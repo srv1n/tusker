@@ -110,7 +110,7 @@ open: <summary>` for every candidate. `tusker daemon resume` closes it and the i
 
 | Command | Effect |
 | --- | --- |
-| `daemon status [--json]` | Paths, liveness, per-project health and dispatch-scope projection, active/parked counts, launchd mode, crash-loop / invariant / budget circuits, disk pressure (`:6641`). |
+| `daemon status [--json]` | Paths, liveness, per-project health and dispatch-scope projection, active/parked counts, launchd mode, crash-loop / invariant circuits, disk pressure (`:6641`). |
 | `daemon limits [--max-active-runs n] [--disk-pressure-enabled\|-min-free-bytes\|-min-free-percent]` | Reads/writes global `runtime.max_active_runs` (default 2) and the runtime-store disk-pressure config (`:6817`). |
 | `daemon resume` / `daemon stop [--drain]` | Closes invariant + crash-loop circuits; `stop` over the control socket waits 5s for the pid file to clear, `--drain` then waits bounded for detached wrappers (`:6893`). |
 
@@ -123,7 +123,7 @@ open: <summary>` for every candidate. `tusker daemon resume` closes it and the i
    frontmatter-only notes. Full task bodies load only for projects with non-terminal tasks or
    external-loop apply inputs (`:1562`).
 2. Count global dispatch capacity; resolve the global limit.
-3. Per project: refresh budget circuit, `scheduleBatchGateIfDue`, `scheduleDepartureIfDue`,
+3. Per project: `scheduleBatchGateIfDue`, `scheduleDepartureIfDue`,
    `startPendingDepartureExecutions`.
 4. Per existing run: normalize dead `retry_queued` rows, park at attempt caps, reconcile
    against plan and tracker, auto-advance the external loop.
@@ -146,10 +146,9 @@ Evaluated per candidate in `pollOnce`, in order; each stamps `run.LastError` and
 | 2 | Dispatch scope / armed wave | `automationDispatchScopeBlocker` (`dispatch_scope.go:70`) | `dispatch blocked: dispatch scope armed_waves requires task membership in a currently armed wave` |
 | 3 | Readiness / dependencies | `daemonDispatchBlockedReason` | `dispatch blocked: <reason>` |
 | 4 | Crash-loop circuit | `crashLoopDispatchBlocker` | `daemon circuit open: …` |
-| 5 | Budget | `budgetDispatchBlocker` (`budget.go:276`) | **inert — always returns no blocker** |
-| 6 | Invariant sentinel | `invariantDispatchBlocker` | circuit summary |
-| 7 | Per-state cap | `stateDispatchCapReachedForRun` | `dispatch blocked: state %q concurrency cap reached` |
-| 8 | Full automation plan | `executePlanBlockedReason` (`:2056`) | `automation plan do_not_dispatch: <blockers>` |
+| 5 | Invariant sentinel | `invariantDispatchBlocker` | circuit summary |
+| 6 | Per-state cap | `stateDispatchCapReachedForRun` | `dispatch blocked: state %q concurrency cap reached` |
+| 7 | Full automation plan | `executePlanBlockedReason` (`:2056`) | `automation plan do_not_dispatch: <blockers>` |
 
 Review-lane candidates prefix scope failures with `review dispatch blocked: ` and add
 `reviewDispatchAllowed`, the reviewer cycle cap (`review parked: automated review cycle cap
@@ -241,16 +240,15 @@ early guard cannot leave a stale observation on the process CWD. Status is merge
 (≤64 attempts); observations older than 5m are dropped and status degrades to `unknown` rather
 than staying stuck paused. A paused status that freshly remeasures clean reports `recovered`.
 
-## Budgets — inert
+## Budgets
 
-Token budgets are **diagnostic-only**. `withDefaultRuntimeBudgetConfig` (`budget.go:73`)
-force-sets `Enabled = false` regardless of workflow or task config; `budgetDispatchBlocker` and
-`enforceBudgetForRun` are no-ops; `BudgetCircuitStatus` / `ReadBudgetCircuitStatus` never read
-persisted state. Runs still parked in `parked_budget` are released on sight with
-`legacy token budget park released: token telemetry is diagnostic-only` (`:294`). Turn
-accounting (`SumRunTokens`, `SumAttemptTokens`, `SumTokensSince`) remains for forensics. The one
-live cap here is `enforceTurnCapForRun` (`:305`): for `codex-exec` runs only, observed turns >
-the lane's `max_turns` stops execution, records `turn_cap_exhausted`, schedules a retry.
+`RuntimeBudgetConfig` remains a valid workflow/task configuration shape and is defaulted and
+round-tripped, but the daemon does not enforce token totals or maintain a budget circuit. Legacy
+`parked_budget` rows are released on sight with a diagnostic-only message so historical state does
+not strand dispatch. Provider-reported `max_tokens` outcomes and explicit budget redrive records
+remain separate runtime/provider behavior. The live runtime cap is `enforceTurnCapForRun`: for
+`codex-exec` runs only, observed turns above the lane's `max_turns` stop execution, record
+`turn_cap_exhausted`, and schedule a retry.
 
 ## Scheduled promotion (departure)
 

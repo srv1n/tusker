@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	skillbundle "tusker/skills/tusker"
@@ -69,81 +66,6 @@ type factoryIntakeDecision struct {
 	DurableMutation    string `yaml:"durable_mutation"`
 	ExecutionAuthority string `yaml:"execution_authority"`
 	Remedy             string `yaml:"remedy"`
-}
-
-// FactoryIntakeRequest is semantic intent plus facts discovered during
-// repository inspection. It deliberately contains no prompt text: language
-// understanding happens before routing, and routing must not be keyword based.
-type FactoryIntakeRequest struct {
-	Intent FactoryIntakeIntent
-	Scope  FactoryIntakeScope
-}
-
-type FactoryIntakeIntent string
-
-const (
-	FactoryIntakeAnalysis           FactoryIntakeIntent = "analysis"
-	FactoryIntakeUnattendedDelivery FactoryIntakeIntent = "unattended_delivery"
-	FactoryIntakePlanningOrTasking  FactoryIntakeIntent = "planning_or_tasking"
-	FactoryIntakeSingletonRecord    FactoryIntakeIntent = "singleton_record"
-	FactoryIntakeImplementation     FactoryIntakeIntent = "implementation"
-)
-
-type FactoryIntakeScope struct {
-	IndependentlyProvableOutcomes int
-	Domains                       int
-	ConcurrentLanes               bool
-	SharedScarceResource          bool
-	RolloutOrRecoveryPhase        bool
-	ImplementationBranches        int
-	ReviewerPackets               int
-}
-
-func (s FactoryIntakeScope) multiUnit() bool {
-	return s.IndependentlyProvableOutcomes >= 2 || s.Domains >= 2 || s.ConcurrentLanes ||
-		s.SharedScarceResource || s.RolloutOrRecoveryPhase || s.ImplementationBranches >= 2 || s.ReviewerPackets >= 2
-}
-
-// RouteFactoryIntake applies the canonical decision table after a caller has
-// identified the request's intent and inspected its structural scope.
-func RouteFactoryIntake(contract factoryIntakeContract, request FactoryIntakeRequest) (factoryIntakeDecision, error) {
-	if err := validateFactoryIntakeContract(contract); err != nil {
-		return factoryIntakeDecision{}, err
-	}
-	scope := "singleton"
-	if request.Scope.multiUnit() {
-		scope = "multi_unit"
-	}
-	for _, decision := range contract.DecisionTable {
-		if decision.Intent != string(request.Intent) {
-			continue
-		}
-		if decision.Scope == "" || decision.Scope == scope {
-			return decision, nil
-		}
-	}
-	return factoryIntakeDecision{}, fmt.Errorf("factory intake contract has no route for intent %q and scope %q", request.Intent, scope)
-}
-
-func loadFactoryIntakeContract(path string) (factoryIntakeContract, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return factoryIntakeContract{}, fmt.Errorf("read factory intake contract: %w", err)
-	}
-	var contract factoryIntakeContract
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&contract); err != nil {
-		return factoryIntakeContract{}, fmt.Errorf("parse factory intake contract: %w", err)
-	}
-	if err := validateFactoryIntakeContract(contract); err != nil {
-		return factoryIntakeContract{}, err
-	}
-	return contract, nil
-}
-
-func factoryIntakeContractPath(repoRoot string) string {
-	return filepath.Join(repoRoot, "skills", "tusker", "assets", "factory-intake-contract.yaml")
 }
 
 func validateFactoryIntakeContract(contract factoryIntakeContract) error {

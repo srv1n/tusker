@@ -252,39 +252,7 @@ func TestCodexExecContinuationRedispatchResumesRecordedSession(t *testing.T) {
 	assertEqual(t, "", budgetKilled.SessionRef, "fresh fallback after budget kill")
 }
 
-func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
-	t.Run("budget", func(t *testing.T) {
-		store, daemon, run, project := codexExecGovernorFixture(t)
-		defer store.Close()
-		note := Note{Data: map[string]any{"id": run.ItemID}}
-		wf := defaultWorkflow()
-		wf.Runtime.Budget.PerAttemptInputTokens = 10
-		wf.Runtime.Budget.PerAttemptOutputTokens = 100
-		if changed, err := daemon.ingestCodexExecRawLog(run); err != nil {
-			t.Fatal(err)
-		} else if !changed {
-			t.Fatal("expected raw log ingestion")
-		}
-		updated, changed, err := daemon.enforceBudgetForRun(context.Background(), project, wf, note, run)
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertEqual(t, false, changed, "usage telemetry does not stop the runner")
-		assertEqual(t, string(AttemptOutcomeNone), updated.AttemptOutcome, "usage does not set a budget outcome")
-		attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if attempts[0].Outcome == string(AttemptOutcomeBudgetExceeded) {
-			t.Fatalf("usage telemetry must not set a budget outcome: %#v", attempts[0])
-		}
-		turns, err := store.ListTurnsForAttempt(run.ActiveAttemptID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertEqual(t, 2, len(turns), "turns remain recorded diagnostically")
-	})
-
+func TestCodexExecTurnCapAcrossJSONLTurns(t *testing.T) {
 	t.Run("turn cap", func(t *testing.T) {
 		store, daemon, run, project := codexExecGovernorFixture(t)
 		defer store.Close()
@@ -312,8 +280,8 @@ func TestCodexExecBudgetAcrossJSONLTurnsAndTurnCap(t *testing.T) {
 	})
 }
 
-func TestUsageTelemetryIsOptionalAndCannotPauseCodexExec(t *testing.T) {
-	store, daemon, run, project := codexExecGovernorFixture(t)
+func TestUsageTelemetryIngestsOptionalRows(t *testing.T) {
+	store, daemon, run, _ := codexExecGovernorFixture(t)
 	defer store.Close()
 	if err := writeText(run.RawLogPath, strings.Join([]string{
 		`not json`,
@@ -326,12 +294,6 @@ func TestUsageTelemetryIsOptionalAndCannotPauseCodexExec(t *testing.T) {
 	if _, err := daemon.ingestCodexExecRawLog(run); err != nil {
 		t.Fatalf("usage telemetry must not fail a valid run: %v", err)
 	}
-	updated, changed, err := daemon.enforceBudgetForRun(context.Background(), project, defaultWorkflow(), Note{}, run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, false, changed, "optional usage telemetry does not pause the run")
-	assertEqual(t, run.LeaseState, updated.LeaseState, "run remains live with malformed or oversized usage")
 	turns, err := store.ListTurnsForAttempt(run.ActiveAttemptID)
 	if err != nil {
 		t.Fatal(err)

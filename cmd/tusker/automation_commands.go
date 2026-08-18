@@ -650,11 +650,6 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	} else if reason != "" {
 		blockers = append(blockers, reason)
 	}
-	if _, reason, _, err := daemon.budgetDispatchBlocker(ctx.Project, ctx.Workflow.Data, note, run, time.Now().UTC()); err != nil {
-		blockers = append(blockers, "budget: "+err.Error())
-	} else if reason != "" {
-		blockers = append(blockers, reason)
-	}
 	if reason, err := daemon.invariantDispatchBlocker(); err != nil {
 		blockers = append(blockers, "invariant sentinel: "+err.Error())
 	} else if reason != "" {

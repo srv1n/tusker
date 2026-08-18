@@ -208,13 +208,12 @@ created. Each copy carries `.tusker/workspace.json` (`WorkspaceMetadata`) whose
 
 The invariant sentinel (`cmd/tusker/sentinel.go`) evaluates each reconcile tick
 and trips a circuit breaker persisted in `daemon_settings` under
-`invariant_circuit_status`; a spend snapshot lives under
-`invariant_spend_snapshot`. Default checks: `held_lease_dispatch_eligible`,
+`invariant_circuit_status`. Default checks are `held_lease_dispatch_eligible`,
 `attempt_count_within_caps`, `fresh_heartbeat_pid_live`,
-`unique_active_lease_per_task`, `last_poll_advanced`. `active_spend_monotonic`
-has an implementation (`sentinelActiveSpendMonotonic`) but **no caller**:
-`evaluateInvariantSentinel` skips it even when config lists it. An open circuit blocks dispatch
-(`invariantDispatchBlocker`); recovery is `ResumeInvariantCircuit`.
+`unique_active_lease_per_task`, and `last_poll_advanced`. An open circuit blocks
+dispatch (`invariantDispatchBlocker`); recovery is `ResumeInvariantCircuit`.
+`active_spend_monotonic` is a retired check name that older workflow files may
+still list, and the daemon skips it as a no-op.
 
 ## Private file writes
 

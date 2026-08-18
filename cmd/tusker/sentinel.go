@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	invariantCircuitSettingKey       = "invariant_circuit_status"
-	invariantSpendSnapshotSettingKey = "invariant_spend_snapshot"
-	invariantViolationReason         = "invariant_violation"
+	invariantCircuitSettingKey = "invariant_circuit_status"
+	invariantViolationReason   = "invariant_violation"
 
 	invariantCheckHeldLeaseDispatchEligible = "held_lease_dispatch_eligible"
 	invariantCheckAttemptCountWithinCaps    = "attempt_count_within_caps"
@@ -23,6 +22,11 @@ const (
 
 	defaultSentinelFreshHeartbeatMS = int(daemonHeartbeatDeadThreshold / time.Millisecond)
 )
+
+// Older materialized workflows may retain retired names; keep skipping them so they cannot open the global circuit.
+var retiredSentinelChecks = map[string]struct{}{
+	invariantCheckActiveSpendMonotonic: {},
+}
 
 type RuntimeSentinelConfig struct {
 	Checks           []string `yaml:"checks" json:"checks"`
@@ -60,15 +64,12 @@ type runtimeSentinelProjectSnapshot struct {
 type runtimeSentinelSnapshot struct {
 	Projects       []runtimeSentinelProjectSnapshot
 	Runs           []RunStatus
-	TokenTotals    map[string]runtimeBudgetTotals
 	PreviousPollAt string
 	CurrentPollAt  string
 	Now            time.Time
 	Resume         bool
 	Liveness       func(RunStatus) bool
 }
-
-type runtimeSpendSnapshot map[string]runtimeBudgetTotals
 
 func defaultRuntimeSentinelConfig() RuntimeSentinelConfig {
 	return RuntimeSentinelConfig{
@@ -120,46 +121,6 @@ func (s *RuntimeStore) ClearInvariantCircuitStatus(checkedAt string) error {
 		LastCheckedAt: checkedAt,
 		Summary:       "invariant circuit closed",
 	})
-}
-
-func (s *RuntimeStore) ReadInvariantSpendSnapshot() (runtimeSpendSnapshot, error) {
-	raw, err := s.GetSetting(invariantSpendSnapshotSettingKey)
-	if err != nil || strings.TrimSpace(raw) == "" {
-		return runtimeSpendSnapshot{}, err
-	}
-	var snapshot runtimeSpendSnapshot
-	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
-		return runtimeSpendSnapshot{}, err
-	}
-	return snapshot, nil
-}
-
-func (s *RuntimeStore) SetInvariantSpendSnapshot(snapshot runtimeSpendSnapshot) error {
-	raw, err := json.Marshal(snapshot)
-	if err != nil {
-		return err
-	}
-	return s.SetSetting(invariantSpendSnapshotSettingKey, string(raw))
-}
-
-func (s *RuntimeStore) RunTokenTotalsByRun() (map[string]runtimeBudgetTotals, error) {
-	rows, err := s.query(`SELECT project_id, record_id, COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(total_tokens), 0)
-		FROM turns
-		GROUP BY project_id, record_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]runtimeBudgetTotals{}
-	for rows.Next() {
-		var projectID, recordID string
-		var totals runtimeBudgetTotals
-		if err := rows.Scan(&projectID, &recordID, &totals.InputTokens, &totals.OutputTokens, &totals.TotalTokens); err != nil {
-			return nil, err
-		}
-		out[runtimeRunKey(projectID, recordID)] = totals
-	}
-	return out, rows.Err()
 }
 
 func (d *Daemon) invariantDispatchBlocker() (string, error) {
@@ -327,9 +288,6 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 	if snapshot.Liveness == nil {
 		snapshot.Liveness = processIdentityMatches
 	}
-	if snapshot.TokenTotals == nil {
-		snapshot.TokenTotals = map[string]runtimeBudgetTotals{}
-	}
 	status := invariantCircuitStatus{
 		Open:          true,
 		Reason:        invariantViolationReason,
@@ -340,7 +298,7 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 	for _, project := range snapshot.Projects {
 		config := withDefaultRuntimeSentinelConfig(project.Workflow.Runtime.Sentinel)
 		for _, check := range config.Checks {
-			if check == invariantCheckActiveSpendMonotonic {
+			if _, retired := retiredSentinelChecks[check]; retired {
 				continue
 			}
 			status.Checks = append(status.Checks, check)
@@ -524,29 +482,6 @@ func sentinelUniqueActiveLeasePerTask(project runtimeSentinelProjectSnapshot, ru
 	return violations
 }
 
-func sentinelActiveSpendMonotonic(project runtimeSentinelProjectSnapshot, runs []RunStatus, totals map[string]runtimeBudgetTotals, previous runtimeSpendSnapshot) []runtimeInvariantViolation {
-	_ = project
-	var violations []runtimeInvariantViolation
-	for _, run := range runs {
-		if !isDispatchCapacityLeaseState(run.LeaseState) {
-			continue
-		}
-		key := runtimeRunKey(run.ProjectID, run.RecordID)
-		before, ok := previous[key]
-		if !ok {
-			continue
-		}
-		after := totals[key]
-		if after.InputTokens < before.InputTokens || after.OutputTokens < before.OutputTokens || after.TotalTokens < before.TotalTokens {
-			violations = append(violations, runViolation(run, invariantCheckActiveSpendMonotonic, "active run spend decreased since previous tick", map[string]any{
-				"previous": before,
-				"current":  after,
-			}))
-		}
-	}
-	return violations
-}
-
 func sentinelLastPollAdvanced(previousPollAt, currentPollAt string) []runtimeInvariantViolation {
 	previousPollAt = strings.TrimSpace(previousPollAt)
 	currentPollAt = strings.TrimSpace(currentPollAt)
@@ -591,18 +526,6 @@ func sentinelRunsByProject(runs []RunStatus) map[string][]RunStatus {
 	out := map[string][]RunStatus{}
 	for _, run := range runs {
 		out[run.ProjectID] = append(out[run.ProjectID], run)
-	}
-	return out
-}
-
-func currentActiveSpendSnapshot(runs []RunStatus, totals map[string]runtimeBudgetTotals) runtimeSpendSnapshot {
-	out := runtimeSpendSnapshot{}
-	for _, run := range runs {
-		if !isDispatchCapacityLeaseState(run.LeaseState) {
-			continue
-		}
-		key := runtimeRunKey(run.ProjectID, run.RecordID)
-		out[key] = totals[key]
 	}
 	return out
 }

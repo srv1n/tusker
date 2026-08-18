@@ -115,10 +115,7 @@ func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 		}
 	}
 
-	contract, err := loadFactoryIntakeContract(filepath.Join(root, "assets", "factory-intake-contract.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	contract := canonicalFactoryIntakeContractForTest(t)
 	for _, guardrail := range []string{
 		"tracked_modifying_work_requires_work_start",
 		"dispatched_worker_verifies_existing_claim",

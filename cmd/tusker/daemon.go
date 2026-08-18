@@ -939,9 +939,6 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 
 		project := loaded.Project
 		wfFile := loaded.Workflow
-		if _, err := d.refreshBudgetCircuitStatus(wfFile.Data, time.Now().UTC()); err != nil {
-			return err
-		}
 		notes := loaded.Notes
 		sortDispatchCandidates(notes)
 		noteStatusByRecord := map[string]string{}
@@ -1256,25 +1253,6 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				beforeBudget := current
-				budgeted, budgetReason, budgetChanged, err := d.budgetDispatchBlocker(project, wfFile.Data, dispatchNote, current, now)
-				if err != nil {
-					return err
-				}
-				if budgetReason != "" {
-					current = budgeted
-					current.LastError = budgetReason
-					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-						return err
-					}
-					projectRuns[recordID] = current
-					if budgetChanged {
-						globalActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
-						projectActiveRuns += dispatchCapacityRunDelta(beforeBudget, current)
-					}
-					continue
-				}
 				invariantReason, err := d.invariantDispatchBlocker()
 				if err != nil {
 					return err
@@ -1464,20 +1442,6 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				current.LastError = crashLoopReason
 				current.UpdatedAt = now.Format(time.RFC3339)
 				if err := d.store.UpsertRun(current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
-			}
-			budgeted, budgetReason, _, err := d.budgetDispatchBlocker(project, wfFile.Data, note, current, now)
-			if err != nil {
-				return err
-			}
-			if budgetReason != "" {
-				current = budgeted
-				current.LastError = budgetReason
-				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 					return err
 				}
 				projectRuns[recordID] = current
@@ -1810,8 +1774,8 @@ func isDispatchingLeaseState(state string) bool {
 }
 
 // isDispatchCapacityLeaseState reports whether a run row still holds live
-// attempt/session state that the daemon must reconcile, budget-meter, or
-// release, and that the sentinel treats as a held lease: a dispatching lease
+// attempt/session state that the daemon must reconcile or release, and that
+// the sentinel treats as a held lease: a dispatching lease
 // (claimed/running) or a queued retry that still owns its attempt refs.
 // Despite the name it is NOT the active-run capacity predicate: capacity
 // counts only claimed/running via isDispatchingLeaseState, so retry_queued
@@ -2131,9 +2095,6 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 		return d.reconcileRun(ctx, project, wfFile, run)
 	}
 	if strings.TrimSpace(note.AbsolutePath) != "" {
-		if budgeted, changed, err := d.enforceBudgetForRun(ctx, project, wfFile.Data, note, run); err != nil || changed {
-			return budgeted, changed, err
-		}
 		if turnCapped, changed, err := d.enforceTurnCapForRun(ctx, project, wfFile.Data, run); err != nil || changed {
 			return turnCapped, changed, err
 		}
@@ -6713,9 +6674,6 @@ func daemonStatusCmd(args Args) error {
 	}
 	if boolFromAny(status["invariant_circuit_open"]) {
 		fmt.Printf("Invariant circuit: open (%s)\n", stringValue(status["invariant_circuit_reason"]))
-	}
-	if boolFromAny(status["budget_circuit_open"]) {
-		fmt.Printf("Budget circuit: open until %s (%s)\n", stringValue(status["budget_circuit_reset_at"]), stringValue(status["budget_circuit_reason"]))
 	}
 	if diskPressure, ok := status["disk_pressure"].(DiskPressureStatus); ok {
 		fmt.Printf("Disk pressure: %s (bytes=%d percent=%.2f paused=%t)\n", diskPressure.State, diskPressure.MinFreeBytes, diskPressure.MinFreePercent, diskPressure.DispatchPaused)

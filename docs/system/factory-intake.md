@@ -32,17 +32,16 @@ Top-level keys (`factoryIntakeContract` in `cmd/tusker/factory_intake_contract.g
 `factory_mechanics`, `decision_table`, `structural_multi_unit_signals`,
 `guardrails`. `product_questions`, `factory_mechanics`,
 `structural_multi_unit_signals`, and `guardrails` must be non-empty.
-`loadFactoryIntakeContract` decodes with `KnownFields(true)`, but the path every
-production caller uses (`factoryIntakeContractProvenanceFromRaw`) uses plain
-`yaml.Unmarshal` — it validates shape while silently ignoring unknown keys.
+The embedded provenance path (`factoryIntakeContractProvenanceFromRaw`) uses
+`yaml.Unmarshal`, validates the contract shape, and binds the canonical content
+fingerprint to the reported schema and version.
 
-### Routing inputs
+### Contract semantics
 
-Routing takes semantic intent plus structural facts. `FactoryIntakeRequest`
-carries **no prompt text** — language understanding happens before routing, and
-routing is never keyword matching.
+The decision table records semantic intent and structural scope without prompt
+text or keyword matching. Agents apply those meanings during intake.
 
-| Intent (`FactoryIntakeIntent`) | Meaning |
+| Intent | Meaning |
 | --- | --- |
 | `analysis` | Evaluation, audit, comparison, critique. |
 | `singleton_record` | One small recorded follow-up. |
@@ -50,19 +49,11 @@ routing is never keyword matching.
 | `planning_or_tasking` | Produce tracked work. |
 | `unattended_delivery` | Work to run without a human at the keyboard. |
 
-`FactoryIntakeScope` collapses to `singleton` or `multi_unit`.
-`FactoryIntakeScope.multiUnit()` returns true if **any** of:
-`IndependentlyProvableOutcomes >= 2`, `Domains >= 2`, `ConcurrentLanes`,
-`SharedScarceResource`, `RolloutOrRecoveryPhase`, `ImplementationBranches >= 2`,
-`ReviewerPackets >= 2`.
-
 ### The decision table
 
-`RouteFactoryIntake` picks the first row whose `intent` matches and whose
-`scope` is empty (matches either) or equal. The six rows are hard-coded as the
-expected shape in `validateFactoryIntakeContract` — the YAML may not add,
-remove, rename, or re-point a route. Row *order* is load-bearing for that
-first-match scan but is not validated.
+The six rows are hard-coded as the expected shape in
+`validateFactoryIntakeContract` — the YAML may not add, remove, rename, or
+re-point a route. Row order is documentation, not an executable dispatch order.
 
 | id | intent | scope | route | durable_mutation | execution_authority |
 | --- | --- | --- | --- | --- | --- |
@@ -73,9 +64,9 @@ first-match scan but is not validated.
 | `bounded_direct_implementation` | `implementation` | `singleton` | `direct_interactive` | `singleton_contract_only` | `explicit_direct_request` |
 | `implementation_with_multi_unit_scope` | `implementation` | `multi_unit` | `delivery_plan` | `versioned_plan_and_held_import` | `fingerprint_bound_start_delivery` |
 
-`singleton_record` has no `multi_unit` row, so that combination returns an
-explicit "no route" error rather than silently downgrading. Every other intent
-is covered for both scopes.
+`singleton_record` has no `multi_unit` row; the distinction is retained in the
+contract for agents to resolve explicitly rather than silently downgrading.
+Every other intent is covered for both scopes.
 
 Each row also carries a free-text `remedy` (required, not shape-checked) stating
 the correct action, e.g. "Plan first; unattended execution requires the exact
@@ -136,13 +127,10 @@ those statuses are produced and repaired.
 
 ### What actually runs this
 
-`RouteFactoryIntake`, `loadFactoryIntakeContract`, and
-`factoryIntakeContractPath` have no non-test callers. The routing table is
-enforced today as a **validated, fingerprinted contract that agents read**, not
-as an executed dispatcher: the binary validates its shape, binds its
-fingerprint into compatibility and provenance, and the skill guides carry the
-same rules in prose. Treat the YAML as the authority when the prose and the
-table disagree.
+There is no executable intake dispatcher. The binary validates the embedded
+contract and binds its fingerprint into compatibility and provenance; agents
+read the table and skill guidance. Treat the YAML as the authority when prose
+and table disagree.
 
 ## `tusker factory operations`
 
