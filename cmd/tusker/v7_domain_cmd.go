@@ -682,19 +682,19 @@ func listV7ProjectSkillDomains(vaultPath string) ([]Note, error) {
 
 func renderV7ProjectSkillBody(domains []Note) string {
 	var rows []string
-	rows = append(rows, "| Intent | Read first | Canon | Notes |")
+	rows = append(rows, "| Domain | Read when | Read first | Canon |")
 	rows = append(rows, "|---|---|---|---|")
 	for _, domain := range domains {
 		id := stringField(domain.Data, "id")
-		rows = append(rows, fmt.Sprintf("| %s | `knowledge/domains/%s/INDEX.md` | `knowledge/domains/%s/CANON.md` | %s |", stringField(domain.Data, "summary"), id, id, stringField(domain.Data, "title")))
+		rows = append(rows, fmt.Sprintf("| %s | %s | `knowledge/domains/%s/INDEX.md` | `knowledge/domains/%s/CANON.md` |", stringField(domain.Data, "title"), stringField(domain.Data, "summary"), id, id))
 	}
 	if len(rows) == 2 {
-		rows = append(rows, "| No domains yet. | Create a V7 domain first. | Create a V7 domain first. | Empty project knowledge route. |")
+		rows = append(rows, "| No domains yet. | Create a V7 domain first. | Create a V7 domain first. | Create a V7 domain first. |")
 	}
 	return strings.Join([]string{
 		"# Project Knowledge Skill",
 		"",
-		"This is a generated V7 project knowledge skill. Use it after the Tusker operator skill when you need repository-specific context.",
+		"This is the project knowledge skill for this repository. Use it after the Tusker operator skill when repository-specific canon is needed.",
 		"",
 		"## Read This When",
 		"",

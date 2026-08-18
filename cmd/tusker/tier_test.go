@@ -153,6 +153,54 @@ func TestTierOneStatusDoneUsesCloseProjection(t *testing.T) {
 	}
 }
 
+func TestTierOneCloseSkipsProofGateButTierTwoKeepsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tier    int
+		wantErr bool
+	}{
+		{name: "tier one", tier: 1},
+		{name: "tier two", tier: 2, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vault := v7DispatchTestVault(t)
+			if _, err := setProjectLocalConfigWithReadback(vault, "tier", tc.tier); err != nil {
+				t.Fatal(err)
+			}
+			if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Proofless close", "proof-mode": "inline", "proof-required": "focused_test"}); err != nil {
+				t.Fatal(err)
+			}
+			replaceV7TaskSection(t, vault, "APP-T-0001", "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | The task may close after the tier policy is applied. | Focused proof |")
+			replaceV7TaskSection(t, vault, "APP-T-0001", "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|")
+			setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+				"status": "review", "readiness": "waiting_on_review", "proof_status": "pending",
+			})
+			taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+			if rows := parseV7VerificationRows(mustBody(t, taskPath)); len(rows) != 0 {
+				t.Fatalf("proofless close fixture has %d verification rows", len(rows))
+			}
+
+			err := closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent"})
+			if tc.wantErr {
+				if err == nil || errorToIssue(err).Code != errorEvidenceGate {
+					t.Fatalf("expected EVIDENCE_GATE refusal, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("tier one close with no verification rows: %v", err)
+			}
+			data, _, err := parseFrontmatterMustRead(taskPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := stringField(data, "status"); got != "done" {
+				t.Fatalf("tier one close status = %q, want done", got)
+			}
+		})
+	}
+}
+
 func TestDefaultTierStatusDoneStillRefuses(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Ceremonial close"}); err != nil {

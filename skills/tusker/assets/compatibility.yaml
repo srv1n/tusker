@@ -11,6 +11,7 @@ factory_intake_contract:
 canonical_source: canonical://skills/tusker
 materialization_schema: tusker.skill-materialization/v1
 primary_guides:
-  - references/PLAN.md
-  - references/WORK.md
+  - references/TRACK.md
+  - references/KNOWLEDGE.md
+  - references/RUN.md
   - references/OPERATE.md

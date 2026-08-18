@@ -654,6 +654,10 @@ func TestV7ProfileInitCreatesSkillShapedKnowledgeVault(t *testing.T) {
 	assertContainsIndexTest(t, body, "managed Tusker bootstrap pointers")
 	assertContainsIndexTest(t, body, "knowledge/domains/project/INDEX.md")
 	assertContainsIndexTest(t, body, "knowledge/domains/project/CANON.md")
+	assertContainsIndexTest(t, body, "| Domain | Read when | Read first | Canon |")
+	if strings.Count(body, "This is the project knowledge skill for this repository.") != 1 {
+		t.Fatalf("project skill introduction is not singular: %q", body)
+	}
 	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
 		t.Fatalf("validate failed: code=%d err=%v", code, err)
 	}

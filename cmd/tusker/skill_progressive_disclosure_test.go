@@ -139,7 +139,7 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 
 	routePattern := regexp.MustCompile("`(references/[A-Z0-9_-]+\\.md)`")
 	routes := routePattern.FindAllStringSubmatch(body, -1)
-	if len(routes) != 7 {
+	if len(routes) != 6 {
 		t.Fatalf("router routes = %#v", routes)
 	}
 	for _, match := range routes {
@@ -149,18 +149,17 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 	}
 	routeTable := parseSkillRouteTable(body)
 	expectedRoutes := map[string]string{
-		"Requirements, decomposition, or creating tracked work": "references/PLAN.md",
-		"Task status, proof, gates, review state, or closeout":  "references/WORK.md",
-		"Tracker diagnosis or stuck task state":                 "references/OPERATE.md",
-		"Existing-repo onboarding":                              "references/REPO_ONBOARDING.md",
-		"Xcode generated build-state failure":                   "references/XCODE_BUILD_STATE.md",
-		"Documentation publication":                             "references/DOCS_PUBLICATION.md",
-		"Obsidian/Bases projection":                             "references/OBSIDIAN_BASES.md",
+		"Create, update, or close tracked work": "references/TRACK.md",
+		"Answer from or write repo knowledge":   "references/KNOWLEDGE.md",
+		"Run a task, resolve gates, watch runs": "references/RUN.md",
+		"Tracker diagnosis or stuck task state": "references/OPERATE.md",
+		"Existing-repo onboarding":              "references/REPO_ONBOARDING.md",
+		"Xcode generated build-state failure":   "references/XCODE_BUILD_STATE.md",
 	}
 	if !reflect.DeepEqual(routeTable, expectedRoutes) {
 		t.Fatalf("router table = %#v, want %#v", routeTable, expectedRoutes)
 	}
-	for _, rel := range []string{"references/PLAN.md", "references/WORK.md", "references/OPERATE.md"} {
+	for _, rel := range []string{"references/TRACK.md", "references/KNOWLEDGE.md", "references/RUN.md", "references/OPERATE.md"} {
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)
@@ -169,7 +168,7 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 			t.Fatalf("primary guide %s recursively routes to another reference", rel)
 		}
 	}
-	assertNoDuplicateSkillParagraphs(t, root, []string{"SKILL.md", "references/PLAN.md", "references/WORK.md", "references/OPERATE.md"})
+	assertNoDuplicateSkillParagraphs(t, root, []string{"SKILL.md", "references/TRACK.md", "references/KNOWLEDGE.md", "references/RUN.md", "references/OPERATE.md"})
 
 	raw, err := os.ReadFile(filepath.Join(root, "testdata", "progressive-disclosure-budget.json"))
 	if err != nil {
@@ -195,7 +194,7 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 	if err := json.Unmarshal(raw, &budget); err != nil {
 		t.Fatal(err)
 	}
-	if budget.Schema != "tusker.skill-disclosure-budget/v1" || len(budget.Cases) != 7 {
+	if budget.Schema != "tusker.skill-disclosure-budget/v1" || len(budget.Cases) != 6 {
 		t.Fatalf("budget fixture = %#v", budget)
 	}
 	routerRaw, err := os.ReadFile(filepath.Join(root, budget.Router.Path))

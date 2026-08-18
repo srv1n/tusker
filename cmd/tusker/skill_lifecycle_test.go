@@ -58,11 +58,11 @@ func TestSkillSymlinkTargetStaysAbsoluteOutsideTheRepo(t *testing.T) {
 func TestSkillTaskManagementProtocol(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
 	source := filepath.Join(root, "SKILL.md")
-	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"), filepath.Join("references", "OPERATE.md"))
+	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
-		"task records only", "mutate its records through the CLI",
+		"Mutate tracker state only through the CLI", "hand edit corrupts compare-and-swap",
 		"tusker new task", "tusker status <TASK-ID>", "tusker verify add",
-		"Never hand-edit", "tracker failure is not a source-code failure",
+		"tracker failure is not a source-code failure",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing %q", required)
@@ -90,11 +90,11 @@ func TestSkillTaskManagementProtocol(t *testing.T) {
 
 func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
-	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"))
+	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "RUN.md"))
 	for _, required := range []string{
-		"Everything already decided by the task, acceptance criteria, governing spec",
-		"final human acceptance remains appropriate for UX feel, brand quality",
-		"Risk alone is not a gate",
+		"Anything the task, spec, or a linked decision already settles is settled",
+		"subjective acceptance (UX feel, brand, legal)",
+		"risk alone is not a gate",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing human-approval rule %q", required)
@@ -104,10 +104,10 @@ func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 
 func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
-	normalizedText := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"), filepath.Join("references", "OPERATE.md"))
+	normalizedText := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
-		"desired outcome, observable acceptance", "One bounded outcome is one task",
-		"Use dependencies only when", "Use gates only for missing human authority",
+		"Capture observable acceptance and non-goals", "One bounded outcome is one task",
+		"A gate records one missing human fact",
 		"tusker show <TASK-ID> --capsule", "tusker proof status <TASK-ID>",
 	} {
 		if !strings.Contains(normalizedText, required) {

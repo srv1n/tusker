@@ -170,7 +170,7 @@ func validateTuskerSkillPackageShape(root string) error {
 			return fmt.Errorf("Tusker skill package requires real directory %s", filepath.ToSlash(rel))
 		}
 	}
-	for _, rel := range []string{"SKILL.md", filepath.Join("references", "PLAN.md"), filepath.Join("references", "WORK.md"), filepath.Join("references", "OPERATE.md"), filepath.Join("assets", skillCompatibilityFilename), filepath.Join("assets", "factory-intake-contract.yaml")} {
+	for _, rel := range []string{"SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "KNOWLEDGE.md"), filepath.Join("references", "RUN.md"), filepath.Join("references", "OPERATE.md"), filepath.Join("assets", skillCompatibilityFilename), filepath.Join("assets", "factory-intake-contract.yaml")} {
 		info, err := os.Lstat(filepath.Join(root, rel))
 		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return fmt.Errorf("Tusker skill package requires regular file %s", filepath.ToSlash(rel))

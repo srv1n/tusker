@@ -379,12 +379,12 @@ func TestDeliveryHelpSpecRefsAndSkillContract(t *testing.T) {
 		assertContainsIndexTest(t, help, want)
 	}
 	skill := mustReadIndexTest(t, filepath.Join("..", "..", "skills", "tusker", "SKILL.md"))
-	for _, want := range []string{"references/PLAN.md", "task records only", "through the CLI"} {
+	for _, want := range []string{"references/TRACK.md", "Mutate tracker state only through the CLI"} {
 		assertContainsIndexTest(t, skill, want)
 	}
-	planGuide := mustReadIndexTest(t, filepath.Join("..", "..", "skills", "tusker", "references", "PLAN.md"))
-	for _, want := range []string{"smallest useful Tusker record", "tusker new task", "Do not hand-edit protected fields"} {
-		assertContainsIndexTest(t, planGuide, want)
+	trackGuide := mustReadIndexTest(t, filepath.Join("..", "..", "skills", "tusker", "references", "TRACK.md"))
+	for _, want := range []string{"One bounded outcome is one task", "tusker new task", "tusker verify add"} {
+		assertContainsIndexTest(t, trackGuide, want)
 	}
 }
 

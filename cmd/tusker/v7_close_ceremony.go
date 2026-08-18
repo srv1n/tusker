@@ -140,14 +140,18 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 	if dep, blocked := v7UnclosedDependency(task, idx); blocked {
 		return v7ClosePreflightResult{}, tuskerError(errorInvalidTransition, v7ClosePreflightMessage(request.Action, id, "blocked by unfinished dependency "+dep.ID))
 	}
-	if missing := missingRequiredEvidence(vaultPath, id, normalizeList(task.Data["evidence_required"])); len(missing) > 0 {
-		return v7ClosePreflightResult{}, tuskerError(errorEvidenceGate, v7ClosePreflightMessage(request.Action, id, "missing required evidence: "+strings.Join(missing, ", ")))
+	if tuskerTier(vaultPath) >= 2 {
+		if missing := missingRequiredEvidence(vaultPath, id, normalizeList(task.Data["evidence_required"])); len(missing) > 0 {
+			return v7ClosePreflightResult{}, tuskerError(errorEvidenceGate, v7ClosePreflightMessage(request.Action, id, "missing required evidence: "+strings.Join(missing, ", ")))
+		}
 	}
 	if err := enforceV7ClosePolicy(vaultPath, task, idx, request.Actor); err != nil {
 		return v7ClosePreflightResult{}, err
 	}
-	if err := enforceV7AcceptanceClose(vaultPath, task, idx); err != nil {
-		return v7ClosePreflightResult{}, err
+	if tuskerTier(vaultPath) >= 2 {
+		if err := enforceV7AcceptanceClose(vaultPath, task, idx); err != nil {
+			return v7ClosePreflightResult{}, err
+		}
 	}
 
 	risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))

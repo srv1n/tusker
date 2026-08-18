@@ -680,7 +680,7 @@ func TestInteractiveExecutionContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(string(raw)), " ")
-	for _, want := range []string{"implements the requested work itself", "does not require daemon enablement or a daemon lifecycle claim", "Never start `tusker daemon run`"} {
+	for _, want := range []string{"implements the requested work itself", "no daemon enablement, no run claim", "only the resident daemon dispatches background runs"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("interactive contract missing %q", want)
 		}

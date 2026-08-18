@@ -785,7 +785,7 @@ description: Operate Tusker.
 	if err := writeText(filepath.Join(root, "SKILL.md"), body); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"PLAN.md", "WORK.md", "OPERATE.md"} {
+	for _, name := range []string{"TRACK.md", "KNOWLEDGE.md", "RUN.md", "OPERATE.md"} {
 		if err := writeText(filepath.Join(root, "references", name), "# "+name+"\n"); err != nil {
 			t.Fatal(err)
 		}

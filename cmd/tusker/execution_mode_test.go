@@ -54,7 +54,7 @@ func TestExecutionModeInstructionsForbidNestedRunners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"task records only", "through the CLI", "authority over repository operations"} {
+	for _, required := range []string{"implements the requested work itself", "through the CLI", "work only the claimed task"} {
 		if !strings.Contains(skill, required) {
 			t.Fatalf("task-only skill missing %q", required)
 		}

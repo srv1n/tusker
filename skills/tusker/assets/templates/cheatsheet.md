@@ -56,6 +56,7 @@ tusker closeout status <TASK-ID> --json  # when supported
 
 ## What to read
 
-- `references/PLAN.md` for direct-task versus delivery-DAG intake.
-- `references/WORK.md` for implementation, proof, review, and human wait.
-- `references/OPERATE.md` for automation, waves, integration, and recovery.
+- `references/TRACK.md` for task creation, lifecycle, proof, and gates.
+- `references/KNOWLEDGE.md` for repo knowledge reads and writes.
+- `references/RUN.md` for deliberate runs, gates, and run watching.
+- `references/OPERATE.md` for read-only tracker diagnosis.

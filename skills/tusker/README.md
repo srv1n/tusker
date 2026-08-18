@@ -8,11 +8,11 @@ routed reference or asset needed for the current task.
 
 The primary routes are deliberately terminal:
 
-- `references/PLAN.md` — requirements and task creation;
-- `references/WORK.md` — lifecycle, proof, gates, and human wait;
+- `references/TRACK.md` — task creation, lifecycle, proof, and gates;
+- `references/KNOWLEDGE.md` — repo knowledge reads and writes;
+- `references/RUN.md` — deliberate runs, gates, and run watching;
 - `references/OPERATE.md` — read-only tracker diagnosis.
 
-Rare routes stay one hop from `SKILL.md`. Legacy reference filenames are small
-non-normative redirects for old packets. Compatibility lives in
+Rare routes stay one hop from `SKILL.md`. Compatibility lives in
 `assets/compatibility.yaml` and `tusker capabilities --json`, never in skill
 frontmatter.

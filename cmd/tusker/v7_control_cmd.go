@@ -471,8 +471,10 @@ func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string
 		return tuskerError(errorInvalidTransition, id+": close requires reviewer or human acceptor for "+risk+" risk", withContext(map[string]any{"risk": risk, "actor": actor, "required_acceptor": requiredAcceptor}))
 	}
 	requiredEvidence := mergeUniqueStrings(normalizeList(task.Data["evidence_required"]), policy.RequiredEvidence)
-	if missing := missingRequiredEvidence(vaultPath, id, requiredEvidence); len(missing) > 0 {
-		return tuskerError(errorEvidenceGate, id+": close missing risk-policy evidence: "+strings.Join(missing, ", "), withContext(map[string]any{"risk": risk, "missing": missing}))
+	if tuskerTier(vaultPath) >= 2 {
+		if missing := missingRequiredEvidence(vaultPath, id, requiredEvidence); len(missing) > 0 {
+			return tuskerError(errorEvidenceGate, id+": close missing risk-policy evidence: "+strings.Join(missing, ", "), withContext(map[string]any{"risk": risk, "missing": missing}))
+		}
 	}
 	for _, kind := range policy.RequiredGates {
 		if !v7CloseGateKindSatisfied(idx, id, kind) {

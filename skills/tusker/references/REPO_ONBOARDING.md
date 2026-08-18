@@ -177,7 +177,7 @@ IDs; held import allocates final identities locally.
 
 ## Import, Review, and Start Boundaries
 
-Planned target surfaces (not claims about the installed CLI):
+All commands below are live in the installed CLI:
 
 ```bash
 tusker delivery doctor --plan <plan.yaml> --json

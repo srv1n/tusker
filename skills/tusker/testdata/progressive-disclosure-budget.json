@@ -7,64 +7,51 @@
   },
   "cases": [
     {
-      "id": "planning",
+      "id": "track",
       "prompt": "Turn this request into the smallest useful tracked task.",
-      "route": "Requirements, decomposition, or creating tracked work",
-      "guide": "references/PLAN.md",
-      "loaded_words": 744,
-      "max_loaded_words": 750,
+      "route": "Create, update, or close tracked work",
+      "guide": "references/TRACK.md",
+      "loaded_words": 610,
+      "max_loaded_words": 625,
       "required": [
         "One bounded outcome is one task",
-        "tusker new task",
-        "Do not hand-edit protected fields"
+        "tusker verify add"
       ]
     },
     {
-      "id": "task_status",
-      "prompt": "Update this task's lifecycle state.",
-      "route": "Task status, proof, gates, review state, or closeout",
-      "guide": "references/WORK.md",
-      "loaded_words": 849,
-      "max_loaded_words": 850,
+      "id": "knowledge",
+      "prompt": "Answer this repository question from its durable canon.",
+      "route": "Answer from or write repo knowledge",
+      "guide": "references/KNOWLEDGE.md",
+      "loaded_words": 715,
+      "max_loaded_words": 725,
       "required": [
-        "tusker status",
-        "Never write lifecycle fields directly"
+        "read-when",
+        "not in canon"
       ]
     },
     {
-      "id": "proof",
-      "prompt": "Record the proof for this task.",
-      "route": "Task status, proof, gates, review state, or closeout",
-      "guide": "references/WORK.md",
-      "loaded_words": 849,
-      "max_loaded_words": 850,
+      "id": "run",
+      "prompt": "Run this ready task once and watch it finish.",
+      "route": "Run a task, resolve gates, watch runs",
+      "guide": "references/RUN.md",
+      "loaded_words": 625,
+      "max_loaded_words": 650,
       "required": [
-        "tusker verify add",
-        "smallest verification set covering acceptance"
+        "run directive is deliberate human authority",
+        "tusker runs inspect"
       ]
     },
     {
-      "id": "gate",
-      "prompt": "Record the missing human authority as a task gate.",
-      "route": "Task status, proof, gates, review state, or closeout",
-      "guide": "references/WORK.md",
-      "loaded_words": 849,
-      "max_loaded_words": 850,
+      "id": "operate",
+      "prompt": "Diagnose why this task is stuck without changing tracker state.",
+      "route": "Tracker diagnosis or stuck task state",
+      "guide": "references/OPERATE.md",
+      "loaded_words": 400,
+      "max_loaded_words": 425,
       "required": [
-        "Create a gate only when",
-        "tusker new gate"
-      ]
-    },
-    {
-      "id": "human_wait",
-      "prompt": "The task is waiting_on_human; tell me the exact next action.",
-      "route": "Task status, proof, gates, review state, or closeout",
-      "guide": "references/WORK.md",
-      "loaded_words": 849,
-      "max_loaded_words": 850,
-      "required": [
-        "agent_action: stop_until_human_response",
-        "exact human action"
+        "Diagnose tracker state read-only",
+        "tusker closeout status"
       ]
     },
     {
@@ -72,8 +59,8 @@
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 1899,
-      "max_loaded_words": 1900,
+      "loaded_words": 1663,
+      "max_loaded_words": 1675,
       "required": [
         "Existing Repository Onboarding",
         "Storage Boundary"
@@ -84,8 +71,8 @@
       "prompt": "Xcode failed because generated build state looks corrupted.",
       "route": "Xcode generated build-state failure",
       "guide": "references/XCODE_BUILD_STATE.md",
-      "loaded_words": 688,
-      "max_loaded_words": 700,
+      "loaded_words": 452,
+      "max_loaded_words": 475,
       "required": [
         "tusker xcode doctor",
         "likely_infrastructure"

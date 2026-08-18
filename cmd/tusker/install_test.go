@@ -280,12 +280,11 @@ func TestInstallSkillPayloadRemovesStaleFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(destination, "assets", "templates", "task.md")); err != nil {
 		t.Fatalf("expected current task template to be installed: %v", err)
 	}
-	referenceContent, err := os.ReadFile(staleReference)
-	if err != nil {
-		t.Fatalf("expected current commands reference to be installed: %v", err)
+	if _, err := os.Stat(staleReference); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted commands redirect to be removed: %v", err)
 	}
-	if strings.Contains(string(referenceContent), "stale commands") || !strings.Contains(string(referenceContent), "# Compatibility redirect") {
-		t.Fatalf("expected stale reference content to be replaced, got:\n%s", string(referenceContent))
+	if _, err := os.Stat(filepath.Join(destination, "references", "TRACK.md")); err != nil {
+		t.Fatalf("expected current track reference to be installed: %v", err)
 	}
 }
 
@@ -320,7 +319,7 @@ func TestInstallCommandLeavesExistingUserSkillsAloneByDefault(t *testing.T) {
 
 	for _, destination := range destinations {
 		assertExists(t, filepath.Join(destination, "SKILL.md"))
-		assertExists(t, filepath.Join(destination, "references", "COMMANDS.md"))
+		assertExists(t, filepath.Join(destination, "references", "TRACK.md"))
 		if _, err := os.Stat(filepath.Join(destination, "assets", "templates", "story.md")); !os.IsNotExist(err) {
 			t.Fatalf("stale file still exists after explicit refresh at %s: %v", destination, err)
 		}

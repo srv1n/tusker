@@ -199,12 +199,12 @@ same function with a narrowed `RepairScope`.
 `cmd/tusker/skill_progressive_disclosure_test.go` enforces the router contract
 against `skills/tusker/testdata/progressive-disclosure-budget.json`
 (`tusker.skill-disclosure-budget/v1`): `SKILL.md` body ≤900 words and ≤140
-lines, exactly two frontmatter keys, exactly seven `references/*.md` routes
+lines, exactly two frontmatter keys, exactly six `references/*.md` routes
 matching a fixed route table, no `references/` mention at all inside
-`PLAN.md`/`WORK.md`/`OPERATE.md`, and no duplicated paragraphs across those
-three plus `SKILL.md`.
+`TRACK.md`/`KNOWLEDGE.md`/`RUN.md`/`OPERATE.md`, and no duplicated paragraphs
+across those four plus `SKILL.md`.
 
-Each of the seven fixture cases pins router+guide word counts **exactly**
+Each of the six fixture cases pins router+guide word counts **exactly**
 (`loaded_words`) under a ceiling (`max_loaded_words`) and asserts required
 safety strings survive. Editing a primary guide's length fails the test until
 the fixture is updated. The test also re-derives `skillPayloadFingerprint` for
