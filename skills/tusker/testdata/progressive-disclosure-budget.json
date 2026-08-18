@@ -23,10 +23,10 @@
       "prompt": "Answer this repository question from its durable canon.",
       "route": "Answer from or write repo knowledge",
       "guide": "references/KNOWLEDGE.md",
-      "loaded_words": 715,
-      "max_loaded_words": 725,
+      "loaded_words": 658,
+      "max_loaded_words": 675,
       "required": [
-        "read-when",
+        "tusker docs find",
         "not in canon"
       ]
     },
