@@ -1758,7 +1758,7 @@ func reconcileV7Cmd(args Args) error {
 		return reconcileV7TargetedStateRevCmd(vaultPath, targetID, args)
 	}
 	if args.Bool("dry-run") {
-		return tuskerError(errorMissingArg, "targeted reconcile requires --id <TASK-ID>")
+		return reconcileV7StateRevScanCmd(vaultPath, args)
 	}
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
@@ -1868,6 +1868,75 @@ type v7TargetedStateRevRepair struct {
 	BeforeStateRev string
 	AfterStateRev  string
 	Changed        bool
+}
+
+type v7StateRevScanRow struct {
+	ID             string `json:"id"`
+	Path           string `json:"path"`
+	BeforeStateRev string `json:"before_state_rev"`
+	AfterStateRev  string `json:"after_state_rev"`
+	Type           string `json:"type"`
+}
+
+type v7StateRevScanReport struct {
+	Schema string              `json:"schema"`
+	OK     bool                `json:"ok"`
+	DryRun bool                `json:"dry_run"`
+	Count  int                 `json:"count"`
+	Rows   []v7StateRevScanRow `json:"rows"`
+}
+
+func reconcileV7StateRevScanCmd(vaultPath string, args Args) error {
+	notes, err := listAllNotes(vaultPath)
+	if err != nil {
+		return err
+	}
+	rows := make([]v7StateRevScanRow, 0)
+	for _, note := range notes {
+		data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+		if err != nil {
+			return err
+		}
+		if !isV7StoreObject(data) {
+			continue
+		}
+		before := stringField(data, "state_rev")
+		if before == "" || v7StateRevMatches(data, body, before) {
+			continue
+		}
+		rows = append(rows, v7StateRevScanRow{
+			ID:             stringField(data, "id"),
+			Path:           note.RelativePath,
+			BeforeStateRev: before,
+			AfterStateRev:  v7StateRev(data, body),
+			Type:           effectiveV7Kind(data),
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ID != rows[j].ID {
+			return rows[i].ID < rows[j].ID
+		}
+		if rows[i].Type != rows[j].Type {
+			return rows[i].Type < rows[j].Type
+		}
+		return rows[i].Path < rows[j].Path
+	})
+	report := v7StateRevScanReport{
+		Schema: "tusker.state-rev-scan/v1",
+		OK:     true,
+		DryRun: true,
+		Count:  len(rows),
+		Rows:   rows,
+	}
+	if args.Bool("json") {
+		emitJSON(report)
+	} else if !args.Bool("quiet") {
+		for _, row := range rows {
+			fmt.Printf("%s %s %s: %s -> %s\n", row.Type, row.ID, row.Path, row.BeforeStateRev, row.AfterStateRev)
+		}
+		fmt.Printf("Found %d V7 object%s with an invalid state_rev.\n", len(rows), plural(len(rows)))
+	}
+	return nil
 }
 
 func reconcileV7TargetedStateRevCmd(vaultPath, targetID string, args Args) error {
