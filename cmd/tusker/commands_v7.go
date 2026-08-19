@@ -645,9 +645,26 @@ TBD.
 }
 
 func newV7Task(args Args) error {
+	return newV7TaskWithActor(args, nil)
+}
+
+// newV7TaskWithActor is the trusted in-process creation seam used by daemon
+// repair paths. Public callers must go through newV7Task, whose actor resolver
+// accepts only human/reviewer/agent identities and rejects agent-session human
+// impersonation. Internal daemon/tusker provenance is never accepted via Args.
+func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
+	}
+	actor := ""
+	if internal != nil {
+		actor = internal.value
+	} else {
+		actor, err = v7AgentDefaultActor(args, "task create")
+		if err != nil {
+			return err
+		}
 	}
 	epic, err := requireArg(args, "epic")
 	if err != nil {
@@ -760,9 +777,9 @@ func newV7Task(args Args) error {
 		"dependencies":          splitCSV(args.String("dependencies")),
 		"evidence_required":     requestedEvidenceRequired,
 		"created_at":            now,
-		"created_by":            fallback(args.String("by"), "agent:"+defaultActorName()),
+		"created_by":            actor,
 		"updated_at":            now,
-		"updated_by":            fallback(args.String("by"), "agent:"+defaultActorName()),
+		"updated_by":            actor,
 	}
 	if workKind := strings.ToLower(strings.TrimSpace(args.String("work-kind"))); workKind != "" {
 		if workKind != "implementation" && workKind != "integrator" {
@@ -786,8 +803,13 @@ func newV7Task(args Args) error {
 		data["raw_artifacts_reason"] = reason
 	}
 	body := v7TaskBody(id, title)
+	// --force-ready may bypass proof/dispatchability checks, never the strict
+	// governing-spec requirement for a demanding task.
+	synthetic := Note{Data: data, Body: body, RelativePath: filepath.ToSlash(filepath.Join("work", "tasks", id+".md"))}
+	if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, synthetic, synthetic.RelativePath); ok && tuskerTier(vaultPath) >= 2 {
+		return tuskerError(errorInvalidArg, "ready V7 task is not dispatchable: "+finding.Message, withHint(finding.Hint))
+	}
 	if status == "ready" && !args.Bool("force-ready") && tuskerTier(vaultPath) >= 2 {
-		synthetic := Note{Data: data, Body: body}
 		if reasons := v7TaskDispatchBlockers(vaultPath, synthetic); len(reasons) > 0 {
 			return tuskerError(
 				errorInvalidArg,
@@ -808,7 +830,7 @@ func newV7Task(args Args) error {
 	if !args.Bool("quiet") {
 		fmt.Printf("Created V7 task %s at %s\n", id, path)
 	}
-	return emitV7Event(vaultPath, id, "task", "created", fallback(args.String("by"), "agent:"+defaultActorName()), map[string]any{"path": filepath.ToSlash(filepath.Join("work", "tasks", id+".md"))})
+	return emitV7Event(vaultPath, id, "task", "created", actor, map[string]any{"path": filepath.ToSlash(filepath.Join("work", "tasks", id+".md"))})
 }
 
 func v7DefaultProofRequiredOwners(required []string) map[string]string {
@@ -907,6 +929,10 @@ func newV7Gate(args Args) error {
 	if err != nil {
 		return err
 	}
+	actor, err := v7AgentDefaultActor(args, "gate create")
+	if err != nil {
+		return err
+	}
 	blocks := splitCSV(firstNonEmpty(args.String("blocks"), args.String("block"), args.String("_pos0")))
 	if len(blocks) == 0 {
 		return tuskerError(errorMissingArg, "Missing required --blocks <task-id>")
@@ -961,9 +987,9 @@ func newV7Gate(args Args) error {
 		"action":       action,
 		"verification": verification,
 		"created_at":   now,
-		"created_by":   fallback(args.String("by"), "agent:"+defaultActorName()),
+		"created_by":   actor,
 		"updated_at":   now,
-		"updated_by":   fallback(args.String("by"), "agent:"+defaultActorName()),
+		"updated_by":   actor,
 	}
 	if whyAgentCannot != "" {
 		data["why_agent_cannot"] = whyAgentCannot
@@ -997,7 +1023,6 @@ func newV7Gate(args Args) error {
 	if !args.Bool("quiet") {
 		fmt.Printf("Created gate %s at %s\n", id, path)
 	}
-	actor := fallback(args.String("by"), "agent:"+defaultActorName())
 	if err := emitV7Event(vaultPath, id, "gate", "created", actor, map[string]any{"blocks": blocks}); err != nil {
 		return err
 	}
@@ -1091,6 +1116,17 @@ func newV7Decision(args Args) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	status := strings.ToLower(fallback(args.String("status"), "proposed"))
+	actor, err := v7AgentDefaultActor(args, "decision creation")
+	if err != nil {
+		return err
+	}
+	var decidedBy string
+	if status == "accepted" {
+		decidedBy, err = v7HumanActor(args, "accepted decision creation")
+		if err != nil {
+			return err
+		}
+	}
 	data := map[string]any{
 		"schema":     "tusker.decision/v1",
 		"kind":       "decision",
@@ -1101,12 +1137,12 @@ func newV7Decision(args Args) error {
 		"status":     status,
 		"supersedes": splitCSV(args.String("supersedes")),
 		"created_at": now,
-		"created_by": fallback(args.String("by"), "agent:"+defaultActorName()),
+		"created_by": actor,
 		"updated_at": now,
-		"updated_by": fallback(args.String("by"), "agent:"+defaultActorName()),
+		"updated_by": actor,
 	}
 	if status == "accepted" {
-		data["decided_by"] = fallback(args.String("by"), "human:"+defaultActorName())
+		data["decided_by"] = decidedBy
 		data["decided_at"] = now
 	}
 	body := fmt.Sprintf("# %s · %s\n\n## Decision\n\n%s\n\n## Context\n\nTBD.\n\n## Work streams\n\n- None yet.\n\n## Consequences\n\nTBD.\n", id, title, fallback(args.String("decision"), "TBD."))
@@ -1121,7 +1157,7 @@ func newV7Decision(args Args) error {
 	if !args.Bool("quiet") {
 		fmt.Printf("Created decision %s at %s\n", id, path)
 	}
-	return emitV7Event(vaultPath, id, "decision", "created", fallback(args.String("by"), "agent:"+defaultActorName()), nil)
+	return emitV7Event(vaultPath, id, "decision", "created", actor, nil)
 
 }
 
@@ -1175,7 +1211,10 @@ func redactV7Cmd(args Args) error {
 	if _, ok := v7EventObjectKinds[objectKind]; !ok {
 		return tuskerError(errorInvalidField, "invalid redaction object kind: "+objectKind)
 	}
-	actor := fallback(args.String("by"), "human:"+defaultActorName())
+	actor, err := v7HumanActor(args, "redact")
+	if err != nil {
+		return err
+	}
 	payload := map[string]any{"reason": reason}
 	if target := args.String("target"); target != "" {
 		payload["target"] = target
@@ -1294,7 +1333,12 @@ func attemptV7HandoffCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if err := requireAgentWorkSession(vaultPath, taskID, fallback(args.String("by"), "agent:"+defaultActorName()), args); err != nil {
+	actor, err := v7AgentDefaultActor(args, "finish")
+	if err != nil {
+		return err
+	}
+	args["by"] = actor
+	if err := requireAgentWorkSession(vaultPath, taskID, actor, args); err != nil {
 		return err
 	}
 	attemptID := args.String("attempt-id")
@@ -1321,7 +1365,7 @@ func attemptV7HandoffCmd(args Args) error {
 		if err := ensureV7FinishProofReady(vaultPath, taskID); err != nil {
 			return err
 		}
-		if err := updateV7TaskProofStatus(vaultPath, taskID, fallback(args.String("by"), "agent:"+defaultActorName())); err != nil {
+		if err := updateV7TaskProofStatus(vaultPath, taskID, actor); err != nil {
 			return err
 		}
 	}
@@ -1338,7 +1382,7 @@ func attemptV7HandoffCmd(args Args) error {
 	if !args.Bool("quiet") {
 		fmt.Printf("Attempt %s moved to handoff\n", attemptID)
 	}
-	if err := emitV7Event(vaultPath, taskID, "task", "attempt_handoff", "agent:"+defaultActorName(), map[string]any{"attempt": attemptID}); err != nil {
+	if err := emitV7Event(vaultPath, taskID, "task", "attempt_handoff", actor, map[string]any{"attempt": attemptID}); err != nil {
 		return err
 	}
 	if args.Bool("no-review-proposal") {
@@ -1361,7 +1405,12 @@ func finishV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if err := requireAgentWorkSession(vaultPath, taskID, fallback(args.String("by"), "agent:"+defaultActorName()), args); err != nil {
+	actor, err := v7AgentDefaultActor(args, "finish")
+	if err != nil {
+		return err
+	}
+	args["by"] = actor
+	if err := requireAgentWorkSession(vaultPath, taskID, actor, args); err != nil {
 		return err
 	}
 	if verify := strings.TrimSpace(args.String("verify")); verify != "" {
@@ -1369,7 +1418,6 @@ func finishV7Cmd(args Args) error {
 		if err != nil {
 			return err
 		}
-		actor := fallback(args.String("by"), "agent:"+defaultActorName())
 		for _, row := range rows {
 			if _, err := upsertV7Verification(vaultPath, taskID, row, actor); err != nil {
 				return err
@@ -1379,7 +1427,7 @@ func finishV7Cmd(args Args) error {
 	if err := ensureV7FinishProofReady(vaultPath, taskID); err != nil {
 		return err
 	}
-	if err := updateV7TaskProofStatus(vaultPath, taskID, fallback(args.String("by"), "agent:"+defaultActorName())); err != nil {
+	if err := updateV7TaskProofStatus(vaultPath, taskID, actor); err != nil {
 		return err
 	}
 	return attemptV7HandoffCmd(args)
@@ -1392,9 +1440,15 @@ func finishV7Cmd(args Args) error {
 func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
 	actor = strings.TrimSpace(actor)
 	if args.Bool("break-glass") {
-		if !strings.HasPrefix(actor, "human:") || strings.TrimSpace(args.String("reason")) == "" {
+		canonical, ok := normalizeV7ProposalActor(actor)
+		if !ok || !strings.HasPrefix(canonical, "human:") || strings.TrimSpace(args.String("reason")) == "" {
 			return tuskerError(errorInvalidArg, "break-glass requires --by human:<name> and --reason")
 		}
+		canonical, err := v7HumanActor(Args{"by": canonical}, "break-glass")
+		if err != nil {
+			return err
+		}
+		actor = canonical
 		return nil
 	}
 	if !strings.HasPrefix(actor, "agent:") {
@@ -1551,8 +1605,7 @@ func ensureV7FinishProofReady(vaultPath, taskID string) error {
 	if len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(task.Data)) == 0 {
 		return tuskerError(errorEvidenceGate, taskID+": finish blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
 	}
-	missing := append([]string{}, report.Missing...)
-	missing = append(missing, report.ModeMissing...)
+	missing := v7PendingCommandProofGaps(task, report)
 	if len(missing) > 0 {
 		if len(report.OpenGates) > 0 {
 			return nil
@@ -1591,8 +1644,7 @@ func requestV7ReviewAfterHandoff(vaultPath, taskID string, args Args) error {
 	if len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(task.Data)) == 0 {
 		return tuskerError(errorEvidenceGate, taskID+": finish blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
 	}
-	missing := append([]string{}, report.Missing...)
-	missing = append(missing, report.ModeMissing...)
+	missing := v7PendingCommandProofGaps(task, report)
 	if len(missing) > 0 {
 		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("remaining proof gaps: "+v7ProofRemainingGapSummary(report)+"; use `tusker verify add` for inline proof, add required evidence, or create a blocking gate"))
 	}
@@ -3711,6 +3763,11 @@ func v7TaskDispatchBlockersWithStates(vaultPath string, task Note, includeAuthor
 // index, so wave-scope blockers there are noise, not contract defects.
 func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string) []string {
 	reasons := append([]string{}, v7DispatchStateBlockers(task, triggerStates)...)
+	// Strict tiers require a real governing link even when --force-ready was
+	// supplied. Tier 1 intentionally keeps the warning-only probation path.
+	if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, task, stringField(task.Data, "id")); ok && tuskerTier(vaultPath) >= 2 {
+		reasons = append(reasons, finding.Message)
+	}
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
 		if idx, err := loadV7Index(vaultPath); err == nil {
 			if wave, ok := idx.Waves[waveID]; ok {

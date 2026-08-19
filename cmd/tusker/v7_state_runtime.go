@@ -574,10 +574,43 @@ func v7AgentReadyDashboard(idx v7Index) string {
 func v7ReviewQueueDashboard(idx v7Index) string {
 	var rows []string
 	for _, task := range v7ReviewTasks(idx) {
-		rows = append(rows, fmt.Sprintf("| [[%s]] | %s | %s | %s |", stringField(task.Data, "id"), stringField(task.Data, "wave"), stringField(task.Data, "risk"), stringField(task.Data, "next_action")))
+		rows = append(rows, fmt.Sprintf("| [[%s]] | %s | %s | %s |", stringField(task.Data, "id"), v7TaskWaveID(idx, task), stringField(task.Data, "risk"), stringField(task.Data, "next_action")))
 	}
-	sort.Strings(rows)
+	sort.Slice(rows, func(i, j int) bool {
+		waveI, taskI := v7ReviewQueueRowSortKey(rows[i])
+		waveJ, taskJ := v7ReviewQueueRowSortKey(rows[j])
+		if (waveI == "") != (waveJ == "") {
+			return waveJ == ""
+		}
+		if waveI != waveJ {
+			return waveI < waveJ
+		}
+		return taskI < taskJ
+	})
 	return v7GeneratedDashboardHeader() + "# Review Queue\n\n<!-- tusker:generated:start review-queue -->\n\n| Task | Wave | Risk | Next action |\n|---|---|---|---|\n" + strings.Join(rows, "\n") + "\n\n<!-- tusker:generated:end -->\n"
+}
+
+func v7TaskWaveID(idx v7Index, task Note) string {
+	if wave := strings.TrimSpace(stringField(task.Data, "wave")); wave != "" {
+		return wave
+	}
+	taskID := stringField(task.Data, "id")
+	for _, wave := range idx.Waves {
+		if containsString(normalizeList(wave.Data["members"]), taskID) {
+			return stringField(wave.Data, "id")
+		}
+	}
+	return ""
+}
+
+func v7ReviewQueueRowSortKey(row string) (string, string) {
+	parts := strings.Split(row, "|")
+	if len(parts) < 3 {
+		return "", row
+	}
+	task := strings.TrimSpace(strings.Trim(parts[1], "[]"))
+	wave := strings.TrimSpace(parts[2])
+	return wave, task
 }
 
 func v7CIWaitingDashboard(idx v7Index) string {

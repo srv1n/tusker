@@ -614,6 +614,19 @@ export interface WaveSummary {
   brief: WaveBrief;
 }
 
+export interface ReviewBatch {
+  waves: ReviewBatchWave[];
+  unwaved: TaskCapsule[];
+}
+
+export interface ReviewBatchWave {
+  waveId: string;
+  title: string;
+  authorization: WaveSummary["authorization"];
+  readyForReview: boolean;
+  members: TaskCapsule[];
+}
+
 export interface WaveTaskDeliveryState {
   taskId: string; title: string; taskHref: string;
   implementation: "absent" | "present";
@@ -641,6 +654,8 @@ export interface TaskCapsule {
   id: string;
   projectId?: string;
   title: string;
+  /** Owning wave is landed/closed; done work must not enter Land selection. */
+  waveTerminal?: boolean;
   epicId: string;
   epicTitle: string;
   status: TaskStatus;

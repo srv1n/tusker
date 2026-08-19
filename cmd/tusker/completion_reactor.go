@@ -498,7 +498,7 @@ func completionCloseAuthorityProjectionSnapshot(vaultPath, integrationView strin
 	preflight, err := v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
 		Actor: result.Actor, Action: "close", RequireReview: true,
 		DependencyRef: integrationView, ExpectedTaskID: result.TaskID,
-		ExpectedStateRev: result.TaskStateRev, ExpectedTaskState: "review",
+		ExpectedStateRev: result.TaskStateRev, ExpectedTaskState: "review", SkipCommandVerification: true,
 	})
 	if err != nil {
 		return completionCloseAuthorityProjection{}, err
@@ -1487,11 +1487,11 @@ func (d *Daemon) returnCompletionFindingToImplementer(project RegisteredProject,
 				return tuskerError("CAS_CONFLICT", "completion handback marker exists on a different source revision")
 			}
 			// This is our own crash between the marker write and status flip.
-			return statusV7Cmd(Args{
+			return statusV7CmdAsInternalActor(Args{
 				"vault": project.VaultRoot, "quiet": "true", "local": "true",
 				"id": result.TaskID, "status": "rework", "by": "daemon:completion-reactor",
 				"reason": reviewerFindingReturnReason,
-			})
+			}, "daemon:completion-reactor")
 		case "done", "cancelled", "superseded":
 			return nil // terminal monotonicity wins over an old handback.
 		default:
@@ -2214,6 +2214,13 @@ func projectCompletionTaskToCanonical(vaultPath, repoRoot string, result ReviewR
 				"task": result.TaskID, "expected_state_rev": transaction.ReviewedTaskStateRev, "current_state_rev": currentState,
 				"expected_source": result.ImplementationSHA, "current_source": currentSource, "status": stringField(currentData, "status"),
 			}))
+	}
+	// Every close route, including daemon completion projection, shares the
+	// same documentation-touch policy before terminal bytes land. Keep the
+	// already-materialized replay above idempotent; only a new projection needs
+	// the drift check.
+	if err := v7DocTouchCheck(vaultPath, staged); err != nil {
+		return err
 	}
 	if err := atomicReplaceV7Document(taskPath, stagedRaw); err != nil {
 		return err

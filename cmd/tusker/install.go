@@ -1183,6 +1183,15 @@ func initCmd(args Args) error {
 			return err
 		}
 	}
+	if useV7 {
+		writes, err := scaffoldDocumentationSystem(v7RepoRoot(effectiveVault))
+		if err != nil {
+			return err
+		}
+		for _, write := range writes {
+			recordWrite(write.path, write.undo)
+		}
+	}
 	if err := workflowInitCmd(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
 	}

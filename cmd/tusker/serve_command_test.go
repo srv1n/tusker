@@ -385,9 +385,9 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 	if len(task.HumanAction.Acceptance) != 2 || task.HumanAction.Acceptance[0].ID != "A1" || task.HumanAction.Acceptance[1].ID != "A3" {
 		t.Fatalf("expected only covered acceptance rows, got %#v", task.HumanAction.Acceptance)
 	}
-	var review []serveTaskCapsule
+	var review serveReviewBatch
 	serveDecode(t, server, "/api/review/batch", &review)
-	if len(review) != 1 || review[0].ID != "APP-T-0010" || review[0].Status != "review" {
+	if len(review.Unwaved) != 1 || review.Unwaved[0].ID != "APP-T-0010" || review.Unwaved[0].Status != "review" {
 		t.Fatalf("review batch must use the human-wait projection, got %#v", review)
 	}
 
@@ -406,6 +406,114 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 		t.Fatalf("human action must disappear after gate completion, got %#v", completed.Task.HumanAction)
 	}
 	assertEqual(t, "satisfied", completed.Gate.Status, "completed gate status")
+}
+
+func TestServeReviewBatchGroupsByWaveAndHonorsBoundaryReadiness(t *testing.T) {
+	review := Note{Data: map[string]any{"kind": "task", "id": "APP-T-0001", "project": "app", "epic": "APP", "title": "Review me", "status": "review", "readiness": "waiting_on_review"}}
+	ready := Note{Data: map[string]any{"kind": "task", "id": "APP-T-0002", "project": "app", "epic": "APP", "title": "Not finished", "status": "ready", "readiness": "ready"}}
+	unwaved := Note{Data: map[string]any{"kind": "task", "id": "APP-T-0003", "project": "app", "epic": "APP", "title": "Unwaved review", "status": "review", "readiness": "waiting_on_review"}}
+	wave := Note{Data: map[string]any{"kind": "wave", "id": "W-0001", "project": "app", "title": "Morning batch", "members": []any{"APP-T-0001", "APP-T-0002"}}}
+	snap := serveSnapshot{
+		projectID: "app", project: RegisteredProject{VaultRoot: t.TempDir()},
+		tasks: []Note{review, ready, unwaved}, waves: []Note{wave},
+		notesByID: map[string]Note{"APP-T-0001": review, "APP-T-0002": ready, "APP-T-0003": unwaved},
+	}
+	batch := serveReviewBatchFor(snap)
+	if len(batch.Waves) != 1 || len(batch.Unwaved) != 1 {
+		t.Fatalf("unexpected review groups: %#v", batch)
+	}
+	if batch.Waves[0].ReadyForReview {
+		t.Fatalf("wave with a ready member was marked ready: %#v", batch.Waves[0])
+	}
+	if len(batch.Waves[0].Members) != 1 || batch.Waves[0].Members[0].ID != "APP-T-0001" {
+		t.Fatalf("wave members were not grouped from review candidates: %#v", batch.Waves[0].Members)
+	}
+	ready.Data["status"] = "done"
+	snap.notesByID[ready.Data["id"].(string)] = ready
+	snap.tasks[1] = ready
+	batch = serveReviewBatchFor(snap)
+	if len(batch.Waves) != 1 || !batch.Waves[0].ReadyForReview {
+		t.Fatalf("review+done wave was not marked ready: %#v", batch.Waves)
+	}
+	snap.runs = []RunStatus{{ItemID: "APP-T-0001", LeaseState: string(LeaseStateClaimed)}}
+	batch = serveReviewBatchFor(snap)
+	if batch.Waves[0].ReadyForReview {
+		t.Fatalf("live run incorrectly left wave ready: %#v", batch.Waves[0])
+	}
+}
+
+func TestServeReviewBatchRejectsHistoricalTerminalWaves(t *testing.T) {
+	historical := []struct {
+		waveID, waveStatus, taskStatus string
+		landedAt                       string
+		members                        []string
+	}{
+		{"W-0004", "open", "cancelled", "", []string{"ORC-T-0050"}},
+		{"W-0005", "landed", "done", "2026-07-27T04:10:55Z", []string{"ORC-T-0051", "ORC-T-0052", "ORC-T-0053", "ORC-T-0054"}},
+		{"W-0006", "open", "superseded", "", []string{"ORC-T-0055", "ORC-T-0056", "ORC-T-0057", "ORC-T-0058", "ORC-T-0059", "ORC-T-0060", "ORC-T-0061", "ORC-T-0062", "ORC-T-0063", "ORC-T-0064", "ORC-T-0065"}},
+		{"W-0008", "open", "cancelled", "", []string{"ORC-T-0077", "ORC-T-0078", "ORC-T-0079", "ORC-T-0080", "ORC-T-0081", "ORC-T-0082"}},
+		{"W-0009", "landed", "done", "2026-07-29T09:08:34Z", []string{"ORC-T-0083", "ORC-T-0084", "ORC-T-0085", "ORC-T-0086", "ORC-T-0087", "ORC-T-0088"}},
+	}
+	tasks := make([]Note, 0, 28)
+	waves := make([]Note, 0, len(historical))
+	notesByID := make(map[string]Note, 28)
+	for _, item := range historical {
+		members := make([]any, 0, len(item.members))
+		for _, taskID := range item.members {
+			task := Note{Data: map[string]any{"kind": "task", "id": taskID, "project": "tusker", "epic": "ORC", "title": taskID, "status": item.taskStatus, "readiness": item.taskStatus}}
+			tasks = append(tasks, task)
+			notesByID[taskID] = task
+			members = append(members, taskID)
+		}
+		waveData := map[string]any{"kind": "wave", "id": item.waveID, "project": "tusker", "title": item.waveID, "status": item.waveStatus, "members": members}
+		if item.landedAt != "" {
+			waveData["landed_at"] = item.landedAt
+		}
+		waves = append(waves, Note{Data: waveData})
+	}
+	snap := serveSnapshot{
+		projectID: "tusker", project: RegisteredProject{VaultRoot: t.TempDir()},
+		tasks: tasks, waves: waves, notesByID: notesByID,
+	}
+	batch := serveReviewBatchFor(snap)
+	if len(batch.Waves) != 0 || len(batch.Unwaved) != 0 {
+		t.Fatalf("historical cancelled/superseded/landed work must not enter review batches: %#v", batch)
+	}
+	for _, status := range []string{"cancelled", "superseded"} {
+		liveReview := Note{Data: map[string]any{"kind": "task", "id": "ORC-T-9000", "project": "tusker", "epic": "ORC", "title": "Historical wave review", "status": "review", "readiness": "waiting_on_review"}}
+		wave := Note{Data: map[string]any{"kind": "wave", "id": "W-9000", "project": "tusker", "title": "Historical wave", "status": status, "members": []any{"ORC-T-9000"}}}
+		snap.tasks = []Note{liveReview}
+		snap.waves = []Note{wave}
+		snap.notesByID = map[string]Note{"ORC-T-9000": liveReview}
+		batch = serveReviewBatchFor(snap)
+		if len(batch.Waves) != 0 || len(batch.Unwaved) != 0 {
+			t.Fatalf("%s wave must never enter review batches: %#v", status, batch)
+		}
+	}
+}
+
+func TestServeReviewBatchRequiresDurableReviewMember(t *testing.T) {
+	done := Note{Data: map[string]any{"kind": "task", "id": "APP-T-0001", "project": "app", "epic": "APP", "title": "Already accepted", "status": "done", "readiness": "done"}}
+	wave := Note{Data: map[string]any{"kind": "wave", "id": "W-0001", "project": "app", "title": "Done only", "status": "open", "members": []any{"APP-T-0001"}}}
+	snap := serveSnapshot{projectID: "app", project: RegisteredProject{VaultRoot: t.TempDir()}, tasks: []Note{done}, waves: []Note{wave}, notesByID: map[string]Note{"APP-T-0001": done}}
+	batch := serveReviewBatchFor(snap)
+	if len(batch.Waves) != 1 || batch.Waves[0].ReadyForReview {
+		t.Fatalf("done-only wave must not advertise review readiness: %#v", batch)
+	}
+
+	cancelled := Note{Data: map[string]any{"kind": "task", "id": "APP-T-0002", "project": "app", "epic": "APP", "title": "Cancelled", "status": "cancelled", "readiness": "cancelled"}}
+	review := Note{Data: map[string]any{"kind": "task", "id": "APP-T-0003", "project": "app", "epic": "APP", "title": "Review me", "status": "review", "readiness": "waiting_on_review"}}
+	wave = Note{Data: map[string]any{"kind": "wave", "id": "W-0002", "project": "app", "title": "Cancelled sibling", "status": "open", "members": []any{"APP-T-0002", "APP-T-0003"}}}
+	snap.tasks = []Note{cancelled, review}
+	snap.waves = []Note{wave}
+	snap.notesByID = map[string]Note{"APP-T-0002": cancelled, "APP-T-0003": review}
+	batch = serveReviewBatchFor(snap)
+	if len(batch.Waves) != 1 || !batch.Waves[0].ReadyForReview {
+		t.Fatalf("cancelled sibling must be ignored while review member drives readiness: %#v", batch)
+	}
+	if len(batch.Waves[0].Members) != 1 || batch.Waves[0].Members[0].ID != "APP-T-0003" {
+		t.Fatalf("cancelled member must not be a review candidate: %#v", batch.Waves[0].Members)
+	}
 }
 
 func TestServeHumanActionKindMappingAndReworkProjection(t *testing.T) {
@@ -693,6 +801,56 @@ func TestServeMutationEndpointsReturnVisibleRefusals(t *testing.T) {
 	}
 }
 
+func TestServeLandRejectsTerminalOwningWave(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, landedAt string
+	}{
+		{name: "landed", status: "landed", landedAt: "2026-07-07T02:00:00Z"},
+		{name: "closed", status: "closed"},
+		{name: "stale landed timestamp", status: "open", landedAt: "2026-07-07T02:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newServeEmptyNeedsFixture(t)
+			if err := ensureDir(filepath.Join(server.vaultPath, "work", "waves")); err != nil {
+				t.Fatal(err)
+			}
+			writeServeWave(t, server.vaultPath, "W-0001", "Terminal wave", []string{"APP-T-0001"})
+			setServeTaskWave(t, server.vaultPath, "APP-T-0001", "W-0001")
+			path := filepath.Join(server.vaultPath, "work", "waves", "W-0001.md")
+			data, body, err := parseFrontmatterMustRead(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data["status"] = tc.status
+			if tc.landedAt == "" {
+				delete(data, "landed_at")
+			} else {
+				data["landed_at"] = tc.landedAt
+			}
+			data["state_rev"] = v7StateRev(data, body)
+			content, err := serializeDocument(data, body, v7FrontmatterOrder["wave"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeText(path, content); err != nil {
+				t.Fatal(err)
+			}
+			server.dropProjectSnapshot("")
+
+			for _, endpoint := range []string{
+				"/api/tasks/APP-T-0001/land",
+				"/api/waves/W-0001/land",
+			} {
+				var result serveActionResult
+				servePost(t, server, endpoint, `{}`, &result)
+				if !result.Refused || result.OK || !strings.Contains(result.Reason, "already landed or closed") {
+					t.Fatalf("%s must fail closed for %s wave, got %#v", endpoint, tc.status, result)
+				}
+			}
+		})
+	}
+}
+
 func TestServeCloseDefaultsReviewerActorForHighRisk(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 	writeServeCloseableReviewTask(t, server.vaultPath, "APP-T-0001", "high")
@@ -708,7 +866,7 @@ func TestServeCloseDefaultsReviewerActorForHighRisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "done", stringField(data, "status"), "closed task status")
-	assertEqual(t, "reviewer:agent", stringField(data, "accepted_by"), "serve close default acceptor")
+	assertEqual(t, "human:test-operator", stringField(data, "accepted_by"), "serve close configured operator")
 }
 
 func newServeFixture(t *testing.T) *serveServer {
@@ -790,6 +948,7 @@ func newServeFixture(t *testing.T) *serveServer {
 	}
 	assets := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>serve fixture</html>"), ModTime: time.Now()}}
 	server := newServeServer(vault, root, defaultServeAddr, store, assets)
+	server.operatorActor = "human:test-operator"
 	server.now = func() time.Time {
 		return time.Date(2026, 7, 6, 6, 11, 0, 0, time.UTC)
 	}
@@ -861,6 +1020,7 @@ func newServeEmptyNeedsFixture(t *testing.T) *serveServer {
 	}
 	assets := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>serve fixture</html>"), ModTime: time.Now()}}
 	server := newServeServer(vault, root, defaultServeAddr, store, assets)
+	server.operatorActor = "human:test-operator"
 	server.now = func() time.Time {
 		return time.Date(2026, 7, 6, 6, 11, 0, 0, time.UTC)
 	}
@@ -889,6 +1049,15 @@ func writeServeEpic(t *testing.T, vault, id, title string) {
 
 func writeServeTask(t *testing.T, vault string, seed serveTaskSeed) {
 	t.Helper()
+	specPath := filepath.Join(v7RepoRoot(vault), "docs", "specs", "test-fixture.md")
+	if err := ensureDir(filepath.Dir(specPath)); err != nil {
+		t.Fatal(err)
+	}
+	if !fileExists(specPath) {
+		if err := writeText(specPath, "# Test fixture governing spec\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	readiness := firstNonEmpty(seed.Readiness, "ready")
 	var deps string
 	if len(seed.Dependencies) > 0 {
@@ -906,7 +1075,7 @@ func writeServeTask(t *testing.T, vault string, seed serveTaskSeed) {
 			transitions += fmt.Sprintf("  - at: \"2026-07-06T06:%02d:00Z\"\n    kind: \"status\"\n    from: \"review\"\n    to: \"rework\"\n    actor: \"reviewer:agent\"\n    reason: \"needs changes\"\n", i)
 		}
 	}
-	body := "---\nschema: \"tusker.task/v7\"\nkind: \"task\"\nid: \"" + seed.ID + "\"\nproject: \"app\"\ntitle: \"" + seed.Title + "\"\nepic: \"" + seed.Epic + "\"\nstatus: \"" + seed.Status + "\"\nreadiness: \"" + readiness + "\"\npriority: \"" + seed.Priority + "\"\nrisk: \"" + seed.Risk + "\"\nsize: \"m\"\nproof_mode: \"inline\"\nproof_status: \"pending\"\nproof_required:\n  - \"focused_test\"\n" + deps + "gates: []\ncreated_at: \"2026-07-06T06:00:00Z\"\nupdated_at: \"2026-07-06T06:00:00Z\"\nnext_owner: \"agent\"\nnext_action: \"Execute.\"\n" + transitions + "---\n\n# " + seed.ID + " - " + seed.Title + "\n\n## Intent\n\nDo the work.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Works. | Inline verification |\n\n## Non-goals\n\n- None.\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | go test ./cmd/tusker -run TestServe -count=1 | pending | Focused. |\n\n## Evidence\n\nAccepted:\n- None.\n\nPending:\n- None.\n\n## Knowledge delta\n\nNone expected.\n"
+	body := "---\nschema: \"tusker.task/v7\"\nkind: \"task\"\nid: \"" + seed.ID + "\"\nproject: \"app\"\ntitle: \"" + seed.Title + "\"\nepic: \"" + seed.Epic + "\"\nstatus: \"" + seed.Status + "\"\nreadiness: \"" + readiness + "\"\npriority: \"" + seed.Priority + "\"\nrisk: \"" + seed.Risk + "\"\nspec_refs:\n  - \"docs/specs/test-fixture.md\"\nsize: \"m\"\nproof_mode: \"inline\"\nproof_status: \"pending\"\nproof_required:\n  - \"focused_test\"\n" + deps + "gates: []\ncreated_at: \"2026-07-06T06:00:00Z\"\nupdated_at: \"2026-07-06T06:00:00Z\"\nnext_owner: \"agent\"\nnext_action: \"Execute.\"\n" + transitions + "---\n\n# " + seed.ID + " - " + seed.Title + "\n\n## Intent\n\nDo the work.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Works. | Inline verification |\n\n## Non-goals\n\n- None.\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | go test ./cmd/tusker -run TestServe -count=1 | pending | Focused. |\n\n## Evidence\n\nAccepted:\n- None.\n\nPending:\n- None.\n\n## Knowledge delta\n\nNone expected.\n"
 	writeServeTaskDocument(t, filepath.Join(vault, "work", "tasks", seed.ID+".md"), body)
 }
 

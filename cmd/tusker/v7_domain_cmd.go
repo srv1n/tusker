@@ -15,6 +15,10 @@ func newV7Domain(args Args) error {
 	if err != nil {
 		return err
 	}
+	actor, err := v7AgentDefaultActor(args, "domain create")
+	if err != nil {
+		return err
+	}
 	id, err := requireArg(args, "id")
 	if err != nil {
 		return err
@@ -109,7 +113,7 @@ func newV7Domain(args Args) error {
 	if !args.Bool("quiet") {
 		fmt.Printf("Created V7 domain %s at %s\n", id, domainDir)
 	}
-	return emitV7Event(vaultPath, id, "domain", "created", fallback(args.String("by"), "agent:"+defaultActorName()), map[string]any{"path": filepath.ToSlash(filepath.Join("knowledge", "domains", id, "INDEX.md"))})
+	return emitV7Event(vaultPath, id, "domain", "created", actor, map[string]any{"path": filepath.ToSlash(filepath.Join("knowledge", "domains", id, "INDEX.md"))})
 }
 
 func domainV7ListCmd(args Args) error {

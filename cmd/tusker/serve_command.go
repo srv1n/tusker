@@ -49,6 +49,13 @@ func serveCmd(args Args) error {
 	}
 	defer store.Close()
 	server := newServeServer(vaultPath, repoRoot, addr, store, dist)
+	if raw := firstNonEmpty(args.String("by"), args.String("actor")); strings.TrimSpace(raw) != "" {
+		actor, actorErr := v7HumanActor(Args{"by": raw}, "serve operator")
+		if actorErr != nil {
+			return actorErr
+		}
+		server.operatorActor = actor
+	}
 	server.requireCapability = true
 	go server.warmRegisteredProjectSnapshots()
 	httpServer := serveHTTPServer(addr, server)
@@ -105,6 +112,7 @@ func newServeServer(vaultPath, repoRoot, addr string, store *RuntimeStore, asset
 		addr:             addr,
 		store:            store,
 		assets:           assets,
+		operatorActor:    configuredServeOperatorActor(),
 		stream:           newServeStreamBroker(),
 		now:              func() time.Time { return time.Now().UTC() },
 		snapshots:        map[string]*serveSnapshotEntry{},
@@ -112,6 +120,19 @@ func newServeServer(vaultPath, repoRoot, addr string, store *RuntimeStore, asset
 		requestAdmission: make(chan struct{}, 128),
 		streamAdmission:  make(chan struct{}, 32),
 	}
+}
+
+// configuredServeOperatorActor accepts only an explicitly configured,
+// qualified human identity. It never falls back to USER or LOGNAME; a Serve
+// process without this provenance refuses human mutations until the UI or
+// caller supplies an actor in its request body.
+func configuredServeOperatorActor() string {
+	raw := firstNonEmpty(os.Getenv("TUSKER_SERVE_OPERATOR"), os.Getenv("TUSKER_ACTOR"))
+	actor, ok := normalizeV7ProposalActor(raw)
+	if !ok || !strings.HasPrefix(actor, "human:") {
+		return ""
+	}
+	return actor
 }
 
 func serveHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -346,7 +367,7 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet && path == "/api/capability" {
 		w.Header().Set("Cache-Control", "no-store")
-		serveJSON(w, http.StatusOK, map[string]string{"capability": s.mutationToken})
+		serveJSON(w, http.StatusOK, map[string]string{"capability": s.mutationToken, "operatorActor": s.operatorActor})
 		return
 	}
 	if path == "/api/capabilities" {
@@ -509,13 +530,165 @@ func (s *serveServer) handleReviewBatch(w http.ResponseWriter, r *http.Request) 
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	items := make([]serveTaskCapsule, 0)
+	serveJSON(w, http.StatusOK, serveReviewBatchFor(snap))
+}
+
+// serveReviewBatchFor keeps the wave boundary authoritative on the server.
+// Only open waves participate. A task may be shown in a batch when it is
+// reviewable (or already accepted), while readiness requires a real review
+// member and every canonical member to satisfy the review boundary.
+func serveReviewBatchFor(snap serveSnapshot) serveReviewBatch {
+	idx := serveSnapshotV7Index(snap)
+	byWave := make(map[string][]serveTaskCapsule)
+	unwaved := make([]serveTaskCapsule, 0)
+	knownWaves := make(map[string]bool, len(snap.waves))
+	eligibleWaves := make(map[string]bool, len(snap.waves))
+	waveForTask := make(map[string]string)
+	for _, wave := range snap.waves {
+		waveID := stringField(wave.Data, "id")
+		if waveID == "" {
+			continue
+		}
+		knownWaves[waveID] = true
+		for _, taskID := range normalizeList(wave.Data["members"]) {
+			// The wave member list is the locked batch boundary. A task's
+			// mutable wave field cannot add it to a review batch.
+			if _, exists := waveForTask[taskID]; !exists {
+				waveForTask[taskID] = waveID
+			}
+		}
+		if !serveReviewWaveCandidate(wave) {
+			continue
+		}
+		eligibleWaves[waveID] = true
+	}
 	for _, task := range snap.tasks {
-		if serveTaskStatus(snap, task) == "review" {
-			items = append(items, serveTaskCapsuleFor(snap, task))
+		if !serveReviewBatchCandidate(snap, task) {
+			continue
+		}
+		capsule := serveTaskCapsuleFor(snap, task)
+		taskID := stringField(task.Data, "id")
+		waveID := waveForTask[taskID]
+		if waveID == "" {
+			// A known wave's member list is authoritative. The task field is
+			// only a fallback for legacy/unwaved records, never a way to add a
+			// task to an existing batch boundary.
+			taskWaveID := strings.TrimSpace(stringField(task.Data, "wave"))
+			if knownWaves[taskWaveID] {
+				if !eligibleWaves[taskWaveID] {
+					continue
+				}
+			} else {
+				waveID = taskWaveID
+			}
+		}
+		if waveID != "" && knownWaves[waveID] && !eligibleWaves[waveID] {
+			continue
+		}
+		if waveID == "" || !knownWaves[waveID] {
+			unwaved = append(unwaved, capsule)
+			continue
+		}
+		byWave[waveID] = append(byWave[waveID], capsule)
+	}
+
+	waves := make([]serveReviewWave, 0, len(byWave))
+	for _, wave := range snap.waves {
+		waveID := stringField(wave.Data, "id")
+		if !eligibleWaves[waveID] {
+			continue
+		}
+		members := byWave[waveID]
+		if len(members) == 0 {
+			continue
+		}
+		sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
+		waves = append(waves, serveReviewWave{
+			WaveID: waveID, Title: firstNonEmpty(stringField(wave.Data, "title"), waveID),
+			Authorization:  waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
+			ReadyForReview: serveWaveReadyForReview(snap, wave), Members: members,
+		})
+	}
+	sort.Slice(waves, func(i, j int) bool { return waves[i].WaveID < waves[j].WaveID })
+	sort.Slice(unwaved, func(i, j int) bool { return unwaved[i].ID < unwaved[j].ID })
+	return serveReviewBatch{Waves: waves, Unwaved: unwaved}
+}
+
+func serveReviewBatchCandidate(snap serveSnapshot, task Note) bool {
+	status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
+	if status == "cancelled" || status == "superseded" {
+		return false
+	}
+	if status == "review" || status == "done" {
+		return true
+	}
+	// Human-owned gates are still useful in the flat review queue, even when
+	// their durable task status remains backlog. They never make a wave ready
+	// without a durable status=review member.
+	return serveTaskStatus(snap, task) == "review" && serveHumanActionForTask(snap, task) != nil
+}
+
+func serveReviewWaveCandidate(wave Note) bool {
+	if v7WaveHasDurableTerminal(wave) {
+		return false
+	}
+	return true
+}
+
+func serveWaveReadyForReview(snap serveSnapshot, wave Note) bool {
+	tasks := snap.notesByID
+	if tasks == nil {
+		tasks = make(map[string]Note, len(snap.tasks))
+		for _, candidate := range snap.tasks {
+			tasks[stringField(candidate.Data, "id")] = candidate
 		}
 	}
-	serveJSON(w, http.StatusOK, items)
+	hasReview := false
+	for _, taskID := range normalizeList(wave.Data["members"]) {
+		task, ok := tasks[taskID]
+		if !ok || serveNoteKind(task) != "task" {
+			return false
+		}
+		status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
+		if status == "cancelled" || status == "superseded" {
+			// Discarded members are historical tombstones, not required
+			// review work. They remain outside the candidate projection.
+			continue
+		}
+		for _, run := range snap.runs {
+			if (run.ItemID == taskID || run.RecordID == taskID) && isDispatchingLeaseState(run.LeaseState) {
+				return false
+			}
+		}
+		if status == "review" {
+			hasReview = true
+			continue
+		}
+		if status != "done" {
+			return false
+		}
+	}
+	return hasReview
+}
+
+func serveSnapshotV7Index(snap serveSnapshot) v7Index {
+	idx := v7Index{Tasks: map[string]Note{}, Gates: map[string]Note{}, Waves: map[string]Note{}, Evidence: map[string][]Note{}, Attempts: map[string][]Note{}}
+	for _, task := range snap.tasks {
+		idx.Tasks[stringField(task.Data, "id")] = task
+	}
+	for _, gate := range snap.gates {
+		idx.Gates[stringField(gate.Data, "id")] = gate
+	}
+	for _, wave := range snap.waves {
+		idx.Waves[stringField(wave.Data, "id")] = wave
+	}
+	for _, evidence := range snap.evidence {
+		idx.Evidence[stringField(evidence.Data, "task")] = append(idx.Evidence[stringField(evidence.Data, "task")], evidence)
+	}
+	for _, attempt := range snap.attemptNotes {
+		idx.Attempts[stringField(attempt.Data, "task")] = append(idx.Attempts[stringField(attempt.Data, "task")], attempt)
+	}
+	return idx
 }
 
 func (s *serveServer) handleScheduledPromotionMorningBrief(w http.ResponseWriter, r *http.Request) {
@@ -1367,7 +1540,13 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 // redrive, so it returns a visible refusal instead of requeuing into the
 // daemon's silent retire. A redrivable task is requeued and reported as such.
 // The response always carries a reason so the UI can never swallow the result.
-func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, taskID string) {
+func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, taskID string, body serveActionBody) {
+	actor, actorErr := s.serveOperatorActor(body, "serve run redrive")
+	if actorErr != nil {
+		status, result := serveOperatorActorResult("tusker redrive", actorErr)
+		serveJSON(w, status, serveRedriveResult{Refused: true, TaskID: strings.TrimSpace(taskID), Reason: result.Reason, Issue: result.Issue})
+		return
+	}
 	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -1400,7 +1579,6 @@ func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, t
 		serveJSON(w, http.StatusOK, result)
 		return
 	}
-	actor := defaultActorName()
 	reason := "operator redrive from serve"
 	if err := serveRedriveRun(s.store, &run, actor, reason, s.now()); err != nil {
 		serveJSON(w, http.StatusInternalServerError, serveRedriveResult{TaskID: taskID, Reason: "redrive failed: " + err.Error()})
@@ -1660,6 +1838,7 @@ func serveTaskCapsuleFor(snap serveSnapshot, task Note) serveTaskCapsule {
 		Title:           stringField(task.Data, "title"),
 		WaveID:          waveID,
 		WaveTitle:       serveWaveTitle(snap, waveID),
+		WaveTerminal:    serveTaskWaveTerminal(snap, task),
 		EpicID:          epicID,
 		EpicTitle:       serveEpicTitle(snap, epicID),
 		Status:          serveTaskStatus(snap, task),
@@ -1680,6 +1859,31 @@ func serveTaskCapsuleFor(snap serveSnapshot, task Note) serveTaskCapsule {
 		WorkRevision:    intField(task.Data, "work_revision"),
 		ReadinessSource: "automation_queue",
 	}
+}
+
+// serveTaskWaveTerminal follows the canonical wave membership first, then the
+// legacy task field, so a stale task projection cannot make a landed wave
+// selectable for landing again.
+func serveTaskWaveTerminal(snap serveSnapshot, task Note) bool {
+	taskID := strings.TrimSpace(stringField(task.Data, "id"))
+	waveID := strings.TrimSpace(stringField(task.Data, "wave"))
+	for _, wave := range snap.waves {
+		candidateID := strings.TrimSpace(stringField(wave.Data, "id"))
+		if candidateID == "" || !containsString(normalizeList(wave.Data["members"]), taskID) {
+			continue
+		}
+		waveID = candidateID
+		break
+	}
+	if waveID == "" {
+		return false
+	}
+	for _, wave := range snap.waves {
+		if strings.TrimSpace(stringField(wave.Data, "id")) == waveID {
+			return !serveReviewWaveCandidate(wave)
+		}
+	}
+	return false
 }
 
 func serveTaskStatus(snap serveSnapshot, task Note) string {
@@ -2050,7 +2254,7 @@ func nullIfBlank(value string) any {
 
 func printServeHelp() {
 	fmt.Println(`Usage:
-  tusker serve [--addr 127.0.0.1:7420] [--vault <path>]
+  tusker serve [--addr 127.0.0.1:7420] [--vault <path>] --by human:<name>
 
 Purpose:
   Serve the embedded Tusker operator control room and JSON API over the

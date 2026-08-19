@@ -8,6 +8,39 @@ import (
 	"time"
 )
 
+// proposalV7Actor keeps proposal attribution fail-closed. A proposal review
+// or application is a durable control-plane mutation, so an omitted --by may
+// not be turned into human:$USER. Human attribution is also refused from an
+// agent session: the caller must either use its real reviewer/agent namespace
+// or return to a human terminal. Proposal mutations have no audited
+// break-glass contract, so --force/--local only affect branch protection and
+// never this identity check.
+func proposalV7Actor(args Args, operation string, reviewerRequired bool) (string, error) {
+	raw := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
+	if raw == "" {
+		if reviewerRequired {
+			return "", tuskerError(errorMissingArg,
+				operation+" requires an explicit reviewer: or human: actor",
+				withHint("pass --by reviewer:<name> or --by human:<name>; proposal mutations never infer an actor"))
+		}
+		return "", tuskerError(errorMissingArg,
+			operation+" requires an explicit qualified actor",
+			withHint("pass --by human:<name>, reviewer:<name>, or agent:<name>; proposal mutations never infer an actor"))
+	}
+	if !strings.Contains(raw, ":") {
+		return "", tuskerError(errorInvalidField,
+			operation+" requires a qualified actor namespace (human:<name>, reviewer:<name>, or agent:<name>), got "+raw)
+	}
+	return resolveV7Actor(args, operation, v7ActorPolicy{AllowedKinds: map[string]bool{"agent": true, "human": true, "reviewer": true}})
+}
+
+func proposalV7CreationActor(args Args) (string, error) {
+	// Proposal creation is agent work by default. This namespace is safe to
+	// infer because it never claims human authority; acceptance/application
+	// still require an explicit actor through proposalV7Actor.
+	return resolveV7Actor(args, "proposal creation", v7ActorPolicy{AllowedKinds: map[string]bool{"agent": true, "human": true, "reviewer": true}, DefaultAgent: true})
+}
+
 func proposalV7Cmd(args Args) error {
 	switch strings.ToLower(args.String("_pos0")) {
 	case "list":
@@ -73,7 +106,10 @@ func proposalV7NewCmd(args Args) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	title := fallback(args.String("title"), v7ProposalDefaultTitle(action, target))
-	actor := fallback(args.String("by"), "agent:"+defaultActorName())
+	actor, err := proposalV7CreationActor(args)
+	if err != nil {
+		return err
+	}
 	data := map[string]any{
 		"schema":          "tusker.proposal/v1",
 		"kind":            "proposal",
@@ -145,6 +181,10 @@ func proposalV7TransitionCmd(args Args, status string) error {
 	if err != nil {
 		return err
 	}
+	actor, err := proposalV7Actor(args, "proposal "+status, status == "accepted")
+	if err != nil {
+		return err
+	}
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
@@ -173,14 +213,23 @@ func proposalV7TransitionCmd(args Args, status string) error {
 		return tuskerError(errorMissingArg, "proposal reject requires --reason")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	actor := fallback(args.String("by"), "human:"+defaultActorName())
-	if status == "accepted" && !args.Bool("self-review-ok") && actor == stringField(data, "proposed_by") {
+	proposedBy := strings.TrimSpace(stringField(data, "proposed_by"))
+	if canonical, ok := normalizeV7ProposalActor(proposedBy); ok {
+		proposedBy = canonical
+	}
+	if status == "accepted" && !args.Bool("self-review-ok") && actor == proposedBy {
 		return tuskerError(
 			errorInvalidTransition,
 			id+": proposal acceptance requires an independent reviewer",
 			withHint("pass --by human:<name> or --by reviewer:<name>; use --self-review-ok only when policy explicitly permits it"),
-			withContext(map[string]any{"proposed_by": stringField(data, "proposed_by"), "reviewed_by": actor}),
+			withContext(map[string]any{"proposed_by": proposedBy, "reviewed_by": actor}),
 		)
+	}
+	if status == "accepted" && !strings.HasPrefix(actor, "human:") && !strings.HasPrefix(actor, "reviewer:") {
+		return tuskerError(errorInvalidField,
+			id+": proposal acceptance requires reviewer:<name> or human:<name>",
+			withHint("only an independent reviewer or human can accept a proposal"),
+			withContext(map[string]any{"reviewed_by": actor}))
 	}
 	baseRev := stringField(data, "state_rev")
 	data["status"] = status
@@ -202,6 +251,10 @@ func proposalV7TransitionCmd(args Args, status string) error {
 
 func proposalV7ApplyCmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	actor, err := proposalV7Actor(args, "proposal apply", false)
 	if err != nil {
 		return err
 	}
@@ -227,7 +280,6 @@ func proposalV7ApplyCmd(args Args) error {
 	if stringField(data, "applied_at") != "" {
 		return tuskerError(errorInvalidTransition, id+": proposal is already applied", withContext(map[string]any{"applied_at": stringField(data, "applied_at")}))
 	}
-	actor := fallback(args.String("by"), "human:"+defaultActorName())
 	now := time.Now().UTC().Format(time.RFC3339)
 	baseRev := stringField(data, "state_rev")
 	transactionID := firstNonEmpty(args.String("transaction"), fmt.Sprintf("%s-apply-%s", id, strings.ReplaceAll(now, ":", "")))
@@ -293,8 +345,12 @@ func proposalV7ApplyCmd(args Args) error {
 		}
 		target = created
 		targetKind = "decision"
+	case "change":
+		if err := applyV7ChangeProposal(vaultPath, target, targetKind, fields, actor, id); err != nil {
+			return err
+		}
 	default:
-		return tuskerError(errorInvalidTransition, id+": proposal apply currently supports close, status, create_task, create_gate, and create_decision actions", withContext(map[string]any{"action": action}))
+		return tuskerError(errorInvalidTransition, id+": proposal apply currently supports change, close, status, create_task, create_gate, and create_decision actions", withContext(map[string]any{"action": action}))
 	}
 	targetNote, err := resolveV7Note(vaultPath, target, targetKind)
 	if err != nil {
@@ -315,6 +371,76 @@ func proposalV7ApplyCmd(args Args) error {
 		fmt.Printf("Applied proposal %s to %s\n", id, target)
 	}
 	return emitV7Event(vaultPath, id, "proposal", "updated", actor, map[string]any{"action": "applied", "target": target, "target_rev": stringField(targetNote.Data, "state_rev")})
+}
+
+// applyV7ChangeProposal is intentionally narrow. Generic frontmatter editing
+// would bypass the task lifecycle's typed control paths; spec_refs is the one
+// metadata repair that needs an auditable reviewer-approved proposal while
+// retaining the existing task/epic contract and state revision.
+func applyV7ChangeProposal(vaultPath, target, targetKind string, fields map[string]any, actor, proposalID string) error {
+	if targetKind != "task" && targetKind != "epic" {
+		return tuskerError(errorInvalidTransition, proposalID+": change proposal target must be a task or epic", withContext(map[string]any{"target": target, "target_kind": targetKind}))
+	}
+	refsValue, ok := fields["spec_refs"]
+	if !ok {
+		return tuskerError(errorInvalidField, proposalID+": change proposal only supports spec_refs", withHint("use --set spec_refs=<repo-relative-spec>"))
+	}
+	refs := normalizeList(refsValue)
+	if len(refs) == 0 {
+		return tuskerError(errorInvalidField, proposalID+": spec_refs must contain at least one non-blank path")
+	}
+	for key := range fields {
+		if key != "spec_refs" {
+			return tuskerError(errorInvalidField, proposalID+": change proposal only supports spec_refs", withContext(map[string]any{"field": key}))
+		}
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	decisionIDs := map[string]Note{}
+	for decisionID, decision := range idx.Decisions {
+		decisionIDs[decisionID] = decision
+	}
+	for _, ref := range refs {
+		clean := v7CleanSpecRef(ref)
+		if clean == "" || !v7SpecRefExists(vaultPath, clean, decisionIDs) {
+			return tuskerError(errorInvalidField, proposalID+": spec_refs reference does not resolve: "+ref, withHint("use an existing repo-relative docs/specs or docs/design path"), withContext(map[string]any{"ref": ref}))
+		}
+	}
+
+	var before []string
+	var after []string
+	note, err := resolveV7Note(vaultPath, target, targetKind)
+	if err != nil {
+		return err
+	}
+	order := v7FrontmatterOrder[targetKind]
+	if len(order) == 0 {
+		order = frontmatterOrderForType(targetKind)
+	}
+	nextRev, changed, err := mutateV7DocumentLocked(note.AbsolutePath, order, func(data map[string]any, body string) (map[string]any, string, bool, error) {
+		before = normalizeList(data["spec_refs"])
+		after = uniqueStrings(refs)
+		if stringSlicesEqual(before, after) {
+			return data, body, false, nil
+		}
+		data["spec_refs"] = after
+		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		data["updated_by"] = actor
+		return data, body, true, nil
+	})
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return emitV7Event(vaultPath, target, targetKind, "updated", actor, map[string]any{
+		"changes":   map[string]any{"spec_refs": map[string]any{"from": before, "to": after}},
+		"source":    "proposal:" + proposalID,
+		"state_rev": nextRev,
+	})
 }
 
 func applyV7CreateGateProposal(vaultPath, target, targetKind string, fields map[string]any, actor string) (string, error) {

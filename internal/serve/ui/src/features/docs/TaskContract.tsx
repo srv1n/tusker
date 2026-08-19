@@ -469,6 +469,7 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
     task.rawStatus ??
     (task.status === "in_progress" || task.status === "blocked" ? "ready" : task.status);
   const runnable = currentStatus === "ready" || currentStatus === "rework";
+  const terminalWave = Boolean(task.waveTerminal);
   const directiveQueued = task.runDirective?.state === "queued";
   const statusOptions = [
     ["ready", "Ready"],
@@ -536,6 +537,7 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   // Land is irreversible git surgery — merges the task branch into main. Gate it
   // behind a type-the-id confirm before firing.
   const onLand = async () => {
+    if (terminalWave) return;
     const ok = await confirm({
       title: `Land ${task.id} to main`,
       body: "This merges the task branch into the default branch.",
@@ -647,7 +649,7 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
           >
             <option value="">Choose an action...</option>
             <option value="close">Accept &amp; close</option>
-            <option value="land">Land task branch</option>
+            {!terminalWave && <option value="land">Land task branch</option>}
             <option value="discard">Discard task</option>
             {task.gates.length > 0 && <option value="gate">Manage gate</option>}
             <option value="evidence">Add evidence</option>
@@ -665,12 +667,12 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
             </div>
           )}
 
-          {activeAction === "land" && (
+          {activeAction === "land" && !terminalWave && (
             <div className="space-y-2 animate-rise">
               <p className="text-[12px] leading-relaxed text-muted">
                 Merge this task branch into the default branch. You will confirm the task ID next.
               </p>
-              <Button type="button" size="sm" variant="danger" className="w-full" disabled={busy} onClick={onLand}>
+              <Button type="button" size="sm" variant="danger" className="w-full" disabled={busy || terminalWave} onClick={onLand}>
                 <GitMerge size={12} />
                 Land task branch
               </Button>
@@ -768,7 +770,7 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
                 )}
               </div>
               <TextInput aria-label="Evidence summary" value={evidenceSummary} onChange={(e) => setEvidenceSummary(e.target.value)} placeholder="Evidence summary" className="w-full" />
-              <Button type="button" size="sm" className="w-full" disabled={busy || !evidenceSummary.trim()} onClick={() => evidenceAdd.mutate({ kind: evidenceKind, covers: evidenceCovers, status: "accepted", summary: evidenceSummary })}>Add evidence</Button>
+              <Button type="button" size="sm" className="w-full" disabled={busy || !evidenceSummary.trim()} onClick={() => evidenceAdd.mutate({ kind: evidenceKind, covers: evidenceCovers, status: "pending_review", summary: evidenceSummary })}>Add evidence</Button>
               <ActionResultLine pending={evidenceAdd.isPending} error={evidenceAdd.error} result={evidenceAdd.data} />
             </div>
           )}

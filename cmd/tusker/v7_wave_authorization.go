@@ -129,6 +129,195 @@ func waveV7DisarmCmd(args Args) error {
 	return mutateWaveAuthorization(args, "disarmed", nil)
 }
 
+const waveRefingerprintSchema = "tusker.wave-refingerprint/v1"
+
+type waveRefingerprintReport struct {
+	Schema             string                          `json:"schema"`
+	WaveID             string                          `json:"waveId"`
+	Authorization      string                          `json:"authorization"`
+	ReadOnly           bool                            `json:"readOnly"`
+	Changed            bool                            `json:"changed"`
+	Updated            bool                            `json:"updated"`
+	DispatchAuthorized bool                            `json:"dispatchAuthorized"`
+	StoredFingerprint  string                          `json:"storedFingerprint,omitempty"`
+	CurrentFingerprint string                          `json:"currentFingerprint"`
+	NextFingerprint    string                          `json:"nextFingerprint"`
+	PlannedContract    factoryIntakeContractProvenance `json:"plannedContract"`
+	CurrentContract    factoryIntakeContractProvenance `json:"currentContract"`
+	Action             string                          `json:"action"`
+	Blockers           []string                        `json:"blockers,omitempty"`
+}
+
+func waveV7RefingerprintCmd(args Args) error {
+	vaultPath, wave, idx, err := loadWaveAuthorizationTarget(args)
+	if err != nil {
+		return err
+	}
+	actor, err := v7HumanActor(args, "wave refingerprint")
+	if err != nil {
+		return err
+	}
+	args["by"] = actor
+	report, err := buildWaveRefingerprintReport(vaultPath, idx, wave)
+	if err != nil {
+		return err
+	}
+	report.ReadOnly = true
+	if args.Bool("dry-run") || strings.TrimSpace(args.String("confirm")) == "" {
+		return emitWaveRefingerprintResult(args, report)
+	}
+	if len(report.Blockers) > 0 {
+		return tuskerError(errorInvalidTransition, report.WaveID+": wave re-fingerprint blocked: "+strings.Join(report.Blockers, "; "), withContext(report))
+	}
+	if strings.TrimSpace(args.String("confirm")) != report.NextFingerprint {
+		return tuskerError(errorInvalidTransition, report.WaveID+": confirmation fingerprint differs; rerun `tusker wave refingerprint "+report.WaveID+" --dry-run` and confirm its exact next fingerprint", withContext(report))
+	}
+	if report.Authorization != "disarmed" {
+		return tuskerError(errorInvalidTransition, report.WaveID+": re-fingerprint is inert and requires a disarmed wave; it cannot alter an armed or paused authorization", withContext(report))
+	}
+	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
+		return err
+	}
+	updated, err := refingerprintWaveAtomically(vaultPath, report.WaveID, report.NextFingerprint, args)
+	if err != nil {
+		return err
+	}
+	updated.ReadOnly = false
+	return emitWaveRefingerprintResult(args, updated)
+}
+
+func buildWaveRefingerprintReport(vaultPath string, idx v7Index, wave Note) (waveRefingerprintReport, error) {
+	waveID := stringField(wave.Data, "id")
+	want, err := embeddedFactoryIntakeContractProvenance()
+	if err != nil {
+		return waveRefingerprintReport{}, tuskerError(errorInvalidTransition, "current factory-intake contract cannot be loaded: "+err.Error())
+	}
+	have := factoryIntakeContractProvenance{
+		Schema:      stringField(wave.Data, "factory_intake_contract_schema"),
+		Version:     stringField(wave.Data, "factory_intake_contract_version"),
+		Fingerprint: stringField(wave.Data, "factory_intake_contract_fingerprint"),
+	}
+	if have.Schema == "" && have.Version == "" && have.Fingerprint == "" {
+		return waveRefingerprintReport{}, tuskerError(errorInvalidTransition, waveID+": wave has no imported factory-intake provenance; re-fingerprint only repairs imported plan material")
+	}
+	if have.Schema == "" || have.Version == "" || have.Fingerprint == "" {
+		return waveRefingerprintReport{}, tuskerError(errorInvalidTransition, waveID+": imported factory-intake provenance is incomplete")
+	}
+	currentFingerprint, issues := waveMaterialFingerprint(vaultPath, idx, wave)
+	prospective := wave
+	prospective.Data = cloneMap(wave.Data)
+	prospective.Data["factory_intake_contract_schema"] = want.Schema
+	prospective.Data["factory_intake_contract_version"] = want.Version
+	prospective.Data["factory_intake_contract_fingerprint"] = want.Fingerprint
+	nextFingerprint, nextIssues := waveMaterialFingerprint(vaultPath, idx, prospective)
+	blockers := append([]string{}, issues...)
+	blockers = append(blockers, nextIssues...)
+	blockers = uniqueStrings(blockers)
+	authorization := fallback(stringField(wave.Data, "authorization"), "disarmed")
+	return waveRefingerprintReport{
+		Schema: waveRefingerprintSchema, WaveID: waveID,
+		Authorization:      authorization,
+		DispatchAuthorized: false, StoredFingerprint: stringField(wave.Data, "authorization_fingerprint"),
+		CurrentFingerprint: currentFingerprint, NextFingerprint: nextFingerprint,
+		PlannedContract: have, CurrentContract: want,
+		Changed:  have != want || currentFingerprint != nextFingerprint || (authorization == "disarmed" && stringField(wave.Data, "authorization_fingerprint") != ""),
+		Action:   "tusker wave refingerprint " + waveID + " --confirm " + nextFingerprint,
+		Blockers: blockers,
+	}, nil
+}
+
+func refingerprintWaveAtomically(vaultPath, waveID, expectedFingerprint string, args Args) (waveRefingerprintReport, error) {
+	actor, err := v7HumanActor(args, "wave refingerprint")
+	if err != nil {
+		return waveRefingerprintReport{}, err
+	}
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return waveRefingerprintReport{}, err
+	}
+	wavePath := filepath.Join(vaultPath, "work", "waves", waveID+".md")
+	waveLock, err := acquireV7DocumentLock(wavePath, v7DocumentLockTimeout)
+	if err != nil {
+		return waveRefingerprintReport{}, combineV7AuthorizationLockCloseError(err, closeV7AuthorizationLocks(materialLock, nil, nil))
+	}
+	finish := func(report waveRefingerprintReport, cause error) (waveRefingerprintReport, error) {
+		return report, combineV7AuthorizationLockCloseError(cause, closeV7AuthorizationLocks(materialLock, waveLock, nil))
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return finish(waveRefingerprintReport{}, err)
+	}
+	wave, ok := idx.Waves[waveID]
+	if !ok {
+		return finish(waveRefingerprintReport{}, tuskerError(errorNotFound, "V7 wave not found: "+waveID))
+	}
+	report, err := buildWaveRefingerprintReport(vaultPath, idx, wave)
+	if err != nil {
+		return finish(waveRefingerprintReport{}, err)
+	}
+	if report.Authorization != "disarmed" {
+		return finish(report, tuskerError(errorInvalidTransition, report.WaveID+": re-fingerprint is inert and requires a disarmed wave"))
+	}
+	if len(report.Blockers) > 0 {
+		return finish(report, tuskerError(errorInvalidTransition, report.WaveID+": wave re-fingerprint blocked: "+strings.Join(report.Blockers, "; "), withContext(report)))
+	}
+	if report.NextFingerprint != expectedFingerprint {
+		return finish(report, tuskerError(errorInvalidTransition, report.WaveID+": wave material changed after dry-run; rerun re-fingerprint and confirm the new exact fingerprint", withContext(report)))
+	}
+	if !report.Changed {
+		return finish(report, nil)
+	}
+
+	data := cloneMap(wave.Data)
+	data["factory_intake_contract_schema"] = report.CurrentContract.Schema
+	data["factory_intake_contract_version"] = report.CurrentContract.Version
+	data["factory_intake_contract_fingerprint"] = report.CurrentContract.Fingerprint
+	// Disarmed waves carry no active execution authority. Remove a stale
+	// imported authorization receipt rather than silently reauthorizing it.
+	delete(data, "authorization_fingerprint")
+	now := time.Now().UTC().Format(time.RFC3339)
+	data["updated_at"], data["updated_by"] = now, actor
+	data["state_rev"] = v7StateRev(data, wave.Body)
+	content, err := serializeDocument(data, wave.Body, v7FrontmatterOrder["wave"])
+	if err != nil {
+		return finish(report, err)
+	}
+	if err := commitDeliveryWritesGuardedWithLocks(map[string]string{wave.AbsolutePath: content}, 0, nil, []*v7DocumentLock{waveLock}); err != nil {
+		return finish(report, err)
+	}
+	if err := emitV7Event(vaultPath, waveID, "wave", "updated", actor, map[string]any{
+		"reason": "wave material re-fingerprinted without authorization", "authorization": "disarmed",
+		"fingerprint": report.NextFingerprint, "factory_intake_contract": report.CurrentContract,
+	}); err != nil {
+		return finish(report, err)
+	}
+	report.Updated = true
+	report.StoredFingerprint = ""
+	report.CurrentFingerprint = report.NextFingerprint
+	report.Action = "none"
+	return finish(report, nil)
+}
+
+func emitWaveRefingerprintResult(args Args, report waveRefingerprintReport) error {
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "refingerprint": report})
+		return nil
+	}
+	mode := "read-only"
+	if !report.ReadOnly {
+		mode = "updated"
+	}
+	fmt.Printf("%s wave re-fingerprint (%s): authorization=%s changed=%t\n", report.WaveID, mode, report.Authorization, report.Changed)
+	fmt.Printf("  current=%s\n  next=%s\n", report.CurrentFingerprint, report.NextFingerprint)
+	if report.ReadOnly && report.Changed {
+		fmt.Printf("  confirm=%s\n", report.Action)
+	}
+	for _, blocker := range report.Blockers {
+		fmt.Printf("  blocker: %s\n", blocker)
+	}
+	return nil
+}
+
 func loadWaveAuthorizationTarget(args Args) (string, Note, v7Index, error) {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -465,7 +654,11 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 	report.Checks["specDag"] = !report.hasBlockerKey(waveBlockerSpecDAG)
 	report.Checks["taskContracts"] = !report.hasBlockerKey(waveBlockerTaskContracts)
 	report.Checks["artifacts"] = !report.hasBlockerKey(waveBlockerArtifacts)
-	report.AuthorizationStale = report.StoredFingerprint != "" && report.StoredFingerprint != report.Fingerprint
+	// A fingerprint is execution authority only while the wave is armed or
+	// paused. Imported/disarmed waves may retain historical material while they
+	// are inert; reporting that as stale authorization conflates never-armed
+	// work with drifted authority.
+	report.AuthorizationStale = waveAuthorizationFingerprintActive(report.Authorization) && report.StoredFingerprint != "" && report.StoredFingerprint != report.Fingerprint
 	if report.AuthorizationStale {
 		report.Authorization = "stale"
 	}
@@ -683,6 +876,11 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 	if err != nil {
 		return wavePreflightReport{}, err
 	}
+	actor, err := v7HumanActor(args, "wave "+target)
+	if err != nil {
+		return wavePreflightReport{}, err
+	}
+	args["by"] = actor
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return wavePreflightReport{}, err
 	}
@@ -733,8 +931,9 @@ func mutateWaveAuthorizationWithInspector(args Args, target string, inspector wa
 				return report, handledDeliveryStartRefusal(cause)
 			}
 			if wroteAuthorization && (authority == nil || !authority.PlanBound) {
-				actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "human:"+defaultActorName())
-				_ = emitV7Event(vaultPath, report.WaveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": report.Fingerprint, "members": report.Members})
+				if err := emitV7Event(vaultPath, report.WaveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": report.Fingerprint, "members": report.Members}); err != nil {
+					return report, err
+				}
 			}
 			return report, emitWaveAuthorizationResult(args, report.WaveID, report.Authorization, report)
 		}
@@ -917,9 +1116,11 @@ func rollbackDeliveryStartRefusalUnderLock(vaultPath string, idx v7Index, author
 		if err := commitDeliveryWritesGuardedWithLocks(writes, 0, nil, heldLocks); err != nil {
 			return handledDeliveryStartRefusal(fmt.Errorf("%w; delivery Start readiness rollback failed: %v", cause, err))
 		}
-		_ = emitV7Event(vaultPath, authority.WaveID, "wave", "updated", actor, map[string]any{
+		if err := emitV7Event(vaultPath, authority.WaveID, "wave", "updated", actor, map[string]any{
 			"reason": "delivery Start authority changed before commit", "members_held": authority.Members,
-		})
+		}); err != nil {
+			return handledDeliveryStartRefusal(fmt.Errorf("%w; delivery Start rollback audit event failed: %v", cause, err))
+		}
 	}
 	if len(preserved) > 0 {
 		sort.Strings(preserved)
@@ -1044,7 +1245,10 @@ func armWaveAtomically(vaultPath string, idx v7Index, wave Note, report wavePref
 
 func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args, authority *deliveryStartAuthority, heldLocks []*v7DocumentLock) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "human:"+defaultActorName())
+	actor, err := v7HumanActor(args, "wave arm")
+	if err != nil {
+		return err
+	}
 	writes := map[string]string{}
 	for _, id := range report.Members {
 		task := idx.Tasks[id]
@@ -1116,7 +1320,10 @@ func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report w
 
 func updateWaveAuthorization(vaultPath string, wave Note, target, fingerprint string, args Args, heldLocks []*v7DocumentLock) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	actor := fallback(firstNonEmpty(args.String("by"), args.String("actor")), "human:"+defaultActorName())
+	actor, err := v7HumanActor(args, "wave "+target)
+	if err != nil {
+		return err
+	}
 	reason := strings.TrimSpace(args.String("reason"))
 	data := cloneMap(wave.Data)
 	data["authorization"], data["authorization_updated_by"], data["authorization_updated_at"] = target, actor, now
@@ -1139,7 +1346,9 @@ func updateWaveAuthorization(vaultPath string, wave Note, target, fingerprint st
 	if err := commitDeliveryWritesGuardedWithLocks(map[string]string{wave.AbsolutePath: content}, 0, nil, heldLocks); err != nil {
 		return err
 	}
-	_ = emitV7Event(vaultPath, stringField(data, "id"), "wave", "updated", actor, map[string]any{"authorization": target, "reason": reason})
+	if err := emitV7Event(vaultPath, stringField(data, "id"), "wave", "updated", actor, map[string]any{"authorization": target, "reason": reason}); err != nil {
+		return err
+	}
 	idx, _ := loadV7Index(vaultPath)
 	next := idx.Waves[stringField(data, "id")]
 	report := buildWavePreflight(vaultPath, idx, next, wavePreflightEnvironment{})
@@ -1160,11 +1369,20 @@ func emitWaveAuthorizationResult(args Args, id, state string, report wavePreflig
 func waveAuthorizationProjection(vaultPath string, idx v7Index, wave Note) map[string]any {
 	fingerprint, _ := waveMaterialFingerprint(vaultPath, idx, wave)
 	stored, state := stringField(wave.Data, "authorization_fingerprint"), fallback(stringField(wave.Data, "authorization"), "disarmed")
-	stale := stored != "" && stored != fingerprint
+	stale := waveAuthorizationFingerprintActive(state) && stored != "" && stored != fingerprint
 	if stale {
 		state = "stale"
 	}
 	return map[string]any{"state": state, "stale": stale, "fingerprint": fingerprint, "authorizedFingerprint": nullIfBlank(stored), "actor": nullIfBlank(stringField(wave.Data, "authorized_by")), "at": nullIfBlank(stringField(wave.Data, "authorized_at")), "action": waveAuthorizationProjectionAction(state)}
+}
+
+func waveAuthorizationFingerprintActive(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "armed", "paused":
+		return true
+	default:
+		return false
+	}
 }
 
 func waveAuthorizationProjectionAction(state string) string {

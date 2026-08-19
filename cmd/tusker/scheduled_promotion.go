@@ -912,7 +912,7 @@ func resumePromotionFailureRouting(vaultPath string, store *RuntimeStore, run *D
 			affected = promotionFailureHardClosure(vaultPath, failure.OwningTaskID)
 		}
 		for _, id := range affected {
-			if err := statusV7Cmd(Args{"vault": vaultPath, "quiet": "true", "id": id, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + failure.Identity}); err != nil {
+			if err := statusV7CmdAsInternalActor(Args{"vault": vaultPath, "quiet": "true", "id": id, "status": "rework", "by": "tusker:scheduled-promotion", "reason": "promotion gate red: " + failure.Identity}, "tusker:scheduled-promotion"); err != nil {
 				return err
 			}
 		}

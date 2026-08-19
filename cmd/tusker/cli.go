@@ -102,7 +102,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
+	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "legacy", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
 		return true
 	default:
 		return false
@@ -174,7 +174,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "delivery start", "reconcile", "finish", "close", "accept", "handoff":
+	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "delivery start", "wave refingerprint", "wave re-fingerprint", "actor correction", "reconcile", "finish", "close", "accept", "handoff":
 		return true
 	default:
 		return false
@@ -291,6 +291,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, waveV7ResumeCmd(args)
 	case "wave disarm":
 		return 0, waveV7DisarmCmd(args)
+	case "wave refingerprint", "wave re-fingerprint":
+		return 0, waveV7RefingerprintCmd(args)
 	case "factory":
 		printFactoryOperationsHelp()
 		return 0, nil
@@ -388,11 +390,19 @@ func runInner(command string, args Args) (int, error) {
 		return 0, attemptV7Cmd(args)
 	case "proposal", "propose":
 		return 0, proposalV7Cmd(args)
+	case "actor":
+		fmt.Println("Usage: tusker actor correction plan|apply|list ...")
+		return 0, nil
+	case "actor correction":
+		return 0, actorCorrectionV7Cmd(args)
 	case "redact":
 		return 0, redactV7Cmd(args)
 	case "verify":
 		if strings.ToLower(args.String("_pos0")) == "add" {
 			return 0, verifyV7AddCmd(args)
+		}
+		if strings.ToLower(args.String("_pos0")) == "remove" {
+			return 0, verifyV7RemoveCmd(args)
 		}
 		if strings.ToLower(args.String("_pos0")) == "recipe" {
 			return 0, verifyV7RecipeCmd(args)
@@ -486,6 +496,12 @@ func runInner(command string, args Args) (int, error) {
 		return legacyOnlyCommand("docs model", "legacy docs model")
 	case "docs map":
 		return 0, docsCmd("map", args)
+	case "docs status":
+		return 0, docsCmd("status", args)
+	case "docs verify":
+		return 0, docsCmd("verify", args)
+	case "docs adopt":
+		return 0, docsCmd("adopt", args)
 	case "docs catalog":
 		return legacyOnlyCommand("docs catalog", "legacy docs catalog")
 	case "docs freshness":
@@ -808,10 +824,13 @@ func runInner(command string, args Args) (int, error) {
 	case "help evidence":
 		printEvidenceHelp()
 		return 0, nil
+	case "help actor", "help actor correction":
+		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
+		return 0, nil
 	case "help migrate vault-root":
 		printMigrateVaultRootHelp()
 		return 0, nil
-	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave brief", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate", "help migrate v7", "help migrate gates":
+	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave brief", "help wave preflight", "help wave arm", "help wave pause", "help wave resume", "help wave disarm", "help wave refingerprint", "help wave re-fingerprint", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate", "help migrate v7", "help migrate gates":
 		printV7Help()
 		return 0, nil
 	case "help feedback":
@@ -856,7 +875,7 @@ func runInner(command string, args Args) (int, error) {
 	case "help reindex":
 		printReindexHelp()
 		return 0, nil
-	case "help docs", "help docs init", "help docs model", "help docs map", "help docs catalog", "help docs freshness", "help docs check", "help docs apply", "help docs noop", "help docs waive", "help docs export", "help docs dev", "help docs build":
+	case "help docs", "help docs init", "help docs model", "help docs map", "help docs status", "help docs verify", "help docs adopt", "help docs catalog", "help docs freshness", "help docs check", "help docs apply", "help docs noop", "help docs waive", "help docs export", "help docs dev", "help docs build":
 		printDocsHelp()
 		return 0, nil
 	case "help domain", "help domain list", "help domain show", "help domain new", "help domain canon", "help domain graph":
@@ -968,6 +987,9 @@ Commands:
   gate                list/satisfy/waive/obsolete V7 gates
   wave                create, edit, and show named task batches
   land                run the serialized wave merge lane
+  digest              render the operator morning digest
+  escalate            record or acknowledge runner escalations
+  departure           inspect or control scheduled departures
   feedback            add agent feedback notes and generate digests
   logbook             render a plain-language daily digest for a product reader
   improve             opt-in scans for repeated work worth packaging
@@ -1039,6 +1061,8 @@ func printCommandHelp(command string) bool {
 	switch command {
 	case "acp", "acp install", "acp doctor", "acp setup":
 		printACPAdapterHelp()
+	case "actor", "actor correction":
+		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
 	case "capabilities":
 		printCapabilitiesHelp()
 	case "init":
@@ -1063,7 +1087,9 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "migrate vault-root":
 		printMigrateVaultRootHelp()
-	case "handoff", "finish", "gate", "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "land", "proof", "attempt", "proposal", "propose", "redact", "brief", "packet", "closeout", "closeout status", "dashboard", "reconcile", "state", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
+	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "wave refingerprint", "wave re-fingerprint", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
+		printOperatorCommandHelp(command)
+	case "handoff", "finish", "gate", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate v7", "migrate gates", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1097,7 +1123,9 @@ func printCommandHelp(command string) bool {
 		printGCHelp()
 	case "reindex":
 		printReindexHelp()
-	case "docs", "docs init", "docs model", "docs map", "docs catalog", "docs freshness", "docs check", "docs apply", "docs noop", "docs waive", "docs export", "docs dev", "docs build":
+	case "docs", "docs find", "docs new", "docs map", "docs status", "docs verify", "docs adopt":
+		printDocsHelp()
+	case "docs init", "docs model", "docs catalog", "docs freshness", "docs check", "docs apply", "docs noop", "docs waive", "docs export", "docs dev", "docs build":
 		printLegacyRedirectHelp("docs", "legacy docs")
 	case "domain", "domain list", "domain show", "domain new", "domain canon", "domain graph":
 		printDomainHelp()
@@ -1141,6 +1169,85 @@ func printCommandHelp(command string) bool {
 		return false
 	}
 	return true
+}
+
+// printOperatorCommandHelp is intentionally side-effect free. Keep these
+// short command contracts separate from the broad V7 examples so `--help`
+// never falls through to a command that opens a vault or writes state.
+func printOperatorCommandHelp(command string) {
+	switch {
+	case command == "wave":
+		fmt.Println(`Usage:
+  tusker wave create|add|remove|show|brief|preflight|arm|pause|resume|disarm|refingerprint ...
+
+Purpose:
+  Manage a named, task-backed delivery wave.`)
+	case command == "wave refingerprint" || command == "wave re-fingerprint":
+		fmt.Println(`Usage:
+  tusker wave refingerprint <WAVE-ID> --dry-run [--json]
+  tusker wave refingerprint <WAVE-ID> --confirm <sha256:fingerprint> [--json]
+
+Purpose:
+  Refresh stale imported factory-intake material without reauthoring or
+  arming the wave. The dry-run is read-only; confirmation preserves disarmed
+  state and cannot dispatch work.`)
+	case strings.HasPrefix(command, "wave "):
+		fmt.Printf("Usage:\n  tusker %s ...\n\nPurpose:\n  Operate on a named delivery wave.\n", command)
+	case command == "land":
+		fmt.Println(`Usage:
+  tusker land <TASK-ID|WAVE-ID> [--json]
+
+Purpose:
+  Run the serialized merge lane for a task or wave.`)
+	case command == "brief":
+		fmt.Println(`Usage:
+  tusker brief [<TASK-ID>] [--owner <owner>] [--json]
+
+Purpose:
+  Print a bounded human brief without changing tracker state.`)
+	case command == "dashboard":
+		fmt.Println(`Usage:
+  tusker dashboard build|open <name>
+
+Purpose:
+  Build or locate generated V7 dashboards.`)
+	case strings.HasPrefix(command, "closeout"):
+		fmt.Printf("Usage:\n  tusker %s <TASK-ID> [options]\n\nPurpose:\n  Emit or inspect a terminal human-wait checkpoint.\n", command)
+	case command == "gate-run":
+		fmt.Println(`Usage:
+  tusker gate-run [--changed] [--command <command>] [--profile <name>] [--json]
+
+Purpose:
+  Run configured gate-tier proof. Help performs no preflight or execution.`)
+	case command == "digest":
+		fmt.Println(`Usage:
+  tusker digest [--since <RFC3339|YYYY-MM-DD>] [--all] [--json]
+
+Purpose:
+  Render the operator digest. Without --since or --all, show the last 24 hours;
+  --all explicitly includes all recorded state.`)
+	case command == "escalate":
+		fmt.Println(`Usage:
+  tusker escalate -s <P0|P1|P2> --task <TASK-ID> --reason <reason> <description>
+  tusker escalate ack <ESC-ID> --by <actor>
+
+Purpose:
+  Record or acknowledge a bounded runner escalation.`)
+	case command == "escalate ack":
+		fmt.Println(`Usage:
+  tusker escalate ack <ESC-ID> --by <actor> [--json]
+
+Purpose:
+  Acknowledge one open escalation.`)
+	case command == "departure":
+		fmt.Println(`Usage:
+  tusker departure check|status|history|hold|resume ...
+
+Purpose:
+  Inspect or control scheduled promotion departures.`)
+	case strings.HasPrefix(command, "departure "):
+		fmt.Printf("Usage:\n  tusker %s ...\n\nPurpose:\n  Inspect or control scheduled promotion departures.\n", command)
+	}
 }
 
 func printLegacyHelp() {
@@ -1282,6 +1389,8 @@ func printV7Help() {
   tusker wave pause W-0001 --reason "operator-requested pause"
   tusker wave resume W-0001 --by human:sarav
   tusker wave disarm W-0001 --reason "scope withdrawn"
+  tusker wave refingerprint W-0001 --dry-run --json
+  tusker wave refingerprint W-0001 --confirm sha256:<fingerprint> --json
   tusker verify add HSP-T-0001 --covers A1,A2 --check "go test ./cmd/tusker -count=1" --result pass
   tusker proof status HSP-T-0001
   tusker proof set-mode HSP-T-0001 inline
@@ -1301,7 +1410,7 @@ func printV7Help() {
   tusker redact HSP-T-0001 --reason "Removed leaked token from evidence." --replacement "Redacted summary retained."
   tusker escalate -s P1 --task HSP-T-0001 --reason system_error "Runner is stuck in a no-progress loop."
   tusker escalate ack ESC-0001 --by human:sarav
-  tusker digest [--since 2026-07-07T00:00:00Z] [--json]
+  tusker digest [--since 2026-07-07T00:00:00Z] [--all] [--json]
   tusker logbook [--date 2026-07-20] [--write] [--json]   # --date is host-local; default is today
 
   tusker brief HSP-T-0001
@@ -1598,13 +1707,22 @@ Examples:
 }
 
 func printDocsHelp() {
-	fmt.Println(`The V5/V6 documentation publishing system was removed.
+	fmt.Println(`V7 documentation graph commands:
+  tusker docs find <query>
+  tusker docs new <subject> [--kind doc|spec]
+  tusker docs map
+  tusker docs status
+  tusker docs verify <subject>
+  tusker docs adopt [--dry-run] [--json]
+  tusker docs adopt --table <file> --approve --by human:<name> [--json]
 
-Use V7 project knowledge instead:
-  tusker skill route "<intent>" --json
-  tusker domain list
-  tusker domain show <domain-id>
-  tusker knowledge new <domain>/<path>/<slug> --kind runbook --title "..."`)
+Adoption is a reviewed batch. The default and --dry-run print a fingerprinted
+JSON table and never write. Edit that table, set approved_by, and pass the exact
+table with --approve; every row is preflighted before any write. Promote/merge
+preserve legacy sources. Tombstone rewrites a source as a superseded signpost
+only when explicitly present in the approved table; no disposition deletes a
+file. Generated map artifacts are left untouched; run tusker docs map after
+review. --apply and --yes are not accepted aliases.`)
 }
 
 func printNewHelp() {
@@ -1709,6 +1827,7 @@ func printVerifyHelp() {
   tusker verify add <task-id> --covers A1,A2 --check <command-or-manual-check> --result pass|fail|blocked|skipped|waived [--note <text>]
   tusker verify add <task-id> --rows "A1|go test ./pkg|pass|note"
   tusker verify add <task-id> --batch-file <path>
+  tusker verify remove <task-id> --index <one-based-row>
   tusker verify recipe <task-id> [--files <path[,path...]>]
   tusker verify <id> [--vault <path>] [--by <name>] [--summary <text>]
   tusker verify --id <id> [--vault <path>] [--by <name>] [--summary <text>]

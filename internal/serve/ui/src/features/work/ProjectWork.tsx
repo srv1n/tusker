@@ -6,14 +6,14 @@
 import { useEffect, useState } from "react";
 import { getRouteApi } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Flag, GitMerge, LayoutGrid, Loader2, Table2, X } from "lucide-react";
-import { Button, IconButton, SegmentedControl, Select } from "@/components/ui/controls";
+import { Flag, LayoutGrid, Table2, X } from "lucide-react";
+import { Button, SegmentedControl, Select } from "@/components/ui/controls";
 import { Mono } from "@/components/ui/primitives";
 import { EmptyState, QueryBoundary } from "@/components/ui/states";
 import { statusLabel } from "@/components/ui/tone";
 import { useConfirm } from "@/components/ui/action-feedback";
 import { api } from "@/lib/api";
-import { useEpics, useProjects, useRuns, useTasks } from "@/lib/queries";
+import { useEpics, useProjects, useReviewBatch, useRuns, useTasks } from "@/lib/queries";
 import type { Risk, TaskCapsule } from "@/types/domain";
 import {
   applyFilters,
@@ -33,20 +33,9 @@ import { useSelection } from "@/features/work/selection";
 import { FilterPill } from "@/features/work/WorkParts";
 import { WorkBoard } from "@/features/work/WorkBoard";
 import { WorkTable } from "@/features/work/WorkTable";
+import { BatchBar, type BatchAction, type BatchItemResult, type BatchProgress, WaveReviewGroups } from "@/features/work/WaveReview";
 
 const route = getRouteApi("/p/$projectId/work");
-
-type BatchAction = "close" | "land";
-interface BatchItemResult {
-  taskId: string;
-  ok: boolean;
-  reason: string;
-}
-interface BatchProgress {
-  action: BatchAction;
-  done: number;
-  total: number;
-}
 
 /**
  * Mirror the invalidations the per-task hooks fire on settle (see
@@ -59,6 +48,7 @@ const BATCH_INVALIDATE_KEYS = [
   "tasks",
   "runs",
   "waves",
+  "review",
   "gates",
   "evidence",
   "decisions",
@@ -166,128 +156,10 @@ function FilterBar({
   );
 }
 
-/**
- * Floating batch bar for wave-boundary review. Fans the existing per-task
- * mutations out over the selection (sequentially, to spare the daemon), then
- * shows a compact pass/fail summary. `/api/review/batch` is still a stub, so
- * this is deliberately client-side fan-out over api.closeTask / api.landTask.
- */
-function BatchBar({
-  activeIds,
-  progress,
-  results,
-  disabled,
-  confirm,
-  onRun,
-  onClearSelection,
-  onDismissResults,
-}: {
-  activeIds: string[];
-  progress: BatchProgress | null;
-  results: { action: BatchAction; items: BatchItemResult[] } | null;
-  disabled: boolean;
-  confirm: ReturnType<typeof useConfirm>;
-  onRun: (action: BatchAction, ids: string[]) => void;
-  onClearSelection: () => void;
-  onDismissResults: () => void;
-}) {
-  if (results) {
-    const failed = results.items.filter((i) => !i.ok);
-    const passed = results.items.length - failed.length;
-    const verb = results.action === "close" ? "accepted" : "landed";
-    return (
-      <div className="fixed bottom-6 left-1/2 z-40 w-[min(92vw,460px)] -translate-x-1/2">
-        <div className="animate-rise rounded-xl border border-line bg-raised p-3 shadow-lg">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="text-[13px] font-semibold text-ink">
-              {passed} {verb}
-              {failed.length > 0 ? ` · ${failed.length} failed` : ""}
-            </div>
-            <IconButton onClick={onDismissResults} aria-label="Dismiss batch results">
-              <X size={14} />
-            </IconButton>
-          </div>
-          {failed.length === 0 ? (
-            <div className="text-[12px] text-pass">All selected tasks {verb} cleanly.</div>
-          ) : (
-            <ul className="tk-scroll max-h-40 space-y-1 overflow-y-auto">
-              {failed.map((f) => (
-                <li key={f.taskId} className="flex items-start gap-2 text-[12px] leading-snug">
-                  <Mono className="flex-none text-[10.5px] text-faint">{f.taskId}</Mono>
-                  <span className="text-fail">{f.reason}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (progress) {
-    const label = progress.action === "close" ? "Accepting" : "Landing";
-    return (
-      <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
-        <div className="animate-rise flex items-center gap-2.5 rounded-xl border border-line bg-raised px-3.5 py-2.5 shadow-lg">
-          <Loader2 size={14} className="animate-spin text-accent" />
-          <Mono className="text-[12px] text-ink-soft">
-            {label} {progress.done}/{progress.total}…
-          </Mono>
-        </div>
-      </div>
-    );
-  }
-
-  if (activeIds.length === 0) return null;
-  const count = activeIds.length;
-  const plural = count === 1 ? "" : "s";
-
-  const acceptClose = async () => {
-    const ok = await confirm({
-      title: "Accept & close selected",
-      body: `Accept and close ${count} completed task${plural}. This records acceptance and cannot be undone.`,
-      confirmLabel: "Accept & close",
-    });
-    if (ok) onRun("close", activeIds);
-  };
-
-  const land = async () => {
-    const ok = await confirm({
-      title: "Land selected tasks",
-      body: `Land ${count} task${plural} onto the base branch. Landing is irreversible.`,
-      confirmLabel: `Land ${count}`,
-      tone: "danger",
-      typeToConfirm: "land",
-    });
-    if (ok) onRun("land", activeIds);
-  };
-
-  return (
-    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
-      <div className="animate-rise flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center justify-center gap-2.5 rounded-xl border border-line bg-raised px-3 py-2 shadow-lg">
-        <Mono className="pl-1 text-[12px] text-ink-soft">
-          {count} selected
-        </Mono>
-        <span className="h-4 w-px flex-none bg-line" />
-        <Button size="sm" variant="default" disabled={disabled} onClick={acceptClose}>
-          <Check size={13} strokeWidth={2.25} />
-          Accept &amp; close
-        </Button>
-        <Button size="sm" variant="danger" disabled={disabled} onClick={land}>
-          <GitMerge size={13} strokeWidth={2.25} />
-          Land selected
-        </Button>
-        <IconButton onClick={onClearSelection} aria-label="Clear selection" disabled={disabled}>
-          <X size={14} />
-        </IconButton>
-      </div>
-    </div>
-  );
-}
-
 export function ProjectWork() {
   const { projectId } = route.useParams();
   const tasksQ = useTasks(projectId);
+  const reviewBatchQ = useReviewBatch(projectId);
   const runsQ = useRuns(projectId);
   const epicsQ = useEpics(projectId);
   const projectsQ = useProjects();
@@ -319,7 +191,7 @@ export function ProjectWork() {
     for (const id of ids) {
       try {
         const res =
-          action === "close" ? await api.closeTask(id, {}) : await api.landTask(id, {});
+          action === "close" ? await api.closeTask(id, {}, projectId) : await api.landTask(id, {}, projectId);
         items.push({ taskId: id, ok: res.ok && !res.refused, reason: res.reason });
       } catch (err) {
         items.push({
@@ -375,14 +247,27 @@ export function ProjectWork() {
           {(durableTasks) => {
             const allTasks = projectLiveExecution(durableTasks, runsQ.data ?? []);
             const filtered = applyFilters(allTasks, filters);
-            // The batch acts on every selected task still in a landable state,
-            // even one currently filtered out of view (a wave can span epics).
+            // Keep wave selections across filters; each action below narrows
+            // the shared selection to the canonical status it can mutate.
             const selectableSet = new Set(
               allTasks.filter(isBatchSelectable).map((t) => t.id),
             );
-            const activeIds = [...selection.selectedIds].filter((id) => selectableSet.has(id));
+            const selectedTasks = [...selection.selectedIds]
+              .map((id) => allTasks.find((task) => task.id === id))
+              .filter((task): task is TaskCapsule => task !== undefined && selectableSet.has(task.id));
+            const activeIds = selectedTasks.map((task) => task.id);
+            const closeIds = selectedTasks.filter((task) => task.status === "review").map((task) => task.id);
+            const landIds = selectedTasks.filter((task) => task.status === "done").map((task) => task.id);
             return (
               <>
+                <WaveReviewGroups
+                  batch={reviewBatchQ.data ?? { waves: [], unwaved: [] }}
+                  disabled={running}
+                  onSelectWave={(wave) => {
+                    clearSelection();
+                    selection.setMany(wave.members.filter(isBatchSelectable).map((task) => task.id), true);
+                  }}
+                />
                 <FilterBar
                   tasks={allTasks}
                   filters={filters}
@@ -423,6 +308,8 @@ export function ProjectWork() {
                 )}
                 <BatchBar
                   activeIds={activeIds}
+                  closeIds={closeIds}
+                  landIds={landIds}
                   progress={progress}
                   results={results}
                   disabled={running}

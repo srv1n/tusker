@@ -88,7 +88,9 @@ export function Panel() {
   const reviewQ = useReviewBatch(selectedProjectId, readsEnabled);
   const runsQ = useRuns(selectedProjectId, readsEnabled);
   const needs = needsQ.data ?? [];
-  const review = reviewQ.data ?? [];
+  const review = reviewQ.data
+    ? [...reviewQ.data.waves.flatMap((wave) => wave.members), ...reviewQ.data.unwaved].filter((task) => task.status === "review")
+    : [];
   const runs = runsQ.data ?? [];
   const open = (row: TriageRow) => {
     const embedded = isTuskerShellMode();

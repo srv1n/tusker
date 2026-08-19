@@ -162,6 +162,17 @@ it returns map defects as issues and short-circuits to no-op when
   write time, not at review time.
 - `tusker docs map` — regenerate the three artifacts.
 
+- `tusker docs adopt [--dry-run] [--json]` — inventory Markdown outside the
+  managed tree and emit a fingerprinted `tusker.docs-adopt/v1` proposal table;
+  this path is read-only. A human reviews every disposition, sets
+  `approved_by: human:<name>`, and applies the exact table with
+  `tusker docs adopt --table <file> --approve --by human:<name>`. Apply
+  preflights the complete batch before writing. Promote and merge preserve
+  legacy sources; tombstone is permitted only as an explicit reviewed row and
+  rewrites the source as a `status: superseded` signpost to an existing
+  `docs/system/` successor. No disposition deletes a file, and generated map
+  artifacts still require an explicit `tusker docs map` run.
+
 All other `docs *` and `knowledge *` verbs are `legacyOnlyCommand` stubs
 (`cmd/tusker/cli.go:532-675`), as is `domain graph`.
 

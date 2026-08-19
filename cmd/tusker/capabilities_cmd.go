@@ -129,7 +129,7 @@ func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) (capabi
 			{Capability: strictV2ProofAuthorityCapability, Available: deliveryCapabilityAvailable(strictV2ProofAuthorityCapability)},
 		},
 		Deprecations: []capabilityDeprecation{
-			{Command: "docs", Replacement: "docs find|new|map"},
+			{Command: "docs", Replacement: "docs find|new|map|status|verify|adopt"},
 			{Command: "docs apply", Replacement: "edit canonical docs and record task proof"},
 			{Command: "docs build", Replacement: "use the repository publication pipeline"},
 			{Command: "docs catalog", Replacement: "docs map"},
@@ -217,6 +217,7 @@ func buildCapabilityCompatibility(manifest capabilitiesManifest) (capabilityComp
 func installedCapabilityCommands() []capabilityCommand {
 	return []capabilityCommand{
 		{Command: "acp", Subcommands: []string{"doctor", "install", "setup"}},
+		{Command: "actor", Subcommands: []string{"correction"}, Flags: []string{"--by", "--corrected-actor", "--event-id", "--gate", "--json", "--original-sha256", "--receipt"}},
 		{Command: "acp doctor", Flags: []string{"--auth-source", "--bundle-digest", "--json"}},
 		{Command: "acp install", Flags: []string{"--artifact", "--artifact-sha256", "--json", "--provider", "--publisher", "--source-url", "--version"}},
 		{Command: "acp setup", Flags: []string{"--auth-principal", "--auth-source", "--json", "--node", "--npm-prefix", "--vault"}},
@@ -227,7 +228,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "context", Subcommands: []string{"audit"}}, {Command: "daemon", Subcommands: []string{"install", "limits", "resume", "run", "service", "status", "stop", "uninstall"}},
 		{Command: "dashboard"}, {Command: "delivery", Subcommands: []string{"context", "doctor", "import", "plan", "review", "rollout", "start"}, Flags: []string{"--by", "--confirm", "--json", "--plan", "--scope"}},
 		{Command: "departure", Subcommands: []string{"check", "history", "hold", "resume", "status"}}, {Command: "digest"}, {Command: "discard"},
-		{Command: "docs", Subcommands: []string{"find", "map", "new"}},
+		{Command: "docs", Subcommands: []string{"adopt", "find", "map", "new", "status", "verify"}, Flags: []string{"--approve", "--by", "--dry-run", "--json", "--table"}},
 		{Command: "domain", Subcommands: []string{"canon", "list", "new", "show"}},
 		{Command: "execution", Subcommands: []string{"attach", "bind", "cancel", "detach", "inbox", "launch", "list", "rebind", "register", "rename", "show"}, Flags: []string{"--json"}},
 		{Command: "evidence"}, {Command: "escalate", Subcommands: []string{"ack"}}, {Command: "factory", Subcommands: []string{"operations"}},
@@ -246,9 +247,9 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "search"}, {Command: "serve"}, {Command: "setup", Subcommands: []string{"doctor", "repair"}}, {Command: "show"},
 		{Command: "skill", Subcommands: []string{"audit-agent-guidance", "bundle", "doctor", "pack", "route", "sync"}}, {Command: "state"}, {Command: "status"}, {Command: "streams"},
 		{Command: "sync-repo-contract"}, {Command: "trace", Subcommands: []string{"list", "replay", "show"}}, {Command: "uninstall", Flags: []string{"--force-state", "--state", "--yes"}}, {Command: "update"}, {Command: "validate"},
-		{Command: "verify", Subcommands: []string{"add", "recipe"}},
+		{Command: "verify", Subcommands: []string{"add", "recipe", "remove"}},
 		{Command: "vault", Subcommands: []string{"mount", "move", "repair", "set", "status", "unmount"}}, {Command: "version", Flags: []string{"--json"}},
-		{Command: "wave", Subcommands: []string{"add", "arm", "brief", "create", "disarm", "pause", "preflight", "remove", "resume", "show"}},
+		{Command: "wave", Subcommands: []string{"add", "arm", "brief", "create", "disarm", "pause", "preflight", "refingerprint", "re-fingerprint", "remove", "resume", "show"}},
 		{Command: "work", Subcommands: []string{"fail", "heartbeat", "release", "start", "status", "submit"}, Flags: []string{"--json", "--vault"}}, {Command: "xcode", Subcommands: []string{"doctor"}},
 	}
 }

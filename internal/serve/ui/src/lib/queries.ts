@@ -339,6 +339,7 @@ function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?:
   void qc.invalidateQueries({ queryKey: ["projects"] });
   void qc.invalidateQueries({ queryKey: ["needs"] });
   void qc.invalidateQueries({ queryKey: ["tasks"] });
+  void qc.invalidateQueries({ queryKey: ["review", "batch"] });
   void qc.invalidateQueries({ queryKey: ["runs"] });
   void qc.invalidateQueries({ queryKey: ["waves"] });
   void qc.invalidateQueries({ queryKey: ["gates"] });

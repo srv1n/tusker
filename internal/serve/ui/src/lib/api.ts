@@ -43,6 +43,7 @@ import type {
   RedriveResult,
   RunDetail,
   RunSummary,
+  ReviewBatch,
   TaskCapsule,
   TaskDetail,
   WaveSummary,
@@ -65,24 +66,34 @@ export interface ServeCapabilities { schema: string; capabilities: ServeCapabili
 export const USE_MOCK = false;
 
 const LATENCY_MS = 260;
-let capabilityPromise: Promise<string> | null = null;
+type ServeCapabilityBootstrap = { capability: string; operatorActor?: string };
+let capabilityPromise: Promise<ServeCapabilityBootstrap> | null = null;
 
 export function resetServeCapabilityCache(): void {
   capabilityPromise = null;
 }
 
 async function serveCapability(): Promise<string> {
-  if (capabilityPromise === null) {
-    capabilityPromise = fetch("/api/capability", { headers: { accept: "application/json" }, credentials: "same-origin" })
-      .then(async (res) => {
-        if (!res.ok) throw new ApiError(res.status, `GET /api/capability → ${res.status}`);
-        const payload = await res.json() as { capability?: string };
-        if (!payload.capability) throw new ApiError(500, "Serve capability bootstrap was empty");
-        return payload.capability;
-      })
-      .catch((error) => { capabilityPromise = null; throw error; });
-  }
-  return capabilityPromise;
+	if (capabilityPromise === null) {
+		capabilityPromise = fetch("/api/capability", { headers: { accept: "application/json" }, credentials: "same-origin" })
+		  .then(async (res) => {
+			if (!res.ok) throw new ApiError(res.status, `GET /api/capability → ${res.status}`);
+			const payload = await res.json() as { capability?: string; operatorActor?: string };
+			if (!payload.capability) throw new ApiError(500, "Serve capability bootstrap was empty");
+			return { capability: payload.capability, operatorActor: payload.operatorActor };
+		  })
+		  .catch((error) => { capabilityPromise = null; throw error; });
+	}
+	return (await capabilityPromise).capability;
+}
+
+async function serveOperatorActor(): Promise<string> {
+	if (capabilityPromise === null) {
+		await serveCapability();
+	}
+	const actor = (await capabilityPromise)?.operatorActor?.trim();
+	if (!actor) throw new ApiError(412, "Serve operator identity is not configured; start Serve with --by human:<name>");
+	return actor;
 }
 
 async function capabilityAuthRefusal(response: Response): Promise<boolean> {
@@ -253,7 +264,7 @@ export const api = {
     deliveryRequest("GET", withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)),
 
   deliveryStart: (body: { plan: string; confirm: string; planIdentity: string }, projectId?: string): Promise<DeliveryStartResult> =>
-    deliveryRequest("POST", withProject("/delivery/start", projectId), body),
+    serveOperatorActor().then((actor) => deliveryRequest("POST", withProject("/delivery/start", projectId), { ...body, actor })),
 
   // GET /api/daemon
   daemon: (): Promise<DaemonStatus> =>
@@ -331,10 +342,10 @@ export const api = {
       ? delay(projectId ? fx.runs.filter((r) => r.projectId === projectId) : fx.runs)
       : real(withProject("/runs", projectId)),
 
-  reviewBatch: (projectId?: string): Promise<TaskCapsule[]> => {
+  reviewBatch: (projectId?: string): Promise<ReviewBatch> => {
     const review = fx.taskCapsules.filter((task) => task.status === "review");
     return USE_MOCK
-      ? delay(projectId ? review.filter((task) => task.projectId === projectId) : review)
+      ? delay({ waves: [], unwaved: projectId ? review.filter((task) => task.projectId === projectId) : review })
       : real(withProject("/review/batch", projectId));
   },
 
@@ -352,7 +363,7 @@ export const api = {
   redrive: (taskId: string, projectId?: string): Promise<RedriveResult> =>
     USE_MOCK
       ? delay({ ok: true, requeued: true, reason: "redrive requested (mock)", taskId })
-      : post(withProject(`/runs/${taskId}/redrive`, projectId)),
+      : serveOperatorActor().then((actor) => post(withProject(`/runs/${taskId}/redrive`, projectId), { actor })),
 
   // POST /api/runs/:taskId/acknowledge — retires a settled failed run via the
   // same path as `tusker runs retire`, clearing it from attention. Success
@@ -361,7 +372,8 @@ export const api = {
   acknowledgeRun: async (taskId: string, projectId?: string): Promise<ActionResult> => {
     if (USE_MOCK) return delay({ ok: true, reason: "run acknowledged (mock)", taskId });
     const path = withProject(`/runs/${taskId}/acknowledge`, projectId);
-    return post<ActionResult>(path, {});
+    const actor = await serveOperatorActor();
+    return post<ActionResult>(path, { actor });
   },
 
   // POST /api/runs/:taskId/interrupt — shares `tusker runs interrupt` and
@@ -380,18 +392,17 @@ export const api = {
       : post(withProject(`/runs/${taskId}/interrupt`, projectId)),
 
   taskStatus: (taskId: string, body: { status: string; reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: `status -> ${body.status}`, taskId }) : post(withProject(`/tasks/${taskId}/status`, projectId), body),
+    USE_MOCK ? delay({ ok: true, reason: `status -> ${body.status}`, taskId }) : serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/status`, projectId), { ...body, actor })),
 
   runTask: (taskId: string, projectId?: string): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "queued for daemon dispatch", taskId }) : post(withProject(`/tasks/${taskId}/run`, projectId), {}),
+    USE_MOCK ? delay({ ok: true, reason: "queued for daemon dispatch", taskId }) : serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/run`, projectId), { actor })),
 
   discardTask: (
     taskId: string,
     body: { dryRun?: boolean; reason?: string; actor?: string; dependents?: "detach" | "discard" },
     projectId?: string,
-  ): Promise<ActionResult> =>
-    USE_MOCK
-      ? delay({
+  ): Promise<ActionResult> => {
+    if (USE_MOCK) return delay({
           ok: true,
           reason: body.dryRun ? "discard impact calculated" : "task discarded",
           taskId,
@@ -399,17 +410,19 @@ export const api = {
             taskId, title: taskId, status: "ready", directDependents: [], cascadeDependents: [],
             openGates: [], requiresResolution: false, preservesHistory: true,
           },
-        })
-      : post(withProject(`/tasks/${taskId}/discard`, projectId), body),
+        });
+    if (body.dryRun) return post(withProject(`/tasks/${taskId}/discard`, projectId), body);
+    return serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/discard`, projectId), { ...body, actor }));
+  },
 
   closeTask: (taskId: string, body: { reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "task accepted", taskId }) : post(withProject(`/tasks/${taskId}/close`, projectId), body),
+    USE_MOCK ? delay({ ok: true, reason: "task accepted", taskId }) : serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/close`, projectId), { ...body, actor })),
 
   landTask: (taskId: string, body: { branch?: string; from?: string } = {}, projectId?: string): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "landed task", taskId }) : post(withProject(`/tasks/${taskId}/land`, projectId), body),
+    USE_MOCK ? delay({ ok: true, reason: "landed task", taskId }) : serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/land`, projectId), { ...body, actor })),
 
   landWave: (waveId: string, projectId?: string): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "landed wave" }) : post(withProject(`/waves/${waveId}/land`, projectId), {}),
+    USE_MOCK ? delay({ ok: true, reason: "landed wave" }) : serveOperatorActor().then((actor) => post(withProject(`/waves/${waveId}/land`, projectId), { actor })),
 
   gateAction: (
     gateId: string,
@@ -417,10 +430,10 @@ export const api = {
     body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean },
     projectId?: string,
   ): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: `${gateId} ${action}`, gateId }) : post(withProject(`/gates/${gateId}/${action}`, projectId), body),
+    USE_MOCK ? delay({ ok: true, reason: `${gateId} ${action}`, gateId }) : serveOperatorActor().then((actor) => post(withProject(`/gates/${gateId}/${action}`, projectId), { ...body, actor })),
 
   addEvidence: (body: Record<string, unknown>, projectId?: string): Promise<ActionResult> =>
-    USE_MOCK ? delay({ ok: true, reason: "evidence added" }) : post(withProject("/evidence", projectId), body),
+    USE_MOCK ? delay({ ok: true, reason: "evidence added" }) : serveOperatorActor().then((actor) => post(withProject("/evidence", projectId), { ...body, actor })),
 
   addFeedback: (body: Record<string, unknown>, projectId?: string): Promise<ActionResult> =>
     USE_MOCK ? delay({ ok: true, reason: "feedback added" }) : post(withProject("/feedback", projectId), body),
@@ -505,11 +518,12 @@ export const api = {
     payload: DocgraphSavePayload,
   ): Promise<DocgraphSaveResponse> => {
     const path = withProject(`/docgraph/doc?subject=${encodeURIComponent(subject)}`, projectId);
+    const actor = await serveOperatorActor();
     const res = await capabilityFetch(`/api${path}`, {
       method: "PUT",
       headers: { accept: "application/json", "content-type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, actor }),
     });
     if (res.ok) return (await res.json()) as DocgraphSaveResponse;
     const body = (await res.json().catch(() => null)) as

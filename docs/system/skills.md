@@ -100,6 +100,9 @@ REPO=/abs/path`, `install-bin`, `install` (alias for `install-user`),
 | `tusker sync-repo-contract --repo <path> [--vault] [--force]` | Writes `assets/repo-contract/**` into the repo (skipping existing files unless `--force`), ensures the feedback README, and upserts the pointer block. No `.github/` templates ship today. |
 | `tusker setup doctor` / `tusker setup repair [--dry-run] [--source]` | See below. |
 
+Fresh `tusker init` materializes the `/spec` skill in both repo-local agent
+directories and preserves any existing copies.
+
 `skill doctor --package` on an Agent-Skills package enforces: `name` matches
 `^[a-z0-9]+(-[a-z0-9]+)*$`, ≤64 chars, equal to the directory name;
 `description` 1–1024 chars; `compatibility` ≤500 chars; string-only `metadata`;
@@ -187,9 +190,10 @@ same function with a narrowed `RepairScope`.
 | Location | Kind |
 | --- | --- |
 | `skills/tusker/**` | Canonical source — edit here. |
-| `.claude/skills/spec/` | Repo-local hand-edited skill, unrelated to the bundle. |
+| `skills/spec/SKILL.md` | Canonical `/spec` skill source; embedded into the Tusker binary. |
 | `~/.agents`, `~/.codex`, `~/.claude` `skills/tusker` | Generated copies. |
 | `<repo>/.agents/skills/tusker`, `<repo>/.claude/skills/tusker` | Generated symlinks (copies only with `--skill-mode copy`). |
+| `<repo>/.agents/skills/spec`, `<repo>/.claude/skills/spec` | Generated `/spec` skill copies; `tusker init` fills only missing destinations. |
 | `.tusker/SKILL.md` + `knowledge/domains/**` | Generated `tusker.project-skill/v7` — regenerate with `tusker publish skill --v7`. |
 | `.tusker/_generated/skill-bundle/**` | Generated portable bundle. |
 | `<repo>/docs/agent-workflow.md`, `docs/ai-contribution-policy.md`, `AGENTS.workflow-snippet.md` | Generated from `assets/repo-contract/`. |
@@ -199,7 +203,7 @@ same function with a narrowed `RepairScope`.
 `cmd/tusker/skill_progressive_disclosure_test.go` enforces the router contract
 against `skills/tusker/testdata/progressive-disclosure-budget.json`
 (`tusker.skill-disclosure-budget/v1`): `SKILL.md` body ≤900 words and ≤140
-lines, exactly two frontmatter keys, exactly six `references/*.md` routes
+lines, exactly two frontmatter keys, exactly seven `references/*.md` routes
 matching a fixed route table, no `references/` mention at all inside
 `TRACK.md`/`KNOWLEDGE.md`/`RUN.md`/`OPERATE.md`, and no duplicated paragraphs
 across those four plus `SKILL.md`.

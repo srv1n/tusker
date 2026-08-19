@@ -113,7 +113,7 @@ func TestV7ProofAndReviewRejectStubAcceptance(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub proof", "proof-mode": "inline", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestStub -count=1", "result": "pass", "note": "Focused proof passed."}, verifyV7AddCmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestStub -count=1", "result": "pass", "note": "Focused proof passed."}, v7TestVerificationMutation)
 
 	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
 	if err != nil {

@@ -15,6 +15,9 @@ func acceptTestVaultWithTask(t *testing.T) (string, string) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "Accept", "summary": "One-step accept.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeText(filepath.Join(v7RepoRoot(vault), "test_accept.py"), "import unittest\nclass Proof(unittest.TestCase):\n    def test_accept(self):\n        self.assertTrue(True)\n"); err != nil {
+		t.Fatal(err)
+	}
 	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Finished work", "risk": "low", "priority": "p1", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +26,7 @@ func acceptTestVaultWithTask(t *testing.T) (string, string) {
 
 func acceptTestGreenProof(t *testing.T, vault, id string) {
 	t.Helper()
-	if err := verifyV7AddCmd(Args{"vault": vault, "quiet": "true", "_pos1": id, "by": "agent:worker", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestAccept -count=1", "result": "pass", "note": "Proof passed."}); err != nil {
+	if _, err := upsertV7Verification(vault, id, v7VerificationRow{CoverText: "A1", Check: "command: python3 -m unittest discover -s .", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 }
@@ -166,16 +169,16 @@ func TestAcceptRequiresExplicitReviewer(t *testing.T) {
 	if missing == nil {
 		t.Fatalf("accept ran without an explicit acceptor")
 	}
-	if !strings.Contains(missing.Error(), "reviewer:") || !strings.Contains(missing.Error(), "human:") {
-		t.Fatalf("missing --by refusal did not name the expected format: %v", missing)
+	if errorToIssue(missing).Code != errorMissingArg {
+		t.Fatalf("missing --by refusal did not return missing-actor error: %v", missing)
 	}
 
 	bad := acceptV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": id, "by": "agent:worker"})
 	if bad == nil {
 		t.Fatalf("accept accepted a non-namespaced actor")
 	}
-	if !strings.Contains(bad.Error(), "reviewer:") || !strings.Contains(bad.Error(), "human:") {
-		t.Fatalf("invalid --by refusal did not name the expected format: %v", bad)
+	if errorToIssue(bad).Code != errorInvalidField {
+		t.Fatalf("invalid --by refusal did not return actor-field error: %v", bad)
 	}
 
 	// The refused task must stay open with no recorded acceptor.

@@ -16,6 +16,10 @@ func acceptV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	actor, err := v7RequireAcceptor(args)
+	if err != nil {
+		return err
+	}
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
@@ -34,9 +38,8 @@ func acceptV7Cmd(args Args) error {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
 
-	// Read the existing proof result; do not re-run or re-judge it.
 	report := computeV7ProofReport(vaultPath, task, idx)
-	if !v7ProofGreenForAccept(task, report) {
+	if !v7ProofGreenForAccept(task, report) && len(v7PendingCommandProofGaps(task, report)) > 0 {
 		return tuskerError(
 			errorEvidenceGate,
 			id+": accept refused, proof is not green: "+v7AcceptRefusalReason(report),
@@ -48,16 +51,17 @@ func acceptV7Cmd(args Args) error {
 	// Require an explicit reviewer identity: no --by must never inherit a default
 	// actor that trivially clears the acceptor policy. The identity must be
 	// namespaced so the close policy can tell a reviewer/human from an agent.
-	actor, err := v7RequireAcceptor(args)
-	if err != nil {
-		return err
-	}
-
 	// Pre-flight every close precondition BEFORE any status write, so a refusal
 	// leaves the task exactly where it was instead of stranding it in review.
 	// These mirror the checks close enforces, reading the same sources.
-	if err := v7AcceptPreflight(vaultPath, args, task, idx, actor); err != nil {
+	preflight, err := v7AcceptPreflight(vaultPath, args, task, idx, actor)
+	if err != nil {
 		return err
+	}
+	task, idx = preflight.Task, preflight.Index
+	report = computeV7ProofReport(vaultPath, task, idx)
+	if !v7ProofGreenForAccept(task, report) {
+		return tuskerError(errorEvidenceGate, id+": accept refused, proof is not green: "+v7AcceptRefusalReason(report))
 	}
 
 	// Preconditions hold: move to review, then close so the existing close
@@ -90,22 +94,14 @@ func acceptV7Cmd(args Args) error {
 // v7RequireAcceptor returns the explicit reviewer identity, refusing when --by
 // (or --actor) is missing or is not namespaced with a reviewer:/human: prefix.
 func v7RequireAcceptor(args Args) (string, error) {
-	actor := strings.TrimSpace(fallback(args.String("by"), args.String("actor")))
-	if actor == "" {
+	if strings.TrimSpace(fallback(args.String("by"), args.String("actor"))) == "" {
 		return "", tuskerError(
 			errorMissingArg,
 			"accept requires an explicit acceptor: pass --by reviewer:<name> or --by human:<name>",
 			withHint("accept records who signed off; it never inherits a default agent identity"),
 		)
 	}
-	if !strings.HasPrefix(actor, "reviewer:") && !strings.HasPrefix(actor, "human:") {
-		return "", tuskerError(
-			errorInvalidField,
-			"accept --by must be namespaced reviewer:<name> or human:<name>, got "+actor,
-			withHint("only a reviewer: or human: acceptor can sign off a close"),
-		)
-	}
-	return actor, nil
+	return v7ReviewerOrHumanActor(args, "accept")
 }
 
 // v7AcceptSourceStatusAllowed reports whether accept may legally run from the
@@ -125,28 +121,27 @@ func v7AcceptSourceStatusAllowed(status string) bool {
 // status is illegal or when close would reject the task. It mirrors the
 // close-time checks (acceptor policy, open blocking gates, unclosed
 // dependencies, required evidence, acceptance/proof) against the same sources.
-func v7AcceptPreflight(vaultPath string, args Args, task Note, idx v7Index, actor string) error {
+func v7AcceptPreflight(vaultPath string, args Args, task Note, idx v7Index, actor string) (v7ClosePreflightResult, error) {
 	id := stringField(task.Data, "id")
 
 	status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
 	switch status {
 	case "done":
-		return tuskerError(errorInvalidTransition, id+": accept refused, task is already done", withContext(map[string]any{"status": status}))
+		return v7ClosePreflightResult{}, tuskerError(errorInvalidTransition, id+": accept refused, task is already done", withContext(map[string]any{"status": status}))
 	case "cancelled":
-		return tuskerError(errorInvalidTransition, id+": accept refused, task is cancelled", withContext(map[string]any{"status": status}))
+		return v7ClosePreflightResult{}, tuskerError(errorInvalidTransition, id+": accept refused, task is cancelled", withContext(map[string]any{"status": status}))
 	}
 	if !v7AcceptSourceStatusAllowed(status) {
-		return tuskerError(
+		return v7ClosePreflightResult{}, tuskerError(
 			errorInvalidTransition,
 			id+": accept refused, cannot accept from status "+fallback(status, "(none)")+"; accept only from ready, review, or rework",
 			withContext(map[string]any{"status": status}),
 		)
 	}
 
-	_, err := v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
+	return v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
 		Args: args, Actor: actor, Action: "accept", ExpectedTaskID: id,
 	})
-	return err
 }
 
 // v7ProofGreenForAccept reports whether every proof row is green — the same

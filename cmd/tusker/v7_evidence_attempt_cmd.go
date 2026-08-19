@@ -100,7 +100,12 @@ func evidenceV7AddCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	createdBy := fallback(args.String("by"), "agent:"+defaultActorName())
+	// Serve supplies an explicitly configured operator actor for durable
+	// evidence writes. Direct/automation callers retain the agent default.
+	createdBy, err := v7AgentDefaultActor(args, "evidence creation")
+	if err != nil {
+		return err
+	}
 	status := fallback(args.String("status"), "accepted")
 	if v7EvidenceRequiresReviewerAcceptance(kind) && args.String("status") == "" {
 		status = "pending_review"
@@ -126,7 +131,14 @@ func evidenceV7AddCmd(args Args) error {
 		data["artifact_durability"] = durability
 	}
 	if kind == "screenshot" {
-		checkedBy := firstNonEmpty(args.String("screenshot-checked-by"), args.String("checked-by"))
+		rawCheckedBy := firstNonEmpty(args.String("screenshot-checked-by"), args.String("checked-by"))
+		checkedBy := ""
+		if rawCheckedBy != "" {
+			checkedBy, err = v7ReviewerOrHumanActor(Args{"by": rawCheckedBy}, "screenshot check")
+			if err != nil {
+				return err
+			}
+		}
 		if status == "accepted" {
 			if checkedBy == "" {
 				return tuskerError(errorMissingArg, "accepted screenshot evidence requires --checked-by", withHint("screenshots start pending_review until a reviewer records the visual check"))
@@ -151,12 +163,14 @@ func evidenceV7AddCmd(args Args) error {
 	if status == "accepted" {
 		acceptedBy := fallback(args.String("accepted-by"), stringField(data, "created_by"))
 		if v7EvidenceRequiresReviewerAcceptance(kind) {
-			acceptedBy = firstNonEmpty(args.String("accepted-by"), args.String("checked-by"), args.String("screenshot-checked-by"))
-			if acceptedBy == "" {
+			rawAcceptedBy := firstNonEmpty(args.String("accepted-by"), args.String("checked-by"), args.String("screenshot-checked-by"))
+			if rawAcceptedBy == "" {
 				return tuskerError(errorMissingArg, "accepted "+kind+" evidence requires --accepted-by human:<name> or reviewer:<name>")
 			}
-			if !v7EvidenceAcceptorAllowed(acceptedBy) {
-				return tuskerError(errorInvalidTransition, "accepted "+kind+" evidence requires a human or reviewer acceptor", withContext(map[string]any{"accepted_by": acceptedBy, "evidence_kind": kind}))
+			var acceptErr error
+			acceptedBy, acceptErr = v7ReviewerOrHumanActor(Args{"by": rawAcceptedBy}, "accepted "+kind+" evidence")
+			if acceptErr != nil {
+				return acceptErr
 			}
 			if acceptedBy == createdBy {
 				risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))

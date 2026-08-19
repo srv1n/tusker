@@ -290,12 +290,46 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	if err != nil || result.ProofFingerprint != proof || result.GateFingerprint != gates {
 		return ReviewResult{}, fmt.Errorf("proposal proof or gate snapshot drifted")
 	}
-	switch result.Verdict {
-	case "pass":
+	if result.Verdict == "pass" {
 		want, got := sortedUniqueStrings(v7AcceptanceIDs(note.Body)), sortedUniqueStrings(result.Covers)
 		if strings.Join(want, ",") != strings.Join(got, ",") {
 			return ReviewResult{}, fmt.Errorf("pass proposal does not cover the exact acceptance set")
 		}
+		report, reportErr := loadV7ProofReport(project.VaultRoot, run.RecordID)
+		if reportErr != nil || len(report.OpenGates) != 0 || len(v7PendingCommandProofGaps(note, report)) != 0 {
+			return ReviewResult{}, fmt.Errorf("pass proposal requires eligible proof and no open gates before command execution")
+		}
+		_, pending := v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body))
+		if len(pending) > 0 && result.Schema != reviewResultSchema {
+			return ReviewResult{}, fmt.Errorf("automatic command verification requires an exact authoritative worker policy; use interactive accept or close with manifest confirmation")
+		}
+	}
+	// A worker may request review with pending command rows. The daemon-owned
+	// review gate executes those rows on the canonical repository, then reloads
+	// the task so the authoritative result binds the observed proof snapshot.
+	commandProofExecuted := false
+	if result.Verdict == "pass" {
+		fresh, _, failures, executeErr := executeV7CommandVerificationRows(project.VaultRoot, note, nil, "daemon:review-proof", true)
+		if executeErr != nil {
+			return ReviewResult{}, executeErr
+		}
+		if len(failures) > 0 {
+			failure := failures[0]
+			return ReviewResult{}, fmt.Errorf("command verification row %s failed: %s", failure.Row.CoverText, failure.Message)
+		}
+		note = fresh
+		result.TaskStateRev = stringField(note.Data, "state_rev")
+		commandProofExecuted = true
+	}
+	if commandProofExecuted {
+		proof, gates, err = reviewObjectiveSnapshots(project.VaultRoot, note)
+		result.ProofFingerprint = proof
+	}
+	if err != nil || result.GateFingerprint != gates {
+		return ReviewResult{}, fmt.Errorf("proposal proof or gate snapshot drifted")
+	}
+	switch result.Verdict {
+	case "pass":
 		report, reportErr := loadV7ProofReport(project.VaultRoot, run.RecordID)
 		if reportErr != nil || report.Status != "satisfied" || len(report.OpenGates) != 0 {
 			return ReviewResult{}, fmt.Errorf("pass proposal requires currently satisfied proof and gates")

@@ -54,6 +54,16 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(stateRoot)
 		os.Exit(1)
 	}
+	// Do not let the host Codex/Claude session impersonate a human in fixture
+	// mutations. Tests that exercise agent-session policy set these variables
+	// explicitly with t.Setenv.
+	for _, key := range []string{"TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"} {
+		if err := os.Setenv(key, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate agent session %s: %v\n", key, err)
+			_ = os.RemoveAll(stateRoot)
+			os.Exit(1)
+		}
+	}
 	// Repository fixtures must not inherit developer-machine hooks, signing
 	// requirements, credential helpers, or interactive prompts. Those settings
 	// made otherwise deterministic git commits execute the host Tusker hook and

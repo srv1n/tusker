@@ -444,7 +444,9 @@ func newCrossScopeServeServer(t *testing.T, vault string) *serveServer {
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)
 	}
-	return newServeServer(vault, v7RepoRoot(vault), defaultServeAddr, store, nil)
+	server := newServeServer(vault, v7RepoRoot(vault), defaultServeAddr, store, nil)
+	server.operatorActor = "human:test"
+	return server
 }
 
 func assertCrossScopeGateRefusal(t *testing.T, err error) {

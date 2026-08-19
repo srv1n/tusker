@@ -105,6 +105,7 @@ type ResolvedRunnerProfile struct {
 	Source     string                  `json:"source"`
 	Reason     string                  `json:"reason"`
 	RuleName   string                  `json:"rule_name,omitempty"`
+	Warnings   []string                `json:"warnings,omitempty"`
 	Definition RunnerProfileDefinition `json:"definition"`
 }
 
@@ -910,15 +911,52 @@ func resolveRunProfileForLane(note Note, wf Workflow, lane, legacyRunner string)
 	legacyRunner = strings.TrimSpace(legacyRunner)
 	if selected.Source == configSourceBuiltIn && legacyRunner != "" {
 		if strings.TrimSpace(lane) == runLaneReview || legacyRunner != strings.TrimSpace(selected.Definition.Harness) {
-			return ResolvedRunnerProfile{
-				Reason: "legacy runner fallback",
+			selected = ResolvedRunnerProfile{
+				Reason: fmt.Sprintf("legacy runner fallback: using %q because no named profile was selected", legacyRunner),
 				Definition: RunnerProfileDefinition{
 					Harness: legacyRunner,
 				},
-			}, nil
+			}
+		}
+	}
+	if strings.TrimSpace(lane) == runLaneReview {
+		selected.Warnings = reviewerProfileWarnings(note, wf, selected)
+		if warning := strings.TrimSpace(wf.Reviewer.FallbackWarning); warning != "" {
+			selected.Warnings = append([]string{warning}, selected.Warnings...)
 		}
 	}
 	return selected, nil
+}
+
+func runnerVendor(harness string) string {
+	harness = strings.ToLower(strings.TrimSpace(harness))
+	switch {
+	case strings.HasPrefix(harness, "codex"):
+		return "codex"
+	case strings.HasPrefix(harness, "claude"):
+		return "claude"
+	default:
+		return harness
+	}
+}
+
+func reviewerProfileWarnings(note Note, wf Workflow, reviewer ResolvedRunnerProfile) []string {
+	implementer, err := resolveRunnerProfileForNote(note, wf, runLaneExecute)
+	if err != nil {
+		return nil
+	}
+	var warnings []string
+	reviewerVendor := runnerVendor(reviewer.Definition.Harness)
+	implementerVendor := runnerVendor(implementer.Definition.Harness)
+	if reviewerVendor != "" && reviewerVendor == implementerVendor {
+		warnings = append(warnings, fmt.Sprintf("reviewer vendor %q matches implementer vendor %q", reviewerVendor, implementerVendor))
+	}
+	reviewerModel := strings.TrimSpace(reviewer.Definition.Model)
+	implementerModel := strings.TrimSpace(implementer.Definition.Model)
+	if reviewerModel != "" && reviewerModel == implementerModel {
+		warnings = append(warnings, fmt.Sprintf("reviewer model %q matches implementer model", reviewerModel))
+	}
+	return uniqueStrings(warnings)
 }
 
 func applyResolvedProfileToRun(run RunStatus, selected ResolvedRunnerProfile) RunStatus {

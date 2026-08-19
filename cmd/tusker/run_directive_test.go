@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -23,7 +25,7 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	defer guard.Close()
 
 	var result serveActionResult
-	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:forged"}`, &result)
+	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:test-operator"}`, &result)
 	if !result.OK || result.Refused {
 		t.Fatalf("expected queued directive, got %#v", result)
 	}
@@ -36,6 +38,11 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	}
 	assertEqual(t, "queued", directive.State, "directive state")
 	assertEqual(t, "human:test-operator", directive.Actor, "trusted directive actor")
+	var forged serveActionResult
+	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:forged"}`, &forged)
+	if !forged.Refused || !strings.Contains(forged.Reason, "does not match") {
+		t.Fatalf("expected configured operator to reject forged request actor, got %#v", forged)
+	}
 
 	var detail serveTaskDetail
 	serveDecode(t, server, "/api/tasks/APP-T-0001?project=app", &detail)
@@ -45,7 +52,7 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	assertEqual(t, "queued", detail.RunDirective.State, "task detail directive state")
 
 	var duplicate serveActionResult
-	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:other"}`, &duplicate)
+	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:test-operator"}`, &duplicate)
 	if !duplicate.Refused || !strings.Contains(duplicate.Reason, "already queued") {
 		t.Fatalf("expected duplicate refusal, got %#v", duplicate)
 	}
@@ -54,6 +61,18 @@ func TestRunDirectiveRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "human:test-operator", directive.Actor, "duplicate must not overwrite actor")
+}
+
+func TestServeRunDirectiveRequiresConfiguredOperator(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	server.operatorActor = ""
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/tasks/APP-T-0001/run?project=app", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("missing Serve operator status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 // The play button is deliberate human execution authority: the directive

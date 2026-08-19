@@ -463,6 +463,7 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	})
 	repo := t.TempDir()
 	vault := filepath.Join(repo, "tusker")
+	runGit(t, "-C", repo, "init", "-q")
 	if err := os.Chdir(repo); err != nil {
 		t.Fatal(err)
 	}
@@ -473,6 +474,12 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := writeText(filepath.Join(repo, "provider-ready.png"), "fake screenshot fixture\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "go.mod"), "module example.test/router\n\ngo 1.22\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "cmd", "tusker", "router_test.go"), "package tusker\n\nimport \"testing\"\n\nfunc TestV7(t *testing.T) {}\n"); err != nil {
 		t.Fatal(err)
 	}
 	runCLI := func(argv ...string) string {
@@ -508,7 +515,7 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("gate", "list", "--owner", "human:sarav")
 	runCLI("list", "--runnable")
 	runCLI("next", "--owner", "agent")
-	runCLI("gate", "satisfy", "APP-G-0001", "--evidence", "Provider ready endpoint returned OpenAI model.")
+	runCLI("gate", "satisfy", "APP-G-0001", "--evidence", "Provider ready endpoint returned OpenAI model.", "--by", "human:sarav")
 	runCLI("gate", "waive", "APP-G-0002", "--reason", "Live smoke deferred to release candidate.")
 	runCLI("gate", "obsolete", "APP-G-0003", "--reason", "Task superseded.")
 	runCLI("claim", "APP-T-0001", "--owner", "agent:codex")
@@ -531,7 +538,7 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("next", "--owner", "agent")
 	runCLI("reconcile")
 	runCLI("status", "APP-T-0001", "review", "--reason", "Ready for independent review.")
-	runCLI("close", "APP-T-0001", "--by", "reviewer:agent")
+	runCLI("close", "APP-T-0001", "--by", "reviewer:agent", "--confirm", acceptVerificationManifest(t, vault, "APP-T-0001"))
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, _, err := parseFrontmatterMustRead(taskPath)
@@ -1121,8 +1128,15 @@ func TestV7ValidationWarnsOnLargeKnowledgeDeltaAndManyDomains(t *testing.T) {
 }
 
 func TestV7ValidationKnowledgeDeltaRiskGate(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
+	repo := t.TempDir()
+	vault := filepath.Join(repo, "vault")
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDir(filepath.Join(repo, "docs", "specs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "docs", "specs", "knowledge-delta.md"), "# Knowledge delta\n"); err != nil {
 		t.Fatal(err)
 	}
 	data := map[string]any{
@@ -1136,6 +1150,7 @@ func TestV7ValidationKnowledgeDeltaRiskGate(t *testing.T) {
 		"readiness":             "ready",
 		"priority":              "p2",
 		"risk":                  "medium",
+		"spec_refs":             []string{"docs/specs/knowledge-delta.md"},
 		"proof_mode":            "inline",
 		"proof_status":          "pending",
 		"proof_required":        []string{"focused_test"},
@@ -1168,6 +1183,12 @@ func TestV7ValidationKnowledgeDeltaLineBudgetWarnsAndFails(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := ensureDir(filepath.Join(repo, "docs", "specs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "docs", "specs", "knowledge-delta.md"), "# Knowledge delta\n"); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeText(filepath.Join(repo, "tusker.yaml"), "validation:\n  knowledge_delta_warn_lines: 2\n  knowledge_delta_fail_lines: 4\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -1182,6 +1203,7 @@ func TestV7ValidationKnowledgeDeltaLineBudgetWarnsAndFails(t *testing.T) {
 		"readiness":             "ready",
 		"priority":              "p2",
 		"risk":                  "medium",
+		"spec_refs":             []string{"docs/specs/knowledge-delta.md"},
 		"proof_mode":            "inline",
 		"proof_status":          "pending",
 		"proof_required":        []string{"focused_test"},
@@ -2427,7 +2449,7 @@ func TestV7AttemptHandoffRequestsReviewWhenUnblocked(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	must := func(args Args, fn func(Args) error) {
 		t.Helper()
-		if err := fn(args); err != nil {
+		if err := runV7TestMutation(args, fn); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2435,7 +2457,7 @@ func TestV7AttemptHandoffRequestsReviewWhenUnblocked(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
 	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Handoff review", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
-	must(Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7AttemptHandoff -count=1", "result": "pass", "note": "Handoff proof passed."}, verifyV7AddCmd)
+	must(Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7AttemptHandoff -count=1", "result": "pass", "note": "Handoff proof passed."}, v7TestVerificationMutation)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implemented and ready."}, attemptV7HandoffCmd)
 

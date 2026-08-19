@@ -117,6 +117,9 @@ func validateV7SpecTraceability(vaultPath string, notes []Note) []Issue {
 	}
 
 	for _, note := range workNotes {
+		if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, note, note.RelativePath); ok && tuskerTier(vaultPath) == 1 {
+			warnings = append(warnings, finding)
+		}
 		warnings = append(warnings, validateV7SpecRefs(vaultPath, note, decisionIDs)...)
 	}
 
@@ -141,6 +144,56 @@ func validateV7SpecTraceability(vaultPath string, notes []Note) []Issue {
 		}
 	}
 	return warnings
+}
+
+// v7DemandingTaskSpecRefIssue is shared by whole-vault traceability, task
+// readiness validation, and every ready-transition seam. Tier 1 keeps the
+// probationary warning-only behavior; the strict tiers require at least one
+// resolvable governing spec or decision.
+func v7DemandingTaskSpecRefIssue(vaultPath string, note Note, where string) (Issue, bool) {
+	if effectiveV7Kind(note.Data) != "task" || !v7TaskIsDemanding(note.Data) || strings.TrimSpace(stringField(note.Data, "readiness")) != "ready" {
+		return Issue{}, false
+	}
+	refs := normalizeList(note.Data["spec_refs"])
+	if tuskerTier(vaultPath) == 1 && len(refs) > 0 {
+		return Issue{}, false
+	}
+	if tuskerTier(vaultPath) >= 2 && v7TaskHasResolvableSpecRef(vaultPath, refs) {
+		return Issue{}, false
+	}
+	if tuskerTier(vaultPath) == 1 {
+		return issue(
+			"TASK_SPEC_REF_REQUIRED",
+			"demanding ready task should declare at least one spec_refs link",
+			where,
+			"add a repo-relative spec/decision path when available; tier 1 permits ready work while the link is being recovered",
+			map[string]any{"id": stringField(note.Data, "id")},
+		), true
+	}
+	return issue(
+		"TASK_SPEC_REF_REQUIRED",
+		"demanding ready task must declare at least one resolvable spec_refs link",
+		where,
+		"add a repo-relative spec/decision path or V7 decision id that resolves in this repository, or keep the task out of ready",
+		map[string]any{"id": stringField(note.Data, "id")},
+	), true
+}
+
+func v7TaskHasResolvableSpecRef(vaultPath string, refs []string) bool {
+	if len(refs) == 0 || strings.TrimSpace(vaultPath) == "" {
+		return false
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return false
+	}
+	for _, ref := range refs {
+		clean := v7CleanSpecRef(ref)
+		if clean != "" && v7SpecRefExists(vaultPath, clean, idx.Decisions) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateV7SpecRefs(vaultPath string, note Note, decisionIDs map[string]Note) []Issue {

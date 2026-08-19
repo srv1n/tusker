@@ -32,3 +32,13 @@ test("ready and rework tasks expose one-shot daemon dispatch with visible lifecy
   }
   expect(task).toContain("<ActionResultLine pending={runTask.isPending} error={runTask.error} result={runTask.data} />");
 });
+
+test("Serve evidence starts pending review without free-text acceptance authority", () => {
+  const taskContract = readFileSync(new URL("../src/features/docs/TaskContract.tsx", import.meta.url), "utf8");
+  const projectOps = readFileSync(new URL("../src/features/ops/ProjectOps.tsx", import.meta.url), "utf8");
+  expect(taskContract).toContain('status: "pending_review"');
+  expect(projectOps).toContain('useState("pending_review")');
+  expect(projectOps).not.toContain("acceptedBy");
+  expect(projectOps).not.toContain("accepted by");
+  expect(projectOps).not.toContain('<option value="accepted">accepted</option>');
+});

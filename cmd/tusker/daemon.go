@@ -1405,6 +1405,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				projectRuns[recordID] = current
 				continue
 			}
+			for _, warning := range selectedProfile.Warnings {
+				fmt.Fprintf(os.Stderr, "warning: task %s: %s\n", recordID, warning)
+			}
 			current.ProjectID = project.ProjectID
 			current.RecordID = recordID
 			current.ItemID = stringField(note.Data, "id")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -77,13 +78,139 @@ func WriteDocsMap(repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, filepath.FromSlash(overviewRelPath)), []byte(artifacts.overview), 0o644); err != nil {
+	root, err := openDocsMapRoot(repoRoot)
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, filepath.FromSlash(indexRelPath)), []byte(artifacts.index), 0o644); err != nil {
+	defer root.Close()
+	for _, relative := range []string{overviewRelPath, indexRelPath, graphRelPath} {
+		if err := validateDocsMapArtifact(root, relative); err != nil {
+			return err
+		}
+	}
+	if err := writeDocsMapArtifact(root, overviewRelPath, []byte(artifacts.overview)); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(repoRoot, filepath.FromSlash(graphRelPath)), artifacts.graph, 0o644)
+	if err := writeDocsMapArtifact(root, indexRelPath, []byte(artifacts.index)); err != nil {
+		return err
+	}
+	return writeDocsMapArtifact(root, graphRelPath, artifacts.graph)
+}
+
+func openDocsMapRoot(repoRoot string) (*os.Root, error) {
+	abs, err := filepath.Abs(filepath.Clean(strings.TrimSpace(repoRoot)))
+	if err != nil || strings.TrimSpace(repoRoot) == "" {
+		return nil, fmt.Errorf("documentation map repository root is unavailable")
+	}
+	before, err := os.Lstat(abs)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("documentation map repository root must be a real directory: %s", abs)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize documentation map repository root: %w", err)
+	}
+	resolved, err = filepath.Abs(filepath.Clean(resolved))
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize documentation map repository root: %w", err)
+	}
+	root, err := os.OpenRoot(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("open documentation map repository root: %w", err)
+	}
+	opened, openErr := root.Stat(".")
+	after, statErr := os.Lstat(resolved)
+	if openErr != nil || statErr != nil || !os.SameFile(before, after) || !os.SameFile(opened, after) {
+		_ = root.Close()
+		return nil, fmt.Errorf("documentation map repository root changed while opening")
+	}
+	return root, nil
+}
+
+func writeDocsMapArtifact(root *os.Root, relative string, data []byte) error {
+	if err := validateDocsMapArtifact(root, relative); err != nil {
+		return err
+	}
+	clean := filepath.Clean(filepath.FromSlash(relative))
+	// Open without O_TRUNC: a concurrent symlink swap must be rejected before
+	// any existing target bytes are destroyed.
+	file, err := root.OpenFile(clean, os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	opened, statErr := file.Stat()
+	if statErr != nil || !opened.Mode().IsRegular() {
+		_ = file.Close()
+		return fmt.Errorf("documentation map artifact changed while opening: %s", relative)
+	}
+	after, statErr := root.Lstat(clean)
+	if statErr != nil || after.Mode()&os.ModeSymlink != 0 || !after.Mode().IsRegular() || !os.SameFile(opened, after) {
+		_ = file.Close()
+		return fmt.Errorf("documentation map artifact changed while opening: %s", relative)
+	}
+	if err := file.Truncate(0); err != nil {
+		_ = file.Close()
+		return err
+	}
+	written, writeErr := file.Write(data)
+	if writeErr == nil && written != len(data) {
+		writeErr = io.ErrShortWrite
+	}
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	pathAfter, pathErr := root.Lstat(clean)
+	if writeErr == nil && (pathErr != nil || pathAfter.Mode()&os.ModeSymlink != 0 || !pathAfter.Mode().IsRegular() || !os.SameFile(opened, pathAfter)) {
+		writeErr = fmt.Errorf("documentation map artifact changed while writing: %s", relative)
+	}
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
+}
+
+func validateDocsMapArtifact(root *os.Root, relative string) error {
+	clean := filepath.Clean(filepath.FromSlash(relative))
+	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("documentation map artifact escapes repository: %s", relative)
+	}
+	if err := rejectDocsMapSymlinkPath(root, clean); err != nil {
+		return err
+	}
+	before, statErr := root.Lstat(clean)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+	if statErr == nil && (!before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0) {
+		return fmt.Errorf("documentation map artifact is not a regular file: %s", relative)
+	}
+	return nil
+}
+
+func rejectDocsMapSymlinkPath(root *os.Root, relative string) error {
+	current := "."
+	for _, part := range strings.Split(relative, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		if current == "." {
+			current = part
+		} else {
+			current = filepath.Join(current, part)
+		}
+		info, err := root.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("documentation map artifact path is symlinked: %s", relative)
+		}
+	}
+	return nil
 }
 
 // CheckDocsMapFresh regenerates the artifacts in memory and diffs them against
@@ -147,7 +274,7 @@ func buildDocsMap(repoRoot string) (mapArtifacts, error) {
 	copy(docs, corpus.Documents)
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Subject < docs[j].Subject })
 
-	if defects := findMapDefects(docs); len(defects) > 0 {
+	if defects := findMapDefects(repoRoot, docs); len(defects) > 0 {
 		sort.Slice(defects, func(i, j int) bool {
 			if defects[i].Path != defects[j].Path {
 				return defects[i].Path < defects[j].Path
@@ -174,12 +301,12 @@ func buildDocsMap(repoRoot string) (mapArtifacts, error) {
 
 	return mapArtifacts{
 		overview: overview,
-		index:    renderIndex(docs),
+		index:    renderIndex(repoRoot, docs),
 		graph:    graphBytes,
 	}, nil
 }
 
-func findMapDefects(docs []Document) []MapDefect {
+func findMapDefects(repoRoot string, docs []Document) []MapDefect {
 	var defects []MapDefect
 	subjects := make(map[string]struct{}, len(docs))
 	seen := make(map[string]struct{}, len(docs))
@@ -197,6 +324,23 @@ func findMapDefects(docs []Document) []MapDefect {
 		}
 		seen[doc.Subject] = struct{}{}
 		subjects[doc.Subject] = struct{}{}
+	}
+
+	for _, doc := range docs {
+		for _, target := range doc.Updates {
+			target = strings.TrimSpace(target)
+			if target == "" {
+				continue
+			}
+			if _, ok := subjects[target]; ok || repoFileExists(repoRoot, target) {
+				continue
+			}
+			defects = append(defects, MapDefect{
+				Code:    "DOCS_MAP_DANGLING_UPDATES",
+				Path:    doc.Path,
+				Message: fmt.Sprintf("updates names %q, but it is neither a document subject nor an existing repository path", target),
+			})
+		}
 	}
 
 	for _, doc := range docs {
@@ -364,7 +508,7 @@ func mermaidID(subject string) string {
 	return "n_" + id
 }
 
-func renderIndex(docs []Document) string {
+func renderIndex(repoRoot string, docs []Document) string {
 	var builder strings.Builder
 	builder.WriteString(docsMapBeginMarker + "\n")
 	builder.WriteString("# Documentation index\n\n")
@@ -380,17 +524,32 @@ func renderIndex(docs []Document) string {
 			description = doc.Subject
 		}
 		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
-			doc.Subject, doc.Path, description, freshness(doc)))
+			doc.Subject, doc.Path, description, freshness(repoRoot, doc)))
 	}
 	builder.WriteString(docsMapEndMarker + "\n")
 	return builder.String()
 }
 
-func freshness(doc Document) string {
-	if value := scalar(doc.Raw["last_verified"]); value != "" {
-		return value
+func freshness(repoRoot string, doc Document) string {
+	if value := strings.TrimSpace(doc.LastVerified); value != "" {
+		if stamp, ok := verifiedStamp(value); ok && verifiedCommitExists(repoRoot, stamp.Commit) {
+			return value
+		}
 	}
 	return "never"
+}
+
+func repoFileExists(repoRoot, target string) bool {
+	if filepath.IsAbs(target) {
+		return false
+	}
+	candidate := filepath.Join(repoRoot, filepath.FromSlash(target))
+	rel, err := filepath.Rel(repoRoot, candidate)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	info, err := os.Stat(candidate)
+	return err == nil && !info.IsDir()
 }
 
 func renderGraphJSON(docs []Document) ([]byte, error) {

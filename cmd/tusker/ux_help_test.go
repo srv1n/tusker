@@ -127,6 +127,43 @@ func TestHookCommandIsNotAdvertisedOrParsedAsSubcommand(t *testing.T) {
 	assertEqual(t, "install", args.String("_pos0"), "removed hook positional argument")
 }
 
+func TestOperatorHelpIsCommandSpecificAndInert(t *testing.T) {
+	commands := []string{
+		"wave", "wave create", "land", "brief", "dashboard", "closeout",
+		"closeout status", "gate-run", "digest", "escalate", "escalate ack",
+		"departure", "departure check",
+	}
+	for _, command := range commands {
+		output := captureStdout(t, func() {
+			if !printCommandHelp(command) {
+				t.Fatalf("%s has no command-specific help", command)
+			}
+		})
+		if !strings.Contains(output, "Usage:") || !strings.Contains(output, "tusker "+command) {
+			t.Fatalf("%s help is not command-specific:\n%s", command, output)
+		}
+		if strings.Contains(output, "Tusker - V7 repo-local work tracking") {
+			t.Fatalf("%s help fell back to global usage:\n%s", command, output)
+		}
+	}
+
+	for _, command := range commands {
+		code, err := run(command, Args{"help": "true"})
+		if code != 0 || err != nil {
+			t.Fatalf("%s --help failed: code=%d err=%v", command, code, err)
+		}
+	}
+}
+
+func TestMainHelpAdvertisesOperatorCommands(t *testing.T) {
+	output := captureStdout(t, printHelp)
+	for _, command := range []string{"digest", "escalate", "departure"} {
+		if !strings.Contains(output, "\n  "+command) {
+			t.Fatalf("main help missing %s:\n%s", command, output)
+		}
+	}
+}
+
 func TestParseCLIHandlesNoCommand(t *testing.T) {
 	for _, argv := range [][]string{
 		nil,

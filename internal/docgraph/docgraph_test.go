@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseDocHeaders(t *testing.T) {
-	content := []byte("---\nsubject: orchestration\nkeywords: [daemon, workers]\npart_of: overview\nupdates: [docs/system/00-overview.md]\nsources: [operator-notes]\n---\n\n# Orchestration\n")
+	content := []byte("---\nsubject: orchestration\nkeywords: [daemon, workers]\npart_of: overview\ndescribes: [internal/docgraph, cmd/tusker/docs_cmd.go]\nupdates: [docs/system/00-overview.md]\nsources: [operator-notes]\nlast_verified: '2026-08-01'\n---\n\n# Orchestration\n")
 	doc, err := ParseDocHeaders("docs/system/orchestration.md", content)
 	if err != nil {
 		t.Fatalf("ParseDocHeaders() error = %v", err)
@@ -18,6 +18,9 @@ func TestParseDocHeaders(t *testing.T) {
 	}
 	if strings.Join(doc.Keywords, ",") != "daemon,workers" || doc.PartOf != "overview" {
 		t.Fatalf("header connections not normalized: %#v", doc)
+	}
+	if strings.Join(doc.Describes, ",") != "internal/docgraph,cmd/tusker/docs_cmd.go" || doc.LastVerified != "2026-08-01" {
+		t.Fatalf("describes/freshness fields not parsed: %#v", doc)
 	}
 	if len(doc.Updates) != 1 || doc.Updates[0] != "docs/system/00-overview.md" || len(doc.Sources) != 1 {
 		t.Fatalf("edge fields not parsed: %#v", doc)
@@ -118,6 +121,17 @@ func TestTombstoneSuccessorRequired(t *testing.T) {
 			}
 			assertIssue(t, issues, tc.code, "docs/system/old-guide.md", tc.message)
 		})
+	}
+}
+
+func TestDocTouchIntersectsCoarsePathsAndHonorsWaivers(t *testing.T) {
+	corpus := Corpus{Documents: []Document{
+		{Path: "docs/system/graph.md", Kind: KindCanonical, Subject: "graph", Describes: []string{"internal/docgraph"}},
+		{Path: "docs/system/cli.md", Kind: KindCanonical, Subject: "cli", Describes: []string{"cmd/tusker/docs_cmd.go"}},
+	}}
+	report := CheckDocTouch(corpus, []string{"internal/docgraph/docmap.go", "cmd/tusker/docs_cmd.go"}, map[string]bool{"cli": true})
+	if len(report.Implicated) != 2 || len(report.Missing) != 1 || report.Missing[0].Subject != "graph" {
+		t.Fatalf("unexpected doc-touch report: %#v", report)
 	}
 }
 

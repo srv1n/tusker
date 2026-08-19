@@ -451,7 +451,11 @@ func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, pr
 		}
 	}
 	id := nextSafeV7TaskID(vaultPath, "BGR")
-	if err := newV7Task(Args{"vault": vaultPath, "quiet": "true", "epic": "BGR", "id": id, "title": "Repair red batch gate " + gateRunID, "risk": "medium", "priority": "p1", "status": "backlog", "by": "tusker:batch-gate"}); err != nil {
+	internalActor, actorErr := newV7InternalActor("tusker:batch-gate")
+	if actorErr != nil {
+		return actorErr
+	}
+	if err := newV7TaskWithActor(Args{"vault": vaultPath, "quiet": "true", "epic": "BGR", "id": id, "title": "Repair red batch gate " + gateRunID, "risk": "medium", "priority": "p1", "status": "backlog"}, &internalActor); err != nil {
 		return err
 	}
 	note, err := resolveNote(vaultPath, id)
@@ -489,7 +493,7 @@ func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, pr
 	if held {
 		return nil
 	}
-	return statusCmd(Args{"vault": vaultPath, "id": id, "status": "ready", "actor": "tusker:batch-gate", "reason": "unattended batch gate red"})
+	return statusV7CmdAsInternalActor(Args{"vault": vaultPath, "id": id, "status": "ready", "actor": "tusker:batch-gate", "reason": "unattended batch gate red"}, "tusker:batch-gate")
 }
 
 func promotionFailureRepairTaskID(vaultPath, identity string) string {

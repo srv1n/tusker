@@ -300,36 +300,13 @@ func TestDeparturePlannerRejectsForgedLandingAuditProvenance(t *testing.T) {
 }
 
 func TestLandingActorLabelCannotMintControlPlaneReceipt(t *testing.T) {
-	repo, vault := newLandTestRepo(t, 1, "true")
-	source := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"spoofed-actor.txt": "untrusted\n"})
-	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", source)
-	if err := landV7Cmd(Args{
+	_, vault := newLandTestRepo(t, 1, "true")
+	err := landV7Cmd(Args{
 		"vault": vault, "quiet": "true", "actor": "daemon:departure:typed-by-a-user",
 		"_pos0": "APP-T-0001",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	idx, err := loadV7Index(vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wave := idx.Waves["W-0001"]
-	saw := false
-	for _, row := range normalizeLandingAudit(wave.Data["landings"]) {
-		if stringField(row, "task") != "APP-T-0001" {
-			continue
-		}
-		saw = true
-		if stringField(row, "control_authority") != "" ||
-			stringField(row, "provenance") == v7LandingAuditProvenance {
-			t.Fatalf("an actor label minted control-plane authority: %#v", row)
-		}
-	}
-	if !saw {
-		t.Fatal("spoofed actor fixture did not land")
-	}
-	if recovered, ok := authenticatedV7LandingAuditSource(repo, "integration/W-0001", wave, "APP-T-0001", gitRevParse); ok || recovered != "" {
-		t.Fatalf("actor-label-only landing authenticated: source=%s ok=%v", recovered, ok)
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires actor kind") {
+		t.Fatalf("public daemon actor must be refused before landing, got %v", err)
 	}
 }
 

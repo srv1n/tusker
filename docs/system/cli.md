@@ -198,6 +198,7 @@ each lower number relaxes one class of guard. Only these five guards read it;
 |---|---|
 | `new task --status ready` runs the dispatchability preflight | tier ≥ 2 (tier 1 creates ready tasks with no contract/proof check) |
 | `tusker next` / `validate --dispatchable` use the full dispatch blockers | tier ≥ 2 (tier 1 checks only status ∈ trigger states and `readiness: ready`, `v7TierOneNextBlockers`) |
+| demanding ready tasks require a governing `spec_refs` link | tier ≥ 2/default requires at least one resolvable path or decision ID; tier 1 allows ready work with a `TASK_SPEC_REF_REQUIRED` warning |
 | `status <id> done` is refused in favour of `tusker close` | tier ≥ 2 (tier 1 may set `done` directly) |
 | `projects add` requires a loadable `WORKFLOW.md` | tier ≥ 2 (tier 1 registers with a warning) |
 | `runtime.serve.enabled` / `reviewer.enabled` default on | tier ≥ 4 (tiers 1–3 default both off unless the workflow sets them explicitly, `applyTuskerTierWorkflowDefaults`) |

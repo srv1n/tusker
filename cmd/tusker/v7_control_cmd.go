@@ -104,6 +104,12 @@ func gateV7Transition(args Args, status string) error {
 	if err != nil {
 		return err
 	}
+	rawActor := firstNonEmpty(args.String("by"), args.String("actor"))
+	actor, err := v7AgentDefaultActor(args, "gate "+status)
+	if err != nil {
+		return err
+	}
+	args["by"] = actor
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
@@ -132,9 +138,16 @@ func gateV7Transition(args Args, status string) error {
 	baseRev := stringField(data, "state_rev")
 	prev := stringField(data, "status")
 	now := time.Now().UTC().Format(time.RFC3339)
-	actor := fallback(args.String("by"), "agent:"+defaultActorName())
 	gateKind := strings.ToLower(stringField(data, "gate_kind"))
 	if (status == "satisfied" || status == "waived") && (gateKind == "auth" || gateKind == "release") {
+		// High-risk gate authority is a human/reviewer act. Unlike generic
+		// gate metadata, it may not fall back to an agent or accept a human
+		// namespace from a dispatched/interactive agent session.
+		actor, err = v7HumanActor(Args{"by": rawActor}, "gate "+status)
+		if err != nil {
+			return err
+		}
+		args["by"] = actor
 		idx, indexErr := loadV7Index(vaultPath)
 		if indexErr != nil {
 			return indexErr
@@ -285,10 +298,24 @@ func v7GateAuthorityReceiptCurrent(gate Note, idx v7Index) bool {
 }
 
 func statusV7Cmd(args Args) error {
+	return statusV7CmdWithInternalActor(args, nil)
+}
+
+func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
 	}
+	var actor string
+	if internal != nil {
+		actor = internal.value
+	} else {
+		actor, err = v7AgentDefaultActor(args, "task status")
+		if err != nil {
+			return err
+		}
+	}
+	args["by"] = actor
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
@@ -329,12 +356,25 @@ func statusV7Cmd(args Args) error {
 	}
 	note.Data = data
 	note.Body = body
+	if nextStatus == "ready" {
+		candidate := cloneNoteData(data)
+		candidate["status"], candidate["readiness"] = "ready", "ready"
+		if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, Note{Data: candidate, Body: body, RelativePath: note.RelativePath}, note.RelativePath); ok && tuskerTier(vaultPath) >= 2 {
+			return tuskerError(errorInvalidTransition, id+": "+finding.Message, withHint(finding.Hint))
+		}
+	}
+	if directDone {
+		// Tier 0/1 intentionally skip the full close ceremony, but the shared
+		// documentation-drift contract still applies before terminal mutation.
+		if err := v7DocTouchCheck(vaultPath, note); err != nil {
+			return err
+		}
+	}
 	if nextStatus == "review" && len(v7PacketStubAcceptanceItems(body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
 		return tuskerError(errorEvidenceGate, id+": review blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
 	}
 	baseRev := stringField(data, "state_rev")
 	prev := stringField(data, "status")
-	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
 	if nextStatus == "review" {
 		if err := requireAgentWorkSession(vaultPath, id, actor, args); err != nil {
 			return err
@@ -376,6 +416,9 @@ func statusV7Cmd(args Args) error {
 			return err
 		}
 	}
+	if directDone {
+		warnScratchReapFailed(id, reapTaskScratch(vaultPath, id))
+	}
 	affected, err := v7TaskIDsForTaskControl(vaultPath, id)
 	if err != nil {
 		return err
@@ -389,6 +432,21 @@ func closeV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	rawActor := firstNonEmpty(args.String("actor"), args.String("by"))
+	var actor string
+	if args.Bool("break-glass") {
+		actor, err = v7HumanActor(args, "close break-glass")
+	} else if strings.TrimSpace(rawActor) == "" {
+		// The historical close default is a non-human reviewer identity. It
+		// remains attributable without minting human authority.
+		actor = "reviewer:agent"
+	} else {
+		actor, err = v7ReviewerOrHumanActor(args, "close")
+	}
+	if err != nil {
+		return err
+	}
+	args["by"] = actor
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
 	}
@@ -404,7 +462,6 @@ func closeV7Cmd(args Args) error {
 	if !ok {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
-	actor := fallback(fallback(args.String("actor"), args.String("by")), "reviewer:agent")
 	preflight, err := v7ClosePreflight(vaultPath, note, idx, v7ClosePreflightRequest{
 		Args: args, Actor: actor, Action: "close", RequireReview: true, Force: args.Bool("force"), ExpectedTaskID: id,
 	})
@@ -484,13 +541,16 @@ func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string
 	return nil
 }
 
-func enforceV7AcceptanceClose(vaultPath string, task Note, idx v7Index) error {
+func enforceV7AcceptanceClose(vaultPath string, task Note, idx v7Index, allowPendingCommands bool) error {
 	if len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(task.Data)) == 0 {
 		return tuskerError(errorEvidenceGate, stringField(task.Data, "id")+": close blocked by placeholder acceptance", withHint("replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver"))
 	}
 	report := computeV7ProofReport(vaultPath, task, idx)
 	missing := append([]string{}, report.Missing...)
 	missing = append(missing, report.ModeMissing...)
+	if allowPendingCommands {
+		missing = v7PendingCommandProofGaps(task, report)
+	}
 	if len(missing) == 0 || stringField(task.Data, "proof_status") == "waived" {
 		return nil
 	}

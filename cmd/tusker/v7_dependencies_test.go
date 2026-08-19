@@ -159,7 +159,7 @@ func TestV7CloseOrderEnforced(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0002", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseOrderEnforced -count=1", "result": "pass", "note": "Dependent proof passed."}, verifyV7AddCmd)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0002", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseOrderEnforced -count=1", "result": "pass", "note": "Dependent proof passed."}, v7TestVerificationMutation)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status":       "review",
 		"proof_status": "satisfied",

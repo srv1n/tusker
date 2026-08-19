@@ -52,6 +52,31 @@ func TestWaveCreateMembership(t *testing.T) {
 	assertEqual(t, "W-0001", stringField(task3, "wave"), "added task wave back-pointer")
 }
 
+func TestWaveMembershipMutationsRejectForgedActors(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
+	vault := newWaveTestVault(t, 2)
+	for _, raw := range []string{"human:operator", "daemon:spoof", "operator"} {
+		t.Run("create/"+strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
+			t.Setenv("CODEX_THREAD_ID", "wave-session")
+			err := waveV7CreateCmd(Args{"vault": vault, "quiet": "true", "id": "W-0099", "_pos0": "forged", "_pos1": "APP-T-0001", "by": raw})
+			if err == nil {
+				t.Fatalf("wave create accepted forged actor %q", raw)
+			}
+		})
+	}
+	clearAgentSessionEnvForTest(t)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "valid", "_pos1": "APP-T-0001", "by": "agent:luna"}, waveV7CreateCmd)
+	for _, raw := range []string{"human:operator", "daemon:spoof", "operator"} {
+		t.Run("edit/"+strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
+			t.Setenv("CODEX_THREAD_ID", "wave-session")
+			err := waveV7AddCmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001", "_pos1": "APP-T-0002", "by": raw})
+			if err == nil {
+				t.Fatalf("wave membership edit accepted forged actor %q", raw)
+			}
+		})
+	}
+}
+
 func TestWaveDerivedState(t *testing.T) {
 	vault := newWaveTestVault(t, 3)
 	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "Landing batch", "_pos1": "APP-T-0001", "_pos2": "APP-T-0002"}, waveV7CreateCmd)
@@ -71,8 +96,8 @@ func TestWaveDerivedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "landed", stringField(waveData, "status"), "landed wave status")
-	assertEqual(t, "2026-07-07T02:00:00Z", stringField(waveData, "landed_at"), "landed timestamp")
+	assertEqual(t, "open", stringField(waveData, "status"), "all-done wave remains landable")
+	assertEqual(t, "", stringField(waveData, "landed_at"), "all-done wave has no landing receipt")
 
 	baseRev := stringField(waveData, "state_rev")
 	waveData["status"] = "open"
@@ -85,8 +110,8 @@ func TestWaveDerivedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "landed", stringField(waveData, "status"), "reconciled wave status")
-	assertEqual(t, "2026-07-07T02:00:00Z", stringField(waveData, "landed_at"), "reconciled landed timestamp")
+	assertEqual(t, "landed", stringField(waveData, "status"), "receipt-backed reconciled wave status")
+	assertEqual(t, "2000-01-01T00:00:00Z", stringField(waveData, "landed_at"), "durable landing receipt timestamp")
 
 	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "W-0001", "_pos1": "APP-T-0003"}, waveV7AddCmd)
 	waveData, _, err = parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", "W-0001.md"))

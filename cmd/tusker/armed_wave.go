@@ -18,6 +18,7 @@ const (
 	armedWaveMachineParked      = "machine-parked"
 	armedWaveHumanBlocked       = "human-blocked"
 	armedWaveStaleAuthorization = "stale-authorization"
+	armedWaveDisarmed           = "disarmed"
 	armedWaveDependencyWaiting  = "dependency-waiting"
 )
 
@@ -60,7 +61,13 @@ func buildArmedWaveSnapshot(vaultPath string, idx v7Index, wave Note, runs map[s
 			member.State, member.Reason = armedWaveLanded, "landed on wave integration branch"
 		case landed[id] && stringField(task.Data, "status") == "review":
 			member.State, member.Reason = armedWaveReview, "awaiting objective review and landing"
-		case stale || authState != "armed":
+		case stale:
+			member.State, member.Reason = armedWaveStaleAuthorization, "wave authorization is "+fallback(authState, "disarmed")
+		case authState == "disarmed":
+			member.State, member.Reason = armedWaveDisarmed, "wave authorization is disarmed"
+		case authState != "armed":
+			// Paused is intentionally kept on the existing stale/blocked surface;
+			// only an explicit disarmed wave gets the never-armed member state.
 			member.State, member.Reason = armedWaveStaleAuthorization, "wave authorization is "+fallback(authState, "disarmed")
 		case armedWaveTaskHumanBlocked(idx, task):
 			member.State, member.Reason = armedWaveHumanBlocked, firstNonEmpty(stringField(task.Data, "next_action"), "human action required")

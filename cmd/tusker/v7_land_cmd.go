@@ -176,7 +176,7 @@ type v7LandSummaryRow struct {
 }
 
 func landV7Cmd(args Args) error {
-	return landV7CmdWithAuthority(args, nil, "", nil)
+	return landV7CmdWithAuthority(args, nil, "", nil, nil)
 }
 
 func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) error {
@@ -187,21 +187,39 @@ func landV7CmdWithDepartureAuthority(args Args, frozenSources map[string]string,
 	if authority == nil || len(authority.private) != ed25519.PrivateKeySize {
 		return tuskerError(errorInvalidTransition, "scheduled landing refusal: daemon authority capability is unavailable")
 	}
-	return landV7CmdWithAuthority(args, frozenSources, v7LandingAuthorityDeparture, authority)
+	internal, err := newV7InternalActor(firstNonEmpty(args.String("actor"), args.String("by")))
+	if err != nil {
+		return err
+	}
+	return landV7CmdWithAuthority(args, frozenSources, v7LandingAuthorityDeparture, authority, &internal)
 }
 
 func landV7CmdAsWaveDrain(args Args) error {
 	// Wave draining is a daemon workflow label, not a signing capability.
 	// Its ordinary landing receipt may support idempotent Git staging, but it
 	// must never become scheduled-departure source authority.
-	return landV7CmdWithAuthority(args, nil, "", nil)
+	internal, err := newV7InternalActor("daemon:wave-drain")
+	if err != nil {
+		return err
+	}
+	return landV7CmdWithAuthority(args, nil, "", nil, &internal)
 }
 
-func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string, capability *v7LandingAuthority) error {
+func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string, capability *v7LandingAuthority, internal *v7InternalActor) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
 	}
+	var actor string
+	if internal != nil {
+		actor = internal.value
+	} else {
+		actor, err = v7AgentDefaultActor(args, "land")
+		if err != nil {
+			return err
+		}
+	}
+	args["by"] = actor
 	targets := landTargets(args)
 	if len(targets) == 0 {
 		return tuskerError(errorMissingArg, "Usage: tusker land <TASK-ID> [TASK-ID...] or tusker land <W-0001>")
@@ -404,6 +422,44 @@ func releaseV7LandingLock(lockPath, token string) {
 	_ = os.Remove(lockPath)
 }
 
+// refuseV7TerminalWaveLanding is the durable landing authority boundary. UI
+// projections may lag, so task and wave landing paths both fail closed here.
+// A derived status=landed is not itself a receipt: reconcile can observe that
+// every member is done before Git has moved. Only landed_at or a durable wave
+// landing audit row closes the wave.
+func refuseV7TerminalWaveLanding(waveID string, wave Note) error {
+	if v7WaveHasDurableTerminal(wave) {
+		return tuskerError(errorInvalidTransition, "landing refused: wave "+waveID+" is already landed or closed")
+	}
+	return nil
+}
+
+func v7WaveHasDurableTerminal(wave Note) bool {
+	status := strings.ToLower(strings.TrimSpace(stringField(wave.Data, "status")))
+	return status == "closed" || status == "cancelled" || status == "superseded" ||
+		strings.TrimSpace(stringField(wave.Data, "landed_at")) != "" || v7WaveHasLandingReceipt(wave)
+}
+
+func v7WaveHasLandingReceipt(wave Note) bool {
+	_, ok := v7WaveLandingReceiptAt(wave.Data["landings"])
+	return ok
+}
+
+func v7WaveLandingReceiptAt(value any) (string, bool) {
+	latest := ""
+	found := false
+	for _, row := range normalizeLandingAudit(value) {
+		if stringField(row, "task") != "wave" || !strings.EqualFold(stringField(row, "gate_result"), "pass") {
+			continue
+		}
+		found = true
+		if timestamp := strings.TrimSpace(stringField(row, "timestamp")); timestamp > latest {
+			latest = timestamp
+		}
+	}
+	return latest, found
+}
+
 func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string, capability *v7LandingAuthority) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
@@ -437,8 +493,12 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 				return tuskerError(errorInvalidTransition, v7NoWaveRefusal(taskID))
 			}
 		}
-		if _, ok := idx.Waves[waveID]; !ok {
+		wave, ok := idx.Waves[waveID]
+		if !ok {
 			return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+		}
+		if err := refuseV7TerminalWaveLanding(waveID, wave); err != nil {
+			return err
 		}
 		branch := v7TaskBranchName(taskID)
 		if len(targets) == 1 {
@@ -2253,12 +2313,19 @@ func isMergeProgressChatter(line string) bool {
 }
 
 func kickV7LandingTaskToRework(vaultPath, taskID, summary, actor string) error {
-	if err := statusV7Cmd(Args{
+	statusArgs := Args{
 		"vault": vaultPath, "quiet": "true", "local": "true",
 		"id": taskID, "status": "rework", "by": actor,
 		"reason": summary,
-	}); err != nil {
-		return err
+	}
+	var statusErr error
+	if internal, internalErr := newV7InternalActor(actor); internalErr == nil {
+		statusErr = statusV7CmdWithInternalActor(statusArgs, &internal)
+	} else {
+		statusErr = statusV7Cmd(statusArgs)
+	}
+	if statusErr != nil {
+		return statusErr
 	}
 	note, err := resolveV7Note(vaultPath, taskID, "task")
 	if err != nil {
@@ -2321,6 +2388,9 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	wave, ok := idx.Waves[waveID]
 	if !ok {
 		return tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+	}
+	if err := refuseV7TerminalWaveLanding(waveID, wave); err != nil {
+		return err
 	}
 	allowed, err := scheduledPromotionAllowsDefaultAdvance(vaultPath)
 	if err != nil {
@@ -3427,7 +3497,21 @@ func appendV7WaveLandingAudit(vaultPath, waveID string, entries []v7LandingAudit
 			landings = append(landings, row)
 			seen[key] = true
 		}
-		if len(landings) == before {
+		changed := len(landings) != before
+		if receiptAt, ok := v7WaveLandingReceiptAt(landings); ok {
+			if receiptAt == "" {
+				receiptAt = time.Now().UTC().Format(time.RFC3339)
+			}
+			if stringField(data, "status") != "landed" {
+				data["status"] = "landed"
+				changed = true
+			}
+			if stringField(data, "landed_at") != receiptAt {
+				data["landed_at"] = receiptAt
+				changed = true
+			}
+		}
+		if !changed {
 			return data, body, false, nil
 		}
 		data["landings"] = landings

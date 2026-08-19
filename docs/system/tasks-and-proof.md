@@ -75,7 +75,7 @@ alphabetically (`stringifyFrontmatter`, `cmd/tusker/frontmatter.go`).
 | `evidence_budget` | default per mode | exceeding it warns (`EVIDENCE_BUDGET_EXCEEDED`), errors under strict proof policy |
 | `dependencies` | no | `ID` or `ID:hard` / `ID:soft` |
 | `gates` | no | gate IDs; see [[gates]] |
-| `spec_refs` | no | repo-relative doc path or a decision ID |
+| `spec_refs` | no while drafting; required to resolve for a demanding ready task at tier 2–5/default (tier 1 warns) | repo-relative doc path or a V7 decision ID; at least one entry must resolve before strict ready/dispatch |
 | `domains` | no | >5 warns (`TASK_TOO_MANY_DOMAINS`) |
 | `wave` | no | must match `W-0001` |
 | `complexity` | no | `routine` `standard` `complex` `frontier` |
@@ -220,8 +220,10 @@ that parks consumers when the hard-dependency closure fails validation
 `cmd/tusker/v7_traceability.go`. `spec_refs` entries resolve as either a V7
 decision ID (`ABC-D-0001` → `work/decisions/<ID>.md`) or a repo-relative path
 (also tried under `.tusker/` for `work/` prefixes). Unresolvable refs warn
-`SPEC_REF_DANGLING`; absolute paths and `..` escapes never resolve. Refs are
-surfaced to workers as required reads in capsules and packets
+`SPEC_REF_DANGLING`; absolute paths and `..` escapes never resolve. A demanding
+task entering ready must have at least one resolvable entry at tier 2–5/default;
+tier 1 emits `TASK_SPEC_REF_REQUIRED` as a warning. Refs are surfaced to workers
+as required reads in capsules and packets
 (`v7SpecRefsCapsuleLine`, `v7SpecRefsPacketSection`).
 
 The reverse direction: any `## Work streams` section in `docs/specs/**`,

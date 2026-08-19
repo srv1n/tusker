@@ -54,6 +54,53 @@ describe("transport error normalization", () => {
 });
 
 describe("capability rotation", () => {
+  test.serial("threads the configured operator actor into human mutations", async () => {
+    const bodies: unknown[] = [];
+    globalThis.fetch = (async (input, init) => {
+      if (String(input) === "/api/capability") return jsonResponse(200, { capability: "current-token", operatorActor: "human:operator" });
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
+      return jsonResponse(200, { ok: true, reason: "accepted" });
+    }) as typeof fetch;
+    await api.runTask("APP-T-0001", "app");
+    await api.deliveryStart({ plan: "plan.yaml", confirm: "fp", planIdentity: "id" }, "app");
+    expect(bodies).toEqual([
+      { actor: "human:operator" },
+      { plan: "plan.yaml", confirm: "fp", planIdentity: "id", actor: "human:operator" },
+    ]);
+    resetServeCapabilityCache();
+  });
+
+  test.serial("threads the configured actor through every durable Serve mutation", async () => {
+    const bodies: unknown[] = [];
+    globalThis.fetch = (async (input, init) => {
+      if (String(input) === "/api/capability") return jsonResponse(200, { capability: "current-token", operatorActor: "human:operator" });
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
+      return jsonResponse(200, { ok: true, reason: "accepted" });
+    }) as typeof fetch;
+
+    await api.taskStatus("APP-T-1", { status: "rework" }, "app");
+    await api.discardTask("APP-T-1", { reason: "obsolete" }, "app");
+    await api.closeTask("APP-T-1", {}, "app");
+    await api.landTask("APP-T-1", {}, "app");
+    await api.landWave("W-1", "app");
+    await api.gateAction("APP-G-1", "satisfy", { evidence: "checked" }, "app");
+    await api.addEvidence({ taskId: "APP-T-1", kind: "automated_test", covers: "A1" }, "app");
+    await api.redrive("APP-T-1", "app");
+    await api.acknowledgeRun("APP-T-1", "app");
+
+    expect(bodies).toEqual([
+      { status: "rework", actor: "human:operator" },
+      { reason: "obsolete", actor: "human:operator" },
+      { actor: "human:operator" },
+      { actor: "human:operator" },
+      { actor: "human:operator" },
+      { evidence: "checked", actor: "human:operator" },
+      { taskId: "APP-T-1", kind: "automated_test", covers: "A1", actor: "human:operator" },
+      { actor: "human:operator" },
+      { actor: "human:operator" },
+    ]);
+  });
+
   test.serial("re-bootstraps once after a stale capability 403", async () => {
     const calls: Array<{ url: string; token: string | null }> = [];
     globalThis.fetch = (async (input, init) => {
@@ -62,7 +109,7 @@ describe("capability rotation", () => {
       calls.push({ url, token });
       if (url === "/api/capability") {
         const bootstrapCount = calls.filter((call) => call.url === url).length;
-        return jsonResponse(200, { capability: bootstrapCount === 1 ? "stale-token" : "fresh-token" });
+        return jsonResponse(200, { capability: bootstrapCount === 1 ? "stale-token" : "fresh-token", operatorActor: "human:test" });
       }
       if (token === "stale-token") {
         return jsonResponse(403, { ok: false, refused: true, reason: "refused mutation without serve capability" });
@@ -85,7 +132,7 @@ describe("capability rotation", () => {
     globalThis.fetch = (async (input, init) => {
       if (String(input) === "/api/capability") {
         bootstraps += 1;
-        return jsonResponse(200, { capability: `token-${bootstraps}` });
+        return jsonResponse(200, { capability: `token-${bootstraps}`, operatorActor: "human:test" });
       }
       mutations += 1;
       expect(new Headers(init?.headers).get("X-Tusker-Capability")).toBe(`token-${mutations}`);
@@ -109,7 +156,7 @@ describe("capability rotation", () => {
     globalThis.fetch = (async (input) => {
       if (String(input) === "/api/capability") {
         bootstraps += 1;
-        return jsonResponse(200, { capability: "current-token" });
+        return jsonResponse(200, { capability: "current-token", operatorActor: "human:test" });
       }
       mutations += 1;
       return jsonResponse(200, { ok: false, refused: true, reason: "gate is still open" });
@@ -123,7 +170,7 @@ describe("capability rotation", () => {
   test.serial("preserves typed refusal for an ordinary non-2xx action response", async () => {
     let mutations = 0;
     globalThis.fetch = (async (input) => {
-      if (String(input) === "/api/capability") return jsonResponse(200, { capability: "current-token" });
+      if (String(input) === "/api/capability") return jsonResponse(200, { capability: "current-token", operatorActor: "human:test" });
       mutations += 1;
       return jsonResponse(409, { ok: false, refused: true, reason: "run is still active" });
     }) as typeof fetch;
@@ -145,7 +192,7 @@ describe("capability rotation", () => {
       globalThis.fetch = (async (input, init) => {
         if (String(input) === "/api/capability") {
           bootstraps += 1;
-          return jsonResponse(200, { capability: bootstraps === 1 ? "stale" : "fresh" });
+          return jsonResponse(200, { capability: bootstraps === 1 ? "stale" : "fresh", operatorActor: "human:test" });
         }
         mutations += 1;
         expect(init?.method).toBe(expectedMethod);

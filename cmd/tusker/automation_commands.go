@@ -484,7 +484,7 @@ func (ctx *automationCommandContext) automationQueueIncludes(note Note) bool {
 		return true
 	}
 	wave, ok := idx.Waves[stringField(note.Data, "wave")]
-	return !ok || stringField(wave.Data, "status") != "landed"
+	return !ok || !v7WaveHasDurableTerminal(wave)
 }
 
 func automationQueueIncludes(note Note) bool {
@@ -749,7 +749,7 @@ func automationStatusArmedWaves(projects []RegisteredProject, runs []RunStatus) 
 			}
 		}
 		for _, wave := range sortedV7Waves(idx) {
-			if stringField(wave.Data, "status") == "landed" {
+			if v7WaveHasDurableTerminal(wave) {
 				continue
 			}
 			out = append(out, buildArmedWaveSnapshot(project.VaultRoot, idx, wave, projectRuns, time.Now().UTC()))

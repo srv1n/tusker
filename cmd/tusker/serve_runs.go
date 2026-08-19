@@ -398,6 +398,7 @@ type serveRedriveResult struct {
 	Refused         bool   `json:"refused"`
 	Requeued        bool   `json:"requeued"`
 	Reason          string `json:"reason"`
+	Issue           *Issue `json:"issue,omitempty"`
 	TaskID          string `json:"taskId"`
 	CanonicalStatus string `json:"canonicalStatus"`
 	LeaseState      string `json:"leaseState"`

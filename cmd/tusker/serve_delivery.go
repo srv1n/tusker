@@ -67,7 +67,9 @@ type serveDeliveryError struct {
 func serveDeliveryFailure(w http.ResponseWriter, err error) {
 	issue := serveErrorIssue(err)
 	status := http.StatusUnprocessableEntity
-	if issue.Code == errorNotFound {
+	if issue.Code == "SERVE_OPERATOR_REQUIRED" {
+		status = http.StatusPreconditionFailed
+	} else if issue.Code == errorNotFound {
 		status = http.StatusNotFound
 	} else if issue.Code == errorInvalidTransition || strings.Contains(strings.ToLower(issue.Message), "stale") || strings.Contains(strings.ToLower(issue.Message), "changed") {
 		status = http.StatusConflict
@@ -328,6 +330,11 @@ func (s *serveServer) handleDeliveryStart(w http.ResponseWriter, body serveActio
 		serveDeliveryFailure(w, err)
 		return
 	}
+	actor, err := s.serveOperatorActor(body, "serve delivery start")
+	if err != nil {
+		serveDeliveryFailure(w, err)
+		return
+	}
 	snapshot, err := s.serveDeliveryPlanSnapshot(project, body.string("plan"))
 	if err != nil {
 		serveDeliveryFailure(w, err)
@@ -345,7 +352,7 @@ func (s *serveServer) handleDeliveryStart(w http.ResponseWriter, body serveActio
 	}
 	args["plan"] = snapshot.Path
 	args["confirm"] = body.string("confirm", "planFingerprint", "plan_fingerprint")
-	args["by"] = firstNonEmpty(body.string("actor", "by"), serveOperatorActor())
+	args["by"] = actor
 	if serveDeliveryPlanPhaseHook != nil {
 		serveDeliveryPlanPhaseHook("start")
 	}

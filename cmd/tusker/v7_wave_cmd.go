@@ -10,7 +10,7 @@ import (
 
 var v7WaveGroupOrder = []string{
 	armedWaveRunnable, armedWaveRunning, armedWaveReview, armedWaveLanded,
-	armedWaveMachineParked, armedWaveHumanBlocked, armedWaveStaleAuthorization,
+	armedWaveMachineParked, armedWaveHumanBlocked, armedWaveDisarmed, armedWaveStaleAuthorization,
 	armedWaveDependencyWaiting,
 	// Retain the old empty headings for scripts parsing the pre-DAG display.
 	"done", "parked", "ready", "blocked",
@@ -38,8 +38,10 @@ func waveV7Cmd(args Args) error {
 		return waveV7ResumeCmd(shiftV7WaveArgs(args, 1))
 	case "disarm":
 		return waveV7DisarmCmd(shiftV7WaveArgs(args, 1))
+	case "refingerprint", "re-fingerprint":
+		return waveV7RefingerprintCmd(shiftV7WaveArgs(args, 1))
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show|brief|preflight|arm|pause|resume|disarm ...")
+		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show|brief|preflight|arm|pause|resume|disarm|refingerprint ...")
 	}
 }
 
@@ -81,6 +83,10 @@ func waveV7CreateCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	actor, err := v7AgentDefaultActor(args, "wave create")
+	if err != nil {
+		return err
+	}
 	id := strings.ToUpper(strings.TrimSpace(args.String("id")))
 	if id == "" {
 		id = nextV7WaveID(vaultPath)
@@ -97,7 +103,6 @@ func waveV7CreateCmd(args Args) error {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
 	data := map[string]any{
 		"schema":             "tusker.wave/v7",
 		"kind":               "wave",
@@ -207,13 +212,16 @@ func waveV7EditMembership(args Args, add bool) error {
 			return err
 		}
 	}
+	actor, err := v7AgentDefaultActor(args, "wave membership edit")
+	if err != nil {
+		return err
+	}
 	if stringSlicesEqual(current, next) {
 		if !args.Bool("quiet") {
 			fmt.Printf("%s unchanged.\n", id)
 		}
 		return nil
 	}
-	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
 	baseRev := stringField(data, "state_rev")
 	data["members"] = next
 	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
@@ -478,21 +486,24 @@ func v7DerivedWaveState(idx v7Index, wave Note) (string, string) {
 	if len(members) == 0 {
 		return "open", ""
 	}
-	landedAt := ""
 	for _, member := range members {
 		task, ok := idx.Tasks[member]
 		if !ok || stringField(task.Data, "status") != "done" {
 			return "open", ""
 		}
-		closedAt := v7TaskClosedAt(task)
-		if closedAt > landedAt {
-			landedAt = closedAt
+	}
+	if landedAt := strings.TrimSpace(stringField(wave.Data, "landed_at")); landedAt != "" {
+		return "landed", landedAt
+	}
+	if receiptAt, ok := v7WaveLandingReceiptAt(wave.Data["landings"]); ok {
+		if receiptAt == "" {
+			receiptAt = time.Now().UTC().Format(time.RFC3339)
 		}
+		return "landed", receiptAt
 	}
-	if landedAt == "" {
-		landedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	return "landed", landedAt
+	// All members being done is a precondition for landing, not proof that Git
+	// moved. Keep the wave open until the landing receipt is durable.
+	return "open", ""
 }
 
 func v7TaskClosedAt(task Note) string {

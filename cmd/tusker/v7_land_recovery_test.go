@@ -208,6 +208,74 @@ func TestLandNoWaveRefusal(t *testing.T) {
 	}
 }
 
+func TestLandRejectsTerminalOwningWave(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, landedAt string
+	}{
+		{name: "landed", status: "landed", landedAt: "2026-07-07T02:00:00Z"},
+		{name: "closed", status: "closed"},
+		{name: "stale landed timestamp", status: "open", landedAt: "2026-07-07T02:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, vault := newLandTestRepo(t, 1, "true")
+			path := filepath.Join(vault, "work", "waves", "W-0001.md")
+			data, body, err := parseFrontmatterMustRead(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data["status"] = tc.status
+			if tc.landedAt == "" {
+				delete(data, "landed_at")
+			} else {
+				data["landed_at"] = tc.landedAt
+			}
+			data["state_rev"] = v7StateRev(data, body)
+			content, err := serializeDocument(data, body, v7FrontmatterOrder["wave"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeText(path, content); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, target := range []string{"APP-T-0001", "W-0001"} {
+				err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": target})
+				if err == nil || !strings.Contains(err.Error(), "already landed or closed") {
+					t.Fatalf("%s landing must fail closed for %s wave: %v", target, tc.status, err)
+				}
+			}
+			if !gitBranchExists(repo, "integration/W-0001") {
+				t.Fatal("terminal-wave refusal must not recreate or remove the integration branch")
+			}
+		})
+	}
+}
+
+func TestLandAllowsDerivedLandedWithoutReceipt(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "true")
+	commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"derived-open.txt": "landable\n"})
+	path := filepath.Join(vault, "work", "waves", "W-0001.md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reconcile may project all-done work as status=landed before Git has
+	// produced a wave receipt. That projection must not block task landing.
+	data["status"] = "landed"
+	delete(data, "landed_at")
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["wave"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
+	}
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}); err != nil {
+		t.Fatalf("derived status without durable receipt must remain landable: %v", err)
+	}
+}
+
 // A2: a detached completed worktree with no task/<ID> branch and nothing to
 // branch from gets a refusal that prints the exact branch command before retry.
 func TestLandDetachedBranchRefusal(t *testing.T) {

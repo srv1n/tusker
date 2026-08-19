@@ -112,7 +112,9 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
       <SectionLabel className="mb-2.5">Waves</SectionLabel>
       <div className="grid grid-cols-1 gap-2">
         {waves.length === 0 && <EmptyLine text="No waves" />}
-        {waves.map((wave) => (
+        {waves.map((wave) => {
+          const terminal = Boolean(wave.landedAt) || ["closed", "cancelled", "superseded"].includes(wave.status);
+          return (
           <div id={`wave-${wave.id}`} key={wave.id} className="rounded-lg border border-line bg-raised px-3.5 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -141,18 +143,21 @@ function WavePanel({ waves, projectId }: { waves: WaveSummary[]; projectId: stri
                 {wave.authorization.action !== "none" ? <Mono className="mt-1 block text-[10px] text-warn">{wave.authorization.action}</Mono> : null}
                 <WaveBriefView brief={wave.brief} />
               </div>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => onLand(wave)}
-                disabled={landWave.isPending}
-              >
-                <GitMerge size={12} />
-                Land
-              </Button>
+              {!terminal ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => onLand(wave)}
+                  disabled={landWave.isPending}
+                >
+                  <GitMerge size={12} />
+                  Land
+                </Button>
+              ) : null}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       <ActionResultLine className="mt-2" pending={landWave.isPending} error={landWave.error} result={landWave.data} />
     </section>
@@ -362,8 +367,7 @@ function EvidenceForm({ projectId }: { projectId: string }) {
   const [covers, setCovers] = useState("A1");
   const [summary, setSummary] = useState("");
   const [kind, setKind] = useState("automated_test");
-  const [status, setStatus] = useState("accepted");
-  const [acceptedBy, setAcceptedBy] = useState("");
+  const [status, setStatus] = useState("pending_review");
   return (
     <section>
       <SectionLabel className="mb-2.5">Evidence add</SectionLabel>
@@ -377,14 +381,12 @@ function EvidenceForm({ projectId }: { projectId: string }) {
             <option value="verification_summary">verification_summary</option>
           </Select>
           <Select value={status} onChange={(e) => setStatus(e.target.value)} className="min-w-0 flex-1">
-            <option value="accepted">accepted</option>
             <option value="pending_review">pending_review</option>
           </Select>
         </div>
         <TextInput value={covers} onChange={(e) => setCovers(e.target.value)} placeholder="covers" className="w-full" />
         <TextInput value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="summary" className="w-full" />
-        <TextInput value={acceptedBy} onChange={(e) => setAcceptedBy(e.target.value)} placeholder="accepted by" className="w-full" />
-        <Button type="button" size="sm" onClick={() => add.mutate({ taskId, kind, covers, status, summary, acceptedBy })} disabled={add.isPending}>
+        <Button type="button" size="sm" onClick={() => add.mutate({ taskId, kind, covers, status, summary })} disabled={add.isPending}>
           <Upload size={12} /> Add
         </Button>
       </div>

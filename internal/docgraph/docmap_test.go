@@ -51,7 +51,7 @@ func TestMapRendersAllThreeArtifacts(t *testing.T) {
 		t.Fatalf("read index: %v", err)
 	}
 	indexText := string(index)
-	for _, want := range []string{"| Subject | File | Description | Freshness |", "cli", "2026-07-21 @ abc123", "never"} {
+	for _, want := range []string{"| Subject | File | Description | Freshness |", "cli", "never"} {
 		if !strings.Contains(indexText, want) {
 			t.Fatalf("index missing %q:\n%s", want, indexText)
 		}
@@ -139,6 +139,14 @@ func TestMapRefusesMalformedGraph(t *testing.T) {
 			},
 			code: "DOCS_MAP_CYCLE",
 		},
+		{
+			name: "dangling updates",
+			mutate: func(t *testing.T, root string) {
+				writeDoc(t, root, ".tusker/specs/bad-updates.md",
+					"---\ntitle: \"Bad updates\"\nsubject: bad-updates\npart_of: overview\nupdates: [missing-subject-or-file]\nstatus: canonical\n---\n\n# Bad updates\n")
+			},
+			code: "DOCS_MAP_DANGLING_UPDATES",
+		},
 	}
 
 	for _, tc := range cases {
@@ -175,5 +183,42 @@ func TestMapRefusesMalformedGraph(t *testing.T) {
 				t.Fatalf("graph.json written despite refusal")
 			}
 		})
+	}
+}
+
+func TestWriteDocsMapRejectsSymlinkedRootAndArtifactsBeforeWriting(t *testing.T) {
+	root := wellFormedCorpus(t)
+	symlinkRoot := filepath.Join(t.TempDir(), "repo-link")
+	if err := os.Symlink(root, symlinkRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteDocsMap(symlinkRoot); err == nil || !strings.Contains(err.Error(), "real directory") {
+		t.Fatalf("symlinked repository root accepted: %v", err)
+	}
+
+	external := filepath.Join(root, "outside.json")
+	if err := os.WriteFile(external, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	graphPath := filepath.Join(root, filepath.FromSlash(graphRelPath))
+	if err := os.Symlink(external, graphPath); err != nil {
+		t.Fatal(err)
+	}
+	overviewPath := filepath.Join(root, filepath.FromSlash(overviewRelPath))
+	overviewBefore, err := os.ReadFile(overviewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteDocsMap(root); err == nil || !strings.Contains(err.Error(), "symlinked") {
+		t.Fatalf("symlinked graph target accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(indexRelPath))); !os.IsNotExist(err) {
+		t.Fatalf("map wrote INDEX before rejecting symlink target: %v", err)
+	}
+	if overviewAfter, err := os.ReadFile(overviewPath); err != nil || string(overviewAfter) != string(overviewBefore) {
+		t.Fatalf("map changed overview before rejecting symlink target: err=%v", err)
+	}
+	if target, err := os.Readlink(graphPath); err != nil || target != external {
+		t.Fatalf("symlink target changed: target=%q err=%v", target, err)
 	}
 }

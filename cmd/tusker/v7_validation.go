@@ -30,7 +30,7 @@ var (
 		"domain":        makeSet("status"),
 		"project_skill": makeSet("status"),
 	}
-	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement", "acknowledged", "stale_bumped", "notified", "implicit_delivery_unit_created")
+	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "verification_removed", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement", "acknowledged", "stale_bumped", "notified", "implicit_delivery_unit_created", "actor_correction")
 	v7EventObjectKinds = makeSet("task", "gate", "wave", "escalation", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout")
 	v7KnowledgeKinds   = makeSet("runbook", "decision", "invariant", "interface", "glossary", "source")
 )
@@ -137,7 +137,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 		}
 	}
 	validateV7TaskProofPolicy(note, ctx, where, errors, warnings)
-	validateV7TaskReadiness(note, ctx, where, errors)
+	validateV7TaskReadiness(note, ctx, where, errors, warnings)
 	if stringField(data, "status") == "done" {
 		if policy.RequireAcceptanceProof && (stringField(data, "accepted_by") == "" || stringField(data, "accepted_at") == "") {
 			*errors = append(*errors, issue("DONE_TASK_ACCEPTANCE_MISSING", "done V7 task requires accepted_by and accepted_at", where, "", nil))
@@ -376,11 +376,18 @@ func validateV7ArtifactContract(note Note, where string, errors *[]Issue) {
 	}
 }
 
-func validateV7TaskReadiness(note Note, ctx validationContext, where string, errors *[]Issue) {
+func validateV7TaskReadiness(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
 	data := note.Data
 	id := stringField(data, "id")
 	status := stringField(data, "status")
 	readiness := stringField(data, "readiness")
+	if finding, ok := v7DemandingTaskSpecRefIssue(ctx.VaultPath, note, where); ok {
+		if tuskerTier(ctx.VaultPath) == 1 {
+			*warnings = append(*warnings, finding)
+		} else {
+			*errors = append(*errors, finding)
+		}
+	}
 	if status == "done" || status == "cancelled" || status == "superseded" {
 		if readiness != "" && readiness != status {
 			*errors = append(*errors, issue("READINESS_STALE", fmt.Sprintf("terminal task status %s requires readiness %s", status, status), where, "", nil))

@@ -1,1 +1,0 @@
-import{wt as e}from"./index-iec2cBHA.js";var t=e(`chevron-right`,[[`path`,{d:`m9 18 6-6-6-6`,key:`mthhwq`}]]);export{t};

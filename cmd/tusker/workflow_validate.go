@@ -395,9 +395,6 @@ func validateReviewerPolicy(policy ReviewerPolicy, enabledAgents []string, fileP
 	if len(policy.HumanRequiredRisks) > 0 {
 		return tuskerError(errorConfigInvalid, "legacy reviewer.human_required_risks treats risk as human authority", withPath(filePath), withHint("run `tusker migrate close-policy --write`; use explicit gates for capability, external authority, unresolved intent, or subjective acceptance"))
 	}
-	if len(policy.AutoCloseRisks) == 0 {
-		return tuskerError(errorConfigInvalid, "reviewer.auto_close_risks must list every objective risk tier", withPath(filePath))
-	}
 	seen := map[string]string{}
 	for field, values := range map[string][]string{
 		"reviewer.auto_close_risks": policy.AutoCloseRisks,
@@ -411,11 +408,6 @@ func validateReviewerPolicy(policy ReviewerPolicy, enabledAgents []string, fileP
 				return tuskerError(errorConfigInvalid, "reviewer risk "+value+" appears in both "+previous+" and "+field, withPath(filePath))
 			}
 			seen[value] = field
-		}
-	}
-	for risk := range risks {
-		if !stringListContainsFold(policy.AutoCloseRisks, risk) {
-			return tuskerError(errorConfigInvalid, "reviewer.auto_close_risks missing objective close tier "+risk, withPath(filePath), withHint("list low, medium, high, critical; explicit gates—not risk—reserve human authority"))
 		}
 	}
 	if strings.TrimSpace(policy.Prompt) == "" {

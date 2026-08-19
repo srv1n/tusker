@@ -52,8 +52,8 @@ func TestDeliveryStart(t *testing.T) {
 		_, path, confirm := newPlan(t, vault)
 		before := snapshotDeliveryRecords(t, vault)
 		_, err := deliveryStart(Args{"vault": vault, "plan": path, "confirm": confirm}, nil)
-		if err == nil || !strings.Contains(err.Error(), "--by human") {
-			t.Fatalf("missing human actor was accepted: %v", err)
+		if err == nil || errorToIssue(err).Code != errorInvalidArg {
+			t.Fatalf("missing human actor was not refused as invalid actor input: %v", err)
 		}
 		_, err = deliveryStart(Args{"vault": vault, "plan": path, "by": "human:test", "confirm": "sha256:stale"}, nil)
 		if err == nil || !strings.Contains(err.Error(), "confirmed plan fingerprint differs") {

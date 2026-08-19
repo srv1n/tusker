@@ -18,6 +18,7 @@ type waveBrief struct {
 	WaveHref     string                   `json:"waveHref"`
 	SectionOrder []string                 `json:"sectionOrder"`
 	Outcome      waveBriefOutcome         `json:"outcome"`
+	NotStarted   []waveBriefTask          `json:"notStarted"`
 	SeeIt        []waveBriefArtifact      `json:"seeIt"`
 	Landed       []waveBriefTask          `json:"landed"`
 	Rework       []waveBriefRework        `json:"reworkParked"`
@@ -169,8 +170,8 @@ func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) w
 	b := waveBrief{
 		Schema: waveBriefSchema, WaveID: waveID, Title: stringField(wave.Data, "title"),
 		WaveHref: waveDeepLink(stringField(wave.Data, "project"), waveID), SectionOrder: append([]string{}, waveBriefSectionOrder...),
-		Outcome: waveBriefOutcome{Counts: map[string]int{"implemented": 0, "proven": 0, "reviewed": 0, "landed": 0, "documented": 0, "reworkParked": 0, "humanAction": 0}, Tasks: []waveTaskState{}},
-		SeeIt:   []waveBriefArtifact{}, Landed: []waveBriefTask{}, Rework: []waveBriefRework{}, HumanAction: []waveBriefHumanAction{}, Docs: []waveBriefDocumentation{},
+		Outcome:    waveBriefOutcome{Counts: map[string]int{"implemented": 0, "proven": 0, "reviewed": 0, "landed": 0, "documented": 0, "reworkParked": 0, "humanAction": 0, "notStarted": 0, "inFlight": 0}, Tasks: []waveTaskState{}},
+		NotStarted: []waveBriefTask{}, SeeIt: []waveBriefArtifact{}, Landed: []waveBriefTask{}, Rework: []waveBriefRework{}, HumanAction: []waveBriefHumanAction{}, Docs: []waveBriefDocumentation{},
 	}
 	landing := successfulWaveLandings(wave)
 	members := normalizeList(wave.Data["members"])
@@ -180,8 +181,17 @@ func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) w
 		if !ok {
 			continue
 		}
+		run, hasRun := runs[taskID]
 		state := waveBriefState(idx, task, landing[taskID] != nil)
 		b.Outcome.Tasks = append(b.Outcome.Tasks, state)
+		started := waveTaskStarted(idx, task, run, hasRun)
+		inFlight := hasRun && isDispatchingLeaseState(run.LeaseState)
+		if !started {
+			b.Outcome.Counts["notStarted"]++
+			b.NotStarted = append(b.NotStarted, waveBriefTask{TaskID: taskID, Title: stringField(task.Data, "title"), TaskHref: taskDeepLink(stringField(task.Data, "project"), taskID)})
+		} else if inFlight {
+			b.Outcome.Counts["inFlight"]++
+		}
 		if state.Implementation == "present" {
 			b.Outcome.Counts["implemented"]++
 		}
@@ -207,7 +217,7 @@ func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) w
 		}
 		if item, ok := waveReworkItem(idx, task, state); ok {
 			b.Rework = append(b.Rework, item)
-		} else if run := runs[taskID]; armedWaveRunMachineParked(run) || (run.Infrastructure != nil && run.Infrastructure.State == runnerInfrastructureBlockedState) {
+		} else if hasRun && (armedWaveRunMachineParked(run) || (run.Infrastructure != nil && run.Infrastructure.State == runnerInfrastructureBlockedState)) {
 			b.Rework = append(b.Rework, waveBriefRework{
 				TaskID: taskID, Title: state.Title, TaskHref: state.TaskHref,
 				State: firstNonEmpty(run.LeaseState, string(LeaseStateParkedNoProgress)), Failure: firstNonEmpty(run.LastError, runnerInfrastructureBlockReason(run.Infrastructure), "attempt policy exhausted"),
@@ -232,9 +242,20 @@ func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) w
 	if b.Outcome.FullyDrained {
 		b.Outcome.Summary = fmt.Sprintf("Delivered %d of %d tasks; the wave is proven, reviewed, landed, and documented as required.", len(b.Outcome.Tasks), len(members))
 	} else {
-		b.Outcome.Summary = fmt.Sprintf("Delivered %d of %d tasks; %d parked for machine rework and %d require human action.", b.Outcome.Counts["landed"], len(members), len(b.Rework), len(b.HumanAction))
+		b.Outcome.Summary = fmt.Sprintf("Delivered %d of %d tasks; %d not started, %d in flight, %d parked for machine rework, and %d require human action.", b.Outcome.Counts["landed"], len(members), b.Outcome.Counts["notStarted"], b.Outcome.Counts["inFlight"], len(b.Rework), len(b.HumanAction))
 	}
 	return b
+}
+
+func waveTaskStarted(idx v7Index, task Note, run RunStatus, hasRun bool) bool {
+	status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
+	if status == "review" || status == "done" || status == "rework" || status == "cancelled" || status == "superseded" || waveTaskHasExecutedProof(idx, task) {
+		return true
+	}
+	if hasRun && (isDispatchingLeaseState(run.LeaseState) || run.AttemptCount > 0 || run.ActiveAttemptID != "") {
+		return true
+	}
+	return len(idx.Attempts[stringField(task.Data, "id")]) > 0
 }
 
 func waveBriefState(idx v7Index, task Note, landed bool) waveTaskState {
@@ -509,6 +530,7 @@ func sortWaveBrief(b *waveBrief) {
 		return b.SeeIt[i].EvidenceRef < b.SeeIt[j].EvidenceRef
 	})
 	sort.Slice(b.Landed, func(i, j int) bool { return b.Landed[i].TaskID < b.Landed[j].TaskID })
+	sort.Slice(b.NotStarted, func(i, j int) bool { return b.NotStarted[i].TaskID < b.NotStarted[j].TaskID })
 	sort.Slice(b.Rework, func(i, j int) bool { return b.Rework[i].TaskID < b.Rework[j].TaskID })
 	sort.Slice(b.Docs, func(i, j int) bool {
 		if b.Docs[i].TaskID != b.Docs[j].TaskID {
@@ -529,7 +551,14 @@ func renderWaveBrief(b waveBrief) string {
 		}
 		s.WriteString("\n")
 	}
-	s.WriteString("\n## See it\n\n")
+	if len(b.NotStarted) > 0 {
+		s.WriteString("## Never started\n\n")
+		for _, x := range b.NotStarted {
+			s.WriteString(fmt.Sprintf("- %s · %s\n", x.TaskID, x.Title))
+		}
+		s.WriteString("\n")
+	}
+	s.WriteString("## See it\n\n")
 	if len(b.SeeIt) == 0 {
 		s.WriteString("- None.\n")
 	} else {

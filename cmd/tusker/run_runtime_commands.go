@@ -852,8 +852,14 @@ func runsReleaseCmd(args Args) error {
 	if run.HandRun && (LeaseState(run.LeaseState) == LeaseStateClaimed || LeaseState(run.LeaseState) == LeaseStateRunning) {
 		if args.Bool("break-glass") {
 			actor := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
-			if !strings.HasPrefix(actor, "human:") || strings.TrimSpace(args.String("reason")) == "" {
+			canonical, ok := normalizeV7ProposalActor(actor)
+			if !ok || !strings.HasPrefix(canonical, "human:") || strings.TrimSpace(args.String("reason")) == "" {
 				return tuskerError(errorInvalidArg, "break-glass release requires --by human:<name> and --reason")
+			}
+			var actorErr error
+			actor, actorErr = v7HumanActor(Args{"by": canonical}, "run release break-glass")
+			if actorErr != nil {
+				return actorErr
 			}
 			if runProcessGroupAlive(*run) {
 				return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))

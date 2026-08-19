@@ -39,6 +39,25 @@ type reviewProposal struct {
 	Result    ReviewResult `json:"result"`
 }
 
+func resolveReviewResultActor(args Args, configuredReviewer string, note Note) (string, error) {
+	configuredReviewer = strings.TrimSpace(configuredReviewer)
+	rawActor := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
+	if rawActor == "" && !isV7TaskNote(note) && configuredReviewer == "agent-reviewer" {
+		// Pre-V7 review notes predate qualified actors. Preserve their implicit
+		// reviewer identity only when the caller did not supply an override.
+		return configuredReviewer, nil
+	}
+	if rawActor == "" {
+		rawActor = configuredReviewer
+	}
+	// Review authority is operation-specific: the configured reviewer actor is
+	// the only accepted identity, with the V7 default remaining reviewer:agent.
+	// Resolve it through the shared public boundary so an explicit human actor
+	// is rejected from dispatched/interactive agent sessions and all persisted
+	// forms are canonicalized before comparison.
+	return resolveV7Actor(Args{"by": rawActor}, "review result", v7ActorPolicy{AllowedKinds: map[string]bool{"agent": true, "human": true, "reviewer": true}})
+}
+
 const (
 	reviewResultMaxSummary       = 800
 	reviewResultMaxFindings      = 20
@@ -147,8 +166,8 @@ func reviewSubmitCmd(args Args) error {
 			if proofErr != nil {
 				return proofErr
 			}
-			if proof.Status != "satisfied" || len(proof.OpenGates) != 0 {
-				return tuskerError(errorInvalidTransition, "pass requires currently satisfied objective proof and gates")
+			if len(proof.OpenGates) != 0 || len(v7PendingCommandProofGaps(note, proof)) != 0 {
+				return tuskerError(errorInvalidTransition, "pass requires eligible objective proof and gates before command execution")
 			}
 		}
 	case "changes_requested":
@@ -223,12 +242,23 @@ func reviewSubmitCmd(args Args) error {
 			return tuskerError(errorInvalidTransition, "stale gate fingerprint")
 		}
 	}
-	actor := firstNonEmpty(args.String("by"), "reviewer:agent")
 	wf, wfErr := loadWorkflow(vault)
 	if wfErr != nil {
 		return wfErr
 	}
-	if actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
+	configuredReviewer := reviewerActorForNote(wf.Data.Reviewer.Actor, note)
+	actor, actorErr := resolveReviewResultActor(args, configuredReviewer, note)
+	if actorErr != nil {
+		return actorErr
+	}
+	canonicalConfigured, configuredOK := normalizeV7ProposalActor(configuredReviewer)
+	if !configuredOK {
+		// Legacy non-V7 notes use agent-reviewer. Keep their historical
+		// configured value while applying the session guard to explicit human
+		// provenance above; V7 records always have a qualified reviewer actor.
+		canonicalConfigured = strings.TrimSpace(configuredReviewer)
+	}
+	if actor != canonicalConfigured {
 		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
 	}
 	if workerAttempt != "" {
@@ -276,6 +306,26 @@ func reviewSubmitCmd(args Args) error {
 	resultSchema, workerPolicyFP, policyErr := reviewResultPolicyForRun(wf.Data, note, run)
 	if policyErr != nil {
 		return tuskerError(errorInvalidTransition, policyErr.Error())
+	}
+	if verdict == "pass" {
+		fresh, _, failures, execErr := executeV7CommandVerificationRows(vault, note, args, actor, false)
+		if execErr != nil {
+			return execErr
+		}
+		if len(failures) > 0 {
+			failure := failures[0]
+			return tuskerError(errorEvidenceGate, fmt.Sprintf("%s: review refused, command verification row %s failed: %s", id, failure.Row.CoverText, failure.Message), withContext(map[string]any{"row": failure.Row.CoverText, "check": failure.Row.Check, "first_error": failure.Message}))
+		}
+		note = fresh
+		state = stringField(note.Data, "state_rev")
+		proofFingerprint, gateFingerprint, policyErr = reviewObjectiveSnapshots(vault, note)
+		if policyErr != nil {
+			return policyErr
+		}
+		proof, proofErr := loadV7ProofReport(vault, id)
+		if proofErr != nil || proof.Status != "satisfied" || len(proof.OpenGates) != 0 {
+			return tuskerError(errorInvalidTransition, "pass requires command-verified objective proof and gates")
+		}
 	}
 	result := ReviewResult{Schema: resultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, WorkerPolicyFP: workerPolicyFP, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := normalizeReviewResult(&result); err != nil {

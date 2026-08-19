@@ -112,8 +112,9 @@ Spec: same file, locked decisions 6 and 8. Neither had a task before this audit.
 `knowledge-graph.md` sets it and names two `updates:` targets. Build the
 deterministic form: resolve each `updates:` target; a missing target is an error;
 an existing target that predates the spec with no task in the owning epic
-referencing that spec in `spec_refs` emits a warning (suggest
-`SPEC_UPDATES_UNLANDED`). Test against this repo's real spec.
+referencing that spec in `spec_refs` fails validation (`SPEC_UPDATES_UNLANDED`).
+A related doc-update task that has not landed remains a warning
+(`SPEC_UPDATES_PENDING`). Test against this repo's real spec.
 
 **KNW-T-0010 — readable-shape lint for docs.** The plain-language lint
 (`cmd/tusker/v7_plain_top_layer_lint.go`) exists but applies to tasks only.
@@ -198,14 +199,15 @@ from "may auto-close" is a real fix; confirm it against the spec before doing it
 Spec: `.tusker/specs/software-factory.md` — hard tasks are blocked from ready
 without a spec link.
 
-**State.** `validateV7SpecTraceability` (`cmd/tusker/v7_traceability.go`) warns
-only about dangling refs. An empty `spec_refs` on a p1 or high-risk task passes
-silently.
+**State.** `validateV7SpecTraceability` and the ready-transition seams share the
+`v7TaskIsDemanding` predicate. Tier 1 keeps the probationary warning when a
+demanding ready task has no governing link. The strict default and tiers 2–5
+require at least one resolvable repo-relative spec or V7 decision ID; a dangling
+ref does not satisfy that gate.
 
-**Build.** Reuse the existing `v7TaskIsDemanding` predicate (already written for
-the plain-language lint) to warn at validate and at `status ready` when a
-demanding task has empty `spec_refs`. Warning-first per the established probation
-pattern; tier 1 exempt.
+**Build.** Keep the shared requirement on `validate`, `status ready`,
+`new task --status ready`, `next`, and wave admission. `--force-ready` may not
+bypass the strict spec/decision requirement.
 
 **Owns.** `cmd/tusker/v7_traceability.go` plus the ready-transition check.
 

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,11 +35,13 @@ type Document struct {
 	Subject      string
 	Keywords     []string
 	PartOf       string
+	Describes    []string
 	Updates      []string
 	Sources      []string
 	DecidesFor   string
 	Status       string
 	SupersededBy string
+	LastVerified string
 	Raw          map[string]any
 	Body         string
 }
@@ -96,15 +99,81 @@ func ParseDocHeaders(path string, content []byte) (Document, error) {
 		Subject:      scalar(frontmatter["subject"]),
 		Keywords:     list(frontmatter["keywords"]),
 		PartOf:       scalar(frontmatter["part_of"]),
+		Describes:    list(frontmatter["describes"]),
 		Updates:      list(frontmatter["updates"]),
 		Sources:      list(frontmatter["sources"]),
 		DecidesFor:   scalar(frontmatter["decides_for"]),
 		Status:       scalar(frontmatter["status"]),
 		SupersededBy: scalar(frontmatter["superseded_by"]),
+		LastVerified: dateScalar(frontmatter["last_verified"]),
 		Raw:          frontmatter,
 		Body:         body,
 	}
 	return doc, nil
+}
+
+// DocTouchReport identifies managed documents whose declared code paths
+// intersect a change set, and the implicated documents still needing either a
+// doc edit or a close-time waiver.
+type DocTouchReport struct {
+	Implicated []Document
+	Missing    []Document
+}
+
+// CheckDocTouch applies the decision-4 path intersection. Describes entries
+// are coarse repository paths: a directory entry covers every descendant.
+func CheckDocTouch(corpus Corpus, changedPaths []string, waivers map[string]bool) DocTouchReport {
+	changed := make([]string, 0, len(changedPaths))
+	for _, path := range changedPaths {
+		path = filepath.ToSlash(filepath.Clean(path))
+		if path != "" && path != "." {
+			changed = append(changed, path)
+		}
+	}
+	var report DocTouchReport
+	for _, doc := range corpus.Documents {
+		if len(doc.Describes) == 0 || !describesChanged(doc.Describes, changed) {
+			continue
+		}
+		report.Implicated = append(report.Implicated, doc)
+		if pathChanged(doc.Path, changed) || waivers[strings.TrimSpace(doc.Subject)] || waivers[doc.Path] {
+			continue
+		}
+		report.Missing = append(report.Missing, doc)
+	}
+	sort.Slice(report.Implicated, func(i, j int) bool { return report.Implicated[i].Path < report.Implicated[j].Path })
+	sort.Slice(report.Missing, func(i, j int) bool { return report.Missing[i].Path < report.Missing[j].Path })
+	return report
+}
+
+func describesChanged(describes, changed []string) bool {
+	for _, described := range describes {
+		described = filepath.ToSlash(filepath.Clean(strings.TrimSpace(described)))
+		described = strings.TrimSuffix(described, "/**")
+		described = strings.TrimSuffix(described, "/")
+		if described == "" {
+			continue
+		}
+		if described == "." && len(changed) > 0 {
+			return true
+		}
+		for _, path := range changed {
+			if path == described || strings.HasPrefix(path, described+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pathChanged(path string, changed []string) bool {
+	path = filepath.ToSlash(filepath.Clean(path))
+	for _, current := range changed {
+		if current == path {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadRepository scans only the canonical documentation roots:
@@ -378,6 +447,13 @@ func scalar(value any) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func dateScalar(value any) string {
+	if parsed, ok := value.(time.Time); ok {
+		return parsed.Format("2006-01-02")
+	}
+	return scalar(value)
 }
 
 func list(value any) []string {

@@ -29,6 +29,7 @@ type runnerRoutePreview struct {
 	Source            string                  `json:"source,omitempty"`
 	Reason            string                  `json:"reason,omitempty"`
 	Rule              string                  `json:"rule,omitempty"`
+	Warnings          []string                `json:"warnings,omitempty"`
 	Precedence        []runnerRoutePrecedence `json:"precedence"`
 	Blockers          []string                `json:"blockers"`
 }
@@ -81,7 +82,7 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 		return preview
 	}
 	preview.SemanticRole = semanticRunnerRole(complexity, lane)
-	selected, err := resolveRunnerProfileForNote(note, wf, lane)
+	selected, err := resolveRunProfileForLane(note, wf, lane, "")
 	if err != nil {
 		preview.Blockers = append(preview.Blockers, err.Error())
 		return preview
@@ -89,6 +90,7 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 	preview.Profile, preview.ProfileDefinition = selected.Name, selected.Definition
 	preview.Harness, preview.Model, preview.Effort = selected.Definition.Harness, selected.Definition.Model, selected.Definition.Effort
 	preview.Source, preview.Reason, preview.Rule = selected.Source, selected.Reason, selected.RuleName
+	preview.Warnings = append([]string{}, selected.Warnings...)
 	preview.Precedence = []runnerRoutePrecedence{
 		{Source: "task frontmatter", Reason: "runner_profile", Selected: selected.Source == "task frontmatter"},
 		{Source: "automation.routing", Reason: "first matching routing rule", Selected: selected.Source == "automation.routing"},

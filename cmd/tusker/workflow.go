@@ -285,6 +285,10 @@ type ReviewerPolicy struct {
 	AutoCloseRisks     []string `yaml:"auto_close_risks" json:"auto_close_risks"`
 	HumanRequiredRisks []string `yaml:"human_required_risks,omitempty" json:"human_required_risks,omitempty"`
 	Prompt             string   `yaml:"prompt" json:"prompt"`
+	// FallbackWarning is runtime provenance for a reviewer runner that was
+	// configured but not enabled. It is deliberately not persisted in
+	// WORKFLOW.md; config resolution repopulates it on every load.
+	FallbackWarning string `yaml:"-" json:"fallback_warning,omitempty"`
 }
 
 type ExtensionPolicy struct {
@@ -400,7 +404,22 @@ Explicit blocking gates must be reported in the typed result; do not change gate
 }
 
 func reviewerPolicyCoversRisk(policy ReviewerPolicy, risk string) bool {
-	return reviewerMayAutoCloseRisk(policy, risk)
+	return reviewerMayReviewRisk(policy, risk)
+}
+
+// reviewerMayReviewRisk is intentionally independent from auto-close policy.
+// A reviewer can inspect any objective risk tier even when the resulting
+// verdict must stop for a separate close authority.
+func reviewerMayReviewRisk(policy ReviewerPolicy, risk string) bool {
+	if !policy.Enabled {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "low", "medium", "high", "critical":
+		return true
+	default:
+		return false
+	}
 }
 
 func reviewerMayAutoCloseRisk(policy ReviewerPolicy, risk string) bool {
@@ -665,7 +684,10 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 		wf.RunnerDenylist = runnerDenylistFromSchema(cfg.Automation.Denylist)
 	}
 	if wf.Reviewer.Enabled && !stringListContainsFold(wf.Agents.Enabled, wf.Reviewer.Runner) {
-		wf.Reviewer.Runner = wf.Agents.Default
+		configured := strings.TrimSpace(wf.Reviewer.Runner)
+		fallbackRunner := strings.TrimSpace(wf.Agents.Default)
+		wf.Reviewer.FallbackWarning = fmt.Sprintf("configured reviewer runner %q is unavailable; fell back to agents.default %q", configured, fallbackRunner)
+		wf.Reviewer.Runner = fallbackRunner
 	}
 	if resolvedConfigKeyPresent(resolved, "automation.concurrency.max_active_runs") {
 		wf.Agents.MaxConcurrentAgents = cfg.Automation.Concurrency.MaxActiveRuns

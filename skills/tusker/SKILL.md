@@ -17,6 +17,7 @@ Read exactly one guide:
 |---|---|
 | Create, update, or close tracked work | `references/TRACK.md` |
 | Answer from or write repo knowledge | `references/KNOWLEDGE.md` |
+| Read or update documentation/spec contracts | `references/SPECS.md` |
 | Run a task, resolve gates, watch runs | `references/RUN.md` |
 | Tracker diagnosis or stuck task state | `references/OPERATE.md` |
 | Existing-repo onboarding | `references/REPO_ONBOARDING.md` |

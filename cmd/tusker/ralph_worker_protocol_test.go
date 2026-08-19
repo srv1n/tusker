@@ -142,7 +142,7 @@ func TestPlanFileLifecycle(t *testing.T) {
 		t.Fatalf("expected existing plan to survive, got created=%t contents=%q", again.Created, again.Contents)
 	}
 
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestPlanFileLifecycle -count=1", "result": "pass", "note": "Plan lifecycle proof passed."}, verifyV7AddCmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestPlanFileLifecycle -count=1", "result": "pass", "note": "Plan lifecycle proof passed."}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent", "force": "true", "local": "true"}, closeV7Cmd)
 	if fileExists(plan.Path) {
 		t.Fatalf("expected close to remove plan file %s", plan.Path)

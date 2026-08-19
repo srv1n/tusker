@@ -118,6 +118,33 @@ func TestWaveBriefHonesty(t *testing.T) {
 	}
 }
 
+func TestWaveBriefSplitsNeverStartedInFlightAndParked(t *testing.T) {
+	idx, wave := briefFixture()
+	backlog := briefTask("APP-T-0002", "backlog", "pending")
+	inFlight := briefTask("APP-T-0003", "ready", "pending")
+	rework := briefTask("APP-T-0004", "rework", "partial")
+	rework.Data["next_action"] = "Fix the failed review."
+	idx.Tasks["APP-T-0002"] = backlog
+	idx.Tasks["APP-T-0003"] = inFlight
+	idx.Tasks["APP-T-0004"] = rework
+	wave.Data["members"] = []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004"}
+	brief := buildWaveBriefWithRuns(idx, wave, map[string]RunStatus{
+		"APP-T-0003": {ItemID: "APP-T-0003", LeaseState: string(LeaseStateClaimed)},
+	})
+	if brief.Outcome.Counts["notStarted"] != 1 || brief.Outcome.Counts["inFlight"] != 1 || brief.Outcome.Counts["reworkParked"] != 1 {
+		t.Fatalf("wave outcome categories collapsed: %#v", brief.Outcome.Counts)
+	}
+	if len(brief.NotStarted) != 1 || brief.NotStarted[0].TaskID != "APP-T-0002" {
+		t.Fatalf("never-started heading missing backlog member: %#v", brief.NotStarted)
+	}
+	if len(brief.Rework) != 1 || brief.Rework[0].TaskID != "APP-T-0004" {
+		t.Fatalf("backlog was incorrectly reported as rework: %#v", brief.Rework)
+	}
+	if text := renderWaveBrief(brief); !strings.Contains(text, "## Never started") || !strings.Contains(text, "APP-T-0002") {
+		t.Fatalf("rendered brief omitted never-started section:\n%s", text)
+	}
+}
+
 func TestWaveBriefDoesNotDrainBeforeContractedArtifactIsVisible(t *testing.T) {
 	idx, wave := briefFixture()
 	delete(idx.Evidence, "APP-T-0001")

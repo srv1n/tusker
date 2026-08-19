@@ -65,7 +65,12 @@ loopback `Host`, same-origin `Origin`/`Referer` when present,
 Failure is `403` with `{ok:false,refused:true,reason:...}`. `GET
 /api/capability` hands that token to any same-origin reader — this is CSRF
 defense, **not authentication**; any local process that can reach the port owns
-the control plane.
+the control plane. Human mutations also require an explicit qualified operator
+actor. Configure standalone Serve with `--by human:<name>`, or set
+`TUSKER_SERVE_OPERATOR=human:<name>` for daemon-hosted Serve; the capability
+bootstrap returns that actor and the SPA includes it on run and
+delivery-start requests. There is no `$USER` fallback. Interactive
+Codex/Claude and dispatched Tusker sessions cannot use that human actor.
 
 Admission control: 128 slots for normal requests, a separate 32 for
 `/api/stream` so idle SSE cannot starve reads; over budget returns `503`.
@@ -93,7 +98,7 @@ vault/repo equals the server's, else synthesizes one).
 
 | Method + path | Handler (file) | Notes |
 | --- | --- | --- |
-| `GET /api/capability` | `serve_command.go` | mutation token, `no-store` |
+| `GET /api/capability` | `serve_command.go` | mutation token + configured operator actor, `no-store` |
 | `GET /api/capabilities` | `serve_capabilities.go` | compatibility registry |
 | `GET /api/stream` | `serve_stream.go` | SSE; `?project=` filter |
 | `GET /api/daemon` | `serve_command.go` | `serveDaemonStatus` projection |

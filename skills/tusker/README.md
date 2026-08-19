@@ -10,6 +10,7 @@ The primary routes are deliberately terminal:
 
 - `references/TRACK.md` — task creation, lifecycle, proof, and gates;
 - `references/KNOWLEDGE.md` — repo knowledge reads and writes;
+- `references/SPECS.md` — documentation and spec authoring contracts;
 - `references/RUN.md` — deliberate runs, gates, and run watching;
 - `references/OPERATE.md` — read-only tracker diagnosis.
 

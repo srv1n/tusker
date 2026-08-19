@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -105,6 +103,7 @@ type serveDocgraphSaveRequest struct {
 	BaseRev string          `json:"base_rev"`
 	Body    *string         `json:"body"`
 	Header  json.RawMessage `json:"header"`
+	Actor   string          `json:"actor,omitempty"`
 }
 
 // serveDocgraphSaveResponse is the GET detail shape plus warnings (never null).
@@ -334,6 +333,11 @@ func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Reque
 		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
+	if _, actorErr := s.serveOperatorActor(serveActionBody{"actor": req.Actor}, "serve docgraph save"); actorErr != nil {
+		status, result := serveOperatorActorResult("docgraph save", actorErr)
+		serveJSON(w, status, result)
+		return
+	}
 	baseRev := strings.TrimSpace(req.BaseRev)
 	if baseRev == "" {
 		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "base_rev is required"})
@@ -363,9 +367,7 @@ func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	relPath := corpus.Documents[targetIndex].Path
-	fullPath := filepath.Join(project.RepoRoot, filepath.FromSlash(relPath))
-
-	original, err := os.ReadFile(fullPath)
+	original, err := docgraph.ReadDocumentFile(project.RepoRoot, relPath)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -449,7 +451,7 @@ func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := serveDocgraphAtomicWrite(fullPath, []byte(newContent)); err != nil {
+	if err := serveDocgraphAtomicWrite(project.RepoRoot, relPath, []byte(newContent)); err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -541,35 +543,12 @@ func serveDocgraphNewDefects(base, edited []docgraph.Issue) []serveDocgraphIssue
 // serveDocgraphAtomicWrite writes content to a temp file in the same directory
 // and renames it into place, so a failed or partial write never corrupts the
 // document.
-func serveDocgraphAtomicWrite(fullPath string, content []byte) error {
-	dir := filepath.Dir(fullPath)
-	tmp, err := os.CreateTemp(dir, ".docsave-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(content); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, fullPath); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return nil
+func serveDocgraphAtomicWrite(repoRoot, relPath string, content []byte) error {
+	return docgraph.WriteDocumentFile(repoRoot, relPath, content)
 }
 
 func serveDocgraphFileRev(repoRoot, relPath string) string {
-	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(relPath)))
+	raw, err := docgraph.ReadDocumentFile(repoRoot, relPath)
 	if err != nil {
 		return ""
 	}

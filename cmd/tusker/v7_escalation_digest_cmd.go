@@ -997,7 +997,19 @@ func escalationNextSeverity(severity string) string {
 }
 
 func digestSinceFromArgs(args Args) (time.Time, string, error) {
+	if args.Bool("all") {
+		if strings.TrimSpace(args.String("since")) != "" {
+			return time.Time{}, "", tuskerError(errorInvalidArg, "digest --all cannot be combined with --since")
+		}
+		// A non-empty override prevents the persisted watermark from narrowing
+		// an explicit all-time request.
+		return time.Time{}, "all", nil
+	}
 	raw := strings.TrimSpace(args.String("since"))
+	if raw == "" {
+		since := time.Now().UTC().Add(-24 * time.Hour)
+		return since, since.Format(time.RFC3339), nil
+	}
 	return digestSinceFromQuery(raw)
 }
 

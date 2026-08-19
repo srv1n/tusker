@@ -28,7 +28,21 @@ func newServeDeliveryFixture(t *testing.T) (*serveServer, string) {
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)
 	}
-	return newServeServer(vault, repo, defaultServeAddr, store, nil), repo
+	server := newServeServer(vault, repo, defaultServeAddr, store, nil)
+	server.operatorActor = "human:test"
+	return server, repo
+}
+
+func TestServeDeliveryStartRequiresConfiguredOperator(t *testing.T) {
+	server, _ := newServeDeliveryFixture(t)
+	server.operatorActor = ""
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/delivery/start?project=delivery", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("missing Serve operator status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func beginServeDeliveryMutationTracking(t *testing.T) func() []string {

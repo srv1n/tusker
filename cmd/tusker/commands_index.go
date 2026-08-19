@@ -876,6 +876,16 @@ func validateCmd(args Args) (int, error) {
 	for _, current := range docGraphIssues {
 		errs = append(errs, issue(current.Code, current.Message, current.Path, "", nil))
 	}
+	if docOpeningIssues, err := validateCanonicalDocOpenings(v7RepoRoot(vaultPath)); err != nil {
+		return 0, err
+	} else {
+		warns = append(warns, docOpeningIssues...)
+	}
+	if specUpdateIssues, err := validateLockedSpecUpdates(v7RepoRoot(vaultPath), vaultPath, notes); err != nil {
+		return 0, err
+	} else {
+		classifyLockedSpecUpdateIssues(specUpdateIssues, &errs, &warns)
+	}
 	errs = append(errs, validateDocsMapConfig(docsMap)...)
 	if hasV6Index {
 		v6Errs, v6Warns := validateV6Vault(vaultPath, v6Index)
@@ -999,6 +1009,20 @@ func validateCmd(args Args) (int, error) {
 		fmt.Printf("Validation passed for %d notes and %d events.\n", len(notes), eventCount)
 	}
 	return 0, nil
+}
+
+func classifyLockedSpecUpdateIssues(issues []Issue, errs, warns *[]Issue) {
+	for _, current := range issues {
+		if current.Code == "SPEC_UPDATES_PENDING" {
+			// A linked doc-update task is an explicit plan, so keep the
+			// unfinished work visible without failing the whole validation.
+			*warns = append(*warns, current)
+			continue
+		}
+		// A missing target or an unlanded target without a linked task
+		// violates the locked contract; validation must fail closed.
+		*errs = append(*errs, current)
+	}
 }
 
 func validationIDCollisionKey(note Note) string {

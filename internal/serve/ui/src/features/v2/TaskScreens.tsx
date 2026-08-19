@@ -1,9 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid, List, ShieldCheck } from "lucide-react";
 import { QueryBoundary } from "@/components/ui/states";
-import { useRun, useRuns, useTask, useTasks } from "@/lib/queries";
-import { projectLiveExecution } from "@/features/work/work-utils";
+import { useConfirm } from "@/components/ui/action-feedback";
+import { api } from "@/lib/api";
+import { useReviewBatch, useRun, useRuns, useTask, useTasks } from "@/lib/queries";
+import { isBatchSelectable, projectLiveExecution } from "@/features/work/work-utils";
+import { BatchBar, type BatchAction, type BatchItemResult, type BatchProgress, WaveReviewGroups } from "@/features/work/WaveReview";
 import type { TaskCapsule } from "@/types/domain";
 import {
   phaseTone,
@@ -69,8 +73,21 @@ export function TasksV2() {
   const { projectId } = useParams({ strict: false }) as { projectId: string };
   const tasks = useTasks(projectId);
   const runs = useRuns(projectId);
+  const reviewBatch = useReviewBatch(projectId);
+  const qc = useQueryClient();
+  const confirm = useConfirm();
   const [view, setView] = useState<"board" | "list">("board");
   const [epic, setEpic] = useState("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [progress, setProgress] = useState<BatchProgress | null>(null);
+  const [results, setResults] = useState<{ action: BatchAction; items: BatchItemResult[] } | null>(null);
+  const running = progress !== null;
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setResults(null);
+  }, [projectId]);
+
   // Runtime ownership is projected into the board from fresh leases. It is
   // intentionally not written back as a durable task lifecycle transition.
   const all = useMemo(
@@ -79,6 +96,35 @@ export function TasksV2() {
   );
   const epics = useMemo(() => [...new Set(all.map((task) => task.epicId))].sort(), [all]);
   const filtered = epic === "all" ? all : all.filter((task) => task.epicId === epic);
+  const selectedTasks = [...selectedIds]
+    .map((id) => all.find((task) => task.id === id))
+    .filter((task): task is TaskCapsule => task !== undefined && isBatchSelectable(task));
+  const activeIds = selectedTasks.map((task) => task.id);
+  const closeIds = selectedTasks.filter((task) => task.status === "review").map((task) => task.id);
+  const landIds = selectedTasks.filter((task) => task.status === "done").map((task) => task.id);
+
+  const runBatch = async (action: BatchAction, ids: string[]) => {
+    setResults(null);
+    setProgress({ action, done: 0, total: ids.length });
+    const items: BatchItemResult[] = [];
+    for (const id of ids) {
+      try {
+        const res = action === "close"
+          ? await api.closeTask(id, {}, projectId)
+          : await api.landTask(id, {}, projectId);
+        items.push({ taskId: id, ok: res.ok && !res.refused, reason: res.reason });
+      } catch (err) {
+        items.push({ taskId: id, ok: false, reason: err instanceof Error ? err.message : "request failed" });
+      }
+      setProgress({ action, done: items.length, total: ids.length });
+    }
+    for (const key of ["projects", "needs", "tasks", "runs", "waves", "review", "gates", "evidence", "decisions", "feedback", "daemon"]) {
+      void qc.invalidateQueries({ queryKey: [key] });
+    }
+    setSelectedIds(new Set());
+    setProgress(null);
+    setResults({ action, items });
+  };
 
   return (
     <V2Page
@@ -113,6 +159,16 @@ export function TasksV2() {
         ))}
         <span className="ml-auto font-mono text-[10px] text-faint">{filtered.length} tasks</span>
       </div>
+
+      <QueryBoundary q={reviewBatch} loading={null}>
+        {(batch) => (
+          <WaveReviewGroups
+            batch={batch}
+            disabled={running || tasks.isLoading || runs.isLoading}
+            onSelectWave={(wave) => setSelectedIds(new Set(wave.members.filter(isBatchSelectable).map((task) => task.id)))}
+          />
+        )}
+      </QueryBoundary>
 
       <QueryBoundary q={tasks} loading={<V2Loading rows={5} />}>
         {() => <QueryBoundary q={runs} loading={<V2Loading rows={5} />}>
@@ -163,6 +219,18 @@ export function TasksV2() {
           }
         </QueryBoundary>}
       </QueryBoundary>
+      <BatchBar
+        activeIds={activeIds}
+        closeIds={closeIds}
+        landIds={landIds}
+        progress={progress}
+        results={results}
+        disabled={running}
+        confirm={confirm}
+        onRun={runBatch}
+        onClearSelection={() => setSelectedIds(new Set())}
+        onDismissResults={() => setResults(null)}
+      />
     </V2Page>
   );
 }

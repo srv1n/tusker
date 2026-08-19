@@ -314,6 +314,27 @@ func TestDocSaveWritesFile(t *testing.T) {
 	}
 }
 
+func TestDocSaveRejectsSymlinkedDocumentPath(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "docs", "system"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "doc.md")
+	if err := os.WriteFile(external, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Join(repoRoot, "docs", "system", "doc.md")
+	if err := os.Symlink(external, leaf); err != nil {
+		t.Fatal(err)
+	}
+	if err := serveDocgraphAtomicWrite(repoRoot, "docs/system/doc.md", []byte("changed\n")); err == nil {
+		t.Fatal("atomic document save followed a symlinked leaf")
+	}
+	if got, err := os.ReadFile(external); err != nil || string(got) != "outside\n" {
+		t.Fatalf("external document changed: %q (%v)", got, err)
+	}
+}
+
 func TestDocSaveRefusesHeaderDefects(t *testing.T) {
 	server := newServeFixture(t)
 	seedDocgraphCorpus(t, server.repoRoot)

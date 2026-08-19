@@ -208,9 +208,10 @@ const deliveryRoute = createRoute({
 const opsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "ops",
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/p/$projectId/diagnostics", params: { projectId: params.projectId } });
-  },
+  component: lazyRouteComponent(
+    () => import("@/features/ops/ProjectOps"),
+    "ProjectOps",
+  ),
 });
 
 const docsRoute = createRoute({

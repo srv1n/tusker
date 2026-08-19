@@ -117,11 +117,12 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	if source != nil && source.Verify == nil {
 		return deliveryStartResult{}, tuskerError(errorInvalidTransition, "bound delivery plan snapshot has no path identity verifier")
 	}
-	if err := ensureV7ControlMutation(vault, args); err != nil {
-		return deliveryStartResult{}, err
-	}
 	actor, err := deliveryStartActor(args)
 	if err != nil {
+		return deliveryStartResult{}, err
+	}
+	args["by"] = actor
+	if err := ensureV7ControlMutation(vault, args); err != nil {
 		return deliveryStartResult{}, err
 	}
 	path, confirmed, plan, raw, err := deliveryStartPlanInput(vault, args, source)
@@ -472,9 +473,9 @@ func publishDeliveryStartMutation(vault string, authority *deliveryStartAuthorit
 }
 
 func deliveryStartActor(args Args) (string, error) {
-	actor := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
-	if !strings.HasPrefix(actor, "human:") || strings.TrimSpace(strings.TrimPrefix(actor, "human:")) == "" {
-		return "", tuskerError(errorInvalidArg, "delivery start requires an attributable --by human:<name> actor")
+	actor, err := v7HumanActor(args, "delivery start")
+	if err != nil {
+		return "", tuskerError(errorInvalidArg, err.Error())
 	}
 	return actor, nil
 }

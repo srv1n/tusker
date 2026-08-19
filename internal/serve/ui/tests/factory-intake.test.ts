@@ -27,7 +27,8 @@ test("delivery surface keeps a narrow layout and renders the canonical state mat
   expect(source).toContain("Delivery ${phase} is invalid");
   expect(source).toContain('title={startResult.replayed ? "Already started" : "Delivery started"}');
   expect(api).toContain('deliveryRequest("GET", withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId))');
-  expect(api).toContain('deliveryRequest("POST", withProject("/delivery/start", projectId), body)');
+  expect(api).toContain('deliveryRequest("POST", withProject("/delivery/start", projectId), { ...body, actor })');
+  expect(api).toContain('Serve operator identity is not configured');
 });
 
 test("review keeps canonical relationships, links resolvable records, and clears cross-plan Start state", () => {

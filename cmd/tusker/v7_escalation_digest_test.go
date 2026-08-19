@@ -238,7 +238,7 @@ func TestDigestRender(t *testing.T) {
 
 	var cmdErr error
 	output := captureStdout(t, func() {
-		cmdErr = digestCmd(Args{"vault": vault})
+		cmdErr = digestCmd(Args{"vault": vault, "all": "true"})
 	})
 	if cmdErr != nil {
 		t.Fatal(cmdErr)
@@ -270,6 +270,32 @@ func TestDigestRender(t *testing.T) {
 	}
 	if len(digest.Landed) != 1 || digest.Landed[0].ID != "W-0001" {
 		t.Fatalf("--since should include only the wave landed after override, got %#v", digest.Landed)
+	}
+}
+
+func TestDigestSinceDefaultsToLastDayAndSupportsExplicitAll(t *testing.T) {
+	before := time.Now().UTC().Add(-24 * time.Hour)
+	since, override, err := digestSinceFromArgs(Args{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(-24 * time.Hour)
+	if since.Before(before.Add(-time.Second)) || since.After(after.Add(time.Second)) {
+		t.Fatalf("default digest window is not the last 24 hours: %s", since)
+	}
+	if override != since.Format(time.RFC3339) {
+		t.Fatalf("default digest override = %q, want %q", override, since.Format(time.RFC3339))
+	}
+
+	allSince, allOverride, err := digestSinceFromArgs(Args{"all": "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allSince.IsZero() || allOverride != "all" {
+		t.Fatalf("--all window = %s/%q, want zero/all", allSince, allOverride)
+	}
+	if _, _, err := digestSinceFromArgs(Args{"all": "true", "since": "2026-07-01"}); err == nil {
+		t.Fatal("expected --all and --since conflict")
 	}
 }
 

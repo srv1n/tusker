@@ -2602,7 +2602,7 @@ func recordCompletionTestProof(t *testing.T, vault, taskID string) {
 		"A1|go test ./cmd/tusker -run '^TestDeterministicReviewCompletion$' -count=1|pass|Focused completion proof passed.",
 		"A1|go test ./cmd/tusker -count=1|pass|Broad command proof passed.",
 	}, "\n")
-	if err := verifyV7AddCmd(Args{
+	if err := v7TestVerificationMutation(Args{
 		"vault": vault, "quiet": "true", "id": taskID, "rows": rows, "by": "agent:test",
 	}); err != nil {
 		t.Fatal(err)

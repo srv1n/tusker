@@ -170,9 +170,9 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 	case len(parts) == 3 && parts[1] == "setup" && (parts[2] == "doctor" || parts[2] == "repair"):
 		s.handleSetupDoctorAction(w, body, parts[2] == "repair")
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
-		s.handleRunRedrive(w, r, parts[2])
+		s.handleRunRedrive(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "acknowledge":
-		s.handleRunAcknowledge(w, r, parts[2])
+		s.handleRunAcknowledge(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
 		s.handleTaskStatusAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "run":
@@ -208,6 +208,15 @@ func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID strin
 	_, project, err := serveBaseArgsForBody(s, body)
 	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
+		return
+	}
+	actor, err := s.serveOperatorActor(body, "serve task run")
+	if err != nil {
+		status := http.StatusOK
+		if serveErrorIssue(err).Code == "SERVE_OPERATOR_REQUIRED" {
+			status = http.StatusPreconditionFailed
+		}
+		serveJSON(w, status, serveCommandResult("tusker task run", "", err))
 		return
 	}
 	snap, err := s.loadSnapshotForProject(project.ProjectID)
@@ -250,7 +259,7 @@ func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID strin
 		return
 	}
 	now := time.Now().UTC()
-	directive := RunDirective{ProjectID: project.ProjectID, RecordID: trackerRecordID(note), Actor: serveOperatorActor(), CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(10 * time.Minute).Format(time.RFC3339), State: "queued"}
+	directive := RunDirective{ProjectID: project.ProjectID, RecordID: trackerRecordID(note), Actor: actor, CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(10 * time.Minute).Format(time.RFC3339), State: "queued"}
 	queued, err := s.store.QueueRunDirective(directive)
 	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
@@ -273,12 +282,29 @@ func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID strin
 	serveJSON(w, http.StatusOK, serveActionResult{OK: true, Reason: "queued for daemon dispatch", Command: "tusker task run"})
 }
 
-func serveOperatorActor() string {
-	name := strings.TrimSpace(firstNonEmpty(os.Getenv("USER"), os.Getenv("LOGNAME"), defaultActorName()))
-	if strings.HasPrefix(name, "human:") {
-		return name
+func (s *serveServer) serveOperatorActor(body serveActionBody, operation string) (string, error) {
+	// Serve is an HTTP boundary. The capability-authenticated local UI uses the
+	// server's explicitly configured operator actor. A request actor, when
+	// present, must normalize to that same identity; it cannot forge a second
+	// human. Neither path consults USER/LOGNAME.
+	configured := strings.TrimSpace(s.operatorActor)
+	if configured == "" {
+		return "", tuskerError("SERVE_OPERATOR_REQUIRED", operation+" requires an explicitly configured human operator actor", withHint("start Serve with --by human:<name> or set TUSKER_SERVE_OPERATOR=human:<name>"))
 	}
-	return "human:" + name
+	actor, err := v7HumanActor(Args{"by": configured}, operation)
+	if err != nil {
+		return "", err
+	}
+	if raw := body.string("actor", "by"); raw != "" {
+		requested, requestErr := v7HumanActor(Args{"by": raw}, operation)
+		if requestErr != nil {
+			return "", requestErr
+		}
+		if requested != actor {
+			return "", tuskerError(errorInvalidTransition, operation+" actor does not match the configured Serve operator", withContext(map[string]any{"configured_actor": actor, "requested_actor": requested}))
+		}
+	}
+	return actor, nil
 }
 
 func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body serveActionBody) {
@@ -511,16 +537,16 @@ func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID strin
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker status", "", projectErr))
 		return
 	}
+	actor, actorErr := s.serveOperatorActor(body, "serve status")
+	if actorErr != nil {
+		statusCode, result := serveOperatorActorResult("tusker status", actorErr)
+		serveJSON(w, statusCode, result)
+		return
+	}
 	args["id"] = strings.ToUpper(strings.TrimSpace(taskID))
 	args["status"] = status
 	args["reason"] = firstNonEmpty(body.string("reason"), "operator action from serve")
-	if actor := body.string("actor", "by"); actor != "" {
-		args["by"] = actor
-	} else if status == "rework" {
-		if action := s.humanActionForTask(project.ProjectID, args["id"]); action != nil {
-			args["by"] = s.humanActionOwner(project.ProjectID, action.GateID)
-		}
-	}
+	args["by"] = actor
 	if body.bool("force") {
 		args["force"] = "true"
 	}
@@ -551,11 +577,15 @@ func (s *serveServer) handleTaskDiscardAction(w http.ResponseWriter, taskID stri
 		})
 		return
 	}
+	actor, actorErr := s.serveOperatorActor(body, "serve discard")
+	if actorErr != nil {
+		statusCode, result := serveOperatorActorResult("tusker discard", actorErr)
+		serveJSON(w, statusCode, result)
+		return
+	}
 	args["reason"] = body.string("reason")
 	args["dependents"] = body.string("dependents")
-	if actor := body.string("actor", "by"); actor != "" {
-		args["by"] = actor
-	}
+	args["by"] = actor
 	output, err := serveInvokeCommand(args, discardV7Cmd)
 	result := serveCommandResult("tusker discard "+args["id"], output, err)
 	result.TaskID = args["id"]
@@ -587,12 +617,15 @@ func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker close", "", projectErr))
 		return
 	}
+	actor, actorErr := s.serveOperatorActor(body, "serve close")
+	if actorErr != nil {
+		status, result := serveOperatorActorResult("tusker close", actorErr)
+		serveJSON(w, status, result)
+		return
+	}
 	args["id"] = strings.ToUpper(strings.TrimSpace(taskID))
 	args["reason"] = firstNonEmpty(body.string("reason"), "accepted from serve")
-	actor := body.string("actor", "by", "acceptedBy", "accepted_by")
-	if actor != "" {
-		args["by"] = actor
-	}
+	args["by"] = actor
 	if body.bool("force") {
 		args["force"] = "true"
 	}
@@ -611,7 +644,14 @@ func (s *serveServer) handleLandAction(w http.ResponseWriter, target string, bod
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker land", "", projectErr))
 		return
 	}
+	actor, actorErr := s.serveOperatorActor(body, "serve land")
+	if actorErr != nil {
+		status, result := serveOperatorActorResult("tusker land", actorErr)
+		serveJSON(w, status, result)
+		return
+	}
 	args["_pos0"] = target
+	args["by"] = actor
 	if from := body.string("from", "branch", "source"); from != "" {
 		args["from"] = from
 	}
@@ -634,8 +674,15 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker gate", "", projectErr))
 		return
 	}
+	actor, actorErr := s.serveOperatorActor(body, "serve gate "+action)
+	if actorErr != nil {
+		status, result := serveOperatorActorResult("tusker gate", actorErr)
+		serveJSON(w, status, result)
+		return
+	}
 	args["_pos0"] = action
 	args["id"] = strings.ToUpper(strings.TrimSpace(gateID))
+	args["by"] = actor
 	if reason := body.string("reason"); reason != "" {
 		args["reason"] = reason
 	}
@@ -644,13 +691,6 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 	}
 	if refs := body.csv("evidenceRefs", "evidence_refs", "evidence-refs", "evidenceRef", "evidence_ref"); refs != "" {
 		args["evidence-refs"] = refs
-	}
-	if actor := body.string("actor", "by"); actor != "" {
-		args["by"] = actor
-	} else if owner := s.humanActionOwner(project.ProjectID, args["id"]); owner != "" {
-		// Completing an owner action must be recorded as that human owner, not
-		// silently attributed to the default agent actor.
-		args["by"] = owner
 	}
 	if body.bool("force") {
 		args["force"] = "true"
@@ -695,7 +735,14 @@ func (s *serveServer) handleEvidenceAddAction(w http.ResponseWriter, body serveA
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker evidence add", "", projectErr))
 		return
 	}
+	actor, actorErr := s.serveOperatorActor(body, "serve evidence add")
+	if actorErr != nil {
+		status, result := serveOperatorActorResult("tusker evidence add", actorErr)
+		serveJSON(w, status, result)
+		return
+	}
 	args["id"] = taskID
+	args["by"] = actor
 	for _, pair := range []struct{ arg, key string }{
 		{"kind", "kind"},
 		{"summary", "summary"},
@@ -705,10 +752,6 @@ func (s *serveServer) handleEvidenceAddAction(w http.ResponseWriter, body serveA
 		{"external-url", "externalUrl"},
 		{"external-url", "external_url"},
 		{"status", "status"},
-		{"accepted-by", "acceptedBy"},
-		{"accepted-by", "accepted_by"},
-		{"checked-by", "checkedBy"},
-		{"checked-by", "checked_by"},
 		{"redaction-note", "redactionNote"},
 		{"redaction-note", "redaction_note"},
 		{"evidence-id", "evidenceId"},
@@ -741,6 +784,16 @@ func (s *serveServer) handleEvidenceAddAction(w http.ResponseWriter, body serveA
 	}
 	s.decorateTaskActionResultForProject(&result, taskID, project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
+}
+
+// serveOperatorActorResult keeps all high-risk Serve mutations fail-closed
+// when Serve was started without explicit human operator provenance.
+func serveOperatorActorResult(command string, err error) (status int, result serveActionResult) {
+	status = http.StatusOK
+	if serveErrorIssue(err).Code == "SERVE_OPERATOR_REQUIRED" {
+		status = http.StatusPreconditionFailed
+	}
+	return status, serveCommandResult(command, "", err)
 }
 
 func (s *serveServer) handleFeedbackAddAction(w http.ResponseWriter, body serveActionBody) {
@@ -1304,7 +1357,14 @@ const serveAcknowledgeReason = "acknowledged from serve UI"
 // `tusker runs retire`. It refuses (409) while the run is still executing or
 // holding a live lease, so an operator can never acknowledge away a run that is
 // still doing work; the caller must interrupt it first.
-func (s *serveServer) handleRunAcknowledge(w http.ResponseWriter, r *http.Request, taskID string) {
+func (s *serveServer) handleRunAcknowledge(w http.ResponseWriter, r *http.Request, taskID string, body serveActionBody) {
+	actor, actorErr := s.serveOperatorActor(body, "serve run acknowledge")
+	if actorErr != nil {
+		status, result := serveOperatorActorResult("tusker runs acknowledge", actorErr)
+		result.TaskID = strings.TrimSpace(taskID)
+		serveJSON(w, status, result)
+		return
+	}
 	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -1320,7 +1380,6 @@ func (s *serveServer) handleRunAcknowledge(w http.ResponseWriter, r *http.Reques
 		serveJSON(w, http.StatusConflict, serveActionResult{Refused: true, TaskID: firstNonEmpty(run.ItemID, taskID), ProjectID: snap.projectID, Reason: reason})
 		return
 	}
-	actor := defaultActorName()
 	if _, err := retireRuntimeRun(s.store, DefaultStateRoot(), run, actor, serveAcknowledgeReason, s.now(), false); err != nil {
 		// retireRuntimeRun re-checks the live-heartbeat guard; surface a late
 		// refusal as a conflict rather than a 500 so the card can be restored.

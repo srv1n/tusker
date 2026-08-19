@@ -299,6 +299,10 @@ func proofV7SetModeCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	actor, err := v7AgentDefaultActor(args, "proof mode update")
+	if err != nil {
+		return err
+	}
 	data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
 	if err != nil {
 		return err
@@ -334,14 +338,14 @@ func proofV7SetModeCmd(args Args) error {
 	}
 	data["proof_status"] = report.Status
 	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-	data["updated_by"] = fallback(args.String("by"), "agent:"+defaultActorName())
+	data["updated_by"] = actor
 	if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("%s proof_mode=%s proof_status=%s\n", taskID, mode, report.Status)
 	}
-	return emitV7Event(vaultPath, taskID, "task", "updated", stringField(data, "updated_by"), map[string]any{"proof_mode": mode, "proof_status": report.Status})
+	return emitV7Event(vaultPath, taskID, "task", "updated", actor, map[string]any{"proof_mode": mode, "proof_status": report.Status})
 }
 
 func verifyV7AddCmd(args Args) error {
@@ -353,11 +357,20 @@ func verifyV7AddCmd(args Args) error {
 	if strings.TrimSpace(taskID) == "" {
 		return tuskerError(errorMissingArg, "verify add requires <task-id>")
 	}
+	actor, err := v7AgentDefaultActor(args, "verify add")
+	if err != nil {
+		return err
+	}
 	rows, err := parseV7VerifyAddRows(args)
 	if err != nil {
 		return err
 	}
-	status, err := upsertV7Verifications(vaultPath, taskID, rows, fallback(args.String("by"), "agent:"+defaultActorName()), args)
+	for _, row := range rows {
+		if _, command := v7VerificationCommand(row.Check); command && !strings.EqualFold(strings.TrimSpace(row.Result), "pending") {
+			return tuskerError(errorInvalidField, "verify add command rows must be pending; only the verification gate executor may record pass or fail")
+		}
+	}
+	status, err := upsertV7Verifications(vaultPath, taskID, rows, actor, args)
 	if err != nil {
 		return err
 	}
@@ -366,6 +379,86 @@ func verifyV7AddCmd(args Args) error {
 		if report, err := loadV7ProofReport(vaultPath, taskID); err == nil {
 			fmt.Printf("Remaining proof gaps: %s\n", v7ProofRemainingGapSummary(report))
 		}
+	}
+	return nil
+}
+
+// verifyV7RemoveCmd deletes one verification row by its one-based position in
+// the task's current table. Indexing is explicit and CAS-protected so a stale
+// cleanup cannot silently remove a different row after a concurrent proof edit.
+func verifyV7RemoveCmd(args Args) error {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	taskID := firstNonEmpty(args.String("id"), args.String("_pos1"))
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return tuskerError(errorMissingArg, "verify remove requires <task-id>")
+	}
+	if !v7TaskIDPattern.MatchString(taskID) {
+		return tuskerError(errorIDScheme, "V7 task id must match ABC-T-0001", withContext(map[string]any{"id": taskID}))
+	}
+	if _, err := resolveV7Note(vaultPath, taskID, "task"); err != nil {
+		return err
+	}
+	actor, err := v7AgentDefaultActor(args, "verify remove")
+	if err != nil {
+		return err
+	}
+	rawIndex := strings.TrimSpace(args.String("index"))
+	index := atoiSafe(rawIndex)
+	if rawIndex == "" || index < 1 {
+		return tuskerError(errorMissingArg, "verify remove requires --index <one-based-row>")
+	}
+	retryCommand := fmt.Sprintf("tusker verify remove %s --index %d", taskID, index)
+	if vault := strings.TrimSpace(args.String("vault")); vault != "" {
+		retryCommand += " --vault " + v7ShellQuote(vault)
+	}
+	var removed v7VerificationRow
+	err = withV7ProofWriteLock(vaultPath, taskID, args, retryCommand, func() error {
+		note, err := resolveV7Note(vaultPath, taskID, "task")
+		if err != nil {
+			return err
+		}
+		data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+		if err != nil {
+			return err
+		}
+		rows := parseV7VerificationRows(body)
+		if index > len(rows) {
+			return tuskerError(errorInvalidArg, fmt.Sprintf("verify remove --index %d is outside %d verification row%s", index, len(rows), plural(len(rows))))
+		}
+		removed = rows[index-1]
+		rows = append(rows[:index-1], rows[index:]...)
+		body = replaceSection(body, "## Verification", renderV7VerificationTable(rows))
+		idx, err := loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+		task := note
+		task.Data = data
+		task.Body = body
+		report := computeV7ProofReport(vaultPath, task, idx)
+		if report.Status == "satisfied" && len(v7PacketStubAcceptanceItems(body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
+			report.Status = "partial"
+		}
+		data["proof_status"] = report.Status
+		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		data["updated_by"] = actor
+		if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev")); err != nil {
+			return err
+		}
+		return emitV7Event(vaultPath, taskID, "task", "verification_removed", actor, map[string]any{
+			"index": index, "covers": removed.CoverText, "check": removed.Check, "result": removed.Result,
+			"notes": removed.Notes, "blocked_by": removed.BlockedBy,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if !args.Bool("quiet") {
+		fmt.Printf("Removed verification row %d for %s\n", index, taskID)
 	}
 	return nil
 }
@@ -450,8 +543,14 @@ func validateV7VerificationRow(row v7VerificationRow) error {
 	if strings.TrimSpace(row.Check) == "" {
 		return tuskerError(errorMissingArg, "verify add requires --check")
 	}
-	if _, ok := v7VerificationResults[row.Result]; !ok || row.Result == "pending" {
+	if _, ok := v7VerificationResults[row.Result]; !ok {
 		return tuskerError(errorInvalidField, "invalid verification result: "+row.Result)
+	}
+	if row.Result == "pending" {
+		if _, ok := v7VerificationCommand(row.Check); !ok {
+			return tuskerError(errorInvalidField, "pending verification rows must use an exact command: check")
+		}
+		return nil
 	}
 	if row.Result == "blocked" && strings.TrimSpace(row.BlockedBy) == "" {
 		return tuskerError(errorMissingArg, "verify add --result blocked requires --blocked-by <path-or-task>")
@@ -652,7 +751,8 @@ func upsertV7VerificationRow(body string, row v7VerificationRow) string {
 	var kept []v7VerificationRow
 	replaced := false
 	for _, existing := range rows {
-		if strings.EqualFold(strings.TrimSpace(existing.Check), "TBD") || existing.Result == "pending" {
+		if strings.EqualFold(strings.TrimSpace(existing.Check), "TBD") ||
+			(existing.Result == "pending" && strings.Contains(existing.Check, "<exact command")) {
 			continue
 		}
 		if strings.EqualFold(existing.CoverText, row.CoverText) && strings.EqualFold(existing.Check, row.Check) {
@@ -1953,7 +2053,7 @@ func parseV7VerificationRowArg(line string) (v7VerificationRow, error) {
 	result := ""
 	for i := len(parts) - 1; i >= 2; i-- {
 		candidate := strings.ToLower(strings.TrimSpace(parts[i]))
-		if _, ok := v7VerificationResults[candidate]; ok && candidate != "pending" {
+		if _, ok := v7VerificationResults[candidate]; ok {
 			resultIndex = i
 			result = candidate
 			break

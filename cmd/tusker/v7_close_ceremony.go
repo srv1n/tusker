@@ -23,6 +23,10 @@ type v7ClosePreflightRequest struct {
 	ExpectedStateRev  string
 	ExpectedTaskID    string
 	ExpectedTaskState string
+	// SkipCommandVerification is reserved for an upstream authoritative review
+	// snapshot that already executed the exact command rows and rebound the
+	// task revision/fingerprint. Direct accept/close leave it false.
+	SkipCommandVerification bool
 }
 
 // saveV7CloseProjectionCAS repeats the task identity/revision integrity check
@@ -120,7 +124,6 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 			)
 		}
 	}
-
 	idx.Tasks = cloneNoteMap(idx.Tasks)
 	idx.Tasks[id] = task
 	if request.DependencyRef != "" {
@@ -149,8 +152,38 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 		return v7ClosePreflightResult{}, err
 	}
 	if tuskerTier(vaultPath) >= 2 {
-		if err := enforceV7AcceptanceClose(vaultPath, task, idx); err != nil {
+		if err := enforceV7AcceptanceClose(vaultPath, task, idx, !request.SkipCommandVerification); err != nil {
 			return v7ClosePreflightResult{}, err
+		}
+	}
+	if err := v7DocTouchCheck(vaultPath, task); err != nil {
+		return v7ClosePreflightResult{}, err
+	}
+	// Run mutable command proof only after every actor, gate, dependency,
+	// evidence, policy, acceptance, and docs check that can refuse without it.
+	// This prevents an ineligible close from becoming a shell trigger.
+	if !request.SkipCommandVerification {
+		if err := preflightCanonicalRuntimeRetirement(vaultPath, id); err != nil {
+			return v7ClosePreflightResult{}, err
+		}
+		fresh, _, failures, err := executeV7CommandVerificationRows(vaultPath, task, request.Args, request.Actor, false)
+		if err != nil {
+			return v7ClosePreflightResult{}, err
+		}
+		if len(failures) > 0 {
+			failure := failures[0]
+			return v7ClosePreflightResult{}, tuskerError(errorEvidenceGate,
+				fmt.Sprintf("%s: %s refused, command verification row %s failed: %s", id, fallback(request.Action, "close"), failure.Row.CoverText, failure.Message),
+				withContext(map[string]any{"row": failure.Row.CoverText, "check": failure.Row.Check, "result": failure.Row.Result, "first_error": failure.Message}))
+		}
+		task = fresh
+		data, body = task.Data, task.Body
+		idx.Tasks = cloneNoteMap(idx.Tasks)
+		idx.Tasks[id] = task
+		if tuskerTier(vaultPath) >= 2 {
+			if err := enforceV7AcceptanceClose(vaultPath, task, idx, false); err != nil {
+				return v7ClosePreflightResult{}, err
+			}
 		}
 	}
 

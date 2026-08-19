@@ -63,6 +63,7 @@ export const BATCH_SELECTABLE_STATUSES: TaskStatus[] = ["review", "done"];
 
 /** Whether a task may join a batch accept/land selection. */
 export function isBatchSelectable(task: TaskCapsule): boolean {
+  if (task.status === "done" && task.waveTerminal) return false;
   return BATCH_SELECTABLE_STATUSES.includes(task.status);
 }
 

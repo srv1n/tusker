@@ -261,11 +261,11 @@ func returnReviewerFindingToImplementer(vaultPath, taskID, findingText, actor st
 	}
 	// Step 2: flip to rework. If this crashes, the explanation already stands
 	// and a later re-detection completes the flip idempotently.
-	return statusV7Cmd(Args{
+	return statusV7CmdAsInternalActor(Args{
 		"vault": vaultPath, "quiet": "true", "local": "true",
 		"id": taskID, "status": "rework", "by": actor,
 		"reason": reviewerFindingReturnReason,
-	})
+	}, actor)
 }
 
 // generatedReviewerFindingContent returns the content of the daemon-generated

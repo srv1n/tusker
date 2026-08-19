@@ -14,6 +14,7 @@ type serveServer struct {
 	assets            fs.FS
 	now               func() time.Time
 	stream            *serveStreamBroker
+	operatorActor     string
 	reconcileStatus   func(string) adaptiveProjectReconcileStatus
 	snapshotMu        sync.Mutex
 	snapshots         map[string]*serveSnapshotEntry
@@ -172,11 +173,29 @@ type serveWaveTaskSummary struct {
 	Proof  string `json:"proof"`
 }
 
+// serveReviewBatch is the wave-boundary review projection. Members are the
+// terminal task records relevant to the review surface (review or done);
+// readiness is derived from every canonical wave member so a partial wave
+// cannot be mistaken for a reviewable batch.
+type serveReviewBatch struct {
+	Waves   []serveReviewWave  `json:"waves"`
+	Unwaved []serveTaskCapsule `json:"unwaved"`
+}
+
+type serveReviewWave struct {
+	WaveID         string             `json:"waveId"`
+	Title          string             `json:"title"`
+	Authorization  map[string]any     `json:"authorization"`
+	ReadyForReview bool               `json:"readyForReview"`
+	Members        []serveTaskCapsule `json:"members"`
+}
+
 type serveTaskCapsule struct {
 	ID              string            `json:"id"`
 	Title           string            `json:"title"`
 	WaveID          string            `json:"waveId,omitempty"`
 	WaveTitle       string            `json:"waveTitle,omitempty"`
+	WaveTerminal    bool              `json:"waveTerminal,omitempty"`
 	EpicID          string            `json:"epicId"`
 	EpicTitle       string            `json:"epicTitle"`
 	Status          string            `json:"status"`

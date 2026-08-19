@@ -133,9 +133,9 @@ func departureHoldCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	by := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")))
-	if by == "" {
-		return tuskerError(errorMissingArg, "departure hold requires --by")
+	by, err := v7HumanActor(args, "departure hold")
+	if err != nil {
+		return err
 	}
 	stateRoot := firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot())
 	projectID := strings.TrimSpace(args.String("project"))
@@ -158,9 +158,9 @@ func departureHoldCmd(args Args) error {
 }
 
 func departureResumeCmd(args Args) error {
-	by := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")))
-	if by == "" {
-		return tuskerError(errorMissingArg, "departure resume requires --by")
+	by, err := v7HumanActor(args, "departure resume")
+	if err != nil {
+		return err
 	}
 	stateRoot := firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot())
 	projectID := strings.TrimSpace(args.String("project"))

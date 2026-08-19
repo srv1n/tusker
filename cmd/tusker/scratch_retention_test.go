@@ -462,7 +462,7 @@ func inlineProofTaskTest(t *testing.T) string {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Scratch retention.", "v7": "true"}, newV7Epic)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reap scratch", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run ScratchReap -count=1", "result": "pass", "note": "Focused proof passed."}, verifyV7AddCmd)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run ScratchReap -count=1", "result": "pass", "note": "Focused proof passed."}, v7TestVerificationMutation)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "attempt": "APP-T-0001-A-0001", "summary": "Implementation complete.", "local": "true"}, finishV7Cmd)
 	return vault
 }
@@ -476,6 +476,24 @@ func TestScratchReapOnManualClose(t *testing.T) {
 	}
 	if dirExists(dir) {
 		t.Fatalf("manual close left scratch behind: %s", dir)
+	}
+}
+
+func TestScratchReapOnTierOneDirectDone(t *testing.T) {
+	vault := v7DispatchTestVault(t)
+	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct close", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := seedScratchTest(t, vault, "APP-T-0001")
+
+	if err := statusV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if dirExists(dir) {
+		t.Fatalf("tier-one direct done left scratch behind: %s", dir)
 	}
 }
 
@@ -504,5 +522,20 @@ func TestScratchReapOnReactorClose(t *testing.T) {
 	body = body[:strings.Index(body, "\n}\n")]
 	if strings.Count(body, "reapTaskScratch(vaultPath, result.TaskID)") != 2 {
 		t.Fatal("canonical completion projection must reap task scratch on both return paths")
+	}
+}
+
+// The daemon's reviewed completion path is a separate close route from the
+// interactive ceremony. Keep the shared documentation-touch check wired into
+// that terminal projection so automation cannot bypass the policy.
+func TestDocTouchCheckOnReactorClose(t *testing.T) {
+	source, err := readText("completion_reactor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := source[strings.Index(source, "func projectCompletionTaskToCanonical("):]
+	body = body[:strings.Index(body, "\n}\n")]
+	if strings.Count(body, "v7DocTouchCheck(vaultPath, staged)") != 1 {
+		t.Fatal("canonical completion projection must check documentation drift before terminal replacement")
 	}
 }

@@ -21,7 +21,7 @@ func TestObjectiveClosePolicy(t *testing.T) {
 			t.Fatalf("create %s: %v", risk, err)
 		}
 		id := "APP-T-000" + string(rune('1'+i))
-		if err := verifyV7AddCmd(Args{"vault": vault, "quiet": "true", "_pos1": id, "by": "reviewer:independent", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestObjectiveClosePolicy -count=1", "result": "pass", "note": "Objective proof passed."}); err != nil {
+		if _, err := upsertV7Verification(vault, id, v7VerificationRow{CoverText: "A1", Check: "command: go test ./cmd/tusker -run TestObjectiveClosePolicy -count=1", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
 			t.Fatalf("verify %s: %v", risk, err)
 		}
 		if err := statusV7Cmd(Args{"vault": vault, "quiet": "true", "id": id, "status": "review", "by": "agent:worker"}); err != nil {
