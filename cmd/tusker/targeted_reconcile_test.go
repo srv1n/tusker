@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -236,9 +237,86 @@ func TestV7TargetedReconcileRefusesInvalidAndMissingIDs(t *testing.T) {
 			t.Fatalf("%s error code=%s, want %s: %v", tc.id, issue.Code, tc.code, err)
 		}
 	}
-	if err := reconcileV7Cmd(Args{"vault": vault, "dry-run": "true", "json": "true"}); errorToIssue(err).Code != errorMissingArg {
-		t.Fatalf("missing targeted id was not refused: %v", err)
+}
+
+func TestV7ReconcileDryRunEnumeratesInvalidStateRevsWithoutWrites(t *testing.T) {
+	vault := targetedReconcileFixture(t)
+	epicPath := filepath.Join(vault, "work", "epics", "APP.md")
+	terminalTaskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+
+	epicBeforeRev := makeTargetedReconcileObjectStale(t, epicPath, "epic", "\n## Stale epic detail\n\nEnumerate this epic.\n")
+	taskData, taskBody, err := parseFrontmatterMustRead(terminalTaskPath)
+	if err != nil {
+		t.Fatal(err)
 	}
+	taskData["status"] = "done"
+	taskData["readiness"] = "done"
+	taskData["state_rev"] = v7StateRev(taskData, taskBody)
+	raw, err := serializeDocument(taskData, taskBody+"\n## Stale terminal detail\n\nReport without repair.\n", v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(terminalTaskPath, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	terminalBeforeRev := stringField(taskData, "state_rev")
+	before := snapshotTargetedReconcileVault(t, vault)
+
+	scan := func() v7StateRevScanReport {
+		t.Helper()
+		output := captureTargetedReconcileStdout(t, func() {
+			if err := reconcileV7Cmd(Args{"vault": vault, "dry-run": "true", "json": "true"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		var report v7StateRevScanReport
+		if err := json.Unmarshal([]byte(output), &report); err != nil {
+			t.Fatalf("decode state_rev scan: %v\n%s", err, output)
+		}
+		return report
+	}
+
+	first := scan()
+	if first.Schema != "tusker.state-rev-scan/v1" || !first.OK || !first.DryRun || first.Count != len(first.Rows) || first.Count < 2 {
+		t.Fatalf("unexpected state_rev scan report: %#v", first)
+	}
+	if !sort.SliceIsSorted(first.Rows, func(i, j int) bool {
+		if first.Rows[i].ID != first.Rows[j].ID {
+			return first.Rows[i].ID < first.Rows[j].ID
+		}
+		if first.Rows[i].Type != first.Rows[j].Type {
+			return first.Rows[i].Type < first.Rows[j].Type
+		}
+		return first.Rows[i].Path < first.Rows[j].Path
+	}) {
+		t.Fatalf("state_rev scan rows are not stably sorted: %#v", first.Rows)
+	}
+	rowsByID := map[string]v7StateRevScanRow{}
+	for _, row := range first.Rows {
+		rowsByID[row.ID] = row
+	}
+	epicRow := rowsByID["APP"]
+	if epicRow.Type != "epic" || epicRow.Path != "work/epics/APP.md" ||
+		epicRow.BeforeStateRev != epicBeforeRev || epicRow.AfterStateRev == "" || epicRow.AfterStateRev == epicBeforeRev {
+		t.Fatalf("stale epic row is incomplete: %#v", first.Rows)
+	}
+	terminalRow := rowsByID["APP-T-0001"]
+	if terminalRow.Type != "task" || terminalRow.Path != "work/tasks/APP-T-0001.md" ||
+		terminalRow.BeforeStateRev != terminalBeforeRev || terminalRow.AfterStateRev == "" || terminalRow.AfterStateRev == terminalBeforeRev {
+		t.Fatalf("stale terminal task row is incomplete: %#v", first.Rows)
+	}
+	if _, ok := rowsByID["APP-T-0002"]; ok {
+		t.Fatalf("valid task was included in invalid state_rev scan: %#v", first.Rows)
+	}
+	assertTargetedReconcileSnapshotsEqual(t, before, snapshotTargetedReconcileVault(t, vault))
+
+	nextSecond := time.Now().Truncate(time.Second).Add(time.Second)
+	time.Sleep(time.Until(nextSecond) + 20*time.Millisecond)
+	second := scan()
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("identical vault produced clock-dependent scan: first=%#v second=%#v", first, second)
+	}
+	assertTargetedReconcileSnapshotsEqual(t, before, snapshotTargetedReconcileVault(t, vault))
 }
 
 func TestV7TargetedReconcileRefusesDuplicateTaskID(t *testing.T) {
@@ -293,12 +371,17 @@ func targetedReconcileFixture(t *testing.T) string {
 
 func makeTargetedReconcileTaskStale(t *testing.T, path, suffix string) string {
 	t.Helper()
+	return makeTargetedReconcileObjectStale(t, path, "task", suffix)
+}
+
+func makeTargetedReconcileObjectStale(t *testing.T, path, kind, suffix string) string {
+	t.Helper()
 	data, body, err := parseFrontmatterMustRead(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	beforeRev := stringField(data, "state_rev")
-	raw, err := serializeDocument(data, body+suffix, v7FrontmatterOrder["task"])
+	raw, err := serializeDocument(data, body+suffix, v7FrontmatterOrder[kind])
 	if err != nil {
 		t.Fatal(err)
 	}
