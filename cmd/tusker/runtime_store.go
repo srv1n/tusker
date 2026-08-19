@@ -197,6 +197,20 @@ type RegisteredProject struct {
 	LastError    string        `json:"last_error"`
 }
 
+// ProjectNonTerminalRun is the deliberately narrow operator view used when a
+// project rebind is fenced by durable runtime state. It exposes only stable
+// identities needed by supported inspect/retire commands; runtime artifact
+// paths, prompts, logs, sessions, and ownership details stay private.
+type ProjectNonTerminalRun struct {
+	ProjectID string `json:"project_id"`
+	RunID     string `json:"run_id"`
+	TaskID    string `json:"task_id"`
+	Status    string `json:"status"`
+	AttemptID string `json:"attempt_id"`
+	Lane      string `json:"lane"`
+	Outcome   string `json:"outcome"`
+}
+
 type RunStatus struct {
 	ProjectID          string                     `json:"project_id"`
 	RecordID           string                     `json:"record_id"`
@@ -1810,12 +1824,12 @@ func (s *RuntimeStore) RebindProjectRegistration(projectID, repoRoot, vaultRoot 
 		if sameCanonicalProjectPath(before.RepoRoot, repoRoot) || sameCanonicalProjectPath(before.VaultRoot, vaultRoot) {
 			return tuskerError(errorInvalidArg, "project rebind must change repo_root and vault_root together", withContext(map[string]any{"project_id": projectID, "repo_root": repoRoot, "vault_root": vaultRoot}))
 		}
-		var active int
-		if txErr = tx.QueryRow(`SELECT COUNT(*) FROM runs WHERE project_id = ? AND terminal = 0`, projectID).Scan(&active); txErr != nil {
+		active, txErr := listProjectNonTerminalRunsTx(tx, projectID)
+		if txErr != nil {
 			return txErr
 		}
-		if active != 0 {
-			return tuskerError(errorInvalidTransition, fmt.Sprintf("project rebind requires zero non-terminal runs; found %d", active), withContext(map[string]any{"project_id": projectID, "active_run_count": active}))
+		if len(active) != 0 {
+			return projectRebindNonTerminalRunsError(projectID, active)
 		}
 		rows, txErr := tx.Query(`SELECT project_id, repo_root, vault_root FROM projects WHERE project_id <> ?`, projectID)
 		if txErr != nil {
@@ -1929,6 +1943,58 @@ func (s *RuntimeStore) CountProjectNonTerminalRuns(projectID string) (int, error
 	var count int
 	err := s.queryRowScan(`SELECT COUNT(*) FROM runs WHERE project_id = ? AND terminal = 0`, []any{projectID}, &count)
 	return count, err
+}
+
+func (s *RuntimeStore) ListProjectNonTerminalRuns(projectID string) ([]ProjectNonTerminalRun, error) {
+	rows, err := s.query(`SELECT project_id, record_id, item_id, lease_state, active_attempt_id, lane, attempt_outcome
+		FROM runs
+		WHERE project_id = ? AND terminal = 0
+		ORDER BY record_id, item_id, active_attempt_id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanProjectNonTerminalRuns(rows)
+}
+
+func listProjectNonTerminalRunsTx(tx *sql.Tx, projectID string) ([]ProjectNonTerminalRun, error) {
+	rows, err := tx.Query(`SELECT project_id, record_id, item_id, lease_state, active_attempt_id, lane, attempt_outcome
+		FROM runs
+		WHERE project_id = ? AND terminal = 0
+		ORDER BY record_id, item_id, active_attempt_id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanProjectNonTerminalRuns(rows)
+}
+
+func scanProjectNonTerminalRuns(rows *sql.Rows) ([]ProjectNonTerminalRun, error) {
+	var out []ProjectNonTerminalRun
+	for rows.Next() {
+		var run ProjectNonTerminalRun
+		if err := rows.Scan(&run.ProjectID, &run.RunID, &run.TaskID, &run.Status, &run.AttemptID, &run.Lane, &run.Outcome); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(run.TaskID) == "" {
+			run.TaskID = run.RunID
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
+func projectRebindNonTerminalRunsError(projectID string, runs []ProjectNonTerminalRun) error {
+	return tuskerError(
+		errorInvalidTransition,
+		fmt.Sprintf("project rebind requires zero non-terminal runs; found %d", len(runs)),
+		withHint("inspect each blocking run with `tusker runs inspect <run-id> --json`; retire only settled legacy runs with `tusker runs retire <run-id> --reason <text> --json`"),
+		withContext(map[string]any{
+			"project_id":       projectID,
+			"active_run_count": len(runs),
+			"blocking_runs":    runs,
+		}),
+	)
 }
 
 func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
