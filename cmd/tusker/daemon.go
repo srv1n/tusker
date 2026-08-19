@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"tusker/internal/reviewpacket"
 )
 
 type Daemon struct {
@@ -4846,162 +4848,39 @@ func writeReviewPacketEvidence(vaultPath string, note Note, run RunStatus, store
 	return nil
 }
 
-type reviewPacketFacts struct {
-	ChangedFiles                  []string
-	ChangedFilesStatement         string
-	DiffSummary                   []string
-	DiffSummaryStatement          string
-	CommandSummaries              []string
-	CommandSummariesStatement     string
-	VerificationCommands          []string
-	VerificationCommandsStatement string
-	ValidationSummaries           []string
-	ValidationSummariesStatement  string
-	SessionRefs                   []string
-	TurnIDs                       []string
-	EventTokenTotals              runtimeTokenTotals
-	RuntimeSummaries              []string
-	OpenRisks                     []string
-	SoftDependencyDependents      []string
-}
+type reviewPacketFacts = reviewpacket.Facts
 
 func renderReviewPacket(note Note, run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) string {
-	var out []string
-	out = append(out, "# Review packet")
-	out = append(out, "")
-	out = append(out, fmt.Sprintf("- Item: %s - %s", stringField(note.Data, "id"), stringField(note.Data, "title")))
-	out = append(out, fmt.Sprintf("- Record: %s", run.RecordID))
-	out = append(out, fmt.Sprintf("- Attempt: %s", run.ActiveAttemptID))
-	out = append(out, fmt.Sprintf("- Runner: %s", run.Runner))
-	out = append(out, fmt.Sprintf("- Runner profile: %s", fallback(run.RunnerProfile, "(none)")))
-	out = append(out, fmt.Sprintf("- Harness: %s", fallback(run.RunnerHarness, run.Runner)))
-	out = append(out, fmt.Sprintf("- Model: %s", fallback(run.RunnerModel, "(unknown)")))
-	out = append(out, fmt.Sprintf("- Effort: %s", fallback(run.RunnerEffort, "(unknown)")))
-	out = append(out, fmt.Sprintf("- Lane: %s", firstNonEmpty(run.Lane, runLaneExecute)))
-	out = append(out, fmt.Sprintf("- Work revision: %d", run.WorkRevision))
-	out = append(out, fmt.Sprintf("- Turns: %d", len(turns)))
-	out = append(out, "- Usage telemetry: raw diagnostic data only; it is neither billable nor an exact aggregate.")
-	out = append(out, fmt.Sprintf("- Workspace: %s", run.WorkspacePath))
-	out = append(out, fmt.Sprintf("- Session: %s", run.SessionRef))
-	out = append(out, fmt.Sprintf("- Started: %s", run.StartedAt))
-	out = append(out, fmt.Sprintf("- Last event: %s", run.LastEventAt))
-	out = append(out, "")
-	out = append(out, "## Runtime summary", "")
-	if len(facts.RuntimeSummaries) == 0 {
-		out = append(out, "- No normalized runtime summary was recorded for this attempt.")
-	} else {
-		for _, summary := range facts.RuntimeSummaries {
-			out = append(out, "- "+summary)
-		}
+	doc := reviewpacket.Document{
+		ItemID:    stringField(note.Data, "id"),
+		ItemTitle: stringField(note.Data, "title"),
+		Run: reviewpacket.Run{
+			RecordID: run.RecordID, AttemptID: run.ActiveAttemptID, Runner: run.Runner,
+			RunnerProfile: run.RunnerProfile, RunnerHarness: run.RunnerHarness,
+			RunnerModel: run.RunnerModel, RunnerEffort: run.RunnerEffort, Lane: run.Lane,
+			WorkRevision: run.WorkRevision, WorkspacePath: run.WorkspacePath,
+			SessionRef: run.SessionRef, StartedAt: run.StartedAt, LastEventAt: run.LastEventAt,
+			PromptPath: run.PromptPath, EventSinkPath: run.EventSinkPath,
+			RawLogPath: run.RawLogPath, StatusPath: run.StatusPath,
+		},
+		Facts: facts,
 	}
-	out = append(out, "")
-	out = append(out, "## Soft dependency blast radius", "")
-	if len(facts.SoftDependencyDependents) == 0 {
-		out = append(out, "- No soft-edge dependents were found for this task.")
-	} else {
-		out = append(out, facts.SoftDependencyDependents...)
+	for _, turn := range turns {
+		doc.Turns = append(doc.Turns, reviewpacket.Turn{
+			Index: turn.TurnIndex, ID: turn.TurnID, SessionRef: turn.SessionRef,
+			Status: turn.Status, LastEventAt: turn.LastEventAt, LastError: turn.LastError,
+		})
 	}
-	out = append(out, "")
-	out = append(out, "## Runtime artifacts", "")
-	for _, artifact := range []struct {
-		label string
-		path  string
-	}{
-		{"prompt", run.PromptPath},
-		{"events", run.EventSinkPath},
-		{"raw log pointer", run.RawLogPath},
-		{"status", run.StatusPath},
-	} {
-		if strings.TrimSpace(artifact.path) != "" {
-			out = append(out, fmt.Sprintf("- %s: `%s`", artifact.label, artifact.path))
-		}
+	for _, decision := range supervisorDecisions {
+		doc.SupervisorDecisions = append(doc.SupervisorDecisions, reviewpacket.SupervisorDecision{
+			Kind: decision.Kind, Reason: decision.Reason, ParentAttemptID: decision.ParentAttemptID,
+			ParentSessionRef: decision.ParentSessionRef, BranchName: decision.BranchName,
+			WorkspacePath: decision.WorkspacePath, ContextSignal: decision.ContextSignal,
+			TotalTokens: decision.TotalTokens, CreatedAt: decision.CreatedAt,
+			ValidationDelta: decision.ValidationDelta, MergeRule: decision.MergeRule,
+		})
 	}
-	out = append(out, "", "## Turns", "")
-	if len(turns) == 0 {
-		out = append(out, "- No normalized turns were recorded for this attempt.")
-	} else {
-		for _, turn := range turns {
-			out = append(out, fmt.Sprintf("- #%d `%s` session=%s status=%s last_event=%s error=%s",
-				turn.TurnIndex, turn.TurnID, firstNonEmpty(turn.SessionRef, "none"), turn.Status, turn.LastEventAt, firstNonEmpty(turn.LastError, "none")))
-		}
-	}
-	out = append(out, "", "## Sessions and turns", "")
-	sessionRefs := sessionRefsForPacket(run, turns, facts)
-	turnIDs := turnIDsForPacket(turns, facts)
-	if len(sessionRefs) == 0 {
-		out = append(out, "- Session refs: none observed.")
-	} else {
-		out = append(out, "- Session refs: "+backtickList(sessionRefs))
-	}
-	if len(turnIDs) == 0 {
-		out = append(out, "- Turn ids: none observed.")
-	} else {
-		out = append(out, "- Turn ids: "+backtickList(turnIDs))
-	}
-	out = append(out, "", "## Supervisor decisions", "")
-	if len(supervisorDecisions) == 0 {
-		out = append(out, "- No supervisor decisions were recorded for this attempt.")
-	} else {
-		for _, decision := range supervisorDecisions {
-			out = append(out, fmt.Sprintf("- `%s` reason=%s parent_attempt=%s parent_session=%s branch=%s workspace=%s signal=%s tokens=%d at=%s",
-				decision.Kind, firstNonEmpty(decision.Reason, "none"), firstNonEmpty(decision.ParentAttemptID, "none"), firstNonEmpty(decision.ParentSessionRef, "none"), firstNonEmpty(decision.BranchName, "none"), firstNonEmpty(decision.WorkspacePath, "none"), firstNonEmpty(decision.ContextSignal, "none"), decision.TotalTokens, decision.CreatedAt))
-			if decision.ValidationDelta != "" || decision.MergeRule != "" {
-				out = append(out, fmt.Sprintf("  validation_delta=%s merge_rule=%s", firstNonEmpty(decision.ValidationDelta, "none"), firstNonEmpty(decision.MergeRule, "none")))
-			}
-		}
-	}
-	out = append(out, "", "## Changed files", "")
-	if len(facts.ChangedFiles) == 0 {
-		out = append(out, "- "+firstNonEmpty(facts.ChangedFilesStatement, "No changed files were observed in normalized events or workspace status."))
-	} else {
-		for _, file := range facts.ChangedFiles {
-			out = append(out, "- "+file)
-		}
-	}
-	out = append(out, "", "### Diff summary", "")
-	if len(facts.DiffSummary) == 0 {
-		out = append(out, "- "+firstNonEmpty(facts.DiffSummaryStatement, "No diff summary was observed in normalized events or workspace status."))
-	} else {
-		for _, summary := range facts.DiffSummary {
-			out = append(out, "- "+summary)
-		}
-	}
-	out = append(out, "", "## Commands and tests", "")
-	if len(facts.CommandSummaries) == 0 {
-		out = append(out, "- "+firstNonEmpty(facts.CommandSummariesStatement, "No command or test summaries were observed in normalized events."))
-	} else {
-		for _, command := range facts.CommandSummaries {
-			out = append(out, "- "+command)
-		}
-	}
-	out = append(out, "", "## Verification", "")
-	if len(facts.VerificationCommands) == 0 {
-		out = append(out, "- "+firstNonEmpty(facts.VerificationCommandsStatement, "No verification commands were observed in normalized events."))
-	} else {
-		for _, command := range facts.VerificationCommands {
-			out = append(out, "- "+command)
-		}
-	}
-	out = append(out, "", "## Validation", "")
-	if len(facts.ValidationSummaries) == 0 {
-		out = append(out, "- "+firstNonEmpty(facts.ValidationSummariesStatement, "No validation results were observed in normalized events."))
-	} else {
-		for _, validation := range facts.ValidationSummaries {
-			out = append(out, "- "+validation)
-		}
-	}
-	out = append(out, "", "## Open risks", "")
-	risks := openRisksForPacket(run, turns, supervisorDecisions, facts)
-	if len(risks) == 0 {
-		out = append(out, "- No open risks were observed in normalized events or runtime status.")
-	} else {
-		for _, risk := range risks {
-			out = append(out, "- "+risk)
-		}
-	}
-	out = append(out, "- Reviewer must still check claims against the current tree before approval.")
-	out = append(out, "- This packet summarizes daemon-observed runtime facts. It does not embed raw logs or full transcripts.")
-	return strings.Join(out, "\n") + "\n"
+	return reviewpacket.Render(doc)
 }
 
 func collectReviewPacketFacts(run RunStatus) reviewPacketFacts {
@@ -5040,7 +4919,6 @@ func collectReviewPacketFacts(run RunStatus) reviewPacketFacts {
 		ValidationSummariesStatement:  "No validation results were observed in normalized events.",
 		SessionRefs:                   sessionRefsFromEvents(events),
 		TurnIDs:                       turnIDsFromEvents(events),
-		EventTokenTotals:              tokenTotalsFromEvents(events),
 		RuntimeSummaries:              runtimeSummariesFromRun(run),
 		OpenRisks:                     dedupeSortedStrings(openRisks),
 	}
