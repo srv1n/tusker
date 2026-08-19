@@ -182,12 +182,12 @@ func validateProjectRebindPreconditions(store *RuntimeStore, before RegisteredPr
 	if sameCanonicalProjectPath(before.RepoRoot, repoRoot) || sameCanonicalProjectPath(before.VaultRoot, vaultRoot) {
 		return tuskerError(errorInvalidArg, "project rebind must change repo_root and vault_root together")
 	}
-	active, err := store.CountProjectNonTerminalRuns(before.ProjectID)
+	active, err := store.ListProjectNonTerminalRuns(before.ProjectID)
 	if err != nil {
 		return err
 	}
-	if active != 0 {
-		return tuskerError(errorInvalidTransition, fmt.Sprintf("project rebind requires zero non-terminal runs; found %d", active))
+	if len(active) != 0 {
+		return projectRebindNonTerminalRunsError(before.ProjectID, active)
 	}
 	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {

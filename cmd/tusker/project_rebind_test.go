@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -122,6 +123,78 @@ func TestProjectRebindFailsClosedAndRollsBackPersistenceFailure(t *testing.T) {
 	}
 	if _, _, _, err := store.RebindProjectRegistration("", newRepo, newVault); err == nil {
 		t.Fatal("missing project ID must fail")
+	}
+}
+
+func TestProjectRebindReportsScopedStableNonTerminalRunIdentities(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectID, project.Enabled, project.Health = "project-rebind", false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	fixtures := []RunStatus{
+		{ProjectID: project.ProjectID, RecordID: "APP-T-0002", ItemID: "APP-T-0002", Lane: runLaneReview, LeaseState: string(LeaseStateParkedNoProgress), AttemptOutcome: string(AttemptOutcomeBlocked), ActiveAttemptID: "attempt-2", WorkspacePath: "/secret/workspace", RawLogPath: "/secret/raw.log", Terminal: false, UpdatedAt: now},
+		{ProjectID: "other-project", RecordID: "OTHER-T-0001", ItemID: "OTHER-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed), AttemptOutcome: string(AttemptOutcomeNone), ActiveAttemptID: "other-attempt", Terminal: false, UpdatedAt: now},
+		{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "", Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed), AttemptOutcome: string(AttemptOutcomeNone), ActiveAttemptID: "", Terminal: false, UpdatedAt: now},
+		{ProjectID: project.ProjectID, RecordID: "APP-T-0003", ItemID: "APP-T-0003", Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeAbandoned), ActiveAttemptID: "terminal-attempt", Terminal: true, UpdatedAt: now},
+	}
+	for _, run := range fixtures {
+		if err := store.UpsertRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err = projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "dry-run": "true", "json": "true"})
+	if err == nil {
+		t.Fatal("dry-run must remain fenced by non-terminal runs")
+	}
+	issue := errorToIssue(err)
+	if issue.Code != errorInvalidTransition || !strings.Contains(issue.Hint, "runs inspect <run-id>") || !strings.Contains(issue.Hint, "runs retire <run-id>") {
+		t.Fatalf("issue=%#v", issue)
+	}
+	context, ok := issue.Context.(map[string]any)
+	if !ok {
+		t.Fatalf("context type=%T", issue.Context)
+	}
+	blocking, ok := context["blocking_runs"].([]ProjectNonTerminalRun)
+	if !ok || len(blocking) != 2 {
+		t.Fatalf("blocking=%#v", context["blocking_runs"])
+	}
+	if blocking[0].RunID != "APP-T-0001" || blocking[0].TaskID != "APP-T-0001" || blocking[0].ProjectID != project.ProjectID || blocking[0].Status != string(LeaseStateUnclaimed) {
+		t.Fatalf("first blocking run=%#v", blocking[0])
+	}
+	if blocking[1].RunID != "APP-T-0002" || blocking[1].AttemptID != "attempt-2" || blocking[1].Lane != runLaneReview || blocking[1].Outcome != string(AttemptOutcomeBlocked) {
+		t.Fatalf("second blocking run=%#v", blocking[1])
+	}
+	encoded, err := json.Marshal(issue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := string(encoded)
+	for _, forbidden := range []string{"OTHER-T-0001", "other-attempt", "APP-T-0003", "terminal-attempt", "/secret/workspace", "/secret/raw.log"} {
+		if strings.Contains(wire, forbidden) {
+			t.Fatalf("diagnostic leaked %q: %s", forbidden, wire)
+		}
+	}
+
+	_, _, _, err = store.RebindProjectRegistration(project.ProjectID, newRepo, newVault)
+	if err == nil {
+		t.Fatal("live rebind must remain fenced by non-terminal runs")
+	}
+	liveContext := errorToIssue(err).Context.(map[string]any)
+	liveBlocking := liveContext["blocking_runs"].([]ProjectNonTerminalRun)
+	if len(liveBlocking) != 2 || liveBlocking[0].RunID != "APP-T-0001" || liveBlocking[1].RunID != "APP-T-0002" {
+		t.Fatalf("live blocking runs=%#v", liveBlocking)
 	}
 }
 
