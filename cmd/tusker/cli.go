@@ -462,6 +462,8 @@ func runInner(command string, args Args) (int, error) {
 		return legacyOnlyCommand("legacy migrate gates", "")
 	case "reindex":
 		return 0, reindex(args)
+	case "reset", "relaunch":
+		return 0, resetCmd(args)
 	case "validate":
 		return validateCmd(args)
 	case "purge":
@@ -935,6 +937,9 @@ func runInner(command string, args Args) (int, error) {
 	case "help init":
 		printInitHelp()
 		return 0, nil
+	case "help reset", "help relaunch":
+		printResetHelp()
+		return 0, nil
 	case "help", "--help", "-h", "":
 		printHelp()
 		return 0, nil
@@ -969,6 +974,8 @@ Start here:
 
 Commands:
   init                initialize or refresh a repo vault
+  reset               delete Tusker state, preserve specs, and relaunch a repo
+  relaunch            alias for reset
   capabilities        print the installed-binary capability manifest (JSON only)
   new                 create V7 epics, tasks, gates, and decisions
   list                list work records
@@ -1044,6 +1051,8 @@ Help:
   tusker context --help
   tusker status --help
   tusker install --help
+  tusker reset --help
+  tusker relaunch --help
   tusker purge --help
   tusker gc --help
   tusker gate --help
@@ -1067,6 +1076,8 @@ func printCommandHelp(command string) bool {
 		printCapabilitiesHelp()
 	case "init":
 		printInitHelp()
+	case "reset", "relaunch":
+		printResetHelp()
 	case "runner", "runner catalog", "runner profiles", "runner route":
 		printRunnerHelp()
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
@@ -1667,8 +1678,8 @@ Examples:
 
 func printInitHelp() {
 	fmt.Println(`Usage:
-  tusker init [--vault <path>] [--yes] [--fresh] [--purge-state] [--with-pointers] [--with-contract] [--with-mount]
-  tusker init --profile v7 [--yes] [--fresh] [--purge-state] [--with-pointers] [--with-contract] [--with-mount]
+  tusker init [--vault <path>] [--yes] [--fresh] [--purge-state] [--preserve-specs] [--with-pointers] [--with-contract] [--with-mount]
+  tusker init --profile v7 [--yes] [--fresh] [--purge-state] [--preserve-specs] [--with-pointers] [--with-contract] [--with-mount]
 
 What it does:
   1. initializes a V7 repo-local vault under .tusker by default
@@ -1689,6 +1700,7 @@ Flags:
   --fresh           move an existing target vault aside and recreate it cleanly
   --purge-state     delete generated Tusker state first; implies the same safe
                     scope as 'tusker purge --only-tusker-state --yes'
+  --preserve-specs  with --purge-state, retain .tusker/specs/** across the reset
   --profile v7      explicit V7 profile; any other profile is rejected
   --v7              explicit alias for default V7 init
   --vault-only      update only the vault; skip pointers and repo-contract files
@@ -1715,14 +1727,19 @@ func printDocsHelp() {
   tusker docs verify <subject>
   tusker docs adopt [--dry-run] [--json]
   tusker docs adopt --table <file> --approve --by human:<name> [--json]
+  tusker docs adopt --table <file> --approve --by user-session:<id> [--approval-token user-session:<id>@<fingerprint>] [--json]
 
 Adoption is a reviewed batch. The default and --dry-run print a fingerprinted
 JSON table and never write. Edit that table, set approved_by, and pass the exact
-table with --approve; every row is preflighted before any write. Promote/merge
-preserve legacy sources. Tombstone rewrites a source as a superseded signpost
-only when explicitly present in the approved table; no disposition deletes a
-file. Generated map artifacts are left untouched; run tusker docs map after
-review. --apply and --yes are not accepted aliases.`)
+table with --approve; every row is preflighted before any write. Unattended runs
+require --by human:<name>. An interactive agent session may use the explicit
+user-session:<id> approval path; --approval-token binds that user receipt to the
+exact proposal fingerprint. Every approval, apply, and failure is written to
+.tusker/events as an auditable V7 event. Promote/merge preserve legacy sources.
+Tombstone rewrites a source as a superseded signpost only when explicitly
+present in the approved table; no disposition deletes a file. Generated map
+artifacts are left untouched; run tusker docs map after review. --apply and
+--yes are not accepted aliases.`)
 }
 
 func printNewHelp() {

@@ -49,8 +49,11 @@ the POST status, as proof that anything changed.
   the serve addr into the daemon PID file. Only the daemon-hosted server emits
   run/task stream events (`daemon_stream.go` calls `stream.Broadcast`); a
   standalone `tusker serve` only ever broadcasts `projection_refreshed`.
-- Both paths call `warmRegisteredProjectSnapshots` in the background and set
-  `requireCapability = true`.
+- Both paths set `requireCapability = true`. Snapshot warming is lazy: startup
+  does not eagerly build Serve projections; a CLI notification, explicit
+  refresh, or an actual UI read is the wake source. The daemon's separate
+  periodic reconciliation can be disabled with
+  `TUSKER_RECONCILIATION_MODE=event`.
 
 ## Security boundary
 
@@ -147,25 +150,26 @@ back to `index.html` so client routing works; `assets/<name>-<hash>.<ext>` gets
 `serveSnapshot` (`cmd/tusker/serve_types.go`) is a per-project in-memory
 projection: workflow, notes bucketed by kind (task/epic/gate/wave/evidence/
 decision/attempt), `docs`, `needs`, `runs`, automation `queue`, and an
-`openP0Escalation` flag. `buildSnapshotForProject` loads project contents, then
+`openP0Escalation` flag. The passive projection omits automation `queue`;
+explicit task-run validation loads it at the action boundary. `buildSnapshotForProject` loads project contents, then
 calls `ListRunsForProjectPage` with a hard cap of 1000 runs — exceeding it is a
 `RUNTIME_RUN_SNAPSHOT_LIMIT` error, never a partial snapshot.
 
 Cache behavior in `loadSnapshotForProjectMode`:
 
 - Entries are keyed by project ID (falling back to cleaned vault/repo path).
-- A ready, valid entry is served immediately; if it is older than 30 s it is
-  marked invalid and a background rebuild starts.
-- A ready-but-invalid entry is still served stale unless the caller asked for a
-  fresh build; concurrent builders wait on the entry's `done` channel.
+- A ready, valid entry is served immediately; there is no timer-driven
+  background rebuild.
+- An invalid entry is rebuilt by the next reader; concurrent builders wait on
+  the entry's `done` channel.
 - After a rebuild, `serveSnapshotContentHash` (`serve_snapshot_hash.go`) hashes
   only client-visible fields (timestamps and transport metadata excluded). A
   changed hash broadcasts a `projection_refreshed` stream event covering every
   major key.
 
 Mutations invalidate explicitly: `invalidateProjectSnapshot` marks entries
-invalid and clears the summary cache; `refreshProjectSnapshot` also kicks a
-background warm.
+invalid and clears the summary cache; `refreshProjectSnapshot` broadcasts the
+invalidation without warming a project that has no reader.
 
 ## Stream
 

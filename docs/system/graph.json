@@ -127,6 +127,13 @@
       "status": "canonical"
     },
     {
+      "subject": "project-reset-and-relaunch",
+      "kind": "spec",
+      "path": ".tusker/specs/project-reset-and-relaunch.md",
+      "title": "Project reset and relaunch",
+      "status": "canonical"
+    },
+    {
       "subject": "proof-and-closeout",
       "kind": "canonical",
       "path": "docs/system/proof-and-closeout.md",
@@ -331,6 +338,11 @@
     {
       "from": "platform-support",
       "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "project-reset-and-relaunch",
+      "to": "storage-and-runtime",
       "kind": "part_of"
     },
     {

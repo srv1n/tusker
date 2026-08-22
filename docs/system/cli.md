@@ -1,7 +1,7 @@
 ---
 title: "Tusker CLI reference"
 subject: cli
-keywords: [cli, commands, flags, json, capsule, capabilities, exit-codes, vault-discovery, config-resolve, deprecations, adoption tier]
+keywords: [cli, commands, flags, json, capsule, capabilities, exit-codes, vault-discovery, config-resolve, deprecations, adoption tier, reset, relaunch, preserve specs]
 part_of: overview
 status: canonical
 read_when: "You need the command inventory, global flag/output conventions, vault and config resolution, capability reporting, or exit/error semantics of the `tusker` binary."
@@ -11,6 +11,7 @@ sources:
   - cmd/tusker/main.go
   - cmd/tusker/commands_index.go
   - cmd/tusker/capabilities_cmd.go
+  - cmd/tusker/docs_adopt_cmd.go
   - cmd/tusker/removed_surfaces.go
   - cmd/tusker/helpers.go
   - cmd/tusker/config_resolve_cmd.go
@@ -20,6 +21,9 @@ sources:
   - cmd/tusker/commands_open_print.go
   - cmd/tusker/commands_compact.go
   - cmd/tusker/commands_context.go
+  - cmd/tusker/install.go
+  - cmd/tusker/project_reset.go
+  - cmd/tusker/spec_snapshot.go
   - cmd/tusker/terminal_layout.go
 ---
 
@@ -104,8 +108,9 @@ Semantics belong to the subject docs; this table is the routing map.
 
 | Family | Purpose | Key subcommands / flags | Owning code | Semantics |
 |---|---|---|---|---|
-| `init`, `install`, `update`, `sync-repo-contract`, `setup doctor\|repair` | Install and wire a repo | `init --yes --fresh --purge-state --vault-only` | `install.go`, `setup_doctor.go` | [[skills]] |
+| `init`, `reset`, `relaunch`, `install`, `update`, `sync-repo-contract`, `setup doctor\|repair` | Install, reset, and wire a repo | `init --yes --fresh --purge-state --vault-only`; `reset --yes --repo <path>` preserves `.tusker/specs/**` | `install.go`, `project_reset.go`, `setup_doctor.go` | [[skills]], [[project-reset-and-relaunch]] |
 | `new epic\|task\|gate\|decision`, `knowledge new`, `docs find\|new\|map` | Create records | `new task --epic --size --risk` | `commands_v7.go`, `v7_domain_cmd.go` | [[tasks-and-proof]] |
+| `docs adopt` | Review and apply a fingerprinted brownfield documentation migration | `--table --approve --by human:<name>`; interactive agent receipt: `--by user-session:<id> [--approval-token user-session:<id>@<fingerprint>]` | `docs_adopt_cmd.go` | [[knowledge-and-feedback]] |
 | `list`, `search`, `show`, `print`, `open`, `next`, `brief`, `packet` | Read work | see read-surface table | `commands_*.go`, `v7_migration_cmd.go` | [[tasks-and-proof]] |
 | `status`, `discard`, `close`, `accept`, `finish`, `release`, `heartbeat` | Lifecycle moves | `status <ID> <status>` (either order is accepted) | `removed_surfaces.go` shim → `commands_v7.go` | [[tasks-and-proof]] |
 | `work start\|status\|heartbeat\|submit\|fail\|release`, `claim` | One owned interactive session | `--json`, `--vault`; `claim` is a compatibility alias that forwards to `work start` when a workflow file exists | `work_session_cmd.go`, `commands_pickup.go` | [[tasks-and-proof]] |
@@ -128,6 +133,29 @@ Semantics belong to the subject docs; this table is the routing map.
 | `skill doctor\|route\|pack\|sync\|bundle\|audit-agent-guidance`, `publish skill` | Skill install integrity | `publish skill --v7 --out <dir>` (refuses without `--v7`; refuses unsafe output paths) | `v7_skill_cmd.go`, `removed_surfaces.go` | [[skills]] |
 | `factory operations` | Read-only factory projection | | `factory_operations.go` | [[factory-intake]] |
 | `capabilities`, `version`, `config resolve`, `vault mount\|unmount\|set\|status\|repair\|move`, `xcode doctor` | Introspection and host wiring | `--json` | `capabilities_cmd.go`, `version_cmd.go`, `config_resolve_cmd.go`, `vault_workspace.go`, `xcode_doctor.go` | [[platform-support]] |
+
+## Reset and relaunch
+
+Use this path when a repository's disposable Tusker tracker state is stale
+after an API change and repairing old tickets is not worth the effort:
+
+```sh
+tusker reset --dry-run [--repo <path>]
+tusker reset --yes [--repo <path>]
+# equivalent alias:
+tusker relaunch --yes [--repo <path>]
+```
+
+The apply form requires `--yes`. It deletes the known repo-local Tusker state,
+including tickets, epics, proof, scratch, events, generated indexes, and
+generated tracker wiring, then initializes a clean V7 vault. It snapshots and
+restores `.tusker/specs/**`; `docs/specs/**`, source files, and ordinary
+documentation are outside the deletion boundary. `--dry-run` is read-only.
+
+For a lower-level init composition, use
+`tusker init --yes --purge-state --preserve-specs`. The reset operation does not
+recreate repo pointers, repo-contract files, or Obsidian mounts; add those
+explicitly with the normal install/init flags when needed.
 
 ## Capability reporting
 

@@ -26,6 +26,7 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         webView = WKWebView(frame: frame, configuration: webConfig)
         super.init()
         content.add(self, name: "tuskerShell")
+        window.appearance = NSAppearance(named: .darkAqua)
         window.title = "Tusker"
         window.collectionBehavior = [.fullScreenPrimary]
         window.isReleasedWhenClosed = false
@@ -56,6 +57,7 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
     }
 
     func show(path: String? = nil) {
+        restoreVisibleFrame()
         window.contentView?.layoutSubtreeIfNeeded()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -71,6 +73,24 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
     func enterFullScreen() {
         show()
         if !window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
+    }
+
+    private func restoreVisibleFrame() {
+        guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(window.frame) }) ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        var frame = window.frame
+        frame.size.width = min(max(frame.size.width, 720), visible.width)
+        frame.size.height = min(max(frame.size.height, 520), visible.height)
+        if !visible.intersects(frame) {
+            frame.origin = NSPoint(
+                x: visible.midX - frame.width / 2,
+                y: visible.midY - frame.height / 2
+            )
+        } else {
+            frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
+        }
+        window.setFrame(frame, display: false)
     }
 
     private func load(path: String, kind: RuntimeShellLoadKind) {

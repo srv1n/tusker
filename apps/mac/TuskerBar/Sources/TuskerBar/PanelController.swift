@@ -34,6 +34,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         webView = WKWebView(frame: frame, configuration: webConfig)
         super.init()
         content.add(self, name: "tuskerShell")
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false

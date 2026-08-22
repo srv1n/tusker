@@ -53,7 +53,6 @@ func (d *Daemon) startServe(_ context.Context) (*daemonServeServer, error) {
 	server.stream = stream
 	server.reconcileStatus = d.adaptiveReconcileStatus
 	d.serve = server
-	go server.warmRegisteredProjectSnapshots()
 	httpServer := serveHTTPServer(actualAddr, server)
 	daemonServer := &daemonServeServer{
 		addr:       actualAddr,

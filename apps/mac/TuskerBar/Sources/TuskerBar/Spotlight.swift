@@ -161,6 +161,7 @@ final class SpotlightIndexer {
         attributes.contentDescription = record.description
         attributes.contentURL = URL(string: "tusker://spotlight/\(record.route.identifier.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? record.route.identifier)")
         attributes.keywords = record.keywords.filter { !$0.isEmpty }
+        attributes.thumbnailData = TuskerBranding.iconData()
         attributes.relatedUniqueIdentifier = record.route.identifier
         return CSSearchableItem(uniqueIdentifier: record.route.identifier, domainIdentifier: "tusker", attributeSet: attributes)
     }

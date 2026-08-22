@@ -51,6 +51,116 @@ type docsAdoptPrepared struct {
 
 var docsAdoptApplyMu sync.Mutex
 
+// docs adopt is the one mutation that may be explicitly authorized by the
+// user while an agent is driving the CLI. The session namespace is local to
+// this command; it must never become a general actor kind or break-glass
+// escape hatch for other mutations.
+func normalizeDocsAdoptActor(raw string) (string, string, bool) {
+	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	kind := strings.ToLower(strings.TrimSpace(parts[0]))
+	name := strings.TrimSpace(parts[1])
+	if name == "" || strings.ContainsAny(name, " \t\r\n") {
+		return "", "", false
+	}
+	switch kind {
+	case "human", "user-session":
+		return kind + ":" + name, kind, true
+	default:
+		return "", "", false
+	}
+}
+
+func parseDocsAdoptApprovalToken(raw string) (string, string, error) {
+	raw = strings.TrimSpace(raw)
+	separator := strings.LastIndexByte(raw, '@')
+	if separator <= 0 || separator == len(raw)-1 {
+		return "", "", tuskerError(errorInvalidField, "docs adopt --approval-token must be <actor>@<proposal-fingerprint>")
+	}
+	actor, kind, ok := normalizeDocsAdoptActor(raw[:separator])
+	if !ok || kind != "user-session" {
+		return "", "", tuskerError(errorInvalidField, "docs adopt --approval-token must identify a user-session actor")
+	}
+	fingerprint := strings.TrimSpace(raw[separator+1:])
+	if !strings.HasPrefix(fingerprint, "sha256:") || len(strings.TrimPrefix(fingerprint, "sha256:")) != sha256.Size*2 {
+		return "", "", tuskerError(errorInvalidField, "docs adopt --approval-token must contain a sha256 proposal fingerprint")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(fingerprint, "sha256:")); err != nil {
+		return "", "", tuskerError(errorInvalidField, "docs adopt --approval-token contains an invalid proposal fingerprint")
+	}
+	return actor, fingerprint, nil
+}
+
+func docsAdoptApprovalActor(args Args, fingerprint string) (string, string, error) {
+	rawBy := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
+	rawToken := strings.TrimSpace(args.String("approval-token"))
+	tokenActor := ""
+	if rawToken != "" {
+		var tokenFingerprint string
+		var err error
+		tokenActor, tokenFingerprint, err = parseDocsAdoptApprovalToken(rawToken)
+		if err != nil {
+			return "", "", err
+		}
+		if tokenFingerprint != fingerprint {
+			return "", "", tuskerError(errorInvalidTransition, "docs adopt approval token is bound to a different proposal fingerprint")
+		}
+		if rawBy == "" {
+			rawBy = tokenActor
+		}
+	}
+	actor, kind, ok := normalizeDocsAdoptActor(rawBy)
+	if !ok {
+		return "", "", tuskerError(errorInvalidField, "docs adopt approval requires --by human:<name> or --by user-session:<id>")
+	}
+	if tokenActor != "" && actor != tokenActor {
+		return "", "", tuskerError(errorInvalidField, "docs adopt --approval-token actor must match explicit --by "+actor)
+	}
+	if kind == "human" {
+		resolved, err := v7HumanActor(Args{"by": actor}, "docs adopt approval")
+		if err != nil {
+			return "", "", err
+		}
+		return resolved, "human", nil
+	}
+	if !strings.HasPrefix(agentSessionKind(), "interactive ") {
+		return "", "", tuskerError(errorInvalidTransition,
+			"docs adopt user-session approval requires an interactive agent session",
+			withHint("run unattended adoption from a human terminal with --by human:<name>; user-session approval is not an agent break-glass flag"))
+	}
+	if rawToken != "" {
+		return actor, "user-session-receipt", nil
+	}
+	return actor, "user-session", nil
+}
+
+func emitDocsAdoptAudit(vaultPath, eventKind, actor, approvalMethod, fingerprint, tablePath string, proposals []docsAdoptProposal, token string, applied bool, detail string) error {
+	digest := strings.TrimPrefix(fingerprint, "sha256:")
+	if len(digest) < 16 {
+		return fmt.Errorf("documentation adoption audit requires a complete proposal fingerprint")
+	}
+	payload := map[string]any{
+		"schema":               "tusker.docs-adopt-audit/v1",
+		"proposal_fingerprint": fingerprint,
+		"proposal_table":       filepath.Base(tablePath),
+		"proposal_count":       len(proposals),
+		"action_count":         len(docsAdoptActionRows(proposals)),
+		"approval_method":      approvalMethod,
+		"execution_role":       agentSessionKind(),
+		"applied":              applied,
+	}
+	if token != "" {
+		payload["approval_token_digest"] = docsAdoptBytesFingerprint([]byte(token))
+	}
+	if detail != "" {
+		payload["detail"] = detail
+	}
+	objectID := "docs-adopt-" + digest[:16]
+	return emitV7Event(vaultPath, objectID, "documentation", eventKind, actor, payload)
+}
+
 func docsAdoptBytesFingerprint(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -447,15 +557,15 @@ func docsAdoptCmd(args Args) error {
 		return tuskerError(errorInvalidTransition, "docs adopt --approve requires an explicit reviewed proposal table; save the dry-run JSON, review every row, set approved_by, then pass --table <file>")
 	}
 	if approved && len(docsAdoptActionRows(proposals)) > 0 {
-		actor, actorErr := v7HumanActor(args, "docs adopt approval")
+		actor, approvalMethod, actorErr := docsAdoptApprovalActor(args, table.Fingerprint)
 		if actorErr != nil {
 			return actorErr
 		}
 		if strings.TrimSpace(table.ApprovedBy) == "" {
 			return tuskerError(errorInvalidTransition, "docs adopt approval table requires approved_by: "+actor)
 		}
-		approvedBy, ok := normalizeV7ProposalActor(table.ApprovedBy)
-		if !ok || approvedBy != actor || !strings.HasPrefix(approvedBy, "human:") {
+		approvedBy, _, ok := normalizeDocsAdoptActor(table.ApprovedBy)
+		if !ok || approvedBy != actor {
 			return tuskerError(errorInvalidField, "docs adopt approval table approved_by must match explicit --by "+actor)
 		}
 		if table.Fingerprint != docsAdoptTableFingerprint(proposals) {
@@ -465,8 +575,17 @@ func docsAdoptCmd(args Args) error {
 		if preflightErr != nil {
 			return preflightErr
 		}
+		if err := emitDocsAdoptAudit(vaultPath, "docs_adopt_approved", actor, approvalMethod, table.Fingerprint, tablePath, proposals, args.String("approval-token"), false, "reviewed table passed preflight"); err != nil {
+			return fmt.Errorf("documentation adoption approval audit failed: %w", err)
+		}
 		if err := applyPreparedDocsAdoptTable(repoRoot, prepared); err != nil {
+			if auditErr := emitDocsAdoptAudit(vaultPath, "docs_adopt_failed", actor, approvalMethod, table.Fingerprint, tablePath, proposals, args.String("approval-token"), false, err.Error()); auditErr != nil {
+				return fmt.Errorf("%w (failure audit failed: %v)", err, auditErr)
+			}
 			return err
+		}
+		if err := emitDocsAdoptAudit(vaultPath, "docs_adopt_applied", actor, approvalMethod, table.Fingerprint, tablePath, proposals, args.String("approval-token"), true, "reviewed table applied"); err != nil {
+			return fmt.Errorf("documentation adoption applied but completion audit failed: %w", err)
 		}
 		for i := range proposals {
 			proposals[i].Applied = true
@@ -507,7 +626,7 @@ func docsAdoptCmd(args Args) error {
 		fmt.Println(line)
 	}
 	if !approved {
-		fmt.Printf("Review this table, set approved_by, then run `tusker docs adopt --table <file> --approve --by human:<name>` (fingerprint %s); no file is changed by this run.\n", table.Fingerprint)
+		fmt.Printf("Review this table, set approved_by, then run `tusker docs adopt --table <file> --approve --by human:<name>` (or an explicit user-session approval in an interactive agent session; fingerprint %s); no file is changed by this run.\n", table.Fingerprint)
 	} else if applied {
 		fmt.Println("Generated map artifacts were not changed; run `tusker docs map` after reviewing the adopted canonical docs.")
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +72,7 @@ const (
 	cleanExitContinuationReason  = "runner exited cleanly while tracker state remained active; queued continuation retry"
 	tuskerSignsWarnLineLimit     = 60
 	daemonPollIntervalEnv        = "TUSKER_POLL_INTERVAL_MS"
+	daemonReconcileModeEnv       = "TUSKER_RECONCILIATION_MODE"
 	minimumReconcileTick         = 5 * time.Second
 	attentionProjectPollCadence  = 20 * time.Second
 	attentionProjectCheckCadence = time.Second
@@ -183,24 +185,26 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			_ = serveServer.Close(shutdownCtx)
 		}()
 	}
-	stopWatchdog := d.startWatchdog(runCtx)
+	periodic := daemonPeriodicReconciliationEnabled()
+	stopWatchdog := func() {}
+	if periodic {
+		stopWatchdog = d.startWatchdog(runCtx)
+	}
 	defer stopWatchdog()
-	if err := d.runPoll(runCtx, ""); err != nil {
-		return err
-	}
-	_, initialWait, err := d.adaptiveProjectsDue(time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	initialWait = d.nextDepartureWait(time.Now().UTC(), initialWait)
-	pollTimer := time.NewTimer(initialWait)
-	defer pollTimer.Stop()
-	var attentionC <-chan time.Time
-	var attentionTicker *time.Ticker
-	if d.stream != nil {
-		attentionTicker = time.NewTicker(attentionProjectCheckCadence)
-		attentionC = attentionTicker.C
-		defer attentionTicker.Stop()
+	var pollC <-chan time.Time
+	var pollTimer *time.Timer
+	if periodic {
+		if err := d.runPoll(runCtx, ""); err != nil {
+			return err
+		}
+		_, initialWait, err := d.adaptiveProjectsDue(time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		initialWait = d.nextDepartureWait(time.Now().UTC(), initialWait)
+		pollTimer = time.NewTimer(initialWait)
+		pollC = pollTimer.C
+		defer pollTimer.Stop()
 	}
 	for {
 		select {
@@ -211,23 +215,27 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				if err := d.runPoll(runCtx, ""); err != nil {
 					return err
 				}
-				_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
-				if err != nil {
-					return err
+				if periodic {
+					_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+					if err != nil {
+						return err
+					}
+					resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 				}
-				resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 				continue
 			}
 			d.noteProjectActivity(projectID, "cli_mutation", time.Now().UTC())
 			if err := d.runPoll(runCtx, projectID); err != nil {
 				return err
 			}
-			_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
-			if err != nil {
-				return err
+			if periodic {
+				_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+				if err != nil {
+					return err
+				}
+				resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 			}
-			resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
-		case <-pollTimer.C:
+		case <-pollC:
 			due, _, err := d.adaptiveProjectsDue(time.Now().UTC())
 			if err != nil {
 				return err
@@ -244,19 +252,6 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				if err := d.runPoll(runCtx, projectID); err != nil {
 					return err
 				}
-			}
-			_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
-			if err != nil {
-				return err
-			}
-			resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
-		case now := <-attentionC:
-			for _, attendedProjectID := range d.attentionProjectsDue(now) {
-				d.noteProjectActivity(attendedProjectID, "serve_attention", now)
-				if err := d.runPoll(runCtx, attendedProjectID); err != nil {
-					return err
-				}
-				d.attentionLastPoll[attendedProjectID] = now
 			}
 			_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
 			if err != nil {
@@ -292,6 +287,7 @@ func (d *Daemon) attentionProjectsDue(now time.Time) []string {
 }
 
 func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
+	started := time.Now()
 	var err error
 	if projectID == "" {
 		err = d.PollOnce(ctx)
@@ -300,6 +296,9 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 	}
 	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		return nil
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		log.Printf("daemon poll: project=%s duration=%s error=%v", firstNonEmpty(strings.TrimSpace(projectID), "*"), elapsed, err)
 	}
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" {
@@ -386,6 +385,18 @@ func (d *Daemon) nextPollInterval() time.Duration {
 	// project force fast full scans and made the watchdog reload registrations
 	// every five seconds. Targeted notifications handle responsiveness instead.
 	return configuredReconcileInterval(os.Getenv(daemonPollIntervalEnv))
+}
+
+func daemonPeriodicReconciliationEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(daemonReconcileModeEnv))) {
+	case "event", "manual", "off", "false", "0":
+		// Event-driven mode is opt-in for installations that want zero periodic
+		// project reads. CLI notifications, explicit UI refreshes, and live runner
+		// events still target the affected project.
+		return false
+	default:
+		return true
+	}
 }
 
 func configuredReconcileInterval(raw string) time.Duration {

@@ -158,7 +158,7 @@ func cliCommandMutatesProjectRegistry(command string, args Args) bool {
 		return false
 	}
 	switch command {
-	case "projects add", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune":
+	case "projects add", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune", "reset", "relaunch":
 		return true
 	default:
 		return false

@@ -56,8 +56,22 @@ func adaptiveReconcileCadenceWithHot(idle time.Duration, runtimeUrgent bool, hot
 }
 
 func runtimeRunNeedsHotReconcile(run RunStatus) bool {
+	return runtimeRunNeedsHotReconcileAt(run, time.Now().UTC())
+}
+
+func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {
 	if run.Terminal {
 		return false
+	}
+	// A dead/stale row must get a bounded reconciliation, not pin its project
+	// to the five-second loop forever. Rows without timestamps are legacy data;
+	// keep those urgent until one normal poll can repair them.
+	lastHeartbeat := strings.TrimSpace(run.LastHeartbeatAt)
+	if lastHeartbeat != "" {
+		if heartbeatAt, err := time.Parse(time.RFC3339Nano, lastHeartbeat); err == nil &&
+			run.ProcessPID <= 0 && run.ProcessPGID <= 0 && now.Sub(heartbeatAt) > daemonHeartbeatDeadThreshold {
+			return false
+		}
 	}
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
 	case LeaseStateClaimed, LeaseStateRunning, LeaseStateRetryQueued, LeaseStateInterrupted:
@@ -149,7 +163,7 @@ func (d *Daemon) recordPollSchedule(projectID string, now time.Time) error {
 	}
 	urgent := map[string]bool{}
 	for _, run := range runs {
-		if runtimeRunNeedsHotReconcile(run) {
+		if runtimeRunNeedsHotReconcileAt(run, now) {
 			urgent[run.ProjectID] = true
 		}
 	}
@@ -186,7 +200,7 @@ func (d *Daemon) adaptiveProjectsDue(now time.Time) ([]string, time.Duration, er
 	}
 	urgent := map[string]bool{}
 	for _, run := range runs {
-		if runtimeRunNeedsHotReconcile(run) {
+		if runtimeRunNeedsHotReconcileAt(run, now) {
 			urgent[run.ProjectID] = true
 		}
 	}

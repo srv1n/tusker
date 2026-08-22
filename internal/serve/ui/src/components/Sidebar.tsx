@@ -71,7 +71,8 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
         )}
       >
         <div className="flex h-[74px] items-center border-b border-line px-5">
-          <Link to="/" className="flex items-baseline gap-2">
+          <Link to="/" className="flex items-center gap-2">
+            <img src="/tusker-icon.png" alt="" aria-hidden="true" className="h-7 w-7 rounded-lg object-cover" />
             <span className="text-[20px] font-bold tracking-[-0.045em] text-ink">tusker</span>
             <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-faint">factory</span>
           </Link>

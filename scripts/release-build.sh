@@ -85,7 +85,7 @@ for target in $matrix; do
 	goos=${target%/*}; goarch=${target#*/}
 	case "$goos/$goarch" in darwin/arm64|darwin/amd64|linux/arm64|linux/amd64|windows/amd64) ;; *) printf 'Unsupported release target: %s\n' "$target" >&2; exit 1;; esac
 	stem="tusker_${version}_${goos}_${goarch}"; work="$stage/$stem"; mkdir "$work"; ext=''; [ "$goos" = windows ] && ext=.exe
-	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false -ldflags "-buildid= -X main.buildVersion=$version" -o "$work/tusker$ext" ./cmd/tusker
+	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false -ldflags "-s -w -buildid= -X main.buildVersion=$version" -o "$work/tusker$ext" ./cmd/tusker
 	cp README.md LICENSE "$work/"
 	archive="$stage/$stem.tar.gz"
 	( cd "$stage" && "$gnu_tar" --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --mode='u+rw,go+rX' -cf - "$stem" | gzip -n >"$archive" )

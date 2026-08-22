@@ -117,6 +117,14 @@ hand-maintained, because a hand-drawn map is just another document that rots.
     unpromoted legacy docs become tombstones and `docs find` always routes
     forward.
 
+    Adoption remains human-gated for unattended runs. When an interactive agent
+    is carrying out a user-approved migration, the user may authorize the
+    exact reviewed fingerprint with `approved_by: user-session:<id>` and an
+    optional `--approval-token user-session:<id>@<fingerprint>` receipt. Tusker
+    records approval, application, and failure events under `.tusker/events/`;
+    this session receipt is scoped to `docs adopt` and is not an agent
+    break-glass actor.
+
 ## The agent habit (bound into skills)
 
 Before reading or writing any documentation: `tusker docs find <query>` —

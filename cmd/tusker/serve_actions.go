@@ -224,6 +224,7 @@ func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID strin
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
 		return
 	}
+	snap.queue = s.loadQueueExplanationsForProjectMode(project, true)
 	note, ok := snap.notesByID[strings.TrimSpace(taskID)]
 	if !ok || serveNoteKind(note) != "task" {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task not found"})

@@ -69,20 +69,22 @@ holding pid, started_at, state_root, serve enabled/addr, managed_by_launchd
 `$TUSKER_STATE_ROOT`, else `~/Library/Application Support/tusker`, else `$TMPDIR/tusker`
 (`:87`). **`--once`** sets the one-shot refusal, disables departure execution, skips control
 server / serve / watchdog, runs exactly one `PollOnce`, returns (`:129-172`). **Resident**:
-control server → serve (if configured) → watchdog → initial full poll → loop.
+control server → serve (if configured) → adaptive loop. Set
+`TUSKER_RECONCILIATION_MODE=event` for a zero-periodic-read mode in which CLI
+notifications, explicit UI refreshes, and live runner events target a project.
 
 | Wake source | Behavior |
 | --- | --- |
 | `notifyWake` channel | `"*"` polls everything; a project ID stamps `cli_mutation` activity and polls that project (`:207-227`). |
-| Poll timer | `adaptiveProjectsDue`, then any `departureProjectsDue` not already covered (`:228-250`). |
-| Attention ticker (1s) | Serve only; polls browser-watched projects at most every 20s (`:268`). |
+| Poll timer | `adaptiveProjectsDue`, then any `departureProjectsDue` not already covered (`:228-250`); disabled in event mode. |
+| Attention ticker | Removed. A connected browser does not itself authorize periodic disk reads. |
 
 Next wait is `min(adaptive wait, next departure window)` (`nextDepartureWait`), floored at 100ms
 by `resetTimer` (`adaptive_reconcile.go:281`). **Control socket**: `<state>/daemon.sock`, mode 0600, ≤64KB/request, ≤32 concurrent; startup
 refuses a symlink, a non-socket path, or a socket owned by another UID (`daemon_control.go:75`).
 Commands: `interrupt`, `stop`, `reconcile_project` (optional change hints), `reconcile_registry`.
-**Watchdog**: ticks 5s; `pollOnce` writes `daemon_watchdog_beat_at`; beat age >
-`3 × adaptiveWatchdogCadence` (smallest live per-project cadence, default 1m) records
+**Watchdog**: ticks 5s in adaptive mode; `pollOnce` writes
+`daemon_watchdog_beat_at`; beat age > `3 × adaptiveWatchdogCadence` records
 `watchdog_stale` and calls `os.Exit(70)` so launchd restarts (`:315-379`).
 
 ### launchd service (macOS only)

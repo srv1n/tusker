@@ -93,6 +93,19 @@ func TestSentinelDetectsConfiguredInvariants(t *testing.T) {
 	}
 }
 
+func TestSentinelIgnoresFreshHeartbeatForHandRun(t *testing.T) {
+	now := time.Date(2026, 7, 6, 12, 0, 1, 0, time.UTC)
+	config := withDefaultRuntimeSentinelConfig(RuntimeSentinelConfig{})
+	violations := sentinelFreshHeartbeatPidLive(runtimeSentinelProjectSnapshot{}, []RunStatus{{
+		ProjectID: "app", RecordID: "APP-T-0001", Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), HandRun: true,
+		LastHeartbeatAt: now.Format(time.RFC3339),
+	}}, config, now, func(RunStatus) bool { return false })
+	if len(violations) != 0 {
+		t.Fatalf("hand-run heartbeat must not require daemon PID liveness: %#v", violations)
+	}
+}
+
 func TestSentinelCircuitOpenBlocksDispatchButServeReadsStatus(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Circuit blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)

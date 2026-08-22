@@ -116,6 +116,7 @@ graph TD
   n_orchestration["Orchestration"]
   n_overview["Tusker system overview"]
   n_platform_support["Platform support"]
+  n_project_reset_and_relaunch["Project reset and relaunch"]
   n_proof_and_closeout["Proof recording and closeout"]
   n_runners_and_acp["Runners and the ACP adapter stack"]
   n_scratch_retention["Scratch retention: task scratch is ephemeral and reaps itself"]
@@ -143,6 +144,7 @@ graph TD
   n_overview --> n_landing_and_completion
   n_overview --> n_orchestration
   n_overview --> n_platform_support
+  n_storage_and_runtime --> n_project_reset_and_relaunch
   n_overview --> n_proof_and_closeout
   n_overview --> n_runners_and_acp
   n_software_factory --> n_scratch_retention

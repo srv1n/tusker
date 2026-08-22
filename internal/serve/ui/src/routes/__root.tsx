@@ -73,9 +73,7 @@ function MobileTopBar({ onMenuOpen }: { onMenuOpen: () => void }) {
         <Menu size={18} />
       </button>
       <Link to="/" className="flex items-center gap-2 py-2 pr-2">
-        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-ink font-serif text-[12px] font-semibold text-surface">
-          t
-        </span>
+        <img src="/tusker-icon.png" alt="" aria-hidden="true" className="h-6 w-6 rounded-md object-cover" />
         <span className="font-serif text-[16px] font-semibold tracking-[-0.01em] text-ink">tusker</span>
       </Link>
       {needsCount > 0 && (

@@ -34,6 +34,13 @@ type automationCommandContext struct {
 	ProjectActiveRuns  int
 	StateActiveRuns    map[string]int
 	DispatchRefusal    string
+	runnerCache        map[string]runnerResolution
+}
+
+type runnerResolution struct {
+	runner  Runner
+	command string
+	err     error
 }
 
 type automationProjectSummary struct {
@@ -333,6 +340,7 @@ func loadAutomationCommandContextWithStore(args Args, stateRoot string, store *R
 		ProjectRuns:        map[string]RunStatus{},
 		NoteStatusByRecord: map[string]string{},
 		StateActiveRuns:    map[string]int{},
+		runnerCache:        map[string]runnerResolution{},
 	}
 	project, registered, projectErr := resolveAutomationRegisteredProject(store, args)
 	if projectErr != nil && strings.TrimSpace(firstNonEmpty(args.String("project"), args.String("project-id"))) != "" {
@@ -606,21 +614,21 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 			blockers = append(blockers, reason)
 		}
 	}
-	runnerObj, configuredCommand, err := runnerForName(runner, ctx.Workflow.Data)
 	var infrastructure *RunnerInfrastructureBlock
-	if err != nil {
-		blockers = append(blockers, "runner config: "+err.Error())
-	} else {
-		command = commandForRunnerProfile(configuredCommand, selectedProfile)
-		if checkRunnerHealth {
+	if checkRunnerHealth {
+		runnerObj, configuredCommand, err := ctx.runnerForName(runner)
+		if err != nil {
+			blockers = append(blockers, "runner config: "+err.Error())
+		} else {
+			command = commandForRunnerProfile(configuredCommand, selectedProfile)
 			health := runnerPreclaimHealth(runnerObj.Name(), command)
 			if health.Block != nil {
 				infrastructure = health.Block
 				blockers = append(blockers, runnerInfrastructureBlockReason(health.Block))
 			}
-		}
-		if runnerObj.Capabilities().ExplicitApprovals {
-			requiredApprovals = append(requiredApprovals, "runner explicit approvals")
+			if runnerObj.Capabilities().ExplicitApprovals {
+				requiredApprovals = append(requiredApprovals, "runner explicit approvals")
+			}
 		}
 	}
 	if runner != "" && !containsString(ctx.Workflow.Data.Agents.Enabled, runner) {
@@ -711,6 +719,19 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		ArmedWaveReason:   waveReason,
 		DispatchScope:     ctx.Workflow.Data.DispatchScope,
 	}
+}
+
+func (ctx *automationCommandContext) runnerForName(name string) (Runner, string, error) {
+	name = strings.TrimSpace(name)
+	if ctx.runnerCache == nil {
+		ctx.runnerCache = map[string]runnerResolution{}
+	}
+	if cached, ok := ctx.runnerCache[name]; ok {
+		return cached.runner, cached.command, cached.err
+	}
+	runner, command, err := runnerForName(name, ctx.Workflow.Data)
+	ctx.runnerCache[name] = runnerResolution{runner: runner, command: command, err: err}
+	return runner, command, err
 }
 
 func (ctx *automationCommandContext) armedWaveTaskProjection(note Note) (string, string, string) {

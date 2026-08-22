@@ -1054,6 +1054,22 @@ func initCmd(args Args) error {
 	}
 	cwd := mustGetwd()
 	yes := args.Bool("yes")
+	var err error
+	var preservedSpecs *tuskerSpecSnapshot
+	if args.Bool("purge-state") && args.Bool("preserve-specs") {
+		preservedSpecs, err = snapshotTuskerSpecs(cwd)
+		if err != nil {
+			return err
+		}
+		if preservedSpecs != nil {
+			defer func() {
+				if preservedSpecs != nil {
+					_ = preservedSpecs.restore(cwd)
+					preservedSpecs.cleanup()
+				}
+			}()
+		}
+	}
 	if args.Bool("purge-state") {
 		purgeArgs := Args{"repo": cwd, "only-tusker-state": "true", "yes": "true"}
 		if args.Bool("quiet") {
@@ -1194,6 +1210,13 @@ func initCmd(args Args) error {
 	}
 	if err := workflowInitCmd(Args{"vault": effectiveVault, "quiet": "true"}); err != nil {
 		return err
+	}
+	if preservedSpecs != nil {
+		if err := preservedSpecs.restore(cwd); err != nil {
+			return err
+		}
+		preservedSpecs.cleanup()
+		preservedSpecs = nil
 	}
 	purgeUndo := fmt.Sprintf("remove the generated Tusker vault manually at %s", effectiveVault)
 	if sameCanonicalProjectPath(effectiveVault, filepath.Join(cwd, defaultRepoVaultDir)) {

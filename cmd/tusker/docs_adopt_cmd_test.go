@@ -369,6 +369,106 @@ func TestDocsAdoptLeavesMapArtifactsForExplicitReview(t *testing.T) {
 	}
 }
 
+func TestDocsAdoptUserSessionApprovalIsFingerprintBoundAndAudited(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
+	t.Setenv("CODEX_THREAD_ID", "user-thread")
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vault := filepath.Join(repo, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n\nKeep this source.\n")
+	source, err := os.ReadFile(filepath.Join(repo, "docs/legacy.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposals := []docsAdoptProposal{{
+		Path: "docs/legacy.md", Subject: "Legacy", Disposition: "promote",
+		Target: "docs/system/legacy.md", Reason: "user reviewed",
+		SourceFingerprint: docsAdoptBytesFingerprint(source),
+	}}
+	fingerprint := docsAdoptTableFingerprint(proposals)
+	actor := "user-session:sarav-thread"
+	table := docsAdoptTable{Schema: docsAdoptTableSchema, Fingerprint: fingerprint, ApprovedBy: actor, Proposals: proposals}
+	tablePath := filepath.Join(repo, "adoption.json")
+	raw, err := json.Marshal(table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tablePath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	token := actor + "@" + fingerprint
+	if err := docsAdoptCmd(Args{
+		"vault": vault, "table": tablePath, "approve": "true", "by": actor,
+		"approval-token": token,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "docs/system/legacy.md")); err != nil {
+		t.Fatalf("user-session approval did not apply: %v", err)
+	}
+	if eventErrors, _, _ := validateV7Events(vault); len(eventErrors) != 0 {
+		t.Fatalf("audit events failed V7 validation: %#v", eventErrors)
+	}
+	eventsRoot := filepath.Join(vault, "events")
+	var kinds = map[string]bool{}
+	err = filepath.WalkDir(eventsRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		data := map[string]any{}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if err := json.Unmarshal(raw, &data); err != nil {
+			return err
+		}
+		kinds[stringField(data, "event_kind")] = true
+		payload := mapField(data, "payload")
+		if stringField(data, "event_kind") == "docs_adopt_approved" {
+			if stringField(payload, "proposal_fingerprint") != fingerprint || stringField(data, "actor") != actor {
+				t.Fatalf("approval audit lost binding: %#v", data)
+			}
+			if strings.Contains(string(raw), token) {
+				t.Fatalf("approval audit leaked the raw token: %s", raw)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kinds["docs_adopt_approved"] || !kinds["docs_adopt_applied"] {
+		t.Fatalf("audit events = %#v, want approval and applied", kinds)
+	}
+}
+
+func TestDocsAdoptUserSessionApprovalKeepsUnattendedHumanGate(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
+	if _, _, err := docsAdoptApprovalActor(Args{"by": "user-session:operator"}, "sha256:"+strings.Repeat("a", 64)); err == nil || !strings.Contains(err.Error(), "interactive agent session") {
+		t.Fatalf("user-session approval escaped human-terminal gate: %v", err)
+	}
+	t.Setenv("CODEX_THREAD_ID", "interactive")
+	fingerprint := "sha256:" + strings.Repeat("a", 64)
+	if _, _, err := docsAdoptApprovalActor(Args{"by": "user-session:operator", "approval-token": "user-session:operator@sha256:" + strings.Repeat("b", 64)}, fingerprint); err == nil || !strings.Contains(err.Error(), "different proposal fingerprint") {
+		t.Fatalf("mismatched approval token was accepted: %v", err)
+	}
+	clearAgentSessionEnvForTest(t)
+	t.Setenv("TUSKER_ATTEMPT_ID", "unattended-worker")
+	if _, _, err := docsAdoptApprovalActor(Args{"by": "user-session:operator"}, fingerprint); err == nil || !strings.Contains(err.Error(), "interactive agent session") {
+		t.Fatalf("dispatched worker received user-session approval: %v", err)
+	}
+	if _, _, err := docsAdoptApprovalActor(Args{"by": "agent:worker"}, fingerprint); err == nil || !strings.Contains(err.Error(), "human:<name> or --by user-session") {
+		t.Fatalf("agent actor became a docs adoption break-glass path: %v", err)
+	}
+}
+
 func TestDocsAdoptMixedTablePreflightAndApply(t *testing.T) {
 	repo := t.TempDir()
 	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")

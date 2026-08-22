@@ -11,6 +11,7 @@ sources:
   - internal/docgraph/docmap.go
   - internal/docgraph/search.go
   - cmd/tusker/docs_cmd.go
+  - cmd/tusker/docs_adopt_cmd.go
   - cmd/tusker/v7_domain_cmd.go
   - cmd/tusker/v7_feedback_cmd.go
   - cmd/tusker/v7_feedback_signal.go
@@ -166,12 +167,17 @@ it returns map defects as issues and short-circuits to no-op when
   managed tree and emit a fingerprinted `tusker.docs-adopt/v1` proposal table;
   this path is read-only. A human reviews every disposition, sets
   `approved_by: human:<name>`, and applies the exact table with
-  `tusker docs adopt --table <file> --approve --by human:<name>`. Apply
-  preflights the complete batch before writing. Promote and merge preserve
-  legacy sources; tombstone is permitted only as an explicit reviewed row and
-  rewrites the source as a `status: superseded` signpost to an existing
-  `docs/system/` successor. No disposition deletes a file, and generated map
-  artifacts still require an explicit `tusker docs map` run.
+  `tusker docs adopt --table <file> --approve --by human:<name>`. An interactive
+  agent session may use an explicit `approved_by: user-session:<id>` receipt;
+  `--approval-token user-session:<id>@<fingerprint>` optionally binds that
+  receipt to the exact reviewed fingerprint. Unattended runs still require a
+  human actor, and user-session is not a general agent break-glass path. Apply
+  preflights the complete batch before writing and records approval, apply, and
+  failure events under `.tusker/events/`. Promote and merge preserve legacy
+  sources; tombstone is permitted only as an explicit reviewed row and rewrites
+  the source as a `status: superseded` signpost to an existing `docs/system/`
+  successor. No disposition deletes a file, and generated map artifacts still
+  require an explicit `tusker docs map` run.
 
 All other `docs *` and `knowledge *` verbs are `legacyOnlyCommand` stubs
 (`cmd/tusker/cli.go:532-675`), as is `domain graph`.

@@ -57,7 +57,6 @@ func serveCmd(args Args) error {
 		server.operatorActor = actor
 	}
 	server.requireCapability = true
-	go server.warmRegisteredProjectSnapshots()
 	httpServer := serveHTTPServer(addr, server)
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "addr": addr, "vault": vaultPath})
@@ -816,8 +815,6 @@ func serveJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-const serveSnapshotBackgroundRefresh = 30 * time.Second
-
 // loadSnapshot retains the launch project's compatibility path for callers
 // without a project selector. All HTTP reads use loadSnapshotForProject.
 func (s *serveServer) loadSnapshot() (serveSnapshot, error) {
@@ -899,7 +896,6 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 	}
 	key := serveSnapshotKey(project)
 	for {
-		now := s.now()
 		s.snapshotMu.Lock()
 		if s.snapshots == nil {
 			s.snapshots = map[string]*serveSnapshotEntry{}
@@ -913,18 +909,6 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 		}
 		if entry.ready && !entry.invalid {
 			snap, cachedErr := entry.snapshot, entry.err
-			if now.Sub(entry.builtAt) >= serveSnapshotBackgroundRefresh && !entry.building {
-				entry.invalid = true
-				go s.warmSnapshot(project.ProjectID)
-			}
-			s.snapshotMu.Unlock()
-			return snap, cachedErr
-		}
-		if entry.ready && entry.invalid && !waitFresh {
-			snap, cachedErr := entry.snapshot, entry.err
-			if !entry.building {
-				go s.warmSnapshot(project.ProjectID)
-			}
 			s.snapshotMu.Unlock()
 			return snap, cachedErr
 		}
@@ -944,7 +928,7 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 		wasReady := entry.ready
 		s.snapshotMu.Unlock()
 
-		snap, buildErr := s.buildSnapshotForProject(project, true)
+		snap, buildErr := s.buildSnapshotForProject(project, false)
 		contentHash := ""
 		if buildErr == nil {
 			contentHash = serveSnapshotContentHash(snap)
@@ -978,10 +962,21 @@ func (s *serveServer) warmSnapshot(projectID string) {
 func (s *serveServer) warmRegisteredProjectSnapshots() {
 	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil || len(loaded) == 0 {
+		log.Printf("serve snapshot warm: fallback project load_error=%v", err)
 		s.warmSnapshot("")
 		return
 	}
+	warmable := 0
 	for _, item := range loaded {
+		if item.Project.Enabled && item.LoadError == nil {
+			warmable++
+		}
+	}
+	log.Printf("serve snapshot warm: starting projects=%d warmable=%d skipped=%d", len(loaded), warmable, len(loaded)-warmable)
+	for _, item := range loaded {
+		if !item.Project.Enabled || item.LoadError != nil {
+			continue
+		}
 		projectID := item.Project.ProjectID
 		go s.warmSnapshot(projectID)
 	}
@@ -989,7 +984,12 @@ func (s *serveServer) warmRegisteredProjectSnapshots() {
 
 func (s *serveServer) refreshProjectSnapshot(projectID string) {
 	s.invalidateProjectSnapshot(projectID)
-	go s.warmSnapshot(projectID)
+	if s.stream != nil {
+		s.stream.Broadcast(serveStreamEvent{
+			Kind: "projection_refreshed", Project: strings.TrimSpace(projectID),
+			Keys: []string{"projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch", "factory-operations"},
+		})
+	}
 }
 
 func (s *serveServer) refreshRegisteredProjectSnapshots() {
@@ -1006,10 +1006,15 @@ func (s *serveServer) buildSnapshot(includeQueue bool) (serveSnapshot, error) {
 }
 
 func (s *serveServer) buildSnapshotForProject(project RegisteredProject, includeQueue bool) (serveSnapshot, error) {
+	started := time.Now()
+	projectLabel := firstNonEmpty(strings.TrimSpace(project.ProjectID), strings.TrimSpace(project.ProjectKey), filepath.Base(project.RepoRoot))
+	contentsStarted := time.Now()
 	loaded, err := loadProjectContents(s.store, project, true)
 	if err != nil {
+		log.Printf("serve snapshot build: project=%s phase=load_contents duration=%s error=%v", projectLabel, time.Since(contentsStarted), err)
 		return serveSnapshot{}, err
 	}
+	contentsDuration := time.Since(contentsStarted)
 	project = loaded.Project
 	notes := loaded.Notes
 	projectID, err := resolveV7ProjectID(project.VaultRoot)
@@ -1064,9 +1069,13 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 			Health:       projectHealthHealthy,
 		}
 	}
-	if runs, truncated, err := s.store.ListRunsForProjectPage(snap.projectID, serveSnapshotRunCap); err != nil {
+	runsStarted := time.Now()
+	runs, truncated, err := s.store.ListRunsForProjectPage(snap.projectID, serveSnapshotRunCap)
+	if err != nil {
+		log.Printf("serve snapshot build: project=%s phase=list_runs duration=%s error=%v", projectLabel, time.Since(runsStarted), err)
 		return serveSnapshot{}, err
 	} else if truncated {
+		log.Printf("serve snapshot build: project=%s phase=list_runs duration=%s error=run_cap_exceeded", projectLabel, time.Since(runsStarted))
 		return serveSnapshot{}, tuskerError(
 			"RUNTIME_RUN_SNAPSHOT_LIMIT",
 			fmt.Sprintf("project %s exceeds the Serve runtime snapshot limit of %d runs", snap.projectID, serveSnapshotRunCap),
@@ -1075,14 +1084,26 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 	} else {
 		snap.runs = runs
 	}
+	runsDuration := time.Since(runsStarted)
+	queueDuration := time.Duration(0)
 	if includeQueue {
+		queueStarted := time.Now()
 		snap.queue = s.loadQueueExplanationsForProject(project)
+		queueDuration = time.Since(queueStarted)
 	}
+	docsStarted := time.Now()
 	snap.docs, err = serveDocList(project.RepoRoot, project.VaultRoot, snap.workflow.Runtime.Serve.DocsDirs)
 	if err != nil {
+		log.Printf("serve snapshot build: project=%s phase=load_docs duration=%s error=%v", projectLabel, time.Since(docsStarted), err)
 		return serveSnapshot{}, err
 	}
+	docsDuration := time.Since(docsStarted)
 	snap.needs = serveNeeds(snap, s.now())
+	log.Printf(
+		"serve snapshot build: project=%s total=%s contents=%s runs=%s queue=%s docs=%s notes=%d tasks=%d runs_count=%d queue_count=%d needs=%d",
+		projectLabel, time.Since(started), contentsDuration, runsDuration, queueDuration, docsDuration,
+		len(notes), len(snap.tasks), len(snap.runs), len(snap.queue), len(snap.needs),
+	)
 	return snap, nil
 }
 
@@ -1105,10 +1126,39 @@ func (s *serveServer) invalidateProjectSnapshot(projectID string) {
 	s.summaryMu.Unlock()
 }
 
+func (s *serveServer) cachedNeedsCount(projectID string) (int, bool) {
+	projectID = strings.TrimSpace(projectID)
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	for _, entry := range s.snapshots {
+		if entry == nil || !entry.ready || entry.err != nil {
+			continue
+		}
+		if projectID == entry.project.ProjectID || projectID == entry.snapshot.projectID {
+			return len(entry.snapshot.needs), true
+		}
+	}
+	return 0, false
+}
+
+func (s *serveServer) cachedSnapshotForProject(projectID string) (serveSnapshot, bool) {
+	projectID = strings.TrimSpace(projectID)
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	for _, entry := range s.snapshots {
+		if entry == nil || !entry.ready || entry.err != nil || entry.invalid {
+			continue
+		}
+		if projectID == entry.project.ProjectID || projectID == entry.snapshot.projectID {
+			return entry.snapshot, true
+		}
+	}
+	return serveSnapshot{}, false
+}
+
 // dropProjectSnapshot removes cached entries outright so the next read rebuilds
 // synchronously. Use after a mutation whose effect must be visible immediately;
-// invalidateProjectSnapshot only schedules a background refresh and keeps
-// serving the stale snapshot in the meantime.
+// invalidateProjectSnapshot marks a stale entry for the next read to rebuild.
 func (s *serveServer) dropProjectSnapshot(projectID string) {
 	projectID = strings.TrimSpace(projectID)
 	s.snapshotMu.Lock()
@@ -1137,14 +1187,18 @@ func (s *serveServer) loadQueueExplanations() map[string]automationTaskExplanati
 }
 
 func (s *serveServer) loadQueueExplanationsForProject(project RegisteredProject) map[string]automationTaskExplanation {
+	return s.loadQueueExplanationsForProjectMode(project, false)
+}
+
+func (s *serveServer) loadQueueExplanationsForProjectMode(project RegisteredProject, checkRunnerHealth bool) map[string]automationTaskExplanation {
 	ctx, err := loadAutomationCommandContextWithStore(Args{"vault": project.VaultRoot, "repo": project.RepoRoot}, DefaultStateRoot(), s.store)
 	if err != nil {
 		return map[string]automationTaskExplanation{}
 	}
 	defer ctx.Close()
-	// Serve is a read-only control surface.  Runner preflight belongs at the
-	// claim boundary, not on every dashboard refresh.
-	report := ctx.automationQueueReportWithRunnerHealth(false)
+	// Serve is a read-only control surface. Runner preflight belongs at the
+	// explicit claim boundary, not on dashboard reads.
+	report := ctx.automationQueueReportWithRunnerHealth(checkRunnerHealth)
 	out := map[string]automationTaskExplanation{}
 	for _, explanation := range append(report.Eligible, report.Blocked...) {
 		out[explanation.ID] = explanation
@@ -1253,7 +1307,7 @@ func (s *serveServer) handleDigest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
-	loadedProjects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{LoadDisabled: true})
+	loadedProjects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1268,12 +1322,6 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		projects = []RegisteredProject{project}
 	}
 	allRuns, _ := s.store.ListRuns()
-	workflowByProject := make(map[string]WorkflowFile, len(loadedProjects))
-	for _, loaded := range loadedProjects {
-		if loaded.LoadError == nil {
-			workflowByProject[loaded.Project.ProjectID] = loaded.Workflow
-		}
-	}
 	target := strings.TrimSpace(r.URL.Query().Get("project"))
 	items := make([]serveProjectSummary, 0, len(projects))
 	for _, project := range projects {
@@ -1290,25 +1338,25 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			worst = serveWorstLiveness(worst, serveRunLiveness(run, s.now()))
 		}
 		needsCount := 0
-		wf, ok := workflowByProject[project.ProjectID]
-		if !ok {
-			continue
+		wf := defaultWorkflow()
+		if cached, ok := s.cachedSnapshotForProject(project.ProjectID); ok {
+			wf = cached.workflow
 		}
-		autoReport, _ := configResolveForRepo(project.RepoRoot, true, "automation.enabled")
-		workspaceReport, _ := configResolveForRepo(project.RepoRoot, true, "workspace.strategy")
-		concurrencyReport, _ := configResolveForRepo(project.RepoRoot, true, "runtime.max_active_runs_per_project")
-		if snap, snapshotErr := s.loadSnapshotForProject(project.ProjectID); snapshotErr == nil {
-			needsCount = len(snap.needs)
+		// The global project list is metadata-only. A needs count is available
+		// once that project has been read explicitly; do not wake every inactive
+		// vault just to populate a dashboard badge.
+		if cached, ok := s.cachedNeedsCount(project.ProjectID); ok {
+			needsCount = cached
 		}
 		items = append(items, serveProjectSummary{
 			ID: project.ProjectID, Name: project.Name,
 			RepoRoot: project.RepoRoot, VaultRoot: project.VaultRoot,
-			AutomationEnabled: wf.Data.AutomationEnabled,
-			AutomationSource:  autoReport.Source,
-			DispatchScope:     wf.Data.DispatchScope,
-			WorkspaceMode:     string(workspaceStrategyFromWorkflow(wf.Data.Workspace.Strategy)), WorkspaceSource: workspaceReport.Source,
-			MaxActiveRunsPerProject: wf.Data.Runtime.MaxActiveRunsPerProject, ConcurrencySource: concurrencyReport.Source,
-			Health: string(project.Health), LastError: nullIfBlank(project.LastError),
+			AutomationEnabled:       wf.AutomationEnabled,
+			AutomationSource:        configSourceBuiltIn,
+			DispatchScope:           wf.DispatchScope,
+			WorkspaceMode:           string(workspaceStrategyFromWorkflow(wf.Workspace.Strategy)),
+			MaxActiveRunsPerProject: wf.Runtime.MaxActiveRunsPerProject,
+			Health:                  string(project.Health), LastError: nullIfBlank(project.LastError),
 			NeedsCount: needsCount, ActiveRuns: active, WorstLiveness: worst,
 			DaemonConnected: true, LastPollAt: nullIfBlank(project.LastPollAt),
 			Reconciliation: func() adaptiveProjectReconcileStatus {

@@ -423,6 +423,12 @@ func sentinelFreshHeartbeatPidLive(project runtimeSentinelProjectSnapshot, runs 
 		if !isDispatchingLeaseState(run.LeaseState) {
 			continue
 		}
+		// Hand-run sessions renew a logical lease but deliberately have no
+		// daemon-owned process identity. Their heartbeat cannot prove PID
+		// liveness, so this daemon-process invariant does not apply.
+		if run.HandRun {
+			continue
+		}
 		if runnerStatusReadyForReconcile(run) {
 			continue
 		}

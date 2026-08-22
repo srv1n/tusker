@@ -18,6 +18,19 @@ func TestPollIntervalDefaultIsGlobalSafetyNet(t *testing.T) {
 	}
 }
 
+func TestDaemonReconciliationCanBeDisabled(t *testing.T) {
+	t.Setenv(daemonReconcileModeEnv, "")
+	if !daemonPeriodicReconciliationEnabled() {
+		t.Fatal("resident daemon should retain adaptive reconciliation by default")
+	}
+	for _, raw := range []string{"event", "manual", "off", "false", "0"} {
+		t.Setenv(daemonReconcileModeEnv, raw)
+		if daemonPeriodicReconciliationEnabled() {
+			t.Fatalf("reconciliation mode %q did not disable periodic polling", raw)
+		}
+	}
+}
+
 func TestPollIntervalGlobalOverrideWinsAndClamps(t *testing.T) {
 	cases := []struct {
 		name string

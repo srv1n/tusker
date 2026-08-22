@@ -21,7 +21,7 @@ VALIDATION_GATE := sh scripts/with-validation-lock.sh --
 .DEFAULT_GOAL := help
 
 .NOTPARALLEL: check-unlocked ui-check-unlocked
-.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract release-artifacts tag-release codebasezip codebase zip
+.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-preview-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract release-artifacts tag-release codebasezip codebase zip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -34,7 +34,7 @@ build-go: ## Build the Go binary from the prepared embedded assets
 
 build-go-unlocked:
 	@mkdir -p "$(DIST_DIR)"
-	GOMAXPROCS=$(GO_MAX_PROCS) go build -p=$(GO_PACKAGE_PARALLELISM) -ldflags "-X main.buildVersion=$(VERSION)" -o "$(DIST_BIN)" "$(CMD_DIR)"
+	GOMAXPROCS=$(GO_MAX_PROCS) go build -trimpath -p=$(GO_PACKAGE_PARALLELISM) -ldflags "-s -w -X main.buildVersion=$(VERSION)" -o "$(DIST_BIN)" "$(CMD_DIR)"
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 		for attempt in 1 2 3; do \
 			xattr -d com.apple.provenance "$(DIST_BIN)" 2>/dev/null || true; \
@@ -57,8 +57,11 @@ mac-uninstall: require-macos ## Remove TuskerBar from ~/Applications
 mac-open: require-macos ## Open the installed TuskerBar app
 	open "$(MAC_APP_DIR)/TuskerBar.app"
 
-mac-preview: install-user mac-install ## Install the CLI/skills and build, install, and open TuskerBar
+mac-preview: install-user mac-preview-install ## Install the CLI/skills and build, install, and open TuskerBar
 	@echo "Tusker is open; the app starts or reuses its bundled daemon automatically."
+
+mac-preview-install: mac-app
+	MAC_PREVIEW=1 MAC_APP_DIR="$(MAC_APP_DIR)" apps/mac/TuskerBar/scripts/install-app.sh
 
 ui-install: ## Install the pinned Serve UI dependency graph
 	cd "$(UI_DIR)" && bun install --frozen-lockfile

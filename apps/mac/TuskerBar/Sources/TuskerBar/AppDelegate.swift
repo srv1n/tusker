@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var connected = false { didSet { updateStatusAppearance() } }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.applicationIconImage = TuskerBranding.icon()
         NSApp.setActivationPolicy(config.showDockIcon ? .regular : .accessory)
         RuntimeSupervisor.shared.ensureRunning()
         panel = PanelController(config: config) { [weak self] title, body, path in self?.notifications.postBridgeNotification(title: title, body: body, path: path) }
@@ -103,9 +104,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configureStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem.button else { return }
-        button.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Tusker")
-        button.image?.isTemplate = true
+        if let icon = TuskerBranding.menuBarIcon() {
+            button.image = icon
+        } else {
+            button.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "Tusker")
+            button.image?.isTemplate = true
+        }
+        button.imageScaling = .scaleProportionallyDown
         button.toolTip = "Tusker"
+        button.setAccessibilityLabel("Tusker")
         button.target = self
         button.action = #selector(statusItemPressed)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])

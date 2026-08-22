@@ -30,8 +30,8 @@ var (
 		"domain":        makeSet("status"),
 		"project_skill": makeSet("status"),
 	}
-	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "verification_removed", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement", "acknowledged", "stale_bumped", "notified", "implicit_delivery_unit_created", "actor_correction")
-	v7EventObjectKinds = makeSet("task", "gate", "wave", "escalation", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout")
+	v7EventKinds       = makeSet("created", "updated", "status_changed", "gate_added", "gate_satisfied", "gate_waived", "gate_obsoleted", "claimed", "claim_released", "attempt_started", "attempt_handoff", "attempt_failed", "verification_added", "verification_removed", "evidence_added", "review_requested", "review_passed", "review_failed", "closed", "reopened", "superseded", "cancelled", "decision_accepted", "lease_stale", "redaction", "redacted_replacement", "acknowledged", "stale_bumped", "notified", "implicit_delivery_unit_created", "actor_correction", "docs_adopt_approved", "docs_adopt_applied", "docs_adopt_failed")
+	v7EventObjectKinds = makeSet("task", "gate", "wave", "escalation", "epic", "decision", "evidence", "attempt", "proposal", "domain", "closeout", "documentation")
 	v7KnowledgeKinds   = makeSet("runbook", "decision", "invariant", "interface", "glossary", "source")
 )
 

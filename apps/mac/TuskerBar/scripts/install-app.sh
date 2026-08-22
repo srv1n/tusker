@@ -39,6 +39,16 @@ codesign --verify --deep --strict "$SOURCE"
 "$SOURCE/Contents/Resources/tusker" version --json >/dev/null
 
 mkdir -p "$DESTINATION_ROOT"
+mkdir -p "$HOME/Library/Application Support/tusker/logs"
+chmod 700 "$HOME/Library/Application Support/tusker/logs"
+for log in "$HOME/Library/Application Support/tusker/logs"/app-daemon.log*; do
+  [ -f "$log" ] && chmod 600 "$log"
+done
+if [ "${MAC_PREVIEW:-}" = 1 ]; then
+  # Preview must serve the just-built bundle, not attach to an older launchd daemon.
+  "$SOURCE/Contents/Resources/tusker" daemon service stop --json >/dev/null 2>&1 || \
+    "$SOURCE/Contents/Resources/tusker" daemon stop --json >/dev/null
+fi
 if /usr/bin/pgrep -x TuskerBar >/dev/null 2>&1; then
   /usr/bin/osascript -e 'tell application "TuskerBar" to quit' >/dev/null 2>&1 || /usr/bin/pkill -x TuskerBar || true
   sleep 1
