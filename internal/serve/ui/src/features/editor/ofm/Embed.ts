@@ -3,7 +3,7 @@
 
   Ported from cinta's `ofm-embed.js`. For now it renders as a labelled chip
   ("Embed: target"); resolving image/note/PDF previews against real assets is a
-  later slice (tracked in BACKEND-GAPS.md — needs the daemon asset endpoint).
+  later change after the daemon has an asset endpoint.
   Round-trips to `![[…]]` via `storage.markdown`.
 */
 

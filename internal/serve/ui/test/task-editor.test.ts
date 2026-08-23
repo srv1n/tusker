@@ -35,7 +35,7 @@ describe("task editor markdown sections", () => {
   test("maps task ids to raw task source paths", () => {
     expect(taskDocPath(task.id)).toBe(".tusker/work/tasks/SRV-T-1234.md");
     expect(taskIdFromDocPath(".tusker/work/tasks/SRV-T-1234.md")).toBe("SRV-T-1234");
-    expect(taskIdFromDocPath("docs/specs/10-tusker-serve.md")).toBeNull();
+    expect(taskIdFromDocPath("docs/system/serve-ui.md")).toBeNull();
   });
 
   test("builds a task doc fallback with prose sections", () => {

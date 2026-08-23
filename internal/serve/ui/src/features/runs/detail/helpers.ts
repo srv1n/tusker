@@ -74,7 +74,7 @@ export function eventToneClasses(level: RunEvent["level"]): { kind: string; text
 /**
  * ISO → "18:22:05" wall clock (UTC, to stay consistent with the frozen mock
  * timeline). Defensive on purpose: a missing or unparseable timestamp renders
- * as "--:--:--", never "NaN:NaN:NaN" (SRV-T-0015 A1). The event tail should
+ * as "--:--:--", never "NaN:NaN:NaN". The event tail should
  * degrade to a placeholder, not shout NaN at the operator, if the API ever
  * emits a timestamp shape this can't parse.
  */
@@ -90,7 +90,7 @@ export function clockTime(iso: string): string {
  * the operator-facing reason to show inline and disable the control; otherwise
  * null (redrive is allowed). A review/done task has no execution to redrive —
  * clicking Retry there previously requeued into a silent daemon retire behind a
- * stale "Ready" badge (SRV-T-0016 A3). Point the operator at the real lane.
+ * stale "Ready" badge. Point the operator at the real lane.
  */
 export function redriveDisabledReason(
   status: TaskStatus | undefined,

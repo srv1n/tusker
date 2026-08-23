@@ -1,5 +1,5 @@
 /*
-  Module-level store for the docs explorer rail (SRV-T-0004).
+  Module-level store for the docs explorer rail.
 
   The three knowledge routes are separate code-split screens, so the rail
   remounts on every navigation between list / reader / graph. Keeping its

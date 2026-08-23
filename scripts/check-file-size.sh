@@ -7,7 +7,7 @@
 # docs/ai-contribution-policy.md, Code file size). This check is ADVISORY: it
 # reports offenders but never fails the build. Files already known to exceed the
 # limit live in scripts/file-size-allowlist.txt and are burned down by
-# CLN-T-0007.
+# Keep the allowlist small and explicit.
 set -euo pipefail
 
 LIMIT="${FILE_SIZE_LIMIT:-1000}"
@@ -43,7 +43,7 @@ if [ -n "$offenders" ]; then
 	echo "  Code files over ${LIMIT} lines that are not allowlisted:"
 	printf '%s' "$offenders" | sort -rn | awk '{printf "    %6d  %s\n", $1, $2}'
 	echo "  Split them into cohesive modules, or record a deliberate exception in"
-	echo "  scripts/file-size-allowlist.txt (burn-down tracked by CLN-T-0007)."
+	echo "  scripts/file-size-allowlist.txt"
 else
 	echo "  OK: no non-allowlisted code files exceed ${LIMIT} lines."
 fi

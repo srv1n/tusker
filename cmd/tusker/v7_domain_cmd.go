@@ -25,14 +25,14 @@ func newV7Domain(args Args) error {
 	}
 	id = strings.TrimSpace(id)
 	if err := validateKnowledgeNodePath(id); err != "" {
-		return tuskerError(errorInvalidArg, fmt.Sprintf(`invalid V7 domain id "%s": %s`, id, err))
+		return tuskerError(errorInvalidArg, fmt.Sprintf(`invalid domain id "%s": %s`, id, err))
 	}
 	if strings.Contains(id, "/") {
-		return tuskerError(errorInvalidArg, "V7 domain id must be one portable path segment")
+		return tuskerError(errorInvalidArg, "domain id must be one portable path segment")
 	}
 	status := strings.ToLower(fallback(args.String("status"), "current"))
 	if _, ok := v7DomainStatus[status]; !ok {
-		return tuskerError(errorInvalidField, "invalid V7 domain status: "+status)
+		return tuskerError(errorInvalidField, "invalid domain status: "+status)
 	}
 	title := fallback(args.String("title"), v7DefaultDomainTitle(id))
 	summary := fallback(args.String("summary"), "Durable source of truth for "+title+".")
@@ -40,7 +40,7 @@ func newV7Domain(args Args) error {
 	indexPath := filepath.Join(domainDir, "INDEX.md")
 	canonPath := filepath.Join(domainDir, "CANON.md")
 	if fileExists(indexPath) || fileExists(canonPath) {
-		return tuskerError(errorAlreadyExists, "V7 domain already exists: "+id, withPath(domainDir))
+		return tuskerError(errorAlreadyExists, "domain already exists: "+id, withPath(domainDir))
 	}
 	if err := bootstrapV7Dirs(vaultPath); err != nil {
 		return err
@@ -111,7 +111,7 @@ func newV7Domain(args Args) error {
 		return err
 	}
 	if !args.Bool("quiet") {
-		fmt.Printf("Created V7 domain %s at %s\n", id, domainDir)
+		fmt.Printf("Created domain %s at %s\n", id, domainDir)
 	}
 	return emitV7Event(vaultPath, id, "domain", "created", actor, map[string]any{"path": filepath.ToSlash(filepath.Join("knowledge", "domains", id, "INDEX.md"))})
 }
@@ -227,11 +227,11 @@ func domainV7CanonCmd(args Args) error {
 func readV7DomainIndex(vaultPath, id string) (Note, error) {
 	id = strings.TrimSpace(id)
 	if err := validateKnowledgeNodePath(id); err != "" || strings.Contains(id, "/") {
-		return Note{}, tuskerError(errorInvalidArg, "invalid V7 domain id: "+id)
+		return Note{}, tuskerError(errorInvalidArg, "invalid domain id: "+id)
 	}
 	path := filepath.Join(vaultPath, "knowledge", "domains", id, "INDEX.md")
 	if !fileExists(path) {
-		return Note{}, tuskerError(errorNotFound, "V7 domain not found: "+id, withPath(path))
+		return Note{}, tuskerError(errorNotFound, "domain not found: "+id, withPath(path))
 	}
 	data, body, err := parseFrontmatterMustRead(path)
 	if err != nil {
@@ -243,11 +243,11 @@ func readV7DomainIndex(vaultPath, id string) (Note, error) {
 func readV7DomainCanon(vaultPath, id string) (Note, error) {
 	id = strings.TrimSpace(id)
 	if err := validateKnowledgeNodePath(id); err != "" || strings.Contains(id, "/") {
-		return Note{}, tuskerError(errorInvalidArg, "invalid V7 domain id: "+id)
+		return Note{}, tuskerError(errorInvalidArg, "invalid domain id: "+id)
 	}
 	path := filepath.Join(vaultPath, "knowledge", "domains", id, "CANON.md")
 	if !fileExists(path) {
-		return Note{}, tuskerError(errorNotFound, "V7 domain canon not found: "+id, withPath(path))
+		return Note{}, tuskerError(errorNotFound, "domain canon not found: "+id, withPath(path))
 	}
 	data, body, err := parseFrontmatterMustRead(path)
 	if err != nil {
@@ -337,7 +337,7 @@ func v7DomainIndexBody(id, title, summary string) string {
 
 ## Sources
 
-- Raw external input belongs in sources/. Do not treat root docs/ or site output as canonical V7 knowledge.
+- Raw external input belongs in sources/. Do not treat root docs/ or site output as domain canon.
 
 ## Glossary
 
@@ -454,14 +454,14 @@ func knowledgeV7NewCmd(args Args) error {
 	}
 	node = strings.Trim(strings.ToLower(strings.TrimSpace(node)), "/")
 	if reason := validateKnowledgeNodePath(node); reason != "" {
-		return tuskerError(errorInvalidArg, fmt.Sprintf(`invalid V7 knowledge node "%s": %s`, node, reason))
+		return tuskerError(errorInvalidArg, fmt.Sprintf(`invalid knowledge node "%s": %s`, node, reason))
 	}
 	if strings.Contains(node, "/references/") || strings.HasPrefix(node, "references/") || strings.HasSuffix(node, "/references") {
-		return tuskerError(errorInvalidArg, "V7 knowledge uses sources/ for raw external input, not references/")
+		return tuskerError(errorInvalidArg, "knowledge uses sources/ for raw external input, not references/")
 	}
 	parts := strings.Split(node, "/")
 	if len(parts) != 3 {
-		return tuskerError(errorInvalidArg, "V7 knowledge node must be <domain>/<folder>/<slug>", withHint("example: tusker knowledge new providers/runbooks/oauth-refresh --v7 --kind runbook --title \"OAuth refresh\""))
+		return tuskerError(errorInvalidArg, "knowledge node must be <domain>/<folder>/<slug>", withHint("example: tusker knowledge new providers/runbooks/oauth-refresh --kind runbook --title \"OAuth refresh\""))
 	}
 	domain, folder, slug := parts[0], parts[1], parts[2]
 	if _, err := readV7DomainIndex(vaultPath, domain); err != nil {
@@ -469,18 +469,18 @@ func knowledgeV7NewCmd(args Args) error {
 	}
 	kind := strings.ToLower(strings.TrimSpace(firstNonEmpty(args.String("kind"), v7KnowledgeKindForFolder(folder))))
 	if _, ok := v7KnowledgeKinds[kind]; !ok {
-		return tuskerError(errorInvalidField, "invalid V7 knowledge kind: "+kind)
+		return tuskerError(errorInvalidField, "invalid knowledge kind: "+kind)
 	}
 	expectedFolder := v7KnowledgeFolderForKind(kind)
 	if folder != expectedFolder {
-		return tuskerError(errorInvalidArg, fmt.Sprintf("V7 %s nodes must live under %s/", kind, expectedFolder), withContext(map[string]any{"kind": kind, "folder": folder, "expected_folder": expectedFolder}))
+		return tuskerError(errorInvalidArg, fmt.Sprintf("%s nodes must live under %s/", kind, expectedFolder), withContext(map[string]any{"kind": kind, "folder": folder, "expected_folder": expectedFolder}))
 	}
 	title := firstNonEmpty(args.String("title"), v7DefaultDomainTitle(slug))
 	summary := firstNonEmpty(args.String("summary"), title+".")
 	rel := filepath.ToSlash(filepath.Join("knowledge", "domains", domain, folder, slug+".md"))
 	path := filepath.Join(vaultPath, filepath.FromSlash(rel))
 	if fileExists(path) {
-		return tuskerError(errorAlreadyExists, "V7 knowledge node already exists: "+node, withPath(rel))
+		return tuskerError(errorAlreadyExists, "knowledge node already exists: "+node, withPath(rel))
 	}
 	if err := ensureV7DomainLayout(filepath.Join(vaultPath, "knowledge", "domains", domain)); err != nil {
 		return err
@@ -519,7 +519,7 @@ func knowledgeV7NewCmd(args Args) error {
 		return err
 	}
 	if !args.Bool("quiet") {
-		fmt.Printf("Created V7 %s knowledge node %s at %s\n", kind, node, rel)
+		fmt.Printf("Created %s knowledge node %s at %s\n", kind, node, rel)
 	}
 	return nil
 }
@@ -642,7 +642,7 @@ func writeV7ProjectSkill(vaultPath, path string) error {
 		"name":            "project-knowledge",
 		"project":         v7ProjectID(vaultPath),
 		"status":          "current",
-		"description":     "Route agents through this repository's V7 domain canon without publishing task proof or runtime state.",
+		"description":     "Route agents through this repository's domain canon without publishing task proof or runtime state.",
 		"capsule":         capsule,
 		"operator_skill":  "tusker",
 		"source_of_truth": []string{"knowledge/domains"},
@@ -693,7 +693,7 @@ func renderV7ProjectSkillBody(domains []Note) string {
 		rows = append(rows, fmt.Sprintf("| %s | %s | `knowledge/domains/%s/INDEX.md` | `knowledge/domains/%s/CANON.md` |", stringField(domain.Data, "title"), stringField(domain.Data, "summary"), id, id))
 	}
 	if len(rows) == 2 {
-		rows = append(rows, "| No domains yet. | Create a V7 domain first. | Create a V7 domain first. | Create a V7 domain first. |")
+		rows = append(rows, "| No domains yet. | Create a domain first. | Create a domain first. | Create a domain first. |")
 	}
 	return strings.Join([]string{
 		"# Project Knowledge Skill",
@@ -745,12 +745,12 @@ func renderV7ProjectSkillBody(domains []Note) string {
 		"- Do not publish task records, evidence logs, attempts, event files, generated output, runtime state, or raw logs as project skill source.",
 		"- Forbidden paths include `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`, `_system/**`, `dashboards/**`, packet caches, `.tusker-*`, raw logs, and local absolute paths.",
 		"- Raw external input belongs in `knowledge/domains/<domain>/sources/`.",
-		"- Root `docs/` may contain optional repository engineering guardrails; it is not the V7 canonical knowledge source.",
+		"- Root `docs/` may contain repository guides; it is not domain canon.",
 		"",
 		"## Validation",
 		"",
 		"- `tusker skill doctor --strict --json` checks project skill routes and package hygiene.",
-		"- `tusker validate --json` checks V7 domain layout and task-domain coverage.",
+		"- `tusker validate --json` checks domain layout and task-domain coverage.",
 		"",
 	}, "\n")
 }

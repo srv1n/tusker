@@ -26,7 +26,7 @@ export interface DiffSpan {
 
 /** The CAS-conflict payload: what an agent saved while the human was editing. */
 export interface ConflictDiff {
-  /** e.g. "codex · API-T-0090" */
+  /** Agent and task label. */
   agent: string;
   /** e.g. "40s ago" */
   agoLabel: string;

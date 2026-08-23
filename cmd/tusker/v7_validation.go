@@ -1520,7 +1520,7 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 	}
 	skillPath := filepath.Join(vaultPath, "SKILL.md")
 	if !fileExists(skillPath) {
-		errors = append(errors, issue(errorMissingField, "V7 knowledge domains require "+vaultDisplayPath(vaultPath, "SKILL.md")+" project knowledge skill", "SKILL.md", "run `tusker init --profile v7` or `tusker publish skill --v7` after adding V7 domains", nil))
+		errors = append(errors, issue(errorMissingField, "knowledge domains require "+vaultDisplayPath(vaultPath, "SKILL.md")+" project knowledge skill", "SKILL.md", "run `tusker init --yes` or `tusker publish skill` after adding domains", nil))
 	} else if hasV7KnowledgeDomains(vaultPath) && !hasV7ProjectSkill(vaultPath) {
 		errors = append(errors, issue(errorInvalidField, "V7 knowledge domains require SKILL.md to use schema tusker.project-skill/v7", "SKILL.md", "keep V6 domains under .tusker/knowledge/domains/** or migrate the project skill to V7", nil))
 	} else if hasV7KnowledgeDomains(vaultPath) {

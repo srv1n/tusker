@@ -62,12 +62,12 @@ export function DeliveryReviewPage() {
           </div>
           {plans.isLoading && <p className="mt-4 text-sm text-muted">Finding project delivery plans…</p>}
           {plans.error && <StateCard tone="fail" title="Could not load delivery plans" detail={plans.error instanceof Error ? plans.error.message : "Refresh this project and try again."} />}
-          {plans.data?.plans.length === 0 && <StateCard tone="info" title="No delivery plans yet" detail="When a planner writes a V2 plan in docs/plans, it will appear here automatically. Nothing can start until you review and authorize it." />}
+          {plans.data?.plans.length === 0 && <StateCard tone="info" title="No delivery plans yet" detail="When a planner writes a delivery plan, it will appear here. Nothing can start until you review and authorize it." />}
           {plans.data && plans.data.plans.length > 0 && <div className="mt-4 grid gap-3 md:grid-cols-2">{plans.data.plans.map((candidate) => <DeliveryPlanCard key={candidate.path} plan={candidate} selected={submittedPlan === candidate.path} onChoose={() => choosePlan(candidate)} />)}</div>}
           <details className="mt-4 border-t border-line pt-3">
             <summary className="cursor-pointer text-xs font-medium text-muted hover:text-ink">Open a plan by repository path</summary>
             <form onSubmit={(event) => { event.preventDefault(); refresh(); }} className="mt-3 flex w-full gap-2" aria-label="Advanced delivery plan path">
-              <input aria-label="Repo-relative plan path" value={plan} onChange={(event) => setPlan(event.target.value)} placeholder="docs/plans/example-v2.yaml" autoComplete="off" spellCheck={false} className="min-w-0 flex-1 rounded-[3px] border border-line bg-panel px-3 py-2 font-mono text-xs text-ink outline-none focus:border-accent" />
+              <input aria-label="Repo-relative plan path" value={plan} onChange={(event) => setPlan(event.target.value)} placeholder=".tusker/scratch/delivery-plan.yaml" autoComplete="off" spellCheck={false} className="min-w-0 flex-1 rounded-[3px] border border-line bg-panel px-3 py-2 font-mono text-xs text-ink outline-none focus:border-accent" />
               <button type="submit" disabled={!plan.trim()} className="inline-flex items-center gap-1.5 rounded-[3px] border border-line px-3 py-2 text-sm font-medium text-ink hover:bg-hover disabled:cursor-not-allowed disabled:opacity-45"><RefreshCw size={14} />Review</button>
             </form>
           </details>

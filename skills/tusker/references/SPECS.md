@@ -12,6 +12,6 @@ after changing the corpus. Generated indexes, diagrams, and graph artifacts
 are outputs, never hand-maintained source.
 
 When a spec locks decisions, its `updates:` targets must land with the change
-or have an explicit doc-update task in the owning epic. Do not silently leave
-legacy copies competing with the canonical answer; use `tusker docs adopt`
-for brownfield triage and approve the complete proposal as one batch.
+or have an explicit doc-update task in the owning epic. Do not leave competing
+copies. Use `tusker docs adopt` only when a user asks to review an existing
+brownfield corpus, and approve the complete proposal as one batch.

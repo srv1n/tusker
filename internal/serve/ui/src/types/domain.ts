@@ -4,7 +4,7 @@
   These types mirror the tusker runtime store & vault as the serve JSON API is
   expected to expose it. The backend is still being built; where a shape is a
   best-guess ahead of the API, it is marked `// TODO(api)` and tracked in
-  BACKEND-GAPS.md. Screens render against these types via the mock layer today
+  Screens render against these types through the API client
   and the real API later — the shapes should not change when we swap.
 */
 
@@ -680,7 +680,7 @@ export interface AcceptanceRow {
   proof: ProofStatus;
 }
 
-/** Server-derived contract for one open human-owned V7 gate. */
+/** Server-derived contract for one open human-owned gate. */
 export interface HumanAction {
   kind: string;
   rawKind: string;

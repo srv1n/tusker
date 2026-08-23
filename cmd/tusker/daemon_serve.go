@@ -15,6 +15,8 @@ import (
 	serveassets "tusker/internal/serve"
 )
 
+const daemonServeRequiredEnv = "TUSKER_SERVE_REQUIRED"
+
 type daemonServeServer struct {
 	addr       string
 	httpServer *http.Server
@@ -74,7 +76,7 @@ func (d *Daemon) startServe(_ context.Context) (*daemonServeServer, error) {
 }
 
 func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
-	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{})
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{LoadDisabled: true})
 	if err != nil {
 		return daemonServeTarget{}, false, err
 	}
@@ -86,22 +88,31 @@ func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
 		right := firstNonEmpty(projects[j].Project.ProjectID, projects[j].Project.Name, projects[j].Project.RepoRoot)
 		return left < right
 	})
+	selected := -1
 	for i := range projects {
-		candidate := projects[i]
-		if !candidate.Project.Enabled || !candidate.Loadable() {
+		if !projects[i].Loadable() {
 			continue
 		}
-		cfg := candidate.Workflow.Data.Runtime.Serve
-		if !cfg.Enabled {
-			return daemonServeTarget{}, false, nil
+		if selected == -1 || projects[i].Project.Enabled {
+			selected = i
 		}
-		addr, err := serveNormalizeAddr(firstNonEmpty(strings.TrimSpace(cfg.Addr), defaultServeAddr))
-		if err != nil {
-			return daemonServeTarget{}, false, err
+		if projects[i].Project.Enabled {
+			break
 		}
-		return daemonServeTarget{project: candidate.Project, addr: addr}, true, nil
 	}
-	return daemonServeTarget{}, false, nil
+	if selected == -1 {
+		return daemonServeTarget{}, false, nil
+	}
+	candidate := projects[selected]
+	cfg := candidate.Workflow.Data.Runtime.Serve
+	if !cfg.Enabled && !parseTruthyQuery(os.Getenv(daemonServeRequiredEnv)) {
+		return daemonServeTarget{}, false, nil
+	}
+	addr, err := serveNormalizeAddr(firstNonEmpty(strings.TrimSpace(cfg.Addr), defaultServeAddr))
+	if err != nil {
+		return daemonServeTarget{}, false, err
+	}
+	return daemonServeTarget{project: candidate.Project, addr: addr}, true, nil
 }
 
 func (d *Daemon) updateServePIDFile(enabled bool, addr string) error {

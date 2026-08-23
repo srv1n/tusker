@@ -40,8 +40,8 @@ test("active work hides discarded tombstones and the explicit history filter rev
   expect(applyFilters([task, discarded], { ...EMPTY_FILTERS, visibility: "discarded" }).map((item) => item.id)).toEqual([discarded.id]);
 });
 
-test("the v2 task board promotes fresh runtime work into a Working now lane", () => {
-  const screen = readFileSync(new URL("../src/features/v2/TaskScreens.tsx", import.meta.url), "utf8");
+test("the task board promotes fresh runtime work into a Working now lane", () => {
+  const screen = readFileSync(new URL("../src/features/product/TaskScreens.tsx", import.meta.url), "utf8");
   expect(screen).toContain("useRuns(projectId)");
   expect(screen).toContain("projectLiveExecution(tasks.data ?? [], runs.data ?? [])");
   expect(screen).toContain('return status === "in_progress" ? "Working now"');

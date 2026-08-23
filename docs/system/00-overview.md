@@ -1,158 +1,114 @@
 ---
-title: "Tusker system overview"
+title: "System overview"
 subject: overview
-keywords: [overview, architecture, system, routing]
 status: canonical
-read_when: "You are new to Tusker (human PM or fresh agent session) and need the mental model and the route to the right subsystem doc."
-skip_when: "You already know which subsystem you need — jump straight to its doc via the table below."
 ---
 
-# Tusker system overview
+# System overview
 
-Tusker is a **repo-local, agent-native work tracker**. It lives inside a single
-repository (a `.tusker/` vault) and treats every piece of work as a *task
-contract*: what should change and how we will know it is done. Agents or an
-operator claim contracts, do the work, attach **proof**, pass **gates**, and get
-**reviewed** before the change lands. State is files in the repo — no cloud
-service — so it travels with the code.
+Tusker tracks work in a Git repository. A task is a contract. It states the
+result, the checks, and the proof.
 
-## Mental model in one breath
+## Authority map
 
-- A **task contract** has a PM-readable top (what/why/acceptance) and an
-  implementer appendix (files, symbols, commands).
-- Work is a **DAG of contracts on the outside** (dependency-ordered,
-  gate-fenced) with **loop-ish workers on the inside**.
-- **Proof, not vibes.** A task closes only when proof rows are green and, for
-  risky work, an independent reviewer submitted a typed verdict.
-- **Whoever drives, it registers.** Daemon workers and interactive sessions use
-  the same CLI, so every view reflects reality.
+| Fact | Current authority |
+| --- | --- |
+| Command behavior | `cmd/tusker/` and `tusker capabilities --json` |
+| Record fields and allowed values | `internal/v7schema/schema.go` |
+| Close policy | `internal/v7policy/` and the close commands in `cmd/tusker/` |
+| Repository tracker state | `.tusker/` |
+| Machine runtime state | `cmd/tusker/runtime_store.go` |
+| Local HTTP API | `cmd/tusker/serve_command.go` and `cmd/tusker/serve_*.go` |
+| Web routes and screens | `internal/serve/ui/src/` |
+| macOS shell | `apps/mac/TuskerBar/` |
+| Agent operation rules | `skills/tusker/` |
+| Project facts | `.tusker/knowledge/domains/project/` |
+| Public system explanation | `docs/system/` |
 
-```mermaid
-flowchart TD
-    spec["Operator / spec session"] -->|emits| vault["Task contracts in .tusker"]
-    vault --> claim{"Who claims?"}
-    claim -->|resident daemon| worker["Dispatched worker"]
-    claim -->|interactive session| worker2["Hands-on agent"]
-    worker --> proof["Proof rows + evidence"]
-    worker2 --> proof
-    proof --> gates["Gates: per-change / wave / nightly"]
-    gates --> review["Reviewer lane"]
-    review --> land["Deterministic integration / batch gate"]
-    land --> views["Logbook • stream board • serve UI"]
-    views -.reflects.-> vault
-```
+Source and schemas win when a page is wrong. A runtime observation can show
+what one process did. It does not change the source contract.
 
-## Route to the right doc
+## Main flow
 
-Load exactly one subsystem doc per question; each carries its own
-`read_when`/`skip_when` frontmatter.
+1. A person creates a task contract.
+2. The CLI checks its fields and state revision.
+3. An interactive worker or an enabled daemon claims the work.
+4. The worker changes the repository.
+5. The worker records proof for the acceptance rows.
+6. A reviewer submits a typed result.
+7. Landing and close check the bound revisions and proof.
 
-| Question is about | Doc |
-|---|---|
-| Task/epic schema, lifecycle states, readiness, dependencies, validation | [[tasks-and-proof]] |
-| Recording proof, evidence, attempts, closeout checkpoints, close/accept | [[proof-and-closeout]] |
-| Human gates, the automated gate tier, gate ledger, batch/full gates | [[gates]] |
-| Landing merges, completion reactor, receipts, integration authority | [[landing-and-completion]] |
-| The resident daemon: scheduling, dispatch, departures, limits | [[orchestration]] |
-| Execution identity, lineage, runs, work sessions, heartbeats, cancellation | [[execution-observability-system]] |
-| Runner adapters, routing, the wrapper, the ACP stack | [[runners-and-acp]] |
-| Delivery plans, import transactions, waves, arming, rollout | [[delivery-and-waves]] |
-| The localhost control plane, its API, streams, snapshots, the SPA | [[serve-ui]] |
-| Docgraph/frontmatter contract, docs map, domain canon, feedback pipeline, improve scan, logbook/digest/morning brief | [[knowledge-and-feedback]] |
-| Skill packaging, install destinations, provenance, managed snippets | [[skills]] |
-| The factory intake contract and factory operations projection | [[factory-intake]] |
-| Vault vs state root, SQLite runtime store, event log, traces, migrations | [[storage-and-runtime]] |
-| CLI grammar, exit codes, output modes, deprecations, command families | [[cli]] |
-| Supported operating systems, OS-gated behavior, release targets, CI lanes | [[platform-support]] |
+Planning, review, import, and automation are separate actions. A plan does not
+dispatch work. Project registration does not enable automation.
 
-## Where things live
+## Important boundaries
 
-| Path | What it holds |
-|---|---|
-| `.tusker/specs/` | Canonical specs — the durable *why / what-changes* |
-| `.tusker/specs/decisions/` | Decision logs — point-in-time records of what was decided |
-| `.tusker/work/` | Live task/epic/gate records |
-| `.tusker/knowledge/domains/` | Per-domain `INDEX.md` + `CANON.md` — durable domain truth |
-| `docs/system/` | These canonical *how it is today* docs |
+- `.tusker/` is repository truth. `daemon.db` is machine runtime truth.
+- Serve is a guarded view and control surface. It is not a second tracker.
+- TuskerBar uses or starts the local daemon. It does not store task state.
+- Generated indexes and the embedded web `dist/` are build outputs.
+- Names such as `tusker.task/v7` are file-format identifiers. They are not
+  product generations.
 
-Other `.tusker/` subtrees (`events`, `_generated`, `attempts`, `evidence`,
-`Attachments`, raw logs) are machine state — do not read them unless a task
-requires it. `.tusker/scratch/<TASK-ID>/` is ephemeral and reaped; promote
-anything worth keeping to evidence before close. The full on-disk ownership
-table is in [[storage-and-runtime]].
+## Read next
 
-## The documentation contract
+- [Tasks and proof](tasks-and-proof.md)
+- [Proof and closeout](proof-and-closeout.md)
+- [Storage and runtime](storage-and-runtime.md)
+- [CLI reference](cli.md)
+- [Orchestration](orchestration.md)
+- [Serve UI](serve-ui.md)
+- [Platform support](platform-support.md)
 
-- **Specs** (`.tusker/specs/`) say *why* and *what will change*.
-- **Decision logs** (`.tusker/specs/decisions/`) record *what was said*; never
-  updated.
-- **System docs** (`docs/system/`) describe *how the system actually is today*,
-  read from the code. If code and doc disagree, the code wins and the doc is
-  the bug — fix the doc.
+## Documentation rule
 
-Cross-references between managed docs are Obsidian-style `[[subject]]`
-wikilinks; the frontmatter fields, validation codes, and the wikilink
-convention itself are specified in [[knowledge-and-feedback]]. The index and
-graph below are generated by `tusker docs map` — never edit them by hand.
+Each page must name its code sources. Use short sentences. Use active voice.
+Use one term for one idea. Do not copy plans, old task history, or runtime logs
+into this document set.
+
+Run `tusker docs map --vault ./.tusker` after a system page changes.
+
+## Code sources
+
+- `cmd/tusker/cli.go`
+- `cmd/tusker/runtime_store.go`
+- `cmd/tusker/serve_command.go`
+- `internal/v7schema/schema.go`
+- `internal/v7policy/`
+- `apps/mac/TuskerBar/Sources/TuskerBar/RuntimeSupervisor.swift`
 
 <!-- tusker:docs-map:begin -->
 ```mermaid
 graph TD
-  n_acp_runner_migration["ACP runner migration: one bounded local agent transport"]
-  n_acp_runner_migration_decision["ACP runner migration decision"]
-  n_build_and_test_economics["Build and test economics: how often we build and test at each stage"]
-  n_cli["Tusker CLI reference"]
-  n_delivery_and_waves["Delivery plans and waves (author → review → import → arm)"]
-  n_execution_observability["Execution observability: names, lineage, and truthful multi-agent tracking"]
-  n_execution_observability_grill["Decision log: execution observability and direct-agent identity"]
+  n_cli["CLI reference"]
+  n_delivery_and_waves["Delivery and waves"]
   n_execution_observability_system["Execution observability"]
-  n_factory_intake["Factory intake and operations"]
-  n_gates["Gates (human gates, the gate tier, the isolated full gate, and batch merge windows)"]
-  n_gates_over_records["Decision log: gates over records"]
-  n_knowledge_and_feedback["Knowledge canon and the feedback loop"]
-  n_knowledge_graph["Knowledge graph: self-scaffolding, self-checking documentation"]
-  n_knowledge_graph_grill["Decision log: the knowledge-graph discussion"]
-  n_landing_and_completion["Landing and completion (how finished work reaches the integration branch and main)"]
+  n_factory_intake["Factory intake"]
+  n_gates["Gates"]
+  n_knowledge_and_feedback["Knowledge and feedback"]
+  n_landing_and_completion["Landing and completion"]
   n_orchestration["Orchestration"]
-  n_overview["Tusker system overview"]
+  n_overview["System overview"]
   n_platform_support["Platform support"]
-  n_project_reset_and_relaunch["Project reset and relaunch"]
-  n_proof_and_closeout["Proof recording and closeout"]
-  n_runners_and_acp["Runners and the ACP adapter stack"]
-  n_scratch_retention["Scratch retention: task scratch is ephemeral and reaps itself"]
-  n_scratch_retention_grill["Decision log: scratch retention session, 2026-08-04"]
-  n_serve_ui["Serve — local control plane and embedded SPA"]
-  n_skills["Skill packaging and distribution"]
-  n_software_factory["Software Factory: Tusker as the production loop harness"]
-  n_software_factory_grill["Decision log: the factory grill session"]
-  n_storage_and_runtime["Storage and runtime state"]
-  n_tasks_and_proof["V7 task model: schema, lifecycle, validation"]
-  n_software_factory --> n_acp_runner_migration
-  n_acp_runner_migration --> n_acp_runner_migration_decision
-  n_software_factory --> n_build_and_test_economics
+  n_proof_and_closeout["Proof and closeout"]
+  n_runners_and_acp["Runners and ACP"]
+  n_serve_ui["Serve UI"]
+  n_skills["Skills"]
+  n_storage_and_runtime["Storage and runtime"]
+  n_tasks_and_proof["Tasks and proof"]
   n_overview --> n_cli
   n_overview --> n_delivery_and_waves
-  n_software_factory --> n_execution_observability
-  n_execution_observability --> n_execution_observability_grill
   n_overview --> n_execution_observability_system
   n_overview --> n_factory_intake
   n_overview --> n_gates
-  n_software_factory --> n_gates_over_records
   n_overview --> n_knowledge_and_feedback
-  n_overview --> n_knowledge_graph
-  n_knowledge_graph --> n_knowledge_graph_grill
   n_overview --> n_landing_and_completion
   n_overview --> n_orchestration
   n_overview --> n_platform_support
-  n_storage_and_runtime --> n_project_reset_and_relaunch
   n_overview --> n_proof_and_closeout
   n_overview --> n_runners_and_acp
-  n_software_factory --> n_scratch_retention
-  n_scratch_retention --> n_scratch_retention_grill
   n_overview --> n_serve_ui
   n_overview --> n_skills
-  n_overview --> n_software_factory
-  n_software_factory --> n_software_factory_grill
   n_overview --> n_storage_and_runtime
   n_overview --> n_tasks_and_proof
 ```

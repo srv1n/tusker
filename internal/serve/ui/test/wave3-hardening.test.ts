@@ -4,9 +4,9 @@ import { isSafeHref } from "../src/features/editor/sanitize";
 
 describe("Wave 3 production UI contracts", () => {
   test("execution settings validate a draft and save explicitly", () => {
-    const source = readFileSync("src/features/settings/ProjectSettings.tsx", "utf8");
-    expect(source).toContain("settings.mutateAsync");
-    expect(source).toContain("Number.isInteger");
+    const source = readFileSync("src/features/product/OperationsScreens.tsx", "utf8");
+    expect(source).toContain("settings.mutate");
+    expect(source).toContain("Number.isFinite");
     expect(source).not.toContain("onChange={(e) => settings.mutate");
   });
 

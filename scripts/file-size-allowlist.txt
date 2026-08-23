@@ -5,7 +5,7 @@
 # docs/ai-contribution-policy.md, Code file size). They are grandfathered so the
 # advisory check does not flag them on every run.
 #
-# Burn-down is tracked by CLN-T-0007: split these into cohesive modules and drop
+# Split these into cohesive modules and drop
 # each entry as its file falls under the limit. Do not add a new entry without a
 # deliberate, stated reason (generated code, a cohesive protocol/lookup table).
 #

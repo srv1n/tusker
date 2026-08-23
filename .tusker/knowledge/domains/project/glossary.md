@@ -1,16 +1,11 @@
----
-capsule:
-  what: "Glossary of project/control-plane terms used by Tusker V7 canon."
-  use_when:
-    - "A Tusker project or runtime term is ambiguous."
-  skip_when:
-    - "You need lifecycle rules; read project CANON instead."
----
+# Glossary
 
-# Project glossary
-
-| Term | Meaning |
-|---|---|
-| Control plane | Markdown contracts and project canon under `.tusker/**`. |
-| Runtime plane | SQLite/state-branch/workspace/session data used to execute tasks. |
-| Proof | Bounded evidence that acceptance criteria are satisfied. |
+- Task: one bounded work contract.
+- Vault: the `.tusker/` directory in the repository.
+- Proof: a recorded check for an acceptance row.
+- Gate: one fact that needs a human or an external system.
+- Run: one execution attempt for a claimed task.
+- Execution: one immutable runtime identity for direct or provider work.
+- Repository state: tracked files under `.tusker/`.
+- Runtime state: machine-local data in `daemon.db`.
+- Canon: current durable project truth.

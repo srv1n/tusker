@@ -38,11 +38,10 @@ describe("task search", () => {
     expect(gateDetailPath("backend", gate)).toBe("/p/backend/docs?path=AOS-T-0006&gate=AOS-G-0001");
   });
 
-  test("exposes the same palette globally, on overview, mobile, sidebar, and panel", () => {
+  test("exposes the same palette globally, on mobile, in the sidebar, and in the panel", () => {
     expect(source("src/routes/__root.tsx")).toContain("<TaskSearch />");
     expect(source("src/routes/__root.tsx")).toContain("onClick={openTaskSearch}");
     expect(source("src/components/Sidebar.tsx")).toContain("onClick={openTaskSearch}");
-    expect(source("src/features/overview/ProjectOverview.tsx")).toContain("Search tasks");
     expect(source("src/features/panel/Panel.tsx")).toContain("onClick={openTaskSearch}");
   });
 

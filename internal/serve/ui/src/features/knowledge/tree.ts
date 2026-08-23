@@ -1,5 +1,5 @@
 /*
-  Filesystem-literal folder tree for the docs explorer rail (SRV-T-0004).
+  Filesystem-literal folder tree for the docs explorer rail.
 
   The rail mirrors the corpus on disk as obviously as possible: roots and nesting
   come straight from splitting each doc's `path` on "/", showing the real

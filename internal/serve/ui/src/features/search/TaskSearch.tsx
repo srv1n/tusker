@@ -192,7 +192,7 @@ export function TaskSearch() {
 
         <div id="task-search-results" role="listbox" className="tk-scroll max-h-[min(62vh,520px)] overflow-y-auto p-2">
           {!query.trim() ? (
-            <SearchState title="Jump to work or a human gate" detail="Type a task or gate ID such as SRV-T-0030 or AOS-G-0001." />
+            <SearchState title="Jump to work or a human gate" detail="Type a task or gate ID such as APP-T-0001 or APP-G-0001." />
           ) : loading && items.length === 0 ? (
             <SearchState title="Loading tasks…" detail="Reading task indexes from registered projects." />
           ) : results.length === 0 ? (

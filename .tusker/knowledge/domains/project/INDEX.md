@@ -5,49 +5,55 @@ id: "project"
 project: "tusker"
 title: "Project"
 status: "current"
-summary: "Repository-wide Tusker V7 canon, orchestration, skills, and validation policy."
+summary: "Durable project knowledge."
 capsule:
-  skip_when: "Skip when the task packet names exact files or you only need task proof/runtime state."
-  use_when: "Use when no narrower domain is declared or work changes workflow, automation, validation, or skills."
-  what: "Project domain index routing repo-wide Tusker V7 canon and implementation areas."
+  skip_when: "Skip when another domain is narrower or proof is the only need."
+  use_when: "Read before a task changes project behavior or docs."
+  what: "Routes readers to current repository facts and document guides."
 source_of_truth:
-  - ".tusker/SKILL.md"
-  - ".tusker/WORKFLOW.md"
-  - "tusker.yaml"
+  - "knowledge/domains/project/CANON.md"
 canonical_files:
   - "INDEX.md"
   - "CANON.md"
-  - "cmd/tusker/**"
-  - "internal/**"
-  - "skills/tusker/**"
-created_at: "2026-06-04 00:00:00 +0000 UTC"
-updated_at: "2026-08-04T06:33:48Z"
-state_rev: "sha256:c37d537abe3c23cb8f084cc96fa9c1eef82df2efbefa5d050b944f9f90dfbd15"
+created_at: "2026-08-23T10:56:31Z"
+updated_at: "2026-08-23T15:03:08Z"
+state_rev: "sha256:6a6bee1830e54bad549f1bb1a85d4dabef73c2f7fd4eb906ae2502184de70aa5"
 ---
 
-# Project Domain
+# Project
 
-## Read This When
+## Summary
 
-- A task changes V7 workflow semantics, automation planning, runner dispatch, proof policy, skill packaging, or repository bootstrap behavior.
-- A task has no narrower domain route.
+This domain maps the current repository facts.
 
-## Do Not Read This When
+## Read this when
 
-- You only need a specific task packet and exact file paths are already named.
-- You are trying to inspect raw event or runtime logs. Use Tusker commands instead.
+- You need the source layout.
+- You need the runtime boundary.
+- You need the documentation route.
+Execution identity, direct-work visibility, provider children, or timeline recovery are current execution topics.
 
-## Current Canon
+## Canonical files
 
-Read `CANON.md` before implementation.
+- `CANON.md`: current project truth.
+- `INDEX.md`: reading order and links.
 
-## Start Here
+## Current guides
 
-| Need | Read |
-|---|---|
-| V7-only lifecycle rules | `CANON.md` |
-| Operator skill package | `skills/tusker/SKILL.md` and `skills/tusker/references/` |
-| Execution identity, direct-work visibility, provider children, or timeline recovery | `docs/system/execution-observability.md`, `docs/runbooks/execution-observability.md` |
-| Adaptive reconciliation | `docs/runbooks/adaptive-reconciliation.md`, `cmd/tusker/adaptive_reconcile.go` |
-| Runtime dispatch policy | `cmd/tusker/automation_commands.go`, `cmd/tusker/daemon.go`, `cmd/tusker/workflow.go` |
-| Task/proof validation | `cmd/tusker/v7_validation.go`, `internal/v7schema/schema.go` |
+- `docs/system/00-overview.md`: system map.
+- `docs/system/tasks-and-proof.md`: task lifecycle.
+- `docs/system/orchestration.md`: daemon and run ownership.
+- `docs/system/storage-and-runtime.md`: storage boundary.
+- `docs/system/execution-observability.md`: execution identity and recovery.
+- `docs/system/serve-ui.md`: local UI behavior.
+
+## Invariants
+
+- Keep durable facts in `CANON.md`.
+- Keep procedures in a system guide or runbook.
+- Keep task state in `.tusker/work/`.
+- Treat generated maps as read-only outputs.
+
+## Glossary
+
+See `glossary.md`.

@@ -9,9 +9,6 @@ import (
 )
 
 func bootstrap(args Args) error {
-	if args.Bool("legacy") || args.Bool("v5") {
-		return tuskerError(errorInvalidArg, "legacy bootstrap has been removed; V7 init is the only supported bootstrap path", withHint("use `tusker init --yes`"))
-	}
 	return bootstrapV7(args)
 }
 
@@ -56,13 +53,9 @@ func bootstrapV7(args Args) error {
 		}
 	}
 	if !args.Bool("quiet") {
-		fmt.Printf("Tusker V7 vault initialized at %s\n", vaultPath)
+		fmt.Printf("Tusker vault initialized at %s\n", vaultPath)
 	}
 	return nil
-}
-
-func bootstrapLegacy(args Args) error {
-	return tuskerError(errorInvalidArg, "legacy bootstrap has been removed; V7 init is the only supported bootstrap path", withHint("use `tusker init --yes`"))
 }
 
 func writeDefaultTuskerConfig(vaultPath string) error {

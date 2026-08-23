@@ -68,7 +68,7 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := strings.Index(string(raw), "func runInner(")
-	end := strings.Index(string(raw), "\nfunc legacyOnlyCommand(")
+	end := strings.Index(string(raw), "\nfunc printHelp(")
 	if start < 0 || end <= start {
 		t.Fatal("cannot isolate runInner dispatcher")
 	}
@@ -91,7 +91,6 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 				break
 			}
 		}
-		refuses := strings.Contains(strings.Join(lines[i+1:j], "\n"), "legacyOnlyCommand(")
 		for _, match := range quoted.FindAllStringSubmatch(caseExpression, -1) {
 			caseName := strings.TrimSpace(match[1])
 			parts := strings.Fields(caseName)
@@ -103,15 +102,6 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 				continue
 			}
 			deprecated := capabilityDeprecationNamed(manifest.Deprecations, caseName)
-			if refuses {
-				if !deprecated {
-					t.Errorf("refusal route %q is missing a typed deprecation", caseName)
-				}
-				if capabilityAdvertisesCase(manifest.Commands, caseName) {
-					t.Errorf("refusal route %q is advertised as live", caseName)
-				}
-				continue
-			}
 			if deprecated {
 				continue
 			}
@@ -125,21 +115,6 @@ func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
 			}
 		}
 	}
-}
-
-func capabilityAdvertisesCase(commands []capabilityCommand, caseName string) bool {
-	parts := strings.Fields(caseName)
-	if len(parts) == 0 {
-		return false
-	}
-	command, ok := capabilityCommandNamed(commands, parts[0])
-	if !ok {
-		return false
-	}
-	if len(parts) == 1 {
-		return len(command.Subcommands) == 0
-	}
-	return containsString(command.Subcommands, parts[1])
 }
 
 func capabilityDeprecationNamed(deprecations []capabilityDeprecation, name string) bool {

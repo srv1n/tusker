@@ -25,10 +25,10 @@ final class TuskerBarTests: XCTestCase {
 
     func testDeepLinksAcceptKnownRoutesOnly() {
         XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://task/RUN-T-0043")!), .task(id: "RUN-T-0043"))
-        XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://open?path=%2Fp%2Ftusker%2Fwork")!), .open(path: "/p/tusker/work"))
+        XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://open?path=%2Fp%2Ftusker%2Ftasks")!), .open(path: "/p/tusker/tasks"))
         XCTAssertNil(TuskerDeepLink.parse(URL(string: "tusker://task/not-a-task")!))
         XCTAssertEqual(TuskerDeepLink.parse(URL(string: "tusker://spotlight/task%3Atusker%3AMAC-T-0001")!), .spotlight(identifier: "task:tusker:MAC-T-0001"))
-        XCTAssertEqual(TuskerDeepLink.taskPath(projectID: "01ABC", taskID: "MAC-T-0001"), "/p/01ABC/work?task=MAC-T-0001")
+        XCTAssertEqual(TuskerDeepLink.taskPath(projectID: "01ABC", taskID: "MAC-T-0001"), "/p/01ABC/docs?path=MAC-T-0001")
     }
 
     func testSpotlightRoutesAreProjectQualifiedAndReversible() {
@@ -62,7 +62,7 @@ final class TuskerBarTests: XCTestCase {
     }
 
     func testNotificationPlanUsesTaskThreadAndCriticalInterruption() {
-        let event = TuskerStreamEvent(id: 8, kind: "task_waiting_human", project: "tusker", taskID: "MAC-T-0001", title: "Panel", status: "review", urgency: "critical", deepLinkPath: "/p/tusker/work?task=MAC-T-0001", occurredAt: nil, keys: [])
+        let event = TuskerStreamEvent(id: 8, kind: "task_waiting_human", project: "tusker", taskID: "MAC-T-0001", title: "Panel", status: "review", urgency: "critical", deepLinkPath: "/p/tusker/docs?path=MAC-T-0001", occurredAt: nil, keys: [])
         let plan = notificationPlan(for: event, preferences: NotificationPreferences(attentionEnabled: true, criticalEnabled: true))
         XCTAssertEqual(plan, NotificationPlan(identifier: "tusker.event-8", threadIdentifier: "MAC-T-0001", shouldNotify: true, timeSensitive: true))
         XCTAssertFalse(notificationPlan(for: event, preferences: NotificationPreferences(attentionEnabled: true, criticalEnabled: false))!.shouldNotify)
@@ -187,7 +187,7 @@ safe=visible
             "CLAUDE_CODE_ENTRYPOINT": "cli",
         ])
 
-        XCTAssertEqual(environment, ["PATH": "/usr/bin"])
+        XCTAssertEqual(environment, ["PATH": "/usr/bin", "TUSKER_SERVE_REQUIRED": "1"])
     }
 
     func testRuntimeShellLoadsStoredUIOptimisticallyAndNeverCoversCommittedContent() {

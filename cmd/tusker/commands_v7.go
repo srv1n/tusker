@@ -2365,42 +2365,6 @@ func briefV7Cmd(args Args) error {
 	return nil
 }
 
-func compactMigratedSection(text, fallbackText string, maxLines int) string {
-	lines := strings.Split(strings.TrimSpace(text), "\n")
-	var kept []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" && len(kept) == 0 {
-			continue
-		}
-		if strings.Contains(trimmed, "_No ") && strings.Contains(trimmed, "yet") {
-			continue
-		}
-		kept = append(kept, line)
-		if len(kept) >= maxLines {
-			kept = append(kept, "- Migrated section truncated; inspect source task for old detail if needed.")
-			break
-		}
-	}
-	if strings.TrimSpace(strings.Join(kept, "\n")) == "" {
-		return fallbackText
-	}
-	return strings.TrimSpace(strings.Join(kept, "\n"))
-}
-
-func migratedV7EvidenceLinks(vaultPath, taskID string) []string {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return nil
-	}
-	var links []string
-	for _, ev := range idx.Evidence[taskID] {
-		links = append(links, fmt.Sprintf("- [[%s]] %s", stringField(ev.Data, "id"), stringField(ev.Data, "evidence_kind")))
-	}
-	sort.Strings(links)
-	return links
-}
-
 func migratedV7EvidenceExists(vaultPath, taskID, source string) bool {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
@@ -2412,10 +2376,6 @@ func migratedV7EvidenceExists(vaultPath, taskID, source string) bool {
 		}
 	}
 	return false
-}
-
-func writeMigratedV7Evidence(vaultPath string, task Note, evidenceID, evidenceText string) error {
-	return writeMigratedV7EvidenceRecord(vaultPath, task, evidenceID, "manual_smoke", "V5 task Evidence section", evidenceText)
 }
 
 func writeMigratedV7EvidenceRecord(vaultPath string, task Note, evidenceID, evidenceKind, source, evidenceText string) error {
@@ -2521,58 +2481,6 @@ None.
 		return err
 	}
 	return emitV7Event(vaultPath, taskID, "task", "attempt_handoff", "tusker:migrate-v7", map[string]any{"attempt": attemptID})
-}
-
-func migrateV7GatesCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	if !args.Bool("from-blocked-reason") {
-		return tuskerError(errorMissingArg, "migrate gates requires --from-blocked-reason")
-	}
-	notes, err := listAllNotes(vaultPath)
-	if err != nil {
-		return err
-	}
-	proposals := v7GateProposalsFromV5(vaultPath, notes)
-	if !args.Bool("write") {
-		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": true, "write": false, "count": len(proposals), "gates": proposals})
-			return nil
-		}
-		if !args.Bool("json") {
-			fmt.Printf("Would create %d gate%s from blocked V5 task metadata.\n", len(proposals), plural(len(proposals)))
-		}
-		return nil
-	}
-	created := 0
-	for _, current := range proposals {
-		if fileExists(filepath.Join(vaultPath, "work", "gates", current.GateID+".md")) {
-			continue
-		}
-		if err := newV7Gate(Args{
-			"vault":            vaultPath,
-			"quiet":            "true",
-			"id":               current.GateID,
-			"blocks":           current.TaskID,
-			"kind":             "manual_hold",
-			"owner":            fallback(args.String("owner"), "human:"+defaultActorName()),
-			"title":            current.Title,
-			"action":           current.Action,
-			"verification":     current.Verification,
-			"why-agent-cannot": "Migrated from V5 blocked-task metadata; the agent cannot safely infer or complete the human-owned blocker without owner input.",
-		}); err != nil {
-			return err
-		}
-		created++
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "write": true, "count": len(proposals), "created": created, "gates": proposals})
-		return nil
-	}
-	fmt.Printf("Created %d gate%s from blocked V5 task metadata.\n", created, plural(created))
-	return nil
 }
 
 func bootstrapV7Dirs(vaultPath string) error {

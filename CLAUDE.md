@@ -23,7 +23,6 @@ they implement the current user's coding request themselves.
 `TUSKER_ATTEMPT_ID` is present, this is a dispatched Tusker worker: follow the
 claimed-run protocol, work only the claimed task, and do not spawn another
 runner or daemon.
-
 <!-- tusker:epic-index:begin -->
 ## Tusker
 
@@ -31,19 +30,9 @@ Use Tusker for tracked repo work.
 
 - Task mechanics live in the installed `tusker` skill.
 - Project knowledge starts at `.tusker/SKILL.md`.
-- The canonical system docs live at `docs/system/00-overview.md` (how each
-  subsystem works today); specs and decision logs live in `.tusker/specs/`
-  (what is changing and why). Keep `docs/system/` true when designs change.
 - Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.
 - Do not read `.tusker/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.
 - Keep proof compact: use capsules, path-scoped status/search, and command + PASS/FAIL summaries; put noisy logs in `.tusker/scratch/<TASK-ID>/`.
+- Scratch is not durable: it is deleted when the task closes and swept after 14 days regardless. Promote anything worth keeping to evidence before close.
 - Record concise Tusker/product friction with `tusker feedback add`; skip routine progress reports.
 <!-- tusker:epic-index:end -->
-
-## DOSSIER.md — keep it current
-`DOSSIER.md` at the repo root is this product's internal fact sheet, read by
-brand/strategy agents in /Users/sarav/Downloads/side/hq via symlink. When a session
-here ships a feature, changes user-facing behavior, or learns a real usage number,
-update the relevant section of `DOSSIER.md` in the same session, including the
-"Last updated" line. Facts only; no narrative; no marketing language. DOSSIER.md is
-NOT the README: it is internal and honest, warts included.

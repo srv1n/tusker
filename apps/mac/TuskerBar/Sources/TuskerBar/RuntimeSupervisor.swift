@@ -75,6 +75,7 @@ enum RuntimeLaunchPlan {
         for key in ["TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
             environment.removeValue(forKey: key)
         }
+        environment["TUSKER_SERVE_REQUIRED"] = "1"
         return environment
     }
 }

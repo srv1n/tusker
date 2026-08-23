@@ -46,11 +46,11 @@ export function ProjectOps() {
             <h1 className="font-serif text-[30px] font-semibold tracking-[-0.02em] text-ink">Ops</h1>
           </div>
           <Link
-            to="/p/$projectId/work"
+            to="/p/$projectId/tasks"
             params={{ projectId }}
             className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-medium text-ink-soft transition-colors hover:bg-hover"
           >
-            Work
+            Tasks
           </Link>
         </header>
 

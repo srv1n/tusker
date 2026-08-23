@@ -1,5 +1,5 @@
 ---
-schema: tusker.gate/v7
+schema: tusker.gate/v1
 kind: gate
 status: open
 blocking: true

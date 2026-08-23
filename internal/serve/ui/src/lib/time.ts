@@ -1,14 +1,9 @@
 /*
-  Time formatting. The mock is authored against a frozen NOW; pass that in so
-  relative strings read sensibly without a live clock. In production the default
-  (real `new Date()`) is used.
+  Time formatting.
 */
 
-import { NOW } from "@/mock/fixtures";
-import { USE_MOCK } from "@/lib/api";
-
 function now(): Date {
-  return USE_MOCK ? NOW : new Date();
+  return new Date();
 }
 
 /** "3m ago", "2h ago", "just now". */

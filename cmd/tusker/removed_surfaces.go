@@ -122,9 +122,6 @@ func printV6MigrationReport(report *v6MigrationReport, args Args) {
 }
 
 func publishSkillCmd(args Args) error {
-	if !args.Bool("v7") {
-		return tuskerError(errorInvalidArg, "publish skill now only supports explicit --v7", withHint("run `tusker publish skill --v7 --out <dir>`"))
-	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -165,7 +162,7 @@ func publishSkillCmd(args Args) error {
 		return err
 	}
 	if !args.Bool("quiet") {
-		fmt.Printf("Wrote V7 project skill package: %s\n", out)
+		fmt.Printf("Wrote project skill package: %s\n", out)
 	}
 	return nil
 }

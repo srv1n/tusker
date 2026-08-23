@@ -1,5 +1,5 @@
 /*
-  The Docs index route (SRV-T-0004, A6).
+  The Docs index route.
 
   There is no bespoke landing page: the Docs section is the familiar two-pane
   notes layout, and the index simply opens that layout on the corpus root

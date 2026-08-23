@@ -1,54 +1,45 @@
 # Agent workflow
 
-The goal is not to make contribution harder. The goal is to make sloppy contribution harder.
+This repository has two execution modes.
 
-## Principles
+## Interactive work
 
-- Problems should be legible before implementation starts.
-- Review should start with evidence, not archaeology.
-- AI is allowed, but slop is not.
-- Contributors must understand their own changes.
-- Raw transcripts are optional appendix material, not required reading.
+A session that a user opens does the requested work itself.
 
-## Expected flow
+1. Read the task contract and routed project canon.
+2. Check the current workspace and ownership.
+3. Make the smallest complete change.
+4. Record exact proof.
+5. Submit the work for review.
 
-```text
-idea / report
-   ↓
-structured issue
-   ↓
-approval or maintainer signal
-   ↓
-implementation
-   ↓
-PR summary + evidence
-   ↓
-review
-```
+Do not start `tusker daemon run`, dispatch automation, or start a nested
+command-line agent from an interactive session.
 
-## What we want from contributors
+## Automated work
 
-Before opening a PR, contributors should be able to explain:
+Only a resident daemon can dispatch background work. Registration does not
+enable automation. `tusker automation plan` is read-only.
 
-- what changed
-- why it changed
-- how it was tested
-- what the risk is
-- what a reviewer should focus on
+A process with `TUSKER_ATTEMPT_ID` works only on its claimed task, attempt, and
+workspace. It does not start another daemon or runner.
 
-If AI was used, disclose it. If the contributor cannot explain the final behavior without leaning on the tool, the work is not ready.
+## Refusals
 
-For broad, high-risk, or agent-heavy changes, generate an explainer packet before review:
+Keep a typed refusal visible. Do not turn a dependency, gate, owner conflict,
+workspace conflict, disabled project, or daemon failure into a generic waiting
+state.
 
-```bash
-tusker packet <TASK-ID> --for explainer --write
-```
+## Proof
 
-The explainer packet is for human understanding. It does not replace evidence, tests, or reviewer approval.
+Map each check to acceptance row IDs. State the command and the result. Keep
+large logs in task scratch. Do not treat a packet, process exit, or model claim
+as proof.
 
-## What maintainers should enforce
+## Sources
 
-- keep new features or architecture discussion out of surprise PRs
-- reject refactor-only churn unless requested
-- ask for evidence on user-visible changes
-- keep the bar proportional to risk
+- `AGENTS.md`
+- `CLAUDE.md`
+- `.tusker/WORKFLOW.md`
+- `cmd/tusker/daemon.go`
+- `cmd/tusker/run_ownership.go`
+- `cmd/tusker/work_session_cmd.go`

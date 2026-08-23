@@ -36,9 +36,9 @@ tusker reset --yes
 # or: tusker relaunch --yes
 ```
 
-`reset` deletes known Tusker state (tickets, epics, proof, scratch, and generated
-state), preserves `.tusker/specs/**`, leaves source and `docs/specs/**` alone,
-and initializes a clean V7 vault. Use `--repo <path>` for another checkout.
+`reset` deletes known Tusker state (tasks, epics, proof, scratch, and generated
+state), preserves `.tusker/specs/**`, leaves product source and system docs alone,
+and initializes a clean current vault. Use `--repo <path>` for another checkout.
 It is destructive and requires `--yes`; use `tusker init --yes --purge-state
 --preserve-specs` when composing the lower-level operation directly.
 

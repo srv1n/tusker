@@ -1,9 +1,8 @@
 /*
   "Needs me" is a DERIVED signal, never a hand-authored list.
 
-  This is the executable form of the closed five-signal definition in
-  docs/design/serve-ui-supplement.md §3. An item enters the panel iff at least
-  one signal fires; everything else is an explicit non-signal and is dropped.
+  An item enters the panel only when one of the closed signals below fires.
+  Everything else is an explicit non-signal and is dropped.
   A false "needs you" count trains the operator to ignore the panel, which
   defeats attention routing — so the guards below are as important as the signals.
 
@@ -21,10 +20,8 @@
     - capacity-blocked ready tasks      → the queue's job
     - deliberately parked/interrupted leases
 
-  Signals 3 and 5 need fields the mock/daemon don't expose yet (a rework counter;
-  a cohort-drain trigger). They are OMITTED here rather than faked — see
-  internal/serve/ui/BACKEND-GAPS.md. This whole computation should move
-  server-side (SRV-T-0002); the client should ultimately just render /api/needs.
+  Signals 3 and 5 need fields the API does not expose yet. They are omitted
+  rather than faked. The server is the current source of the rendered list.
 */
 
 import type {

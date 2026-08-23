@@ -122,14 +122,14 @@ release-test: ## Run offline release/install integrity fixtures
 	@set -eu; for test_script in scripts/tests/test-release-*.sh scripts/tests/test-mac-atomic-swap.sh; do sh "$$test_script"; done
 
 install-bin: build ## Build/install binary and refresh existing root user skills
-	./"$(DIST_BIN)" update --bin-dir "$(BIN_DIR)"
+	./"$(DIST_BIN)" update --bin --bin-dir "$(BIN_DIR)"
 	@printf "$(GREEN)OK install-bin complete$(RESET)\n"
 
 install-cli: install-bin ## Alias for the cross-platform CLI install
 	@:
 
 install-user: build ## Build and install binary + Codex/Claude user skills
-	./"$(DIST_BIN)" install --codex-user --claude-user --bin-dir "$(BIN_DIR)" --force
+	./"$(DIST_BIN)" install --bin --codex-user --claude-user --bin-dir "$(BIN_DIR)" --force
 	@printf "$(GREEN)OK install-user complete$(RESET)\n"
 
 install: install-user ## Install the cross-platform CLI and Codex/Claude user skills

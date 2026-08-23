@@ -4,13 +4,12 @@ kind: "project_skill"
 name: "project-knowledge"
 project: "tusker"
 status: "current"
-description: "Route agents through this repository's V7 domain canon without publishing task proof or runtime state."
+description: "Route agents through this repository's current domain canon."
 capsule:
   skip_when:
-    - "You only need task lifecycle, proof, gates, or closeout mechanics."
-  use_when:
-    - "Choosing project/domain context before implementation."
-  what: "Repo project knowledge router for Tusker V7 domain canon."
+    - "You only need task proof or runtime state."
+  use_when: "You need repository facts before a code or documentation change."
+  what: "Routes agents to the current project canon."
 operator_skill: "tusker"
 source_of_truth:
   - "knowledge/domains"
@@ -18,14 +17,12 @@ canonical_files:
   - "SKILL.md"
   - "knowledge/domains/*/INDEX.md"
   - "knowledge/domains/*/CANON.md"
-created_at: "2026-07-05T17:58:21Z"
-updated_at: "2026-07-11T08:46:17Z"
-state_rev: "sha256:65c6b2064f05880704c755de9b98a738ed09a1ff6fa48d77fce52fef0f31a73a"
+created_at: "2026-08-23T10:56:31Z"
+updated_at: "2026-08-23T15:41:58Z"
+state_rev: "sha256:673ad4488d6a5651adfd84fc31a603a110c7141467b4f89ff7d88d0d68256b04"
 ---
 
 # Project Knowledge Skill
-
-This is a generated V7 project knowledge skill. Use it after the Tusker operator skill when you need repository-specific context.
 
 This is the project knowledge skill for this repository. Use it after the Tusker operator skill when repository-specific canon is needed.
 
@@ -54,25 +51,15 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 
 ## Domains
 
-| Intent | Read first | Canon | Notes |
+| Domain | Read when | Read first | Canon |
 |---|---|---|---|
-| Repository-wide Tusker V7 canon, orchestration, skills, and validation policy. | `knowledge/domains/project/INDEX.md` | `knowledge/domains/project/CANON.md` | Project |
+| Project | Durable project knowledge. | `knowledge/domains/project/INDEX.md` | `knowledge/domains/project/CANON.md` |
 
 ## Repo Command Policy
 
 - Put repository-specific command rules here or in routed runbooks: validation commands, build-lock/status commands, token/noise wrappers, and forbidden expensive probes.
 - Keep root `AGENTS.md` and `CLAUDE.md` as managed Tusker bootstrap pointers; do not copy Tusker workflow mechanics there.
 - Agents should prefer path-scoped status/search, lock/status commands over process-table probes, redirected validation logs, and command + PASS/FAIL summaries.
-
-## Serve/API Routing
-
-- Run display is liveness-derived, never row-derived. `/api/runs` omits `unclaimed` zero-attempt placeholders by default; `?all=true` may expose them as `leaseState: "unclaimed"` with `outcome: "idle"`. `outcome: "running"` requires a held lease and a heartbeat fresher than the reclaim grace window; stale held leases are labeled `stale`.
-
-## Prompt Signs
-
-- `.tusker/signs.md` is the operator-maintained corrective prompt file injected into every dispatched attempt when present.
-- Keep signs operational, terse, and durable: recurring mistakes, repo-specific traps, and validation habits belong there; task progress, proof logs, and transcripts do not.
-- Keep the file near 60 lines or less. V7 validation warns when it bloats because every future attempt pays for it in context.
 
 ## Updating Canon
 
@@ -86,9 +73,9 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 - Do not publish task records, evidence logs, attempts, event files, generated output, runtime state, or raw logs as project skill source.
 - Forbidden paths include `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`, `_system/**`, `dashboards/**`, packet caches, `.tusker-*`, raw logs, and local absolute paths.
 - Raw external input belongs in `knowledge/domains/<domain>/sources/`.
-- Root `docs/` may contain optional repository engineering guardrails; it is not the V7 canonical knowledge source.
+- Root `docs/` contains current system and contribution guides. Project canon stays under `knowledge/domains/`.
 
 ## Validation
 
 - `tusker skill doctor --strict --json` checks project skill routes and package hygiene.
-- `tusker validate --json` checks V7 domain layout and task-domain coverage.
+- `tusker validate --json` checks the domain layout and task-domain coverage.

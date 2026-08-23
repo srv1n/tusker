@@ -1,5 +1,5 @@
 /*
-  Save-outcome banners for the corpus editor (SRV-T-0002). Each surfaces one
+  Save-outcome banners for the corpus editor. Each surfaces one
   save result inline above the document: a validated save (with any advisory
   warnings), an on-disk conflict with a reload path, refused header defects, or a
   transport error. Colors resolve through the shared tone tokens only.

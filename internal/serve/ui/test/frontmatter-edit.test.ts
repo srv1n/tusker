@@ -32,7 +32,7 @@ const task = {
 } satisfies TaskDetail;
 
 const doc = {
-  path: "docs/specs/10-tusker-serve.md",
+  path: "docs/system/serve-ui.md",
   title: "Serve spec",
   kind: "spec",
   updatedAt: "2026-07-09T12:00:00Z",
@@ -121,10 +121,8 @@ describe("frontmatter edit surface", () => {
     expect(taskContract).not.toContain("useFrontmatterUpdate");
   });
 
-  test("edits persist through the structured action mutation boundary", () => {
-    expect(api).toContain("updateFrontmatter");
-    expect(queries).toContain("api.updateFrontmatter(input)");
-    expect(queries).toContain("patchTaskFrontmatter");
-    expect(queries).toContain("patchDocFrontmatter");
+  test("the UI does not expose a fake frontmatter mutation", () => {
+    expect(api).not.toContain("updateFrontmatter");
+    expect(queries).not.toContain("useFrontmatterUpdate");
   });
 });

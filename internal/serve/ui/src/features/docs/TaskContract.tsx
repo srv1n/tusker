@@ -53,7 +53,6 @@ import { DocShell } from "./DocShell";
 import { FrontmatterInlineControl, PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow, ResultChip } from "./bits";
 import { MergeReadiness } from "./banners";
-import { resolveWikilink, wikilinkTargets } from "./mock";
 import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import type { MergeCheck } from "./types";
 import {
@@ -128,8 +127,8 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
   const frontmatterByKey = Object.fromEntries(frontmatter.map((field) => [field.key, field]));
   const editorConfig = useMemo<EditorRuntimeConfig>(
     () => ({
-      resolveWikilink,
-      wikilinkIndex: Object.values(wikilinkTargets),
+      resolveWikilink: () => undefined,
+      wikilinkIndex: [],
       placeholder: "Write...",
       onOpenWikilink: ({ target, resolved }) =>
         navigate({

@@ -3,7 +3,6 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
-  redirect,
 } from "@tanstack/react-router";
 import { ProjectLayout, RootLayout } from "@/routes/__root";
 import { RouteFallback } from "@/components/RouteFallback";
@@ -29,11 +28,7 @@ import { RouteFallback } from "@/components/RouteFallback";
     '/p/$projectId/trains'       Promotion trains
     '/p/$projectId/diagnostics'  Runtime diagnostics
     '/p/$projectId/diagnostics/executions' Execution graph beneath Operations
-    '/p/$projectId/needs'        → redirects to overview (absorbed)
-    '/p/$projectId/runs'         → redirects to overview (absorbed)
     '/p/$projectId/runs/$taskId' Run detail          (params: projectId, taskId)
-    '/p/$projectId/work'         Project work
-    '/p/$projectId/delivery'     Review and start a planned delivery
     '/p/$projectId/ops'          Operator controls
     '/p/$projectId/docs'         Library / document  (search: { path?: string })
     '/p/$projectId/knowledge'            Docs corpus list
@@ -48,8 +43,8 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: lazyRouteComponent(
-    () => import("@/features/v2/TodayScreens"),
-    "GlobalTodayV2",
+    () => import("@/features/product/TodayScreens"),
+    "GlobalToday",
   ),
 });
 
@@ -78,8 +73,8 @@ const overviewRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/",
   component: lazyRouteComponent(
-    () => import("@/features/v2/TodayScreens"),
-    "ProjectTodayV2",
+    () => import("@/features/product/TodayScreens"),
+    "ProjectToday",
   ),
 });
 
@@ -96,8 +91,8 @@ const epicsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "epics",
   component: lazyRouteComponent(
-    () => import("@/features/v2/DeliveryScreens"),
-    "EpicsV2",
+    () => import("@/features/product/DeliveryScreens"),
+    "Epics",
   ),
 });
 
@@ -105,8 +100,8 @@ const wavesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "waves",
   component: lazyRouteComponent(
-    () => import("@/features/v2/DeliveryScreens"),
-    "WavesV2",
+    () => import("@/features/product/DeliveryScreens"),
+    "Waves",
   ),
 });
 
@@ -114,8 +109,8 @@ const waveDetailRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "waves/$waveId",
   component: lazyRouteComponent(
-    () => import("@/features/v2/DeliveryScreens"),
-    "WaveDetailV2",
+    () => import("@/features/product/DeliveryScreens"),
+    "WaveDetail",
   ),
 });
 
@@ -123,8 +118,8 @@ const tasksRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "tasks",
   component: lazyRouteComponent(
-    () => import("@/features/v2/TaskScreens"),
-    "TasksV2",
+    () => import("@/features/product/TaskScreens"),
+    "Tasks",
   ),
 });
 
@@ -132,8 +127,8 @@ const taskDetailRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "tasks/$taskId",
   component: lazyRouteComponent(
-    () => import("@/features/v2/TaskScreens"),
-    "TaskDetailV2",
+    () => import("@/features/product/TaskScreens"),
+    "TaskDetail",
   ),
 });
 
@@ -141,8 +136,8 @@ const trainsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "trains",
   component: lazyRouteComponent(
-    () => import("@/features/v2/DeliveryScreens"),
-    "TrainsV2",
+    () => import("@/features/product/DeliveryScreens"),
+    "Trains",
   ),
 });
 
@@ -150,8 +145,8 @@ const diagnosticsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "diagnostics",
   component: lazyRouteComponent(
-    () => import("@/features/v2/OperationsScreens"),
-    "DiagnosticsV2",
+    () => import("@/features/product/OperationsScreens"),
+    "Diagnostics",
   ),
 });
 
@@ -161,25 +156,6 @@ const executionsRoute = createRoute({
   component: lazyRouteComponent(() => import("@/features/executions/ExecutionOperations"), "ExecutionOperations"),
 });
 
-// Needs-me and Runs are absorbed into the Overview (SRV-T-0003). Their old
-// URLs redirect to the Overview so bookmarks and in-app links never break; the
-// run-detail route below is kept (it is just no longer a sidebar item).
-const needsRoute = createRoute({
-  getParentRoute: () => projectRoute,
-  path: "needs",
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/p/$projectId", params: { projectId: params.projectId } });
-  },
-});
-
-const runsRoute = createRoute({
-  getParentRoute: () => projectRoute,
-  path: "runs",
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/p/$projectId", params: { projectId: params.projectId } });
-  },
-});
-
 const runDetailRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "runs/$taskId",
@@ -187,22 +163,6 @@ const runDetailRoute = createRoute({
     () => import("@/features/runs/RunDetail"),
     "RunDetail",
   ),
-});
-
-const workRoute = createRoute({
-  getParentRoute: () => projectRoute,
-  path: "work",
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/p/$projectId/tasks", params: { projectId: params.projectId } });
-  },
-});
-
-const deliveryRoute = createRoute({
-  getParentRoute: () => projectRoute,
-  path: "delivery",
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/p/$projectId/plan", params: { projectId: params.projectId } });
-  },
 });
 
 const opsRoute = createRoute({
@@ -259,8 +219,8 @@ const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
   component: lazyRouteComponent(
-    () => import("@/features/v2/OperationsScreens"),
-    "SettingsV2",
+    () => import("@/features/product/OperationsScreens"),
+    "Settings",
   ),
 });
 
@@ -279,11 +239,7 @@ const routeTree = rootRoute.addChildren([
     trainsRoute,
   diagnosticsRoute,
   executionsRoute,
-    needsRoute,
-    runsRoute,
     runDetailRoute,
-    workRoute,
-    deliveryRoute,
     opsRoute,
     docsRoute,
     knowledgeRoute,

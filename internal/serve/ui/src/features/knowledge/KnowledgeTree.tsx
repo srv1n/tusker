@@ -1,5 +1,5 @@
 /*
-  The docs explorer rail (SRV-T-0004) — a VS Code-style file explorer.
+  The docs explorer rail is a file explorer.
 
   Derives a filesystem-literal folder tree from the docgraph list's real paths,
   keeps the current document highlighted with its ancestor folders expanded, and

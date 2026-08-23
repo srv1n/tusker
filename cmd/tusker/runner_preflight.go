@@ -95,7 +95,9 @@ func readRunnerLoginShellPath() string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, shell, "-lc", `printf %s "$PATH"`).Output()
+	cmd := exec.CommandContext(ctx, shell, "-lc", `printf %s "$PATH"`)
+	cmd.WaitDelay = 250 * time.Millisecond
+	output, err := cmd.Output()
 	if err != nil || ctx.Err() != nil {
 		return ""
 	}

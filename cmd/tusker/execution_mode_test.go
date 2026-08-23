@@ -39,7 +39,7 @@ func TestAgentSessionGuardLeavesHumanTerminalCommandsAvailable(t *testing.T) {
 }
 
 func TestExecutionModeInstructionsForbidNestedRunners(t *testing.T) {
-	for _, path := range []string{"../../AGENTS.md", "../../CLAUDE.md", "../../docs/specs/reliable-execution-lifecycle.md"} {
+	for _, path := range []string{"../../AGENTS.md", "../../CLAUDE.md", "../../docs/agent-workflow.md"} {
 		body, err := readText(path)
 		if err != nil {
 			t.Fatal(err)

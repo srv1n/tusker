@@ -26,31 +26,6 @@ test("clockTime degrades to a placeholder instead of NaN:NaN:NaN", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SRV-T-0015 A2/A3 — labeled columns incl. lease/outcome, terminal distinction
-// ---------------------------------------------------------------------------
-
-test("runs board header labels every non-usage column including lease and state", () => {
-  const src = readFileSync("src/features/runs/board/rows.tsx", "utf8");
-  for (const label of ["Task", "Runner", "Lane", "Lease", "State"]) {
-    expect(src).toMatch(new RegExp(`<span(?: className="[^"]*")?>${label}</span>`));
-  }
-  expect(src).not.toContain(">Tokens<");
-});
-
-test("recent rows are visually distinct from live runs (terminal tag + attempt count)", () => {
-  const src = readFileSync("src/features/runs/board/rows.tsx", "utf8");
-  expect(src).toContain("terminal");
-  expect(src).toContain("attempts");
-  expect(src).toContain("bg-panel/40");
-});
-
-test("both the active and recent boards render the labeled header", () => {
-  const src = readFileSync("src/features/runs/RunsBoard.tsx", "utf8");
-  const headerCount = src.split("<RunsTableHeader />").length - 1;
-  expect(headerCount).toBe(2);
-});
-
-// ---------------------------------------------------------------------------
 // SRV-T-0016 — generic outcome rendering, Retry honesty, canonical badge
 // ---------------------------------------------------------------------------
 
@@ -98,12 +73,12 @@ test("the redrive action posts to the run redrive endpoint", () => {
 test("the interrupt action posts to the guarded run interrupt endpoint", () => {
   const src = readFileSync("src/lib/api.ts", "utf8");
   expect(src).toContain("/runs/${taskId}/interrupt");
-  expect(src).toContain("processRunning");
+  expect(src).toContain("Promise<InterruptResult>");
 });
 
 test("retry queued plus daemon down pauses timing and disables duplicate redrive", () => {
   const queued = {
-    taskId: "SRV-T-0021",
+    taskId: "APP-T-0001",
     taskTitle: "Queued run",
     projectId: "tusker",
     runner: "codex",

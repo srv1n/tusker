@@ -33,7 +33,7 @@ declare global {
 type TriageRow = { key: string; id: string; title: string; chip: string; path: string; tone?: "attention" | "running" | "failed" };
 
 function taskPath(projectId: string, taskId: string): string {
-  return `/p/${encodeURIComponent(projectId)}/work?task=${encodeURIComponent(taskId)}`;
+  return `/p/${encodeURIComponent(projectId)}/docs?path=${encodeURIComponent(taskId)}`;
 }
 
 function age(value: string | undefined): string {

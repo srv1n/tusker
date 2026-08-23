@@ -21,7 +21,7 @@ enum SpotlightRoute: Equatable {
         case let .project(projectID): return TuskerDeepLink.projectPath(projectID: projectID)
         case let .task(projectID, taskID): return TuskerDeepLink.mainTaskPath(projectID: projectID, taskID: taskID)
         case let .gate(projectID, gateID, taskID):
-            guard let taskID, !taskID.isEmpty else { return "/p/\(projectID)/needs" }
+            guard let taskID, !taskID.isEmpty else { return TuskerDeepLink.projectPath(projectID: projectID) }
             var components = URLComponents()
             components.path = "/p/\(projectID)/docs"
             components.queryItems = [URLQueryItem(name: "path", value: taskID), URLQueryItem(name: "gate", value: gateID)]

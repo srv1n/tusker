@@ -12,8 +12,8 @@ tusker execution inbox                 # unbound execution strands
 tusker execution list                  # execution graph
 ```
 
-Provider observations remain authority-neutral; recovery procedures live in
-`docs/runbooks/execution-observability.md`.
+Provider observations remain authority-neutral. Current execution behavior is
+in `docs/system/execution-observability.md` and its listed source files.
 
 The smallest command that names the task, lifecycle state, open gate, or missing proof wins.
 

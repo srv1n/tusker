@@ -1,5 +1,5 @@
 /*
-  Extension set for the corpus document editor (SRV-T-0002).
+  Extension set for the corpus document editor.
 
   Mirrors the app's proven doc-editor stack (features/editor) at the subset the
   documentation corpus needs: StarterKit's marks + list/heading/blockquote/code

@@ -31,7 +31,7 @@ export interface InterruptState {
 
 /**
  * Run-detail header (design §07): task id + serif title, the task capsule chips
- * (the canonical status badge — SRV-T-0016 A3), a runner/model/lane/state meta
+ * (the canonical status badge), a runner/model/lane/state meta
  * line with liveness, and the run actions. Interrupt is destructive (danger)
  * and only enabled while the run is active. Retry maps to `tusker redrive` and
  * says so ("Redrive"): it is disabled with an inline explanation when the
@@ -140,7 +140,7 @@ export function RunHeader({
  * Inline feedback for the redrive control. Shows, in priority order: why redrive
  * is disabled (review/done → point to review/land), an in-flight state, or the
  * last result — a requeue confirmation or the refusal reason. The refusal is
- * never swallowed (SRV-T-0016 A2).
+ * never swallowed.
  */
 function RedriveFeedback({
   disabledReason,

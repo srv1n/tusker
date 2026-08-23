@@ -1,5 +1,5 @@
 /*
-  A `[[ref]]` / `[[ref|label]]` inline node for the corpus editor (SRV-T-0002).
+  A `[[ref]]` / `[[ref|label]]` inline node for the corpus editor.
 
   The rendered document is the editor, so wiki-links must look and behave exactly
   as the read-only reader (Markdown.tsx) drew them: a resolved ref is info-tinted

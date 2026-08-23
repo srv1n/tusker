@@ -65,7 +65,7 @@ export function GateKindChip({ kind }: { kind: GateKind }) {
 /**
  * Renders any run outcome — known or one the API adds later. Both the tone and
  * the label resolve generically so a new outcome value never renders blank
- * (SRV-T-0016: outcome is an open enum, not a closed switch).
+ * Outcome is an open enum, not a closed switch.
  */
 export function OutcomeChip({ outcome }: { outcome: RunOutcome }) {
   return (

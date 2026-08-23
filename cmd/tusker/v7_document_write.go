@@ -92,7 +92,19 @@ func acquireV7MaterialEpochLockForDocument(filePath string) (*v7DocumentLock, er
 	}
 	current := filepath.Dir(abs)
 	for {
-		if fileExists(filepath.Join(current, "SKILL.md")) && fileExists(filepath.Join(current, "work")) {
+		skillPath := filepath.Join(current, "SKILL.md")
+		if fileExists(skillPath) && fileExists(filepath.Join(current, "work")) {
+			documentIdentity, err := v7DocumentLockIdentity(abs)
+			if err != nil {
+				return nil, err
+			}
+			skillIdentity, err := v7DocumentLockIdentity(skillPath)
+			if err != nil {
+				return nil, err
+			}
+			if documentIdentity == skillIdentity {
+				return nil, nil
+			}
 			return acquireV7MaterialEpochLock(current)
 		}
 		parent := filepath.Dir(current)

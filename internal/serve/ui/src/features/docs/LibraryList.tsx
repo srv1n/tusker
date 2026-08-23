@@ -5,24 +5,14 @@ import { Mono } from "@/components/ui/primitives";
 import { PageHeader, PageScroll, SectionLabel } from "@/components/ui/page";
 import { EmptyState, QueryBoundary } from "@/components/ui/states";
 import { useDocList } from "@/lib/queries";
-import { USE_MOCK } from "@/lib/api";
 import { relativeTime } from "@/lib/time";
 import type { DocKind, DocListEntry } from "@/types/domain";
 import { KindGlyph, kindMeta } from "./bits";
-import { localDocList } from "./mock";
 
 const GROUP_ORDER: DocKind[] = ["spec", "decision", "knowledge", "task", "epic", "dashboard"];
 
 function mergeDocs(remote: DocListEntry[]): DocListEntry[] {
-  // Live mode (USE_MOCK false) renders ONLY the real vault index — no fixtures.
-  // For local Vite work the screen-local list fills entries the daemon isn't
-  // serving yet (task contracts + the editing-demo doc).
-  const all = [...remote];
-  if (USE_MOCK) {
-    const seen = new Set(remote.map((d) => d.path));
-    all.push(...localDocList.filter((d) => !seen.has(d.path)));
-  }
-  return all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...remote].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function LibraryList({ projectId }: { projectId: string }) {

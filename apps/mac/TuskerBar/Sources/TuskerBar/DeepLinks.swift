@@ -28,13 +28,9 @@ enum TuskerDeepLink: Equatable {
     }
 
     static func taskPath(projectID: String, taskID: String) -> String {
-        var components = URLComponents()
-        components.path = "/p/\(projectID)/work"
-        components.queryItems = [URLQueryItem(name: "task", value: taskID)]
-        return components.string ?? "/panel?shell=1"
+        mainTaskPath(projectID: projectID, taskID: taskID)
     }
 
-    /// The document route is the canonical full-window task destination.
     static func mainTaskPath(projectID: String, taskID: String) -> String {
         var components = URLComponents()
         components.path = "/p/\(projectID)/docs"

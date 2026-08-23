@@ -311,8 +311,6 @@ func contextOutputCategory(cmd string) string {
 		return "raw jsonl read"
 	case strings.Contains(cmd, "rg -n"):
 		return "broad rg output"
-	case strings.Contains(cmd, "compact --all") && strings.Contains(cmd, "--json"):
-		return "large json output"
 	case strings.Contains(cmd, "git status --short"):
 		return "git status"
 	case strings.Contains(cmd, "git diff --stat"):

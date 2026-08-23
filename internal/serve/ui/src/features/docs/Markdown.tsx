@@ -3,13 +3,12 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
-import { USE_MOCK } from "@/lib/api";
 import { useDocList } from "@/lib/queries";
 import type { DocListEntry } from "@/types/domain";
-import { resolveWikilink, slugify } from "./mock";
+import { slugify } from "./utils";
 import { isSafeHref } from "@/features/editor/sanitize";
 
-/** The subset a rendered wikilink needs (from the live vault index or mock). */
+/** The subset a rendered wikilink needs from the live vault index. */
 type ResolvedLink = { path: string; title: string; kind: string };
 
 /** Resolve a `[[id]]` against the live doc list — by task path or file basename. */
@@ -52,17 +51,7 @@ function WikiLink({
 }) {
   const target = resolve(id);
   if (!target) {
-    // Live mode: an unknown reference is plain text, never a dead link. In mock
-    // mode keep the warn-tinted annotation the validation demo depends on.
-    if (!USE_MOCK) return <>{label}</>;
-    return (
-      <span
-        className="cursor-help font-mono text-[0.92em] text-warn decoration-warn/60 underline decoration-dashed underline-offset-2"
-        title="Unresolved reference — no such note in the vault"
-      >
-        {label}
-      </span>
-    );
+    return <>{label}</>;
   }
   return (
     <Link
@@ -231,18 +220,10 @@ export function Markdown({
   projectId: string;
   className?: string;
 }) {
-  // Wikilinks resolve against the live vault index; fixtures only in USE_MOCK.
-  // Prop signature is intentionally unchanged — resolution is internal so
-  // sibling callers (TaskContract, DocReader) don't need to thread an index.
+  // Resolution is internal so sibling callers do not need to thread an index.
   const docsQ = useDocList(projectId);
   const docs = docsQ.data ?? [];
-  const resolve = (id: string): ResolvedLink | undefined => {
-    if (USE_MOCK) {
-      const t = resolveWikilink(id);
-      return t ? { path: t.path ?? t.id, title: t.title, kind: t.kind } : undefined;
-    }
-    return resolveFromDocs(id, docs);
-  };
+  const resolve = (id: string): ResolvedLink | undefined => resolveFromDocs(id, docs);
   return (
     <div className={cn("[&>*:first-child]:mt-0", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(projectId, resolve)}>

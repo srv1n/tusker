@@ -1,5 +1,5 @@
 /*
-  Doc-graph API contract (SRV-T-0001). The daemon serves the documentation
+  Doc-graph API contract. The daemon serves the documentation
   corpus — canonical system docs, specs, and decision logs — plus the edges that
   connect them. These types mirror the pinned /api/docgraph shape exactly.
 */
@@ -86,7 +86,7 @@ export interface DocgraphDocDetail {
 }
 
 /*
-  Save contract (SRV-T-0002). PUT /api/docgraph/doc?project=&subject=.
+  Save contract. PUT /api/docgraph/doc?project=&subject=.
   Send `body` only when the body is dirty and `header` only when the header is
   dirty (at least one); a body-only save leaves the on-disk YAML bytes untouched.
 */

@@ -14,6 +14,5 @@ The primary routes are deliberately terminal:
 - `references/RUN.md` — deliberate runs, gates, and run watching;
 - `references/OPERATE.md` — read-only tracker diagnosis.
 
-Rare routes stay one hop from `SKILL.md`. Compatibility lives in
-`assets/compatibility.yaml` and `tusker capabilities --json`, never in skill
-frontmatter.
+Rare routes stay one hop from `SKILL.md`. Current command support comes from
+`tusker capabilities --json`, not skill frontmatter.

@@ -1,5 +1,5 @@
 /*
-  Shared layout shell for the three knowledge routes (SRV-T-0004).
+  Shared layout shell for the three knowledge routes.
 
   Each route (list, reader, graph) wraps its own content in this shell, which
   renders the persistent explorer rail to the left. On wide viewports the rail is

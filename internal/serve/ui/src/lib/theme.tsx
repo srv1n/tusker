@@ -30,7 +30,7 @@ function readPref(): ThemePref {
   } catch {
     /* ignore */
   }
-  // The v2 reference is an intentionally light editorial canvas. Respect an
+  // The product uses a light editorial canvas. Respect an
   // explicit saved preference, but make that visual system the first-run view.
   return "light";
 }

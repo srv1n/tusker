@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-const tasksSource = readFileSync(new URL("../src/features/v2/TaskScreens.tsx", import.meta.url), "utf8");
+const tasksSource = readFileSync(new URL("../src/features/product/TaskScreens.tsx", import.meta.url), "utf8");
 const waveSource = readFileSync(new URL("../src/features/work/WaveReview.tsx", import.meta.url), "utf8");
 const workUtilsSource = readFileSync(new URL("../src/features/work/work-utils.ts", import.meta.url), "utf8");
 const opsSource = readFileSync(new URL("../src/features/ops/ProjectOps.tsx", import.meta.url), "utf8");
@@ -16,8 +16,8 @@ test("the live Tasks route mounts wave review and action surfaces", () => {
   expect(waveSource).toContain("ready for your review");
   expect(waveSource).toContain("disabled={disabled || !wave.readyForReview || selectable.length === 0}");
   expect(routerSource).toContain('path: "tasks"');
-  expect(routerSource).toContain('"@/features/v2/TaskScreens"');
-  expect(routerSource).toContain('"TasksV2"');
+  expect(routerSource).toContain('"@/features/product/TaskScreens"');
+  expect(routerSource).toContain('"Tasks"');
 });
 
 test("terminal waves cannot expose Land or enter BatchBar selection", () => {

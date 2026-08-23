@@ -1,52 +1,17 @@
 {
   "nodes": [
     {
-      "subject": "acp-runner-migration",
-      "kind": "spec",
-      "path": ".tusker/specs/acp-runner-migration.md",
-      "title": "ACP runner migration: one bounded local agent transport",
-      "status": "canonical"
-    },
-    {
-      "subject": "acp-runner-migration-decision",
-      "kind": "decision",
-      "path": ".tusker/specs/decisions/2026-08-10-acp-runner-migration.md",
-      "title": "ACP runner migration decision",
-      "status": "canonical"
-    },
-    {
-      "subject": "build-and-test-economics",
-      "kind": "spec",
-      "path": ".tusker/specs/build-and-test-economics.md",
-      "title": "Build and test economics: how often we build and test at each stage",
-      "status": "canonical"
-    },
-    {
       "subject": "cli",
       "kind": "canonical",
       "path": "docs/system/cli.md",
-      "title": "Tusker CLI reference",
+      "title": "CLI reference",
       "status": "canonical"
     },
     {
       "subject": "delivery-and-waves",
       "kind": "canonical",
       "path": "docs/system/delivery-and-waves.md",
-      "title": "Delivery plans and waves (author → review → import → arm)",
-      "status": "canonical"
-    },
-    {
-      "subject": "execution-observability",
-      "kind": "spec",
-      "path": ".tusker/specs/execution-observability.md",
-      "title": "Execution observability: names, lineage, and truthful multi-agent tracking",
-      "status": "canonical"
-    },
-    {
-      "subject": "execution-observability-grill",
-      "kind": "decision",
-      "path": ".tusker/specs/decisions/2026-07-29-execution-observability-grill.md",
-      "title": "Decision log: execution observability and direct-agent identity",
+      "title": "Delivery and waves",
       "status": "canonical"
     },
     {
@@ -60,49 +25,28 @@
       "subject": "factory-intake",
       "kind": "canonical",
       "path": "docs/system/factory-intake.md",
-      "title": "Factory intake and operations",
+      "title": "Factory intake",
       "status": "canonical"
     },
     {
       "subject": "gates",
       "kind": "canonical",
       "path": "docs/system/gates.md",
-      "title": "Gates (human gates, the gate tier, the isolated full gate, and batch merge windows)",
-      "status": "canonical"
-    },
-    {
-      "subject": "gates-over-records",
-      "kind": "decision",
-      "path": ".tusker/specs/decisions/2026-07-22-gates-over-records.md",
-      "title": "Decision log: gates over records",
+      "title": "Gates",
       "status": "canonical"
     },
     {
       "subject": "knowledge-and-feedback",
       "kind": "canonical",
       "path": "docs/system/knowledge-and-feedback.md",
-      "title": "Knowledge canon and the feedback loop",
-      "status": "canonical"
-    },
-    {
-      "subject": "knowledge-graph",
-      "kind": "spec",
-      "path": ".tusker/specs/knowledge-graph.md",
-      "title": "Knowledge graph: self-scaffolding, self-checking documentation",
-      "status": "canonical"
-    },
-    {
-      "subject": "knowledge-graph-grill",
-      "kind": "decision",
-      "path": ".tusker/specs/decisions/2026-07-21-knowledge-graph-grill.md",
-      "title": "Decision log: the knowledge-graph discussion",
+      "title": "Knowledge and feedback",
       "status": "canonical"
     },
     {
       "subject": "landing-and-completion",
       "kind": "canonical",
       "path": "docs/system/landing-and-completion.md",
-      "title": "Landing and completion (how finished work reaches the integration branch and main)",
+      "title": "Landing and completion",
       "status": "canonical"
     },
     {
@@ -116,7 +60,7 @@
       "subject": "overview",
       "kind": "canonical",
       "path": "docs/system/00-overview.md",
-      "title": "Tusker system overview",
+      "title": "System overview",
       "status": "canonical"
     },
     {
@@ -127,104 +71,49 @@
       "status": "canonical"
     },
     {
-      "subject": "project-reset-and-relaunch",
-      "kind": "spec",
-      "path": ".tusker/specs/project-reset-and-relaunch.md",
-      "title": "Project reset and relaunch",
-      "status": "canonical"
-    },
-    {
       "subject": "proof-and-closeout",
       "kind": "canonical",
       "path": "docs/system/proof-and-closeout.md",
-      "title": "Proof recording and closeout",
+      "title": "Proof and closeout",
       "status": "canonical"
     },
     {
       "subject": "runners-and-acp",
       "kind": "canonical",
       "path": "docs/system/runners-and-acp.md",
-      "title": "Runners and the ACP adapter stack",
-      "status": "canonical"
-    },
-    {
-      "subject": "scratch-retention",
-      "kind": "spec",
-      "path": ".tusker/specs/scratch-retention.md",
-      "title": "Scratch retention: task scratch is ephemeral and reaps itself",
-      "status": "canonical"
-    },
-    {
-      "subject": "scratch-retention-grill",
-      "kind": "decision",
-      "path": ".tusker/specs/decisions/2026-08-04-scratch-retention-grill.md",
-      "title": "Decision log: scratch retention session, 2026-08-04",
+      "title": "Runners and ACP",
       "status": "canonical"
     },
     {
       "subject": "serve-ui",
       "kind": "canonical",
       "path": "docs/system/serve-ui.md",
-      "title": "Serve — local control plane and embedded SPA",
+      "title": "Serve UI",
       "status": "canonical"
     },
     {
       "subject": "skills",
       "kind": "canonical",
       "path": "docs/system/skills.md",
-      "title": "Skill packaging and distribution",
-      "status": "canonical"
-    },
-    {
-      "subject": "software-factory",
-      "kind": "spec",
-      "path": ".tusker/specs/software-factory.md",
-      "title": "Software Factory: Tusker as the production loop harness",
-      "status": "canonical"
-    },
-    {
-      "subject": "software-factory-grill",
-      "kind": "decision",
-      "path": ".tusker/specs/decisions/2026-07-21-factory-grill.md",
-      "title": "Decision log: the factory grill session",
+      "title": "Skills",
       "status": "canonical"
     },
     {
       "subject": "storage-and-runtime",
       "kind": "canonical",
       "path": "docs/system/storage-and-runtime.md",
-      "title": "Storage and runtime state",
+      "title": "Storage and runtime",
       "status": "canonical"
     },
     {
       "subject": "tasks-and-proof",
       "kind": "canonical",
       "path": "docs/system/tasks-and-proof.md",
-      "title": "V7 task model: schema, lifecycle, validation",
+      "title": "Tasks and proof",
       "status": "canonical"
     }
   ],
   "edges": [
-    {
-      "from": "acp-runner-migration",
-      "to": "software-factory",
-      "kind": "part_of"
-    },
-    {
-      "from": "acp-runner-migration-decision",
-      "to": "[ACP v1 transport boundary local Codex and Claude runner migration authority and identity separation fallback and deletion gates]",
-      "kind": "decides_for"
-    },
-    {
-      "from": "acp-runner-migration-decision",
-      "to": "acp-runner-migration",
-      "kind": "part_of"
-    },
-    {
-      "from": "build-and-test-economics",
-      "to": "software-factory",
-      "kind": "part_of"
-    },
     {
       "from": "cli",
       "to": "overview",
@@ -233,41 +122,6 @@
     {
       "from": "delivery-and-waves",
       "to": "overview",
-      "kind": "part_of"
-    },
-    {
-      "from": "execution-observability",
-      "to": "software-factory",
-      "kind": "part_of"
-    },
-    {
-      "from": "execution-observability",
-      "to": "docs/system/00-overview.md",
-      "kind": "updates"
-    },
-    {
-      "from": "execution-observability",
-      "to": "docs/system/cli.md",
-      "kind": "updates"
-    },
-    {
-      "from": "execution-observability",
-      "to": "docs/system/orchestration.md",
-      "kind": "updates"
-    },
-    {
-      "from": "execution-observability",
-      "to": "docs/system/serve-ui.md",
-      "kind": "updates"
-    },
-    {
-      "from": "execution-observability-grill",
-      "to": ".tusker/specs/execution-observability.md",
-      "kind": "decides_for"
-    },
-    {
-      "from": "execution-observability-grill",
-      "to": "execution-observability",
       "kind": "part_of"
     },
     {
@@ -286,43 +140,8 @@
       "kind": "part_of"
     },
     {
-      "from": "gates-over-records",
-      "to": ".tusker/specs/software-factory.md",
-      "kind": "decides_for"
-    },
-    {
-      "from": "gates-over-records",
-      "to": "software-factory",
-      "kind": "part_of"
-    },
-    {
       "from": "knowledge-and-feedback",
       "to": "overview",
-      "kind": "part_of"
-    },
-    {
-      "from": "knowledge-graph",
-      "to": "overview",
-      "kind": "part_of"
-    },
-    {
-      "from": "knowledge-graph",
-      "to": "docs/system/00-overview.md",
-      "kind": "updates"
-    },
-    {
-      "from": "knowledge-graph",
-      "to": "docs/system/cli.md",
-      "kind": "updates"
-    },
-    {
-      "from": "knowledge-graph-grill",
-      "to": ".tusker/specs/knowledge-graph.md",
-      "kind": "decides_for"
-    },
-    {
-      "from": "knowledge-graph-grill",
-      "to": "knowledge-graph",
       "kind": "part_of"
     },
     {
@@ -341,11 +160,6 @@
       "kind": "part_of"
     },
     {
-      "from": "project-reset-and-relaunch",
-      "to": "storage-and-runtime",
-      "kind": "part_of"
-    },
-    {
       "from": "proof-and-closeout",
       "to": "overview",
       "kind": "part_of"
@@ -356,26 +170,6 @@
       "kind": "part_of"
     },
     {
-      "from": "scratch-retention",
-      "to": "software-factory",
-      "kind": "part_of"
-    },
-    {
-      "from": "scratch-retention",
-      "to": "docs/system/gates.md",
-      "kind": "updates"
-    },
-    {
-      "from": "scratch-retention-grill",
-      "to": ".tusker/specs/scratch-retention.md",
-      "kind": "decides_for"
-    },
-    {
-      "from": "scratch-retention-grill",
-      "to": "scratch-retention",
-      "kind": "part_of"
-    },
-    {
       "from": "serve-ui",
       "to": "overview",
       "kind": "part_of"
@@ -383,21 +177,6 @@
     {
       "from": "skills",
       "to": "overview",
-      "kind": "part_of"
-    },
-    {
-      "from": "software-factory",
-      "to": "overview",
-      "kind": "part_of"
-    },
-    {
-      "from": "software-factory-grill",
-      "to": ".tusker/specs/software-factory.md",
-      "kind": "decides_for"
-    },
-    {
-      "from": "software-factory-grill",
-      "to": "software-factory",
       "kind": "part_of"
     },
     {

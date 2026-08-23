@@ -7,7 +7,7 @@ const queries = readFileSync(new URL("../src/lib/queries.ts", import.meta.url), 
 const types = readFileSync(new URL("../src/types/domain.ts", import.meta.url), "utf8");
 const router = readFileSync(new URL("../src/router.tsx", import.meta.url), "utf8");
 const sidebar = readFileSync(new URL("../src/components/Sidebar.tsx", import.meta.url), "utf8");
-const operations = readFileSync(new URL("../src/features/v2/OperationsScreens.tsx", import.meta.url), "utf8");
+const operations = readFileSync(new URL("../src/features/product/OperationsScreens.tsx", import.meta.url), "utf8");
 
 test("execution operations keeps graph, inbox, authority boundary and timeline seams explicit", () => {
   for (const text of ["Execution tree", "Unbound direct work", "Guarded binding", "Earlier unbound history remains", "Convergent timeline", "Partial provider visibility", "provider-owned", "Tusker-managed", "Reset", "Older", "Newer"]) expect(screen).toContain(text);

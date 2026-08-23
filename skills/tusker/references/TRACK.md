@@ -35,7 +35,7 @@ tusker close <TASK-ID>
 The smallest verification set covering acceptance: exact command, PASS/FAIL, bounded note. Noisy output lives in `.tusker/scratch/<TASK-ID>/`; promote only what acceptance or a gate consumes. At tiers 2+, `close` refuses until proof satisfies the contract — that refusal is the product working, so supply the missing row rather than working around it.
 Scratch is not durable: it is deleted when the task closes and swept after 14 days regardless.
 
-At tier 1 (`tier: 1` in `.tusker/config.yaml`) create/status/close work as a plain tracker: no dispatch/proof contract check on ready, while a demanding task with no `spec_refs` emits the `TASK_SPEC_REF_REQUIRED` warning. There is no proof gate on close. Record what exists; ceremony arrives with higher tiers, not before.
+At tier 1, create/status/close work as a plain tracker: no dispatch/proof contract check on ready, while a demanding task with no `spec_refs` emits the `TASK_SPEC_REF_REQUIRED` warning. There is no proof gate on close. Record what exists; ceremony arrives with higher tiers, not before.
 
 ## Gates
 

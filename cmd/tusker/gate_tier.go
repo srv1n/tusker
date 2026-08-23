@@ -90,7 +90,7 @@ type GateTierResult struct {
 	DurationMS int64        `json:"duration_ms"`
 }
 
-// gateLedgerReader is the seam onto the tree-keyed gate ledger (ORC-T-0005).
+// gateLedgerReader is the seam onto the tree-keyed gate ledger.
 // *RuntimeStore satisfies it; a nil reader simply disables the short-circuit,
 // which keeps the gate usable in projects that have no ledger yet.
 type gateLedgerReader interface {

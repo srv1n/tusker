@@ -178,6 +178,31 @@ func TestServeConfigDisableAndLocalhostDefaults(t *testing.T) {
 	}
 }
 
+func TestDaemonServeTargetFallsBackToDisabledProject(t *testing.T) {
+	t.Setenv(daemonServeRequiredEnv, "1")
+	stateRoot := setupDaemonServeProject(t, false, "127.0.0.1:0")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	projects, err := store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetProjectEnabled(projects[0].ProjectID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	target, enabled, err := (&Daemon{stateRoot: stateRoot, store: store}).serveTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled || target.project.ProjectID != projects[0].ProjectID {
+		t.Fatalf("disabled registered project should keep Serve available: enabled=%t target=%q", enabled, target.project.ProjectID)
+	}
+}
+
 type panicFS struct{}
 
 func (panicFS) Open(string) (fs.File, error) {

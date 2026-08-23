@@ -7,7 +7,6 @@ import { openTaskSearch, TaskSearch } from "@/features/search/TaskSearch";
 import { CountBadge } from "@/components/ui/primitives";
 import { useDaemon, useNeeds } from "@/lib/queries";
 import { connectProjectAttention } from "@/lib/stream";
-import { USE_MOCK } from "@/lib/api";
 
 let shellMode = typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("shell") === "1";
@@ -53,7 +52,7 @@ export function ProjectLayout() {
 	const projectId = useParams({ strict: false }).projectId as string | undefined;
 	useEffect(() => {
 		if (!projectId) return;
-		return connectProjectAttention(projectId, { enabled: !USE_MOCK });
+		return connectProjectAttention(projectId, { enabled: true });
 	}, [projectId]);
 	return <Outlet />;
 }

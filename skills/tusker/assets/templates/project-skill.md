@@ -2,7 +2,7 @@
 schema: tusker.project-skill/v7
 name: project-knowledge
 kind: project_skill
-description: "Route through this repository using V7 domain canon without treating task proof or runtime state as source truth."
+description: "Route through this repository's current domain canon without treating task proof or runtime state as source truth."
 capsule:
   what: ""
   use_when: ""
@@ -62,9 +62,9 @@ For broad, high-risk, or agent-heavy changes, humans and reviewers may run `tusk
 - Do not publish task records, evidence logs, attempts, event files, generated output, runtime state, or raw logs as project skill source.
 - Forbidden paths include `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`, `_system/**`, `dashboards/**`, packet caches, `.tusker-*`, raw logs, and local absolute paths.
 - Raw external input belongs in `knowledge/domains/<domain>/sources/`.
-- Root `docs/` may contain optional repository engineering guardrails; it is not the V7 canonical knowledge source.
+- Root `docs/` can contain current system and contribution guides. Project canon stays under `knowledge/domains/`.
 
 ## Validation
 
 - `tusker skill doctor --strict --json` checks project skill routes and package hygiene.
-- `tusker validate --json` checks V7 domain layout and task-domain coverage.
+- `tusker validate --json` checks the domain layout and task-domain coverage.

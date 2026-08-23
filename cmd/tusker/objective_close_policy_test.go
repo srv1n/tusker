@@ -163,7 +163,7 @@ func TestObjectiveClosePolicyContract(t *testing.T) {
 		regexp.MustCompile(`(?i)usually human acceptance`),
 		regexp.MustCompile(`(?i)human_required_risks\s*:`),
 	}
-	paths := []string{"../../skill", "../../docs", "../../internal/serve/ui", "../../.tusker/WORKFLOW.md", "../../.tusker/knowledge/domains/project/CANON.md", "../../HANDOFF-dispatch-land-hardening.md", "../../tusker.yaml"}
+	paths := []string{"../../skill", "../../docs", "../../internal/serve/ui", "../../.tusker/WORKFLOW.md", "../../.tusker/knowledge/domains/project/CANON.md", "../../tusker.yaml"}
 	for _, root := range paths {
 		info, err := os.Stat(root)
 		if err != nil {

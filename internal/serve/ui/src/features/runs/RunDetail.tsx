@@ -89,7 +89,7 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
   return (
     <div className="tk-scroll h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-[1040px] px-6 pb-20 pt-6 sm:px-11">
-        {/* Runs now live on the Overview (SRV-T-0003); back-link goes there. */}
+        {/* Runs live on the overview; the back-link goes there. */}
         <Link
           to="/p/$projectId"
           params={{ projectId }}

@@ -5,7 +5,7 @@ import { fileURLToPath, URL } from "node:url";
 
 // Tusker Serve UI — embedded control-room SPA.
 // Dev server runs standalone; production build (`bun run build`) emits to ./dist,
-// which the Go serve package embeds via go:embed. See BACKEND-GAPS.md.
+// which the Go serve package embeds via go:embed.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {

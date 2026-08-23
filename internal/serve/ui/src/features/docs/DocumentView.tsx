@@ -3,7 +3,7 @@ import { LibraryList } from "./LibraryList";
 import { TaskContract } from "./TaskContract";
 import { DocReader } from "./DocReader";
 import { DocSourceView } from "./DocSourceView";
-import { isTaskId } from "./mock";
+import { isTaskId } from "./utils";
 
 const route = getRouteApi("/p/$projectId/docs");
 

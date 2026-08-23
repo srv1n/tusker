@@ -1,40 +1,55 @@
-# tusker serve — control-room UI
+# Serve web app
 
-The embedded single-page control room served by the `tusker` binary on
-`localhost:7420`. Answers one question: **what needs me, and what is the machine
-doing?** Attention-routed (needs-me first), multi-project.
+This directory contains the web app that `tusker serve` returns. The Go binary
+embeds `dist/` with `go:embed`.
 
-## Stack
+## Runtime
 
-Bun (no npm) · Vite 8 · React 19 · TypeScript 6 (strict) · TanStack Router /
-Query / Table / Virtual · Tailwind v4 (CSS-first tokens) · self-hosted fonts
-(Source Serif 4 + Source Code Pro via Fontsource) · light + dark themes.
+The app reads the local Serve API. It uses mock data only when
+`VITE_USE_MOCK=1` is set. The API authority is
+`cmd/tusker/serve_command.go` and the `cmd/tusker/serve_*.go` handlers.
 
-## Develop
+The production service uses the local address `127.0.0.1:7420` by default.
+The browser client listens to `/api/stream` and invalidates its query cache when
+the service reports a change.
 
-```bash
-bun install
-bun run dev        # http://localhost:5173 (runs against the in-browser mock)
+## Commands
+
+Run these commands in this directory:
+
+```sh
+bun install --frozen-lockfile
 bun run typecheck
-bun run build      # → dist/ (embedded by the Go serve package via go:embed)
+bun test
+bun run build
 ```
 
-There is **no npm**; use Bun for everything.
+Use `bun run dev` for the Vite development server. Set `VITE_USE_MOCK=1` only
+when you need the fixture data.
 
-## Layout
+## Source layout
 
-- `src/routes`, `src/router.tsx` — app shell + TanStack (code-based) routes
-- `src/features/<screen>` — one folder per screen
-- `src/components/ui` — shared primitives (chips, states, controls, liveness…)
-- `src/lib` — `api` (backend seam), `queries` (TanStack Query), `theme`, `time`, `cn`
-- `src/types/domain.ts` — the domain model (the API contract)
-- `src/mock/fixtures.ts` — in-browser mock dataset
+| Path | Purpose |
+| --- | --- |
+| `src/router.tsx` | Current route tree. |
+| `src/features/product/` | Today, task, delivery, and operations screens. |
+| `src/features/docs/` | Tracker document reader and task contract view. |
+| `src/features/knowledge/` | System document list, graph, and reader. |
+| `src/features/executions/` | Execution graph and actions. |
+| `src/lib/api.ts` | HTTP client and response types. |
+| `src/lib/queries.ts` | Query keys and mutations. |
+| `src/mock/` | Opt-in development fixtures. |
+| `dist/` | Generated embedded files. Do not edit by hand. |
 
-## Status
+## Main routes
 
-Front-end-first. Data comes from a typed mock; the daemon JSON API is being built
-in parallel. See **`BACKEND-GAPS.md`** for the wiring checklist and
-`FOUNDATION.md` for the architecture + component contract.
+- `/` and `/p/<project>/` show current work.
+- `/p/<project>/tasks` shows tasks.
+- `/p/<project>/epics` and `/p/<project>/waves` show delivery groups.
+- `/p/<project>/diagnostics` shows runtime health.
+- `/p/<project>/diagnostics/executions` shows the execution graph.
+- `/p/<project>/docs` reads tracker documents.
+- `/p/<project>/knowledge` reads the system document graph.
+- `/p/<project>/settings` changes project settings through guarded API calls.
 
-Design source of truth: the handed "Tusker Serve" design
-(claude.ai/design project `77b1bb97-2b9a-4919-89ce-eb3c10a10466`).
+See `docs/system/serve-ui.md` for the system contract.

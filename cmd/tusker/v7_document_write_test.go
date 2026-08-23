@@ -94,6 +94,35 @@ func TestV7DocumentCASConcurrentProcessesAllowExactlyOneWriter(t *testing.T) {
 	}
 }
 
+func TestV7SkillMutationUsesOneLockForDocumentAndMaterialEpoch(t *testing.T) {
+	vault := t.TempDir()
+	if err := os.Mkdir(filepath.Join(vault, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skillPath := filepath.Join(vault, "SKILL.md")
+	body := "\n# Project skill\n"
+	data := map[string]any{"schema": "tusker.project-skill/v7", "kind": "project_skill"}
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, []string{"schema", "kind", "state_rev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte(content), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	_, changed, err := mutateV7DocumentLocked(skillPath, []string{"schema", "kind", "title", "state_rev"}, func(data map[string]any, body string) (map[string]any, string, bool, error) {
+		data["title"] = "Tusker"
+		return data, body, true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("SKILL.md mutation did not run")
+	}
+}
+
 func TestV7DocumentCASProcessHelper(t *testing.T) {
 	if os.Getenv("TUSKER_V7_CAS_HELPER") != "1" {
 		return

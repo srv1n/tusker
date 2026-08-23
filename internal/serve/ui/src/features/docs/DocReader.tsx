@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
-import { USE_MOCK } from "@/lib/api";
 import { Mono } from "@/components/ui/primitives";
 import { Skeleton, ErrorState } from "@/components/ui/states";
 import { useDoc, useDocList } from "@/lib/queries";
@@ -12,7 +11,6 @@ import { DocShell } from "./DocShell";
 import { Outline } from "./Outline";
 import { PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow } from "./bits";
-import { resolveWikilink, wikilinkTargets } from "./mock";
 
 /** A live vault entry → the lite wikilink target the editor resolves/links. */
 function docToWikilink(d: DocListEntry): WikilinkTargetLite {
@@ -24,8 +22,6 @@ function docToWikilink(d: DocListEntry): WikilinkTargetLite {
 
 export function DocReader({ projectId, path }: { projectId: string; path: string }) {
   const q = useDoc(path, projectId);
-  // Live mode never substitutes a fixture body — an absent doc is a loading or
-  // error state below, never fabricated content.
   const doc = q.data;
 
   if (!doc) {
@@ -78,13 +74,9 @@ function ReaderBody({ projectId, doc }: { projectId: string; doc: DocContent }) 
   const { body } = useMemo(() => splitLeadingH1(doc.markdown), [doc.markdown]);
 
   const editorConfig = useMemo<EditorRuntimeConfig>(() => {
-    // Wikilinks resolve against the live vault index; fixtures only in USE_MOCK.
-    const index: WikilinkTargetLite[] = USE_MOCK
-      ? Object.values(wikilinkTargets)
-      : (liveDocs ?? []).map(docToWikilink);
+    const index: WikilinkTargetLite[] = (liveDocs ?? []).map(docToWikilink);
     const resolve = (id: string): WikilinkTargetLite | undefined => {
       const key = id.trim();
-      if (USE_MOCK) return resolveWikilink(key);
       return index.find((t) => t.id === key || t.path === key);
     };
     return {

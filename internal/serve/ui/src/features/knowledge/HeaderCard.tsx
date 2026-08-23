@@ -1,5 +1,5 @@
 /*
-  The front-matter header, editable in place (SRV-T-0002).
+  The front-matter header, editable in place.
 
   Front-matter is shown as typed facts, never as raw YAML. Status, keywords, and
   part_of are edited here through typed controls; the document's title lives in

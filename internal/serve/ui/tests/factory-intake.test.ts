@@ -48,7 +48,7 @@ test("review keeps canonical relationships, links resolvable records, and clears
 test("delivery waits for an explicit plan path and never shows a stale review for edited input", () => {
   expect(source).toContain('const defaultPlan = "";');
   expect(source).toContain("const inputMatchesReview = plan.trim() === submittedPlan");
-  expect(source).toContain('placeholder="docs/plans/example-v2.yaml"');
+  expect(source).toContain('placeholder=".tusker/scratch/delivery-plan.yaml"');
   expect(source).toContain("disabled={!plan.trim()}");
   expect(source).toContain('title="Choose a delivery plan"');
   expect(source).toContain('title="Review this plan"');

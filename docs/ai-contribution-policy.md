@@ -1,41 +1,35 @@
 # AI contribution policy
 
-AI-assisted work is allowed.
+AI-assisted work is allowed. The configured Git user owns the change.
 
-What is not allowed is submitting code that the human contributor does not understand.
+## Repository rule
 
-## Required when AI is used
+Do not add AI attribution to commits, pull requests, source files, or generated
+metadata. Do not add agent co-author trailers or generated-by lines.
 
-- disclose that AI was used
-- disclose the tool or tools used
-- summarize the degree of assistance
-- verify the final behavior manually when appropriate
-- resolve bot or review comments intentionally, not mechanically
+The contributor must understand the final behavior. The contributor must check
+the result with the same commands that a non-AI change needs.
 
-## Not required
+## Evidence
 
-- full transcripts for every change
-- giant prompt dumps
-- performative process theater
+Keep proof about the code, not about the tool that wrote it. Record:
 
-## Code file size
+- the requested outcome;
+- the changed paths;
+- exact checks and results;
+- known limits; and
+- the reviewer focus.
 
-Keep code files at or below roughly 1,000 lines. Past that, humans and agents
-lose grip on the file; prefer extracting a cohesive module.
+Raw transcripts are not proof. A Tusker packet is context, not approval.
 
-Exceeding the limit is allowed as a deliberate decision with a stated reason
-(generated code, a cohesive protocol or lookup table) recorded in the change or
-task evidence. `make check` runs an advisory (non-fatal) scan that lists code
-files over the limit that are not on the allowlist.
+## Scope
 
-## Strong preference
+Do not make unrelated cleanup. Do not overwrite user changes. Keep a dirty
+worktree intact unless the task owns the changed paths.
 
-Use structured summaries instead of transcript walls.
+## Sources
 
-For non-trivial AI-assisted changes, prefer a Tusker explainer packet over raw transcripts:
-
-```bash
-tusker packet <TASK-ID> --for explainer --write
-```
-
-It should help the human explain the change in their own words; it is not proof by itself.
+- `AGENTS.md`
+- `CLAUDE.md`
+- `.tusker/WORKFLOW.md`
+- `skills/tusker/SKILL.md`

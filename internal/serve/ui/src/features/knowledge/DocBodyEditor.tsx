@@ -1,5 +1,5 @@
 /*
-  The corpus document body as an always-on inline editor (SRV-T-0002).
+  The corpus document body as an always-on inline editor.
 
   There is no read/edit toggle: the ProseMirror surface renders with `.tk-prose`
   so it looks exactly like the reader, and the caret drops wherever it is clicked.

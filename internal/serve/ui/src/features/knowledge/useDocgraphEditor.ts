@@ -1,5 +1,5 @@
 /*
-  Editor state for one corpus document (SRV-T-0002).
+  Editor state for one corpus document.
 
   Holds the header draft (status / keywords / part_of) and the body draft
   (serialized markdown), tracks dirtiness against the loaded document, and drives

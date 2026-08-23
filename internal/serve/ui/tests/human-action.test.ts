@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 const card = readFileSync(new URL("../src/features/human-action/HumanActionCard.tsx", import.meta.url), "utf8");
-const needs = readFileSync(new URL("../src/components/needs/NeedCard.tsx", import.meta.url), "utf8");
 const task = readFileSync(new URL("../src/features/docs/TaskContract.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../src/features/panel/Panel.tsx", import.meta.url), "utf8");
 
@@ -36,9 +35,4 @@ test("compact panel consumes the same live human-action payload", () => {
   expect(panel).toContain("<HumanActionCard");
   expect(panel).toContain("compact");
   expect(panel).toContain(">Your action</h2>");
-});
-
-test("needs cards use the same contextual contract instead of clarify inference", () => {
-  expect(needs).toContain("if (need.humanAction)");
-  expect(needs).toContain("<HumanActionCard");
 });
