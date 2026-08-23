@@ -73,12 +73,21 @@ func FindWithLimit(corpus Corpus, query string, limit int) FindResult {
 		return result
 	}
 
+	parents := map[string]bool{}
+	for _, doc := range corpus.Documents {
+		if parent := strings.TrimSpace(doc.PartOf); parent != "" {
+			parents[parent] = true
+		}
+	}
 	sort.SliceStable(scored, func(i, j int) bool {
 		if scored[i].score != scored[j].score {
 			return scored[i].score > scored[j].score
 		}
 		if ki, kj := kindRank(scored[i].doc.Kind), kindRank(scored[j].doc.Kind); ki != kj {
 			return ki < kj
+		}
+		if hi, hj := parents[scored[i].doc.Subject], parents[scored[j].doc.Subject]; hi != hj {
+			return hi
 		}
 		return scored[i].doc.Path < scored[j].doc.Path
 	})
@@ -149,13 +158,13 @@ func scoreDocuments(corpus Corpus, terms []string, requireAll bool) []scoredDoc 
 
 func scoreTerm(doc Document, term string) int {
 	subject := strings.ToLower(strings.TrimSpace(doc.Subject))
-	switch {
-	case subject == term:
+	if subject == term {
 		return scoreSubjectExact
-	case subject != "" && strings.Contains(subject, term):
-		return scoreSubjectContain
 	}
 	best := scoreNone
+	if subject != "" && strings.Contains(subject, term) {
+		best = scoreSubjectContain
+	}
 	for _, keyword := range doc.Keywords {
 		keyword = strings.ToLower(strings.TrimSpace(keyword))
 		if keyword == "" {

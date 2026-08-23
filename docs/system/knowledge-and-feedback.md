@@ -51,6 +51,10 @@ file.
 `tusker docs map` builds `docs/system/INDEX.md`, `docs/system/graph.json`, and
 the graph block in the overview. Do not edit those outputs by hand.
 
+Use `aliases` in front matter when a preserved document has older wiki-link
+names. Tusker resolves a unique alias to its canonical subject. It leaves a
+duplicate alias unresolved.
+
 A document is verified only when `last_verified` contains a date and the Git
 commit that was checked. A date alone is not a verification stamp.
 

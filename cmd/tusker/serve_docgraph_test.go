@@ -218,6 +218,34 @@ func TestDocLinksPipeLabelSyntaxMatchesFrontend(t *testing.T) {
 	}
 }
 
+func TestDocLinksResolveUniqueAliasesAndBacklinks(t *testing.T) {
+	server := newServeFixture(t)
+	seedDocgraphCorpus(t, server.repoRoot)
+	writeDocgraphDoc(t, server.repoRoot, ".tusker/specs/alias-source.md",
+		"title: \"Alias Source\"\nsubject: alias-source\npart_of: overview\nkeywords: [alias]\nstatus: active\n",
+		"# Alias Source\n\nSee [[12]] and [[../meta-harness/00 Meta-Harness Overview]].\n")
+	writeDocgraphDoc(t, server.repoRoot, ".tusker/specs/aliased.md",
+		"title: \"Aliased\"\nsubject: aliased\naliases: [\"12\", \"../meta-harness/00 Meta-Harness Overview\"]\npart_of: overview\nkeywords: [alias]\nstatus: active\n",
+		"# Aliased\n")
+
+	var source serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=alias-source", &source)
+	if len(source.Links) != 2 {
+		t.Fatalf("expected two alias links, got %#v", source.Links)
+	}
+	for _, link := range source.Links {
+		if !link.Resolved || link.Subject != "aliased" || link.Path != ".tusker/specs/aliased.md" {
+			t.Fatalf("alias did not resolve to canonical subject: %#v", link)
+		}
+	}
+
+	var target serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=aliased", &target)
+	if !hasBacklink(target.Backlinks, "alias-source", "wiki") {
+		t.Fatalf("alias link did not register a backlink: %#v", target.Backlinks)
+	}
+}
+
 func hasBacklink(backlinks []serveDocgraphBacklink, subject, via string) bool {
 	for _, backlink := range backlinks {
 		if backlink.Subject == subject && backlink.Via == via {

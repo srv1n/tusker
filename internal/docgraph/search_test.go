@@ -39,6 +39,21 @@ func TestFindRanksCanonicalFirst(t *testing.T) {
 	}
 }
 
+func TestFindRanksTopicHubBeforeEqualLeafMatches(t *testing.T) {
+	root := t.TempDir()
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
+	writeDoc(t, root, "docs/system/knowledge/00-index.md", "---\nsubject: knowledge-indexing\nkeywords: [knowledge indexing]\npart_of: overview\n---\n# Knowledge indexing\n")
+	writeDoc(t, root, "docs/system/knowledge/leaf.md", "---\nsubject: extraction-cards\nkeywords: [knowledge indexing]\npart_of: knowledge-indexing\n---\n# Extraction cards\n")
+
+	result := Find(loadCorpus(t, root), "knowledge indexing")
+	if len(result.Matches) < 2 {
+		t.Fatalf("expected hub and leaf matches, got %#v", result.Matches)
+	}
+	if result.Matches[0].Subject != "knowledge-indexing" {
+		t.Fatalf("topic hub should rank first, got %#v", result.Matches)
+	}
+}
+
 func TestFindMatchesReadWhenMetadataAndIgnoresSkipWhen(t *testing.T) {
 	root := t.TempDir()
 	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
