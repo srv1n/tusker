@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -181,6 +182,36 @@ func deliveryReviewCmd(args Args) error {
 	return nil
 }
 
+func deliveryReviewMatchesTrackedPlanCommit(vault, path string, raw []byte, context deliveryPlanningContext, want string) bool {
+	repo := v7RepoRoot(vault)
+	rel, err := filepath.Rel(repo, path)
+	if err != nil || rel == "." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	head, err := gitOutputTrim(repo, "rev-parse", "HEAD")
+	if err != nil || head != context.IntegrationBase.SHA {
+		return false
+	}
+	changed, err := gitOutputTrim(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD", "--")
+	if err != nil || changed != rel {
+		return false
+	}
+	committed, err := exec.Command("git", "-C", repo, "show", "HEAD:"+rel).Output()
+	if err != nil || !bytes.Equal(committed, raw) {
+		return false
+	}
+	parent, err := gitOutputTrim(repo, "rev-parse", "HEAD^")
+	if err != nil {
+		return false
+	}
+	context.IntegrationBase.SHA = parent
+	if context.Policy.Branches.DefaultSHA != "" {
+		context.Policy.Branches.DefaultSHA = parent
+	}
+	return deliveryContextMaterialFingerprint(context) == want
+}
+
 func buildDeliveryReview(vault, path string) (deliveryReview, error) {
 	return buildDeliveryReviewWithInspector(vault, path, inspectWavePreflightEnvironmentReadOnly)
 }
@@ -224,7 +255,7 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 		} else {
 			integrationBaseSHA = context.IntegrationBase.SHA
 			r.Start.ContextFingerprint = plan.v2.ContextFingerprint
-			if context.ContextFingerprint != plan.v2.ContextFingerprint {
+			if context.ContextFingerprint != plan.v2.ContextFingerprint && !deliveryReviewMatchesTrackedPlanCommit(vault, path, raw, context, plan.v2.ContextFingerprint) {
 				r.Start.Blockers = append(r.Start.Blockers, "planning context fingerprint differs; regenerate the plan from current delivery context")
 				r.Start.State = "changed"
 				r.Start.StateLabel = "Delivery changed"

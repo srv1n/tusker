@@ -80,6 +80,38 @@ func TestDeliveryPlanReview(t *testing.T) {
 	}
 }
 
+func TestDeliveryPlanReviewAcceptsCommittedTrackedPlan(t *testing.T) {
+	vault := deliveryTestVault(t)
+	repo := v7RepoRoot(vault)
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "seed")
+
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	scratchPath := writeDeliveryV2TestPlan(t, vault, plan)
+	raw, err := os.ReadFile(scratchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trackedPath := filepath.Join(repo, "docs", "plans", "delivery.yaml")
+	if err := writeText(trackedPath, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", "docs/plans/delivery.yaml")
+	runGitDir(t, repo, "commit", "-m", "track delivery plan")
+
+	review, err := buildDeliveryReviewWithInspector(vault, trackedPath, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !review.Ready || strings.Contains(strings.Join(review.Start.Blockers, "\n"), "planning context fingerprint differs") {
+		t.Fatalf("committing the tracked plan invalidated its planning context: %#v", review.Start)
+	}
+}
+
 func TestDeliveryPlanReviewPreservesV1ReadOnlyCompatibility(t *testing.T) {
 	vault := deliveryTestVault(t)
 	path := writeDeliveryTestPlan(t, vault, validDeliveryPlan())

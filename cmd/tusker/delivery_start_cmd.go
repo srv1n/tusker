@@ -129,7 +129,7 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	if err != nil {
 		return deliveryStartResult{}, err
 	}
-	context, err := deliveryStartValidateContext(vault, plan)
+	context, err := deliveryStartValidateContext(vault, path, raw, plan)
 	if err != nil {
 		return deliveryStartResult{}, err
 	}
@@ -142,7 +142,7 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 	// reparses its descriptor-bound bytes and verifies the rooted path chain.
 	pathLocked, confirmedLocked, planLocked, rawLocked, err := deliveryStartPlanInput(vault, args, source)
 	if err == nil {
-		context, err = deliveryStartValidateContext(vault, planLocked)
+		context, err = deliveryStartValidateContext(vault, pathLocked, rawLocked, planLocked)
 	}
 	if err == nil && (!bytes.Equal(raw, rawLocked) || pathLocked != path || confirmedLocked != confirmed) {
 		err = tuskerError(errorInvalidTransition, "delivery plan changed during Start; regenerate delivery review and confirm its exact plan fingerprint")
@@ -269,7 +269,7 @@ func deliveryStartWithPlanSource(args Args, inspector wavePreflightEnvironmentIn
 		cause := tuskerError(errorInvalidTransition, "delivery plan changed during Start; regenerate delivery review and confirm its exact plan fingerprint")
 		return deliveryStartResult{}, refuseDeliveryStartBeforeArm(vault, authority, cause)
 	}
-	if _, err := deliveryStartValidateContext(vault, planAfter); err != nil {
+	if _, err := deliveryStartValidateContext(vault, authority.PlanPath, rawAfter, planAfter); err != nil {
 		return deliveryStartResult{}, refuseDeliveryStartBeforeArm(vault, authority, err)
 	}
 
@@ -361,7 +361,7 @@ func validateDeliveryStartAuthorityUnderLock(vault string, wave Note, authority 
 	if !bytes.Equal(raw, authority.PlanBytes) || confirmed != authority.PlanFingerprint || deliveryFingerprint(raw) != authority.PlanFingerprint || stringField(wave.Data, "delivery_plan_fingerprint") != authority.PlanFingerprint || deliveryPlanScope(plan) != stringField(wave.Data, "delivery_plan_scope") {
 		return tuskerError(errorInvalidTransition, "reviewed delivery plan changed before authorization; regenerate delivery review and Start")
 	}
-	context, err := deliveryStartValidateContext(vault, plan)
+	context, err := deliveryStartValidateContext(vault, authority.PlanPath, raw, plan)
 	if err != nil {
 		return err
 	}
@@ -555,20 +555,23 @@ func deliveryStartPlanBytes(vault string, args Args, path string, raw []byte) (s
 	return path, confirmed, plan, append([]byte(nil), raw...), nil
 }
 
-func deliveryStartValidateContext(vault string, plan deliveryPlan) (deliveryPlanningContext, error) {
+func deliveryStartValidateContext(vault, path string, raw []byte, plan deliveryPlan) (deliveryPlanningContext, error) {
 	context, err := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), deliveryPlanScope(plan))
 	if err != nil {
 		return deliveryPlanningContext{}, tuskerError(errorInvalidTransition, "planning context could not be recomputed; repair the cited context before Start")
 	}
 	if context.ContextFingerprint != plan.v2.ContextFingerprint {
-		return deliveryPlanningContext{}, tuskerError(
-			errorInvalidTransition,
-			"planning context fingerprint differs; regenerate the plan from current delivery context",
-			withContext(map[string]any{
-				"reviewed_context_fingerprint": plan.v2.ContextFingerprint,
-				"current_context_fingerprint":  context.ContextFingerprint,
-			}),
-		)
+		if !deliveryReviewMatchesTrackedPlanCommit(vault, path, raw, context, plan.v2.ContextFingerprint) {
+			return deliveryPlanningContext{}, tuskerError(
+				errorInvalidTransition,
+				"planning context fingerprint differs; regenerate the plan from current delivery context",
+				withContext(map[string]any{
+					"reviewed_context_fingerprint": plan.v2.ContextFingerprint,
+					"current_context_fingerprint":  context.ContextFingerprint,
+				}),
+			)
+		}
+		context.ContextFingerprint = plan.v2.ContextFingerprint
 	}
 	return context, nil
 }

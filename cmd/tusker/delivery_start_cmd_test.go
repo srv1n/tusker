@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,46 @@ func TestDeliveryStart(t *testing.T) {
 			if got := stringField(idx.Tasks[id].Data, "status"); got != "ready" {
 				t.Fatalf("%s was not promoted only with the armed wave: %s", id, got)
 			}
+		}
+	})
+
+	t.Run("starts immediately after committing the tracked plan", func(t *testing.T) {
+		vault := deliveryTestVault(t)
+		repo := v7RepoRoot(vault)
+		runGitDir(t, repo, "init", "-b", "main")
+		runGitDir(t, repo, "config", "user.email", "test@example.com")
+		runGitDir(t, repo, "config", "user.name", "Test User")
+		runGitDir(t, repo, "add", ".")
+		runGitDir(t, repo, "commit", "-m", "seed")
+
+		plan := validDeliveryPlanV2()
+		plan.HumanGates = nil
+		scratchPath := writeDeliveryV2TestPlan(t, vault, plan)
+		raw, err := os.ReadFile(scratchPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trackedPath := filepath.Join(repo, "docs", "plans", "delivery.yaml")
+		if err := writeText(trackedPath, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		runGitDir(t, repo, "add", "docs/plans/delivery.yaml")
+		runGitDir(t, repo, "commit", "-m", "track delivery plan")
+
+		review, err := buildDeliveryReviewWithInspector(vault, trackedPath, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
+		if err != nil || !review.Ready {
+			t.Fatalf("committed plan was not reviewable: %#v %v", review.Start, err)
+		}
+		result, err := start(vault, trackedPath, deliveryFingerprint(raw), greenWaveEnvironment())
+		if err != nil {
+			t.Fatal(err)
+		}
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := stringField(idx.Waves[result.WaveID].Data, "integration_base_sha"), strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "HEAD")); got != want {
+			t.Fatalf("Start froze %q instead of committed plan base %q", got, want)
 		}
 	})
 
