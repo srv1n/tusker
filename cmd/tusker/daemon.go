@@ -7158,7 +7158,7 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 	}
 	if projectID := strings.TrimSpace(args.String("id")); projectID != "" {
 		for _, project := range loaded {
-			if project.Project.ProjectID == projectID {
+			if project.Project.ProjectID == projectID || project.Project.ProjectKey == projectID || project.Project.Name == projectID {
 				copy := project
 				return &copy, nil
 			}

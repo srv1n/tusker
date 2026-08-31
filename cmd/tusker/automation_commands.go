@@ -364,7 +364,12 @@ func loadAutomationCommandContextWithStore(args Args, stateRoot string, store *R
 			repoRoot = v7RepoRoot(vaultPath)
 		}
 		repoRoot, _ = filepath.Abs(repoRoot)
+		projectID, err := resolveV7ProjectID(vaultPath)
+		if err != nil {
+			return nil, err
+		}
 		ctx.Project = RegisteredProject{
+			ProjectID:    projectID,
 			ProjectKey:   projectKeyFromPath(repoRoot),
 			Name:         filepath.Base(repoRoot),
 			RepoRoot:     repoRoot,

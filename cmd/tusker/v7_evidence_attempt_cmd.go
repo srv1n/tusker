@@ -84,7 +84,7 @@ func evidenceV7AddCmd(args Args) error {
 		return tuskerError(errorInvalidArg, "invalid evidence id: "+id)
 	}
 	covers := normalizeV7Covers(splitCSV(args.String("covers")))
-	if len(covers) == 0 {
+	if len(covers) == 0 && tuskerTier(vaultPath) >= 2 {
 		return tuskerError(errorMissingArg, "evidence requires --covers A1 or --covers TASK:A1", withHint("tie every evidence record to the acceptance item it proves"))
 	}
 	dir := filepath.Join(vaultPath, "evidence", taskID)
@@ -206,6 +206,9 @@ func evidenceV7AddCmd(args Args) error {
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Added evidence %s at %s\n", id, path)
+		if len(covers) == 0 {
+			fmt.Println("Warning: evidence is not linked to an acceptance item.")
+		}
 	}
 	return nil
 }

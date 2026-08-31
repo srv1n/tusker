@@ -804,20 +804,24 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	}
 	body := v7TaskBody(id, title)
 	// --force-ready may bypass proof/dispatchability checks, never the strict
-	// governing-spec requirement for a demanding task.
+	// governing-spec requirement for a demanding task. Report every applicable
+	// blocker together so callers can fix the contract in one pass.
 	synthetic := Note{Data: data, Body: body, RelativePath: filepath.ToSlash(filepath.Join("work", "tasks", id+".md"))}
+	var readyBlockers []string
 	if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, synthetic, synthetic.RelativePath); ok && tuskerTier(vaultPath) >= 2 {
-		return tuskerError(errorInvalidArg, "ready V7 task is not dispatchable: "+finding.Message, withHint(finding.Hint))
+		readyBlockers = append(readyBlockers, finding.Message)
 	}
 	if status == "ready" && !args.Bool("force-ready") && tuskerTier(vaultPath) >= 2 {
-		if reasons := v7TaskDispatchBlockers(vaultPath, synthetic); len(reasons) > 0 {
-			return tuskerError(
-				errorInvalidArg,
-				"ready V7 task is not dispatchable: "+strings.Join(reasons, "; "),
-				withHint("create it as backlog/held, or pass --force-ready only after replacing placeholder acceptance and verification"),
-				withContext(map[string]any{"id": id, "dispatch_blockers": reasons}),
-			)
-		}
+		readyBlockers = append(readyBlockers, v7TaskDispatchBlockers(vaultPath, synthetic)...)
+	}
+	readyBlockers = uniqueStrings(readyBlockers)
+	if len(readyBlockers) > 0 {
+		return tuskerError(
+			errorInvalidArg,
+			"ready V7 task is not dispatchable: "+strings.Join(readyBlockers, "; "),
+			withHint("fix every listed blocker, create it as backlog/held, or use --force-ready only after supplying the required governing spec"),
+			withContext(map[string]any{"id": id, "dispatch_blockers": readyBlockers}),
+		)
 	}
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
@@ -1488,7 +1492,7 @@ func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
 	if run == nil || run.LeaseOwner != actor ||
 		(LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) ||
 		runFreshness(run, time.Now().UTC()) != "fresh" {
-		return tuskerError("WORK_SESSION_REQUIRED", "agent mutation requires a live work session owned by "+actor, withHint("run `tusker work start "+taskID+" --by "+actor+"` or use explicit human --break-glass"))
+		return tuskerError("WORK_SESSION_REQUIRED", "agent mutation requires a live work session owned by "+actor, withHint("run `tusker work start "+taskID+" --by "+actor+" --vault "+strconv.Quote(vaultPath)+"` or use explicit human --break-glass"))
 	}
 	if data, _, readErr := parseFrontmatterMustRead(note.AbsolutePath); readErr != nil {
 		return readErr
@@ -4035,7 +4039,11 @@ func resolveV7ProjectID(vaultPath string) (string, error) {
 	return "", tuskerError(errorConfigInvalid, "V7 project_id is required in .tusker/config.yaml", withPath(managedTuskerConfigPath(vaultPath)), withHint("run `tusker init --yes` from the repository root or add project_id to .tusker/config.yaml"))
 }
 
-func v7StateRev(data map[string]any, body string) string {
+func v7StateRev(data map[string]any, _ string) string {
+	return v7schema.StateRev(data, "")
+}
+
+func v7ContentRev(data map[string]any, body string) string {
 	return v7schema.StateRev(data, body)
 }
 
@@ -4048,6 +4056,11 @@ func v7StateRevMatches(data map[string]any, body, rev string) bool {
 		return true
 	}
 	if v7StateRev(data, body) == rev {
+		return true
+	}
+	// Read old body-inclusive revisions during the migration. The next
+	// structured write stores the frontmatter-only revision.
+	if v7ContentRev(data, body) == rev {
 		return true
 	}
 	if strings.HasSuffix(body, "\n") && v7StateRev(data, strings.TrimSuffix(body, "\n")) == rev {

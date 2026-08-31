@@ -397,7 +397,7 @@ func v7CloseoutFingerprint(vaultPath string, task Note, idx v7Index, closeout No
 		"task": map[string]any{
 			"path":      task.RelativePath,
 			"data":      task.Data,
-			"body_hash": v7StateRev(map[string]any{}, task.Body),
+			"body_hash": v7ContentRev(map[string]any{}, task.Body),
 			"state_rev": stringField(task.Data, "state_rev"),
 		},
 		"proof_report": map[string]any{
@@ -524,7 +524,7 @@ func v7CloseoutRelatedNoteRevs(notes []Note) []map[string]string {
 			"path":      note.RelativePath,
 			"status":    stringField(note.Data, "status"),
 			"state_rev": stringField(note.Data, "state_rev"),
-			"body_hash": v7StateRev(map[string]any{}, note.Body),
+			"body_hash": v7ContentRev(map[string]any{}, note.Body),
 		})
 	}
 	return out
@@ -549,7 +549,7 @@ func v7CloseoutPacketFingerprint(vaultPath string, closeout Note) []map[string]a
 			abs := v7CloseoutPacketAbsPath(vaultPath, packet)
 			item["exists"] = fileExists(abs)
 			if text, err := readText(abs); err == nil {
-				item["content_hash"] = v7StateRev(map[string]any{}, text)
+				item["content_hash"] = v7ContentRev(map[string]any{}, text)
 			}
 		}
 		out = append(out, item)

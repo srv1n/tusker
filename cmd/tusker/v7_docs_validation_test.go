@@ -34,6 +34,19 @@ func TestLockedSpecUpdateSeverityMatchesLockedContract(t *testing.T) {
 	}
 }
 
+func TestValidationIssueScoping(t *testing.T) {
+	issues := []Issue{
+		{Code: "ONE", Path: "work/tasks/FLW-T-0001.md", Message: "FLW-T-0001 failed"},
+		{Code: "TWO", Path: "work/tasks/OLD-T-0001.md", Message: "old failure"},
+	}
+	if got := filterValidationIssuesByPath(issues, "work/tasks"); len(got) != 2 {
+		t.Fatalf("path scope = %#v", got)
+	}
+	if got := filterValidationIssuesByEpic(issues, "FLW"); len(got) != 1 || got[0].Code != "ONE" {
+		t.Fatalf("epic scope = %#v", got)
+	}
+}
+
 func TestLockedSpecUpdatesRequireLandingOrDocTask(t *testing.T) {
 	repo := t.TempDir()
 	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")

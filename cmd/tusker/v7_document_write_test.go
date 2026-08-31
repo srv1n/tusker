@@ -123,6 +123,41 @@ func TestV7SkillMutationUsesOneLockForDocumentAndMaterialEpoch(t *testing.T) {
 	}
 }
 
+func TestV7DocumentCASAllowsBodyOnlyHumanEdit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "APP-T-0001.md")
+	body := "\n## Question\n\nOriginal.\n"
+	data := map[string]any{"schema": "tusker.task/v7", "kind": "task", "id": "APP-T-0001", "next_action": "start"}
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	current, _, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editedBody := "\n## Question\n\nHuman prose edit.\n"
+	edited, err := serializeDocument(current, editedBody, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(edited), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	current["next_action"] = "continue"
+	if _, err := saveV7DocumentCAS(path, current, editedBody, v7FrontmatterOrder["task"], stringField(current, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+	_, finalBody, err := parseFrontmatterMustRead(path)
+	if err != nil || !strings.Contains(finalBody, "Human prose edit.") {
+		t.Fatalf("body-only edit was not preserved: body=%q err=%v", finalBody, err)
+	}
+}
+
 func TestV7DocumentCASProcessHelper(t *testing.T) {
 	if os.Getenv("TUSKER_V7_CAS_HELPER") != "1" {
 		return

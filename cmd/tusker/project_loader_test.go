@@ -38,6 +38,24 @@ func TestLoadRegisteredProjectsMetadataOnlyDoesNotReadProjectContract(t *testing
 	}
 }
 
+func TestResolveRegisteredProjectAcceptsIDKeyOrName(t *testing.T) {
+	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := RegisteredProject{ProjectID: "project-123", ProjectKey: "backend", Name: "Backend", RepoRoot: t.TempDir(), VaultRoot: t.TempDir(), Enabled: true}
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	for _, selector := range []string{project.ProjectID, project.ProjectKey, project.Name} {
+		loaded, err := resolveLoadedRegisteredProject(store, Args{"id": selector}, registeredProjectLoadOptions{MetadataOnly: true})
+		if err != nil || loaded.Project.ProjectID != project.ProjectID {
+			t.Fatalf("selector %q resolved %#v, err=%v", selector, loaded, err)
+		}
+	}
+}
+
 func TestProjectLoadSkipsMissingTrackerRootWithoutRepeatQuarantineWrite(t *testing.T) {
 	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "state"))
 	if err != nil {

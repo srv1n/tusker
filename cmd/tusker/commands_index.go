@@ -980,6 +980,14 @@ func validateCmd(args Args) (int, error) {
 	if hasV7ProjectSkill(vaultPath) && hasV7KnowledgeDomains(vaultPath) {
 		errs, warns = fenceLegacyV6DocsImpactForV7(errs, warns)
 	}
+	if scope := strings.TrimSpace(args.String("path")); scope != "" {
+		errs = filterValidationIssuesByPath(errs, scope)
+		warns = filterValidationIssuesByPath(warns, scope)
+	}
+	if epic := strings.ToUpper(strings.TrimSpace(args.String("epic"))); epic != "" {
+		errs = filterValidationIssuesByEpic(errs, epic)
+		warns = filterValidationIssuesByEpic(warns, epic)
+	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok":       len(errs) == 0,
@@ -1009,6 +1017,29 @@ func validateCmd(args Args) (int, error) {
 		fmt.Printf("Validation passed for %d notes and %d events.\n", len(notes), eventCount)
 	}
 	return 0, nil
+}
+
+func filterValidationIssuesByPath(issues []Issue, scope string) []Issue {
+	scope = filepath.ToSlash(strings.TrimPrefix(filepath.Clean(scope), "./"))
+	var filtered []Issue
+	for _, current := range issues {
+		path := filepath.ToSlash(strings.TrimPrefix(filepath.Clean(current.Path), "./"))
+		if path == scope || strings.HasPrefix(path, strings.TrimSuffix(scope, "/")+"/") {
+			filtered = append(filtered, current)
+		}
+	}
+	return filtered
+}
+
+func filterValidationIssuesByEpic(issues []Issue, epic string) []Issue {
+	needle := strings.ToUpper(epic) + "-"
+	var filtered []Issue
+	for _, current := range issues {
+		if strings.Contains(strings.ToUpper(current.Path), needle) || strings.Contains(strings.ToUpper(current.Message), needle) {
+			filtered = append(filtered, current)
+		}
+	}
+	return filtered
 }
 
 func classifyLockedSpecUpdateIssues(issues []Issue, errs, warns *[]Issue) {

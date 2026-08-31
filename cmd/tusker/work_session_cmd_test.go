@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +125,27 @@ func TestWorkSessionInteractiveStartWithAutomationDisabled(t *testing.T) {
 	}
 	if len(attempts) != 1 || attempts[0].WorkRevision != run.WorkRevision || attempts[0].BranchName != identity.Branch {
 		t.Fatalf("interactive work start attempt binding = %#v", attempts)
+	}
+}
+
+func TestWorkSessionUnregisteredRepoSupportsAgentReviewPath(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual unregistered work", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
+
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:sarav"); err != nil {
+		t.Fatal(err)
+	}
+	if err := statusV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "status": "review", "by": "agent:sarav", "local": "true", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stringField(data, "status") != "review" {
+		t.Fatalf("agent review path status = %q", stringField(data, "status"))
 	}
 }
 
@@ -442,6 +464,8 @@ func TestWorkSessionAgentGuardAndHumanBreakGlass(t *testing.T) {
 	vault, _ := workSessionFixture(t, 1)
 	if err := requireAgentWorkSession(vault, "APP-T-0001", "agent:a", Args{}); workSessionErrorCode(err) != "WORK_SESSION_REQUIRED" {
 		t.Fatalf("direct review guard = %v", err)
+	} else if hint := errorToIssue(err).Hint; !strings.Contains(hint, "--vault "+strconv.Quote(vault)) {
+		t.Fatalf("work-session hint is not self-contained: %q", hint)
 	}
 	if err := statusV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "status": "review", "by": "agent:a", "local": "true", "quiet": "true"}); workSessionErrorCode(err) != "WORK_SESSION_REQUIRED" {
 		t.Fatalf("status --local bypassed configured work-session guard: %v", err)

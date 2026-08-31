@@ -81,6 +81,46 @@ func TestTierOneCreateReadySkipsDispatchabilityRefusal(t *testing.T) {
 	}
 }
 
+func TestTierOneAllowsUncoveredEvidenceAsWarningOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tier    int
+		wantErr bool
+	}{
+		{name: "tier one", tier: 1},
+		{name: "tier two", tier: 2, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vault := v7DispatchTestVault(t)
+			if _, err := setProjectLocalConfigWithReadback(vault, "tier", tc.tier); err != nil {
+				t.Fatal(err)
+			}
+			if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence target"}); err != nil {
+				t.Fatal(err)
+			}
+			err := evidenceV7AddCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "manual_smoke", "summary": "Recon finding."})
+			if tc.wantErr {
+				if err == nil || errorToIssue(err).Code != errorMissingArg {
+					t.Fatalf("strict tier uncovered evidence = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			note, err := resolveV7Note(vault, "APP-T-0001-E-0001", "evidence")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var errs, warns []Issue
+			validateV7Evidence(note, validationContext{VaultPath: vault}, note.RelativePath, &errs, &warns)
+			if issuesContainCode(errs, "EVIDENCE_COVERS_MISSING") || !issuesContainCode(warns, "EVIDENCE_COVERS_MISSING") {
+				t.Fatalf("tier one uncovered evidence validation errors=%#v warnings=%#v", errs, warns)
+			}
+		})
+	}
+}
+
 func TestTierOneNextPicksPlainReadyTask(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {

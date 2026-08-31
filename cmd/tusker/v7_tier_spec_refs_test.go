@@ -50,6 +50,20 @@ func TestStrictDemandingReadyRequiresResolvableSpecRef(t *testing.T) {
 	}
 }
 
+func TestReadyCreateReportsAllContractBlockersAtOnce(t *testing.T) {
+	vault := v7DispatchTestVault(t)
+	err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete ready task", "risk": "medium", "status": "ready"})
+	if err == nil {
+		t.Fatal("incomplete ready task was accepted")
+	}
+	message := err.Error()
+	for _, want := range []string{"spec_refs", "placeholder acceptance", "verification missing exact command"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("combined refusal missing %q: %v", want, err)
+		}
+	}
+}
+
 func TestStrictDemandingReadyAcceptsResolvableRepoSpec(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 	spec := filepath.Join(v7RepoRoot(vault), "docs", "specs", "linked.md")

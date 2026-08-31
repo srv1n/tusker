@@ -965,7 +965,12 @@ func validateV7Evidence(note Note, ctx validationContext, where string, errors, 
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 evidence status: "+stringField(data, "status"), where, "", map[string]any{"status": stringField(data, "status")}))
 	}
 	if len(normalizeV7Covers(normalizeList(data["covers"]))) == 0 {
-		*errors = append(*errors, issue("EVIDENCE_COVERS_MISSING", "V7 evidence requires covers entries such as TASK:A1", where, "pass --covers A1 or --covers TASK:A1 when adding evidence", nil))
+		finding := issue("EVIDENCE_COVERS_MISSING", "V7 evidence has no covers entries such as TASK:A1", where, "pass --covers A1 or --covers TASK:A1 when the evidence proves acceptance", nil)
+		if tuskerTier(ctx.VaultPath) == 1 {
+			*warnings = append(*warnings, finding)
+		} else {
+			*errors = append(*errors, finding)
+		}
 	}
 	for _, cover := range normalizeList(data["covers"]) {
 		if v7NormalizeCover(cover) == "" {
@@ -2028,6 +2033,9 @@ func v7AcceptanceOutcomeVague(item string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(item))
 	normalized = strings.Trim(normalized, ".!")
 	normalized = strings.Join(strings.Fields(normalized), " ")
+	if normalized == strings.ToLower(strings.TrimSuffix(defaultScaffoldAcceptanceOutcome, ".")) {
+		return true
+	}
 	switch normalized {
 	case "works", "it works", "tests pass", "tests passing", "tests are passing", "passes tests", "define the accepted outcome", "tbd", "todo", "placeholder":
 		return true
