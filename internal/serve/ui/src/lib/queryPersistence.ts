@@ -11,7 +11,6 @@ export const STARTUP_QUERY_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 export const STARTUP_QUERY_CACHE_MAX_CHARS = 1_500_000;
 
 const STARTUP_QUERY_ROOTS = new Set([
-  "daemon",
   "projects",
   "factory-operations",
   "needs",
@@ -27,7 +26,7 @@ const STARTUP_QUERY_ROOTS = new Set([
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 interface PersistedStartupQueries {
-  schema: 1;
+  schema: 2;
   savedAt: number;
   clientState: ReturnType<typeof dehydrate>;
 }
@@ -54,7 +53,7 @@ export function saveStartupQueryCache(
   now = Date.now,
 ): boolean {
   const persisted: PersistedStartupQueries = {
-    schema: 1,
+    schema: 2,
     savedAt: now(),
     clientState: dehydrate(queryClient, { shouldDehydrateQuery: shouldPersistQuery }),
   };
@@ -92,7 +91,7 @@ export function restoreStartupQueryCache(
   try {
     const persisted = JSON.parse(serialized) as Partial<PersistedStartupQueries>;
     if (
-      persisted.schema !== 1 ||
+      persisted.schema !== 2 ||
       typeof persisted.savedAt !== "number" ||
       !persisted.clientState ||
       now() - persisted.savedAt > STARTUP_QUERY_CACHE_MAX_AGE_MS ||

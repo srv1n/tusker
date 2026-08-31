@@ -89,12 +89,12 @@ enum RuntimeShellLoadPlan {
     static func cachePolicy(for kind: RuntimeShellLoadKind) -> URLRequest.CachePolicy {
         switch kind {
         case .optimistic:
-            // A warm launch may render the stored SPA shell before localhost is
-            // ready. The page's persisted read cache then supplies bounded stale
-            // data while its normal queries reconnect in the background.
-            return .returnCacheDataElseLoad
+            // The HTML names content-hashed bundles. Reusing an older document
+            // after an app update can point WebKit at bundles the new daemon no
+            // longer serves and leave the window blank.
+            return .reloadIgnoringLocalCacheData
         case .live:
-            return .reloadRevalidatingCacheData
+            return .reloadIgnoringLocalCacheData
         }
     }
 

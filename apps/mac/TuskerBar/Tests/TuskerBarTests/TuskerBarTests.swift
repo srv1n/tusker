@@ -191,8 +191,8 @@ safe=visible
     }
 
     func testRuntimeShellLoadsStoredUIOptimisticallyAndNeverCoversCommittedContent() {
-        XCTAssertEqual(RuntimeShellLoadPlan.cachePolicy(for: .optimistic), .returnCacheDataElseLoad)
-        XCTAssertEqual(RuntimeShellLoadPlan.cachePolicy(for: .live), .reloadRevalidatingCacheData)
+        XCTAssertEqual(RuntimeShellLoadPlan.cachePolicy(for: .optimistic), .reloadIgnoringLocalCacheData)
+        XCTAssertEqual(RuntimeShellLoadPlan.cachePolicy(for: .live), .reloadIgnoringLocalCacheData)
         XCTAssertTrue(RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: false))
         XCTAssertFalse(RuntimeShellLoadPlan.shouldCoverWebView(hasCommittedContent: true))
     }

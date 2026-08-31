@@ -25,6 +25,7 @@ class MemoryStorage {
 }
 
 test("startup persistence allows bounded main-screen reads only", () => {
+  expect(isStartupQueryKey(["daemon"])).toBe(false);
   expect(isStartupQueryKey(["projects"])).toBe(true);
   expect(isStartupQueryKey(["needs", "tusker"])).toBe(true);
   expect(isStartupQueryKey(["tasks", "tusker"])).toBe(true);

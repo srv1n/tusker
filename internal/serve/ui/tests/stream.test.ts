@@ -60,6 +60,12 @@ test("stream keys map to live query invalidations", () => {
     ["projects"],
   ]);
   expect(streamKeyToQueryKeys("runs:AGX-T-0005", "tusker")).toEqual([qk.runs("tusker"), ["run", "tusker", "AGX-T-0005"]]);
+  expect(streamKeyToQueryKeys("docs", "tusker")).toEqual([
+    ["docs", "tusker"],
+    ["doc", "tusker"],
+    ["docgraph", "tusker"],
+    ["docgraph", "doc", "tusker"],
+  ]);
   expect(streamKeyToQueryKeys("review:batch", "tusker")).toEqual([qk.needs("tusker"), ["tasks", "tusker"], qk.runs("tusker"), ["projects"], qk.reviewBatch("tusker")]);
 
   const { client, invalidations } = recorder();

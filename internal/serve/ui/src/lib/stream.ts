@@ -78,7 +78,12 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
     case "epics":
       return [scoped("epics")];
     case "docs":
-      return [scoped("docs"), project ? ["doc", project] : ["doc"]];
+      return [
+        scoped("docs"),
+        project ? ["doc", project] : ["doc"],
+        scoped("docgraph"),
+        project ? ["docgraph", "doc", project] : ["docgraph", "doc"],
+      ];
     case "waves":
       return [scoped("waves"), scoped("tasks"), panelScoped("needs")];
     case "gates":
