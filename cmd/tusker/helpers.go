@@ -153,15 +153,45 @@ func resolveVaultPath(args Args, allowCreate bool) (string, error) {
 	if explicit := args.String("vault"); explicit != "" {
 		return filepath.Abs(explicit)
 	}
-	found, err := discoverVault(mustGetwd())
+	startDir := mustGetwd()
+	project, registered, discoveryErr := discoverRegisteredProjectVault(startDir)
+	if args.Bool("use-project-vault") {
+		if discoveryErr != nil {
+			return "", discoveryErr
+		} else if registered {
+			return project.VaultRoot, nil
+		}
+	}
+	found, err := discoverVault(startDir)
 	if err != nil {
 		return "", err
 	}
+	if discoveryErr != nil {
+		if allowCreate && args.Bool("isolated-vault") {
+			return filepath.Abs(filepath.Join(startDir, defaultRepoVaultDir))
+		}
+		return "", discoveryErr
+	}
+	if registered {
+		if args.Bool("use-project-vault") {
+			return project.VaultRoot, nil
+		}
+		if allowCreate && args.Bool("isolated-vault") {
+			return filepath.Abs(filepath.Join(startDir, defaultRepoVaultDir))
+		}
+		if found != "" && sameCanonicalProjectPath(found, project.VaultRoot) {
+			return found, nil
+		}
+		return "", registeredProjectVaultError(startDir, project)
+	}
 	if found != "" {
-		return found, nil
+		if vaultIsExplicitlyConfigured(startDir, found) || vaultMatchesCurrentGitWorktree(startDir, found) {
+			return found, nil
+		}
+		found = ""
 	}
 	if allowCreate {
-		return filepath.Abs(filepath.Join(mustGetwd(), defaultRepoVaultDir))
+		return filepath.Abs(filepath.Join(startDir, defaultRepoVaultDir))
 	}
 	return "", tuskerError(
 		errorMissingArg,
@@ -172,6 +202,229 @@ func resolveVaultPath(args Args, allowCreate bool) (string, error) {
 			"cwd":            mustGetwd(),
 			"repo_wiring":    "tusker init --yes",
 			"existing_vault": "--vault <path>",
+		}),
+	)
+}
+
+func vaultIsExplicitlyConfigured(startDir, vaultPath string) bool {
+	repoRoot, err := gitFactOutput(startDir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(repoRoot) == "" {
+		return false
+	}
+	configured := configuredVaultPathFromRepo(canonicalProjectPath(repoRoot))
+	return configured != "" && sameCanonicalProjectPath(configured, vaultPath)
+}
+
+// vaultMatchesCurrentGitWorktree rejects an unrelated ancestor .tusker that
+// discoverVault may encounter while walking upward from a linked worktree.
+// Non-Git workspaces retain the historical discovery behavior.
+func vaultMatchesCurrentGitWorktree(startDir, vaultPath string) bool {
+	repoRoot, err := gitFactOutput(startDir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(repoRoot) == "" {
+		return true
+	}
+	repoRoot = canonicalProjectPath(repoRoot)
+	currentCommon, err := gitCommonDirectory(repoRoot)
+	if err != nil {
+		return true
+	}
+	candidateRoot, err := gitFactOutput(filepath.Dir(vaultPath), "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(candidateRoot) == "" {
+		// An explicitly configured external vault is still valid. An ancestor
+		// directory that is not a repository cannot be trusted implicitly.
+		return pathWithinRoot(repoRoot, vaultPath)
+	}
+	candidateCommon, err := gitCommonDirectory(canonicalProjectPath(candidateRoot))
+	return err == nil && candidateCommon == currentCommon
+}
+
+func pathWithinRoot(root, target string) bool {
+	rel, err := filepath.Rel(canonicalProjectPath(root), canonicalProjectPath(target))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// discoverRegisteredProjectVault bridges linked worktrees to the one vault
+// registered for their project. A worktree has its own files, but Git's common
+// directory and the project_id in tusker.yaml are shared identity anchors.
+func discoverRegisteredProjectVault(startDir string) (RegisteredProject, bool, error) {
+	repoRoot, err := gitFactOutput(startDir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(repoRoot) == "" {
+		return RegisteredProject{}, false, nil
+	}
+	repoRoot = canonicalProjectPath(repoRoot)
+	commonDir, err := gitCommonDirectory(repoRoot)
+	if err != nil {
+		return RegisteredProject{}, false, nil
+	}
+	resolved, err := resolveTuskerConfigForRepo(repoRoot, true)
+	if err != nil {
+		return RegisteredProject{}, false, registeredProjectConfigInvalidError(startDir, repoRoot, err)
+	}
+	projectID := strings.TrimSpace(resolved.Config.ProjectID)
+	if projectID == "" {
+		return RegisteredProject{}, false, nil
+	}
+	stateRoot := DefaultStateRoot()
+	store, missing, err := openRuntimeStoreReadOnly(stateRoot)
+	if err != nil {
+		return RegisteredProject{}, false, registeredProjectVaultLookupUnavailableError(startDir, projectID, stateRoot, err)
+	}
+	if missing {
+		return RegisteredProject{}, false, nil
+	}
+	defer store.Close()
+	projects, err := store.ListProjects()
+	if err != nil {
+		return RegisteredProject{}, false, registeredProjectVaultLookupUnavailableError(startDir, projectID, stateRoot, err)
+	}
+	// ponytail: linear scan and one Git probe per registration; index by common
+	// directory only if registry size makes discovery measurably slow.
+	var identityMatches []RegisteredProject
+	var matches []RegisteredProject
+	for _, candidate := range projects {
+		if !registeredProjectConfigIdentityMatches(candidate, projectID) {
+			continue
+		}
+		candidate.RepoRoot = canonicalProjectPath(candidate.RepoRoot)
+		candidate.VaultRoot = canonicalProjectPath(candidate.VaultRoot)
+		candidate.WorkflowPath = workflowPath(candidate.VaultRoot)
+		identityMatches = append(identityMatches, candidate)
+		candidateCommon, commonErr := gitCommonDirectory(candidate.RepoRoot)
+		if commonErr == nil && candidateCommon == commonDir && dirExists(candidate.VaultRoot) {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) > 1 {
+		vaults := make([]string, 0, len(matches))
+		for _, match := range matches {
+			vaults = append(vaults, match.VaultRoot)
+		}
+		return RegisteredProject{}, false, tuskerError(
+			errorConfigInvalid,
+			fmt.Sprintf("multiple registered Tusker vaults match project %s in this Git repository", projectID),
+			withHint("run `tusker projects list` and reconcile duplicate registrations before initializing a vault"),
+			withContext(map[string]any{"project_id": projectID, "git_common_dir": commonDir, "matching_vaults": vaults}),
+		)
+	}
+	if len(matches) == 1 {
+		return matches[0], true, nil
+	}
+	if len(identityMatches) > 0 {
+		return RegisteredProject{}, false, staleRegisteredProjectVaultError(startDir, projectID, commonDir, identityMatches)
+	}
+	return RegisteredProject{}, false, nil
+}
+
+func registeredProjectConfigInvalidError(startDir, repoRoot string, cause error) error {
+	return tuskerError(
+		errorConfigInvalid,
+		fmt.Sprintf("cannot resolve Tusker project config for Git worktree %s: %v", repoRoot, cause),
+		withHint("repair the worktree's tusker.yaml/project config before initializing a vault; Tusker will not create a duplicate graph from malformed identity"),
+		withContext(map[string]any{
+			"cwd":       startDir,
+			"repo_root": repoRoot,
+			"config":    filepath.Join(repoRoot, legacyTuskerConfigName),
+		}),
+	)
+}
+
+func registeredProjectVaultLookupUnavailableError(startDir, projectID, stateRoot string, cause error) error {
+	return tuskerError(
+		errorConfigInvalid,
+		fmt.Sprintf("cannot inspect the Tusker project registry for project %s: %v", projectID, cause),
+		withHint("repair the runtime registry, or explicitly pass `tusker init --isolated-vault` to create an intentionally separate graph"),
+		withContext(map[string]any{
+			"cwd":            startDir,
+			"project_id":     projectID,
+			"state_root":     stateRoot,
+			"isolated_vault": "--isolated-vault",
+		}),
+	)
+}
+
+func registeredProjectConfigIdentityMatches(project RegisteredProject, identity string) bool {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false
+	}
+	for _, candidate := range []string{project.ProjectID, project.ProjectKey, project.Name, registeredProjectLabel(project)} {
+		if strings.EqualFold(strings.TrimSpace(candidate), identity) {
+			return true
+		}
+	}
+	return false
+}
+
+func gitCommonDirectory(repoRoot string) (string, error) {
+	commonDir, err := gitFactOutput(repoRoot, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(repoRoot, commonDir)
+	}
+	return canonicalProjectPath(commonDir), nil
+}
+
+func registeredProjectVaultError(startDir string, project RegisteredProject) error {
+	identity := registeredProjectLabel(project)
+	return tuskerError(
+		errorMissingArg,
+		fmt.Sprintf("No Tusker vault found in this worktree. Project %s is registered to the canonical vault-owning checkout %s (%s) (runtime ID %s).", identity, project.RepoRoot, project.VaultRoot, project.ProjectID),
+		withHint(fmt.Sprintf("Use the canonical project vault: `tusker <command> --vault %s` (or `tusker <command> --use-project-vault`). To create a second graph, explicitly pass `tusker init --isolated-vault` from %s.", project.VaultRoot, startDir)),
+		withContext(map[string]any{
+			"arg":                 "--vault",
+			"cwd":                 startDir,
+			"project_id":          identity,
+			"runtime_project_id":  project.ProjectID,
+			"project_key":         project.ProjectKey,
+			"project_name":        project.Name,
+			"canonical_repo_root": project.RepoRoot,
+			"canonical_vault":     project.VaultRoot,
+			"use_project_vault":   "--use-project-vault",
+			"isolated_vault":      "--isolated-vault",
+		}),
+	)
+}
+
+func duplicateProjectVaultInitError(startDir, target string, project RegisteredProject) error {
+	identity := registeredProjectLabel(project)
+	return tuskerError(
+		errorInvalidTransition,
+		fmt.Sprintf("refusing to create a second Tusker vault for project %s (runtime ID %s): canonical vault is %s (owned by %s), requested target is %s", identity, project.ProjectID, project.VaultRoot, project.RepoRoot, target),
+		withHint(fmt.Sprintf("use `tusker <command> --vault %s` (or `tusker <command> --use-project-vault`) or explicitly confirm an isolated graph with `tusker init --isolated-vault --yes`", project.VaultRoot)),
+		withContext(map[string]any{
+			"cwd":                 startDir,
+			"project_id":          identity,
+			"runtime_project_id":  project.ProjectID,
+			"project_key":         project.ProjectKey,
+			"project_name":        project.Name,
+			"canonical_repo_root": project.RepoRoot,
+			"canonical_vault":     project.VaultRoot,
+			"requested_vault":     target,
+			"isolated_vault":      "--isolated-vault",
+		}),
+	)
+}
+
+func staleRegisteredProjectVaultError(startDir, projectID, commonDir string, projects []RegisteredProject) error {
+	paths := make([]string, 0, len(projects))
+	for _, project := range projects {
+		paths = append(paths, firstNonEmpty(project.VaultRoot, project.RepoRoot))
+	}
+	return tuskerError(
+		errorConfigInvalid,
+		fmt.Sprintf("registered Tusker project identity %s has no usable canonical vault for this Git worktree", projectID),
+		withHint("repair the matching registration with `tusker projects rebind` or `tusker projects prune`; Tusker will not initialize a second vault implicitly"),
+		withContext(map[string]any{
+			"cwd":                 startDir,
+			"project_id":          projectID,
+			"git_common_dir":      commonDir,
+			"matching_registries": paths,
+			"isolated_vault":      "--isolated-vault",
 		}),
 	)
 }

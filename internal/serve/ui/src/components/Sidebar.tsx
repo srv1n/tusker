@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { Bell, ChevronDown, Plus, Search, X } from "lucide-react";
+import { Bell, ChevronDown, Plus, RefreshCw, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { openTaskSearch } from "@/features/search/TaskSearch";
-import { useDaemon, useProjects, useRegisterProject } from "@/lib/queries";
+import { useDaemon, useProjectRefresh, useProjects, useRegisterProject } from "@/lib/queries";
 import type { ProjectSummary } from "@/types/domain";
 
 const PROJECT_NAV = [
@@ -51,12 +51,14 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
     openerRef.current?.focus();
   }, [open]);
 
-  const health = !daemon.data?.connected
-    ? "Offline"
-    : projects.data?.some((project) => project.health !== "healthy")
+  const health = daemon.isPending || projects.isPending
+    ? "Checking"
+    : !daemon.data?.connected
+      ? "Offline"
+      : projects.data?.some((project) => project.health === "error")
       ? "Limited"
       : "Healthy";
-  const healthTone = health === "Healthy" ? "text-pass" : health === "Limited" ? "text-warn" : "text-fail";
+  const healthTone = health === "Healthy" ? "text-pass" : health === "Limited" ? "text-warn" : health === "Offline" ? "text-fail" : "text-muted";
 
   return (
     <>
@@ -177,20 +179,50 @@ function RailLink({ active, to, children }: { active: boolean; to: "/"; children
 }
 
 function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; active: boolean; pathname: string }) {
+  const refresh = useProjectRefresh(project.id);
+
   return (
     <div className="mb-1">
-      <Link
-        to="/p/$projectId"
-        params={{ projectId: project.id }}
-        className={cn(
-          "flex items-center gap-2 border-l-2 px-3 py-2.5 text-[13px] font-semibold",
-          active ? "border-ink bg-active text-ink" : "border-transparent text-ink-soft hover:bg-hover",
-        )}
-      >
-        <ChevronDown size={12} className={active ? "" : "-rotate-90"} />
-        <span className="min-w-0 flex-1 truncate">{project.name}</span>
-        {project.needsCount > 0 && <span className="font-mono text-[9px] text-fail">{project.needsCount}</span>}
-      </Link>
+      <div className={cn(
+        "flex items-center border-l-2 text-[13px] font-semibold",
+        active ? "border-ink bg-active text-ink" : "border-transparent text-ink-soft",
+      )}>
+        <Link
+          to="/p/$projectId"
+          params={{ projectId: project.id }}
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 hover:bg-hover"
+        >
+          <ChevronDown size={12} className={active ? "" : "-rotate-90"} />
+          <span className="min-w-0 flex-1 truncate">{project.name}</span>
+          {project.needsCount > 0 && <span className="font-mono text-[9px] text-fail">{project.needsCount}</span>}
+        </Link>
+        <button
+          type="button"
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+          aria-busy={refresh.isPending}
+          aria-label={`Refresh ${project.name}`}
+          title={refresh.isError ? "Refresh failed — try again" : "Refresh project"}
+          className="mr-2 rounded p-1 text-faint hover:bg-hover hover:text-ink disabled:cursor-wait disabled:opacity-50"
+        >
+          <RefreshCw size={12} className={refresh.isPending ? "animate-spin" : ""} />
+        </button>
+      </div>
+      {refresh.error && (
+        <p role="alert" className="ml-8 truncate px-3 pb-1 text-[10px] text-fail" title={String(refresh.error)}>
+          Refresh failed — check this project’s source.
+        </p>
+      )}
+      {project.health === "error" && (
+        <Link
+          to="/p/$projectId/settings"
+          params={{ projectId: project.id }}
+          aria-label={`Repair ${project.name} registration`}
+          className="ml-8 block px-3 pb-1 text-[10px] font-semibold text-warn hover:text-ink"
+        >
+          Repair in Settings
+        </Link>
+      )}
       {active && (
         <div className="ml-[18px] border-l border-line pl-2">
           {PROJECT_NAV.map((item) => {

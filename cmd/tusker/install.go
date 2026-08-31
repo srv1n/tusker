@@ -1034,6 +1034,23 @@ func initCmd(args Args) error {
 	}
 	cwd := mustGetwd()
 	yes := args.Bool("yes")
+	vaultPath := filepath.Join(cwd, defaultRepoVaultDir)
+	explicitVault := args.String("vault") != ""
+	if explicit := args.String("vault"); explicit != "" {
+		vaultPath, _ = filepath.Abs(explicit)
+	}
+	if project, ok, discoveryErr := discoverRegisteredProjectVault(cwd); discoveryErr != nil {
+		if !args.Bool("isolated-vault") {
+			return discoveryErr
+		}
+	} else if ok {
+		if args.Bool("use-project-vault") {
+			vaultPath = project.VaultRoot
+			explicitVault = true
+		} else if !sameCanonicalProjectPath(vaultPath, project.VaultRoot) && !args.Bool("isolated-vault") {
+			return duplicateProjectVaultInitError(cwd, vaultPath, project)
+		}
+	}
 	var err error
 	var preservedSpecs *tuskerSpecSnapshot
 	if args.Bool("purge-state") && args.Bool("preserve-specs") {
@@ -1096,11 +1113,6 @@ func initCmd(args Args) error {
 		fmt.Printf("wrote %s — undo: %s\n", displayed, undo)
 		initWrites = append(initWrites, displayed)
 	}
-	vaultPath := filepath.Join(cwd, defaultRepoVaultDir)
-	explicitVault := args.String("vault") != ""
-	if explicit := args.String("vault"); explicit != "" {
-		vaultPath, _ = filepath.Abs(explicit)
-	}
 	if fresh && fileExists(vaultPath) {
 		backupPath := vaultPath + ".backup-" + time.Now().UTC().Format("20060102-150405")
 		doBackup, err := ask(fmt.Sprintf("Move existing %s to %s and recreate it cleanly?", vaultPath, backupPath), true)
@@ -1117,7 +1129,7 @@ func initCmd(args Args) error {
 	existingVault := ""
 	if isVaultDir(vaultPath) {
 		existingVault = vaultPath
-	} else if !explicitVault && !mountTracker {
+	} else if !explicitVault && !mountTracker && !args.Bool("isolated-vault") {
 		discovered, _ := discoverVault(cwd)
 		if discovered != "" {
 			existingVault = discovered

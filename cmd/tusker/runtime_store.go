@@ -209,6 +209,14 @@ type ProjectNonTerminalRun struct {
 	AttemptID string `json:"attempt_id"`
 	Lane      string `json:"lane"`
 	Outcome   string `json:"outcome"`
+	// Runtime ownership fields are used only for the rebind safety fence. Keep
+	// them out of the structured operator diagnostic: paths, session refs, and
+	// process IDs are private runtime metadata.
+	LeaseOwner    string `json:"-"`
+	WorkspacePath string `json:"-"`
+	SessionRef    string `json:"-"`
+	ProcessPID    int    `json:"-"`
+	ProcessPGID   int    `json:"-"`
 }
 
 type RunStatus struct {
@@ -1828,8 +1836,15 @@ func (s *RuntimeStore) RebindProjectRegistration(projectID, repoRoot, vaultRoot 
 		if txErr != nil {
 			return txErr
 		}
-		if len(active) != 0 {
-			return projectRebindNonTerminalRunsError(projectID, active)
+		if blocking := projectRebindBlockingRuns(active); len(blocking) != 0 {
+			return projectRebindNonTerminalRunsError(projectID, blocking)
+		}
+		directives, txErr := listActiveRunDirectivesTx(tx, projectID, time.Now().UTC())
+		if txErr != nil {
+			return txErr
+		}
+		if len(directives) != 0 {
+			return projectRebindActiveDirectivesError(projectID, directives)
 		}
 		rows, txErr := tx.Query(`SELECT project_id, repo_root, vault_root FROM projects WHERE project_id <> ?`, projectID)
 		if txErr != nil {
@@ -1946,7 +1961,8 @@ func (s *RuntimeStore) CountProjectNonTerminalRuns(projectID string) (int, error
 }
 
 func (s *RuntimeStore) ListProjectNonTerminalRuns(projectID string) ([]ProjectNonTerminalRun, error) {
-	rows, err := s.query(`SELECT project_id, record_id, item_id, lease_state, active_attempt_id, lane, attempt_outcome
+	rows, err := s.query(`SELECT project_id, record_id, item_id, lease_state, active_attempt_id, lane, attempt_outcome,
+		lease_owner, workspace_path, session_ref, process_pid, process_pgid
 		FROM runs
 		WHERE project_id = ? AND terminal = 0
 		ORDER BY record_id, item_id, active_attempt_id`, projectID)
@@ -1958,7 +1974,8 @@ func (s *RuntimeStore) ListProjectNonTerminalRuns(projectID string) ([]ProjectNo
 }
 
 func listProjectNonTerminalRunsTx(tx *sql.Tx, projectID string) ([]ProjectNonTerminalRun, error) {
-	rows, err := tx.Query(`SELECT project_id, record_id, item_id, lease_state, active_attempt_id, lane, attempt_outcome
+	rows, err := tx.Query(`SELECT project_id, record_id, item_id, lease_state, active_attempt_id, lane, attempt_outcome,
+		lease_owner, workspace_path, session_ref, process_pid, process_pgid
 		FROM runs
 		WHERE project_id = ? AND terminal = 0
 		ORDER BY record_id, item_id, active_attempt_id`, projectID)
@@ -1973,7 +1990,8 @@ func scanProjectNonTerminalRuns(rows *sql.Rows) ([]ProjectNonTerminalRun, error)
 	var out []ProjectNonTerminalRun
 	for rows.Next() {
 		var run ProjectNonTerminalRun
-		if err := rows.Scan(&run.ProjectID, &run.RunID, &run.TaskID, &run.Status, &run.AttemptID, &run.Lane, &run.Outcome); err != nil {
+		if err := rows.Scan(&run.ProjectID, &run.RunID, &run.TaskID, &run.Status, &run.AttemptID, &run.Lane, &run.Outcome,
+			&run.LeaseOwner, &run.WorkspacePath, &run.SessionRef, &run.ProcessPID, &run.ProcessPGID); err != nil {
 			return nil, err
 		}
 		if strings.TrimSpace(run.TaskID) == "" {
@@ -1987,7 +2005,7 @@ func scanProjectNonTerminalRuns(rows *sql.Rows) ([]ProjectNonTerminalRun, error)
 func projectRebindNonTerminalRunsError(projectID string, runs []ProjectNonTerminalRun) error {
 	return tuskerError(
 		errorInvalidTransition,
-		fmt.Sprintf("project rebind requires zero non-terminal runs; found %d", len(runs)),
+		fmt.Sprintf("project rebind requires zero active runs (non-terminal claimed/running or with active attempts); found %d", len(runs)),
 		withHint("inspect each blocking run with `tusker runs inspect <run-id> --json`; retire only settled legacy runs with `tusker runs retire <run-id> --reason <text> --json`"),
 		withContext(map[string]any{
 			"project_id":       projectID,
@@ -2183,6 +2201,44 @@ func (s *RuntimeStore) RunDirective(projectID, recordID string) (*RunDirective, 
 		directive.Reason = "daemon did not claim this one-shot run before it expired"
 	}
 	return &directive, nil
+}
+
+// ListActiveRunDirectives returns durable one-shot requests that have not
+// expired. They are separate from run rows until the daemon consumes them, so
+// project rebind preconditions must inspect this table explicitly.
+func (s *RuntimeStore) ListActiveRunDirectives(projectID string, now time.Time) ([]RunDirective, error) {
+	rows, err := s.query(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason
+		FROM run_directives
+		WHERE project_id = ? AND state = 'queued' AND julianday(expires_at) > julianday(?)
+		ORDER BY record_id`, projectID, now.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	return scanRunDirectives(rows)
+}
+
+func listActiveRunDirectivesTx(tx *sql.Tx, projectID string, now time.Time) ([]RunDirective, error) {
+	rows, err := tx.Query(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason
+		FROM run_directives
+		WHERE project_id = ? AND state = 'queued' AND julianday(expires_at) > julianday(?)
+		ORDER BY record_id`, projectID, now.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	return scanRunDirectives(rows)
+}
+
+func scanRunDirectives(rows *sql.Rows) ([]RunDirective, error) {
+	defer rows.Close()
+	var directives []RunDirective
+	for rows.Next() {
+		var directive RunDirective
+		if err := rows.Scan(&directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason); err != nil {
+			return nil, err
+		}
+		directives = append(directives, directive)
+	}
+	return directives, rows.Err()
 }
 
 func (s *RuntimeStore) ExpireRunDirectives(now time.Time) error {

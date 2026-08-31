@@ -58,6 +58,13 @@ export type ServeCapabilityClass =
 export interface ServeCapability { id: string; class: ServeCapabilityClass; mutable?: boolean; description: string }
 export interface ServeCapabilities { schema: string; capabilities: ServeCapability[] }
 
+export interface ProjectRebindResult extends ActionResult {
+  rebind?: {
+    dry_run?: boolean;
+    retained_queued_count?: number;
+  };
+}
+
 type ServeCapabilityBootstrap = { capability: string; operatorActor?: string };
 let capabilityPromise: Promise<ServeCapabilityBootstrap> | null = null;
 
@@ -261,6 +268,12 @@ export const api = {
 
   registerProject: (body: { repoRoot: string; vaultRoot?: string }): Promise<ProjectRegistrationResult> =>
     post("/projects", body),
+
+  rebindProject: (
+    projectId: string,
+    body: { repoRoot: string; vaultRoot?: string; allowDirty?: boolean; confirm?: string; dryRun?: boolean },
+  ): Promise<ProjectRebindResult> =>
+    post(`/projects/${encodeURIComponent(projectId)}/rebind`, body),
 
   setProjectAutomation: (projectId: string, enabled: boolean): Promise<ActionResult> =>
     post(`/projects/${projectId}/automation`, { enabled }),

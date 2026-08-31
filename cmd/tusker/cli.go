@@ -780,6 +780,9 @@ func printHelp() {
 Vault discovery: if [--vault] is omitted, tusker walks up from the current
 working directory looking for a repo-local .tusker/ vault. Current markers
 include .tusker/config.yaml, .tusker/work, and .tusker/knowledge/domains.
+For a linked worktree without its own vault, use --use-project-vault to route
+to the registered canonical checkout. Creating a separate graph requires the
+explicit tusker init --isolated-vault confirmation.
 
 Start here:
   tusker init --yes
@@ -1199,7 +1202,7 @@ func printProjectsHelp() {
   tusker projects limits [--id <project-id>|--repo <path>|--vault <path>] [--max-active-runs <n>] [--json]
   tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--json]
   tusker projects disable [--id <project-id>|--repo <path>|--vault <path>] [--json]
-  tusker projects rebind --id <project-id> --repo <canonical-path> --vault <canonical-path> [--dry-run] [--json]
+  tusker projects rebind --id <project-id> --repo <canonical-path> --vault <canonical-path> [--allow-dirty] [--dry-run] [--json]
   tusker projects remove <project-id> [--json]
   tusker projects prune [--apply] [--dry-run] [--json]
 
@@ -1212,6 +1215,7 @@ Behavior:
   - project WORKFLOW.md, tasks, knowledge, and source remain repo-local
   - shared daemon state, logs, limits, and runtime metadata live outside repos
   - rebind moves one disabled, quiescent project identity to a clean validated repo/vault without replacing its runtime history
+  - --allow-dirty is an explicit opt-in to rebind a Git worktree with uncommitted changes
   - prune previews registrations whose tracker roots no longer exist and their
     matching dangling Obsidian-vault symlinks; --apply performs the removal
   - on macOS, projects under Desktop, Documents, Downloads, or iCloud Drive
@@ -1395,7 +1399,7 @@ Examples:
 
 func printInitHelp() {
 	fmt.Println(`Usage:
-  tusker init [--vault <path>] [--yes] [--fresh] [--purge-state] [--preserve-specs] [--with-pointers] [--with-contract] [--with-mount]
+  tusker init [--vault <path>] [--yes] [--fresh] [--purge-state] [--preserve-specs] [--isolated-vault] [--with-pointers] [--with-contract] [--with-mount]
 
 What it does:
   1. initializes a repo-local vault under .tusker by default
@@ -1407,6 +1411,7 @@ What it does:
 
 Flags:
   --vault <path>    target vault path (default: ./.tusker)
+  --isolated-vault   explicitly allow a second vault for a registered project
   --yes             accept the safe minimum: vault + reindex only
   --fresh           move an existing target vault aside and recreate it cleanly
   --purge-state     delete generated Tusker state first; implies the same safe
@@ -1459,6 +1464,10 @@ func printNewHelp() {
 
 Purpose:
   Create current work objects.
+
+Notes:
+  Task IDs are allocated only after a successful create. For ordered batches,
+  pass explicit --id values; a refused create does not reserve an ID.
 
 Examples:
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
@@ -1687,6 +1696,7 @@ Examples:
 func printValidateHelp() {
 	fmt.Println(`Usage:
   tusker validate [--vault <path>] [--json]
+  tusker validate [--path <vault-relative-path> | --epic <ACR>] [--json]
   tusker validate --branch-policy [--base origin/main] [--json]
   tusker validate --branch-policy-only [--base origin/main] [--json]
   tusker validate --staged --branch-policy [--json]
@@ -1695,6 +1705,8 @@ Purpose:
   Check the vault against Tusker schema and workflow invariants.
 
 Options:
+  --path                Report findings only under this vault-relative path.
+  --epic                Report findings only for records belonging to this epic.
   --branch-policy       Include protected state-field diff checks.
   --branch-policy-only  Run only protected state-field diff checks.
   --staged              Check staged changes instead of branch diff.`)

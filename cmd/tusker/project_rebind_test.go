@@ -40,6 +40,7 @@ func TestProjectsRebindPreservesProjectRuntimeHistoryAndSupportsReverseRetry(t *
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
+	projectRebindMarkSourceStale(t, oldRepo)
 
 	dryRunOutput := captureStdout(t, func() {
 		err = projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "dry-run": "true", "json": "true"})
@@ -115,7 +116,7 @@ func TestProjectRebindFailsClosedAndRollsBackPersistenceFailure(t *testing.T) {
 		t.Fatalf("rollback audit=%#v err=%v", audit, err)
 	}
 	store.rebindProjectAfterUpdate = nil
-	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "live", ItemID: "live", LeaseState: string(LeaseStateUnclaimed), UpdatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "live", ItemID: "live", LeaseState: string(LeaseStateRunning), ActiveAttemptID: "live-attempt", UpdatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := store.RebindProjectRegistration(project.ProjectID, newRepo, newVault); err == nil || !strings.Contains(err.Error(), "non-terminal") {
@@ -123,6 +124,232 @@ func TestProjectRebindFailsClosedAndRollsBackPersistenceFailure(t *testing.T) {
 	}
 	if _, _, _, err := store.RebindProjectRegistration("", newRepo, newVault); err == nil {
 		t.Fatal("missing project ID must fail")
+	}
+}
+
+func TestProjectRebindPreservesUnclaimedQueueAndRefusesActiveAttempt(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	thirdRepo, thirdVault := projectRebindFixtureRepo(t, "third")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectID, project.Enabled, project.Health = "project-rebind", false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	queued := RunStatus{ProjectID: project.ProjectID, RecordID: "queued", ItemID: "queued", LeaseState: string(LeaseStateUnclaimed), UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err := store.UpsertRun(queued); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, changed, err := store.RebindProjectRegistration(project.ProjectID, newRepo, newVault); err != nil || !changed {
+		t.Fatalf("queued rebind changed=%v err=%v", changed, err)
+	}
+	bound, err := projectByID(store, project.ProjectID)
+	if err != nil || bound.RepoRoot != newRepo || bound.VaultRoot != newVault {
+		t.Fatalf("rebound project=%#v err=%v", bound, err)
+	}
+	preserved, err := store.FindRun("queued")
+	if err != nil || preserved == nil || preserved.ProjectID != project.ProjectID || preserved.LeaseState != string(LeaseStateUnclaimed) {
+		t.Fatalf("queued run was not preserved: %#v err=%v", preserved, err)
+	}
+	owned := RunStatus{ProjectID: project.ProjectID, RecordID: "owned", ItemID: "owned", LeaseState: string(LeaseStateUnclaimed), LeaseOwner: "worker", WorkspacePath: "/tmp/workspace", SessionRef: "session-owned", ProcessPID: 1234, ProcessPGID: 1234, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err := store.UpsertRun(owned); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, changed, err := store.RebindProjectRegistration(project.ProjectID, thirdRepo, thirdVault); err == nil || changed || !strings.Contains(err.Error(), "active runs") {
+		t.Fatalf("owned queue rebind changed=%v err=%v", changed, err)
+	}
+	active := RunStatus{ProjectID: project.ProjectID, RecordID: "active", ItemID: "active", LeaseState: string(LeaseStateRunning), ActiveAttemptID: "attempt-active", UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err := store.UpsertRun(active); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, changed, err := store.RebindProjectRegistration(project.ProjectID, thirdRepo, thirdVault); err == nil || changed || !strings.Contains(err.Error(), "active runs") {
+		t.Fatalf("active rebind changed=%v err=%v", changed, err)
+	}
+}
+
+func TestProjectsRebindRequiresExplicitAllowDirty(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	if err := writeText(filepath.Join(newRepo, "uncommitted.txt"), "keep me\n"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectID, project.Enabled, project.Health = "project-rebind", false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	projectRebindMarkSourceStale(t, oldRepo)
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault}); err == nil || !strings.Contains(err.Error(), "must be clean") {
+		t.Fatalf("dirty target was accepted without opt-in: %v", err)
+	}
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "allow-dirty": "true"}); err != nil {
+		t.Fatalf("explicit dirty opt-in failed: %v", err)
+	}
+}
+
+func TestProjectsRebindValidatesRetainedQueueTasksAndReportsCount(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectID, project.Enabled, project.Health = "project-rebind", false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "QUEUED-T-0001", ItemID: "QUEUED-T-0001", LeaseState: string(LeaseStateUnclaimed), UpdatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	projectRebindMarkSourceStale(t, oldRepo)
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault}); err == nil || !strings.Contains(err.Error(), "missing queued task QUEUED-T-0001") {
+		t.Fatalf("missing queued task was accepted: %v", err)
+	}
+	if err := ensureDir(filepath.Join(newVault, "work", "tasks")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(newVault, "work", "tasks", "QUEUED-T-0001.md"), "queued task\n"); err != nil {
+		t.Fatal(err)
+	}
+	output := captureStdout(t, func() {
+		err = projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "allow-dirty": "true", "json": "true"})
+	})
+	if err != nil || !strings.Contains(output, `"retained_queued_count":1`) {
+		t.Fatalf("retained queue report=%s err=%v", output, err)
+	}
+}
+
+func TestProjectsRebindRefusesActiveRunDirectives(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectID, project.Enabled, project.Health = "project-rebind", false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if queued, err := store.QueueRunDirective(RunDirective{ProjectID: project.ProjectID, RecordID: "QUEUED-T-0001", Actor: "human:test", CreatedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)}); err != nil || !queued {
+		t.Fatalf("queue directive=%v err=%v", queued, err)
+	}
+	projectRebindMarkSourceStale(t, oldRepo)
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault}); err == nil || !strings.Contains(err.Error(), "no non-expired queued run directives") || !strings.Contains(err.Error(), "QUEUED-T-0001") {
+		t.Fatalf("active directive was not refused: %v", err)
+	}
+	if _, _, changed, err := store.RebindProjectRegistration(project.ProjectID, newRepo, newVault); err == nil || changed || !strings.Contains(err.Error(), "QUEUED-T-0001") {
+		t.Fatalf("store rebind ignored active directive changed=%v err=%v", changed, err)
+	}
+}
+
+func TestProjectsRebindRefusesMismatchedTargetProjectIdentity(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectID, project.Enabled, project.Health = "project-rebind", false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	projectRebindMarkSourceStale(t, oldRepo)
+	if err := writeText(filepath.Join(newRepo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: unrelated\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "allow-dirty": "true"}); err == nil || !strings.Contains(err.Error(), "different project") {
+		t.Fatalf("mismatched target identity was accepted: %v", err)
+	}
+	if err := writeText(filepath.Join(newRepo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: project-rebind\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "allow-dirty": "true"}); err != nil {
+		t.Fatalf("matching target identity was refused: %v", err)
+	}
+}
+
+func TestProjectsRebindFencesSeparateGitRepoButAllowsStaleSource(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectID, project.Enabled, project.Health = "project-rebind", false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault}); err == nil || !strings.Contains(err.Error(), "separate Git repository") {
+		t.Fatalf("separate Git repository was accepted: %v", err)
+	}
+	store, err = OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.RepoRoot = filepath.Join(oldRepo, "stale-registration")
+	if err := store.UpsertProject(project); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault}); err != nil {
+		t.Fatalf("stale source identity fallback was refused: %v", err)
+	}
+}
+
+func TestProjectsRebindRejectsNestedRepositoryPath(t *testing.T) {
+	newRepo, _ := projectRebindFixtureRepo(t, "new")
+	nested := filepath.Join(newRepo, "nested")
+	if err := ensureDir(nested); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireGitRepository(nested, true); err == nil || !strings.Contains(err.Error(), "Git worktree") {
+		t.Fatalf("nested repository path was accepted: %v", err)
 	}
 }
 
@@ -153,10 +380,11 @@ func TestProjectRebindReportsScopedStableNonTerminalRunIdentities(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	projectRebindMarkSourceStale(t, oldRepo)
 
 	err = projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "dry-run": "true", "json": "true"})
 	if err == nil {
-		t.Fatal("dry-run must remain fenced by non-terminal runs")
+		t.Fatal("dry-run must remain fenced by active runs")
 	}
 	issue := errorToIssue(err)
 	if issue.Code != errorInvalidTransition || !strings.Contains(issue.Hint, "runs inspect <run-id>") || !strings.Contains(issue.Hint, "runs retire <run-id>") {
@@ -167,14 +395,11 @@ func TestProjectRebindReportsScopedStableNonTerminalRunIdentities(t *testing.T) 
 		t.Fatalf("context type=%T", issue.Context)
 	}
 	blocking, ok := context["blocking_runs"].([]ProjectNonTerminalRun)
-	if !ok || len(blocking) != 2 {
+	if !ok || len(blocking) != 1 {
 		t.Fatalf("blocking=%#v", context["blocking_runs"])
 	}
-	if blocking[0].RunID != "APP-T-0001" || blocking[0].TaskID != "APP-T-0001" || blocking[0].ProjectID != project.ProjectID || blocking[0].Status != string(LeaseStateUnclaimed) {
-		t.Fatalf("first blocking run=%#v", blocking[0])
-	}
-	if blocking[1].RunID != "APP-T-0002" || blocking[1].AttemptID != "attempt-2" || blocking[1].Lane != runLaneReview || blocking[1].Outcome != string(AttemptOutcomeBlocked) {
-		t.Fatalf("second blocking run=%#v", blocking[1])
+	if blocking[0].RunID != "APP-T-0002" || blocking[0].AttemptID != "attempt-2" || blocking[0].Lane != runLaneReview || blocking[0].Outcome != string(AttemptOutcomeBlocked) {
+		t.Fatalf("blocking run=%#v", blocking[0])
 	}
 	encoded, err := json.Marshal(issue)
 	if err != nil {
@@ -189,11 +414,11 @@ func TestProjectRebindReportsScopedStableNonTerminalRunIdentities(t *testing.T) 
 
 	_, _, _, err = store.RebindProjectRegistration(project.ProjectID, newRepo, newVault)
 	if err == nil {
-		t.Fatal("live rebind must remain fenced by non-terminal runs")
+		t.Fatal("live rebind must remain fenced by active runs")
 	}
 	liveContext := errorToIssue(err).Context.(map[string]any)
 	liveBlocking := liveContext["blocking_runs"].([]ProjectNonTerminalRun)
-	if len(liveBlocking) != 2 || liveBlocking[0].RunID != "APP-T-0001" || liveBlocking[1].RunID != "APP-T-0002" {
+	if len(liveBlocking) != 1 || liveBlocking[0].RunID != "APP-T-0002" {
 		t.Fatalf("live blocking runs=%#v", liveBlocking)
 	}
 }
@@ -213,6 +438,7 @@ func TestProjectRebindRefusesWorkspaceMountAndPartialSamePath(t *testing.T) {
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)
 	}
+	projectRebindMarkSourceStale(t, oldRepo)
 	if err := saveWorkspaceVaultConfig(WorkspaceVaultConfig{Projects: []WorkspaceProject{{ProjectID: project.ProjectID, TrackerRoot: oldVault, MountPath: filepath.Join(t.TempDir(), "mount")}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +471,34 @@ func TestProjectRebindRefusesWorkspaceMountAndPartialSamePath(t *testing.T) {
 	}
 	if _, _, changed, err := store.RebindProjectRegistration(project.ProjectID, thirdRepo, thirdVault); err != nil || !changed {
 		t.Fatalf("unclaimed target changed=%v err=%v", changed, err)
+	}
+}
+
+func TestProjectsRebindAcceptsLogicalWorkspaceMountIdentity(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, newVault := projectRebindFixtureRepo(t, "new")
+	if err := writeText(filepath.Join(newRepo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: backend\n"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(oldRepo, oldVault)
+	project.ProjectKey, project.Name = "backend", "backend"
+	project.Enabled, project.Health = false, projectHealthDisabled
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	projectRebindMarkSourceStale(t, oldRepo)
+	if err := saveWorkspaceVaultConfig(WorkspaceVaultConfig{Projects: []WorkspaceProject{{ProjectID: "backend", TrackerRoot: newVault, MountPath: filepath.Join(t.TempDir(), "mount")}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "allow-dirty": "true"}); err != nil {
+		t.Fatalf("logical workspace mount should be accepted: %v", err)
 	}
 }
 
@@ -297,10 +551,20 @@ func projectRebindFixtureRepo(t *testing.T, name string) (string, string) {
 	if err := writeDefaultWorkflow(vault); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeText(filepath.Join(repo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: project-rebind\n"); err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Tusker Test"}, {"add", "."}, {"commit", "-qm", "fixture"}} {
 		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
 	return canonicalProjectPath(repo), canonicalProjectPath(vault)
+}
+
+func projectRebindMarkSourceStale(t *testing.T, repo string) {
+	t.Helper()
+	if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
+		t.Fatalf("mark source stale: %v", err)
+	}
 }

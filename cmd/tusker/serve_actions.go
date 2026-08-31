@@ -163,6 +163,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleProjectRegisterAction(w, body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "remove":
 		s.handleProjectRemoveAction(w, parts[2])
+	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "rebind":
+		s.handleProjectRebindAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "automation":
 		s.handleProjectAutomationAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "settings":
@@ -368,6 +370,64 @@ func (s *serveServer) handleProjectRemoveAction(w http.ResponseWriter, projectID
 	result.ProjectID = args["id"]
 	if err == nil {
 		s.invalidateProjectSnapshot(args["id"])
+	}
+	serveJSON(w, http.StatusOK, result)
+}
+
+func (s *serveServer) handleProjectRebindAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	repoRoot := body.string("repoRoot", "repo_root", "repo", "path")
+	if repoRoot == "" {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "project rebind requires a repository path"})
+		return
+	}
+	vaultRoot := body.string("vaultRoot", "vault_root", "vault")
+	if vaultRoot == "" {
+		absRepo, err := filepath.Abs(repoRoot)
+		if err != nil {
+			result := serveCommandResult("tusker projects rebind "+projectID, "", err)
+			result.ProjectID = projectID
+			serveJSON(w, http.StatusOK, result)
+			return
+		}
+		vaultRoot = filepath.Join(absRepo, ".tusker")
+	}
+	args := Args{
+		"id":    strings.TrimSpace(projectID),
+		"repo":  repoRoot,
+		"vault": vaultRoot,
+		"json":  "true",
+	}
+	if body.bool("dryRun") || body.bool("dry_run") {
+		args["dry-run"] = "true"
+	}
+	allowDirty := body.bool("allowDirty") || body.bool("allow_dirty")
+	if allowDirty {
+		if strings.TrimSpace(body.string("confirm", "confirmation")) != "ALLOW DIRTY" {
+			err := tuskerError(errorInvalidArg, "allowDirty requires the exact confirmation token ALLOW DIRTY", withHint("send {\"allowDirty\":true,\"confirm\":\"ALLOW DIRTY\"} only after reviewing the dirty target"))
+			result := serveCommandResult("tusker projects rebind "+strings.TrimSpace(projectID), "", err)
+			result.ProjectID = strings.TrimSpace(projectID)
+			serveJSON(w, http.StatusOK, result)
+			return
+		}
+		args["allow-dirty"] = "true"
+	}
+	output, err := serveInvokeCommand(args, projectsRebindCmd)
+	result := serveCommandResult("tusker projects rebind "+args["id"], output, err)
+	result.ProjectID = args["id"]
+	if err == nil {
+		s.dropProjectSnapshot(args["id"])
+		var payload struct {
+			Rebind projectRebindReport `json:"rebind"`
+		}
+		if decodeErr := json.Unmarshal([]byte(output), &payload); decodeErr == nil && payload.Rebind.ProjectID != "" {
+			result.Rebind = &payload.Rebind
+		} else {
+			if decodeErr == nil {
+				decodeErr = fmt.Errorf("missing rebind report")
+			}
+			result = serveCommandResult("tusker projects rebind "+args["id"], output, fmt.Errorf("decode rebind response: %w", decodeErr))
+			result.ProjectID = args["id"]
+		}
 	}
 	serveJSON(w, http.StatusOK, result)
 }

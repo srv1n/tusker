@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -106,6 +107,91 @@ func TestServeProjectRegistrationRejectsInvalidPathsWithoutPersisting(t *testing
 		t.Fatal(err)
 	}
 	assertEqual(t, len(before), len(after), "invalid registration leaves no phantom project")
+}
+
+func TestServeProjectRebindUsesCanonicalCommandAndDefaultsVault(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, _ := projectRebindFixtureRepo(t, "new")
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("fixture projects=%#v err=%v", projects, err)
+	}
+	project := projects[0]
+	if err := server.store.RemoveProject(project.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	project.ProjectID = "project-rebind"
+	project.RepoRoot, project.VaultRoot, project.WorkflowPath = oldRepo, oldVault, workflowPath(oldVault)
+	project.Enabled, project.Health = false, projectHealthDisabled
+	if err := server.store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err := server.loadSnapshotForProject(project.ProjectID); err != nil || snapshot.project.VaultRoot != oldVault {
+		t.Fatalf("warm snapshot=%#v err=%v", snapshot.project, err)
+	}
+	projectRebindMarkSourceStale(t, oldRepo)
+
+	var preview serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/rebind", `{"repoRoot":"`+newRepo+`","dryRun":true}`, &preview)
+	if !preview.OK || preview.Refused || preview.Rebind == nil || !preview.Rebind.DryRun {
+		t.Fatalf("expected structured rebind preview, got %#v", preview)
+	}
+	if stored, err := projectByID(server.store, project.ProjectID); err != nil || stored.RepoRoot != oldRepo {
+		t.Fatalf("preview changed registry project=%#v err=%v", stored, err)
+	}
+
+	var result serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/rebind", `{"repoRoot":"`+newRepo+`"}`, &result)
+	if !result.OK || result.Refused || result.ProjectID != project.ProjectID || result.Rebind == nil {
+		t.Fatalf("expected structured rebind success, got %#v", result)
+	}
+	if result.Rebind.After.RepoRoot != newRepo || result.Rebind.After.VaultRoot != filepath.Join(newRepo, ".tusker") {
+		t.Fatalf("rebind defaults not reflected: %#v", result.Rebind)
+	}
+	if snapshot, err := server.loadSnapshotForProject(project.ProjectID); err != nil || snapshot.project.VaultRoot != filepath.Join(newRepo, ".tusker") {
+		t.Fatalf("snapshot did not follow rebound project=%#v err=%v", snapshot.project, err)
+	}
+}
+
+func TestServeProjectRebindRefusesDirtyTargetByDefault(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
+	newRepo, _ := projectRebindFixtureRepo(t, "new")
+	if err := writeText(filepath.Join(newRepo, "uncommitted.txt"), "keep me\n"); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("fixture projects=%#v err=%v", projects, err)
+	}
+	project := projects[0]
+	if err := server.store.RemoveProject(project.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	project.ProjectID = "project-rebind"
+	project.RepoRoot, project.VaultRoot, project.WorkflowPath = oldRepo, oldVault, workflowPath(oldVault)
+	project.Enabled, project.Health = false, projectHealthDisabled
+	if err := server.store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	projectRebindMarkSourceStale(t, oldRepo)
+
+	var result serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/rebind", `{"repoRoot":"`+newRepo+`"}`, &result)
+	if result.OK || !result.Refused || result.Issue == nil || !strings.Contains(result.Issue.Message, "must be clean") {
+		t.Fatalf("dirty target refusal was not structured: %#v", result)
+	}
+	result = serveActionResult{}
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/rebind", `{"repoRoot":"`+newRepo+`","allowDirty":true}`, &result)
+	if result.OK || !result.Refused || result.Issue == nil || !strings.Contains(result.Issue.Message, "exact confirmation token") {
+		t.Fatalf("dirty confirmation refusal was not structured: %#v", result)
+	}
+	result = serveActionResult{}
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/rebind", `{"repoRoot":"`+newRepo+`","allowDirty":true,"confirm":"ALLOW DIRTY"}`, &result)
+	if !result.OK || result.Refused || result.Rebind == nil || !result.Rebind.AllowDirty {
+		t.Fatalf("explicit dirty opt-in failed: %#v", result)
+	}
 }
 
 func TestServeProjectSettingsPersistWorkspaceAndConcurrency(t *testing.T) {

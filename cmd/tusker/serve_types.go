@@ -111,23 +111,24 @@ type serveDaemonStatus struct {
 }
 
 type serveActionResult struct {
-	OK              bool                `json:"ok"`
-	Refused         bool                `json:"refused,omitempty"`
-	Reason          string              `json:"reason"`
-	Command         string              `json:"command,omitempty"`
-	Output          string              `json:"output,omitempty"`
-	Issue           *Issue              `json:"issue,omitempty"`
-	TaskID          string              `json:"taskId,omitempty"`
-	GateID          string              `json:"gateId,omitempty"`
-	EvidenceID      string              `json:"evidenceId,omitempty"`
-	FeedbackPath    string              `json:"feedbackPath,omitempty"`
-	ProjectID       string              `json:"projectId,omitempty"`
-	CanonicalStatus string              `json:"canonicalStatus,omitempty"`
-	Discard         *serveDiscardImpact `json:"discard,omitempty"`
-	Task            *serveTaskDetail    `json:"task,omitempty"`
-	Gate            *serveGateDetail    `json:"gate,omitempty"`
-	Evidence        *serveEvidenceDoc   `json:"evidence,omitempty"`
-	Daemon          *serveDaemonStatus  `json:"daemon,omitempty"`
+	OK              bool                 `json:"ok"`
+	Refused         bool                 `json:"refused,omitempty"`
+	Reason          string               `json:"reason"`
+	Command         string               `json:"command,omitempty"`
+	Output          string               `json:"output,omitempty"`
+	Issue           *Issue               `json:"issue,omitempty"`
+	TaskID          string               `json:"taskId,omitempty"`
+	GateID          string               `json:"gateId,omitempty"`
+	EvidenceID      string               `json:"evidenceId,omitempty"`
+	FeedbackPath    string               `json:"feedbackPath,omitempty"`
+	ProjectID       string               `json:"projectId,omitempty"`
+	CanonicalStatus string               `json:"canonicalStatus,omitempty"`
+	Discard         *serveDiscardImpact  `json:"discard,omitempty"`
+	Task            *serveTaskDetail     `json:"task,omitempty"`
+	Gate            *serveGateDetail     `json:"gate,omitempty"`
+	Evidence        *serveEvidenceDoc    `json:"evidence,omitempty"`
+	Daemon          *serveDaemonStatus   `json:"daemon,omitempty"`
+	Rebind          *projectRebindReport `json:"rebind,omitempty"`
 }
 
 type serveDiscardDependent struct {

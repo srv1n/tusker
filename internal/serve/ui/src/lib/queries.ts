@@ -85,6 +85,19 @@ export const useRegisterProject = () => {
   });
 };
 
+export const useProjectRebind = (projectId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { repoRoot: string; vaultRoot?: string; allowDirty?: boolean; confirm?: string; dryRun?: boolean }) =>
+      api.rebindProject(projectId, body).then(requireAccepted),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.projects });
+      void qc.invalidateQueries({ queryKey: qk.daemon });
+      void qc.invalidateQueries({ predicate: (query) => query.queryKey.some((part) => part === projectId) });
+    },
+  });
+};
+
 export const useProjectAutomation = (projectId: string) => {
   const qc = useQueryClient();
   return useMutation({
@@ -136,10 +149,19 @@ export const useSetupDoctor = (projectId: string) => {
   });
 };
 
-export const useProjectRefresh = (projectId: string) =>
-  useMutation({
+export const useProjectRefresh = (projectId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
     mutationFn: () => api.refreshProject(projectId).then(requireAccepted),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.projects });
+      void qc.invalidateQueries({ queryKey: qk.docs(projectId) });
+      void qc.invalidateQueries({ queryKey: ["doc", projectId] });
+      void qc.invalidateQueries({ queryKey: qk.docgraph(projectId) });
+      void qc.invalidateQueries({ queryKey: ["docgraph", "doc", projectId] });
+    },
   });
+};
 
 export const useNeeds = (projectId?: string, enabled = true) =>
   useQuery({

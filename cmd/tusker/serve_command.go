@@ -856,11 +856,11 @@ func (s *serveServer) cachedProjectForSnapshot(projectID string) (RegisteredProj
 	projectID = strings.TrimSpace(projectID)
 	s.snapshotMu.Lock()
 	defer s.snapshotMu.Unlock()
-	if entry := s.snapshots[projectID]; projectID != "" && entry != nil {
+	if entry := s.snapshots[projectID]; projectID != "" && entry != nil && !entry.invalid {
 		return entry.project, true
 	}
 	for _, entry := range s.snapshots {
-		if entry == nil {
+		if entry == nil || entry.invalid {
 			continue
 		}
 		if projectID != "" && entry.project.ProjectID == projectID {
@@ -934,6 +934,25 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 			contentHash = serveSnapshotContentHash(snap)
 		}
 		s.snapshotMu.Lock()
+		if entry.invalid {
+			// A mutation (notably project rebind) invalidated this build while it
+			// was reading the old roots. Never publish or return that stale
+			// projection; wake waiters, discard this entry, and reload the
+			// registered project before rebuilding.
+			entry.building = false
+			close(entry.done)
+			if current, ok := s.snapshots[key]; ok && current == entry {
+				delete(s.snapshots, key)
+			}
+			s.snapshotMu.Unlock()
+			freshProject, freshErr := s.projectForSnapshot(projectID)
+			if freshErr != nil {
+				return serveSnapshot{}, freshErr
+			}
+			project = freshProject
+			key = serveSnapshotKey(project)
+			continue
+		}
 		previousHash := entry.contentHash
 		entry.snapshot = snap
 		entry.contentHash = contentHash
@@ -1115,6 +1134,9 @@ func (s *serveServer) invalidateProjectSnapshot(projectID string) {
 	projectID = strings.TrimSpace(projectID)
 	s.snapshotMu.Lock()
 	for key, entry := range s.snapshots {
+		if entry == nil {
+			continue
+		}
 		if projectID == "" || entry.project.ProjectID == projectID || key == projectID {
 			entry.invalid = true
 		}
@@ -1131,7 +1153,7 @@ func (s *serveServer) cachedNeedsCount(projectID string) (int, bool) {
 	s.snapshotMu.Lock()
 	defer s.snapshotMu.Unlock()
 	for _, entry := range s.snapshots {
-		if entry == nil || !entry.ready || entry.err != nil {
+		if entry == nil || !entry.ready || entry.err != nil || entry.invalid {
 			continue
 		}
 		if projectID == entry.project.ProjectID || projectID == entry.snapshot.projectID {
@@ -1163,11 +1185,14 @@ func (s *serveServer) dropProjectSnapshot(projectID string) {
 	projectID = strings.TrimSpace(projectID)
 	s.snapshotMu.Lock()
 	for key, entry := range s.snapshots {
-		if entry.building {
-			entry.invalid = true
+		if entry == nil {
 			continue
 		}
 		if projectID == "" || entry.project.ProjectID == projectID || key == projectID {
+			if entry.building {
+				entry.invalid = true
+				continue
+			}
 			delete(s.snapshots, key)
 		}
 	}
