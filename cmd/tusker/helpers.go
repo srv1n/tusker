@@ -276,7 +276,10 @@ func discoverRegisteredProjectVault(startDir string) (RegisteredProject, bool, e
 		return RegisteredProject{}, false, nil
 	}
 	defer store.Close()
-	projects, err := store.ListProjects()
+	loadedProjects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{
+		MetadataOnly: true,
+		LoadDisabled: true,
+	})
 	if err != nil {
 		return RegisteredProject{}, false, registeredProjectVaultLookupUnavailableError(startDir, projectID, stateRoot, err)
 	}
@@ -284,7 +287,8 @@ func discoverRegisteredProjectVault(startDir string) (RegisteredProject, bool, e
 	// directory only if registry size makes discovery measurably slow.
 	var identityMatches []RegisteredProject
 	var matches []RegisteredProject
-	for _, candidate := range projects {
+	for _, loadedProject := range loadedProjects {
+		candidate := loadedProject.Project
 		if !registeredProjectConfigIdentityMatches(candidate, projectID) {
 			continue
 		}

@@ -2033,15 +2033,33 @@ func v7AcceptanceOutcomeVague(item string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(item))
 	normalized = strings.Trim(normalized, ".!")
 	normalized = strings.Join(strings.Fields(normalized), " ")
-	if normalized == strings.ToLower(strings.TrimSuffix(defaultScaffoldAcceptanceOutcome, ".")) {
-		return true
-	}
 	switch normalized {
 	case "works", "it works", "tests pass", "tests passing", "tests are passing", "passes tests", "define the accepted outcome", "tbd", "todo", "placeholder":
 		return true
 	default:
 		return false
 	}
+}
+
+// v7AcceptanceContainsDefaultScaffold identifies the untouched generated A1
+// outcome for dispatch readiness. It deliberately stays separate from
+// v7AcceptanceOutcomeVague: an unedited scaffold should not make a proven
+// legacy task impossible to close, but it must still block promotion to ready.
+func v7AcceptanceContainsDefaultScaffold(body string) bool {
+	expected := strings.ToLower(strings.TrimSuffix(defaultScaffoldAcceptanceOutcome, "."))
+	for _, line := range strings.Split(sectionContent(body, "## Acceptance"), "\n") {
+		item := v7AcceptanceOutcomeFromLine(line)
+		if item == "" {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(item))
+		normalized = strings.Trim(normalized, ".!")
+		normalized = strings.Join(strings.Fields(normalized), " ")
+		if normalized == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func findV7Gate(vaultPath, gateID string) (Note, bool) {

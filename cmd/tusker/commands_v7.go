@@ -3770,6 +3770,9 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 	if stub := v7PacketStubAcceptanceItems(task.Body); len(stub) > 0 {
 		reasons = append(reasons, "placeholder acceptance: "+strings.Join(stub, ", "))
 	}
+	if v7AcceptanceContainsDefaultScaffold(task.Body) {
+		reasons = append(reasons, "placeholder acceptance: "+defaultScaffoldAcceptanceOutcome)
+	}
 	if !v7AcceptanceHasProof(task.Body) {
 		reasons = append(reasons, "acceptance missing proof mapping")
 	}
