@@ -71,6 +71,10 @@ SWAPPED=1
 sync
 codesign --verify --deep --strict "$DESTINATION"
 "$DESTINATION/Contents/Resources/tusker" version --json >/dev/null
+if [ "${MAC_PREVIEW:-}" = 1 ]; then
+  "$DESTINATION/Contents/Resources/tusker" daemon service refresh --json >/dev/null
+  cmp "$DESTINATION/Contents/Resources/tusker" "$HOME/Library/Application Support/tusker/bin/tusker-daemon"
+fi
 if ! open "$DESTINATION"; then
   printf '%s\n' 'Opening installed TuskerBar failed; rolling back.' >&2
   exit 1

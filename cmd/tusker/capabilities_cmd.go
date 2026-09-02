@@ -20,7 +20,6 @@ const (
 // belongs to the vault. Neither can make an installed CLI capability appear.
 type capabilitiesManifest struct {
 	Schema               string                   `json:"schema"`
-	ReadOnly             bool                     `json:"read_only"`
 	Binary               VersionProjection        `json:"binary"`
 	Commands             []capabilityCommand      `json:"commands"`
 	Schemas              capabilitySchemas        `json:"schemas"`
@@ -72,7 +71,6 @@ type capabilityCompatibility struct {
 
 type capabilityCompatibilityMaterial struct {
 	Schema               string                   `json:"schema"`
-	ReadOnly             bool                     `json:"read_only"`
 	Commands             []capabilityCommand      `json:"commands"`
 	Schemas              capabilitySchemas        `json:"schemas"`
 	RunnerAdapters       []string                 `json:"runner_adapters"`
@@ -106,7 +104,6 @@ var loadEmbeddedSkillPayloadFingerprint = embeddedSkillPayloadFingerprint
 func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) (capabilitiesManifest, error) {
 	manifest := capabilitiesManifest{
 		Schema:   capabilitiesSchema,
-		ReadOnly: true,
 		Binary:   buildVersionProjection(info, executable),
 		Commands: installedCapabilityCommands(),
 		Schemas: capabilitySchemas{
@@ -161,7 +158,7 @@ func buildCapabilityCompatibility(manifest capabilitiesManifest) (capabilityComp
 	sort.Strings(projection.WaveAuthorizationSchemas)
 	sort.Strings(projection.PrimaryGuides)
 	material := capabilityCompatibilityMaterial{
-		Schema: manifest.Schema, ReadOnly: manifest.ReadOnly,
+		Schema:   manifest.Schema,
 		Commands: manifest.Commands, Schemas: manifest.Schemas,
 		RunnerAdapters: manifest.RunnerAdapters, RunnerCatalogSchema: manifest.RunnerCatalogSchema,
 		OptionalCapabilities: manifest.OptionalCapabilities, Deprecations: manifest.Deprecations,
@@ -238,5 +235,5 @@ func sortCapabilitiesManifest(manifest *capabilitiesManifest) {
 }
 
 func printCapabilitiesHelp() {
-	fmt.Println("Usage: tusker capabilities --json\n\nPrint the versioned, read-only installed-binary capability manifest.")
+	fmt.Println("Usage: tusker capabilities --json\n\nPrint the versioned installed-binary capability manifest. This query does not mutate state.")
 }

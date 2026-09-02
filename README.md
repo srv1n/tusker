@@ -89,7 +89,10 @@ The CI and release workflows are `.github/workflows/ci.yml` and
 
 ## macOS app
 
-Run `make mac-preview` to build, install, and open TuskerBar from this checkout.
+Run `make install` or `make mac-preview` to refresh the CLI, user skills,
+TuskerBar, its bundled daemon, and the dormant launchd daemon executable from
+this checkout, then open the app. On non-macOS systems, `make install` refreshes
+the CLI and user skills only.
 The app probes `http://127.0.0.1:7420`. It reuses a healthy local daemon or
 starts the bundled daemon. A custom remote base URL is not managed by the app.
 

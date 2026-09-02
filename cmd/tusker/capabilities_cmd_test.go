@@ -36,7 +36,7 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 	if err := json.Unmarshal(first, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Schema != capabilitiesSchema || !manifest.ReadOnly {
+	if manifest.Schema != capabilitiesSchema {
 		t.Fatalf("manifest contract = %#v", manifest)
 	}
 	if manifest.Binary.Version != "v1.2.3-test" || manifest.Binary.BinarySHA256 == "" {
@@ -214,7 +214,7 @@ func capabilitiesContainCommand(commands []capabilityCommand, name string) bool 
 	return false
 }
 
-func TestCapabilitiesCommandRoutesOnlyReadOnlyJSON(t *testing.T) {
+func TestCapabilitiesCommandRoutesJSON(t *testing.T) {
 	command, args := parseCLI([]string{"tusker", "capabilities", "--json"})
 	if command != "capabilities" || !args.Bool("json") {
 		t.Fatalf("parseCLI = %q %#v", command, args)
@@ -224,7 +224,7 @@ func TestCapabilitiesCommandRoutesOnlyReadOnlyJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(output, `"schema":"`+capabilitiesSchema+`"`) || !strings.Contains(output, `"read_only":true`) {
+	if !strings.Contains(output, `"schema":"`+capabilitiesSchema+`"`) || strings.Contains(output, `"read_only"`) {
 		t.Fatalf("capabilities output = %s", output)
 	}
 	if cliCommandMutatesVault("capabilities") {

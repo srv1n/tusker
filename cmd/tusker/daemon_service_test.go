@@ -172,7 +172,7 @@ func TestPlanDaemonService(t *testing.T) {
 }
 
 func TestPlanDaemonServiceRejectsUnknownAction(t *testing.T) {
-	if _, err := planDaemonService("restart", daemonServiceConfig{}); err == nil || !strings.Contains(err.Error(), "install, start, stop, status, or uninstall") {
+	if _, err := planDaemonService("restart", daemonServiceConfig{}); err == nil || !strings.Contains(err.Error(), "install, start, stop, refresh, status, or uninstall") {
 		t.Fatalf("expected actionable invalid action error, got %v", err)
 	}
 }
@@ -212,6 +212,35 @@ func TestInstallDaemonServiceExecutableCopiesToStableRuntimePath(t *testing.T) {
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		t.Fatalf("service executable mode = %v", info.Mode())
+	}
+}
+
+func TestDaemonServiceRefreshCopiesWithoutLaunchctl(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source-tusker")
+	if err := os.WriteFile(source, []byte("current daemon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := daemonServiceConfig{
+		SourceExecutable: source,
+		Executable:       filepath.Join(dir, "state", "bin", "tusker-daemon"),
+		StateRoot:        filepath.Join(dir, "state"),
+	}
+	originalRun := daemonServiceCommandRun
+	t.Cleanup(func() { daemonServiceCommandRun = originalRun })
+	daemonServiceCommandRun = func(daemonServiceCommand, daemonServiceConfig) ([]byte, error) {
+		t.Fatal("refresh must not invoke launchctl or start a daemon")
+		return nil, nil
+	}
+	if err := daemonServiceRefresh(Args{"json": "true"}, config); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(config.Executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "current daemon" {
+		t.Fatalf("service executable content = %q", string(got))
 	}
 }
 

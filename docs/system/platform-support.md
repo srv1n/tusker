@@ -25,6 +25,11 @@ Application Support state root.
 `make mac-app` builds and signs the app. It uses Developer ID when available
 and ad-hoc signing otherwise. An ad-hoc build is for local use.
 
+`make install` and `make mac-preview` refresh the CLI, Codex and Claude user
+skills, TuskerBar, the bundled daemon, and the dormant launchd daemon executable
+in one build. They stop an older launchd daemon before opening the newly
+installed app.
+
 ## Linux
 
 The release matrix builds the CLI for amd64 and arm64. The Go daemon and Serve

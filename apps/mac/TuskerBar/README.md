@@ -30,15 +30,17 @@ make mac-open
 script puts the Go binary in the app bundle. It uses a Developer ID identity
 when one is available. Otherwise, it uses an ad-hoc signature.
 
-For a checkout preview, run:
+To refresh every local Tusker surface from this checkout, run either command:
 
 ```sh
+make install
 make mac-preview
 ```
 
-This target also installs the CLI and user skills. Run `make mac-uninstall` to
-remove the app from `~/Applications`. Set `MAC_APP_DIR` to use another install
-directory.
+Both install the CLI and user skills, replace the app in `~/Applications`, stop
+an older launchd daemon, atomically refresh its dormant executable, and open the
+app with the just-built bundled daemon. Run `make mac-uninstall` to remove the
+app. Set `MAC_APP_DIR` to use another install directory.
 
 ## Surfaces
 

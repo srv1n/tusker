@@ -1078,7 +1078,7 @@ func printDaemonHelp() {
   tusker daemon resume [--json]
   tusker daemon stop [--drain] [--json]
   tusker daemon service install|start [--allow-protected-projects] [--json]
-  tusker daemon service stop|status|uninstall [--json]
+  tusker daemon service stop|refresh|status|uninstall [--json]
 
 Purpose:
   Operator/internal runtime loop for registered local projects. The normal
@@ -1097,6 +1097,7 @@ Behavior:
   - daemon stop asks the resident daemon to shut down and leaves detached wrappers alive
   - daemon stop --drain waits bounded for detached wrappers to finish
   - daemon service manages the macOS per-user launchd agent for daemon run
+  - service refresh atomically updates its executable without starting a daemon
   - service install/start blocks before launch when enabled projects are under
     macOS-protected folders; --allow-protected-projects is the explicit override
     after Full Disk Access has been granted
@@ -1112,6 +1113,7 @@ Examples:
   tusker daemon stop --drain
   tusker daemon service install
   tusker daemon service install --allow-protected-projects
+  tusker daemon service refresh
   tusker daemon service status`)
 }
 

@@ -402,7 +402,7 @@ func planDaemonService(action string, c daemonServiceConfig) ([]daemonServiceCom
 	case "uninstall":
 		return []daemonServiceCommand{{Name: daemonLaunchctlPath, Args: []string{"bootout", c.serviceTarget()}}}, nil
 	default:
-		return nil, tuskerError(errorInvalidArg, "daemon service action must be install, start, stop, status, or uninstall")
+		return nil, tuskerError(errorInvalidArg, "daemon service action must be install, start, stop, refresh, status, or uninstall")
 	}
 }
 
@@ -431,6 +431,8 @@ func daemonServiceCmd(args Args) error {
 		return daemonServiceStart(args, config)
 	case "stop":
 		return daemonServiceStop(args, config)
+	case "refresh":
+		return daemonServiceRefresh(args, config)
 	case "status":
 		return daemonServiceStatus(args, config)
 	case "uninstall":
@@ -439,6 +441,19 @@ func daemonServiceCmd(args Args) error {
 		_, err := planDaemonService(action, config)
 		return err
 	}
+}
+
+// daemonServiceRefresh updates the dormant launchd executable without starting
+// a daemon. The macOS app installer uses it after unloading an older service so
+// the app bundle, foreground runtime, and any later launchd start stay aligned.
+func daemonServiceRefresh(args Args, config daemonServiceConfig) error {
+	if err := installDaemonServiceExecutable(config); err != nil {
+		return err
+	}
+	displayDaemonServiceResult(args, map[string]any{
+		"ok": true, "action": "refresh", "executable": config.Executable,
+	}, "Refreshed daemon service executable: "+config.Executable)
+	return nil
 }
 
 func daemonServiceInstall(args Args, config daemonServiceConfig) error {

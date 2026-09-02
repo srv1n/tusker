@@ -16,6 +16,7 @@ RESET := \033[0m
 GO_MAX_PROCS ?= 2
 GO_PACKAGE_PARALLELISM ?= 1
 GO_TEST_PARALLELISM ?= 1
+HOST_OS ?= $(shell uname -s)
 VALIDATION_GATE := sh scripts/with-validation-lock.sh --
 
 .DEFAULT_GOAL := help
@@ -57,7 +58,7 @@ mac-uninstall: require-macos ## Remove TuskerBar from ~/Applications
 mac-open: require-macos ## Open the installed TuskerBar app
 	open "$(MAC_APP_DIR)/TuskerBar.app"
 
-mac-preview: install-user mac-preview-install ## Install the CLI/skills and build, install, and open TuskerBar
+mac-preview: require-macos install ## Install every local Tusker surface and open TuskerBar
 	@echo "Tusker is open; the app starts or reuses its bundled daemon automatically."
 
 mac-preview-install: mac-app
@@ -132,7 +133,11 @@ install-user: build ## Build and install binary + Codex/Claude user skills
 	./"$(DIST_BIN)" install --bin --codex-user --claude-user --bin-dir "$(BIN_DIR)" --force
 	@printf "$(GREEN)OK install-user complete$(RESET)\n"
 
+ifeq ($(HOST_OS),Darwin)
+install: install-user mac-preview-install ## Install CLI/skills plus the macOS app and bundled daemon
+else
 install: install-user ## Install the cross-platform CLI and Codex/Claude user skills
+endif
 	@printf "$(GREEN)OK install complete$(RESET)\n"
 
 install-repo: build ## Install repo-local skills into REPO=/abs/path
