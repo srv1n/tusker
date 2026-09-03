@@ -11,7 +11,7 @@
       "prompt": "Turn this request into the smallest useful tracked task.",
       "route": "Create, update, or close tracked work",
       "guide": "references/TRACK.md",
-      "loaded_words": 650,
+      "loaded_words": 649,
       "max_loaded_words": 650,
       "required": [
         "One bounded outcome is one task",

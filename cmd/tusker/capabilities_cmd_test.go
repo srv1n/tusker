@@ -48,6 +48,10 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 			t.Fatalf("manifest omitted command family %q", command)
 		}
 	}
+	importCapability, ok := capabilityCommandNamed(manifest.Commands, "delivery import")
+	if !ok || !strings.Contains(importCapability.Purpose, "amend canonical task contracts") || !containsString(importCapability.Flags, "--dry-run") {
+		t.Fatalf("manifest omitted the supported task-contract amendment path: %#v", importCapability)
+	}
 	if capabilitiesContainCommand(manifest.Commands, "hook") {
 		t.Fatal("Tusker must not advertise repository hook installation")
 	}

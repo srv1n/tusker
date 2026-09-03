@@ -34,6 +34,7 @@ type capabilityCommand struct {
 	Command     string   `json:"command"`
 	Subcommands []string `json:"subcommands,omitempty"`
 	Flags       []string `json:"flags,omitempty"`
+	Purpose     string   `json:"purpose,omitempty"`
 }
 
 type capabilitySchemas struct {
@@ -189,6 +190,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "closeout", Subcommands: []string{"status"}}, {Command: "config", Subcommands: []string{"resolve"}},
 		{Command: "context", Subcommands: []string{"audit"}}, {Command: "daemon", Subcommands: []string{"install", "limits", "resume", "run", "service", "status", "stop", "uninstall"}},
 		{Command: "dashboard"}, {Command: "delivery", Subcommands: []string{"context", "doctor", "import", "plan", "review", "rollout", "start"}, Flags: []string{"--by", "--confirm", "--json", "--plan", "--scope"}},
+		{Command: "delivery import", Flags: []string{"--by", "--dry-run", "--json", "--plan", "--wave"}, Purpose: "Create or amend canonical task contracts in an open, disarmed wave while affected tasks remain backlog/held; preserve plan scope and task source_key values to retain identities."},
 		{Command: "departure", Subcommands: []string{"check", "history", "hold", "resume", "status"}}, {Command: "digest"}, {Command: "discard"},
 		{Command: "docs", Subcommands: []string{"adopt", "find", "map", "new", "status", "verify"}, Flags: []string{"--approval-token", "--approve", "--by", "--dry-run", "--json", "--table"}},
 		{Command: "domain", Subcommands: []string{"canon", "list", "new", "show"}},
