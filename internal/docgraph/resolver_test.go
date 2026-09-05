@@ -3,7 +3,6 @@ package docgraph
 import (
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -115,11 +114,12 @@ func TestSemanticLinksKeepTrackerReferencesOutsideDocumentCorpus(t *testing.T) {
 }
 
 func TestRepositorySpecsAreDiscoverableFromCanonicalRoot(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller did not return the test path")
+	// Go runs package tests in their source directory. runtime.Caller paths
+	// are module-relative under -trimpath and are not filesystem locations.
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
 	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(filename), "../.."))
 	corpus, _, err := LoadRepository(repoRoot)
 	if err != nil {
 		t.Fatalf("LoadRepository(%q) error = %v", repoRoot, err)

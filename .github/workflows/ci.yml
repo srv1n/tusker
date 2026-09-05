@@ -14,8 +14,72 @@ concurrency:
 
 env:
   GOFLAGS: -trimpath
+  GOMAXPROCS: 2
 
 jobs:
+  convergence-focused:
+    name: Focused convergence regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - name: Capture exact source snapshot
+        run: |
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/convergence-source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/convergence-source.sha"
+      - name: Retain source for failure reproduction
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: convergence-source
+          path: |
+            ${{ runner.temp }}/convergence-source.tar.gz
+            ${{ runner.temp }}/convergence-source.sha
+          retention-days: 1
+          if-no-files-found: error
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run every required selector and reject empty selections
+        run: |
+          mkdir -p "$RUNNER_TEMP/convergence-results"
+          status=0
+          for selector in \
+            TestTrustCompactCli \
+            TestTuskerSkillProgressiveDisclosure \
+            TestTrustCliGuideUsesExecutorRecordedCommandProof \
+            TestDeliveryStart \
+            TestTrustFullJourney \
+            TestReviewProposalDaemonLifecycleBoundary \
+            TestLinkedWorktreeUsesRegisteredCanonicalVaultAndRefusesImplicitDuplicate \
+            TestTrustEfficiencyGate; do
+            if ! go test -list "^${selector}$" ./cmd/tusker > "$RUNNER_TEMP/convergence-results/${selector}.list" 2>&1; then
+              cat "$RUNNER_TEMP/convergence-results/${selector}.list"
+              status=1
+              continue
+            fi
+            if ! grep -Fxq "$selector" "$RUNNER_TEMP/convergence-results/${selector}.list"; then
+              echo "FAIL: required selector $selector matched no tests"
+              status=1
+              continue
+            fi
+            if ! go test -count=1 -timeout=5m -p=1 -parallel=1 -run "^${selector}$" ./cmd/tusker 2>&1 | tee "$RUNNER_TEMP/convergence-results/${selector}.log"; then
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Retain focused test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: convergence-focused-results
+          path: ${{ runner.temp }}/convergence-results
+          retention-days: 7
+          if-no-files-found: warn
+
   ui-linux:
     name: UI (Linux)
     runs-on: ubuntu-latest
@@ -41,7 +105,7 @@ jobs:
   release-linux:
     name: Go release gate (Linux)
     runs-on: ubuntu-latest
-    needs: ui-linux
+    needs: [ui-linux, convergence-focused]
     timeout-minutes: 35
     steps:
       - name: Check out repository
@@ -71,6 +135,7 @@ jobs:
 
   go-matrix:
     name: Go tests (${{ matrix.os }})
+    needs: convergence-focused
     strategy:
       fail-fast: false
       matrix:

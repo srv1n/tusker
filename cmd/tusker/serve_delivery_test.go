@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -407,11 +406,7 @@ func TestDeliveryReviewProjectsBudgetParkButNotRetryOrHold(t *testing.T) {
 }
 
 func TestDeliveryReviewPageUsesStandardScrollableLayout(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("could not locate delivery review test source")
-	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	repoRoot := repoRootForFreshCloneTest(t)
 	pageSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "serve", "ui", "src", "features", "delivery", "DeliveryReview.tsx"))
 	if err != nil {
 		t.Fatal(err)

@@ -9,6 +9,9 @@ import (
 
 func deliveryAmendmentPlan(t *testing.T, vault string) (deliveryPlanV2, string, string) {
 	t.Helper()
+	if err := writeText(filepath.Join(vault, "specs", "delivery.md"), "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n"); err != nil {
+		t.Fatal(err)
+	}
 	plan := validDeliveryPlanV2()
 	plan.HumanGates = nil
 	path := writeDeliveryV2TestPlan(t, vault, plan)
@@ -60,7 +63,10 @@ func TestDeliveryImportAllowsHeldWaveAmendmentAfterDefaultAdvance(t *testing.T) 
 	if baseA == "" || fallback(stringField(waveA.Data, "status"), "") != "open" || stringField(waveA.Data, "authorization") != "disarmed" {
 		t.Fatalf("initial import did not retain a held base snapshot: %#v", waveA.Data)
 	}
-	tasksA := deliveryWaveTaskIDsBySource(t, vault, stringField(waveA.Data, "delivery_plan_scope"))
+	tasksA := deliveryWaveTaskIDsBySource(t, vault, stringField(waveA.Data, "id"))
+	if len(tasksA) != len(planA.Tasks) {
+		t.Fatalf("initial import has incomplete source-keyed task allocation: %#v", tasksA)
+	}
 
 	if err := writeText(filepath.Join(repo, "amendment-base.txt"), "base B\n"); err != nil {
 		t.Fatal(err)

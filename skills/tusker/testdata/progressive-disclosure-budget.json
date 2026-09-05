@@ -71,8 +71,8 @@
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 581,
-      "max_loaded_words": 1675,
+      "loaded_words": 648,
+      "max_loaded_words": 650,
       "required": [
         "Existing Repository Onboarding",
         "Storage Boundary"

@@ -464,7 +464,7 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 	vault := automationTestVault(t)
 	repo := filepath.Dir(vault)
 	initializeOrchestrationGitRepo(t, repo)
-	runGitDir(t, repo, "add", ".gitignore", "SKILL.md", "WORKFLOW.md")
+	runGitDir(t, repo, "add", filepath.Base(vault)+"/.gitignore", filepath.Base(vault)+"/SKILL.md", filepath.Base(vault)+"/WORKFLOW.md")
 	runGitDir(t, repo, "commit", "-m", "fixture controls")
 	if err := os.MkdirAll(filepath.Join(repo, "owned"), 0o755); err != nil {
 		t.Fatal(err)

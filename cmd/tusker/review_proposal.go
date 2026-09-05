@@ -317,11 +317,15 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		}
 	}
 	// A worker may request review with pending command rows. The daemon-owned
-	// review gate executes those rows on the canonical repository, then reloads
-	// the task so the authoritative result binds the observed proof snapshot.
+	// review gate executes those rows on the bound implementation workspace,
+	// then reloads the task to bind the observed proof snapshot.
 	commandProofExecuted := false
 	if result.Verdict == "pass" {
-		fresh, _, failures, executeErr := executeV7CommandVerificationRows(project.VaultRoot, note, nil, "daemon:review-proof", true)
+		workspace, targetErr := reviewCommandVerificationWorkspace(d.store, project.VaultRoot, note, run)
+		if targetErr != nil {
+			return ReviewResult{}, targetErr
+		}
+		fresh, _, failures, executeErr := executeV7CommandVerificationRowsInWorkspace(project.VaultRoot, note, nil, "daemon:review-proof", true, workspace)
 		if executeErr != nil {
 			return ReviewResult{}, executeErr
 		}

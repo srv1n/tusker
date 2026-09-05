@@ -12,7 +12,7 @@ import (
 
 func validDeliveryPlanV2() deliveryPlanV2 {
 	return deliveryPlanV2{
-		Schema: deliveryPlanV2Schema, Scope: "v2-delivery", Title: "V2 delivery", SpecRefs: []string{"docs/specs/delivery.md"},
+		Schema: deliveryPlanV2Schema, Scope: "v2-delivery", Title: "V2 delivery", SpecRefs: []string{".tusker/specs/delivery.md"},
 		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
 		Summary:      "Import a held V2 delivery wave with requirements and human-proof traceability.",
 		EpicContract: &deliveryEpicContract{SourceKey: "v2-delivery", AcronymHint: "VTP", Title: "V2 delivery"},
@@ -299,7 +299,7 @@ func TestDeliveryPlanV2ChangedGateCannotBypassProgressedTaskContract(t *testing.
 	changed := validDeliveryPlanV2()
 	changed.HumanGates[0].Action = "Choose a materially different product option."
 	path = writeDeliveryV2TestPlan(t, vault, changed)
-	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "progressed beyond held state") {
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "existing delivery scope is frozen to a different reviewed plan") {
 		t.Fatalf("expected progressed contract refusal, got %v", err)
 	}
 	assertEqual(t, before, snapshotDeliveryV2Records(t, vault), "gate contract refusal is atomic")

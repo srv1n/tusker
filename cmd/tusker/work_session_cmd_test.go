@@ -58,6 +58,9 @@ func configureWorkSessionMaterialScope(t *testing.T, vault string) {
 	if _, err := gitFactOutput(filepath.Dir(vault), "add", "owned/implementation.go"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := gitFactOutput(filepath.Dir(vault), "commit", "-m", "seed owned implementation"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func workSessionErrorCode(err error) string {
@@ -633,7 +636,7 @@ func TestWorkSessionInteractiveReviewMaterialScopeIgnoresUnrelatedAndControlWrit
 		t.Fatalf("completed implementation run: %#v err=%v", run, err)
 	}
 	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
-	if err != nil || len(attempts) != 1 || strings.Join(attempts[0].EndState.MaterialScope, ",") != "owned" {
+	if err != nil || len(attempts) != 1 || strings.Join(attempts[0].EndState.MaterialScope, ",") != ".tusker/specs/test-fixture.md,owned" {
 		t.Fatalf("declared material scope not persisted: %#v err=%v", attempts, err)
 	}
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA})
@@ -716,7 +719,7 @@ func TestWorkSessionAcceptsOnlyExactDaemonAttemptCapability(t *testing.T) {
 	attemptID := "01KYDAEMONWORKSESSION00000000"
 	claim, err := newRunOwnershipService(store).claimExistingWithAuthorization(run, attemptID, RunAuthorization{
 		Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true,
-	}, RunAttempt{})
+	}, RunAttempt{AttemptID: attemptID, WorkspacePath: project.RepoRoot})
 	if err != nil || !claim.Claimed || claim.Run == nil {
 		t.Fatalf("daemon claim failed: claim=%#v err=%v", claim, err)
 	}

@@ -48,6 +48,12 @@ func trustJourneyReadyTask(t *testing.T, vault, id string) {
 }
 
 func TestTrustFullJourney(t *testing.T) {
+	for _, scenario := range []string{"source-bound command proof", "verification changes implementation", "stale verification confirmation"} {
+		t.Run(scenario, func(t *testing.T) { trustFullJourneyScenario(t, scenario) })
+	}
+}
+
+func trustFullJourneyScenario(t *testing.T, scenario string) {
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
 	previousWD, err := os.Getwd()
 	if err != nil {
@@ -57,13 +63,24 @@ func TestTrustFullJourney(t *testing.T) {
 
 	repo := t.TempDir()
 	initializeOrchestrationGitRepo(t, repo)
-	if err := os.MkdirAll(filepath.Join(repo, "docs", "specs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".tusker", "specs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, "docs", "specs", "journey.md"), []byte("# Locked journey decision\n\nOnly owned/journey.txt is implementation material.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".tusker", "specs", "journey.md"), []byte("---\nsubject: journey\npart_of: overview\n---\n# Locked journey decision\n\nOnly owned/journey.txt is implementation material.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runGitDir(t, repo, "add", "docs/specs/journey.md")
+	// The review must execute a real focused assertion, not label `true` as
+	// focused-test proof. This test is committed before either work attempt.
+	if err := writeText(filepath.Join(repo, "tests", "test_journey.py"), `from pathlib import Path
+import unittest
+
+class JourneyTest(unittest.TestCase):
+    def test_recovered_implementation(self):
+        self.assertEqual(Path("owned/journey.txt").read_text(), "recovered implementation\n")
+`); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", ".tusker/specs/journey.md", "tests/test_journey.py")
 	runGitDir(t, repo, "commit", "-m", "add locked journey specification")
 	if err := os.Chdir(repo); err != nil {
 		t.Fatal(err)
@@ -73,11 +90,15 @@ func TestTrustFullJourney(t *testing.T) {
 	trustJourneyCLI(t, vault, "init", "--vault", vault, "--yes", "--vault-only", "--no-mount")
 	plan := validDeliveryPlanV2()
 	plan.HumanGates = nil
-	plan.Scope, plan.Title, plan.SpecRefs = "trust-full-journey", "Trust full journey", []string{"docs/specs/journey.md"}
+	plan.Scope, plan.Title, plan.SpecRefs = "trust-full-journey", "Trust full journey", []string{".tusker/specs/journey.md"}
 	plan.Epic, plan.EpicContract = "", &deliveryEpicContract{SourceKey: "trust-full-journey", AcronymHint: "JNY", Title: "Trust full journey"}
 	plan.Requirements = []deliveryRequirement{{ID: "R1", Outcome: "The implementation is confined to its declared material."}, {ID: "R2", Outcome: "The dependent task follows the implementation."}}
+	verificationCommand := "python3 -m unittest discover -s tests -p test_journey.py && printf x >> verification-count"
+	if scenario == "verification changes implementation" {
+		verificationCommand += " && printf 'changed after review' > owned/journey.txt"
+	}
 	plan.Tasks = []deliveryPlanTask{
-		{SourceKey: "implement", RequirementRefs: []string{"R1"}, Title: "Implement declared material", Outcome: "Write the locked implementation.", Acceptance: []deliveryAcceptance{{ID: "A1", Outcome: "The declared implementation exists."}}, Verification: []deliveryVerification{{Covers: "A1", Check: "command: true"}}, Artifact: deliveryArtifactContract{Kind: "diff_summary", Path: "owned/journey.txt", Summary: "Journey implementation.", AcceptanceIDs: []string{"A1"}}, OwnedPaths: []string{"owned/journey.txt"}, Priority: "p1", Risk: "low"},
+		{SourceKey: "implement", RequirementRefs: []string{"R1"}, Title: "Implement declared material", Outcome: "Write the locked implementation.", Acceptance: []deliveryAcceptance{{ID: "A1", Outcome: "The declared implementation exists."}}, Verification: []deliveryVerification{{Covers: "A1", Check: "command: " + verificationCommand}}, Artifact: deliveryArtifactContract{Kind: "diff_summary", Path: "owned/journey.txt", Summary: "Journey implementation.", AcceptanceIDs: []string{"A1"}}, OwnedPaths: []string{"owned/journey.txt"}, Priority: "p1", Risk: "low"},
 		{SourceKey: "dependent-doc", RequirementRefs: []string{"R2"}, Title: "Follow the implementation", Outcome: "Stay outside the implementation frontier until it succeeds.", Acceptance: []deliveryAcceptance{{ID: "A1", Outcome: "The dependency is durable."}}, Verification: []deliveryVerification{{Covers: "A1", Check: "command: true"}}, Dependencies: []deliveryDependency{{Task: "implement", Kind: "hard"}}, Artifact: deliveryArtifactContract{Kind: "diff_summary", Path: "docs/followup.md", Summary: "Dependent follow-up.", AcceptanceIDs: []string{"A1"}}, OwnedPaths: []string{"docs/followup.md"}, Priority: "p1", Risk: "low"},
 	}
 	plan.ContextFingerprint = deliveryPlanV2ContextFingerprint(t, vault, plan)
@@ -96,7 +117,7 @@ func TestTrustFullJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := normalizeList(task.Data["owned_paths"]); strings.Join(got, ",") != "owned/journey.txt" || strings.Join(normalizeList(task.Data["spec_refs"]), ",") != "docs/specs/journey.md" {
+	if got := normalizeList(task.Data["owned_paths"]); strings.Join(got, ",") != "owned/journey.txt" || strings.Join(normalizeList(task.Data["spec_refs"]), ",") != ".tusker/specs/journey.md" {
 		t.Fatalf("delivery import lost declared material: %#v", task.Data)
 	}
 	dependent, err := resolveV7Note(vault, "JNY-T-0002", "task")
@@ -122,10 +143,10 @@ func TestTrustFullJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := store.FindRun(taskID)
-	if err != nil || run == nil || run.AttemptOutcome != string(AttemptOutcomeFailed) || run.LeaseState != string(LeaseStateReleased) {
+	runtimeRun, err := store.FindRun(taskID)
+	if err != nil || runtimeRun == nil || runtimeRun.AttemptOutcome != string(AttemptOutcomeFailed) || runtimeRun.LeaseState != string(LeaseStateReleased) {
 		_ = store.Close()
-		t.Fatalf("interruption did not release a recoverable session: run=%#v err=%v", run, err)
+		t.Fatalf("interruption did not release a recoverable session: run=%#v err=%v", runtimeRun, err)
 	}
 	_ = store.Close()
 
@@ -147,12 +168,12 @@ func TestTrustFullJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err = store.FindRun(taskID)
-	if err != nil || run == nil {
+	runtimeRun, err = store.FindRun(taskID)
+	if err != nil || runtimeRun == nil {
 		_ = store.Close()
-		t.Fatalf("submitted run unavailable: %#v err=%v", run, err)
+		t.Fatalf("submitted run unavailable: %#v err=%v", runtimeRun, err)
 	}
-	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	attempts, err := store.ListAttemptsForRun(runtimeRun.ProjectID, runtimeRun.RecordID)
 	_ = store.Close()
 	var succeeded RunAttempt
 	failed := false
@@ -169,11 +190,67 @@ func TestTrustFullJourney(t *testing.T) {
 	}
 	setAutomationV7TaskFields(t, vault, taskID, map[string]any{"source_sha": succeeded.EndState.HeadSHA})
 
+	// Import the actual source delta as durable, source-bound artifact evidence.
+	// This is not a test verdict; the pending command still runs in review.
+	diffPath := filepath.Join(".tusker", "scratch", taskID, "journey.diff")
+	if err := writeText(diffPath, gitDirOutput(t, recovered.Workspace, "diff", "HEAD^", "HEAD", "--", "owned/journey.txt")); err != nil {
+		t.Fatal(err)
+	}
+	trustJourneyCLI(t, vault, "evidence", "add", taskID, "--by", "agent:implementer", "--kind", "verification_summary", "--path", diffPath, "--covers", "A1", "--summary", "Source delta for the recovered implementation; command verification remains pending.")
+
 	review := trustJourneyPacket(t, trustJourneyCLI(t, vault, "work", "review", taskID, "--by", "reviewer:agent", "--source", "codex"))
-	if review.Action != "review" || review.Run == nil || review.Run.Lane != runLaneReview || review.ImplementationAttempt != succeeded.AttemptID || review.ImplementationActor != "agent:implementer" || review.MaterialFingerprint == "" || !strings.Contains(review.Next, "--material-fingerprint "+review.MaterialFingerprint) {
+	if review.Action != "review" || review.Run == nil || review.Run.Lane != runLaneReview || review.ImplementationAttempt != succeeded.AttemptID || review.ImplementationActor != "agent:implementer" || review.MaterialFingerprint == "" || review.VerificationManifest == "" || !strings.Contains(review.Next, "--confirm-verification "+review.VerificationManifest) || !strings.Contains(review.Next, "--material-fingerprint "+review.MaterialFingerprint) {
 		t.Fatalf("review packet omitted independent immutable provenance: %#v", review)
 	}
-	trustJourneyCLI(t, vault, "review", "submit", taskID, "--attempt", review.Run.ActiveAttemptID, "--by", "reviewer:agent", "--task-rev", stringField(closedTaskData(t, vault, taskID), "state_rev"), "--source-sha", succeeded.EndState.HeadSHA, "--work-rev", strconv.Itoa(review.Revision), "--proof-fingerprint", review.ProofFingerprint, "--gate-fingerprint", review.GateFingerprint, "--material-fingerprint", review.MaterialFingerprint, "--verdict", "pass", "--covers", "A1", "--summary", "independent review passed")
+	submit := []string{"review", "submit", taskID, "--attempt", review.Run.ActiveAttemptID, "--by", "reviewer:agent", "--task-rev", stringField(closedTaskData(t, vault, taskID), "state_rev"), "--source-sha", succeeded.EndState.HeadSHA, "--work-rev", strconv.Itoa(review.Revision), "--proof-fingerprint", review.ProofFingerprint, "--gate-fingerprint", review.GateFingerprint, "--material-fingerprint", review.MaterialFingerprint, "--confirm-verification", review.VerificationManifest, "--verdict", "pass", "--covers", "A1", "--summary", "independent review passed"}
+	if scenario == "stale verification confirmation" {
+		for i, arg := range submit {
+			if arg == "--confirm-verification" {
+				submit[i+1] = "sha256:stale"
+			}
+		}
+	}
+	if scenario != "source-bound command proof" {
+		command, args := parseCLI(append([]string{"tusker"}, submit...))
+		args["vault"], args["quiet"] = vault, "true"
+		_, refusal := run(command, args)
+		want := "implementation workspace material changed"
+		if scenario == "stale verification confirmation" {
+			want = "verification manifest changed"
+			if fileExists(filepath.Join(recovered.Workspace, "verification-count")) {
+				t.Fatal("stale confirmation executed a verification command")
+			}
+		}
+		if refusal == nil || !strings.Contains(refusal.Error(), want) {
+			t.Fatalf("unsafe review was not refused for %q: %v", want, refusal)
+		}
+		store, err := OpenRuntimeStore(DefaultStateRoot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		results, err := store.ListReviewResults(review.Run.ProjectID)
+		if err != nil || len(results) != 0 {
+			t.Fatalf("unsafe command persisted review authority: %#v err=%v", results, err)
+		}
+		current, err := resolveV7Note(vault, taskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := parseV7VerificationRows(current.Body)
+		if len(rows) != 1 || rows[0].Result != "pending" || stringField(current.Data, "status") == "done" {
+			t.Fatalf("unsafe command certified changed material: %#v", rows)
+		}
+		return
+	}
+	trustJourneyCLI(t, vault, submit...)
+	if count, err := os.ReadFile(filepath.Join(recovered.Workspace, "verification-count")); err != nil || string(count) != "x" {
+		t.Fatalf("review did not execute exactly once in the recorded implementation workspace: count=%q err=%v", count, err)
+	}
+	if fileExists(filepath.Join(repo, "verification-count")) {
+		t.Fatal("review ran verification in the base checkout")
+	}
+
 	trustJourneyCLI(t, vault, "close", taskID, "--by", "reviewer:agent", "--reason", "independent review and command proof passed")
 
 	closed, err := resolveV7Note(vault, taskID, "task")

@@ -117,7 +117,7 @@ func assertMaxLineWidthIndexTest(t *testing.T, output string, maxWidth int) {
 
 func pickupV7TestVault(t *testing.T) string {
 	t.Helper()
-	vault := filepath.Join(t.TempDir(), "vault")
+	vault := filepath.Join(t.TempDir(), defaultRepoVaultDir)
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}

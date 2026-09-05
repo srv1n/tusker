@@ -11,6 +11,7 @@ func TestTrustContextReuse(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stable context", "domains": "project", "v7": "true"}, newV7Task)
 	task := mustV7Task(t, vault, "APP-T-0001")
 	task.Data = cloneMap(task.Data)
+	task.Data["work_revision"] = 1
 	task.Data["source_sha"] = "sha256:" + strings.Repeat("d", 64)
 	idx := mustIndex(t, vault)
 

@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,12 +54,7 @@ var fakeACPBuild struct {
 func fakeACPBinary(t *testing.T) string {
 	t.Helper()
 	fakeACPBuild.Do(func() {
-		_, file, _, ok := runtime.Caller(0)
-		if !ok {
-			fakeACPBuild.err = errors.New("runtime.Caller failed")
-			return
-		}
-		root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+		root := repoRootForFreshCloneTest(t)
 		tmp, err := os.MkdirTemp("", "tusker-fake-acp-")
 		if err != nil {
 			fakeACPBuild.err = err

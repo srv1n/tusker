@@ -317,7 +317,11 @@ func reviewSubmitCmd(args Args) error {
 		return tuskerError(errorInvalidTransition, policyErr.Error())
 	}
 	if verdict == "pass" {
-		fresh, _, failures, execErr := executeV7CommandVerificationRows(vault, note, args, actor, false)
+		workspace, targetErr := reviewCommandVerificationWorkspace(store, vault, note, run)
+		if targetErr != nil {
+			return targetErr
+		}
+		fresh, _, failures, execErr := executeV7CommandVerificationRowsInWorkspace(vault, note, args, actor, false, workspace)
 		if execErr != nil {
 			return execErr
 		}
@@ -429,27 +433,33 @@ func activeReviewRunForAttempt(store *RuntimeStore, projectID, taskID string, at
 }
 
 func reviewAttemptMaterialFingerprint(store *RuntimeStore, projectID, recordID, attemptID string, workRevision int, source string) (string, error) {
+	_, material, err := reviewAttemptImplementation(store, projectID, recordID, attemptID, workRevision, source)
+	return material, err
+}
+
+func reviewAttemptImplementation(store *RuntimeStore, projectID, recordID, attemptID string, workRevision int, source string) (RunAttempt, string, error) {
 	var parentID string
 	if err := store.queryRowScan(`SELECT parent_attempt_id FROM attempts WHERE attempt_id=? AND project_id=? AND record_id=?`, []any{attemptID, projectID, recordID}, &parentID); err != nil {
-		return "", err
+		return RunAttempt{}, "", err
 	}
 	if strings.TrimSpace(parentID) == "" {
-		return "", tuskerError(errorInvalidTransition, "interactive review attempt is missing its implementation session")
+		return RunAttempt{}, "", tuskerError(errorInvalidTransition, "interactive review attempt is missing its implementation session")
 	}
 	attempts, err := store.ListAttemptsForRun(projectID, recordID)
 	if err != nil {
-		return "", err
+		return RunAttempt{}, "", err
 	}
 	for _, parent := range attempts {
 		if parent.AttemptID != parentID {
 			continue
 		}
 		if parent.Lane != runLaneExecute || parent.Outcome != string(AttemptOutcomeSucceeded) || parent.WorkRevision != workRevision || parent.EndState.HeadSHA != source {
-			return "", tuskerError(errorInvalidTransition, "interactive review implementation session no longer matches the reviewed work")
+			return RunAttempt{}, "", tuskerError(errorInvalidTransition, "interactive review implementation session no longer matches the reviewed work")
 		}
-		return verifiedImplementationWorkspaceMaterial(parent)
+		material, err := verifiedImplementationWorkspaceMaterial(parent)
+		return parent, material, err
 	}
-	return "", tuskerError(errorInvalidTransition, "interactive review implementation session is unavailable")
+	return RunAttempt{}, "", tuskerError(errorInvalidTransition, "interactive review implementation session is unavailable")
 }
 
 func validateInteractiveReviewIndependence(store *RuntimeStore, run RunStatus, attemptID, reviewer string, note Note) (string, error) {

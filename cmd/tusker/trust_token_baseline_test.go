@@ -3,17 +3,12 @@ package main
 import (
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestTrustTokenBaseline(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	repo := repoRootForFreshCloneTest(t)
 	script := filepath.Join(repo, "scripts", "measure-agent-workflows.py")
 	baseline := filepath.Join(repo, "docs", "reports", "agent-efficiency", "token-baseline.json")
 	fixtures := filepath.Join(repo, "docs", "reports", "agent-efficiency", "fixtures-v2.json")
