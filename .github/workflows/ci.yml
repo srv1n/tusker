@@ -31,7 +31,7 @@ jobs:
           git archive --format=tar.gz HEAD > "$RUNNER_TEMP/convergence-source.tar.gz"
           git rev-parse HEAD > "$RUNNER_TEMP/convergence-source.sha"
       - name: Retain source for failure reproduction
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: convergence-source
           path: |
@@ -73,7 +73,7 @@ jobs:
           exit "$status"
       - name: Retain focused test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: convergence-focused-results
           path: ${{ runner.temp }}/convergence-results
