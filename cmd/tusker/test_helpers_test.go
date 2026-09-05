@@ -47,7 +47,7 @@ func makeV7TaskDispatchableForTest(t *testing.T, vault, taskID string) {
 	data["next_owner"] = "agent"
 	// Dispatch fixtures represent governed work; keep the strict default's
 	// resolvable spec admission explicit without weakening production policy.
-	specPath := filepath.Join(v7RepoRoot(vault), "docs", "specs", "test-fixture.md")
+	specPath := filepath.Join(v7RepoRoot(vault), ".tusker", "specs", "test-fixture.md")
 	if err := ensureDir(filepath.Dir(specPath)); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func makeV7TaskDispatchableForTest(t *testing.T, vault, taskID string) {
 			t.Fatal(err)
 		}
 	}
-	data["spec_refs"] = []string{"docs/specs/test-fixture.md"}
+	data["spec_refs"] = []string{".tusker/specs/test-fixture.md"}
 	body = replaceSection(body, "## Intent", "Exercise the focused test task.")
 	body = replaceSection(body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Complete the focused test task. | Inline verification |")
 	body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused test proof. |")
