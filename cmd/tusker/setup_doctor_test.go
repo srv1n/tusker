@@ -23,7 +23,7 @@ func TestSetupDoctorRepairsStaleKurpodVaultRootIdempotently(t *testing.T) {
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
-	stale := filepath.Join(repo, "tusker")
+	stale := filepath.Join(repo, "missing-vault")
 	project := RegisteredProject{ProjectID: "kurpod", ProjectKey: "kurpod", Name: "kurpod", RepoRoot: repo, VaultRoot: stale, WorkflowPath: workflowPath(stale), Enabled: true}
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)
@@ -59,6 +59,7 @@ func TestSetupDoctorRepairsStaleKurpodVaultRootIdempotently(t *testing.T) {
 }
 
 func TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource(t *testing.T) {
+	t.Parallel()
 	sourceRoot := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, sourceRoot)
 	repo := t.TempDir()
@@ -101,6 +102,7 @@ func TestSetupDoctorRepairsGeneratedSkillInstallsFromCanonicalSource(t *testing.
 }
 
 func TestSetupDoctorRepairsLocallyModifiedSkillInstall(t *testing.T) {
+	t.Parallel()
 	sourceRoot := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, sourceRoot)
 	repo := t.TempDir()
@@ -133,6 +135,7 @@ func TestSetupDoctorRepairsLocallyModifiedSkillInstall(t *testing.T) {
 }
 
 func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		old  string
@@ -615,18 +618,15 @@ func TestRuntimeStoreReadOnlyRejectsWrites(t *testing.T) {
 	assertSnapshotEqual(t, before, snapshotTree(t, stateRoot), "read-only runtime database")
 }
 
-func TestSetupRepairConvergesForWrongRootValidStaleSymlinkAndZip(t *testing.T) {
+func TestSetupRepairConvergesForMissingRootAndZip(t *testing.T) {
 	stateRoot := t.TempDir()
 	repo := t.TempDir()
 	canonical := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, canonical)
 	installCanonicalSkillLinks(t, repo, filepath.Join(canonical, "skills", "tusker"))
 	writeValidHandoffFixture(t, repo)
-	legacy := filepath.Join(repo, "tusker")
-	if err := writeText(workflowPath(legacy), defaultWorkflowMarkdown()); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("tusker", filepath.Join(repo, ".tusker")); err != nil {
+	vault := filepath.Join(repo, defaultRepoVaultDir)
+	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
 	config, _, err := readHandoffConfig(filepath.Join(repo, ".chatgpt-handoff.json"))
@@ -644,7 +644,8 @@ func TestSetupRepairConvergesForWrongRootValidStaleSymlinkAndZip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpsertProject(RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: repo, VaultRoot: legacy, WorkflowPath: workflowPath(legacy), Enabled: true}); err != nil {
+	missingVault := filepath.Join(repo, "missing-vault")
+	if err := store.UpsertProject(RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: repo, VaultRoot: missingVault, WorkflowPath: workflowPath(missingVault), Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	_ = store.Close()
@@ -707,7 +708,6 @@ func TestSetupRepairConvergesForWrongRootValidStaleSymlinkAndZip(t *testing.T) {
 	if err := json.Unmarshal([]byte(second), &report); err != nil {
 		t.Fatal(err)
 	}
-	assertSetupFinding(t, report, "stale_vault_symlink", false)
 	if findingByCode(report, "stale_vault_root") != nil || findingByCode(report, "handoff_zip_config_stale") != nil {
 		t.Fatalf("repairable drift survived convergence: %#v", report.Findings)
 	}

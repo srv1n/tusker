@@ -53,12 +53,4 @@ if RELEASE_VERSION=v9.9.9 "$validator" --root "$tmp_root/releases" --print-dir >
 fi
 pass=$((pass + 1))
 
-mkdir -p "$tmp_root/releases/v8.8.8/stale"
-printf stale >"$tmp_root/releases/v8.8.8/stale/file"
-prepared=$(RELEASE_VERSION=v8.8.8 "$validator" --root "$tmp_root/releases" --prepare-dir --print-dir)
-[ "$prepared" = "$tmp_root/releases/v8.8.8" ] || fail 'prepare-dir returned the wrong path'
-[ -d "$tmp_root/releases/v8.8.8" ] || fail 'prepare-dir did not recreate the directory'
-[ ! -e "$tmp_root/releases/v8.8.8/stale/file" ] || fail 'prepare-dir retained stale contents'
-pass=$((pass + 1))
-
 printf 'PASS: %s release-version/path validation cases\n' "$pass"

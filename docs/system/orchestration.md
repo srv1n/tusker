@@ -3,6 +3,8 @@ title: "Orchestration"
 subject: orchestration
 part_of: overview
 status: canonical
+read_when: "Understanding scheduling, workspace preparation, or worker ownership."
+skip_when: "Authoring acceptance criteria or inspecting visual evidence."
 ---
 
 # Orchestration
@@ -36,6 +38,15 @@ live run.
 The project can use a shared checkout or a worktree. `WORKFLOW.md` stores the
 runner workspace policy. A worker must use the workspace that the claim
 assigns.
+
+Worktree and clone preparation must succeed in Git before the workspace is
+reported as prepared. A failed Git command returns its error and preserves
+preexisting files at the destination.
+
+Orphan cleanup checks active runtime ownership as well as the preparer's PID.
+A detached worker can outlive the daemon that prepared its workspace. If the
+runtime store is missing or unreadable, the copy stays counted toward the cap
+until ownership can be established.
 
 ## Interactive work
 

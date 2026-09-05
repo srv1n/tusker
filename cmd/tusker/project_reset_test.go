@@ -60,6 +60,24 @@ func TestResetPreservesSpecsAndRelaunchesV7Vault(t *testing.T) {
 	if got, err := os.ReadFile(docSpec); err != nil || string(got) != "# External spec\n" {
 		t.Fatalf("docs/specs changed: %q %v", got, err)
 	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatalf("load reset workflow: %v", err)
+	}
+	if wf.Data.Agents.Default != string(RunnerCodexExec) || wf.Data.Reviewer.Runner != string(RunnerCodexExec) {
+		t.Fatalf("reset seeded unavailable default runner: agents=%q reviewer=%q", wf.Data.Agents.Default, wf.Data.Reviewer.Runner)
+	}
+	if containsString(wf.Data.Agents.Enabled, string(RunnerCodexACP)) {
+		t.Fatalf("reset enabled unconfigured ACP: %v", wf.Data.Agents.Enabled)
+	}
+	for name, profile := range wf.Data.RunnerProfiles {
+		if profile.Harness == string(RunnerCodexACP) {
+			t.Fatalf("reset seeded ACP profile %s without ACP setup", name)
+		}
+	}
+	if _, _, err := runnerForName(string(RunnerCodexExec), wf.Data); err != nil {
+		t.Fatalf("reset did not seed an available default runner: %v", err)
+	}
 }
 
 func TestResetRefusesSymlinkedSpecsBeforeDeletion(t *testing.T) {

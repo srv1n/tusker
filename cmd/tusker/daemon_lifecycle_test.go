@@ -1082,6 +1082,7 @@ func TestDispatchRecordsProcessIdentity(t *testing.T) {
 		t.Skip("platform does not expose process start times")
 	}
 	vault := automationTestVault(t)
+	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	installCodexSleepShimForTest(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Identity", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")

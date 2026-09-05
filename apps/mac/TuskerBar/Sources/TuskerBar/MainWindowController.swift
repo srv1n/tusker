@@ -20,7 +20,9 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         let frame = NSRect(x: 0, y: 0, width: 1180, height: 780)
         window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         let content = WKUserContentController()
-        content.addUserScript(WKUserScript(source: PanelController.folderPickerScript(origin: PanelController.configuredOrigin(config.baseURL) ?? ""), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let origin = PanelController.configuredOrigin(config.baseURL) ?? ""
+        content.addUserScript(WKUserScript(source: PanelController.folderPickerScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        content.addUserScript(WKUserScript(source: PanelController.humanReceiptScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let webConfig = WKWebViewConfiguration()
         webConfig.userContentController = content
         webView = WKWebView(frame: frame, configuration: webConfig)
@@ -208,11 +210,31 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "tuskerShell", isConfiguredOrigin(webView.url), let payload = message.body as? [String: Any], payload["method"] as? String == "pickFolder", let requestID = payload["requestId"] as? String else { return }
-        let picker = NSOpenPanel()
-        PanelController.configureFolderPicker(picker)
-        picker.beginSheetModal(for: window) { [weak self] response in
-            self?.webView.evaluateJavaScript(PanelController.folderPickerResponseScript(requestID: requestID, path: response == .OK ? picker.url?.path : nil))
+        guard message.name == "tuskerShell", isConfiguredOrigin(webView.url), let payload = message.body as? [String: Any], let method = payload["method"] as? String else { return }
+        switch method {
+        case "pickFolder":
+            guard let requestID = payload["requestId"] as? String else { return }
+            let picker = NSOpenPanel()
+            PanelController.configureFolderPicker(picker)
+            picker.beginSheetModal(for: window) { [weak self] response in
+                self?.webView.evaluateJavaScript(PanelController.folderPickerResponseScript(requestID: requestID, path: response == .OK ? picker.url?.path : nil))
+            }
+        case "requestHumanReceipt":
+            guard let requestID = payload["requestId"] as? String else { return }
+            guard let projectID = payload["projectId"] as? String,
+                  let gateID = payload["gateId"] as? String,
+                  let action = payload["action"] as? String,
+                  let request = try? HumanReceiptRequest(projectID: projectID, gateID: gateID, action: action) else {
+                webView.evaluateJavaScript(PanelController.humanReceiptResponseScript(requestID: requestID, result: .error(HumanReceiptError.invalidRequest)))
+                return
+            }
+            Task { [weak self] in
+                guard let self else { return }
+                let result = await HumanDecisionReceiptController.shared.request(request, baseURL: self.config.baseURL, presenting: self.window)
+                _ = try? await self.webView.evaluateJavaScript(PanelController.humanReceiptResponseScript(requestID: requestID, result: result))
+            }
+        default:
+            return
         }
     }
 

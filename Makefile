@@ -22,7 +22,7 @@ VALIDATION_GATE := sh scripts/with-validation-lock.sh --
 .DEFAULT_GOAL := help
 
 .NOTPARALLEL: check-unlocked ui-check-unlocked
-.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-preview-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract release-artifacts tag-release codebasezip codebase zip
+.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-preview-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked test-fast test-fast-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked check-fast check-fast-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract release-artifacts tag-release codebasezip codebase zip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -98,6 +98,12 @@ test: ## Run Go tests
 test-unlocked:
 	GOMAXPROCS=$(GO_MAX_PROCS) go test -timeout=20m -p=$(GO_PACKAGE_PARALLELISM) -parallel=$(GO_TEST_PARALLELISM) ./...
 
+test-fast: ## Run Go tests with t.Parallel-marked unit tests overlapped (Go-only fast loop)
+	$(VALIDATION_GATE) $(MAKE) test-fast-unlocked
+
+test-fast-unlocked:
+	GOMAXPROCS=$(GO_MAX_PROCS) go test -timeout=20m -p=$(GO_PACKAGE_PARALLELISM) -parallel=4 ./...
+
 vet: ## Run go vet
 	$(VALIDATION_GATE) $(MAKE) vet-unlocked
 
@@ -118,6 +124,12 @@ check: ## Run the serialized UI + Go release-candidate gate
 
 check-unlocked: ui-check-unlocked
 	$(MAKE) fmt-check test-unlocked vet-unlocked validate-unlocked release-test build-go-unlocked
+
+check-fast: ## Fast Go-only gate: fmt + vet + parallel tests + build (skips UI, validate, release-test; use check for release)
+	$(VALIDATION_GATE) $(MAKE) check-fast-unlocked
+
+check-fast-unlocked:
+	$(MAKE) fmt-check vet-unlocked test-fast-unlocked build-go-unlocked
 
 release-test: ## Run offline release/install integrity fixtures
 	@set -eu; for test_script in scripts/tests/test-release-*.sh scripts/tests/test-mac-atomic-swap.sh; do sh "$$test_script"; done

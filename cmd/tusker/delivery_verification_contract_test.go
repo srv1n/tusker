@@ -190,8 +190,4 @@ func TestDeliveryVerificationContractAdoption(t *testing.T) {
 	if _, err := deliveryProofContractFromData(tampered); err == nil {
 		t.Fatal("mutable marker substitution was accepted")
 	}
-	legacy := deliveryPlan{}
-	if deliveryPlanRequiresStrictProofAuthority(legacy) {
-		t.Fatal("V1/direct legacy plan entered strict authority")
-	}
 }

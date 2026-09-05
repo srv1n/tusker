@@ -1,7 +1,6 @@
 // Package docgraph parses and validates the repository's canonical document
-// headers. It intentionally knows nothing about Tusker task records: docs,
-// specs, and decision logs are one small, shared corpus with different edge
-// fields.
+// headers. It keeps recognized tracker IDs external to the document corpus
+// while treating docs, specs, and decision logs as one shared corpus.
 package docgraph
 
 import (
@@ -242,6 +241,7 @@ func ValidateRepository(repoRoot string) ([]Issue, error) {
 			}
 		}
 	}
+	issues = append(issues, brokenLinkIssues(corpus)...)
 
 	sortIssues(issues)
 	return issues, nil
@@ -305,6 +305,7 @@ func ValidateCorpus(corpus Corpus) []Issue {
 			}
 		}
 	}
+	issues = append(issues, brokenLinkIssues(corpus)...)
 
 	sortIssues(issues)
 	return issues

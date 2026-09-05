@@ -1,0 +1,174 @@
+schema: tusker.delivery-plan/v2
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+scope: trust-release
+title: 'Trust wave 6: Demonstrate trust in an installed downstream pilot'
+epic: FLW
+spec_refs:
+- .tusker/specs/tusker-trust-and-efficiency.md
+context_fingerprint: sha256:0682facf5b14f789f95d05af9351d5706b28c3a7c025171ad41c97282d267fd1
+non_goals:
+- Do not dispatch workers, enable automation or publish as part of planning.
+- Do not omit contract content to meet a token target or substitute static evidence for live acceptance.
+- Do not duplicate CFX-T-0001 or the existing FLW-T-0002 through FLW-T-0005 repairs.
+requirements:
+- id: R1
+  outcome: The installed CLI, skills and UI pass the declared support matrix, including failure/recovery and measured
+    cost; release limitations are explicit.
+concurrency: 1
+summary: The installed CLI, skills and UI pass the declared support matrix, including failure/recovery and measured
+  cost; release limitations are explicit.
+tasks:
+- source_key: full-journey
+  title: Prove spec-to-task-to-execution-to-reviewed-proof end to end
+  outcome: 'Run a representative project from constraints and a locked decision through imported DAG, safe parallel
+    work, a real failure, recovery, independent review, evidence, closeout and documentation update. Token objective:
+    Report all retries and recovery context in the same cost ledger as the happy path.'
+  acceptance:
+  - id: A1
+    outcome: Run a representative project from constraints and a locked decision through imported DAG, safe parallel
+      work, a real failure, recovery, independent review, evidence, closeout and documentation update.
+  - id: A2
+    outcome: Inject stale plans, false artifacts, revoked authority, provider interruption and overlapping ownership.
+      Require zero unauthorized starts, lost changes, false completions or stale-review acceptance.
+  - id: A3
+    outcome: Make every failure actionable and resumable; publish an outcome/evidence matrix and distinguish deterministic
+      fixtures, compiled tests, live harness proof and human acceptance.
+  verification:
+  - covers: A1
+    check: 'command: go test ./e2e/contractconvergence -run "^TestContractConvergence$" -count=1 -v && go test ./e2e/crashrecovery -run "^TestSpecToWaveDelivery$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproducible offline
+      integration journey plus the supported live-provider journey; the full Go suite must be green or the release
+      fails.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestDeliveryPlanV2RefusesFrozenV1WaveContractSwap|TestV7LandingAuthorityRejectsForgedReceiptAndRuntimeRecord|TestV7FullGateProviderOutcomeJournalRejectsTampering)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproducible offline
+      integration journey plus the supported live-provider journey; the full Go suite must be green or the release
+      fails.'
+  - covers: A3
+    check: 'command: go test ./e2e/executionobservability -run "^TestExecutionObservability$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproducible offline
+      integration journey plus the supported live-provider journey; the full Go suite must be green or the release
+      fails.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/full-journey.md
+    summary: Reproducible offline integration journey plus the supported live-provider journey; the full Go suite
+      must be green or the release fails. Include actual commands, executed cases, revision, host, results and durable
+      artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - e2e/contractconvergence/contract_convergence_test.go
+  - e2e/crashrecovery/crash_recovery_test.go
+  - docs/reports/trust-evidence/full-journey.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: human-receipts
+    kind: hard
+    scope: trust-contracts
+  - task: proof-categories
+    kind: hard
+    scope: trust-proof
+  - task: review-closeout
+    kind: hard
+    scope: trust-proof
+  - task: workspace-recovery
+    kind: hard
+    scope: trust-execution
+  - task: adapter-contract
+    kind: hard
+    scope: trust-execution
+  - task: fresh-agent
+    kind: hard
+    scope: trust-experience
+  - task: daemon-process
+    kind: hard
+    scope: trust-execution
+  - task: enforcement-lint
+    kind: hard
+    scope: trust-contracts
+  - task: docs-lifecycle
+    kind: hard
+    scope: trust-experience
+- source_key: installed-pilot
+  title: Validate installation, upgrades and a real downstream pilot
+  outcome: 'Validate shipped binary, installed skill and Mac bundle versions together from a fresh install and an
+    existing-project upgrade; preserve task/spec/proof identities and data with a tested recovery path. Token objective:
+    Compare actual pilot context/usage with W0 fixtures and retain uncertainty where provider accounting is absent.'
+  acceptance:
+  - id: A1
+    outcome: Validate shipped binary, installed skill and Mac bundle versions together from a fresh install and
+      an existing-project upgrade; preserve task/spec/proof identities and data with a tested recovery path.
+  - id: A2
+    outcome: Run at least one real downstream repository with bounded concurrency and explicit supported harness/version
+      matrix. Any missing credentials, spend authorization or subjective acceptance becomes a specific real gate
+      when encountered.
+  - id: A3
+    outcome: 'Publish go/no-go evidence: all required tests pass, no unresolved trust/data-loss defect, no hidden
+      unavailable capability, fresh-agent journey succeeds, token targets pass and human proof is inspectable. Repeat
+      the affected gate after a fix; do not rerun unrelated expensive suites.'
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^(TestFreshCloneBaselineCLIRunsHelpAndV7Init|TestInstalledCapabilityManifest|TestSkillBundleProvenanceIsPortable)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Installed-runtime
+      smoke and upgrade preservation checks, pilot transcripts, artifact inspection and a signed-off release checklist
+      tied to exact versions.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestInstallCommandInstallsRepoSkillsWithoutBinary|TestInstallCommandCopyModeMaterializesRepoSkills|TestSkillBundleMaterializesPortableCopies)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Installed-runtime
+      smoke and upgrade preservation checks, pilot transcripts, artifact inspection and a signed-off release checklist
+      tied to exact versions.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestInstalledCapabilityManifest|TestSkillBundleProvenanceIsPortable|TestV7FullGateProviderFixtureReceiptSatisfiesLifecycleContract)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Installed-runtime
+      smoke and upgrade preservation checks, pilot transcripts, artifact inspection and a signed-off release checklist
+      tied to exact versions.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/installed-pilot.md
+    summary: Installed-runtime smoke and upgrade preservation checks, pilot transcripts, artifact inspection and
+      a signed-off release checklist tied to exact versions. Include actual commands, executed cases, revision,
+      host, results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - scripts
+  - cmd/tusker/install_test.go
+  - cmd/tusker/capabilities_cmd_test.go
+  - cmd/tusker/skill_provenance_test.go
+  - docs/reports/trust-evidence/installed-pilot.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: full-journey
+    kind: hard
+  - task: graph-ui
+    kind: hard
+    scope: trust-experience
+owned_path_overlaps:
+- source_key: full-journey--installed-pilot
+  tasks:
+  - full-journey
+  - installed-pilot
+  paths:
+  - docs/reports/trust-release
+  strategy: serialize

@@ -45,7 +45,7 @@ func TestV7NewTaskRejectsLegacyTaskIDBeforeWriting(t *testing.T) {
 func TestV7GeneratedTaskIDSkipsConfiguredLegacyRootCollision(t *testing.T) {
 	repo := t.TempDir()
 	vault := filepath.Join(repo, "tusker")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "legacy_task_roots:\n  - legacy/tasks\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "legacy_task_roots:\n  - legacy/tasks\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -134,7 +134,7 @@ func TestV7ProtectedActiveStatusExplainsAttemptFlowAndCapsuleRuntime(t *testing.
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {

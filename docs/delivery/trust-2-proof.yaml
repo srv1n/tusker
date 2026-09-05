@@ -1,0 +1,217 @@
+schema: tusker.delivery-plan/v2
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+scope: trust-proof
+title: 'Trust wave 2: Make completion claims enforceable'
+epic: FLW
+spec_refs:
+- .tusker/specs/tusker-trust-and-efficiency.md
+context_fingerprint: sha256:70e1893b5173470b9e076a288f35be553718d5d93cce8096132a41a0d60dc18d
+non_goals:
+- Do not dispatch workers, enable automation or publish as part of planning.
+- Do not omit contract content to meet a token target or substitute static evidence for live acceptance.
+- Do not duplicate CFX-T-0001 or the existing FLW-T-0002 through FLW-T-0005 repairs.
+requirements:
+- id: R1
+  outcome: Completion requires current, criterion-covered artifacts and an independent review; wrong, missing or
+    stale proof cannot close a task.
+concurrency: 1
+summary: Completion requires current, criterion-covered artifacts and an independent review; wrong, missing or stale
+  proof cannot close a task.
+tasks:
+- source_key: artifact-contract
+  title: Bind proof to the promised artifact and current task
+  outcome: 'Enforce the existing artifact contract: required kind, acceptance coverage, path policy, readable durable
+    artifact and applicable task/code revision. Unrelated artifact-bearing evidence cannot satisfy it. Token objective:
+    Return missing criterion IDs and exact repair actions rather than replaying all evidence.'
+  acceptance:
+  - id: A1
+    outcome: 'Enforce the existing artifact contract: required kind, acceptance coverage, path policy, readable
+      durable artifact and applicable task/code revision. Unrelated artifact-bearing evidence cannot satisfy it.'
+  - id: A2
+    outcome: Reject unknown proof requirement classes when authored with an actionable error; legacy handling is
+      explicit and never quietly treated as passing.
+  - id: A3
+    outcome: Missing, replaced, stale, mismatched-type and out-of-scope artifacts fail completion; successful evidence
+      survives scratch cleanup and records a hash or equivalent immutable identity.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustArtifactContract$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Public close attempts
+      with each invalid artifact and one valid artifact; preserve evidence ordering and CAS recovery invariants.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustArtifactContract$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Public close attempts
+      with each invalid artifact and one valid artifact; preserve evidence ordering and CAS recovery invariants.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^TestTrustArtifactContract$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Public close attempts
+      with each invalid artifact and one valid artifact; preserve evidence ordering and CAS recovery invariants.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/artifact-contract.md
+    summary: Public close attempts with each invalid artifact and one valid artifact; preserve evidence ordering
+      and CAS recovery invariants. Include actual commands, executed cases, revision, host, results and durable
+      artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/v7_proof_cmd.go
+  - cmd/tusker/trust_artifact_contract_test.go
+  - docs/reports/trust-evidence/artifact-contract.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: preflight
+    kind: hard
+    scope: trust-contracts
+  - task: handoff
+    kind: hard
+    scope: trust-contracts
+- source_key: proof-categories
+  title: Define useful visual, performance, backend and migration proof
+  outcome: 'Visual changes require comparable before/after views; new UI needs an after view plus stated absence
+    of a baseline. Performance proof includes before/after workload, units, method, environment and revision. Token
+    objective: Small typed summaries link to full evidence; avoid screenshot/log dumps in every agent context.'
+  acceptance:
+  - id: A1
+    outcome: Visual changes require comparable before/after views; new UI needs an after view plus stated absence
+      of a baseline. Performance proof includes before/after workload, units, method, environment and revision.
+  - id: A2
+    outcome: Backend proof covers observable behavior and relevant negative cases; migration proof checks preservation,
+      interruption and recovery/rollback expectations using realistic data.
+  - id: A3
+    outcome: Use existing artifact/evidence records with only fields needed to validate these requirements; automated
+      checks establish structure and provenance, while subjective quality remains an explicit acceptance decision.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustProofCategories$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: One passing and one
+      materially misleading failing fixture for each category, including a benchmark whose workload changed and
+      a migration losing data.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustProofCategories$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: One passing and one
+      materially misleading failing fixture for each category, including a benchmark whose workload changed and
+      a migration losing data.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^TestTrustProofCategories$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: One passing and one
+      materially misleading failing fixture for each category, including a benchmark whose workload changed and
+      a migration losing data.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/proof-categories.md
+    summary: One passing and one materially misleading failing fixture for each category, including a benchmark
+      whose workload changed and a migration losing data. Include actual commands, executed cases, revision, host,
+      results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/v7_proof_cmd.go
+  - docs/system/proof-and-closeout.md
+  - cmd/tusker/trust_proof_categories_test.go
+  - docs/reports/trust-evidence/proof-categories.md
+  domains:
+  - project
+  complexity: standard
+  risk: medium
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: artifact-contract
+    kind: hard
+- source_key: review-closeout
+  title: Require fresh independent review and readable completion receipts
+  outcome: 'A review is bound to the reviewed material and evidence; subsequent meaningful changes invalidate it,
+    and the implementing attempt cannot masquerade as independent review. Token objective: Review packets contain
+    current relevant evidence once, with drilldown for logs.'
+  acceptance:
+  - id: A1
+    outcome: A review is bound to the reviewed material and evidence; subsequent meaningful changes invalidate it,
+      and the implementing attempt cannot masquerade as independent review.
+  - id: A2
+    outcome: A reviewer sees full relevant acceptance and proof without unrelated history; unresolved findings prevent
+      close and rework clears the obsolete approval.
+  - id: A3
+    outcome: The final human receipt lists outcomes, exact checks, artifact links, remaining limitations and human
+      gates; wave totals never relabel or inflate proof.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustReviewCloseout$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Implement-review-edit-close
+      and reject-rework-review-close walkthroughs, plus rendered/readable completion receipt inspection.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustReviewCloseout$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Implement-review-edit-close
+      and reject-rework-review-close walkthroughs, plus rendered/readable completion receipt inspection.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^TestTrustReviewCloseout$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Implement-review-edit-close
+      and reject-rework-review-close walkthroughs, plus rendered/readable completion receipt inspection.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/review-closeout.md
+    summary: Implement-review-edit-close and reject-rework-review-close walkthroughs, plus rendered/readable completion
+      receipt inspection. Include actual commands, executed cases, revision, host, results and durable artifact
+      links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/v7_proof_cmd.go
+  - cmd/tusker/v7_wave_brief.go
+  - cmd/tusker/trust_review_closeout_test.go
+  - docs/reports/trust-evidence/review-closeout.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: artifact-contract
+    kind: hard
+  - task: human-receipts
+    kind: hard
+    scope: trust-contracts
+  - task: proof-categories
+    kind: hard
+owned_path_overlaps:
+- source_key: artifact-contract--proof-categories
+  tasks:
+  - artifact-contract
+  - proof-categories
+  paths:
+  - cmd/tusker/v7_proof_cmd.go
+  strategy: serialize
+- source_key: artifact-contract--review-closeout
+  tasks:
+  - artifact-contract
+  - review-closeout
+  paths:
+  - cmd/tusker/v7_proof_cmd.go
+  strategy: serialize
+- source_key: proof-categories--review-closeout
+  tasks:
+  - proof-categories
+  - review-closeout
+  paths:
+  - cmd/tusker/v7_proof_cmd.go
+  strategy: serialize

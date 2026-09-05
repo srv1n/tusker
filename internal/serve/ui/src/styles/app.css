@@ -43,7 +43,7 @@
 
   /* Type families — self-hosted via @fontsource (no CDN) */
   --font-sans: "Archivo", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
-  --font-serif: "Archivo", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Motion */
@@ -51,62 +51,62 @@
   --animate-pulse-soft: tkPulse 1.4s ease-in-out infinite;
 }
 
-/* ---- Light (from design) ---- */
+/* ---- Light (Modern neutral slate/zinc canvas) ---- */
 :root {
-  --k-surface: #fbfaf7;
-  --k-panel: #f2f0e9;
+  --k-surface: #f9fafb;
+  --k-panel: #f3f4f6;
   --k-raised: #ffffff;
-  --k-ink: #15140f;
-  --k-ink-soft: #302f29;
-  --k-muted: #625f55;
-  --k-faint: #8c897f;
-  --k-fainter: #aaa69b;
+  --k-ink: #09090b;
+  --k-ink-soft: #27272a;
+  --k-muted: #71717a;
+  --k-faint: #a1a1aa;
+  --k-fainter: #d4d4d8;
 
-  --k-line: #c9c5b8;
-  --k-line-soft: #e7e4db;
-  --k-hover: #ebe8df;
-  --k-active: #dedbd1;
+  --k-line: #e4e4e7;
+  --k-line-soft: #f4f4f5;
+  --k-hover: #f4f4f5;
+  --k-active: #e4e4e7;
 
-  --k-fail: #b23b2c;
-  --k-fail-soft: #f7e8e3;
-  --k-pass: #2e7a5a;
-  --k-pass-soft: #e3f0e8;
-  --k-warn: #8c5d14;
-  --k-warn-soft: #f4ead7;
-  --k-info: #2f5ca8;
-  --k-info-soft: #e3eaf5;
-  --k-accent: #6550a8;
-  --k-accent-soft: #ece8f6;
+  --k-fail: #dc2626;
+  --k-fail-soft: #fef2f2;
+  --k-pass: #059669;
+  --k-pass-soft: #ecfdf5;
+  --k-warn: #d97706;
+  --k-warn-soft: #fffbeb;
+  --k-info: #2563eb;
+  --k-info-soft: #eff6ff;
+  --k-accent: #7c3aed;
+  --k-accent-soft: #f5f3ff;
 
   color-scheme: light;
 }
 
-/* ---- Dark (derived) ---- */
+/* ---- Dark (Deep, crisp zinc & vibrant semantics) ---- */
 :root[data-theme="dark"] {
-  --k-surface: #0e0e11;
-  --k-panel: #16161a;
-  --k-raised: #1b1b20;
-  --k-ink: #f0f0f2;
-  --k-ink-soft: #d8d8dc;
-  --k-muted: #a2a2aa;
-  --k-faint: #74747e;
-  --k-fainter: #565660;
+  --k-surface: #09090b;
+  --k-panel: #111114;
+  --k-raised: #18181b;
+  --k-ink: #fafafa;
+  --k-ink-soft: #e4e4e7;
+  --k-muted: #a1a1aa;
+  --k-faint: #71717a;
+  --k-fainter: #3f3f46;
 
-  --k-line: #2a2a31;
-  --k-line-soft: #232329;
-  --k-hover: #212127;
-  --k-active: #2a2a31;
+  --k-line: #27272a;
+  --k-line-soft: #1e1e24;
+  --k-hover: #1e1e24;
+  --k-active: #27272a;
 
-  --k-fail: #e5674f;
-  --k-fail-soft: #3a1e1a;
-  --k-pass: #4cae82;
-  --k-pass-soft: #172b22;
-  --k-warn: #d9a441;
-  --k-warn-soft: #302713;
-  --k-info: #5b8def;
-  --k-info-soft: #16233d;
-  --k-accent: #8f7fea;
-  --k-accent-soft: #221f3a;
+  --k-fail: #ef4444;
+  --k-fail-soft: #450a0a;
+  --k-pass: #10b981;
+  --k-pass-soft: #064e3b;
+  --k-warn: #f59e0b;
+  --k-warn-soft: #451a03;
+  --k-info: #3b82f6;
+  --k-info-soft: #172554;
+  --k-accent: #a78bfa;
+  --k-accent-soft: #2e1065;
 
   color-scheme: dark;
 }
@@ -114,30 +114,30 @@
 /* System-following when the user hasn't pinned a theme. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --k-surface: #0e0e11;
-    --k-panel: #16161a;
-    --k-raised: #1b1b20;
-    --k-ink: #f0f0f2;
-    --k-ink-soft: #d8d8dc;
-    --k-muted: #a2a2aa;
-    --k-faint: #74747e;
-    --k-fainter: #565660;
+    --k-surface: #09090b;
+    --k-panel: #111114;
+    --k-raised: #18181b;
+    --k-ink: #fafafa;
+    --k-ink-soft: #e4e4e7;
+    --k-muted: #a1a1aa;
+    --k-faint: #71717a;
+    --k-fainter: #3f3f46;
 
-    --k-line: #2a2a31;
-    --k-line-soft: #232329;
-    --k-hover: #212127;
-    --k-active: #2a2a31;
+    --k-line: #27272a;
+    --k-line-soft: #1e1e24;
+    --k-hover: #1e1e24;
+    --k-active: #27272a;
 
-    --k-fail: #e5674f;
-    --k-fail-soft: #3a1e1a;
-    --k-pass: #4cae82;
-    --k-pass-soft: #172b22;
-    --k-warn: #d9a441;
-    --k-warn-soft: #302713;
-    --k-info: #5b8def;
-    --k-info-soft: #16233d;
-    --k-accent: #8f7fea;
-    --k-accent-soft: #221f3a;
+    --k-fail: #ef4444;
+    --k-fail-soft: #450a0a;
+    --k-pass: #10b981;
+    --k-pass-soft: #064e3b;
+    --k-warn: #f59e0b;
+    --k-warn-soft: #451a03;
+    --k-info: #3b82f6;
+    --k-info-soft: #172554;
+    --k-accent: #a78bfa;
+    --k-accent-soft: #2e1065;
 
     color-scheme: dark;
   }
@@ -204,18 +204,20 @@
   }
 }
 
-/* Thin control-room scrollbars (design: .tk-scroll). */
+/* Thin modern scrollbars (.tk-scroll). */
 .tk-scroll::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
+}
+.tk-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 .tk-scroll::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--k-ink) 15%, transparent);
-  border: 3px solid var(--k-surface);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--k-ink) 12%, transparent);
+  border-radius: 9999px;
 }
 .tk-scroll::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--k-ink) 28%, transparent);
+  background: color-mix(in srgb, var(--k-ink) 25%, transparent);
 }
 
 @keyframes tkIn {
@@ -696,4 +698,24 @@
    default block margins since `.tk-mermaid-nv` already provides them. */
 .tk-prose .tk-mermaid-source {
   margin: 0;
+}
+
+/* Knowledge graph map: SVG nodes are real keyboard links, so the focus ring
+   needs to remain visible against both light and dark raised surfaces. */
+.kg-node:focus-visible rect:nth-of-type(2) {
+  stroke: var(--k-accent);
+  stroke-width: 2.5;
+}
+
+.kg-mermaid {
+  display: flex;
+  justify-content: center;
+  min-height: 12rem;
+  overflow: auto;
+}
+
+.kg-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }

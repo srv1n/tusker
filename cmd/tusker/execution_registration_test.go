@@ -180,7 +180,7 @@ func TestDirectExecutionLaunchGuard(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, "tusker.yaml"), []byte("project_id: project-cloud\n"), 0o600); err != nil {
+	if err := os.WriteFile(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), []byte("project_id: project-cloud\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cloudState := filepath.Join(t.TempDir(), "cloud-state")

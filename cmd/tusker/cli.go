@@ -230,7 +230,7 @@ func runInner(command string, args Args) (int, error) {
 		return 0, discardV7Cmd(args)
 	case "next":
 		return 0, nextCmd(args)
-	case "work start", "work status", "work heartbeat", "work submit", "work fail", "work release":
+	case "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review":
 		return 0, workSessionCmd(args, strings.TrimPrefix(command, "work "))
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		return 0, executionCmd(args, strings.TrimSpace(strings.TrimPrefix(command, "execution")))
@@ -411,8 +411,6 @@ func runInner(command string, args Args) (int, error) {
 		return 0, migrateV7EvidencePolicyCmd(args)
 	case "migrate close-policy":
 		return 0, migrateClosePolicyCmd(args)
-	case "migrate vault-root":
-		return 0, migrateVaultRootCmd(args)
 	case "reindex":
 		return 0, reindex(args)
 	case "reset", "relaunch":
@@ -654,9 +652,6 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nil
 	case "help actor", "help actor correction":
 		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
-		return 0, nil
-	case "help migrate vault-root":
-		printMigrateVaultRootHelp()
 		return 0, nil
 	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave brief", "help wave preflight", "help wave arm", "help wave pause", "help wave resume", "help wave disarm", "help wave refingerprint", "help wave re-fingerprint", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate":
 		printV7Help()
@@ -904,7 +899,7 @@ func printCommandHelp(command string) bool {
 		printDiscardHelp()
 	case "next":
 		printNextHelp()
-	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release":
+	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review":
 		printWorkSessionHelp()
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		printExecutionHelp()
@@ -912,8 +907,6 @@ func printCommandHelp(command string) bool {
 		printClaimHelp()
 	case "evidence":
 		printEvidenceHelp()
-	case "migrate vault-root":
-		printMigrateVaultRootHelp()
 	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "wave refingerprint", "wave re-fingerprint", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
 	case "handoff", "finish", "gate", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy", "migrate close-policy":
@@ -1158,8 +1151,9 @@ func printV7Help() {
   tusker new epic --acronym APP --title "App foundation"
   tusker new task --epic APP --title "Add login"
   tusker new gate --blocks APP-T-0001 --kind auth --owner human:sarav --action "Provision credentials." --verification "The provider reports ready."
-  tusker verify add APP-T-0001 --covers A1 --check "go test ./..." --result pass
-  tusker status APP-T-0001 review --reason "Proof is complete."
+  tusker verify add APP-T-0001 --covers A1 --check "command: go test ./..." --result pending
+  tusker attempt handoff APP-T-0001
+  tusker finish APP-T-0001 --request-review
   tusker review submit APP-T-0001 ...
   tusker close APP-T-0001
   tusker wave preflight W-0001 --json
@@ -1171,30 +1165,11 @@ func printV7Help() {
   tusker delivery start --plan .tusker/scratch/delivery-plan.yaml --confirm sha256:<fingerprint> --by human:<name>
   tusker migrate evidence-policy [--write] [--json]
   tusker migrate close-policy [--write] [--json]
-  tusker migrate vault-root --to .tusker [--dry-run] [--json]
 
 Purpose:
   Manage repository work records, proof, gates, review, delivery, and closeout.
   A Tusker delivery plan is inert until an authorized final start.
   Planning, review, import, and preflight do not dispatch work.`)
-}
-
-func printMigrateVaultRootHelp() {
-	fmt.Println(`Usage:
-  tusker migrate vault-root --to .tusker [--vault <path>] [--dry-run] [--json]
-
-Purpose:
-  Explicitly move a repo-local Tusker vault, update .tusker/config.yaml storage roots,
-  and refresh managed AGENTS.md / CLAUDE.md pointer blocks.
-
-Behavior:
-  - never runs as part of normal commands or init
-  - warns when the Git worktree is dirty
-  - errors if the destination already exists
-
-Examples:
-  tusker migrate vault-root --to .tusker --dry-run
-  tusker migrate vault-root --to .tusker`)
 }
 
 func printProjectsHelp() {
@@ -1287,6 +1262,7 @@ func printWorkSessionHelp() {
   tusker work submit <task-id> --by <agent> --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass> [--json]
   tusker work fail <task-id> --by <agent> --reason <text> [--json]
   tusker work release <task-id> --by <agent> --reason <text> [--json]
+  tusker work review <task-id> --by reviewer:<name> [--source codex|claude|tusker_cli] [--json]
 
 Purpose:
   The canonical runtime ownership protocol for interactive tracked work.
@@ -1460,7 +1436,7 @@ artifacts are left untouched; run tusker docs map after review. --apply and
 func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
-  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--spec-refs <csv>] [--evidence-required automated_test]
+  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 
@@ -1473,7 +1449,8 @@ Notes:
 
 Examples:
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
-  tusker new task --vault ./.tusker --epic APP --title "Implement auth" --risk medium --size m
+  tusker new task --vault ./.tusker --epic APP --title "Implement auth" --risk medium --size m \
+    --spec-refs .tusker/specs/auth.md --owned-paths cmd/auth.go,internal/auth --generated-outputs internal/auth/openapi.gen.go
   tusker new gate --vault ./.tusker --blocks APP-T-0001 --kind auth --owner human:sarav \
     --action "Provision staging OAuth credentials." \
     --verification "Provider ready check passes." \
@@ -1560,8 +1537,8 @@ Scratch retention:
 
 func printVerifyHelp() {
 	fmt.Println(`Usage:
-  tusker verify add <task-id> --covers A1,A2 --check <command-or-manual-check> --result pass|fail|blocked|skipped|waived [--note <text>]
-  tusker verify add <task-id> --rows "A1|go test ./pkg|pass|note"
+  tusker verify add <task-id> --covers A1,A2 --check <command-or-manual-check> --result pending|blocked|skipped|waived [--note <text>]
+  tusker verify add <task-id> --rows "A1|command: go test ./pkg|pending|note"
   tusker verify add <task-id> --batch-file <path>
   tusker verify remove <task-id> --index <one-based-row>
   tusker verify recipe <task-id> [--files <path[,path...]>]
@@ -1569,7 +1546,8 @@ func printVerifyHelp() {
   tusker verify --id <id> [--vault <path>] [--by <name>] [--summary <text>]
 
 Purpose:
-  Add inline verification rows or suggest scoped verification recipes.
+  Add inline verification rows or suggest scoped verification recipes. Command
+  rows start pending; the verification executor records their pass or fail.
 
 Options:
   --blocked-by <path|task|owner>  Required with --result blocked; attributes external/shared blockers.

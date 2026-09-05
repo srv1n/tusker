@@ -232,7 +232,7 @@ func TestClosePolicyMigration(t *testing.T) {
 	if err := writeText(workflowPath(vault), fm+"\n"+body); err != nil {
 		t.Fatal(err)
 	}
-	legacyConfigPath := filepath.Join(root, "tusker.yaml")
+	legacyConfigPath := managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir))
 	legacyConfig := "close_policy:\n  high:\n    required_acceptor: human\n  critical:\n    required_acceptor: human\n    required_gates: [release, security]\n"
 	if err := writeText(legacyConfigPath, legacyConfig); err != nil {
 		t.Fatal(err)

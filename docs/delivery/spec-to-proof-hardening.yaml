@@ -1,0 +1,96 @@
+schema: tusker.delivery-plan/v2
+scope: spec-to-proof-hardening
+title: Core workflow hardening
+epic: FLW
+spec_refs:
+    - .tusker/specs/spec-to-proof.md
+context_fingerprint: sha256:15c94d371355c925a32c85941038eefd30f0df1c117ccb8d98e8b427016c2b90
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+non_goals:
+  - Do not redesign the Mac interface or alter its existing working changes.
+  - Do not enable automation, start provider workers, install, or publish a release.
+requirements:
+  - id: R2
+    outcome: Typed visual evidence cannot be substituted by a filename or promised artifact type.
+  - id: R3
+    outcome: Failed Git workspace preparation cannot launch a worker in an empty directory or delete unrelated files.
+  - id: R4
+    outcome: A document can be discovered from its read guidance and exposes its skip guidance.
+concurrency: 1
+summary: Repair typed evidence, workspace preparation, and document discovery.
+tasks:
+  - source_key: typed-evidence
+    title: Keep visual proof and displayed artifact types honest
+    outcome: A test attachment cannot masquerade as a screenshot, recording, or trace.
+    acceptance:
+      - id: A1
+        outcome: Screenshot, video, and trace requirements use the evidence type and wave summaries never borrow the promised artifact kind.
+    verification:
+      - covers: A1
+        check: 'command: go test ./cmd/tusker -run "TestV7ProofCategoryRequiresTypedEvidenceKind|TestWaveArtifactsDoNotBorrowPromisedEvidenceKind" -count=1'
+    artifact:
+      kind: diff_summary
+      path: cmd/tusker/v7_proof_evidence_kind_test.go
+      summary: Runnable regression showing filenames and promises do not replace actual evidence types.
+      acceptance_ids: [A1]
+    owned_paths:
+      - cmd/tusker/v7_proof_cmd.go
+      - cmd/tusker/v7_proof_evidence_kind_test.go
+      - cmd/tusker/v7_wave_brief.go
+      - cmd/tusker/v7_wave_artifact_kind_test.go
+    domains: [project]
+    complexity: standard
+    risk: medium
+    priority: p1
+    size: s
+    requirement_refs: [R2]
+  - source_key: workspace-failure
+    title: Refuse failed or unsafe workspace preparation
+    outcome: A worker receives a prepared repository or an actionable failure; unrelated files survive.
+    acceptance:
+      - id: A1
+        outcome: Invalid Git setup fails and a preexisting unowned directory is preserved.
+    verification:
+      - covers: A1
+        check: 'command: go test ./cmd/tusker -run TestWorkspacePrepare -count=1'
+    artifact:
+      kind: diff_summary
+      path: cmd/tusker/workspace_prepare_failure_test.go
+      summary: Real temporary Git repositories exercise invalid-base and path-preservation behavior.
+      acceptance_ids: [A1]
+    owned_paths:
+      - cmd/tusker/workspace_manager.go
+      - cmd/tusker/workspace_prepare_failure_test.go
+    domains: [project]
+    complexity: standard
+    risk: medium
+    priority: p1
+    size: s
+    requirement_refs: [R3]
+  - source_key: document-discovery
+    title: Discover documents from their reading guidance
+    outcome: Search finds relevant document metadata and shows readers when to skip a result.
+    acceptance:
+      - id: A1
+        outcome: A read-guidance-only query finds the document and search results retain read and skip guidance.
+    verification:
+      - covers: A1
+        check: 'command: go test ./internal/docgraph ./cmd/tusker -run "TestFind|TestDocsFind" -count=1'
+    artifact:
+      kind: diff_summary
+      path: internal/docgraph/search_test.go
+      summary: Metadata-only search and compact output regressions.
+      acceptance_ids: [A1]
+    owned_paths:
+      - internal/docgraph/search.go
+      - internal/docgraph/search_test.go
+      - cmd/tusker/docs_cmd.go
+      - cmd/tusker/docs_find_capsule_test.go
+    domains: [project]
+    complexity: standard
+    risk: low
+    priority: p2
+    size: s
+    requirement_refs: [R4]

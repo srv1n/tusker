@@ -28,7 +28,7 @@ func TestV7CapsuleValidateCommandWarnsAndFailsByBudget(t *testing.T) {
 	if err := bootstrapV7Profile(vault, "v7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "validation:\n  capsule_token_budget: 40\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 40\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := knowledgeV7NewCmd(Args{"vault": vault, "quiet": "true", "node": "project/runbooks/capsule-route", "kind": "runbook", "title": "Capsule Route", "summary": "Route by capsule.", "v7": "true"}); err != nil {

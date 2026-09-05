@@ -92,9 +92,9 @@ func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
 	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "RUN.md"))
 	for _, required := range []string{
-		"Anything the task, spec, or a linked decision already settles is settled",
-		"subjective acceptance (UX feel, brand, legal)",
-		"risk alone is not a gate",
+		"A gate records one missing human fact",
+		"subjective acceptance (UX, brand, legal)",
+		"Settled facts and risk alone are not gates",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing human-approval rule %q", required)

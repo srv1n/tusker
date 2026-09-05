@@ -68,7 +68,7 @@ func TestDeliveryRolloutRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := "schema: tusker.config/v1\nproject_id: stale\nautomation:\n  default_runner: codex_app_server\n  runners:\n    codex:\n      kind: codex_app_server\n      approval_policy: on-request\nclose_policy:\n  high:\n    required_acceptor: human\n    required_gates: [signoff]\nunknown_top: keep\n"
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), config); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), config); err != nil {
 		t.Fatal(err)
 	}
 	first, err := runDeliveryRolloutScoped(fixture.input(), deliveryRolloutRepairAutomation, true)
@@ -79,7 +79,7 @@ func TestDeliveryRolloutRepair(t *testing.T) {
 	if project.Status != "repaired" || !deliveryRolloutChanged(project.Findings) {
 		t.Fatalf("repair did not report changes: %#v", project)
 	}
-	for _, text := range []string{mustReadIndexTest(t, wfPath), mustReadIndexTest(t, filepath.Join(repo, "tusker.yaml"))} {
+	for _, text := range []string{mustReadIndexTest(t, wfPath), mustReadIndexTest(t, managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)))} {
 		if strings.Contains(text, "codex_app_server") || strings.Contains(text, "required_acceptor: human") || strings.Contains(text, "approval_policy: on-request") || strings.Contains(text, "approval_policy: untrusted") {
 			t.Fatalf("legacy unattended policy survived repair:\n%s", text)
 		}
@@ -98,6 +98,7 @@ func TestDeliveryRolloutRepair(t *testing.T) {
 }
 
 func TestDeliveryRolloutPreservation(t *testing.T) {
+	t.Parallel()
 	fixture := newDeliveryRolloutFixture(t)
 	repo := fixture.addProject("preserve", false)
 	sentinels := map[string]string{
@@ -143,6 +144,7 @@ func TestDeliveryRolloutPreservation(t *testing.T) {
 }
 
 func TestDeliveryRolloutQuarantine(t *testing.T) {
+	t.Parallel()
 	fixture := newDeliveryRolloutFixture(t)
 	good := fixture.addProject("repairable", true)
 	bad := fixture.addProject("old-schema", true)
@@ -152,7 +154,7 @@ func TestDeliveryRolloutQuarantine(t *testing.T) {
 	}
 	opaque := fixture.addProject("opaque-runner", true)
 	opaqueConfig := "schema: tusker.config/v1\nproject_id: opaque-runner\nautomation:\n  runners:\n    codex:\n      kind: codex_exec\n      command: custom-human-approval-wrapper\n      approval_policy: on-request\n"
-	if err := writeText(filepath.Join(opaque, "tusker.yaml"), opaqueConfig); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(opaque, defaultRepoVaultDir)), opaqueConfig); err != nil {
 		t.Fatal(err)
 	}
 	report, err := runDeliveryRollout(fixture.input(), true)
@@ -198,6 +200,7 @@ func TestDeliveryRolloutQuarantine(t *testing.T) {
 }
 
 func TestScopedFleetRepair(t *testing.T) {
+	t.Parallel()
 	fixture := newDeliveryRolloutFixture(t)
 	repo := fixture.addProject("optional", true)
 	stabilizeFleetReadinessFixture(t, fixture)
@@ -244,6 +247,7 @@ func TestScopedFleetRepair(t *testing.T) {
 }
 
 func TestFleetHealthDimensions(t *testing.T) {
+	t.Parallel()
 	fixture := newDeliveryRolloutFixture(t)
 	disabled := fixture.addProject("disabled", false)
 	degraded := fixture.addProject("degraded", true)
@@ -286,6 +290,7 @@ func TestFleetHealthDimensions(t *testing.T) {
 }
 
 func TestMixedFleetCoreRepairPreservesOtherScopes(t *testing.T) {
+	t.Parallel()
 	fixture := newDeliveryRolloutFixture(t)
 	missingSkill := fixture.addProject("missing-skill", true)
 	legacyRunner := fixture.addProject("legacy-runner", true)
@@ -302,7 +307,7 @@ func TestMixedFleetCoreRepairPreservesOtherScopes(t *testing.T) {
 		}
 	}
 	legacyConfig := "schema: tusker.config/v1\nproject_id: legacy-runner\nautomation:\n  runners:\n    codex:\n      kind: codex_exec\n      command: custom-human-approval-wrapper\n      approval_policy: on-request\n"
-	legacyConfigPath := filepath.Join(legacyRunner, "tusker.yaml")
+	legacyConfigPath := managedTuskerConfigPath(filepath.Join(legacyRunner, defaultRepoVaultDir))
 	if err := writeText(legacyConfigPath, legacyConfig); err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +414,7 @@ func (f *deliveryRolloutFixture) addProject(id string, enabled bool) string {
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		f.t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: "+id+"\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: "+id+"\n"); err != nil {
 		f.t.Fatal(err)
 	}
 	canonicalSkill := filepath.Join(f.source, "skills", "tusker")

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRight, Check } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Check } from "lucide-react";
 import { Mono } from "@/components/ui/primitives";
 import { SectionLabel } from "@/components/ui/page";
 import { ErrorState, Skeleton } from "@/components/ui/states";
@@ -167,6 +167,7 @@ function DocBody({
             }
           />
 
+          <OutgoingLinks projectId={projectId} links={doc.links} />
           <Backlinks projectId={projectId} backlinks={doc.backlinks} />
         </article>
       </div>
@@ -189,7 +190,51 @@ function SaveBanners({ ed }: { ed: KnowledgeDocEditor }) {
   }
 }
 
-const VIA_ORDER: BacklinkVia[] = ["part_of", "updates", "decides_for", "superseded_by", "wiki"];
+function OutgoingLinks({ projectId, links }: { projectId: string; links: DocLinkRef[] }) {
+  if (links.length === 0) return null;
+  return (
+    <section className="mt-12 border-t border-line pt-6" aria-label="Document links">
+      <div className="mb-3 flex items-center gap-2">
+        <SectionLabel>Document links</SectionLabel>
+        <span className="font-mono text-[10.5px] text-fainter">{links.length}</span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {links.map((link, index) => (
+          link.resolved && link.subject ? (
+            <Link
+              key={`${link.ref}:${index}`}
+              to="/p/$projectId/knowledge/$subject"
+              params={{ projectId, subject: link.subject }}
+              className="group flex items-center gap-3 rounded-lg border border-line bg-raised px-3.5 py-2.5 transition-colors hover:border-line-soft hover:bg-hover"
+            >
+              <span className="h-1.5 w-1.5 flex-none rounded-full bg-pass" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-medium text-ink-soft group-hover:text-ink">{link.ref}</div>
+                <Mono className="text-[10.5px] text-faint">{link.subject}</Mono>
+              </div>
+              <span className="flex-none text-[12px] font-semibold text-accent">Open →</span>
+            </Link>
+          ) : (
+            <div
+              key={`${link.ref}:${index}`}
+              data-kg-unresolved="true"
+              role="note"
+              className="flex items-start gap-3 rounded-lg border border-warn/40 bg-warn-soft/40 px-3.5 py-2.5"
+            >
+              <AlertTriangle size={15} className="mt-0.5 flex-none text-warn" aria-hidden="true" />
+              <div className="min-w-0">
+                <div className="truncate text-[13px] font-medium text-ink">{link.ref}</div>
+                <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted">Unresolved reference. The source document is still available for review.</p>
+              </div>
+            </div>
+          )
+        ))}
+      </div>
+    </section>
+  );
+}
+
+const VIA_ORDER: BacklinkVia[] = ["part_of", "updates", "source", "decides_for", "superseded_by", "link", "wiki"];
 
 function Backlinks({ projectId, backlinks }: { projectId: string; backlinks: DocBacklink[] }) {
   if (backlinks.length === 0) return null;

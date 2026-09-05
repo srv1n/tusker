@@ -234,7 +234,7 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		return ReviewResult{}, fmt.Errorf("proposal run lease is no longer authoritative")
 	}
 	result := proposal.Result
-	if result.Runner != "" || result.RunnerProfile != "" || result.WorkerPolicyFP != "" || result.ResultRevision != "" {
+	if result.Runner != "" || result.RunnerProfile != "" || result.WorkerPolicyFP != "" || result.ResultRevision != "" || result.MaterialFingerprint != "" {
 		return ReviewResult{}, fmt.Errorf("worker proposal attempted to choose runner authority")
 	}
 	if result.Schema != reviewResultSchemaV2 {
@@ -286,6 +286,18 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	if result.Actor != reviewerActorForNote(wf.Data.Reviewer.Actor, note) {
 		return ReviewResult{}, fmt.Errorf("proposal reviewer actor is not authorized")
 	}
+	_, expectedMaterial, bindingErr := reviewImplementationParent(d.store, project.VaultRoot, run.ProjectID, run.RecordID, run.WorkRevision, expectedSourceSHA, note)
+	if bindingErr != nil {
+		return ReviewResult{}, fmt.Errorf("proposal implementation binding is unavailable: %w", bindingErr)
+	}
+	material, materialErr := reviewAttemptMaterialFingerprint(d.store, run.ProjectID, run.RecordID, run.ActiveAttemptID, run.WorkRevision, expectedSourceSHA)
+	if materialErr != nil {
+		return ReviewResult{}, fmt.Errorf("proposal implementation material is unavailable: %w", materialErr)
+	}
+	if material != expectedMaterial {
+		return ReviewResult{}, fmt.Errorf("proposal implementation parent does not match the current declared material")
+	}
+	result.MaterialFingerprint = material
 	proof, gates, err := reviewObjectiveSnapshots(project.VaultRoot, note)
 	if err != nil || result.ProofFingerprint != proof || result.GateFingerprint != gates {
 		return ReviewResult{}, fmt.Errorf("proposal proof or gate snapshot drifted")

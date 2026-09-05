@@ -183,7 +183,7 @@ automation:
       sandbox: {mode: workspace-write, network: false}
       subagents: {allowed: false, max_concurrent: 0}
 `
-	projectPath := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	projectPath := managedTuskerConfigPath(vault)
 	if err := writeText(projectPath, projectConfig); err != nil {
 		t.Fatal(err)
 	}

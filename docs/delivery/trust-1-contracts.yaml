@@ -1,0 +1,362 @@
+schema: tusker.delivery-plan/v2
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+scope: trust-contracts
+title: 'Trust wave 1: Unify contracts, authority and command behavior'
+epic: FLW
+spec_refs:
+- .tusker/specs/tusker-trust-and-efficiency.md
+context_fingerprint: sha256:2f6a15b45ac8e2bda2825b47f54c11273fdc9bec242fb81c530b2b089be83ce2
+non_goals:
+- Do not dispatch workers, enable automation or publish as part of planning.
+- Do not omit contract content to meet a token target or substitute static evidence for live acceptance.
+- Do not duplicate CFX-T-0001 or the existing FLW-T-0002 through FLW-T-0005 repairs.
+requirements:
+- id: R1
+  outcome: A valid contract survives every handoff; previews and writes agree; human authority cannot be forged;
+    an unfamiliar agent has one completion route.
+concurrency: 1
+summary: A valid contract survives every handoff; previews and writes agree; human authority cannot be forged; an
+  unfamiliar agent has one completion route.
+tasks:
+- source_key: preflight
+  title: Use consistent validity and readiness checks across entry points
+  outcome: 'Creation, status-ready, next, dispatch and delivery preview/write agree on malformed contracts and frozen-plan
+    refusals, with stable reason codes and a next action. Token objective: One compact actionable refusal replaces
+    trial-and-error commands.'
+  acceptance:
+  - id: A1
+    outcome: Creation, status-ready, next, dispatch and delivery preview/write agree on malformed contracts and
+      frozen-plan refusals, with stable reason codes and a next action.
+  - id: A2
+    outcome: A complete dependent task remains valid while waiting on dependencies; contract validity is not conflated
+      with readiness or wave authorization.
+  - id: A3
+    outcome: Race a preview against material edits and require mutation-time revalidation. Exercise current CFX
+      immutable-base behavior without duplicating or weakening it.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustPreflight$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Table-driven public
+      CLI walkthrough for valid, malformed, dependency-blocked, frozen and changed-since-preview contracts; assert
+      read-only commands write nothing.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestV7ValidateAllowsHandoffWaitingOnUnresolvedDependency|TestV7SoftDependencyUnblocks|TestV7NextSkipsStubReadyTask)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Table-driven public
+      CLI walkthrough for valid, malformed, dependency-blocked, frozen and changed-since-preview contracts; assert
+      read-only commands write nothing.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestDeliveryPlanReviewFailsClosedOnPlanDriftAndCoverageGap|TestDeliveryStartCLIContract|TestV7TargetedReconcileRepairsOnlySelectedTask)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Table-driven public
+      CLI walkthrough for valid, malformed, dependency-blocked, frozen and changed-since-preview contracts; assert
+      read-only commands write nothing.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/preflight.md
+    summary: Table-driven public CLI walkthrough for valid, malformed, dependency-blocked, frozen and changed-since-preview
+      contracts; assert read-only commands write nothing. Include actual commands, executed cases, revision, host,
+      results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/v7_control_cmd.go
+  - cmd/tusker/delivery_cmd.go
+  - cmd/tusker/delivery_doctor.go
+  - cmd/tusker/trust_preflight_test.go
+  - docs/reports/trust-evidence/preflight.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: baseline
+    kind: hard
+    scope: trust-foundation
+  - task: state-integrity
+    kind: hard
+    scope: trust-foundation
+- source_key: human-receipts
+  title: Accept conversational human decisions with verifiable authority
+  outcome: 'Use one authority rule for every human-owned gate. An agent actor or arbitrary human: string cannot
+    satisfy a human decision, including generic signoff gates. Token objective: Settled decisions are reused at
+    their exact scope; genuine new material still requires a new answer.'
+  acceptance:
+  - id: A1
+    outcome: 'Use one authority rule for every human-owned gate. An agent actor or arbitrary human: string cannot
+      satisfy a human decision, including generic signoff gates.'
+  - id: A2
+    outcome: Reuse a trusted interaction receipt mechanism if one exists; otherwise implement the smallest receipt
+      producer and verifier bound to the specific gate, material revision, action and human answer, with replay
+      protection and revocation/expiry rules documented.
+  - id: A3
+    outcome: 'Exercise an actual supported human interaction surface: a human answers yes once and the assistant
+      records it without asking them to run CLI commands. Altered, stale, cross-task and replayed receipts fail.
+      If no trusted producer is available, retain an explicit unsupported state and do not claim conversational
+      approval shipped.'
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^(TestV7GateCreationRejectsVagueHumanGates|TestV7ProposalActorRejectsHumanImpersonationInAgentSessionEvenWithForceOrLocal|TestV7ProofMutationsRejectForgedActors)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Forged/stale/replayed
+      receipt negative tests plus one end-to-end trusted-producer interaction; capture a redacted receipt and visible
+      gate result.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustHumanReceipts$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Forged/stale/replayed
+      receipt negative tests plus one end-to-end trusted-producer interaction; capture a redacted receipt and visible
+      gate result.'
+  - covers: A3
+    check: 'manual proof: Launch the current TuskerBar human-action surface, answer one current gate once, capture the redacted receipt and visible gate result, then retry the same receipt and record the typed replay refusal.'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Forged/stale/replayed
+      receipt negative tests plus one end-to-end trusted-producer interaction; capture a redacted receipt and visible
+      gate result.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/human-receipts.md
+    summary: Forged/stale/replayed receipt negative tests plus one end-to-end trusted-producer interaction; capture
+      a redacted receipt and visible gate result. Include actual commands, executed cases, revision, host, results
+      and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/actor_authority.go
+  - cmd/tusker/actor_correction_cmd.go
+  - cmd/tusker/v7_control_cmd.go
+  - cmd/tusker/trust_human_receipts_test.go
+  - apps/mac/TuskerBar/Sources/TuskerBar/HumanDecisionReceipt.swift
+  - apps/mac/TuskerBar/Tests/TuskerBarTests/HumanDecisionReceiptTests.swift
+  - docs/reports/trust-evidence/human-receipts.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: state-integrity
+    kind: hard
+    scope: trust-foundation
+  - task: preflight
+    kind: hard
+- source_key: handoff
+  title: Preserve the complete contract and exact execution identity
+  outcome: 'Verify the existing FLW-T-0002 repair across agent, reviewer, work-session, daemon and integrator consumers
+    with long acceptance lists, indentation, non-goals and artifact obligations. Token objective: Deduplicate wrapper
+    content only after contract completeness assertions pass.'
+  acceptance:
+  - id: A1
+    outcome: Verify the existing FLW-T-0002 repair across agent, reviewer, work-session, daemon and integrator consumers
+      with long acceptance lists, indentation, non-goals and artifact obligations.
+  - id: A2
+    outcome: Keep stable task context separate from attempt identity; every execution handoff identifies task revision,
+      runner, model when known, workspace, branch/base, attempt and resume capability without fabricating unsupported
+      fields.
+  - id: A3
+    outcome: No normative material is truncated to hit a budget. Oversized contracts use explicit complete retrieval
+      before execution, with revision binding and a visible incomplete state until retrieved.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^(TestV7PacketPreservesCompleteTaskContract|TestDeliveryImportPreservesNonGoalsInPackets|TestTrustHandoffPreservesIntegratorContract)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Public packet and
+      adapter fixtures compare canonical mandatory content at every consumer; include a contract exceeding current
+      historical truncation limits.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestProfileRunRecordAndReviewPacketIncludeProfileHarnessModel|TestV7AttemptHandoffRequestsReviewWhenUnblocked|TestV7PacketIncludesDomainContextAndClosePolicy)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Public packet and
+      adapter fixtures compare canonical mandatory content at every consumer; include a contract exceeding current
+      historical truncation limits.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestV7PacketPreservesCompleteTaskContract|TestV7CapsuleValidationWarnsMissingAndBudgetsTokens|TestV7ExplainerPacketBuildsUnderstandingScaffold)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Public packet and
+      adapter fixtures compare canonical mandatory content at every consumer; include a contract exceeding current
+      historical truncation limits.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/handoff.md
+    summary: Public packet and adapter fixtures compare canonical mandatory content at every consumer; include a
+      contract exceeding current historical truncation limits. Include actual commands, executed cases, revision,
+      host, results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/commands_v7.go
+  - cmd/tusker/v7_wave_brief.go
+  - cmd/tusker/trust_handoff_test.go
+  - docs/reports/trust-evidence/handoff.md
+  domains:
+  - project
+  complexity: standard
+  risk: medium
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: baseline
+    kind: hard
+    scope: trust-foundation
+- source_key: cli-guide
+  title: Ship one accurate low-friction agent completion workflow
+  outcome: 'Capabilities, help and installed skill examples agree on verified syntax, executor-recorded proof, imported-plan
+    amendment limits and real human boundaries. Token objective: Read one route once; avoid dumping every skill
+    reference or capabilities payload each turn.'
+  acceptance:
+  - id: A1
+    outcome: Capabilities, help and installed skill examples agree on verified syntax, executor-recorded proof,
+      imported-plan amendment limits and real human boundaries.
+  - id: A2
+    outcome: A fresh agent can create/import, inspect, implement, run verification, submit review and close using
+      shipped guidance alone; every deliberate refusal supplies the next useful command.
+  - id: A3
+    outcome: Replace brittle obsolete wording/word-count expectations with checks for runnable examples and mandatory
+      guidance plus measured size budgets; preserve progressive disclosure and interactive no-dispatch rules.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^(TestTrustCliGuideUsesExecutorRecordedCommandProof|TestV7SpecCLIExamplesRunThroughRouter)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Execute documented
+      examples against a temporary vault, including executor-only verification, frozen import and a missing gate;
+      rerun skill contract/convergence checks.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestTuskerSkillProgressiveDisclosure|TestSkillTaskManagementProtocol)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Execute documented
+      examples against a temporary vault, including executor-only verification, frozen import and a missing gate;
+      rerun skill contract/convergence checks.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract|TestV7VerificationGrammarIsToolIndependent|TestV7VerificationDiagnosticsCarryGrammar)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Execute documented
+      examples against a temporary vault, including executor-only verification, frozen import and a missing gate;
+      rerun skill contract/convergence checks.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/cli-guide.md
+    summary: Execute documented examples against a temporary vault, including executor-only verification, frozen
+      import and a missing gate; rerun skill contract/convergence checks. Include actual commands, executed cases,
+      revision, host, results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - .agents/skills/tusker/SKILL.md
+  - .agents/skills/tusker/references/TRACK.md
+  - cmd/tusker/main.go
+  - cmd/tusker/trust_cli_guide_test.go
+  - docs/reports/trust-evidence/cli-guide.md
+  domains:
+  - project
+  complexity: standard
+  risk: medium
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: preflight
+    kind: hard
+  - task: handoff
+    kind: hard
+- source_key: enforcement-lint
+  title: Enforce real boundaries without becoming a bureaucratic middleman
+  outcome: 'Publish one rule inventory with owner, rationale, severity and enforcement point. Hard failures are
+    limited to malformed execution contracts, invalid authority, unsafe ownership/state and unmet explicit completion
+    requirements; prose style and advisory quality suggestions remain warnings. Token objective: Lint saves troubleshooting
+    turns and remains scoped; metadata and warnings do not become repetitive prompt payloads.'
+  acceptance:
+  - id: A1
+    outcome: Publish one rule inventory with owner, rationale, severity and enforcement point. Hard failures are
+      limited to malformed execution contracts, invalid authority, unsafe ownership/state and unmet explicit completion
+      requirements; prose style and advisory quality suggestions remain warnings.
+  - id: A2
+    outcome: CLI, daemon, process handoff and closeout call the same applicable checks. A worker cannot bypass a
+      hard invariant by choosing another entry point, and read-only discovery is not blocked by unrelated warning
+      debt.
+  - id: A3
+    outcome: Lint supports scoped deterministic findings, stable codes, source locations and a repair action. Repeated
+      unchanged warnings are summarized once; no blanket full-repo lint, report, approval or documentation ceremony
+      is required for a routine low-risk change.
+  - id: A4
+    outcome: 'Compare routine success and failure journeys before/after: no duplicated state reporting, no mandatory
+      empty fields or speculative gates, no extra human intervention, and no safety regression. Provide a documented
+      narrow exception only for advisory rules; never a universal bypass for authority or data safety.'
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^(TestTrustEnforcementLintRejectsUnknownProofRequirement|TestTrustEnforcementLintRejectsMalformedEvidenceIdentity)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Cross-entry-point
+      invariant tests plus a tiny valid change with existing unrelated warning debt; count mandatory commands and
+      human interventions.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestV7ProofMutationsRejectForgedActors|TestV7ValidationRejectsSecretsInAnyRecordKind|TestV7ValidationFlagsVagueAndMisroutedHumanGates)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Cross-entry-point
+      invariant tests plus a tiny valid change with existing unrelated warning debt; count mandatory commands and
+      human interventions.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestV7ProofMatchingRejectsKeywordTheater|TestV7ProofReportKeepsMachineProofMissingActionable|TestV7VerificationDiagnosticsCarryGrammar)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Cross-entry-point
+      invariant tests plus a tiny valid change with existing unrelated warning debt; count mandatory commands and
+      human interventions.'
+  - covers: A4
+    check: 'command: go test ./cmd/tusker -run "^(TestV7CloseRequiresAcceptanceCoverageOrWaiver|TestV7CloseRequiresReviewStatus|TestV7AttemptHandoffRequiresProofBeforeReview)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Cross-entry-point
+      invariant tests plus a tiny valid change with existing unrelated warning debt; count mandatory commands and
+      human interventions.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/enforcement-lint.md
+    summary: Cross-entry-point invariant tests plus a tiny valid change with existing unrelated warning debt; count
+      mandatory commands and human interventions. Include actual commands, executed cases, revision, host, results
+      and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+  owned_paths:
+  - cmd/tusker/workflow_validate.go
+  - cmd/tusker/v7_docs_validation.go
+  - cmd/tusker/v7_plain_top_layer_lint.go
+  - cmd/tusker/trust_enforcement_lint_test.go
+  - docs/reports/trust-evidence/enforcement-lint.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: preflight
+    kind: hard
+  - task: cli-guide
+    kind: hard
+human_gates:
+- source_key: human-receipts-interaction
+  title: Confirm one native human receipt round trip
+  kind: subjective_acceptance
+  owner: human:sarav
+  task_source_key: human-receipts
+  acceptance_ids:
+  - A3
+  action: Answer one current human-owned gate through the supported native interaction surface.
+  verification: The redacted receipt is bound to the current gate and visible gate result, and replay is refused.
+  why_agent_cannot: Only the human can answer the product decision and exercise the trusted producer surface.
+owned_path_overlaps:
+- source_key: preflight--human-receipts
+  tasks:
+  - preflight
+  - human-receipts
+  paths:
+  - cmd/tusker/v7_control_cmd.go
+  strategy: serialize

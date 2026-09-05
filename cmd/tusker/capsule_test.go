@@ -15,10 +15,10 @@ func TestCapsuleTemplatesCreateScaffolds(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
 		t.Fatal(err)
 	}
-	if err := knowledgeNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/runbooks/oauth-refresh", "kind": "runbook", "title": "OAuth refresh"}); err != nil {
+	if err := knowledgeV7NewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/runbooks/oauth-refresh", "kind": "runbook", "title": "OAuth refresh"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, rel := range []string{
@@ -47,7 +47,7 @@ func TestCapsuleValidationWarnsAndFailsByBudget(t *testing.T) {
 	if err := ensureDir(vault); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(filepath.Dir(vault), "tusker.yaml"), "validation:\n  capsule_token_budget: 5\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 5\n"); err != nil {
 		t.Fatal(err)
 	}
 	note := Note{Data: map[string]any{
@@ -80,7 +80,7 @@ func TestCapsuleValidationLeavesForeignV7SchemaOnLegacyPath(t *testing.T) {
 	if err := ensureDir(vault); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(filepath.Dir(vault), "tusker.yaml"), "validation:\n  capsule_token_budget: 5\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 5\n"); err != nil {
 		t.Fatal(err)
 	}
 	note := Note{Data: map[string]any{
@@ -95,13 +95,13 @@ func TestCapsuleValidationLeavesForeignV7SchemaOnLegacyPath(t *testing.T) {
 	}
 }
 
-func TestCapsuleSpecValidationScansDocsSpecs(t *testing.T) {
+func TestCapsuleSpecValidationScansCanonicalSpecs(t *testing.T) {
 	repo := t.TempDir()
 	vault := filepath.Join(repo, ".tusker")
-	if err := ensureDir(filepath.Join(repo, "docs", "specs")); err != nil {
+	if err := ensureDir(filepath.Join(repo, ".tusker", "specs")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "docs", "specs", "missing.md"), "# Missing capsule\n"); err != nil {
+	if err := writeText(filepath.Join(repo, ".tusker", "specs", "missing.md"), "# Missing capsule\n"); err != nil {
 		t.Fatal(err)
 	}
 	errs, warns := validateSpecCapsules(vault)
@@ -118,7 +118,7 @@ func TestCapsuleTriageSurfacesAndPackets(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App work.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
 		t.Fatal(err)
 	}
 	setCapsuleForTest(t, filepath.Join(vault, "knowledge", "domains", "providers", "INDEX.md"), v7FrontmatterOrder["domain"], capsuleBlock(

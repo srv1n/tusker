@@ -4,74 +4,39 @@ kind: "domain_canon"
 id: "project/canon"
 project: "tusker"
 domain: "project"
-title: "Project canon"
+title: "Project Canon"
 status: "current"
-summary: "Current facts about the Tusker repository."
+summary: "Current durable truth for Project."
 capsule:
-  skip_when: "Skip when the task needs only proof or a generated view."
-  use_when: "Read before changing repository behavior or project documentation."
-  what: "Source layout, runtime boundaries, and project rules."
+  what: "Current durable truth, invariants, and constraints for Project."
+  use_when: "Use before changing behavior owned by project or reviewing a domain-impacting task."
+  skip_when: "Skip when you only need task proof, runtime events, or generated packets."
 source_of_truth:
   - "knowledge/domains/project/CANON.md"
-created_at: "2026-08-23T10:56:31Z"
-updated_at: "2026-08-23T15:48:02Z"
-state_rev: "sha256:82fbda3f3ac55bd8ccc5e75f1c8e5210c9e834c43bae8f71cf70afd170a795d6"
+created_at: "2026-09-05T08:36:27Z"
+updated_at: "2026-09-05T08:36:27Z"
+state_rev: "sha256:8b64493a1fc87812d5e00ef8a90e07633afb492089896dd761f7e15f95a52339"
 ---
 
-# Project canon
+# Project Canon
 
-## Current truth
+## Current Truth
 
-Tusker is a Go CLI and local work tracker. `cmd/tusker/` contains the CLI,
-daemon, runtime commands, and Serve handlers.
+- project is the canonical domain id for Project.
 
-The main source areas are:
+## Stable Interfaces
 
-- `internal/v7schema/` for current record and field rules;
-- `internal/v7policy/` for close policy;
-- `internal/docgraph/` for system document maps and freshness;
-- `internal/serve/` for embedded Serve files;
-- `internal/acp/` for ACP transport;
-- `apps/mac/TuskerBar/` for the macOS shell;
-- `skills/tusker/` for the operator skill; and
-- `docs/system/` for the current public explanation.
-
-## Canonical rules
-
-- The repository vault is `.tusker/`.
-- The CLI owns tracker mutations.
-- The task contract owns product scope.
-- Proof must link to acceptance rows.
-- A gate names one fact that needs a human or an external system.
-- Automation stays off until an operator enables it.
-- Source code and schemas are the authority for current behavior.
-- Repository state and shared runtime state are separate authorities.
-- Format suffixes such as `/v7` identify stored data. They do not identify a
-  product generation.
-
-## Stable interfaces
-
-- CLI commands and their JSON output.
-- Current task, gate, evidence, proof, wave, and decision records.
-- The project skill route in `.tusker/SKILL.md`.
-- The system documentation map in `docs/system/`.
-
-## Execution contract
-
-`docs/system/execution-observability.md` explains the execution ledger. The
-source authority is `cmd/tusker/execution_ledger.go`,
-`cmd/tusker/execution_graph.go`, and `cmd/tusker/serve_execution_timeline.go`.
+- _No stable interfaces declared yet._
 
 ## Constraints
 
-- Keep system guides in simple technical English.
-- Do not edit generated maps by hand.
-- Do not read raw tracker state unless the task requires it.
-- Do not change another project while working in this repository.
-- Do not start nested runners from an interactive session.
+- Keep this canon short enough to read before implementation.
+- Move obsolete details to Deprecated Or Stale instead of deleting useful history.
 
-## Known current limits
+## Deprecated Or Stale
 
-- `RuntimeStore.RemoveProject` does not clear every project-keyed runtime table.
-- A local build is not a signed public release.
-- The embedded Serve `dist/` must be rebuilt after TypeScript source changes.
+- _None known._
+
+## Open Questions
+
+- _None yet._

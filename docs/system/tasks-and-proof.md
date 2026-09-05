@@ -3,6 +3,8 @@ title: "Tasks and proof"
 subject: tasks-and-proof
 part_of: overview
 status: canonical
+read_when: "Writing task contracts or handing work to another worker or reviewer."
+skip_when: "Configuring provider adapters or investigating a daemon process."
 ---
 
 # Tasks and proof
@@ -56,6 +58,11 @@ person or an external system. The CLI projects both into readiness.
 Use `tusker show <TASK-ID> --capsule`. Use a full task file only when the
 contract or a repair needs it. Do not read all events or attempts for normal
 work.
+
+Worker and reviewer packets preserve the complete task body, including
+non-goals, verification commands, and artifact requirements. They also include
+declared owned paths, generated outputs, migration keys, and shared resources.
+Delivery import carries plan non-goals into each task.
 
 ## Code sources
 

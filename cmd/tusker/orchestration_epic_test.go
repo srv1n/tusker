@@ -633,8 +633,6 @@ func TestIntegratorWorkKindOwnsSharedNamespaces(t *testing.T) {
 	}
 }
 
-func TestIntegratorClaimOwnsNamespaces(t *testing.T) { TestIntegratorWorkKindOwnsSharedNamespaces(t) }
-
 func TestIntegratorPacketComposesEndStatesAndOverlap(t *testing.T) {
 	reports := []integratorLaneReport{
 		{TaskID: "APP-T-0001", EndState: RunEndState{Branch: "task/a", HeadSHA: strings.Repeat("a", 40), WorktreePath: "/tmp/a", GateVerdicts: map[string]string{"A1": "pass"}}, Files: []string{"shared.go", "a.go"}},
@@ -649,13 +647,9 @@ func TestIntegratorPacketComposesEndStatesAndOverlap(t *testing.T) {
 	}
 }
 
-func TestIntegratorPacketMergeBrief(t *testing.T) { TestIntegratorPacketComposesEndStatesAndOverlap(t) }
-
 func TestIntegratorPacketRequiresDoctrine(t *testing.T) {
 	packet := integratorPacket(t.TempDir(), Note{Data: map[string]any{"id": "APP-T-0008"}}, v7Index{})
 	if !strings.Contains(packet, "references/OPERATE.md") {
 		t.Fatalf("doctrine route missing: %s", packet)
 	}
 }
-
-func TestIntegratorPacketRequiredReads(t *testing.T) { TestIntegratorPacketRequiresDoctrine(t) }

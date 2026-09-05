@@ -87,7 +87,7 @@ func TestContractConvergence(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, goBinary, "test", "./cmd/tusker", "-run", pattern, "-count=1", "-v")
+	cmd := exec.CommandContext(ctx, goBinary, "test", "./cmd/tusker", "-run", pattern, "-count=1", "-parallel", "4", "-v")
 	cmd.Dir = repo
 	cmd.Env = contractTestEnvironment(home, stateRoot, tmpRoot, trapBin, trapLog, moduleCache)
 	var output bytes.Buffer

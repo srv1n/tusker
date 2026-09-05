@@ -4,12 +4,11 @@ kind: "project_skill"
 name: "project-knowledge"
 project: "tusker"
 status: "current"
-description: "Route agents through this repository's current domain canon."
+description: "Route agents through this repository's domain canon without publishing task proof or runtime state."
 capsule:
-  skip_when:
-    - "You only need task proof or runtime state."
-  use_when: "You need repository facts before a code or documentation change."
-  what: "Routes agents to the current project canon."
+  skip_when: []
+  use_when: []
+  what: ""
 operator_skill: "tusker"
 source_of_truth:
   - "knowledge/domains"
@@ -17,9 +16,9 @@ canonical_files:
   - "SKILL.md"
   - "knowledge/domains/*/INDEX.md"
   - "knowledge/domains/*/CANON.md"
-created_at: "2026-08-23T10:56:31Z"
-updated_at: "2026-08-23T15:41:58Z"
-state_rev: "sha256:673ad4488d6a5651adfd84fc31a603a110c7141467b4f89ff7d88d0d68256b04"
+created_at: "2026-09-05T08:36:27Z"
+updated_at: "2026-09-05T08:36:27Z"
+state_rev: "sha256:b1973e133c977c6ce44cf3bf6935d32a6d90efaaefd714b2a4ad2fd1c1c5dde0"
 ---
 
 # Project Knowledge Skill
@@ -73,9 +72,9 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 - Do not publish task records, evidence logs, attempts, event files, generated output, runtime state, or raw logs as project skill source.
 - Forbidden paths include `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`, `_system/**`, `dashboards/**`, packet caches, `.tusker-*`, raw logs, and local absolute paths.
 - Raw external input belongs in `knowledge/domains/<domain>/sources/`.
-- Root `docs/` contains current system and contribution guides. Project canon stays under `knowledge/domains/`.
+- Root `docs/` may contain repository guides; it is not domain canon.
 
 ## Validation
 
 - `tusker skill doctor --strict --json` checks project skill routes and package hygiene.
-- `tusker validate --json` checks the domain layout and task-domain coverage.
+- `tusker validate --json` checks domain layout and task-domain coverage.

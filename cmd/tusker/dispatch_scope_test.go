@@ -35,7 +35,7 @@ func TestAutomationDispatchScopeFreshDefaultsAndLegacyProjection(t *testing.T) {
 }
 
 func TestAutomationDispatchScopeExplicitConfigAndEnforcement(t *testing.T) {
-	resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{{Name: configSourceProject, Path: "tusker.yaml", Present: true, Raw: map[string]any{"automation": map[string]any{"dispatch_scope": "all_eligible"}}}}}
+	resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{{Name: configSourceProject, Path: ".tusker/config.yaml", Present: true, Raw: map[string]any{"automation": map[string]any{"dispatch_scope": "all_eligible"}}}}}
 	scope, err := resolveAutomationDispatchScope(resolved, true)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestAutomationDispatchScopeExplicitConfigAndEnforcement(t *testing.T) {
 }
 
 func TestAutomationDispatchScopeRejectsInvalidValue(t *testing.T) {
-	resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{{Name: configSourceProject, Path: "tusker.yaml", Present: true, Raw: map[string]any{"automation": map[string]any{"dispatch_scope": "anything_goes"}}}}}
+	resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{{Name: configSourceProject, Path: ".tusker/config.yaml", Present: true, Raw: map[string]any{"automation": map[string]any{"dispatch_scope": "anything_goes"}}}}}
 	_, err := resolveAutomationDispatchScope(resolved, false)
 	if err == nil || !strings.Contains(err.Error(), "dispatch_scope") {
 		t.Fatalf("expected dispatch scope validation error, got %v", err)
@@ -72,7 +72,7 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeDefaultRootTuskerConfig(vault); err != nil {
+	if err := writeDefaultTuskerConfig(vault); err != nil {
 		t.Fatal(err)
 	}
 	configPath := managedTuskerConfigPath(vault)
@@ -85,7 +85,7 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 			t.Fatalf("fresh config missing %q:\n%s", want, config)
 		}
 	}
-	if fileExists(filepath.Join(root, "tusker.yaml")) {
+	if fileExists(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir))) {
 		t.Fatal("fresh bootstrap wrote a root-level tusker.yaml")
 	}
 	if err := writeText(configPath, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {

@@ -1,0 +1,72 @@
+{
+  "schema": "tusker.agent-efficiency-fixtures/v2",
+  "version": "flw-t-0008-fixtures-v2",
+  "script_version": "flw-t-0008-measurement-v2",
+  "manifest": {
+    "schema": "tusker.agent-efficiency-fixtures/v2",
+    "version": "flw-t-0008-fixtures-v2",
+    "task_contracts": [
+      {
+        "id": "LRG-T-0001",
+        "class": "large",
+        "bytes": 13063,
+        "sha256": "sha256:2689cb0948163f28d56344f8b9ec7c570d8d187ca56ffb15e2a5bd9a3dd33080"
+      },
+      {
+        "id": "MED-T-0001",
+        "class": "medium",
+        "bytes": 3464,
+        "sha256": "sha256:775bb66cf39323dd94fbea188d582ccc84c17e952f0ff7d35a941fc6ea876570"
+      },
+      {
+        "id": "SML-T-0001",
+        "class": "small",
+        "bytes": 1776,
+        "sha256": "sha256:79faf549b214ef1f214baf37a06aee6afd308bc4cce03c6c6512d8c1cc842017"
+      }
+    ],
+    "document_repositories": [
+      {
+        "name": "docs-10",
+        "documents": 10,
+        "files": 10,
+        "digest": "sha256:57fd2e09095410d2a55101867ee9ed1d8d961ec884b4d15585eef0b36643df85"
+      },
+      {
+        "name": "docs-100",
+        "documents": 100,
+        "files": 100,
+        "digest": "sha256:10dbd3ca8b86dc229d36536097a2af83babb974aaed6a664bb1f7c94d3849936"
+      },
+      {
+        "name": "docs-1000",
+        "documents": 1000,
+        "files": 1000,
+        "digest": "sha256:9cf6a263f040976a02cf4a2ff522a2eabd4d54ba56728ffb1717d1ce683db273"
+      }
+    ],
+    "special_records": {
+      "gate": {
+        "id": "BLK-G-0001",
+        "bytes": 757,
+        "sha256": "sha256:174c8e6978902168ce9e10cd4278519d195948fa4ee1a50de93bb22e85428955"
+      },
+      "attempt": {
+        "id": "RES-T-0001-A-0001",
+        "bytes": 367,
+        "sha256": "sha256:fb708a9597a3b845348348368a744dc899ff2d2a07c6e9ce820824e8577605df"
+      }
+    },
+    "scenarios": [
+      "small-contract",
+      "medium-contract",
+      "large-contract",
+      "long-contract",
+      "branching-dag",
+      "blocked-gate",
+      "failed-proof",
+      "resumed-job"
+    ]
+  },
+  "manifest_sha256": "sha256:0d7607e7052585d1b2769a5f5f5c0a6f983350c062fa05399c22b704aa1d156f"
+}

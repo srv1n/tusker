@@ -11,6 +11,7 @@ import (
 )
 
 func TestSkillContractCompatibility(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..", "skills", "tusker")
 	contract, err := readSkillCompatibilityContract(root)
 	if err != nil {

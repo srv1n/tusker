@@ -7,6 +7,7 @@ import (
 )
 
 func TestACPPermissionBroker(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(workspace, "outside-link")); err != nil {
@@ -99,6 +100,7 @@ func TestACPPermissionBroker(t *testing.T) {
 }
 
 func TestACPPermissionBrokerAuditIsDeterministicAndRedacted(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	req := ACPPermissionRequest{
 		AttemptID: "attempt-1", BoundAttemptID: "attempt-1", SessionID: "session-1", BoundSessionID: "session-1",

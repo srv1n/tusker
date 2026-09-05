@@ -1,0 +1,60 @@
+schema: tusker.delivery-plan/v2
+scope: fresh-agent-fixture
+title: Fresh agent fixture
+epic_contract:
+  source_key: fresh-agent-fixture
+  acronym_hint: FSH
+  title: Fresh agent fixture
+spec_refs:
+  - .tusker/specs/fresh-agent.md
+# The release operator replaces this value with the exact output of
+# `tusker delivery plan --spec docs/specs/fresh-agent.md --out ...` in the
+# pinned temporary repository before import. It is never invented by an agent.
+context_fingerprint: sha256:REPLACE_WITH_PINNED_CONTEXT
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+requirements:
+  - id: R1
+    outcome: The greeting is written only in its declared material scope.
+  - id: R2
+    outcome: The sibling material remains independently owned.
+concurrency: 1
+summary: A bounded fresh-agent implementation and independent sibling contract.
+tasks:
+  - source_key: greeting
+    requirement_refs: [R1]
+    title: Implement the greeting
+    outcome: Write the exact greeting in its declared path.
+    acceptance:
+      - id: A1
+        outcome: The greeting content exactly matches the locked specification.
+    verification:
+      - covers: A1
+        check: 'command: test "$(cat owned/greeting.txt)" = "hello from a fresh agent"'
+    artifact:
+      kind: diff_summary
+      path: owned/greeting.txt
+      summary: Exact greeting implementation.
+      acceptance_ids: [A1]
+    owned_paths: [owned/greeting.txt]
+    priority: p1
+    risk: low
+  - source_key: sibling
+    requirement_refs: [R2]
+    title: Preserve independent sibling
+    outcome: Keep the sibling ownership boundary available for parallel work.
+    acceptance:
+      - id: A1
+        outcome: The sibling remains independent.
+    verification:
+      - covers: A1
+        check: 'command: test ! -e owned/sibling.txt'
+    artifact:
+      kind: diff_summary
+      path: owned/sibling.txt
+      summary: Independent ownership sentinel.
+      acceptance_ids: [A1]
+    owned_paths: [owned/sibling.txt]
+    priority: p1
+    risk: low

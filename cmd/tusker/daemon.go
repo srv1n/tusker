@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1842,6 +1844,25 @@ func shouldDispatchRun(run RunStatus, now time.Time) bool {
 	}
 }
 
+func daemonReviewImplementationAttempt(store *RuntimeStore, vault string, run RunStatus, note Note) (RunAttempt, error) {
+	if store == nil || run.ProjectID == "" || run.RecordID == "" || run.WorkRevision <= 0 {
+		return RunAttempt{}, tuskerError(errorInvalidTransition, "review dispatch requires a current implementation identity")
+	}
+	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	if source == "" || intField(note.Data, "work_revision") != run.WorkRevision {
+		return RunAttempt{}, tuskerError(errorInvalidTransition, "review dispatch requires the current task source and work revision")
+	}
+	parent, _, err := reviewImplementationParent(store, vault, run.ProjectID, run.RecordID, run.WorkRevision, source, note)
+	if err != nil {
+		return RunAttempt{}, err
+	}
+	var actor string
+	if err := store.queryRowScan(`SELECT actor FROM run_authorizations WHERE project_id=? AND record_id=? AND lease_generation=?`, []any{run.ProjectID, run.RecordID, run.LeaseGeneration}, &actor); err != nil || strings.TrimSpace(actor) == "" {
+		return RunAttempt{}, firstNonNil(err, tuskerError(errorInvalidTransition, "review dispatch requires durable implementation actor provenance"))
+	}
+	return parent, nil
+}
+
 func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
 	if strings.TrimSpace(runner) != "" {
 		run.Runner = runner
@@ -2549,7 +2570,12 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			if run.Lane != runLaneReview {
 				verdictJSON, _ := json.Marshal(gateVerdictsFromTask(note))
 				var endStateErr error
-				endState, endStateErr = captureRunEndState(run.WorkspacePath, string(verdictJSON), "", "", time.Now().UTC())
+				materialScope, scopeErr := canonicalRunMaterialScope(d.store, run)
+				if scopeErr != nil {
+					endStateErr = scopeErr
+				} else {
+					endState, endStateErr = captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC())
+				}
 				if endStateErr != nil {
 					reason := "normalized run submission refused: " + endStateErr.Error()
 					updateRunAttemptFromRun(d.store, run, AttemptOutcomeEarlyExit, 0, reason, finished)
@@ -3857,16 +3883,24 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if directiveActive {
 		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: wfFile.Data.AutomationEnabled}
 	}
+	parentAttemptID := ""
+	if lane == runLaneReview {
+		parent, parentErr := daemonReviewImplementationAttempt(d.store, project.VaultRoot, run, note)
+		if parentErr != nil {
+			return run, false, parentErr
+		}
+		parentAttemptID = parent.AttemptID
+	}
 	attemptIntent := RunAttempt{
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
 		Runner: run.Runner, Lane: lane, WorkerPolicyFP: run.WorkerPolicyFP, WorkRevision: run.WorkRevision, WorkspacePath: selectedWorkspacePath,
-		BranchName: branchName, ParentAttemptID: previousRun.ActiveAttemptID, StartedAt: startedAt,
+		BranchName: branchName, ParentAttemptID: parentAttemptID, StartedAt: startedAt,
 	}
 	var claimResult runClaimResult
 	if directiveActive {
 		claimResult, err = ownership.claimExistingWithDirective(claimRun, attemptID, authorization, attemptIntent)
 	} else {
-		claimResult, err = ownership.claimExistingWithAuthorization(claimRun, attemptID, authorization)
+		claimResult, err = ownership.claimExistingWithAuthorization(claimRun, attemptID, authorization, attemptIntent)
 	}
 	if err != nil {
 		return run, false, err
@@ -4068,6 +4102,27 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	} else if !ok {
 		latest, err := d.latestDispatchRun(run)
 		return latest, true, err
+	}
+	if strings.TrimSpace(resumeSession.SessionRef) != "" {
+		// A verified native continuation already has the immutable workflow and
+		// task packet in its provider history. Send only the current, durable
+		// identity and outcome delta. The helper falls back to the full prompt if
+		// any identity needed to safely bind that delta is missing.
+		resumedPrompt, promptErr := renderAttemptPromptForResume(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store, resumeSession)
+		if promptErr != nil {
+			attempt.Outcome = string(AttemptOutcomeFailed)
+			attempt.LastError = promptErr.Error()
+			attempt.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			_, _ = d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration)
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, promptErr)
+		}
+		if err := writeText(promptPath, resumedPrompt); err != nil {
+			attempt.Outcome = string(AttemptOutcomeFailed)
+			attempt.LastError = err.Error()
+			attempt.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			_, _ = d.store.SaveAttemptIfRunLease(attempt, attemptID, leaseGeneration)
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+		}
 	}
 	if strings.TrimSpace(resumeSession.SessionRef) != "" {
 		// Resume identity is resolved from the durable session registry and may
@@ -4340,6 +4395,9 @@ func (d *Daemon) resolveResumeSession(project RegisteredProject, note Note, run 
 		if reason := incompatibleResumeSessionReason(project, run, session); reason != "" {
 			return resolvedResumeSession{}, nil
 		}
+		if reason := d.resumeContextFingerprintMismatch(run, session); reason != "" {
+			return resolvedResumeSession{}, nil
+		}
 		kind := string(SupervisorDecisionResumeSession)
 		reason := "resuming compatible stored session"
 		if LeaseState(run.LeaseState) == LeaseStateRetryQueued {
@@ -4358,6 +4416,9 @@ func (d *Daemon) resolveResumeSession(project RegisteredProject, note Note, run 
 		return resolvedResumeSession{}, err
 	}
 	if reason := incompatibleResumeSessionReason(project, run, session); reason != "" {
+		return resolvedResumeSession{}, nil
+	}
+	if reason := d.resumeContextFingerprintMismatch(run, session); reason != "" {
 		return resolvedResumeSession{}, nil
 	}
 	reason := appendRunnerContinuityCaveat(run.Runner, "resolved compatible stored session for same-ticket resume")
@@ -6109,7 +6170,336 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
 		rendered = strings.TrimSpace(rendered) + "\n\n" + runtimeContext
 	}
+	if fingerprint := resumeContextFingerprint(project, wfFile, note, workspacePath, lane, run); fingerprint != "" {
+		rendered = strings.TrimSpace(rendered) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+	}
 	return strings.TrimSpace(rendered) + "\n", nil
+}
+
+const (
+	resumePromptContextHeader       = "## Tusker Resume Context"
+	resumePromptContextMarkerPrefix = "- Stable context fingerprint: `"
+)
+
+// resumeContextFingerprint binds the full prompt that established a native
+// session to the durable identities that make a compact continuation safe.
+// The marker is carried in the prompt artifact already persisted for each
+// attempt, so this does not add a second cache or runtime schema surface.
+func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath, lane string, run RunStatus) string {
+	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	if _, ok := note.Data["work_revision"]; !ok || stringField(note.Data, "work_revision") == "" || strings.TrimSpace(note.AbsolutePath) == "" || strings.TrimSpace(wfFile.Path) == "" {
+		return ""
+	}
+	if intField(note.Data, "work_revision") != run.WorkRevision {
+		return ""
+	}
+	for _, value := range []string{
+		project.ProjectID, project.ProjectKey, project.RepoRoot, project.VaultRoot,
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile,
+		run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.Lane, lane,
+		workspacePath, stringField(note.Data, "id"), stringField(note.Data, "state_rev"),
+		source,
+		stringField(note.Data, "title"), stringField(note.Data, "work_revision"),
+		strconv.Itoa(run.WorkRevision), run.WorkerPolicyFP, run.ExecutePolicyFP,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return ""
+		}
+	}
+	wfData, err := json.Marshal(wfFile.Data)
+	if err != nil {
+		return ""
+	}
+	noteData, err := json.Marshal(note.Data)
+	if err != nil {
+		return ""
+	}
+	input := struct {
+		Version          string `json:"version"`
+		ProjectID        string `json:"project_id"`
+		ProjectKey       string `json:"project_key"`
+		ProjectName      string `json:"project_name"`
+		RepoRoot         string `json:"repo_root"`
+		VaultRoot        string `json:"vault_root"`
+		WorkflowPath     string `json:"workflow_path"`
+		WorkflowBody     string `json:"workflow_body"`
+		WorkflowData     string `json:"workflow_data"`
+		TaskPath         string `json:"task_path"`
+		TaskRelativePath string `json:"task_relative_path"`
+		TaskBody         string `json:"task_body"`
+		TaskData         string `json:"task_data"`
+		RunProjectID     string `json:"run_project_id"`
+		RecordID         string `json:"record_id"`
+		ItemID           string `json:"item_id"`
+		Runner           string `json:"runner"`
+		RunnerProfile    string `json:"runner_profile"`
+		RunnerHarness    string `json:"runner_harness"`
+		RunnerModel      string `json:"runner_model"`
+		RunnerEffort     string `json:"runner_effort"`
+		WorkerPolicyFP   string `json:"worker_policy_fingerprint"`
+		ExecutePolicyFP  string `json:"execute_policy_fingerprint"`
+		Lane             string `json:"lane"`
+		RunLane          string `json:"run_lane"`
+		WorkspacePath    string `json:"workspace_path"`
+		WorkRevision     int    `json:"work_revision"`
+	}{
+		Version:          "tusker.resume-context/v1",
+		ProjectID:        project.ProjectID,
+		ProjectKey:       project.ProjectKey,
+		ProjectName:      project.Name,
+		RepoRoot:         project.RepoRoot,
+		VaultRoot:        project.VaultRoot,
+		WorkflowPath:     wfFile.Path,
+		WorkflowBody:     wfFile.Body,
+		WorkflowData:     string(wfData),
+		TaskPath:         note.AbsolutePath,
+		TaskRelativePath: note.RelativePath,
+		TaskBody:         note.Body,
+		TaskData:         string(noteData),
+		RunProjectID:     run.ProjectID,
+		RecordID:         run.RecordID,
+		ItemID:           run.ItemID,
+		Runner:           run.Runner,
+		RunnerProfile:    run.RunnerProfile,
+		RunnerHarness:    run.RunnerHarness,
+		RunnerModel:      run.RunnerModel,
+		RunnerEffort:     run.RunnerEffort,
+		WorkerPolicyFP:   run.WorkerPolicyFP,
+		ExecutePolicyFP:  run.ExecutePolicyFP,
+		Lane:             lane,
+		RunLane:          run.Lane,
+		WorkspacePath:    workspacePath,
+		WorkRevision:     run.WorkRevision,
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func resumeContextFingerprintFromPrompt(prompt string) string {
+	lines := strings.Split(prompt, "\n")
+	headerIndex := -1
+	for index, line := range lines {
+		if strings.TrimSpace(line) != resumePromptContextHeader {
+			continue
+		}
+		if headerIndex >= 0 {
+			return ""
+		}
+		headerIndex = index
+	}
+	if headerIndex < 0 {
+		return ""
+	}
+	for index := headerIndex + 1; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, resumePromptContextMarkerPrefix) || !strings.HasSuffix(line, "`") {
+			return ""
+		}
+		fingerprint := strings.TrimSuffix(strings.TrimPrefix(line, resumePromptContextMarkerPrefix), "`")
+		if !strings.HasPrefix(fingerprint, "sha256:") {
+			return ""
+		}
+		hexValue := strings.TrimPrefix(fingerprint, "sha256:")
+		if len(hexValue) != sha256.Size*2 {
+			return ""
+		}
+		if _, err := hex.DecodeString(hexValue); err != nil {
+			return ""
+		}
+		return fingerprint
+	}
+	return ""
+}
+
+// resumeContextFingerprintMismatch returns a non-empty reason whenever the
+// current full prompt cannot be proven equivalent to the prompt that last
+// established the stored native session. All failures are fail-closed: the
+// caller keeps the complete prompt path and does not resume with a partial
+// contract.
+func (d *Daemon) resumeContextFingerprintMismatch(run RunStatus, session *RunnerSession) string {
+	if d == nil || d.store == nil || session == nil {
+		return "stored native session has no verifiable prompt context"
+	}
+	lastAttemptID := strings.TrimSpace(session.LastAttemptID)
+	currentPromptPath := strings.TrimSpace(run.PromptPath)
+	if lastAttemptID == "" || currentPromptPath == "" || lastAttemptID == strings.TrimSpace(run.ActiveAttemptID) {
+		return "stored native session has no distinct prior prompt context"
+	}
+	var priorRecordID, priorItemID, priorRunner, priorSessionRef, priorPromptPath string
+	if err := d.store.queryRowScan(`SELECT record_id, item_id, runner, session_ref, prompt_path
+		FROM attempts WHERE project_id = ? AND attempt_id = ? LIMIT 1`, []any{run.ProjectID, lastAttemptID}, &priorRecordID, &priorItemID, &priorRunner, &priorSessionRef, &priorPromptPath); err != nil {
+		return "stored native session prior attempt is unavailable"
+	}
+	if strings.TrimSpace(priorRecordID) != strings.TrimSpace(run.RecordID) ||
+		strings.TrimSpace(priorItemID) != strings.TrimSpace(run.ItemID) ||
+		strings.TrimSpace(priorRunner) != strings.TrimSpace(run.Runner) ||
+		strings.TrimSpace(priorSessionRef) != strings.TrimSpace(session.SessionRef) {
+		return "stored native session prior attempt identity does not match"
+	}
+	priorPromptPath = strings.TrimSpace(priorPromptPath)
+	if priorPromptPath == "" {
+		return "stored native session prior prompt is unavailable"
+	}
+	currentPrompt, err := readText(currentPromptPath)
+	if err != nil {
+		return "current prompt context is unavailable"
+	}
+	priorPrompt, err := readText(priorPromptPath)
+	if err != nil {
+		return "stored native session prior prompt context is unavailable"
+	}
+	currentFingerprint := resumeContextFingerprintFromPrompt(currentPrompt)
+	priorFingerprint := resumeContextFingerprintFromPrompt(priorPrompt)
+	if currentFingerprint == "" || priorFingerprint == "" {
+		return "stored native session prompt context fingerprint is missing or invalid"
+	}
+	if currentFingerprint != priorFingerprint {
+		return "stored native session prompt context fingerprint changed"
+	}
+	return ""
+}
+
+// renderAttemptPromptForResume keeps the full prompt as the safe default. A
+// compact prompt is valid only after resolveResumeSession has accepted a
+// durable native session and every current identity needed to bind the delta
+// is present. Native provider history supplies the unchanged workflow and
+// packet; this message carries only the current attempt's authoritative
+// identity, outcome, and continuation rules.
+func renderAttemptPromptForResume(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, previousRun RunStatus, store *RuntimeStore, resumeSession resolvedResumeSession) (string, error) {
+	if strings.TrimSpace(resumeSession.SessionRef) == "" {
+		return renderAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, store)
+	}
+	fingerprint := resumeContextFingerprint(project, wfFile, note, workspacePath, lane, run)
+	if fingerprint == "" {
+		// A compact continuation is never emitted without a persisted identity
+		// marker that the resolver can compare with the prior attempt.
+		return renderAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, store)
+	}
+	resumed, err := renderResumedAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, resumeSession)
+	if err != nil {
+		// Missing identity is a safety reason to resend the complete contract.
+		// Do not turn an incomplete delta into a provider call with guessed
+		// authority; the full renderer remains the only fallback.
+		return renderAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, store)
+	}
+	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
+		resumed = strings.TrimSpace(resumed) + "\n\n" + runtimeContext
+	}
+	resumed = strings.TrimSpace(resumed) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+	return strings.TrimSpace(resumed) + "\n", nil
+}
+
+func renderResumedAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, previousRun RunStatus, resumeSession resolvedResumeSession) (string, error) {
+	if !isV7TaskNote(note) {
+		return "", fmt.Errorf("verified resume requires a current V7 task contract")
+	}
+	taskID := strings.TrimSpace(stringField(note.Data, "id"))
+	stateRevision := strings.TrimSpace(stringField(note.Data, "state_rev"))
+	_, workRevisionPresent := note.Data["work_revision"]
+	if !workRevisionPresent {
+		return "", fmt.Errorf("verified resume requires the task work_revision")
+	}
+	currentWorkRevision := intField(note.Data, "work_revision")
+	missing := []struct {
+		name  string
+		value string
+	}{
+		{name: "project id", value: project.ProjectID},
+		{name: "project key", value: project.ProjectKey},
+		{name: "record id", value: run.RecordID},
+		{name: "run item id", value: run.ItemID},
+		{name: "task id", value: taskID},
+		{name: "task state revision", value: stateRevision},
+		{name: "workflow path", value: wfFile.Path},
+		{name: "task path", value: note.AbsolutePath},
+		{name: "workspace path", value: workspacePath},
+		{name: "attempt id", value: attemptID},
+		{name: "runner", value: run.Runner},
+		{name: "runner profile", value: run.RunnerProfile},
+		{name: "runner harness", value: run.RunnerHarness},
+		{name: "runner model", value: run.RunnerModel},
+		{name: "runner effort", value: run.RunnerEffort},
+		{name: "lane", value: lane},
+		{name: "session ref", value: resumeSession.SessionRef},
+	}
+	for _, field := range missing {
+		if strings.TrimSpace(field.value) == "" {
+			return "", fmt.Errorf("verified resume context is missing %s", field.name)
+		}
+	}
+	if currentWorkRevision != run.WorkRevision {
+		return "", fmt.Errorf("verified resume work_revision %d does not match current task work_revision %d", run.WorkRevision, currentWorkRevision)
+	}
+	if strings.TrimSpace(run.ItemID) != taskID {
+		return "", fmt.Errorf("verified resume run item %q does not match task %q", run.ItemID, taskID)
+	}
+	if recordID := strings.TrimSpace(trackerRecordID(note)); recordID != "" && recordID != strings.TrimSpace(run.RecordID) {
+		return "", fmt.Errorf("verified resume record %q does not match task record %q", run.RecordID, recordID)
+	}
+
+	value := func(raw string, limit int) string {
+		raw = safePacketText(raw, limit)
+		if raw == "" {
+			return "<not recorded>"
+		}
+		return raw
+	}
+	policy := func(raw string) string {
+		if strings.TrimSpace(raw) == "" {
+			return "<no policy fingerprint recorded>"
+		}
+		return value(raw, 160)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Tusker Verified Native Resume\n\n")
+	fmt.Fprintf(&b, "The existing native session history is authoritative for the unchanged workflow instructions and complete task contract. Continue from that history using only the current delta below.\n\n")
+	fmt.Fprintf(&b, "### Current Authority\n\n")
+	fmt.Fprintf(&b, "- Project: `%s` (key `%s`)\n", value(project.ProjectID, 200), value(project.ProjectKey, 200))
+	fmt.Fprintf(&b, "- Record: `%s`\n", value(run.RecordID, 200))
+	fmt.Fprintf(&b, "- Run item: `%s`\n", value(run.ItemID, 200))
+	fmt.Fprintf(&b, "- Task: `%s`\n", value(taskID, 200))
+	fmt.Fprintf(&b, "- Task state revision: `%s`\n", value(stateRevision, 200))
+	fmt.Fprintf(&b, "- Task source: `%s`\n", value(firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")), 200))
+	fmt.Fprintf(&b, "- Work revision: `%d`\n", run.WorkRevision)
+	fmt.Fprintf(&b, "- Workflow source: `%s`\n", value(wfFile.Path, 500))
+	fmt.Fprintf(&b, "- Task source path: `%s`\n", value(note.AbsolutePath, 500))
+	fmt.Fprintf(&b, "- Workspace: `%s`\n", value(workspacePath, 1000))
+	fmt.Fprintf(&b, "- Attempt: `%d` (`%s`)\n", attemptNumber, value(attemptID, 200))
+	fmt.Fprintf(&b, "- Lane: `%s`\n", value(lane, 100))
+	fmt.Fprintf(&b, "- Runner: `%s`\n", value(run.Runner, 160))
+	fmt.Fprintf(&b, "- Runner profile: `%s`\n", value(run.RunnerProfile, 200))
+	fmt.Fprintf(&b, "- Runner adapter/harness: `%s`\n", value(run.RunnerHarness, 200))
+	fmt.Fprintf(&b, "- Runner model: `%s`\n", value(run.RunnerModel, 200))
+	fmt.Fprintf(&b, "- Runner effort: `%s`\n", value(run.RunnerEffort, 100))
+	fmt.Fprintf(&b, "- Worker policy authority: `%s`\n", policy(run.WorkerPolicyFP))
+	fmt.Fprintf(&b, "- Execute policy authority: `%s`\n", policy(run.ExecutePolicyFP))
+	fmt.Fprintf(&b, "- Native continuity: `%s`\n", value(resumeSession.Reason, 400))
+	if parentAttempt := strings.TrimSpace(resumeSession.ParentAttemptID); parentAttempt != "" {
+		fmt.Fprintf(&b, "- Previous native attempt: `%s`\n", value(parentAttempt, 200))
+	}
+
+	fmt.Fprintf(&b, "\n### Current Delta\n\n")
+	fmt.Fprintf(&b, "- This is a verified native resume of the existing session. Use its existing history; do not request or reconstruct another copy of the unchanged task contract.\n")
+	fmt.Fprintf(&b, "- Continue only `%s` for attempt `%s` in the workspace above. Keep the current task, work revision, workspace, runner, adapter, and policy identities authoritative.\n", value(taskID, 200), value(attemptID, 200))
+	fmt.Fprintf(&b, "- Review the prior structured outcome below, repair its outstanding error or finish the next required step, and update `%s` before returning the current result.\n", taskPlanDisplayPath(taskID))
+	fmt.Fprintf(&b, "\n%s\n", renderPreviousStructuredOutcome(previousRun))
+	if reason := previousStructuredOutcomeReason(previousRun); reason != "" {
+		fmt.Fprintf(&b, "- Current error context: %s\n", reason)
+	}
+
+	fmt.Fprintf(&b, "\n### Resume Safety\n\n")
+	fmt.Fprintf(&b, "- If existing history is missing, stale, or conflicts with any identity above, stop and require a full fresh prompt; never infer an omitted contract or authority.\n")
+	fmt.Fprintf(&b, "- A material task or spec revision, changed work revision, workspace, runner/adapter, policy authority, or lost session requires the complete fresh prompt path.\n")
+	fmt.Fprintf(&b, "- Preserve all mandatory requirements from the existing contract and report a concrete blocker when they cannot be verified.\n")
+	return strings.TrimSpace(b.String()), nil
 }
 
 type taskPlanSnapshot struct {

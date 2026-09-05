@@ -25,7 +25,7 @@ func TestGeneratedCodexProfileArgumentsPassInstalledCLIParser(t *testing.T) {
 func TestProfileConfigParsesAndRejectsUnknownValues(t *testing.T) {
 	vault := automationTestVault(t)
 	root := filepath.Dir(vault)
-	if err := writeText(filepath.Join(root, "tusker.yaml"), strings.TrimSpace(`
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), strings.TrimSpace(`
 schema: tusker.config/v1
 project_id: app
 automation:
@@ -70,7 +70,7 @@ automation:
 		t.Run(tc.name, func(t *testing.T) {
 			vault := automationTestVault(t)
 			root := filepath.Dir(vault)
-			if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  profiles:\n    bad:\n      "+tc.body+"\n      sandbox:\n        mode: workspace-write\n"); err != nil {
+			if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  profiles:\n    bad:\n      "+tc.body+"\n      sandbox:\n        mode: workspace-write\n"); err != nil {
 				t.Fatal(err)
 			}
 			_, err := loadWorkflow(vault)
@@ -81,7 +81,7 @@ automation:
 			if !ok {
 				t.Fatalf("expected TuskerError, got %T %v", err, err)
 			}
-			if !strings.Contains(typed.Message, tc.want) || !strings.Contains(typed.Path, "tusker.yaml") {
+			if !strings.Contains(typed.Message, tc.want) || !strings.Contains(typed.Path, ".tusker/config.yaml") {
 				t.Fatalf("expected legible %s error with source path, got message=%q path=%q", tc.want, typed.Message, typed.Path)
 			}
 		})
@@ -221,7 +221,7 @@ func TestProfileRunRecordAndReviewPacketIncludeProfileHarnessModel(t *testing.T)
 func TestSetterReadbackProjectsLimitsWritesLocalAndRejectsNoop(t *testing.T) {
 	vault := automationTestVault(t)
 	root := filepath.Dir(vault)
-	if err := writeText(filepath.Join(root, "tusker.yaml"), strings.TrimSpace(`
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), strings.TrimSpace(`
 schema: tusker.config/v1
 project_id: app
 automation:
@@ -252,8 +252,8 @@ automation:
 	if !fileExists(filepath.Join(vault, "config.local.yaml")) {
 		t.Fatal("expected project setter to write managed config.local.yaml")
 	}
-	if fileExists(filepath.Join(root, "tusker.local.yaml")) {
-		t.Fatal("project setter must not create legacy tusker.local.yaml")
+	if fileExists(managedTuskerLocalConfigPath(filepath.Join(root, defaultRepoVaultDir))) {
+		t.Fatal("project setter must not create a root local config")
 	}
 	if err := projectsLimitsCmd(Args{"vault": vault, "max-active-runs": "4", "json": "true"}); err == nil {
 		t.Fatal("expected repeat setter to fail as a no-op")
@@ -263,7 +263,7 @@ automation:
 func TestConfigResolverPreservesExplicitZeroFalseAndEmptyCollections(t *testing.T) {
 	vault := automationTestVault(t)
 	root := filepath.Dir(vault)
-	if err := writeText(filepath.Join(root, "tusker.yaml"), `automation:
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `automation:
   concurrency:
     max_active_runs: 7
     max_concurrent_by_state:
@@ -323,7 +323,7 @@ func TestConfigResolverPreservesExplicitZeroFalseAndEmptyCollections(t *testing.
 func TestManagedConfigAugmentsLegacyClosePolicyWithoutMaskingIt(t *testing.T) {
 	vault := automationTestVault(t)
 	root := filepath.Dir(vault)
-	if err := writeText(filepath.Join(root, "tusker.yaml"), `close_policy:
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `close_policy:
   high:
     required_acceptor: reviewer_agent
     required_evidence: [automated_test]
@@ -363,7 +363,7 @@ func TestProjectSetterUsesExactLegacyVaultAndRollsBackNoop(t *testing.T) {
 	if err := ensureDir(vault); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "automation:\n  concurrency:\n    max_active_runs: 2\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "automation:\n  concurrency:\n    max_active_runs: 2\n"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs", 4); err != nil {
@@ -423,10 +423,10 @@ func TestConfigResolveShowsEffectiveWinnerAndLosingSources(t *testing.T) {
 	if err := writeText(filepath.Join(xdg, "tusker", "config.yaml"), "automation:\n  concurrency:\n    max_active_runs_per_project: 2\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  concurrency:\n    max_active_runs_per_project: 3\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  concurrency:\n    max_active_runs_per_project: 3\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(root, "tusker.local.yaml"), "automation:\n  concurrency:\n    max_active_runs_per_project: 4\n"); err != nil {
+	if err := writeText(managedTuskerLocalConfigPath(filepath.Join(root, defaultRepoVaultDir)), "automation:\n  concurrency:\n    max_active_runs_per_project: 4\n"); err != nil {
 		t.Fatal(err)
 	}
 

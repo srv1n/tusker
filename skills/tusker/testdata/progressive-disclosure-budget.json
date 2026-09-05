@@ -11,7 +11,7 @@
       "prompt": "Turn this request into the smallest useful tracked task.",
       "route": "Create, update, or close tracked work",
       "guide": "references/TRACK.md",
-      "loaded_words": 649,
+      "loaded_words": 637,
       "max_loaded_words": 650,
       "required": [
         "One bounded outcome is one task",
@@ -35,7 +35,7 @@
       "prompt": "Read or update a documentation or spec contract without loading unrelated tracker guidance.",
       "route": "Read or update documentation/spec contracts",
       "guide": "references/SPECS.md",
-      "loaded_words": 445,
+      "loaded_words": 447,
       "max_loaded_words": 475,
       "required": [
         "tusker docs find",
@@ -59,7 +59,7 @@
       "prompt": "Diagnose why this task is stuck without changing tracker state.",
       "route": "Tracker diagnosis or stuck task state",
       "guide": "references/OPERATE.md",
-      "loaded_words": 409,
+      "loaded_words": 415,
       "max_loaded_words": 425,
       "required": [
         "Diagnose tracker state read-only",
@@ -71,7 +71,7 @@
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 1672,
+      "loaded_words": 581,
       "max_loaded_words": 1675,
       "required": [
         "Existing Repository Onboarding",

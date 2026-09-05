@@ -735,7 +735,7 @@ func TestDeliveryStart(t *testing.T) {
 		}
 		unrelatedTask := mustReadIndexTest(t, vault+"/work/tasks/APP-T-0001.md")
 		gate := mustReadIndexTest(t, vault+"/work/gates/APP-G-0001.md")
-		config := mustReadIndexTest(t, repo+"/tusker.yaml")
+		config := mustReadIndexTest(t, managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)))
 		refs := gitDirOutput(t, repo, "show-ref")
 		_, path, confirm := newPlan(t, vault)
 		if _, err := start(vault, path, confirm, greenWaveEnvironment()); err != nil {
@@ -743,7 +743,7 @@ func TestDeliveryStart(t *testing.T) {
 		}
 		assertEqual(t, unrelatedTask, mustReadIndexTest(t, vault+"/work/tasks/APP-T-0001.md"), "Start must not include unrelated work")
 		assertEqual(t, gate, mustReadIndexTest(t, vault+"/work/gates/APP-G-0001.md"), "Start must not satisfy or mutate gates")
-		assertEqual(t, config, mustReadIndexTest(t, repo+"/tusker.yaml"), "Start must not mutate runner or automation configuration")
+		assertEqual(t, config, mustReadIndexTest(t, managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir))), "Start must not mutate runner or automation configuration")
 		assertEqual(t, refs, gitDirOutput(t, repo, "show-ref"), "Start must not move any Git ref")
 		idx, err := loadV7Index(vault)
 		if err != nil {

@@ -350,8 +350,18 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	h.gitOK("config", "user.name", "Delivery Fixture")
 	h.gitOK("add", "-A")
 	h.gitOK("commit", "-m", "fixture baseline")
+	templatePath := filepath.Join(h.tempRoot, "delivery-plan-template.yaml")
+	h.cliOK(h.repoDir, "delivery", "plan", "--spec", "docs/specs/delivery.md", "--out", templatePath, "--epic", "APP", "--vault", h.vaultDir, "--quiet")
+	template := h.readFile(templatePath)
+	contextFingerprint := yamlScalar(template, "context_fingerprint")
+	factorySchema := yamlScalar(template, "factory_intake_contract_schema")
+	factoryVersion := yamlScalar(template, "factory_intake_contract_version")
+	factoryFingerprint := yamlScalar(template, "factory_intake_contract_fingerprint")
+	if contextFingerprint == "" || factorySchema == "" || factoryVersion == "" || factoryFingerprint == "" {
+		t.Fatalf("delivery plan scaffold omitted V2 provenance: %s", template)
+	}
 	planPath := filepath.Join(h.tempRoot, "delivery-plan.yaml")
-	h.writeFile(planPath, specToWaveDeliveryPlan())
+	h.writeFile(planPath, specToWaveDeliveryPlan(contextFingerprint, factorySchema, factoryVersion, factoryFingerprint))
 	imported := parseJSON(t, h.cliOK(h.repoDir, "delivery", "import", "--plan", planPath, "--wave", "Disposable delivery", "--vault", h.vaultDir, "--json"))
 	delivery := mapAtPath(t, imported, "delivery")
 	mapping, _ := delivery["taskMapping"].(map[string]any)
@@ -525,7 +535,18 @@ func (h *harness) setDeliveryFixtureVerificationContracts(taskIDs ...string) {
 	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
 }
 
-func specToWaveDeliveryPlan() string {
+func yamlScalar(document, key string) string {
+	prefix := key + ":"
+	for _, line := range strings.Split(document, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, prefix)), "\"'")
+		}
+	}
+	return ""
+}
+
+func specToWaveDeliveryPlan(contextFingerprint, factorySchema, factoryVersion, factoryFingerprint string) string {
 	type task struct {
 		key, title, kind, path string
 		deps                   []string
@@ -540,9 +561,13 @@ func specToWaveDeliveryPlan() string {
 		{key: "final", title: "Integrated delivery", kind: "diff_summary", path: "artifacts/delivery/app-t-0007.json", deps: []string{"ui:hard", "client:soft", "backfill:hard"}},
 	}
 	var b strings.Builder
-	b.WriteString("schema: tusker.delivery-plan/v1\nscope: disposable-spec-to-wave\ntitle: Disposable delivery\nepic: APP\nspec_refs: [docs/specs/delivery.md]\nconcurrency: 3\ntasks:\n")
+	fmt.Fprintf(&b, "schema: tusker.delivery-plan/v2\nscope: disposable-spec-to-wave\ntitle: Disposable delivery\nepic: APP\nspec_refs: [docs/specs/delivery.md]\ncontext_fingerprint: %s\nfactory_intake_contract_schema: %s\nfactory_intake_contract_version: %s\nfactory_intake_contract_fingerprint: %s\nrequirements:\n", contextFingerprint, factorySchema, factoryVersion, factoryFingerprint)
+	for index := range tasks {
+		fmt.Fprintf(&b, "  - id: R%d\n    outcome: Task %d has a committed artifact and focused proof.\n", index+1, index+1)
+	}
+	b.WriteString("concurrency: 3\ntasks:\n")
 	for index, item := range tasks {
-		fmt.Fprintf(&b, "  - source_key: %s\n    title: %s\n    outcome: %s is objectively delivered and documented.\n    acceptance:\n      - id: A1\n        outcome: %s has a committed artifact and focused proof.\n    verification:\n      - covers: A1\n        check: 'command: fixture delivery assertion'\n", item.key, item.title, item.title, item.title)
+		fmt.Fprintf(&b, "  - source_key: %s\n    requirement_refs: [R%d]\n    title: %s\n    outcome: %s is objectively delivered and documented.\n    acceptance:\n      - id: A1\n        outcome: %s has a committed artifact and focused proof.\n    verification:\n      - covers: A1\n        check: 'command: fixture delivery assertion'\n", item.key, index+1, item.title, item.title, item.title)
 		if len(item.deps) > 0 {
 			b.WriteString("    dependencies:\n")
 			for _, dep := range item.deps {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -11,19 +12,24 @@ import (
 // caller, not a second runtime projection.  The run row remains the sole
 // authority for owner, generation, workspace, branch and liveness.
 type workSessionPacket struct {
-	Schema        string            `json:"schema"`
-	Action        string            `json:"action"`
-	TaskID        string            `json:"task_id"`
-	Owner         string            `json:"owner,omitempty"`
-	Revision      int               `json:"work_revision,omitempty"`
-	Workspace     string            `json:"workspace,omitempty"`
-	Branch        string            `json:"branch,omitempty"`
-	Head          string            `json:"head,omitempty"`
-	LeaseExpiry   string            `json:"lease_expires_at,omitempty"`
-	Packet        string            `json:"packet,omitempty"`
-	Next          string            `json:"next"`
-	Run           *RunStatus        `json:"run,omitempty"`
-	Authorization *RunAuthorization `json:"authorization,omitempty"`
+	Schema                string            `json:"schema"`
+	Action                string            `json:"action"`
+	TaskID                string            `json:"task_id"`
+	Owner                 string            `json:"owner,omitempty"`
+	Revision              int               `json:"work_revision,omitempty"`
+	Workspace             string            `json:"workspace,omitempty"`
+	Branch                string            `json:"branch,omitempty"`
+	Head                  string            `json:"head,omitempty"`
+	LeaseExpiry           string            `json:"lease_expires_at,omitempty"`
+	Packet                string            `json:"packet,omitempty"`
+	Next                  string            `json:"next"`
+	Run                   *RunStatus        `json:"run,omitempty"`
+	Authorization         *RunAuthorization `json:"authorization,omitempty"`
+	ProofFingerprint      string            `json:"proof_fingerprint,omitempty"`
+	GateFingerprint       string            `json:"gate_fingerprint,omitempty"`
+	ImplementationAttempt string            `json:"implementation_attempt_id,omitempty"`
+	ImplementationActor   string            `json:"implementation_actor,omitempty"`
+	MaterialFingerprint   string            `json:"material_fingerprint,omitempty"`
 }
 
 func workSessionCmd(args Args, action string) error {
@@ -31,6 +37,8 @@ func workSessionCmd(args Args, action string) error {
 	switch action {
 	case "start":
 		return workSessionStartCmd(args)
+	case "review":
+		return workSessionReviewCmd(args)
 	case "status":
 		return workSessionStatusCmd(args)
 	case "heartbeat":
@@ -44,6 +52,36 @@ func workSessionCmd(args Args, action string) error {
 	default:
 		return tuskerError(errorInvalidArg, "unknown work action: "+action)
 	}
+}
+
+func workSessionReviewCmd(args Args) error {
+	vault, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	id, err := requireArg(args, "id")
+	if err != nil {
+		return err
+	}
+	note, err := resolveV7Note(vault, id, "task")
+	if err != nil {
+		return err
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		return err
+	}
+	configured := reviewerActorForNote(wf.Data.Reviewer.Actor, note)
+	actor, err := resolveReviewResultActor(args, configured, note)
+	if err != nil {
+		return err
+	}
+	canonical, ok := normalizeV7ProposalActor(configured)
+	if !ok || actor != canonical {
+		return tuskerError(errorInvalidTransition, "reviewer actor is not authorized for this task")
+	}
+	args["lane"], args["owner"], args["by"] = runLaneReview, actor, actor
+	return workSessionStartCmd(args)
 }
 
 func workSessionStartCmd(args Args) error {
@@ -77,12 +115,20 @@ func workSessionStartCmd(args Args) error {
 	}
 	note, _ := ctx.findTask(result.Run.ItemID)
 	packet := workSessionPacket{
-		Schema: "tusker.work-session/v1", Action: "start", TaskID: result.Run.ItemID,
+		Schema: "tusker.work-session/v1", Action: firstNonEmpty(args.String("lane"), "start"), TaskID: result.Run.ItemID,
 		Owner: result.Run.LeaseOwner, Revision: result.Run.WorkRevision,
 		Workspace: result.Run.WorkspacePath, Branch: branch, Head: head, LeaseExpiry: result.Run.LeaseExpiresAt,
 		Packet: v7Packet(ctx.Project.VaultRoot, note, workSessionV7Index(ctx.Notes), "agent"),
 		Next:   workSessionNext(*result.Run),
 		Run:    result.Run, Authorization: result.Authorization,
+	}
+	if result.Run.Lane == runLaneReview {
+		packet.ProofFingerprint = args.String("review-proof-fingerprint")
+		packet.GateFingerprint = args.String("review-gate-fingerprint")
+		packet.ImplementationAttempt = args.String("implementation-attempt")
+		packet.ImplementationActor = args.String("implementation-actor")
+		packet.MaterialFingerprint = args.String("review-material-fingerprint")
+		packet.Next = workSessionReviewNext(*result.Run, note, packet)
 	}
 	workSessionNotify(ctx.Project.VaultRoot, result.Run)
 	if !args.Bool("embedded") {
@@ -130,6 +176,13 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	if err != nil {
 		return runClaimResult{}, nil, err
 	}
+	lane := strings.TrimSpace(args.String("lane"))
+	if lane == "" {
+		lane = runLaneExecute
+	}
+	if lane != runLaneExecute && lane != runLaneReview {
+		return runClaimResult{}, nil, tuskerError(errorInvalidArg, "work start lane must be execute or review")
+	}
 	// A same-task holder is reclaimable only after both independent facts hold:
 	// its heartbeat is past the reclaim grace and its recorded process identity
 	// no longer exists.  Never let an expired timestamp alone steal a live
@@ -163,24 +216,61 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 			ctx.ProjectRuns[trackerRecordID(note)] = projected
 		}
 	}
-	if blockers := workSessionAdmissionBlockers(note, workSessionV7Index(ctx.Notes), ctx.NotesByID, ctx.NotesByRecordID); len(blockers) > 0 {
+	if blockers := workSessionAdmissionBlockersForLane(note, workSessionV7Index(ctx.Notes), ctx.NotesByID, ctx.NotesByRecordID, lane); len(blockers) > 0 {
 		return runClaimResult{}, nil, workSessionStartBlocker(blockers[0])
 	}
 	run := ctx.effectiveRunForTask(note, automationResolveRunner(note, ctx.Workflow.Data))
 	run.ProjectID = ctx.Project.ProjectID
+	var reviewBinding *reviewImplementation
+	if lane == runLaneReview {
+		binding, bindingErr := reviewImplementationBinding(ctx.Store, run, note, ctx.Project.VaultRoot)
+		if bindingErr != nil {
+			return runClaimResult{}, nil, bindingErr
+		}
+		if strings.TrimSpace(args.String("owner")) != binding.ReviewerActor {
+			return runClaimResult{}, nil, tuskerError(errorInvalidTransition, "review session owner does not match the configured reviewer")
+		}
+		if binding.ImplementationActor == binding.ReviewerActor {
+			return runClaimResult{}, nil, tuskerError(errorInvalidTransition, "implementing session cannot masquerade as independent review")
+		}
+		selected, profileErr := resolveRunProfileForLane(note, ctx.Workflow.Data, runLaneReview, firstNonEmpty(ctx.Workflow.Data.Reviewer.Runner, ctx.Workflow.Data.Agents.Default))
+		if profileErr != nil {
+			return runClaimResult{}, nil, profileErr
+		}
+		run = prepareRunForLaneDispatch(run, runLaneReview, firstNonEmpty(selected.Definition.Harness, ctx.Workflow.Data.Reviewer.Runner, run.Runner))
+		run = applyResolvedProfileToRun(run, selected)
+		proof, gates, snapshotErr := reviewObjectiveSnapshots(ctx.Project.VaultRoot, note)
+		if snapshotErr != nil {
+			return runClaimResult{}, nil, snapshotErr
+		}
+		reviewBinding = &binding
+		args["implementation-attempt"] = binding.AttemptID
+		args["implementation-actor"] = binding.ImplementationActor
+		args["review-material-fingerprint"] = binding.MaterialFingerprint
+		args["review-proof-fingerprint"], args["review-gate-fingerprint"] = proof, gates
+	}
 	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
-	branchName, branchBase, err := v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane)
-	if err != nil {
-		return runClaimResult{}, nil, err
+	branchName := ""
+	if reviewBinding != nil {
+		// Review the same immutable-at-claim material the implementation submitted.
+		// A new worktree at HEAD would erase an uncommitted implementation diff.
+		run.WorkspacePath, branchName = reviewBinding.WorkspacePath, reviewBinding.Branch
+	} else {
+		branchBase := ""
+		var workspaceErr error
+		branchName, branchBase, workspaceErr = v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane)
+		if workspaceErr != nil {
+			return runClaimResult{}, nil, workspaceErr
+		}
+		if branchName == "" && v7GitRepo(ctx.Project.RepoRoot) {
+			branchName = v7TaskBranchName(trackerRecordID(note))
+		}
+		workspace, prepareErr := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey, RecordID: run.RecordID, ItemID: run.ItemID, BranchName: branchName, BranchBase: branchBase, RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot, WorkspaceRoot: ctx.Workflow.Data.Workspace.Root, Strategy: workspaceStrategy, WorkRevision: run.WorkRevision, MaxLiveWorktrees: ctx.Workflow.Data.Workspace.MaxLiveWorktrees})
+		if prepareErr != nil {
+			return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), prepareErr.Error()))
+		}
+		run.WorkspacePath = workspace.Path
 	}
-	if branchName == "" && v7GitRepo(ctx.Project.RepoRoot) {
-		branchName = v7TaskBranchName(trackerRecordID(note))
-	}
-	workspace, err := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey, RecordID: run.RecordID, ItemID: run.ItemID, BranchName: branchName, BranchBase: branchBase, RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot, WorkspaceRoot: ctx.Workflow.Data.Workspace.Root, Strategy: workspaceStrategy, WorkRevision: run.WorkRevision, MaxLiveWorktrees: ctx.Workflow.Data.Workspace.MaxLiveWorktrees})
-	if err != nil {
-		return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), err.Error()))
-	}
-	run.WorkspacePath = workspace.Path
 	owner := args.String("owner")
 	service := newRunOwnershipService(ctx.Store)
 	claimNotes := orchestrationOwnedPathNotes(ctx.NotesByID, ctx.Workflow.Data)
@@ -189,7 +279,11 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	// slot. Same-task and owned-path safety stay in the ownership service.
 	service.projectConcurrencyLimit = 0
 	identity := runIdentityForClaim(run, ctx.Project.RepoRoot, run.WorkspacePath, string(workspaceStrategy), branchName)
-	result, err := service.claimWorkSessionWithAuthorization(run, owner, RunAuthorization{Source: args.String("source"), Actor: owner, Trigger: "work_start", ProjectAutomationEnabled: ctx.Workflow.Data.AutomationEnabled}, identity)
+	trigger := "work_start"
+	if lane == runLaneReview {
+		trigger = "work_review"
+	}
+	result, err := service.claimWorkSessionWithAuthorizationWithParent(run, owner, RunAuthorization{Source: args.String("source"), Actor: owner, Trigger: trigger, ProjectAutomationEnabled: ctx.Workflow.Data.AutomationEnabled}, identity, args.String("implementation-attempt"))
 	if err != nil {
 		return runClaimResult{}, nil, err
 	}
@@ -198,6 +292,87 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	}
 	closeOnError = false
 	return result, ctx, nil
+}
+
+type reviewImplementation struct {
+	AttemptID           string
+	ImplementationActor string
+	ReviewerActor       string
+	MaterialFingerprint string
+	WorkspacePath       string
+	Branch              string
+}
+
+func reviewImplementationBinding(store *RuntimeStore, run RunStatus, note Note, vault string) (reviewImplementation, error) {
+	if stringField(note.Data, "status") != "review" {
+		return reviewImplementation{}, tuskerError(errorInvalidTransition, "review session requires task status review")
+	}
+	if run.Lane != runLaneExecute || LeaseState(run.LeaseState) != LeaseStateReleased || AttemptOutcome(run.AttemptOutcome) != AttemptOutcomeSucceeded {
+		return reviewImplementation{}, tuskerError(errorInvalidTransition, "review session requires a completed execute work session")
+	}
+	workRevision := intField(note.Data, "work_revision")
+	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	if workRevision == 0 || source == "" || run.WorkRevision != workRevision {
+		return reviewImplementation{}, tuskerError(errorInvalidTransition, fmt.Sprintf("review session requires the current implementation revision and source identity (task revision %d, run revision %d, source %q)", workRevision, run.WorkRevision, source))
+	}
+	parent, material, materialErr := reviewImplementationParent(store, vault, run.ProjectID, run.RecordID, workRevision, source, note)
+	if materialErr != nil {
+		return reviewImplementation{}, materialErr
+	}
+	var actor string
+	err := store.queryRowScan(`SELECT actor FROM run_authorizations WHERE project_id=? AND record_id=? AND lease_generation=?`, []any{run.ProjectID, run.RecordID, run.LeaseGeneration}, &actor)
+	if err != nil || strings.TrimSpace(actor) == "" {
+		return reviewImplementation{}, firstNonNil(err, tuskerError(errorInvalidTransition, "review session requires durable implementation session provenance"))
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		return reviewImplementation{}, err
+	}
+	return reviewImplementation{AttemptID: parent.AttemptID, ImplementationActor: actor, ReviewerActor: reviewerActorForNote(wf.Data.Reviewer.Actor, note), MaterialFingerprint: material, WorkspacePath: parent.WorkspacePath, Branch: firstNonEmpty(parent.EndState.Branch, parent.BranchName)}, nil
+}
+
+// reviewImplementationParent is the single durable binding used before both
+// interactive and daemon review. It rejects a changed declared scope before a
+// reviewer can certify a narrower or different implementation than execute
+// submitted.
+func reviewImplementationParent(store *RuntimeStore, vault, projectID, recordID string, workRevision int, source string, note Note) (RunAttempt, string, error) {
+	attempts, err := store.ListAttemptsForRun(projectID, recordID)
+	if err != nil {
+		return RunAttempt{}, "", err
+	}
+	for _, parent := range attempts {
+		if parent.Lane != runLaneExecute || parent.WorkRevision != workRevision || parent.Outcome != string(AttemptOutcomeSucceeded) || parent.EndState.HeadSHA != source {
+			continue
+		}
+		currentScope, scopeErr := canonicalTaskMaterialScope(vault, note)
+		if scopeErr != nil || strings.Join(currentScope, "\x00") != strings.Join(parent.EndState.MaterialScope, "\x00") {
+			return RunAttempt{}, "", tuskerError(errorInvalidTransition, "review refused: declared implementation material scope changed after execute submission")
+		}
+		material, materialErr := verifiedImplementationWorkspaceMaterial(parent)
+		if materialErr != nil {
+			return RunAttempt{}, "", materialErr
+		}
+		return parent, material, nil
+	}
+	return RunAttempt{}, "", tuskerError(errorInvalidTransition, "review requires a successful execute attempt bound to the current source")
+}
+
+func verifiedImplementationWorkspaceMaterial(parent RunAttempt) (string, error) {
+	if strings.TrimSpace(parent.EndState.MaterialFingerprint) == "" || len(parent.EndState.MaterialScope) == 0 {
+		return "", tuskerError(errorInvalidTransition, "review session requires a declared implementation material scope and fingerprint")
+	}
+	material, err := workspaceTreeStateHashForPaths(parent.WorkspacePath, parent.EndState.MaterialScope)
+	if err != nil {
+		return "", tuskerError(errorInvalidTransition, "review session cannot read implementation workspace material: "+err.Error())
+	}
+	if material != parent.EndState.MaterialFingerprint {
+		return "", tuskerError(errorInvalidTransition, "review session refused: implementation workspace material changed after execute submission")
+	}
+	return material, nil
+}
+
+func workSessionReviewNext(run RunStatus, note Note, packet workSessionPacket) string {
+	return "tusker review submit " + run.ItemID + " --attempt " + run.ActiveAttemptID + " --by " + run.LeaseOwner + " --task-rev " + stringField(note.Data, "state_rev") + " --source-sha " + firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) + " --work-rev " + strconv.Itoa(run.WorkRevision) + " --proof-fingerprint " + packet.ProofFingerprint + " --gate-fingerprint " + packet.GateFingerprint + " --material-fingerprint " + packet.MaterialFingerprint + " --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<review summary>\""
 }
 
 func workSessionStartBlocker(blocker ReadinessBlocker) error {
@@ -287,6 +462,32 @@ func workSessionLifecycleCmd(args Args, action string) error {
 	}
 	workSessionNotifyRun(args.String("id"))
 	return nil
+}
+
+func canonicalTaskMaterialScope(vault string, note Note) ([]string, error) {
+	scope, err := taskMaterialScope(note)
+	if err != nil || stringField(note.Data, "work_kind") != "integrator" {
+		return scope, err
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeWorkspaceMaterialScope(append(scope, wf.Data.Orchestration.SharedNamespaces...))
+}
+
+func taskMaterialScope(note Note) ([]string, error) {
+	paths := append([]string{}, normalizeList(note.Data["owned_paths"])...)
+	paths = append(paths, normalizeList(note.Data["generated_outputs"])...)
+	paths = append(paths, normalizeList(note.Data["knowledge_nodes"])...)
+	for _, ref := range normalizeList(note.Data["spec_refs"]) {
+		ref = firstNonEmpty(wikiTarget(ref), ref)
+		if strings.Contains(ref, "://") || filepath.IsAbs(ref) {
+			continue
+		}
+		paths = append(paths, ref)
+	}
+	return normalizeWorkspaceMaterialScope(paths)
 }
 
 func requireWorkSessionRevision(args Args) error {

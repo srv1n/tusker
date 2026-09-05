@@ -359,27 +359,28 @@ type RunAttempt struct {
 // the reviewed task revision and reviewer attempt, so prose and process exit
 // cannot be mistaken for acceptance.
 type ReviewResult struct {
-	Schema            string   `json:"schema"`
-	ProjectID         string   `json:"project_id"`
-	TaskID            string   `json:"task_id"`
-	TaskStateRev      string   `json:"task_state_rev"`
-	WorkRevision      int      `json:"work_revision"`
-	ImplementationSHA string   `json:"implementation_sha"`
-	AttemptID         string   `json:"attempt_id"`
-	Actor             string   `json:"actor"`
-	Runner            string   `json:"runner"`
-	RunnerProfile     string   `json:"runner_profile"`
-	WorkerPolicyFP    string   `json:"worker_policy_fingerprint"`
-	Covers            []string `json:"covers"`
-	ProofFingerprint  string   `json:"proof_fingerprint"`
-	GateFingerprint   string   `json:"gate_fingerprint"`
-	Verdict           string   `json:"verdict"`
-	Blocker           string   `json:"blocker,omitempty"`
-	Summary           string   `json:"summary"`
-	Findings          []string `json:"findings,omitempty"`
-	EvidenceRefs      []string `json:"evidence_refs,omitempty"`
-	ResultRevision    string   `json:"result_revision"`
-	CreatedAt         string   `json:"created_at"`
+	Schema              string   `json:"schema"`
+	ProjectID           string   `json:"project_id"`
+	TaskID              string   `json:"task_id"`
+	TaskStateRev        string   `json:"task_state_rev"`
+	WorkRevision        int      `json:"work_revision"`
+	ImplementationSHA   string   `json:"implementation_sha"`
+	AttemptID           string   `json:"attempt_id"`
+	Actor               string   `json:"actor"`
+	Runner              string   `json:"runner"`
+	RunnerProfile       string   `json:"runner_profile"`
+	WorkerPolicyFP      string   `json:"worker_policy_fingerprint"`
+	Covers              []string `json:"covers"`
+	ProofFingerprint    string   `json:"proof_fingerprint"`
+	GateFingerprint     string   `json:"gate_fingerprint"`
+	MaterialFingerprint string   `json:"material_fingerprint,omitempty"`
+	Verdict             string   `json:"verdict"`
+	Blocker             string   `json:"blocker,omitempty"`
+	Summary             string   `json:"summary"`
+	Findings            []string `json:"findings,omitempty"`
+	EvidenceRefs        []string `json:"evidence_refs,omitempty"`
+	ResultRevision      string   `json:"result_revision"`
+	CreatedAt           string   `json:"created_at"`
 }
 
 func (s *RuntimeStore) ReviewAttempt(attemptID string) (RunAttempt, error) {
@@ -389,16 +390,18 @@ func (s *RuntimeStore) ReviewAttempt(attemptID string) (RunAttempt, error) {
 }
 
 type RunEndState struct {
-	Schema          string            `json:"schema"`
-	Branch          string            `json:"branch"`
-	HeadSHA         string            `json:"head_sha"`
-	WorktreePath    string            `json:"worktree_path"`
-	Dirty           bool              `json:"dirty"`
-	GateVerdicts    map[string]string `json:"gate_verdicts"`
-	ReportedBranch  string            `json:"reported_branch,omitempty"`
-	ReportedHeadSHA string            `json:"reported_head_sha,omitempty"`
-	Discrepancies   []string          `json:"discrepancies,omitempty"`
-	CapturedAt      string            `json:"captured_at"`
+	Schema              string            `json:"schema"`
+	Branch              string            `json:"branch"`
+	HeadSHA             string            `json:"head_sha"`
+	WorktreePath        string            `json:"worktree_path"`
+	Dirty               bool              `json:"dirty"`
+	MaterialFingerprint string            `json:"material_fingerprint"`
+	MaterialScope       []string          `json:"material_scope,omitempty"`
+	GateVerdicts        map[string]string `json:"gate_verdicts"`
+	ReportedBranch      string            `json:"reported_branch,omitempty"`
+	ReportedHeadSHA     string            `json:"reported_head_sha,omitempty"`
+	Discrepancies       []string          `json:"discrepancies,omitempty"`
+	CapturedAt          string            `json:"captured_at"`
 }
 
 type RuntimeApplyInput struct {
@@ -1212,6 +1215,21 @@ func (s *RuntimeStore) Migrate() error {
 			consumed_at TEXT NOT NULL DEFAULT '',
 			UNIQUE(project_id, departure_id, generation)
 		);`,
+		`CREATE TABLE IF NOT EXISTS human_control_challenges (
+			challenge_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			gate_id TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			key_id TEXT NOT NULL,
+			material_revision TEXT NOT NULL,
+			action_digest TEXT NOT NULL,
+			action TEXT NOT NULL,
+			nonce TEXT NOT NULL,
+			issued_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			consumed_at TEXT NOT NULL DEFAULT '',
+			revoked_at TEXT NOT NULL DEFAULT ''
+		);`,
 		`CREATE TABLE IF NOT EXISTS external_loop_events (
 			event_id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
@@ -1488,7 +1506,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		"run_identity_metadata", "attempts", "turns", "sessions", "supervisor_decisions",
 		"apply_inputs", "review_results", "gate_ledger", "batch_gate_runs", "completion_transactions",
 		"completion_authority_issuances", "resource_leases", "resource_lease_events", "daemon_settings",
-		"departure_runs", "landing_authority_issuances", "external_loop_events",
+		"departure_runs", "landing_authority_issuances", "human_control_challenges", "external_loop_events",
 	} {
 		var count int
 		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, []any{table}, &count); err != nil || count != 1 {
@@ -2784,6 +2802,81 @@ func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generati
 	return affected > 0, nil
 }
 
+// claimRunLeaseWithDaemonAttempt is the ordinary daemon dispatch boundary. It
+// commits lease, authorization, and the parent-bound review intent together so
+// a successful reviewer proposal always has one durable implementation parent.
+func (s *RuntimeStore) claimRunLeaseWithDaemonAttempt(run RunStatus, owner string, generation int, ttl time.Duration, now time.Time, precondition RuntimeLeaseClaimPrecondition, auth RunAuthorization, attempt RunAttempt) (bool, error) {
+	if strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" || strings.TrimSpace(owner) == "" || generation <= 0 || strings.TrimSpace(attempt.AttemptID) == "" || attempt.AttemptID != owner {
+		return false, tuskerError(errorInvalidArg, "daemon lease claim requires project, task, owner, generation, and matching attempt")
+	}
+	expectedLeaseState := strings.TrimSpace(string(precondition.ExpectedLeaseState))
+	if expectedLeaseState == "" {
+		return false, tuskerError(errorInvalidArg, "daemon lease claim requires expected lease state")
+	}
+	if ttl <= 0 {
+		ttl = defaultRunLeaseTTL
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	createdAt := now.Format(time.RFC3339Nano)
+	auth.ProjectID, auth.RecordID, auth.LeaseGeneration = run.ProjectID, run.RecordID, generation
+	auth.Actor, auth.Source, auth.CreatedAt = firstNonEmpty(strings.TrimSpace(auth.Actor), owner), firstNonEmpty(strings.TrimSpace(auth.Source), "daemon_auto"), createdAt
+	attempt.ProjectID, attempt.RecordID, attempt.AttemptID = run.ProjectID, run.RecordID, owner
+	attempt.ItemID = firstNonEmpty(attempt.ItemID, run.ItemID)
+	attempt.Runner, attempt.Lane = firstNonEmpty(attempt.Runner, run.Runner), firstNonEmpty(attempt.Lane, run.Lane, runLaneExecute)
+	attempt.WorkRevision, attempt.Outcome, attempt.StartedAt = run.WorkRevision, firstNonEmpty(attempt.Outcome, string(AttemptOutcomeNone)), firstNonEmpty(attempt.StartedAt, createdAt)
+	claimed := false
+	err := s.withBusyRetry(func() error {
+		claimed = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		result, err := tx.Exec(`UPDATE runs
+			SET lease_state = 'claimed', lease_owner = ?, lease_generation = ?, lease_expires_at = ?, lease_host = ?,
+				last_heartbeat_at = ?, updated_at = ?, hand_run = 0, attempt_count = ?, active_attempt_id = ?,
+				runner = ?, runner_profile = ?, runner_harness = ?, runner_model = ?, runner_effort = ?,
+				worker_policy_fingerprint = ?, execute_policy_fingerprint = ?, lane = ?,
+				started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
+			WHERE project_id = ? AND record_id = ?
+				AND (NOT EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id)
+					OR EXISTS (SELECT 1 FROM projects project WHERE project.project_id = runs.project_id AND project.enabled = 1))
+				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
+				AND lease_generation = ? AND work_revision = ?
+				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,
+			owner, generation, now.Add(ttl).Format(time.RFC3339Nano), runtimeLeaseHost(), createdAt, createdAt,
+			run.AttemptCount+1, owner, attempt.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort,
+			attempt.WorkerPolicyFP, run.ExecutePolicyFP, attempt.Lane, attempt.StartedAt, createdAt,
+			run.ProjectID, run.RecordID, expectedLeaseState, precondition.ExpectedOwner, precondition.ExpectedLeaseGeneration, precondition.ExpectedWorkRevision,
+			precondition.ProjectConcurrencyLimit, run.ProjectID, precondition.ProjectConcurrencyLimit)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return nil
+		}
+		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	})
+	return claimed, err
+}
+
 // claimRunLeaseWithDirectiveAttempt is the directed-dispatch commit boundary.
 // A one-shot authorization must never be consumed unless the matching lease,
 // authorization trail, and durable attempt intent all exist. Keeping those
@@ -2877,8 +2970,8 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 			VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, branch_name, outcome, started_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -2954,7 +3047,7 @@ func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner 
 		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO run_identity_metadata(project_id,record_id,repo_root,workspace_path,workspace_mode,runner,branch,head,created_at)

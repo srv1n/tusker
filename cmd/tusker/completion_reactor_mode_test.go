@@ -37,7 +37,7 @@ func TestCompletionReactorModeResolution(t *testing.T) {
 		},
 		{
 			name:              "explicit disabled",
-			layers:            []tuskerConfigLayer{completionReactorLayer(configSourceProject, "tusker.yaml", "disabled")},
+			layers:            []tuskerConfigLayer{completionReactorLayer(configSourceProject, ".tusker/config.yaml", "disabled")},
 			automationEnabled: true,
 			wantConfigured:    "disabled",
 			wantEffective:     "disabled",
@@ -45,7 +45,7 @@ func TestCompletionReactorModeResolution(t *testing.T) {
 		},
 		{
 			name:              "explicit shadow",
-			layers:            []tuskerConfigLayer{completionReactorLayer(configSourceProject, "tusker.yaml", "shadow")},
+			layers:            []tuskerConfigLayer{completionReactorLayer(configSourceProject, ".tusker/config.yaml", "shadow")},
 			automationEnabled: true,
 			wantConfigured:    "shadow",
 			wantEffective:     "shadow",
@@ -53,7 +53,7 @@ func TestCompletionReactorModeResolution(t *testing.T) {
 		},
 		{
 			name:              "explicit authoritative",
-			layers:            []tuskerConfigLayer{completionReactorLayer(configSourceProject, "tusker.yaml", "authoritative")},
+			layers:            []tuskerConfigLayer{completionReactorLayer(configSourceProject, ".tusker/config.yaml", "authoritative")},
 			automationEnabled: true,
 			wantConfigured:    "authoritative",
 			wantEffective:     "authoritative",
@@ -62,8 +62,8 @@ func TestCompletionReactorModeResolution(t *testing.T) {
 		{
 			name: "local explicit mode wins over project",
 			layers: []tuskerConfigLayer{
-				completionReactorLayer(configSourceProject, "tusker.yaml", "shadow"),
-				completionReactorLayer(configSourceLocal, "tusker.local.yaml", "disabled"),
+				completionReactorLayer(configSourceProject, ".tusker/config.yaml", "shadow"),
+				completionReactorLayer(configSourceLocal, ".tusker/config.local.yaml", "disabled"),
 			},
 			automationEnabled: true,
 			wantConfigured:    "disabled",
@@ -86,13 +86,13 @@ func TestCompletionReactorModeResolution(t *testing.T) {
 }
 
 func TestCompletionReactorModeRejectsInvalidConfiguredValue(t *testing.T) {
-	resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{completionReactorLayer(configSourceProject, "tusker.yaml", "go_for_it")}}
+	resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{completionReactorLayer(configSourceProject, ".tusker/config.yaml", "go_for_it")}}
 	if _, err := resolveCompletionReactorMode(resolved, false); err == nil || !strings.Contains(err.Error(), "completion_reactor.mode") {
 		t.Fatalf("expected invalid completion-reactor mode error, got %v", err)
 	}
 
 	root := t.TempDir()
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "automation:\n  completion_reactor:\n    mode: go_for_it\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "automation:\n  completion_reactor:\n    mode: go_for_it\n"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := resolveTuskerConfigForRepo(root, true); err == nil || !strings.Contains(err.Error(), "completion_reactor.mode") {
@@ -106,7 +106,7 @@ func TestCompletionReactorModeFreshConfigAndDoctorWarningAreSideEffectFree(t *te
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeDefaultRootTuskerConfig(vault); err != nil {
+	if err := writeDefaultTuskerConfig(vault); err != nil {
 		t.Fatal(err)
 	}
 	configPath := managedTuskerConfigPath(vault)

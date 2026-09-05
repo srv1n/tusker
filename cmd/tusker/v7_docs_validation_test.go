@@ -97,7 +97,7 @@ func TestLockedSpecUpdatesAcceptRelatedDocTask(t *testing.T) {
 	}
 }
 
-func TestLockedSpecUpdatesAcceptCanonicalDeliveryAliasWithoutEpicRef(t *testing.T) {
+func TestLockedSpecUpdatesRejectObsoleteDeliveryAlias(t *testing.T) {
 	repo := t.TempDir()
 	vault := filepath.Join(repo, ".tusker")
 	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
@@ -126,11 +126,11 @@ func TestLockedSpecUpdatesAcceptCanonicalDeliveryAliasWithoutEpicRef(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issuesContainCode(issues, "SPEC_UPDATES_UNLANDED") {
-		t.Fatalf("canonical delivery alias task should suppress hard failure: %#v", issues)
+	if !issuesContainCode(issues, "SPEC_UPDATES_UNLANDED") {
+		t.Fatalf("obsolete delivery alias should not suppress the hard failure: %#v", issues)
 	}
-	if !issuesContainCode(issues, "SPEC_UPDATES_PENDING") {
-		t.Fatalf("expected pending warnings until the follow-up docs land: %#v", issues)
+	if issuesContainCode(issues, "SPEC_UPDATES_PENDING") {
+		t.Fatalf("obsolete delivery alias was accepted as a related task: %#v", issues)
 	}
 }
 

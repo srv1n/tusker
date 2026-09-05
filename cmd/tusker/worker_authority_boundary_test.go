@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkerEnvironmentStripsDaemonAuthority(t *testing.T) {
@@ -252,6 +253,76 @@ func TestWorkerReviewSubmitEmitsProposalWithoutOpeningRuntimeStore(t *testing.T)
 }
 
 func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
+	t.Run("daemon claim preserves execute parent across review retries", func(t *testing.T) {
+		project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
+		defer daemon.Close()
+		note, err := resolveV7Note(filepath.Dir(wfFile.Path), run.RecordID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := daemon.store.SaveAttempt(RunAttempt{AttemptID: "prior-review", ProjectID: project.ProjectID, RecordID: run.RecordID, Lane: runLaneReview, WorkRevision: run.WorkRevision, Outcome: string(AttemptOutcomeSucceeded)}); err != nil {
+			t.Fatal(err)
+		}
+		parent, err := daemonReviewImplementationAttempt(daemon.store, filepath.Dir(wfFile.Path), run, note)
+		if err != nil || parent.AttemptID != "execute-boundary" {
+			t.Fatalf("review retry selected parent=%#v err=%v", parent, err)
+		}
+		claimRun := run
+		claimRun.LeaseState, claimRun.LeaseOwner, claimRun.ActiveAttemptID = string(LeaseStateUnclaimed), "", ""
+		claimRun.AttemptCount = 0
+		if err := daemon.store.UpsertRun(claimRun); err != nil {
+			t.Fatal(err)
+		}
+		claim, err := newRunOwnershipService(daemon.store).claimExistingWithAuthorization(claimRun, "daemon-review-retry", RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true}, RunAttempt{AttemptID: "daemon-review-retry", Lane: runLaneReview, ParentAttemptID: parent.AttemptID, WorkspacePath: run.WorkspacePath})
+		if err != nil || !claim.Claimed {
+			t.Fatalf("daemon review claim failed: claim=%#v err=%v", claim, err)
+		}
+		attempts, err := daemon.store.ListAttemptsForRun(project.ProjectID, run.RecordID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, attempt := range attempts {
+			if attempt.AttemptID == "daemon-review-retry" && attempt.ParentAttemptID == "execute-boundary" {
+				return
+			}
+		}
+		t.Fatalf("daemon review retry did not persist execute parent: %#v", attempts)
+	})
+
+	t.Run("missing or mismatched execute parent is rejected", func(t *testing.T) {
+		_, daemon, wfFile, run := reviewProposalDaemonFixture(t)
+		defer daemon.Close()
+		original, err := resolveV7Note(filepath.Dir(wfFile.Path), run.RecordID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalSource := stringField(original.Data, "source_sha")
+		setAutomationV7TaskFields(t, filepath.Dir(wfFile.Path), run.RecordID, map[string]any{"work_revision": run.WorkRevision + 1})
+		note, err := resolveV7Note(filepath.Dir(wfFile.Path), run.RecordID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemonReviewImplementationAttempt(daemon.store, filepath.Dir(wfFile.Path), run, note); err == nil {
+			t.Fatal("daemon review accepted a missing execute parent")
+		}
+		setAutomationV7TaskFields(t, filepath.Dir(wfFile.Path), run.RecordID, map[string]any{"work_revision": run.WorkRevision, "source_sha": "mismatched-source"})
+		note, err = resolveV7Note(filepath.Dir(wfFile.Path), run.RecordID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemonReviewImplementationAttempt(daemon.store, filepath.Dir(wfFile.Path), run, note); err == nil {
+			t.Fatal("daemon review accepted a mismatched execute parent")
+		}
+		setAutomationV7TaskFields(t, filepath.Dir(wfFile.Path), run.RecordID, map[string]any{"source_sha": originalSource, "owned_paths": []string{"narrowed"}})
+		note, err = resolveV7Note(filepath.Dir(wfFile.Path), run.RecordID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := daemonReviewImplementationAttempt(daemon.store, filepath.Dir(wfFile.Path), run, note); err == nil {
+			t.Fatal("daemon review accepted a changed declared material scope")
+		}
+	})
+
 	t.Run("live marker is not durable", func(t *testing.T) {
 		project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
 		defer daemon.Close()
@@ -391,8 +462,28 @@ func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
 func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, WorkflowFile, RunStatus) {
 	t.Helper()
 	vault := automationTestVault(t)
+	repo := filepath.Dir(vault)
+	initializeOrchestrationGitRepo(t, repo)
+	runGitDir(t, repo, "add", ".gitignore", "SKILL.md", "WORKFLOW.md")
+	runGitDir(t, repo, "commit", "-m", "fixture controls")
+	if err := os.MkdirAll(filepath.Join(repo, "owned"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "owned", "implementation.go"), []byte("package owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", "owned/implementation.go")
+	runGitDir(t, repo, "commit", "-m", "implementation")
+	facts, err := captureGitBranchFacts(repo, "main", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := workspaceTreeStateHashForPaths(repo, []string{"owned"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review proposal boundary", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": "abc123", "work_revision": 2})
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": facts.Head, "work_revision": 2, "owned_paths": []string{"owned"}})
 	project := registerAutomationTestProject(t, vault)
 	configureCompletionWorkerProfilesForTest(t, vault)
 	wfFile, err := loadWorkflow(vault)
@@ -435,14 +526,23 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 		Runner: string(RunnerCodexExec), RunnerProfile: reviewProfile.Name, RunnerHarness: string(RunnerCodexExec),
 		WorkerPolicyFP: reviewPolicyFP, ExecutePolicyFP: executePolicyFP,
 		Lane: runLaneReview, LeaseState: string(LeaseStateRunning), LeaseOwner: attemptID,
-		ActiveAttemptID: attemptID, WorkRevision: 2, WorkspacePath: t.TempDir(),
-		RawLogPath: rawLogPath, StatusPath: statusPath, AttemptCount: 1,
+		ActiveAttemptID: attemptID, WorkRevision: 2, WorkspacePath: repo,
+		RawLogPath: rawLogPath, StatusPath: statusPath, AttemptCount: 1, LeaseGeneration: 1,
 	}
-	if err := daemon.store.SaveAttempt(RunAttempt{AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner, Lane: runLaneReview, WorkerPolicyFP: reviewPolicyFP, WorkRevision: run.WorkRevision, WorkspacePath: run.WorkspacePath}); err != nil {
+	parentID := "execute-boundary"
+	if err := daemon.store.SaveAttempt(RunAttempt{AttemptID: parentID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner, Lane: runLaneExecute, WorkerPolicyFP: executePolicyFP, WorkRevision: run.WorkRevision, WorkspacePath: repo, Outcome: string(AttemptOutcomeSucceeded), EndState: RunEndState{Schema: "tusker.run-end-state/v2", HeadSHA: facts.Head, WorktreePath: repo, MaterialFingerprint: material, MaterialScope: []string{"owned"}}}); err != nil {
+		daemon.Close()
+		t.Fatal(err)
+	}
+	if err := daemon.store.SaveAttempt(RunAttempt{AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner, Lane: runLaneReview, WorkerPolicyFP: reviewPolicyFP, WorkRevision: run.WorkRevision, WorkspacePath: run.WorkspacePath, ParentAttemptID: parentID}); err != nil {
 		daemon.Close()
 		t.Fatal(err)
 	}
 	if err := daemon.store.UpsertRun(run); err != nil {
+		daemon.Close()
+		t.Fatal(err)
+	}
+	if err := daemon.store.SaveRunAuthorization(RunAuthorization{ProjectID: project.ProjectID, RecordID: run.RecordID, LeaseGeneration: run.LeaseGeneration, Source: "daemon_auto", Actor: "agent:implementer", Trigger: "execute", ProjectAutomationEnabled: true}); err != nil {
 		daemon.Close()
 		t.Fatal(err)
 	}
@@ -451,7 +551,7 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 		// registry row ID. The authority boundary validates then normalizes it.
 		Schema: reviewResultSchemaV2, ProjectID: v7ProjectID(vault), TaskID: run.RecordID,
 		TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: run.WorkRevision,
-		ImplementationSHA: "abc123", AttemptID: attemptID,
+		ImplementationSHA: facts.Head, AttemptID: attemptID,
 		Actor:  reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 		Covers: []string{}, ProofFingerprint: proof, GateFingerprint: gates,
 		Verdict: "changes_requested", Summary: "actionable", Findings: []string{"fix acceptance"},

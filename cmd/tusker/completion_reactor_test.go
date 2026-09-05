@@ -2181,7 +2181,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				vault, project, daemon, result := completionReactorFixture(t, true)
-				originalConfig, err := os.ReadFile(filepath.Join(project.RepoRoot, "tusker.yaml"))
+				originalConfig, err := os.ReadFile(managedTuskerConfigPath(filepath.Join(project.RepoRoot, defaultRepoVaultDir)))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -2214,7 +2214,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 					t.Fatalf("policy crash did not retain frozen ref intent: transaction=%#v err=%v", transaction, err)
 				}
 				if tc.strongBeforeCAS {
-					if err := writeText(filepath.Join(project.RepoRoot, "tusker.yaml"), string(originalConfig)); err != nil {
+					if err := writeText(managedTuskerConfigPath(filepath.Join(project.RepoRoot, defaultRepoVaultDir)), string(originalConfig)); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -2618,7 +2618,7 @@ func recordCompletionTestProof(t *testing.T, vault, taskID string) {
 
 func appendCompletionTestClosePolicy(t *testing.T, repoRoot, policy string) {
 	t.Helper()
-	path := filepath.Join(repoRoot, "tusker.yaml")
+	path := managedTuskerConfigPath(filepath.Join(repoRoot, defaultRepoVaultDir))
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

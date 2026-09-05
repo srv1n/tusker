@@ -25,23 +25,6 @@ Read exactly one guide:
 
 For a read-only answer, stay here: `tusker show <ID> --capsule`, `tusker list`, `tusker search <term>`. Task history, attempts, events, `_generated`, and raw logs open only when the request names them.
 
-## Reset a stale project
-
-When repo-local tracker state no longer matches the current Tusker API, preview
-then apply the disposable-project reset:
-
-```sh
-tusker reset --dry-run
-tusker reset --yes
-# or: tusker relaunch --yes
-```
-
-`reset` deletes known Tusker state (tasks, epics, proof, scratch, and generated
-state), preserves `.tusker/specs/**`, leaves product source and system docs alone,
-and initializes a clean current vault. Use `--repo <path>` for another checkout.
-It is destructive and requires `--yes`; use `tusker init --yes --purge-state
---preserve-specs` when composing the lower-level operation directly.
-
 ## Hard stop
 
 `agent_action: stop_until_human_response` or `readiness: waiting_on_human` ends tracker mutation. Inspect with `tusker proof status <TASK-ID>` and `tusker closeout status <TASK-ID> --json`, then report the exact human action and task/gate ID. Proof is recorded, never manufactured; a human-owned gate is resolved by its owner.

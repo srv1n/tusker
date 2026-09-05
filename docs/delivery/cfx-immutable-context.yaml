@@ -1,0 +1,48 @@
+schema: tusker.delivery-plan/v2
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+scope: cfx-immutable-context
+title: 'Retain the immutable delivery context contract'
+epic: CFX
+spec_refs:
+- .tusker/specs/tusker-trust-and-efficiency.md
+context_fingerprint: sha256:64437743d3be9300bcf25a627567a2d781c18808870a5182122bfd061c0bca9e
+non_goals:
+- Do not duplicate or redesign the immutable-base implementation.
+- Do not claim the existing incomplete CFX implementation or proof passed.
+- Do not enable automation, arm a wave, dispatch a worker, or impersonate a human receipt.
+- Keep the prior CFX tracker ID in external provenance; allocate one current task from this scope.
+requirements:
+- id: R1
+  outcome: The current tracker retains CFX ownership and its pending card evidence obligation while the concrete immutable-base contract is established.
+concurrency: 1
+summary: Retain the substantive CFX immutable-base contract and its pending evidence obligation in the current-only tracker.
+tasks:
+- source_key: immutable-delivery-context
+  title: Anchor delivery context to immutable Git base
+  outcome: Preserve the existing CFX ownership, high risk, card proof mode, and one-file evidence budget while leaving implementation acceptance pending until the actual immutable-base contract and evidence exist.
+  acceptance:
+  - id: A1
+    outcome: The current CFX task identifies its immutable-base ownership and retains card proof with one evidence file available; its proof status remains pending until a real implementation session and independent review supply evidence.
+  verification:
+  - covers: A1
+    check: 'command: python3 -c "from pathlib import Path; lines=next(Path(\".tusker/work/tasks\").glob(\"CFX-T-*.md\")).read_text().splitlines()[:45]; assert any(\"delivery_source_key:\" in l and \"immutable-delivery-context\" in l for l in lines); assert any(\"proof_mode:\" in l and \"card\" in l for l in lines); assert any(\"evidence_budget:\" in l and \"1\" in l for l in lines); assert any(\"proof_status:\" in l and \"pending\" in l for l in lines)'
+    notes: 'Run only after the supported proof set-mode mutation. This verifies retention of the CFX contract fields; it does not prove the immutable-base implementation.'
+  artifact:
+    kind: knowledge_link
+    path: docs/reports/trust-orchestration.md
+    summary: Current-only mapping records CFX ownership, proof depth, evidence budget, and the pending implementation boundary without claiming acceptance.
+    acceptance_ids:
+    - A1
+  owned_paths:
+  - docs/reports/trust-orchestration.md
+  domains:
+  - project
+  complexity: standard
+  risk: high
+  priority: p1
+  size: s
+  requirement_refs:
+  - R1
+  dependencies: []

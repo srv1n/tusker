@@ -1,0 +1,281 @@
+schema: tusker.delivery-plan/v2
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+scope: trust-efficiency
+title: 'Trust wave 4: Reduce context cost without losing meaning'
+epic: FLW
+spec_refs:
+- .tusker/specs/tusker-trust-and-efficiency.md
+context_fingerprint: sha256:843d9b468888621dfb5ca842e23a96c3b3b0d50e24cfaf6147d78aef1597cdf0
+non_goals:
+- Do not dispatch workers, enable automation or publish as part of planning.
+- Do not omit contract content to meet a token target or substitute static evidence for live acceptance.
+- Do not duplicate CFX-T-0001 or the existing FLW-T-0002 through FLW-T-0005 repairs.
+requirements:
+- id: R1
+  outcome: Measured routine workflow overhead falls materially; cold, warm and recovery paths retain complete contracts
+    and useful error handling.
+concurrency: 1
+summary: Measured routine workflow overhead falls materially; cold, warm and recovery paths retain complete contracts
+  and useful error handling.
+tasks:
+- source_key: compact-cli
+  title: Make routine CLI reads bounded and directly actionable
+  outcome: 'Reuse current capsule, next, proof-status and structured output before adding switches. Default agent
+    reads contain stable IDs, revision, state/reason, next action and only relevant routing links. Token objective:
+    Candidate ceilings: routine next/status <=350 tokens, capsule <=500 tokens; mandatory contract packets are excluded.'
+  acceptance:
+  - id: A1
+    outcome: Reuse current capsule, next, proof-status and structured output before adding switches. Default agent
+      reads contain stable IDs, revision, state/reason, next action and only relevant routing links.
+  - id: A2
+    outcome: Lists are bounded with explicit truncation and complete follow-up navigation; a single routine status
+      call does not dump bodies, logs, whole waves or repeated global instructions.
+  - id: A3
+    outcome: Meet the frozen routine-output budgets against small and large fixtures; errors stay parseable and
+      actionable with matching human-readable meaning.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustCompactCli$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Golden semantic field
+      assertions plus measured output budgets; large-vault fixture proves bounded response and navigable remainder.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run ^TestTrustCompactCli$ -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Golden semantic field
+      assertions plus measured output budgets; large-vault fixture proves bounded response and navigable remainder.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run ^TestTrustCompactCli$ -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Golden semantic field
+      assertions plus measured output budgets; large-vault fixture proves bounded response and navigable remainder.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/compact-cli.md
+    summary: Golden semantic field assertions plus measured output budgets; large-vault fixture proves bounded response
+      and navigable remainder. Include actual commands, executed cases, revision, host, results and durable artifact
+      links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/commands_v7.go
+  - cmd/tusker/capsule.go
+  - cmd/tusker/trust_compact_cli_test.go
+  - docs/reports/trust-evidence/compact-cli.md
+  domains:
+  - project
+  complexity: standard
+  risk: medium
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: token-baseline
+    kind: hard
+    scope: trust-foundation
+  - task: cli-guide
+    kind: hard
+    scope: trust-contracts
+  - task: dag-leases
+    kind: hard
+    scope: trust-execution
+- source_key: document-routing
+  title: Unify spec discovery and progressively disclose knowledge
+  outcome: 'Adopt one spec/decision resolver and compatible scaffolds across skills, docs commands and traceability;
+    retain existing paths/aliases and do not silently bless arbitrary source files as governing specs. Token objective:
+    Candidate routing metadata average <=50 tokens/document and initial shortlist <=800 tokens; full documents remain
+    retrievable.'
+  acceptance:
+  - id: A1
+    outcome: Adopt one spec/decision resolver and compatible scaffolds across skills, docs commands and traceability;
+      retain existing paths/aliases and do not silently bless arbitrary source files as governing specs.
+  - id: A2
+    outcome: For 100/1000 documents, return a small relevant shortlist with read/skip guidance and stable links;
+      selected nodes reveal details on demand. Preserve constraints, decisions and supersession relations.
+  - id: A3
+    outcome: Verify FLW-T-0005 metadata search and measure routing relevance as well as size; the right mandatory
+      spec/decision is found in all curated regression scenarios without listing the entire tree.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDocumentRouting$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Mixed old/new-root
+      fixture, renamed/superseded documents, broken links and measured 100/1000-document discovery journeys.'
+  - covers: A2
+    check: 'command: go test ./internal/docgraph -run "^(TestFindRanksCanonicalFirst|TestFindMatchesReadWhenMetadataAndIgnoresSkipWhen|TestFindResolvesTombstoneToSuccessor|TestResolverUsesOneSubjectAndPathRoute|TestSemanticLinksBacklinksAndBrokenRoutesShareResolver)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Mixed old/new-root
+      fixture, renamed/superseded documents, broken links and measured 100/1000-document discovery journeys.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestV7SpecRefsFrontmatterAndValidation|TestV7SpecRefsSurfaceInCapsulePacketAndAutomationPlan|TestSearchSkipsAttachmentsAndGeneratedFiles)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Mixed old/new-root
+      fixture, renamed/superseded documents, broken links and measured 100/1000-document discovery journeys.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/document-routing.md
+    summary: Mixed old/new-root fixture, renamed/superseded documents, broken links and measured 100/1000-document
+      discovery journeys. Include actual commands, executed cases, revision, host, results and durable artifact
+      links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - internal/docgraph
+  - cmd/tusker/docs_cmd.go
+  - cmd/tusker/v7_traceability.go
+  - cmd/tusker/trust_document_routing_test.go
+  - docs/reports/trust-evidence/document-routing.md
+  domains:
+  - project
+  complexity: standard
+  risk: medium
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: token-baseline
+    kind: hard
+    scope: trust-foundation
+  - task: baseline
+    kind: hard
+    scope: trust-foundation
+- source_key: context-reuse
+  title: Avoid resending unchanged context across harness calls
+  outcome: 'Identify repeated content in measured traces; first remove duplication and reuse existing packet/revision
+    machinery. Add cache/delta logic only where those changes cannot meet the frozen workflow budget. Token objective:
+    Candidate >=30% reduction in median routine Tusker context tokens versus W0; no higher tool-call count solely
+    to hide context.'
+  acceptance:
+  - id: A1
+    outcome: Identify repeated content in measured traces; first remove duplication and reuse existing packet/revision
+      machinery. Add cache/delta logic only where those changes cannot meet the frozen workflow budget.
+  - id: A2
+    outcome: Reuse stable content only under task/spec/capability revision identity. Material edits, stale cursors,
+      lost sessions and changed authority force a complete safe refresh; a fresh harness never receives an unexplained
+      delta.
+  - id: A3
+    outcome: Use native prompt caching only for adapters that actually support it. Record cached versus uncached
+      usage where available; maintain a full-content fallback and cap retrieval round trips.
+  verification:
+  - covers: A1
+    check: 'command: python3 scripts/measure-agent-workflows.py --check --baseline docs/reports/agent-efficiency/token-baseline.json --fixtures docs/reports/agent-efficiency/fixtures-v2.json'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Cold/warm/edited/restarted
+      session equivalence checks on complete mandatory content, plus workflow token/tool-call comparisons.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestExecutionGraphMemoizedWalkMatchesNaiveWalk|TestCodexPayloadStringBoundsDepthAndVisits|TestV7PacketPreservesCompleteTaskContract)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Cold/warm/edited/restarted
+      session equivalence checks on complete mandatory content, plus workflow token/tool-call comparisons.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestV7ModelTaskWriteRoundTripKeepsStateRev|TestProfileRunRecordAndReviewPacketIncludeProfileHarnessModel|TestExecutionLifecycleUnknownSessionMergesPriorEvidence)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Cold/warm/edited/restarted
+      session equivalence checks on complete mandatory content, plus workflow token/tool-call comparisons.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/context-reuse.md
+    summary: Cold/warm/edited/restarted session equivalence checks on complete mandatory content, plus workflow
+      token/tool-call comparisons. Include actual commands, executed cases, revision, host, results and durable
+      artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/commands_v7.go
+  - cmd/tusker/runner.go
+  - cmd/tusker/trust_context_reuse_test.go
+  - docs/reports/trust-evidence/context-reuse.md
+  domains:
+  - project
+  complexity: standard
+  risk: medium
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: compact-cli
+    kind: hard
+  - task: handoff
+    kind: hard
+    scope: trust-contracts
+  - task: adapter-contract
+    kind: hard
+    scope: trust-execution
+- source_key: efficiency-gate
+  title: Enforce total workflow cost and completeness regression budgets
+  outcome: 'Run the same baseline corpus through the new workflow: onboarding, discovery, success, proof failure,
+    gate and resume. Publish before/after input, output, calls, turns, latency and completeness, with exact versions.
+    Token objective: Candidate warm bootstrap <=1200 tokens; p95 tools/latency no >10% regression on deterministic
+    comparable workloads; report total agent-job cost separately.'
+  acceptance:
+  - id: A1
+    outcome: 'Run the same baseline corpus through the new workflow: onboarding, discovery, success, proof failure,
+      gate and resume. Publish before/after input, output, calls, turns, latency and completeness, with exact versions.'
+  - id: A2
+    outcome: Meet frozen targets; require zero omitted normative requirements and zero false closes. Large mandatory
+      contracts may exceed size targets only with an explicit report; never truncate them.
+  - id: A3
+    outcome: Add a cheap deterministic CI regression gate for fixture context size and semantics; reserve billed/live
+      runs for release checkpoints. Detect repeated context regressions and tokenizer/version changes.
+  verification:
+  - covers: A1
+    check: 'command: python3 scripts/measure-agent-workflows.py --check --baseline docs/reports/agent-efficiency/token-baseline.json --fixtures docs/reports/agent-efficiency/fixtures-v2.json'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproduce baseline
+      and candidate from saved fixture inputs and run one intentional oversize/missing-contract failure to prove
+      the gate detects regressions.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestContextAuditSummarizesTranscriptNoise|TestV7CapsuleValidationWarnsMissingAndBudgetsTokens|TestV7ProofReportKeepsMachineProofMissingActionable)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproduce baseline
+      and candidate from saved fixture inputs and run one intentional oversize/missing-contract failure to prove
+      the gate detects regressions.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestDeliveryCanonicalVerificationContract|TestDeliveryVerificationContractAdoption|TestV7GuardrailVerificationTablePassRowsAreStructuredProof)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproduce baseline
+      and candidate from saved fixture inputs and run one intentional oversize/missing-contract failure to prove
+      the gate detects regressions.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/efficiency-gate.md
+    summary: Reproduce baseline and candidate from saved fixture inputs and run one intentional oversize/missing-contract
+      failure to prove the gate detects regressions. Include actual commands, executed cases, revision, host, results
+      and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - scripts/measure-agent-workflows.py
+  - docs/reports/agent-efficiency
+  - cmd/tusker/trust_efficiency_gate_test.go
+  - docs/reports/trust-evidence/efficiency-gate.md
+  domains:
+  - project
+  complexity: standard
+  risk: medium
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: compact-cli
+    kind: hard
+  - task: document-routing
+    kind: hard
+  - task: context-reuse
+    kind: hard
+  - task: proof-categories
+    kind: hard
+    scope: trust-proof
+  - task: review-closeout
+    kind: hard
+    scope: trust-proof
+owned_path_overlaps:
+- source_key: compact-cli--context-reuse
+  tasks:
+  - compact-cli
+  - context-reuse
+  paths:
+  - cmd/tusker/commands_v7.go
+  strategy: serialize

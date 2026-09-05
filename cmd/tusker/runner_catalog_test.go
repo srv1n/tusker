@@ -16,11 +16,7 @@ func TestRunnerCatalogParsesInstalledCodexShape(t *testing.T) {
 
 func TestRunnerProfileBootstrap(t *testing.T) {
 	vault := automationTestVault(t)
-	root := filepath.Dir(vault)
-	path := filepath.Join(root, "tusker.yaml")
-	if err := os.Remove(managedTuskerConfigPath(vault)); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
+	path := managedTuskerConfigPath(vault)
 	original := "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n  default_profile: custom\n  routing:\n    - name: keep\n      profile: custom\n  profiles:\n    custom:\n      harness: codex_exec\n      model: gpt-5.x\n      effort: low\n      sandbox: {mode: workspace-write, network: false}\n      subagents: {allowed: false, max_concurrent: 0}\n"
 	if err := writeText(path, original); err != nil {
 		t.Fatal(err)
@@ -41,10 +37,10 @@ func TestRunnerProfileBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, err = readText(path)
-	if err != nil || after != original {
-		t.Fatalf("write mutated legacy compatibility config: %v %q", err, after)
+	if err != nil || after == original {
+		t.Fatalf("managed bootstrap did not write the selected profiles: %v %q", err, after)
 	}
-	managed, err := readText(managedTuskerConfigPath(vault))
+	managed, err := readText(path)
 	if err != nil || !strings.Contains(managed, "default_profile: custom") || !strings.Contains(managed, "enabled: true") || !strings.Contains(managed, "execute-standard") || !strings.Contains(managed, "name: keep") {
 		t.Fatalf("managed write failed to preserve effective policy: %v %s", err, managed)
 	}
@@ -53,22 +49,8 @@ func TestRunnerProfileBootstrap(t *testing.T) {
 	}
 }
 
-func TestRunnerProfileBootstrapPreservesManagedDefaultOverLegacy(t *testing.T) {
+func TestRunnerProfileBootstrapPreservesManagedDefault(t *testing.T) {
 	vault := automationTestVault(t)
-	root := filepath.Dir(vault)
-	legacy := `schema: tusker.config/v1
-project_id: app
-automation:
-  enabled: false
-  default_profile: legacy-owned
-  profiles:
-    legacy-owned:
-      harness: codex_exec
-      model: gpt-5.x
-      effort: low
-      sandbox: {mode: workspace-write, network: false}
-      subagents: {allowed: false, max_concurrent: 0}
-`
 	managed := `schema: tusker.config/v1
 project_id: app
 automation:
@@ -82,9 +64,6 @@ automation:
       sandbox: {mode: workspace-write, network: false}
       subagents: {allowed: false, max_concurrent: 0}
 `
-	if err := writeText(legacyTuskerConfigPath(root), legacy); err != nil {
-		t.Fatal(err)
-	}
 	if err := writeText(managedTuskerConfigPath(vault), managed); err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +78,7 @@ automation:
 		t.Fatal(err)
 	}
 	if got := resolved.Config.Automation.DefaultProfile; got != "managed-owned" {
-		t.Fatalf("managed default lost precedence: got %q, want managed-owned", got)
-	}
-	legacyAfter, err := readText(legacyTuskerConfigPath(root))
-	if err != nil || legacyAfter != legacy {
-		t.Fatalf("bootstrap mutated legacy config: %v\n%s", err, legacyAfter)
+		t.Fatalf("managed default changed: got %q, want managed-owned", got)
 	}
 }
 
@@ -120,7 +95,7 @@ func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 	if err := os.Remove(managedTuskerConfigPath(vault)); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	if err := writeDefaultRootTuskerConfig(vault); err != nil {
+	if err := writeDefaultTuskerConfig(vault); err != nil {
 		t.Fatal(err)
 	}
 	wf, err := loadWorkflow(vault)
@@ -135,12 +110,12 @@ func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 	}
 	for _, name := range []string{"planner", "execute-fast", "execute-standard", "execute-complex", "execute-frontier", "review-independent", "repair-complex"} {
 		profile, ok := wf.Data.RunnerProfiles[name]
-		if !ok || profile.Model == "codex-auto-review" || profile.Harness != string(RunnerCodexACP) {
+		if !ok || profile.Model == "codex-auto-review" || profile.Harness != string(RunnerCodexExec) {
 			t.Fatalf("bad %s profile: %#v", name, profile)
 		}
 	}
-	if _, _, err := runnerForName(string(RunnerCodexACP), wf.Data); err == nil {
-		t.Fatal("fresh init admitted codex_acp before machine-local ACP setup")
+	if _, _, err := runnerForName(string(RunnerCodexExec), wf.Data); err != nil {
+		t.Fatalf("fresh init did not admit codex_exec: %v", err)
 	}
 }
 
@@ -162,7 +137,7 @@ func TestRunnerCatalogHarnessIsolationAndBundled(t *testing.T) {
 		t.Fatalf("expected bundled catalog: %#v", catalog.Harnesses[0])
 	}
 	profiles := semanticBootstrapProfiles(catalog)
-	if profile, ok := profiles["execute-standard"].(map[string]any); !ok || profile["harness"] != string(RunnerCodexACP) || profile["model"] != "gpt-5.2" {
+	if profile, ok := profiles["execute-standard"].(map[string]any); !ok || profile["harness"] != string(RunnerCodexExec) || profile["model"] != "gpt-5.2" {
 		t.Fatalf("installed --bundled catalog did not produce truthful Codex profiles: %#v", profiles)
 	}
 }
@@ -250,7 +225,7 @@ func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	if err := writeDefaultRootTuskerConfig(vault); err != nil {
+	if err := writeDefaultTuskerConfig(vault); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := readText(path)
@@ -280,7 +255,7 @@ func TestProfileReconcileWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	defer func() { runnerCatalogCommand = original }()
 	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
 	vault := automationTestVault(t)
-	path := filepath.Join(filepath.Dir(vault), "tusker.yaml")
+	path := managedTuskerConfigPath(vault)
 	if err := writeText(path, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: false\n  profiles: {}\n"); err != nil {
 		t.Fatal(err)
 	}

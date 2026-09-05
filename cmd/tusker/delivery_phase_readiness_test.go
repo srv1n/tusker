@@ -7,6 +7,7 @@ import (
 )
 
 func TestDeliveryPhaseReadinessSeparation(t *testing.T) {
+	t.Parallel()
 	vault := deliveryTestVault(t)
 	plan := validDeliveryPlanV2()
 	plan.HumanGates = nil

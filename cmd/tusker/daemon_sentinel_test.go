@@ -231,24 +231,6 @@ func TestSentinelConfigCheckListControlsPredicates(t *testing.T) {
 	assertEqual(t, false, status.Open, "configured checks only")
 }
 
-func TestSentinelSkipsRetiredActiveSpendCheck(t *testing.T) {
-	vault := automationTestVault(t)
-	project := registerAutomationTestProject(t, vault)
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
-	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
-	status, err := daemon.refreshInvariantCircuitStatus(sentinelSnapshotForTest(t, store, project, vault, []string{invariantCheckActiveSpendMonotonic}, "2026-07-06T11:59:59Z", "2026-07-06T12:00:00Z", now, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, false, status.Open, "retired check circuit")
-	assertEqual(t, 0, len(status.Violations), "retired check violations")
-}
-
 func TestSentinelAllowsCompletedRunnerStatusBeforeReconcile(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Completed status sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)

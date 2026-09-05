@@ -2,6 +2,8 @@
 title: "System overview"
 subject: overview
 status: canonical
+read_when: "Starting work or locating the current authority for a repository fact."
+skip_when: "You already know the owning subsystem and need its detailed runbook."
 ---
 
 # System overview
@@ -52,6 +54,8 @@ dispatch work. Project registration does not enable automation.
 
 ## Read next
 
+- Governing specs and decisions: `.tusker/specs/` (find a subject with `tusker docs find`)
+- [Workflow audit and remaining repairs](../reports/spec-to-proof-audit.md)
 - [Tasks and proof](tasks-and-proof.md)
 - [Proof and closeout](proof-and-closeout.md)
 - [Storage and runtime](storage-and-runtime.md)
@@ -65,6 +69,11 @@ dispatch work. Project registration does not enable automation.
 Each page must name its code sources. Use short sentences. Use active voice.
 Use one term for one idea. Do not copy plans, old task history, or runtime logs
 into this document set.
+
+System behavior pages live in `docs/system/`. Governing specs and decisions
+live in `.tusker/specs/` and `.tusker/specs/decisions/`. Use `tusker docs find`
+to route by subject before reading a full document; superseded subjects point
+to their current replacement.
 
 Run `tusker docs map --vault ./.tusker` after a system page changes.
 
@@ -94,22 +103,38 @@ graph TD
   n_runners_and_acp["Runners and ACP"]
   n_serve_ui["Serve UI"]
   n_skills["Skills"]
+  n_spec_to_proof["From product intent to proven work"]
   n_storage_and_runtime["Storage and runtime"]
   n_tasks_and_proof["Tasks and proof"]
-  n_overview --> n_cli
-  n_overview --> n_delivery_and_waves
-  n_overview --> n_execution_observability_system
-  n_overview --> n_factory_intake
-  n_overview --> n_gates
-  n_overview --> n_knowledge_and_feedback
-  n_overview --> n_landing_and_completion
-  n_overview --> n_orchestration
-  n_overview --> n_platform_support
-  n_overview --> n_proof_and_closeout
-  n_overview --> n_runners_and_acp
-  n_overview --> n_serve_ui
-  n_overview --> n_skills
-  n_overview --> n_storage_and_runtime
-  n_overview --> n_tasks_and_proof
+  n_tusker_trust_and_efficiency["Trustworthy Tusker with efficient agent workflows"]
+  n_cli -->|part of| n_overview
+  n_delivery_and_waves -->|part of| n_overview
+  n_execution_observability_system -->|part of| n_overview
+  n_factory_intake -->|part of| n_overview
+  n_gates -->|part of| n_overview
+  n_knowledge_and_feedback -->|part of| n_overview
+  n_landing_and_completion -->|part of| n_overview
+  n_orchestration -->|part of| n_overview
+  n_overview -->|link| n_cli
+  n_overview -->|link| n_orchestration
+  n_overview -->|link| n_platform_support
+  n_overview -->|link| n_proof_and_closeout
+  n_overview -->|link| n_serve_ui
+  n_overview -->|link| n_storage_and_runtime
+  n_overview -->|link| n_tasks_and_proof
+  n_platform_support -->|part of| n_overview
+  n_proof_and_closeout -->|part of| n_overview
+  n_runners_and_acp -->|part of| n_overview
+  n_serve_ui -->|part of| n_overview
+  n_skills -->|part of| n_overview
+  n_spec_to_proof -->|link| n_delivery_and_waves
+  n_spec_to_proof -->|link| n_orchestration
+  n_spec_to_proof -->|link| n_overview
+  n_spec_to_proof -->|link| n_tasks_and_proof
+  n_spec_to_proof -->|part of| n_overview
+  n_storage_and_runtime -->|part of| n_overview
+  n_tasks_and_proof -->|part of| n_overview
+  n_tusker_trust_and_efficiency -->|link| n_spec_to_proof
+  n_tusker_trust_and_efficiency -->|part of| n_overview
 ```
 <!-- tusker:docs-map:end -->

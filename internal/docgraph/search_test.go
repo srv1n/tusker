@@ -39,6 +39,28 @@ func TestFindRanksCanonicalFirst(t *testing.T) {
 	}
 }
 
+func TestFindMatchesReadWhenMetadataAndIgnoresSkipWhen(t *testing.T) {
+	root := t.TempDir()
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
+	writeDoc(t, root, "docs/system/storage.md", "---\nsubject: storage\npart_of: overview\nread_when: latency cost tradeoff\nskip_when: only when changing the login UI\n---\n# Storage\nCurrent storage behavior.\n")
+
+	result := Find(loadCorpus(t, root), "latency cost")
+	if len(result.Matches) != 1 || result.Matches[0].Subject != "storage" {
+		t.Fatalf("metadata-only query matches = %#v, want storage", result.Matches)
+	}
+	match := result.Matches[0]
+	if match.ReadWhen != "latency cost tradeoff" {
+		t.Fatalf("read_when = %q, want metadata value", match.ReadWhen)
+	}
+	if match.SkipWhen != "only when changing the login UI" {
+		t.Fatalf("skip_when = %q, want metadata value", match.SkipWhen)
+	}
+
+	if result := Find(loadCorpus(t, root), "login UI"); len(result.Matches) != 0 {
+		t.Fatalf("skip_when was treated as a positive match: %#v", result.Matches)
+	}
+}
+
 func TestFindResolvesTombstoneToSuccessor(t *testing.T) {
 	root := t.TempDir()
 	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")

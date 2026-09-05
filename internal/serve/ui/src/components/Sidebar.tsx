@@ -72,20 +72,20 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
           open ? "visible translate-x-0" : "max-lg:invisible -translate-x-full lg:translate-x-0",
         )}
       >
-        <div className="flex h-[74px] items-center border-b border-line px-5">
-          <Link to="/" className="flex items-center gap-2">
-            <img src="/tusker-icon.png" alt="" aria-hidden="true" className="h-7 w-7 rounded-lg object-cover" />
-            <span className="text-[20px] font-bold tracking-[-0.045em] text-ink">tusker</span>
-            <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-faint">factory</span>
+        <div className="flex h-[64px] items-center border-b border-line px-4">
+          <Link to="/" className="flex items-center gap-2.5">
+            <img src="/tusker-icon.png" alt="" aria-hidden="true" className="h-6.5 w-6.5 rounded-lg object-cover shadow-2xs" />
+            <span className="text-[18px] font-bold tracking-[-0.035em] text-ink">tusker</span>
+            <span className="rounded bg-hover px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-faint">factory</span>
           </Link>
           {onClose && (
-            <button type="button" onClick={onClose} aria-label="Close navigation" className="ml-auto p-2 text-faint hover:text-ink lg:hidden">
+            <button type="button" onClick={onClose} aria-label="Close navigation" className="ml-auto rounded-lg p-1.5 text-faint hover:bg-hover hover:text-ink lg:hidden">
               <X size={16} />
             </button>
           )}
         </div>
 
-        <nav className="tk-scroll flex-1 overflow-y-auto px-3 py-5">
+        <nav className="tk-scroll flex-1 overflow-y-auto px-2.5 py-4 space-y-1">
           <RailLink active={pathname === "/"} to="/">
             <span>Today</span>
             <span className="font-mono text-[10px] text-faint">{projects.data?.reduce((sum, project) => sum + project.needsCount, 0) || ""}</span>
@@ -93,31 +93,31 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
           <button
             type="button"
             onClick={openTaskSearch}
-            className="flex w-full items-center gap-3 border-l-2 border-transparent px-3 py-2.5 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink"
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink transition-colors"
           >
             <Search size={14} />
-            Search
-            <span className="ml-auto font-mono text-[9px] text-faint">⌘K</span>
+            <span>Search</span>
+            <span className="ml-auto rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] text-faint shadow-2xs">⌘K</span>
           </button>
           <button
             type="button"
             onClick={() => setNotificationsOpen((value) => !value)}
             aria-expanded={notificationsOpen}
-            className="flex w-full items-center gap-3 border-l-2 border-transparent px-3 py-2.5 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink"
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink transition-colors"
             title="Notification history is not exposed by the current Serve API"
           >
             <Bell size={14} />
-            Notifications
+            <span>Notifications</span>
           </button>
           {notificationsOpen && (
-            <p role="status" className="mx-3 mt-1 border-l-2 border-warn bg-warn-soft px-3 py-2 text-[11px] leading-4 text-muted">
+            <p role="status" className="mx-1 mt-1 rounded-lg border border-warn/30 bg-warn-soft px-2.5 py-2 text-[11px] leading-4 text-warn">
               Notification history is not exposed by the current Serve API.
             </p>
           )}
 
-          <div className="mb-2 mt-7 flex items-center justify-between px-3">
-            <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-faint">Projects</span>
-            <span className="font-mono text-[9px] text-faint">{projects.data?.length ?? 0}</span>
+          <div className="mb-1.5 mt-6 flex items-center justify-between px-3">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Projects</span>
+            <span className="font-mono text-[10px] text-faint">{projects.data?.length ?? 0}</span>
           </div>
 
           {projects.data?.map((project) => (
@@ -133,7 +133,7 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
             type="button"
             onClick={() => setAddingProject((value) => !value)}
             aria-label={addingProject ? "Close add project form" : "Add project"}
-            className="mt-2 flex w-full items-center gap-2 border-l-2 border-transparent px-3 py-2.5 text-left text-[12px] font-semibold text-muted hover:bg-hover hover:text-ink"
+            className="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-muted hover:bg-hover hover:text-ink transition-colors"
           >
             {addingProject ? <X size={13} /> : <Plus size={13} />}
             {addingProject ? "Cancel" : "Add project"}
@@ -141,22 +141,25 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
           {addingProject && <AddProjectForm onDone={() => setAddingProject(false)} />}
         </nav>
 
-        <div className="border-t border-line px-3 py-4">
-          <Link to="/settings" className={cn("block border-l-2 px-3 py-2 text-[12px] font-semibold", pathname === "/settings" ? "border-info bg-info-soft text-info" : "border-transparent text-muted hover:bg-hover")}>
+        <div className="border-t border-line px-2.5 py-3 space-y-1">
+          <Link to="/settings" className={cn("block rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors", pathname === "/settings" ? "bg-active font-semibold text-ink" : "text-muted hover:bg-hover hover:text-ink")}>
             Settings
           </Link>
           {activeProject && (
             <Link
               to="/p/$projectId/diagnostics"
               params={{ projectId: activeProject }}
-              className={cn("block border-l-2 px-3 py-2 text-[12px] font-semibold", pathname.includes("/diagnostics") ? "border-info bg-info-soft text-info" : "border-transparent text-muted hover:bg-hover")}
+              className={cn("block rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors", pathname.includes("/diagnostics") ? "bg-active font-semibold text-ink" : "text-muted hover:bg-hover hover:text-ink")}
             >
               Diagnostics
             </Link>
           )}
-          <div className="mt-3 flex items-center justify-between border-t border-line-soft px-3 pt-3 text-[11px]">
+          <div className="mt-2 flex items-center justify-between border-t border-line-soft px-3 pt-2.5 text-[11px]">
             <span className="text-muted">Factory health</span>
-            <span className={cn("font-semibold", healthTone)}>{health}</span>
+            <span className={cn("flex items-center gap-1.5 font-semibold", healthTone)}>
+              <span className={cn("h-1.5 w-1.5 rounded-full", health === "Healthy" ? "bg-pass" : health === "Limited" ? "bg-warn" : "bg-fail")} />
+              {health}
+            </span>
           </div>
         </div>
       </aside>
@@ -169,8 +172,8 @@ function RailLink({ active, to, children }: { active: boolean; to: "/"; children
     <Link
       to={to}
       className={cn(
-        "flex items-center justify-between border-l-2 px-3 py-2.5 text-[13px] font-semibold",
-        active ? "border-info bg-info-soft text-info" : "border-transparent text-ink hover:bg-hover",
+        "flex items-center justify-between rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
+        active ? "bg-ink font-semibold text-surface shadow-2xs" : "text-ink hover:bg-hover",
       )}
     >
       {children}
@@ -184,17 +187,21 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
   return (
     <div className="mb-1">
       <div className={cn(
-        "flex items-center border-l-2 text-[13px] font-semibold",
-        active ? "border-ink bg-active text-ink" : "border-transparent text-ink-soft",
+        "flex items-center rounded-lg text-[13px] transition-colors",
+        active ? "bg-hover/80 font-semibold text-ink" : "text-ink-soft hover:bg-hover/50",
       )}>
         <Link
           to="/p/$projectId"
           params={{ projectId: project.id }}
-          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 hover:bg-hover"
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 hover:opacity-90"
         >
-          <ChevronDown size={12} className={active ? "" : "-rotate-90"} />
+          <ChevronDown size={12} className={cn("text-faint transition-transform", active ? "" : "-rotate-90")} />
           <span className="min-w-0 flex-1 truncate">{project.name}</span>
-          {project.needsCount > 0 && <span className="font-mono text-[9px] text-fail">{project.needsCount}</span>}
+          {project.needsCount > 0 && (
+            <span className="rounded-full bg-fail-soft px-1.5 py-0.2 font-mono text-[10px] font-semibold text-fail">
+              {project.needsCount}
+            </span>
+          )}
         </Link>
         <button
           type="button"
@@ -209,7 +216,7 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
         </button>
       </div>
       {refresh.error && (
-        <p role="alert" className="ml-8 truncate px-3 pb-1 text-[10px] text-fail" title={String(refresh.error)}>
+        <p role="alert" className="ml-7 truncate px-2 pb-1 text-[10px] text-fail" title={String(refresh.error)}>
           Refresh failed — check this project’s source.
         </p>
       )}
@@ -218,13 +225,13 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
           to="/p/$projectId/settings"
           params={{ projectId: project.id }}
           aria-label={`Repair ${project.name} registration`}
-          className="ml-8 block px-3 pb-1 text-[10px] font-semibold text-warn hover:text-ink"
+          className="ml-7 block px-2 pb-1 text-[10.5px] font-semibold text-warn hover:text-ink"
         >
           Repair in Settings
         </Link>
       )}
       {active && (
-        <div className="ml-[18px] border-l border-line pl-2">
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-line-soft pl-2">
           {PROJECT_NAV.map((item) => {
             const href = item.to.replace("$projectId", project.id);
             const selected = item.to.endsWith("$projectId") ? pathname === href : pathname.startsWith(href);
@@ -234,8 +241,8 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
                 to={item.to}
                 params={{ projectId: project.id }}
                 className={cn(
-                  "block border-l-2 px-3 py-1.5 text-[11.5px] font-medium",
-                  selected ? "border-info bg-info-soft text-info" : "border-transparent text-muted hover:bg-hover hover:text-ink",
+                  "block rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors",
+                  selected ? "bg-active font-semibold text-ink shadow-2xs" : "text-muted hover:bg-hover hover:text-ink",
                 )}
               >
                 {item.label}
@@ -283,8 +290,8 @@ function AddProjectForm({ onDone }: { onDone: () => void }) {
     }
   };
   return (
-    <form onSubmit={submit} className="mx-1 mt-2 border border-line bg-raised p-3" data-add-project-form>
-      <label className="font-mono text-[9px] uppercase tracking-[0.12em] text-faint">
+    <form onSubmit={submit} className="mx-1 mt-2 rounded-xl border border-line bg-raised p-3 shadow-2xs" data-add-project-form>
+      <label className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-faint">
         Repository path
         <div className="mt-1 flex">
           <input
@@ -293,34 +300,34 @@ function AddProjectForm({ onDone }: { onDone: () => void }) {
             value={repoRoot}
             onChange={(event) => setRepoRoot(event.target.value)}
             placeholder="/Users/me/code/project"
-            className="min-w-0 flex-1 border border-line bg-surface px-2 py-1.5 font-mono text-[10px] normal-case tracking-normal text-ink outline-none focus:border-info"
+            className="min-w-0 flex-1 rounded-l-md border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-info"
           />
-          <button type="button" onClick={() => void browseForFolder(setRepoRoot)} disabled={browsing} aria-label="Browse repository folder" className="border border-l-0 border-line px-2 text-[9px] normal-case tracking-normal hover:bg-hover">
+          <button type="button" onClick={() => void browseForFolder(setRepoRoot)} disabled={browsing} aria-label="Browse repository folder" className="rounded-r-md border border-l-0 border-line bg-panel px-2.5 text-[10px] font-medium normal-case tracking-normal text-muted hover:bg-hover hover:text-ink">
             Browse
           </button>
         </div>
       </label>
-      <label className="mt-2 block font-mono text-[9px] uppercase tracking-[0.12em] text-faint">
+      <label className="mt-2.5 block font-mono text-[9.5px] uppercase tracking-[0.12em] text-faint">
         Vault path
         <div className="mt-1 flex">
           <input
             value={vaultRoot}
             onChange={(event) => setVaultRoot(event.target.value)}
             placeholder="defaults to .tusker"
-            className="min-w-0 flex-1 border border-line bg-surface px-2 py-1.5 font-mono text-[10px] normal-case tracking-normal text-ink outline-none focus:border-info"
+            className="min-w-0 flex-1 rounded-l-md border border-line bg-surface px-2.5 py-1.5 font-mono text-[11px] normal-case tracking-normal text-ink outline-none focus:border-info"
           />
-          <button type="button" onClick={() => void browseForFolder(setVaultRoot)} disabled={browsing} aria-label="Browse vault folder" className="border border-l-0 border-line px-2 text-[9px] normal-case tracking-normal hover:bg-hover">
+          <button type="button" onClick={() => void browseForFolder(setVaultRoot)} disabled={browsing} aria-label="Browse vault folder" className="rounded-r-md border border-l-0 border-line bg-panel px-2.5 text-[10px] font-medium normal-case tracking-normal text-muted hover:bg-hover hover:text-ink">
             Browse
           </button>
         </div>
       </label>
-      {(!canBrowseFolders || browseHint) && <p className="mt-2 text-[10px] leading-4 text-faint">{browseHint ?? "Browse is available in the Tusker macOS app. In a browser, enter the absolute path manually."}</p>}
-      <p className="mt-2 text-[10px] leading-4 text-faint">Registers only. Daemon automation stays off.</p>
-      {register.data?.reason && <p className={cn("mt-2 text-[10px]", register.data.ok ? "text-pass" : "text-fail")}>{register.data.reason}</p>}
+      {(!canBrowseFolders || browseHint) && <p className="mt-2 text-[10.5px] leading-4 text-faint">{browseHint ?? "Browse is available in the Tusker macOS app. In a browser, enter the absolute path manually."}</p>}
+      <p className="mt-2 text-[10.5px] leading-4 text-faint">Registers only. Daemon automation stays off.</p>
+      {register.data?.reason && <p className={cn("mt-2 text-[10.5px]", register.data.ok ? "text-pass" : "text-fail")}>{register.data.reason}</p>}
       <button
         type="submit"
         disabled={!repoRoot.trim() || register.isPending}
-        className="mt-3 w-full bg-ink px-2 py-2 text-[10px] font-semibold text-surface disabled:opacity-40"
+        className="mt-3 w-full rounded-lg bg-ink px-3 py-2 text-[11.5px] font-semibold text-surface shadow-2xs hover:opacity-90 disabled:opacity-40 transition-opacity"
       >
         {register.isPending ? "Registering…" : "Register project"}
       </button>

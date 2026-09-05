@@ -94,11 +94,11 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertTrue(restored.contains("event-299"))
     }
 
-    func testRuntimeLaunchPlanOnlyOwnsTheDefaultLocalEndpoint() {
+    func testRuntimeLaunchPlanOwnsExplicitLoopbackEndpoints() {
         XCTAssertTrue(RuntimeLaunchPlan.manages(URL(string: "http://127.0.0.1:7420")!))
         XCTAssertTrue(RuntimeLaunchPlan.manages(URL(string: "http://localhost:7420")!))
         XCTAssertFalse(RuntimeLaunchPlan.manages(URL(string: "https://tusker.example")!))
-        XCTAssertFalse(RuntimeLaunchPlan.manages(URL(string: "http://127.0.0.1:9000")!))
+        XCTAssertTrue(RuntimeLaunchPlan.manages(URL(string: "http://127.0.0.1:9000")!))
         let path = RuntimeLaunchPlan.path(home: "/Users/test", inherited: "/custom/bin:/usr/bin")
         XCTAssertTrue(path.hasPrefix("/Users/test/.local/bin:/opt/homebrew/bin"))
         XCTAssertEqual(path.components(separatedBy: ":").filter { $0 == "/usr/bin" }.count, 1)
@@ -175,6 +175,39 @@ safe=visible
         XCTAssertFalse(RuntimeLaunchPlan.shouldStart(from: .running, force: false))
         XCTAssertFalse(RuntimeLaunchPlan.shouldStart(from: .failed("exit 1"), force: false))
         XCTAssertTrue(RuntimeLaunchPlan.shouldStart(from: .failed("exit 1"), force: true))
+    }
+
+    func testRuntimeLaunchPlanManagesOnlyExplicitLoopbackHTTPPorts() {
+        XCTAssertTrue(RuntimeLaunchPlan.manages(URL(string: "http://127.0.0.1:7421")!))
+        XCTAssertTrue(RuntimeLaunchPlan.manages(URL(string: "http://localhost:7421")!))
+        XCTAssertTrue(RuntimeLaunchPlan.manages(URL(string: "http://[::1]:7421")!))
+        XCTAssertFalse(RuntimeLaunchPlan.manages(URL(string: "http://127.0.0.1")!))
+        XCTAssertFalse(RuntimeLaunchPlan.manages(URL(string: "http://example.com:7421")!))
+        XCTAssertFalse(RuntimeLaunchPlan.manages(URL(string: "https://127.0.0.1:7421")!))
+    }
+
+    func testHumanReceiptRequiresAppOwnedChildBoundToConfiguredOrigin() {
+        let configured = URL(string: "http://127.0.0.1:7421")!
+        XCTAssertTrue(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
+            baseURL: configured, configuredBaseURL: configured,
+            childPID: 42, childRunning: true, livenessPID: 42,
+            serveEnabled: true, serveAddr: "127.0.0.1:7421"
+        ))
+        XCTAssertFalse(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
+            baseURL: configured, configuredBaseURL: configured,
+            childPID: 42, childRunning: true, livenessPID: 43,
+            serveEnabled: true, serveAddr: "127.0.0.1:7421"
+        ))
+        XCTAssertFalse(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
+            baseURL: configured, configuredBaseURL: configured,
+            childPID: 42, childRunning: true, livenessPID: 42,
+            serveEnabled: true, serveAddr: "127.0.0.1:7422"
+        ))
+        XCTAssertFalse(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
+            baseURL: configured, configuredBaseURL: URL(string: "http://127.0.0.1:7422")!,
+            childPID: 42, childRunning: true, livenessPID: 42,
+            serveEnabled: true, serveAddr: "127.0.0.1:7421"
+        ))
     }
 
     func testBundledDaemonDoesNotInheritAgentSessionIdentity() {

@@ -267,17 +267,15 @@ func feedbackVaultForRepoPath(path string) (string, string, error) {
 		return "", "", err
 	}
 	base := filepath.Base(abs)
-	if isVaultDir(abs) || (base == defaultRepoVaultDir || base == legacyRepoVaultDir) && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
+	if isVaultDir(abs) || base == defaultRepoVaultDir && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
 		return abs, filepath.Dir(abs), nil
 	}
 	if discovered, _ := discoverVault(abs); discovered != "" {
 		return discovered, filepath.Dir(discovered), nil
 	}
-	for _, name := range []string{defaultRepoVaultDir, legacyRepoVaultDir} {
-		candidate := filepath.Join(abs, name)
-		if dirExists(filepath.Join(candidate, "feedback")) {
-			return candidate, abs, nil
-		}
+	candidate := filepath.Join(abs, defaultRepoVaultDir)
+	if dirExists(filepath.Join(candidate, "feedback")) {
+		return candidate, abs, nil
 	}
 	return filepath.Join(abs, defaultRepoVaultDir), abs, nil
 }
@@ -558,7 +556,7 @@ func feedbackOverBudget(lines, chars int, budget feedbackBudget) bool {
 func feedbackBudgetFor(vaultPath string, args Args) feedbackBudget {
 	budget := feedbackBudget{MaxLines: defaultFeedbackMaxLines, MaxChars: defaultFeedbackMaxChars}
 	if strings.TrimSpace(vaultPath) != "" {
-		configPath := preferredTuskerConfigPath(vaultPath)
+		configPath := managedTuskerConfigPath(vaultPath)
 		if raw, err := readText(configPath); err == nil {
 			var cfg struct {
 				Feedback struct {

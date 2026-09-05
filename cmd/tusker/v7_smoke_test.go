@@ -51,7 +51,7 @@ func TestV7TaskGateEvidenceAttemptReconcileFlow(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implemented V7 smoke slice."}, attemptV7HandoffCmd)
 	assertExists(t, filepath.Join(vault, "attempts", "APP-T-0001", "APP-T-0001-A-0001.md"))
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Provider endpoint returned ready."}, func(args Args) error {
-		return gateV7Transition(args, "satisfied")
+		return gateV7TransitionWithTrustedHumanReceiptForTest(t, args.String("vault"), args.String("id"), "satisfied", args.String("by"))
 	})
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 
@@ -321,7 +321,7 @@ func TestV7ReconcileRefusesTerminalRewindFromStaleObjectRev(t *testing.T) {
 	runGitDir(t, repo, "init", "-b", "main")
 	runGitDir(t, repo, "config", "user.email", "test@example.com")
 	runGitDir(t, repo, "config", "user.name", "Test User")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\n"); err != nil {
 		t.Fatal(err)
 	}
 	vault := filepath.Join(repo, ".tusker")
@@ -559,7 +559,7 @@ func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 	if err := ensureDir(filepath.Join(vault, "knowledge", "domains", "project")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: root-project\nstorage:\n  root: .tusker\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: root-project\nstorage:\n  root: .tusker\n"); err != nil {
 		t.Fatal(err)
 	}
 	discovered, err := discoverVault(filepath.Join(repo, "src", "pkg"))
@@ -571,7 +571,7 @@ func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "root-project", projectID, "root tusker.yaml project_id")
+	assertEqual(t, "root-project", projectID, "managed config project_id")
 
 	legacyVault := filepath.Join(repo, "tusker")
 	if err := ensureDir(filepath.Join(legacyVault, "work", "tasks")); err != nil {
@@ -583,7 +583,7 @@ func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 	}
 	assertEqual(t, vault, discovered, "dot vault is preferred over legacy tusker when both exist")
 
-	if err := os.Remove(filepath.Join(repo, "tusker.yaml")); err != nil {
+	if err := os.Remove(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir))); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(vault); err != nil {
@@ -631,7 +631,7 @@ func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := resolveV7ProjectID(orphanVault); err == nil {
-		t.Fatal("expected orphan V7 vault without tusker.yaml, metadata, or git repo to fail project identity")
+		t.Fatal("expected orphan V7 vault without managed config, metadata, or git repo to fail project identity")
 	}
 }
 
@@ -675,7 +675,7 @@ func TestV7PublishSkillExportsKnowledgeBundleAndFiltersProofState(t *testing.T) 
 	if err := bootstrapV7Profile(vault, "v7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
 		t.Fatal(err)
 	}
 	_, sourceBody, err := parseFrontmatterMustRead(filepath.Join(vault, "SKILL.md"))
@@ -821,7 +821,7 @@ func TestV7ValidationRejectsStaleProjectSkillDomainRoutes(t *testing.T) {
 	if err := bootstrapV7Profile(vault, "v7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
 		t.Fatal(err)
 	}
 	skillPath := filepath.Join(vault, "SKILL.md")
@@ -1189,7 +1189,7 @@ func TestV7ValidationKnowledgeDeltaLineBudgetWarnsAndFails(t *testing.T) {
 	if err := writeText(filepath.Join(repo, "docs", "specs", "knowledge-delta.md"), "# Knowledge delta\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "validation:\n  knowledge_delta_warn_lines: 2\n  knowledge_delta_fail_lines: 4\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  knowledge_delta_warn_lines: 2\n  knowledge_delta_fail_lines: 4\n"); err != nil {
 		t.Fatal(err)
 	}
 	data := map[string]any{
@@ -1258,7 +1258,7 @@ func TestV7ValidationReadsConfiguredTaskBodyLineLimits(t *testing.T) {
 	data["state_rev"] = v7StateRev(data, body)
 	note := Note{Data: data, Body: body, RelativePath: "work/tasks/APP-T-0001.md"}
 
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 10\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 10\n"); err != nil {
 		t.Fatal(err)
 	}
 	errs, _ := validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
@@ -1266,7 +1266,7 @@ func TestV7ValidationReadsConfiguredTaskBodyLineLimits(t *testing.T) {
 		t.Fatalf("expected configured fail limit to reject task body, got %#v", errs)
 	}
 
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 100\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 100\n"); err != nil {
 		t.Fatal(err)
 	}
 	errs, warns := validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
@@ -1284,7 +1284,7 @@ func TestV7ValidationReadsConfiguredFrontmatterWarnLines(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "validation:\n  frontmatter_warn_lines: 5\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  frontmatter_warn_lines: 5\n"); err != nil {
 		t.Fatal(err)
 	}
 	data := map[string]any{
@@ -1963,7 +1963,7 @@ func TestV7ValidationReadsConfiguredStrictSwitches(t *testing.T) {
 		t.Fatalf("expected default acceptance proof warning, got %#v", warns)
 	}
 
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), strings.Join([]string{
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), strings.Join([]string{
 		"validation:",
 		"  require_acceptance_proof: false",
 		"  forbid_work_log_section: false",
@@ -2150,7 +2150,7 @@ func TestV7DomainNewCreatesKnowledgeDomainLayoutAndValidates(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{
+	if err := newV7Domain(Args{
 		"vault":   vault,
 		"quiet":   "true",
 		"v7":      "true",
@@ -2198,19 +2198,19 @@ func TestV7DomainNewCreatesKnowledgeDomainLayoutAndValidates(t *testing.T) {
 	}
 
 	listOutput := captureStdout(t, func() {
-		if err := domainListCmd(Args{"vault": vault, "v7": "true"}); err != nil {
+		if err := domainV7ListCmd(Args{"vault": vault, "v7": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	})
 	assertContainsIndexTest(t, listOutput, "providers")
 	showOutput := captureStdout(t, func() {
-		if err := domainShowCmd(Args{"vault": vault, "v7": "true", "id": "providers"}); err != nil {
+		if err := domainV7ShowCmd(Args{"vault": vault, "v7": "true", "id": "providers"}); err != nil {
 			t.Fatal(err)
 		}
 	})
 	assertContainsIndexTest(t, showOutput, "Read this when:")
 	canonOutput := captureStdout(t, func() {
-		if err := domainCanonCmd(Args{"vault": vault, "v7": "true", "id": "providers"}); err != nil {
+		if err := domainV7CanonCmd(Args{"vault": vault, "v7": "true", "id": "providers"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -2516,7 +2516,7 @@ func TestV7PacketIncludesDomainContextAndClosePolicy(t *testing.T) {
 	if err := bootstrapV7Profile(vault, "v7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
@@ -2619,7 +2619,7 @@ func TestV7KnowledgeNewCreatesLeafNodesAndRejectsBadPaths(t *testing.T) {
 	if err := bootstrapV7Profile(vault, "v7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
 		t.Fatal(err)
 	}
 	kinds := map[string]string{
@@ -2631,7 +2631,7 @@ func TestV7KnowledgeNewCreatesLeafNodesAndRejectsBadPaths(t *testing.T) {
 		"source":    "sources/provider-docs",
 	}
 	for kind, suffix := range kinds {
-		if err := knowledgeNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/" + suffix, "kind": kind, "title": "Provider " + kind}); err != nil {
+		if err := knowledgeV7NewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/" + suffix, "kind": kind, "title": "Provider " + kind}); err != nil {
 			t.Fatalf("%s leaf create failed: %v", kind, err)
 		}
 		path := filepath.Join(vault, "knowledge", "domains", "providers", filepath.FromSlash(suffix+".md"))
@@ -2651,7 +2651,7 @@ func TestV7KnowledgeNewCreatesLeafNodesAndRejectsBadPaths(t *testing.T) {
 		{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/references/raw", "kind": "source", "title": "Legacy path"},
 		{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/runbooks/not-interface", "kind": "interface", "title": "Wrong folder"},
 	} {
-		if err := knowledgeNewCmd(bad); err == nil {
+		if err := knowledgeV7NewCmd(bad); err == nil {
 			t.Fatalf("expected bad V7 knowledge create to fail: %#v", bad)
 		}
 	}
@@ -2665,7 +2665,7 @@ func TestV7SkillDoctorRouteAndPack(t *testing.T) {
 	if err := bootstrapV7Profile(vault, "v7"); err != nil {
 		t.Fatal(err)
 	}
-	if err := domainNewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations and auth refresh."}); err != nil {
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations and auth refresh."}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
@@ -2814,7 +2814,7 @@ func TestV7GateControlEagerlyReconcilesTaskProjectionAndDashboards(t *testing.T)
 	blockedRev := stringField(data, "state_rev")
 
 	must(Args{"vault": vault, "quiet": "true", "local": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Setup complete."}, func(args Args) error {
-		return gateV7Transition(args, "satisfied")
+		return gateV7TransitionWithTrustedHumanReceiptForTest(t, args.String("vault"), args.String("id"), "satisfied", args.String("by"))
 	})
 	data, _, err = parseFrontmatterMustRead(taskPath)
 	if err != nil {
@@ -3674,7 +3674,7 @@ func TestV7ValidationRejectsDoneTaskViolatingClosePolicy(t *testing.T) {
 func TestV7ClosePolicyReadsTuskerYAMLOverride(t *testing.T) {
 	root := t.TempDir()
 	vault := filepath.Join(root, "vault")
-	if err := writeText(filepath.Join(root, "tusker.yaml"), `close_policy:
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `close_policy:
   low:
     required_acceptor: reviewer_agent
     required_evidence:
@@ -3710,7 +3710,7 @@ branches:
 func TestV7ConfigReadsNestedBranchesStateAndRuntime(t *testing.T) {
 	root := t.TempDir()
 	vault := filepath.Join(root, "vault")
-	if err := writeText(filepath.Join(root, "tusker.yaml"), `schema: tusker.config/v1
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `schema: tusker.config/v1
 branches:
   default_branch: release
   state_branch: team/state
@@ -3733,7 +3733,7 @@ runtime:
 	assertEqual(t, "team/state", v7StateBranch(vault), "state branch")
 	assertEqual(t, 7*time.Minute, v7LeaseTTL(vault), "lease ttl")
 
-	if err := writeText(filepath.Join(root, "tusker.yaml"), `schema: tusker.config/v1
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `schema: tusker.config/v1
 branches:
   default_branch: release
   control:
@@ -3936,7 +3936,7 @@ func TestV7StagedBranchPolicyRejectsProtectedStateMutation(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -4012,7 +4012,7 @@ func TestV7BranchPolicyRejectsTaskAndGateDeletion(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -4077,7 +4077,7 @@ func TestV7BranchPolicyHonorsConfiguredProtectStateFieldsFalse(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), strings.Join([]string{
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), strings.Join([]string{
 		"branches:",
 		"  control:",
 		"    - main",
@@ -4142,7 +4142,7 @@ func TestV7BranchPolicyAllowsExplicitSingleUserLocalMode(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), strings.Join([]string{
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), strings.Join([]string{
 		"branches:",
 		"  control:",
 		"    - main",
@@ -4214,7 +4214,7 @@ func TestV7ControlMutationAllowsExplicitSingleUserLocalMode(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -4238,7 +4238,7 @@ func TestV7ControlMutationAllowsExplicitSingleUserLocalMode(t *testing.T) {
 		t.Fatalf("expected protected mutation error, got %v", err)
 	}
 
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), strings.Join([]string{
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), strings.Join([]string{
 		"branches:",
 		"  control:",
 		"    - main",
@@ -4277,7 +4277,7 @@ func TestV7ControlMutationUsesVaultRepoRootBranch(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -4320,7 +4320,7 @@ func TestV7BranchPolicyRejectsDetachedAndNonGitState(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {

@@ -6,6 +6,7 @@ import (
 )
 
 func TestAttentionCadenceBoostsOnlyScopedSubscriberProject(t *testing.T) {
+	t.Parallel()
 	broker := newServeStreamBroker()
 	d := &Daemon{stream: broker}
 	_, unsubscribeGlobal, ok := broker.Subscribe()
@@ -33,6 +34,7 @@ func TestAttentionCadenceBoostsOnlyScopedSubscriberProject(t *testing.T) {
 }
 
 func TestAttentionCadenceExpiresOnScopedDisconnect(t *testing.T) {
+	t.Parallel()
 	broker := newServeStreamBroker()
 	d := &Daemon{stream: broker}
 	_, unsubscribe, ok := broker.SubscribeProject("alpha")
@@ -51,6 +53,7 @@ func TestAttentionCadenceExpiresOnScopedDisconnect(t *testing.T) {
 }
 
 func TestAttentionCadenceScopedStreamFiltersOtherProjectEvents(t *testing.T) {
+	t.Parallel()
 	broker := newServeStreamBroker()
 	ch, unsubscribe, ok := broker.SubscribeProject("alpha")
 	if !ok {

@@ -295,10 +295,19 @@ func renderDocsFind(result docgraph.FindResult) string {
 		if match.Description != "" {
 			line += " — " + match.Description
 		}
+		if match.ReadWhen != "" {
+			line += " — read when: " + match.ReadWhen
+		}
+		if match.SkipWhen != "" {
+			line += " — skip when: " + match.SkipWhen
+		}
 		if match.ResolvedFrom != "" {
 			line += fmt.Sprintf(" (resolved forward from superseded %q)", match.ResolvedFrom)
 		}
 		builder.WriteString(line + "\n")
+	}
+	if result.Truncated {
+		fmt.Fprintf(&builder, "Showing %d of %d matches; use the subject or path above to open the full document.\n", len(result.Matches), result.TotalMatches)
 	}
 	return builder.String()
 }
@@ -359,7 +368,7 @@ func docsNewCmd(args Args) error {
 	if fileExists(absolute) {
 		return tuskerError(errorAlreadyExists, "a file already exists at "+relative+"; pick a different subject or update that file")
 	}
-	if err := docsAdoptWriteText(repoRoot, relative, docsScaffold(subject)); err != nil {
+	if err := docsAdoptWriteText(repoRoot, relative, docsScaffold(subject, kind)); err != nil {
 		return err
 	}
 	if args.Bool("json") {
@@ -385,7 +394,7 @@ func docsSubjectSlug(subject string) string {
 	return slug
 }
 
-func docsScaffold(subject string) string {
+func docsScaffold(subject, kind string) string {
 	created := time.Now().Local().Format("2006-01-02")
 	var builder strings.Builder
 	builder.WriteString("---\n")
@@ -398,6 +407,10 @@ func docsScaffold(subject string) string {
 	builder.WriteString("last_verified:          # date @ commit this document was last checked against code\n")
 	builder.WriteString("read_when: \"\"           # one line: when a reader should open this\n")
 	builder.WriteString("skip_when: \"\"           # one line: when a reader should look elsewhere\n")
+	if kind == "spec" {
+		builder.WriteString("sources: []             # links or records supporting this contract\n")
+		builder.WriteString("decisions_locked: false # set true only when its updates are ready to land\n")
+	}
 	builder.WriteString("---\n\n")
 	fmt.Fprintf(&builder, "# %s\n", subject)
 	return builder.String()

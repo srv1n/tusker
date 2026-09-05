@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"tusker/internal/docgraph"
 )
 
 var (
@@ -73,7 +75,23 @@ func v7SpecRefReadPath(vaultPath, ref string) string {
 	if strings.HasPrefix(ref, "work/") {
 		return vaultDisplayPath(vaultPath, ref)
 	}
+	if canonical := v7CanonicalSpecRef(vaultPath, ref); canonical != "" {
+		return canonical
+	}
 	return ref
+}
+
+func v7CanonicalSpecRef(vaultPath, ref string) string {
+	repoRoot := v7RepoRoot(vaultPath)
+	corpus, _, err := docgraph.LoadRepository(repoRoot)
+	if err != nil {
+		return ""
+	}
+	resolved, ok := docgraph.ResolveReference(corpus, ref)
+	if !ok || (resolved.Document.Kind != docgraph.KindSpec && resolved.Document.Kind != docgraph.KindDecision) {
+		return ""
+	}
+	return resolved.CanonicalRef
 }
 
 func v7SpecRefRequiredReads(vaultPath string, note Note) []string {
@@ -206,7 +224,7 @@ func validateV7SpecRefs(vaultPath string, note Note, decisionIDs map[string]Note
 		if v7SpecRefExists(vaultPath, clean, decisionIDs) {
 			continue
 		}
-		warnings = append(warnings, issue("SPEC_REF_DANGLING", fmt.Sprintf("%s spec_refs reference does not resolve: %s", effectiveV7Kind(note.Data), clean), note.RelativePath, "use a repo-relative docs/specs or docs/design path, a repo-relative decision path, or a V7 decision id", map[string]any{"ref": clean}))
+		warnings = append(warnings, issue("SPEC_REF_DANGLING", fmt.Sprintf("%s spec_refs reference does not resolve: %s", effectiveV7Kind(note.Data), clean), note.RelativePath, "use a subject or path under .tusker/specs (decisions included), or a V7 decision id", map[string]any{"ref": clean}))
 	}
 	return warnings
 }
@@ -219,17 +237,12 @@ func v7SpecRefExists(vaultPath, ref string, decisionIDs map[string]Note) bool {
 	if v7SpecRefPathEscapes(ref) {
 		return false
 	}
-	repoRoot := v7RepoRoot(vaultPath)
-	candidates := []string{filepath.Join(repoRoot, filepath.FromSlash(ref))}
-	if strings.HasPrefix(ref, "work/") {
-		candidates = append(candidates, filepath.Join(vaultPath, filepath.FromSlash(ref)))
+	corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath))
+	if err != nil {
+		return false
 	}
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return true
-		}
-	}
-	return false
+	resolved, ok := docgraph.ResolveReference(corpus, ref)
+	return ok && (resolved.Document.Kind == docgraph.KindSpec || resolved.Document.Kind == docgraph.KindDecision)
 }
 
 func v7SpecRefDecisionID(ref string) string {
@@ -270,7 +283,7 @@ func v7TraceabilityDocs(vaultPath string, decisionDocs []v7TraceabilityDoc) ([]v
 	docs := append([]v7TraceabilityDoc{}, decisionDocs...)
 	var warnings []Issue
 	repoRoot := v7RepoRoot(vaultPath)
-	for _, relRoot := range []string{"docs/specs", "docs/design"} {
+	for _, relRoot := range []string{docgraph.DocsSystemRoot, docgraph.SpecsRoot} {
 		root := filepath.Join(repoRoot, filepath.FromSlash(relRoot))
 		if !dirExists(root) {
 			continue

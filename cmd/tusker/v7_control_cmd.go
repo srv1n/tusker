@@ -100,6 +100,10 @@ func gateV7ListCmd(args Args) error {
 }
 
 func gateV7Transition(args Args, status string) error {
+	return gateV7TransitionWithHumanReceipt(args, status, nil)
+}
+
+func gateV7TransitionWithHumanReceipt(args Args, status string, receipt *verifiedHumanControlReceipt) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -139,7 +143,17 @@ func gateV7Transition(args Args, status string) error {
 	prev := stringField(data, "status")
 	now := time.Now().UTC().Format(time.RFC3339)
 	gateKind := strings.ToLower(stringField(data, "gate_kind"))
-	if (status == "satisfied" || status == "waived") && (gateKind == "auth" || gateKind == "release") {
+	if v7HumanControlRequired(data, status) {
+		if receipt == nil {
+			return tuskerError(humanControlReceiptRequiredCode, id+": human-owned gate requires a native signed human receipt")
+		}
+		if baseRev == "" || !v7StateRevMatches(data, body, baseRev) || receipt.MaterialRevision == "" || receipt.GateID != id || receipt.Action != v7HumanControlAction(status) || receipt.MaterialRevision != baseRev || receipt.ActionDigest != humanControlActionDigest(data, body, receipt.Action) {
+			return tuskerError(humanControlReceiptInvalidCode, id+": human receipt does not bind the current gate material and action")
+		}
+		actor = receipt.Actor
+		args["by"] = actor
+		args["evidence"] = humanControlReceiptEvidence(*receipt)
+	} else if (status == "satisfied" || status == "waived") && (gateKind == "auth" || gateKind == "release") {
 		// High-risk gate authority is a human/reviewer act. Unlike generic
 		// gate metadata, it may not fall back to an agent or accept a human
 		// namespace from a dispatched/interactive agent session.
@@ -361,6 +375,14 @@ func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor) error {
 		candidate["status"], candidate["readiness"] = "ready", "ready"
 		if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, Note{Data: candidate, Body: body, RelativePath: note.RelativePath}, note.RelativePath); ok && tuskerTier(vaultPath) >= 2 {
 			return tuskerError(errorInvalidTransition, id+": "+finding.Message, withHint(finding.Hint))
+		}
+		candidateNote := Note{Data: candidate, Body: body, RelativePath: note.RelativePath}
+		// Setting a task ready is the user-directed interactive admission path.
+		// Wave authorization governs unattended dispatch, not an agent's direct
+		// work session. Keep every contract and membership check here, while the
+		// daemon/next paths retain the armed-wave requirement.
+		if blockers := v7TaskDispatchBlockersWithAuthorization(vaultPath, candidateNote, false); len(blockers) > 0 {
+			return tuskerError(errorInvalidTransition, id+": not dispatchable: "+strings.Join(blockers, "; "), withHint("repair the listed contract blockers before setting status ready"))
 		}
 	}
 	if directDone {

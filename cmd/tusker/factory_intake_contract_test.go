@@ -9,6 +9,7 @@ import (
 )
 
 func TestCanonicalSkillCompatibilityMatchesFactoryIntakeContract(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..", "skills", "tusker")
 	compatibility, err := readSkillCompatibilityContract(root)
 	if err != nil {

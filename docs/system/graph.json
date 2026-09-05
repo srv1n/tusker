@@ -99,6 +99,13 @@
       "status": "canonical"
     },
     {
+      "subject": "spec-to-proof",
+      "kind": "spec",
+      "path": ".tusker/specs/spec-to-proof.md",
+      "title": "From product intent to proven work",
+      "status": "draft"
+    },
+    {
       "subject": "storage-and-runtime",
       "kind": "canonical",
       "path": "docs/system/storage-and-runtime.md",
@@ -111,6 +118,13 @@
       "path": "docs/system/tasks-and-proof.md",
       "title": "Tasks and proof",
       "status": "canonical"
+    },
+    {
+      "subject": "tusker-trust-and-efficiency",
+      "kind": "spec",
+      "path": ".tusker/specs/tusker-trust-and-efficiency.md",
+      "title": "Trustworthy Tusker with efficient agent workflows",
+      "status": "planned"
     }
   ],
   "edges": [
@@ -155,6 +169,41 @@
       "kind": "part_of"
     },
     {
+      "from": "overview",
+      "to": "cli",
+      "kind": "link"
+    },
+    {
+      "from": "overview",
+      "to": "orchestration",
+      "kind": "link"
+    },
+    {
+      "from": "overview",
+      "to": "platform-support",
+      "kind": "link"
+    },
+    {
+      "from": "overview",
+      "to": "proof-and-closeout",
+      "kind": "link"
+    },
+    {
+      "from": "overview",
+      "to": "serve-ui",
+      "kind": "link"
+    },
+    {
+      "from": "overview",
+      "to": "storage-and-runtime",
+      "kind": "link"
+    },
+    {
+      "from": "overview",
+      "to": "tasks-and-proof",
+      "kind": "link"
+    },
+    {
       "from": "platform-support",
       "to": "overview",
       "kind": "part_of"
@@ -180,12 +229,47 @@
       "kind": "part_of"
     },
     {
+      "from": "spec-to-proof",
+      "to": "delivery-and-waves",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "orchestration",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "overview",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "tasks-and-proof",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
       "from": "storage-and-runtime",
       "to": "overview",
       "kind": "part_of"
     },
     {
       "from": "tasks-and-proof",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "tusker-trust-and-efficiency",
+      "to": "spec-to-proof",
+      "kind": "link"
+    },
+    {
+      "from": "tusker-trust-and-efficiency",
       "to": "overview",
       "kind": "part_of"
     }

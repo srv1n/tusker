@@ -6,22 +6,27 @@ import (
 )
 
 // Match is one row of a docs find answer: the document that satisfied the
-// query, a one-line description, and, when the raw hit was a superseded
-// document, the subject it was resolved forward from.
+// query, its compact discovery guidance, and, when the raw hit was a
+// superseded document, the subject it was resolved forward from.
 type Match struct {
 	Path         string
 	Subject      string
 	Description  string
 	ResolvedFrom string
+	ReadWhen     string `json:"read_when"`
+	SkipWhen     string `json:"skip_when"`
 }
 
 // FindResult is the whole answer to a docs find query. Matches is empty only
 // when nothing matched, in which case Suggestions holds the closest subjects
 // so the caller never presents a silent empty result.
 type FindResult struct {
-	Query       string
-	Matches     []Match
-	Suggestions []string
+	Query        string
+	Matches      []Match
+	Suggestions  []string
+	TotalMatches int  `json:"total_matches"`
+	Truncated    bool `json:"truncated"`
+	Limit        int  `json:"limit"`
 }
 
 const (
@@ -31,15 +36,29 @@ const (
 	scoreKeywordContain = 3
 	scoreKeywordExact   = 4
 	scoreSubjectExact   = 5
+	scoreReadWhen       = 2
 )
 
-// Find runs a deterministic keyword search over document subjects, keywords,
-// and Markdown headings. Multi-word queries require every term to match; when
-// that yields nothing it falls back to the best single term. Results rank
-// exact subject over keyword alias over heading substring, breaking ties by
-// canonical document, then spec, then decision log, then path.
+// Find runs a deterministic, bounded keyword search over document subjects,
+// keywords, positive read_when guidance, and Markdown headings. Multi-word
+// queries require every term to match; when that yields nothing it falls back
+// to the best single term. Results rank exact subject over keyword alias over
+// read_when guidance over heading substring, breaking ties by canonical
+// document, then spec, then decision log, then path. skip_when is surfaced as
+// guidance only and never treated as a positive match.
 func Find(corpus Corpus, query string) FindResult {
+	return FindWithLimit(corpus, query, DefaultFindLimit)
+}
+
+// FindWithLimit is the explicit bounded form used by callers that need a
+// smaller or larger shortlist. A non-positive limit uses DefaultFindLimit so
+// no caller accidentally turns a worker-facing query into a full tree dump.
+func FindWithLimit(corpus Corpus, query string, limit int) FindResult {
+	if limit <= 0 {
+		limit = DefaultFindLimit
+	}
 	result := FindResult{Query: query}
+	result.Limit = limit
 	terms := splitTerms(query)
 	if len(terms) == 0 {
 		return result
@@ -64,21 +83,37 @@ func Find(corpus Corpus, query string) FindResult {
 		return scored[i].doc.Path < scored[j].doc.Path
 	})
 
-	subjectIndex := indexBySubject(corpus)
+	resolver := NewResolver(corpus)
+	seen := map[string]bool{}
 	for _, hit := range scored {
 		doc := hit.doc
 		resolvedFrom := ""
-		if successor, ok := resolveSuccessor(doc, subjectIndex); ok {
-			resolvedFrom = doc.Subject
-			doc = successor
+		if current, ok := resolver.ResolveCurrent(doc.Subject); ok {
+			resolvedFrom = current.ResolvedFrom
+			doc = current.Document
+		}
+		key := strings.ToLower(strings.TrimSpace(doc.Subject))
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(doc.Path))
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result.TotalMatches++
+		if len(result.Matches) >= limit {
+			continue
 		}
 		result.Matches = append(result.Matches, Match{
 			Path:         doc.Path,
 			Subject:      doc.Subject,
 			Description:  describe(doc),
 			ResolvedFrom: resolvedFrom,
+			ReadWhen:     compactDiscoveryText(doc, "read_when"),
+			SkipWhen:     compactDiscoveryText(doc, "skip_when"),
 		})
 	}
+	result.Truncated = result.TotalMatches > len(result.Matches)
 	return result
 }
 
@@ -135,27 +170,15 @@ func scoreTerm(doc Document, term string) int {
 	if best > scoreNone {
 		return best
 	}
+	if readWhen := discoveryText(doc, "read_when"); readWhen != "" && strings.Contains(strings.ToLower(readWhen), term) {
+		return scoreReadWhen
+	}
 	for _, heading := range headings(doc.Body) {
 		if strings.Contains(strings.ToLower(heading), term) {
 			return scoreHeading
 		}
 	}
 	return scoreNone
-}
-
-func resolveSuccessor(doc Document, subjectIndex map[string]Document) (Document, bool) {
-	if !strings.EqualFold(strings.TrimSpace(doc.Status), "superseded") {
-		return Document{}, false
-	}
-	successor := strings.TrimSpace(doc.SupersededBy)
-	if successor == "" {
-		return Document{}, false
-	}
-	next, ok := subjectIndex[strings.ToLower(successor)]
-	if !ok {
-		return Document{}, false
-	}
-	return next, true
 }
 
 func describe(doc Document) string {
@@ -165,10 +188,31 @@ func describe(doc Document) string {
 	if heading := firstHeading(doc.Body); heading != "" {
 		return heading
 	}
-	if readWhen := scalar(doc.Raw["read_when"]); readWhen != "" {
+	if readWhen := discoveryText(doc, "read_when"); readWhen != "" {
 		return readWhen
 	}
 	return doc.Subject
+}
+
+func discoveryText(doc Document, field string) string {
+	return strings.Join(strings.Fields(scalar(doc.Raw[field])), " ")
+}
+
+func compactDiscoveryText(doc Document, field string) string {
+	text := discoveryText(doc, field)
+	if text == "" {
+		return ""
+	}
+	words := strings.Fields(text)
+	const maxWords = 24
+	if len(words) > maxWords {
+		return strings.Join(words[:maxWords], " ") + "…"
+	}
+	const maxCharacters = 220
+	if runes := []rune(text); len(runes) > maxCharacters {
+		return string(runes[:maxCharacters]) + "…"
+	}
+	return text
 }
 
 func suggestSubjects(corpus Corpus, terms []string) []string {
@@ -207,7 +251,9 @@ func suggestSubjects(corpus Corpus, terms []string) []string {
 }
 
 func sharedTermCount(doc Document, terms []string) int {
-	haystack := strings.ToLower(strings.Join(append([]string{doc.Subject}, doc.Keywords...), " "))
+	fields := append([]string{doc.Subject}, doc.Keywords...)
+	fields = append(fields, discoveryText(doc, "read_when"))
+	haystack := strings.ToLower(strings.Join(fields, " "))
 	count := 0
 	for _, term := range terms {
 		if strings.Contains(haystack, term) {
@@ -258,20 +304,6 @@ func firstHeading(body string) string {
 		}
 	}
 	return ""
-}
-
-func indexBySubject(corpus Corpus) map[string]Document {
-	index := make(map[string]Document, len(corpus.Documents))
-	for _, doc := range corpus.Documents {
-		subject := strings.ToLower(strings.TrimSpace(doc.Subject))
-		if subject == "" {
-			continue
-		}
-		if _, exists := index[subject]; !exists {
-			index[subject] = doc
-		}
-	}
-	return index
 }
 
 func kindRank(kind Kind) int {

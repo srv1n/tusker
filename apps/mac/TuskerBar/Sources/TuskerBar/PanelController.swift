@@ -175,6 +175,20 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             onBridgeNotify(payload["title"] as? String ?? "Tusker", payload["body"] as? String ?? "", payload["path"] as? String)
         case "pickFolder":
             if let requestID = payload["requestId"] as? String { presentFolderPicker(requestID: requestID) }
+        case "requestHumanReceipt":
+            guard let requestID = payload["requestId"] as? String else { return }
+            guard let projectID = payload["projectId"] as? String,
+                  let gateID = payload["gateId"] as? String,
+                  let action = payload["action"] as? String,
+                  let request = try? HumanReceiptRequest(projectID: projectID, gateID: gateID, action: action) else {
+                webView.evaluateJavaScript(Self.humanReceiptResponseScript(requestID: requestID, result: .error(HumanReceiptError.invalidRequest)))
+                return
+            }
+            Task { [weak self] in
+                guard let self else { return }
+                let result = await HumanDecisionReceiptController.shared.request(request, baseURL: self.config.baseURL, presenting: self.panel)
+                _ = try? await self.webView.evaluateJavaScript(Self.humanReceiptResponseScript(requestID: requestID, result: result))
+            }
         default: break
         }
     }
@@ -282,11 +296,22 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         return "window.tuskerShell?.receiveFolderPick(\(json));"
     }
 
+    static func humanReceiptResponseScript(requestID: String, result: HumanReceiptBridgeResult) -> String {
+        var payload: [String: Any] = ["requestId": requestID, "result": NSNull()]
+        if let data = try? JSONEncoder().encode(result),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            payload["result"] = object
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return "" }
+        return "window.tuskerShell?.receiveHumanReceipt(\(json));"
+    }
+
     static func bridgeScript(appVersion: String, origin: String) -> String {
         let configuration: [String: String] = ["appVersion": appVersion, "origin": origin]
         guard let data = try? JSONSerialization.data(withJSONObject: configuration), let json = String(data: data, encoding: .utf8) else { return "" }
         return """
         \(folderPickerScript(origin: origin))
+        \(humanReceiptScript(origin: origin))
         (() => {
           const config = \(json);
           if (window.location.origin !== config.origin) return;
@@ -318,6 +343,29 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             if (!resolve) return;
             folderRequests.delete(requestId);
             resolve(typeof path === 'string' && path.length > 0 ? path : undefined);
+          };
+        })();
+        """
+    }
+
+    static func humanReceiptScript(origin: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["origin": origin]), let json = String(data: data, encoding: .utf8) else { return "" }
+        return """
+        (() => {
+          const config = \(json);
+          if (window.location.origin !== config.origin) return;
+          const shell = window.tuskerShell = window.tuskerShell || {};
+          const receiptRequests = new Map();
+          shell.requestHumanReceipt = (payload) => new Promise((resolve) => {
+            const requestId = window.crypto?.randomUUID?.() || `receipt-${Date.now()}-${Math.random()}`;
+            receiptRequests.set(requestId, resolve);
+            window.webkit.messageHandlers.tuskerShell.postMessage({method:'requestHumanReceipt', requestId, projectId: payload?.projectId, gateId: payload?.gateId, action: payload?.action});
+          });
+          shell.receiveHumanReceipt = ({requestId, result}) => {
+            const resolve = receiptRequests.get(requestId);
+            if (!resolve) return;
+            receiptRequests.delete(requestId);
+            resolve(result || null);
           };
         })();
         """

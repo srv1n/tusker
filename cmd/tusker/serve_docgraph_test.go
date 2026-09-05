@@ -18,8 +18,8 @@ func seedDocgraphCorpus(t *testing.T, repoRoot string) {
 		"title: \"System Overview\"\nsubject: overview\nkeywords: [overview]\nstatus: canonical\n",
 		"# System Overview\n\nRoot doc.\n")
 	writeDocgraphDoc(t, repoRoot, ".tusker/specs/alpha.md",
-		"title: \"Alpha Spec\"\nsubject: alpha\npart_of: overview\nkeywords: [alpha]\nstatus: active\n",
-		"# Alpha Spec\n\nSee [[beta]] and [[ghost]].\n")
+		"title: \"Alpha Spec\"\nsubject: alpha\npart_of: overview\nsources: [docs/system/00-overview.md]\nkeywords: [alpha]\nstatus: active\n",
+		"# Alpha Spec\n\nSee [[beta]] and [[ghost]]. The [overview](../../docs/system/00-overview.md) is the root.\n")
 	writeDocgraphDoc(t, repoRoot, ".tusker/specs/beta.md",
 		"title: \"Beta Spec\"\nsubject: beta\npart_of: overview\nkeywords: [beta]\nstatus: active\n",
 		"# Beta Spec\n\nRefers to [[alpha]].\n")
@@ -90,6 +90,18 @@ func TestDocsListEndpoint(t *testing.T) {
 	if !hasDocgraphEdge(out.Graph.Edges, "alpha-decision", "alpha", "decides_for") {
 		t.Fatalf("missing alpha-decision->alpha decides_for edge: %#v", out.Graph.Edges)
 	}
+	if !hasDocgraphEdge(out.Graph.Edges, "alpha", "beta", "link") {
+		t.Fatalf("missing alpha->beta body-link edge: %#v", out.Graph.Edges)
+	}
+	if !hasDocgraphEdge(out.Graph.Edges, "alpha", "overview", "source") {
+		t.Fatalf("missing alpha->overview source edge: %#v", out.Graph.Edges)
+	}
+	if !hasDefect(out.Issues, "DOC_LINK_DANGLING") {
+		t.Fatalf("missing unresolved body-link issue: %#v", out.Issues)
+	}
+	if countDocgraphIssues(out.Issues, "DOC_LINK_DANGLING") != 1 {
+		t.Fatalf("duplicate unresolved body-link issue: %#v", out.Issues)
+	}
 }
 
 func hasDocgraphEdge(edges []serveDocgraphEdge, from, to, kind string) bool {
@@ -99,6 +111,16 @@ func hasDocgraphEdge(edges []serveDocgraphEdge, from, to, kind string) bool {
 		}
 	}
 	return false
+}
+
+func countDocgraphIssues(issues []serveDocgraphIssue, code string) int {
+	count := 0
+	for _, issue := range issues {
+		if issue.Code == code {
+			count++
+		}
+	}
+	return count
 }
 
 func TestDocDetailRendersBodyAndHeader(t *testing.T) {
@@ -134,8 +156,8 @@ func TestDocLinksResolveAcrossCorpus(t *testing.T) {
 	var out serveDocgraphDetail
 	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=alpha", &out)
 
-	if len(out.Links) != 2 {
-		t.Fatalf("expected 2 links, got %#v", out.Links)
+	if len(out.Links) != 3 {
+		t.Fatalf("expected 3 links, got %#v", out.Links)
 	}
 	first := out.Links[0]
 	if first.Ref != "beta" || !first.Resolved || first.Subject != "beta" || first.Path != ".tusker/specs/beta.md" {
@@ -144,6 +166,10 @@ func TestDocLinksResolveAcrossCorpus(t *testing.T) {
 	second := out.Links[1]
 	if second.Ref != "ghost" || second.Resolved || second.Subject != "" || second.Path != "" {
 		t.Fatalf("second link should be unresolved: %#v", second)
+	}
+	third := out.Links[2]
+	if third.Ref != "../../docs/system/00-overview.md" || !third.Resolved || third.Subject != "overview" || third.Path != "docs/system/00-overview.md" {
+		t.Fatalf("relative Markdown link should resolve through the shared resolver: %#v", third)
 	}
 }
 
@@ -154,11 +180,17 @@ func TestDocBacklinksListed(t *testing.T) {
 	var out serveDocgraphDetail
 	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=alpha", &out)
 
-	if !hasBacklink(out.Backlinks, "beta", "wiki") {
-		t.Fatalf("expected beta backlink via wiki: %#v", out.Backlinks)
+	if !hasBacklink(out.Backlinks, "beta", "link") {
+		t.Fatalf("expected beta backlink via link: %#v", out.Backlinks)
 	}
 	if !hasBacklink(out.Backlinks, "alpha-decision", "part_of") {
 		t.Fatalf("expected alpha-decision backlink via part_of: %#v", out.Backlinks)
+	}
+
+	var overview serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=overview", &overview)
+	if !hasBacklink(overview.Backlinks, "alpha", "source") {
+		t.Fatalf("expected alpha backlink via source: %#v", overview.Backlinks)
 	}
 }
 
@@ -181,8 +213,8 @@ func TestDocLinksPipeLabelSyntaxMatchesFrontend(t *testing.T) {
 
 	var alpha serveDocgraphDetail
 	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=alpha", &alpha)
-	if !hasBacklink(alpha.Backlinks, "gamma", "wiki") {
-		t.Fatalf("piped wiki link should register a wiki backlink: %#v", alpha.Backlinks)
+	if !hasBacklink(alpha.Backlinks, "gamma", "link") {
+		t.Fatalf("piped wiki link should register a link backlink: %#v", alpha.Backlinks)
 	}
 }
 
@@ -392,8 +424,8 @@ func TestDocSaveRefreshesCorpus(t *testing.T) {
 	// Backlinks refresh without a restart: overview now backlinked from beta.
 	var overview serveDocgraphDetail
 	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=overview", &overview)
-	if !hasBacklink(overview.Backlinks, "beta", "wiki") {
-		t.Fatalf("overview backlinks missing edited beta via wiki: %#v", overview.Backlinks)
+	if !hasBacklink(overview.Backlinks, "beta", "link") {
+		t.Fatalf("overview backlinks missing edited beta via link: %#v", overview.Backlinks)
 	}
 
 	// The list reflects the H1 title change.

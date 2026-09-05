@@ -7,53 +7,56 @@ title: "Project"
 status: "current"
 summary: "Durable project knowledge."
 capsule:
-  skip_when: "Skip when another domain is narrower or proof is the only need."
-  use_when: "Read before a task changes project behavior or docs."
-  what: "Routes readers to current repository facts and document guides."
+  what: "Domain index for Project; routes agents to canon and owned knowledge files."
+  use_when: "Use when a task touches project behavior or needs the domain reading order."
+  skip_when: "Skip when another domain is narrower or task proof/gates are the target."
 source_of_truth:
   - "knowledge/domains/project/CANON.md"
 canonical_files:
   - "INDEX.md"
   - "CANON.md"
-created_at: "2026-08-23T10:56:31Z"
-updated_at: "2026-08-23T15:03:08Z"
-state_rev: "sha256:6a6bee1830e54bad549f1bb1a85d4dabef73c2f7fd4eb906ae2502184de70aa5"
+created_at: "2026-09-05T08:36:27Z"
+updated_at: "2026-09-05T08:36:27Z"
+state_rev: "sha256:4bfafcccc10dfeb00ebabae92e5be777823b3820c5298ab16a1f908db4f3618a"
 ---
 
 # Project
 
 ## Summary
 
-This domain maps the current repository facts.
+Durable project knowledge.
 
-## Read this when
+## Read This When
 
-- You need the source layout.
-- You need the runtime boundary.
-- You need the documentation route.
-Execution identity, direct-work visibility, provider children, or timeline recovery are current execution topics.
+- You need current source-of-truth context for project.
+- You are changing behavior owned by this domain.
 
-## Canonical files
+## Canonical Files
 
-- `CANON.md`: current project truth.
-- `INDEX.md`: reading order and links.
+- CANON.md - current durable truth.
+- INDEX.md - domain map and routing hints.
 
-## Current guides
+## Runbooks
 
-- `docs/system/00-overview.md`: system map.
-- `docs/system/tasks-and-proof.md`: task lifecycle.
-- `docs/system/orchestration.md`: daemon and run ownership.
-- `docs/system/storage-and-runtime.md`: storage boundary.
-- `docs/system/execution-observability.md`: execution identity and recovery.
-- `docs/system/serve-ui.md`: local UI behavior.
+- _None yet._
+
+## Interfaces
+
+- _No stable interfaces declared yet._
 
 ## Invariants
 
-- Keep durable facts in `CANON.md`.
-- Keep procedures in a system guide or runbook.
-- Keep task state in `.tusker/work/`.
-- Treat generated maps as read-only outputs.
+- Keep durable truth in CANON.md.
+- Put procedural guidance in runbooks/.
+
+## Sources
+
+- Raw external input belongs in sources/. Do not treat root docs/ or site output as domain canon.
 
 ## Glossary
 
-See `glossary.md`.
+- See glossary.md.
+
+## Current Work
+
+- _No current work linked._

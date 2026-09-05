@@ -60,16 +60,20 @@ const viaLabel: Record<BacklinkVia, string> = {
   wiki: "links",
   part_of: "part of",
   updates: "updates",
+  source: "source",
   decides_for: "decides for",
   superseded_by: "supersedes",
+  link: "link",
 };
 
 const viaTone: Record<BacklinkVia, Tone> = {
   wiki: "info",
   part_of: "muted",
   updates: "accent",
+  source: "info",
   decides_for: "pass",
   superseded_by: "warn",
+  link: "accent",
 };
 
 export function ViaChip({ via }: { via: BacklinkVia }) {

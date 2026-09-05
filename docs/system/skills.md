@@ -3,6 +3,8 @@ title: "Skills"
 subject: skills
 part_of: overview
 status: canonical
+read_when: "Choosing the operator skill source, installed provenance, or project canon route."
+skip_when: "You need product behavior, task proof, or runtime storage details."
 ---
 
 # Skills
@@ -19,6 +21,12 @@ routes an agent to repository facts.
 
 The installed skill can be a copy or a symlink. The source tree remains the
 authority for this repository.
+
+Documentation follows the same current-only route: `docs/system/` owns product
+behavior, `.tusker/specs/` owns governing contracts, and
+`.tusker/specs/decisions/` owns durable decisions. `docs/system/INDEX.md` and
+`docs/system/graph.json` are generated views; update their source documents and
+run `tusker docs map` rather than editing those files.
 
 ## Install and refresh
 

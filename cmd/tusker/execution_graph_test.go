@@ -104,6 +104,3 @@ func TestExecutionGraphFiltersAndReadOnly(t *testing.T) {
 		t.Fatalf("read graph mutated authority: bindings %d/%d runs %d/%d", bindings, afterBindings, runs, afterRuns)
 	}
 }
-
-func TestExecutionGraphFilters(t *testing.T)  { TestExecutionGraphFiltersAndReadOnly(t) }
-func TestExecutionGraphReadOnly(t *testing.T) { TestExecutionGraphFiltersAndReadOnly(t) }

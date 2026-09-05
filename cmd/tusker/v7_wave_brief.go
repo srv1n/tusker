@@ -390,16 +390,12 @@ func successfulWaveLandings(wave Note) map[string]map[string]any {
 func normalizeWaveArtifacts(idx v7Index, task Note) []waveBriefArtifact {
 	taskID := stringField(task.Data, "id")
 	acceptance := v7AcceptanceIDs(task.Body)
-	contractKind := canonicalWaveArtifactKind(stringField(mapField(task.Data, "artifact_contract"), "kind"))
 	out := []waveBriefArtifact{}
 	for _, evidence := range idx.Evidence[taskID] {
 		if !v7EvidenceUsableForProof(evidence) {
 			continue
 		}
 		kind := waveArtifactKind(stringField(evidence.Data, "evidence_kind"))
-		if contractKind != "" && (kind == "" || kind == "diff_summary") {
-			kind = contractKind
-		}
 		if kind == "" {
 			continue
 		}
@@ -418,33 +414,6 @@ func normalizeWaveArtifacts(idx v7Index, task Note) []waveBriefArtifact {
 		}
 	}
 	return out
-}
-
-func canonicalWaveArtifactKind(kind string) string {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "screenshot", "screenshot_set":
-		return "screenshot"
-	case "video", "recording":
-		return "video"
-	case "benchmark", "benchmark_delta":
-		return "benchmark_delta"
-	case "trace":
-		return "trace"
-	case "replay":
-		return "replay"
-	case "behavior_matrix", "matrix", "request_response":
-		return "behavior_matrix"
-	case "reliability_summary", "reliability_timeline":
-		return "reliability_summary"
-	case "security_note", "security_summary":
-		return "security_note"
-	case "diff_summary":
-		return "diff_summary"
-	case "knowledge_link", "documentation", "document":
-		return "knowledge_link"
-	default:
-		return ""
-	}
 }
 
 func waveArtifactKind(kind string) string {

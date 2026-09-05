@@ -184,26 +184,26 @@ func TestCrossScopeGateOrdering(t *testing.T) {
 	unrelatedAuthID := "PRD-G-0001"
 	server := newCrossScopeServeServer(t, fixture.Vault)
 
-	if err := gateV7Cmd(Args{"vault": fixture.Vault, "_pos0": "satisfy", "_pos1": setupID, "evidence": "Isolated runtime prepared.", "by": "human:test", "quiet": "true"}); err != nil {
+	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, setupID, "satisfied", "human:test"); err != nil {
 		t.Fatalf("setup gate was unusable before producer completion: %v", err)
 	}
-	if err := gateV7Transition(Args{"vault": fixture.Vault, "id": unrelatedAuthID, "evidence": "Producer authority recorded.", "by": "human:test", "quiet": "true"}, "satisfied"); err != nil {
+	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, unrelatedAuthID, "satisfied", "human:test"); err != nil {
 		t.Fatalf("independent empty hard closure was blocked: %v", err)
 	}
 
 	for _, gateID := range []string{authID, releaseID} {
 		t.Run("direct-api-"+gateID, func(t *testing.T) {
-			err := gateV7Transition(Args{"vault": fixture.Vault, "id": gateID, "evidence": "Premature authority.", "by": "human:test", "quiet": "true"}, "satisfied")
+			err := gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, gateID, "satisfied", "human:test")
 			assertCrossScopeGateRefusal(t, err)
 		})
 		t.Run("cli-"+gateID, func(t *testing.T) {
 			err := gateV7Cmd(Args{"vault": fixture.Vault, "_pos0": "satisfy", "_pos1": gateID, "evidence": "Premature authority.", "by": "human:test", "quiet": "true"})
-			assertCrossScopeGateRefusal(t, err)
+			assertCrossScopeHumanReceiptRequired(t, err)
 		})
 		t.Run("serve-"+gateID, func(t *testing.T) {
 			var result serveActionResult
 			servePost(t, server, "/api/gates/"+gateID+"/satisfy", fmt.Sprintf(`{"projectId":%q,"evidence":"Premature authority.","by":"human:test"}`, projectID), &result)
-			if !result.Refused || result.Issue == nil || result.Issue.Code != v7GateHardDependencyIncompleteCode {
+			if !result.Refused || result.Issue == nil || result.Issue.Code != humanControlReceiptRequiredCode {
 				t.Fatalf("Serve gate path did not preserve stable refusal: %#v", result)
 			}
 		})
@@ -212,13 +212,16 @@ func TestCrossScopeGateOrdering(t *testing.T) {
 	crossScopeWriteTaskFields(t, fixture.Vault, fixture.ProducerID, map[string]any{
 		"status": "done", "readiness": "done", "proof_status": "satisfied",
 	})
-	if err := gateV7Cmd(Args{"vault": fixture.Vault, "_pos0": "satisfy", "_pos1": authID, "evidence": "Current dependency closure authorized.", "by": "human:test", "quiet": "true"}); err != nil {
+	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, authID, "satisfied", "human:test"); err != nil {
 		t.Fatalf("auth gate rejected completed closure: %v", err)
 	}
 	var releaseResult serveActionResult
 	servePost(t, server, "/api/gates/"+releaseID+"/satisfy", fmt.Sprintf(`{"projectId":%q,"evidence":"Current closure released.","by":"human:test"}`, projectID), &releaseResult)
-	if !releaseResult.OK || releaseResult.Refused {
-		t.Fatalf("release gate rejected completed closure: %#v", releaseResult)
+	if !releaseResult.Refused || releaseResult.Issue == nil || releaseResult.Issue.Code != humanControlReceiptRequiredCode {
+		t.Fatalf("raw Serve release approval bypassed native receipt: %#v", releaseResult)
+	}
+	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, releaseID, "satisfied", "human:test"); err != nil {
+		t.Fatalf("trusted release receipt rejected completed closure: %v", err)
 	}
 
 	idx, err := loadV7Index(fixture.Vault)
@@ -288,7 +291,7 @@ func TestCrossScopeGateOrdering(t *testing.T) {
 		t.Fatalf("receipt material drift did not stale affected wave authority: %q", got)
 	}
 
-	if err := gateV7Transition(Args{"vault": fixture.Vault, "id": authID, "evidence": "Authority refreshed for current epoch.", "by": "human:test", "quiet": "true"}, "satisfied"); err != nil {
+	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, authID, "satisfied", "human:test"); err != nil {
 		t.Fatalf("current completed closure could not refresh stale receipt: %v", err)
 	}
 	idx, err = loadV7Index(fixture.Vault)
@@ -312,15 +315,11 @@ func TestCrossScopeGateOrdering(t *testing.T) {
 	if !v7GateAuthorityReceiptCurrent(idx.Gates[setupID], idx) || !v7GateAuthorityReceiptCurrent(idx.Gates[unrelatedAuthID], idx) {
 		t.Fatal("red done producer invalidated setup or unrelated authority")
 	}
-	assertCrossScopeGateRefusal(t, gateV7Transition(Args{
-		"vault": fixture.Vault, "id": authID, "evidence": "Red material must not refresh authority.", "by": "human:test", "quiet": "true",
-	}, "satisfied"))
-	assertCrossScopeGateRefusal(t, gateV7Cmd(Args{
+	assertCrossScopeGateRefusal(t, gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, authID, "satisfied", "human:test"))
+	assertCrossScopeHumanReceiptRequired(t, gateV7Cmd(Args{
 		"vault": fixture.Vault, "_pos0": "waive", "_pos1": releaseID, "reason": "Red material must not be waived.", "by": "human:test", "quiet": "true",
 	}))
-	if err := gateV7Cmd(Args{
-		"vault": fixture.Vault, "_pos0": "satisfy", "_pos1": setupID, "evidence": "Runtime setup remains usable.", "by": "human:test", "quiet": "true",
-	}); err != nil {
+	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, fixture.Vault, setupID, "satisfied", "human:test"); err != nil {
 		t.Fatalf("setup gate inherited hard-closure policy: %v", err)
 	}
 	idx, err = loadV7Index(fixture.Vault)
@@ -453,5 +452,12 @@ func assertCrossScopeGateRefusal(t *testing.T, err error) {
 	t.Helper()
 	if err == nil || errorToIssue(err).Code != v7GateHardDependencyIncompleteCode {
 		t.Fatalf("want %s, got %v", v7GateHardDependencyIncompleteCode, err)
+	}
+}
+
+func assertCrossScopeHumanReceiptRequired(t *testing.T, err error) {
+	t.Helper()
+	if err == nil || errorToIssue(err).Code != humanControlReceiptRequiredCode {
+		t.Fatalf("want %s, got %v", humanControlReceiptRequiredCode, err)
 	}
 }

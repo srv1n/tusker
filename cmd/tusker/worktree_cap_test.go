@@ -84,6 +84,13 @@ func itoa(n int) string {
 // dispatch by exhausting the cap forever.
 func TestWorktreeCapPrunesStaleOrphans(t *testing.T) {
 	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatalf("create runtime store: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close runtime store: %v", err)
+	}
 	// Materialize one real, live copy (owned by this test process, which is
 	// alive) so we know the project root.
 	live, err := prepareCopyWorkspace(t, stateRoot, "record-live", 1)

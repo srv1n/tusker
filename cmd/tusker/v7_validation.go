@@ -15,6 +15,7 @@ import (
 var (
 	v7RawLogLinePattern     = regexp.MustCompile(`(?i)\b(PASS|FAIL|panic:|goroutine \d+|exit status \d+|npm ERR!|Traceback \(most recent call last\))\b`)
 	v7AcceptanceIDLine      = regexp.MustCompile(`(?i)^A\d+\s*:\s*(.+)$`)
+	v7SHA256Fingerprint     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	v7ProtectedCommonFields = makeSet("schema", "kind", "id", "project", "state_rev")
 	v7ProtectedFieldsByKind = map[string]map[string]struct{}{
 		"task":          makeSet("status", "readiness", "wave", "next_owner", "next_source", "next_ref", "next_action", "accepted_by", "accepted_at", "closed_at", "close_authority", "superseded_by", "discarded_by", "discarded_at", "discard_reason"),
@@ -281,6 +282,11 @@ func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, e
 		}
 		if mode != "" && mode != "none" && len(normalizeList(data["proof_required"])) == 0 {
 			*errors = append(*errors, issue("TASK_PROOF_REQUIRED_MISSING", "V7 task proof_mode="+mode+" requires proof_required", where, "record the proof classes expected for close", nil))
+		}
+		for _, required := range normalizeList(data["proof_required"]) {
+			if !v7KnownProofRequirement(required) {
+				*errors = append(*errors, issue("TASK_PROOF_REQUIRED_UNKNOWN", "V7 task has unknown proof_required: "+required, where, "use a supported proof class before certifying proof", map[string]any{"proof_required": required}))
+			}
 		}
 	}
 	if boolField(data, "raw_artifacts_allowed") && strings.TrimSpace(stringField(data, "raw_artifacts_reason")) == "" {
@@ -963,6 +969,35 @@ func validateV7Evidence(note Note, ctx validationContext, where string, errors, 
 	}
 	if _, ok := v7EvidenceStatus[stringField(data, "status")]; !ok {
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 evidence status: "+stringField(data, "status"), where, "", map[string]any{"status": stringField(data, "status")}))
+	}
+	durability := strings.TrimSpace(stringField(data, "artifact_durability"))
+	if _, present := data["artifact_durability"]; present && durability != "copied" && durability != "link_only" && durability != "external" {
+		*errors = append(*errors, issue("EVIDENCE_ARTIFACT_DURABILITY_INVALID", "evidence artifact_durability must be copied, link_only, or external", where, "record the artifact's actual storage boundary", nil))
+	}
+	fingerprint := strings.TrimSpace(stringField(data, "artifact_fingerprint"))
+	if _, present := data["artifact_fingerprint"]; present && !v7SHA256Fingerprint.MatchString(fingerprint) {
+		*errors = append(*errors, issue("EVIDENCE_ARTIFACT_FINGERPRINT_INVALID", "evidence artifact_fingerprint must be sha256:<64 lowercase hex>", where, "recreate copied evidence through `tusker evidence add`", nil))
+	}
+	if _, present := data["source_revision"]; present && strings.TrimSpace(stringField(data, "source_revision")) == "" {
+		*errors = append(*errors, issue("EVIDENCE_SOURCE_REVISION_INVALID", "evidence source_revision must be a non-empty revision", where, "record the task source revision that produced the evidence", nil))
+	}
+	category := strings.ToLower(strings.TrimSpace(stringField(data, "proof_category")))
+	_, factsPresent := data["proof_facts"]
+	if category != "" {
+		if category != "visual" && category != "performance" && category != "backend" && category != "migration" {
+			*errors = append(*errors, issue("EVIDENCE_PROOF_CATEGORY_INVALID", "evidence proof_category must be visual, performance, backend, or migration", where, "use a supported category", nil))
+		} else if !factsPresent || !v7ProofCategoryFactsValid(category, stringMapValue(data["proof_facts"]), normalizeList(data["artifact_paths"])) {
+			*errors = append(*errors, issue("EVIDENCE_PROOF_FACTS_INVALID", "evidence proof_facts do not satisfy proof_category="+category, where, v7EvidenceProofCategoryHint(category), nil))
+		}
+	} else if factsPresent {
+		*errors = append(*errors, issue("EVIDENCE_PROOF_FACTS_ORPHANED", "evidence proof_facts require a proof_category", where, "set a supported proof_category or remove proof_facts", nil))
+	}
+	if stringField(data, "status") == "accepted" && durability == "copied" {
+		if !v7SHA256Fingerprint.MatchString(fingerprint) {
+			*errors = append(*errors, issue("EVIDENCE_ARTIFACT_IDENTITY_MISSING", "accepted copied evidence requires an artifact_fingerprint", where, "recreate copied evidence through `tusker evidence add`", nil))
+		} else if current, ok := v7EvidenceArtifactFingerprint(ctx.VaultPath, note); ctx.VaultPath != "" && (!ok || current != fingerprint) {
+			*errors = append(*errors, issue("EVIDENCE_ARTIFACT_IDENTITY_STALE", "accepted copied evidence artifact_fingerprint does not match its files", where, "recreate the evidence from the current copied artifacts", nil))
+		}
 	}
 	if len(normalizeV7Covers(normalizeList(data["covers"]))) == 0 {
 		finding := issue("EVIDENCE_COVERS_MISSING", "V7 evidence has no covers entries such as TASK:A1", where, "pass --covers A1 or --covers TASK:A1 when the evidence proves acceptance", nil)

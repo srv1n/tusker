@@ -6,7 +6,6 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
-| [[DOC-T-0001]] |  | high | Review evidence and close or return to rework. |
-| [[TBR-T-0001]] |  | medium | Review evidence and close or return to rework. |
+
 
 <!-- tusker:generated:end -->

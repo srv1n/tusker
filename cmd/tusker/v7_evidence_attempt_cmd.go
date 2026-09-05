@@ -76,6 +76,10 @@ func evidenceV7AddCmd(args Args) error {
 	if _, ok := v7EvidenceKinds[kind]; !ok {
 		return tuskerError(errorInvalidField, "invalid evidence kind: "+kind)
 	}
+	proofCategory, proofFacts, err := parseV7EvidenceProofCategory(args)
+	if err != nil {
+		return err
+	}
 	id := strings.ToUpper(args.String("evidence-id"))
 	if id == "" {
 		id = fmt.Sprintf("%s-E-%s", taskID, padNumber(nextV7EvidenceSequence(vaultPath, taskID)))
@@ -99,6 +103,9 @@ func evidenceV7AddCmd(args Args) error {
 	artifactPaths, durability, err := prepareV7EvidenceArtifacts(vaultPath, taskID, id, args)
 	if err != nil {
 		return err
+	}
+	if proofCategory != "" && !v7ProofCategoryFactsValid(proofCategory, proofFacts, artifactPaths) {
+		return tuskerError(errorInvalidArg, "invalid proof facts for "+proofCategory, withHint(v7EvidenceProofCategoryHint(proofCategory)))
 	}
 	// Serve supplies an explicitly configured operator actor for durable
 	// evidence writes. Direct/automation callers retain the agent default.
@@ -129,6 +136,20 @@ func evidenceV7AddCmd(args Args) error {
 	}
 	if durability != "" {
 		data["artifact_durability"] = durability
+	}
+	if proofCategory != "" {
+		data["proof_category"] = proofCategory
+		data["proof_facts"] = proofFacts
+	}
+	if sourceRevision := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")); sourceRevision != "" {
+		data["source_revision"] = sourceRevision
+	}
+	if durability == "copied" {
+		fingerprint, ok := v7EvidenceArtifactFingerprint(vaultPath, Note{Data: data})
+		if !ok {
+			return tuskerError(errorInvalidTransition, "copied evidence artifact identity could not be recorded")
+		}
+		data["artifact_fingerprint"] = fingerprint
 	}
 	if kind == "screenshot" {
 		rawCheckedBy := firstNonEmpty(args.String("screenshot-checked-by"), args.String("checked-by"))
@@ -211,6 +232,41 @@ func evidenceV7AddCmd(args Args) error {
 		}
 	}
 	return nil
+}
+
+func parseV7EvidenceProofCategory(args Args) (string, map[string]string, error) {
+	category := strings.ToLower(strings.TrimSpace(args.String("proof-category")))
+	factsRaw := strings.TrimSpace(args.String("proof-facts"))
+	if category == "" && factsRaw == "" {
+		return "", nil, nil
+	}
+	if category != "visual" && category != "performance" && category != "backend" && category != "migration" {
+		return "", nil, tuskerError(errorInvalidArg, "proof category must be visual, performance, backend, or migration")
+	}
+	facts := map[string]string{}
+	for _, item := range strings.Split(factsRaw, ",") {
+		key, value, ok := strings.Cut(item, "=")
+		key = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(key, "-", "_")))
+		value = strings.TrimSpace(value)
+		if !ok || key == "" || value == "" || facts[key] != "" {
+			return "", nil, tuskerError(errorInvalidArg, "proof facts must use unique key=value entries")
+		}
+		facts[key] = value
+	}
+	return category, facts, nil
+}
+
+func v7EvidenceProofCategoryHint(category string) string {
+	switch category {
+	case "visual":
+		return "use baseline=before_after with two artifacts, or baseline=new_ui with an after artifact"
+	case "performance":
+		return "include before, after, before_workload, after_workload, units, method, environment, and revision; workloads must match"
+	case "backend":
+		return "include observable and negative"
+	default:
+		return "include preservation, interruption, and recovery"
+	}
 }
 
 func resumeV7EvidenceAdd(vaultPath, taskID, evidenceID, path, requestedKind string, requestedCovers []string, args Args) (bool, error) {

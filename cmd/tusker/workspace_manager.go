@@ -114,7 +114,7 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 			return WorkspacePrepareResult{}, err
 		}
 		defer unlock()
-		if refusal := liveWorktreeCapRefusal(root, workspacePath, req.MaxLiveWorktrees); refusal != nil {
+		if refusal := liveWorktreeCapRefusal(root, workspacePath, req.StateRoot, req.MaxLiveWorktrees); refusal != nil {
 			return WorkspacePrepareResult{}, tuskerError(errorInvalidTransition,
 				refusal.Detail+"; "+refusal.Remedy,
 				withPath(workspacePath),
@@ -129,7 +129,7 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 // is a no-op when the cap is off (max <= 0) or when the target work copy already
 // exists (reusing a copy does not add to the live count). The cause is named so
 // the refusal is machine-routable, matching the gate preflight's GateRefusal.
-func liveWorktreeCapRefusal(root, workspacePath string, max int) *GateRefusal {
+func liveWorktreeCapRefusal(root, workspacePath, stateRoot string, max int) *GateRefusal {
 	if max <= 0 {
 		return nil
 	}
@@ -137,17 +137,16 @@ func liveWorktreeCapRefusal(root, workspacePath string, max int) *GateRefusal {
 	if fileExists(filepath.Join(workspacePath, ".tusker", "workspace.json")) {
 		return nil
 	}
-	live := countLiveWorktrees(root)
+	live := countLiveWorktrees(root, stateRoot)
 	if live < max {
 		return nil
 	}
 	return &GateRefusal{
 		Cause:  gateRefusalWorktreeCap,
 		Detail: fmt.Sprintf("cannot open another live work copy: %d already live under %s, at the configured per-project cap of %d", live, root, max),
-		// These %d copies are actively in use: stale/orphaned copies (their run
-		// crashed or exited) are pruned automatically on every prepare, so they
-		// are never part of this count. There is nothing to reclaim by hand.
-		Remedy: "these copies are actively in use (orphaned copies are pruned automatically, so none are counted here); wait for a running copy to finish and be cleaned up, or raise the per-project cap in workspace.max_live_worktrees",
+		// Confirmed orphans are pruned automatically. A copy whose runtime state
+		// is unavailable remains counted until ownership can be inspected safely.
+		Remedy: "wait for a running copy to finish and be cleaned up, inspect any copy whose runtime state is unavailable, or raise the per-project cap in workspace.max_live_worktrees",
 	}
 }
 
@@ -155,15 +154,16 @@ func liveWorktreeCapRefusal(root, workspacePath string, max int) *GateRefusal {
 // a materialized, still-live workspace (a .tusker/workspace.json). Each is one
 // live work copy. The shared/in_place repo is never under root, so it is not
 // counted. Orphaned copies — whose recording run has crashed or exited and left
-// the copy behind — are opportunistically pruned here (through the same removal
-// path Cleanup uses, so git worktree metadata stays consistent) rather than
-// counted, so accumulated orphans can never wedge dispatch by exhausting the cap
-// forever.
-func countLiveWorktrees(root string) int {
+// the copy behind — are opportunistically pruned here once the read-only runtime
+// store confirms that no claimed or running run owns the path (through the same
+// removal path Cleanup uses, so git worktree metadata stays consistent) rather
+// than counted. If runtime ownership is unavailable, the copy stays counted.
+func countLiveWorktrees(root, stateRoot string) int {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return 0
 	}
+	activeOwners, runtimeStateKnown := activeWorkspacePaths(stateRoot)
 	count := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -175,7 +175,18 @@ func countLiveWorktrees(root string) int {
 			continue
 		}
 		if workspaceCopyStale(metadataPath) {
-			_ = cleanupWorkspacePath(child)
+			// A dead preparer PID is not enough to prove that a workspace is
+			// orphaned: the detached runner may have outlived the daemon that
+			// prepared it, and interactive runs may have PID zero. If runtime
+			// ownership cannot be read, keep the copy and count it conservatively.
+			_, activeOwner := activeOwners[workspacePathIdentity(child)]
+			if !runtimeStateKnown || activeOwner {
+				count++
+				continue
+			}
+			if err := cleanupWorkspacePath(child); err != nil {
+				count++
+			}
 			continue
 		}
 		count++
@@ -183,12 +194,42 @@ func countLiveWorktrees(root string) int {
 	return count
 }
 
-// workspaceCopyStale reports whether the live copy described by metadataPath is
-// an orphan that nothing is using. The most reliable adjacent signal is the
-// owning PID recorded in workspace.json: if a PID was recorded and that process
-// is no longer alive, its run has gone and the copy is stale. For legacy copies
-// with no recorded PID, fall back to the workspace.json mtime — a copy untouched
-// for longer than the generous staleWorkspaceThreshold is treated as abandoned.
+func activeWorkspacePaths(stateRoot string) (map[string]struct{}, bool) {
+	store, err := OpenRuntimeStoreReadOnly(stateRoot)
+	if err != nil {
+		return nil, false
+	}
+	// ponytail: scan recorded runs at the workspace cap; use an active-path query if history makes preparation slow.
+	runs, listErr := store.ListRuns()
+	closeErr := store.Close()
+	if listErr != nil || closeErr != nil {
+		return nil, false
+	}
+	active := make(map[string]struct{})
+	for _, run := range runs {
+		if !isDispatchingLeaseState(run.LeaseState) || strings.TrimSpace(run.WorkspacePath) == "" {
+			continue
+		}
+		active[workspacePathIdentity(run.WorkspacePath)] = struct{}{}
+	}
+	return active, true
+}
+
+func workspacePathIdentity(path string) string {
+	path = strings.TrimSpace(path)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	return canonicalPath(path)
+}
+
+// workspaceCopyStale reports whether the metadata's local liveness signal is
+// stale. countLiveWorktrees additionally checks the read-only runtime store
+// before treating a stale copy as orphaned. The PID recorded in workspace.json
+// is only the preparer's adjacent signal: if it is no longer alive, the copy may
+// be stale. For legacy copies with no recorded PID, fall back to the
+// workspace.json mtime — a copy untouched for longer than the generous
+// staleWorkspaceThreshold is treated as abandoned.
 func workspaceCopyStale(metadataPath string) bool {
 	text, err := readText(metadataPath)
 	if err != nil {
@@ -503,33 +544,39 @@ func (m *FSWorkspaceManager) ResetForRework(path string, workRevision int) error
 }
 
 func (m *FSWorkspaceManager) materializeWorkspace(workspacePath string, req WorkspacePrepareRequest) error {
-	_ = os.RemoveAll(workspacePath)
-	if req.RepoRoot == "" || !fileExists(req.RepoRoot) {
+	// Copy is the explicit non-Git fallback used by local/manual workflows.
+	// Keep its existing behavior, but never remove a caller-owned directory.
+	if req.Strategy != WorkspaceStrategyWorktree && req.Strategy != WorkspaceStrategyClone {
 		return ensureDir(workspacePath)
 	}
-	if _, err := exec.LookPath("git"); err == nil && fileExists(filepath.Join(req.RepoRoot, ".git")) {
-		switch req.Strategy {
-		case WorkspaceStrategyWorktree:
-			if strings.TrimSpace(req.BranchName) != "" {
-				base := firstNonEmpty(strings.TrimSpace(req.BranchBase), "HEAD")
-				if gitBranchExists(req.RepoRoot, req.BranchName) {
-					if err := exec.Command("git", "-C", req.RepoRoot, "worktree", "add", workspacePath, req.BranchName).Run(); err == nil {
-						return nil
-					}
-				}
-				if err := exec.Command("git", "-C", req.RepoRoot, "worktree", "add", "-b", req.BranchName, workspacePath, base).Run(); err == nil {
-					return nil
-				}
-			} else {
-				if err := exec.Command("git", "-C", req.RepoRoot, "worktree", "add", "--detach", workspacePath, "HEAD").Run(); err == nil {
-					return nil
-				}
-			}
-		case WorkspaceStrategyClone:
-			if err := exec.Command("git", "clone", req.RepoRoot, workspacePath).Run(); err == nil {
-				return nil
-			}
-		}
+	if req.RepoRoot == "" || !fileExists(req.RepoRoot) {
+		return fmt.Errorf("materialize %s workspace: repository root %q does not exist", req.Strategy, req.RepoRoot)
 	}
-	return ensureDir(workspacePath)
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("materialize %s workspace: git is unavailable: %w", req.Strategy, err)
+	}
+	if !fileExists(filepath.Join(req.RepoRoot, ".git")) {
+		return fmt.Errorf("materialize %s workspace: repository root %q is not a Git repository", req.Strategy, req.RepoRoot)
+	}
+	if err := ensureDir(filepath.Dir(workspacePath)); err != nil {
+		return fmt.Errorf("materialize %s workspace parent: %w", req.Strategy, err)
+	}
+
+	var args []string
+	if req.Strategy == WorkspaceStrategyClone {
+		args = []string{"clone", req.RepoRoot, workspacePath}
+	} else if branch := strings.TrimSpace(req.BranchName); branch != "" {
+		args = []string{"-C", req.RepoRoot, "worktree", "add"}
+		if gitBranchExists(req.RepoRoot, branch) {
+			args = append(args, workspacePath, branch)
+		} else {
+			args = append(args, "-b", branch, workspacePath, firstNonEmpty(strings.TrimSpace(req.BranchBase), "HEAD"))
+		}
+	} else {
+		args = []string{"-C", req.RepoRoot, "worktree", "add", "--detach", workspacePath, "HEAD"}
+	}
+	if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("materialize %s workspace: %w: %s", req.Strategy, err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }

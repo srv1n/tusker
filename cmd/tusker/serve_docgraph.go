@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -68,6 +67,8 @@ type serveDocgraphLink struct {
 	Resolved bool   `json:"resolved"`
 }
 
+// serveDocgraphBacklink uses the same semantic edge kinds as the graph API;
+// body links are reported as "link", alongside typed metadata relationships.
 type serveDocgraphBacklink struct {
 	Subject string `json:"subject"`
 	Title   string `json:"title"`
@@ -111,11 +112,6 @@ type serveDocgraphSaveResponse struct {
 	serveDocgraphDetail
 	Warnings []string `json:"warnings"`
 }
-
-// Ref is everything before an optional |label, mirroring the UI's wiki-link
-// syntax exactly; drift here makes the reader render links the API never
-// resolved.
-var serveDocgraphWikiLink = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]*)?\]\]`)
 
 func serveDocgraphKindRank(kind docgraph.Kind) int {
 	switch kind {
@@ -167,17 +163,13 @@ func (s *serveServer) handleDocgraph(w http.ResponseWriter, r *http.Request) {
 		return docs[i].Subject < docs[j].Subject
 	})
 
-	subjects := map[string]struct{}{}
-	for _, doc := range docs {
-		if doc.Subject != "" {
-			subjects[doc.Subject] = struct{}{}
-		}
-	}
-
 	out := serveDocgraphList{
 		Docs:   make([]serveDocgraphDoc, 0, len(docs)),
 		Graph:  serveDocgraphGraph{Nodes: []serveDocgraphNode{}, GraphGenerated: true, Edges: []serveDocgraphEdge{}},
 		Issues: make([]serveDocgraphIssue, 0, len(issues)),
+	}
+	for _, issue := range issues {
+		out.Issues = append(out.Issues, serveDocgraphIssue{Code: issue.Code, Path: issue.Path, Message: issue.Message})
 	}
 	for _, doc := range docs {
 		title := serveDocgraphTitle(doc)
@@ -204,31 +196,9 @@ func (s *serveServer) handleDocgraph(w http.ResponseWriter, r *http.Request) {
 			Status:  doc.Status,
 		})
 	}
-	for _, doc := range docs {
-		if doc.Subject == "" {
-			continue
-		}
-		if target := strings.TrimSpace(doc.PartOf); target != "" {
-			if _, ok := subjects[target]; ok {
-				out.Graph.Edges = append(out.Graph.Edges, serveDocgraphEdge{From: doc.Subject, To: target, Kind: "part_of"})
-			}
-		}
-		for _, raw := range doc.Updates {
-			target := strings.TrimSpace(raw)
-			if _, ok := subjects[target]; ok {
-				out.Graph.Edges = append(out.Graph.Edges, serveDocgraphEdge{From: doc.Subject, To: target, Kind: "updates"})
-			}
-		}
-		if target := strings.TrimSpace(doc.DecidesFor); target != "" {
-			if _, ok := subjects[target]; ok {
-				out.Graph.Edges = append(out.Graph.Edges, serveDocgraphEdge{From: doc.Subject, To: target, Kind: "decides_for"})
-			}
-		}
-		if target := strings.TrimSpace(doc.SupersededBy); target != "" {
-			if _, ok := subjects[target]; ok {
-				out.Graph.Edges = append(out.Graph.Edges, serveDocgraphEdge{From: doc.Subject, To: target, Kind: "superseded_by"})
-			}
-		}
+	semanticLinks, _ := docgraph.SemanticLinks(corpus)
+	for _, link := range semanticLinks {
+		out.Graph.Edges = append(out.Graph.Edges, serveDocgraphEdge{From: link.From, To: link.To, Kind: link.Kind})
 	}
 	sort.SliceStable(out.Graph.Edges, func(i, j int) bool {
 		a, b := out.Graph.Edges[i], out.Graph.Edges[j]
@@ -240,9 +210,6 @@ func (s *serveServer) handleDocgraph(w http.ResponseWriter, r *http.Request) {
 		}
 		return a.To < b.To
 	})
-	for _, issue := range issues {
-		out.Issues = append(out.Issues, serveDocgraphIssue{Code: issue.Code, Path: issue.Path, Message: issue.Message})
-	}
 	serveJSON(w, http.StatusOK, out)
 }
 
@@ -274,13 +241,9 @@ func (s *serveServer) handleDocgraphDoc(w http.ResponseWriter, r *http.Request) 
 // successor, and the on-disk rev) for one subject in an already-loaded corpus.
 // Shared by GET and the PUT save response so both stay identical.
 func serveDocgraphBuildDetail(repoRoot string, corpus docgraph.Corpus, subject string) (serveDocgraphDetail, bool) {
-	subjectPath := map[string]string{}
 	var target *docgraph.Document
 	for i := range corpus.Documents {
 		doc := &corpus.Documents[i]
-		if doc.Subject != "" {
-			subjectPath[doc.Subject] = doc.Path
-		}
 		if doc.Subject == subject {
 			target = doc
 		}
@@ -288,6 +251,7 @@ func serveDocgraphBuildDetail(repoRoot string, corpus docgraph.Corpus, subject s
 	if target == nil {
 		return serveDocgraphDetail{}, false
 	}
+	resolver := docgraph.NewResolver(corpus)
 	detail := serveDocgraphDetail{
 		Subject:   target.Subject,
 		Title:     serveDocgraphTitle(*target),
@@ -297,12 +261,12 @@ func serveDocgraphBuildDetail(repoRoot string, corpus docgraph.Corpus, subject s
 		Rev:       serveDocgraphFileRev(repoRoot, target.Path),
 		Header:    target.Raw,
 		Body:      target.Body,
-		Links:     serveDocgraphLinks(target.Body, subjectPath),
-		Backlinks: serveDocgraphBacklinks(subject, corpus.Documents),
+		Links:     serveDocgraphLinks(*target, resolver),
+		Backlinks: serveDocgraphBacklinks(subject, corpus, resolver),
 	}
 	if successor := strings.TrimSpace(target.SupersededBy); successor != "" && strings.EqualFold(strings.TrimSpace(target.Status), "superseded") {
-		if path, ok := subjectPath[successor]; ok {
-			detail.Successor = &serveDocgraphSuccessor{Subject: successor, Path: path}
+		if resolved, ok := resolver.ResolveFrom(target.Path, successor); ok {
+			detail.Successor = &serveDocgraphSuccessor{Subject: resolved.Document.Subject, Path: resolved.Document.Path}
 		}
 	}
 	return detail, true
@@ -560,22 +524,13 @@ func serveDocgraphRev(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func serveDocgraphLinks(body string, subjectPath map[string]string) []serveDocgraphLink {
+func serveDocgraphLinks(doc docgraph.Document, resolver *docgraph.Resolver) []serveDocgraphLink {
 	links := []serveDocgraphLink{}
-	seen := map[string]struct{}{}
-	for _, match := range serveDocgraphWikiLink.FindAllStringSubmatch(body, -1) {
-		ref := strings.TrimSpace(match[1])
-		if ref == "" {
-			continue
-		}
-		if _, ok := seen[ref]; ok {
-			continue
-		}
-		seen[ref] = struct{}{}
+	for _, ref := range docgraph.ExtractReferences(doc.Body) {
 		link := serveDocgraphLink{Ref: ref}
-		if path, ok := subjectPath[ref]; ok {
-			link.Subject = ref
-			link.Path = path
+		if resolved, ok := resolver.ResolveFrom(doc.Path, ref); ok {
+			link.Subject = resolved.Document.Subject
+			link.Path = resolved.Document.Path
 			link.Resolved = true
 		}
 		links = append(links, link)
@@ -583,37 +538,20 @@ func serveDocgraphLinks(body string, subjectPath map[string]string) []serveDocgr
 	return links
 }
 
-func serveDocgraphBacklinks(subject string, docs []docgraph.Document) []serveDocgraphBacklink {
+func serveDocgraphBacklinks(subject string, corpus docgraph.Corpus, resolver *docgraph.Resolver) []serveDocgraphBacklink {
 	backlinks := []serveDocgraphBacklink{}
-	for i := range docs {
-		doc := docs[i]
-		if doc.Subject == subject || strings.TrimSpace(doc.Subject) == "" {
+	for _, link := range resolver.Backlinks(subject, corpus) {
+		source, ok := resolver.Resolve(link.From)
+		if !ok || source.Document.Subject == subject {
 			continue
 		}
-		add := func(via string) {
-			backlinks = append(backlinks, serveDocgraphBacklink{
-				Subject: doc.Subject,
-				Title:   serveDocgraphTitle(doc),
-				Path:    doc.Path,
-				Kind:    string(doc.Kind),
-				Via:     via,
-			})
-		}
-		if serveDocgraphBodyReferences(doc.Body, subject) {
-			add("wiki")
-		}
-		if strings.TrimSpace(doc.PartOf) == subject {
-			add("part_of")
-		}
-		if serveDocgraphListContains(doc.Updates, subject) {
-			add("updates")
-		}
-		if strings.TrimSpace(doc.DecidesFor) == subject {
-			add("decides_for")
-		}
-		if strings.TrimSpace(doc.SupersededBy) == subject {
-			add("superseded_by")
-		}
+		backlinks = append(backlinks, serveDocgraphBacklink{
+			Subject: source.Document.Subject,
+			Title:   serveDocgraphTitle(source.Document),
+			Path:    source.Document.Path,
+			Kind:    string(source.Document.Kind),
+			Via:     link.Kind,
+		})
 	}
 	sort.SliceStable(backlinks, func(i, j int) bool {
 		a, b := backlinks[i], backlinks[j]
@@ -626,22 +564,4 @@ func serveDocgraphBacklinks(subject string, docs []docgraph.Document) []serveDoc
 		return a.Via < b.Via
 	})
 	return backlinks
-}
-
-func serveDocgraphBodyReferences(body, subject string) bool {
-	for _, match := range serveDocgraphWikiLink.FindAllStringSubmatch(body, -1) {
-		if strings.TrimSpace(match[1]) == subject {
-			return true
-		}
-	}
-	return false
-}
-
-func serveDocgraphListContains(values []string, subject string) bool {
-	for _, value := range values {
-		if strings.TrimSpace(value) == subject {
-			return true
-		}
-	}
-	return false
 }

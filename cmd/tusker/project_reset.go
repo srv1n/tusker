@@ -76,8 +76,7 @@ func resetCmd(args Args) error {
 func resetLooksLikeProject(repoRoot string) bool {
 	return fileExists(filepath.Join(repoRoot, ".git")) ||
 		dirExists(filepath.Join(repoRoot, ".git")) ||
-		dirExists(filepath.Join(repoRoot, defaultRepoVaultDir)) ||
-		fileExists(filepath.Join(repoRoot, "tusker.yaml"))
+		dirExists(filepath.Join(repoRoot, defaultRepoVaultDir))
 }
 
 func printResetHelp() {

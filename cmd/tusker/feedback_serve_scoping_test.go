@@ -104,7 +104,7 @@ func TestDaemonServeTargetSkipsDisabledProject(t *testing.T) {
 		if err := ensureDir(filepath.Join(vault, "work", "tasks")); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: "+projectID+"\nstorage:\n  root: .tusker\n"); err != nil {
+		if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: "+projectID+"\nstorage:\n  root: .tusker\n"); err != nil {
 			t.Fatal(err)
 		}
 		writeDaemonServeWorkflow(t, vault, true, "127.0.0.1:0")

@@ -366,6 +366,19 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 	writeServeTask(t, server.vaultPath, serveTaskSeed{ID: "APP-T-0010", Epic: "APP", Title: "Panel review", Status: "backlog", Readiness: "waiting_on_human", Risk: "medium", Priority: "p1"})
 	writeServeAcceptanceRows(t, server.vaultPath, "APP-T-0010")
 	writeServeHumanVerificationGate(t, server.vaultPath, "APP-G-0010", "APP-T-0010", "A1,A3")
+	gatePath := filepath.Join(server.vaultPath, "work", "gates", "APP-G-0010.md")
+	gateData, gateBody, err := parseFrontmatterMustRead(gatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateData["state_rev"] = v7StateRev(gateData, gateBody)
+	gateContent, err := serializeDocument(gateData, gateBody, v7FrontmatterOrder["gate"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(gatePath, gateContent); err != nil {
+		t.Fatal(err)
+	}
 
 	var task serveTaskDetail
 	serveDecode(t, server, "/api/tasks/APP-T-0010", &task)
@@ -397,15 +410,22 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 		t.Fatalf("refused completion must keep human action readback visible, got %#v", refused)
 	}
 
-	var completed serveActionResult
-	servePost(t, server, "/api/gates/APP-G-0010/satisfy", `{"projectId":"app","taskId":"APP-T-0010","evidence":"Panel behavior confirmed."}`, &completed)
-	if !completed.OK || completed.Refused || completed.Task == nil {
-		t.Fatalf("expected successful human action completion readback, got %#v", completed)
+	var rawApproval serveActionResult
+	servePost(t, server, "/api/gates/APP-G-0010/satisfy", `{"projectId":"app","taskId":"APP-T-0010","evidence":"Panel behavior confirmed."}`, &rawApproval)
+	if !rawApproval.Refused || rawApproval.Issue == nil || rawApproval.Issue.Code != humanControlReceiptRequiredCode {
+		t.Fatalf("raw Serve approval bypassed native receipt: %#v", rawApproval)
 	}
-	if completed.Task.HumanAction != nil {
-		t.Fatalf("human action must disappear after gate completion, got %#v", completed.Task.HumanAction)
+	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, server.vaultPath, "APP-G-0010", "satisfied", "human:sarav"); err != nil {
+		t.Fatal(err)
 	}
-	assertEqual(t, "satisfied", completed.Gate.Status, "completed gate status")
+	server.invalidateProjectSnapshot("app")
+	serveDecode(t, server, "/api/tasks/APP-T-0010", &task)
+	if task.HumanAction != nil {
+		t.Fatalf("human action must disappear after trusted completion, got %#v", task.HumanAction)
+	}
+	var completed serveGateDetail
+	serveDecode(t, server, "/api/gates/APP-G-0010", &completed)
+	assertEqual(t, "satisfied", completed.Status, "completed gate status")
 }
 
 func TestServeReviewBatchGroupsByWaveAndHonorsBoundaryReadiness(t *testing.T) {
@@ -887,7 +907,7 @@ func newServeFixture(t *testing.T) *serveServer {
 			t.Fatal(err)
 		}
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(filepath.Join(vault, "SKILL.md"), "# Tusker fixture\n"); err != nil {
@@ -970,7 +990,7 @@ func newServeEmptyNeedsFixture(t *testing.T) *serveServer {
 			t.Fatal(err)
 		}
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(filepath.Join(vault, "SKILL.md"), "# Tusker fixture\n"); err != nil {

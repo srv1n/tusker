@@ -15,8 +15,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const deliveryPlanSchema = "tusker.delivery-plan/v1"
-
 var deliveryImportNow = time.Now
 var deliveryImportRollbackWriteHook func(path string) error
 var deliveryImportRollbackAfterRestoreHook func(path string)
@@ -288,68 +286,14 @@ func deliveryImportCmd(args Args) error {
 	if !filepath.IsAbs(planPath) {
 		planPath = filepath.Join(v7RepoRoot(vaultPath), planPath)
 	}
-	// Decode V2 in its own strict contract. Keeping this branch before the V1
-	// decoder is intentional: V1 remains exactly the old data model.
-	if schema, err := deliveryPlanSchemaAt(planPath); err != nil {
-		return err
-	} else if schema == deliveryPlanV2Schema {
-		return deliveryV2ImportCmd(vaultPath, planPath, args)
-	}
-	plan, raw, err := readDeliveryPlan(planPath)
+	schema, err := deliveryPlanSchemaAt(planPath)
 	if err != nil {
 		return err
 	}
-	issues, frontiers := validateDeliveryPlan(vaultPath, plan)
-	issueMessages := deliveryIssueMessages(issues)
-	mapping, existingWave, err := deliveryTaskMapping(vaultPath, plan)
-	if err != nil {
-		return err
+	if schema != deliveryPlanV2Schema {
+		return tuskerError(errorInvalidArg, "unsupported delivery plan schema: "+fallback(schema, "<missing>")+"; expected "+deliveryPlanV2Schema)
 	}
-	waveID := existingWave
-	if waveID == "" {
-		waveID = nextV7WaveID(vaultPath)
-	}
-	report := deliveryImportReport{
-		PlanFingerprint: deliveryFingerprint(raw), PlanScope: deliveryPlanScope(plan), WaveID: waveID,
-		WaveTitle: fallback(firstNonEmpty(args.String("wave"), plan.Title), "Imported delivery"),
-		SpecRefs:  plan.SpecRefs, TaskMapping: mapping, Frontiers: frontiers,
-		ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Issues: issueMessages, DryRun: args.Bool("dry-run"),
-	}
-	if len(issueMessages) > 0 {
-		return tuskerError(
-			errorInvalidArg,
-			"delivery plan is invalid: "+strings.Join(issueMessages, "; "),
-			withContext(map[string]any{"delivery": report}),
-		)
-	}
-	if args.Bool("dry-run") {
-		emitDeliveryImportReport(report, args)
-		return nil
-	}
-	if err := applyDeliveryImport(vaultPath, plan, report, args); err != nil {
-		return err
-	}
-	emitDeliveryImportReport(report, args)
-	return nil
-}
-
-func readDeliveryPlan(path string) (deliveryPlan, []byte, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return deliveryPlan{}, nil, err
-	}
-	plan, err := readDeliveryPlanBytes(raw)
-	return plan, raw, err
-}
-
-func readDeliveryPlanBytes(raw []byte) (deliveryPlan, error) {
-	var plan deliveryPlan
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&plan); err != nil {
-		return plan, tuskerError(errorInvalidArg, "invalid delivery plan YAML: "+err.Error())
-	}
-	return plan, nil
+	return deliveryV2ImportCmd(vaultPath, planPath, args)
 }
 
 type deliveryIssue struct {
@@ -385,10 +329,7 @@ func uniqueDeliveryIssues(issues []deliveryIssue) []deliveryIssue {
 
 func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue, [][]string) {
 	var issues []deliveryIssue
-	expectedSchema := deliveryPlanSchema
-	if plan.v2 != nil {
-		expectedSchema = deliveryPlanV2Schema
-	}
+	expectedSchema := deliveryPlanV2Schema
 	if plan.Schema != expectedSchema {
 		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "schema must be " + expectedSchema})
 	}
@@ -397,7 +338,7 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue,
 	}
 	if !epicAcronymPattern.MatchString(strings.ToUpper(plan.Epic)) {
 		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic must name an existing three-letter V7 epic"})
-	} else if (plan.v2 == nil || plan.v2.EpicContract == nil) && !fileExists(filepath.Join(vaultPath, "work", "epics", strings.ToUpper(plan.Epic)+".md")) {
+	} else if plan.v2 == nil || (plan.v2.EpicContract == nil && !fileExists(filepath.Join(vaultPath, "work", "epics", strings.ToUpper(plan.Epic)+".md"))) {
 		issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "epic does not exist: " + strings.ToUpper(plan.Epic)})
 	}
 	if len(plan.SpecRefs) == 0 {
@@ -499,7 +440,7 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue,
 			if kind != "hard" && kind != "soft" {
 				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": dependency kind must be hard or soft"})
 			}
-			if plan.v2 != nil && dep.scopePresent {
+			if dep.scopePresent {
 				if strings.TrimSpace(dep.scope) == "" {
 					issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": CROSS_SCOPE_INVALID_SCOPE; supplied scope must be non-blank"})
 					continue
@@ -523,7 +464,7 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue,
 	}
 	for _, task := range plan.Tasks {
 		for _, dep := range task.Dependencies {
-			if plan.v2 != nil && strings.TrimSpace(dep.scope) != "" {
+			if strings.TrimSpace(dep.scope) != "" {
 				continue
 			}
 			if !keys[dep.Task] {
@@ -536,14 +477,6 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue,
 		issues = append(issues, deliveryIssue{Code: "DEPENDENCY_CYCLE", Message: "task dependency graph contains a cycle"})
 	}
 	return uniqueDeliveryIssues(issues), frontiers
-}
-
-func deliveryTaskMapping(vaultPath string, plan deliveryPlan) (map[string]string, string, error) {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return nil, "", err
-	}
-	return deliveryTaskMappingFromIndex(idx, plan)
 }
 
 func deliveryTaskMappingFromIndex(idx v7Index, plan deliveryPlan) (map[string]string, string, error) {
@@ -652,18 +585,30 @@ func deliveryFrontiers(plan deliveryPlan) ([][]string, bool) {
 	return frontiers, seen != len(plan.Tasks)
 }
 
-func applyDeliveryImport(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args) error {
-	return applyDeliveryImportGuarded(vaultPath, plan, report, args, nil)
-}
-
-// applyDeliveryImportWithMaterialEpoch retains the epoch-held entry point
-// while keeping guarded import as the only writer.
-func applyDeliveryImportWithMaterialEpoch(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args, materialEpochHeld bool) error {
-	if materialEpochHeld {
-		args = copyArgsForInternalMutation(args)
-		args["material-lock-held"] = "true"
+// deliveryWaveContractFrozen reports whether a prior import has crossed the
+// boundary at which changing its plan would rewrite execution history. The
+// integration base is only a snapshot selected at import time; it is not that
+// boundary by itself.
+func deliveryWaveContractFrozen(wave map[string]any, idx v7Index) bool {
+	if fallback(stringField(wave, "status"), "open") != "open" || fallback(stringField(wave, "authorization"), "disarmed") != "disarmed" {
+		return true
 	}
-	return applyDeliveryImportGuarded(vaultPath, plan, report, args, nil)
+	for _, field := range []string{"authorization_fingerprint", "authorized_by", "authorized_at", "authorization_reason", "authorization_updated_by", "authorization_updated_at"} {
+		if strings.TrimSpace(stringField(wave, field)) != "" {
+			return true
+		}
+	}
+	members := normalizeList(wave["members"])
+	if len(members) == 0 {
+		return true
+	}
+	for _, taskID := range members {
+		task, ok := idx.Tasks[taskID]
+		if !ok || fallback(stringField(task.Data, "status"), "backlog") != "backlog" || fallback(stringField(task.Data, "readiness"), "held") != "held" || len(idx.Attempts[taskID]) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deliveryImportReport, args Args, guard *deliveryImportWriteGuard) error {
@@ -694,10 +639,18 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		if readErr != nil {
 			return readErr
 		}
-		if frozen := stringField(existingWave, "integration_base_sha"); frozen != "" {
-			if stringField(existingWave, "delivery_plan_fingerprint") != report.PlanFingerprint {
+		frozen := stringField(existingWave, "integration_base_sha")
+		if stringField(existingWave, "delivery_plan_fingerprint") != report.PlanFingerprint {
+			idx := v7Index{}
+			if report.V2Index != nil {
+				idx = *report.V2Index
+			}
+			if deliveryWaveContractFrozen(existingWave, idx) {
 				return tuskerError(errorInvalidTransition, "existing delivery scope is frozen to a different reviewed plan; use a new plan scope/wave or perform an explicit controlled rebase")
 			}
+			// A held/disarmed wave has only selected the old base. An ordinary
+			// amendment is reviewed against the current base instead.
+		} else if frozen != "" {
 			integrationBase = frozen
 		}
 	}
@@ -735,10 +688,7 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			}
 			deps = append(deps, target+":"+fallback(strings.ToLower(dep.Kind), "hard"))
 		}
-		contractFingerprint := deliveryTaskFingerprint(task)
-		if plan.v2 != nil {
-			contractFingerprint = deliveryV2TaskFingerprint(task, plan.v2.HumanGates)
-		}
+		contractFingerprint := deliveryV2TaskFingerprint(task, plan.v2.HumanGates)
 		var strictContract deliveryProofContract
 		strictRequested := deliveryPlanRequiresStrictProofAuthority(plan)
 		if strictRequested {
@@ -779,11 +729,9 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		if len(task.RequirementRefs) > 0 {
 			data["requirement_refs"] = task.RequirementRefs
 		}
-		if plan.v2 != nil {
-			data["gates"] = deliveryV2TaskGateIDs(plan.v2, task.SourceKey)
-			if projections := report.CrossScopeDependencies[task.SourceKey]; len(projections) > 0 {
-				data["delivery_cross_scope_dependencies"] = deliveryCrossScopeProjectionValue(projections)
-			}
+		data["gates"] = deliveryV2TaskGateIDs(plan.v2, task.SourceKey)
+		if projections := report.CrossScopeDependencies[task.SourceKey]; len(projections) > 0 {
+			data["delivery_cross_scope_dependencies"] = deliveryCrossScopeProjectionValue(projections)
 		}
 		if strictRequested {
 			held := status == "backlog" && readiness == "held"
@@ -805,6 +753,9 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			}
 		}
 		body := renderDeliveryTaskBody(id, task)
+		if len(plan.v2.NonGoals) > 0 {
+			body += "\n## Non-goals\n\n" + v7BulletList(plan.v2.NonGoals) + "\n"
+		}
 		data["state_rev"] = v7StateRev(data, body)
 		content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
 		if err != nil {
@@ -815,14 +766,12 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 	// A producer's contract fingerprint is part of each inbound semantic
 	// projection. Refresh the complete inbound closure here, before any write,
 	// so a failed or corrupt consumer cannot leave a partially rewritten graph.
-	if plan.v2 != nil {
-		if report.V2Index == nil {
-			return tuskerError(errorInvalidTransition, "V2 import missing locked index epoch")
-		}
-		idx := *report.V2Index
-		if err := deliveryRefreshInboundProjectionWrites(vaultPath, idx, plan, report, writes, now, actor); err != nil {
-			return err
-		}
+	if report.V2Index == nil {
+		return tuskerError(errorInvalidTransition, "V2 import missing locked index epoch")
+	}
+	idx := *report.V2Index
+	if err := deliveryRefreshInboundProjectionWrites(vaultPath, idx, plan, report, writes, now, actor); err != nil {
+		return err
 	}
 	waveCreatedAt := now
 	waveCreatedBy := actor
@@ -872,18 +821,16 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		"runner_profile": plan.RunnerProfile, "created_at": waveCreatedAt, "created_by": waveCreatedBy, "updated_at": now, "updated_by": actor,
 	}
 	if integrationBase != "" {
-		// This is a frozen, read-only snapshot of the configured default ref.
-		// Start may authorize against it, but never creates the integration ref.
+		// This is a snapshot of the configured default ref. Held waves may
+		// refresh it on an ordinary amendment; Start never creates the ref.
 		waveData["integration_base_sha"] = integrationBase
 	}
-	if plan.v2 != nil {
-		contractData, err := deliveryV2WaveContractData(plan.v2)
-		if err != nil {
-			return err
-		}
-		for field, value := range contractData {
-			waveData[field] = value
-		}
+	contractData, err := deliveryV2WaveContractData(plan.v2)
+	if err != nil {
+		return err
+	}
+	for field, value := range contractData {
+		waveData[field] = value
 	}
 	if deliveryPlanRequiresStrictProofAuthority(plan) {
 		lineage, err := deliveryStrictWaveLineageFor(plan, report)
@@ -908,10 +855,8 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 		return err
 	}
 	writes[wavePath] = waveContent
-	if plan.v2 != nil {
-		if err := deliveryV2WriteExtras(vaultPath, plan, report, writes, now, actor); err != nil {
-			return err
-		}
+	if err := deliveryV2WriteExtras(vaultPath, plan, report, writes, now, actor); err != nil {
+		return err
 	}
 	currentRefs := makeSet(plan.SpecRefs...)
 	allRefs := uniqueStrings(append(append([]string{}, previousSpecRefs...), plan.SpecRefs...))
@@ -1645,11 +1590,6 @@ func deliveryRefsOverlap(left, right []string) bool {
 		}
 	}
 	return false
-}
-
-func deliveryTaskFingerprint(task deliveryPlanTask) string {
-	raw, _ := yaml.Marshal(task)
-	return deliveryFingerprint(raw)
 }
 
 func deliveryPlanScope(plan deliveryPlan) string {

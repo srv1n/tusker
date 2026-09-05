@@ -290,13 +290,13 @@ func TestProjectsRebindRefusesMismatchedTargetProjectIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	projectRebindMarkSourceStale(t, oldRepo)
-	if err := writeText(filepath.Join(newRepo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: unrelated\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(newVault), "schema: tusker.config/v1\nproject_id: unrelated\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "allow-dirty": "true"}); err == nil || !strings.Contains(err.Error(), "different project") {
 		t.Fatalf("mismatched target identity was accepted: %v", err)
 	}
-	if err := writeText(filepath.Join(newRepo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: project-rebind\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(newVault), "schema: tusker.config/v1\nproject_id: project-rebind\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := projectsRebindCmd(Args{"id": project.ProjectID, "repo": newRepo, "vault": newVault, "allow-dirty": "true"}); err != nil {
@@ -479,7 +479,7 @@ func TestProjectsRebindAcceptsLogicalWorkspaceMountIdentity(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
 	oldRepo, oldVault := projectRebindFixtureRepo(t, "old")
 	newRepo, newVault := projectRebindFixtureRepo(t, "new")
-	if err := writeText(filepath.Join(newRepo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: backend\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(newVault), "schema: tusker.config/v1\nproject_id: backend\n"); err != nil {
 		t.Fatal(err)
 	}
 	store, err := OpenRuntimeStore(stateRoot)
@@ -551,7 +551,7 @@ func projectRebindFixtureRepo(t *testing.T, name string) (string, string) {
 	if err := writeDefaultWorkflow(vault); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, legacyTuskerConfigName), "schema: tusker.config/v1\nproject_id: project-rebind\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "schema: tusker.config/v1\nproject_id: project-rebind\n"); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Tusker Test"}, {"add", "."}, {"commit", "-qm", "fixture"}} {

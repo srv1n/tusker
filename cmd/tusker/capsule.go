@@ -103,7 +103,33 @@ func capsuleOneLine(note Note) string {
 	if len(capsule.SkipWhen) > 0 {
 		parts = append(parts, "skip when "+strings.Join(capsule.SkipWhen, "; "))
 	}
-	return strings.Join(parts, " | ")
+	text := strings.Join(parts, " | ")
+	return compactCapsuleOneLine(text, note, defaultCapsuleTokenBudget)
+}
+
+func compactCapsuleOneLine(text string, note Note, budget int) string {
+	text = strings.TrimSpace(text)
+	words := strings.Fields(text)
+	if budget <= 0 || len(words) <= budget {
+		return text
+	}
+	continuation := capsuleContinuationTarget(note)
+	marker := "... capsule shortened; read " + continuation
+	markerWords := len(strings.Fields(marker))
+	if markerWords >= budget {
+		return strings.Join(words[:budget], " ")
+	}
+	return strings.Join(append(append([]string{}, words[:budget-markerWords]...), marker), " ")
+}
+
+func capsuleContinuationTarget(note Note) string {
+	if id := strings.TrimSpace(stringField(note.Data, "id")); id != "" {
+		return "`tusker show " + id + " --capsule`"
+	}
+	if path := strings.TrimSpace(filepath.ToSlash(note.RelativePath)); path != "" {
+		return "`" + path + "`"
+	}
+	return "the full note"
 }
 
 func renderFrontmatterCapsule(note Note) string {
@@ -137,7 +163,7 @@ func capsuleTokenCount(capsule frontmatterCapsule) int {
 
 func capsuleRequiredForSpecPath(path string) bool {
 	normalized := filepath.ToSlash(path)
-	return strings.HasPrefix(normalized, "docs/specs/") && strings.HasSuffix(normalized, ".md")
+	return strings.HasPrefix(normalized, ".tusker/specs/") && strings.HasSuffix(normalized, ".md")
 }
 
 func capsuleBudgetFor(vaultPath string) int {

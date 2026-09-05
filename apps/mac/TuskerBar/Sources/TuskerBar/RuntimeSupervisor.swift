@@ -43,7 +43,34 @@ enum RuntimeLaunchPlan {
     static func manages(_ baseURL: URL) -> Bool {
         guard baseURL.scheme?.lowercased() == "http" else { return false }
         let host = baseURL.host?.lowercased()
-        return (host == "127.0.0.1" || host == "localhost") && (baseURL.port ?? 80) == 7420
+        guard ["127.0.0.1", "localhost", "::1"].contains(host ?? ""),
+              let port = baseURL.port else { return false }
+        return (1 ... 65_535).contains(port)
+    }
+
+    static func ownsHumanReceiptRuntime(
+        baseURL: URL,
+        configuredBaseURL: URL,
+        childPID: Int32,
+        childRunning: Bool,
+        livenessPID: Int,
+        serveEnabled: Bool,
+        serveAddr: String
+    ) -> Bool {
+        guard manages(baseURL), sameOrigin(baseURL, configuredBaseURL), childRunning,
+              childPID > 0, Int(childPID) == livenessPID, serveEnabled,
+              let expectedHost = baseURL.host?.lowercased(), let expectedPort = baseURL.port,
+              let bound = URL(string: "http://" + serveAddr),
+              bound.host?.lowercased() == expectedHost, bound.port == expectedPort else {
+            return false
+        }
+        return true
+    }
+
+    private static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
+            && lhs.host?.lowercased() == rhs.host?.lowercased()
+            && lhs.port == rhs.port
     }
 
     static func executableURL(in bundle: Bundle) -> URL? {
@@ -131,6 +158,20 @@ final class RuntimeSupervisor {
 
     private init(config: AppConfig) {
         self.config = config
+    }
+
+    func ownsHumanReceiptRuntime(at baseURL: URL) -> Bool {
+        guard state == .running, let child = process, child.isRunning,
+              let liveness = receiptLiveness(for: child) else { return false }
+        return RuntimeLaunchPlan.ownsHumanReceiptRuntime(
+            baseURL: baseURL,
+            configuredBaseURL: config.baseURL,
+            childPID: child.processIdentifier,
+            childRunning: child.isRunning,
+            livenessPID: liveness.pid,
+            serveEnabled: liveness.serveEnabled,
+            serveAddr: liveness.serveAddr
+        )
     }
 
     var title: String {
@@ -249,6 +290,16 @@ final class RuntimeSupervisor {
         process.executableURL = executable
         process.arguments = ["daemon", "run"]
         var environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment)
+        // The daemon pins this public key at launch. The Secure Enclave private
+        // key remains in the app's Keychain and is never passed to the runtime.
+        environment["TUSKER_HUMAN_RECEIPT_PUBLIC_KEY"] = try HumanReceiptNativeKey.shared.publicKeyBase64()
+        guard let humanOperator = HumanReceiptNativeOperator.resolve(environment: environment) else {
+            throw RuntimeStartupError("TuskerBar could not determine the signed-in macOS operator.")
+        }
+        // This is either a valid existing explicit human operator or the macOS
+        // account that owns the app's Secure Enclave signing key.
+        environment["TUSKER_SERVE_OPERATOR"] = humanOperator
+        environment["TUSKER_ACTOR"] = humanOperator
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         environment["HOME"] = home
         environment["PATH"] = RuntimeLaunchPlan.path(home: home, inherited: environment["PATH"])
@@ -313,8 +364,32 @@ final class RuntimeSupervisor {
     }
 
     private func startupFailureMessage() -> String {
+        if let process, let liveness = receiptLiveness(for: process), liveness.serveEnabled {
+            return "The bundled runtime bound http://\(liveness.serveAddr), but TuskerBar is configured for \(config.baseURL.absoluteString). Match runtime.serve.addr to the configured local URL."
+        }
         let suffix = lastExitCode.map { " (exit \($0))" } ?? ""
         return "The bundled daemon didn't become ready\(suffix). See ~/Library/Application Support/tusker/logs/app-daemon.log."
+    }
+
+    private func receiptLiveness(for child: Process) -> RuntimeReceiptLiveness? {
+        let environment = child.environment ?? [:]
+        let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let stateRoot = environment["TUSKER_STATE_ROOT"] ?? "\(home)/Library/Application Support/tusker"
+        let pidPath = URL(fileURLWithPath: stateRoot).appendingPathComponent("daemon.pid")
+        guard let data = try? Data(contentsOf: pidPath) else { return nil }
+        return try? JSONDecoder().decode(RuntimeReceiptLiveness.self, from: data)
+    }
+}
+
+private struct RuntimeReceiptLiveness: Decodable {
+    let pid: Int
+    let serveEnabled: Bool
+    let serveAddr: String
+
+    enum CodingKeys: String, CodingKey {
+        case pid
+        case serveEnabled = "serve_enabled"
+        case serveAddr = "serve_addr"
     }
 }
 

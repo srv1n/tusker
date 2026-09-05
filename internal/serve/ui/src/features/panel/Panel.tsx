@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useNeeds, useProjects, useReviewBatch, useRuns } from "@/lib/queries";
 import { isTuskerShellMode } from "@/routes/__root";
+import type { HumanReceiptBridgeResult, HumanReceiptRequest } from "@/lib/humanReceipt";
 import type { NeedItem, RunSummary, TaskCapsule } from "@/types/domain";
 import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import {
@@ -26,6 +27,7 @@ declare global {
       openFull?: (path: string) => void;
       onNavigate?: (path: string) => boolean;
       pickFolder?: () => Promise<string | undefined>;
+      requestHumanReceipt?: (request: HumanReceiptRequest) => Promise<HumanReceiptBridgeResult | null>;
     };
   }
 }
@@ -49,17 +51,22 @@ function age(value: string | undefined): string {
 
 function Section({ title, rows, onOpen }: { title: string; rows: TriageRow[]; onOpen: (row: TriageRow) => void }) {
   return (
-    <section className="border-b border-line-soft px-3 py-2 last:border-b-0">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">{title}</h2>
-        <span className="font-mono text-[11px] text-faint">{rows.length}</span>
+    <section className="border-b border-line-soft px-3 py-2.5 last:border-b-0">
+      <div className="mb-1.5 flex items-center justify-between">
+        <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">{title}</h2>
+        <span className="rounded-full border border-line bg-surface px-1.5 py-0.2 font-mono text-[10px] font-medium text-faint shadow-2xs">{rows.length}</span>
       </div>
-      <div className="divide-y divide-line-soft">
+      <div className="space-y-1">
         {rows.map((row) => (
-          <button key={`${title}-${row.key}`} type="button" onClick={() => onOpen(row)} className="flex w-full min-w-0 items-center gap-2 py-2 text-left hover:bg-hover">
-            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-soft">{row.id}</span>
-            <span className="min-w-0 flex-[2] truncate text-[13px] text-ink">{row.title || "Untitled task"}</span>
-            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${row.tone === "failed" ? "bg-fail-soft text-fail" : row.tone === "running" ? "bg-info-soft text-info" : "bg-warn-soft text-warn"}`}>{row.chip}</span>
+          <button
+            key={`${title}-${row.key}`}
+            type="button"
+            onClick={() => onOpen(row)}
+            className="flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-hover"
+          >
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-ink-soft">{row.id}</span>
+            <span className="min-w-0 flex-[2] truncate text-[12.5px] font-medium text-ink">{row.title || "Untitled task"}</span>
+            <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold ${row.tone === "failed" ? "border-fail/30 bg-fail-soft text-fail" : row.tone === "running" ? "border-info/30 bg-info-soft text-info" : "border-warn/30 bg-warn-soft text-warn"}`}>{row.chip}</span>
           </button>
         ))}
       </div>
@@ -143,16 +150,22 @@ export function Panel() {
   const allEmpty = humanActionRows.length + attentionRows.length + reviewRows.length + runningRows.length + failureRows.length === 0;
   return (
     <div className="h-full w-full overflow-y-auto overflow-x-hidden bg-surface">
-      <header className="sticky top-0 z-10 border-b border-line bg-surface/95 px-3 py-3 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-line bg-surface/95 px-3 py-2.5 backdrop-blur">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="min-w-0 truncate font-serif text-[19px] font-semibold">Tusker triage</h1>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="text-[11px] text-muted">live</span>
+          <div className="flex items-center gap-2">
+            <img src="/tusker-icon.png" alt="" aria-hidden="true" className="h-5 w-5 rounded-md object-cover shadow-2xs" />
+            <h1 className="min-w-0 truncate font-serif text-[17px] font-semibold text-ink">Tusker triage</h1>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="flex items-center gap-1 text-[11px] font-medium text-pass">
+              <span className="h-1.5 w-1.5 rounded-full bg-pass animate-pulse" />
+              live
+            </span>
             <button
               type="button"
               onClick={openTaskSearch}
               aria-label="Search tasks"
-              className="rounded-md border border-line bg-panel px-2 py-1.5 text-[11px] font-semibold text-ink-soft shadow-sm hover:bg-hover hover:text-ink"
+              className="rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink-soft shadow-2xs hover:bg-hover hover:text-ink transition-colors"
             >
               Search
             </button>
@@ -160,7 +173,7 @@ export function Panel() {
               type="button"
               onClick={openDesktop}
               aria-label="Open the main Tusker window"
-              className="rounded-md border border-line bg-panel px-2.5 py-1.5 text-[11px] font-semibold text-ink-soft shadow-sm hover:bg-hover hover:text-ink"
+              className="rounded-lg border border-line bg-surface px-2.5 py-1 text-[11px] font-medium text-ink-soft shadow-2xs hover:bg-hover hover:text-ink transition-colors"
             >
               Open Tusker <span aria-hidden="true">↗</span>
             </button>
@@ -173,7 +186,7 @@ export function Panel() {
             value={projectsQ.data ? projectSelectionValue(selection) : ALL_PROJECTS_VALUE}
             onChange={(event) => selectProject(projectSelectionFromValue(event.target.value))}
             disabled={projectsQ.isPending || projectsQ.isError}
-            className="h-8 w-full min-w-0 truncate rounded-md border border-line bg-panel px-2 text-[11px] font-semibold text-ink-soft outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:opacity-60"
+            className="h-8 w-full min-w-0 truncate rounded-lg border border-line bg-surface px-2 text-[12px] font-medium text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent/30 shadow-2xs disabled:opacity-60 transition-all"
           >
             <option value={ALL_PROJECTS_VALUE}>All projects</option>
             {projects.map((project) => (

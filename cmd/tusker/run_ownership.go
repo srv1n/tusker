@@ -63,12 +63,56 @@ func holderLiveness(run RunStatus, now time.Time) (string, bool) {
 	}
 }
 
-// ownedPathConflict is deliberately evaluated before the lease CAS.  A lease
-// protects a task row; it does not protect the files that two tasks intend to
-// edit.  Treating prefix paths as overlapping also catches a lane claiming a
-// directory while another claims a file beneath it.
+type taskOwnershipClaim struct {
+	Kind  string
+	Value string
+}
+
+// taskOwnershipClaims projects every authored collision surface into the one
+// existing claim lock. Paths overlap by prefix; generated outputs and migration
+// keys are exact names in their own namespaces.
+func taskOwnershipClaims(note Note) []taskOwnershipClaim {
+	claims := make([]taskOwnershipClaim, 0)
+	for _, path := range normalizeOwnedPaths(normalizeList(note.Data["owned_paths"])) {
+		claims = append(claims, taskOwnershipClaim{Kind: "owned_path", Value: path})
+	}
+	for _, output := range normalizeOwnedPaths(normalizeList(note.Data["generated_outputs"])) {
+		claims = append(claims, taskOwnershipClaim{Kind: "generated_output", Value: output})
+	}
+	for _, key := range normalizeList(note.Data["migration_keys"]) {
+		if key = strings.TrimSpace(key); key != "" {
+			claims = append(claims, taskOwnershipClaim{Kind: "migration_key", Value: key})
+		}
+	}
+	return claims
+}
+
+func taskOwnershipClaimsOverlap(left, right taskOwnershipClaim) bool {
+	if left.Kind != right.Kind {
+		return false
+	}
+	if left.Kind == "owned_path" {
+		return ownedPathsOverlap(left.Value, right.Value)
+	}
+	return left.Value == right.Value
+}
+
+func taskOwnershipConflictCode(kind string) string {
+	switch kind {
+	case "generated_output":
+		return "GENERATED_OUTPUT_CONFLICT"
+	case "migration_key":
+		return "MIGRATION_KEY_CONFLICT"
+	default:
+		return "OWNED_PATH_CONFLICT"
+	}
+}
+
+// ownedPathConflict is deliberately evaluated before the lease CAS. A lease
+// protects a task row; it does not protect its authored file, generated-output,
+// or migration-key collision surfaces.
 func ownedPathConflict(candidate Note, notes map[string]Note, runs []RunStatus, now time.Time) (map[string]any, bool) {
-	wanted := normalizeOwnedPaths(normalizeList(candidate.Data["owned_paths"]))
+	wanted := taskOwnershipClaims(candidate)
 	if len(wanted) == 0 {
 		return nil, false
 	}
@@ -82,13 +126,13 @@ func ownedPathConflict(candidate Note, notes map[string]Note, runs []RunStatus, 
 			continue
 		}
 		for _, mine := range wanted {
-			for _, theirs := range normalizeOwnedPaths(normalizeList(holder.Data["owned_paths"])) {
-				if ownedPathsOverlap(mine, theirs) {
+			for _, theirs := range taskOwnershipClaims(holder) {
+				if taskOwnershipClaimsOverlap(mine, theirs) {
 					age := "unknown"
 					if started, err := time.Parse(time.RFC3339, firstNonEmpty(run.StartedAt, run.UpdatedAt)); err == nil {
 						age = now.Sub(started).Round(time.Second).String()
 					}
-					return map[string]any{"code": "OWNED_PATH_CONFLICT", "holder": run.LeaseOwner, "task_id": run.ItemID, "lease_age": age, "liveness": liveness, "candidate_path": mine, "holder_path": theirs}, true
+					return map[string]any{"code": taskOwnershipConflictCode(mine.Kind), "holder": run.LeaseOwner, "task_id": run.ItemID, "lease_age": age, "liveness": liveness, "candidate_path": mine.Value, "holder_path": theirs.Value, "ownership_kind": mine.Kind}, true
 				}
 			}
 		}
@@ -125,7 +169,7 @@ func ownedPathsOverlap(a, b string) bool {
 }
 
 func reclaimDeadOwnedPathHolders(store *RuntimeStore, vaultPath string, candidate Note, notes map[string]Note, runs []RunStatus, now time.Time) ([]string, error) {
-	wanted := normalizeOwnedPaths(normalizeList(candidate.Data["owned_paths"]))
+	wanted := taskOwnershipClaims(candidate)
 	if len(wanted) == 0 {
 		return nil, nil
 	}
@@ -142,8 +186,8 @@ func reclaimDeadOwnedPathHolders(store *RuntimeStore, vaultPath string, candidat
 			continue
 		}
 		for _, mine := range wanted {
-			for _, theirs := range normalizeOwnedPaths(normalizeList(holder.Data["owned_paths"])) {
-				if !ownedPathsOverlap(mine, theirs) {
+			for _, theirs := range taskOwnershipClaims(holder) {
+				if !taskOwnershipClaimsOverlap(mine, theirs) {
 					continue
 				}
 				ok, err := store.ReclaimExpiredRunLease(run.ProjectID, run.RecordID, now.Add(2*defaultRunLeaseTTL), defaultRunLeaseTTL, "owned-path takeover after expired heartbeat")
@@ -153,7 +197,7 @@ func reclaimDeadOwnedPathHolders(store *RuntimeStore, vaultPath string, candidat
 				if ok {
 					taken = append(taken, run.ItemID)
 					if vaultPath != "" {
-						_ = emitV7Event(vaultPath, stringField(candidate.Data, "id"), "task", "claimed", "tusker:claim", map[string]any{"takeover_from": run.ItemID, "dead_holder": run.LeaseOwner, "reason": "expired heartbeat and failed liveness probe", "candidate_path": mine, "holder_path": theirs})
+						_ = emitV7Event(vaultPath, stringField(candidate.Data, "id"), "task", "claimed", "tusker:claim", map[string]any{"takeover_from": run.ItemID, "dead_holder": run.LeaseOwner, "reason": "expired heartbeat and failed liveness probe", "candidate_path": mine.Value, "holder_path": theirs.Value, "ownership_kind": mine.Kind})
 					}
 				}
 			}
@@ -211,7 +255,7 @@ func (s *runOwnershipService) guardOwnedPathClaim() error {
 		return err
 	}
 	if conflict, found := ownedPathConflict(s.candidateNote, s.notesByID, runs, now); found {
-		return tuskerError("OWNED_PATH_CONFLICT", fmt.Sprintf("claim refused: %s holds %s for %s (lease age %s; liveness %s)", conflict["holder"], conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]), withContext(conflict))
+		return tuskerError(stringValue(conflict["code"]), fmt.Sprintf("claim refused: %s holds %s for %s (lease age %s; liveness %s)", conflict["holder"], conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]), withContext(conflict))
 	}
 	return nil
 }
@@ -300,6 +344,10 @@ func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string
 // contrast with the older claim API, it atomically creates the lease, its
 // authorization evidence, and a unique runtime attempt intent.
 func (s *runOwnershipService) claimWorkSessionWithAuthorization(run RunStatus, owner string, auth RunAuthorization, identity RunIdentityMetadata) (runClaimResult, error) {
+	return s.claimWorkSessionWithAuthorizationWithParent(run, owner, auth, identity, "")
+}
+
+func (s *runOwnershipService) claimWorkSessionWithAuthorizationWithParent(run RunStatus, owner string, auth RunAuthorization, identity RunIdentityMetadata, parentAttemptID string) (runClaimResult, error) {
 	if s == nil || s.store == nil {
 		return runClaimResult{}, tuskerError(errorConfigInvalid, "run ownership store is unavailable")
 	}
@@ -327,7 +375,7 @@ func (s *runOwnershipService) claimWorkSessionWithAuthorization(run RunStatus, o
 	now, generation := s.now(), current.LeaseGeneration+1
 	identity.ProjectID, identity.RecordID = current.ProjectID, current.RecordID
 	identity.WorkspacePath, identity.Runner = current.WorkspacePath, current.Runner
-	attempt := RunAttempt{AttemptID: "work-" + newRecordID(), ProjectID: current.ProjectID, RecordID: current.RecordID, ItemID: current.ItemID, Runner: current.Runner, Lane: current.Lane, WorkRevision: current.WorkRevision, WorkspacePath: current.WorkspacePath, BranchName: identity.Branch, Outcome: string(AttemptOutcomeNone), StartedAt: now.Format(time.RFC3339Nano)}
+	attempt := RunAttempt{AttemptID: "work-" + newRecordID(), ProjectID: current.ProjectID, RecordID: current.RecordID, ItemID: current.ItemID, Runner: current.Runner, Lane: current.Lane, WorkRevision: current.WorkRevision, WorkspacePath: current.WorkspacePath, BranchName: identity.Branch, ParentAttemptID: strings.TrimSpace(parentAttemptID), Outcome: string(AttemptOutcomeNone), StartedAt: now.Format(time.RFC3339Nano)}
 	claimed, err := s.store.claimRunLeaseWithWorkSessionAttempt(*current, owner, generation, defaultRunLeaseTTL, now, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseState(current.LeaseState), ExpectedOwner: current.LeaseOwner, ExpectedLeaseGeneration: current.LeaseGeneration, ExpectedWorkRevision: current.WorkRevision, ProjectConcurrencyLimit: s.projectConcurrencyLimit}, auth, attempt, identity)
 	if err != nil {
 		return runClaimResult{}, err
@@ -348,7 +396,7 @@ func (s *runOwnershipService) claimWorkSessionWithAuthorization(run RunStatus, o
 // claimExistingWithAuthorization is the daemon path: the supplied row is the
 // planning snapshot, so its CAS preconditions must not be refreshed after a
 // concurrent operator mutation.
-func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owner string, auth RunAuthorization) (runClaimResult, error) {
+func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owner string, auth RunAuthorization, attempt RunAttempt) (runClaimResult, error) {
 	if s == nil || s.store == nil {
 		return runClaimResult{}, tuskerError(errorConfigInvalid, "run ownership store is unavailable")
 	}
@@ -362,14 +410,13 @@ func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owne
 	}
 	now := s.now()
 	generation := run.LeaseGeneration + 1
-	// The daemon claim path is, by definition, machine-dispatched: this claim was
-	// not made by hand in a live session, so it stamps hand_run=false and clears
-	// any hand-run origin left by an earlier hand claim of the same task.
-	claimed, err := s.store.ClaimRunLease(run.ProjectID, run.RecordID, owner, generation, defaultRunLeaseTTL, now, true, false, RuntimeLeaseClaimPrecondition{
+	// The daemon claim path atomically records the exact attempt intent with its
+	// lease and authorization, including a review's successful execute parent.
+	claimed, err := s.store.claimRunLeaseWithDaemonAttempt(run, owner, generation, defaultRunLeaseTTL, now, RuntimeLeaseClaimPrecondition{
 		ExpectedLeaseState: LeaseState(run.LeaseState), ExpectedOwner: run.LeaseOwner,
 		ExpectedLeaseGeneration: run.LeaseGeneration, ExpectedWorkRevision: run.WorkRevision,
 		ProjectConcurrencyLimit: s.projectConcurrencyLimit,
-	})
+	}, auth, attempt)
 	if err != nil {
 		return runClaimResult{}, err
 	}
@@ -381,10 +428,7 @@ func (s *runOwnershipService) claimExistingWithAuthorization(run RunStatus, owne
 		return runClaimResult{OwnerRun: latest, Freshness: runFreshness(latest, now)}, nil
 	}
 	auth.ProjectID, auth.RecordID, auth.LeaseGeneration = run.ProjectID, run.RecordID, generation
-	auth.Actor, auth.Source, auth.CreatedAt = firstNonEmpty(auth.Actor, owner), firstNonEmpty(auth.Source, "daemon_auto"), now.Format(time.RFC3339)
-	if err := s.store.SaveRunAuthorization(auth); err != nil {
-		return runClaimResult{}, err
-	}
+	auth.Actor, auth.Source, auth.CreatedAt = firstNonEmpty(auth.Actor, owner), firstNonEmpty(auth.Source, "daemon_auto"), now.Format(time.RFC3339Nano)
 	return runClaimResult{OK: true, Claimed: true, Run: latest, Freshness: "fresh", Authorization: &auth}, nil
 }
 
@@ -550,6 +594,10 @@ func (s *runOwnershipService) finishWithEndStateAtRevision(identity, owner strin
 }
 
 func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA string, now time.Time) (RunEndState, error) {
+	return captureRunEndStateForMaterialScope(workspace, nil, gateVerdicts, reportedBranch, reportedSHA, now)
+}
+
+func captureRunEndStateForMaterialScope(workspace string, materialScope []string, gateVerdicts, reportedBranch, reportedSHA string, now time.Time) (RunEndState, error) {
 	verdicts, err := parseGateVerdicts(gateVerdicts)
 	if err != nil {
 		return RunEndState{}, err
@@ -561,7 +609,15 @@ func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA str
 	if err != nil {
 		return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot capture authoritative workspace end state: "+err.Error(), withContext(map[string]any{"worktree_path": workspace}))
 	}
-	state := RunEndState{Schema: "tusker.run-end-state/v1", Branch: facts.Branch, HeadSHA: facts.Head, WorktreePath: workspace, Dirty: facts.Dirty, GateVerdicts: verdicts, ReportedBranch: strings.TrimSpace(reportedBranch), ReportedHeadSHA: strings.TrimSpace(reportedSHA), CapturedAt: now.UTC().Format(time.RFC3339)}
+	materialScope, err = normalizeWorkspaceMaterialScope(materialScope)
+	if err != nil {
+		return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot normalize implementation material scope: "+err.Error())
+	}
+	material, err := workspaceTreeStateHashForPaths(workspace, materialScope)
+	if err != nil {
+		return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot fingerprint authoritative workspace material: "+err.Error(), withContext(map[string]any{"worktree_path": workspace}))
+	}
+	state := RunEndState{Schema: "tusker.run-end-state/v2", Branch: facts.Branch, HeadSHA: facts.Head, WorktreePath: workspace, Dirty: facts.Dirty, MaterialFingerprint: material, MaterialScope: materialScope, GateVerdicts: verdicts, ReportedBranch: strings.TrimSpace(reportedBranch), ReportedHeadSHA: strings.TrimSpace(reportedSHA), CapturedAt: now.UTC().Format(time.RFC3339)}
 	if state.ReportedBranch != "" && state.ReportedBranch != state.Branch {
 		state.Discrepancies = append(state.Discrepancies, fmt.Sprintf("reported branch %s differs from harness branch %s", state.ReportedBranch, state.Branch))
 	}
@@ -569,6 +625,28 @@ func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA str
 		state.Discrepancies = append(state.Discrepancies, fmt.Sprintf("reported HEAD %s differs from harness HEAD %s", state.ReportedHeadSHA, state.HeadSHA))
 	}
 	return state, nil
+}
+
+func canonicalRunMaterialScope(store *RuntimeStore, run RunStatus) ([]string, error) {
+	if run.Lane != runLaneExecute {
+		return nil, nil
+	}
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
+	if err != nil || len(loaded) != 1 || loaded[0].LoadError != nil {
+		return nil, firstNonNil(err, tuskerError(errorConfigInvalid, "work session cannot resolve its registered project"))
+	}
+	note, err := resolveV7Note(loaded[0].Project.VaultRoot, run.ItemID, "task")
+	if err != nil {
+		return nil, err
+	}
+	scope, err := canonicalTaskMaterialScope(loaded[0].Project.VaultRoot, note)
+	if err != nil {
+		return nil, tuskerError(errorInvalidArg, "work session has invalid declared material scope: "+err.Error())
+	}
+	if len(scope) == 0 {
+		return nil, tuskerError(errorInvalidTransition, "work session requires declared owned paths, generated outputs, or spec references before submission")
+	}
+	return scope, nil
 }
 
 func parseGateVerdicts(raw string) (map[string]string, error) {
@@ -690,7 +768,11 @@ func runsLifecycleCmd(args Args, action string) error {
 		if findErr != nil || current == nil {
 			return firstNonNil(findErr, tuskerError(errorNotFound, "run not found: "+id))
 		}
-		endState, captureErr := captureRunEndState(current.WorkspacePath, firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), args.String("branch"), firstNonEmpty(args.String("head-sha"), args.String("sha")), time.Now().UTC())
+		materialScope, scopeErr := canonicalRunMaterialScope(store, *current)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		endState, captureErr := captureRunEndStateForMaterialScope(current.WorkspacePath, materialScope, firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), args.String("branch"), firstNonEmpty(args.String("head-sha"), args.String("sha")), time.Now().UTC())
 		if captureErr != nil {
 			return captureErr
 		}

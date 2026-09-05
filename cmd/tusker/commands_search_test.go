@@ -8,6 +8,7 @@ import (
 )
 
 func TestSearchSkipsAttachmentsAndGeneratedFiles(t *testing.T) {
+	t.Parallel()
 	vault := t.TempDir()
 	writeSearchFixture(t, vault, "epics/APP/APP.md", `---
 schema: "tusker.epic/v5"
@@ -51,6 +52,7 @@ This task adds a cheap tracker search path for agents.
 }
 
 func TestSearchFiltersByEpicStatusAndType(t *testing.T) {
+	t.Parallel()
 	vault := t.TempDir()
 	writeSearchFixture(t, vault, "epics/APP/APP.md", `---
 schema: "tusker.epic/v5"
@@ -100,6 +102,7 @@ search needle
 }
 
 func TestSearchUsesAllPositionalQueryTerms(t *testing.T) {
+	t.Parallel()
 	vault := t.TempDir()
 	writeSearchFixture(t, vault, "epics/APP/APP-T-0001.md", `---
 schema: "tusker.task/v5"
@@ -124,6 +127,7 @@ status: "ready"
 }
 
 func TestSearchHelpExplainsBoundedScope(t *testing.T) {
+	t.Parallel()
 	output := captureStdout(t, printSearchHelp)
 	for _, expected := range []string{
 		"tusker search <text>",

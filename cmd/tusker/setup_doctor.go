@@ -123,11 +123,9 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 				continue
 			}
 			expectedVault := filepath.Join(project.RepoRoot, ".tusker")
-			legacyVault := filepath.Join(project.RepoRoot, "tusker")
 			canonicalExists := pathExistsIncludingSymlink(expectedVault)
-			legacyRegistration := sameCleanPath(project.VaultRoot, legacyVault)
 			missingRegistration := !pathExistsIncludingSymlink(project.VaultRoot)
-			if canonicalExists && !sameCleanPath(project.VaultRoot, expectedVault) && (legacyRegistration || missingRegistration) {
+			if canonicalExists && !sameCleanPath(project.VaultRoot, expectedVault) && missingRegistration {
 				finding := setupFinding{Code: "stale_vault_root", Status: "error", Path: project.VaultRoot, Repairable: true,
 					Message: fmt.Sprintf("registered project %s points at %s instead of %s", project.ProjectID, project.VaultRoot, expectedVault),
 					Action:  "update the registration to the repository's .tusker root"}
@@ -165,7 +163,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 			add(setupFinding{
 				Code:       "legacy_dispatch_scope",
 				Status:     "warning",
-				Path:       preferredTuskerConfigPath(localVault),
+				Path:       managedTuskerConfigPath(localVault),
 				Message:    workflow.Data.DispatchScope.Warning,
 				Action:     workflow.Data.DispatchScope.Repair,
 				Repairable: false,
@@ -175,7 +173,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 			add(setupFinding{
 				Code:       "legacy_completion_reactor_mode",
 				Status:     "warning",
-				Path:       preferredTuskerConfigPath(localVault),
+				Path:       managedTuskerConfigPath(localVault),
 				Message:    workflow.Data.CompletionReactor.Warning,
 				Action:     workflow.Data.CompletionReactor.Repair,
 				Repairable: false,
@@ -183,11 +181,9 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 		}
 	}
 	if info, err := os.Lstat(localVault); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		resolved, resolveErr := filepath.EvalSymlinks(localVault)
+		_, resolveErr := filepath.EvalSymlinks(localVault)
 		if resolveErr != nil {
 			add(setupFinding{Code: "broken_vault_symlink", Status: "error", Path: localVault, Message: "repo-local .tusker symlink is broken", Action: "recreate the vault link with tusker vault mount", Repairable: false})
-		} else if sameResolvedFile(resolved, filepath.Join(repo, "tusker")) {
-			add(setupFinding{Code: "stale_vault_symlink", Status: "warning", Path: localVault, Message: "repo-local .tusker symlink still targets the legacy repo/tusker vault", Action: "run tusker migrate vault-root --to .tusker and replace the legacy link after verification", Repairable: false})
 		}
 	}
 

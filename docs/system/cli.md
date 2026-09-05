@@ -3,6 +3,8 @@ title: "CLI reference"
 subject: cli
 part_of: overview
 status: canonical
+read_when: "Looking up an exact command, document route, or machine-readable output."
+skip_when: "You need the rationale or lifecycle rule behind a command."
 ---
 
 # CLI reference
@@ -45,8 +47,17 @@ These commands do not grant a task claim.
 
 ## Documentation and skills
 
-- `tusker docs find <query>` searches the system pages.
-- `tusker docs map` rebuilds the index and graph.
+- `tusker docs find <query>` searches the managed corpus: system pages in
+  `docs/system/`, specs in `.tusker/specs/`, and decisions in
+  `.tusker/specs/decisions/`.
+- Search returns a bounded shortlist with `read_when` and `skip_when` guidance.
+  JSON also reports `total_matches` and `truncated`; open the returned subject
+  or stable path to read the full document.
+- `tusker docs new --kind doc` creates a system page. `tusker docs new --kind
+  spec` creates a governing spec under `.tusker/specs/`.
+- `tusker docs map` rebuilds the index and graph from the same resolver. It
+  includes metadata relationships, Markdown/Obsidian links, backlinks, and
+  supersession edges; broken managed routes fail validation.
 - `tusker docs status --json` reports freshness.
 - `tusker skill doctor --strict --json` checks the skill routes.
 

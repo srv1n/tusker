@@ -23,8 +23,6 @@ const (
 const (
 	managedTuskerConfigName      = "config.yaml"
 	managedTuskerLocalConfigName = "config.local.yaml"
-	legacyTuskerConfigName       = "tusker.yaml"
-	legacyTuskerLocalConfigName  = "tusker.local.yaml"
 )
 
 func managedTuskerConfigPath(vaultPath string) string {
@@ -33,28 +31,6 @@ func managedTuskerConfigPath(vaultPath string) string {
 
 func managedTuskerLocalConfigPath(vaultPath string) string {
 	return filepath.Join(vaultPath, managedTuskerLocalConfigName)
-}
-
-func legacyTuskerConfigPath(repoRoot string) string {
-	return filepath.Join(repoRoot, legacyTuskerConfigName)
-}
-
-func legacyTuskerLocalConfigPath(repoRoot string) string {
-	return filepath.Join(repoRoot, legacyTuskerLocalConfigName)
-}
-
-// preferredTuskerConfigPath retains root-level config only as a compatibility
-// read path. New repositories and all new local overrides live in the vault.
-func preferredTuskerConfigPath(vaultPath string) string {
-	managed := managedTuskerConfigPath(vaultPath)
-	if fileExists(managed) {
-		return managed
-	}
-	legacy := legacyTuskerConfigPath(v7RepoRoot(vaultPath))
-	if fileExists(legacy) {
-		return legacy
-	}
-	return managed
 }
 
 type RunnerSandboxDefinition struct {
@@ -159,7 +135,7 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 	cfg.Automation.DefaultProfile = "default"
 	cfg.Automation.Profiles = map[string]v7schema.TuskerRunnerProfileConfig{
 		"default": {
-			Harness:          string(RunnerCodexACP),
+			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "medium",
 			PermissionPreset: "workspace-write-offline",
@@ -167,7 +143,7 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(true), MaxConcurrent: 2},
 		},
 		"execute-cheap": {
-			Harness:          string(RunnerCodexACP),
+			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "low",
 			PermissionPreset: "workspace-write-network",
@@ -183,8 +159,8 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(false), MaxConcurrent: 0},
 		},
 		"unrestricted-high": {
-			// Direct Codex remains an explicit emergency profile. It is never an
-			// automatic retry or fallback after an ACP prompt may have been sent.
+			// Direct Codex is the fresh-install default. ACP remains an explicitly
+			// configured adapter and is never an automatic fallback.
 			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "high",
@@ -227,10 +203,7 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 	}
 	if includeProject {
 		layers = append(layers,
-			// Old root-level files remain lower-precedence compatibility inputs.
-			tuskerConfigLayer{Name: configSourceProject, Path: legacyTuskerConfigPath(repoRoot)},
 			tuskerConfigLayer{Name: configSourceProject, Path: managedTuskerConfigPath(vaultPath)},
-			tuskerConfigLayer{Name: configSourceLocal, Path: legacyTuskerLocalConfigPath(repoRoot)},
 			tuskerConfigLayer{Name: configSourceLocal, Path: managedTuskerLocalConfigPath(vaultPath)},
 		)
 	}

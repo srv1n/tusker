@@ -738,6 +738,11 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	if len(proofRequired) == 0 {
 		proofRequired = defaultV7ProofRequired(proofMode)
 	}
+	for _, required := range proofRequired {
+		if !v7KnownProofRequirement(required) {
+			return tuskerError(errorInvalidField, "unknown proof_required: "+required)
+		}
+	}
 	proofRequiredOwner := v7DefaultProofRequiredOwners(proofRequired)
 	for required, owner := range parseV7ProofRequiredOwnerArg(firstNonEmpty(args.String("proof-required-owner"), args.String("proof-owner"))) {
 		proofRequiredOwner[required] = owner
@@ -751,6 +756,8 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	specRefs := splitCSV(firstNonEmpty(args.String("spec-refs"), args.String("spec_refs")))
+	ownedPaths := normalizeOwnedPaths(splitCSV(firstNonEmpty(args.String("owned-paths"), args.String("owned_paths"))))
+	generatedOutputs := normalizeOwnedPaths(splitCSV(firstNonEmpty(args.String("generated-outputs"), args.String("generated_outputs"))))
 	data := map[string]any{
 		"schema":                "tusker.task/v7",
 		"kind":                  "task",
@@ -795,6 +802,12 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	}
 	if len(specRefs) > 0 {
 		data["spec_refs"] = specRefs
+	}
+	if len(ownedPaths) > 0 {
+		data["owned_paths"] = ownedPaths
+	}
+	if len(generatedOutputs) > 0 {
+		data["generated_outputs"] = generatedOutputs
 	}
 	if len(proofRequiredOwner) > 0 {
 		data["proof_required_owner"] = proofRequiredOwner
@@ -2833,12 +2846,11 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 		fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 		fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
 		fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
-		fmt.Fprintf(&b, "## Intent\n\n%s\n\n", sectionContent(task.Body, "## Intent"))
-		fmt.Fprintf(&b, "## Acceptance\n\n%s\n\n", sectionContent(task.Body, "## Acceptance"))
+		fmt.Fprintf(&b, "## Task contract\n\n%s\n\n", strings.TrimSpace(task.Body))
+		writeV7PacketOwnership(&b, task)
 		report := computeV7ProofReport(vaultPath, task, idx)
 		fmt.Fprintf(&b, "## Proof status\n\nMode: %s\nStatus: %s\nMissing: %s\n\n", report.Mode, report.Status, fallback(strings.Join(append(append([]string{}, report.Missing...), report.ModeMissing...), ", "), "none"))
 		fmt.Fprintf(&b, "## Proof required\n\n%s\n\n", v7BulletList(normalizeList(task.Data["proof_required"])))
-		fmt.Fprintf(&b, "## Verification\n\n%s\n\n", v7PacketSnippet(sectionContent(task.Body, "## Verification"), 12))
 		fmt.Fprintf(&b, "## Evidence\n\n")
 		for _, ev := range idx.Evidence[id] {
 			fmt.Fprintf(&b, "- [[%s]] %s\n", stringField(ev.Data, "id"), stringField(ev.Data, "evidence_kind"))
@@ -2852,7 +2864,8 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	writeV7PacketWarnings(&b, vaultPath, task)
 	fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 	fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
-	fmt.Fprintf(&b, "## Task contract\n\nIntent:\n%s\n\nAcceptance:\n%s\n\n", v7PacketSnippet(sectionContent(task.Body, "## Intent"), 8), v7PacketSnippet(sectionContent(task.Body, "## Acceptance"), 18))
+	fmt.Fprintf(&b, "## Task contract\n\n%s\n\n", strings.TrimSpace(task.Body))
+	writeV7PacketOwnership(&b, task)
 	fmt.Fprintf(&b, "## Open gates\n\n")
 	for _, gate := range idx.Gates {
 		if stringField(gate.Data, "status") == "open" && containsString(normalizeList(gate.Data["blocks"]), id) {
@@ -2862,11 +2875,23 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	fmt.Fprintf(&b, "\n## Dependencies\n\n%s\n\n", v7BulletList(normalizeList(task.Data["dependencies"])))
 	fmt.Fprintf(&b, "## Routed file capsules\n\n%s\n\n", v7RoutedFileCapsules(vaultPath, task))
 	fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
-	fmt.Fprintf(&b, "## Verification\n\n%s\n\n", v7PacketSnippet(sectionContent(task.Body, "## Verification"), 12))
 	fmt.Fprintf(&b, "## Proof requirements\n\nMode: %s\nRequired:\n%s\n\n", fallback(stringField(task.Data, "proof_mode"), defaultV7ProofMode(stringField(task.Data, "risk"))), v7BulletList(normalizeList(task.Data["proof_required"])))
 	fmt.Fprintf(&b, "## Branch policy\n\nProtected task/gate state fields must be changed through Tusker control operations on a control branch.\n\n")
 	fmt.Fprintf(&b, "## Close policy\n\n%s\n", v7ClosePolicySummary(vaultPath, task))
 	return b.String()
+}
+
+func writeV7PacketOwnership(b *strings.Builder, task Note) {
+	for _, field := range []struct{ key, title string }{
+		{"owned_paths", "Owned paths"},
+		{"generated_outputs", "Generated outputs"},
+		{"migration_keys", "Migration keys"},
+		{"resource_refs", "Shared resources"},
+	} {
+		if values := normalizeList(task.Data[field.key]); len(values) > 0 {
+			fmt.Fprintf(b, "## %s\n\n%s\n\n", field.title, v7BulletList(values))
+		}
+	}
 }
 
 func v7ExplainerPacket(vaultPath string, task Note, idx v7Index) string {
@@ -4036,14 +4061,14 @@ func resolveV7ProjectID(vaultPath string) (string, error) {
 		return "", err
 	}
 	repoRoot := filepath.Dir(vaultPath)
-	if fileExists(preferredTuskerConfigPath(vaultPath)) || dirExists(filepath.Join(repoRoot, ".git")) || fileExists(filepath.Join(repoRoot, ".git")) {
+	if fileExists(managedTuskerConfigPath(vaultPath)) || dirExists(filepath.Join(repoRoot, ".git")) || fileExists(filepath.Join(repoRoot, ".git")) {
 		return sanitizeProjectID(filepath.Base(repoRoot)), nil
 	}
 	return "", tuskerError(errorConfigInvalid, "V7 project_id is required in .tusker/config.yaml", withPath(managedTuskerConfigPath(vaultPath)), withHint("run `tusker init --yes` from the repository root or add project_id to .tusker/config.yaml"))
 }
 
-func v7StateRev(data map[string]any, _ string) string {
-	return v7schema.StateRev(data, "")
+func v7StateRev(data map[string]any, body string) string {
+	return v7schema.StateRev(data, body)
 }
 
 func v7ContentRev(data map[string]any, body string) string {
@@ -4058,18 +4083,7 @@ func v7StateRevMatches(data map[string]any, body, rev string) bool {
 	if strings.TrimSpace(rev) == "" {
 		return true
 	}
-	if v7StateRev(data, body) == rev {
-		return true
-	}
-	// Read old body-inclusive revisions during the migration. The next
-	// structured write stores the frontmatter-only revision.
-	if v7ContentRev(data, body) == rev {
-		return true
-	}
-	if strings.HasSuffix(body, "\n") && v7StateRev(data, strings.TrimSuffix(body, "\n")) == rev {
-		return true
-	}
-	return false
+	return v7StateRev(data, body) == rev
 }
 
 func v7TerminalTaskStatus(status string) bool {

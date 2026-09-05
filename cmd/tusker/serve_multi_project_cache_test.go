@@ -18,7 +18,7 @@ func addServeProjectFixture(t *testing.T, server *serveServer, projectID, taskID
 			t.Fatal(err)
 		}
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: "+projectID+"\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: "+projectID+"\nstorage:\n  root: .tusker\nruntime:\n  mutation_mode: single_user_local\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {

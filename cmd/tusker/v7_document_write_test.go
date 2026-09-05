@@ -123,7 +123,7 @@ func TestV7SkillMutationUsesOneLockForDocumentAndMaterialEpoch(t *testing.T) {
 	}
 }
 
-func TestV7DocumentCASAllowsBodyOnlyHumanEdit(t *testing.T) {
+func TestV7DocumentCASRejectsBodyOnlyHumanEditWithStaleStateRev(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "APP-T-0001.md")
 	body := "\n## Question\n\nOriginal.\n"
 	data := map[string]any{"schema": "tusker.task/v7", "kind": "task", "id": "APP-T-0001", "next_action": "start"}
@@ -149,12 +149,12 @@ func TestV7DocumentCASAllowsBodyOnlyHumanEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	current["next_action"] = "continue"
-	if _, err := saveV7DocumentCAS(path, current, editedBody, v7FrontmatterOrder["task"], stringField(current, "state_rev")); err != nil {
-		t.Fatal(err)
+	if _, err := saveV7DocumentCAS(path, current, editedBody, v7FrontmatterOrder["task"], stringField(current, "state_rev")); err == nil {
+		t.Fatal("expected stale body edit to require reconciliation")
 	}
-	_, finalBody, err := parseFrontmatterMustRead(path)
-	if err != nil || !strings.Contains(finalBody, "Human prose edit.") {
-		t.Fatalf("body-only edit was not preserved: body=%q err=%v", finalBody, err)
+	finalData, finalBody, err := parseFrontmatterMustRead(path)
+	if err != nil || !strings.Contains(finalBody, "Human prose edit.") || v7StateRevMatches(finalData, finalBody, stringField(finalData, "state_rev")) {
+		t.Fatalf("stale body edit was overwritten or certified: body=%q data=%#v err=%v", finalBody, finalData, err)
 	}
 }
 
@@ -292,6 +292,26 @@ func TestV7DocumentCASParentDirectorySyncFailureIsReportedAfterRename(t *testing
 	}
 	if len(temps) != 0 {
 		t.Fatalf("temporary files leaked after parent directory sync failure: %v", temps)
+	}
+	// A post-rename sync error leaves completion ambiguous to the caller. Retrying
+	// the same write must recover to one exact canonical document, not append or
+	// corrupt the already-materialized content.
+	if err := atomicReplaceV7Document(documentPath, "replacement\n"); err != nil {
+		t.Fatalf("retry after parent directory sync failure: %v", err)
+	}
+	after, err = os.ReadFile(documentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != "replacement\n" {
+		t.Fatalf("retry did not recover exact canonical bytes: %q", after)
+	}
+	temps, err = filepath.Glob(filepath.Join(filepath.Dir(documentPath), ".APP-T-0001.md.tmp-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(temps) != 0 {
+		t.Fatalf("retry leaked temporary files: %v", temps)
 	}
 }
 

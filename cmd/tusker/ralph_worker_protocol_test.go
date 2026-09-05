@@ -174,7 +174,7 @@ func TestPromptBackpressureAndSigns(t *testing.T) {
 		"# APP-T-0001 agent packet",
 		".tusker/scratch/APP-T-0001/PLAN.md",
 		"Previous reason: parked because validation stayed red",
-		"Source: `tusker.yaml` automation.validation.commands",
+		"Source: `.tusker/config.yaml` automation.validation.commands",
 		"go test ./cmd/tusker -run TestPromptBackpressureAndSigns -count=1",
 		"Search before implementing",
 		"placeholder, stub",
@@ -221,7 +221,7 @@ func ralphPromptTestVault(t *testing.T) string {
 	t.Helper()
 	vault := automationTestVault(t)
 	repo := filepath.Dir(vault)
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), strings.TrimSpace(`
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), strings.TrimSpace(`
 automation:
   validation:
     commands:

@@ -50,7 +50,7 @@ func TestFeedbackAddWritesStructuredNote(t *testing.T) {
 
 func TestFeedbackAddRejectsLongNoteUnlessAllowed(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "budgeted")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "feedback:\n  note_max_chars: 40\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "feedback:\n  note_max_chars: 40\n"); err != nil {
 		t.Fatal(err)
 	}
 	args := Args{

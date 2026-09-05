@@ -133,13 +133,6 @@ func TestDeliveryCrossScopeProjectionDoesNotRebindAndRefreshesAtomically(t *test
 	}
 }
 
-func TestDeliveryPlanV1RejectsScopedDependency(t *testing.T) {
-	_, err := readDeliveryPlanBytes([]byte("schema: tusker.delivery-plan/v1\ntasks:\n  - dependencies:\n      - task: local\n        scope: other/v1\n"))
-	if err == nil || !strings.Contains(err.Error(), "scope") {
-		t.Fatalf("V1 scope input was accepted: %v", err)
-	}
-}
-
 func TestDeliveryPlanV2RejectsUnknownNestedField(t *testing.T) {
 	raw := []byte("schema: tusker.delivery-plan/v2\nscope: example/v1\ntitle: Example\nepic: APP\nspec_refs: [docs/specs/example.md]\ncontext_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000\ntasks:\n  - source_key: x\n    title: x\n    outcome: x\n    acceptance: []\n    verification: []\n    artifact:\n      kind: diff_summary\n      unknown_nested: true\n")
 	var plan deliveryPlanV2
@@ -366,13 +359,4 @@ func TestDeliveryCrossScopeAtomicity(t *testing.T) {
 		t.Fatalf("want stale epoch refusal, got %v", err)
 	}
 	assertEqual(t, before, mustReadIndexTest(t, consumerPath), "raw race cannot overwrite consumer")
-}
-
-func TestDeliveryPlanV1(t *testing.T) {
-	vault := deliveryTestVault(t)
-	issues, _ := validateDeliveryPlan(vault, validDeliveryPlan())
-	if len(issues) != 0 {
-		t.Fatalf("unchanged V1 plan rejected: %v", issues)
-	}
-	TestDeliveryPlanV1RejectsScopedDependency(t)
 }

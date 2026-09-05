@@ -591,7 +591,7 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		for attempt := 0; attempt < 2; attempt++ {
 			_, err := service.claimExistingWithAuthorization(candidate, "scheduler-attempt", RunAuthorization{
 				Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true,
-			})
+			}, RunAttempt{})
 			var typed *TuskerError
 			if !errors.As(err, &typed) || typed.Code != "OWNED_PATH_CONFLICT" {
 				t.Fatalf("owned path claim was not fenced: %v", err)

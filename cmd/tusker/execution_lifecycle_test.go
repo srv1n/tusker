@@ -151,6 +151,3 @@ func TestExecutionLifecycleRecovery(t *testing.T) {
 		t.Fatalf("parent exit forged child outcome: %#v", facts)
 	}
 }
-func TestExecutionCancellationEvidence(t *testing.T) {
-	TestExecutionCancellationEvidenceIsIdempotentAndProviderSafe(t)
-}

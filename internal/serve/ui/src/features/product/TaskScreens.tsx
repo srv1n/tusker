@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid, List, ShieldCheck } from "lucide-react";
+import { cn } from "@/lib/cn";
 import { QueryBoundary } from "@/components/ui/states";
 import { useConfirm } from "@/components/ui/action-feedback";
 import { api } from "@/lib/api";
@@ -49,21 +50,36 @@ function statusCopy(task: TaskCapsule): string {
 
 function TaskLink({ projectId, task }: { projectId: string; task: TaskCapsule }) {
   const label = statusCopy(task);
+  const priorityTone =
+    task.priority === "p0"
+      ? "text-fail bg-fail-soft border-fail/30"
+      : task.priority === "p1"
+        ? "text-warn bg-warn-soft border-warn/30"
+        : "text-muted bg-panel border-line";
+
   return (
     <Link
       to="/p/$projectId/tasks/$taskId"
       params={{ projectId, taskId: task.id }}
-      className="block border-b border-line-soft px-1 py-4 transition-colors hover:bg-hover/70"
+      className="group block rounded-xl border border-line bg-raised p-3.5 shadow-2xs transition-all hover:border-line hover:shadow-xs active:scale-[0.99]"
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="font-mono text-[10px] text-faint">{task.id}</span>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="font-mono text-[10.5px] font-medium text-faint">{task.id}</span>
         <ProductStatus tone={phaseTone(label)}>{label}</ProductStatus>
       </div>
-      <div className="text-[14px] font-semibold leading-5 text-ink">{task.title}</div>
-      <div className="mt-3 flex items-center gap-3 text-[11px] text-muted">
-        <span>{task.epicId}</span>
-        <span>{task.priority.toUpperCase()}</span>
-        <span>{task.risk} risk</span>
+      <div className="text-[13.5px] font-semibold leading-snug text-ink group-hover:text-accent transition-colors">
+        {task.title}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+        {task.epicId && (
+          <span className="rounded bg-panel px-1.5 py-0.5 font-mono text-[10px] text-muted">
+            {task.epicId}
+          </span>
+        )}
+        <span className={cn("rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider", priorityTone)}>
+          {task.priority.toUpperCase()}
+        </span>
+        <span className="text-faint font-mono text-[10.5px]">{task.risk} risk</span>
       </div>
     </Link>
   );
@@ -200,17 +216,24 @@ export function Tasks() {
                 ))}
             </div>
           ) : (
-            <div className="grid gap-8 md:grid-cols-3 xl:grid-cols-6">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 items-start">
               {statusOrder.map((status) => {
                 const column = filtered.filter((task) => task.status === status);
-                if (column.length === 0) return null;
                 return (
-                  <section key={status} className="min-w-0">
-                    <div className="mb-2 flex items-center justify-between border-b border-line pb-2">
-                      <ProductLabel>{columnLabel(status)}</ProductLabel>
-                      <span className="font-mono text-[10px] text-faint">{column.length}</span>
+                  <section key={status} className="flex min-w-0 flex-col rounded-xl border border-line bg-panel/40 p-3 shadow-2xs">
+                    <div className="mb-3 flex items-center justify-between pb-1">
+                      <span className="text-[12.5px] font-semibold text-ink">{columnLabel(status)}</span>
+                      <span className="rounded-full border border-line bg-surface px-2 py-0.5 font-mono text-[10.5px] font-semibold text-muted shadow-2xs">{column.length}</span>
                     </div>
-                    {column.map((task) => <TaskLink key={task.id} projectId={projectId} task={task} />)}
+                    <div className="flex flex-col gap-2.5">
+                      {column.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-line-soft bg-surface/50 py-7 text-center font-mono text-[11px] text-faint">
+                          Empty
+                        </div>
+                      ) : (
+                        column.map((task) => <TaskLink key={task.id} projectId={projectId} task={task} />)
+                      )}
+                    </div>
                   </section>
                 );
               })}

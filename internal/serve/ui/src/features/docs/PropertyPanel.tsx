@@ -32,14 +32,14 @@ export function PropertyPanel({
 }) {
   if (frontmatter.length === 0) return null;
   return (
-    <div className="mb-7 rounded-lg border border-line bg-panel px-4 py-3">
-      <div className="mb-2.5 font-mono text-[9px] uppercase tracking-[0.1em] text-faint">
-        Properties <span className="text-fainter">· structured fields</span>
+    <div className="mb-7 rounded-xl border border-line bg-panel/50 px-4 py-3 shadow-2xs">
+      <div className="mb-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">
+        Properties <span className="text-fainter font-normal">· structured fields</span>
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-2">
+      <div className="flex flex-wrap gap-2">
         {frontmatter.map((field) => (
-          <div key={field.key} className="flex items-center gap-1.5">
-            <span className="font-mono text-[10.5px] text-faint">{field.key}</span>
+          <div key={field.key} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 text-ink shadow-2xs">
+            <span className="font-mono text-[10.5px] font-medium text-faint">{field.key}:</span>
             <FrontmatterInlineControl
               field={field}
               onCommit={onCommit}
@@ -47,7 +47,7 @@ export function PropertyPanel({
               pending={pendingKey === field.key}
               className="font-mono text-[11px]"
             >
-              <span>{field.value}</span>
+              <span className="font-medium text-ink-soft">{field.value}</span>
             </FrontmatterInlineControl>
           </div>
         ))}

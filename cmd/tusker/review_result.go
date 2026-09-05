@@ -299,9 +299,18 @@ func reviewSubmitCmd(args Args) error {
 	if expected := atoiSafe(args.String("work-rev")); expected == 0 || expected != intField(note.Data, "work_revision") || attempt.RecordID != id || attempt.Lane != runLaneReview || attempt.WorkRevision != expected {
 		return tuskerError(errorInvalidTransition, "stale or unauthorized reviewer attempt")
 	}
-	run, err := activeReviewRunForAttempt(store, v7ProjectID(vault), id, attempt)
+	run, err := activeReviewRunForAttempt(store, attempt.ProjectID, id, attempt)
 	if err != nil {
 		return err
+	}
+	materialFingerprint, materialErr := validateInteractiveReviewIndependence(store, run, attemptID, actor, note)
+	if materialErr != nil {
+		return materialErr
+	}
+	if run.HandRun {
+		if expected := strings.TrimSpace(args.String("material-fingerprint")); expected == "" || expected != materialFingerprint {
+			return tuskerError(errorInvalidTransition, "stale implementation material fingerprint")
+		}
 	}
 	resultSchema, workerPolicyFP, policyErr := reviewResultPolicyForRun(wf.Data, note, run)
 	if policyErr != nil {
@@ -327,7 +336,7 @@ func reviewSubmitCmd(args Args) error {
 			return tuskerError(errorInvalidTransition, "pass requires command-verified objective proof and gates")
 		}
 	}
-	result := ReviewResult{Schema: resultSchema, ProjectID: v7ProjectID(vault), TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, WorkerPolicyFP: workerPolicyFP, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := ReviewResult{Schema: resultSchema, ProjectID: run.ProjectID, TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, WorkerPolicyFP: workerPolicyFP, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, MaterialFingerprint: materialFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := normalizeReviewResult(&result); err != nil {
 		return err
 	}
@@ -419,6 +428,52 @@ func activeReviewRunForAttempt(store *RuntimeStore, projectID, taskID string, at
 	return RunStatus{}, tuskerError(errorInvalidTransition, "reviewer attempt is not the current active review attempt")
 }
 
+func reviewAttemptMaterialFingerprint(store *RuntimeStore, projectID, recordID, attemptID string, workRevision int, source string) (string, error) {
+	var parentID string
+	if err := store.queryRowScan(`SELECT parent_attempt_id FROM attempts WHERE attempt_id=? AND project_id=? AND record_id=?`, []any{attemptID, projectID, recordID}, &parentID); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(parentID) == "" {
+		return "", tuskerError(errorInvalidTransition, "interactive review attempt is missing its implementation session")
+	}
+	attempts, err := store.ListAttemptsForRun(projectID, recordID)
+	if err != nil {
+		return "", err
+	}
+	for _, parent := range attempts {
+		if parent.AttemptID != parentID {
+			continue
+		}
+		if parent.Lane != runLaneExecute || parent.Outcome != string(AttemptOutcomeSucceeded) || parent.WorkRevision != workRevision || parent.EndState.HeadSHA != source {
+			return "", tuskerError(errorInvalidTransition, "interactive review implementation session no longer matches the reviewed work")
+		}
+		return verifiedImplementationWorkspaceMaterial(parent)
+	}
+	return "", tuskerError(errorInvalidTransition, "interactive review implementation session is unavailable")
+}
+
+func validateInteractiveReviewIndependence(store *RuntimeStore, run RunStatus, attemptID, reviewer string, note Note) (string, error) {
+	if !run.HandRun {
+		return "", nil
+	}
+	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	material, err := reviewAttemptMaterialFingerprint(store, run.ProjectID, run.RecordID, attemptID, run.WorkRevision, source)
+	if err != nil {
+		return "", err
+	}
+	if run.LeaseGeneration <= 1 {
+		return "", tuskerError(errorInvalidTransition, "interactive review is missing implementation authorization provenance")
+	}
+	var implementationActor string
+	if err := store.queryRowScan(`SELECT actor FROM run_authorizations WHERE project_id=? AND record_id=? AND lease_generation=?`, []any{run.ProjectID, run.RecordID, run.LeaseGeneration - 1}, &implementationActor); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(implementationActor) == "" || implementationActor == reviewer {
+		return "", tuskerError(errorInvalidTransition, "implementing session cannot masquerade as independent review")
+	}
+	return material, nil
+}
+
 func normalizeReviewResult(result *ReviewResult) error {
 	result.Schema = strings.TrimSpace(result.Schema)
 	result.ProjectID = strings.TrimSpace(result.ProjectID)
@@ -435,6 +490,7 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.Summary = strings.TrimSpace(result.Summary)
 	result.ProofFingerprint = strings.TrimSpace(result.ProofFingerprint)
 	result.GateFingerprint = strings.TrimSpace(result.GateFingerprint)
+	result.MaterialFingerprint = strings.TrimSpace(result.MaterialFingerprint)
 	result.Covers = sortedUniqueStrings(result.Covers)
 	result.Findings = sortedUniqueStrings(result.Findings)
 	result.EvidenceRefs = sortedUniqueStrings(result.EvidenceRefs)

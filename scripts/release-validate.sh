@@ -3,12 +3,11 @@
 set -eu
 
 usage() {
-	printf '%s\n' "Usage: RELEASE_VERSION=v1.2.3 $0 [--root PATH] [--check-only] [--print-dir] [--prepare-dir]" >&2
+	printf '%s\n' "Usage: RELEASE_VERSION=v1.2.3 $0 [--root PATH] [--check-only] [--print-dir]" >&2
 }
 
 root="dist/releases"
 print_dir=0
-prepare_dir=0
 check_only=0
 while [ "$#" -gt 0 ]; do
 	case "$1" in
@@ -19,10 +18,6 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--print-dir)
 			print_dir=1
-			shift
-			;;
-		--prepare-dir)
-			prepare_dir=1
 			shift
 			;;
 		--check-only)
@@ -80,14 +75,6 @@ if [ -e "$candidate" ]; then
 		"$root_abs/"*) ;;
 		*) printf '%s\n' "release directory escapes root: $candidate_abs" >&2; exit 1 ;;
 	esac
-fi
-
-if [ "$prepare_dir" -eq 1 ]; then
-	# The same validated process owns the destructive operation. The Makefile
-	# never interpolates the version into an rm command and never accepts a
-	# path returned by a second, independent validation step.
-	rm -rf -- "$candidate"
-	mkdir -p -- "$candidate"
 fi
 
 if [ "$print_dir" -eq 1 ]; then

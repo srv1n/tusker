@@ -8,6 +8,11 @@ import (
 
 const defaultV7CapsuleTokenBudget = 80
 
+// Routed capsules are supporting context, so they must stay small even when
+// a knowledge file was authored with an over-budget capsule. The task packet
+// still carries the complete task contract separately.
+const maxV7RoutedCapsuleFiles = 8
+
 type v7Capsule struct {
 	What     string `json:"what,omitempty"`
 	UseWhen  string `json:"use_when,omitempty"`
@@ -194,16 +199,60 @@ func v7RoutedFileCapsules(vaultPath string, task Note) string {
 	if len(files) == 0 {
 		return "- None available."
 	}
+	visibleFiles := files
+	var omittedFiles []routedFile
+	if len(visibleFiles) > maxV7RoutedCapsuleFiles {
+		visibleFiles = visibleFiles[:maxV7RoutedCapsuleFiles]
+		omittedFiles = files[maxV7RoutedCapsuleFiles:]
+	}
 	var sections []string
-	for _, file := range files {
+	for _, file := range visibleFiles {
 		capsule, present := renderV7FrontmatterCapsule(file.Note)
 		if !present {
 			sections = append(sections, "- `"+file.Path+"`: capsule missing.")
 			continue
 		}
-		sections = append(sections, "- `"+file.Path+"`\n"+indentMarkdown(capsule, "  "))
+		_, truncated := compactV7RoutedCapsule(capsule, defaultV7CapsuleTokenBudget)
+		if truncated {
+			sections = append(sections, "- `"+file.Path+"`\n  - Capsule truncated; read the complete route at `"+file.Path+"`.")
+			continue
+		}
+		// Project skill routing and domain context already emit these same
+		// capsules in the packet. Keep this section as a navigable path index
+		// so a reader can retrieve the complete route without paying for a
+		// third copy of stable context.
+		sections = append(sections, "- `"+file.Path+"`: capsule summarized above; read the complete route at `"+file.Path+"`.")
+	}
+	if len(omittedFiles) > 0 {
+		paths := make([]string, 0, len(omittedFiles))
+		for _, file := range omittedFiles {
+			paths = append(paths, file.Path)
+		}
+		sections = append(sections, v7RoutedCapsuleContinuation(paths))
 	}
 	return strings.Join(sections, "\n")
+}
+
+func compactV7RoutedCapsule(text string, budget int) (string, bool) {
+	text = strings.TrimSpace(text)
+	words := strings.Fields(text)
+	if budget <= 0 || len(words) <= budget {
+		return text, false
+	}
+	marker := "... capsule shortened"
+	markerWords := len(strings.Fields(marker))
+	if markerWords >= budget {
+		return strings.Join(words[:budget], " "), true
+	}
+	return strings.Join(append(append([]string{}, words[:budget-markerWords]...), marker), " "), true
+}
+
+func v7RoutedCapsuleContinuation(paths []string) string {
+	links := make([]string, 0, len(paths))
+	for _, path := range paths {
+		links = append(links, "`"+path+"`")
+	}
+	return fmt.Sprintf("- %d routed file capsules omitted; read the complete routes at: %s.", len(links), strings.Join(links, ", "))
 }
 
 func v7PacketDomains(vaultPath string, task Note) []string {
@@ -228,19 +277,4 @@ func readV7RoutedFile(vaultPath, rel string) (Note, bool) {
 		return Note{}, false
 	}
 	return Note{AbsolutePath: path, RelativePath: rel, Data: data, Body: body}, true
-}
-
-func indentMarkdown(text, prefix string) string {
-	if strings.TrimSpace(text) == "" {
-		return ""
-	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			lines[i] = line
-			continue
-		}
-		lines[i] = prefix + line
-	}
-	return strings.Join(lines, "\n")
 }

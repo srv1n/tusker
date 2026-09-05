@@ -512,6 +512,7 @@ func TestDispatchLostCASAbortsBeforeWorkspacePrepAndPreservesControlMutation(t *
 
 func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	vault := automationTestVault(t)
+	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	installCodexSleepShimForTest(t)
 	disableReviewerForTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS happy", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
@@ -577,6 +578,7 @@ func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 
 func TestDispatchPostSpawnLeaseLossReapsSpawnedProcess(t *testing.T) {
 	vault := automationTestVault(t)
+	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	disableReviewerForTest(t, vault)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Post spawn reap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")

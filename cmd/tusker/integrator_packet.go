@@ -33,7 +33,8 @@ func integratorPacket(vaultPath string, task Note, idx v7Index) string {
 			fmt.Fprintf(&b, "- %s\n", overlap)
 		}
 	}
-	fmt.Fprintf(&b, "\n## Merge contract\n\n%s\n", v7PacketSnippet(sectionContent(task.Body, "## Acceptance"), 18))
+	fmt.Fprintf(&b, "\n## Task contract\n\n%s\n\n", strings.TrimSpace(task.Body))
+	writeV7PacketOwnership(&b, task)
 	_ = idx
 	return b.String()
 }

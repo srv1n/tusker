@@ -16,7 +16,7 @@ func wellFormedCorpus(t *testing.T) string {
 	writeDoc(t, root, "docs/system/cli.md",
 		"---\ntitle: \"CLI reference\"\nsubject: cli\npart_of: overview\nstatus: canonical\nlast_verified: \"2026-07-21 @ abc123\"\n---\n\n# CLI\n")
 	writeDoc(t, root, ".tusker/specs/knowledge-graph.md",
-		"---\ntitle: \"Knowledge graph\"\nsubject: knowledge-graph\npart_of: overview\nstatus: canonical\nupdates:\n  - docs/system/00-overview.md\n---\n\n# KG\n")
+		"---\ntitle: \"Knowledge graph\"\nsubject: knowledge-graph\npart_of: overview\nstatus: canonical\nupdates:\n  - docs/system/00-overview.md\nsources:\n  - docs/system/cli.md\n---\n\n# KG\n")
 	writeDoc(t, root, ".tusker/specs/decisions/kg-grill.md",
 		"---\ntitle: \"KG decisions\"\nsubject: kg-grill\npart_of: knowledge-graph\ndecides_for: knowledge-graph\nstatus: canonical\n---\n\n# Grill\n")
 	return root
@@ -42,8 +42,14 @@ func TestMapRendersAllThreeArtifacts(t *testing.T) {
 	if !strings.Contains(overviewText, "# Overview") {
 		t.Fatalf("generation clobbered prose outside the fence:\n%s", overviewText)
 	}
-	if !strings.Contains(overviewText, "-->") {
-		t.Fatalf("mermaid DAG has no edges:\n%s", overviewText)
+	for _, want := range []string{
+		"n_cli -->|part of| n_overview",
+		"n_knowledge_graph -->|updates| n_overview",
+		"n_kg_grill -->|decides for| n_knowledge_graph",
+	} {
+		if !strings.Contains(overviewText, want) {
+			t.Fatalf("mermaid DAG missing canonical edge %q:\n%s", want, overviewText)
+		}
 	}
 
 	index, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(indexRelPath)))
@@ -68,18 +74,26 @@ func TestMapRendersAllThreeArtifacts(t *testing.T) {
 	if len(graph.Nodes) != 4 {
 		t.Fatalf("expected 4 nodes, got %d", len(graph.Nodes))
 	}
-	var havePartOf, haveUpdates, haveDecidesFor bool
+	var havePartOf, haveUpdates, haveDecidesFor, haveSource, haveCliPartOf bool
 	for _, edge := range graph.Edges {
 		switch edge.Kind {
 		case "part_of":
 			havePartOf = true
+			if edge.From != "cli" || edge.To != "overview" {
+				continue
+			}
+			haveCliPartOf = true
 		case "updates":
 			haveUpdates = true
 		case "decides_for":
 			haveDecidesFor = true
+		case "source":
+			if edge.From == "knowledge-graph" && edge.To == "cli" {
+				haveSource = true
+			}
 		}
 	}
-	if !havePartOf || !haveUpdates || !haveDecidesFor {
+	if !havePartOf || !haveCliPartOf || !haveUpdates || !haveDecidesFor || !haveSource {
 		t.Fatalf("graph.json missing expected edge kinds: %#v", graph.Edges)
 	}
 

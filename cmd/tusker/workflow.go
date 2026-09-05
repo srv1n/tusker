@@ -318,8 +318,8 @@ func defaultWorkflow() Workflow {
 	wf.Tracker.ActiveStates = []string{"ready", "rework"}
 	wf.Tracker.ReviewStates = []string{"review"}
 	wf.Tracker.TerminalStates = []string{"done", "cancelled", "superseded"}
-	wf.Agents.Default = string(RunnerCodexACP)
-	wf.Agents.Enabled = []string{string(RunnerCodexACP), string(RunnerCodexExec), string(RunnerClaude)}
+	wf.Agents.Default = string(RunnerCodexExec)
+	wf.Agents.Enabled = []string{string(RunnerCodexExec), string(RunnerClaude)}
 	wf.Agents.MaxConcurrentAgents = 2
 	wf.Agents.MaxConcurrentAgentsByState = map[string]int{"rework": 1}
 	wf.Runtime.PollIntervalMS = int(defaultReconcileTick / time.Millisecond)
@@ -334,7 +334,7 @@ func defaultWorkflow() Workflow {
 	wf.Retry.MaxAttempts = 3
 	wf.Retry.BackoffMS = []int{30000, 120000, 600000}
 	wf.Reviewer.Enabled = true
-	wf.Reviewer.Runner = string(RunnerCodexACP)
+	wf.Reviewer.Runner = string(RunnerCodexExec)
 	wf.Reviewer.Actor = defaultReviewerActor
 	wf.Reviewer.MaxCycles = 3
 	wf.Reviewer.AutoCloseRisks = []string{"low", "medium", "high", "critical"}

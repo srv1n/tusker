@@ -474,7 +474,7 @@ func deliveryRolloutWorkflowPolicy(project RegisteredProject, apply bool) ([]set
 		}
 		findings = append(findings, finding)
 	}
-	configPath := preferredTuskerConfigPath(project.VaultRoot)
+	configPath := managedTuskerConfigPath(project.VaultRoot)
 	if opaque := deliveryOpaqueRunnerCommands(configPath); len(opaque) > 0 {
 		findings = append(findings, setupFinding{Code: "runner_harness_opaque", Status: "error", Path: configPath, Message: "unattended runner command is not a canonical enforceable harness: " + strings.Join(opaque, ", "), Action: "run tusker acp setup for codex_acp, or keep codex_exec only in an explicit emergency/danger profile; Claude must use bypassPermissions", Repairable: false})
 	}

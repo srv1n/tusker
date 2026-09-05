@@ -16,10 +16,7 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-const (
-	defaultRepoVaultDir = ".tusker"
-	legacyRepoVaultDir  = "tusker"
-)
+const defaultRepoVaultDir = ".tusker"
 
 func replaceTemplateTokens(template string, replacements map[string]string) string {
 	output := template
@@ -248,7 +245,7 @@ func pathWithinRoot(root, target string) bool {
 
 // discoverRegisteredProjectVault bridges linked worktrees to the one vault
 // registered for their project. A worktree has its own files, but Git's common
-// directory and the project_id in tusker.yaml are shared identity anchors.
+// directory and the project_id in .tusker/config.yaml are shared identity anchors.
 func discoverRegisteredProjectVault(startDir string) (RegisteredProject, bool, error) {
 	repoRoot, err := gitFactOutput(startDir, "rev-parse", "--show-toplevel")
 	if err != nil || strings.TrimSpace(repoRoot) == "" {
@@ -326,11 +323,11 @@ func registeredProjectConfigInvalidError(startDir, repoRoot string, cause error)
 	return tuskerError(
 		errorConfigInvalid,
 		fmt.Sprintf("cannot resolve Tusker project config for Git worktree %s: %v", repoRoot, cause),
-		withHint("repair the worktree's tusker.yaml/project config before initializing a vault; Tusker will not create a duplicate graph from malformed identity"),
+		withHint("repair the worktree's .tusker/config.yaml before initializing a vault; Tusker will not create a duplicate graph from malformed identity"),
 		withContext(map[string]any{
 			"cwd":       startDir,
 			"repo_root": repoRoot,
-			"config":    filepath.Join(repoRoot, legacyTuskerConfigName),
+			"config":    managedTuskerConfigPath(filepath.Join(repoRoot, defaultRepoVaultDir)),
 		}),
 	)
 }
@@ -446,12 +443,8 @@ func discoverVault(startDir string) (string, error) {
 			return configured, nil
 		}
 		child := filepath.Join(dir, defaultRepoVaultDir)
-		if isVaultDir(child) || (fileExists(managedTuskerConfigPath(child)) && dirExists(child)) || (fileExists(legacyTuskerConfigPath(dir)) && dirExists(child)) {
+		if isVaultDir(child) || (fileExists(managedTuskerConfigPath(child)) && dirExists(child)) {
 			return child, nil
-		}
-		legacyChild := filepath.Join(dir, legacyRepoVaultDir)
-		if isVaultDir(legacyChild) {
-			return legacyChild, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

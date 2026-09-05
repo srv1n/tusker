@@ -7,11 +7,11 @@
 /** The three corpus kinds. Distinct from the vault's DocKind — do not conflate. */
 export type DocgraphKind = "canonical" | "spec" | "decision";
 
-/** How one document relates to another. */
-export type EdgeKind = "part_of" | "updates" | "decides_for" | "superseded_by";
+/** How one document relates to another in the six-kind semantic graph. */
+export type EdgeKind = "part_of" | "updates" | "source" | "decides_for" | "superseded_by" | "link";
 
 /** How a backlink reaches this doc (wiki-reference or a typed relation). */
-export type BacklinkVia = "wiki" | "part_of" | "updates" | "decides_for" | "superseded_by";
+export type BacklinkVia = "wiki" | "part_of" | "updates" | "source" | "decides_for" | "superseded_by" | "link";
 
 export interface DocgraphDoc {
   subject: string;

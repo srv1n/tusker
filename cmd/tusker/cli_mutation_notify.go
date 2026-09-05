@@ -109,7 +109,7 @@ func mutationVaultRoot(filePath string) string {
 	}
 	for current := filepath.Dir(abs); ; current = filepath.Dir(current) {
 		base := filepath.Base(current)
-		if isVaultDir(current) && (base == defaultRepoVaultDir || base == "tusker" || fileExists(filepath.Join(current, "WORKFLOW.md")) || fileExists(filepath.Join(current, "SKILL.md"))) {
+		if isVaultDir(current) && (base == defaultRepoVaultDir || fileExists(filepath.Join(current, "WORKFLOW.md")) || fileExists(filepath.Join(current, "SKILL.md"))) {
 			return filepath.Clean(current)
 		}
 		parent := filepath.Dir(current)

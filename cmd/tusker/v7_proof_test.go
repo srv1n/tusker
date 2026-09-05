@@ -966,7 +966,7 @@ func TestV7CloseoutFingerprintInvalidatesGateChange(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Sign off.", "verification": "Human signoff recorded.", "covers": "A1", "why-agent-cannot": "Final human signoff is required by this proof policy."}, newV7Gate)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}, closeoutV7Cmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Human signed off."}, func(args Args) error {
-		return gateV7Transition(args, "satisfied")
+		return gateV7TransitionWithTrustedHumanReceiptForTest(t, args.String("vault"), args.String("id"), "satisfied", args.String("by"))
 	})
 
 	idx := mustIndex(t, vault)
@@ -1064,7 +1064,7 @@ func TestV7VerificationGateCanSatisfyManualProofRequirement(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Verification gate smoke", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "manual_smoke", "proof-required-owner": "manual_smoke=human:sarav", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Run manual smoke.", "verification": "Manual smoke passed.", "covers": "A1", "why-agent-cannot": "Manual smoke requires human device or environment access."}, newV7Gate)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Manual smoke passed."}, func(args Args) error {
-		return gateV7Transition(args, "satisfied")
+		return gateV7TransitionWithTrustedHumanReceiptForTest(t, args.String("vault"), args.String("id"), "satisfied", args.String("by"))
 	})
 
 	report := computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))

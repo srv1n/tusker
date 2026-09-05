@@ -107,8 +107,8 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-xl border border-line bg-raised",
-        interactive && "transition-colors hover:border-line hover:bg-hover cursor-pointer",
+        "rounded-xl border border-line bg-raised shadow-2xs",
+        interactive && "transition-all hover:border-line hover:shadow-xs hover:bg-hover/50 cursor-pointer",
         className,
       )}
       {...rest}

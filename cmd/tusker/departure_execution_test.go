@@ -1107,7 +1107,7 @@ func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixtu
 	runGitDir(t, repo, "init", "-b", "main")
 	runGitDir(t, repo, "config", "user.email", "test@example.com")
 	runGitDir(t, repo, "config", "user.name", "Test User")
-	if err := writeText(filepath.Join(repo, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nbranches:\n  default_branch: main\n  control:\n    - main\nruntime:\n  mutation_mode: single_user_local\nautomation:\n  validation:\n    commands:\n      - \"true\"\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nbranches:\n  default_branch: main\n  control:\n    - main\nruntime:\n  mutation_mode: single_user_local\nautomation:\n  validation:\n    commands:\n      - \"true\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	vault := filepath.Join(repo, ".tusker")

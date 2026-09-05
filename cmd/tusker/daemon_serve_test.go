@@ -224,7 +224,7 @@ func setupDaemonServeProject(t *testing.T, serveEnabled bool, serveAddr string) 
 			t.Fatal(err)
 		}
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nstorage:\n  root: .tusker\n"); err != nil {
 		t.Fatal(err)
 	}
 	writeDaemonServeWorkflow(t, vault, serveEnabled, serveAddr)

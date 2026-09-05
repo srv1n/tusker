@@ -9,11 +9,15 @@ import (
 // wave authorization, runner health, and critical-risk dispatch policy are
 // separate authority domains and cannot refuse direct interactive work.
 func workSessionAdmissionBlockers(task Note, idx v7Index, notesByID, notesByRecordID map[string]Note) []ReadinessBlocker {
+	return workSessionAdmissionBlockersForLane(task, idx, notesByID, notesByRecordID, runLaneExecute)
+}
+
+func workSessionAdmissionBlockersForLane(task Note, idx v7Index, notesByID, notesByRecordID map[string]Note, lane string) []ReadinessBlocker {
 	taskID := stringField(task.Data, "id")
 	if !isV7TaskNote(task) {
-		return workSessionLegacyAdmissionBlockers(task, notesByID, notesByRecordID)
+		return workSessionLegacyAdmissionBlockersForLane(task, notesByID, notesByRecordID, lane)
 	}
-	if blocker := workSessionTaskStateBlocker(task); blocker != nil {
+	if blocker := workSessionTaskStateBlockerForLane(task, lane); blocker != nil {
 		return []ReadinessBlocker{*blocker}
 	}
 	if edge, blocked := v7BlockingDependencyForReadiness(task, idx); blocked {
@@ -33,7 +37,11 @@ func workSessionAdmissionBlockers(task Note, idx v7Index, notesByID, notesByReco
 }
 
 func workSessionLegacyAdmissionBlockers(task Note, notesByID, notesByRecordID map[string]Note) []ReadinessBlocker {
-	if blocker := workSessionTaskStateBlocker(task); blocker != nil {
+	return workSessionLegacyAdmissionBlockersForLane(task, notesByID, notesByRecordID, runLaneExecute)
+}
+
+func workSessionLegacyAdmissionBlockersForLane(task Note, notesByID, notesByRecordID map[string]Note, lane string) []ReadinessBlocker {
+	if blocker := workSessionTaskStateBlockerForLane(task, lane); blocker != nil {
 		return []ReadinessBlocker{*blocker}
 	}
 	if blocker := workSessionUnresolvedDependencyBlocker(task, notesByID, notesByRecordID); blocker != nil {
@@ -43,6 +51,10 @@ func workSessionLegacyAdmissionBlockers(task Note, notesByID, notesByRecordID ma
 }
 
 func workSessionTaskStateBlocker(task Note) *ReadinessBlocker {
+	return workSessionTaskStateBlockerForLane(task, runLaneExecute)
+}
+
+func workSessionTaskStateBlockerForLane(task Note, lane string) *ReadinessBlocker {
 	taskID := stringField(task.Data, "id")
 	status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
 	if status == "done" || status == "cancelled" || status == "superseded" {
@@ -51,6 +63,9 @@ func workSessionTaskStateBlocker(task Note) *ReadinessBlocker {
 			Affects: []ReadinessDimensionKind{ReadinessDimensionInteractive}, TaskID: taskID,
 			Reason: "Task status is " + status + ".", Remedy: "Choose a non-terminal task or create a new task revision.",
 		}
+	}
+	if (lane == runLaneReview && status == "review") || (lane != runLaneReview && (status == "ready" || status == "rework")) {
+		return nil
 	}
 	if status != "ready" && status != "rework" {
 		return &ReadinessBlocker{

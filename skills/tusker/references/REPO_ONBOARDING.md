@@ -1,7 +1,12 @@
-# Existing repository onboarding
+# Existing Repository Onboarding
 
 Use this guide when a repository does not yet have a current `.tusker/`
 tracker.
+
+## Storage Boundary
+
+`.tusker/` holds tracker state and project canon. Product source stays outside
+that directory; record durable facts in canon and delivery work in tasks.
 
 ## 1. Inspect the repository
 
@@ -39,6 +44,45 @@ tusker init --vault ./.tusker --yes --fresh --with-pointers --with-contract --no
 
 Do not register or enable automation unless the user asks for it.
 
+## Runtime and workspace setup
+
+This is an operator setup step, not agent permission. If the default global
+runtime registry is sandbox-protected, choose a writable per-project state root
+before `init` and keep using it for this project shell:
+
+```sh
+export TUSKER_STATE_ROOT="$PWD/.tusker/runtime-state"
+install -d -m 700 "$TUSKER_STATE_ROOT"
+```
+
+For a direct session in a read-only Git worktree, do not retry writes. The
+operator may select the existing shared policy only after `git status --short`
+is clean outside `.tusker/` and the task has narrow `owned_paths`:
+
+```yaml
+# .tusker/config.local.yaml (operator-owned)
+automation:
+  workspace:
+    strategy: shared
+```
+
+```sh
+tusker config resolve automation.workspace.strategy --vault ./.tusker --json
+```
+
+If source, docs, or skills are dirty, commit or otherwise obtain a clean
+permitted Git workspace; an agent must request that provision rather than widen
+its write permission. Fresh setup uses `codex_exec`; inspect it with
+`tusker config resolve automation.profiles --vault ./.tusker --json`. ACP is
+an operator choice after `tusker acp setup`, never an agent fallback.
+
+Governing contracts belong in `.tusker/specs/`, not `docs/specs/`:
+
+```sh
+tusker docs new auth --kind spec --vault ./.tusker
+tusker docs find auth --vault ./.tusker
+```
+
 ## 4. Write project canon
 
 Update `.tusker/knowledge/domains/project/CANON.md` with current facts only.
@@ -72,6 +116,19 @@ tusker projects list --json
 ```
 
 Registration does not enable automation. Keep it disabled during setup.
+
+## Amend before work starts
+
+An open, disarmed delivery wave whose members remain `backlog`/`held` can be
+amended without changing its plan `scope` or task `source_key`:
+
+```sh
+tusker delivery import --plan <plan.yaml> --dry-run --vault ./.tusker --json
+tusker delivery import --plan <plan.yaml> --vault ./.tusker
+```
+
+Once any member progresses, preserve its identity and use the explicit
+rework/control route instead of retrying import.
 
 ## Source commands
 

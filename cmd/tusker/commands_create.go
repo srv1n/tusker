@@ -59,9 +59,7 @@ func bootstrapV7(args Args) error {
 }
 
 func writeDefaultTuskerConfig(vaultPath string) error {
-	// Keep an existing root-level config readable, but never create one. This
-	// prevents init from producing a duplicate competing configuration file.
-	if fileExists(managedTuskerConfigPath(vaultPath)) || fileExists(legacyTuskerConfigPath(v7RepoRoot(vaultPath))) {
+	if fileExists(managedTuskerConfigPath(vaultPath)) {
 		return nil
 	}
 	configPath := managedTuskerConfigPath(vaultPath)
@@ -108,10 +106,10 @@ automation:
   completion_reactor:
     mode: disabled
   trigger_states: [ready, rework]
-  # Codex ACP is the primary local runner. Run "tusker acp setup" once on the
-  # machine to install/configure its pinned adapter before enabling automation.
-  default_runner: codex_acp
-  enabled_runners: [codex_acp, codex_exec, claude-code]
+  # Direct Codex is available after fresh setup. tusker acp setup can add the
+  # pinned ACP adapter later when that machine has been configured for it.
+  default_runner: codex_exec
+  enabled_runners: [codex_exec, claude-code]
   workspace:
     strategy: worktree
     root: workspaces
@@ -121,8 +119,8 @@ automation:
     max_concurrent_by_state:
       rework: 1
   runners:
-    # Direct Codex remains available only to an explicitly named emergency or
-    # danger profile; safe generated profiles use codex_acp above.
+    # Direct Codex is the current default runner. ACP is added only by its
+    # explicit machine-local setup.
     codex_exec:
       kind: codex_exec
       command: codex exec --json --skip-git-repo-check -
@@ -135,12 +133,6 @@ automation:
     allowed_child_types: []
     merge_rule: manual_review
 `, projectID, root, root, root, root, root, defaultProfileYAML, profileYAML))
-}
-
-// writeDefaultRootTuskerConfig is retained for in-package compatibility while
-// callers migrate. It no longer writes at repository root.
-func writeDefaultRootTuskerConfig(vaultPath string) error {
-	return writeDefaultTuskerConfig(vaultPath)
 }
 
 func indentBootstrapYAML(value, indent string) string {

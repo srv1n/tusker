@@ -431,7 +431,7 @@ func deliveryContextDocuments(vault, specArg, excludedPlanScope string, expected
 		raw, displayRef, err := deliveryContextReadDocument(vault, ref)
 		if err != nil {
 			if request.Required {
-				return nil, nil, nil, nil, nil, tuskerError(errorInvalidArg, "delivery context spec is not a readable allowed repository document: "+ref, withHint("use a Markdown file under docs/specs or docs/design"))
+				return nil, nil, nil, nil, nil, tuskerError(errorInvalidArg, "delivery context spec is not a readable allowed repository document: "+ref, withHint("use a Markdown file under .tusker/specs"))
 			}
 			unknowns = append(unknowns, deliveryContextUnknownFact(
 				"document", ref, "an explicitly cited document is missing or outside the allowed document roots", "repair or remove the citation", []deliveryContextProvenance{{Kind: "citation", Ref: ref}},
@@ -534,7 +534,7 @@ func deliveryContextReadDocument(vault, ref string) ([]byte, string, error) {
 	decisionID := v7SpecRefDecisionID(ref)
 	if decisionID == "" {
 		if filepath.IsAbs(ref) || v7SpecRefPathEscapes(ref) || !strings.HasSuffix(strings.ToLower(ref), ".md") ||
-			(!strings.HasPrefix(ref, "docs/specs/") && !strings.HasPrefix(ref, "docs/design/")) {
+			!strings.HasPrefix(ref, ".tusker/specs/") {
 			return nil, "", errors.New("document ref outside allowlist")
 		}
 	}
@@ -1321,7 +1321,7 @@ func deliveryContextPlanSchemaContract() deliveryContextPlanContract {
 	raw, _ := json.Marshal(rules)
 	factory, _ := embeddedFactoryIntakeContractProvenance()
 	return deliveryContextPlanContract{
-		AuthoringSchema: deliveryPlanV2Schema, SupportedSchemas: []string{deliveryPlanV2Schema, deliveryPlanSchema},
+		AuthoringSchema: deliveryPlanV2Schema, SupportedSchemas: []string{deliveryPlanV2Schema},
 		FactoryIntakeContract: factory,
 		DoctorSchema:          "tusker.delivery-doctor/v1",
 		ValidationCommand:     "tusker delivery doctor --plan <plan.yaml> --json",
@@ -1478,15 +1478,12 @@ func deliveryContextUnknownFact(kind, field, reason, remedy string, provenance [
 }
 
 func deliveryContextConfigProvenance(vault string) []deliveryContextProvenance {
-	repo := v7RepoRoot(vault)
 	candidates := []struct {
 		path, ref, kind string
 	}{
 		{filepath.Join(vault, "WORKFLOW.md"), ".tusker/WORKFLOW.md", "workflow"},
 		{managedTuskerConfigPath(vault), ".tusker/config.yaml", "project_config"},
 		{managedTuskerLocalConfigPath(vault), ".tusker/config.local.yaml", "project_local_config"},
-		{legacyTuskerConfigPath(repo), "tusker.yaml", "legacy_project_config"},
-		{legacyTuskerLocalConfigPath(repo), "tusker.local.yaml", "legacy_project_local_config"},
 	}
 	out := []deliveryContextProvenance{}
 	for _, candidate := range candidates {

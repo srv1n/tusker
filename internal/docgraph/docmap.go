@@ -380,6 +380,20 @@ func findMapDefects(repoRoot string, docs []Document) []MapDefect {
 	}
 
 	defects = append(defects, findPartOfCycles(docs, subjects)...)
+	_, broken := SemanticLinks(Corpus{Documents: docs})
+	for _, link := range broken {
+		// These metadata fields retain the older, more actionable defect code
+		// above. Keep the shared resolver as the decision point without
+		// reporting those same missing routes a second time.
+		if link.Kind == "part_of" || link.Kind == "updates" || link.Kind == "superseded_by" {
+			continue
+		}
+		defects = append(defects, MapDefect{
+			Code:    "DOCS_MAP_DANGLING_LINK",
+			Path:    link.Path,
+			Message: fmt.Sprintf("%s reference %q does not resolve to a managed document", link.Kind, link.Ref),
+		})
+	}
 	return defects
 }
 
@@ -469,18 +483,36 @@ func renderMermaid(docs []Document) string {
 		}
 		builder.WriteString(fmt.Sprintf("  %s[%q]\n", ids[doc.Subject], mermaidLabel(doc)))
 	}
-	for _, doc := range docs {
-		parent := strings.TrimSpace(doc.PartOf)
-		if parent == "" {
+	links, _ := SemanticLinks(Corpus{Documents: docs})
+	for _, link := range links {
+		fromID, fromOK := ids[link.From]
+		toID, toOK := ids[link.To]
+		if !fromOK || !toOK {
 			continue
 		}
-		if _, ok := ids[parent]; !ok {
-			continue
-		}
-		builder.WriteString(fmt.Sprintf("  %s --> %s\n", ids[parent], ids[doc.Subject]))
+		builder.WriteString(fmt.Sprintf("  %s -->|%s| %s\n", fromID, mermaidEdgeLabel(link.Kind), toID))
 	}
 	builder.WriteString("```")
 	return builder.String()
+}
+
+func mermaidEdgeLabel(kind string) string {
+	switch kind {
+	case "part_of":
+		return "part of"
+	case "updates":
+		return "updates"
+	case "decides_for":
+		return "decides for"
+	case "superseded_by":
+		return "superseded by"
+	case "source":
+		return "source"
+	case "link":
+		return "link"
+	default:
+		return kind
+	}
 }
 
 func mermaidLabel(doc Document) string {
@@ -554,12 +586,10 @@ func repoFileExists(repoRoot, target string) bool {
 
 func renderGraphJSON(docs []Document) ([]byte, error) {
 	graph := mapGraph{Nodes: []mapNode{}, Edges: []mapEdge{}}
-	subjects := make(map[string]struct{}, len(docs))
 	for _, doc := range docs {
 		if doc.Subject == "" {
 			continue
 		}
-		subjects[doc.Subject] = struct{}{}
 		graph.Nodes = append(graph.Nodes, mapNode{
 			Subject: doc.Subject,
 			Kind:    doc.Kind,
@@ -568,22 +598,9 @@ func renderGraphJSON(docs []Document) ([]byte, error) {
 			Status:  doc.Status,
 		})
 	}
-	for _, doc := range docs {
-		if doc.Subject == "" {
-			continue
-		}
-		if parent := strings.TrimSpace(doc.PartOf); parent != "" {
-			graph.Edges = append(graph.Edges, mapEdge{From: doc.Subject, To: parent, Kind: "part_of"})
-		}
-		for _, target := range doc.Updates {
-			graph.Edges = append(graph.Edges, mapEdge{From: doc.Subject, To: target, Kind: "updates"})
-		}
-		if target := strings.TrimSpace(doc.DecidesFor); target != "" {
-			graph.Edges = append(graph.Edges, mapEdge{From: doc.Subject, To: target, Kind: "decides_for"})
-		}
-		if target := strings.TrimSpace(doc.SupersededBy); target != "" {
-			graph.Edges = append(graph.Edges, mapEdge{From: doc.Subject, To: target, Kind: "superseded_by"})
-		}
+	links, _ := SemanticLinks(Corpus{Documents: docs})
+	for _, link := range links {
+		graph.Edges = append(graph.Edges, mapEdge{From: link.From, To: link.To, Kind: link.Kind})
 	}
 	sort.SliceStable(graph.Edges, func(i, j int) bool {
 		if graph.Edges[i].From != graph.Edges[j].From {

@@ -1,0 +1,48 @@
+schema: tusker.delivery-plan/v2
+scope: delivery-2cf085bab753d6d4
+title: spec-to-proof
+epic: FLW
+spec_refs:
+    - .tusker/specs/spec-to-proof.md
+context_fingerprint: sha256:8c05e96c1feec31e5d365194e053ff0aa0b1e281029e018b0a298cd537f535a4
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+non_goals:
+  - Do not redesign the Mac interface or alter its existing working changes.
+  - Do not enable automation, start provider workers, install, or publish a release.
+requirements:
+  - id: R1
+    outcome: Workers and reviewers receive the entire authored task contract and ownership constraints.
+concurrency: 1
+summary: Repair contract loss between delivery import and worker or reviewer handoff.
+tasks:
+  - source_key: complete-handoff
+    title: Preserve the complete imported task contract through handoff
+    outcome: Changing providers or opening a reviewer packet preserves every acceptance criterion, command, non-goal, artifact requirement, and ownership claim.
+    acceptance:
+      - id: A1
+        outcome: Agent and reviewer packets retain all task text without truncating late acceptance and verification rows or changing command indentation.
+      - id: A2
+        outcome: Imported plan non-goals and task ownership claims reach both worker and reviewer packets.
+    verification:
+      - covers: A1
+        check: 'command: go test ./cmd/tusker -run TestV7PacketPreservesCompleteTaskContract -count=1'
+      - covers: A2
+        check: 'command: go test ./cmd/tusker -run "TestDeliveryImportPreservesNonGoalsInPackets|TestV7PacketPreservesCompleteTaskContract|TestDeliveryPlanV2OperationalPersistence" -count=1'
+    artifact:
+      kind: diff_summary
+      path: docs/reports/spec-to-proof-audit.md
+      summary: Source-backed findings, exact changes, focused test results, and remaining delivery gates.
+      acceptance_ids: [A1, A2]
+    owned_paths:
+      - cmd/tusker/commands_v7.go
+      - cmd/tusker/delivery_cmd.go
+      - cmd/tusker/v7_packet_contract_test.go
+      - docs/reports/spec-to-proof-audit.md
+    domains: [project]
+    complexity: standard
+    risk: medium
+    priority: p1
+    size: s
+    requirement_refs: [R1]

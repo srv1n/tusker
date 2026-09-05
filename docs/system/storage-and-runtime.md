@@ -3,6 +3,8 @@ title: "Storage and runtime"
 subject: storage-and-runtime
 part_of: overview
 status: canonical
+read_when: "Checking repository, tracker, or machine runtime storage boundaries."
+skip_when: "You need task proof, scheduling, or document search behavior."
 ---
 
 # Storage and runtime
@@ -15,11 +17,13 @@ The `.tusker/` directory travels with the repository.
 
 | Path | Content |
 | --- | --- |
+| `config.yaml` | Current project configuration and policy. |
 | `WORKFLOW.md` | Project work and runner policy. |
 | `SKILL.md` | Project knowledge route. |
 | `work/` | Epics, tasks, gates, waves, decisions, and proposals. |
 | `knowledge/` | Durable project facts. |
-| `specs/` | Current approved change contracts. |
+| `specs/` | Current approved change contracts and their source links. |
+| `specs/decisions/` | Durable decisions attached to a governing spec. |
 | `evidence/` | Durable evidence cards. |
 | `scratch/` | Temporary task files. |
 | `_generated/` | Disposable indexes and views. |

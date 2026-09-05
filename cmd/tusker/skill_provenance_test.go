@@ -8,6 +8,7 @@ import (
 )
 
 func TestMaterializedSkillProvenanceClassifiesFreshnessAndLocalEdits(t *testing.T) {
+	t.Parallel()
 	destination := filepath.Join(t.TempDir(), "tusker")
 	if err := installSkillPayloadCopy(destination); err != nil {
 		t.Fatal(err)
@@ -53,6 +54,7 @@ func TestMaterializedSkillProvenanceClassifiesFreshnessAndLocalEdits(t *testing.
 }
 
 func TestSymlinkProvenanceReadsLiveTarget(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	first := filepath.Join(root, "first", "tusker")
 	second := filepath.Join(root, "second", "tusker")
@@ -114,6 +116,7 @@ func TestSymlinkProvenanceReadsLiveTarget(t *testing.T) {
 }
 
 func TestSkillBundleProvenanceIsPortable(t *testing.T) {
+	t.Parallel()
 	repo, tempRoot := t.TempDir(), t.TempDir()
 	out := filepath.Join(tempRoot, "bundle")
 	if err := skillBundleCmd(Args{"repo": repo, "out": out, "quiet": "true"}); err != nil {
@@ -195,6 +198,7 @@ func TestWaveFactoryContractPreflightRejectsClaimedDriftAndKeepsLegacyCompatible
 }
 
 func TestSkillSyncCopyUsesValidatedCanonicalSource(t *testing.T) {
+	t.Parallel()
 	source := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, source)
 	canonical := filepath.Join(source, "skills", "tusker")

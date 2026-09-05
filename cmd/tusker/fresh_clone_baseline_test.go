@@ -37,8 +37,8 @@ func TestFreshCloneBaselineCLIRunsHelpAndV7Init(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go run ./cmd/tusker --help failed: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "V7 repo-local work tracking") {
-		t.Fatalf("help output does not advertise V7 default:\n%s", output)
+	if !strings.Contains(string(output), "Tusker - repo-local work tracking") {
+		t.Fatalf("help output does not advertise repo-local work tracking:\n%s", output)
 	}
 
 	temp := t.TempDir()

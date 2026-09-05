@@ -404,12 +404,6 @@ func ensureWorkspaceMount(mountPath, trackerRoot string, force bool) error {
 		if canonicalPath(resolved) == canonicalPath(trackerRoot) {
 			return nil
 		}
-		if isHistoricalTuskerMountTarget(resolved, trackerRoot) {
-			if err := os.Remove(mountPath); err != nil {
-				return err
-			}
-			return os.Symlink(trackerRoot, mountPath)
-		}
 		if !force {
 			return tuskerError(errorAlreadyExists, "mount path already points somewhere else: "+mountPath, withHint("Use --force only if replacing that symlink is intentional."), withPath(mountPath))
 		}
@@ -420,17 +414,6 @@ func ensureWorkspaceMount(mountPath, trackerRoot string, force bool) error {
 		return err
 	}
 	return os.Symlink(trackerRoot, mountPath)
-}
-
-func isHistoricalTuskerMountTarget(resolved, trackerRoot string) bool {
-	if strings.TrimSpace(resolved) == "" || strings.TrimSpace(trackerRoot) == "" {
-		return false
-	}
-	repoRoot := filepath.Dir(trackerRoot)
-	if filepath.Base(trackerRoot) != defaultRepoVaultDir {
-		return false
-	}
-	return canonicalPath(resolved) == canonicalPath(filepath.Join(repoRoot, "tusker"))
 }
 
 func removeWorkspaceMount(mountPath string) error {

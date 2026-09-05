@@ -36,7 +36,7 @@ func TestEscalationCreateRouting(t *testing.T) {
 	}
 	assertEqual(t, 1, len(notifications), "P1 notification count")
 
-	if err := writeText(filepath.Join(filepath.Dir(vault), "tusker.yaml"), "escalation:\n  notifications_enabled: false\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "escalation:\n  notifications_enabled: false\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P1", "task": "APP-T-0001", "_pos0": "disabled notification escalation"}); err != nil {
@@ -433,7 +433,7 @@ func writeEscalationNotificationsConfig(t *testing.T, vault string, enabled bool
 	if enabled {
 		value = "true"
 	}
-	if err := writeText(filepath.Join(filepath.Dir(vault), "tusker.yaml"), strings.Join([]string{
+	if err := writeText(managedTuskerConfigPath(vault), strings.Join([]string{
 		"schema: tusker.config/v1",
 		"project_id: app",
 		"storage:",

@@ -17,11 +17,13 @@ func workSessionFixture(t *testing.T, count int) (string, RegisteredProject) {
 	vault := automationTestVault(t)
 	for i := 0; i < count; i++ {
 		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": fmt.Sprintf("Work %d", i+1), "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-		makeV7TaskDispatchableForTest(t, vault, fmt.Sprintf("APP-T-%04d", i+1))
+		id := fmt.Sprintf("APP-T-%04d", i+1)
+		makeV7TaskDispatchableForTest(t, vault, id)
+		setAutomationV7TaskFields(t, vault, id, map[string]any{"owned_paths": []string{"owned/" + id}})
 	}
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	project := registerAutomationTestProject(t, vault)
-	configPath := filepath.Join(vault, "config.yaml")
+	configPath := managedTuskerConfigPath(vault)
 	config, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +43,21 @@ func startWorkSessionTest(t *testing.T, vault, id, owner string) error {
 	var err error
 	captureStdout(t, func() { err = workSessionStartCmd(Args{"vault": vault, "id": id, "by": owner, "source": "codex"}) })
 	return err
+}
+
+func configureWorkSessionMaterialScope(t *testing.T, vault string) {
+	t.Helper()
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"work_revision": 1, "owned_paths": []string{"owned"}})
+	owned := filepath.Join(filepath.Dir(vault), "owned")
+	if err := os.MkdirAll(owned, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(owned, "implementation.go"), []byte("package owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitFactOutput(filepath.Dir(vault), "add", "owned/implementation.go"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func workSessionErrorCode(err error) string {
@@ -449,6 +466,191 @@ func TestWorkSessionHeartbeatAndSubmitCAS(t *testing.T) {
 	}
 }
 
+func TestWorkSessionInteractiveReviewReceiptBindsImplementer(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:implementer"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "agent:implementer", "deliverable": "implementation", "verification": "A1 pass", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("completed implementation run: %#v err=%v", run, err)
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 || attempts[0].EndState.HeadSHA == "" {
+		t.Fatalf("completed implementation attempt: %#v err=%v", attempts, err)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA})
+	output := captureStdout(t, func() {
+		if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var packet workSessionPacket
+	if err := json.Unmarshal([]byte(output), &packet); err != nil {
+		t.Fatal(err)
+	}
+	if packet.Action != "review" || packet.Run == nil || packet.Run.Lane != runLaneReview || packet.Run.ActiveAttemptID == "" || packet.ImplementationAttempt != attempts[0].AttemptID || packet.Workspace != attempts[0].WorkspacePath || packet.ImplementationActor != "agent:implementer" || packet.ProofFingerprint == "" || packet.GateFingerprint == "" || packet.MaterialFingerprint == "" || !strings.Contains(packet.Next, "--material-fingerprint "+packet.MaterialFingerprint) {
+		t.Fatalf("review packet lacks native provenance: %#v", packet)
+	}
+	current, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reviewSubmitCmd(Args{"vault": vault, "id": "APP-T-0001", "attempt": packet.Run.ActiveAttemptID, "by": "reviewer:agent", "verdict": "changes_requested", "summary": "needs one correction", "finding": "repair A1", "task-rev": stringField(current.Data, "state_rev"), "source-sha": stringField(current.Data, "source_sha"), "work-rev": strconv.Itoa(packet.Revision), "proof-fingerprint": packet.ProofFingerprint, "gate-fingerprint": packet.GateFingerprint, "material-fingerprint": packet.MaterialFingerprint}); err != nil {
+		t.Fatal(err)
+	}
+	results, err := store.ListReviewResults(run.ProjectID)
+	if err != nil || len(results) != 1 || results[0].Result.MaterialFingerprint != packet.MaterialFingerprint {
+		t.Fatalf("durable review receipt material identity = %#v err=%v", results, err)
+	}
+}
+
+func TestWorkSessionInteractiveReviewRejectsMaterialDrift(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:implementer"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "agent:implementer", "deliverable": "implementation", "verification": "A1 pass", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("completed implementation run: %#v err=%v", run, err)
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 || attempts[0].EndState.MaterialFingerprint == "" {
+		t.Fatalf("completed material fingerprint: %#v err=%v", attempts, err)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA})
+	if err := os.WriteFile(filepath.Join(attempts[0].WorkspacePath, "owned", "review-material-drift.go"), []byte("untracked source changed after execute\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err == nil || !strings.Contains(err.Error(), "workspace material changed") {
+		t.Fatalf("review accepted changed untracked implementation material: %v", err)
+	}
+}
+
+func TestWorkSessionInteractiveReviewRejectsTrackedMaterialDrift(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:implementer"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "agent:implementer", "deliverable": "implementation", "verification": "A1 pass", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("completed implementation run: %#v err=%v", run, err)
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("completed implementation attempt: %#v err=%v", attempts, err)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA})
+	if err := os.WriteFile(filepath.Join(attempts[0].WorkspacePath, "owned", "implementation.go"), []byte("package owned\n// changed after execute\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err == nil || !strings.Contains(err.Error(), "workspace material changed") {
+		t.Fatalf("review accepted changed tracked implementation material: %v", err)
+	}
+}
+
+func TestWorkSessionInteractiveReviewRejectsMaterialScopeDrift(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:implementer"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "agent:implementer", "deliverable": "implementation", "verification": "A1 pass", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("completed implementation run: %#v err=%v", run, err)
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("completed implementation attempt: %#v err=%v", attempts, err)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA, "owned_paths": []string{"narrowed"}})
+	if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err == nil || !strings.Contains(err.Error(), "material scope changed") {
+		t.Fatalf("review accepted narrowed material scope: %v", err)
+	}
+}
+
+func TestWorkSessionInteractiveReviewMaterialScopeIgnoresUnrelatedAndControlWrites(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:implementer"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "agent:implementer", "deliverable": "implementation", "verification": "A1 pass", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRun("APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("completed implementation run: %#v err=%v", run, err)
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil || len(attempts) != 1 || strings.Join(attempts[0].EndState.MaterialScope, ",") != "owned" {
+		t.Fatalf("declared material scope not persisted: %#v err=%v", attempts, err)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA})
+	if err := os.WriteFile(filepath.Join(attempts[0].WorkspacePath, "other-task.go"), []byte("package other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(attempts[0].WorkspacePath, ".tusker", "evidence"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(attempts[0].WorkspacePath, ".tusker", "evidence", "review.md"), []byte("operational evidence\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err != nil {
+		t.Fatalf("unrelated or control-plane write invalidated review: %v", err)
+	}
+}
+
 func TestWorkSessionTaskRevisionDriftRefusesMutation(t *testing.T) {
 	vault, _ := workSessionFixture(t, 1)
 	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); err != nil {
@@ -514,7 +716,7 @@ func TestWorkSessionAcceptsOnlyExactDaemonAttemptCapability(t *testing.T) {
 	attemptID := "01KYDAEMONWORKSESSION00000000"
 	claim, err := newRunOwnershipService(store).claimExistingWithAuthorization(run, attemptID, RunAuthorization{
 		Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true,
-	})
+	}, RunAttempt{})
 	if err != nil || !claim.Claimed || claim.Run == nil {
 		t.Fatalf("daemon claim failed: claim=%#v err=%v", claim, err)
 	}

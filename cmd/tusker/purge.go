@@ -104,10 +104,6 @@ func planTuskerPurge(repoRoot string) ([]tuskerPurgeAction, error) {
 			actions = append(actions, tuskerPurgeAction{Kind: "remove_path", Path: path, Reason: "nested/app-local Tusker vault"})
 			return filepath.SkipDir
 		}
-		if d.IsDir() && name == "tusker" && path == filepath.Join(repoRoot, "tusker") && looksLikeTuskerStateDir(path) {
-			actions = append(actions, tuskerPurgeAction{Kind: "remove_path", Path: path, Reason: "legacy root Tusker tracker"})
-			return filepath.SkipDir
-		}
 		return nil
 	}); err != nil {
 		return nil, err
@@ -195,15 +191,6 @@ func workspaceProjectMatchesRepo(project WorkspaceProject, repoRoot string) bool
 	}
 	for _, candidate := range []string{project.TrackerRoot, project.MountPath} {
 		if candidate != "" && isWithinPath(candidate, repoRoot) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeTuskerStateDir(path string) bool {
-	for _, rel := range []string{"SKILL.md", "WORKFLOW.md", "work", "knowledge", "events"} {
-		if fileExists(filepath.Join(path, rel)) {
 			return true
 		}
 	}

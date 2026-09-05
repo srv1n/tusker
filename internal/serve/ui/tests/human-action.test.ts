@@ -17,6 +17,9 @@ test("human action card renders the served contract and one contextual completio
   expect(card).toContain("Return to rework");
   expect(card).toContain("blocks ");
   expect(card).toContain("action.gateId");
+  expect(card).toContain("requestHumanReceipt");
+  expect(card).toContain('status === "accepted"');
+  expect(card).toContain("native confirmation");
   expect(card).toContain('disposeGate("waive")');
   expect(card).toContain('disposeGate("obsolete")');
   expect(card).not.toContain("evidenceKind");

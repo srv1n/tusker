@@ -8,6 +8,7 @@ import (
 )
 
 func TestReadinessContract(t *testing.T) {
+	t.Parallel()
 	const fixture = `{
   "dimensions": {
     "contract": {"state":"blocked","provenance":{"source":"task","revision":"task-r1"}},

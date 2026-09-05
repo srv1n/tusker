@@ -8,7 +8,8 @@
   Within a layer nodes are ordered by a single barycenter pass (mean of parent
   column indices) to reduce crossings. Nodes with no part_of relation (orphans)
   drop to a bottom layer, ordered by the columns of whatever they *do* connect
-  to (updates / decides_for / superseded_by) so they sit near their referents.
+  to other semantic relations (updates / source / decides_for / superseded_by /
+  link) so they sit near their referents.
 */
 
 import type { DocgraphEdge, DocgraphKind, DocgraphNode } from "./types";

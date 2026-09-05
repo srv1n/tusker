@@ -157,6 +157,10 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	switch {
+	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "challenge":
+		s.handleHumanControlChallenge(w, body)
+	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "submit":
+		s.handleHumanControlReceiptSubmit(w, body)
 	case len(parts) == 3 && parts[1] == "delivery" && parts[2] == "start":
 		s.handleDeliveryStart(w, body)
 	case len(parts) == 2 && parts[1] == "projects":

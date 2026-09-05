@@ -121,7 +121,7 @@ func TestTuskerYamlAutomationOverridesWorkflowControlPlane(t *testing.T) {
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), strings.TrimSpace(`
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), strings.TrimSpace(`
 schema: tusker.config/v1
 project_id: app
 automation:
@@ -167,7 +167,7 @@ func TestTuskerYamlAutomationRejectsLegacyActiveWithoutProfile(t *testing.T) {
 	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(root, "tusker.yaml"), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  trigger_states: [active, rework]\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  trigger_states: [active, rework]\n"); err != nil {
 		t.Fatal(err)
 	}
 

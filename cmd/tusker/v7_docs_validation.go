@@ -144,7 +144,7 @@ func validateLockedSpecUpdates(repoRoot, vaultPath string, notes []Note) ([]Issu
 				issues = append(issues, issue("SPEC_UPDATE_TARGET_MISSING", fmt.Sprintf("locked spec updates target %q, but it does not exist", target), spec.Path, "create the target document or remove it from updates", map[string]any{"target": target}))
 				continue
 			}
-			relatedTask := docUpdateTaskExists(repoRoot, notes, specPath, target)
+			relatedTask := docUpdateTaskExists(notes, specPath, target)
 			landed := targetOK && docUpdatedAfterSpecForTarget(repoRoot, specPath, targetDoc.Path, target)
 			// A follow-up documentation task is the explicit authority for a
 			// multi-commit update. Without that link, a later edit to the target
@@ -300,16 +300,14 @@ func docRevisionTime(repoRoot, relative string) (int64, bool) {
 	return info.ModTime().Unix(), true
 }
 
-// docUpdateTaskExists accepts a task-level governing spec reference. Older
-// delivery imports may point at a docs/specs intake document that explicitly
-// links the canonical .tusker/specs document; that is an alias, not a second
-// authority. Epic metadata is optional because imported epics predate the
+// docUpdateTaskExists accepts only an exact task-level governing spec
+// reference. Epic metadata is optional because imported epics predate the
 // spec_refs field, but when an owning epic does declare the spec we still keep
 // the task scoped to it.
-func docUpdateTaskExists(repoRoot string, notes []Note, specPath, target string) bool {
+func docUpdateTaskExists(notes []Note, specPath, target string) bool {
 	owningEpics := map[string]bool{}
 	for _, note := range notes {
-		if effectiveV7Kind(note.Data) != "epic" || !specRefListContainsCanonical(repoRoot, note.Data["spec_refs"], specPath) {
+		if effectiveV7Kind(note.Data) != "epic" || !specRefListContains(note.Data["spec_refs"], specPath) {
 			continue
 		}
 		if id := strings.TrimSpace(stringField(note.Data, "id")); id != "" {
@@ -318,7 +316,7 @@ func docUpdateTaskExists(repoRoot string, notes []Note, specPath, target string)
 	}
 	hasOwningEpic := len(owningEpics) > 0
 	for _, note := range notes {
-		if effectiveV7Kind(note.Data) != "task" || !specRefListContainsCanonical(repoRoot, note.Data["spec_refs"], specPath) {
+		if effectiveV7Kind(note.Data) != "task" || !specRefListContains(note.Data["spec_refs"], specPath) {
 			continue
 		}
 		if hasOwningEpic && !owningEpics[strings.TrimSpace(stringField(note.Data, "epic"))] {
@@ -339,40 +337,6 @@ func specRefListContains(value any, want string) bool {
 		}
 	}
 	return false
-}
-
-func specRefListContainsCanonical(repoRoot string, value any, want string) bool {
-	want = filepath.ToSlash(strings.TrimSpace(v7CleanSpecRef(want)))
-	if want == "" {
-		return false
-	}
-	for _, ref := range normalizeList(value) {
-		candidate := filepath.ToSlash(strings.TrimSpace(v7CleanSpecRef(ref)))
-		if candidate == want || specRefAliasPointsAt(repoRoot, candidate, want) {
-			return true
-		}
-	}
-	return false
-}
-
-// specRefAliasPointsAt recognizes a delivery-intake document only when its
-// own bytes link to the canonical locked spec. This keeps old imports usable
-// without treating arbitrary similarly named documents as authority.
-func specRefAliasPointsAt(repoRoot, candidate, want string) bool {
-	if !strings.HasPrefix(candidate, "docs/specs/") || !strings.HasPrefix(want, ".tusker/specs/") ||
-		!repoFileExistsForSpec(repoRoot, candidate) || !repoFileExistsForSpec(repoRoot, want) {
-		return false
-	}
-	rel, err := filepath.Rel(filepath.Dir(filepath.FromSlash(candidate)), filepath.FromSlash(want))
-	if err != nil {
-		return false
-	}
-	rel = filepath.ToSlash(rel)
-	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(candidate)))
-	if err != nil {
-		return false
-	}
-	return strings.Contains(strings.ReplaceAll(string(raw), "\\", "/"), rel)
 }
 
 func containsDocUpdateMarker(note Note, target string) bool {

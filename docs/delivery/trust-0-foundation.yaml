@@ -1,0 +1,207 @@
+schema: tusker.delivery-plan/v2
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+scope: trust-foundation
+title: 'Trust wave 0: Establish a trustworthy baseline'
+epic: FLW
+spec_refs:
+- .tusker/specs/tusker-trust-and-efficiency.md
+context_fingerprint: sha256:be84078136507ef4bb6386ba099f0215e3ae21121cd2b28d80018e75ef5cdf31
+non_goals:
+- Do not dispatch workers, enable automation or publish as part of planning.
+- Do not omit contract content to meet a token target or substitute static evidence for live acceptance.
+- Do not duplicate CFX-T-0001 or the existing FLW-T-0002 through FLW-T-0005 repairs.
+requirements:
+- id: R1
+  outcome: Every known failure has a reproduced cause and disposition; state corruption is repaired; the token benchmark
+    has an immutable baseline.
+concurrency: 1
+summary: Every known failure has a reproduced cause and disposition; state corruption is repaired; the token benchmark
+  has an immutable baseline.
+tasks:
+- source_key: baseline
+  title: Reconcile current work and repair the nine baseline failures
+  outcome: 'Reproduce all nine failures named in the audit; classify obsolete assertions separately from production
+    defects, with no weakened product invariant or silent skip. Assign production repairs to state-integrity or
+    the relevant owned task before changing its files. Token objective: Separates flaky/redundant validation from
+    required checks; baseline commands are reused at wave exits.'
+  acceptance:
+  - id: A1
+    outcome: Reproduce all nine failures named in the audit; classify obsolete assertions separately from production
+      defects, with no weakened product invariant or silent skip. Assign production repairs to state-integrity or
+      the relevant owned task before changing its files.
+  - id: A2
+    outcome: Inventory FLW-T-0002 through FLW-T-0005 and CFX-T-0001; retain their IDs and proof obligations. Confirm
+      existing repairs with fresh focused proof and record the actual CFX contract before preflight work; do not
+      create a second immutable-base implementation.
+  - id: A3
+    outcome: Produce a command/host/revision/PASS-FAIL matrix for the complete suite and focused cases; remaining
+      failures have an explicit blocking owner. Shared dirty changes remain intact.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^(TestFreshCloneBaselineHasModuleAndEmbeddedSkillAssets|TestFreshCloneBaselineCLIRunsHelpAndV7Init|TestFreshCloneBaselineIgnoresTaskAttachmentGoSources|TestV7TaskGateEvidenceAttemptReconcileFlow|TestV7ValidationHardensTaskSchemaAndKind|TestV7ValidationHardensEpicAndDecisionSchema|TestV7ValidationHardensGateEvidenceAttemptAndProposalSchema|TestV7ProjectIdentityAndDiscovery|TestV7ReconcileRepairsStaleObjectStateRevAndEmitsEvent)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Existing nine named
+      regressions from the audit, then the complete Go suite through scripts/with-validation-lock.sh; record executed
+      tests, not only exit status.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestV7PacketPreservesCompleteTaskContract|TestDeliveryImportPreservesNonGoalsInPackets|TestV7ProjectIdentityAndDiscovery)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Existing nine named
+      regressions from the audit, then the complete Go suite through scripts/with-validation-lock.sh; record executed
+      tests, not only exit status.'
+  - covers: A3
+    check: 'command: GOMAXPROCS=2 scripts/with-validation-lock.sh -- go test -timeout=5m -p=1 -parallel=1 ./cmd/tusker -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Existing nine named
+      regressions from the audit, then the complete Go suite through scripts/with-validation-lock.sh; record executed
+      tests, not only exit status.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/baseline.md
+    summary: Existing nine named regressions from the audit, then the complete Go suite through scripts/with-validation-lock.sh;
+      record executed tests, not only exit status. Include actual commands, executed cases, revision, host, results
+      and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/fresh_clone_baseline_test.go
+  - cmd/tusker/skill_lifecycle_test.go
+  - cmd/tusker/skill_progressive_disclosure_test.go
+  - e2e/contractconvergence/contract_convergence_test.go
+  - cmd/tusker/trust_baseline_test.go
+  - docs/reports/trust-evidence/baseline.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: state-integrity
+    kind: hard
+- source_key: state-integrity
+  title: Make state revisions, reconciliation and snapshot invalidation reliable
+  outcome: 'Stale body edits fail compare-and-swap; successful mutations recompute revisions under lock and publish
+    exactly the state actually saved. Token objective: Prevents repeat reads, unnecessary refresh events and recovery
+    loops.'
+  acceptance:
+  - id: A1
+    outcome: Stale body edits fail compare-and-swap; successful mutations recompute revisions under lock and publish
+      exactly the state actually saved.
+  - id: A2
+    outcome: Targeted reconciliation changes only the selected record; dry-run reports stale terminal records without
+      writes; stale attempts repair once; identical refresh emits no event and changed snapshots do.
+  - id: A3
+    outcome: Interrupted writes and competing mutations preserve the last committed state, fail visibly and recover
+      idempotently; no unrelated task or user file is lost.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^(TestV7DocumentCASRejectsBodyOnlyHumanEditWithStaleStateRev|TestV7ModelTaskWriteRoundTripKeepsStateRev|TestV7DocumentCASConcurrentProcessesAllowExactlyOneWriter)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproduce the six
+      state/snapshot failures listed in the audit and add the smallest adversarial interleaving regression at the
+      shared mutation boundary. Resolve actual source owner paths before editing.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^(TestServeSnapshotCacheReusesBuildAndInvalidatesPerProject|TestServeSnapshotIdenticalRefreshEmitsNoProjectionEvent|TestV7TargetedReconcileRepairsOnlySelectedTask|TestV7ReconcileDryRunEnumeratesInvalidStateRevsWithoutWrites|TestV7ReconcileRepairsStaleObjectStateRevAndEmitsEvent)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproduce the six
+      state/snapshot failures listed in the audit and add the smallest adversarial interleaving regression at the
+      shared mutation boundary. Resolve actual source owner paths before editing.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^(TestV7DocumentCASAtomicFailuresPreserveOriginal|TestV7DocumentCASParentDirectorySyncFailureIsReportedAfterRename|TestV7DocumentCASConcurrentProcessesAllowExactlyOneWriter)$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Reproduce the six
+      state/snapshot failures listed in the audit and add the smallest adversarial interleaving regression at the
+      shared mutation boundary. Resolve actual source owner paths before editing.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/state-integrity.md
+    summary: Reproduce the six state/snapshot failures listed in the audit and add the smallest adversarial interleaving
+      regression at the shared mutation boundary. Resolve actual source owner paths before editing. Include actual
+      commands, executed cases, revision, host, results and durable artifact links; do not claim a planned check
+      passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/commands_v7.go
+  - cmd/tusker/v7_control_cmd.go
+  - cmd/tusker/serve_command.go
+  - cmd/tusker/trust_state_integrity_test.go
+  - docs/reports/trust-evidence/state-integrity.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies: []
+- source_key: token-baseline
+  title: Measure total downstream workflow context and token cost
+  outcome: 'Capture versioned fixtures for small/medium/large task contracts and 10/100/1000-document repositories,
+    including a long contract, branching DAG, blocked gate, failed proof and resumed job. Token objective: This
+    task supplies the denominator for every savings claim.'
+  acceptance:
+  - id: A1
+    outcome: Capture versioned fixtures for small/medium/large task contracts and 10/100/1000-document repositories,
+      including a long contract, branching DAG, blocked gate, failed proof and resumed job.
+  - id: A2
+    outcome: 'Measure cold and warm bootstrap, discovery, next, packet, verification, review, recovery and completion:
+      input/output bytes, declared tokenizer counts when available, tool calls, turns, elapsed time and repeated
+      context. Store raw bounded transcripts or hashes plus reproducible extraction.'
+  - id: A3
+    outcome: Report real provider usage separately as cached input, uncached input and output when supplied; absent
+      usage remains unknown. Offline fixture size is never labelled billed cost. Use at least five identical-condition
+      repetitions for latency medians and record variance.
+  - id: A4
+    outcome: Freeze the candidate budgets in this roadmap against the measured baseline before optimization. Document
+      any necessary revision and rationale; do not lower a target merely to pass.
+  verification:
+  - covers: A1
+    check: 'command: python3 scripts/measure-agent-workflows.py --check --baseline docs/reports/agent-efficiency/token-baseline.json --fixtures docs/reports/agent-efficiency/fixtures-v2.json'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: A deterministic stdlib
+      measurement script with fixture self-checks and a versioned JSON/Markdown baseline; no external calls required
+      for this task.'
+  - covers: A2
+    check: 'command: python3 scripts/measure-agent-workflows.py --check --baseline docs/reports/agent-efficiency/token-baseline.json --fixtures docs/reports/agent-efficiency/fixtures-v2.json'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: A deterministic stdlib
+      measurement script with fixture self-checks and a versioned JSON/Markdown baseline; no external calls required
+      for this task.'
+  - covers: A3
+    check: 'command: python3 scripts/measure-agent-workflows.py --check --baseline docs/reports/agent-efficiency/token-baseline.json --fixtures docs/reports/agent-efficiency/fixtures-v2.json'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: A deterministic stdlib
+      measurement script with fixture self-checks and a versioned JSON/Markdown baseline; no external calls required
+      for this task.'
+  - covers: A4
+    check: 'command: python3 scripts/measure-agent-workflows.py --check --baseline docs/reports/agent-efficiency/token-baseline.json --fixtures docs/reports/agent-efficiency/fixtures-v2.json'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: A deterministic stdlib
+      measurement script with fixture self-checks and a versioned JSON/Markdown baseline; no external calls required
+      for this task.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/token-baseline.md
+    summary: A deterministic stdlib measurement script with fixture self-checks and a versioned JSON/Markdown baseline;
+      no external calls required for this task. Include actual commands, executed cases, revision, host, results
+      and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+  owned_paths:
+  - scripts/measure-agent-workflows.py
+  - docs/reports/agent-efficiency
+  - cmd/tusker/trust_token_baseline_test.go
+  - docs/reports/trust-evidence/token-baseline.md
+  domains:
+  - project
+  complexity: standard
+  risk: low
+  priority: p1
+  size: m
+  requirement_refs:
+  - R1
+  dependencies: []

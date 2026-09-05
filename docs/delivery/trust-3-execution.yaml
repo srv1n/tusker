@@ -1,0 +1,275 @@
+schema: tusker.delivery-plan/v2
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+scope: trust-execution
+title: 'Trust wave 3: Prove scheduling, recovery and workspace safety'
+epic: FLW
+spec_refs:
+- .tusker/specs/tusker-trust-and-efficiency.md
+context_fingerprint: sha256:7df8e3b3924dbb3b148dcc987e286ec4b75e6a9d132d8335cfd8416bf3096d54
+non_goals:
+- Do not dispatch workers, enable automation or publish as part of planning.
+- Do not omit contract content to meet a token target or substitute static evidence for live acceptance.
+- Do not duplicate CFX-T-0001 or the existing FLW-T-0002 through FLW-T-0005 repairs.
+requirements:
+- id: R1
+  outcome: Offline adverse scenarios pass across supported adapters; leases prevent conflicting work; recovery neither
+    loses work nor duplicates execution.
+concurrency: 1
+summary: Offline adverse scenarios pass across supported adapters; leases prevent conflicting work; recovery neither
+  loses work nor duplicates execution.
+tasks:
+- source_key: dag-leases
+  title: Execute only safe authorized DAG frontiers
+  outcome: 'Independent ready branches can progress while a sibling waits or fails; dependent work cannot start
+    early and nothing launches outside the armed scope. Token objective: A bounded frontier/next response replaces
+    full graph reloads and polling loops.'
+  acceptance:
+  - id: A1
+    outcome: Independent ready branches can progress while a sibling waits or fails; dependent work cannot start
+      early and nothing launches outside the armed scope.
+  - id: A2
+    outcome: Two workers racing for a task or shared capacity yield at most one valid claim; expired leases cannot
+      commit results after reassignment.
+  - id: A3
+    outcome: Owned paths, generated outputs, migration keys and named resources constrain concurrency across waves;
+      collisions serialize without globally serializing unrelated tasks.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDagLeases$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Deterministic scheduler
+      fixtures with a branching DAG, races, failure and lease expiry; assert actual starts and blocked reasons.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDagLeases$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Deterministic scheduler
+      fixtures with a branching DAG, races, failure and lease expiry; assert actual starts and blocked reasons.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDagLeases$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Deterministic scheduler
+      fixtures with a branching DAG, races, failure and lease expiry; assert actual starts and blocked reasons.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/dag-leases.md
+    summary: Deterministic scheduler fixtures with a branching DAG, races, failure and lease expiry; assert actual
+      starts and blocked reasons. Include actual commands, executed cases, revision, host, results and durable artifact
+      links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/execution_graph.go
+  - cmd/tusker/resource_lease.go
+  - cmd/tusker/trust_dag_leases_test.go
+  - docs/reports/trust-evidence/dag-leases.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: preflight
+    kind: hard
+    scope: trust-contracts
+  - task: state-integrity
+    kind: hard
+    scope: trust-foundation
+- source_key: workspace-recovery
+  title: Preserve work through crashes, caps and shared Git activity
+  outcome: 'Reverify FLW-T-0004 and active-owner pruning fixes; failed Git setup never launches a worker and corrupt
+    runtime state never authorizes deletion. Token objective: Reuse workspaces and resumable context safely; avoid
+    full reimplementation after restart.'
+  acceptance:
+  - id: A1
+    outcome: Reverify FLW-T-0004 and active-owner pruning fixes; failed Git setup never launches a worker and corrupt
+      runtime state never authorizes deletion.
+  - id: A2
+    outcome: Crash/restart retains unlanded work, checkpoints and task ownership; cleanup requires established ownership
+      and safe disposal. Test dirty, active, orphaned and missing workspaces.
+  - id: A3
+    outcome: Shared-checkout Git mutations serialize while disjoint source edits remain possible; worktree/disk
+      caps account for active work and preserve reuse of existing build caches without inventing a new cache service.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustWorkspaceRecovery$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Temporary real Git
+      repositories, killed/restarted worker fixtures, cap pressure and conflicting Git operations; inspect preserved
+      files and durable records.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustWorkspaceRecovery$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Temporary real Git
+      repositories, killed/restarted worker fixtures, cap pressure and conflicting Git operations; inspect preserved
+      files and durable records.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^TestTrustWorkspaceRecovery$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Temporary real Git
+      repositories, killed/restarted worker fixtures, cap pressure and conflicting Git operations; inspect preserved
+      files and durable records.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/workspace-recovery.md
+    summary: Temporary real Git repositories, killed/restarted worker fixtures, cap pressure and conflicting Git
+      operations; inspect preserved files and durable records. Include actual commands, executed cases, revision,
+      host, results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/workspace_manager.go
+  - cmd/tusker/worktree_cap_test.go
+  - cmd/tusker/trust_workspace_recovery_test.go
+  - docs/reports/trust-evidence/workspace-recovery.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: dag-leases
+    kind: hard
+  - task: baseline
+    kind: hard
+    scope: trust-foundation
+- source_key: adapter-contract
+  title: Make ACP and CLI adapter capabilities and usage truthful
+  outcome: 'For every supported installed adapter, publish and test actual start, stream, cancel, resume, permission
+    and usage behavior; unsupported actions return explicit unsupported results. Token objective: Reliable usage
+    telemetry and supported resume prevent false savings and repeated cold starts.'
+  acceptance:
+  - id: A1
+    outcome: For every supported installed adapter, publish and test actual start, stream, cancel, resume, permission
+      and usage behavior; unsupported actions return explicit unsupported results.
+  - id: A2
+    outcome: Fake-provider fixtures cover disconnect, timeout, malformed output, cancellation and duplicate final
+      events; attempt/session/model identity is preserved across supported resumes.
+  - id: A3
+    outcome: Turn caps, retries and token/cost policy have reachable behavior or are marked unavailable. Unknown
+      usage never means zero; no capability flag is enabled merely because a field or helper exists.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustAdapterContract$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Offline conformance
+      table and fake adapters before any live calls; name the two real harnesses available for the release pilot
+      without assuming missing credentials.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustAdapterContract$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Offline conformance
+      table and fake adapters before any live calls; name the two real harnesses available for the release pilot
+      without assuming missing credentials.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^TestTrustAdapterContract$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Offline conformance
+      table and fake adapters before any live calls; name the two real harnesses available for the release pilot
+      without assuming missing credentials.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/adapter-contract.md
+    summary: Offline conformance table and fake adapters before any live calls; name the two real harnesses available
+      for the release pilot without assuming missing credentials. Include actual commands, executed cases, revision,
+      host, results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+  owned_paths:
+  - cmd/tusker/runner_acp.go
+  - cmd/tusker/runner.go
+  - cmd/tusker/trust_adapter_contract_test.go
+  - docs/reports/trust-evidence/adapter-contract.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: handoff
+    kind: hard
+    scope: trust-contracts
+  - task: state-integrity
+    kind: hard
+    scope: trust-foundation
+- source_key: daemon-process
+  title: Make resident daemon and worker lifecycle observable and recoverable
+  outcome: 'Interactive commands never spawn a resident daemon or nested worker implicitly. Only enabled automation
+    with a valid authorized claim dispatches; read-only plan, doctor and status remain inert. Token objective: Bound
+    idle wakeups, retry context and log tails; no repeated full snapshots while nothing changed.'
+  acceptance:
+  - id: A1
+    outcome: Interactive commands never spawn a resident daemon or nested worker implicitly. Only enabled automation
+      with a valid authorized claim dispatches; read-only plan, doctor and status remain inert.
+  - id: A2
+    outcome: Test start, stop, graceful shutdown, forced termination, restart and stale PID/process identity. Cancellation
+      reaches owned child processes; unrelated processes survive; stopped work cannot later report success.
+  - id: A3
+    outcome: Recover durable attempts after restart without duplicate launches; use bounded retry/backoff and a
+      terminal actionable failure. A failed task does not cause daemon-wide busy loops or starve independent work.
+  - id: A4
+    outcome: Expose one compact health/status view joining daemon identity, queue/frontier, active attempts, last
+      meaningful failure and next action. Idle unchanged operation emits no repetitive agent prompts or human notifications;
+      logs are bounded and on demand.
+  verification:
+  - covers: A1
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDaemonProcess$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Process-level temporary-project
+      test with real child process termination/restart and fake providers; assert process ownership, launch counts,
+      durable outcomes and idle polling/event volume.'
+  - covers: A2
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDaemonProcess$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Process-level temporary-project
+      test with real child process termination/restart and fake providers; assert process ownership, launch counts,
+      durable outcomes and idle polling/event volume.'
+  - covers: A3
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDaemonProcess$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Process-level temporary-project
+      test with real child process termination/restart and fake providers; assert process ownership, launch counts,
+      durable outcomes and idle polling/event volume.'
+  - covers: A4
+    check: 'command: go test ./cmd/tusker -run "^TestTrustDaemonProcess$" -count=1 -v'
+    notes: 'Future regression must execute, not match zero tests. Required scenario evidence: Process-level temporary-project
+      test with real child process termination/restart and fake providers; assert process ownership, launch counts,
+      durable outcomes and idle polling/event volume.'
+  artifact:
+    kind: diff_summary
+    path: docs/reports/trust-evidence/daemon-process.md
+    summary: Process-level temporary-project test with real child process termination/restart and fake providers;
+      assert process ownership, launch counts, durable outcomes and idle polling/event volume. Include actual commands,
+      executed cases, revision, host, results and durable artifact links; do not claim a planned check passed.
+    acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+  owned_paths:
+  - cmd/tusker/daemon.go
+  - cmd/tusker/daemon_service.go
+  - cmd/tusker/daemon_control.go
+  - cmd/tusker/runner_exec.go
+  - cmd/tusker/trust_daemon_process_test.go
+  - docs/reports/trust-evidence/daemon-process.md
+  domains:
+  - project
+  complexity: complex
+  risk: high
+  priority: p1
+  size: l
+  requirement_refs:
+  - R1
+  dependencies:
+  - task: dag-leases
+    kind: hard
+  - task: adapter-contract
+    kind: hard
+  - task: enforcement-lint
+    kind: hard
+    scope: trust-contracts

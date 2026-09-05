@@ -31,6 +31,7 @@ func TestAutomationPlanRetryQueuedSelfBlockAllowsContinuationCapacity(t *testing
 
 func TestDaemonRetryQueuedSelfBlockDispatchesContinuationAtProjectLimit(t *testing.T) {
 	vault := automationTestVault(t)
+	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	installCodexSleepShimForTest(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self parked daemon retry", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")

@@ -17,16 +17,10 @@ const (
 	invariantCheckAttemptCountWithinCaps    = "attempt_count_within_caps"
 	invariantCheckFreshHeartbeatPidLive     = "fresh_heartbeat_pid_live"
 	invariantCheckUniqueActiveLeasePerTask  = "unique_active_lease_per_task"
-	invariantCheckActiveSpendMonotonic      = "active_spend_monotonic"
 	invariantCheckLastPollAdvanced          = "last_poll_advanced"
 
 	defaultSentinelFreshHeartbeatMS = int(daemonHeartbeatDeadThreshold / time.Millisecond)
 )
-
-// Older materialized workflows may retain retired names; keep skipping them so they cannot open the global circuit.
-var retiredSentinelChecks = map[string]struct{}{
-	invariantCheckActiveSpendMonotonic: {},
-}
 
 type RuntimeSentinelConfig struct {
 	Checks           []string `yaml:"checks" json:"checks"`
@@ -298,9 +292,6 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 	for _, project := range snapshot.Projects {
 		config := withDefaultRuntimeSentinelConfig(project.Workflow.Runtime.Sentinel)
 		for _, check := range config.Checks {
-			if _, retired := retiredSentinelChecks[check]; retired {
-				continue
-			}
 			status.Checks = append(status.Checks, check)
 			if snapshot.Resume && check == invariantCheckLastPollAdvanced {
 				continue

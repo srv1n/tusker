@@ -1,8 +1,7 @@
 ---
 agents:
-    default: codex_acp
+    default: codex_exec
     enabled:
-        - codex_acp
         - codex_exec
         - claude-code
     max_concurrent_agents: 2
@@ -85,7 +84,7 @@ reviewer:
         Submit exactly one result for the injected review attempt: `tusker review submit {{ note.id }} --attempt {{ attempt.id }} --task-rev {{ review.task_rev }} --source-sha {{ review.source_sha }} --work-rev {{ review.work_rev }} --proof-fingerprint {{ review.proof_fingerprint }} --gate-fingerprint {{ review.gate_fingerprint }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary "<bounded summary>"`. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
 
         Explicit blocking gates must be reported in the typed result; do not change gate or task state.
-    runner: codex_acp
+    runner: codex_exec
 runners:
     claude-code:
         command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions

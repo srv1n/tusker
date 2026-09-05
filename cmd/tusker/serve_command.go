@@ -106,18 +106,19 @@ func newServeServer(vaultPath, repoRoot, addr string, store *RuntimeStore, asset
 		panic(fmt.Sprintf("generate serve mutation capability: %v", err))
 	}
 	return &serveServer{
-		vaultPath:        vaultPath,
-		repoRoot:         repoRoot,
-		addr:             addr,
-		store:            store,
-		assets:           assets,
-		operatorActor:    configuredServeOperatorActor(),
-		stream:           newServeStreamBroker(),
-		now:              func() time.Time { return time.Now().UTC() },
-		snapshots:        map[string]*serveSnapshotEntry{},
-		mutationToken:    base64.RawURLEncoding.EncodeToString(token),
-		requestAdmission: make(chan struct{}, 128),
-		streamAdmission:  make(chan struct{}, 32),
+		vaultPath:             vaultPath,
+		repoRoot:              repoRoot,
+		addr:                  addr,
+		store:                 store,
+		assets:                assets,
+		operatorActor:         configuredServeOperatorActor(),
+		stream:                newServeStreamBroker(),
+		now:                   func() time.Time { return time.Now().UTC() },
+		snapshots:             map[string]*serveSnapshotEntry{},
+		mutationToken:         base64.RawURLEncoding.EncodeToString(token),
+		humanControlPublicKey: configuredHumanControlPublicKey(),
+		requestAdmission:      make(chan struct{}, 128),
+		streamAdmission:       make(chan struct{}, 32),
 	}
 }
 
@@ -924,6 +925,9 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 			continue
 		}
 		entry.building = true
+		// Consume the invalidation that selected this build. A later invalidation
+		// remains visible until after the build and forces a retry below.
+		entry.invalid = false
 		entry.done = make(chan struct{})
 		wasReady := entry.ready
 		s.snapshotMu.Unlock()
@@ -2357,6 +2361,7 @@ Endpoints:
   POST /api/tasks/<task-id>/(status|discard|close|land)
   GET /api/gates[?task=<id>]
   POST /api/gates/<gate-id>/(satisfy|waive|obsolete)
+  POST /api/human-receipts/(challenge|submit)
   GET /api/evidence[?task=<id>]
   POST /api/evidence
   GET /api/decisions[?epic=<id>]

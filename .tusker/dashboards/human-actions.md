@@ -6,6 +6,6 @@
 
 | Item | Owner | Blocks / refs | Action |
 |---|---|---|---|
-
+| [[FLW-G-0001]] | human:sarav | [[FLW-T-0009]] | Answer one current human-owned gate through the supported native interaction surface. |
 
 <!-- tusker:generated:end -->

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -973,7 +975,7 @@ func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofRepor
 		report.Covered[acceptance] = append(report.Covered[acceptance], "waiver")
 	}
 	if mode == "none" {
-		report.ModeMissing = v7ProofModeRequirementMissing(task, idx)
+		report.ModeMissing = v7ProofModeRequirementMissing(vaultPath, task, idx)
 		report.Status = v7ComputedProofStatus(task, report)
 		classifyV7ProofReport(&report, task, idx)
 		return report
@@ -983,7 +985,7 @@ func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofRepor
 			report.Missing = append(report.Missing, acceptance)
 		}
 	}
-	report.ModeMissing = v7ProofModeRequirementMissing(task, idx)
+	report.ModeMissing = v7ProofModeRequirementMissing(vaultPath, task, idx)
 	report.Status = v7ComputedProofStatus(task, report)
 	classifyV7ProofReport(&report, task, idx)
 	return report
@@ -1415,16 +1417,17 @@ func v7CoverTokens(text string) []string {
 	return out
 }
 
-func v7ProofModeRequirementMissing(task Note, idx v7Index) []string {
+func v7ProofModeRequirementMissing(vaultPath string, task Note, idx v7Index) []string {
 	if strings.EqualFold(stringField(task.Data, "proof_status"), "waived") {
 		return nil
 	}
 	taskID := stringField(task.Data, "id")
 	mode := strings.ToLower(fallback(stringField(task.Data, "proof_mode"), defaultV7ProofMode(stringField(task.Data, "risk"))))
 	if mode == "none" {
-		return nil
+		return v7ArtifactContractProofMissing(vaultPath, task, idx)
 	}
 	var missing []string
+	missing = append(missing, v7ArtifactContractProofMissing(vaultPath, task, idx)...)
 	for _, required := range v7TaskProofRequired(task) {
 		if !v7ProofRequiredClassSatisfied(taskID, required, task, idx) {
 			missing = append(missing, "proof_required:"+required)
@@ -1446,6 +1449,112 @@ func v7ProofModeRequirementMissing(task Note, idx v7Index) []string {
 	default:
 		return []string{"valid proof_mode"}
 	}
+}
+
+func v7KnownProofRequirement(required string) bool {
+	required = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(required, "-", "_")))
+	switch required {
+	case "", "none", "focused_test", "broad_test", "typecheck", "lint", "build", "ci", "independent_review", "manual_smoke", "physical_smoke", "screenshot", "video", "trace", "provider_probe", "benchmark", "security_review", "privacy_review", "release_smoke", "human_signoff", "visual", "performance", "backend", "migration":
+		return true
+	default:
+		return false
+	}
+}
+
+func v7ArtifactContractProofMissing(vaultPath string, task Note, idx v7Index) []string {
+	contract := mapField(task.Data, "artifact_contract")
+	if contract == nil {
+		return nil
+	}
+	kind := strings.ToLower(strings.TrimSpace(stringField(contract, "kind")))
+	wantKinds := v7ArtifactContractEvidenceKinds(kind)
+	if len(wantKinds) == 0 {
+		return []string{"artifact_contract:invalid kind " + fallback(kind, "(missing)")}
+	}
+	acceptance := v7AcceptanceIDs(task.Body)
+	wantCoverage := v7CoversToAcceptanceIDs(normalizeList(firstPresent(contract, "acceptance_ids", "acceptance")), acceptance)
+	if len(wantCoverage) == 0 {
+		return []string{"artifact_contract:missing acceptance coverage"}
+	}
+	covered := map[string]bool{}
+	for _, evidence := range idx.Evidence[stringField(task.Data, "id")] {
+		if !containsString(wantKinds, strings.ToLower(stringField(evidence.Data, "evidence_kind"))) || !v7EvidenceUsableForArtifactContract(vaultPath, task, evidence) {
+			continue
+		}
+		for _, id := range v7CoversToAcceptanceIDs(normalizeList(evidence.Data["covers"]), wantCoverage) {
+			covered[id] = true
+		}
+	}
+	var missing []string
+	for _, id := range wantCoverage {
+		if !covered[id] {
+			missing = append(missing, "artifact_contract:"+kind+" evidence missing for "+id)
+		}
+	}
+	return missing
+}
+
+func v7ArtifactContractEvidenceKinds(kind string) []string {
+	switch kind {
+	case "screenshot", "screenshot_set":
+		return []string{"screenshot"}
+	case "video", "recording":
+		return []string{"video"}
+	case "benchmark", "benchmark_delta":
+		return []string{"benchmark", "performance_profile"}
+	case "trace", "replay":
+		return []string{"trace"}
+	case "behavior_matrix", "request_response", "matrix":
+		return []string{"integration_test", "e2e_test", "provider_probe"}
+	case "reliability_summary", "reliability_timeline":
+		return []string{"release_smoke", "manual_smoke", "physical_smoke"}
+	case "security_note", "security_summary":
+		return []string{"security_review", "privacy_review"}
+	case "diff_summary":
+		return []string{"automated_test", "unit_test", "verification_summary"}
+	case "knowledge_link", "documentation", "document":
+		return []string{"verification_summary"}
+	default:
+		return nil
+	}
+}
+
+func v7EvidenceUsableForArtifactContract(vaultPath string, task, evidence Note) bool {
+	paths := normalizeList(evidence.Data["artifact_paths"])
+	if len(paths) == 0 || strings.TrimSpace(stringField(evidence.Data, "artifact_fingerprint")) == "" {
+		return false
+	}
+	if expected := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")); expected != "" && stringField(evidence.Data, "source_revision") != expected {
+		return false
+	}
+	current, ok := v7EvidenceArtifactFingerprint(vaultPath, evidence)
+	return ok && current == stringField(evidence.Data, "artifact_fingerprint")
+}
+
+func v7EvidenceArtifactFingerprint(vaultPath string, evidence Note) (string, bool) {
+	taskID, evidenceID := stringField(evidence.Data, "task"), stringField(evidence.Data, "id")
+	if vaultPath == "" || taskID == "" || evidenceID == "" {
+		return "", false
+	}
+	paths := normalizeList(evidence.Data["artifact_paths"])
+	if len(paths) == 0 {
+		return "", false
+	}
+	prefix := "evidence/" + taskID + "/artifacts/" + evidenceID + "/"
+	hash := sha256.New()
+	for _, artifact := range sortedV7ProofStrings(paths) {
+		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(artifact)))
+		if !strings.HasPrefix(clean, prefix) {
+			return "", false
+		}
+		raw, err := os.ReadFile(filepath.Join(vaultPath, filepath.FromSlash(clean)))
+		if err != nil {
+			return "", false
+		}
+		sum := sha256.Sum256(raw)
+		_, _ = hash.Write([]byte(clean + "\x00" + hex.EncodeToString(sum[:]) + "\x00"))
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), true
 }
 
 func v7TaskProofRequired(task Note) []string {
@@ -1532,7 +1641,6 @@ func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool 
 
 func v7EvidenceSatisfiesProofRequired(required string, ev Note) bool {
 	kind := strings.ToLower(stringField(ev.Data, "evidence_kind"))
-	artifactPaths := normalizeList(ev.Data["artifact_paths"])
 	switch required {
 	case "focused_test", "broad_test":
 		return kind == "automated_test" || kind == "unit_test" || kind == "integration_test" || kind == "e2e_test" || kind == "ci_run"
@@ -1550,11 +1658,11 @@ func v7EvidenceSatisfiesProofRequired(required string, ev Note) bool {
 	case "manual_smoke":
 		return kind == "manual_smoke" || kind == "physical_smoke"
 	case "screenshot":
-		return kind == "screenshot" || v7EvidenceHasArtifactExt(artifactPaths, ".png", ".jpg", ".jpeg")
+		return kind == "screenshot"
 	case "video":
-		return kind == "video" || v7EvidenceHasArtifactExt(artifactPaths, ".mov", ".mp4", ".webm")
+		return kind == "video"
 	case "trace":
-		return kind == "trace" || v7EvidenceHasArtifactExt(artifactPaths, ".trace")
+		return kind == "trace"
 	case "provider_probe":
 		return kind == "provider_probe"
 	case "benchmark":
@@ -1567,8 +1675,69 @@ func v7EvidenceSatisfiesProofRequired(required string, ev Note) bool {
 		return kind == "release_smoke"
 	case "human_signoff":
 		return kind == "human_review"
+	case "visual", "performance", "backend", "migration":
+		return v7EvidenceSatisfiesProofCategory(required, ev)
 	default:
 		return kind == required
+	}
+}
+
+func v7EvidenceSatisfiesProofCategory(category string, ev Note) bool {
+	category = strings.ToLower(strings.TrimSpace(category))
+	if strings.ToLower(stringField(ev.Data, "proof_category")) != category {
+		return false
+	}
+	kind := strings.ToLower(stringField(ev.Data, "evidence_kind"))
+	switch category {
+	case "visual":
+		if kind != "screenshot" && kind != "video" {
+			return false
+		}
+	case "performance":
+		if kind != "benchmark" && kind != "performance_profile" {
+			return false
+		}
+	case "backend":
+		if kind != "integration_test" && kind != "e2e_test" && kind != "provider_probe" {
+			return false
+		}
+	case "migration":
+		if kind != "integration_test" && kind != "e2e_test" {
+			return false
+		}
+	default:
+		return false
+	}
+	return v7ProofCategoryFactsValid(category, stringMapValue(ev.Data["proof_facts"]), normalizeList(ev.Data["artifact_paths"]))
+}
+
+func v7ProofCategoryFactsValid(category string, facts map[string]string, artifactPaths []string) bool {
+	has := func(keys ...string) bool {
+		for _, key := range keys {
+			if strings.TrimSpace(facts[key]) == "" {
+				return false
+			}
+		}
+		return true
+	}
+	switch category {
+	case "visual":
+		switch facts["baseline"] {
+		case "before_after":
+			return len(artifactPaths) >= 2
+		case "new_ui":
+			return len(artifactPaths) >= 1
+		default:
+			return false
+		}
+	case "performance":
+		return has("before", "after", "before_workload", "after_workload", "units", "method", "environment", "revision") && facts["before_workload"] == facts["after_workload"]
+	case "backend":
+		return has("observable", "negative")
+	case "migration":
+		return has("preservation", "interruption", "recovery")
+	default:
+		return false
 	}
 }
 
@@ -1812,18 +1981,6 @@ func v7ShellCommandWrapper(value string) bool {
 	default:
 		return false
 	}
-}
-
-func v7EvidenceHasArtifactExt(paths []string, exts ...string) bool {
-	for _, path := range paths {
-		lower := strings.ToLower(strings.TrimSpace(path))
-		for _, ext := range exts {
-			if strings.HasSuffix(lower, ext) || strings.Contains(lower, ext+"?") {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func v7GateSatisfiesProofRequired(required string, gate Note) bool {

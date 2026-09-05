@@ -232,35 +232,30 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 	validationIssues, frontiers := validateDeliveryPlan(vault, plan)
 	issues := uniqueStrings(append(preparationIssues, deliveryIssueMessages(validationIssues)...))
 	sort.Strings(issues)
-	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, Title: plan.Title, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, CrossScopeDependencies: []deliveryCrossScopeReviewDependency{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
-	if plan.v2 != nil {
-		r.Summary = plan.v2.Summary
-	}
+	r := deliveryReview{Schema: deliveryReviewSchema, ReadOnly: true, Title: plan.Title, Summary: plan.v2.Summary, What: []deliveryReviewOutcome{}, Proof: []deliveryReviewProof{}, Decisions: []deliveryReviewDecision{}, NonGoals: []string{}, Flow: deliveryReviewFlow{Frontiers: deliveryReviewFrontiers(plan, frontiers), ExpectedConcurrency: deliveryExpectedConcurrency(plan, frontiers), Integration: "Reviewed work joins one serialized integration phase before landing.", SharedResources: []deliveryReviewResource{}, CrossScopeDependencies: []deliveryCrossScopeReviewDependency{}, Warnings: []string{}}, Start: deliveryReviewStart{PlanFingerprint: deliveryFingerprint(raw), Authorization: "not imported", Readiness: "review only", Blockers: []string{}, State: "held", StateLabel: "Held for review"}}
 	integrationBaseSHA := ""
 	for _, issue := range issues {
 		r.Start.Blockers = append(r.Start.Blockers, issue)
 	}
-	if plan.v2 != nil {
-		findings := deliveryReviewDoctorFindings(vault, path, raw)
-		for _, finding := range findings {
-			r.Start.Blockers = append(r.Start.Blockers, finding.Message)
-			if strings.Contains(finding.Code, "CONFLICT") || strings.Contains(finding.Code, "RESOURCE") {
-				r.Flow.Warnings = append(r.Flow.Warnings, finding.Message)
-			}
+	findings := deliveryReviewDoctorFindings(vault, path, raw)
+	for _, finding := range findings {
+		r.Start.Blockers = append(r.Start.Blockers, finding.Message)
+		if strings.Contains(finding.Code, "CONFLICT") || strings.Contains(finding.Code, "RESOURCE") {
+			r.Flow.Warnings = append(r.Flow.Warnings, finding.Message)
 		}
-		r.Flow.SharedResources = deliveryReviewSharedResources(plan.v2.SharedResources, plan.Tasks, findings)
-		context, contextErr := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), deliveryPlanScope(plan))
-		if contextErr != nil {
-			r.Start.Blockers = append(r.Start.Blockers, "planning context could not be recomputed: "+contextErr.Error())
-		} else {
-			integrationBaseSHA = context.IntegrationBase.SHA
-			r.Start.ContextFingerprint = plan.v2.ContextFingerprint
-			if context.ContextFingerprint != plan.v2.ContextFingerprint && !deliveryReviewMatchesTrackedPlanCommit(vault, path, raw, context, plan.v2.ContextFingerprint) {
-				r.Start.Blockers = append(r.Start.Blockers, "planning context fingerprint differs; regenerate the plan from current delivery context")
-				r.Start.State = "changed"
-				r.Start.StateLabel = "Delivery changed"
-				r.Start.NextAction = "Regenerate the plan from current delivery context, then review its new exact fingerprint."
-			}
+	}
+	r.Flow.SharedResources = deliveryReviewSharedResources(plan.v2.SharedResources, plan.Tasks, findings)
+	context, contextErr := buildDeliveryPlanningContextForScope(vault, strings.Join(plan.SpecRefs, ","), deliveryPlanScope(plan))
+	if contextErr != nil {
+		r.Start.Blockers = append(r.Start.Blockers, "planning context could not be recomputed: "+contextErr.Error())
+	} else {
+		integrationBaseSHA = context.IntegrationBase.SHA
+		r.Start.ContextFingerprint = plan.v2.ContextFingerprint
+		if context.ContextFingerprint != plan.v2.ContextFingerprint && !deliveryReviewMatchesTrackedPlanCommit(vault, path, raw, context, plan.v2.ContextFingerprint) {
+			r.Start.Blockers = append(r.Start.Blockers, "planning context fingerprint differs; regenerate the plan from current delivery context")
+			r.Start.State = "changed"
+			r.Start.StateLabel = "Delivery changed"
+			r.Start.NextAction = "Regenerate the plan from current delivery context, then review its new exact fingerprint."
 		}
 	}
 	if integrationBaseSHA == "" {
@@ -300,32 +295,26 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 		}
 		r.Proof = append(r.Proof, proof)
 	}
-	if plan.v2 != nil {
-		for _, req := range plan.v2.Requirements {
-			links := []deliveryReviewLink{}
-			for _, specRef := range plan.SpecRefs {
-				if deliverySpecRefExists(vault, specRef) {
-					links = append(links, deliveryReviewLink{Label: specRef, Href: docDeepLink(projectID, specRef)})
-				}
+	for _, req := range plan.v2.Requirements {
+		links := []deliveryReviewLink{}
+		for _, specRef := range plan.SpecRefs {
+			if deliverySpecRefExists(vault, specRef) {
+				links = append(links, deliveryReviewLink{Label: specRef, Href: docDeepLink(projectID, specRef)})
 			}
-			r.What = append(r.What, deliveryReviewOutcome{Requirement: req.ID, Outcome: req.Outcome, NonGoals: []string{}, Links: links})
 		}
-		r.NonGoals = deliveryContextCleanStrings(plan.v2.NonGoals)
-		sort.Strings(r.NonGoals)
-		for _, gate := range plan.v2.HumanGates {
-			r.Decisions = append(r.Decisions, deliveryReviewDecision{
-				Title: gate.Title, Action: gate.Action, Why: gate.WhyAgentCannot,
-				SourceKey: gate.SourceKey, TaskSourceKey: gate.TaskSourceKey,
-				AcceptanceIDs: append([]string(nil), gate.AcceptanceIDs...), Verification: gate.Verification,
-			})
-		}
-		for _, decision := range plan.v2.UnresolvedDecisions {
-			r.Decisions = append(r.Decisions, deliveryReviewDecision{Title: "Product decision", Action: decision.Question, Why: "The plan marks this as unresolved.", SourceKey: decision.SourceKey, AcceptanceIDs: []string{}})
-		}
-	} else {
-		for _, task := range plan.Tasks {
-			r.What = append(r.What, deliveryReviewOutcome{Outcome: task.Outcome, NonGoals: []string{}, Links: []deliveryReviewLink{}})
-		}
+		r.What = append(r.What, deliveryReviewOutcome{Requirement: req.ID, Outcome: req.Outcome, NonGoals: []string{}, Links: links})
+	}
+	r.NonGoals = deliveryContextCleanStrings(plan.v2.NonGoals)
+	sort.Strings(r.NonGoals)
+	for _, gate := range plan.v2.HumanGates {
+		r.Decisions = append(r.Decisions, deliveryReviewDecision{
+			Title: gate.Title, Action: gate.Action, Why: gate.WhyAgentCannot,
+			SourceKey: gate.SourceKey, TaskSourceKey: gate.TaskSourceKey,
+			AcceptanceIDs: append([]string(nil), gate.AcceptanceIDs...), Verification: gate.Verification,
+		})
+	}
+	for _, decision := range plan.v2.UnresolvedDecisions {
+		r.Decisions = append(r.Decisions, deliveryReviewDecision{Title: "Product decision", Action: decision.Question, Why: "The plan marks this as unresolved.", SourceKey: decision.SourceKey, AcceptanceIDs: []string{}})
 	}
 	if len(r.Start.Blockers) > 0 && r.Start.State == "held" {
 		r.Start.State = "invalid"
@@ -836,20 +825,21 @@ func readDeliveryReviewPlan(vault, path string) (deliveryPlan, []byte, []string,
 }
 
 func readDeliveryReviewPlanBytes(vault string, raw []byte) (deliveryPlan, []string, error) {
-	if schema, err := deliveryPlanSchemaBytes(raw); err != nil {
+	schema, err := deliveryPlanSchemaBytes(raw)
+	if err != nil {
 		return deliveryPlan{}, nil, err
-	} else if schema == deliveryPlanV2Schema {
-		var v2 deliveryPlanV2
-		d := yaml.NewDecoder(bytes.NewReader(raw))
-		d.KnownFields(true)
-		if err := d.Decode(&v2); err != nil {
-			return deliveryPlan{}, nil, tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
-		}
-		plan, issues := deliveryV2Prepare(vault, v2)
-		return plan, deliveryIssueMessages(issues), nil
 	}
-	plan, err := readDeliveryPlanBytes(raw)
-	return plan, nil, err
+	if schema != deliveryPlanV2Schema {
+		return deliveryPlan{}, nil, tuskerError(errorInvalidArg, "unsupported delivery plan schema: "+fallback(schema, "<missing>")+"; expected "+deliveryPlanV2Schema)
+	}
+	var v2 deliveryPlanV2
+	d := yaml.NewDecoder(bytes.NewReader(raw))
+	d.KnownFields(true)
+	if err := d.Decode(&v2); err != nil {
+		return deliveryPlan{}, nil, tuskerError(errorInvalidArg, "invalid V2 delivery plan YAML: "+err.Error())
+	}
+	plan, issues := deliveryV2Prepare(vault, v2)
+	return plan, deliveryIssueMessages(issues), nil
 }
 
 func deliveryReviewDoctorFindings(vault, path string, raw []byte) []deliveryDoctorFinding {

@@ -492,19 +492,14 @@ type parsedID struct {
 }
 
 type validationContext struct {
-	RelativePath     string
-	Basename         string
-	VaultPath        string
-	EpicAcronyms     map[string]struct{}
-	NoteIDs          map[string]struct{}
-	IDToRecordID     map[string]string
-	RecordIDs        map[string]struct{}
-	DocsMap          *DocsMap
-	V6Domains        map[string]bool
-	V6KnowledgeNodes map[string]bool
-	V6LinkTargets    map[string]bool
-	V6Freshness      map[string]v6FreshnessRecord
-	CompletionStore  *RuntimeStore
+	RelativePath    string
+	Basename        string
+	VaultPath       string
+	EpicAcronyms    map[string]struct{}
+	NoteIDs         map[string]struct{}
+	IDToRecordID    map[string]string
+	RecordIDs       map[string]struct{}
+	CompletionStore *RuntimeStore
 }
 
 func parseID(id string) *parsedID {

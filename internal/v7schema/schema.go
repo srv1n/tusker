@@ -76,7 +76,7 @@ var FrontmatterOrder = map[string][]string{
 		"schema", "kind", "id", "project", "epic", "title", "status", "decided_by", "decided_at", "supersedes", "created_at", "created_by", "updated_at", "updated_by", "state_rev",
 	},
 	"evidence": {
-		"schema", "kind", "id", "project", "task", "epic", "evidence_kind", "status", "covers", "artifact_paths", "artifact_durability", "screenshot_checked_by", "screenshot_checked_at", "redacted", "redaction_note", "created_by", "created_at", "accepted_by", "accepted_at", "state_rev",
+		"schema", "kind", "id", "project", "task", "epic", "evidence_kind", "status", "covers", "artifact_paths", "artifact_durability", "artifact_fingerprint", "source_revision", "proof_category", "proof_facts", "screenshot_checked_by", "screenshot_checked_at", "redacted", "redaction_note", "created_by", "created_at", "accepted_by", "accepted_at", "state_rev",
 	},
 	"attempt": {
 		"schema", "kind", "id", "project", "task", "runner", "agent_model", "workspace_kind", "workspace_path", "branch", "status", "started_at", "ended_at", "pr_url", "evidence", "state_rev",

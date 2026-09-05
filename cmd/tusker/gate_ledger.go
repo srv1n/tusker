@@ -9,19 +9,37 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 func workspaceTreeStateHash(workspace string) (string, error) {
+	return workspaceTreeStateHashForPaths(workspace, nil)
+}
+
+// workspaceTreeStateHashForPaths hashes the declared source paths in their
+// current worktree form, including untracked files. A nil scope is the gate
+// ledger's established whole-source scope; a non-empty scope is an immutable
+// work-session boundary and never widens to unrelated checkout paths.
+func workspaceTreeStateHashForPaths(workspace string, scope []string) (string, error) {
+	scope, err := normalizeWorkspaceMaterialScope(scope)
+	if err != nil {
+		return "", err
+	}
 	tracked, err := gitFactOutput(workspace, "ls-files", "-c", "-o", "--exclude-standard", "-z")
 	if err != nil {
 		return "", err
 	}
 	hash := sha256.New()
+	if scope != nil {
+		for _, path := range scope {
+			_, _ = hash.Write([]byte("scope\x00" + path + "\x00"))
+		}
+	}
 	for _, rel := range strings.Split(tracked, "\x00") {
-		if rel == "" || gateLedgerIgnoresPath(rel) {
+		if rel == "" || gateLedgerIgnoresPath(rel) || (scope != nil && !workspaceMaterialScopeContains(scope, rel)) {
 			continue
 		}
 		_, _ = hash.Write([]byte(rel))
@@ -50,6 +68,36 @@ func workspaceTreeStateHash(workspace string) (string, error) {
 		}
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func normalizeWorkspaceMaterialScope(scope []string) ([]string, error) {
+	if scope == nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(scope))
+	for _, raw := range scope {
+		path := strings.Trim(strings.TrimSpace(filepath.ToSlash(raw)), "/")
+		if path == "" || path == "." || strings.HasPrefix(path, "../") || strings.Contains(path, "/../") || gateLedgerIgnoresPath(path) {
+			return nil, fmt.Errorf("invalid workspace material scope path %q", raw)
+		}
+		if !seen[path] {
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func workspaceMaterialScopeContains(scope []string, rel string) bool {
+	rel = filepath.ToSlash(rel)
+	for _, root := range scope {
+		if rel == root || strings.HasPrefix(rel, root+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // Gate identity follows the files a gate can consume, including untracked source

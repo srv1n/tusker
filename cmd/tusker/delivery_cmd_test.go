@@ -10,6 +10,7 @@ import (
 )
 
 func TestDeliveryPlanV2Scaffold(t *testing.T) {
+	t.Parallel()
 	vault := deliveryTestVault(t)
 	out := filepath.Join(v7RepoRoot(vault), ".tusker", "scratch", "plan.yaml")
 	if err := deliveryPlanCmd(Args{"vault": vault, "spec": "docs/specs/delivery.md", "out": out, "epic": "APP", "quiet": "true"}); err != nil {
@@ -76,6 +77,7 @@ func TestDeliveryPlanV2Scaffold(t *testing.T) {
 }
 
 func TestDeliveryPlanV2RejectsInvalidComplexity(t *testing.T) {
+	t.Parallel()
 	vault := deliveryTestVault(t)
 	plan := validDeliveryPlanV2()
 	plan.Tasks[0].Complexity = "turbo"
@@ -90,6 +92,7 @@ func TestDeliveryPlanV2RejectsInvalidComplexity(t *testing.T) {
 }
 
 func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
+	t.Parallel()
 	vault := deliveryTestVault(t)
 	planPath := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
 
@@ -242,18 +245,12 @@ func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 }
 
 func TestDeliveryImportIsRefInert(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		plan  func(t *testing.T, vault string) string
 		paths []string
 	}{
-		{
-			name: "v1",
-			plan: func(t *testing.T, vault string) string {
-				return writeDeliveryTestPlan(t, vault, validDeliveryPlan())
-			},
-			paths: []string{"APP-T-0001.md", "APP-T-0002.md"},
-		},
 		{
 			name: "v2",
 			plan: func(t *testing.T, vault string) string {
@@ -299,7 +296,20 @@ func TestDeliveryImportIsRefInert(t *testing.T) {
 	}
 }
 
+func TestDeliveryImportRejectsRetiredV1Schema(t *testing.T) {
+	vault := deliveryTestVault(t)
+	path := filepath.Join(v7RepoRoot(vault), ".tusker", "scratch", "retired-v1.yaml")
+	if err := writeText(path, "schema: tusker.delivery-plan/v1\n"); err != nil {
+		t.Fatal(err)
+	}
+	err := deliveryImportCmd(Args{"vault": vault, "plan": path, "dry-run": "true", "quiet": "true"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported delivery plan schema") {
+		t.Fatalf("retired V1 import was not refused: %v", err)
+	}
+}
+
 func TestDeliveryManifestRejectsInvalidMatrixWithoutWrites(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func(*deliveryPlan)
@@ -333,6 +343,7 @@ func TestDeliveryManifestRejectsInvalidMatrixWithoutWrites(t *testing.T) {
 }
 
 func TestDeliveryDAGFrontiersAndMapping(t *testing.T) {
+	t.Parallel()
 	plan := validDeliveryPlan()
 	plan.Tasks = append(plan.Tasks, deliveryPlanTask{
 		SourceKey: "docs", Title: "Document delivery", Outcome: "Durable truth is routed.",
@@ -350,6 +361,7 @@ func TestDeliveryDAGFrontiersAndMapping(t *testing.T) {
 }
 
 func TestDeliveryImportJSONReportsAllPreflightIssues(t *testing.T) {
+	t.Parallel()
 	vault := deliveryTestVault(t)
 	plan := validDeliveryPlan()
 	plan.Tasks[0].Acceptance[0].Outcome = "TBD"
@@ -374,6 +386,7 @@ func TestDeliveryImportJSONReportsAllPreflightIssues(t *testing.T) {
 }
 
 func TestDeliveryHelpSpecRefsAndSkillContract(t *testing.T) {
+	t.Parallel()
 	help := captureStdout(t, printV7Help)
 	for _, want := range []string{"delivery plan", "delivery import", "delivery review", "delivery start", "delivery doctor", "inert", "Tusker", "final"} {
 		assertContainsIndexTest(t, help, want)
@@ -389,6 +402,7 @@ func TestDeliveryHelpSpecRefsAndSkillContract(t *testing.T) {
 }
 
 func TestDeliverySpecRefsDecisionBacklinksAndRollback(t *testing.T) {
+	t.Parallel()
 	vault := deliveryTestVault(t)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Delivery authority", "decision": "Use imported delivery plans."}, newV7Decision)
 	plan := validDeliveryPlan()
@@ -428,31 +442,61 @@ func deliveryTestVault(t *testing.T) string {
 }
 
 func validDeliveryPlan() deliveryPlan {
-	return deliveryPlan{
-		Schema: deliveryPlanSchema, Scope: "app-delivery", Title: "Delivery", Epic: "APP", SpecRefs: []string{"docs/specs/delivery.md"}, Concurrency: 3, RunnerProfile: "focused",
-		Tasks: []deliveryPlanTask{
-			{
-				SourceKey: "schema", Title: "Define schema", Outcome: "A versioned delivery schema round-trips.",
-				Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "All required delivery fields survive round-trip."}},
-				Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliveryPlanSchemaRoundTrip -count=1"}},
-				Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "cmd/tusker/delivery_cmd.go", Summary: "Schema and validation implementation.", AcceptanceIDs: []string{"A1"}},
-				OwnedPaths:   []string{"cmd/tusker/delivery_cmd.go"}, KnowledgeNodes: []string{"project/CANON.md"}, Risk: "medium", Priority: "p1", Domains: []string{"project"},
-			},
-			{
-				SourceKey: "cli", Title: "Import graph", Outcome: "The CLI atomically imports the graph.",
-				Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Repeated imports preserve stable task IDs."}},
-				Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliveryImportAtomicDedupeAndRollback -count=1"}},
-				Dependencies: []deliveryDependency{{Task: "schema", Kind: "hard"}},
-				Artifact:     deliveryArtifactContract{Kind: "behavior_matrix", Path: "cmd/tusker/delivery_cmd_test.go", Summary: "Import behavior matrix.", AcceptanceIDs: []string{"A1"}},
-				OwnedPaths:   []string{"cmd/tusker/delivery_cmd_test.go"}, Risk: "medium", Priority: "p1", Domains: []string{"project"},
-			},
+	tasks := []deliveryPlanTask{
+		{
+			SourceKey: "schema", Title: "Define schema", Outcome: "A versioned delivery schema round-trips.",
+			Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "All required delivery fields survive round-trip."}},
+			Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliveryPlanSchemaRoundTrip -count=1"}},
+			Artifact:     deliveryArtifactContract{Kind: "diff_summary", Path: "cmd/tusker/delivery_cmd.go", Summary: "Schema and validation implementation.", AcceptanceIDs: []string{"A1"}},
+			OwnedPaths:   []string{"cmd/tusker/delivery_cmd.go"}, KnowledgeNodes: []string{"project/CANON.md"}, Risk: "medium", Priority: "p1", Domains: []string{"project"}, RequirementRefs: []string{"R1"},
+		},
+		{
+			SourceKey: "cli", Title: "Import graph", Outcome: "The CLI atomically imports the graph.",
+			Acceptance:   []deliveryAcceptance{{ID: "A1", Outcome: "Repeated imports preserve stable task IDs."}},
+			Verification: []deliveryVerification{{Covers: "A1", Check: "command: go test ./cmd/tusker -run TestDeliveryImportAtomicDedupeAndRollback -count=1"}},
+			Dependencies: []deliveryDependency{{Task: "schema", Kind: "hard"}},
+			Artifact:     deliveryArtifactContract{Kind: "behavior_matrix", Path: "cmd/tusker/delivery_cmd_test.go", Summary: "Import behavior matrix.", AcceptanceIDs: []string{"A1"}},
+			OwnedPaths:   []string{"cmd/tusker/delivery_cmd_test.go"}, Risk: "medium", Priority: "p1", Domains: []string{"project"}, RequirementRefs: []string{"R2"},
 		},
 	}
+	v2 := &deliveryPlanV2{
+		Schema: deliveryPlanV2Schema, Scope: "app-delivery", Title: "Delivery", Epic: "APP", SpecRefs: []string{"docs/specs/delivery.md"},
+		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
+		Summary: "Import a held delivery wave with requirements and traceable task contracts.", Requirements: []deliveryRequirement{{ID: "R1", Outcome: "The delivery schema is explicit and traceable."}, {ID: "R2", Outcome: "The CLI import graph remains atomic and source-keyed."}}, Tasks: tasks,
+	}
+	return deliveryPlan{Schema: v2.Schema, Scope: v2.Scope, Title: v2.Title, Epic: v2.Epic, SpecRefs: v2.SpecRefs, Concurrency: 3, RunnerProfile: "focused", Tasks: tasks, v2: v2}
 }
 
 func writeDeliveryTestPlan(t *testing.T, vault string, plan deliveryPlan) string {
 	t.Helper()
-	raw, err := yaml.Marshal(plan)
+	if plan.v2 == nil {
+		t.Fatal("delivery test plan must use the V2 contract")
+	}
+	for _, destination := range []string{filepath.Join(v7RepoRoot(vault), ".agents", "skills", "tusker"), filepath.Join(v7RepoRoot(vault), ".claude", "skills", "tusker")} {
+		if err := installSkillPayloadCopy(destination); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v2 := *plan.v2
+	v2.Schema, v2.Scope, v2.Title, v2.Epic, v2.SpecRefs = plan.Schema, plan.Scope, plan.Title, plan.Epic, plan.SpecRefs
+	v2.Concurrency, v2.RunnerProfile, v2.Tasks = plan.Concurrency, plan.RunnerProfile, plan.Tasks
+	coveredRequirements := map[string]bool{}
+	for _, task := range v2.Tasks {
+		for _, requirement := range task.RequirementRefs {
+			coveredRequirements[requirement] = true
+		}
+	}
+	requirements := v2.Requirements[:0]
+	for _, requirement := range v2.Requirements {
+		if coveredRequirements[requirement.ID] {
+			requirements = append(requirements, requirement)
+		}
+	}
+	v2.Requirements = requirements
+	if v2.ContextFingerprint == "" {
+		v2.ContextFingerprint = deliveryPlanV2ContextFingerprint(t, vault, v2)
+	}
+	raw, err := yaml.Marshal(v2)
 	if err != nil {
 		t.Fatal(err)
 	}

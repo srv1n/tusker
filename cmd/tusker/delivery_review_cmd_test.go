@@ -112,18 +112,6 @@ func TestDeliveryPlanReviewAcceptsCommittedTrackedPlan(t *testing.T) {
 	}
 }
 
-func TestDeliveryPlanReviewPreservesV1ReadOnlyCompatibility(t *testing.T) {
-	vault := deliveryTestVault(t)
-	path := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
-	review, err := buildDeliveryReviewWithInspector(vault, path, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !review.Ready || len(review.What) != 2 || review.Start.Authorization != "not imported" {
-		t.Fatalf("V1 review=%#v", review)
-	}
-}
-
 func TestDeliveryPlanReviewFailsClosedOnPlanDriftAndCoverageGap(t *testing.T) {
 	vault := deliveryTestVault(t)
 	plan := validDeliveryPlanV2()

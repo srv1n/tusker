@@ -746,11 +746,15 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 func waveFactoryIntakeContractBlockers(vaultPath string, wave Note) []string {
 	planned := factoryIntakeContractProvenance{Schema: stringField(wave.Data, "factory_intake_contract_schema"), Version: stringField(wave.Data, "factory_intake_contract_version"), Fingerprint: stringField(wave.Data, "factory_intake_contract_fingerprint")}
 	if planned.Schema == "" && planned.Version == "" && planned.Fingerprint == "" {
-		if stringField(wave.Data, "delivery_plan_schema") == deliveryPlanV2Schema || stringField(wave.Data, "context_fingerprint") != "" {
+		deliverySchema := stringField(wave.Data, "delivery_plan_schema")
+		if deliverySchema == deliveryPlanV2Schema || stringField(wave.Data, "context_fingerprint") != "" {
 			return []string{"factory-intake contract provenance is missing from a V2-derived wave; remedy: regenerate and re-import the V2 plan from tusker delivery context"}
 		}
-		// Manual and V1 waves retain compatibility because neither carries the
-		// V2 schema nor its authored planning-context fingerprint.
+		if deliverySchema != "" {
+			return []string{"unsupported delivery plan schema on wave: " + deliverySchema + "; remedy: re-import a tusker.delivery-plan/v2 plan"}
+		}
+		// Manual waves created through the current task API carry no delivery plan
+		// provenance and do not require factory-intake contract metadata.
 		return nil
 	}
 	if planned.Schema == "" || planned.Version == "" || planned.Fingerprint == "" {

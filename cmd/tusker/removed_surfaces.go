@@ -8,118 +8,7 @@ import (
 	"strings"
 )
 
-// removedSurfaces centralizes the hard fence around V5/V6/docs-map era code.
-// The implementations were deleted from the V7-only build; these functions keep
-// accidental command invocations explicit instead of silently reviving legacy
-// behavior through hidden compatibility aliases.
-
-func removedSurfaceError(name string) error {
-	return tuskerError(
-		errorInvalidArg,
-		fmt.Sprintf("%s was removed from the V7-only Tusker build", name),
-		withHint("use .tusker V7 work records, project SKILL.md, and knowledge/domains/**; migrate old vaults outside the default repo path before importing current work"),
-	)
-}
-
-func docsInitCmd(args Args) error           { return removedSurfaceError("docs init") }
-func docsModelCmd(args Args) error          { return removedSurfaceError("docs model") }
-func docsCatalogCmd(args Args) error        { return removedSurfaceError("docs catalog") }
-func docsFreshnessCmd(args Args) error      { return removedSurfaceError("docs freshness") }
-func docsImpactCheckCmd(args Args) error    { return removedSurfaceError("docs check") }
-func docsImpactApplyCmd(args Args) error    { return removedSurfaceError("docs apply") }
-func docsImpactNoopCmd(args Args) error     { return removedSurfaceError("docs noop") }
-func docsImpactWaiveCmd(args Args) error    { return removedSurfaceError("docs waive") }
-func docsExportCmd(args Args) error         { return removedSurfaceError("docs export") }
-func docsDevCmd(args Args) error            { return removedSurfaceError("docs dev") }
-func docsBuildCmd(args Args) error          { return removedSurfaceError("docs build") }
-func domainListCmd(args Args) error         { return domainV7ListCmd(args) }
-func domainShowCmd(args Args) error         { return domainV7ShowCmd(args) }
-func domainNewCmd(args Args) error          { return newV7Domain(args) }
-func domainCanonCmd(args Args) error        { return domainV7CanonCmd(args) }
-func domainGraphCmd(args Args) error        { return removedSurfaceError("domain graph") }
-func knowledgeMapCmd(args Args) error       { return removedSurfaceError("knowledge map") }
-func knowledgeListCmd(args Args) error      { return removedSurfaceError("knowledge list") }
-func knowledgeShowCmd(args Args) error      { return removedSurfaceError("knowledge show") }
-func knowledgeRouteCmd(args Args) error     { return removedSurfaceError("knowledge route") }
-func knowledgeFreshnessCmd(args Args) error { return removedSurfaceError("knowledge freshness") }
-func knowledgeCheckCmd(args Args) error     { return removedSurfaceError("knowledge check") }
-func knowledgeApplyCmd(args Args) error     { return removedSurfaceError("knowledge apply") }
-func knowledgeNoopCmd(args Args) error      { return removedSurfaceError("knowledge noop") }
-func knowledgeWaiveCmd(args Args) error     { return removedSurfaceError("knowledge waive") }
-func knowledgeNewCmd(args Args) error       { return knowledgeV7NewCmd(args) }
-func publishExportCmd(args Args) error      { return removedSurfaceError("publish export") }
-func publishBuildCmd(args Args) error       { return removedSurfaceError("publish build") }
-func publishDevCmd(args Args) error         { return removedSurfaceError("publish dev") }
-func publishLLMSCmd(args Args) error        { return removedSurfaceError("publish llms") }
-
-func newV5Epic(args Args) error              { return removedSurfaceError("new V5 epic") }
-func newV5Task(args Args, kind string) error { return removedSurfaceError("new V5 task") }
-func newV5Doc(args Args) error               { return removedSurfaceError("new V5 doc") }
-func nextV5Cmd(args Args) error              { return removedSurfaceError("legacy next") }
-func verifyCmd(args Args) error              { return removedSurfaceError("legacy verify") }
-func closeV5Cmd(args Args) error             { return removedSurfaceError("legacy close") }
-func bootstrapV6(args Args) error            { return removedSurfaceError("V6 init") }
-
-type v5MigrationReport struct {
-	OK              bool              `json:"ok"`
-	DryRun          bool              `json:"dryRun"`
-	Vault           string            `json:"vault"`
-	BackupPath      string            `json:"backupPath,omitempty"`
-	NotesScanned    int               `json:"notesScanned"`
-	NotesChanged    int               `json:"notesChanged"`
-	FilesMoved      int               `json:"filesMoved"`
-	DocsMapNodesAdd int               `json:"docsMapNodesAdded"`
-	IDMap           map[string]string `json:"idMap,omitempty"`
-	Moved           []v5MigrationMove `json:"moved,omitempty"`
-	Changed         []string          `json:"changed,omitempty"`
-	Warnings        []string          `json:"warnings,omitempty"`
-}
-
-type v5MigrationMove struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-
-type v6MigrationReport struct {
-	Vault         string            `json:"vault"`
-	DryRun        bool              `json:"dry_run"`
-	Compatibility string            `json:"compatibility"`
-	Moves         []v6MigrationMove `json:"moves"`
-	FieldRewrites []v6FieldRewrite  `json:"field_rewrites"`
-	Warnings      []string          `json:"warnings,omitempty"`
-}
-
-type v6MigrationMove struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Kind string `json:"kind"`
-}
-
-type v6FieldRewrite struct {
-	Path  string `json:"path"`
-	From  string `json:"from"`
-	To    string `json:"to"`
-	Count int    `json:"count,omitempty"`
-}
-
-func migrateLegacyVaultToV5(args Args) (*v5MigrationReport, error) {
-	return nil, removedSurfaceError("migrate-v5")
-}
-func migrateV5VaultToV6(args Args) (*v6MigrationReport, error) {
-	return nil, removedSurfaceError("migrate-v6")
-}
-
-func printV6MigrationReport(report *v6MigrationReport, args Args) {
-	if args.Bool("json") {
-		emitJSON(report)
-		return
-	}
-	if report == nil {
-		fmt.Println("V6 migration was removed from the V7-only build.")
-		return
-	}
-	fmt.Printf("V6 migration report for %s\n", report.Vault)
-}
+const docsFreshnessBegin = "<!-- tusker:docs-freshness:begin -->"
 
 func publishSkillCmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
@@ -247,97 +136,6 @@ func copyRegularFile(src, dst string) error {
 	return closeErr
 }
 
-// Minimal V5/V6/docs-map shapes retained only so the remaining shared index and
-// validation code can reject legacy records cleanly. They no longer load config,
-// validate docs publication state, or add graph routes.
-
-const docsMapRelative = "_config/docs-map.yaml"
-
-type DocsMap struct {
-	Schema  string                   `yaml:"schema"`
-	Domains map[string]DocsMapDomain `yaml:"domains"`
-	Nodes   []DocsMapNode            `yaml:"nodes"`
-}
-
-type DocsMapDomain struct {
-	Label       string `yaml:"label"`
-	Description string `yaml:"description"`
-	OwnerEpic   string `yaml:"owner_epic"`
-}
-
-type DocsMapStaleWhen struct {
-	Paths []string `yaml:"paths"`
-}
-
-type DocsMapNode struct {
-	ID                 string           `yaml:"id"`
-	Title              string           `yaml:"title"`
-	Page               string           `yaml:"page"`
-	Domain             string           `yaml:"domain"`
-	Mode               string           `yaml:"mode"`
-	Audience           string           `yaml:"audience"`
-	AgentLayer         string           `yaml:"agent_layer"`
-	Kind               string           `yaml:"kind"`
-	Role               string           `yaml:"role"`
-	PublishLane        string           `yaml:"publish_lane"`
-	PublishPath        string           `yaml:"publish_path"`
-	PublishDescription string           `yaml:"publish_description"`
-	OwnerEpic          string           `yaml:"owner_epic"`
-	SourceOfTruth      []string         `yaml:"source_of_truth"`
-	StaleWhen          DocsMapStaleWhen `yaml:"stale_when"`
-	Evals              []string         `yaml:"evals"`
-}
-
-func loadDocsMap(vaultPath string) (*DocsMap, error) { return nil, nil }
-func validateDocsMapConfig(m *DocsMap) []Issue       { return nil }
-func defaultDocsMapYAML(date string) string          { return "" }
-
-func (m *DocsMap) Node(id string) (DocsMapNode, bool) { return DocsMapNode{}, false }
-func (m *DocsMap) HasDomain(domain string) bool       { return false }
-func (n DocsMapNode) SourcePath() string {
-	if strings.TrimSpace(n.Page) != "" {
-		return n.Page
-	}
-	return n.ID
-}
-func (n DocsMapNode) EffectiveMode() string       { return n.Mode }
-func (n DocsMapNode) EffectiveAgentLayer() string { return n.AgentLayer }
-
-type v6FreshnessRecord struct {
-	Node      string `json:"node"`
-	Freshness string `json:"freshness"`
-}
-
-type v6KnowledgeDomain struct {
-	ID string `json:"id"`
-}
-type v6KnowledgeNode struct {
-	Node    string   `json:"node"`
-	Aliases []string `json:"aliases"`
-}
-
-type v6KnowledgeIndex struct {
-	Domains        []v6KnowledgeDomain `json:"domains"`
-	KnowledgeNodes []v6KnowledgeNode   `json:"knowledge_nodes"`
-	Freshness      []v6FreshnessRecord `json:"freshness"`
-}
-
-var v6FrontmatterOrder = map[string][]string{}
-
-func hasV6Vault(vaultPath string) bool                                            { return false }
-func v6IndexVault(vaultPath string) (v6KnowledgeIndex, error)                     { return v6KnowledgeIndex{}, nil }
-func addV6ValidationLinkTarget(targets map[string]bool, value string)             {}
-func validateV6Vault(vaultPath string, index v6KnowledgeIndex) ([]Issue, []Issue) { return nil, nil }
-func writeV6GeneratedIndexes(vaultPath string, quiet bool) error                  { return nil }
-func v6TaskProofIssues(data map[string]any, body string) []string                 { return nil }
-func v6FreshnessByNode(index v6KnowledgeIndex) map[string]v6FreshnessRecord {
-	return map[string]v6FreshnessRecord{}
-}
-func knowledgeImpactFreshnessIssues(data map[string]any, freshness map[string]v6FreshnessRecord) []string {
-	return nil
-}
-func validateDocsPublicationState(vaultPath string, notes []Note) ([]Issue, []Issue) { return nil, nil }
-
 func statusCmd(args Args) error {
 	id := firstNonEmpty(args.String("id"), args.String("_pos0"))
 	status := firstNonEmpty(args.String("status"), args.String("_pos1"))
@@ -364,23 +162,8 @@ func evidenceCmd(args Args) error {
 	case "prune":
 		return evidenceV7PruneCmd(args)
 	default:
-		return removedSurfaceError("legacy evidence")
+		return tuskerError(errorMissingArg, "evidence requires add, promote, or prune")
 	}
-}
-
-func verifyV5Cmd(args Args) error { return removedSurfaceError("legacy verify") }
-
-func isV5Schema(data map[string]any) bool { return false }
-func isV6Schema(data map[string]any) bool { return false }
-func effectiveNoteKind(data map[string]any) string {
-	return firstNonEmpty(stringField(data, "kind"), stringField(data, "type"))
-}
-
-func validateV5Note(note Note, ctx validationContext, where string) ([]Issue, []Issue) {
-	return nil, nil
-}
-func validateV6Note(note Note, ctx validationContext, where string) ([]Issue, []Issue) {
-	return nil, nil
 }
 
 func assertEvidenceGate(data map[string]any, body, id string) error {
@@ -398,18 +181,6 @@ func assertEvidenceGate(data map[string]any, body, id string) error {
 	return nil
 }
 
-func docsImpactResolved(data map[string]any) bool      { return true }
-func knowledgeImpactResolved(data map[string]any) bool { return true }
-
-func splitMarkdownTableRow(row string) []string {
-	row = strings.Trim(row, "|")
-	parts := strings.Split(row, "|")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return parts
-}
-
 func firstNonEmptyList(values ...[]string) []string {
 	for _, value := range values {
 		if len(value) > 0 {
@@ -417,31 +188,6 @@ func firstNonEmptyList(values ...[]string) []string {
 		}
 	}
 	return nil
-}
-
-func docsNormalizePath(value string) string {
-	return filepath.ToSlash(strings.TrimSpace(value))
-}
-
-func docsTitleizeSegment(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	value = strings.ReplaceAll(value, "-", " ")
-	value = strings.ReplaceAll(value, "_", " ")
-	fields := strings.Fields(value)
-	for i, field := range fields {
-		if field == strings.ToUpper(field) {
-			continue
-		}
-		fields[i] = capitalize(strings.ToLower(field))
-	}
-	return strings.Join(fields, " ")
-}
-
-func defaultV5DashboardNote(date string) string {
-	return v7DashboardLandingNote()
 }
 
 func validateKnowledgeNodePath(value string) string {

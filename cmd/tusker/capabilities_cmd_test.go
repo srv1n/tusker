@@ -11,6 +11,7 @@ import (
 )
 
 func TestInstalledCapabilityManifest(t *testing.T) {
+	t.Parallel()
 	executable := writeTempExecutable(t, "tusker-capabilities-test-binary")
 	info := &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3-test"}}
 	firstManifest, err := buildCapabilitiesManifest(info, executable)
@@ -140,6 +141,7 @@ func capabilityCommandNamed(commands []capabilityCommand, name string) (capabili
 }
 
 func TestCapabilityCompatibilityFailsClosed(t *testing.T) {
+	t.Parallel()
 	previousContract := loadEmbeddedSkillCompatibility
 	previousPayload := loadEmbeddedSkillPayloadFingerprint
 	t.Cleanup(func() {

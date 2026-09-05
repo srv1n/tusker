@@ -899,7 +899,7 @@ func (d *Daemon) completePassingReview(project RegisteredProject, result ReviewR
 		if _, err := completionPreCASAuthorizedWave(project.VaultRoot, transaction); err != nil {
 			return d.failCompletion(project, result, transaction, err.Error())
 		}
-		if reason := completionReviewDrift(project.VaultRoot, note, result); reason != "" {
+		if reason := completionReviewDrift(d.store, project.VaultRoot, note, result); reason != "" {
 			return d.failCompletion(project, result, transaction, reason)
 		}
 		if err := completionPreCASCloseAuthority(project.VaultRoot, result, transaction); err != nil {
@@ -1266,7 +1266,7 @@ func completionCanonicalTaskMatches(task Note, result ReviewResult, transaction 
 		strings.Contains(task.Body, "[tusker-review-result:"+result.ResultRevision+"]")
 }
 
-func completionReviewDrift(vaultPath string, note Note, result ReviewResult) string {
+func completionReviewDrift(store *RuntimeStore, vaultPath string, note Note, result ReviewResult) string {
 	if stringField(note.Data, "status") != "review" {
 		return "stale review state: task is " + stringField(note.Data, "status")
 	}
@@ -1288,6 +1288,19 @@ func completionReviewDrift(vaultPath string, note Note, result ReviewResult) str
 	}
 	if gates != result.GateFingerprint {
 		return "gate fingerprint drift"
+	}
+	if result.MaterialFingerprint != "" {
+		_, expectedMaterial, bindingErr := reviewImplementationParent(store, vaultPath, result.ProjectID, result.TaskID, result.WorkRevision, result.ImplementationSHA, note)
+		if bindingErr != nil {
+			return "current implementation binding unavailable: " + bindingErr.Error()
+		}
+		material, materialErr := reviewAttemptMaterialFingerprint(store, result.ProjectID, result.TaskID, result.AttemptID, result.WorkRevision, result.ImplementationSHA)
+		if materialErr != nil {
+			return "implementation material unavailable: " + materialErr.Error()
+		}
+		if material != result.MaterialFingerprint || material != expectedMaterial {
+			return "implementation material fingerprint drift"
+		}
 	}
 	return ""
 }
