@@ -13,7 +13,7 @@ func TestDeliveryPlanV2Scaffold(t *testing.T) {
 	t.Parallel()
 	vault := deliveryTestVault(t)
 	out := filepath.Join(v7RepoRoot(vault), ".tusker", "scratch", "plan.yaml")
-	if err := deliveryPlanCmd(Args{"vault": vault, "spec": "docs/specs/delivery.md", "out": out, "epic": "APP", "quiet": "true"}); err != nil {
+	if err := deliveryPlanCmd(Args{"vault": vault, "spec": ".tusker/specs/delivery.md", "out": out, "epic": "APP", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(out)
@@ -58,7 +58,7 @@ func TestDeliveryPlanV2Scaffold(t *testing.T) {
 	}
 
 	withoutEpic := filepath.Join(v7RepoRoot(vault), ".tusker", "scratch", "plan-without-epic.yaml")
-	if err := deliveryPlanCmd(Args{"vault": vault, "spec": "docs/specs/delivery.md", "out": withoutEpic, "quiet": "true"}); err != nil {
+	if err := deliveryPlanCmd(Args{"vault": vault, "spec": ".tusker/specs/delivery.md", "out": withoutEpic, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err = os.ReadFile(withoutEpic)
@@ -93,7 +93,7 @@ func TestDeliveryPlanV2RejectsInvalidComplexity(t *testing.T) {
 
 func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 	t.Parallel()
-	vault := deliveryTestVault(t)
+	vault := deliveryContextTestVault(t)
 	planPath := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
 
 	dryOutput := captureStdout(t, func() {
@@ -121,7 +121,7 @@ func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 	assertEqual(t, "held", stringField(first, "readiness"), "held task readiness")
 	assertEqual(t, "W-0001", stringField(first, "wave"), "wave back pointer")
 	assertEqual(t, []string{"A1"}, normalizeList(mapField(first, "artifact_contract")["acceptance_ids"]), "artifact acceptance round trip")
-	specBody := mustReadIndexTest(t, filepath.Join(v7RepoRoot(vault), "docs", "specs", "delivery.md"))
+	specBody := mustReadIndexTest(t, filepath.Join(v7RepoRoot(vault), ".tusker", "specs", "delivery.md"))
 	for _, want := range []string{"tusker:delivery-import:", "[[APP-T-0001]]", "[[APP-T-0002]]", "[[W-0001]]"} {
 		assertContainsIndexTest(t, specBody, want)
 	}
@@ -170,23 +170,23 @@ func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, []string{"APP-T-0001"}, normalizeList(wave["members"]), "changed plan wave members")
-	specBody = mustReadIndexTest(t, filepath.Join(v7RepoRoot(vault), "docs", "specs", "delivery.md"))
+	specBody = mustReadIndexTest(t, filepath.Join(v7RepoRoot(vault), ".tusker", "specs", "delivery.md"))
 	if strings.Contains(specBody, "[[APP-T-0002]]") {
 		t.Fatal("changed plan leaked removed source mapping into spec back-links")
 	}
 
-	secondary := filepath.Join(v7RepoRoot(vault), "docs", "specs", "secondary.md")
+	secondary := filepath.Join(v7RepoRoot(vault), ".tusker", "specs", "secondary.md")
 	if err := writeText(secondary, "# Secondary\n\n## Work streams\n"); err != nil {
 		t.Fatal(err)
 	}
 	refsChanged := removed
-	refsChanged.SpecRefs = []string{"docs/specs/delivery.md", "docs/specs/secondary.md"}
+	refsChanged.SpecRefs = []string{".tusker/specs/delivery.md", ".tusker/specs/secondary.md"}
 	planPath = writeDeliveryTestPlan(t, vault, refsChanged)
 	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "Morning", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	assertContainsIndexTest(t, mustReadIndexTest(t, secondary), "[[W-0001]]")
-	refsChanged.SpecRefs = []string{"docs/specs/delivery.md"}
+	refsChanged.SpecRefs = []string{".tusker/specs/delivery.md"}
 	planPath = writeDeliveryTestPlan(t, vault, refsChanged)
 	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "Morning", "quiet": "true"}); err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 		t.Fatal("removed governing ref retained stale delivery backlinks")
 	}
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Added governing decision", "decision": "Keep the imported wave identity."}, newV7Decision)
-	refsChanged.SpecRefs = []string{"docs/specs/delivery.md", "APP-D-0001"}
+	refsChanged.SpecRefs = []string{".tusker/specs/delivery.md", "APP-D-0001"}
 	planPath = writeDeliveryTestPlan(t, vault, refsChanged)
 	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "Morning", "quiet": "true"}); err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 	assertEqual(t, 1, len(waves), "governing-ref change wave count")
 	decisionPath := filepath.Join(vault, "work", "decisions", "APP-D-0001.md")
 	assertContainsIndexTest(t, mustReadIndexTest(t, decisionPath), "[[W-0001]]")
-	refsChanged.SpecRefs = []string{"docs/specs/delivery.md"}
+	refsChanged.SpecRefs = []string{".tusker/specs/delivery.md"}
 	planPath = writeDeliveryTestPlan(t, vault, refsChanged)
 	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "Morning", "quiet": "true"}); err != nil {
 		t.Fatal(err)
@@ -329,6 +329,8 @@ func TestDeliveryManifestRejectsInvalidMatrixWithoutWrites(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			vault := deliveryTestVault(t)
 			plan := validDeliveryPlan()
+			// Resolve a real context before corrupting the contract under test.
+			plan.v2.ContextFingerprint = deliveryPlanV2ContextFingerprint(t, vault, *plan.v2)
 			tc.mutate(&plan)
 			path := writeDeliveryTestPlan(t, vault, plan)
 			err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"})
@@ -403,10 +405,10 @@ func TestDeliveryHelpSpecRefsAndSkillContract(t *testing.T) {
 
 func TestDeliverySpecRefsDecisionBacklinksAndRollback(t *testing.T) {
 	t.Parallel()
-	vault := deliveryTestVault(t)
+	vault := deliveryContextTestVault(t)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Delivery authority", "decision": "Use imported delivery plans."}, newV7Decision)
 	plan := validDeliveryPlan()
-	plan.SpecRefs = []string{"APP-D-0001"}
+	plan.SpecRefs = []string{".tusker/specs/delivery.md", "APP-D-0001"}
 	path := writeDeliveryTestPlan(t, vault, plan)
 	decisionPath := filepath.Join(vault, "work", "decisions", "APP-D-0001.md")
 	before := mustReadIndexTest(t, decisionPath)
@@ -435,7 +437,7 @@ func deliveryTestVault(t *testing.T) string {
 	vault := filepath.Join(repo, ".tusker")
 	mustWave(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustWave(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "Delivery", "summary": "Delivery tests."}, newV7Epic)
-	if err := writeText(filepath.Join(repo, "docs", "specs", "delivery.md"), "# Delivery\n\n## Work streams\n\n- Existing context.\n"); err != nil {
+	if err := writeText(filepath.Join(repo, ".tusker", "specs", "delivery.md"), "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n\n- Existing context.\n"); err != nil {
 		t.Fatal(err)
 	}
 	return vault
@@ -460,11 +462,11 @@ func validDeliveryPlan() deliveryPlan {
 		},
 	}
 	v2 := &deliveryPlanV2{
-		Schema: deliveryPlanV2Schema, Scope: "app-delivery", Title: "Delivery", Epic: "APP", SpecRefs: []string{"docs/specs/delivery.md"},
+		Schema: deliveryPlanV2Schema, Scope: "app-delivery", Title: "Delivery", Epic: "APP", SpecRefs: []string{".tusker/specs/delivery.md"},
 		FactoryIntakeContractSchema: factoryIntakeContractSchema, FactoryIntakeContractVersion: "1.1.0", FactoryIntakeContractFingerprint: "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
 		Summary: "Import a held delivery wave with requirements and traceable task contracts.", Requirements: []deliveryRequirement{{ID: "R1", Outcome: "The delivery schema is explicit and traceable."}, {ID: "R2", Outcome: "The CLI import graph remains atomic and source-keyed."}}, Tasks: tasks,
 	}
-	return deliveryPlan{Schema: v2.Schema, Scope: v2.Scope, Title: v2.Title, Epic: v2.Epic, SpecRefs: v2.SpecRefs, Concurrency: 3, RunnerProfile: "focused", Tasks: tasks, v2: v2}
+	return deliveryPlan{Schema: v2.Schema, Scope: v2.Scope, Title: v2.Title, Epic: v2.Epic, SpecRefs: v2.SpecRefs, Concurrency: 3, Tasks: tasks, v2: v2}
 }
 
 func writeDeliveryTestPlan(t *testing.T, vault string, plan deliveryPlan) string {
@@ -510,7 +512,7 @@ func writeDeliveryTestPlan(t *testing.T, vault string, plan deliveryPlan) string
 func snapshotDeliveryRecords(t *testing.T, vault string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	for _, pattern := range []string{filepath.Join(vault, "work", "tasks", "*.md"), filepath.Join(vault, "work", "waves", "*.md"), filepath.Join(v7RepoRoot(vault), "docs", "specs", "*.md")} {
+	for _, pattern := range []string{filepath.Join(vault, "work", "tasks", "*.md"), filepath.Join(vault, "work", "waves", "*.md"), filepath.Join(v7RepoRoot(vault), ".tusker", "specs", "*.md")} {
 		paths, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)

@@ -645,8 +645,8 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			if report.V2Index != nil {
 				idx = *report.V2Index
 			}
-			if deliveryWaveContractFrozen(existingWave, idx) {
-				return tuskerError(errorInvalidTransition, "existing delivery scope is frozen to a different reviewed plan; use a new plan scope/wave or perform an explicit controlled rebase")
+			if err := validateDeliveryPlanAmendment(vaultPath, existingWave, report.PlanFingerprint, idx); err != nil {
+				return err
 			}
 			// A held/disarmed wave has only selected the old base. An ordinary
 			// amendment is reviewed against the current base instead.

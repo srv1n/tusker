@@ -45,11 +45,22 @@ func v7VerificationCommandTimeoutFor(args Args) time.Duration {
 
 // executeV7CommandVerificationRows is the shared gate seam used by accept,
 // direct close, and the authoritative review/completion path. It reloads the
-// task under the proof lock, executes every command row from the repository
-// root, records the observed result and bounded receipt in the same table, and
-// returns failures for the caller to refuse before any lifecycle transition.
+// task under the proof lock, executes pending commands from the canonical
+// repository root, records bounded receipts, and returns failures before any
+// lifecycle transition. Reviews supply a separately bound workspace below.
 // Manual-proof rows are deliberately left byte-for-byte untouched.
 func executeV7CommandVerificationRows(vaultPath string, task Note, args Args, actor string, trustedWorker bool) (Note, v7ProofReport, []v7VerificationExecutionFailure, error) {
+	return executeV7CommandVerificationRowsInWorkspace(vaultPath, task, args, actor, trustedWorker, nil)
+}
+
+// A workspace target is supplied only by the trusted review coordinator after
+// resolving the durable execute parent. It is never selected by a CLI flag.
+type v7VerificationWorkspace struct {
+	Path   string
+	Verify func() error
+}
+
+func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, args Args, actor string, trustedWorker bool, workspace *v7VerificationWorkspace) (Note, v7ProofReport, []v7VerificationExecutionFailure, error) {
 	taskID := stringField(task.Data, "id")
 	if taskID == "" {
 		return task, v7ProofReport{}, nil, tuskerError(errorInvalidArg, "verification execution requires a task id")
@@ -107,7 +118,17 @@ func executeV7CommandVerificationRows(vaultPath string, task Note, args Args, ac
 				return tuskerError(errorInvalidTransition, taskID+": verification manifest changed after confirmation", withHint("review the exact pending command rows and confirm "+manifest), withContext(map[string]any{"confirmed": confirmed, "verification_manifest": manifest}))
 			}
 		}
-		repoRoot, err := canonicalV7VerificationRepoRoot(vaultPath)
+		root := v7RepoRoot(vaultPath)
+		if workspace != nil {
+			if workspace.Verify == nil {
+				return tuskerError(errorInvalidTransition, "verification workspace lacks an implementation binding")
+			}
+			if err := workspace.Verify(); err != nil {
+				return err
+			}
+			root = workspace.Path
+		}
+		repoRoot, err := canonicalV7VerificationWorkspaceRoot(root)
 		if err != nil {
 			return err
 		}
@@ -144,6 +165,13 @@ func executeV7CommandVerificationRows(vaultPath string, task Note, args Args, ac
 			fresh = current
 			report = computeV7ProofReport(vaultPath, current, idx)
 			return nil
+		}
+		if workspace != nil {
+			// A command may change the implementation. Such a run must not stamp
+			// passing proof onto the material snapshot reviewed before execution.
+			if err := workspace.Verify(); err != nil {
+				return err
+			}
 		}
 		body = replaceSection(body, "## Verification", renderV7VerificationTable(rows))
 		idx, err := loadV7Index(vaultPath)
@@ -277,8 +305,8 @@ func v7VerificationManifest(data map[string]any, rows []v7VerificationRow) (stri
 	return "sha256:" + hex.EncodeToString(sum[:]), pending
 }
 
-func canonicalV7VerificationRepoRoot(vaultPath string) (string, error) {
-	repoRoot, err := filepath.Abs(filepath.Clean(v7RepoRoot(vaultPath)))
+func canonicalV7VerificationWorkspaceRoot(root string) (string, error) {
+	repoRoot, err := filepath.Abs(filepath.Clean(root))
 	if err != nil {
 		return "", err
 	}

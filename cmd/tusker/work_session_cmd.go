@@ -30,6 +30,7 @@ type workSessionPacket struct {
 	ImplementationAttempt string            `json:"implementation_attempt_id,omitempty"`
 	ImplementationActor   string            `json:"implementation_actor,omitempty"`
 	MaterialFingerprint   string            `json:"material_fingerprint,omitempty"`
+	VerificationManifest  string            `json:"verification_manifest,omitempty"`
 }
 
 func workSessionCmd(args Args, action string) error {
@@ -128,6 +129,9 @@ func workSessionStartCmd(args Args) error {
 		packet.ImplementationAttempt = args.String("implementation-attempt")
 		packet.ImplementationActor = args.String("implementation-actor")
 		packet.MaterialFingerprint = args.String("review-material-fingerprint")
+		if manifest, pending := v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body)); len(pending) > 0 {
+			packet.VerificationManifest = manifest
+		}
 		packet.Next = workSessionReviewNext(*result.Run, note, packet)
 	}
 	workSessionNotify(ctx.Project.VaultRoot, result.Run)
@@ -372,7 +376,11 @@ func verifiedImplementationWorkspaceMaterial(parent RunAttempt) (string, error) 
 }
 
 func workSessionReviewNext(run RunStatus, note Note, packet workSessionPacket) string {
-	return "tusker review submit " + run.ItemID + " --attempt " + run.ActiveAttemptID + " --by " + run.LeaseOwner + " --task-rev " + stringField(note.Data, "state_rev") + " --source-sha " + firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) + " --work-rev " + strconv.Itoa(run.WorkRevision) + " --proof-fingerprint " + packet.ProofFingerprint + " --gate-fingerprint " + packet.GateFingerprint + " --material-fingerprint " + packet.MaterialFingerprint + " --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<review summary>\""
+	next := "tusker review submit " + run.ItemID + " --attempt " + run.ActiveAttemptID + " --by " + run.LeaseOwner + " --task-rev " + stringField(note.Data, "state_rev") + " --source-sha " + firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) + " --work-rev " + strconv.Itoa(run.WorkRevision) + " --proof-fingerprint " + packet.ProofFingerprint + " --gate-fingerprint " + packet.GateFingerprint + " --material-fingerprint " + packet.MaterialFingerprint
+	if packet.VerificationManifest != "" {
+		next += " --confirm-verification " + packet.VerificationManifest
+	}
+	return next + " --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<review summary>\""
 }
 
 func workSessionStartBlocker(blocker ReadinessBlocker) error {

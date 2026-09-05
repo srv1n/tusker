@@ -4435,7 +4435,8 @@ func incompatibleResumeSessionReason(project RegisteredProject, run RunStatus, s
 	if AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) == AttemptOutcomeBudgetExceeded || strings.Contains(strings.ToLower(run.LastError), "budget") {
 		return "prior attempt was budget-killed"
 	}
-	if session.ProjectID != project.ProjectID {
+	if strings.TrimSpace(project.ProjectID) == "" || strings.TrimSpace(run.ProjectID) == "" ||
+		session.ProjectID != project.ProjectID || run.ProjectID != project.ProjectID {
 		return "stored session project_id does not match"
 	}
 	if session.RecordID != run.RecordID {

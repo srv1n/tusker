@@ -52,7 +52,7 @@ func makeV7TaskDispatchableForTest(t *testing.T, vault, taskID string) {
 		t.Fatal(err)
 	}
 	if !fileExists(specPath) {
-		if err := writeText(specPath, "# Test fixture governing spec\n"); err != nil {
+		if err := writeText(specPath, "---\nsubject: test-fixture\npart_of: overview\n---\n# Test fixture governing spec\n"); err != nil {
 			t.Fatal(err)
 		}
 	}

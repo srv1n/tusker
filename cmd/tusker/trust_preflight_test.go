@@ -75,8 +75,8 @@ func TestTrustPreflight(t *testing.T) {
 		if len(errs) != 0 {
 			t.Fatalf("dependency wait corrupted contract validity: %#v", errs)
 		}
-		if _, ok := pickV7Next(vault, "APP", ""); ok {
-			t.Fatal("dependency-waiting task became pickable")
+		if picked, ok := pickV7Next(vault, "APP", ""); !ok || stringField(picked.Data, "id") != "APP-T-0001" {
+			t.Fatalf("must pick the runnable upstream, not its blocked dependent: picked=%q ok=%v", stringField(picked.Data, "id"), ok)
 		}
 	})
 

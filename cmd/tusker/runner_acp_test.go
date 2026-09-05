@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -261,11 +260,7 @@ func TestACPReapedChildHelper(t *testing.T) {
 }
 
 func TestRunnerACPCancelledStartReapsAfterPublishingStatus(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "runner_wrapper.go"))
+	raw, err := os.ReadFile(filepath.Join(repoRootForFreshCloneTest(t), "cmd", "tusker", "runner_wrapper.go"))
 	if err != nil {
 		t.Fatal(err)
 	}

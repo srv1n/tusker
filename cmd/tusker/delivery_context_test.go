@@ -172,10 +172,12 @@ func TestDeliveryPlanningContext(t *testing.T) {
 	t.Run("bounded deterministic and read only", func(t *testing.T) {
 		vault := deliveryContextTestVault(t)
 		repo := v7RepoRoot(vault)
-		specRef := "docs/specs/planning-context.md"
+		specRef := ".tusker/specs/planning-context.md"
 		specPath := filepath.Join(repo, filepath.FromSlash(specRef))
 		specText := `---
 title: Planning context
+subject: planning-context
+part_of: overview
 domains:
   - project
 decision_refs:
@@ -189,7 +191,7 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		if err := writeText(specPath, specText); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeText(filepath.Join(repo, "docs", "specs", "unrelated.md"), "# Unrelated\n"); err != nil {
+		if err := writeText(filepath.Join(repo, ".tusker", "specs", "unrelated.md"), "# Unrelated\n"); err != nil {
 			t.Fatal(err)
 		}
 		if err := newV7Decision(Args{
@@ -213,7 +215,7 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 		}, "")
 		if err := newV7Task(Args{
 			"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0002", "title": "UNRELATED-TITLE-MARKER",
-			"risk": "low", "priority": "p2", "domains": "project", "spec-refs": "docs/specs/unrelated.md", "v7": "true",
+			"risk": "low", "priority": "p2", "domains": "project", "spec-refs": ".tusker/specs/unrelated.md", "v7": "true",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -461,9 +463,11 @@ Deliver a bounded repository-fact packet. [[APP-D-0001]]
 	t.Run("typed unknowns and bounded paths", func(t *testing.T) {
 		vault := deliveryTestVault(t)
 		repo := v7RepoRoot(vault)
-		specRef := "docs/specs/missing-context.md"
+		specRef := ".tusker/specs/missing-context.md"
 		if err := writeText(filepath.Join(repo, filepath.FromSlash(specRef)), `---
 title: Missing context
+subject: missing-context
+part_of: overview
 domains:
   - missing
 ---
@@ -500,10 +504,10 @@ domains:
 		if err := writeText(outside, "# Outside\n\nOUTSIDE-SECRET-MARKER\n"); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(outside, filepath.Join(repo, "docs", "specs", "escape.md")); err != nil {
+		if err := os.Symlink(outside, filepath.Join(repo, ".tusker", "specs", "escape.md")); err != nil {
 			t.Fatal(err)
 		}
-		for _, escaped := range []string{"../outside-secret.md", ".env", "docs/specs/escape.md"} {
+		for _, escaped := range []string{"../outside-secret.md", ".env", ".tusker/specs/escape.md"} {
 			if _, err := buildDeliveryPlanningContext(vault, escaped); err == nil {
 				t.Fatalf("unsafe spec ref was accepted: %s", escaped)
 			}

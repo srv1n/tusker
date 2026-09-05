@@ -1,63 +1,41 @@
 # Existing Repository Onboarding
 
-Use this guide when a repository does not yet have a current `.tusker/`
-tracker.
+Inspect source, build files, tests, user instructions, and Git status. Identify
+entry points, verification commands, supported platforms, local services, and
+unresolved facts. Old plans are not evidence of current behavior.
 
 ## Storage Boundary
 
-`.tusker/` holds tracker state and project canon. Product source stays outside
-that directory; record durable facts in canon and delivery work in tasks.
+`.tusker/` holds tracker state and canon; product source stays outside it.
+Never reset an existing tracker without explicit authorization and a verified
+export. `tusker purge --repo . --only-tusker-state` only previews deletion
+until `--yes`; inspect every proposed path.
 
-## 1. Inspect the repository
+## Initialize without global side effects
 
-Read the source, build files, tests, and user instructions. Check Git status.
-Do not infer product behavior from old plans or tickets.
-
-Record:
-
-- the product entry points;
-- the build and test commands;
-- the main source areas;
-- machine-local services and data;
-- supported platforms; and
-- facts that still need a person.
-
-## 2. Preview init
-
-Run:
+Before initialization, choose a writable project-local runtime in sandboxed
+sessions; never redirect `HOME`:
 
 ```sh
+export TUSKER_STATE_ROOT="$PWD/.tusker/runtime-state"
+install -d -m 700 "$TUSKER_STATE_ROOT"
 tusker init --help
-tusker purge --repo . --only-tusker-state
 ```
 
-The purge command is a preview until `--yes` is present. Check that every path
-belongs to the target repository.
-
-## 3. Create the tracker
-
-For a new tracker, run:
+For a new tracker only:
 
 ```sh
 tusker init --vault ./.tusker --yes --fresh --with-pointers --with-contract --no-mount
 ```
 
-Do not register or enable automation unless the user asks for it.
+Do not register or enable automation unless requested. Keep the same state
+root throughout this project session.
 
-## Runtime and workspace setup
+## Workspace and runner
 
-This is an operator setup step, not agent permission. If the default global
-runtime registry is sandbox-protected, choose a writable per-project state root
-before `init` and keep using it for this project shell:
-
-```sh
-export TUSKER_STATE_ROOT="$PWD/.tusker/runtime-state"
-install -d -m 700 "$TUSKER_STATE_ROOT"
-```
-
-For a direct session in a read-only Git worktree, do not retry writes. The
-operator may select the existing shared policy only after `git status --short`
-is clean outside `.tusker/` and the task has narrow `owned_paths`:
+Read-only Git metadata is not permission to widen sandbox access. Request a
+writable workspace, or have the operator select shared mode only when
+`git status --short` is clean outside `.tusker/` and `owned_paths` are narrow:
 
 ```yaml
 # .tusker/config.local.yaml (operator-owned)
@@ -70,11 +48,11 @@ automation:
 tusker config resolve automation.workspace.strategy --vault ./.tusker --json
 ```
 
-If source, docs, or skills are dirty, commit or otherwise obtain a clean
-permitted Git workspace; an agent must request that provision rather than widen
-its write permission. Fresh setup uses `codex_exec`; inspect it with
-`tusker config resolve automation.profiles --vault ./.tusker --json`. ACP is
-an operator choice after `tusker acp setup`, never an agent fallback.
+Commit or ignore fixture artifacts before checking cleanliness. Fresh setup uses `codex_exec`;
+inspect `tusker config resolve automation.profiles --vault ./.tusker --json`.
+ACP requires operator `tusker acp setup`, never an agent fallback.
+
+## Canon and delivery
 
 Governing contracts belong in `.tusker/specs/`, not `docs/specs/`:
 
@@ -83,55 +61,26 @@ tusker docs new auth --kind spec --vault ./.tusker
 tusker docs find auth --vault ./.tusker
 ```
 
-## 4. Write project canon
-
-Update `.tusker/knowledge/domains/project/CANON.md` with current facts only.
-Name the code, schema, configuration, and workflow files that support each
-fact. Put open delivery work in tasks, not canon.
-
-## 5. Validate
-
-Run:
-
-```sh
-tusker reconcile --vault ./.tusker
-tusker validate --vault ./.tusker --json
-tusker skill doctor --strict --json
-```
-
-If the project has system documentation, also run:
-
-```sh
-tusker docs map --vault ./.tusker
-tusker docs status --vault ./.tusker --json
-```
-
-## 6. Register only when needed
-
-Registration is machine state:
-
-```sh
-tusker projects add --repo . --vault ./.tusker
-tusker projects list --json
-```
-
-Registration does not enable automation. Keep it disabled during setup.
-
-## Amend before work starts
-
-An open, disarmed delivery wave whose members remain `backlog`/`held` can be
-amended without changing its plan `scope` or task `source_key`:
+Record source-backed facts in `.tusker/knowledge/domains/project/CANON.md`;
+track delivery work as tasks. An open, disarmed, backlog/held wave with no
+attempts or reviews can be amended without changing scope or source keys:
 
 ```sh
 tusker delivery import --plan <plan.yaml> --dry-run --vault ./.tusker --json
 tusker delivery import --plan <plan.yaml> --vault ./.tusker
 ```
 
-Once any member progresses, preserve its identity and use the explicit
-rework/control route instead of retrying import.
+Progressed plans need explicit rework/control, not repeated import.
 
-## Source commands
+## Validate
 
-The onboarding behavior comes from `cmd/tusker/install.go`,
-`cmd/tusker/purge.go`, `cmd/tusker/commands_index.go`, and
-`cmd/tusker/daemon.go`.
+```sh
+tusker reconcile --vault ./.tusker
+tusker validate --vault ./.tusker --json
+tusker skill doctor --strict --json
+tusker docs map --vault ./.tusker
+tusker docs status --vault ./.tusker --json
+```
+
+Registration, when requested, is machine state: `tusker projects add --repo .
+--vault ./.tusker`. It does not enable automation; leave automation disabled.

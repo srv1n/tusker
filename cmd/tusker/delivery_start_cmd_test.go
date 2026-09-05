@@ -106,7 +106,7 @@ func TestDeliveryStart(t *testing.T) {
 	t.Run("refuses stale bounded context", func(t *testing.T) {
 		vault := deliveryTestVault(t)
 		_, path, confirm := newPlan(t, vault)
-		if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Context drift", "risk": "medium", "priority": "p1", "domains": "project", "spec-refs": "docs/specs/delivery.md", "v7": "true"}); err != nil {
+		if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Context drift", "risk": "medium", "priority": "p1", "domains": "project", "spec-refs": ".tusker/specs/delivery.md", "v7": "true"}); err != nil {
 			t.Fatal(err)
 		}
 		before := snapshotDeliveryRecords(t, vault)
@@ -119,7 +119,7 @@ func TestDeliveryStart(t *testing.T) {
 
 	t.Run("reviewed default SHA refuses advance before any mutation", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 1, "true")
-		if err := writeText(repo+"/docs/specs/delivery.md", "# Delivery\n\n## Work streams\n"); err != nil {
+		if err := writeText(repo+"/.tusker/specs/delivery.md", "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n"); err != nil {
 			t.Fatal(err)
 		}
 		_, path, confirm := newPlan(t, vault)
@@ -132,7 +132,7 @@ func TestDeliveryStart(t *testing.T) {
 		}
 		runGitDir(t, repo, "add", "advance.txt")
 		runGitDir(t, repo, "commit", "-m", "advance reviewed default")
-		currentContext, contextErr := buildDeliveryPlanningContextForScope(vault, "docs/specs/delivery.md", "v2-delivery")
+		currentContext, contextErr := buildDeliveryPlanningContextForScope(vault, ".tusker/specs/delivery.md", "v2-delivery")
 		if contextErr != nil {
 			t.Fatal(contextErr)
 		}
@@ -152,9 +152,9 @@ func TestDeliveryStart(t *testing.T) {
 		}
 	})
 
-	t.Run("changed reviewed plan cannot reuse an older frozen scope", func(t *testing.T) {
+	t.Run("held plan amendment selects the newly reviewed base in place", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 1, "true")
-		if err := writeText(repo+"/docs/specs/delivery.md", "# Delivery\n\n## Work streams\n"); err != nil {
+		if err := writeText(repo+"/.tusker/specs/delivery.md", "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n"); err != nil {
 			t.Fatal(err)
 		}
 		planA, path, confirmA := newPlan(t, vault)
@@ -170,7 +170,7 @@ func TestDeliveryStart(t *testing.T) {
 		waveA := idx.Waves["W-0002"]
 		frozenA := stringField(waveA.Data, "integration_base_sha")
 		if frozenA == "" || stringField(waveA.Data, "authorization") != "disarmed" {
-			t.Fatalf("base A did not remain held/frozen: %#v", waveA.Data)
+			t.Fatalf("base A did not remain held and disarmed: %#v", waveA.Data)
 		}
 
 		if err := writeText(repo+"/advance-again.txt", "base B\n"); err != nil {
@@ -187,18 +187,26 @@ func TestDeliveryStart(t *testing.T) {
 			t.Fatal(readErr)
 		}
 		confirmB := deliveryFingerprint(rawB)
-		before := snapshotDeliveryRecords(t, vault)
-		refs := gitDirOutput(t, repo, "show-ref")
-		_, err = start(vault, path, confirmB, greenWaveEnvironment())
-		if err == nil || !strings.Contains(err.Error(), "new plan scope/wave or perform an explicit controlled rebase") {
-			t.Fatalf("changed B consent reused frozen A: %v", err)
+		tasksBefore := deliveryWaveTaskIDsBySource(t, vault, "W-0002")
+		if len(tasksBefore) != len(planA.Tasks) {
+			t.Fatalf("initial source-keyed allocation is incomplete: %#v", tasksBefore)
 		}
-		assertEqual(t, before, snapshotDeliveryRecords(t, vault), "changed plan/frozen-scope refusal must precede mutation")
-		assertEqual(t, refs, gitDirOutput(t, repo, "show-ref"), "frozen-scope refusal must not move refs")
-		idx, _ = loadV7Index(vault)
-		waveAfter := idx.Waves["W-0002"]
-		if stringField(waveAfter.Data, "integration_base_sha") != frozenA || stringField(waveAfter.Data, "authorization") != "disarmed" {
-			t.Fatalf("changed consent rewrote or armed frozen scope: %#v", waveAfter.Data)
+		refs := gitDirOutput(t, repo, "show-ref")
+		result, err := start(vault, path, confirmB, greenWaveEnvironment())
+		if err != nil {
+			t.Fatalf("held amendment at newly reviewed base B failed: %v", err)
+		}
+		assertEqual(t, "W-0002", result.WaveID, "amendment must reuse wave identity")
+		assertEqual(t, tasksBefore, deliveryWaveTaskIDsBySource(t, vault, result.WaveID), "amendment must preserve source-keyed task IDs")
+		assertEqual(t, refs, gitDirOutput(t, repo, "show-ref"), "Start must not move integration refs")
+		idx, err = loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waveAfter := idx.Waves[result.WaveID]
+		baseB := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "refs/heads/main"))
+		if baseB == frozenA || stringField(waveAfter.Data, "integration_base_sha") != baseB || stringField(waveAfter.Data, "authorization") != "armed" || stringField(waveAfter.Data, "delivery_plan_fingerprint") != confirmB {
+			t.Fatalf("amended Start did not bind current consent and base: %#v", waveAfter.Data)
 		}
 	})
 
@@ -260,7 +268,7 @@ func TestDeliveryStart(t *testing.T) {
 
 	t.Run("does not create or move integration refs", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 1, "true")
-		if err := writeText(repo+"/docs/specs/delivery.md", "# Delivery\n\n## Work streams\n"); err != nil {
+		if err := writeText(repo+"/.tusker/specs/delivery.md", "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n"); err != nil {
 			t.Fatal(err)
 		}
 		// W-0001 belongs to the fixture's ordinary wave, so Start imports its
@@ -638,7 +646,7 @@ func TestDeliveryStart(t *testing.T) {
 
 	t.Run("final lock reinspects integration state after default advances", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 1, "true")
-		if err := writeText(repo+"/docs/specs/delivery.md", "# Delivery\n\n## Work streams\n"); err != nil {
+		if err := writeText(repo+"/.tusker/specs/delivery.md", "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n"); err != nil {
 			t.Fatal(err)
 		}
 		_, path, confirm := newPlan(t, vault)
@@ -683,7 +691,7 @@ func TestDeliveryStart(t *testing.T) {
 		prepareHeld := func(t *testing.T) (string, string, Note) {
 			t.Helper()
 			repo, vault := newLandTestRepo(t, 1, "true")
-			if err := writeText(repo+"/docs/specs/delivery.md", "# Delivery\n\n## Work streams\n"); err != nil {
+			if err := writeText(repo+"/.tusker/specs/delivery.md", "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n"); err != nil {
 				t.Fatal(err)
 			}
 			_, path, confirm := newPlan(t, vault)
@@ -727,7 +735,7 @@ func TestDeliveryStart(t *testing.T) {
 
 	t.Run("authorization boundary leaves unrelated authority untouched", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 1, "true")
-		if err := writeText(repo+"/docs/specs/delivery.md", "# Delivery\n\n## Work streams\n"); err != nil {
+		if err := writeText(repo+"/.tusker/specs/delivery.md", "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n"); err != nil {
 			t.Fatal(err)
 		}
 		if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "release", "owner": "human:release", "action": "Authorize the production release.", "verification": "Release authority records approval.", "why-agent-cannot": "Only the production release authority can deploy."}); err != nil {

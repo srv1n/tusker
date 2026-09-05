@@ -395,6 +395,11 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 		return err
 	}
 	plan.v2.gateMapping = gateMapping
+	if existing, ok := idx.Waves[waveID]; ok {
+		if err := validateDeliveryPlanAmendment(vaultPath, existing.Data, report.PlanFingerprint, idx); err != nil {
+			return err
+		}
+	}
 	if args.Bool("dry-run") {
 		emitDeliveryImportReport(report, args)
 		return nil
