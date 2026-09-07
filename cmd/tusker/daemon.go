@@ -2085,7 +2085,7 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 		if authErr != nil {
 			return "", authErr
 		}
-		directed = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth)
+		directed = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth) || consumedRunDirectiveMatchesTaskAuthority(project.VaultRoot, note, run, directive, auth, time.Now().UTC())
 	}
 	if directed {
 		filtered := blockers[:0]
@@ -3667,7 +3667,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		if authErr != nil {
 			return run, false, authErr
 		}
-		directiveActive = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth)
+		directiveActive = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth) || consumedRunDirectiveMatchesTaskAuthority(project.VaultRoot, note, run, directive, auth, time.Now().UTC())
 	}
 	// Registry enablement controls whether this project is polled. The project
 	// configuration is the separate, authoritative opt-in for daemon spawning.

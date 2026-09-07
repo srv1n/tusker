@@ -178,3 +178,22 @@ func runDirectiveAuthorizationMatchesTaskAuthority(vaultPath string, task Note, 
 	wave, _, armed := armedWaveForTask(vaultPath, task)
 	return armed && stringField(wave.Data, "authorization_fingerprint") == auth.DirectiveAuthorizationFingerprint && stringField(wave.Data, "authorized_at") == auth.DirectiveWaveAuthorizedAt
 }
+
+func consumedRunDirectiveMatchesTaskAuthority(vaultPath string, task Note, run RunStatus, directive *RunDirective, auth *RunAuthorization, now time.Time) bool {
+	if directive == nil || directive.State != "consumed" || auth == nil || auth.Source != "human_run_directive" ||
+		auth.LeaseGeneration != run.LeaseGeneration || auth.Actor != directive.Actor {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, directive.ExpiresAt)
+	if err != nil || !expiresAt.After(now) {
+		return false
+	}
+	if directive.WaveID == "" && directive.AuthorizationFingerprint == "" {
+		return true
+	}
+	if directive.WaveID == "" || directive.AuthorizationFingerprint == "" || directive.WaveAuthorizedAt == "" || stringField(task.Data, "wave") != directive.WaveID {
+		return false
+	}
+	wave, _, armed := armedWaveForTask(vaultPath, task)
+	return armed && stringField(wave.Data, "authorization_fingerprint") == directive.AuthorizationFingerprint && stringField(wave.Data, "authorized_at") == directive.WaveAuthorizedAt
+}
