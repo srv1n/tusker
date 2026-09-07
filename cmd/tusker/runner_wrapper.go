@@ -75,7 +75,7 @@ func startDetachedRunnerWrapper(ctx context.Context, runner RunnerName, req Star
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("record detached runner wrapper spawn: %w", err)
 	}
-	_ = cmd.Process.Release()
+	go func() { _ = cmd.Wait() }()
 	return &StartResult{
 		StartedAt:    processStartedAt,
 		PID:          pid,
