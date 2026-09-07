@@ -268,7 +268,7 @@ func reviewSubmitCmd(args Args) error {
 		// Worker stdout is an authority-less transport proposal. The daemon
 		// decides whether the exact active run qualifies for v3 completion
 		// policy; generic reviewers are persisted as audit-only v2 results.
-		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_PROJECT_ID")), v7ProjectID(vault)), TaskID: id, TaskStateRev: state, WorkRevision: workRevision, ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: strings.TrimSpace(os.Getenv("TUSKER_RUNNER_HARNESS")), Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, MaterialFingerprint: strings.TrimSpace(args.String("material-fingerprint")), Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_PROJECT_ID")), v7ProjectID(vault)), TaskID: id, TaskStateRev: state, WorkRevision: workRevision, ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, MaterialFingerprint: strings.TrimSpace(args.String("material-fingerprint")), Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := normalizeReviewResultProposal(&result); err != nil {
 			return err
 		}

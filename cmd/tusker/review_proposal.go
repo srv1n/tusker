@@ -270,7 +270,10 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		return ReviewResult{}, err
 	}
 	expectedTaskRevision := stringField(note.Data, "state_rev")
-	expectedSourceSHA := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	expectedSourceSHA, sourceErr := reviewImplementationSource(d.store, run, note)
+	if sourceErr != nil {
+		return ReviewResult{}, fmt.Errorf("proposal implementation source is unavailable: %w", sourceErr)
+	}
 	if result.TaskID != run.RecordID || result.AttemptID != run.ActiveAttemptID || result.WorkRevision != run.WorkRevision ||
 		result.TaskStateRev != expectedTaskRevision || result.ImplementationSHA != expectedSourceSHA {
 		return ReviewResult{}, fmt.Errorf(
