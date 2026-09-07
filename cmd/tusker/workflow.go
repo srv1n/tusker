@@ -396,6 +396,7 @@ Policy:
 Checklist:
 1. Read the task acceptance contract, proof mode, verification rows, evidence cards, and gates.
 2. Run the smallest verification needed to prove the acceptance contract.
+   Pending inline verification is expected before independent review. When the command passes, confirm the injected verification manifest in the typed pass result; do not require a pre-existing evidence card.
 3. Risk alone does not justify a human gate. Create or honor one only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
 4. Record any acceptance gap as an actionable typed finding.
 
