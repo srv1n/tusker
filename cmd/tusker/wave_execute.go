@@ -164,3 +164,17 @@ func runDirectiveMatchesTaskAuthority(vaultPath string, task Note, directive *Ru
 	wave, _, armed := armedWaveForTask(vaultPath, task)
 	return armed && stringField(wave.Data, "authorization_fingerprint") == directive.AuthorizationFingerprint && stringField(wave.Data, "authorized_at") == directive.WaveAuthorizedAt
 }
+
+func runDirectiveAuthorizationMatchesTaskAuthority(vaultPath string, task Note, run RunStatus, auth *RunAuthorization) bool {
+	if auth == nil || auth.Source != "human_run_directive" || auth.LeaseGeneration != run.LeaseGeneration {
+		return false
+	}
+	if auth.DirectiveWaveID == "" && auth.DirectiveAuthorizationFingerprint == "" {
+		return true
+	}
+	if auth.DirectiveWaveID == "" || auth.DirectiveAuthorizationFingerprint == "" || auth.DirectiveWaveAuthorizedAt == "" || stringField(task.Data, "wave") != auth.DirectiveWaveID {
+		return false
+	}
+	wave, _, armed := armedWaveForTask(vaultPath, task)
+	return armed && stringField(wave.Data, "authorization_fingerprint") == auth.DirectiveAuthorizationFingerprint && stringField(wave.Data, "authorized_at") == auth.DirectiveWaveAuthorizedAt
+}

@@ -120,6 +120,19 @@ func TestWaveDirectiveRequiresCurrentTaskAuthorization(t *testing.T) {
 	}
 }
 
+func TestConsumedWaveDirectiveAuthorizationKeepsClaimedRunAuthorized(t *testing.T) {
+	vault, idx, wave := waveExecuteTestFixture(t)
+	run := RunStatus{LeaseGeneration: 3}
+	auth := &RunAuthorization{Source: "human_run_directive", LeaseGeneration: 3, DirectiveWaveID: "W-0001", DirectiveAuthorizationFingerprint: stringField(wave.Data, "authorization_fingerprint"), DirectiveWaveAuthorizedAt: stringField(wave.Data, "authorized_at")}
+	if !runDirectiveAuthorizationMatchesTaskAuthority(vault, idx.Tasks["APP-T-0001"], run, auth) {
+		t.Fatal("current consumed directive authorization was not retained for its claimed run")
+	}
+	auth.LeaseGeneration++
+	if runDirectiveAuthorizationMatchesTaskAuthority(vault, idx.Tasks["APP-T-0001"], run, auth) {
+		t.Fatal("authorization from another lease generation was accepted")
+	}
+}
+
 func TestServeWaveExecuteFencesDaemonClaimsToSelectedWave(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
 	installCodexSleepShimForTest(t)

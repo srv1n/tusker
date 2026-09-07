@@ -2074,7 +2074,15 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 		return "", directiveErr
 	}
 	blockers := append([]string(nil), explanation.Blockers...)
-	if runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC()) {
+	directed := runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC())
+	if !directed && isDispatchingLeaseState(run.LeaseState) {
+		auth, authErr := d.store.LatestRunAuthorization(project.ProjectID, run.RecordID)
+		if authErr != nil {
+			return "", authErr
+		}
+		directed = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth)
+	}
+	if directed {
 		filtered := blockers[:0]
 		for _, blocker := range blockers {
 			if !runDirectiveBypassableBlocker(blocker) {
