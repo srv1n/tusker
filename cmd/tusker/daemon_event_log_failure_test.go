@@ -207,6 +207,14 @@ func TestSupervisorDecisionUsesProjectScopedRunIdentity(t *testing.T) {
 	}
 }
 
+func TestLegacySupervisorLookupFailureNeedsNoEventReplay(t *testing.T) {
+	daemon := &Daemon{}
+	errs := daemon.probeEventLogPersistenceFailures([]eventLogPersistenceFailure{{EventKind: "supervisor_decision_lookup", RecordID: "APP-T-0001"}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("lookup-only failure required a nonexistent event replay: %#v", errs)
+	}
+}
+
 func TestEventLogPersistenceResumeReplaysSupervisorDecisionBeforeProbe(t *testing.T) {
 	stateRoot := t.TempDir()
 	store, err := OpenRuntimeStore(stateRoot)

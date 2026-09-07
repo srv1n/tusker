@@ -263,6 +263,11 @@ func (d *Daemon) probeEventLogPersistenceFailures(failures []eventLogPersistence
 	})
 	for _, index := range indexes {
 		path := strings.TrimSpace(failures[index].EventSinkPath)
+		if path == "" && strings.TrimSpace(failures[index].EventKind) == "supervisor_decision_lookup" {
+			// The decision was saved before lookup failed. Current code resolves
+			// it by project; legacy lookup-only failures have no event to replay.
+			continue
+		}
 		if path == "" {
 			resolved, err := d.eventSinkPathForRecord(failures[index].RecordID)
 			if err != nil {
