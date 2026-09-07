@@ -1,13 +1,39 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestDemoExecuteWaveUsesSupportedServeAction(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/capability", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"capability":"test-token"}`))
+	})
+	mux.HandleFunc("/api/waves/W-0001/execute", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("project") != "project-1" || r.Header.Get(serveCapabilityHeader) != "test-token" {
+			t.Fatalf("execute request missing project or capability: %s %#v", r.URL.String(), r.Header)
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"execution":{"waveId":"W-0001","queuedTaskIds":["APP-T-0001"]}}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	previous := demoServeBaseURL
+	demoServeBaseURL = server.URL
+	t.Cleanup(func() { demoServeBaseURL = previous })
+
+	receipt, err := demoExecuteWave(context.Background(), "project-1", "W-0001")
+	if err != nil || receipt.WaveID != "W-0001" || len(receipt.QueuedTaskIDs) != 1 {
+		t.Fatalf("supported Execute Wave action failed: receipt=%#v err=%v", receipt, err)
+	}
+}
 
 // TestRealWorkFixtureShape pins the standalone-task addition: thirteen tasks
 // under sample/ with unique artifacts, all three work levels covered, and

@@ -14,8 +14,13 @@ package main
 // and transport are recorded from runtime inspection, never invented.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -38,6 +43,8 @@ const (
 	demoRealDefaultTimeout = "15m"
 	demoRealPollEvery      = 2 * time.Second
 )
+
+var demoServeBaseURL = "http://" + defaultServeAddr
 
 // ---------------------------------------------------------------------------
 // seeded static files
@@ -726,8 +733,7 @@ func demoRunReal(ctx context.Context, args Args, repoRoot string, manifest *demo
 		record.TaskProfiles[key] = profile
 	}
 	for _, name := range waves {
-		record.Results[name] = demoWaveResult{Wave: name, Authorized: true}
-		record.Notes = append(record.Notes, fmt.Sprintf("wave %s authorized by real-harness run %s; execution uses configured profiles through the resident runtime, never the timer lane", name, record.RunID))
+		record.Results[name] = demoWaveResult{Wave: name}
 	}
 	// Ordinary readiness transitions first: without a resident daemon nothing
 	// recomputes next_owner until reconcile runs.
@@ -747,6 +753,20 @@ func demoRunReal(ctx context.Context, args Args, repoRoot string, manifest *demo
 				return nil, 0, tuskerError(demoCodePrecondition, fmt.Sprintf("task %s (%s) could not move to ready: %s", key, rec.TaskID, err.Error()))
 			}
 		}
+	}
+	for _, name := range waves {
+		wave, ok := manifest.Waves[name]
+		if !ok || strings.TrimSpace(wave.WaveID) == "" {
+			return nil, 0, tuskerError(demoCodePrecondition, "real-harness run has no registered wave for "+name)
+		}
+		receipt, err := demoExecuteWave(ctx, manifest.RuntimeProjectID, wave.WaveID)
+		if err != nil {
+			return nil, 0, err
+		}
+		result := record.Results[name]
+		result.Authorized = true
+		record.Results[name] = result
+		record.Notes = append(record.Notes, fmt.Sprintf("wave %s authorized and queued by supported Execute Wave action (%d new, %d already queued); execution uses configured profiles through the resident runtime, never the timer lane", name, len(receipt.QueuedTaskIDs), len(receipt.AlreadyQueuedTaskIDs)))
 	}
 	manifest.Runs = append(manifest.Runs, record)
 	runIndex := len(manifest.Runs) - 1
@@ -811,6 +831,52 @@ func demoRunReal(ctx context.Context, args Args, repoRoot string, manifest *demo
 					withHint("start the resident runtime from an independent shell (never from an agent session) or have the configured agent drive the tasks through work start/submit/review/close, then rerun"))
 		}
 	}
+}
+
+func demoExecuteWave(ctx context.Context, projectID, waveID string) (*serveWaveExecuteReceipt, error) {
+	if strings.TrimSpace(projectID) == "" {
+		return nil, tuskerError(demoCodePrecondition, "real-harness run is not registered in the resident runtime", withHint("reset and reseed the fixture after installing the current Tusker candidate"))
+	}
+	base := demoServeBaseURL
+	var capability struct {
+		Capability string `json:"capability"`
+	}
+	if err := demoHTTPJSON(ctx, http.MethodGet, base+"/api/capability", "", &capability); err != nil {
+		return nil, tuskerError(demoCodePrecondition, "resident runtime is unavailable: "+err.Error(), withHint("install and open the current TuskerBar candidate, then rerun"))
+	}
+	var result serveWaveExecuteResult
+	endpoint := base + "/api/waves/" + url.PathEscape(waveID) + "/execute?project=" + url.QueryEscape(projectID)
+	if err := demoHTTPJSON(ctx, http.MethodPost, endpoint, capability.Capability, &result); err != nil {
+		return nil, tuskerError(demoCodePrecondition, "Execute Wave request failed: "+err.Error())
+	}
+	if !result.OK || result.Refused || result.Execution == nil {
+		return nil, tuskerError(demoCodePrecondition, "Execute Wave refused: "+firstNonEmpty(result.Reason, "no execution receipt"))
+	}
+	return result.Execution, nil
+}
+
+func demoHTTPJSON(ctx context.Context, method, endpoint, capability string, out any) error {
+	var body io.Reader = http.NoBody
+	if method == http.MethodPost {
+		body = bytes.NewBufferString(`{}`)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return err
+	}
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(serveCapabilityHeader, capability)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s returned %s", endpoint, resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 func demoSelectedKeys(manifest *demoManifest, waves []string) []string {
