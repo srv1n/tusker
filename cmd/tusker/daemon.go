@@ -2643,6 +2643,19 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					run.UpdatedAt = finished
 					return run, true, nil
 				}
+				dirtyMaterial := false
+				if endState.Dirty {
+					args := append([]string{"-C", run.WorkspacePath, "status", "--porcelain=v1", "--untracked-files=all", "--"}, endState.MaterialScope...)
+					out, dirtyErr := exec.Command("git", args...).Output()
+					dirtyMaterial = dirtyErr != nil || strings.TrimSpace(string(out)) != ""
+				}
+				if dirtyMaterial {
+					reason := "normalized run submission refused: implementation material is uncommitted; commit the owned changes before submitting"
+					updateRunAttemptFromRun(d.store, run, AttemptOutcomeEarlyExit, 0, reason, finished)
+					run, _ = d.scheduleContinuationRetry(run, wfFile.Data, reason)
+					run.UpdatedAt = finished
+					return run, true, nil
+				}
 			}
 			if err := writeReviewPacketEvidence(project.VaultRoot, note, run, d.store); err != nil {
 				return run, changed, err
