@@ -133,7 +133,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	// run concurrently with two-task frontiers, so the demo project allows
 	// four live runs. This touches only the demo repo's local overlay, never
 	// unrelated global settings.
-	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  lane_profiles:\n    execute: execute-fast\n    review: review-independent\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n"); err != nil {
+	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  lane_profiles:\n    execute: execute-fast\n    review: review-independent\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\nreviewer:\n  enabled: true\n"); err != nil {
 		return nil, err
 	}
 	contextFP, factory, err := demoSeedContext(repoRoot, exec, vaultPath)
