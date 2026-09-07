@@ -4271,6 +4271,10 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		CodexPolicy:         codexPolicy,
 		ExternalLoop:        externalLaunch,
 		CodexACP:            codexACPPlan,
+		Actor:               authorization.Actor,
+	}
+	if lane == runLaneReview {
+		startReq.Actor = reviewerActorForNote(wfFile.Data.Reviewer.Actor, note)
 	}
 	resumeSession := resolvedResumeSession{}
 	if runner.Capabilities().ResumeSession {
@@ -6349,7 +6353,11 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		values["review.proof_fingerprint"], values["review.gate_fingerprint"] = proof, gates
 		if source, sourceErr := reviewImplementationSource(store, run, note); sourceErr == nil {
 			values["review.source_sha"] = source
+			if _, material, materialErr := reviewImplementationParent(store, project.VaultRoot, run.ProjectID, run.RecordID, run.WorkRevision, source, note); materialErr == nil {
+				values["review.material_fingerprint"] = material
+			}
 		}
+		values["review.verification_manifest"], _ = v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body))
 	}
 	template := wfFile.Body
 	if lane == runLaneReview {

@@ -400,7 +400,7 @@ Checklist:
 3. Risk alone does not justify a human gate. Create or honor one only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
 4. Record any acceptance gap as an actionable typed finding.
 
-Submit exactly one result for the injected review attempt: ` + "`tusker review submit {{ note.id }} --attempt {{ attempt.id }} --task-rev {{ review.task_rev }} --source-sha {{ review.source_sha }} --work-rev {{ review.work_rev }} --proof-fingerprint {{ review.proof_fingerprint }} --gate-fingerprint {{ review.gate_fingerprint }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
+Submit exactly one result for the injected review attempt: ` + "`tusker review submit {{ note.id }} --attempt {{ attempt.id }} --task-rev {{ review.task_rev }} --source-sha {{ review.source_sha }} --work-rev {{ review.work_rev }} --proof-fingerprint {{ review.proof_fingerprint }} --gate-fingerprint {{ review.gate_fingerprint }} --material-fingerprint {{ review.material_fingerprint }} --confirm-verification {{ review.verification_manifest }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
 
 Explicit blocking gates must be reported in the typed result; do not change gate or task state.`)
 }
