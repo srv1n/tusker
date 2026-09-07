@@ -371,7 +371,15 @@ func deliveryV2ImportBytesGuarded(vaultPath, path string, raw []byte, args Args,
 			return tuskerError(errorInvalidArg, "delivery plan is operationally unsafe", withContext(map[string]any{"delivery_doctor": doctor}))
 		}
 	}
-	mapping, existingWave, mapErr := deliveryTaskMappingFromIndex(idx, plan)
+	var bindings map[string]string
+	if rawBindings := strings.TrimSpace(args.String("delivery-bindings")); rawBindings != "" {
+		var bindErr error
+		bindings, bindErr = deliveryBindMappings(rawBindings)
+		if bindErr != nil {
+			return tuskerError(errorInvalidArg, bindErr.Error())
+		}
+	}
+	mapping, existingWave, mapErr := deliveryTaskMappingFromIndexWithBindings(idx, plan, bindings)
 	if mapErr != nil {
 		return mapErr
 	}

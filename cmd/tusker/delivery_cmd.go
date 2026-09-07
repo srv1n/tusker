@@ -480,6 +480,10 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue,
 }
 
 func deliveryTaskMappingFromIndex(idx v7Index, plan deliveryPlan) (map[string]string, string, error) {
+	return deliveryTaskMappingFromIndexWithBindings(idx, plan, nil)
+}
+
+func deliveryTaskMappingFromIndexWithBindings(idx v7Index, plan deliveryPlan, bindings map[string]string) (map[string]string, string, error) {
 	mapping := map[string]string{}
 	waveID := ""
 	scope := deliveryPlanScope(plan)
@@ -499,6 +503,38 @@ func deliveryTaskMappingFromIndex(idx v7Index, plan deliveryPlan) (map[string]st
 	wanted := map[string]bool{}
 	for _, task := range plan.Tasks {
 		wanted[task.SourceKey] = true
+	}
+	if len(bindings) > 0 {
+		if len(bindings) != len(wanted) {
+			return nil, "", tuskerError(errorInvalidArg, "delivery bind requires exactly one source_key=task-ID mapping for every plan task")
+		}
+		boundIDs := map[string]string{}
+		for source, id := range bindings {
+			if !wanted[source] || id == "" {
+				return nil, "", tuskerError(errorInvalidArg, "delivery bind mapping does not name an exact plan source key and task ID")
+			}
+			if previous := boundIDs[id]; previous != "" {
+				return nil, "", tuskerError(errorInvalidArg, "delivery bind maps multiple source keys to task "+id)
+			}
+			target, ok := idx.Tasks[id]
+			if !ok {
+				return nil, "", tuskerError(errorNotFound, "delivery bind target task not found: "+id)
+			}
+			if stringField(target.Data, "epic") != strings.ToUpper(plan.Epic) || stringField(target.Data, "status") != "backlog" || stringField(target.Data, "readiness") != "held" {
+				return nil, "", tuskerError(errorInvalidTransition, "delivery bind target must be a backlog/held task in epic "+strings.ToUpper(plan.Epic)+": "+id)
+			}
+			if stringField(target.Data, "wave") != "" || !deliveryRefsOverlap(normalizeList(target.Data["spec_refs"]), plan.SpecRefs) {
+				return nil, "", tuskerError(errorInvalidTransition, "delivery bind target must be unassigned and share a governing spec_ref with the plan: "+id)
+			}
+			key, taskScope := stringField(target.Data, "delivery_source_key"), stringField(target.Data, "delivery_plan_scope")
+			if (key == "") != (taskScope == "") || (key != "" && (key != source || taskScope != scope)) {
+				return nil, "", tuskerError(errorInvalidTransition, "delivery bind target already has a different delivery identity: "+id)
+			}
+			if !v7StateRevMatches(target.Data, target.Body, stringField(target.Data, "state_rev")) {
+				return nil, "", tuskerError(errorInvalidTransition, "delivery bind target has a stale state revision: "+id)
+			}
+			mapping[source], boundIDs[id] = id, source
+		}
 	}
 	maxSeq := 0
 	for id, task := range idx.Tasks {

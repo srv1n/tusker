@@ -114,7 +114,12 @@ func parseArgs(argv []string) Args {
 			args[key] = "true"
 			continue
 		}
-		args[key] = argv[i+1]
+		value := argv[i+1]
+		if key == "task" && args[key] != "" {
+			args[key] += "\n" + value
+		} else {
+			args[key] = value
+		}
 		i++
 	}
 	if len(positionals) > 0 {
@@ -165,7 +170,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "delivery start", "wave refingerprint", "wave re-fingerprint", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "demo seed", "demo run", "demo reset":
+	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery bind", "delivery import", "delivery start", "wave refingerprint", "wave re-fingerprint", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "demo seed", "demo run", "demo reset":
 		return true
 	default:
 		return false
@@ -297,6 +302,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, deliveryPlanningContextCmd(args)
 	case "delivery import":
 		return 0, deliveryImportCmd(args)
+	case "delivery bind":
+		return 0, deliveryBindCmd(args)
 	case "delivery review":
 		return 0, deliveryReviewCmd(args)
 	case "delivery start":
@@ -956,7 +963,7 @@ func printCommandHelp(command string) bool {
 		printEvidenceHelp()
 	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "wave refingerprint", "wave re-fingerprint", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
-	case "handoff", "finish", "gate", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy", "migrate close-policy":
+	case "handoff", "finish", "gate", "delivery", "delivery plan", "delivery context", "delivery bind", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()

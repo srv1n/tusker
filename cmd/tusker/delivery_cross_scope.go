@@ -19,6 +19,9 @@ var deliveryCrossScopeAfterIndexLoad func()
 // vault-wide material epoch is held.  It never consults plan files or performs
 // recursive imports: an imported, open-wave producer is the only valid target.
 func deliveryResolveCrossScopeDependencies(vault string, idx v7Index, plan deliveryPlan, mapping map[string]string) (map[string][]deliveryCrossScopeDependency, func() error, func(string, []byte), []string, error) {
+	if !deliveryPlanTouchesCrossScope(idx, plan, mapping) {
+		return map[string][]deliveryCrossScopeDependency{}, nil, nil, nil, nil
+	}
 	if err := validateDeliveryCrossScopeIndex(idx, v7ProjectID(vault)); err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -92,6 +95,24 @@ func deliveryResolveCrossScopeDependencies(vault string, idx v7Index, plan deliv
 		return nil, nil, nil, nil, err
 	}
 	return resolved, snapshot, advance, paths, nil
+}
+
+func deliveryPlanTouchesCrossScope(idx v7Index, plan deliveryPlan, mapping map[string]string) bool {
+	for _, task := range plan.Tasks {
+		for _, dep := range task.Dependencies {
+			if strings.TrimSpace(dep.scope) != "" {
+				return true
+			}
+		}
+	}
+	for _, consumer := range idx.Tasks {
+		for _, id := range mapping {
+			if v7TaskDependsOnID(consumer, id, idx) && stringField(consumer.Data, "delivery_plan_scope") != plan.Scope {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // The epoch serializes cooperative writers, but raw edits can bypass it.
@@ -405,6 +426,9 @@ func deliveryRefreshInboundProjectionWrites(vault string, idx v7Index, plan deli
 	nextFingerprints := map[string]string{}
 	for _, task := range plan.Tasks {
 		nextFingerprints[report.TaskMapping[task.SourceKey]] = deliveryV2TaskFingerprint(task, plan.v2.HumanGates)
+	}
+	if !deliveryPlanTouchesCrossScope(idx, plan, report.TaskMapping) {
+		return nil
 	}
 	for _, consumer := range idx.Tasks {
 		projections, err := deliveryCrossScopeProjections(consumer)
