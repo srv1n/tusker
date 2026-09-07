@@ -73,6 +73,6 @@ func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
 	}
 	args := Args{"id": run.RecordID, "project": run.ProjectID, "owner": run.LeaseOwner, "revision": fmt.Sprintf("%d", run.WorkRevision),
 		"deliverable": w.Deliverable, "verification": w.Verification, "gate-verdicts": w.GateVerdicts, "reason": w.Reason,
-		"actor": run.LeaseOwner, "quiet": "true"}
+		"actor": "agent:" + w.AttemptID, "quiet": "true"}
 	return runsLifecycleWithStore(store, args, w.Action, false)
 }
