@@ -441,6 +441,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFactoryOperations(w, r)
 	case path == "/api/runs":
 		s.handleRuns(w, r)
+	case path == "/api/runner/conformance":
+		s.handleRunnerConformance(w, r, nil)
 	case path == "/api/executions":
 		s.handleExecutionGraph(w, r)
 	case path == "/api/executions/inbox":
@@ -1661,6 +1663,7 @@ func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, t
 		serveJSON(w, http.StatusInternalServerError, serveRedriveResult{TaskID: taskID, Reason: "redrive failed: " + err.Error()})
 		return
 	}
+	_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "run_redrive", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
 	result.OK = true
 	result.Requeued = true
 	result.LeaseState = run.LeaseState

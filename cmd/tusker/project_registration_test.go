@@ -42,6 +42,89 @@ func TestProjectRegistrationIsIdempotentAcrossCanonicalPaths(t *testing.T) {
 	}
 }
 
+func TestProjectRegistrationIsIdempotentAcrossLinkedWorktrees(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "tusker-test@example.invalid")
+	runGitDir(t, repo, "config", "user.name", "Tusker Test")
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: backend\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", defaultRepoVaultDir)
+	runGitDir(t, repo, "commit", "-m", "project config")
+
+	first := newRegisteredProject(repo, filepath.Join(repo, defaultRepoVaultDir))
+	first.ProjectKey = "backend"
+	registered, created, err := store.RegisterProject(first)
+	if err != nil || !created {
+		t.Fatalf("main registration: created=%v err=%v", created, err)
+	}
+	worktree := filepath.Join(t.TempDir(), "feature")
+	runGitDir(t, repo, "worktree", "add", "-b", "feature", worktree, "main")
+	existing, created, err := store.RegisterProject(newRegisteredProject(worktree, filepath.Join(worktree, defaultRepoVaultDir)))
+	if err != nil || created {
+		t.Fatalf("worktree registration: created=%v err=%v", created, err)
+	}
+	if existing.ProjectID != registered.ProjectID {
+		t.Fatalf("worktree returned %s, want %s", existing.ProjectID, registered.ProjectID)
+	}
+}
+
+func TestProjectRegistrationKeepsDistinctGitProjectIdentities(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "tusker-test@example.invalid")
+	runGitDir(t, repo, "config", "user.name", "Tusker Test")
+	configPath := managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir))
+	if err := writeText(configPath, "schema: tusker.config/v1\nproject_id: primary\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", defaultRepoVaultDir)
+	runGitDir(t, repo, "commit", "-m", "project config")
+	primary := newRegisteredProject(repo, filepath.Join(repo, defaultRepoVaultDir))
+	primary.ProjectKey = "primary"
+	if _, created, err := store.RegisterProject(primary); err != nil || !created {
+		t.Fatalf("primary registration: created=%v err=%v", created, err)
+	}
+
+	worktree := filepath.Join(t.TempDir(), "secondary")
+	runGitDir(t, repo, "worktree", "add", "-b", "secondary", worktree, "main")
+	if err := writeText(managedTuskerConfigPath(filepath.Join(worktree, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: secondary\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := store.RegisterProject(newRegisteredProject(worktree, filepath.Join(worktree, defaultRepoVaultDir))); err != nil || !created {
+		t.Fatalf("distinct identity registration: created=%v err=%v", created, err)
+	}
+
+	unrelated := t.TempDir()
+	runGitDir(t, unrelated, "init", "-b", "main")
+	if err := writeText(managedTuskerConfigPath(filepath.Join(unrelated, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: primary\n"); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedProject := newRegisteredProject(unrelated, filepath.Join(unrelated, defaultRepoVaultDir))
+	unrelatedProject.ProjectKey = "primary"
+	if _, created, err := store.RegisterProject(unrelatedProject); err != nil || !created {
+		t.Fatalf("unrelated repository registration: created=%v err=%v", created, err)
+	}
+
+	projects, err := store.ListProjects()
+	if err != nil || len(projects) != 3 {
+		t.Fatalf("registrations: err=%v projects=%#v", err, projects)
+	}
+}
+
 func TestReconcileDuplicateProjectsKeepsAuthoritativeMetadataAndHistory(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {

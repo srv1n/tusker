@@ -157,6 +157,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	switch {
+	case len(parts) == 3 && parts[1] == "runner" && parts[2] == "conformance":
+		s.handleRunnerConformance(w, r, body)
 	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "challenge":
 		s.handleHumanControlChallenge(w, body)
 	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "submit":
@@ -191,6 +193,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleLandAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "waves" && parts[3] == "land":
 		s.handleLandAction(w, parts[2], body)
+	case len(parts) == 4 && parts[1] == "waves" && parts[3] == "execute":
+		s.handleWaveExecute(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "gates" && (parts[3] == "satisfy" || parts[3] == "waive" || parts[3] == "obsolete"):
 		s.handleGateAction(w, parts[2], parts[3], body)
 	case len(parts) == 2 && parts[1] == "evidence":

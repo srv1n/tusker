@@ -59,34 +59,32 @@ func runnerPreclaimHealthWithSearchPath(runner RunnerName, command, searchPath s
 		return block("executable", probe.Executable, err.Error())
 	}
 
-	// The first candidate is the authorized executable: an explicit command,
-	// command-local PATH assignment, or the daemon's effective PATH selected it.
-	// Reporting a later candidate is useful diagnosis, but silently replacing the
-	// authorized binary would make the inspected command differ from dispatch.
-	resolved := candidates[0]
-	if !isExecutableFile(resolved) {
-		reason := fmt.Sprintf("authorized executable %q resolved to %s but is not executable", probe.Executable, resolved)
-		if len(candidates) > 1 {
-			reason += fmt.Sprintf("; discovered alternate %s was not substituted", candidates[1])
-		}
-		return block("permission", resolved, reason)
-	}
-	version := ""
-	if runnerExecutableNeedsHealthCheck(runner, probe.Executable) {
-		version, err = runnerExecutableHealthCheck(resolved, probe.SearchPath)
-		if err != nil {
-			reason := fmt.Sprintf("executable %q resolved to %s but failed health check: %s", probe.Executable, resolved, err)
-			if len(candidates) > 1 {
-				reason += fmt.Sprintf("; discovered alternate %s was not substituted", candidates[1])
+	first, firstCheck, firstReason := candidates[0], "permission", ""
+	for _, resolved := range candidates {
+		if !isExecutableFile(resolved) {
+			if firstReason == "" {
+				firstReason = fmt.Sprintf("executable %q resolved to %s but is not executable", probe.Executable, resolved)
 			}
-			return block("version", resolved, reason)
+			continue
 		}
+		version := ""
+		if runnerExecutableNeedsHealthCheck(runner, probe.Executable) {
+			version, err = runnerExecutableHealthCheck(resolved, probe.SearchPath)
+			if err != nil {
+				if firstReason == "" {
+					firstCheck = "version"
+					firstReason = fmt.Sprintf("executable %q resolved to %s but failed health check: %s", probe.Executable, resolved, err)
+				}
+				continue
+			}
+		}
+		result := runnerCommandPreflightResult{ResolvedExecutable: resolved, ExecutableVersion: version, SearchPath: probe.SearchPath}
+		if !strings.ContainsRune(probe.Executable, os.PathSeparator) {
+			result.RunnerPathPrefix = filepath.Dir(resolved)
+		}
+		return runnerPreclaimHealthResult{Preflight: result}
 	}
-	result := runnerCommandPreflightResult{ResolvedExecutable: resolved, ExecutableVersion: version, SearchPath: probe.SearchPath}
-	if !strings.ContainsRune(probe.Executable, os.PathSeparator) {
-		result.RunnerPathPrefix = filepath.Dir(resolved)
-	}
-	return runnerPreclaimHealthResult{Preflight: result}
+	return block(firstCheck, first, firstReason)
 }
 
 // authorizedExecutableCandidates deliberately retains non-executable files.

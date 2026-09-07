@@ -40,9 +40,11 @@ import type {
   RunDetail,
   RunSummary,
   ReviewBatch,
+  RunnerConformanceReport,
   TaskCapsule,
   TaskDetail,
   WaveSummary,
+  WaveExecuteResult,
   ExecutionGraph,
   ExecutionInbox,
   ExecutionTimeline,
@@ -235,6 +237,10 @@ export class DocSaveError extends ApiError {
 
 export const api = {
   capabilities: (): Promise<ServeCapabilities> => real("/capabilities"),
+  runnerConformance: (harness: string, preset: string, live = false, exercise = "", projectId?: string): Promise<RunnerConformanceReport> => {
+    const path = withProject(`/runner/conformance?harness=${encodeURIComponent(harness)}&preset=${encodeURIComponent(preset)}&exercise=${encodeURIComponent(exercise)}`, projectId);
+    return live ? post<RunnerConformanceReport & { ok?: boolean }>(path, { harness, preset, exercise }) : real(path);
+  },
   executions: (params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionGraph> => {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value) as [string, string][]).toString();
     return real(withProject(`/executions${query ? `?${query}` : ""}`, projectId));
@@ -354,6 +360,9 @@ export const api = {
 
   landWave: (waveId: string, projectId?: string): Promise<ActionResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/waves/${waveId}/land`, projectId), { actor })),
+
+  waveExecute: (waveId: string, projectId?: string): Promise<WaveExecuteResult> =>
+    serveOperatorActor().then((actor) => post(withProject(`/waves/${encodeURIComponent(waveId)}/execute`, projectId), { actor })),
 
   gateAction: (
     gateId: string,

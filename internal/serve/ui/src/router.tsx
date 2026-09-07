@@ -100,8 +100,8 @@ const wavesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "waves",
   component: lazyRouteComponent(
-    () => import("@/features/product/DeliveryScreens"),
-    "Waves",
+    () => import("@/features/workbench/integration"),
+    "WorkOverview",
   ),
 });
 
@@ -109,8 +109,8 @@ const waveDetailRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "waves/$waveId",
   component: lazyRouteComponent(
-    () => import("@/features/product/DeliveryScreens"),
-    "WaveDetail",
+    () => import("@/features/workbench/integration"),
+    "WorkWave",
   ),
 });
 
@@ -118,8 +118,8 @@ const tasksRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "tasks",
   component: lazyRouteComponent(
-    () => import("@/features/product/TaskScreens"),
-    "Tasks",
+    () => import("@/features/workbench/integration"),
+    "WorkBoard",
   ),
 });
 

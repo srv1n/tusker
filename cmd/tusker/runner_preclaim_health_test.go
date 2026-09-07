@@ -27,11 +27,9 @@ func TestRunnerPreclaimHealth(t *testing.T) {
 	}{
 		{name: "missing", command: "codex exec -", searchPath: t.TempDir(), check: "executable", contains: []string{"not found"}},
 		{name: "non executable", command: nonExecutable + " exec -", searchPath: t.TempDir(), check: "permission", contains: []string{"not executable"}},
-		{name: "non executable discovered alternate", command: "codex exec -", searchPath: filepath.Dir(nonExecutable) + string(os.PathListSeparator) + goodDir, check: "permission", contains: []string{"not executable", "discovered alternate", good}},
 		{name: "version", command: bad + " exec -", searchPath: badDir, check: "version", contains: []string{"failed health check", "broken runner"}},
 		{name: "malformed", command: "codex 'unterminated", searchPath: goodDir, check: "command_shape", contains: []string{"unterminated"}},
 		{name: "shell control", command: "codex exec -; whoami", searchPath: goodDir, check: "command_shape", contains: []string{"shell control"}},
-		{name: "discovered alternate", command: "codex exec -", searchPath: badDir + string(os.PathListSeparator) + goodDir, check: "version", contains: []string{"discovered alternate", good}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			health := runnerPreclaimHealthWithSearchPath(RunnerCodexExec, tc.command, tc.searchPath)
@@ -49,6 +47,13 @@ func TestRunnerPreclaimHealth(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	for _, firstDir := range []string{badDir, filepath.Dir(nonExecutable)} {
+		health := runnerPreclaimHealthWithSearchPath(RunnerCodexExec, "codex exec -", firstDir+string(os.PathListSeparator)+goodDir)
+		if health.Block != nil || health.Preflight.ResolvedExecutable != good {
+			t.Fatalf("healthy PATH fallback was not selected: %#v", health)
+		}
 	}
 
 	t.Run("explicit executable", func(t *testing.T) {

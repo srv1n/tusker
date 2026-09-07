@@ -197,12 +197,8 @@ func runInner(command string, args Args) (int, error) {
 		}
 		printACPAdapterHelp()
 		return 0, nil
-	case "acp install":
-		return 0, acpInstallCommand(args)
 	case "acp doctor":
 		return 0, acpDoctorCommand(args)
-	case "acp setup":
-		return 0, acpSetupCommand(args)
 	case "runner-wrapper":
 		return 0, runnerWrapperCmd(args)
 	case "runner":
@@ -215,6 +211,10 @@ func runInner(command string, args Args) (int, error) {
 	case "runner route":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runnerRouteCmd(args)
+	case "runner conformance":
+		return runnerConformanceCmd(args)
+	case "runner test":
+		return runnerConformanceCmd(args)
 	case "new epic":
 		return 0, newV7Epic(args)
 	case "new task":
@@ -889,7 +889,7 @@ func printCommandHelp(command string) bool {
 		printInitHelp()
 	case "reset", "relaunch":
 		printResetHelp()
-	case "runner", "runner catalog", "runner profiles", "runner route":
+	case "runner", "runner catalog", "runner profiles", "runner route", "runner conformance", "runner test":
 		printRunnerHelp()
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()

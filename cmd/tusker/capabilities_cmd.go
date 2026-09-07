@@ -179,11 +179,9 @@ func buildCapabilityCompatibility(manifest capabilitiesManifest) (capabilityComp
 // new command families here when they are added to runInner.
 func installedCapabilityCommands() []capabilityCommand {
 	return []capabilityCommand{
-		{Command: "acp", Subcommands: []string{"doctor", "install", "setup"}},
+		{Command: "acp", Subcommands: []string{"doctor"}},
 		{Command: "actor", Subcommands: []string{"correction"}, Flags: []string{"--by", "--corrected-actor", "--event-id", "--gate", "--json", "--original-sha256", "--receipt"}},
 		{Command: "acp doctor", Flags: []string{"--auth-source", "--bundle-digest", "--json"}},
-		{Command: "acp install", Flags: []string{"--artifact", "--artifact-sha256", "--json", "--provider", "--publisher", "--source-url", "--version"}},
-		{Command: "acp setup", Flags: []string{"--auth-principal", "--auth-source", "--json", "--node", "--npm-prefix", "--vault"}},
 		{Command: "accept"}, {Command: "attachments"}, {Command: "attempt"},
 		{Command: "automation", Subcommands: []string{"advance-external", "collect-external", "dispatch", "explain", "external-loop", "plan", "queue", "status"}, Flags: []string{"--json"}},
 		{Command: "brief"}, {Command: "capabilities", Flags: []string{"--json"}}, {Command: "claim"}, {Command: "close"},
@@ -206,7 +204,9 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "projects", Subcommands: []string{"add", "disable", "enable", "limits", "list", "prune", "rebind", "remove"}, Flags: []string{"--allow-dirty", "--dry-run", "--id", "--json", "--repo", "--vault"}}, {Command: "proof"}, {Command: "proposal"}, {Command: "publish", Subcommands: []string{"skill"}}, {Command: "purge"},
 		{Command: "reconcile", Flags: []string{"--dry-run", "--id", "--json"}}, {Command: "redact"}, {Command: "redrive"}, {Command: "refresh"}, {Command: "reindex"}, {Command: "release"}, {Command: "relaunch", Flags: []string{"--dry-run", "--json", "--repo", "--yes"}}, {Command: "reset", Flags: []string{"--dry-run", "--json", "--repo", "--yes"}},
 		{Command: "review", Subcommands: []string{"submit"}, Flags: []string{"--attempt", "--covers", "--gate-fingerprint", "--proof-fingerprint", "--source-sha", "--task-rev", "--verdict", "--work-rev"}},
-		{Command: "runner", Subcommands: []string{"catalog", "profiles", "route"}, Flags: []string{"--bundled", "--json", "--lane", "--write"}}, {Command: "runner-wrapper"},
+		{Command: "runner", Subcommands: []string{"catalog", "conformance", "profiles", "route", "test"}, Flags: []string{"--bundled", "--json", "--lane", "--write"}},
+		{Command: "runner conformance", Flags: []string{"--exercise", "--external-containment", "--harness", "--json", "--live", "--preset", "--script", "--workspace"}, Purpose: "Probe and exercise an operator-installed CLI or ACP harness without claiming work."}, {Command: "runner-wrapper"},
+		{Command: "runner test", Flags: []string{"--exercise", "--external-containment", "--harness", "--json", "--live", "--preset", "--quiet", "--script", "--workspace"}, Purpose: "Short agent-friendly alias for runner conformance; accepts the harness as the first positional argument."},
 		{Command: "runs", Subcommands: []string{"claim", "events", "fail", "heartbeat", "inspect", "interrupt", "logs", "reclaim", "redrive", "release", "retire", "start", "submit"}},
 		{Command: "search"}, {Command: "serve"}, {Command: "setup", Subcommands: []string{"doctor", "repair"}}, {Command: "show"},
 		{Command: "skill", Subcommands: []string{"audit-agent-guidance", "bundle", "doctor", "pack", "route", "sync"}}, {Command: "state"}, {Command: "status"}, {Command: "streams"},
@@ -214,7 +214,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "verify", Subcommands: []string{"add", "recipe", "remove"}},
 		{Command: "vault", Subcommands: []string{"mount", "move", "repair", "set", "status", "unmount"}}, {Command: "version", Flags: []string{"--json"}},
 		{Command: "wave", Subcommands: []string{"add", "arm", "brief", "create", "disarm", "pause", "preflight", "refingerprint", "re-fingerprint", "remove", "resume", "show"}},
-		{Command: "work", Subcommands: []string{"fail", "heartbeat", "release", "start", "status", "submit"}, Flags: []string{"--json", "--vault"}}, {Command: "xcode", Subcommands: []string{"doctor"}},
+		{Command: "work", Subcommands: []string{"fail", "heartbeat", "release", "review", "start", "status", "submit"}, Flags: []string{"--json", "--vault"}}, {Command: "xcode", Subcommands: []string{"doctor"}},
 	}
 }
 

@@ -1080,6 +1080,9 @@ func redriveCmd(args Args) error {
 		return err
 	}
 	*run = retry.Run
+	if !retry.AlreadyLive {
+		_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "run_redrive", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
+	}
 	switch {
 	case retry.AlreadyLive:
 		if args.Bool("json") {

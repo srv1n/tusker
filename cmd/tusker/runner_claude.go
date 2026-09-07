@@ -14,13 +14,13 @@ func (r *ClaudeRunner) Capabilities() RunnerCapabilities {
 }
 
 func (r *ClaudeRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
-	if shouldUseLiveClaude(req.Command) {
+	if shouldUseLiveClaude(req.Command) || len(req.CommandArgv) > 0 {
 		return startLiveClaude(ctx, req, nil)
 	}
 	return executeRunnerCommand(ctx, r.Name(), runnerExecRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath, Command: req.Command, RunnerPathPrefix: req.RunnerPathPrefix,
+		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath, Command: req.Command, CommandArgv: append([]string(nil), req.CommandArgv...), CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		NotePath: req.NotePath, VaultPath: req.VaultPath,
 		CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
@@ -30,16 +30,16 @@ func (r *ClaudeRunner) Start(ctx context.Context, req StartRequest) (*StartResul
 func (r *ClaudeRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		command = "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
+		command = "claude -p --output-format stream-json --input-format stream-json --permission-mode plan --permission-prompts none --tools Read,Glob,Grep"
 	}
 	startReq := StartRequest{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath,
-		RepoRoot: req.RepoRoot, Command: command, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
+		RepoRoot: req.RepoRoot, Command: command, CommandArgv: append([]string(nil), req.CommandArgv...), CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
 	}
-	if shouldUseLiveClaude(command) {
+	if shouldUseLiveClaude(command) || len(req.CommandArgv) > 0 {
 		// Claude attempts are fresh by default. A runner profile must opt into
 		// session continuation by placing the session token in its command.
 		if strings.Contains(command, "{{session_ref}}") {

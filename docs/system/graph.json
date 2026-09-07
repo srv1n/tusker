@@ -8,6 +8,13 @@
       "status": "canonical"
     },
     {
+      "subject": "decisions/2026-09-07-work-area-redesign-grill",
+      "kind": "spec",
+      "path": ".tusker/specs/decisions-2026-09-07-work-area-redesign-grill.md",
+      "title": "Work-area redesign discussion record",
+      "status": "canonical"
+    },
+    {
       "subject": "delivery-and-waves",
       "kind": "canonical",
       "path": "docs/system/delivery-and-waves.md",
@@ -78,6 +85,27 @@
       "status": "canonical"
     },
     {
+      "subject": "repeatable-work-testing",
+      "kind": "spec",
+      "path": ".tusker/specs/repeatable-work-testing.md",
+      "title": "Repeatable work scenarios and CLI parity",
+      "status": "canonical"
+    },
+    {
+      "subject": "runner-boundary-decisions",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-09-07-runner-boundary.md",
+      "title": "Runner boundary decisions — 7 September 2026",
+      "status": "canonical"
+    },
+    {
+      "subject": "runner-execution-boundary",
+      "kind": "spec",
+      "path": ".tusker/specs/runner-execution-boundary.md",
+      "title": "Use the operator's installed coding agents",
+      "status": "canonical"
+    },
+    {
       "subject": "runners-and-acp",
       "kind": "canonical",
       "path": "docs/system/runners-and-acp.md",
@@ -125,6 +153,34 @@
       "path": ".tusker/specs/tusker-trust-and-efficiency.md",
       "title": "Trustworthy Tusker with efficient agent workflows",
       "status": "planned"
+    },
+    {
+      "subject": "work-area-build-packets",
+      "kind": "spec",
+      "path": ".tusker/specs/work-area-build-packets.md",
+      "title": "Parallel build packets for the Tusker work experience",
+      "status": "canonical"
+    },
+    {
+      "subject": "work-area-redesign",
+      "kind": "spec",
+      "path": ".tusker/specs/work-area-redesign.md",
+      "title": "Tusker work experience — implementation specification",
+      "status": "canonical"
+    },
+    {
+      "subject": "work-experience-map",
+      "kind": "spec",
+      "path": ".tusker/specs/work-experience-map.md",
+      "title": "Find the everyday Tusker work experience",
+      "status": "canonical"
+    },
+    {
+      "subject": "work-knowledge-and-retention",
+      "kind": "spec",
+      "path": ".tusker/specs/work-knowledge-and-retention.md",
+      "title": "Project knowledge, model choices and lightweight evidence",
+      "status": "canonical"
     }
   ],
   "edges": [
@@ -132,6 +188,31 @@
       "from": "cli",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "repeatable-work-testing",
+      "kind": "link"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "work-area-redesign",
+      "kind": "link"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "work-knowledge-and-retention",
+      "kind": "link"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "work-area-redesign",
+      "kind": "source"
     },
     {
       "from": "delivery-and-waves",
@@ -214,6 +295,71 @@
       "kind": "part_of"
     },
     {
+      "from": "repeatable-work-testing",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "repeatable-work-testing",
+      "to": "work-area-redesign",
+      "kind": "source"
+    },
+    {
+      "from": "repeatable-work-testing",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
+      "from": "repeatable-work-testing",
+      "to": "cli",
+      "kind": "updates"
+    },
+    {
+      "from": "repeatable-work-testing",
+      "to": "runners-and-acp",
+      "kind": "updates"
+    },
+    {
+      "from": "repeatable-work-testing",
+      "to": "tasks-and-proof",
+      "kind": "updates"
+    },
+    {
+      "from": "runner-boundary-decisions",
+      "to": "runner-execution-boundary",
+      "kind": "decides_for"
+    },
+    {
+      "from": "runner-boundary-decisions",
+      "to": "runner-execution-boundary",
+      "kind": "part_of"
+    },
+    {
+      "from": "runner-boundary-decisions",
+      "to": "runner-execution-boundary",
+      "kind": "source"
+    },
+    {
+      "from": "runner-execution-boundary",
+      "to": "spec-to-proof",
+      "kind": "part_of"
+    },
+    {
+      "from": "runner-execution-boundary",
+      "to": "runner-boundary-decisions",
+      "kind": "source"
+    },
+    {
+      "from": "runner-execution-boundary",
+      "to": "runners-and-acp",
+      "kind": "updates"
+    },
+    {
+      "from": "runners-and-acp",
+      "to": "runner-execution-boundary",
+      "kind": "link"
+    },
+    {
       "from": "runners-and-acp",
       "to": "overview",
       "kind": "part_of"
@@ -245,6 +391,11 @@
     },
     {
       "from": "spec-to-proof",
+      "to": "runner-execution-boundary",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
       "to": "tasks-and-proof",
       "kind": "link"
     },
@@ -272,6 +423,96 @@
       "from": "tusker-trust-and-efficiency",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "work-area-build-packets",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "work-area-build-packets",
+      "to": "work-area-redesign",
+      "kind": "source"
+    },
+    {
+      "from": "work-area-redesign",
+      "to": "work-area-build-packets",
+      "kind": "link"
+    },
+    {
+      "from": "work-area-redesign",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "work-area-redesign",
+      "to": "decisions/2026-09-07-work-area-redesign-grill",
+      "kind": "source"
+    },
+    {
+      "from": "work-area-redesign",
+      "to": "work-area-build-packets",
+      "kind": "source"
+    },
+    {
+      "from": "work-area-redesign",
+      "to": "serve-ui",
+      "kind": "updates"
+    },
+    {
+      "from": "work-experience-map",
+      "to": "decisions/2026-09-07-work-area-redesign-grill",
+      "kind": "link"
+    },
+    {
+      "from": "work-experience-map",
+      "to": "repeatable-work-testing",
+      "kind": "link"
+    },
+    {
+      "from": "work-experience-map",
+      "to": "work-area-build-packets",
+      "kind": "link"
+    },
+    {
+      "from": "work-experience-map",
+      "to": "work-area-redesign",
+      "kind": "link"
+    },
+    {
+      "from": "work-experience-map",
+      "to": "work-knowledge-and-retention",
+      "kind": "link"
+    },
+    {
+      "from": "work-experience-map",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "work-experience-map",
+      "to": "work-area-redesign",
+      "kind": "source"
+    },
+    {
+      "from": "work-knowledge-and-retention",
+      "to": "repeatable-work-testing",
+      "kind": "link"
+    },
+    {
+      "from": "work-knowledge-and-retention",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "work-knowledge-and-retention",
+      "to": "decisions/2026-09-07-work-area-redesign-grill",
+      "kind": "source"
+    },
+    {
+      "from": "work-knowledge-and-retention",
+      "to": "work-area-redesign",
+      "kind": "source"
     }
   ]
 }

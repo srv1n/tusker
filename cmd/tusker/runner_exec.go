@@ -83,6 +83,12 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 	if err := validateRunnerCommandShape(command, req.CommandArgv); err != nil {
 		return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("%s %s", runner, err))
 	}
+	if req.ContainmentPGID > 0 && processGroupID(os.Getpid()) != req.ContainmentPGID {
+		return nil, tuskerError(errorInvalidTransition, fmt.Sprintf(
+			"runner wrapper containment is stale: current pgid=%d expected=%d",
+			processGroupID(os.Getpid()), req.ContainmentPGID,
+		))
+	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
 		return nil, err
 	}

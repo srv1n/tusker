@@ -4,7 +4,10 @@
   Built-ins are editable-by-copy: Duplicate leaves the original intact.
 */
 
-import { Copy, Pencil, Plus } from "lucide-react";
+import { useState } from "react";
+import { Copy, Pencil, Play, Plus } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
+import type { RunnerConformanceReport } from "@/types/domain";
 import { DashedButton, HarnessChip } from "./parts";
 import { runnerProfiles, type RunnerProfile } from "./mock";
 
@@ -61,12 +64,77 @@ function ProfileCard({ p }: { p: RunnerProfile }) {
 }
 
 export function ProfilesSection() {
+  const [harness, setHarness] = useState("codex_exec");
+  const [preset, setPreset] = useState("read-only");
+  const [exercise, setExercise] = useState("print");
+  const [report, setReport] = useState<RunnerConformanceReport>();
+  const [error, setError] = useState("");
+  const [running, setRunning] = useState(false);
+
+  async function testHarness(live: boolean) {
+    setRunning(true);
+    setError("");
+    try {
+      setReport(await api.runnerConformance(harness, preset, live, live ? exercise : ""));
+    } catch (cause) {
+      setReport(undefined);
+      setError(cause instanceof ApiError ? cause.message : String(cause));
+    } finally {
+      setRunning(false);
+    }
+  }
+
   return (
     <div className="animate-rise">
       <p className="mb-4 max-w-[64ch] text-[13px] leading-relaxed text-muted">
         A profile is the bundle the daemon uses to launch an agent. Built-ins are editable by copy —
         duplicating one leaves the original intact.
       </p>
+
+      <section className="mb-4 rounded-[10px] border border-line bg-surface px-4 py-[15px]" aria-labelledby="runner-conformance-title">
+        <h2 id="runner-conformance-title" className="font-serif text-[16px] font-semibold text-ink">Test an installed harness</h2>
+        <p className="mb-3 mt-1 text-[12px] leading-relaxed text-muted">
+          Local checks verify the executable, version, authentication, and exact permission flags. A live canary also starts one disposable model turn.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 font-mono text-[10px] text-faint">
+            HARNESS
+            <select value={harness} onChange={(event) => setHarness(event.target.value)} className="rounded-md border border-line bg-canvas px-2 py-1.5 text-[12px] text-ink">
+              <option value="codex_exec">Codex CLI</option>
+              <option value="muse">Muse profile</option>
+              <option value="claude-code">Claude CLI</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 font-mono text-[10px] text-faint">
+            PERMISSION PRESET
+            <select value={preset} onChange={(event) => setPreset(event.target.value)} className="rounded-md border border-line bg-canvas px-2 py-1.5 text-[12px] text-ink">
+              <option value="read-only">Read only</option>
+              <option value="workspace-write-offline">Workspace write, offline</option>
+              <option value="workspace-write-network">Workspace write, network</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 font-mono text-[10px] text-faint">
+            LIVE EXERCISE
+            <select value={exercise} onChange={(event) => setExercise(event.target.value)} className="rounded-md border border-line bg-canvas px-2 py-1.5 text-[12px] text-ink">
+              <option value="print">Print token</option>
+              <option value="timer">One-second timer</option>
+            </select>
+          </label>
+          <button type="button" disabled={running} onClick={() => void testHarness(false)} className="rounded-md border border-line px-3 py-1.5 text-[12px] font-medium text-ink hover:bg-hover disabled:opacity-50">Run local checks</button>
+          <button type="button" disabled={running} onClick={() => void testHarness(true)} className="inline-flex items-center gap-1 rounded-md bg-ink px-3 py-1.5 text-[12px] font-medium text-surface disabled:opacity-50"><Play size={12} /> Run live canary</button>
+        </div>
+        {error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
+        {report && (
+          <div className="mt-3 border-t border-line-soft pt-3" role="status">
+            <p className="mb-2 font-mono text-[11px] text-ink-soft">
+              {report.harness_id} · {report.version || "unknown version"} · {report.ready ? "ready" : report.live ? "not ready" : "local checks complete"}
+            </p>
+            <ul className="grid gap-1 font-mono text-[10px]">
+              {report.cases.map((item) => <li key={item.id} className="flex gap-2"><span className={item.result === "pass" ? "text-success" : item.result === "not_run" ? "text-faint" : "text-danger"}>{item.result}</span><span className="text-ink-soft">{item.id}{item.evidence ? ` — ${item.evidence}` : ""}</span></li>)}
+            </ul>
+          </div>
+        )}
+      </section>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {runnerProfiles.map((p) => (

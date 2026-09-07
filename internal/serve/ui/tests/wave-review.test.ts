@@ -8,7 +8,7 @@ const opsSource = readFileSync(new URL("../src/features/ops/ProjectOps.tsx", imp
 const taskContractSource = readFileSync(new URL("../src/features/docs/TaskContract.tsx", import.meta.url), "utf8");
 const routerSource = readFileSync(new URL("../src/router.tsx", import.meta.url), "utf8");
 
-test("the live Tasks route mounts wave review and action surfaces", () => {
+test("the legacy task surface retains review actions while the live route mounts WorkBoard", () => {
   expect(tasksSource).toContain("useReviewBatch(projectId)");
   expect(tasksSource).toContain("<WaveReviewGroups");
   expect(tasksSource).toContain("<BatchBar");
@@ -16,8 +16,8 @@ test("the live Tasks route mounts wave review and action surfaces", () => {
   expect(waveSource).toContain("ready for your review");
   expect(waveSource).toContain("disabled={disabled || !wave.readyForReview || selectable.length === 0}");
   expect(routerSource).toContain('path: "tasks"');
-  expect(routerSource).toContain('"@/features/product/TaskScreens"');
-  expect(routerSource).toContain('"Tasks"');
+  expect(routerSource).toContain('"@/features/workbench/integration"');
+  expect(routerSource).toContain('"WorkBoard"');
 });
 
 test("terminal waves cannot expose Land or enter BatchBar selection", () => {

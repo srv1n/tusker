@@ -1,0 +1,209 @@
+/*
+  WUX-T-0006 — TaskInspector panel layout.
+
+  Temporary right panel above 1100px viewport width (420px); below that a
+  full-width overlay with a dismiss scrim. Local to the inspector directory:
+  no global styles are touched.
+*/
+
+.wux-inspector-scrim-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.wux-inspector-scrim {
+  display: none;
+}
+
+.wux-inspector {
+  pointer-events: auto;
+  position: fixed;
+  top: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: 420px;
+  max-width: 100vw;
+  height: 100dvh;
+  background: var(--k-surface);
+  border-left: 1px solid var(--k-line);
+  box-shadow: -12px 0 32px rgb(0 0 0 / 0.12);
+  outline: none;
+}
+
+.wux-inspector:focus-visible {
+  box-shadow: -12px 0 32px rgb(0 0 0 / 0.12), 0 0 0 2px var(--k-info);
+}
+
+.wux-inspector-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--k-line);
+}
+
+.wux-inspector-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--k-line);
+  background: var(--k-raised);
+  color: var(--k-ink);
+}
+
+.wux-inspector-close:hover {
+  background: var(--k-hover);
+}
+
+.wux-inspector-close:focus-visible {
+  outline: 2px solid var(--k-info);
+  outline-offset: 2px;
+}
+
+.wux-inspector-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  padding-bottom: 32px;
+}
+
+.wux-inspector-h {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--k-ink);
+}
+
+/* Long contract text stays inside the panel: bounded scroll, never overflow. */
+.wux-inspector-intent {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--k-line-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--k-ink-soft);
+  background: var(--k-panel);
+  overflow-wrap: break-word;
+}
+
+.wux-inspector-intent > *:first-child {
+  margin-top: 0;
+}
+
+.wux-inspector-intent > *:last-child {
+  margin-bottom: 0;
+}
+
+.wux-inspector-intent p {
+  margin: 0 0 8px;
+}
+
+.wux-inspector details {
+  border: 1px solid var(--k-line-soft);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--k-panel);
+}
+
+.wux-inspector summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--k-ink);
+}
+
+.wux-inspector summary:focus-visible {
+  outline: 2px solid var(--k-info);
+  outline-offset: 2px;
+}
+
+.wux-inspector-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--k-line);
+  background: var(--k-raised);
+  color: var(--k-ink);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.wux-inspector-action:hover {
+  background: var(--k-hover);
+}
+
+.wux-inspector-action:focus-visible {
+  outline: 2px solid var(--k-info);
+  outline-offset: 2px;
+}
+
+.wux-inspector-action-primary {
+  border-color: transparent;
+  background: var(--k-ink);
+  color: var(--k-surface);
+}
+
+.wux-inspector-skeleton {
+  height: 14px;
+  border-radius: 6px;
+  background: var(--k-active);
+  margin-bottom: 12px;
+  animation: wux-inspector-pulse 1.2s ease-in-out infinite;
+}
+
+.wux-inspector-skeleton-short {
+  width: 55%;
+}
+
+@keyframes wux-inspector-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wux-inspector-skeleton {
+    animation: none;
+  }
+}
+
+/* Narrow screens: usable full-width overlay with a dismiss scrim. */
+@media (max-width: 1100px) {
+  .wux-inspector-scrim {
+    pointer-events: auto;
+    display: block;
+    position: absolute;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    background: rgb(0 0 0 / 0.35);
+    cursor: default;
+  }
+
+  .wux-inspector {
+    left: 0;
+    right: 0;
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--k-line);
+    box-shadow: 0 -12px 32px rgb(0 0 0 / 0.18);
+  }
+}

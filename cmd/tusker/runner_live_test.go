@@ -853,9 +853,15 @@ func TestClaudeLiveRunnerCompletesFixtureThroughReviewLane(t *testing.T) {
 	}
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 
-	scriptPath := filepath.Join(filepath.Dir(vault), "fake-claude.py")
+	scriptPath := filepath.Join(t.TempDir(), "fake-claude.py")
 	script := `#!/usr/bin/env python3
 import datetime, json, os, pathlib, re, subprocess, sys
+if "--version" in sys.argv:
+    print("claude-test 1")
+    raise SystemExit(0)
+if sys.argv[1:3] == ["auth", "status"]:
+    print('{"loggedIn":true}')
+    raise SystemExit(0)
 def promote_note_to_review():
     path = pathlib.Path(os.environ["TUSKER_NOTE_PATH"])
     text = path.read_text()
@@ -944,9 +950,9 @@ for line in sys.stdin:
 	wf.Workspace.Strategy = string(WorkspaceStrategyCopy)
 	wf.Claude.Command = scriptPath + " --input-format stream-json"
 	wf.Runners[string(RunnerClaude)] = RunnerDefinition{Kind: string(RunnerClaude), Command: wf.Claude.Command}
-	wf.Codex.ApprovalPolicy = "on-failure"
-	wf.Codex.ThreadSandbox = "workspace-write"
-	wf.Codex.TurnSandboxPolicy = "workspace-write"
+	wf.Codex.ApprovalPolicy = "never"
+	wf.Codex.ThreadSandbox = "danger-full-access"
+	wf.Codex.TurnSandboxPolicy = "danger-full-access"
 	wf.Codex.ReadTimeoutMS = 5000
 	wf.Codex.TurnTimeoutMS = 5000
 	wfFile := WorkflowFile{Path: workflowPath(vault), Data: wf}
@@ -976,10 +982,13 @@ for line in sys.stdin:
 	}
 	executeRun = finishDaemonRunForTest(t, daemon, project, wfFile, executeRun)
 	if executeRun.LeaseState != string(LeaseStateReleased) {
-		t.Fatalf("execute completion was not released: state=%s error=%s", executeRun.LeaseState, executeRun.LastError)
+		raw, _ := readText(executeRun.RawLogPath)
+		t.Fatalf("execute completion was not released: state=%s error=%s raw=%s", executeRun.LeaseState, executeRun.LastError, raw)
 	}
 	assertEqual(t, string(LeaseStateReleased), executeRun.LeaseState, "execute lease")
-	assertEqual(t, string(AttemptOutcomeSucceeded), executeRun.AttemptOutcome, "execute outcome")
+	if executeRun.AttemptOutcome != string(AttemptOutcomeSucceeded) {
+		t.Fatalf("execute outcome=%s error=%s summary=%s", executeRun.AttemptOutcome, executeRun.LastError, executeRun.FinalSummary)
+	}
 	implementationSHA := strings.TrimSpace(gitOutput(t, "-C", executeRun.WorkspacePath, "rev-parse", "HEAD"))
 	// Copy-mode workspaces have an independent object database. Import the
 	// exact implementation object before asking the review lane to resolve the
@@ -1154,6 +1163,7 @@ for line in sys.stdin:
 		StatusPath:    statusPath,
 		Command:       scriptPath,
 		VaultPath:     tempRoot,
+		CodexPolicy:   CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1257,6 +1267,7 @@ while running:
 		StatusPath:    statusPath,
 		Command:       scriptPath,
 		VaultPath:     tempRoot,
+		CodexPolicy:   CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

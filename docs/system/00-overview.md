@@ -90,6 +90,7 @@ Run `tusker docs map --vault ./.tusker` after a system page changes.
 ```mermaid
 graph TD
   n_cli["CLI reference"]
+  n_decisions_2026_09_07_work_area_redesign_grill["Work-area redesign discussion record"]
   n_delivery_and_waves["Delivery and waves"]
   n_execution_observability_system["Execution observability"]
   n_factory_intake["Factory intake"]
@@ -100,6 +101,9 @@ graph TD
   n_overview["System overview"]
   n_platform_support["Platform support"]
   n_proof_and_closeout["Proof and closeout"]
+  n_repeatable_work_testing["Repeatable work scenarios and CLI parity"]
+  n_runner_boundary_decisions["Runner boundary decisions — 7 September 2026"]
+  n_runner_execution_boundary["Use the operator's installed coding agents"]
   n_runners_and_acp["Runners and ACP"]
   n_serve_ui["Serve UI"]
   n_skills["Skills"]
@@ -107,7 +111,16 @@ graph TD
   n_storage_and_runtime["Storage and runtime"]
   n_tasks_and_proof["Tasks and proof"]
   n_tusker_trust_and_efficiency["Trustworthy Tusker with efficient agent workflows"]
+  n_work_area_build_packets["Parallel build packets for the Tusker work experience"]
+  n_work_area_redesign["Tusker work experience — implementation specification"]
+  n_work_experience_map["Find the everyday Tusker work experience"]
+  n_work_knowledge_and_retention["Project knowledge, model choices and lightweight evidence"]
   n_cli -->|part of| n_overview
+  n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_repeatable_work_testing
+  n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_work_area_redesign
+  n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_work_knowledge_and_retention
+  n_decisions_2026_09_07_work_area_redesign_grill -->|part of| n_work_area_redesign
+  n_decisions_2026_09_07_work_area_redesign_grill -->|source| n_work_area_redesign
   n_delivery_and_waves -->|part of| n_overview
   n_execution_observability_system -->|part of| n_overview
   n_factory_intake -->|part of| n_overview
@@ -124,17 +137,49 @@ graph TD
   n_overview -->|link| n_tasks_and_proof
   n_platform_support -->|part of| n_overview
   n_proof_and_closeout -->|part of| n_overview
+  n_repeatable_work_testing -->|part of| n_work_area_redesign
+  n_repeatable_work_testing -->|source| n_work_area_redesign
+  n_repeatable_work_testing -->|source| n_work_knowledge_and_retention
+  n_repeatable_work_testing -->|updates| n_cli
+  n_repeatable_work_testing -->|updates| n_runners_and_acp
+  n_repeatable_work_testing -->|updates| n_tasks_and_proof
+  n_runner_boundary_decisions -->|decides for| n_runner_execution_boundary
+  n_runner_boundary_decisions -->|part of| n_runner_execution_boundary
+  n_runner_boundary_decisions -->|source| n_runner_execution_boundary
+  n_runner_execution_boundary -->|part of| n_spec_to_proof
+  n_runner_execution_boundary -->|source| n_runner_boundary_decisions
+  n_runner_execution_boundary -->|updates| n_runners_and_acp
+  n_runners_and_acp -->|link| n_runner_execution_boundary
   n_runners_and_acp -->|part of| n_overview
   n_serve_ui -->|part of| n_overview
   n_skills -->|part of| n_overview
   n_spec_to_proof -->|link| n_delivery_and_waves
   n_spec_to_proof -->|link| n_orchestration
   n_spec_to_proof -->|link| n_overview
+  n_spec_to_proof -->|link| n_runner_execution_boundary
   n_spec_to_proof -->|link| n_tasks_and_proof
   n_spec_to_proof -->|part of| n_overview
   n_storage_and_runtime -->|part of| n_overview
   n_tasks_and_proof -->|part of| n_overview
   n_tusker_trust_and_efficiency -->|link| n_spec_to_proof
   n_tusker_trust_and_efficiency -->|part of| n_overview
+  n_work_area_build_packets -->|part of| n_work_area_redesign
+  n_work_area_build_packets -->|source| n_work_area_redesign
+  n_work_area_redesign -->|link| n_work_area_build_packets
+  n_work_area_redesign -->|part of| n_overview
+  n_work_area_redesign -->|source| n_decisions_2026_09_07_work_area_redesign_grill
+  n_work_area_redesign -->|source| n_work_area_build_packets
+  n_work_area_redesign -->|updates| n_serve_ui
+  n_work_experience_map -->|link| n_decisions_2026_09_07_work_area_redesign_grill
+  n_work_experience_map -->|link| n_repeatable_work_testing
+  n_work_experience_map -->|link| n_work_area_build_packets
+  n_work_experience_map -->|link| n_work_area_redesign
+  n_work_experience_map -->|link| n_work_knowledge_and_retention
+  n_work_experience_map -->|part of| n_work_area_redesign
+  n_work_experience_map -->|source| n_work_area_redesign
+  n_work_knowledge_and_retention -->|link| n_repeatable_work_testing
+  n_work_knowledge_and_retention -->|part of| n_work_area_redesign
+  n_work_knowledge_and_retention -->|source| n_decisions_2026_09_07_work_area_redesign_grill
+  n_work_knowledge_and_retention -->|source| n_work_area_redesign
 ```
 <!-- tusker:docs-map:end -->

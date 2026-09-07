@@ -115,6 +115,18 @@ export interface ActionResult {
   discard?: DiscardImpact;
 }
 
+export interface WaveExecutionReceipt {
+  waveId: string;
+  authorizationFingerprint: string;
+  queuedTaskIds: string[];
+  alreadyQueuedTaskIds: string[];
+  statusLink: string;
+}
+
+export interface WaveExecuteResult extends ActionResult {
+  execution?: WaveExecutionReceipt;
+}
+
 export interface DeliveryCrossScopeDependency {
   consumerTaskId?: string;
   consumerSourceKey: string;
@@ -610,7 +622,7 @@ export interface WaveSummary {
   memberIds: string[];
   members: WaveTaskSummary[];
   counts: Record<string, number>;
-  authorization: { state: "disarmed" | "armed" | "paused" | "stale"; stale: boolean; action: string; actor?: string | null; at?: string | null };
+  authorization: { state: "disarmed" | "armed" | "paused" | "stale"; stale: boolean; action: string; fingerprint?: string; authorizedFingerprint?: string | null; actor?: string | null; at?: string | null };
   brief: WaveBrief;
 }
 
@@ -957,4 +969,21 @@ export interface DaemonStatus {
       fields?: Record<string, unknown>;
     }>;
   } | null;
+}
+
+export type RunnerConformanceResult = "pass" | "fail" | "unsupported" | "blocked" | "not_run";
+
+export interface RunnerConformanceReport {
+  schema: "tusker.runner-conformance/v1";
+  harness_id: string;
+  provider: string;
+  transport: "cli" | "acp_stdio";
+  executable?: string;
+  executable_identity?: string;
+  version?: string;
+  preset: string;
+  live: boolean;
+  ready: boolean;
+  valid_until?: string;
+  cases: Array<{ id: string; result: RunnerConformanceResult; evidence?: string }>;
 }

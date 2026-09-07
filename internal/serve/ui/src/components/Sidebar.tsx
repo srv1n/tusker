@@ -6,14 +6,17 @@ import { openTaskSearch } from "@/features/search/TaskSearch";
 import { useDaemon, useProjectRefresh, useProjects, useRegisterProject } from "@/lib/queries";
 import type { ProjectSummary } from "@/types/domain";
 
-const PROJECT_NAV = [
-  { label: "Today", to: "/p/$projectId" as const },
+const PRIMARY_PROJECT_NAV = [
+  { label: "Work", to: "/p/$projectId/waves" as const },
+  { label: "Documents", to: "/p/$projectId/knowledge" as const },
+  { label: "Settings", to: "/p/$projectId/settings" as const },
+];
+
+const SECONDARY_PROJECT_NAV = [
   { label: "Plan", to: "/p/$projectId/plan" as const },
-  { label: "Epics", to: "/p/$projectId/epics" as const },
-  { label: "Waves", to: "/p/$projectId/waves" as const },
-  { label: "Tasks", to: "/p/$projectId/tasks" as const },
+  { label: "Board", to: "/p/$projectId/tasks" as const },
   { label: "Trains", to: "/p/$projectId/trains" as const },
-  { label: "Knowledge", to: "/p/$projectId/knowledge" as const },
+  { label: "Diagnostics", to: "/p/$projectId/diagnostics" as const },
 ];
 
 export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
@@ -145,15 +148,6 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
           <Link to="/settings" className={cn("block rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors", pathname === "/settings" ? "bg-active font-semibold text-ink" : "text-muted hover:bg-hover hover:text-ink")}>
             Settings
           </Link>
-          {activeProject && (
-            <Link
-              to="/p/$projectId/diagnostics"
-              params={{ projectId: activeProject }}
-              className={cn("block rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors", pathname.includes("/diagnostics") ? "bg-active font-semibold text-ink" : "text-muted hover:bg-hover hover:text-ink")}
-            >
-              Diagnostics
-            </Link>
-          )}
           <div className="mt-2 flex items-center justify-between border-t border-line-soft px-3 pt-2.5 text-[11px]">
             <span className="text-muted">Factory health</span>
             <span className={cn("flex items-center gap-1.5 font-semibold", healthTone)}>
@@ -183,6 +177,8 @@ function RailLink({ active, to, children }: { active: boolean; to: "/"; children
 
 function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; active: boolean; pathname: string }) {
   const refresh = useProjectRefresh(project.id);
+  const selected = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
+  const secondarySelected = SECONDARY_PROJECT_NAV.some((item) => selected(item.to.replace("$projectId", project.id)));
 
   return (
     <div className="mb-1">
@@ -232,9 +228,8 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
       )}
       {active && (
         <div className="ml-4 mt-0.5 space-y-0.5 border-l border-line-soft pl-2">
-          {PROJECT_NAV.map((item) => {
+          {PRIMARY_PROJECT_NAV.map((item) => {
             const href = item.to.replace("$projectId", project.id);
-            const selected = item.to.endsWith("$projectId") ? pathname === href : pathname.startsWith(href);
             return (
               <Link
                 key={item.label}
@@ -242,13 +237,37 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
                 params={{ projectId: project.id }}
                 className={cn(
                   "block rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors",
-                  selected ? "bg-active font-semibold text-ink shadow-2xs" : "text-muted hover:bg-hover hover:text-ink",
+                  selected(href) ? "bg-active font-semibold text-ink shadow-2xs" : "text-muted hover:bg-hover hover:text-ink",
                 )}
               >
                 {item.label}
               </Link>
             );
           })}
+          <details open={secondarySelected} className="group pt-1">
+            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2.5 py-1.5 text-[12px] font-medium text-muted hover:bg-hover hover:text-ink">
+              <ChevronDown size={12} className="-rotate-90 transition-transform group-open:rotate-0" />
+              More
+            </summary>
+            <div className="mt-0.5 space-y-0.5">
+              {SECONDARY_PROJECT_NAV.map((item) => {
+                const href = item.to.replace("$projectId", project.id);
+                return (
+                  <Link
+                    key={item.label}
+                    to={item.to}
+                    params={{ projectId: project.id }}
+                    className={cn(
+                      "block rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors",
+                      selected(href) ? "bg-active font-semibold text-ink shadow-2xs" : "text-muted hover:bg-hover hover:text-ink",
+                    )}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </details>
         </div>
       )}
     </div>

@@ -108,6 +108,7 @@ for line in sys.stdin:
 		StatusPath:    filepath.Join(tempRoot, "claude.status.json"),
 		Command:       scriptPath + " --input-format stream-json",
 		VaultPath:     tempRoot,
+		CodexPolicy:   CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"},
 		SessionRef:    "claude-predecessor",
 		MessageRef:    "claude-message",
 	})

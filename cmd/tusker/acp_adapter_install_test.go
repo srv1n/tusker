@@ -239,7 +239,7 @@ func TestACPAdapterDoctorDetectsTamperAndDoesNotCreateMissingState(t *testing.T)
 	}
 }
 
-func TestACPAdapterInstallIsLocalOnlyAndCLIIsAdvertised(t *testing.T) {
+func TestACPAdapterInstallIsLocalOnlyAndCLIIsRetired(t *testing.T) {
 	raw, err := os.ReadFile("acp_adapter_install.go")
 	if err != nil {
 		t.Fatal(err)
@@ -259,13 +259,16 @@ func TestACPAdapterInstallIsLocalOnlyAndCLIIsAdvertised(t *testing.T) {
 		t.Fatal(err)
 	}
 	capability, ok := capabilityCommandNamed(manifest.Commands, "acp")
-	if !ok || len(capability.Flags) != 0 || !containsString(capability.Subcommands, "install") || !containsString(capability.Subcommands, "doctor") {
+	if !ok || len(capability.Flags) != 0 || containsString(capability.Subcommands, "install") || containsString(capability.Subcommands, "setup") || !containsString(capability.Subcommands, "doctor") {
 		t.Fatalf("acp capability = %#v", capability)
 	}
-	installCapability, installOK := capabilityCommandNamed(manifest.Commands, "acp install")
+	_, installOK := capabilityCommandNamed(manifest.Commands, "acp install")
 	doctorCapability, doctorOK := capabilityCommandNamed(manifest.Commands, "acp doctor")
-	if !installOK || !doctorOK || !containsString(installCapability.Flags, "--artifact") || containsString(installCapability.Flags, "--auth-source") || !containsString(doctorCapability.Flags, "--bundle-digest") || containsString(doctorCapability.Flags, "--artifact") {
-		t.Fatalf("per-subcommand capability flags install=%#v doctor=%#v", installCapability, doctorCapability)
+	if installOK || !doctorOK || !containsString(doctorCapability.Flags, "--bundle-digest") || containsString(doctorCapability.Flags, "--artifact") {
+		t.Fatalf("retired install or doctor capability mismatch: install=%t doctor=%#v", installOK, doctorCapability)
+	}
+	if code, err := runInner("acp install", Args{}); err != nil || code == 0 {
+		t.Fatalf("retired acp install result: code=%d err=%v", code, err)
 	}
 	if _, err := runInner("acp", Args{"unexpected": "true"}); err == nil {
 		t.Fatal("root acp accepted arbitrary args")

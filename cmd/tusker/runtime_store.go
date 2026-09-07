@@ -279,27 +279,45 @@ type RunStatus struct {
 }
 
 type RunAuthorization struct {
-	ProjectID                string `json:"project_id"`
-	RecordID                 string `json:"record_id"`
-	LeaseGeneration          int    `json:"lease_generation"`
-	Source                   string `json:"source"`
-	Actor                    string `json:"actor"`
-	Trigger                  string `json:"trigger"`
-	ProjectAutomationEnabled bool   `json:"project_automation_enabled"`
-	CreatedAt                string `json:"created_at"`
+	ProjectID                         string `json:"project_id"`
+	RecordID                          string `json:"record_id"`
+	LeaseGeneration                   int    `json:"lease_generation"`
+	Source                            string `json:"source"`
+	Actor                             string `json:"actor"`
+	Trigger                           string `json:"trigger"`
+	ProjectAutomationEnabled          bool   `json:"project_automation_enabled"`
+	CreatedAt                         string `json:"created_at"`
+	DirectiveWaveID                   string `json:"-"`
+	DirectiveAuthorizationFingerprint string `json:"-"`
+	DirectiveWaveAuthorizedAt         string `json:"-"`
 }
 
 // RunDirective is a durable, human-authorized request for the resident daemon
 // to execute one named task once. It is deliberately separate from a lease:
 // only the daemon may consume it into a normal claim/attempt.
 type RunDirective struct {
-	ProjectID string `json:"project_id"`
-	RecordID  string `json:"record_id"`
-	Actor     string `json:"actor"`
-	CreatedAt string `json:"created_at"`
-	ExpiresAt string `json:"expires_at"`
-	State     string `json:"state"`
-	Reason    string `json:"reason"`
+	ProjectID                string `json:"project_id"`
+	RecordID                 string `json:"record_id"`
+	Actor                    string `json:"actor"`
+	CreatedAt                string `json:"created_at"`
+	ExpiresAt                string `json:"expires_at"`
+	State                    string `json:"state"`
+	Reason                   string `json:"reason"`
+	WaveID                   string `json:"wave_id,omitempty"`
+	AuthorizationFingerprint string `json:"authorization_fingerprint,omitempty"`
+	WaveAuthorizedAt         string `json:"wave_authorized_at,omitempty"`
+}
+
+type waveExecutionScope struct {
+	WaveID                   string `json:"wave_id"`
+	AuthorizationFingerprint string `json:"authorization_fingerprint"`
+	WaveAuthorizedAt         string `json:"wave_authorized_at"`
+	ExpiresAt                string `json:"expires_at"`
+	EnabledProjectPolling    bool   `json:"enabled_project_polling"`
+}
+
+func waveExecutionScopeKey(projectID string) string {
+	return "wave_execute_scope:" + projectID
 }
 
 type RunIdentityMetadata struct {
@@ -963,6 +981,9 @@ func (s *RuntimeStore) Migrate() error {
 			expires_at TEXT NOT NULL,
 			state TEXT NOT NULL DEFAULT 'queued',
 			reason TEXT NOT NULL DEFAULT '',
+			wave_id TEXT NOT NULL DEFAULT '',
+			authorization_fingerprint TEXT NOT NULL DEFAULT '',
+			wave_authorized_at TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(project_id, record_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS run_identity_metadata (
@@ -1266,6 +1287,18 @@ func (s *RuntimeStore) Migrate() error {
 			return err
 		}
 	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"wave_id", `ALTER TABLE run_directives ADD COLUMN wave_id TEXT NOT NULL DEFAULT ''`},
+		{"authorization_fingerprint", `ALTER TABLE run_directives ADD COLUMN authorization_fingerprint TEXT NOT NULL DEFAULT ''`},
+		{"wave_authorized_at", `ALTER TABLE run_directives ADD COLUMN wave_authorized_at TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("run_directives", column.name, column.stmt); err != nil {
+			return err
+		}
+	}
 	if err := s.migrateGateLedgerToolchain(); err != nil {
 		return err
 	}
@@ -1517,7 +1550,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		{"projects", "project_id"}, {"projects", "repo_root"}, {"projects", "vault_root"},
 		{"runs", "project_id"}, {"runs", "record_id"}, {"runs", "item_id"}, {"runs", "lease_generation"}, {"runs", "terminal"},
 		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"},
-		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"},
+		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"}, {"run_directives", "wave_id"}, {"run_directives", "authorization_fingerprint"}, {"run_directives", "wave_authorized_at"},
 		{"run_identity_metadata", "project_id"}, {"run_identity_metadata", "record_id"},
 		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"},
 		{"turns", "attempt_id"}, {"turns", "project_id"}, {"turns", "record_id"},
@@ -1674,7 +1707,7 @@ func (s *RuntimeStore) RegisterProject(project RegisteredProject) (RegisteredPro
 		return RegisteredProject{}, false, err
 	}
 	for _, existing := range projects {
-		if sameCanonicalProjectPath(existing.RepoRoot, project.RepoRoot) || sameCanonicalProjectPath(existing.VaultRoot, project.VaultRoot) {
+		if sameCanonicalProjectPath(existing.RepoRoot, project.RepoRoot) || sameCanonicalProjectPath(existing.VaultRoot, project.VaultRoot) || sameRegisteredGitProject(existing, project) {
 			return existing, false, nil
 		}
 	}
@@ -1682,6 +1715,19 @@ func (s *RuntimeStore) RegisterProject(project RegisteredProject) (RegisteredPro
 		return RegisteredProject{}, false, err
 	}
 	return project, true, nil
+}
+
+func sameRegisteredGitProject(existing, candidate RegisteredProject) bool {
+	existingCommon, err := gitCommonDirectory(existing.RepoRoot)
+	if err != nil {
+		return false
+	}
+	candidateCommon, err := gitCommonDirectory(candidate.RepoRoot)
+	if err != nil || existingCommon != candidateCommon {
+		return false
+	}
+	candidateConfig, err := resolveTuskerConfigForRepo(candidate.RepoRoot, true)
+	return err == nil && registeredProjectConfigIdentityMatches(existing, candidateConfig.Config.ProjectID)
 }
 
 func (s *RuntimeStore) EnsureProjectUniqueness() error {
@@ -2187,14 +2233,14 @@ func (s *RuntimeStore) QueueRunDirective(directive RunDirective) (bool, error) {
 	directive.ExpiresAt = expiresAt.UTC().Format(time.RFC3339Nano)
 	directive.State = "queued"
 	directive.Reason = ""
-	result, err := s.exec(`INSERT INTO run_directives (project_id, record_id, actor, created_at, expires_at, state, reason)
-		SELECT ?, ?, ?, ?, ?, ?, ?
+	result, err := s.exec(`INSERT INTO run_directives (project_id, record_id, actor, created_at, expires_at, state, reason, wave_id, authorization_fingerprint, wave_authorized_at)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (
 			SELECT 1 FROM runs WHERE project_id = ? AND record_id = ? AND lease_state IN ('claimed', 'running')
 		)
-		ON CONFLICT(project_id, record_id) DO UPDATE SET actor=excluded.actor, created_at=excluded.created_at, expires_at=excluded.expires_at, state=excluded.state, reason=excluded.reason
+		ON CONFLICT(project_id, record_id) DO UPDATE SET actor=excluded.actor, created_at=excluded.created_at, expires_at=excluded.expires_at, state=excluded.state, reason=excluded.reason, wave_id=excluded.wave_id, authorization_fingerprint=excluded.authorization_fingerprint, wave_authorized_at=excluded.wave_authorized_at
 		WHERE run_directives.state != 'queued'`,
-		directive.ProjectID, directive.RecordID, directive.Actor, directive.CreatedAt, directive.ExpiresAt, directive.State, directive.Reason,
+		directive.ProjectID, directive.RecordID, directive.Actor, directive.CreatedAt, directive.ExpiresAt, directive.State, directive.Reason, directive.WaveID, directive.AuthorizationFingerprint, directive.WaveAuthorizedAt,
 		directive.ProjectID, directive.RecordID)
 	if err != nil {
 		return false, err
@@ -2203,9 +2249,100 @@ func (s *RuntimeStore) QueueRunDirective(directive RunDirective) (bool, error) {
 	return changed > 0, err
 }
 
+// QueueWaveRunDirectives binds the existing one-shot task authority to one
+// exact armed-wave fingerprint. The batch is atomic so Execute Wave cannot
+// release only part of a reviewed DAG.
+func (s *RuntimeStore) QueueWaveRunDirectives(projectID, waveID, fingerprint, authorizedAt, actor string, taskIDs []string, now time.Time, ttl time.Duration, enableProjectPolling bool) ([]string, []string, error) {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(waveID) == "" || strings.TrimSpace(fingerprint) == "" || strings.TrimSpace(authorizedAt) == "" || strings.TrimSpace(actor) == "" || len(taskIDs) == 0 || ttl <= 0 {
+		return nil, nil, tuskerError(errorInvalidArg, "wave run directives require project, wave, fingerprint, actor, tasks, and expiry")
+	}
+	now = now.UTC()
+	createdAt, expiresAt := now.Format(time.RFC3339Nano), now.Add(ttl).Format(time.RFC3339Nano)
+	queued, already := []string{}, []string{}
+	err := s.withBusyRetry(func() error {
+		queued, already = nil, nil
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		scope := waveExecutionScope{WaveID: waveID, AuthorizationFingerprint: fingerprint, WaveAuthorizedAt: authorizedAt, ExpiresAt: expiresAt, EnabledProjectPolling: enableProjectPolling}
+		var existingScopeJSON string
+		if scanErr := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, waveExecutionScopeKey(projectID)).Scan(&existingScopeJSON); scanErr == nil {
+			var existing waveExecutionScope
+			if json.Unmarshal([]byte(existingScopeJSON), &existing) == nil && existing.WaveID == waveID && existing.AuthorizationFingerprint == fingerprint && existing.WaveAuthorizedAt == authorizedAt {
+				scope.EnabledProjectPolling = scope.EnabledProjectPolling || existing.EnabledProjectPolling
+			}
+		} else if !errors.Is(scanErr, sql.ErrNoRows) {
+			return scanErr
+		}
+		scopeJSON, err := json.Marshal(scope)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, waveExecutionScopeKey(projectID), string(scopeJSON)); err != nil {
+			return err
+		}
+		if enableProjectPolling {
+			if _, err := tx.Exec(`UPDATE projects SET enabled = 1, health = ? WHERE project_id = ?`, string(projectHealthHealthy), projectID); err != nil {
+				return err
+			}
+		}
+		for _, taskID := range uniqueStrings(taskIDs) {
+			var liveRuns int
+			if err := tx.QueryRow(`SELECT COUNT(1) FROM runs WHERE project_id = ? AND record_id = ? AND lease_state IN ('claimed', 'running')`, projectID, taskID).Scan(&liveRuns); err != nil {
+				return err
+			}
+			if liveRuns > 0 {
+				already = append(already, taskID)
+				continue
+			}
+			var state, existingWave, existingFingerprint, existingAuthorizedAt, existingExpiry string
+			err := tx.QueryRow(`SELECT state, wave_id, authorization_fingerprint, wave_authorized_at, expires_at FROM run_directives WHERE project_id = ? AND record_id = ?`, projectID, taskID).Scan(&state, &existingWave, &existingFingerprint, &existingAuthorizedAt, &existingExpiry)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			active := false
+			if err == nil && state == "queued" {
+				if expiry, parseErr := time.Parse(time.RFC3339Nano, existingExpiry); parseErr == nil {
+					active = expiry.After(now)
+				}
+			}
+			if active {
+				if existingWave != waveID {
+					return tuskerError(errorInvalidTransition, taskID+" already has a different active execution directive")
+				}
+				if existingFingerprint == fingerprint && existingAuthorizedAt == authorizedAt {
+					already = append(already, taskID)
+					continue
+				}
+			}
+			result, execErr := tx.Exec(`INSERT INTO run_directives (project_id, record_id, actor, created_at, expires_at, state, reason, wave_id, authorization_fingerprint, wave_authorized_at)
+				VALUES (?, ?, ?, ?, ?, 'queued', '', ?, ?, ?)
+				ON CONFLICT(project_id, record_id) DO UPDATE SET actor=excluded.actor, created_at=excluded.created_at, expires_at=excluded.expires_at, state='queued', reason='', wave_id=excluded.wave_id, authorization_fingerprint=excluded.authorization_fingerprint, wave_authorized_at=excluded.wave_authorized_at`,
+				projectID, taskID, actor, createdAt, expiresAt, waveID, fingerprint, authorizedAt)
+			if execErr != nil {
+				return execErr
+			}
+			changed, rowsErr := result.RowsAffected()
+			if rowsErr != nil {
+				return rowsErr
+			}
+			if changed > 0 {
+				queued = append(queued, taskID)
+			} else {
+				already = append(already, taskID)
+			}
+		}
+		return tx.Commit()
+	})
+	return queued, already, err
+}
+
 func (s *RuntimeStore) RunDirective(projectID, recordID string) (*RunDirective, error) {
 	var directive RunDirective
-	if err := s.queryRowScan(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason FROM run_directives WHERE project_id = ? AND record_id = ?`, []any{projectID, recordID}, &directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason); err != nil {
+	if err := s.queryRowScan(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason, wave_id, authorization_fingerprint, wave_authorized_at FROM run_directives WHERE project_id = ? AND record_id = ?`, []any{projectID, recordID}, &directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason, &directive.WaveID, &directive.AuthorizationFingerprint, &directive.WaveAuthorizedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -2225,7 +2362,7 @@ func (s *RuntimeStore) RunDirective(projectID, recordID string) (*RunDirective, 
 // expired. They are separate from run rows until the daemon consumes them, so
 // project rebind preconditions must inspect this table explicitly.
 func (s *RuntimeStore) ListActiveRunDirectives(projectID string, now time.Time) ([]RunDirective, error) {
-	rows, err := s.query(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason
+	rows, err := s.query(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason, wave_id, authorization_fingerprint, wave_authorized_at
 		FROM run_directives
 		WHERE project_id = ? AND state = 'queued' AND julianday(expires_at) > julianday(?)
 		ORDER BY record_id`, projectID, now.UTC().Format(time.RFC3339Nano))
@@ -2236,7 +2373,7 @@ func (s *RuntimeStore) ListActiveRunDirectives(projectID string, now time.Time) 
 }
 
 func listActiveRunDirectivesTx(tx *sql.Tx, projectID string, now time.Time) ([]RunDirective, error) {
-	rows, err := tx.Query(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason
+	rows, err := tx.Query(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason, wave_id, authorization_fingerprint, wave_authorized_at
 		FROM run_directives
 		WHERE project_id = ? AND state = 'queued' AND julianday(expires_at) > julianday(?)
 		ORDER BY record_id`, projectID, now.UTC().Format(time.RFC3339Nano))
@@ -2251,7 +2388,7 @@ func scanRunDirectives(rows *sql.Rows) ([]RunDirective, error) {
 	var directives []RunDirective
 	for rows.Next() {
 		var directive RunDirective
-		if err := rows.Scan(&directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason); err != nil {
+		if err := rows.Scan(&directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason, &directive.WaveID, &directive.AuthorizationFingerprint, &directive.WaveAuthorizedAt); err != nil {
 			return nil, err
 		}
 		directives = append(directives, directive)
@@ -2922,9 +3059,40 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 			return err
 		}
 		defer tx.Rollback()
+		var scopeJSON string
+		scopeErr := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, waveExecutionScopeKey(run.ProjectID)).Scan(&scopeJSON)
+		var scope waveExecutionScope
+		if scopeErr == nil {
+			if err := json.Unmarshal([]byte(scopeJSON), &scope); err != nil {
+				return err
+			}
+			expiresAt, err := time.Parse(time.RFC3339Nano, scope.ExpiresAt)
+			if err != nil {
+				return err
+			}
+			if !expiresAt.After(now) {
+				if scope.EnabledProjectPolling {
+					if _, err := tx.Exec(`UPDATE projects SET enabled = 0, health = ?, last_error = '' WHERE project_id = ?`, string(projectHealthDisabled), run.ProjectID); err != nil {
+						return err
+					}
+				}
+				if _, err := tx.Exec(`DELETE FROM daemon_settings WHERE key = ?`, waveExecutionScopeKey(run.ProjectID)); err != nil {
+					return err
+				}
+				return tx.Commit()
+			}
+			if scope.WaveID != auth.DirectiveWaveID || scope.AuthorizationFingerprint != auth.DirectiveAuthorizationFingerprint || scope.WaveAuthorizedAt != auth.DirectiveWaveAuthorizedAt {
+				return nil
+			}
+		} else if !errors.Is(scopeErr, sql.ErrNoRows) {
+			return scopeErr
+		} else if auth.DirectiveWaveID != "" || auth.DirectiveAuthorizationFingerprint != "" || auth.DirectiveWaveAuthorizedAt != "" {
+			return nil
+		}
 		directiveResult, err := tx.Exec(`UPDATE run_directives SET state = 'consumed', reason = ''
-			WHERE project_id = ? AND record_id = ? AND state = 'queued' AND julianday(expires_at) > julianday(?)`,
-			run.ProjectID, run.RecordID, createdAt)
+			WHERE project_id = ? AND record_id = ? AND state = 'queued' AND julianday(expires_at) > julianday(?)
+				AND wave_id = ? AND authorization_fingerprint = ? AND wave_authorized_at = ?`,
+			run.ProjectID, run.RecordID, createdAt, auth.DirectiveWaveID, auth.DirectiveAuthorizationFingerprint, auth.DirectiveWaveAuthorizedAt)
 		if err != nil {
 			return err
 		}

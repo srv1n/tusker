@@ -181,8 +181,8 @@ func TestWavePreflightProfileApprovalPolicy(t *testing.T) {
 	wf.Codex.ApprovalPolicy = "on-request"
 	env := wavePreflightEnvironment{}
 	applyWaveWorkflowEnvironment(&env, wave, wf)
-	if env.ApprovalFree {
-		t.Fatalf("workspace-write-network incorrectly bypassed an interactive effective policy: %#v", env)
+	if !env.ApprovalFree {
+		t.Fatalf("unattended workspace-write profile retained an interactive approval policy: %#v", env)
 	}
 }
 

@@ -140,13 +140,14 @@ type TuskerRunnerSubagentPolicyConfig struct {
 }
 
 type TuskerRunnerProfileConfig struct {
-	Harness          string                           `yaml:"harness"`
-	Model            string                           `yaml:"model"`
-	Effort           string                           `yaml:"effort"`
-	PermissionPreset string                           `yaml:"permission_preset"`
-	Command          string                           `yaml:"command"`
-	Sandbox          TuskerRunnerSandboxConfig        `yaml:"sandbox"`
-	Subagents        TuskerRunnerSubagentPolicyConfig `yaml:"subagents"`
+	Harness           string                           `yaml:"harness"`
+	Model             string                           `yaml:"model"`
+	Effort            string                           `yaml:"effort"`
+	PermissionPreset  string                           `yaml:"permission_preset"`
+	Command           string                           `yaml:"command"`
+	NativeContainment bool                             `yaml:"native_containment"`
+	Sandbox           TuskerRunnerSandboxConfig        `yaml:"sandbox"`
+	Subagents         TuskerRunnerSubagentPolicyConfig `yaml:"subagents"`
 }
 
 type TuskerAutomationRoutingMatchConfig struct {

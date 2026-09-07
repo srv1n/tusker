@@ -2071,7 +2071,7 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 		return "", directiveErr
 	}
 	blockers := append([]string(nil), explanation.Blockers...)
-	if runDirectiveActive(directive, time.Now().UTC()) {
+	if runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC()) {
 		filtered := blockers[:0]
 		for _, blocker := range blockers {
 			if !runDirectiveBypassableBlocker(blocker) {
@@ -3610,7 +3610,7 @@ func (d *Daemon) scopeDispatchBlocker(project RegisteredProject, note Note, wf W
 	if err != nil {
 		return "", err
 	}
-	if runDirectiveActive(directive, time.Now().UTC()) {
+	if runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC()) {
 		return "", nil
 	}
 	return reason, nil
@@ -3640,7 +3640,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if err != nil {
 		return run, false, err
 	}
-	directiveActive := runDirectiveActive(directive, time.Now().UTC())
+	directiveActive := runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC())
 	// Registry enablement controls whether this project is polled. The project
 	// configuration is the separate, authoritative opt-in for daemon spawning.
 	if !project.Enabled {
@@ -3801,6 +3801,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 			return run, false, tuskerError(errorInvalidTransition, "completion authority requires an isolated noncanonical review workspace")
 		}
 	}
+	codexPolicy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, selectedProfile)
 	var preflight runnerCommandPreflightResult
 	var health runnerPreclaimHealthResult
 	if codexACPPlan != nil {
@@ -3812,6 +3813,31 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		}}
 	} else if len(authoritativeArgv) > 0 {
 		health = runnerPreclaimHealthWithSearchPath(runner.Name(), command, authoritativeSearchPath)
+	} else if runner.Name() == RunnerCodexExec || runner.Name() == RunnerClaude {
+		// The isolated workspace is materialized only after the atomic claim.
+		// Probe the identical executable/argv against the registered repository,
+		// which already exists, while keeping process spawn after workspace setup.
+		prepared, prepareErr := preparedRunnerForDispatch(project.VaultRoot, runner.Name(), command, selectedProfile, codexPolicy, project.RepoRoot, runnerCommandSearchPath())
+		if prepareErr != nil {
+			return d.persistRunnerInfrastructureBlock(run, &RunnerInfrastructureBlock{
+				State: runnerInfrastructureBlockedState, Runner: string(runner.Name()), Command: command,
+				PathProvenance: runnerCommandSearchPath(), FailedCheck: "admission", Reason: prepareErr.Error(), Remedy: runnerInfrastructureRemedy(runner.Name()),
+			})
+		}
+		authoritativeArgv = append([]string(nil), prepared.Argv...)
+		authoritativeSearchPath = runnerCommandSearchPath()
+		authoritativeRawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
+		resolvedExecutable, executableFP, identityErr := completionExecutableIdentity(prepared.Executable, prepared.Version)
+		if identityErr != nil {
+			return d.persistRunnerInfrastructureBlock(run, &RunnerInfrastructureBlock{
+				State: runnerInfrastructureBlockedState, Runner: string(runner.Name()), Command: command,
+				Executable: prepared.Executable, PathProvenance: authoritativeSearchPath, FailedCheck: "executable_identity", Reason: identityErr.Error(), Remedy: runnerInfrastructureRemedy(runner.Name()),
+			})
+		}
+		authoritativeArgv[0], authoritativeExecutableFP = resolvedExecutable, executableFP
+		health = runnerPreclaimHealthResult{Preflight: runnerCommandPreflightResult{
+			ResolvedExecutable: resolvedExecutable, ExecutableVersion: prepared.Version, SearchPath: authoritativeSearchPath, RunnerPathPrefix: filepath.Dir(resolvedExecutable),
+		}}
 	} else {
 		health = runnerPreclaimHealth(runner.Name(), command)
 	}
@@ -3866,6 +3892,45 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if d.beforeRunLeaseClaim != nil {
 		d.beforeRunLeaseClaim(run)
 	}
+	var materialLock, waveLock *v7DocumentLock
+	if directiveActive && directive != nil && directive.WaveID != "" {
+		materialLock, err = acquireV7MaterialEpochLock(project.VaultRoot)
+		if err != nil {
+			return run, false, err
+		}
+		defer func() {
+			if waveLock != nil {
+				_ = waveLock.Close()
+			}
+			if materialLock != nil {
+				_ = materialLock.Close()
+			}
+		}()
+		idx, loadErr := loadV7Index(project.VaultRoot)
+		if loadErr != nil {
+			return run, false, loadErr
+		}
+		wave, ok := idx.Waves[directive.WaveID]
+		if !ok {
+			return run, false, nil
+		}
+		waveLock, err = acquireV7DocumentLock(wave.AbsolutePath, v7DocumentLockTimeout)
+		if err != nil {
+			return run, false, err
+		}
+		currentDirective, readErr := d.store.RunDirective(project.ProjectID, run.RecordID)
+		if readErr != nil {
+			return run, false, readErr
+		}
+		currentNote, resolveErr := resolveNote(project.VaultRoot, run.RecordID)
+		if resolveErr != nil {
+			return run, false, resolveErr
+		}
+		if !runDirectiveMatchesTaskAuthority(project.VaultRoot, currentNote, currentDirective, time.Now().UTC()) {
+			return run, false, nil
+		}
+		directive = currentDirective
+	}
 	claimRun := run
 	claimRun.ProjectID = project.ProjectID
 	claimRun.Runner = string(runner.Name())
@@ -3881,7 +3946,8 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	ownership.projectConcurrencyLimit = wfFile.Data.Runtime.MaxActiveRunsPerProject
 	authorization := RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: project.Enabled}
 	if directiveActive {
-		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: wfFile.Data.AutomationEnabled}
+		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: wfFile.Data.AutomationEnabled,
+			DirectiveWaveID: directive.WaveID, DirectiveAuthorizationFingerprint: directive.AuthorizationFingerprint, DirectiveWaveAuthorizedAt: directive.WaveAuthorizedAt}
 	}
 	parentAttemptID := ""
 	if lane == runLaneReview {
@@ -3901,6 +3967,13 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		claimResult, err = ownership.claimExistingWithDirective(claimRun, attemptID, authorization, attemptIntent)
 	} else {
 		claimResult, err = ownership.claimExistingWithAuthorization(claimRun, attemptID, authorization, attemptIntent)
+	}
+	if materialLock != nil {
+		closeErr := closeV7AuthorizationLocks(materialLock, waveLock, nil)
+		materialLock, waveLock = nil, nil
+		if closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 	}
 	if err != nil {
 		return run, false, err
@@ -4029,7 +4102,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	}
 
 	var start *StartResult
-	codexPolicy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, selectedProfile)
 	externalLaunch := ExternalLoopLaunchContext{}
 	if externalLoopRunnerRequiresCollect(wfFile.Data, run.Runner) {
 		externalLaunch = d.externalLoopLaunchContext(project.ProjectID, run.RecordID)

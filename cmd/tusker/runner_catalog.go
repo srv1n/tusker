@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -74,9 +76,46 @@ func discoverRunnerCatalog(bundled bool) RunnerCatalog {
 		claude.Error = err.Error()
 	} else {
 		claude.Version = strings.TrimSpace(string(out))
+		if _, err := runnerCatalogCommand("claude", "auth", "status", "--json"); err != nil {
+			claude.Available = false
+			claude.Error = err.Error()
+		} else if ready, _ := cachedRunnerReady("claude-code", "read-only"); !ready {
+			claude.Available = false
+			claude.Error = "run live conformance for Claude Code"
+		}
 	}
 	result.Harnesses = append(result.Harnesses, claude)
+	result.Harnesses = append(result.Harnesses, discoverMuseCatalog())
 	return result
+}
+
+func discoverMuseCatalog() RunnerCatalogHarness {
+	harness := RunnerCatalogHarness{Harness: "muse", Source: "live", Confidence: "none"}
+	if _, err := runnerCatalogCommand("codex", "--profile", "muse", "exec", "--help"); err != nil {
+		harness.Error = err.Error()
+		return harness
+	}
+	ready, version := cachedRunnerReady("muse", "read-only")
+	if !ready {
+		harness.Error = "run live conformance for the Muse profile"
+		return harness
+	}
+	harness.Available, harness.Confidence, harness.Version = true, "high", version
+	harness.Models = []RunnerCatalogModel{{Model: "muse-spark-1.3", Efforts: []string{"medium"}, Default: true, DefaultKnown: true, Visibility: "visible"}}
+	return harness
+}
+
+func cachedRunnerReady(harness, preset string) (bool, string) {
+	var cached struct {
+		Ready      bool       `json:"ready"`
+		ValidUntil *time.Time `json:"valid_until"`
+		Version    string     `json:"version"`
+	}
+	raw, err := os.ReadFile(filepath.Join(DefaultStateRoot(), "runner-conformance", harness+"-"+preset+".json"))
+	if err != nil || json.Unmarshal(raw, &cached) != nil || !cached.Ready || cached.ValidUntil == nil || !cached.ValidUntil.After(runnerCatalogNow()) {
+		return false, ""
+	}
+	return true, cached.Version
 }
 
 func discoverCodexCatalog(bundled bool) RunnerCatalogHarness {
@@ -458,10 +497,13 @@ func printRunnerHelp() {
   tusker runner catalog [--bundled] [--json]
   tusker runner profiles [--bundled] [--write] [--json]
   tusker runner route <TASK-ID> --lane execute|review --json
+  tusker runner test <id-or-profile> [--preset <preset>] [--live] [--exercise print|timer] [--script <executable>] [--json|--quiet]
+  tusker runner conformance --harness <id-or-profile> [same flags]
 
 Catalog observes installed harnesses without authentication or model launch. --bundled
 selects an explicit bundled/offline Codex catalog source; it is not a runtime fallback.
 Profiles previews an additive semantic profile bootstrap; --write updates the project
-config without enabling automation. Codex profiles use codex_exec by default; tusker
-acp setup explicitly adds ACP profiles after its machine-local adapter is configured.`)
+config without enabling automation. Codex profiles use codex_exec by default. ACP
+profiles name the exact operator-installed endpoint; Tusker does not install one.
+Conformance never launches a model unless --live is explicitly supplied.`)
 }

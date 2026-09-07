@@ -1,0 +1,223 @@
+/*
+  WUX-T-0005 — WaveFlow focused behavior checks.
+
+  Exercises the real graph model (classification, states, cycles,
+  viewport math, topology stability). Every test below must execute;
+  zero-match names are failures.
+*/
+
+import { describe, expect, test } from "bun:test";
+import type { RunSummary, TaskDetail } from "../src/types/domain";
+import {
+  NODE_WIDTH,
+  buildFlowGraph,
+  clampViewport,
+  displayStateFor,
+  fitViewport,
+  initialViewport,
+  isLiveRun,
+  layoutFlowGraph,
+  modelFor,
+  panViewport,
+  topologyKey,
+  zoomViewport,
+  type FlowViewport,
+} from "../src/features/workbench/flow/flowGraph";
+import { chainFixture, cycleFixture, liveUpdateBase, liveUpdateNext, thirtyFixture } from "../src/features/workbench/flow/fixtures";
+
+function run(taskId: string, overrides: Partial<RunSummary> = {}): RunSummary {
+  return {
+    taskId,
+    taskTitle: taskId,
+    projectId: "sample",
+    runner: "codex",
+    model: "terra-pro-4",
+    lane: "execute",
+    leaseState: "held",
+    leaseStateRaw: "running",
+    processRunning: true,
+    outcome: "running",
+    elapsedSec: 10,
+    sinceLastEventSec: 2,
+    liveness: "fresh",
+    attemptCount: 1,
+    terminal: false,
+    ...overrides,
+  };
+}
+
+describe("WaveFlow graph model", () => {
+  test("flow preserves selected viewport", () => {
+    // A viewport the user settled on must survive selection events and
+    // unrelated prop churn: viewport math is pure and never derived from
+    // selection, and re-committing the same value is a no-op.
+    const settled: FlowViewport = { x: -120, y: 40, scale: 1.5 };
+    const recommitted = clampViewport({ ...settled });
+    expect(recommitted).toEqual(settled);
+
+    // Panning then zooming back out returns to the settled value.
+    const moved = panViewport(settled, 30, -10);
+    expect(moved).not.toEqual(settled);
+    const back = panViewport(moved, -30, 10);
+    expect(back).toEqual(settled);
+
+    // Initial view is always the readable origin, independent of selection.
+    expect(initialViewport()).toEqual({ x: 0, y: 0, scale: 1 });
+  });
+
+  test("flow external and cyclic dependencies", () => {
+    // Confirmed external references render as external nodes with an edge.
+    const chain = chainFixture();
+    const external = buildFlowGraph({
+      memberIds: [...chain.memberIds, "WUX-T-010"],
+      tasks: [
+        ...chain.tasks,
+        {
+          ...chain.tasks[0]!,
+          id: "WUX-T-010",
+          title: "Downstream of another wave",
+          status: "ready",
+          deps: [{ id: "EXT-1", title: "EXT-1", status: "done" }],
+        } satisfies TaskDetail,
+      ],
+      runs: chain.runs,
+      dependencyFacts: { "EXT-1": { kind: "external", title: "Upstream wave task" } },
+    });
+    const externalNode = external.nodes.find((node) => node.id === "EXT-1");
+    expect(externalNode?.kind).toBe("external");
+    expect(externalNode?.title).toBe("Upstream wave task");
+    expect(external.edges.some((edge) => edge.from === "EXT-1" && edge.to === "WUX-T-010")).toBe(true);
+
+    // Unconfirmed references are unresolved — never missing, never external.
+    const unresolved = buildFlowGraph({
+      memberIds: ["A"],
+      tasks: [
+        {
+          ...chain.tasks[0]!,
+          id: "A",
+          title: "A",
+          status: "ready",
+          deps: [{ id: "GHOST", title: "GHOST", status: "ready" }],
+        } satisfies TaskDetail,
+      ],
+    });
+    const ghost = unresolved.nodes.find((node) => node.id === "GHOST");
+    expect(ghost?.kind).toBe("unresolved");
+    expect(unresolved.warnings.some((warning) => warning.kind === "unresolved")).toBe(true);
+    expect(unresolved.warnings.some((warning) => warning.kind === "missing")).toBe(false);
+
+    // Cycles stay inspectable: nodes render, cyclic edges flag, warning lists.
+    const cycle = cycleFixture();
+    const cyclic = buildFlowGraph(cycle);
+    expect(cyclic.cycles.length).toBeGreaterThan(0);
+    expect(cyclic.edges.filter((edge) => edge.cyclic).length).toBeGreaterThan(0);
+    const warning = cyclic.warnings.find((item) => item.kind === "cycle");
+    expect(warning).toBeDefined();
+    expect(warning!.taskIds).toContain("WF-C-01");
+    for (const id of cycle.memberIds) {
+      expect(cyclic.nodes.some((node) => node.id === id)).toBe(true);
+    }
+    // Cyclic layout still terminates with every node positioned.
+    const layout = layoutFlowGraph(cyclic, cycle.memberIds);
+    for (const id of cycle.memberIds) {
+      expect(layout.positions[id]).toBeDefined();
+    }
+  });
+
+  test("flow live update preserves topology", () => {
+    // Same topology with advanced states: identical topology key, identical
+    // node positions — a live refresh must not relayout or move the viewport.
+    const before = liveUpdateBase();
+    const after = liveUpdateNext();
+    const graphBefore = buildFlowGraph(before);
+    const graphAfter = buildFlowGraph(after);
+    expect(topologyKey(graphAfter)).toBe(topologyKey(graphBefore));
+
+    const layoutBefore = layoutFlowGraph(graphBefore, before.memberIds);
+    const layoutAfter = layoutFlowGraph(graphAfter, after.memberIds);
+    expect(layoutAfter.positions).toEqual(layoutBefore.positions);
+
+    // But the states genuinely advanced: executing moved downstream.
+    const stateOf = (graph: typeof graphBefore, id: string): string | undefined =>
+      graph.nodes.find((node) => node.id === id)?.state;
+    expect(stateOf(graphBefore, "WUX-T-0003")).toBe("executing");
+    expect(stateOf(graphAfter, "WUX-T-0003")).toBe("completed");
+    expect(stateOf(graphAfter, "WUX-T-0004")).toBe("executing");
+  });
+
+  test("flow display states are truthful", () => {
+    expect(displayStateFor("done", run("A"))).toBe("completed");
+    // Worker success is not completion: done alone decides completed.
+    // A live run proves current activity, so it wins; the lane keeps
+    // the worker stage distinct from the reviewer stage.
+    expect(displayStateFor("review", run("A"))).toBe("executing");
+    expect(displayStateFor("review", run("A", { lane: "review" }))).toBe("reviewing");
+    expect(displayStateFor("review", undefined)).toBe("reviewing");
+    expect(displayStateFor("blocked", undefined)).toBe("blocked");
+    expect(displayStateFor("ready", undefined)).toBe("queued");
+    // A stale run behind in_progress is unknown, not executing.
+    expect(
+      displayStateFor("in_progress", run("A", { liveness: "stale", leaseStateRaw: "running" })),
+    ).toBe("unknown");
+    // A terminal failed run surfaces failure.
+    expect(
+      displayStateFor("ready", run("A", { terminal: true, outcome: "failed", liveness: "stale", leaseStateRaw: "settled" })),
+    ).toBe("failed");
+    // Live runs earn executing even when the durable status lags.
+    expect(displayStateFor("ready", run("A"))).toBe("executing");
+    expect(isLiveRun(run("A", { liveness: "dead" }))).toBe(false);
+  });
+
+  test("flow model labels use verified identity only", () => {
+    expect(modelFor(run("A"))).toBe("terra-pro-4");
+    // Stale, terminal, or model-less runs never label a node.
+    expect(modelFor(run("A", { liveness: "stale" }))).toBeUndefined();
+    expect(modelFor(run("A", { terminal: true, outcome: "succeeded", leaseStateRaw: "settled" }))).toBeUndefined();
+    expect(modelFor(run("A", { model: "  " }))).toBeUndefined();
+    expect(modelFor(undefined)).toBeUndefined();
+  });
+
+  test("flow viewport math stays readable", () => {
+    // Zoom clamps to the legible band and anchors the cursor point.
+    const zoomed = zoomViewport({ x: 0, y: 0, scale: 1 }, 99, { x: 100, y: 100 });
+    expect(zoomed.scale).toBe(2.5);
+    expect(zoomed.x).toBeLessThan(0);
+    // Zooming out clamps at the floor.
+    expect(zoomViewport({ x: 0, y: 0, scale: 1 }, 0.001).scale).toBe(0.25);
+    // Fit shows the whole graph inside the container with padding.
+    const fitted = fitViewport({ width: 2000, height: 1000 }, { width: 800, height: 480 });
+    expect(fitted.scale).toBeLessThan(1);
+    expect(fitted.x).toBeGreaterThanOrEqual(0);
+    expect(fitted.y).toBeGreaterThanOrEqual(0);
+  });
+
+  test("flow thirty-node graph lays out left to right", () => {
+    const fixture = thirtyFixture();
+    const graph = buildFlowGraph(fixture);
+    expect(graph.nodes.length).toBe(30);
+    const layout = layoutFlowGraph(graph, fixture.memberIds);
+    const xOf = (id: string): number => layout.positions[id]?.x ?? NaN;
+    // Chain order is preserved along x.
+    expect(xOf("WF-L-02")).toBeGreaterThan(xOf("WF-L-01"));
+    expect(xOf("WF-L-30")).toBeGreaterThan(xOf("WF-L-15"));
+    // Long titles survive intact for accessible labels.
+    const long = graph.nodes.find((node) => node.id === "WF-L-01");
+    expect(long?.title.length ?? 0).toBeGreaterThan(60);
+    // Node text widths honor the 220-280px implementation default.
+    expect(NODE_WIDTH).toBeGreaterThanOrEqual(220);
+    expect(NODE_WIDTH).toBeLessThanOrEqual(280);
+  });
+
+  test("flow unloaded members stay inspectable", () => {
+    const chain = chainFixture();
+    const graph = buildFlowGraph({
+      memberIds: [...chain.memberIds, "WUX-T-999"],
+      tasks: chain.tasks,
+      runs: chain.runs,
+    });
+    const missing = graph.nodes.find((node) => node.id === "WUX-T-999");
+    expect(missing?.missingDetail).toBe(true);
+    expect(missing?.state).toBe("unknown");
+    expect(graph.warnings.some((warning) => warning.kind === "unavailable")).toBe(true);
+  });
+});

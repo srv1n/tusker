@@ -68,15 +68,26 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		return nil, tuskerError(errorConfigInvalid, "claude-code extension bridge is unsupported; disable workflow extensions or use the Codex runner for extension tools")
 	}
 
+	policy := codexPolicyForLane(req.CodexPolicy, req.Lane)
+	permissionMode, err := claudePermissionModeForPolicy(policy)
+	if err != nil {
+		return nil, err
+	}
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		command = "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
+		command = "claude -p --output-format stream-json --input-format stream-json --permission-mode " + permissionMode + " --permission-prompts none"
+		if permissionMode == "plan" {
+			command += " --tools Read,Glob,Grep"
+		}
 		if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
 			command += " --resume {{session_ref}}"
 			if strings.TrimSpace(resume.MessageRef) != "" {
 				command += " --resume-session-at {{message_ref}}"
 			}
 		}
+	}
+	if strings.Contains(command, "bypassPermissions") && permissionMode != "bypassPermissions" {
+		return nil, tuskerError(errorConfigInvalid, "bounded Claude runner command cannot use bypassPermissions")
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
 		return nil, err
@@ -99,8 +110,24 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		"{{message_ref}}":    resumeMessageRef(resume),
 	})
 	command = runnerCommandWithPathPrefix(command, req.RunnerPathPrefix)
-	policy := codexPolicyForLane(req.CodexPolicy, req.Lane)
-	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
+	var cmd *exec.Cmd
+	if len(req.CommandArgv) > 0 {
+		argv := replaceTemplateArgv(req.CommandArgv, map[string]string{
+			"{{workspace_path}}": workspaceCWD, "{{prompt_path}}": req.PromptPath,
+			"{{raw_log_path}}": req.RawLogPath, "{{status_path}}": req.StatusPath,
+			"{{note_path}}": req.NotePath, "{{vault_path}}": runnerWorkspaceVaultPath(workspaceCWD, req.VaultPath),
+			"{{session_ref}}": resumeSessionRef(resume), "{{message_ref}}": resumeMessageRef(resume),
+		})
+		if !filepath.IsAbs(argv[0]) {
+			return nil, tuskerError(errorConfigInvalid, "prepared Claude executable must be an absolute path")
+		}
+		if err := completionVerifyExecutableIdentity(argv[0], req.CommandExecutableFP, req.CommandSearchPath); err != nil {
+			return nil, err
+		}
+		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-lc", command)
+	}
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(RunnerClaude, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
@@ -162,7 +189,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		liveRegistry.Unregister(handle.attemptID)
 		return nil, err
 	}
-	if err := handle.setPermissionMode("bypassPermissions"); err != nil {
+	if err := handle.setPermissionMode(permissionMode); err != nil {
 		_ = appendRawLogLine(req.RawLogPath, "failed to set claude permission mode: "+err.Error())
 	}
 	prompt, err := readText(req.PromptPath)
@@ -188,6 +215,23 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		Completed:    false,
 		Outcome:      AttemptOutcomeNone,
 	}, nil
+}
+
+func claudePermissionModeForPolicy(policy CodexPolicy) (string, error) {
+	mode := strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox))
+	switch mode {
+	case "read-only":
+		return "plan", nil
+	case "danger-full-access":
+		if strings.TrimSpace(policy.ApprovalPolicy) != "never" {
+			return "", tuskerError(errorConfigInvalid, "Claude full access requires approval_policy=never")
+		}
+		return "bypassPermissions", nil
+	case "workspace-write", "":
+		return "", tuskerError(errorConfigInvalid, "Claude Code cannot enforce Tusker's bounded workspace-write preset")
+	default:
+		return "", tuskerError(errorConfigInvalid, "Claude Code cannot enforce sandbox mode "+mode)
+	}
 }
 
 func extensionPolicyRequestsNativeBridge(policy ExtensionPolicy) bool {

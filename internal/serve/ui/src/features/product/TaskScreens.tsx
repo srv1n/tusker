@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { LayoutGrid, List, ShieldCheck } from "lucide-react";
+import { LayoutGrid, List, Play, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { QueryBoundary } from "@/components/ui/states";
-import { useConfirm } from "@/components/ui/action-feedback";
+import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { api } from "@/lib/api";
-import { useReviewBatch, useRun, useRuns, useTask, useTasks } from "@/lib/queries";
+import { useReviewBatch, useRun, useRunTask, useRuns, useTask, useTasks } from "@/lib/queries";
 import { isBatchSelectable, projectLiveExecution } from "@/features/work/work-utils";
 import { BatchBar, type BatchAction, type BatchItemResult, type BatchProgress, WaveReviewGroups } from "@/features/work/WaveReview";
 import type { TaskCapsule } from "@/types/domain";
@@ -262,23 +262,31 @@ export function TaskDetail() {
   const { projectId, taskId } = useParams({ strict: false }) as { projectId: string; taskId: string };
   const task = useTask(taskId, projectId);
   const run = useRun(taskId, false, projectId);
+  const runTask = useRunTask(taskId, projectId);
 
   return (
     <QueryBoundary q={task} loading={<div className="h-full bg-surface p-12"><ProductLoading rows={6} /></div>}>
       {(detail) => {
         const label = statusCopy(detail);
+        const blockers = detail.deps.filter((dependency) => dependency.status !== "done");
+        const currentStatus = detail.rawStatus ?? detail.status;
+        const runnable = (currentStatus === "ready" || currentStatus === "rework") && !detail.humanAction && !detail.hasGate && blockers.length === 0;
+        const directiveQueued = detail.runDirective?.state === "queued";
+        const busy = runTask.isPending || directiveQueued;
         return (
           <ProductPage
             title={detail.title}
             eyebrow={`${projectId} / Tasks / ${detail.id}`}
             intro={detail.intent || "Task contract and objective proof."}
-            actions={<ProductStatus tone={phaseTone(label)}>{label}</ProductStatus>}
+            actions={<div className="flex flex-wrap items-center justify-end gap-2"><ProductStatus tone={phaseTone(label)}>{label}</ProductStatus>{runnable && <ProductButton tone="primary" disabled={busy} onClick={() => runTask.mutate()} aria-label={`Execute ${detail.id} once`}><Play size={13} />{directiveQueued ? "Queued for dispatch" : "Execute once"}</ProductButton>}</div>}
           >
+            {runnable && <div className="mb-6 rounded-lg border border-line bg-panel px-4 py-3" aria-live="polite"><p className="text-[12px] text-muted">Execute queues one daemon run for this exact task. The project daemon and Serve operator identity still control whether it can start.</p><ActionResultLine className="mt-2" pending={runTask.isPending} error={runTask.error} result={runTask.data} />{detail.runDirective && <p className="mt-2 text-[11px] leading-4 text-muted">{detail.runDirective.state === "queued" && `Queued by ${detail.runDirective.actor} · expires ${detail.runDirective.expiresAt}`}{detail.runDirective.state === "lapsed" && (detail.runDirective.reason ?? "The queued run lapsed before dispatch.")}{detail.runDirective.state === "consumed" && `Claimed from the one-shot request by ${detail.runDirective.actor}.`}</p>}</div>}
             {detail.humanAction && (
               <ProductUnavailable>
                 <strong>{detail.humanAction.title}.</strong> {detail.humanAction.action} Completion condition: {detail.humanAction.completionCondition}
               </ProductUnavailable>
             )}
+            {!detail.humanAction && blockers.length > 0 && <ProductUnavailable><strong>Blocked by prerequisites.</strong> {blockers.map((dependency) => `${dependency.id} (${dependency.status})`).join(" · ")}</ProductUnavailable>}
 
             <div className="mt-10 grid gap-12 lg:grid-cols-[minmax(0,1fr)_320px]">
               <div>
@@ -334,6 +342,8 @@ export function TaskDetail() {
                         {run.data.runner} · {run.data.model} · attempt {run.data.attemptCount}
                       </p>
                       {run.data.workspacePath && <code className="block break-all font-mono text-[10px] leading-4 text-faint">{run.data.workspacePath}</code>}
+                      <Link to="/p/$projectId/runs/$taskId" params={{ projectId, taskId }} className="inline-flex text-[12px] font-semibold text-info hover:text-ink">Open logs and result <span aria-hidden="true">→</span></Link>
+                      {run.data.delivery?.summary && <p className="border-t border-line-soft pt-3 text-[12px] leading-5 text-ink">{run.data.delivery.summary}</p>}
                     </div>
                   ) : (
                     <p className="text-[12px] leading-5 text-muted">No runtime record exists for this task.</p>

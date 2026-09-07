@@ -541,7 +541,7 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
 		ValidationLane:   "serialized integration validation", IntegrationBranch: stringField(wave.Data, "integration_branch"),
 		LandingPolicy: "task branches -> wave integration branch -> configured default branch",
 		DispatchScope: dispatchScope,
-		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": env.IsolatedWorkspace && env.IntegrationClean},
+		Checks:        map[string]bool{"specDag": true, "taskContracts": true, "artifacts": true, "project": env.ProjectRegistered && env.ProjectEnabled && env.ProjectHealthy, "daemon": env.DaemonAlive && env.DaemonReconciling, "runner": env.RunnerCompatible, "skill": env.SkillCompatible, "workflow": env.WorkflowCompatible, "approvalPolicy": env.ApprovalFree, "workspaceIsolation": len(members) == 1 || env.IsolatedWorkspace && env.IntegrationClean},
 	}
 	for _, blocker := range fpIssues {
 		report.addBlocker(waveBlockerSpecDAG, blocker)
@@ -1248,7 +1248,7 @@ func armWaveAtomically(vaultPath string, idx v7Index, wave Note, report wavePref
 }
 
 func armWaveAtomicallyGuarded(vaultPath string, idx v7Index, wave Note, report wavePreflightReport, args Args, authority *deliveryStartAuthority, heldLocks []*v7DocumentLock) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	actor, err := v7HumanActor(args, "wave arm")
 	if err != nil {
 		return err

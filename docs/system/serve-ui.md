@@ -27,8 +27,9 @@ queries.
 ## Current web routes
 
 - Today: `/` and `/p/<project>/`
-- Tasks: `/p/<project>/tasks`
-- Epics and waves: `/p/<project>/epics` and `/p/<project>/waves`
+- Work: `/p/<project>/waves` (grouped Waves) and `/p/<project>/tasks` (Board)
+- Wave flow/results: `/p/<project>/waves/<wave>`
+- Full task detail: `/p/<project>/tasks/<task>`
 - Operations: `/p/<project>/diagnostics`
 - Execution Operations: `/p/<project>/diagnostics/executions`
 - Task and tracker documents: `/p/<project>/docs`
@@ -37,6 +38,10 @@ queries.
 
 The TypeScript source is the web source authority. `internal/serve/ui/dist/` is
 a generated embed. Rebuild it after a web source change.
+
+The Work surface uses live project, wave, task and run reads. Start readiness,
+durable tags and stage-specific transport identity remain unavailable until the
+Serve API exposes authoritative contracts; the UI does not infer or persist them.
 
 ## TuskerBar
 

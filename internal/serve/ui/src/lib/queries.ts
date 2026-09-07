@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, requireAccepted } from "@/lib/api";
 import { liveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
-import type { DeliveryPlanList, DeliveryReview, DeliveryStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, RunDetail } from "@/types/domain";
+import type { DeliveryPlanList, DeliveryReview, DeliveryStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, RunDetail, WaveExecuteResult } from "@/types/domain";
 import type {
   DocgraphDocDetail,
   DocgraphSavePayload,
@@ -384,6 +384,14 @@ export const useRunTask = (taskId: string, projectId?: string) => {
   return useMutation({
     mutationFn: () => api.runTask(taskId, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
+  });
+};
+
+export const useWaveExecute = (projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation<WaveExecuteResult, unknown, { waveId: string }>({
+    mutationFn: ({ waveId }) => api.waveExecute(waveId, projectId).then(requireAccepted),
+    onSettled: () => invalidateOperatorState(qc, undefined, projectId),
   });
 };
 

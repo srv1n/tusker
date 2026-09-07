@@ -44,13 +44,14 @@ type RunnerSubagentPolicyDefinition struct {
 }
 
 type RunnerProfileDefinition struct {
-	Harness          string                         `yaml:"harness" json:"harness"`
-	Model            string                         `yaml:"model" json:"model"`
-	Effort           string                         `yaml:"effort" json:"effort"`
-	PermissionPreset string                         `yaml:"permission_preset,omitempty" json:"permission_preset,omitempty"`
-	Command          string                         `yaml:"command,omitempty" json:"command,omitempty"`
-	Sandbox          RunnerSandboxDefinition        `yaml:"sandbox" json:"sandbox"`
-	Subagents        RunnerSubagentPolicyDefinition `yaml:"subagents" json:"subagents"`
+	Harness           string                         `yaml:"harness" json:"harness"`
+	Model             string                         `yaml:"model" json:"model"`
+	Effort            string                         `yaml:"effort" json:"effort"`
+	PermissionPreset  string                         `yaml:"permission_preset,omitempty" json:"permission_preset,omitempty"`
+	Command           string                         `yaml:"command,omitempty" json:"command,omitempty"`
+	NativeContainment bool                           `yaml:"native_containment,omitempty" json:"native_containment,omitempty"`
+	Sandbox           RunnerSandboxDefinition        `yaml:"sandbox" json:"sandbox"`
+	Subagents         RunnerSubagentPolicyDefinition `yaml:"subagents" json:"subagents"`
 }
 
 type RunnerRoutingMatch struct {
@@ -625,10 +626,13 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	harness := RunnerName(strings.TrimSpace(profile.Harness))
 	switch harness {
 	case RunnerCodexAppServer:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("run `tusker acp setup` and migrate the profile harness to codex_acp; keep codex_exec only in an explicit emergency/danger profile"))
-	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerClaude, RunnerCodexACP:
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("migrate to codex_exec or configure an operator-installed acp_v1 endpoint"))
+	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerClaude, RunnerACP, RunnerCodexACP:
 	default:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_acp after `tusker acp setup`, or explicitly select codex_exec, codex_cloud, or claude-code"))
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_exec, claude-code, codex_cloud, or an operator-installed acp_v1 endpoint"))
+	}
+	if profile.NativeContainment && harness != RunnerACP {
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.native_containment is valid only for acp_v1", name), withPath(path))
 	}
 	if !validRunnerModelName(profile.Model) {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.model has unsupported value %q", name, profile.Model), withPath(path), withHint("use a known model family such as gpt-5.x, claude-opus-4-8, claude-fable-5, sonnet-4.6, or glm-5.2"))
@@ -742,11 +746,12 @@ func runnerProfileExplicitInLayer(raw map[string]any, name string) bool {
 
 func runnerProfileFromSchema(profile v7schema.TuskerRunnerProfileConfig) RunnerProfileDefinition {
 	return RunnerProfileDefinition{
-		Harness:          strings.TrimSpace(profile.Harness),
-		Model:            strings.TrimSpace(profile.Model),
-		Effort:           strings.TrimSpace(profile.Effort),
-		PermissionPreset: strings.TrimSpace(profile.PermissionPreset),
-		Command:          strings.TrimSpace(profile.Command),
+		Harness:           strings.TrimSpace(profile.Harness),
+		Model:             strings.TrimSpace(profile.Model),
+		Effort:            strings.TrimSpace(profile.Effort),
+		PermissionPreset:  strings.TrimSpace(profile.PermissionPreset),
+		Command:           strings.TrimSpace(profile.Command),
+		NativeContainment: profile.NativeContainment,
 		Sandbox: RunnerSandboxDefinition{
 			Mode:    strings.TrimSpace(profile.Sandbox.Mode),
 			Network: profile.Sandbox.Network,
@@ -1023,12 +1028,14 @@ func codexPolicyForResolvedProfile(base CodexPolicy, lane string, selected Resol
 			policy.TurnSandboxPolicy = "danger-full-access"
 		}
 	case "workspace-write-network":
+		policy.ApprovalPolicy = "never"
 		if strings.TrimSpace(profile.Sandbox.Mode) == "" {
 			policy.ThreadSandbox = "workspace-write"
 			policy.TurnSandboxPolicy = "workspace-write"
 		}
 		policy.TurnSandboxNetwork = boolPtr(true)
 	case "workspace-write-offline":
+		policy.ApprovalPolicy = "never"
 		if strings.TrimSpace(profile.Sandbox.Mode) == "" {
 			policy.ThreadSandbox = "workspace-write"
 			policy.TurnSandboxPolicy = "workspace-write"
