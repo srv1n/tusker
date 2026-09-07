@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -86,6 +87,9 @@ func workSessionReviewCmd(args Args) error {
 }
 
 func workSessionStartCmd(args Args) error {
+	if attemptID := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")); attemptID != "" {
+		return tuskerError(errorInvalidTransition, "dispatched worker already holds daemon attempt "+attemptID, withHint("do not claim again; finish with `tusker work submit <task-id> --by "+attemptID+" ...`"))
+	}
 	// This entry point is for a user-directed owner.  The daemon has its own
 	// snapshot-bound claim path; accepting daemon_auto here would let an
 	// interactive shell impersonate a dispatcher.
@@ -462,6 +466,9 @@ func workSessionLifecycleCmd(args Args, action string) error {
 	if action == "release" {
 		args["reason"] = firstNonEmpty(args.String("reason"), "work session released")
 	}
+	if strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")) != "" {
+		return workerLifecycleControl(args, action)
+	}
 	if err := requireWorkSessionRevision(args); err != nil {
 		return err
 	}
@@ -469,6 +476,32 @@ func workSessionLifecycleCmd(args Args, action string) error {
 		return err
 	}
 	workSessionNotifyRun(args.String("id"))
+	return nil
+}
+
+func workerLifecycleControl(args Args, action string) error {
+	return workerLifecycleControlAt(DefaultStateRoot(), args, action)
+}
+
+func workerLifecycleControlAt(stateRoot string, args Args, action string) error {
+	if action != "heartbeat" && action != "submit" && action != "fail" && action != "release" {
+		return tuskerError(errorInvalidTransition, "dispatched worker lifecycle action is not supported: "+action)
+	}
+	w := daemonWorkerLifecycleRequest{
+		Action: action, AttemptID: os.Getenv("TUSKER_ATTEMPT_ID"), RecordID: os.Getenv("TUSKER_RECORD_ID"),
+		Lane: os.Getenv("TUSKER_RUN_LANE"), Workspace: os.Getenv("TUSKER_WORKSPACE"), StatusPath: os.Getenv("TUSKER_STATUS_PATH"),
+		LeaseGeneration: atoiSafe(os.Getenv("TUSKER_LEASE_GENERATION")), WorkRevision: atoiSafe(os.Getenv("TUSKER_WORK_REVISION")),
+		Deliverable: args.String("deliverable"), Verification: args.String("verification"),
+		GateVerdicts: firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), Reason: args.String("reason"),
+	}
+	resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "worker_lifecycle", ProjectID: os.Getenv("TUSKER_PROJECT_ID"), Identity: w.AttemptID, Worker: &w})
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "worker lifecycle daemon boundary unavailable: "+err.Error())
+	}
+	if !resp.OK {
+		return tuskerError(errorInvalidTransition, "worker lifecycle refused: "+resp.Message)
+	}
+	emitJSON(map[string]any{"ok": true, "action": action, "attempt_id": w.AttemptID, "authority": "resident_daemon"})
 	return nil
 }
 

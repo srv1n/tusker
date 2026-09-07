@@ -20,13 +20,31 @@ const daemonControlMaxRequestBytes = 64 << 10
 const daemonControlMaxConcurrent = 32
 
 type daemonControlRequest struct {
-	Command   string `json:"command"`
-	Identity  string `json:"identity"`
-	ProjectID string `json:"project_id,omitempty"`
+	Command   string                        `json:"command"`
+	Identity  string                        `json:"identity"`
+	ProjectID string                        `json:"project_id,omitempty"`
+	Worker    *daemonWorkerLifecycleRequest `json:"worker,omitempty"`
 	// Optional rich hints preserve compatibility with existing project-only
 	// reconciliation notifications.
 	Cause   string                `json:"cause,omitempty"`
 	Changes []daemonControlChange `json:"changes,omitempty"`
+}
+
+// daemonWorkerLifecycleRequest is transport, not authority. The daemon checks
+// every injected identity against its active run before performing the write.
+type daemonWorkerLifecycleRequest struct {
+	Action          string `json:"action"`
+	AttemptID       string `json:"attempt_id"`
+	RecordID        string `json:"record_id"`
+	Lane            string `json:"lane"`
+	Workspace       string `json:"workspace"`
+	StatusPath      string `json:"status_path"`
+	LeaseGeneration int    `json:"lease_generation"`
+	WorkRevision    int    `json:"work_revision"`
+	Deliverable     string `json:"deliverable,omitempty"`
+	Verification    string `json:"verification,omitempty"`
+	GateVerdicts    string `json:"gate_verdicts,omitempty"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 type daemonControlResponse struct {

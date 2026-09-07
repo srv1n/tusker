@@ -377,6 +377,9 @@ func armedWaveStateMap(snapshot armedWaveSnapshot) map[string]string {
 func armedWaveTestFixture(t *testing.T) (string, v7Index, Note) {
 	t.Helper()
 	vault := deliveryTestVault(t)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs_per_project", 2); err != nil {
+		t.Fatal(err)
+	}
 	plan := validDeliveryPlan()
 	plan.Concurrency = 2
 	base := plan.Tasks[0]
@@ -390,7 +393,7 @@ func armedWaveTestFixture(t *testing.T) (string, v7Index, Note) {
 	}
 	path := writeDeliveryTestPlan(t, vault, plan)
 	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "wave": "Drain", "quiet": "true"}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("armed-wave fixture import: %#v", errorToIssue(err))
 	}
 	armWaveForTest(t, vault)
 	idx, err := loadV7Index(vault)
@@ -407,6 +410,7 @@ func armedWavePlanTask(base deliveryPlanTask, key string, deps []deliveryDepende
 	task.Title = key
 	task.Dependencies = deps
 	task.OwnedPaths = []string{"cmd/tusker/" + key + ".go"}
+	task.KnowledgeNodes = nil
 	task.Artifact.Path = task.OwnedPaths[0]
 	return task
 }

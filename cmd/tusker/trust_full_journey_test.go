@@ -88,6 +88,9 @@ class JourneyTest(unittest.TestCase):
 
 	vault := filepath.Join(repo, ".tusker")
 	trustJourneyCLI(t, vault, "init", "--vault", vault, "--yes", "--vault-only", "--no-mount")
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.validation.commands", []string{"true"}); err != nil {
+		t.Fatal(err)
+	}
 	plan := validDeliveryPlanV2()
 	plan.HumanGates = nil
 	plan.Scope, plan.Title, plan.SpecRefs = "trust-full-journey", "Trust full journey", []string{".tusker/specs/journey.md"}
@@ -110,6 +113,8 @@ class JourneyTest(unittest.TestCase):
 	if err := os.WriteFile(planPath, rawPlan, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "seed journey contract")
 	trustJourneyCLI(t, vault, "delivery", "import", "--plan", planPath, "--by", "agent:fixture")
 
 	const taskID = "JNY-T-0001"
@@ -130,8 +135,6 @@ class JourneyTest(unittest.TestCase):
 
 	trustJourneyReadyTask(t, vault, taskID)
 	registerAutomationTestProject(t, vault)
-	runGitDir(t, repo, "add", ".")
-	runGitDir(t, repo, "commit", "-m", "seed interactive journey contract")
 
 	first := trustJourneyPacket(t, trustJourneyCLI(t, vault, "work", "start", taskID, "--by", "agent:implementer", "--source", "codex"))
 	if first.Run == nil || first.Run.ActiveAttemptID == "" || first.Workspace == "" {
@@ -162,7 +165,30 @@ class JourneyTest(unittest.TestCase):
 	}
 	runGitDir(t, recovered.Workspace, "add", "owned/journey.txt")
 	runGitDir(t, recovered.Workspace, "commit", "-m", "implement recovered journey")
-	trustJourneyCLI(t, vault, "work", "submit", taskID, "--by", "agent:implementer", "--deliverable", "recovered implementation", "--verification", "A1 command will run during review", "--gate-verdicts", "A1=pass")
+	store, err = OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeRun, err = store.FindRun(taskID)
+	if err != nil || runtimeRun == nil {
+		_ = store.Close()
+		t.Fatalf("recovered run unavailable: %#v err=%v", runtimeRun, err)
+	}
+	runtimeRun.StatusPath = filepath.Join(t.TempDir(), "runner.status.json")
+	if ok, updateErr := store.UpdateRunIfLease(*runtimeRun, runtimeRun.LeaseOwner, runtimeRun.LeaseGeneration); updateErr != nil || !ok {
+		_ = store.Close()
+		t.Fatalf("bind daemon status path: ok=%v err=%v", ok, updateErr)
+	}
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	request := daemonWorkerLifecycleRequest{Action: "submit", AttemptID: runtimeRun.ActiveAttemptID, RecordID: runtimeRun.RecordID,
+		Lane: runtimeRun.Lane, Workspace: runtimeRun.WorkspacePath, StatusPath: runtimeRun.StatusPath,
+		LeaseGeneration: runtimeRun.LeaseGeneration, WorkRevision: runtimeRun.WorkRevision,
+		Deliverable: "recovered implementation", Verification: "A1 command will run during review", GateVerdicts: "A1=pass"}
+	if err := daemon.applyWorkerLifecycle(daemonControlRequest{Command: "worker_lifecycle", Identity: runtimeRun.ActiveAttemptID, ProjectID: runtimeRun.ProjectID, Worker: &request}); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	_ = store.Close()
 
 	store, err = OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -251,14 +277,15 @@ class JourneyTest(unittest.TestCase):
 		t.Fatal("review ran verification in the base checkout")
 	}
 
+	trustJourneyCLI(t, vault, "land", taskID)
 	trustJourneyCLI(t, vault, "close", taskID, "--by", "reviewer:agent", "--reason", "independent review and command proof passed")
 
 	closed, err := resolveV7Note(vault, taskID, "task")
 	if err != nil || stringField(closed.Data, "status") != "done" {
 		t.Fatalf("reviewed journey did not close: task=%#v err=%v", closed.Data, err)
 	}
-	if fileExists(filepath.Join(repo, "owned", "journey.txt")) {
-		t.Fatal("implementation leaked from its isolated workspace into the base checkout")
+	if got := gitShowFile(t, repo, "integration/W-0001", "owned/journey.txt"); got != "recovered implementation\n" {
+		t.Fatalf("reviewed implementation was not landed to integration: contents=%q", got)
 	}
 }
 

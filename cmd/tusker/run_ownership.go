@@ -736,6 +736,15 @@ func runsClaimCmd(args Args) error {
 }
 
 func runsLifecycleCmd(args Args, action string) error {
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return runsLifecycleWithStore(store, args, action, true)
+}
+
+func runsLifecycleWithStore(store *RuntimeStore, args Args, action string, output bool) error {
 	id, err := requireArg(args, "id")
 	if err != nil {
 		return err
@@ -744,11 +753,6 @@ func runsLifecycleCmd(args Args, action string) error {
 	if err != nil {
 		return err
 	}
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		return err
-	}
-	defer store.Close()
 	service := newRunOwnershipService(store).withProject(args.String("project"))
 	findRun := func(identity string) (*RunStatus, error) {
 		return service.findRun(identity)
@@ -817,7 +821,9 @@ func runsLifecycleCmd(args Args, action string) error {
 			return err
 		}
 	}
-	emitJSON(map[string]any{"ok": true, "action": action, "run": run})
+	if output {
+		emitJSON(map[string]any{"ok": true, "action": action, "run": run})
+	}
 	return nil
 }
 

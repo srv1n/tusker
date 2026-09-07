@@ -146,6 +146,11 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	if !once {
 		control, err = startDaemonControlServer(d.stateRoot, func(reqCtx context.Context, req daemonControlRequest) daemonControlResponse {
 			switch req.Command {
+			case "worker_lifecycle":
+				if err := d.applyWorkerLifecycle(req); err != nil {
+					return daemonControlResponse{OK: false, Message: err.Error()}
+				}
+				return daemonControlResponse{OK: true}
 			case "interrupt":
 				if err := d.InterruptRunScoped(reqCtx, req.ProjectID, req.Identity); err != nil {
 					return daemonControlResponse{OK: false, Message: err.Error()}
@@ -6656,6 +6661,9 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 	fmt.Fprintf(&b, "- Attempt: %d (%s)\n", attemptNumber, attemptID)
 	fmt.Fprintf(&b, "- Fresh context rule: this attempt is a new runner session/thread. Do not query or append to predecessor transcripts.\n")
 	fmt.Fprintf(&b, "- Resume state rule: the task packet, claim/workspace identity, prior structured outcome, blockers, and evidence pointers are authoritative. Harness scratch is optional.\n\n")
+	if lane == runLaneExecute {
+		fmt.Fprintf(&b, "- Lifecycle rule: this task is already claimed by attempt `%s`; do not run `tusker work start`. Finish with `tusker work submit %s --by %s --deliverable \"<summary>\" --verification \"<checks run>\" --gate-verdicts \"<acceptance-id>=pass\"`. The resident daemon owns global runtime writes.\n\n", attemptID, taskID, attemptID)
+	}
 	fmt.Fprintf(&b, "### Task Packet\n\n%s\n", strings.TrimSpace(v7Packet(project.VaultRoot, note, idx, audience)))
 	if plan.Path != "" {
 		fmt.Fprintf(&b, "\n### Optional Existing Scratch Note\n\n")

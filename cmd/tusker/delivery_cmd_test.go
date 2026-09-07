@@ -436,6 +436,9 @@ func deliveryTestVault(t *testing.T) string {
 	repo := t.TempDir()
 	vault := filepath.Join(repo, ".tusker")
 	mustWave(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
 	mustWave(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "Delivery", "summary": "Delivery tests."}, newV7Epic)
 	if err := writeText(filepath.Join(repo, ".tusker", "specs", "delivery.md"), "---\nsubject: delivery\npart_of: overview\n---\n# Delivery\n\n## Work streams\n\n- Existing context.\n"); err != nil {
 		t.Fatal(err)
