@@ -2407,16 +2407,24 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		finished := runnerProcessFinishedAt(status)
 		run.ProcessPID = 0
 		run.UpdatedAt = finished
+		workerSubmitted := false
 		if updated, consumed, consumeErr := d.consumeWorkerLifecycleRequest(run); consumeErr != nil {
 			return run, changed, consumeErr
 		} else if consumed {
-			return *updated, true, nil
+			if updated != nil && isDispatchingLeaseState(updated.LeaseState) {
+				workerSubmitted = true
+			} else {
+				return *updated, true, nil
+			}
 		}
 		note, err := resolveNote(project.VaultRoot, run.RecordID)
 		if err != nil {
 			return run, changed, err
 		}
 		classification := classifyRunnerProcessExit(run, status, note, project.VaultRoot, wfFile.Data.Tracker.ActiveStates)
+		if workerSubmitted && status.ExitCode == 0 && classification.outcome == AttemptOutcomeEarlyExit {
+			classification = runnerExitClassification{outcome: AttemptOutcomeSucceeded, trackerState: classification.trackerState}
+		}
 		if statusFailureReason != "" {
 			classification.reason = statusFailureReason
 		}
@@ -2609,13 +2617,24 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			noteStatus := classification.trackerState
 			endState := RunEndState{}
 			if run.Lane != runLaneReview {
-				verdictJSON, _ := json.Marshal(gateVerdictsFromTask(note))
 				var endStateErr error
-				materialScope, scopeErr := canonicalRunMaterialScope(d.store, run)
-				if scopeErr != nil {
-					endStateErr = scopeErr
+				if workerSubmitted {
+					attempts, attemptErr := d.store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+					endStateErr = attemptErr
+					for _, attempt := range attempts {
+						if attempt.AttemptID == run.ActiveAttemptID {
+							endState = attempt.EndState
+							break
+						}
+					}
 				} else {
-					endState, endStateErr = captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC())
+					verdictJSON, _ := json.Marshal(gateVerdictsFromTask(note))
+					materialScope, scopeErr := canonicalRunMaterialScope(d.store, run)
+					if scopeErr != nil {
+						endStateErr = scopeErr
+					} else {
+						endState, endStateErr = captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC())
+					}
 				}
 				if endStateErr != nil {
 					reason := "normalized run submission refused: " + endStateErr.Error()
@@ -4988,7 +5007,7 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 	if store == nil || strings.TrimSpace(run.ActiveAttemptID) == "" {
 		return
 	}
-	_ = store.SaveAttempt(RunAttempt{
+	attempt := RunAttempt{
 		AttemptID:          run.ActiveAttemptID,
 		ProjectID:          run.ProjectID,
 		RecordID:           run.RecordID,
@@ -5018,7 +5037,16 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 		LastError:          lastError,
 		StartedAt:          run.StartedAt,
 		FinishedAt:         finishedAt,
-	})
+	}
+	if attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID); err == nil {
+		for _, existing := range attempts {
+			if existing.AttemptID == run.ActiveAttemptID {
+				attempt.EndStateJSON = existing.EndStateJSON
+				break
+			}
+		}
+	}
+	_ = store.SaveAttempt(attempt)
 }
 
 func turnsUsedForAttempt(store *RuntimeStore, attemptID string) int {

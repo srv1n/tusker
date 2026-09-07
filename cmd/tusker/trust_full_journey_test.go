@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -189,9 +191,33 @@ class JourneyTest(unittest.TestCase):
 	if err := os.WriteFile(workerLifecycleRequestPath(runtimeRun.WorkspacePath), rawRequest, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, consumed, err := daemon.consumeWorkerLifecycleRequest(*runtimeRun); err != nil || !consumed {
+	statusRaw, _ := json.Marshal(runnerProcessStatus{ExitCode: 0, Outcome: string(AttemptOutcomeSucceeded), CompletedAt: time.Now().UTC().Format(time.RFC3339)})
+	if !fileExists(workerLifecycleRequestPath(runtimeRun.WorkspacePath)) {
 		_ = store.Close()
-		t.Fatalf("daemon-owned workspace lifecycle handoff: consumed=%v err=%v", consumed, err)
+		t.Fatal("worker lifecycle request was not persisted in the workspace")
+	}
+	if err := os.WriteFile(runtimeRun.StatusPath, statusRaw, 0o600); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	projects, err := store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		_ = store.Close()
+		t.Fatalf("registered journey project unavailable: %#v err=%v", projects, err)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	updated, changed, err := daemon.reconcileRun(context.Background(), projects[0], wf, *runtimeRun)
+	if err != nil || !changed {
+		_ = store.Close()
+		t.Fatalf("daemon terminal reconciliation: changed=%v err=%v", changed, err)
+	}
+	if err := store.UpsertRun(updated); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
 	}
 	_ = store.Close()
 

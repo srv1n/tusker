@@ -202,7 +202,7 @@ func reviewSubmitCmd(args Args) error {
 		state = strings.TrimSpace(args.String("task-rev"))
 		impl = strings.TrimSpace(args.String("source-sha"))
 		workRevision = atoiSafe(args.String("work-rev"))
-		if state == "" || impl == "" || workRevision <= 0 {
+		if state == "" || impl == "" || strings.TrimSpace(args.String("work-rev")) == "" || workRevision < 0 {
 			return tuskerError(errorInvalidTransition, "worker review submission requires the injected task, work, and source snapshot")
 		}
 	} else {
@@ -296,7 +296,7 @@ func reviewSubmitCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if expected := atoiSafe(args.String("work-rev")); expected == 0 || expected != intField(note.Data, "work_revision") || attempt.RecordID != id || attempt.Lane != runLaneReview || attempt.WorkRevision != expected {
+	if expected := atoiSafe(args.String("work-rev")); strings.TrimSpace(args.String("work-rev")) == "" || expected < 0 || expected != intField(note.Data, "work_revision") || attempt.RecordID != id || attempt.Lane != runLaneReview || attempt.WorkRevision != expected {
 		return tuskerError(errorInvalidTransition, "stale or unauthorized reviewer attempt")
 	}
 	run, err := activeReviewRunForAttempt(store, attempt.ProjectID, id, attempt)

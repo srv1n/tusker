@@ -115,7 +115,7 @@ func demoTaskContext(wave demoWaveDef, task demoTaskDef) string {
 		"Owned paths: " + task.Artifact + " (never edit task status files or sibling outputs).\n" +
 		"Non-goals: no work outside " + demoTaskDir(task.Artifact) + ", no new dependencies, no credential handling.\n" +
 		"Exact verification (offline): " + check + ".\n" +
-		"Real-harness work: implement the outcome above in " + demoTaskDir(task.Artifact) + "/, run `python3 sample/tools/wait_progress.py` so progress is visible (~60s default, --short for cheap runs), execute the real tests, then submit through the ordinary CLI.\n" +
+		"Real-harness work: implement the outcome above in " + demoTaskDir(task.Artifact) + "/, run `python3 sample/tools/wait_progress.py` so progress is visible (~60s default, --short for cheap runs), execute the real tests, commit the owned artifact, then submit through the ordinary CLI.\n" +
 		"Review: independent review lane must accept before close; reviewer re-runs the exact verification."
 }
 
