@@ -268,7 +268,7 @@ func reviewSubmitCmd(args Args) error {
 		// Worker stdout is an authority-less transport proposal. The daemon
 		// decides whether the exact active run qualifies for v3 completion
 		// policy; generic reviewers are persisted as audit-only v2 results.
-		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_PROJECT_ID")), v7ProjectID(vault)), TaskID: id, TaskStateRev: state, WorkRevision: workRevision, ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_PROJECT_ID")), v7ProjectID(vault)), TaskID: id, TaskStateRev: state, WorkRevision: workRevision, ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: strings.TrimSpace(os.Getenv("TUSKER_RUNNER_HARNESS")), Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, MaterialFingerprint: strings.TrimSpace(args.String("material-fingerprint")), Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := normalizeReviewResultProposal(&result); err != nil {
 			return err
 		}
@@ -504,7 +504,7 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.Covers = sortedUniqueStrings(result.Covers)
 	result.Findings = sortedUniqueStrings(result.Findings)
 	result.EvidenceRefs = sortedUniqueStrings(result.EvidenceRefs)
-	if (result.Schema != reviewResultSchema && result.Schema != reviewResultSchemaV2 && result.Schema != reviewResultSchemaV1) || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision <= 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
+	if (result.Schema != reviewResultSchema && result.Schema != reviewResultSchemaV2 && result.Schema != reviewResultSchemaV1) || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision < 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
 		return tuskerError(errorInvalidArg, "review result is missing immutable authority fields")
 	}
 	if result.Schema == reviewResultSchema && result.RunnerProfile == "" {
