@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -480,10 +484,10 @@ func workSessionLifecycleCmd(args Args, action string) error {
 }
 
 func workerLifecycleControl(args Args, action string) error {
-	return workerLifecycleControlAt(DefaultStateRoot(), args, action)
+	return workerLifecycleControlAt("http://"+defaultServeAddr, args, action)
 }
 
-func workerLifecycleControlAt(stateRoot string, args Args, action string) error {
+func workerLifecycleControlAt(serveURL string, args Args, action string) error {
 	if action != "heartbeat" && action != "submit" && action != "fail" && action != "release" {
 		return tuskerError(errorInvalidTransition, "dispatched worker lifecycle action is not supported: "+action)
 	}
@@ -494,12 +498,31 @@ func workerLifecycleControlAt(stateRoot string, args Args, action string) error 
 		Deliverable: args.String("deliverable"), Verification: args.String("verification"),
 		GateVerdicts: firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), Reason: args.String("reason"),
 	}
-	resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "worker_lifecycle", ProjectID: os.Getenv("TUSKER_PROJECT_ID"), Identity: w.AttemptID, Worker: &w})
+	request := daemonControlRequest{Command: "worker_lifecycle", ProjectID: os.Getenv("TUSKER_PROJECT_ID"), Identity: w.AttemptID, Worker: &w}
+	payload, _ := json.Marshal(request)
+	capResp, err := http.Get(strings.TrimRight(serveURL, "/") + "/api/capability")
 	if err != nil {
 		return tuskerError(errorInvalidTransition, "worker lifecycle daemon boundary unavailable: "+err.Error())
 	}
-	if !resp.OK {
-		return tuskerError(errorInvalidTransition, "worker lifecycle refused: "+resp.Message)
+	var capability struct {
+		Capability string `json:"capability"`
+	}
+	err = json.NewDecoder(io.LimitReader(capResp.Body, 32<<10)).Decode(&capability)
+	_ = capResp.Body.Close()
+	if err != nil || capResp.StatusCode != http.StatusOK || capability.Capability == "" {
+		return tuskerError(errorInvalidTransition, "worker lifecycle daemon capability unavailable")
+	}
+	httpReq, _ := http.NewRequest(http.MethodPost, strings.TrimRight(serveURL, "/")+"/api/worker/lifecycle", bytes.NewReader(payload))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set(serveCapabilityHeader, capability.Capability)
+	postResp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "worker lifecycle daemon boundary unavailable: "+err.Error())
+	}
+	defer postResp.Body.Close()
+	var resp serveActionResult
+	if err := json.NewDecoder(io.LimitReader(postResp.Body, 32<<10)).Decode(&resp); err != nil || postResp.StatusCode != http.StatusOK || !resp.OK {
+		return tuskerError(errorInvalidTransition, "worker lifecycle refused: "+resp.Reason)
 	}
 	emitJSON(map[string]any{"ok": true, "action": action, "attempt_id": w.AttemptID, "authority": "resident_daemon"})
 	return nil

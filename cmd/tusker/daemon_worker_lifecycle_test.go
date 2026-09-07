@@ -1,7 +1,9 @@
 package main
 
 import (
-	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,13 +17,16 @@ func TestSandboxedWorkerLifecycleUsesDaemonBoundaryWithoutRuntimeStore(t *testin
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(stateRoot) })
 	requests := make(chan daemonControlRequest, 1)
-	server, err := startDaemonControlServer(stateRoot, func(_ context.Context, req daemonControlRequest) daemonControlResponse {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/capability" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"capability": "test-token"})
+			return
+		}
+		var req daemonControlRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		requests <- req
-		return daemonControlResponse{OK: true}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		_ = json.NewEncoder(w).Encode(serveActionResult{OK: true})
+	}))
 	defer server.Close()
 	t.Setenv("TUSKER_ATTEMPT_ID", "attempt-1")
 	t.Setenv("TUSKER_PROJECT_ID", "project-1")
@@ -31,7 +36,7 @@ func TestSandboxedWorkerLifecycleUsesDaemonBoundaryWithoutRuntimeStore(t *testin
 	t.Setenv("TUSKER_STATUS_PATH", filepath.Join(t.TempDir(), "status.json"))
 	t.Setenv("TUSKER_LEASE_GENERATION", "2")
 	t.Setenv("TUSKER_WORK_REVISION", "1")
-	if err := workerLifecycleControlAt(stateRoot, Args{"deliverable": "implemented", "verification": "test passed", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+	if err := workerLifecycleControlAt(server.URL, Args{"deliverable": "implemented", "verification": "test passed", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
 		t.Fatal(err)
 	}
 	req := <-requests

@@ -6,14 +6,21 @@ import (
 )
 
 func (d *Daemon) applyWorkerLifecycle(req daemonControlRequest) error {
-	if d == nil || d.store == nil || req.Worker == nil {
+	if d == nil {
+		return fmt.Errorf("worker lifecycle request is incomplete")
+	}
+	return applyWorkerLifecycle(d.store, req)
+}
+
+func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
+	if store == nil || req.Worker == nil {
 		return fmt.Errorf("worker lifecycle request is incomplete")
 	}
 	w := req.Worker
 	if req.ProjectID == "" || w.AttemptID == "" || w.RecordID == "" || w.Workspace == "" || w.StatusPath == "" || w.LeaseGeneration <= 0 || w.WorkRevision <= 0 {
 		return fmt.Errorf("worker lifecycle identity is incomplete")
 	}
-	run, err := d.store.FindRunScoped(req.ProjectID, w.RecordID)
+	run, err := store.FindRunScoped(req.ProjectID, w.RecordID)
 	if err != nil || run == nil {
 		return firstNonNil(err, fmt.Errorf("worker lifecycle run not found"))
 	}
@@ -32,5 +39,5 @@ func (d *Daemon) applyWorkerLifecycle(req daemonControlRequest) error {
 	args := Args{"id": run.RecordID, "project": run.ProjectID, "owner": run.LeaseOwner, "revision": fmt.Sprintf("%d", run.WorkRevision),
 		"deliverable": w.Deliverable, "verification": w.Verification, "gate-verdicts": w.GateVerdicts, "reason": w.Reason,
 		"actor": run.LeaseOwner, "quiet": "true"}
-	return runsLifecycleWithStore(d.store, args, w.Action, false)
+	return runsLifecycleWithStore(store, args, w.Action, false)
 }

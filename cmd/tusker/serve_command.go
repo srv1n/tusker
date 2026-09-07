@@ -379,6 +379,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
 			return
 		}
+		if path == "/api/worker/lifecycle" {
+			s.handleWorkerLifecycle(w, r)
+			return
+		}
 		if projectID, ok := serveProjectRefreshID(path); ok {
 			s.handleProjectRefresh(w, projectID)
 			return
