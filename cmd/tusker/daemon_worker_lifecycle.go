@@ -52,7 +52,7 @@ func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
 		return fmt.Errorf("worker lifecycle request is incomplete")
 	}
 	w := req.Worker
-	if req.ProjectID == "" || w.AttemptID == "" || w.RecordID == "" || w.Workspace == "" || w.StatusPath == "" || w.LeaseGeneration <= 0 || w.WorkRevision <= 0 {
+	if req.ProjectID == "" || w.AttemptID == "" || w.RecordID == "" || w.Workspace == "" || w.StatusPath == "" || w.LeaseGeneration <= 0 || w.WorkRevision < 0 {
 		return fmt.Errorf("worker lifecycle identity is incomplete")
 	}
 	run, err := store.FindRunScoped(req.ProjectID, w.RecordID)

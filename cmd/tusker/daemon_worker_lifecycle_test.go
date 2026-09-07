@@ -35,7 +35,7 @@ func TestSandboxedWorkerLifecycleUsesDaemonBoundaryWithoutRuntimeStore(t *testin
 	t.Setenv("TUSKER_WORKSPACE", t.TempDir())
 	t.Setenv("TUSKER_STATUS_PATH", filepath.Join(t.TempDir(), "status.json"))
 	t.Setenv("TUSKER_LEASE_GENERATION", "2")
-	t.Setenv("TUSKER_WORK_REVISION", "1")
+	t.Setenv("TUSKER_WORK_REVISION", "0")
 	req, err := workerLifecycleRequest(Args{"deliverable": "implemented", "verification": "test passed", "gate-verdicts": "A1=pass"}, "submit")
 	if err != nil {
 		t.Fatal(err)
