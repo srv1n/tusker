@@ -1853,11 +1853,11 @@ func shouldDispatchRun(run RunStatus, now time.Time) bool {
 }
 
 func daemonReviewImplementationAttempt(store *RuntimeStore, vault string, run RunStatus, note Note) (RunAttempt, error) {
-	if store == nil || run.ProjectID == "" || run.RecordID == "" || run.WorkRevision <= 0 {
+	if store == nil || run.ProjectID == "" || run.RecordID == "" || run.WorkRevision < 0 {
 		return RunAttempt{}, tuskerError(errorInvalidTransition, "review dispatch requires a current implementation identity")
 	}
-	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
-	if source == "" || intField(note.Data, "work_revision") != run.WorkRevision {
+	source, err := reviewImplementationSource(store, run, note)
+	if err != nil || intField(note.Data, "work_revision") != run.WorkRevision {
 		return RunAttempt{}, tuskerError(errorInvalidTransition, "review dispatch requires the current task source and work revision")
 	}
 	parent, _, err := reviewImplementationParent(store, vault, run.ProjectID, run.RecordID, run.WorkRevision, source, note)
@@ -1869,6 +1869,23 @@ func daemonReviewImplementationAttempt(store *RuntimeStore, vault string, run Ru
 		return RunAttempt{}, firstNonNil(err, tuskerError(errorInvalidTransition, "review dispatch requires durable implementation actor provenance"))
 	}
 	return parent, nil
+}
+
+func reviewImplementationSource(store *RuntimeStore, run RunStatus, note Note) (string, error) {
+	if source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")); source != "" {
+		return source, nil
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return "", err
+	}
+	for i := len(attempts) - 1; i >= 0; i-- {
+		attempt := attempts[i]
+		if attempt.Lane == runLaneExecute && attempt.WorkRevision == run.WorkRevision && attempt.Outcome == string(AttemptOutcomeSucceeded) && attempt.EndState.HeadSHA != "" {
+			return attempt.EndState.HeadSHA, nil
+		}
+	}
+	return "", tuskerError(errorInvalidTransition, "review dispatch requires the current task source")
 }
 
 func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
@@ -6289,6 +6306,9 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 			return "", snapshotErr
 		}
 		values["review.proof_fingerprint"], values["review.gate_fingerprint"] = proof, gates
+		if source, sourceErr := reviewImplementationSource(store, run, note); sourceErr == nil {
+			values["review.source_sha"] = source
+		}
 	}
 	template := wfFile.Body
 	if lane == runLaneReview {
