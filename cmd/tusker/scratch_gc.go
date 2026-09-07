@@ -18,6 +18,9 @@ func scratchGCCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	if args.String("keep") != "" || args.String("unkeep") != "" {
+		return scratchKeepCmd(vaultPath, args)
+	}
 	ttlDays, err := scratchGCTTLDays(args)
 	if err != nil {
 		return err
@@ -77,6 +80,41 @@ func scratchGCCmd(args Args) error {
 		return nil
 	}
 	fmt.Printf("%d stale scratch entries older than %dd (%s). Re-run with --yes to apply.\n", len(stale), ttlDays, humanBytes(total))
+	return nil
+}
+
+func scratchKeepCmd(vaultPath string, args Args) error {
+	if args.String("keep") != "" && args.String("unkeep") != "" {
+		return tuskerError(errorInvalidArg, "choose --keep or --unkeep")
+	}
+	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("keep"), args.String("unkeep"))))
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	task, ok := idx.Tasks[id]
+	if !ok {
+		return tuskerError(errorNotFound, "V7 task not found: "+id)
+	}
+	actor, err := v7AgentDefaultActor(args, "artifact retention")
+	if err != nil {
+		return err
+	}
+	data := cloneMap(task.Data)
+	keep := args.String("keep") != ""
+	if keep {
+		data["artifacts_keep"] = true
+	} else {
+		delete(data, "artifacts_keep")
+	}
+	data["updated_at"], data["updated_by"] = time.Now().UTC().Format(time.RFC3339), actor
+	data["state_rev"] = v7StateRev(data, task.Body)
+	if _, err := saveV7DocumentCAS(task.AbsolutePath, data, task.Body, v7FrontmatterOrder["task"], stringField(task.Data, "state_rev")); err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "task": id, "keep": keep})
+	}
 	return nil
 }
 
@@ -184,6 +222,7 @@ func humanBytes(n int64) string {
 func printGCHelp() {
 	fmt.Println(`Usage:
   tusker gc [--ttl <days>] [--yes] [--vault <path>] [--json] [--quiet]
+  tusker gc --keep <TASK-ID> | --unkeep <TASK-ID>
 
 Purpose:
   Sweep .tusker/scratch/, deleting any top-level entry — task-keyed or
@@ -192,7 +231,7 @@ Purpose:
 
 Behavior:
   - default is dry-run; pass --yes to apply (--yes is the only apply flag)
-  - --ttl overrides the 14-day default; --ttl 0 purges every entry
+	  - --ttl overrides the 7-day default; --ttl 0 purges eligible entries
   - staleness of an entry is the newest mtime found beneath it
   - the target must be a recognized Tusker vault or the command refuses
   - reported sizes are logical file sizes, not measured freed disk space

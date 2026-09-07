@@ -618,6 +618,7 @@ export interface WaveSummary {
   id: string;
   title: string;
   status: string;
+	 expectedOutcome?: string | null;
   landedAt?: string | null;
   memberIds: string[];
   members: WaveTaskSummary[];
@@ -653,6 +654,7 @@ export interface WaveArtifactCard {
 
 export interface WaveBrief {
   schema: "tusker.wave-brief/v1"; waveId: string; title: string; waveHref: string;
+	 expectedOutcome?: string;
   sectionOrder: ["outcome", "seeIt", "landed", "reworkParked", "humanAction", "documentation"];
   outcome: { summary: string; fullyDrained: boolean; counts: Record<string, number>; tasks: WaveTaskDeliveryState[] };
   seeIt: WaveArtifactCard[];
@@ -718,9 +720,20 @@ export interface EvidenceCard {
   label: string;
   kind: "file" | "log" | "image" | "link" | "diff";
   ref: string;
+	 href?: string;
+	 availability: "available" | "expired" | "missing";
+	 expiredAt?: string;
+	 kept: boolean;
 }
 
 export interface TaskDetail extends TaskCapsule {
+	 artifactsKeep?: boolean;
+	 artifactsAvailability?: string;
+	 artifactsExpiredAt?: string;
+  authoredWorkLevel?: "light" | "standard" | "demanding";
+  authoredReviewLevel?: "light" | "standard" | "demanding";
+  effectiveExecute?: TaskRoutePreview;
+  effectiveReview?: TaskRoutePreview;
   /** Intent, rendered as prose (markdown). */
   intent: string;
   acceptance: AcceptanceRow[];
@@ -740,6 +753,18 @@ export interface TaskDetail extends TaskCapsule {
     expiresAt: string;
     reason?: string;
   };
+}
+
+export interface TaskRoutePreview {
+  work_level?: string;
+  profile?: string;
+  harness?: string;
+  model?: string;
+  effort?: string;
+  source?: string;
+  reason?: string;
+  fallbacks?: string[];
+  blockers: string[];
 }
 
 export interface GateDetail {
@@ -986,4 +1011,25 @@ export interface RunnerConformanceReport {
   ready: boolean;
   valid_until?: string;
   cases: Array<{ id: string; result: RunnerConformanceResult; evidence?: string }>;
+}
+
+export interface ModelLevelProfile {
+  harness: string;
+  model: string;
+  effort: string;
+  permission_preset?: string;
+}
+
+export interface ModelLevelValue {
+  profiles: string[];
+  source: string;
+  overridden: boolean;
+}
+
+export interface ModelLevelsReport {
+  schema: "tusker.model-levels/v1";
+  revision: string;
+  profiles: Record<string, ModelLevelProfile>;
+  profile_states: Record<string, "configured_unverified">;
+  levels: Array<{ level: "light" | "standard" | "demanding"; execute: ModelLevelValue; review: ModelLevelValue }>;
 }

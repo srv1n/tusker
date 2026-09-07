@@ -33,13 +33,14 @@ type deliveryPlanV2 struct {
 	// Factory contract provenance is mandatory for every newly imported V2
 	// plan. Historical waves remain readable, but preflight detects their V2
 	// schema/context and refuses execution until they are replanned.
-	FactoryIntakeContractSchema      string                `yaml:"factory_intake_contract_schema,omitempty"`
-	FactoryIntakeContractVersion     string                `yaml:"factory_intake_contract_version,omitempty"`
-	FactoryIntakeContractFingerprint string                `yaml:"factory_intake_contract_fingerprint,omitempty"`
-	NonGoals                         []string              `yaml:"non_goals,omitempty"`
-	Requirements                     []deliveryRequirement `yaml:"requirements"`
-	Concurrency                      int                   `yaml:"concurrency,omitempty"`
-	RunnerProfile                    string                `yaml:"runner_profile,omitempty"`
+	FactoryIntakeContractSchema      string                        `yaml:"factory_intake_contract_schema,omitempty"`
+	FactoryIntakeContractVersion     string                        `yaml:"factory_intake_contract_version,omitempty"`
+	FactoryIntakeContractFingerprint string                        `yaml:"factory_intake_contract_fingerprint,omitempty"`
+	NonGoals                         []string                      `yaml:"non_goals,omitempty"`
+	Requirements                     []deliveryRequirement         `yaml:"requirements"`
+	Deferrals                        []deliveryRequirementDeferral `yaml:"deferrals,omitempty"`
+	Concurrency                      int                           `yaml:"concurrency,omitempty"`
+	RunnerProfile                    string                        `yaml:"runner_profile,omitempty"`
 	// SharedResources, overlap strategies, assumptions, unresolved decisions,
 	// and Summary are authored facts.  The doctor must never manufacture them
 	// from filenames or dependency shape.
@@ -84,6 +85,10 @@ type deliveryRequirement struct {
 	ID      string `yaml:"id"`
 	Outcome string `yaml:"outcome"`
 }
+type deliveryRequirementDeferral struct {
+	Requirement string `yaml:"requirement"`
+	Reason      string `yaml:"reason"`
+}
 type deliveryEpicContract struct {
 	SourceKey   string   `yaml:"source_key"`
 	AcronymHint string   `yaml:"acronym_hint"`
@@ -109,7 +114,7 @@ type deliveryHumanGate struct {
 // V1 is an unknown-field error rather than a silently widened contract.
 func (v *deliveryPlanV2) UnmarshalYAML(value *yaml.Node) error {
 	root := deliveryYAMLMapping(value)
-	if err := deliveryKnownYAMLFields(root, map[string]bool{"schema": true, "scope": true, "title": true, "epic": true, "epic_contract": true, "spec_refs": true, "context_fingerprint": true, "required_capabilities": true, "factory_intake_contract_schema": true, "factory_intake_contract_version": true, "factory_intake_contract_fingerprint": true, "non_goals": true, "requirements": true, "concurrency": true, "runner_profile": true, "shared_resources": true, "owned_path_overlaps": true, "assumptions": true, "unresolved_decisions": true, "summary": true, "tasks": true, "human_gates": true}); err != nil {
+	if err := deliveryKnownYAMLFields(root, map[string]bool{"schema": true, "scope": true, "title": true, "epic": true, "epic_contract": true, "spec_refs": true, "context_fingerprint": true, "required_capabilities": true, "factory_intake_contract_schema": true, "factory_intake_contract_version": true, "factory_intake_contract_fingerprint": true, "non_goals": true, "requirements": true, "deferrals": true, "concurrency": true, "runner_profile": true, "shared_resources": true, "owned_path_overlaps": true, "assumptions": true, "unresolved_decisions": true, "summary": true, "tasks": true, "human_gates": true}); err != nil {
 		return err
 	}
 	tasks := deliveryYAMLField(root, "tasks")
@@ -493,6 +498,18 @@ func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index
 		}
 	}
 	covered := map[string]bool{}
+	deferred := map[string]bool{}
+	for _, deferral := range v2.Deferrals {
+		id := strings.TrimSpace(deferral.Requirement)
+		if !reqs[id] {
+			issues = append(issues, deliveryIssue{Code: "REQUIREMENT_REFERENCE_UNKNOWN", Message: "deferral: unknown requirement " + id})
+		} else if deferred[id] {
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "duplicate deferral for requirement " + id})
+		} else if strings.TrimSpace(deferral.Reason) == "" || deliveryPlaceholder(deferral.Reason) {
+			issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: "deferral for requirement " + id + " requires a concrete reason"})
+		}
+		deferred[id] = true
+	}
 	keys := map[string]deliveryPlanTask{}
 	for _, task := range plan.Tasks {
 		keys[task.SourceKey] = task
@@ -507,7 +524,7 @@ func deliveryV2PrepareWithIndex(vaultPath string, v2 deliveryPlanV2, idx v7Index
 		}
 	}
 	for id := range reqs {
-		if !covered[id] {
+		if !covered[id] && !deferred[id] {
 			issues = append(issues, deliveryIssue{Code: "REQUIREMENT_UNCOVERED", Message: "requirement " + id + " is not covered by any task"})
 		}
 	}

@@ -50,7 +50,7 @@ tusker config resolve automation.workspace.strategy --vault ./.tusker --json
 
 Commit or ignore fixture artifacts before checking cleanliness. Fresh setup uses `codex_exec`;
 inspect `tusker config resolve automation.profiles --vault ./.tusker --json`.
-ACP requires operator `tusker acp setup`, never an agent fallback.
+ACP requires a configured supported runner; inspect runner help, never silently substitute a transport.
 
 ## Canon and delivery
 
@@ -61,7 +61,7 @@ tusker docs new auth --kind spec --vault ./.tusker
 tusker docs find auth --vault ./.tusker
 ```
 
-Record source-backed facts in `.tusker/knowledge/domains/project/CANON.md`;
+Record source-backed facts in `docs/system/`;
 track delivery work as tasks. An open, disarmed, backlog/held wave with no
 attempts or reviews can be amended without changing scope or source keys:
 

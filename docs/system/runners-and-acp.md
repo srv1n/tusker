@@ -96,6 +96,30 @@ automation:
 Unknown CLI event or permission semantics require a small adapter in
 `internal/runner`; arbitrary shell commands are not a harness API.
 
+## Work levels
+
+`automation.model_levels` maps Light, Standard and Demanding to ordered execute
+and review profile lists. The first entry is primary and later entries are the
+only permitted fallbacks. Explicit task `runner_profile`, routing rules and lane
+profiles keep their existing precedence. An authored `work_level` or
+`review_level` selects the new mapping; existing routine/standard/complex/frontier
+complexity routes remain compatible, including frontier-specific profiles.
+
+Tusker records profile, harness, model and effort on the run before claim. A retry
+in the same lane preserves that recorded cycle even if configuration changes.
+Unstarted work observes the newest valid configuration. Missing mappings and
+unknown profiles block before claim.
+
+`automation.profiles` admits only operator-installed harnesses, so a
+simulated executor cannot be registered there: the repeatable demo declares
+its `demo-timer` implement/review/plan profiles in demo-scoped config
+(`.tusker/demo/profiles.yaml`, also mapped in the demo manifest) and executes
+through the `demo-timer` driver, which performs fixed delays, exact fixture
+writes, and bounded progress instead of launching a model. A demo run proves
+orchestration, never provider conformance. `demo run --require-harness`
+refuses when the named harness is unavailable rather than substituting
+another one silently.
+
 ## Lifecycle ownership
 
 `internal/runner` owns discovery, probes, exact policy projection, structured process

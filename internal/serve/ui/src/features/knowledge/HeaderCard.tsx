@@ -8,11 +8,11 @@
 */
 
 import { useState, type KeyboardEvent } from "react";
-import { ChevronDown, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { Card, Mono } from "@/components/ui/primitives";
+import { Mono } from "@/components/ui/primitives";
 import { Select, TextInput } from "@/components/ui/controls";
-import { KindBadge } from "./bits";
+import { DocStatusChip, KindBadge } from "./bits";
 import type { DocgraphKind } from "./types";
 
 const KNOWN_STATUSES = ["canonical", "active", "draft", "accepted", "superseded"];
@@ -45,30 +45,36 @@ export function HeaderCard({
   subjects: string[];
 }) {
   return (
-    <Card className="mb-8 p-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <section aria-label="Document details" className="mb-9 border-y border-line py-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <KindBadge kind={kind} />
-        <StatusEditor value={status} onChange={onStatusChange} />
-      </div>
-      <Mono className="mt-3 block text-[11.5px] text-faint">{subject}</Mono>
-
-      <div className="mt-3 flex flex-col gap-2.5">
-        <div className="flex items-center gap-2">
-          <span className="w-[52px] flex-none font-mono text-[10.5px] uppercase tracking-[0.08em] text-fainter">
-            Part of
-          </span>
-          <PartOfEditor value={partOf} onChange={onPartOfChange} subjects={subjects.filter((s) => s !== subject)} />
-        </div>
-        <div className="flex items-start gap-2">
-          <span className="mt-1 w-[52px] flex-none font-mono text-[10.5px] uppercase tracking-[0.08em] text-fainter">
-            Keywords
-          </span>
-          <KeywordsEditor keywords={keywords} onAdd={onAddKeyword} onRemove={onRemoveKeyword} />
-        </div>
+        <DocStatusChip status={status} />
+        <Mono className="min-w-0 truncate text-[11px] text-faint" title={subject}>{subject}</Mono>
       </div>
 
-      <Mono className="mt-3 block truncate text-[10.5px] text-fainter">{path}</Mono>
-    </Card>
+      <details className="group mt-2.5 rounded-lg border border-line bg-panel/30">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] font-medium text-muted outline-none transition-colors hover:bg-hover/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 [&::-webkit-details-marker]:hidden">
+          <ChevronRight size={13} strokeWidth={2} className="flex-none transition-transform group-open:rotate-90" />
+          <span>Details</span>
+          <Mono className="ml-auto min-w-0 truncate text-[10.5px] text-fainter" title={path}>{path}</Mono>
+        </summary>
+        <div className="grid gap-3 border-t border-line px-3 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Status</span>
+            <StatusEditor value={status} onChange={onStatusChange} />
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Part of</span>
+            <PartOfEditor value={partOf} onChange={onPartOfChange} subjects={subjects.filter((s) => s !== subject)} />
+          </div>
+          <div className="flex min-w-0 items-start gap-2 sm:col-span-2">
+            <span className="mt-1 w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Keywords</span>
+            <KeywordsEditor keywords={keywords} onAdd={onAddKeyword} onRemove={onRemoveKeyword} />
+          </div>
+          <Mono className="truncate text-[10.5px] text-fainter sm:col-span-2" title={path}>{path}</Mono>
+        </div>
+      </details>
+    </section>
   );
 }
 

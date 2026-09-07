@@ -17,6 +17,7 @@ type runnerRoutePreview struct {
 	Task         string `json:"task"`
 	Lane         string `json:"lane"`
 	Complexity   string `json:"complexity,omitempty"`
+	WorkLevel    string `json:"work_level,omitempty"`
 	SemanticRole string `json:"semantic_role,omitempty"`
 	Profile      string `json:"profile,omitempty"`
 	// ProfileDefinition exposes the complete resolved execution policy, not
@@ -30,6 +31,7 @@ type runnerRoutePreview struct {
 	Reason            string                  `json:"reason,omitempty"`
 	Rule              string                  `json:"rule,omitempty"`
 	Warnings          []string                `json:"warnings,omitempty"`
+	Fallbacks         []string                `json:"fallbacks,omitempty"`
 	Precedence        []runnerRoutePrecedence `json:"precedence"`
 	Blockers          []string                `json:"blockers"`
 }
@@ -72,9 +74,10 @@ func runnerRouteCmd(args Args) error {
 func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview {
 	complexity := strings.ToLower(strings.TrimSpace(stringField(note.Data, "complexity")))
 	preview := runnerRoutePreview{Schema: "tusker.runner-route/v1", ReadOnly: true, Task: stringField(note.Data, "id"), Lane: lane, Complexity: complexity, Blockers: []string{}}
+	preview.WorkLevel, _, _ = modelLevelForNote(note, lane)
 	preview.Precedence = []runnerRoutePrecedence{
 		{Source: "task frontmatter", Reason: "runner_profile"}, {Source: "automation.routing", Reason: "first matching routing rule"},
-		{Source: "automation.lane_profiles", Reason: "lane mapping"}, {Source: "task complexity", Reason: "semantic complexity role"},
+		{Source: "automation.lane_profiles", Reason: "lane mapping"}, {Source: "automation.model_levels", Reason: "authored or compatible work level"}, {Source: "task complexity", Reason: "legacy semantic complexity role"},
 		{Source: "automation.default_profile", Reason: "project default or built-in default"},
 	}
 	if complexity != "" && !validTaskComplexity(complexity) {
@@ -91,11 +94,13 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 	preview.Harness, preview.Model, preview.Effort = selected.Definition.Harness, selected.Definition.Model, selected.Definition.Effort
 	preview.Source, preview.Reason, preview.Rule = selected.Source, selected.Reason, selected.RuleName
 	preview.Warnings = append([]string{}, selected.Warnings...)
+	preview.Fallbacks = append([]string{}, selected.Fallbacks...)
 	preview.Precedence = []runnerRoutePrecedence{
 		{Source: "task frontmatter", Reason: "runner_profile", Selected: selected.Source == "task frontmatter"},
 		{Source: "automation.routing", Reason: "first matching routing rule", Selected: selected.Source == "automation.routing"},
 		{Source: "automation.lane_profiles", Reason: "lane mapping", Selected: selected.Source == "automation.lane_profiles"},
-		{Source: "task complexity", Reason: "semantic complexity role", Selected: selected.Source == "task complexity"},
+		{Source: "automation.model_levels", Reason: "authored or compatible work level", Selected: strings.Contains(selected.Source, ":light") || strings.Contains(selected.Source, ":standard") || strings.Contains(selected.Source, ":demanding")},
+		{Source: "task complexity", Reason: "legacy semantic complexity role", Selected: selected.Source == "task complexity"},
 		{Source: "automation.default_profile", Reason: "project default or built-in default", Selected: selected.Source == "automation.default_profile" || selected.Source == configSourceBuiltIn},
 	}
 	return preview

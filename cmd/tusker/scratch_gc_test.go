@@ -85,7 +85,7 @@ func TestScratchGCDryRunListsStaleEntries(t *testing.T) {
 
 func TestScratchGCAppliesWithYes(t *testing.T) {
 	vault := newScratchVault(t)
-	stale := seedAgedScratch(t, vault, "APP-T-0001", 30*24*time.Hour)
+	stale := seedAgedScratch(t, vault, "old-task-output", 30*24*time.Hour)
 
 	if err := scratchGCCmd(Args{"vault": vault, "quiet": "true", "yes": "true"}); err != nil {
 		t.Fatal(err)
@@ -97,8 +97,8 @@ func TestScratchGCAppliesWithYes(t *testing.T) {
 
 func TestScratchGCSparesFreshEntries(t *testing.T) {
 	vault := newScratchVault(t)
-	freshTask := seedAgedScratch(t, vault, "APP-T-0002", time.Hour)
-	freshNamed := seedAgedScratch(t, vault, "orig-piano", 13*24*time.Hour)
+	freshTask := seedAgedScratch(t, vault, "fresh-task-output", time.Hour)
+	freshNamed := seedAgedScratch(t, vault, "orig-piano", 6*24*time.Hour)
 	stale := seedAgedScratch(t, vault, "old-render", 30*24*time.Hour)
 
 	if err := scratchGCCmd(Args{"vault": vault, "quiet": "true", "yes": "true"}); err != nil {
@@ -113,15 +113,15 @@ func TestScratchGCSparesFreshEntries(t *testing.T) {
 		t.Fatalf("expected %s to be deleted, got err=%v", stale, err)
 	}
 
-	// --ttl overrides the 14-day default and now takes the 13-day entry.
-	if err := scratchGCCmd(Args{"vault": vault, "quiet": "true", "yes": "true", "ttl": "7"}); err != nil {
+	// --ttl overrides the 7-day default and now takes the 6-day entry.
+	if err := scratchGCCmd(Args{"vault": vault, "quiet": "true", "yes": "true", "ttl": "3"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(freshNamed); !os.IsNotExist(err) {
-		t.Fatalf("expected %s to be deleted under --ttl 7, got err=%v", freshNamed, err)
+		t.Fatalf("expected %s to be deleted under --ttl 3, got err=%v", freshNamed, err)
 	}
 	if _, err := os.Stat(freshTask); err != nil {
-		t.Fatalf("expected %s to survive --ttl 7: %v", freshTask, err)
+		t.Fatalf("expected %s to survive --ttl 3: %v", freshTask, err)
 	}
 }
 

@@ -36,7 +36,7 @@ func ReadDocumentFile(repoRoot, relative string) ([]byte, error) {
 	defer root.Close()
 	clean := filepath.Clean(filepath.FromSlash(relative))
 	if err := rejectDocsMapSymlinkPath(root, clean); err != nil {
-		return nil, fmt.Errorf("documentation file path is symlinked: %s: %w", relative, err)
+		return nil, &PathError{Code: "DOC_PATH_SYMLINK", Path: filepath.ToSlash(clean), Message: fmt.Sprintf("documentation file path is symlinked: %s", relative)}
 	}
 	return root.ReadFile(clean)
 }

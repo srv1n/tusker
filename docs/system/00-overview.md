@@ -92,15 +92,22 @@ graph TD
   n_cli["CLI reference"]
   n_decisions_2026_09_07_work_area_redesign_grill["Work-area redesign discussion record"]
   n_delivery_and_waves["Delivery and waves"]
+  n_documents_experience["Documents experience and bounded CLI discovery"]
   n_execution_observability_system["Execution observability"]
   n_factory_intake["Factory intake"]
   n_gates["Gates"]
   n_knowledge_and_feedback["Knowledge and feedback"]
   n_landing_and_completion["Landing and completion"]
+  n_model_level_configuration["Manual model setup and three work levels"]
   n_orchestration["Orchestration"]
   n_overview["System overview"]
+  n_planning_handoff_and_agent_entry["Planning capture, task handoff and progressive agent guidance"]
   n_platform_support["Platform support"]
   n_proof_and_closeout["Proof and closeout"]
+  n_real_work_lifecycle_cli["Make real task execution and closeout consistent across CLI and UI"]
+  n_real_work_test_packets["Real-product testing — three implementation assignments"]
+  n_real_work_test_repository["Build a resettable test repository for actual coding-agent work"]
+  n_real_work_ui_acceptance["Verify the live task wave and Documents experience against the seeded project"]
   n_repeatable_work_testing["Repeatable work scenarios and CLI parity"]
   n_runner_boundary_decisions["Runner boundary decisions — 7 September 2026"]
   n_runner_execution_boundary["Use the operator's installed coding agents"]
@@ -116,17 +123,32 @@ graph TD
   n_work_experience_map["Find the everyday Tusker work experience"]
   n_work_knowledge_and_retention["Project knowledge, model choices and lightweight evidence"]
   n_cli -->|part of| n_overview
+  n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_model_level_configuration
+  n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_planning_handoff_and_agent_entry
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_repeatable_work_testing
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_work_area_redesign
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_work_knowledge_and_retention
   n_decisions_2026_09_07_work_area_redesign_grill -->|part of| n_work_area_redesign
   n_decisions_2026_09_07_work_area_redesign_grill -->|source| n_work_area_redesign
   n_delivery_and_waves -->|part of| n_overview
+  n_documents_experience -->|link| n_tusker_trust_and_efficiency
+  n_documents_experience -->|link| n_work_knowledge_and_retention
+  n_documents_experience -->|part of| n_work_knowledge_and_retention
+  n_documents_experience -->|source| n_knowledge_and_feedback
+  n_documents_experience -->|source| n_tusker_trust_and_efficiency
+  n_documents_experience -->|source| n_work_knowledge_and_retention
   n_execution_observability_system -->|part of| n_overview
   n_factory_intake -->|part of| n_overview
   n_gates -->|part of| n_overview
   n_knowledge_and_feedback -->|part of| n_overview
   n_landing_and_completion -->|part of| n_overview
+  n_model_level_configuration -->|part of| n_work_area_redesign
+  n_model_level_configuration -->|source| n_decisions_2026_09_07_work_area_redesign_grill
+  n_model_level_configuration -->|source| n_runner_execution_boundary
+  n_model_level_configuration -->|source| n_work_knowledge_and_retention
+  n_model_level_configuration -->|updates| n_cli
+  n_model_level_configuration -->|updates| n_runners_and_acp
+  n_model_level_configuration -->|updates| n_serve_ui
   n_orchestration -->|part of| n_overview
   n_overview -->|link| n_cli
   n_overview -->|link| n_orchestration
@@ -135,8 +157,28 @@ graph TD
   n_overview -->|link| n_serve_ui
   n_overview -->|link| n_storage_and_runtime
   n_overview -->|link| n_tasks_and_proof
+  n_planning_handoff_and_agent_entry -->|link| n_spec_to_proof
+  n_planning_handoff_and_agent_entry -->|part of| n_spec_to_proof
+  n_planning_handoff_and_agent_entry -->|source| n_decisions_2026_09_07_work_area_redesign_grill
+  n_planning_handoff_and_agent_entry -->|source| n_spec_to_proof
+  n_planning_handoff_and_agent_entry -->|source| n_work_knowledge_and_retention
   n_platform_support -->|part of| n_overview
   n_proof_and_closeout -->|part of| n_overview
+  n_real_work_lifecycle_cli -->|part of| n_real_work_test_packets
+  n_real_work_lifecycle_cli -->|source| n_repeatable_work_testing
+  n_real_work_lifecycle_cli -->|source| n_work_knowledge_and_retention
+  n_real_work_test_packets -->|link| n_real_work_lifecycle_cli
+  n_real_work_test_packets -->|link| n_real_work_test_repository
+  n_real_work_test_packets -->|link| n_real_work_ui_acceptance
+  n_real_work_test_packets -->|part of| n_repeatable_work_testing
+  n_real_work_test_packets -->|source| n_repeatable_work_testing
+  n_real_work_test_packets -->|source| n_work_knowledge_and_retention
+  n_real_work_test_repository -->|part of| n_real_work_test_packets
+  n_real_work_test_repository -->|source| n_repeatable_work_testing
+  n_real_work_test_repository -->|source| n_work_knowledge_and_retention
+  n_real_work_ui_acceptance -->|part of| n_real_work_test_packets
+  n_real_work_ui_acceptance -->|source| n_repeatable_work_testing
+  n_real_work_ui_acceptance -->|source| n_work_knowledge_and_retention
   n_repeatable_work_testing -->|part of| n_work_area_redesign
   n_repeatable_work_testing -->|source| n_work_area_redesign
   n_repeatable_work_testing -->|source| n_work_knowledge_and_retention

@@ -113,6 +113,25 @@ func TestSemanticLinksKeepTrackerReferencesOutsideDocumentCorpus(t *testing.T) {
 	}
 }
 
+func TestSemanticLinksTreatRelativeMarkdownAsManaged(t *testing.T) {
+	root := t.TempDir()
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeDoc(t, root, "docs/system/guide.md", "---\nsubject: guide\npart_of: overview\n---\n# Guide\nSee [[missing.md]] and [external](notes.txt).\n")
+	_, broken := SemanticLinks(loadCorpus(t, root))
+	var foundMissing bool
+	for _, link := range broken {
+		if link.Path == "docs/system/guide.md" && link.Ref == "missing.md" && link.Kind == "link" {
+			foundMissing = true
+		}
+		if link.Ref == "notes.txt" {
+			t.Fatalf("non-Markdown repository link became a dangling document link: %#v", link)
+		}
+	}
+	if !foundMissing {
+		t.Fatalf("relative Markdown route was not reported: %#v", broken)
+	}
+}
+
 func TestRepositorySpecsAreDiscoverableFromCanonicalRoot(t *testing.T) {
 	// Go runs package tests in their source directory. runtime.Caller paths
 	// are module-relative under -trimpath and are not filesystem locations.

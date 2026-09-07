@@ -7,6 +7,17 @@ export function initialWaveView(wave: WaveSummary, requested?: string): WorkView
   return wave.landedAt || ["landed", "closed"].includes(wave.status) ? "results" : "flow";
 }
 
+/**
+ * Entry-view latch for the wave detail (real-work-ui-acceptance A3/A6).
+ * The first computed view sticks: a wave that lands while the operator
+ * watches Flow keeps Flow instead of yanking into Results mid-interaction.
+ * An already-completed wave still leads with its result because the latch
+ * starts empty on entry.
+ */
+export function nextEnteredView(current: WorkView | null, wave: WaveSummary, requested?: string): WorkView {
+  return current ?? initialWaveView(wave, requested);
+}
+
 export function waveStartability(waves: WaveSummary[]) {
   return Object.fromEntries(waves.map((wave) => [wave.id, {
     state: "unknown" as const,

@@ -1,17 +1,29 @@
-# Documentation and spec habits
+# Documentation authoring
 
-Use the repository's one documentation corpus for humans and agents. Before
-reading or writing a doc or spec, run `tusker docs find <query>` so the current
-answer and its subject are known. Create new material with `tusker docs new`
-only; update an existing subject in place instead of making a versioned copy.
+Start with `tusker docs find <query>`; update the existing subject in place.
+The corpus serves humans and agents: current behavior in `docs/system/`,
+proposals in `.tusker/specs/`, rationale in `.tusker/specs/decisions/`.
+Tusker accepts specifications produced by any planning method.
 
-Canonical docs live in `docs/system/`, specs in `.tusker/specs/`, and decision
-logs in `.tusker/specs/decisions/`. Keep front matter complete, connect each
-node to its parent, and run `tusker docs map` followed by `tusker validate`
-after changing the corpus. Generated indexes, diagrams, and graph artifacts
-are outputs, never hand-maintained source.
+Create through `tusker docs new <subject> --kind doc|spec`. Its template is
+front-matter authority; fill subject, discovery keywords, parent (`part_of`),
+read/skip conditions, described paths and applicable spec/decision links.
+Mark verification dates only after checking behavior. Keep metadata out of the
+reading prose. Use a folder introduction/index for purpose, reading order and
+links to children; preserve normal file/folder navigation.
 
-When a spec locks decisions, its `updates:` targets must land with the change
-or have an explicit doc-update task in the owning epic. Do not leave competing
-copies. Use `tusker docs adopt` only when a user asks to review an existing
-brownfield corpus, and approve the complete proposal as one batch.
+Write outcome, decisions and rationale, constraints, acceptance, and unresolved
+questions in the appropriate canonical document. Keep executable details near
+their owning subject. Specs identify `updates:` targets; changed behavior lands
+with its documentation or an explicit follow-up task. Avoid parallel copies.
+
+Use installed `docs --help`/capabilities for bounded browse, read, backlinks,
+front-matter checking and template preview support; report missing helpers
+instead of assuming a newer CLI is installed. Read only the required section
+unless the complete contract is needed.
+
+After edits run `tusker docs map`, then `tusker validate`. Generated maps are
+outputs. Use `tusker docs adopt` for requested brownfield adoption: review the
+whole proposal and preserve its approval boundary. Supersede explicitly so old
+links resolve forward. Durable decisions remain documentation; raw logs and
+scratch are disposable under configured retention, not mandatory agent journals.

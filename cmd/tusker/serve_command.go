@@ -443,6 +443,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleRuns(w, r)
 	case path == "/api/runner/conformance":
 		s.handleRunnerConformance(w, r, nil)
+	case path == "/api/models":
+		s.handleModelLevels(w, r, nil)
+	case path == "/api/models/catalog":
+		s.handleModelCatalog(w, r)
 	case path == "/api/executions":
 		s.handleExecutionGraph(w, r)
 	case path == "/api/executions/inbox":
@@ -1732,18 +1736,25 @@ func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	detail := serveTaskDetail{
-		serveTaskCapsule: serveTaskCapsuleFor(snap, task),
-		Intent:           sectionContent(task.Body, "## Intent"),
-		Acceptance:       serveAcceptanceRows(task),
-		NonGoals:         serveBullets(sectionContent(task.Body, "## Non-goals")),
-		Verification:     serveVerificationRows(task),
-		Evidence:         serveEvidenceCards(snap, task),
-		KnowledgeDelta:   sectionContent(task.Body, "## Knowledge delta"),
-		Deps:             serveTaskDeps(snap, task),
-		Gates:            serveGatesForTask(snap, stringField(task.Data, "id")),
-		HumanAction:      serveHumanActionForTask(snap, task),
-		HumanActions:     serveHumanActionsForTask(snap, task),
-		RunHistory:       serveRunHistory(s, snap, stringField(task.Data, "id")),
+		serveTaskCapsule:      serveTaskCapsuleFor(snap, task),
+		AuthoredWorkLevel:     stringField(task.Data, "work_level"),
+		AuthoredReviewLevel:   stringField(task.Data, "review_level"),
+		EffectiveExecute:      routePreviewForNote(task, snap.workflow, runLaneExecute),
+		EffectiveReview:       routePreviewForNote(task, snap.workflow, runLaneReview),
+		Intent:                sectionContent(task.Body, "## Intent"),
+		Acceptance:            serveAcceptanceRows(task),
+		NonGoals:              serveBullets(sectionContent(task.Body, "## Non-goals")),
+		Verification:          serveVerificationRows(task),
+		Evidence:              serveEvidenceCards(snap, task),
+		ArtifactsKeep:         boolField(task.Data, "artifacts_keep"),
+		ArtifactsAvailability: stringField(task.Data, "artifacts_availability"),
+		ArtifactsExpiredAt:    stringField(task.Data, "artifacts_expired_at"),
+		KnowledgeDelta:        sectionContent(task.Body, "## Knowledge delta"),
+		Deps:                  serveTaskDeps(snap, task),
+		Gates:                 serveGatesForTask(snap, stringField(task.Data, "id")),
+		HumanAction:           serveHumanActionForTask(snap, task),
+		HumanActions:          serveHumanActionsForTask(snap, task),
+		RunHistory:            serveRunHistory(s, snap, stringField(task.Data, "id")),
 	}
 	if directive, directiveErr := s.store.RunDirective(snap.projectID, trackerRecordID(task)); directiveErr == nil && directive != nil {
 		detail.RunDirective = &serveRunDirective{State: directive.State, Actor: directive.Actor, CreatedAt: directive.CreatedAt, ExpiresAt: directive.ExpiresAt, Reason: directive.Reason}
@@ -2115,11 +2126,27 @@ func serveEvidenceCards(snap serveSnapshot, task Note) []serveEvidenceCard {
 			continue
 		}
 		id := stringField(evidence.Data, "id")
+		refs := normalizeList(evidence.Data["artifact_paths"])
+		ref := firstNonEmpty(stringField(evidence.Data, "artifact"), evidence.RelativePath)
+		if len(refs) > 0 {
+			ref = refs[0]
+		}
+		availability, href := "available", ""
+		expiredAt := stringField(task.Data, "artifacts_expired_at")
+		if stringField(task.Data, "artifacts_availability") == "expired" {
+			availability = "expired"
+		} else if strings.HasPrefix(ref, "external:") {
+			href = strings.TrimPrefix(ref, "external:")
+		} else if full, ok := safeRepoPath(v7RepoRoot(snap.project.VaultRoot), strings.TrimPrefix(ref, "link-only:")); ok && fileExists(full) {
+			href = docDeepLink(stringField(task.Data, "project"), strings.TrimPrefix(ref, "link-only:"))
+		} else if len(refs) > 0 {
+			availability = "missing"
+		}
 		out = append(out, serveEvidenceCard{
 			ID:    id,
 			Label: firstNonEmpty(stringField(evidence.Data, "title"), id),
 			Kind:  firstNonEmpty(stringField(evidence.Data, "evidence_kind"), "file"),
-			Ref:   firstNonEmpty(stringField(evidence.Data, "artifact"), evidence.RelativePath),
+			Ref:   ref, Href: href, Availability: availability, ExpiredAt: expiredAt, Kept: boolField(task.Data, "artifacts_keep"),
 		})
 	}
 	return out

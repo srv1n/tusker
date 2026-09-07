@@ -83,6 +83,7 @@ type ResolvedRunnerProfile struct {
 	Reason     string                  `json:"reason"`
 	RuleName   string                  `json:"rule_name,omitempty"`
 	Warnings   []string                `json:"warnings,omitempty"`
+	Fallbacks  []string                `json:"fallbacks,omitempty"`
 	Definition RunnerProfileDefinition `json:"definition"`
 }
 
@@ -169,6 +170,11 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Sandbox:          v7schema.TuskerRunnerSandboxConfig{Mode: "danger-full-access", Network: boolPtr(true)},
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(true), MaxConcurrent: 2},
 		},
+	}
+	cfg.Automation.ModelLevels = map[string]v7schema.TuskerModelLevelConfig{
+		"light":     {Execute: []string{"execute-cheap"}, Review: []string{"review-frontier"}},
+		"standard":  {Execute: []string{"default"}, Review: []string{"review-frontier"}},
+		"demanding": {Execute: []string{"default"}, Review: []string{"review-frontier"}},
 	}
 	cfg.Automation.Denylist = []v7schema.TuskerAutomationDenyRuleConfig{
 		{ID: "recursive-rm-outside-workspace", Pattern: `rm\s+-rf\s+/(?!.*\bTUSKER_WORKSPACE\b)`, Description: "block recursive rm outside the workspace", CodexExecPolicy: "deny", ClaudePermissionRule: "deny", PreToolUse: "deny"},
@@ -302,6 +308,7 @@ func builtInTuskerConfigRaw() map[string]any {
 		"automation": map[string]any{
 			"default_profile": "default",
 			"profiles":        configRawMap(cfg)["automation"].(map[string]any)["profiles"],
+			"model_levels":    configRawMap(cfg)["automation"].(map[string]any)["model_levels"],
 			"denylist":        configRawMap(cfg)["automation"].(map[string]any)["denylist"],
 			"concurrency": map[string]any{
 				"max_active_runs":             2,
@@ -413,6 +420,8 @@ func cloneConfigValue(value any) any {
 var userGlobalConfigAllowlist = map[string]struct{}{
 	"automation.concurrency.max_active_runs":             {},
 	"automation.concurrency.max_active_runs_per_project": {},
+	"automation.profiles":                                {},
+	"automation.model_levels":                            {},
 }
 
 func configLayerAppliedRaw(layerName string, raw map[string]any) map[string]any {
@@ -606,6 +615,16 @@ func validateResolvedTuskerConfig(cfg v7TuskerConfigFile, layers []tuskerConfigL
 			return tuskerError(errorConfigInvalid, "automation.lane_profiles."+lane+" references unknown profile "+profile, withPath(path))
 		}
 	}
+	for level, mapping := range cfg.Automation.ModelLevels {
+		if !validModelLevel(level) {
+			return tuskerError(errorConfigInvalid, "automation.model_levels has unknown level "+level)
+		}
+		for _, profile := range append(append([]string{}, mapping.Execute...), mapping.Review...) {
+			if _, ok := profiles[strings.TrimSpace(profile)]; !ok {
+				return tuskerError(errorConfigInvalid, "automation.model_levels."+level+" references unknown profile "+profile)
+			}
+		}
+	}
 	for _, rule := range cfg.Automation.Routing {
 		if strings.TrimSpace(rule.Profile) == "" {
 			path := sourcePathForConfigKey(layers, "automation.routing")
@@ -658,18 +677,7 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 
 func validRunnerModelName(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
-	if model == "" || strings.ContainsAny(model, " \t\r\n") {
-		return false
-	}
-	if model == "fable" || model == "opus" || model == "sonnet" {
-		return true
-	}
-	for _, prefix := range []string{"gpt-", "claude-", "opus-", "sonnet-", "fable-", "glm-", "o3", "o4"} {
-		if strings.HasPrefix(model, prefix) {
-			return true
-		}
-	}
-	return false
+	return model != "" && !strings.ContainsAny(model, " \t\r\n")
 }
 
 func validRunnerEffort(effort string) bool {
@@ -830,10 +838,44 @@ func resolveRunnerProfileForNote(note Note, wf Workflow, lane string) (ResolvedR
 			return selected, err
 		}
 	}
+	levelField := "work_level"
+	if lane == runLaneReview {
+		levelField = "review_level"
+	}
+	if strings.TrimSpace(stringField(note.Data, levelField)) != "" {
+		candidates, levelErr := modelLevelProfiles(note, wf, lane)
+		if levelErr != nil {
+			return ResolvedRunnerProfile{}, levelErr
+		}
+		selected := candidates[0]
+		for _, candidate := range candidates[1:] {
+			selected.Fallbacks = append(selected.Fallbacks, candidate.Name)
+		}
+		return selected, nil
+	}
 	if role := semanticRunnerRole(stringField(note.Data, "complexity"), lane); role != "" {
 		if selected, ok, err := pick(role, "task complexity", "semantic complexity role", ""); ok || err != nil {
-			return selected, err
+			if err == nil {
+				return selected, nil
+			}
+			// A missing legacy semantic profile allows the three-level mapping to
+			// resolve; an explicitly authored but invalid profile remains an error.
+			if !strings.Contains(err.Error(), "is not defined") {
+				return selected, err
+			}
+			if len(wf.ModelLevels) == 0 {
+				return selected, err
+			}
 		}
+	}
+	if candidates, err := modelLevelProfiles(note, wf, lane); err == nil && len(candidates) > 0 {
+		selected := candidates[0]
+		for _, candidate := range candidates[1:] {
+			selected.Fallbacks = append(selected.Fallbacks, candidate.Name)
+		}
+		return selected, nil
+	} else if err != nil && len(wf.ModelLevels) > 0 {
+		return ResolvedRunnerProfile{}, err
 	}
 	defaultSource := "automation.default_profile"
 	defaultReason := "project default"
@@ -1316,7 +1358,7 @@ func configRawWithValue(path, key string, value any) (map[string]any, error) {
 
 func setUserGlobalConfigWithReadback(key string, value any) (configResolveReport, error) {
 	canonical := canonicalConfigLookupKey(key)
-	if _, allowed := userGlobalConfigAllowlist[canonical]; !allowed {
+	if !userGlobalConfigKeyAllowed(canonical) {
 		return configResolveReport{}, tuskerError(errorConfigInvalid, "user-global config does not allow behavioral key "+key)
 	}
 	before, err := configResolveForRepo("", false, key)
@@ -1324,20 +1366,41 @@ func setUserGlobalConfigWithReadback(key string, value any) (configResolveReport
 		return configResolveReport{}, err
 	}
 	path := userGlobalTuskerConfigPath()
+	previous, existed, err := readConfigText(path)
+	if err != nil {
+		return configResolveReport{}, err
+	}
+	postWriteRaw, err := configRawWithValue(path, key, value)
+	if err != nil {
+		return configResolveReport{}, err
+	}
+	if _, err := resolveTuskerConfigForPathsWithOverrides("", filepath.Join("", defaultRepoVaultDir), false, map[string]map[string]any{path: postWriteRaw}); err != nil {
+		return configResolveReport{}, err
+	}
 	if err := writeConfigValue(path, key, value); err != nil {
 		return configResolveReport{}, err
 	}
 	after, err := configResolveForRepo("", false, key)
 	if err != nil {
+		_ = restoreConfigText(path, previous, existed)
 		return configResolveReport{}, err
 	}
 	if !configValueChanged(before.Value, after.Value) {
+		_ = restoreConfigText(path, previous, existed)
 		return after, tuskerError(errorConfigInvalid, "config setter no-op: effective value for "+key+" is unchanged", withPath(path), withContext(map[string]any{"key": key, "value": after.Value}))
 	}
 	if after.Source != configSourceUserGlobal {
+		_ = restoreConfigText(path, previous, existed)
 		return after, tuskerError(errorConfigInvalid, "config setter failed trigger-eval: user-global config did not win for "+key, withPath(path), withContext(map[string]any{"key": key, "winner": after.Source, "value": after.Value}))
 	}
 	return after, nil
+}
+
+func userGlobalConfigKeyAllowed(key string) bool {
+	if _, ok := userGlobalConfigAllowlist[key]; ok {
+		return true
+	}
+	return strings.HasPrefix(key, "automation.profiles.") || strings.HasPrefix(key, "automation.model_levels.")
 }
 
 func canonicalConfigLookupKey(key string) string {

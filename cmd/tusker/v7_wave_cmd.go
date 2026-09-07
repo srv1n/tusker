@@ -26,6 +26,8 @@ func waveV7Cmd(args Args) error {
 		return waveV7RemoveCmd(shiftV7WaveArgs(args, 1))
 	case "show":
 		return waveV7ShowCmd(shiftV7WaveArgs(args, 1))
+	case "outcome":
+		return waveV7OutcomeCmd(shiftV7WaveArgs(args, 1))
 	case "brief":
 		return waveV7BriefCmd(shiftV7WaveArgs(args, 1))
 	case "preflight":
@@ -75,6 +77,10 @@ func waveV7CreateCmd(args Args) error {
 	if title == "" {
 		return tuskerError(errorMissingArg, `Usage: tusker wave create "<title>" <TASK-ID>...`)
 	}
+	expectedOutcome, err := validateWaveExpectedOutcome(args.String("summary"), false)
+	if err != nil {
+		return err
+	}
 	members := waveTaskArgs(args, 1)
 	if len(members) == 0 {
 		return tuskerError(errorMissingArg, "wave create requires at least one task id")
@@ -118,6 +124,9 @@ func waveV7CreateCmd(args Args) error {
 		"updated_at":         now,
 		"updated_by":         actor,
 	}
+	if expectedOutcome != "" {
+		data["summary"] = expectedOutcome
+	}
 	body := fmt.Sprintf(`# %s · %s
 
 ## Members
@@ -145,6 +154,61 @@ Membership is stored in frontmatter. Run `+"`tusker wave show %s`"+` for the bou
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Created wave %s with %d member%s.\n", id, len(members), plural(len(members)))
+	}
+	return nil
+}
+
+func validateWaveExpectedOutcome(value string, required bool) (string, error) {
+	value = strings.TrimSpace(value)
+	if required && value == "" {
+		return "", tuskerError(errorMissingArg, "wave outcome requires --summary")
+	}
+	if len([]rune(value)) > 500 {
+		return "", tuskerError(errorInvalidArg, "wave outcome must be at most 500 characters")
+	}
+	return value, nil
+}
+
+func waveV7OutcomeCmd(args Args) error {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
+		return err
+	}
+	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
+	if id == "" {
+		return tuskerError(errorMissingArg, "Usage: tusker wave outcome <W-0001> --summary <promise>")
+	}
+	expected, err := validateWaveExpectedOutcome(args.String("summary"), true)
+	if err != nil {
+		return err
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	wave, ok := idx.Waves[id]
+	if !ok {
+		return tuskerError(errorNotFound, "V7 wave not found: "+id)
+	}
+	actor, err := v7AgentDefaultActor(args, "wave outcome edit")
+	if err != nil {
+		return err
+	}
+	data := cloneMap(wave.Data)
+	data["summary"], data["updated_at"], data["updated_by"] = expected, time.Now().UTC().Format(time.RFC3339), actor
+	data["state_rev"] = v7StateRev(data, wave.Body)
+	if _, err := saveV7DocumentCAS(wave.AbsolutePath, data, wave.Body, v7FrontmatterOrder["wave"], stringField(wave.Data, "state_rev")); err != nil {
+		return err
+	}
+	if err := emitV7Event(vaultPath, id, "wave", "updated", actor, map[string]any{"summary": expected}); err != nil {
+		return err
+	}
+	if args.Bool("json") {
+		idx, _ = loadV7Index(vaultPath)
+		emitJSON(map[string]any{"ok": true, "wave": v7WavePayload(vaultPath, idx, idx.Waves[id])})
 	}
 	return nil
 }
@@ -535,6 +599,9 @@ func renderV7WaveShow(vaultPath string, idx v7Index, wave Note) string {
 		b.WriteString(" (landed " + landed + ")")
 	}
 	b.WriteString("\n\n")
+	if expected := stringField(wave.Data, "summary"); expected != "" {
+		b.WriteString("Expected outcome: " + expected + "\n\n")
+	}
 	auth := waveAuthorizationProjection(vaultPath, idx, wave)
 	b.WriteString(fmt.Sprintf("Authorization: %s | action: %s\n\n", stringField(auth, "state"), stringField(auth, "action")))
 	for _, group := range v7WaveGroupOrder {
@@ -688,13 +755,14 @@ func v7WavePayload(vaultPath string, idx v7Index, wave Note) map[string]any {
 		timeline = append(timeline, map[string]any{"sequence": i + 1, "task": member.ID, "state": member.State, "reason": nullIfBlank(member.Reason)})
 	}
 	return map[string]any{
-		"id":            stringField(wave.Data, "id"),
-		"title":         stringField(wave.Data, "title"),
-		"status":        stringField(wave.Data, "status"),
-		"landedAt":      nullIfBlank(stringField(wave.Data, "landed_at")),
-		"members":       members,
-		"memberIds":     normalizeList(wave.Data["members"]),
-		"authorization": waveAuthorizationProjection(vaultPath, idx, wave),
-		"timeline":      timeline,
+		"id":              stringField(wave.Data, "id"),
+		"title":           stringField(wave.Data, "title"),
+		"status":          stringField(wave.Data, "status"),
+		"expectedOutcome": nullIfBlank(stringField(wave.Data, "summary")),
+		"landedAt":        nullIfBlank(stringField(wave.Data, "landed_at")),
+		"members":         members,
+		"memberIds":       normalizeList(wave.Data["members"]),
+		"authorization":   waveAuthorizationProjection(vaultPath, idx, wave),
+		"timeline":        timeline,
 	}
 }

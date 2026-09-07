@@ -159,6 +159,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 	switch {
 	case len(parts) == 3 && parts[1] == "runner" && parts[2] == "conformance":
 		s.handleRunnerConformance(w, r, body)
+	case len(parts) == 2 && parts[1] == "models":
+		s.handleModelLevels(w, r, body)
 	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "challenge":
 		s.handleHumanControlChallenge(w, body)
 	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "submit":
@@ -1009,17 +1011,21 @@ func (s *serveServer) decorateTaskActionResultForProject(result *serveActionResu
 		return
 	}
 	detail := serveTaskDetail{
-		serveTaskCapsule: serveTaskCapsuleFor(snap, task),
-		Intent:           sectionContent(task.Body, "## Intent"),
-		Acceptance:       serveAcceptanceRows(task),
-		NonGoals:         serveBullets(sectionContent(task.Body, "## Non-goals")),
-		Verification:     serveVerificationRows(task),
-		Evidence:         serveEvidenceCards(snap, task),
-		KnowledgeDelta:   sectionContent(task.Body, "## Knowledge delta"),
-		Deps:             serveTaskDeps(snap, task),
-		Gates:            serveGatesForTask(snap, taskID),
-		HumanAction:      serveHumanActionForTask(snap, task),
-		RunHistory:       serveRunHistory(s, snap, taskID),
+		serveTaskCapsule:    serveTaskCapsuleFor(snap, task),
+		AuthoredWorkLevel:   stringField(task.Data, "work_level"),
+		AuthoredReviewLevel: stringField(task.Data, "review_level"),
+		EffectiveExecute:    routePreviewForNote(task, snap.workflow, runLaneExecute),
+		EffectiveReview:     routePreviewForNote(task, snap.workflow, runLaneReview),
+		Intent:              sectionContent(task.Body, "## Intent"),
+		Acceptance:          serveAcceptanceRows(task),
+		NonGoals:            serveBullets(sectionContent(task.Body, "## Non-goals")),
+		Verification:        serveVerificationRows(task),
+		Evidence:            serveEvidenceCards(snap, task),
+		KnowledgeDelta:      sectionContent(task.Body, "## Knowledge delta"),
+		Deps:                serveTaskDeps(snap, task),
+		Gates:               serveGatesForTask(snap, taskID),
+		HumanAction:         serveHumanActionForTask(snap, task),
+		RunHistory:          serveRunHistory(s, snap, taskID),
 	}
 	result.Task = &detail
 	result.CanonicalStatus = detail.RawStatus

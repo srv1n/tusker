@@ -12,18 +12,19 @@ const waveBriefSchema = "tusker.wave-brief/v1"
 var waveBriefSectionOrder = []string{"outcome", "seeIt", "landed", "reworkParked", "humanAction", "documentation"}
 
 type waveBrief struct {
-	Schema       string                   `json:"schema"`
-	WaveID       string                   `json:"waveId"`
-	Title        string                   `json:"title"`
-	WaveHref     string                   `json:"waveHref"`
-	SectionOrder []string                 `json:"sectionOrder"`
-	Outcome      waveBriefOutcome         `json:"outcome"`
-	NotStarted   []waveBriefTask          `json:"notStarted"`
-	SeeIt        []waveBriefArtifact      `json:"seeIt"`
-	Landed       []waveBriefTask          `json:"landed"`
-	Rework       []waveBriefRework        `json:"reworkParked"`
-	HumanAction  []waveBriefHumanAction   `json:"humanAction"`
-	Docs         []waveBriefDocumentation `json:"documentation"`
+	Schema          string                   `json:"schema"`
+	WaveID          string                   `json:"waveId"`
+	Title           string                   `json:"title"`
+	ExpectedOutcome string                   `json:"expectedOutcome,omitempty"`
+	WaveHref        string                   `json:"waveHref"`
+	SectionOrder    []string                 `json:"sectionOrder"`
+	Outcome         waveBriefOutcome         `json:"outcome"`
+	NotStarted      []waveBriefTask          `json:"notStarted"`
+	SeeIt           []waveBriefArtifact      `json:"seeIt"`
+	Landed          []waveBriefTask          `json:"landed"`
+	Rework          []waveBriefRework        `json:"reworkParked"`
+	HumanAction     []waveBriefHumanAction   `json:"humanAction"`
+	Docs            []waveBriefDocumentation `json:"documentation"`
 }
 
 type waveBriefOutcome struct {
@@ -169,7 +170,8 @@ func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) w
 	waveID := stringField(wave.Data, "id")
 	b := waveBrief{
 		Schema: waveBriefSchema, WaveID: waveID, Title: stringField(wave.Data, "title"),
-		WaveHref: waveDeepLink(stringField(wave.Data, "project"), waveID), SectionOrder: append([]string{}, waveBriefSectionOrder...),
+		ExpectedOutcome: stringField(wave.Data, "summary"),
+		WaveHref:        waveDeepLink(stringField(wave.Data, "project"), waveID), SectionOrder: append([]string{}, waveBriefSectionOrder...),
 		Outcome:    waveBriefOutcome{Counts: map[string]int{"implemented": 0, "proven": 0, "reviewed": 0, "landed": 0, "documented": 0, "reworkParked": 0, "humanAction": 0, "notStarted": 0, "inFlight": 0}, Tasks: []waveTaskState{}},
 		NotStarted: []waveBriefTask{}, SeeIt: []waveBriefArtifact{}, Landed: []waveBriefTask{}, Rework: []waveBriefRework{}, HumanAction: []waveBriefHumanAction{}, Docs: []waveBriefDocumentation{},
 	}
@@ -512,6 +514,9 @@ func sortWaveBrief(b *waveBrief) {
 func renderWaveBrief(b waveBrief) string {
 	var s strings.Builder
 	s.WriteString(fmt.Sprintf("# %s · %s\n\n", b.WaveID, b.Title))
+	if b.ExpectedOutcome != "" {
+		s.WriteString("Expected outcome: " + b.ExpectedOutcome + "\n\n")
+	}
 	s.WriteString("## Outcome\n\n" + b.Outcome.Summary + "\n\n")
 	for _, t := range b.Outcome.Tasks {
 		s.WriteString(fmt.Sprintf("- %s — implementation: %s; proof: %s; review: %s; landing: %s; documentation: %s", t.TaskID, t.Implementation, t.Proof, t.Review, t.Landing, t.Documentation))

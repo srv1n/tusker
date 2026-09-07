@@ -18,31 +18,14 @@ tusker docs find <query>
 
 Deterministic keyword routing over front-matter and headings, ranked canonical doc → spec → decision log. Read the top hit(s) whose `read_when` matches; answer citing paths. One question costs one or two file reads, not a scan.
 
-## Front-matter contract
+## Read efficiently
 
-Every doc's front-matter is its context pointer:
+Use supported `docs read` section selection, `docs browse` for a folder and
+`docs backlinks` for callers when available; check targeted help first on an
+older installation. Raw file reads remain sufficient when helpers are missing.
+Read front matter and the relevant section together. A folder introduction
+explains its purpose and reading order; it does not replace its child documents.
 
-```yaml
-subject: token-refresh          # unique key across the corpus
-keywords: [tokens, 401, expiry] # aliases docs find matches
-part_of: auth                   # parent subject — the DAG edge
-describes: [internal/auth/]     # code paths this doc tells the truth about
-read_when: "token refresh, session expiry, 401 retry"
-skip_when: "login UI -> serve-ui"
-last_verified: 2026-08-18       # bump when read against code and found true
-```
-
-Specs add `updates:` (docs they will obsolete) and `sources:`; decision logs add `decides_for:`. Maps, indexes, and diagrams are generated output — a hand-drawn map is another document that rots.
-
-## Write or update
-
-Create only through the CLI — it refuses duplicate subjects and points at the file to update in place:
-
-```bash
-tusker docs new <subject>
-```
-
-- One subject, one doc. Replacement is explicit: the old file becomes a tombstone (`status: superseded`, `superseded_by:`) so stale keywords resolve forward. Version-suffix filenames fail validation.
-- Behavior changed means the owning doc changes in the same task; a task diff touching a doc's `describes:` paths owes a doc edit or a waiver row.
-- Body: dense prose stating current behavior and why — paths, commands, invariants, the gotcha no config confesses. What one `--help` lookup shows stays out.
-- Run `tusker validate --json` after knowledge changes.
+For authoring, switch to the documentation route in the entry point. Keep a
+single durable account of decisions, current behavior and source references;
+execution transcripts and scratch are not a second knowledge corpus.

@@ -109,7 +109,7 @@ function DocBody({
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
+    <main aria-label="Document reader" className="flex h-full flex-col">
       <SectionToolbar
         left={<ContextLabel kind={doc.kind} subject={doc.subject} />}
         right={
@@ -165,13 +165,14 @@ function DocBody({
             onOpenWikilink={(subject) =>
               navigate({ to: "/p/$projectId/knowledge/$subject", params: { projectId, subject } })
             }
+            className="knowledge-prose"
           />
 
           <OutgoingLinks projectId={projectId} links={doc.links} />
           <Backlinks projectId={projectId} backlinks={doc.backlinks} />
         </article>
       </div>
-    </div>
+    </main>
   );
 }
 
@@ -290,7 +291,7 @@ function SaveButton({ dirty, saving, onSave }: { dirty: boolean; saving: boolean
         disabled={!enabled}
         title="Save (⌘S)"
         className={cn(
-          "flex h-7 items-center rounded-lg px-3 text-[12px] font-semibold leading-none transition-colors",
+          "flex h-7 items-center rounded-lg px-3 text-[12px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
           enabled
             ? "bg-pass text-surface hover:opacity-90"
             : "cursor-not-allowed border border-line text-faint opacity-70",

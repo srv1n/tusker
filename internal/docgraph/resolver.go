@@ -462,6 +462,10 @@ func bodyReferenceLike(sourcePath, ref string, resolver *Resolver) bool {
 		candidate := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(sourcePath)), filepath.FromSlash(clean))))
 		return strings.HasPrefix(candidate, DocsSystemRoot+"/") || strings.HasPrefix(candidate, SpecsRoot+"/")
 	}
+	if strings.HasSuffix(strings.ToLower(clean), ".md") {
+		candidate := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(sourcePath)), filepath.FromSlash(clean))))
+		return isManagedPath(candidate)
+	}
 	if _, ok := resolver.bySubject[normalizeSubject(clean)]; ok {
 		return true
 	}

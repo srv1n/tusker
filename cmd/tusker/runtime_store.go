@@ -220,52 +220,53 @@ type ProjectNonTerminalRun struct {
 }
 
 type RunStatus struct {
-	ProjectID          string                     `json:"project_id"`
-	RecordID           string                     `json:"record_id"`
-	ItemID             string                     `json:"item_id"`
-	Runner             string                     `json:"runner"`
-	RunnerProfile      string                     `json:"runner_profile"`
-	RunnerHarness      string                     `json:"runner_harness"`
-	RunnerModel        string                     `json:"runner_model"`
-	RunnerEffort       string                     `json:"runner_effort"`
-	WorkerPolicyFP     string                     `json:"worker_policy_fingerprint"`
-	ExecutePolicyFP    string                     `json:"execute_policy_fingerprint"`
-	Lane               string                     `json:"lane"`
-	LeaseState         string                     `json:"lease_state"`
-	LeaseOwner         string                     `json:"lease_owner"`
-	LeaseGeneration    int                        `json:"lease_generation"`
-	LeaseExpiresAt     string                     `json:"lease_expires_at"`
-	LeaseHost          string                     `json:"lease_host"`
-	AttemptOutcome     string                     `json:"attempt_outcome"`
-	ActiveAttemptID    string                     `json:"active_attempt_id"`
-	WorkspacePath      string                     `json:"workspace_path"`
-	SessionRef         string                     `json:"session_ref"`
-	CloudTaskID        string                     `json:"cloud_task_id"`
-	CloudStatus        string                     `json:"cloud_status"`
-	CloudEnvironmentID string                     `json:"cloud_environment_id"`
-	CloudAttemptNumber int                        `json:"cloud_attempt_number"`
-	PullRequestURL     string                     `json:"pull_request_url"`
-	ApplyRef           string                     `json:"apply_ref"`
-	LogsSummary        string                     `json:"logs_summary"`
-	FinalSummary       string                     `json:"final_summary"`
-	ProcessPID         int                        `json:"process_pid"`
-	ProcessPGID        int                        `json:"process_pgid"`
-	ProcessStartedAt   string                     `json:"process_started_at"`
-	PromptPath         string                     `json:"prompt_path"`
-	EventSinkPath      string                     `json:"event_sink_path"`
-	RawLogPath         string                     `json:"raw_log_path"`
-	StatusPath         string                     `json:"status_path"`
-	WorkRevision       int                        `json:"work_revision"`
-	AttemptCount       int                        `json:"attempt_count"`
-	NextRetryAt        string                     `json:"next_retry_at"`
-	LastError          string                     `json:"last_error"`
-	Infrastructure     *RunnerInfrastructureBlock `json:"infrastructure,omitempty"`
-	LastEventAt        string                     `json:"last_event_at"`
-	FirstEventAt       string                     `json:"first_event_at"`
-	LastHeartbeatAt    string                     `json:"last_heartbeat_at"`
-	Terminal           bool                       `json:"terminal"`
-	StartedAt          string                     `json:"started_at"`
-	UpdatedAt          string                     `json:"updated_at"`
+	ProjectID            string                     `json:"project_id"`
+	RecordID             string                     `json:"record_id"`
+	ItemID               string                     `json:"item_id"`
+	Runner               string                     `json:"runner"`
+	RunnerProfile        string                     `json:"runner_profile"`
+	RunnerHarness        string                     `json:"runner_harness"`
+	RunnerModel          string                     `json:"runner_model"`
+	RunnerEffort         string                     `json:"runner_effort"`
+	RunnerFallbackReason string                     `json:"runner_fallback_reason,omitempty"`
+	WorkerPolicyFP       string                     `json:"worker_policy_fingerprint"`
+	ExecutePolicyFP      string                     `json:"execute_policy_fingerprint"`
+	Lane                 string                     `json:"lane"`
+	LeaseState           string                     `json:"lease_state"`
+	LeaseOwner           string                     `json:"lease_owner"`
+	LeaseGeneration      int                        `json:"lease_generation"`
+	LeaseExpiresAt       string                     `json:"lease_expires_at"`
+	LeaseHost            string                     `json:"lease_host"`
+	AttemptOutcome       string                     `json:"attempt_outcome"`
+	ActiveAttemptID      string                     `json:"active_attempt_id"`
+	WorkspacePath        string                     `json:"workspace_path"`
+	SessionRef           string                     `json:"session_ref"`
+	CloudTaskID          string                     `json:"cloud_task_id"`
+	CloudStatus          string                     `json:"cloud_status"`
+	CloudEnvironmentID   string                     `json:"cloud_environment_id"`
+	CloudAttemptNumber   int                        `json:"cloud_attempt_number"`
+	PullRequestURL       string                     `json:"pull_request_url"`
+	ApplyRef             string                     `json:"apply_ref"`
+	LogsSummary          string                     `json:"logs_summary"`
+	FinalSummary         string                     `json:"final_summary"`
+	ProcessPID           int                        `json:"process_pid"`
+	ProcessPGID          int                        `json:"process_pgid"`
+	ProcessStartedAt     string                     `json:"process_started_at"`
+	PromptPath           string                     `json:"prompt_path"`
+	EventSinkPath        string                     `json:"event_sink_path"`
+	RawLogPath           string                     `json:"raw_log_path"`
+	StatusPath           string                     `json:"status_path"`
+	WorkRevision         int                        `json:"work_revision"`
+	AttemptCount         int                        `json:"attempt_count"`
+	NextRetryAt          string                     `json:"next_retry_at"`
+	LastError            string                     `json:"last_error"`
+	Infrastructure       *RunnerInfrastructureBlock `json:"infrastructure,omitempty"`
+	LastEventAt          string                     `json:"last_event_at"`
+	FirstEventAt         string                     `json:"first_event_at"`
+	LastHeartbeatAt      string                     `json:"last_heartbeat_at"`
+	Terminal             bool                       `json:"terminal"`
+	StartedAt            string                     `json:"started_at"`
+	UpdatedAt            string                     `json:"updated_at"`
 	// HandRun records, per RUN, whether this claim was made by hand in a live
 	// interactive session rather than handed out by the automation daemon. It is
 	// stamped once at claim time (ClaimRunLease) and preserved by later upserts,
@@ -916,6 +917,7 @@ func (s *RuntimeStore) Migrate() error {
 			runner_harness TEXT NOT NULL DEFAULT '',
 			runner_model TEXT NOT NULL DEFAULT '',
 			runner_effort TEXT NOT NULL DEFAULT '',
+			runner_fallback_reason TEXT NOT NULL DEFAULT '',
 			worker_policy_fingerprint TEXT NOT NULL DEFAULT '',
 			execute_policy_fingerprint TEXT NOT NULL DEFAULT '',
 			lane TEXT NOT NULL DEFAULT '',
@@ -1322,6 +1324,7 @@ func (s *RuntimeStore) Migrate() error {
 		{"runner_harness", `ALTER TABLE runs ADD COLUMN runner_harness TEXT NOT NULL DEFAULT ''`},
 		{"runner_model", `ALTER TABLE runs ADD COLUMN runner_model TEXT NOT NULL DEFAULT ''`},
 		{"runner_effort", `ALTER TABLE runs ADD COLUMN runner_effort TEXT NOT NULL DEFAULT ''`},
+		{"runner_fallback_reason", `ALTER TABLE runs ADD COLUMN runner_fallback_reason TEXT NOT NULL DEFAULT ''`},
 		{"worker_policy_fingerprint", `ALTER TABLE runs ADD COLUMN worker_policy_fingerprint TEXT NOT NULL DEFAULT ''`},
 		{"execute_policy_fingerprint", `ALTER TABLE runs ADD COLUMN execute_policy_fingerprint TEXT NOT NULL DEFAULT ''`},
 	} {
@@ -2127,7 +2130,7 @@ func (s *RuntimeStore) LookupRunForAttempt(projectID, attemptID string, generati
 	return &runs[0], nil
 }
 
-const runtimeRunColumns = `project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at, hand_run`
+const runtimeRunColumns = `project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, runner_fallback_reason, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at, hand_run`
 
 func (s *RuntimeStore) ListRunsPage(limit, offset int) ([]RunStatus, bool, error) {
 	if limit <= 0 || offset < 0 {
@@ -2187,7 +2190,7 @@ func scanRunRows(rows *sql.Rows, limit int) ([]RunStatus, error) {
 		var terminal int
 		var handRun sql.NullInt64
 		var infrastructureJSON string
-		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.RunnerProfile, &run.RunnerHarness, &run.RunnerModel, &run.RunnerEffort, &run.WorkerPolicyFP, &run.ExecutePolicyFP, &run.Lane, &run.LeaseState, &run.LeaseOwner, &run.LeaseGeneration, &run.LeaseExpiresAt, &run.LeaseHost, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &infrastructureJSON, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt, &handRun); err != nil {
+		if err := rows.Scan(&run.ProjectID, &run.RecordID, &run.ItemID, &run.Runner, &run.RunnerProfile, &run.RunnerHarness, &run.RunnerModel, &run.RunnerEffort, &run.RunnerFallbackReason, &run.WorkerPolicyFP, &run.ExecutePolicyFP, &run.Lane, &run.LeaseState, &run.LeaseOwner, &run.LeaseGeneration, &run.LeaseExpiresAt, &run.LeaseHost, &run.AttemptOutcome, &run.ActiveAttemptID, &run.WorkspacePath, &run.SessionRef, &run.CloudTaskID, &run.CloudStatus, &run.CloudEnvironmentID, &run.CloudAttemptNumber, &run.PullRequestURL, &run.ApplyRef, &run.LogsSummary, &run.FinalSummary, &run.ProcessPID, &run.ProcessPGID, &run.ProcessStartedAt, &run.PromptPath, &run.EventSinkPath, &run.RawLogPath, &run.StatusPath, &run.WorkRevision, &run.AttemptCount, &run.NextRetryAt, &run.LastError, &infrastructureJSON, &run.LastEventAt, &run.FirstEventAt, &run.LastHeartbeatAt, &terminal, &run.StartedAt, &run.UpdatedAt, &handRun); err != nil {
 			return nil, err
 		}
 		if strings.TrimSpace(infrastructureJSON) != "" {
@@ -2565,8 +2568,8 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, runner_fallback_reason, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
@@ -2574,6 +2577,7 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		runner_harness=excluded.runner_harness,
 		runner_model=excluded.runner_model,
 		runner_effort=excluded.runner_effort,
+		runner_fallback_reason=excluded.runner_fallback_reason,
 		worker_policy_fingerprint=excluded.worker_policy_fingerprint,
 		execute_policy_fingerprint=excluded.execute_policy_fingerprint,
 		lane=excluded.lane,
@@ -2612,7 +2616,7 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 		terminal=excluded.terminal,
 		started_at=excluded.started_at,
 		updated_at=excluded.updated_at`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.WorkerPolicyFP, run.ExecutePolicyFP, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, marshalRunInfrastructure(run.Infrastructure), run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.RunnerFallbackReason, run.WorkerPolicyFP, run.ExecutePolicyFP, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, marshalRunInfrastructure(run.Infrastructure), run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
 	if err != nil || runConsumesDispatchCapacity(run) {
 		return err
 	}
@@ -2620,7 +2624,7 @@ func (s *RuntimeStore) UpsertRun(run RunStatus) error {
 }
 
 var runtimeRunMutableColumns = []string{
-	"item_id", "runner", "runner_profile", "runner_harness", "runner_model", "runner_effort",
+	"item_id", "runner", "runner_profile", "runner_harness", "runner_model", "runner_effort", "runner_fallback_reason",
 	"worker_policy_fingerprint", "execute_policy_fingerprint",
 	"lane", "lease_state", "lease_owner", "lease_generation",
 	"lease_expires_at", "lease_host", "attempt_outcome", "active_attempt_id",
@@ -2647,7 +2651,7 @@ func normalizeRuntimeRunWrite(run RunStatus) RunStatus {
 
 func runtimeRunMutableValues(run RunStatus) []any {
 	return []any{
-		run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort,
+		run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.RunnerFallbackReason,
 		run.WorkerPolicyFP, run.ExecutePolicyFP,
 		run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration,
 		run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID,
@@ -2827,8 +2831,8 @@ func (s *RuntimeStore) UpsertRunPreservingLease(run RunStatus) error {
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.exec(`INSERT INTO runs (
-		project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, runner_fallback_reason, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
@@ -2836,10 +2840,11 @@ func (s *RuntimeStore) UpsertRunPreservingLease(run RunStatus) error {
 		runner_harness=excluded.runner_harness,
 		runner_model=excluded.runner_model,
 		runner_effort=excluded.runner_effort,
+		runner_fallback_reason=excluded.runner_fallback_reason,
 		lane=excluded.lane,
 		work_revision=excluded.work_revision,
 		updated_at=excluded.updated_at`,
-		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.WorkerPolicyFP, run.ExecutePolicyFP, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, marshalRunInfrastructure(run.Infrastructure), run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
+		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile, run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.RunnerFallbackReason, run.WorkerPolicyFP, run.ExecutePolicyFP, run.Lane, run.LeaseState, run.LeaseOwner, run.LeaseGeneration, run.LeaseExpiresAt, run.LeaseHost, run.AttemptOutcome, run.ActiveAttemptID, run.WorkspacePath, run.SessionRef, run.CloudTaskID, run.CloudStatus, run.CloudEnvironmentID, run.CloudAttemptNumber, run.PullRequestURL, run.ApplyRef, run.LogsSummary, run.FinalSummary, run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt, run.PromptPath, run.EventSinkPath, run.RawLogPath, run.StatusPath, run.WorkRevision, run.AttemptCount, run.NextRetryAt, run.LastError, marshalRunInfrastructure(run.Infrastructure), run.LastEventAt, run.FirstEventAt, run.LastHeartbeatAt, boolToInt(run.Terminal), run.StartedAt, run.UpdatedAt)
 	return err
 }
 

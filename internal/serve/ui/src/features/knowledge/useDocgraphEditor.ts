@@ -112,6 +112,14 @@ export function useDocgraphEditor(
   // could race (and clobber) the child's onReady.
   const baseline = useRef<string | null>(null);
   const [body, setBody] = useState<string>("");
+  const statusRef = useRef(status);
+  const keywordsRef = useRef(keywords);
+  const partOfRef = useRef(partOf);
+  const bodyRef = useRef(body);
+  statusRef.current = status;
+  keywordsRef.current = keywords;
+  partOfRef.current = partOf;
+  bodyRef.current = body;
 
   // Header drafts follow the loaded document. Only the header is reset here (it
   // has no child editor to race); after a save the fresh detail's values flow in
@@ -130,10 +138,12 @@ export function useDocgraphEditor(
     // A (re)mounted editor rendered whatever the cache held at that moment, so
     // its content now derives from the live rev.
     baseRev.current = liveRev.current;
+    bodyRef.current = markdown;
     setBody(markdown);
   }, []);
 
   const onBodyChange = useCallback((markdown: string) => {
+    bodyRef.current = markdown;
     setBody(markdown);
     setBanner((b) => (b.type === "saved" ? { type: "none" } : b));
   }, []);
@@ -157,14 +167,44 @@ export function useDocgraphEditor(
     (source: "auto" | "manual") => {
       if (!dirty || save.isPending) return;
       if (source === "auto") setAutoSaving(true);
+      const draftAtSave = {
+        body,
+        keywords: [...keywords],
+        partOf,
+        status,
+      };
       const payload: DocgraphSavePayload = { base_rev: baseRev.current };
       if (bodyDirty) payload.body = body;
       if (headerDirty) payload.header = mergedHeader;
       save.mutate(payload, {
         onSuccess: (data) => {
+          // The response is authoritative because the server may normalize
+          // front-matter. Apply those values only when the user did not edit
+          // that field while the request was in flight; otherwise keep their
+          // newer draft dirty against the returned revision.
+          const normalizedStatus = headerString(data.header, "status") || data.status;
+          const normalizedKeywords = headerArray(data.header, "keywords");
+          const normalizedPartOf = headerString(data.header, "part_of");
+          if (statusRef.current === draftAtSave.status) {
+            statusRef.current = normalizedStatus;
+            setStatus(normalizedStatus);
+          }
+          if (sameList(keywordsRef.current, draftAtSave.keywords)) {
+            keywordsRef.current = normalizedKeywords;
+            setKeywords(normalizedKeywords);
+          }
+          if (partOfRef.current === draftAtSave.partOf) {
+            partOfRef.current = normalizedPartOf;
+            setPartOf(normalizedPartOf);
+          }
+
           // The saved body is now the on-disk truth: advance the baseline so the
-          // control reads clean, and pin base_rev to the rev we just produced.
-          baseline.current = body;
+          // control reads clean. Preserve newer typing if it happened in flight.
+          baseline.current = data.body;
+          if (bodyRef.current === draftAtSave.body) {
+            bodyRef.current = data.body;
+            setBody(data.body);
+          }
           baseRev.current = data.rev;
           if (source === "auto") {
             setAutoSaving(false);
@@ -189,7 +229,7 @@ export function useDocgraphEditor(
         },
       });
     },
-    [dirty, save, bodyDirty, headerDirty, body, mergedHeader],
+    [dirty, save, bodyDirty, headerDirty, body, keywords, partOf, status, mergedHeader],
   );
 
   // Autosave: once the editor has been idle ~1.5s while dirty, run the save path

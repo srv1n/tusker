@@ -26,8 +26,8 @@ func TestServeCapabilitiesRegistryIsMachineReadable(t *testing.T) {
 		t.Fatalf("unexpected registry: %#v", payload)
 	}
 	for _, item := range payload.Capabilities {
-		if item.ID == "profiles" && item.Class != "unavailable" {
-			t.Fatalf("profiles must remain unavailable: %#v", item)
+		if item.ID == "profiles" && (item.Class != "authoritative_mutable" || !item.Mutable) {
+			t.Fatalf("profiles capability mismatch: %#v", item)
 		}
 	}
 }

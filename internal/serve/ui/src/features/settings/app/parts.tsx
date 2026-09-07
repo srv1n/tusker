@@ -38,8 +38,8 @@ export function ResetToInherited({ onReset }: { onReset: () => void }) {
 }
 
 /** Harness identity — codex reads as a solid dark tag, claude-code as a warm soft tag. */
-export function HarnessChip({ harness }: { harness: Harness }) {
-  const isCodex = harness === "codex";
+export function HarnessChip({ harness }: { harness: Harness | string }) {
+	const isCodex = harness === "codex" || harness === "codex_exec";
   return (
     <span
       className={cn(

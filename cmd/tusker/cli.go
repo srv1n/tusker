@@ -93,7 +93,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution":
+	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution", "demo":
 		return true
 	default:
 		return false
@@ -165,7 +165,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "delivery start", "wave refingerprint", "wave re-fingerprint", "actor correction", "reconcile", "finish", "close", "accept", "handoff":
+	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery import", "delivery start", "wave refingerprint", "wave re-fingerprint", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "demo seed", "demo run", "demo reset":
 		return true
 	default:
 		return false
@@ -215,6 +215,16 @@ func runInner(command string, args Args) (int, error) {
 		return runnerConformanceCmd(args)
 	case "runner test":
 		return runnerConformanceCmd(args)
+	case "models", "models show":
+		return 0, modelsCmd(args)
+	case "models catalog":
+		return 0, runnerCatalogCmd(args)
+	case "models set":
+		return 0, modelsSetCmd(args)
+	case "models reset":
+		return 0, modelsResetCmd(args)
+	case "models profile-set":
+		return 0, modelsProfileSetCmd(args)
 	case "new epic":
 		return 0, newV7Epic(args)
 	case "new task":
@@ -232,6 +242,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nextCmd(args)
 	case "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review":
 		return 0, workSessionCmd(args, strings.TrimPrefix(command, "work "))
+	case "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile":
+		return 0, workRealLifecycleCmd(args, strings.TrimPrefix(command, "work "))
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		return 0, executionCmd(args, strings.TrimSpace(strings.TrimPrefix(command, "execution")))
 	case "claim":
@@ -258,6 +270,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, waveV7RemoveCmd(args)
 	case "wave show":
 		return 0, waveV7ShowCmd(args)
+	case "wave outcome":
+		return 0, waveV7OutcomeCmd(args)
 	case "wave brief":
 		return 0, waveV7BriefCmd(args)
 	case "wave preflight":
@@ -293,6 +307,20 @@ func runInner(command string, args Args) (int, error) {
 		return 0, deliveryDoctorCmd(args)
 	case "delivery rollout":
 		return 0, deliveryRolloutCmd(args)
+	case "demo":
+		return demoCmd(args)
+	case "demo seed":
+		return demoSeedCmd(args)
+	case "demo status":
+		return demoStatusCmd(args)
+	case "demo run":
+		return demoRunCmd(args)
+	case "demo wait":
+		return demoWaitCmd(args)
+	case "demo check":
+		return demoCheckCmd(args)
+	case "demo reset":
+		return demoResetCmd(args)
 	case "escalate":
 		return 0, escalationV7Cmd(args)
 	case "escalate ack":
@@ -441,6 +469,18 @@ func runInner(command string, args Args) (int, error) {
 		return 0, docsCmd("find", args)
 	case "docs new":
 		return 0, docsCmd("new", args)
+	case "docs browse":
+		return 0, docsCmd("browse", args)
+	case "docs read":
+		return 0, docsCmd("read", args)
+	case "docs backlinks":
+		return 0, docsCmd("backlinks", args)
+	case "docs check":
+		err := docsCmd("check", args)
+		if _, ok := err.(*docsCheckFailure); ok {
+			return 1, nil
+		}
+		return 0, err
 	case "docs map":
 		return 0, docsCmd("map", args)
 	case "docs status":
@@ -653,7 +693,7 @@ func runInner(command string, args Args) (int, error) {
 	case "help actor", "help actor correction":
 		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
 		return 0, nil
-	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave brief", "help wave preflight", "help wave arm", "help wave pause", "help wave resume", "help wave disarm", "help wave refingerprint", "help wave re-fingerprint", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate":
+	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave outcome", "help wave brief", "help wave preflight", "help wave arm", "help wave pause", "help wave resume", "help wave disarm", "help wave refingerprint", "help wave re-fingerprint", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate":
 		printV7Help()
 		return 0, nil
 	case "help feedback":
@@ -670,6 +710,9 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nil
 	case "help close":
 		printCloseHelp()
+		return 0, nil
+	case "help demo":
+		printDemoHelp()
 		return 0, nil
 	case "help list":
 		printListHelp()
@@ -695,7 +738,7 @@ func runInner(command string, args Args) (int, error) {
 	case "help reindex":
 		printReindexHelp()
 		return 0, nil
-	case "help docs", "help docs map", "help docs status", "help docs verify", "help docs adopt":
+	case "help docs", "help docs find", "help docs new", "help docs browse", "help docs read", "help docs backlinks", "help docs check", "help docs map", "help docs status", "help docs verify", "help docs adopt":
 		printDocsHelp()
 		return 0, nil
 	case "help domain", "help domain list", "help domain show", "help domain new", "help domain canon":
@@ -804,6 +847,7 @@ Commands:
   claim               alias for work start
   evidence            add evidence records
   gate                list, satisfy, waive, or obsolete gates
+  demo                seed and drive a disposable deterministic demo project
   wave                create, edit, and show named task batches
   land                run the serialized wave merge lane
   digest              render the operator morning digest
@@ -854,6 +898,7 @@ Help:
   tusker automation --help
   tusker automation plan <task> --json
   tusker runs --help
+  tusker demo --help
   tusker serve --help
   tusker search --help
   tusker show --help
@@ -891,6 +936,8 @@ func printCommandHelp(command string) bool {
 		printResetHelp()
 	case "runner", "runner catalog", "runner profiles", "runner route", "runner conformance", "runner test":
 		printRunnerHelp()
+	case "models", "models show", "models catalog", "models set", "models reset", "models profile-set":
+		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set --scope global|project --name <name> --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] [--if-revision <sha256>] [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> [--if-revision <sha256>] [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review [--if-revision <sha256>] [--json]")
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()
 	case "status":
@@ -899,7 +946,7 @@ func printCommandHelp(command string) bool {
 		printDiscardHelp()
 	case "next":
 		printNextHelp()
-	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review":
+	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review", "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile":
 		printWorkSessionHelp()
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		printExecutionHelp()
@@ -907,7 +954,7 @@ func printCommandHelp(command string) bool {
 		printClaimHelp()
 	case "evidence":
 		printEvidenceHelp()
-	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "wave refingerprint", "wave re-fingerprint", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
+	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "wave refingerprint", "wave re-fingerprint", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
 	case "handoff", "finish", "gate", "delivery", "delivery plan", "delivery context", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy", "migrate close-policy":
 		printV7Help()
@@ -921,6 +968,8 @@ func printCommandHelp(command string) bool {
 		printVerifyHelp()
 	case "close":
 		printCloseHelp()
+	case "demo", "demo seed", "demo status", "demo run", "demo wait", "demo check", "demo reset":
+		printDemoHelp()
 	case "list":
 		printListHelp()
 	case "search":
@@ -941,7 +990,7 @@ func printCommandHelp(command string) bool {
 		printGCHelp()
 	case "reindex":
 		printReindexHelp()
-	case "docs", "docs find", "docs new", "docs map", "docs status", "docs verify", "docs adopt":
+	case "docs", "docs find", "docs new", "docs browse", "docs read", "docs backlinks", "docs check", "docs map", "docs status", "docs verify", "docs adopt":
 		printDocsHelp()
 	case "domain", "domain list", "domain show", "domain new", "domain canon":
 		printDomainHelp()
@@ -990,7 +1039,7 @@ func printOperatorCommandHelp(command string) {
 	switch {
 	case command == "wave":
 		fmt.Println(`Usage:
-  tusker wave create|add|remove|show|brief|preflight|arm|pause|resume|disarm|refingerprint ...
+  tusker wave create|add|remove|show|outcome|brief|preflight|arm|pause|resume|disarm|refingerprint ...
 
 Purpose:
   Manage a named, task-backed delivery wave.`)
@@ -1263,11 +1312,21 @@ func printWorkSessionHelp() {
   tusker work fail <task-id> --by <agent> --reason <text> [--json]
   tusker work release <task-id> --by <agent> --reason <text> [--json]
   tusker work review <task-id> --by reviewer:<name> [--source codex|claude|tusker_cli] [--json]
+  tusker work readiness <task-id> [--lane execute|review] [--json]
+  tusker work progress <task-id> [--json]
+  tusker work wait <task-id> [--timeout 60] [--json]
+  tusker work reconcile <task-id> --by <agent> [--json]
+  tusker work cancel <task-id> --by <owner> --reason <text> [--json]
+  tusker work retry <task-id> --by <agent> [--json]
+  tusker work profile <task-id> [--lane execute|review] [--json]
 
 Purpose:
   The canonical runtime ownership protocol for interactive tracked work.
   It never enables automation, arms a wave, starts a daemon, or launches a
-  worker. Claim is an alias for work start.`)
+  worker. Claim is an alias for work start.
+  Supported lifecycle: ready -> work start -> work reconcile ->
+  work submit -> work review -> review submit -> close.
+  Legacy attempt start/handoff/finish participate in the same contract.`)
 }
 
 func printRefreshHelp() {
@@ -1412,7 +1471,12 @@ Examples:
 func printDocsHelp() {
 	fmt.Println(`Documentation graph commands:
   tusker docs find <query>
+  tusker docs browse [<managed-directory>] [--limit <n>] [--json]
+  tusker docs read <subject-or-path> [--section <heading>] [--current] [--json]
+  tusker docs backlinks <subject-or-path> [--limit <n>] [--json]
+  tusker docs check [<subject-or-path>] [--json]
   tusker docs new <subject> [--kind doc|spec]
+  tusker docs new <subject> [--kind doc|spec] --print [--json]
   tusker docs map
   tusker docs status
   tusker docs verify <subject>
@@ -1436,7 +1500,7 @@ artifacts are left untouched; run tusker docs map after review. --apply and
 func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
-  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
+  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--work-level light|standard|demanding] [--review-level light|standard|demanding] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 

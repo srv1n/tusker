@@ -26,6 +26,8 @@ queries.
 
 ## Current web routes
 
+Wave views show the authored expected outcome separately from the derived completion result. Task detail labels evidence as available, missing, kept, or expired; only available safe targets expose an Open action. Evidence presence never creates or satisfies a human gate.
+
 - Today: `/` and `/p/<project>/`
 - Work: `/p/<project>/waves` (grouped Waves) and `/p/<project>/tasks` (Board)
 - Wave flow/results: `/p/<project>/waves/<wave>`
@@ -42,6 +44,16 @@ a generated embed. Rebuild it after a web source change.
 The Work surface uses live project, wave, task and run reads. Start readiness,
 durable tags and stage-specific transport identity remain unavailable until the
 Serve API exposes authoritative contracts; the UI does not infer or persist them.
+
+## Model settings
+
+`GET /api/models` returns the same versioned effective configuration as
+`tusker models show`: profile definitions, three level/lane mappings, field
+provenance, override state and a revision. `POST /api/models` accepts `set`,
+`reset`, or `profile-set`; every write uses the shared validator and rejects a
+stale revision. `GET /api/models/catalog` exposes the installed-harness catalog.
+Run responses expose only recorded profile, harness, model and effort values;
+missing execution identity stays empty.
 
 ## TuskerBar
 

@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight, FileText, Folder, FolderOpen, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronRight, FileText, Folder, FolderOpen, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useDocgraph } from "@/lib/queries";
 import { kindMeta } from "./bits";
@@ -80,14 +80,20 @@ export function KnowledgeTree({
   }, [docs, filtering, needle]);
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-panel/40">
+    <div
+      aria-label="Documents explorer"
+      aria-busy={q.isLoading && docs.length === 0}
+      className="flex h-full min-h-0 w-full flex-col bg-panel/40"
+      role="region"
+    >
       <div className="flex-none border-b border-line px-1.5 py-1.5">
-        <label className="flex h-7 items-center gap-1.5 rounded-md border border-line bg-surface px-2 focus-within:border-accent/50">
+        <label className="flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 transition-colors focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/10">
           <Search size={12} className="flex-none text-faint" />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter"
+            aria-label="Filter documents"
             className="w-full min-w-0 bg-transparent text-[12px] text-ink placeholder:text-faint focus:outline-none"
           />
           {filter !== "" && (
@@ -103,9 +109,11 @@ export function KnowledgeTree({
         </label>
       </div>
 
-      <div className="tk-scroll min-h-0 flex-1 overflow-y-auto px-1 py-1">
-        {docs.length === 0 ? (
-          <EmptyRail label={q.isLoading ? "Loading…" : "No documents"} />
+      <div className="tk-scroll min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
+        {q.isError && docs.length === 0 ? (
+          <ErrorRail error={q.error} onRetry={() => q.refetch()} />
+        ) : docs.length === 0 ? (
+          q.isLoading ? <LoadingRail /> : <EmptyRail label="No documents" />
         ) : roots.length === 0 ? (
           <EmptyRail label="No matches" />
         ) : (
@@ -146,9 +154,12 @@ function TreeNodeRow({
         to="/p/$projectId/knowledge/$subject"
         params={{ projectId, subject: node.subject }}
         onClick={() => store.setRailOpen(false)}
+        aria-current={active ? "page" : undefined}
+        aria-label={`Open ${node.title}`}
+        data-selected={active ? "true" : undefined}
         title={node.title}
         className={cn(
-          "relative flex h-6 items-center rounded-[3px] pr-2 transition-colors",
+          "relative flex min-h-7 items-center rounded-md pr-2 transition-colors focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
           active ? "bg-active text-ink" : "text-ink-soft hover:bg-hover",
         )}
         style={{ paddingLeft: rowPad(node.depth) }}
@@ -213,6 +224,7 @@ function FolderRow({
       </span>
     </>
   );
+  const childrenId = folderDomId(projectId, node.id);
   return (
     <>
       {filtering ? (
@@ -227,33 +239,76 @@ function FolderRow({
         <button
           type="button"
           onClick={() => store.toggleFolder(folderKey)}
+          aria-expanded={expanded}
+          aria-controls={childrenId}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${node.name}`}
           title={node.name}
-          className="relative flex h-6 w-full items-center rounded-[3px] pr-2 transition-colors hover:bg-hover"
+          className="relative flex min-h-7 w-full items-center rounded-md pr-2 transition-colors hover:bg-hover focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
           style={{ paddingLeft: rowPad(node.depth) }}
         >
           {inner}
         </button>
       )}
-      {expanded &&
-        node.children.map((child) => (
-          <TreeNodeRow
-            key={child.id}
-            node={child}
-            projectId={projectId}
-            currentSubject={currentSubject}
-            filtering={filtering}
-            store={store}
-          />
-        ))}
+      {expanded && (
+        <div id={childrenId}>
+          {node.children.map((child) => (
+            <TreeNodeRow
+              key={child.id}
+              node={child}
+              projectId={projectId}
+              currentSubject={currentSubject}
+              filtering={filtering}
+              store={store}
+            />
+          ))}
+        </div>
+      )}
     </>
   );
 }
 
+function folderDomId(projectId: string, id: string): string {
+  return `documents-folder-${projectId}-${id}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
 function EmptyRail({ label }: { label: string }) {
   return (
-    <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-faint">
+    <div role="status" className="flex flex-col items-center gap-2 px-4 py-10 text-center text-faint">
       <FileText size={18} strokeWidth={1.5} />
       <span className="text-[12px]">{label}</span>
+    </div>
+  );
+}
+
+function LoadingRail() {
+  return (
+    <div role="status" aria-label="Loading documents" className="flex flex-col gap-2 px-1 py-2">
+      {Array.from({ length: 6 }, (_, index) => (
+        <div
+          key={index}
+          aria-hidden="true"
+          className={cn("h-7 animate-pulse rounded-md bg-hover", index % 3 === 2 ? "ml-5 w-4/5" : "w-full")}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ErrorRail({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-col gap-2.5 px-2 py-8 text-center">
+      <AlertTriangle size={18} strokeWidth={1.75} className="mx-auto text-warn" />
+      <p className="text-[12px] font-medium text-ink-soft">Documents unavailable</p>
+      <p className="break-words text-[11px] leading-relaxed text-muted">
+        {error instanceof Error ? error.message : "The documentation corpus could not be loaded."}
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mx-auto rounded-md border border-line px-2.5 py-1.5 text-[11.5px] font-medium text-ink-soft transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+      >
+        Retry
+      </button>
     </div>
   );
 }

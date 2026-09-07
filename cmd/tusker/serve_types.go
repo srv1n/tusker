@@ -233,10 +233,14 @@ type serveVerificationRow struct {
 }
 
 type serveEvidenceCard struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Kind  string `json:"kind"`
-	Ref   string `json:"ref"`
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	Kind         string `json:"kind"`
+	Ref          string `json:"ref"`
+	Href         string `json:"href,omitempty"`
+	Availability string `json:"availability"`
+	ExpiredAt    string `json:"expiredAt,omitempty"`
+	Kept         bool   `json:"kept"`
 }
 
 type serveGate struct {
@@ -319,18 +323,25 @@ type serveTaskDependency struct {
 
 type serveTaskDetail struct {
 	serveTaskCapsule
-	Intent         string                 `json:"intent"`
-	Acceptance     []serveAcceptanceRow   `json:"acceptance"`
-	NonGoals       []string               `json:"nonGoals"`
-	Verification   []serveVerificationRow `json:"verification"`
-	Evidence       []serveEvidenceCard    `json:"evidence"`
-	KnowledgeDelta string                 `json:"knowledgeDelta,omitempty"`
-	Deps           []serveTaskDependency  `json:"deps"`
-	Gates          []serveGate            `json:"gates"`
-	HumanAction    *serveHumanAction      `json:"humanAction,omitempty"`
-	HumanActions   []serveHumanAction     `json:"humanActions"`
-	RunHistory     []serveRunSummary      `json:"runHistory"`
-	RunDirective   *serveRunDirective     `json:"runDirective,omitempty"`
+	AuthoredWorkLevel     string                 `json:"authoredWorkLevel,omitempty"`
+	AuthoredReviewLevel   string                 `json:"authoredReviewLevel,omitempty"`
+	EffectiveExecute      runnerRoutePreview     `json:"effectiveExecute"`
+	EffectiveReview       runnerRoutePreview     `json:"effectiveReview"`
+	Intent                string                 `json:"intent"`
+	Acceptance            []serveAcceptanceRow   `json:"acceptance"`
+	NonGoals              []string               `json:"nonGoals"`
+	Verification          []serveVerificationRow `json:"verification"`
+	Evidence              []serveEvidenceCard    `json:"evidence"`
+	ArtifactsKeep         bool                   `json:"artifactsKeep"`
+	ArtifactsAvailability string                 `json:"artifactsAvailability,omitempty"`
+	ArtifactsExpiredAt    string                 `json:"artifactsExpiredAt,omitempty"`
+	KnowledgeDelta        string                 `json:"knowledgeDelta,omitempty"`
+	Deps                  []serveTaskDependency  `json:"deps"`
+	Gates                 []serveGate            `json:"gates"`
+	HumanAction           *serveHumanAction      `json:"humanAction,omitempty"`
+	HumanActions          []serveHumanAction     `json:"humanActions"`
+	RunHistory            []serveRunSummary      `json:"runHistory"`
+	RunDirective          *serveRunDirective     `json:"runDirective,omitempty"`
 }
 
 type serveRunDirective struct {

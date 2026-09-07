@@ -1,0 +1,19 @@
+/* Documents-only reading polish. Keep graph labels readable without changing
+   the shared editor defaults used by task documents. */
+.knowledge-prose .tk-mermaid-svg {
+  width: min(100%, 42rem);
+}
+
+.knowledge-prose .tk-mermaid-svg svg {
+  width: 100%;
+}
+
+@media (max-width: 639px) {
+  .knowledge-prose .tk-mermaid {
+    justify-content: flex-start;
+  }
+
+  .knowledge-prose .tk-mermaid-svg {
+    min-width: 22rem;
+  }
+}

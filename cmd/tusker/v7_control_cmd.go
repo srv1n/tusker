@@ -438,9 +438,6 @@ func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor) error {
 			return err
 		}
 	}
-	if directDone {
-		warnScratchReapFailed(id, reapTaskScratch(vaultPath, id))
-	}
 	affected, err := v7TaskIDsForTaskControl(vaultPath, id)
 	if err != nil {
 		return err
@@ -510,7 +507,6 @@ func closeV7Cmd(args Args) error {
 	if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, id, "done", "close ceremony", ""); err != nil {
 		return err
 	}
-	warnScratchReapFailed(id, reapTaskScratch(vaultPath, id))
 	affected, err := v7TaskIDsForTaskControl(vaultPath, id)
 	if err != nil {
 		return err

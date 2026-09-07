@@ -78,6 +78,7 @@ type Workflow struct {
 	ExternalLoop         ExternalLoopCaps                   `yaml:"external_loop"`
 	Runners              map[string]RunnerDefinition        `yaml:"runners"`
 	RunnerProfiles       map[string]RunnerProfileDefinition `yaml:"runner_profiles,omitempty"`
+	ModelLevels          map[string]ModelLevelDefinition    `yaml:"model_levels,omitempty" json:"model_levels,omitempty"`
 	RunnerProfileSources map[string]string                  `yaml:"-" json:"runner_profile_sources,omitempty"`
 	RunnerDefaultProfile string                             `yaml:"runner_default_profile,omitempty"`
 	RunnerLaneProfiles   map[string]string                  `yaml:"runner_lane_profiles,omitempty"`
@@ -666,6 +667,7 @@ func applyTuskerAutomationConfig(vaultPath string, wfFile WorkflowFile) (Workflo
 		wf.Agents.Enabled = normalizeList(cfg.Automation.EnabledRunners)
 	}
 	wf.RunnerProfiles = runnerProfilesFromSchema(cfg.Automation.Profiles)
+	wf.ModelLevels = modelLevelsFromSchema(cfg.Automation.ModelLevels)
 	wf.RunnerProfileSources = runnerProfileSourcesFromLayers(wf.RunnerProfiles, resolved.Layers)
 	wf.RunnerDefaultProfile = strings.TrimSpace(cfg.Automation.DefaultProfile)
 	if resolvedConfigKeyPresent(resolved, "automation.lane_profiles") {

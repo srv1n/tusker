@@ -1,40 +1,50 @@
-# Run
+# Run and configuration
 
-Run one task to completion under human control, resolve its gates, and watch it. `automation.enabled` gates autonomous daemon pickup only; a run directive is deliberate human authority and dispatches even while automation is off.
+A run directive is deliberate human authority; preparing tasks or waves does
+not start them. Interactive sessions implement work themselves. They never
+start a daemon, dispatch automation, or launch nested workers. A dispatched
+worker (`TUSKER_ATTEMPT_ID`) works only its claimed task and follows its packet.
 
-## Preconditions
+## Resolve the execution configuration
 
-```bash
-tusker projects add --repo . --vault ./.tusker   # registers disabled: daemon observes, never auto-dispatches
+```sh
+tusker config resolve automation.model_levels --json
+tusker config resolve automation.profiles --json
 tusker daemon status --json
 ```
 
-Dispatch needs the resident daemon alive. Starting it (`tusker daemon service start`, or `tusker daemon run` in a dedicated terminal) is the operator's action in their own shell — an agent session reports the status and the command, and implements requested work itself instead of spawning workers.
+Tasks specify Light, Standard or Demanding. Ordered configured profiles are the only permitted fallbacks. Resolve profiles when each
+execution/review starts: global defaults, project configuration and explicit
+overrides determine the result. Keep task intent separate from actual harness,
+model, reasoning effort and ACP/CLI transport recorded on the run. Never
+hard-code model names or silently replace a failed profile/transport.
 
-## Dispatch one task
+For configuration changes, discover the current schema and runner commands
+through capabilities/help. Manual profiles are sufficient; model discovery is
+optional where supported. Execution and review can use different profiles;
+approval is a separate policy, human-owned only when explicitly gated.
 
-The task must be `ready` or `rework`. The one-shot dispatch is the Serve play button: `tusker serve`, open the project board, press Run on the task. It queues a run directive the daemon consumes once, and the directive bypasses `automation.enabled` — `tusker automation dispatch <TASK-ID>` also dispatches but passes the same eligibility checks as polling, automation flag included. `tusker automation plan` and `explain` answer "why won't this dispatch" read-only.
+## Inspect and control
 
-## Watch
-
-```bash
+```sh
 tusker runs inspect <TASK-ID>
-tusker runs logs <TASK-ID> --lines 50      # --follow to tail
-tusker next                                 # what the daemon would pick
+tusker runs logs <TASK-ID> --lines 50
+tusker wave show <WAVE-ID>
+tusker wave brief <WAVE-ID> --json
 ```
 
-Serve shows the same live: run display is liveness-derived, so `running` means a held lease with a fresh heartbeat — a stale badge is a stale run, not a UI bug. `tusker runs interrupt <TASK-ID>` stops a live run; `tusker runs retire` clears a settled failed one.
+Use targeted help for installed manual task/wave controls. Report missing CLI
+parity instead of substituting an autonomous dispatch command. Operator service
+startup belongs in the operator shell. `tusker automation plan` is read-only.
+Observe a bounded run only when requested; do not become a polling coordinator.
 
-## Gates and human waits
+Runtime activity is separate from durable task status. A held lease and fresh
+heartbeat establish liveness; exit success alone does not establish reviewed
+completion. Reconnect/read current state before interpreting a stale display.
+Use closeout status to identify missing proof, review or gates.
 
-```bash
-tusker gate list --json
-tusker gate satisfy <GATE-ID> --by human:<name> --evidence "<how it was met>"
-tusker gate waive <GATE-ID> --by human:<name> --reason "<why waived>"
-```
+## Human gates
 
-Satisfy and waive carry human authority: run them on explicit human instruction, naming that human in `--by`. A run parked on `waiting_on_human` names its exact unblocking action in the task capsule — report it and stop.
-
-## After the run
-
-The daemon hands finished work to `review`. Verify and close through `TRACK.md`'s lifecycle: inspect the diff, record proof, `tusker close`.
+Satisfy or waive a human gate only on that human's explicit instruction and
+attribute it to them. Optional screenshots/performance reports are evidence,
+not automatic approval gates. Report the gate ID and exact required action.

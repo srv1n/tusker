@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"tusker/internal/reviewpacket"
+	runnercore "tusker/internal/runner"
 )
 
 type Daemon struct {
@@ -1123,6 +1124,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
+				selectedProfile = preserveResolvedRunIdentity(current, runLaneExecute, selectedProfile)
 				current = applyResolvedProfileToRun(current, selectedProfile)
 				current.Runner = firstNonEmpty(current.Runner, legacyRunner, wfFile.Data.Agents.Default)
 			} else {
@@ -1427,6 +1429,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			current.RecordID = recordID
 			current.ItemID = stringField(note.Data, "id")
 			current.WorkRevision = intField(note.Data, "work_revision")
+			selectedProfile = preserveResolvedRunIdentity(current, runLaneReview, selectedProfile)
 			current = prepareRunForLaneDispatch(current, runLaneReview, firstNonEmpty(selectedProfile.Definition.Harness, reviewerRunner))
 			current = applyResolvedProfileToRun(current, selectedProfile)
 			current.UpdatedAt = now.Format(time.RFC3339)
@@ -3674,6 +3677,40 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	selectedProfile, err := resolveRunProfileForLane(note, wfFile.Data, lane, run.Runner)
 	if err != nil {
 		return run, false, err
+	}
+	selectedProfile = preserveResolvedRunIdentity(run, lane, selectedProfile)
+	if run.AttemptCount == 0 && len(selectedProfile.Fallbacks) > 0 {
+		candidates, candidateErr := resolvedProfileCandidates(selectedProfile, wfFile.Data)
+		if candidateErr != nil {
+			return run, false, candidateErr
+		}
+		selectedProfile, run.RunnerFallbackReason, candidateErr = selectModelProfile(candidates, func(candidate ResolvedRunnerProfile) (bool, string, error) {
+			candidateRunner, base, runnerErr := runnerForName(string(RunnerName(candidate.Definition.Harness)), wfFile.Data)
+			if runnerErr != nil {
+				return false, runnerErr.Error(), nil
+			}
+			command := commandForRunnerProfile(base, candidate)
+			if candidateRunner.Name() == RunnerCodexExec || candidateRunner.Name() == RunnerClaude {
+				policy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, candidate)
+				_, prepareErr := preparedRunnerForDispatch(project.VaultRoot, candidateRunner.Name(), command, candidate, policy, project.RepoRoot, runnerCommandSearchPath())
+				if prepareErr == nil {
+					return true, "", nil
+				}
+				var admission *runnercore.AdmissionError
+				if errors.As(prepareErr, &admission) && (admission.Code == "runtime_missing" || admission.Code == "auth_missing" || admission.Code == "policy_unenforceable") {
+					return false, admission.Error(), nil
+				}
+				return false, "", prepareErr
+			}
+			health := runnerPreclaimHealth(candidateRunner.Name(), command)
+			if health.Block != nil {
+				return false, health.Block.Reason, nil
+			}
+			return true, "", nil
+		})
+		if candidateErr != nil {
+			return run, false, candidateErr
+		}
 	}
 	run = applyResolvedProfileToRun(run, selectedProfile)
 	runner, baseCommand, err := runnerForName(run.Runner, wfFile.Data)
@@ -6562,7 +6599,7 @@ func renderResumedAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, 
 	fmt.Fprintf(&b, "\n### Current Delta\n\n")
 	fmt.Fprintf(&b, "- This is a verified native resume of the existing session. Use its existing history; do not request or reconstruct another copy of the unchanged task contract.\n")
 	fmt.Fprintf(&b, "- Continue only `%s` for attempt `%s` in the workspace above. Keep the current task, work revision, workspace, runner, adapter, and policy identities authoritative.\n", value(taskID, 200), value(attemptID, 200))
-	fmt.Fprintf(&b, "- Review the prior structured outcome below, repair its outstanding error or finish the next required step, and update `%s` before returning the current result.\n", taskPlanDisplayPath(taskID))
+	fmt.Fprintf(&b, "- Review the prior structured outcome below, repair its outstanding error or finish the next required step, then return a concise structured result.\n")
 	fmt.Fprintf(&b, "\n%s\n", renderPreviousStructuredOutcome(previousRun))
 	if reason := previousStructuredOutcomeReason(previousRun); reason != "" {
 		fmt.Fprintf(&b, "- Current error context: %s\n", reason)
@@ -6610,16 +6647,14 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 	fmt.Fprintf(&b, "## Tusker Attempt Context\n\n")
 	fmt.Fprintf(&b, "- Attempt: %d (%s)\n", attemptNumber, attemptID)
 	fmt.Fprintf(&b, "- Fresh context rule: this attempt is a new runner session/thread. Do not query or append to predecessor transcripts.\n")
-	fmt.Fprintf(&b, "- Durable state rule: use the plan file below as disposable cross-attempt state; do not cite it as proof or add it to task markdown.\n\n")
+	fmt.Fprintf(&b, "- Resume state rule: the task packet, claim/workspace identity, prior structured outcome, blockers, and evidence pointers are authoritative. Harness scratch is optional.\n\n")
 	fmt.Fprintf(&b, "### Task Packet\n\n%s\n", strings.TrimSpace(v7Packet(project.VaultRoot, note, idx, audience)))
-	fmt.Fprintf(&b, "\n### Durable Plan File\n\n")
-	fmt.Fprintf(&b, "- Path: `%s`\n", plan.Display)
-	if plan.Created {
-		fmt.Fprintf(&b, "- Lifecycle: created for this first attempt; it survives retries and is removed when the task closes.\n")
-	} else {
-		fmt.Fprintf(&b, "- Lifecycle: existing file loaded from a prior attempt; update it before finishing or stopping.\n")
+	if plan.Path != "" {
+		fmt.Fprintf(&b, "\n### Optional Existing Scratch Note\n\n")
+		fmt.Fprintf(&b, "- Path: `%s`\n", plan.Display)
+		fmt.Fprintf(&b, "- This pre-existing note may help with resume, but updating it is optional and it is not proof.\n")
+		fmt.Fprintf(&b, "\n```markdown\n%s\n```\n", strings.TrimSpace(plan.Contents))
 	}
-	fmt.Fprintf(&b, "\n```markdown\n%s\n```\n", strings.TrimSpace(plan.Contents))
 	fmt.Fprintf(&b, "\n### Previous Structured Outcome\n\n%s\n", renderPreviousStructuredOutcome(previousRun))
 	fmt.Fprintf(&b, "\n### Backpressure\n\n")
 	fmt.Fprintf(&b, "- Source: %s\n", backpressureCommandSource(project.VaultRoot))
@@ -6629,7 +6664,7 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 	fmt.Fprintf(&b, "- Work exactly one task contract in this attempt.\n")
 	fmt.Fprintf(&b, "- Search before implementing; do not create duplicate implementations because a first `rg` missed something.\n")
 	fmt.Fprintf(&b, "- Do not add placeholder, stub, or fake-simple implementations to satisfy a compiler.\n")
-	fmt.Fprintf(&b, "- Read the plan, do the next undone item, update the plan, verify, then finish or park with a concrete reason.\n")
+	fmt.Fprintf(&b, "- Do the next undone item, verify it, then finish or park with a concrete structured reason.\n")
 	if signsPresent {
 		fmt.Fprintf(&b, "\n### Repo Signs\n\n")
 		if signsLines > tuskerSignsWarnLineLimit {
@@ -6647,24 +6682,14 @@ func ensureTaskPlanFile(vaultPath, taskID, title string) (taskPlanSnapshot, erro
 func ensureTaskPlanFileUnlocked(vaultPath, taskID, title string) (taskPlanSnapshot, error) {
 	path := taskPlanPath(vaultPath, taskID)
 	display := taskPlanDisplayPath(taskID)
-	if strings.TrimSpace(path) == "" {
+	if strings.TrimSpace(path) == "" || !fileExists(path) {
 		return taskPlanSnapshot{}, nil
-	}
-	created := false
-	if !fileExists(path) {
-		if err := ensureDir(filepath.Dir(path)); err != nil {
-			return taskPlanSnapshot{}, err
-		}
-		if err := secureScratchWriteTextUnlocked(vaultPath, path, defaultTaskPlanContents(taskID, title)); err != nil {
-			return taskPlanSnapshot{}, err
-		}
-		created = true
 	}
 	contents, err := readText(path)
 	if err != nil {
 		return taskPlanSnapshot{}, err
 	}
-	return taskPlanSnapshot{Path: path, Display: display, Contents: contents, Created: created}, nil
+	return taskPlanSnapshot{Path: path, Display: display, Contents: contents}, nil
 }
 
 func taskPlanPath(vaultPath, taskID string) string {
@@ -6678,21 +6703,6 @@ func taskPlanPath(vaultPath, taskID string) string {
 
 func taskPlanDisplayPath(taskID string) string {
 	return filepath.ToSlash(filepath.Join(".tusker", "scratch", strings.TrimSpace(taskID), "PLAN.md"))
-}
-
-func defaultTaskPlanContents(taskID, title string) string {
-	title = strings.TrimSpace(title)
-	if title == "" {
-		title = taskID
-	}
-	return fmt.Sprintf(`# %s Plan
-
-- [ ] Read this plan, the task packet, and the previous structured outcome.
-- [ ] Search for existing implementation before editing.
-- [ ] Do the next undone implementation or verification item.
-- [ ] Update this plan before finishing, parking, or responding to a stop signal.
-- [ ] Run the configured backpressure commands and record concise proof.
-`, title)
 }
 
 func renderPreviousStructuredOutcome(run RunStatus) string {

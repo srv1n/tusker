@@ -18,12 +18,16 @@ import (
 // unknown subcommand fails cleanly rather than falling through.
 func docsCmd(subcommand string, args Args) error {
 	handlers := map[string]func(Args) error{
-		"find":   docsFindCmd,
-		"new":    docsNewCmd,
-		"map":    docsMapCmd,
-		"status": docsStatusCmd,
-		"verify": docsVerifyCmd,
-		"adopt":  docsAdoptCmd,
+		"find":      docsFindCmd,
+		"new":       docsNewCmd,
+		"map":       docsMapCmd,
+		"status":    docsStatusCmd,
+		"verify":    docsVerifyCmd,
+		"adopt":     docsAdoptCmd,
+		"browse":    docsBrowseCmd,
+		"read":      docsReadCmd,
+		"backlinks": docsBacklinksCmd,
+		"check":     docsCheckCmd,
 	}
 	handler, ok := handlers[subcommand]
 	if !ok {
@@ -368,7 +372,24 @@ func docsNewCmd(args Args) error {
 	if fileExists(absolute) {
 		return tuskerError(errorAlreadyExists, "a file already exists at "+relative+"; pick a different subject or update that file")
 	}
-	if err := docsAdoptWriteText(repoRoot, relative, docsScaffold(subject, kind)); err != nil {
+	scaffold := docsScaffold(subject, kind)
+	candidate, parseErr := docgraph.ParseDocHeaders(relative, []byte(scaffold))
+	if parseErr != nil {
+		return tuskerError(errorInvalidField, "generated document scaffold is invalid: "+parseErr.Error(), withPath(relative))
+	}
+	validated := append(append([]docgraph.Document{}, corpus.Documents...), candidate)
+	if issues := docgraph.ValidateCorpus(docgraph.Corpus{Documents: validated}); len(issues) > 0 {
+		return tuskerError(errorInvalidField, "generated document scaffold failed documentation validation", withPath(relative), withContext(issues))
+	}
+	if args.Bool("print") {
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "path": relative, "subject": subject, "kind": kind, "content": scaffold, "written": false})
+		} else {
+			fmt.Print(scaffold)
+		}
+		return nil
+	}
+	if err := docsAdoptWriteText(repoRoot, relative, scaffold); err != nil {
 		return err
 	}
 	if args.Bool("json") {
@@ -400,7 +421,7 @@ func docsScaffold(subject, kind string) string {
 	builder.WriteString("---\n")
 	fmt.Fprintf(&builder, "subject: %s            # unique key; the one right name for this document\n", subject)
 	builder.WriteString("keywords: []            # search aliases a reader might type instead of the subject\n")
-	builder.WriteString("part_of:                # subject of the parent document this sits under\n")
+	builder.WriteString("part_of: overview       # subject of the parent document this sits under\n")
 	builder.WriteString("describes: []           # coarse repository paths this document explains\n")
 	builder.WriteString("status: canonical       # canonical, or superseded (then set superseded_by)\n")
 	fmt.Fprintf(&builder, "created: %s      # date this document was first written\n", created)

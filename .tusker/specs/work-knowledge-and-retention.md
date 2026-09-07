@@ -134,3 +134,12 @@ Visual proposals grounded in the supplied screenshot: reduce the oversized front
 CLI helper contract: bounded child-folder/direct-file metadata listing; targeted search; exact document/section reads; front-matter validation and safe template/default assistance; missing-parent/duplicate-subject/broken-link diagnostics; meaningful backlink inspection and supersession/freshness visibility. Reuse the existing docgraph parser/resolver and expose documented structured output. Do not invent decision rationale, update verification stamps without checking, or overwrite handwritten metadata while inserting defaults. Read and write operations exposed in the UI need corresponding supported CLI operations with the same validation. Specific command spellings and absent capabilities must be inventoried before implementation.
 
 The user explicitly broadened this effort from UI-only design to the whole Tusker product experience, including CLI/backend contracts. Existing assigned Work packets retain their ownership and acceptance boundaries. New implementation belongs in explicit follow-up slices rather than silently expanding those workers' scope. Repeatable testing has its own canonical spec: [[repeatable-work-testing]].
+
+<!-- tusker:delivery-import:fd0f9d66b7b7fdae:begin -->
+
+- `[[WUX-T-0014]]` implements delivery source `cli-discovery`.
+- `[[WUX-T-0013]]` implements delivery source `ui-polish`.
+
+- `[[W-0015]]` is the imported delivery wave.
+
+<!-- tusker:delivery-import:fd0f9d66b7b7fdae:end -->

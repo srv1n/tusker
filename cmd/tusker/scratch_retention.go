@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const defaultScratchTTLDays = 14
+const defaultScratchTTLDays = 7
 
 const defaultScratchBudgetBytes int64 = 200 << 20 // 200 MiB
 
@@ -525,7 +525,25 @@ func planScratchGC(vaultPath string, ttl time.Duration, now time.Time) ([]scratc
 	if err != nil {
 		return nil, err
 	}
-	return staleScratchEntries(entries, now.Add(-ttl)), nil
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	stale := make([]scratchEntry, 0, len(entries))
+	for _, entry := range entries {
+		if task, ok := idx.Tasks[entry.Name]; ok {
+			terminal := firstNonEmpty(stringField(task.Data, "closed_at"), stringField(task.Data, "discarded_at"))
+			stamp, parseErr := time.Parse(time.RFC3339, terminal)
+			if parseErr == nil && !boolField(task.Data, "artifacts_keep") && !strings.HasPrefix(stringField(task.Data, "readiness"), "waiting_on_human") && !stamp.Add(ttl).After(now) {
+				stale = append(stale, entry)
+			}
+			continue
+		}
+		if entry.Newest.Before(now.Add(-ttl)) {
+			stale = append(stale, entry)
+		}
+	}
+	return stale, nil
 }
 
 // applyScratchGC removes planned entries, re-measuring each one immediately
@@ -566,8 +584,24 @@ func applyScratchGCUnlocked(vaultPath string, entries []scratchEntry, cutoff tim
 			return outcome, err
 		}
 		if !current.Newest.Before(cutoff) {
-			outcome.Skipped = append(outcome.Skipped, current)
-			continue
+			if !v7TaskIDPattern.MatchString(entry.Name) {
+				outcome.Skipped = append(outcome.Skipped, current)
+				continue
+			}
+		}
+		if v7TaskIDPattern.MatchString(entry.Name) {
+			idx, indexErr := loadV7Index(vaultPath)
+			if indexErr != nil {
+				outcome.Failed = entry.Path
+				return outcome, indexErr
+			}
+			task, ok := idx.Tasks[entry.Name]
+			terminal := firstNonEmpty(stringField(task.Data, "closed_at"), stringField(task.Data, "discarded_at"))
+			stamp, stampErr := time.Parse(time.RFC3339, terminal)
+			if !ok || stampErr != nil || boolField(task.Data, "artifacts_keep") || strings.HasPrefix(stringField(task.Data, "readiness"), "waiting_on_human") || stamp.After(cutoff) {
+				outcome.Skipped = append(outcome.Skipped, current)
+				continue
+			}
 		}
 		live, checkErr := scratchEntryHasLiveRunStore(store, projectID, projectOK, entry.Name)
 		if checkErr != nil {
@@ -582,10 +616,32 @@ func applyScratchGCUnlocked(vaultPath string, entries []scratchEntry, cutoff tim
 			outcome.Failed = entry.Path
 			return outcome, err
 		}
+		if v7TaskIDPattern.MatchString(entry.Name) {
+			if err := recordScratchExpiry(vaultPath, entry.Name, time.Now().UTC()); err != nil {
+				outcome.Failed = entry.Path
+				return outcome, err
+			}
+		}
 		outcome.Deleted = append(outcome.Deleted, current)
 		outcome.Reclaimed += current.Bytes
 	}
 	return outcome, nil
+}
+
+func recordScratchExpiry(vaultPath, taskID string, at time.Time) error {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	task, ok := idx.Tasks[taskID]
+	if !ok {
+		return tuskerError(errorNotFound, "V7 task not found: "+taskID)
+	}
+	data := cloneMap(task.Data)
+	data["artifacts_availability"], data["artifacts_expired_at"] = "expired", at.Format(time.RFC3339)
+	data["state_rev"] = v7StateRev(data, task.Body)
+	_, err = saveV7DocumentCAS(task.AbsolutePath, data, task.Body, v7FrontmatterOrder["task"], stringField(task.Data, "state_rev"))
+	return err
 }
 
 func scratchEntryHasLiveRunStore(store *RuntimeStore, projectID string, projectOK bool, name string) (bool, error) {

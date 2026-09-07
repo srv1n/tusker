@@ -14,10 +14,66 @@
 
 import { useSyncExternalStore } from "react";
 
-const collapsed = new Set<string>();
-let railOpen = false;
+export interface TreeStorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export interface PersistedTreeState {
+  collapsedIds: string[];
+  railOpen: boolean;
+}
+
+export const TREE_STORAGE_KEY = "tusker.documents.tree.v1";
+
+function browserStorage(): TreeStorageLike | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readTreeState(storage: TreeStorageLike | null): PersistedTreeState {
+  if (!storage) return { collapsedIds: [], railOpen: false };
+  try {
+    const raw = storage.getItem(TREE_STORAGE_KEY);
+    if (!raw) return { collapsedIds: [], railOpen: false };
+    const parsed = JSON.parse(raw) as { collapsedIds?: unknown; railOpen?: unknown };
+    return {
+      collapsedIds: Array.isArray(parsed.collapsedIds)
+        ? parsed.collapsedIds.filter((id): id is string => typeof id === "string").slice(0, 1000)
+        : [],
+      railOpen: parsed.railOpen === true,
+    };
+  } catch {
+    return { collapsedIds: [], railOpen: false };
+  }
+}
+
+export function writeTreeState(storage: TreeStorageLike | null, state: PersistedTreeState): boolean {
+  if (!storage) return false;
+  try {
+    storage.setItem(TREE_STORAGE_KEY, JSON.stringify({
+      collapsedIds: state.collapsedIds.slice(0, 1000),
+      railOpen: state.railOpen,
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const persisted = readTreeState(browserStorage());
+const collapsed = new Set(persisted.collapsedIds);
+let railOpen = persisted.railOpen;
 let version = 0;
 const listeners = new Set<() => void>();
+
+function persist(): void {
+  writeTreeState(browserStorage(), { collapsedIds: [...collapsed], railOpen });
+}
 
 function emit(): void {
   version += 1;
@@ -40,13 +96,17 @@ export const treeStore = {
   toggleFolder(id: string): void {
     if (collapsed.has(id)) collapsed.delete(id);
     else collapsed.add(id);
+    persist();
     emit();
   },
   /** Ensure a doc's ancestor folders are open (called when a doc is opened). */
   expandAncestors(ids: string[]): void {
     let changed = false;
     for (const id of ids) if (collapsed.delete(id)) changed = true;
-    if (changed) emit();
+    if (changed) {
+      persist();
+      emit();
+    }
   },
   isRailOpen(): boolean {
     return railOpen;
@@ -54,10 +114,12 @@ export const treeStore = {
   setRailOpen(open: boolean): void {
     if (railOpen === open) return;
     railOpen = open;
+    persist();
     emit();
   },
   toggleRail(): void {
     railOpen = !railOpen;
+    persist();
     emit();
   },
 };

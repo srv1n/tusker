@@ -80,6 +80,44 @@ func TestDeliveryPlanReview(t *testing.T) {
 	}
 }
 
+func TestRemainingCoverage(t *testing.T) {
+	vault := deliveryTestVault(t)
+	plan := validDeliveryPlanV2()
+	plan.HumanGates = nil
+	plan.Requirements = append(plan.Requirements, deliveryRequirement{ID: "R2", Outcome: "A deliberate omission stays visible."})
+	plan.Deferrals = []deliveryRequirementDeferral{{Requirement: "R2", Reason: "Waiting for the upstream API contract."}}
+	second := plan.Tasks[0]
+	second.SourceKey, second.Title = "shared", "Share requirement coverage"
+	plan.Tasks = append(plan.Tasks, second)
+
+	review, err := buildDeliveryReview(vault, writeDeliveryV2TestPlan(t, vault, plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(review.What) != 2 || review.What[0].Status != "covered" || len(review.What[0].CoveredBy) != 2 {
+		t.Fatalf("shared coverage projection=%#v", review.What)
+	}
+	if review.What[1].Status != "deferred" || review.What[1].DeferralReason != plan.Deferrals[0].Reason {
+		t.Fatalf("deferral projection=%#v", review.What[1])
+	}
+	if !strings.Contains(renderDeliveryReview(review), "R2 [deferred]") {
+		t.Fatal("terminal review hid deferred requirement")
+	}
+
+	plan.Deferrals[0].Requirement = "R9"
+	review, err = buildDeliveryReview(vault, writeDeliveryV2TestPlan(t, vault, plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := make([]string, 0, len(review.Readiness.Blockers))
+	for _, blocker := range review.Readiness.Blockers {
+		reasons = append(reasons, blocker.Reason)
+	}
+	if !strings.Contains(strings.Join(reasons, "\n"), "unknown requirement R9") {
+		t.Fatalf("unknown deferral accepted: %#v", review.Readiness.Blockers)
+	}
+}
+
 func TestDeliveryPlanReviewAcceptsCommittedTrackedPlan(t *testing.T) {
 	vault := deliveryTestVault(t)
 	repo := v7RepoRoot(vault)

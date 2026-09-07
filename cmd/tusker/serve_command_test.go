@@ -13,6 +13,33 @@ import (
 	"time"
 )
 
+func TestRemainingEvidenceView(t *testing.T) {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	artifact := filepath.Join(repo, "artifacts", "result.png")
+	if err := ensureDir(filepath.Dir(artifact)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(artifact, "png"); err != nil {
+		t.Fatal(err)
+	}
+	task := Note{Data: map[string]any{"id": "APP-T-0001", "project": "app"}}
+	evidence := Note{Data: map[string]any{"id": "APP-T-0001-E-0001", "task": "APP-T-0001", "covers": []string{"APP-T-0001#A1"}, "evidence_kind": "screenshot", "artifact_paths": []string{"artifacts/result.png"}}, RelativePath: "evidence/APP-T-0001/E.md"}
+	snap := serveSnapshot{project: RegisteredProject{VaultRoot: vault}, evidence: []Note{evidence}}
+	cards := serveEvidenceCards(snap, task)
+	if len(cards) != 1 || cards[0].Availability != "available" || cards[0].Href == "" || cards[0].Kept {
+		t.Fatalf("available card=%#v", cards)
+	}
+	task.Data["artifacts_availability"], task.Data["artifacts_expired_at"], task.Data["artifacts_keep"] = "expired", "2026-09-14T00:00:00Z", true
+	cards = serveEvidenceCards(snap, task)
+	if cards[0].Availability != "expired" || cards[0].Href != "" || !cards[0].Kept || cards[0].ExpiredAt == "" {
+		t.Fatalf("expired card=%#v", cards[0])
+	}
+	if len(serveGatesForTask(snap, "APP-T-0001")) != 0 {
+		t.Fatal("artifact created a human gate")
+	}
+}
+
 func TestServeReadOnlyAndLocalhost(t *testing.T) {
 	addr, err := serveBindAddr(Args{})
 	if err != nil {

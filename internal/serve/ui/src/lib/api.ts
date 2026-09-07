@@ -41,6 +41,7 @@ import type {
   RunSummary,
   ReviewBatch,
   RunnerConformanceReport,
+  ModelLevelsReport,
   TaskCapsule,
   TaskDetail,
   WaveSummary,
@@ -241,6 +242,13 @@ export const api = {
     const path = withProject(`/runner/conformance?harness=${encodeURIComponent(harness)}&preset=${encodeURIComponent(preset)}&exercise=${encodeURIComponent(exercise)}`, projectId);
     return live ? post<RunnerConformanceReport & { ok?: boolean }>(path, { harness, preset, exercise }) : real(path);
   },
+  modelLevels: (projectId?: string): Promise<ModelLevelsReport> => real(withProject("/models", projectId)),
+  modelLevelsSet: (level: string, lane: string, profiles: string[], revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
+    post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "set", scope, level, lane, profiles, revision }),
+  modelLevelsReset: (level: string, lane: string, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
+    post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "reset", scope, level, lane, revision }),
+  modelProfileSet: (profile: { name: string; harness: string; model: string; effort: string; preset: string }, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
+    post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "profile-set", scope, ...profile, revision }),
   executions: (params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionGraph> => {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value) as [string, string][]).toString();
     return real(withProject(`/executions${query ? `?${query}` : ""}`, projectId));

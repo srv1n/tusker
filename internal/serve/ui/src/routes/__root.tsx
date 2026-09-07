@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation, useParams } from "@tanstack/react-router";
+import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { AlertTriangle, Menu, Search } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { CrashLoopCircuitBanner } from "@/components/CrashLoopCircuitBanner";
 import { openTaskSearch, TaskSearch } from "@/features/search/TaskSearch";
 import { CountBadge } from "@/components/ui/primitives";
 import { useDaemon, useNeeds } from "@/lib/queries";
-import { connectProjectAttention } from "@/lib/stream";
 
 let shellMode = typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("shell") === "1";
@@ -47,13 +46,16 @@ export function RootLayout() {
   );
 }
 
-/** Pass-through layout for project-scoped routes. */
+/**
+ * Pass-through layout for project-scoped routes.
+ *
+ * Live updates come from the single shared subscription in main.tsx: the
+ * unfiltered /api/stream channel already carries every project-scoped event
+ * (the broker only narrows when a project filter is supplied), so a second
+ * per-project connection here would double broker clients without ever
+ * reading its messages into the query cache.
+ */
 export function ProjectLayout() {
-	const projectId = useParams({ strict: false }).projectId as string | undefined;
-	useEffect(() => {
-		if (!projectId) return;
-		return connectProjectAttention(projectId, { enabled: true });
-	}, [projectId]);
 	return <Outlet />;
 }
 

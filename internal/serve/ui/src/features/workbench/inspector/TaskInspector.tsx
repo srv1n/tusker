@@ -303,9 +303,9 @@ function ReadyInspector({
                       data-testid="inspector-evidence-item"
                       className="rounded-lg border border-line bg-raised px-3 py-2.5"
                     >
-                      <div className="truncate text-[12.5px] font-medium text-ink-soft">{item.label}</div>
+					  {item.availability === "available" && item.href && isSafeHref(item.href) ? <a href={item.href} className="truncate text-[12.5px] font-medium text-ink-soft underline">Open {item.label}</a> : <div className="truncate text-[12.5px] font-medium text-ink-soft">{item.label}</div>}
                       <div className="mt-0.5 truncate font-mono text-[10.5px] text-faint">
-                        {item.kind} · {item.ref}
+						{item.kind.replaceAll("_", " ")} · {item.kept ? "Kept" : item.availability === "expired" ? `Evidence expired${item.expiredAt ? ` ${item.expiredAt}` : ""}` : item.availability} · {item.ref}
                       </div>
                     </li>
                   ))}
@@ -380,6 +380,10 @@ function ReadyInspector({
               <dl className="mt-2 space-y-2 text-[12px]">
                 {[
                   ["Epic", `${task.epicId} · ${task.epicTitle}`],
+                  ["Work level", task.authoredWorkLevel || `${task.effectiveExecute?.work_level || "standard"} (compatible default)`],
+                  ["Review level", task.authoredReviewLevel || `${task.effectiveReview?.work_level || "standard"} (compatible default)`],
+                  ["Execute route", task.effectiveExecute?.profile ? `${task.effectiveExecute.profile} · ${task.effectiveExecute.source || "source unavailable"}` : `Blocked · ${task.effectiveExecute?.blockers.join("; ") || "unavailable"}`],
+                  ["Review route", task.effectiveReview?.profile ? `${task.effectiveReview.profile} · ${task.effectiveReview.source || "source unavailable"}` : `Blocked · ${task.effectiveReview?.blockers.join("; ") || "unavailable"}`],
                   ["Priority", task.priority.toUpperCase()],
                   ["Risk", task.risk],
                   ["Readiness", task.readiness.replaceAll("_", " ")],

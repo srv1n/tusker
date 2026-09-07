@@ -99,6 +99,11 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 	if complexity := strings.TrimSpace(stringField(data, "complexity")); complexity != "" && complexity != "routine" && complexity != "standard" && complexity != "complex" && complexity != "frontier" {
 		*errors = append(*errors, issue(errorInvalidField, "task complexity must be routine, standard, complex, or frontier", where, "omit complexity for compatibility or use a semantic complexity level", map[string]any{"complexity": complexity}))
 	}
+	for _, field := range []string{"work_level", "review_level"} {
+		if level := strings.TrimSpace(stringField(data, field)); level != "" && !validModelLevel(level) {
+			*errors = append(*errors, issue(errorInvalidField, field+" must be light, standard, or demanding", where, "choose one of the three configured work levels", map[string]any{field: level}))
+		}
+	}
 	if workKind := strings.TrimSpace(stringField(data, "work_kind")); workKind != "" && workKind != "implementation" && workKind != "integrator" {
 		*errors = append(*errors, issue(errorInvalidField, "task work_kind must be implementation or integrator", where, "use work_kind: integrator only for the typed merge lane", map[string]any{"work_kind": workKind}))
 	}

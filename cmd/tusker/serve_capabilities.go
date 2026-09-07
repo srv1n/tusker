@@ -37,7 +37,7 @@ var serveCapabilityRegistry = []serveCapability{
 	{ID: "executions", Class: "authoritative_mutable", Mutable: true, Description: "Execution lineage and guarded binding."},
 	{ID: "stream", Class: "cached_projection", Description: "Live invalidation hints; reconnect/read APIs remain authoritative."},
 	{ID: "app-preferences", Class: "local_preference", Description: "Browser/native preferences, not daemon state."},
-	{ID: "profiles", Class: "unavailable", Description: "Runner profile persistence is not exposed by Serve."},
+	{ID: "profiles", Class: "authoritative_mutable", Mutable: true, Description: "Runner profiles and model-level mappings with guarded writes."},
 }
 
 func serveCapabilities() []serveCapability {

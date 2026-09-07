@@ -52,6 +52,40 @@ func TestWaveCreateMembership(t *testing.T) {
 	assertEqual(t, "W-0001", stringField(task3, "wave"), "added task wave back-pointer")
 }
 
+func TestRemainingWaveOutcome(t *testing.T) {
+	vault := newWaveTestVault(t, 1)
+	promise := "Operators can run the sample and inspect its reviewed result."
+	mustWave(t, Args{"vault": vault, "quiet": "true", "summary": promise, "_pos0": "Promised wave", "_pos1": "APP-T-0001"}, waveV7CreateCmd)
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave := idx.Waves["W-0001"]
+	if got := stringField(wave.Data, "summary"); got != promise {
+		t.Fatalf("summary=%q", got)
+	}
+	payload := v7WavePayload(vault, idx, wave)
+	if payload["expectedOutcome"] != promise {
+		t.Fatalf("payload=%#v", payload)
+	}
+	brief := buildWaveBrief(idx, wave)
+	if brief.ExpectedOutcome != promise || brief.Outcome.Summary == promise {
+		t.Fatalf("brief=%#v", brief)
+	}
+
+	updated := "Operators can run and verify the sample."
+	if err := waveV7OutcomeCmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001", "summary": updated}); err != nil {
+		t.Fatal(err)
+	}
+	idx, _ = loadV7Index(vault)
+	if got := stringField(idx.Waves["W-0001"].Data, "summary"); got != updated {
+		t.Fatalf("updated summary=%q", got)
+	}
+	if err := waveV7OutcomeCmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001", "summary": strings.Repeat("x", 501)}); err == nil {
+		t.Fatal("oversized outcome accepted")
+	}
+}
+
 func TestWaveMembershipMutationsRejectForgedActors(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	vault := newWaveTestVault(t, 2)

@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   LIVE_STREAM_FALLBACK_MS,
   connectLiveStream,
-  connectProjectAttention,
   getStreamStatus,
   invalidateStreamEvent,
   liveRefetchInterval,
@@ -177,12 +176,29 @@ test("unscoped stream events retain family-wide invalidation for warm project ca
   ]);
 });
 
-test("project attention scopes SSE lifetime to the active project", () => {
+test("live updates use one shared unfiltered subscription, not a connection per project", () => {
+  // real-work-ui-acceptance: one shared subscription pattern. The unfiltered
+  // /api/stream channel already carries every project-scoped event, so a
+  // second per-project connection would double broker clients without ever
+  // reading its messages into the query cache.
   FakeEventSource.instances = [];
-  const disconnect = connectProjectAttention("alpha beta", { EventSourceImpl: FakeEventSource });
+  const { client, invalidations } = recorder();
+  const disconnect = connectLiveStream(client, {
+    EventSourceImpl: FakeEventSource,
+    debounceMs: 0,
+  });
+  expect(FakeEventSource.instances).toHaveLength(1);
   const source = FakeEventSource.instances[0];
-  expect(source.url).toBe("/api/stream?project=alpha%20beta");
-  expect(source.closed).toBe(false);
+  expect(source.url).toBe("/api/stream");
+  expect(source.url).not.toContain("project=");
+
+  // Project-scoped traffic still invalidates project-scoped queries through
+  // the shared channel.
+  source.message({ kind: "lease_transition", keys: ["runs:SRV-T-0008"], project: "tusker" });
+  expect(invalidations).toContainEqual({ queryKey: ["run", "tusker", "SRV-T-0008"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: qk.runs("tusker"), exact: false });
+
   disconnect();
   expect(source.closed).toBe(true);
+  expect(FakeEventSource.instances).toHaveLength(1);
 });

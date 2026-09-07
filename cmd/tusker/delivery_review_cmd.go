@@ -47,10 +47,17 @@ type deliveryReview struct {
 	startBlockers  []ReadinessBlocker
 }
 type deliveryReviewOutcome struct {
-	Requirement string               `json:"requirement"`
-	Outcome     string               `json:"outcome"`
-	NonGoals    []string             `json:"nonGoals"`
-	Links       []deliveryReviewLink `json:"links"`
+	Requirement    string                   `json:"requirement"`
+	Outcome        string                   `json:"outcome"`
+	Status         string                   `json:"status"`
+	CoveredBy      []deliveryReviewCoverage `json:"coveredBy"`
+	DeferralReason string                   `json:"deferralReason,omitempty"`
+	NonGoals       []string                 `json:"nonGoals"`
+	Links          []deliveryReviewLink     `json:"links"`
+}
+type deliveryReviewCoverage struct {
+	SourceKey     string   `json:"sourceKey"`
+	AcceptanceIDs []string `json:"acceptanceIds"`
 }
 type deliveryReviewProof struct {
 	Requirements []string                 `json:"requirements"`
@@ -297,12 +304,32 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 	}
 	for _, req := range plan.v2.Requirements {
 		links := []deliveryReviewLink{}
+		coverage := []deliveryReviewCoverage{}
+		for _, task := range plan.Tasks {
+			if containsString(task.RequirementRefs, req.ID) {
+				ids := make([]string, 0, len(task.Acceptance))
+				for _, acceptance := range task.Acceptance {
+					ids = append(ids, deliveryAcceptanceID(acceptance.ID))
+				}
+				coverage = append(coverage, deliveryReviewCoverage{SourceKey: task.SourceKey, AcceptanceIDs: ids})
+			}
+		}
+		status, reason := "covered", ""
+		if len(coverage) == 0 {
+			status = "uncovered"
+			for _, deferral := range plan.v2.Deferrals {
+				if deferral.Requirement == req.ID {
+					status, reason = "deferred", deferral.Reason
+					break
+				}
+			}
+		}
 		for _, specRef := range plan.SpecRefs {
 			if deliverySpecRefExists(vault, specRef) {
 				links = append(links, deliveryReviewLink{Label: specRef, Href: docDeepLink(projectID, specRef)})
 			}
 		}
-		r.What = append(r.What, deliveryReviewOutcome{Requirement: req.ID, Outcome: req.Outcome, NonGoals: []string{}, Links: links})
+		r.What = append(r.What, deliveryReviewOutcome{Requirement: req.ID, Outcome: req.Outcome, Status: status, CoveredBy: coverage, DeferralReason: reason, NonGoals: []string{}, Links: links})
 	}
 	r.NonGoals = deliveryContextCleanStrings(plan.v2.NonGoals)
 	sort.Strings(r.NonGoals)
@@ -342,6 +369,10 @@ func buildDeliveryReviewBytes(vault, path string, raw []byte, inspector wavePref
 func normalizeDeliveryReviewCollections(r *deliveryReview) {
 	r.What = deliveryReviewNonNil(r.What)
 	for i := range r.What {
+		r.What[i].CoveredBy = deliveryReviewNonNil(r.What[i].CoveredBy)
+		for j := range r.What[i].CoveredBy {
+			r.What[i].CoveredBy[j].AcceptanceIDs = deliveryReviewNonNil(r.What[i].CoveredBy[j].AcceptanceIDs)
+		}
 		r.What[i].NonGoals = deliveryReviewNonNil(r.What[i].NonGoals)
 		r.What[i].Links = deliveryReviewNonNil(r.What[i].Links)
 	}
@@ -1182,7 +1213,17 @@ func renderDeliveryReview(r deliveryReview) string {
 		b.WriteString("- No requirement outcomes declared.\n")
 	}
 	for _, v := range r.What {
-		b.WriteString("- " + v.Outcome + "\n")
+		line := "- " + v.Requirement + " [" + v.Status + "]: " + v.Outcome
+		if v.Status == "covered" {
+			parts := make([]string, 0, len(v.CoveredBy))
+			for _, coverage := range v.CoveredBy {
+				parts = append(parts, coverage.SourceKey+" ("+strings.Join(coverage.AcceptanceIDs, ", ")+")")
+			}
+			line += " — " + strings.Join(parts, "; ")
+		} else if v.DeferralReason != "" {
+			line += " — " + v.DeferralReason
+		}
+		b.WriteString(line + "\n")
 	}
 	if len(r.NonGoals) == 0 {
 		b.WriteString("- Non-goals: None declared.\n")

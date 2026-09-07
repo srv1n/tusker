@@ -26,6 +26,7 @@ type RunnerCatalogHarness struct {
 	Confidence string               `json:"confidence"`
 	Version    string               `json:"version,omitempty"`
 	Available  bool                 `json:"available"`
+	State      string               `json:"state"`
 	Models     []RunnerCatalogModel `json:"models,omitempty"`
 	Error      string               `json:"error,omitempty"`
 }
@@ -86,6 +87,17 @@ func discoverRunnerCatalog(bundled bool) RunnerCatalog {
 	}
 	result.Harnesses = append(result.Harnesses, claude)
 	result.Harnesses = append(result.Harnesses, discoverMuseCatalog())
+	for i := range result.Harnesses {
+		h := &result.Harnesses[i]
+		switch {
+		case h.Available:
+			h.State = "available"
+		case h.Error != "":
+			h.State = "error"
+		default:
+			h.State = "unsupported"
+		}
+	}
 	return result
 }
 

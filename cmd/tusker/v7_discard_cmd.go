@@ -277,7 +277,6 @@ func discardV7OneTask(vaultPath, taskID, actor, reason string) error {
 	if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, taskID, "cancelled", actor, "discard"); err != nil {
 		return err
 	}
-	warnScratchReapFailed(taskID, reapTaskScratch(vaultPath, taskID))
 	affected, err := v7TaskIDsForTaskControl(vaultPath, taskID)
 	if err != nil {
 		return err

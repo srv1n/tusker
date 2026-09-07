@@ -16,6 +16,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/core";
 import { buildKnowledgeExtensions } from "./editorExtensions";
 import type { DocLinkRef } from "./types";
+import "./knowledge.css";
 
 interface MarkdownStorageLike {
   getMarkdown(): string;

@@ -128,25 +128,28 @@ func TestPlanFileLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Created {
-		t.Fatal("expected first plan creation")
+	if plan.Path != "" || fileExists(taskPlanPath(vault, "APP-T-0001")) {
+		t.Fatal("missing optional plan must not be created")
 	}
-	assertExists(t, plan.Path)
-	if err := writeText(plan.Path, "# Custom Plan\n\n- [x] keep this between attempts\n"); err != nil {
+	path := taskPlanPath(vault, "APP-T-0001")
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, "# Custom Plan\n\n- [x] keep this between attempts\n"); err != nil {
 		t.Fatal(err)
 	}
 	again, err := ensureTaskPlanFile(vault, "APP-T-0001", "Plan lifecycle")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Created || !strings.Contains(again.Contents, "keep this between attempts") {
+	if again.Created || again.Path != path || !strings.Contains(again.Contents, "keep this between attempts") {
 		t.Fatalf("expected existing plan to survive, got created=%t contents=%q", again.Created, again.Contents)
 	}
 
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestPlanFileLifecycle -count=1", "result": "pass", "note": "Plan lifecycle proof passed."}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent", "force": "true", "local": "true"}, closeV7Cmd)
-	if fileExists(plan.Path) {
-		t.Fatalf("expected close to remove plan file %s", plan.Path)
+	if fileExists(path) {
+		t.Fatalf("expected close to remove plan file %s", path)
 	}
 	task := mustV7Task(t, vault, "APP-T-0001")
 	if strings.Contains(task.Body, "PLAN.md") || strings.Contains(task.Body, ".tusker/scratch") {
@@ -173,9 +176,9 @@ func TestPromptBackpressureAndSigns(t *testing.T) {
 	for _, expected := range []string{
 		"## Tusker Attempt Context",
 		"# APP-T-0001 agent packet",
-		".tusker/scratch/APP-T-0001/PLAN.md",
+		"Harness scratch is optional",
 		"Previous reason: parked because validation stayed red",
-		"Source: `.tusker/config.yaml` automation.validation.commands",
+		"Source: `config.yaml` automation.validation.commands",
 		"go test ./cmd/tusker -run TestPromptBackpressureAndSigns -count=1",
 		"Search before implementing",
 		"placeholder, stub",
@@ -190,6 +193,29 @@ func TestPromptBackpressureAndSigns(t *testing.T) {
 	if !issuesContainCode(warnings, "SIGNS_FILE_BLOATED") {
 		t.Fatalf("expected signs bloat warning, got %#v", warnings)
 	}
+}
+
+func TestRemainingOptionalScratch(t *testing.T) {
+	vault := ralphPromptTestVault(t)
+	before := renderRalphPromptForTest(t, vault, RunStatus{})
+	if fileExists(taskPlanPath(vault, "APP-T-0001")) {
+		t.Fatal("prompt created mandatory PLAN.md")
+	}
+	if strings.Contains(before, "Durable Plan File") || strings.Contains(before, "update the plan") {
+		t.Fatal("prompt still mandates scratch journaling")
+	}
+	path := taskPlanPath(vault, "APP-T-0001")
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, "# Optional old note\n"); err != nil {
+		t.Fatal(err)
+	}
+	after := renderRalphPromptForTest(t, vault, RunStatus{AttemptOutcome: string(AttemptOutcomeBlocked), LastError: "verification failed"})
+	if !strings.Contains(after, "Optional Existing Scratch Note") || !strings.Contains(after, "verification failed") {
+		t.Fatalf("resume context missing:\n%s", after)
+	}
+	t.Logf("prompt bytes without optional note=%d with optional note=%d; mandatory writes before=1 after=0", len(before), len(after))
 }
 
 func TestAttemptInputFlat(t *testing.T) {

@@ -92,6 +92,9 @@ func ParseDocHeaders(path string, content []byte) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
+	if err := validateFrontmatterTypes(frontmatter); err != nil {
+		return Document{}, err
+	}
 	doc := Document{
 		Path:         rel,
 		Kind:         kind,
@@ -109,6 +112,54 @@ func ParseDocHeaders(path string, content []byte) (Document, error) {
 		Body:         body,
 	}
 	return doc, nil
+}
+
+func validateFrontmatterTypes(frontmatter map[string]any) error {
+	for _, key := range []string{"title", "subject", "part_of", "decides_for", "status", "superseded_by", "read_when", "skip_when"} {
+		value, ok := frontmatter[key]
+		if !ok || value == nil {
+			continue
+		}
+		if _, ok := value.(string); !ok {
+			return &ParseError{Code: "DOC_HEADER_TYPE_INVALID", Message: fmt.Sprintf("front matter field %q must be a string", key)}
+		}
+	}
+	if value, ok := frontmatter["last_verified"]; ok && value != nil {
+		switch value.(type) {
+		case string, time.Time:
+		default:
+			return &ParseError{Code: "DOC_HEADER_TYPE_INVALID", Message: `front matter field "last_verified" must be a date or string`}
+		}
+	}
+	for _, key := range []string{"keywords", "describes", "updates", "sources"} {
+		value, ok := frontmatter[key]
+		if !ok || value == nil {
+			continue
+		}
+		if !validStringListValue(value) {
+			return &ParseError{Code: "DOC_HEADER_TYPE_INVALID", Message: fmt.Sprintf("front matter field %q must be a string or list of strings", key)}
+		}
+	}
+	return nil
+}
+
+func validStringListValue(value any) bool {
+	if _, ok := value.(string); ok {
+		return true
+	}
+	switch current := value.(type) {
+	case []string:
+		return true
+	case []any:
+		for _, item := range current {
+			if _, ok := item.(string); !ok {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // DocTouchReport identifies managed documents whose declared code paths

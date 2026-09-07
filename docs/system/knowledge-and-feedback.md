@@ -41,6 +41,13 @@ backlinks point at the files that actually exist. A spec's `sources` may point
 to a managed document and appears as a `source` edge; external source records
 remain provenance without becoming governing documents.
 
+Agents can use `tusker docs browse` for one bounded folder level, `tusker docs
+read` for one document or exact Markdown section, and `tusker docs backlinks`
+for incoming relationships. `tusker docs check` reports metadata and managed
+link defects with repair guidance. These reads do not write the corpus; use
+`tusker docs new --print` to inspect a validated scaffold before creating a
+file.
+
 `tusker docs map` builds `docs/system/INDEX.md`, `docs/system/graph.json`, and
 the graph block in the overview. Do not edit those outputs by hand.
 

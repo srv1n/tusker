@@ -22,6 +22,13 @@
       "status": "canonical"
     },
     {
+      "subject": "documents-experience",
+      "kind": "spec",
+      "path": ".tusker/specs/documents-experience.md",
+      "title": "Documents experience and bounded CLI discovery",
+      "status": "canonical"
+    },
+    {
       "subject": "execution-observability-system",
       "kind": "canonical",
       "path": "docs/system/execution-observability.md",
@@ -57,6 +64,13 @@
       "status": "canonical"
     },
     {
+      "subject": "model-level-configuration",
+      "kind": "spec",
+      "path": ".tusker/specs/model-level-configuration.md",
+      "title": "Manual model setup and three work levels",
+      "status": "canonical"
+    },
+    {
       "subject": "orchestration",
       "kind": "canonical",
       "path": "docs/system/orchestration.md",
@@ -71,6 +85,13 @@
       "status": "canonical"
     },
     {
+      "subject": "planning-handoff-and-agent-entry",
+      "kind": "spec",
+      "path": ".tusker/specs/planning-handoff-and-agent-entry.md",
+      "title": "Planning capture, task handoff and progressive agent guidance",
+      "status": "canonical"
+    },
+    {
       "subject": "platform-support",
       "kind": "canonical",
       "path": "docs/system/platform-support.md",
@@ -82,6 +103,34 @@
       "kind": "canonical",
       "path": "docs/system/proof-and-closeout.md",
       "title": "Proof and closeout",
+      "status": "canonical"
+    },
+    {
+      "subject": "real-work-lifecycle-cli",
+      "kind": "spec",
+      "path": ".tusker/specs/real-work-lifecycle-cli.md",
+      "title": "Make real task execution and closeout consistent across CLI and UI",
+      "status": "canonical"
+    },
+    {
+      "subject": "real-work-test-packets",
+      "kind": "spec",
+      "path": ".tusker/specs/real-work-test-packets.md",
+      "title": "Real-product testing — three implementation assignments",
+      "status": "canonical"
+    },
+    {
+      "subject": "real-work-test-repository",
+      "kind": "spec",
+      "path": ".tusker/specs/real-work-test-repository.md",
+      "title": "Build a resettable test repository for actual coding-agent work",
+      "status": "canonical"
+    },
+    {
+      "subject": "real-work-ui-acceptance",
+      "kind": "spec",
+      "path": ".tusker/specs/real-work-ui-acceptance.md",
+      "title": "Verify the live task wave and Documents experience against the seeded project",
       "status": "canonical"
     },
     {
@@ -191,6 +240,16 @@
     },
     {
       "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "model-level-configuration",
+      "kind": "link"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "link"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
       "to": "repeatable-work-testing",
       "kind": "link"
     },
@@ -220,6 +279,36 @@
       "kind": "part_of"
     },
     {
+      "from": "documents-experience",
+      "to": "tusker-trust-and-efficiency",
+      "kind": "link"
+    },
+    {
+      "from": "documents-experience",
+      "to": "work-knowledge-and-retention",
+      "kind": "link"
+    },
+    {
+      "from": "documents-experience",
+      "to": "work-knowledge-and-retention",
+      "kind": "part_of"
+    },
+    {
+      "from": "documents-experience",
+      "to": "knowledge-and-feedback",
+      "kind": "source"
+    },
+    {
+      "from": "documents-experience",
+      "to": "tusker-trust-and-efficiency",
+      "kind": "source"
+    },
+    {
+      "from": "documents-experience",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
       "from": "execution-observability-system",
       "to": "overview",
       "kind": "part_of"
@@ -243,6 +332,41 @@
       "from": "landing-and-completion",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "model-level-configuration",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "model-level-configuration",
+      "to": "decisions/2026-09-07-work-area-redesign-grill",
+      "kind": "source"
+    },
+    {
+      "from": "model-level-configuration",
+      "to": "runner-execution-boundary",
+      "kind": "source"
+    },
+    {
+      "from": "model-level-configuration",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
+      "from": "model-level-configuration",
+      "to": "cli",
+      "kind": "updates"
+    },
+    {
+      "from": "model-level-configuration",
+      "to": "runners-and-acp",
+      "kind": "updates"
+    },
+    {
+      "from": "model-level-configuration",
+      "to": "serve-ui",
+      "kind": "updates"
     },
     {
       "from": "orchestration",
@@ -285,6 +409,31 @@
       "kind": "link"
     },
     {
+      "from": "planning-handoff-and-agent-entry",
+      "to": "spec-to-proof",
+      "kind": "link"
+    },
+    {
+      "from": "planning-handoff-and-agent-entry",
+      "to": "spec-to-proof",
+      "kind": "part_of"
+    },
+    {
+      "from": "planning-handoff-and-agent-entry",
+      "to": "decisions/2026-09-07-work-area-redesign-grill",
+      "kind": "source"
+    },
+    {
+      "from": "planning-handoff-and-agent-entry",
+      "to": "spec-to-proof",
+      "kind": "source"
+    },
+    {
+      "from": "planning-handoff-and-agent-entry",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
       "from": "platform-support",
       "to": "overview",
       "kind": "part_of"
@@ -293,6 +442,81 @@
       "from": "proof-and-closeout",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "real-work-lifecycle-cli",
+      "to": "real-work-test-packets",
+      "kind": "part_of"
+    },
+    {
+      "from": "real-work-lifecycle-cli",
+      "to": "repeatable-work-testing",
+      "kind": "source"
+    },
+    {
+      "from": "real-work-lifecycle-cli",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
+      "from": "real-work-test-packets",
+      "to": "real-work-lifecycle-cli",
+      "kind": "link"
+    },
+    {
+      "from": "real-work-test-packets",
+      "to": "real-work-test-repository",
+      "kind": "link"
+    },
+    {
+      "from": "real-work-test-packets",
+      "to": "real-work-ui-acceptance",
+      "kind": "link"
+    },
+    {
+      "from": "real-work-test-packets",
+      "to": "repeatable-work-testing",
+      "kind": "part_of"
+    },
+    {
+      "from": "real-work-test-packets",
+      "to": "repeatable-work-testing",
+      "kind": "source"
+    },
+    {
+      "from": "real-work-test-packets",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
+      "from": "real-work-test-repository",
+      "to": "real-work-test-packets",
+      "kind": "part_of"
+    },
+    {
+      "from": "real-work-test-repository",
+      "to": "repeatable-work-testing",
+      "kind": "source"
+    },
+    {
+      "from": "real-work-test-repository",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
+      "from": "real-work-ui-acceptance",
+      "to": "real-work-test-packets",
+      "kind": "part_of"
+    },
+    {
+      "from": "real-work-ui-acceptance",
+      "to": "repeatable-work-testing",
+      "kind": "source"
+    },
+    {
+      "from": "real-work-ui-acceptance",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
     },
     {
       "from": "repeatable-work-testing",

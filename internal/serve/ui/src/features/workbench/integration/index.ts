@@ -1,2 +1,3 @@
 export { WorkBoard, WorkOverview, WorkWave } from "./WorkExperience";
-export { initialWaveView, restoredPath, waveStartability } from "./integrationModel";
+export { initialWaveView, nextEnteredView, restoredPath, waveStartability } from "./integrationModel";
+export { StreamStatusNote } from "./StreamStatus";

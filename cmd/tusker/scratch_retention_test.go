@@ -467,19 +467,19 @@ func inlineProofTaskTest(t *testing.T) string {
 	return vault
 }
 
-func TestScratchReapOnManualClose(t *testing.T) {
+func TestScratchRetainedOnManualClose(t *testing.T) {
 	vault := inlineProofTaskTest(t)
 	dir := seedScratchTest(t, vault, "APP-T-0001")
 
 	if err := closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent", "reason": "accepted", "local": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if dirExists(dir) {
-		t.Fatalf("manual close left scratch behind: %s", dir)
+	if !dirExists(dir) {
+		t.Fatalf("manual close deleted scratch before retention: %s", dir)
 	}
 }
 
-func TestScratchReapOnTierOneDirectDone(t *testing.T) {
+func TestScratchRetainedOnTierOneDirectDone(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {
 		t.Fatal(err)
@@ -492,12 +492,12 @@ func TestScratchReapOnTierOneDirectDone(t *testing.T) {
 	if err := statusV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "done"}); err != nil {
 		t.Fatal(err)
 	}
-	if dirExists(dir) {
-		t.Fatalf("tier-one direct done left scratch behind: %s", dir)
+	if !dirExists(dir) {
+		t.Fatalf("tier-one direct done deleted scratch before retention: %s", dir)
 	}
 }
 
-func TestScratchReapOnDiscard(t *testing.T) {
+func TestScratchRetainedOnDiscard(t *testing.T) {
 	vault := pickupV7TestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Discard me", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
 	dir := seedScratchTest(t, vault, "APP-T-0001")
@@ -505,23 +505,75 @@ func TestScratchReapOnDiscard(t *testing.T) {
 	if err := discardV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "reason": "No longer desired."}); err != nil {
 		t.Fatal(err)
 	}
-	if dirExists(dir) {
-		t.Fatalf("discard left scratch behind: %s", dir)
+	if !dirExists(dir) {
+		t.Fatalf("discard deleted scratch before retention: %s", dir)
 	}
 }
 
 // The daemon's automated close only lands through the canonical projection, and
 // that path needs a full git/review-transaction fixture. Assert the wiring at the
 // source instead of standing up one; reapTaskScratch itself is covered above.
-func TestScratchReapOnReactorClose(t *testing.T) {
+func TestScratchNotReapedOnReactorClose(t *testing.T) {
 	source, err := readText("completion_reactor.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := source[strings.Index(source, "func projectCompletionTaskToCanonical("):]
 	body = body[:strings.Index(body, "\n}\n")]
-	if strings.Count(body, "reapTaskScratch(vaultPath, result.TaskID)") != 2 {
-		t.Fatal("canonical completion projection must reap task scratch on both return paths")
+	if strings.Contains(body, "reapTaskScratch(vaultPath, result.TaskID)") {
+		t.Fatal("canonical completion must leave scratch to the retention policy")
+	}
+}
+
+func TestRemainingArtifactRetention(t *testing.T) {
+	vault := inlineProofTaskTest(t)
+	dir := seedScratchTest(t, vault, "APP-T-0001")
+	if err := closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent", "reason": "accepted", "local": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	data, body, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := time.Now().UTC().Add(-7 * 24 * time.Hour)
+	data["closed_at"], data["accepted_at"] = closed.Format(time.RFC3339), closed.Format(time.RFC3339)
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, content); err != nil {
+		t.Fatal(err)
+	}
+	if plan, err := planScratchGC(vault, 7*24*time.Hour, closed.Add(7*24*time.Hour-time.Second)); err != nil || len(plan) != 0 {
+		t.Fatalf("before boundary plan=%v err=%v", plan, err)
+	}
+	if err := scratchKeepCmd(vault, Args{"keep": "APP-T-0001", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if plan, err := planScratchGC(vault, 7*24*time.Hour, closed.Add(7*24*time.Hour)); err != nil || len(plan) != 0 {
+		t.Fatalf("kept plan=%v err=%v", plan, err)
+	}
+	if err := scratchKeepCmd(vault, Args{"unkeep": "APP-T-0001", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planScratchGC(vault, 7*24*time.Hour, closed.Add(7*24*time.Hour))
+	if err != nil || len(plan) != 1 {
+		t.Fatalf("expiry plan=%v err=%v", plan, err)
+	}
+	if _, err := applyScratchGC(vault, plan, closed); err != nil {
+		t.Fatal(err)
+	}
+	if dirExists(dir) {
+		t.Fatal("eligible bytes survived expiry")
+	}
+	expired, _, err := parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stringField(expired, "artifacts_availability") != "expired" || stringField(expired, "artifacts_expired_at") == "" {
+		t.Fatalf("expiry receipt=%#v", expired)
 	}
 }
 

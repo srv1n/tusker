@@ -10,7 +10,7 @@
   the per-route remount (no router change is involved).
 */
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { PanelLeft } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -28,11 +28,64 @@ export function KnowledgeShell({
 }) {
   const store = useTreeStore();
   const open = store.isRailOpen();
+  const drawerRef = useRef<HTMLElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const openFocusFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      openerRef.current?.focus();
+      openerRef.current = null;
+      return;
+    }
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        store.setRailOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const drawer = drawerRef.current;
+      if (!drawer) return;
+      const focusable = Array.from(
+        drawer.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (document.activeElement === drawer || !drawer.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    openFocusFrameRef.current = requestAnimationFrame(() => drawerRef.current?.focus());
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (openFocusFrameRef.current !== null) {
+        cancelAnimationFrame(openFocusFrameRef.current);
+        openFocusFrameRef.current = null;
+      }
+    };
+  }, [open, store]);
 
   return (
     <div className="flex h-full min-h-0 w-full">
       {/* Static rail — wide viewports. */}
-      <aside className="hidden w-64 flex-none border-r border-line lg:block">
+      <aside aria-label="Documents explorer" className="hidden w-64 flex-none border-r border-line lg:block">
         <KnowledgeTree projectId={projectId} currentSubject={currentSubject} />
       </aside>
 
@@ -43,10 +96,43 @@ export function KnowledgeShell({
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div
-            className="absolute inset-0 bg-black/30 backdrop-blur-[1px]"
+            aria-hidden="true"
+            className="absolute inset-0 bg-black/25"
             onClick={() => store.setRailOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col border-r border-line bg-surface shadow-xl">
+          <aside
+            ref={drawerRef}
+            aria-label="Documents explorer"
+            aria-modal="true"
+            className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col border-r border-line bg-surface shadow-lg focus:outline-none"
+            role="dialog"
+            tabIndex={-1}
+            onClickCapture={(event) => {
+              // A document link can unmount this shell before the close effect
+              // runs. Queue focus against the replacement toggle as a fallback;
+              // route chunk loading can take longer than one animation frame.
+              const target = event.target as Element | null;
+              if (!target?.closest("a[href]")) return;
+              let previousToggle = document.querySelector<HTMLElement>('[aria-label="Toggle docs explorer"]');
+              const restore = (attempt = 0): void => {
+                // Route chunk loading may replace the current shell after the
+                // drawer has closed. Wait for the replacement toggle, while
+                // stopping if the operator immediately reopens the drawer.
+                if (document.querySelector('[role="dialog"]')) return;
+                const toggle = document.querySelector<HTMLElement>('[aria-label="Toggle docs explorer"]');
+                const active = document.activeElement;
+                // Stop once the operator moves to another control. Only repair
+                // focus lost when navigation replaces the previous toggle.
+                if (active !== document.body && active !== previousToggle && active !== toggle) return;
+                if (toggle) {
+                  if (document.activeElement !== toggle) toggle.focus();
+                  previousToggle = toggle;
+                }
+                if (attempt < 40) window.setTimeout(() => restore(attempt + 1), 50);
+              };
+              window.setTimeout(() => restore(), 0);
+            }}
+          >
             <KnowledgeTree projectId={projectId} currentSubject={currentSubject} />
           </aside>
         </div>
@@ -79,10 +165,20 @@ export function ViewSwitch({ projectId, active }: { projectId: string; active: "
     );
   return (
     <div className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5">
-      <Link to="/p/$projectId/knowledge" params={{ projectId }} className={tab(active === "files")}>
+      <Link
+        to="/p/$projectId/knowledge"
+        params={{ projectId }}
+        aria-current={active === "files" ? "page" : undefined}
+        className={tab(active === "files")}
+      >
         Files
       </Link>
-      <Link to="/p/$projectId/knowledge/graph" params={{ projectId }} className={tab(active === "graph")}>
+      <Link
+        to="/p/$projectId/knowledge/graph"
+        params={{ projectId }}
+        aria-current={active === "graph" ? "page" : undefined}
+        className={tab(active === "graph")}
+      >
         Graph
       </Link>
     </div>

@@ -800,6 +800,14 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		}
 		data["complexity"] = complexity
 	}
+	for _, field := range []string{"work-level", "review-level"} {
+		if level := strings.ToLower(strings.TrimSpace(args.String(field))); level != "" {
+			if !validModelLevel(level) {
+				return tuskerError(errorInvalidArg, field+" must be light, standard, or demanding")
+			}
+			data[strings.ReplaceAll(field, "-", "_")] = level
+		}
+	}
 	if len(specRefs) > 0 {
 		data["spec_refs"] = specRefs
 	}
@@ -1280,7 +1288,20 @@ func attemptV7Cmd(args Args) error {
 		}
 		args["owner"] = firstNonEmpty(args.String("owner"), args.String("by"), "agent:"+defaultActorName())
 		args["source"] = firstNonEmpty(args.String("source"), "tusker_cli")
-		return workSessionStartCmd(args)
+		if err := workSessionStartCmd(args); err != nil {
+			return err
+		}
+		// The runtime work session is the authority. Link a file attempt note
+		// bound to it so the next command in the chain (`finish`/`handoff`)
+		// recognizes the session instead of reporting "No attempt exists".
+		if vaultPath, vaultErr := resolveVaultPath(args, false); vaultErr == nil {
+			if taskID := strings.TrimSpace(args.String("id")); taskID != "" {
+				if _, linkErr := ensureFileAttemptForWorkSession(vaultPath, taskID); linkErr != nil {
+					return linkErr
+				}
+			}
+		}
+		return nil
 	case "handoff":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
 		return attemptV7HandoffCmd(args)
@@ -1357,6 +1378,12 @@ func attemptV7HandoffCmd(args Args) error {
 	args["by"] = actor
 	if err := requireAgentWorkSession(vaultPath, taskID, actor, args); err != nil {
 		return err
+	}
+	// A live runtime work session without a file attempt note is the reported
+	// start/finish mismatch. Materialize the bound note (honestly marked)
+	// instead of failing, and refuse unrelated worktree notes.
+	if _, bridgeErr := ensureFileAttemptForHandoff(vaultPath, taskID, actor); bridgeErr != nil {
+		return bridgeErr
 	}
 	attemptID := args.String("attempt-id")
 	if attemptID == "" {
@@ -3632,7 +3659,7 @@ func latestV7AttemptID(vaultPath, taskID string) (string, error) {
 	}
 	attempts := idx.Attempts[taskID]
 	if len(attempts) == 0 {
-		return "", tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state; run `tusker attempt start "+taskID+"`, then retry `tusker finish "+taskID+" --request-review`"))
+		return "", v7MissingAttemptError(taskID)
 	}
 	sort.Slice(attempts, func(i, j int) bool { return stringField(attempts[i].Data, "id") < stringField(attempts[j].Data, "id") })
 	return stringField(attempts[len(attempts)-1].Data, "id"), nil
@@ -4389,7 +4416,7 @@ func v7ReviewerControlMutationAllowed(vaultPath string, args Args, branch string
 func v7ProtectedImplementationFlowHint(args Args) string {
 	taskID := firstNonEmpty(args.String("id"), args.String("_pos0"), "<TASK-ID>")
 	if strings.EqualFold(args.String("status"), "active") || strings.EqualFold(args.String("_pos1"), "active") {
-		return "no durable `active` status; use `tusker attempt start " + taskID + "` → `tusker verify add " + taskID + " …` → `tusker attempt handoff " + taskID + "` → `tusker finish " + taskID + " --request-review` (auto-proposes on protected branches)."
+		return "no durable `active` status; use `tusker work start " + taskID + " --by <agent>` (claims the same session as `tusker attempt start " + taskID + "`) → `tusker verify add " + taskID + " …` → `tusker work submit " + taskID + " --by <agent> …` (or legacy `tusker attempt handoff " + taskID + "` → `tusker finish " + taskID + " --request-review`, auto-proposes on protected branches)."
 	}
 	return "durable state changes on this branch go through `tusker finish " + taskID + " --request-review` (auto-proposes on implementation branches)."
 }

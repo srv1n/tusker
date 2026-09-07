@@ -4,9 +4,8 @@
   Mirrors the app's proven doc-editor stack (features/editor) at the subset the
   documentation corpus needs: StarterKit's marks + list/heading/blockquote/code
   stack, GFM tables, and the `tiptap-markdown` round-trip — plus the corpus
-  wiki-link node. StarterKit's plain code block is kept (fences round-trip through
-  tiptap-markdown's default code_block serializer); mermaid/lowlight are out of
-  scope here, so a fenced block simply renders as a code slab.
+  wiki-link node. Mermaid and ordinary code fences reuse the shared code-block
+  extension, so the Markdown model stays identical to the main editor.
 */
 
 import StarterKit from "@tiptap/starter-kit";
@@ -18,12 +17,16 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import type { Extensions } from "@tiptap/core";
 import { KnowledgeWikilink } from "./wikilink";
 import type { DocLinkRef } from "./types";
+import { CodeBlockWithMermaid } from "@/features/editor/codeblock";
 
 export function buildKnowledgeExtensions(
   resolve: (ref: string) => DocLinkRef | undefined,
 ): Extensions {
   return [
     StarterKit.configure({
+      // Reuse the existing code block renderer so Mermaid diagrams render in
+      // Documents without introducing a second diagram implementation.
+      codeBlock: false,
       link: {
         openOnClick: false,
         autolink: true,
@@ -39,6 +42,7 @@ export function buildKnowledgeExtensions(
       transformPastedText: true,
       transformCopiedText: true,
     }),
+    CodeBlockWithMermaid,
     Table.configure({ resizable: false }),
     TableRow,
     TableHeader,

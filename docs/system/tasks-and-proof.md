@@ -41,6 +41,10 @@ project checks also pass. `done`, `cancelled`, and `superseded` are terminal.
 
 ## Proof
 
+Tusker-owned transient task artifacts expire seven days after terminal completion. Close and discard do not delete them immediately. Active or reopened work, human waits, unknown ownership, and `tusker gc --keep <TASK-ID>` are protected; `--unkeep` returns the task to its existing terminal-time window. Expiry removes eligible bytes but retains the task/evidence result and an `artifacts_expired_at` receipt.
+
+Worker `PLAN.md` scratch notes are optional. A missing note is never created merely to start or resume work; packets, claim/workspace identity, structured outcomes, blockers, and evidence pointers carry the required resume state.
+
 Each verification row names the acceptance IDs that it covers. It also stores
 the check, result, and notes. A passing command is not enough when it does not
 cover an acceptance row.
@@ -52,6 +56,16 @@ fields by hand.
 
 A dependency points to another task. A gate points to a fact that needs a
 person or an external system. The CLI projects both into readiness.
+
+Human-owned gates (`owner: human:<name>`) resolve only through a native
+signed human receipt issued in the UI; `gate satisfy` and `gate waive` refuse
+without one, and there is no CLI bypass. The repeatable demo
+(`tusker demo seed --with-human-gate`) exercises this: the gated task cannot
+even move to ready until the owning human releases it.
+
+Delivery plans can declare cross-scope dependencies (`task` plus producer
+`scope`, hard only). The demo follow-up wave uses them to join two
+independently imported waves, and readiness reports the real blockers.
 
 ## Read one task
 
