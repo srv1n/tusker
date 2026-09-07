@@ -88,6 +88,23 @@ func TestRealWorkFixtureShape(t *testing.T) {
 	}
 }
 
+func TestDemoConfigureUnattendedWorkflow(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(vault), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	if err := demoConfigureUnattendedWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil || wf.Data.Codex.ApprovalPolicy != "never" {
+		t.Fatalf("demo workflow retained interactive approval policy: %#v err=%v", wf.Data.Codex, err)
+	}
+}
+
 // TestRealWorkFixtureStaticFiles checks the seeded sample project and
 // knowledge corpus writers without a built binary.
 func TestRealWorkFixtureStaticFiles(t *testing.T) {

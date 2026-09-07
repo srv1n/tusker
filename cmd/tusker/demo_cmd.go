@@ -116,6 +116,9 @@ func demoSeed(args Args) (map[string]any, error) {
 	if _, err := exec.run(repoRoot, "init", "--vault", vaultPath, "--yes", "--vault-only", "--no-mount"); err != nil {
 		return nil, err
 	}
+	if err := demoConfigureUnattendedWorkflow(vaultPath); err != nil {
+		return nil, err
+	}
 	if err := writeText(filepath.Join(vaultPath, "specs", "demo-parallel-waves.md"), demoSpecDoc()); err != nil {
 		return nil, err
 	}
@@ -235,6 +238,24 @@ func demoSeed(args Args) (map[string]any, error) {
 		return nil, err
 	}
 	return demoSeedReport(repoRoot, manifest, false), nil
+}
+
+func demoConfigureUnattendedWorkflow(vaultPath string) error {
+	data, body, err := parseFrontmatterMustRead(workflowPath(vaultPath))
+	if err != nil {
+		return err
+	}
+	codex, _ := data["codex"].(map[string]any)
+	if codex == nil {
+		codex = map[string]any{}
+		data["codex"] = codex
+	}
+	codex["approval_policy"] = "never"
+	content, err := serializeDocument(data, body, nil)
+	if err != nil {
+		return err
+	}
+	return writeText(workflowPath(vaultPath), content)
 }
 
 func fixtureDeps(key string) []string {
