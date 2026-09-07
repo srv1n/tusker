@@ -2010,6 +2010,9 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 	if d == nil || d.store == nil || run.RecordID == "" || run.Lane == runLaneReview || !isDispatchCapacityLeaseState(run.LeaseState) {
 		return run, false, nil
 	}
+	if containsString(wfFile.Data.Tracker.ReviewStates, stringField(note.Data, "status")) {
+		return run, false, nil
+	}
 	if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
 		return run, false, err
 	} else if ok {
