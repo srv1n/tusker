@@ -206,6 +206,7 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 			RunnerPathPrefix: req.Start.RunnerPathPrefix,
 			Command:          req.Start.Command, CommandArgv: append([]string(nil), req.Start.CommandArgv...), CommandExecutableFP: req.Start.CommandExecutableFP, CommandSearchPath: req.Start.CommandSearchPath,
 			RunnerProfile: req.Start.RunnerProfile, RunnerHarness: req.Start.RunnerHarness, RunnerModel: req.Start.RunnerModel, RunnerEffort: req.Start.RunnerEffort,
+			Actor:    req.Start.Actor,
 			NotePath: req.Start.NotePath, VaultPath: req.Start.VaultPath, CodexPolicy: req.Start.CodexPolicy, ExternalLoop: req.Start.ExternalLoop,
 			ContainmentPGID: req.ContainmentPGID,
 		}

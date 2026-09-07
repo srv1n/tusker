@@ -369,6 +369,9 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		path := runnerEnvValue(baseEnv, "PATH")
 		baseEnv = setEnvValue(baseEnv, "PATH", strings.Join(uniquePathStrings([]string{prefix, path}), string(os.PathListSeparator)))
 	}
+	if actor := strings.TrimSpace(req.Actor); actor != "" {
+		baseEnv = setEnvValue(baseEnv, "TUSKER_ACTOR", actor)
+	}
 	return append(baseEnv,
 		"TUSKER_PROJECT_ID="+req.ProjectID,
 		"TUSKER_CANONICAL_PROJECT_ID="+canonicalProjectID,
@@ -457,6 +460,7 @@ type runnerLaunchEnv struct {
 	RunnerHarness     string
 	RunnerModel       string
 	RunnerEffort      string
+	Actor             string
 	CodexPolicy       CodexPolicy
 	ExternalLoop      ExternalLoopLaunchContext
 }

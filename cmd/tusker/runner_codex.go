@@ -26,6 +26,7 @@ func (r *CodexRunner) Start(ctx context.Context, req StartRequest) (*StartResult
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
 		RepoRoot: req.RepoRoot, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath, Command: req.Command, CommandArgv: append([]string(nil), req.CommandArgv...), CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
+		Actor:    req.Actor,
 		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
 		ExternalLoop: req.ExternalLoop,
 	}, r.Capabilities())

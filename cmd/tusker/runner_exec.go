@@ -41,6 +41,7 @@ type runnerExecRequest struct {
 	RunnerHarness       string
 	RunnerModel         string
 	RunnerEffort        string
+	Actor               string
 	NotePath            string
 	VaultPath           string
 	ResumeMode          bool
@@ -214,6 +215,7 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		CommandSearchPath: req.CommandSearchPath,
 		NotePath:          req.NotePath, VaultPath: req.VaultPath, SessionRef: req.SessionRef, MessageRef: req.MessageRef,
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
+		Actor:        req.Actor,
 		CodexPolicy:  withDefaultCodexPolicy(req.CodexPolicy),
 		ExternalLoop: req.ExternalLoop,
 	})
