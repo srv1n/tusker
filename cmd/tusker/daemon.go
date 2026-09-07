@@ -3661,7 +3661,8 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if err != nil {
 		return run, false, err
 	}
-	directiveActive := runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC())
+	directiveQueued := runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC())
+	directiveActive := directiveQueued
 	if !directiveActive {
 		auth, authErr := d.store.LatestRunAuthorization(project.ProjectID, run.RecordID)
 		if authErr != nil {
@@ -3955,7 +3956,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		d.beforeRunLeaseClaim(run)
 	}
 	var materialLock, waveLock *v7DocumentLock
-	if directiveActive && directive != nil && directive.WaveID != "" {
+	if directiveQueued && directive != nil && directive.WaveID != "" {
 		materialLock, err = acquireV7MaterialEpochLock(project.VaultRoot)
 		if err != nil {
 			return run, false, err
@@ -4025,7 +4026,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		BranchName: branchName, ParentAttemptID: parentAttemptID, StartedAt: startedAt,
 	}
 	var claimResult runClaimResult
-	if directiveActive {
+	if directiveQueued {
 		claimResult, err = ownership.claimExistingWithDirective(claimRun, attemptID, authorization, attemptIntent)
 	} else {
 		claimResult, err = ownership.claimExistingWithAuthorization(claimRun, attemptID, authorization, attemptIntent)
