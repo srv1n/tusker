@@ -484,12 +484,24 @@ func workSessionLifecycleCmd(args Args, action string) error {
 }
 
 func workerLifecycleControl(args Args, action string) error {
-	return workerLifecycleControlAt("http://"+defaultServeAddr, args, action)
+	request, err := workerLifecycleRequest(args, action)
+	if err != nil {
+		return err
+	}
+	if err := workerLifecycleControlAt("http://"+defaultServeAddr, request); err == nil {
+		return nil
+	}
+	payload, _ := json.Marshal(request)
+	if err := writeConfigTextAtomically(workerLifecycleRequestPath(os.Getenv("TUSKER_WORKSPACE")), string(payload)); err != nil {
+		return tuskerError(errorInvalidTransition, "worker lifecycle handoff failed: "+err.Error())
+	}
+	emitJSON(map[string]any{"ok": true, "action": action, "attempt_id": request.Worker.AttemptID, "authority": "resident_daemon", "handoff": "workspace_request"})
+	return nil
 }
 
-func workerLifecycleControlAt(serveURL string, args Args, action string) error {
+func workerLifecycleRequest(args Args, action string) (daemonControlRequest, error) {
 	if action != "heartbeat" && action != "submit" && action != "fail" && action != "release" {
-		return tuskerError(errorInvalidTransition, "dispatched worker lifecycle action is not supported: "+action)
+		return daemonControlRequest{}, tuskerError(errorInvalidTransition, "dispatched worker lifecycle action is not supported: "+action)
 	}
 	w := daemonWorkerLifecycleRequest{
 		Action: action, AttemptID: os.Getenv("TUSKER_ATTEMPT_ID"), RecordID: os.Getenv("TUSKER_RECORD_ID"),
@@ -498,7 +510,10 @@ func workerLifecycleControlAt(serveURL string, args Args, action string) error {
 		Deliverable: args.String("deliverable"), Verification: args.String("verification"),
 		GateVerdicts: firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), Reason: args.String("reason"),
 	}
-	request := daemonControlRequest{Command: "worker_lifecycle", ProjectID: os.Getenv("TUSKER_PROJECT_ID"), Identity: w.AttemptID, Worker: &w}
+	return daemonControlRequest{Command: "worker_lifecycle", ProjectID: os.Getenv("TUSKER_PROJECT_ID"), Identity: w.AttemptID, Worker: &w}, nil
+}
+
+func workerLifecycleControlAt(serveURL string, request daemonControlRequest) error {
 	payload, _ := json.Marshal(request)
 	capResp, err := http.Get(strings.TrimRight(serveURL, "/") + "/api/capability")
 	if err != nil {
@@ -524,7 +539,7 @@ func workerLifecycleControlAt(serveURL string, args Args, action string) error {
 	if err := json.NewDecoder(io.LimitReader(postResp.Body, 32<<10)).Decode(&resp); err != nil || postResp.StatusCode != http.StatusOK || !resp.OK {
 		return tuskerError(errorInvalidTransition, "worker lifecycle refused: "+resp.Reason)
 	}
-	emitJSON(map[string]any{"ok": true, "action": action, "attempt_id": w.AttemptID, "authority": "resident_daemon"})
+	emitJSON(map[string]any{"ok": true, "action": request.Worker.Action, "attempt_id": request.Worker.AttemptID, "authority": "resident_daemon"})
 	return nil
 }
 

@@ -184,9 +184,14 @@ class JourneyTest(unittest.TestCase):
 		Lane: runtimeRun.Lane, Workspace: runtimeRun.WorkspacePath, StatusPath: runtimeRun.StatusPath,
 		LeaseGeneration: runtimeRun.LeaseGeneration, WorkRevision: runtimeRun.WorkRevision,
 		Deliverable: "recovered implementation", Verification: "A1 command will run during review", GateVerdicts: "A1=pass"}
-	if err := daemon.applyWorkerLifecycle(daemonControlRequest{Command: "worker_lifecycle", Identity: runtimeRun.ActiveAttemptID, ProjectID: runtimeRun.ProjectID, Worker: &request}); err != nil {
-		_ = store.Close()
+	lifecycleRequest := daemonControlRequest{Command: "worker_lifecycle", Identity: runtimeRun.ActiveAttemptID, ProjectID: runtimeRun.ProjectID, Worker: &request}
+	rawRequest, _ := json.Marshal(lifecycleRequest)
+	if err := os.WriteFile(workerLifecycleRequestPath(runtimeRun.WorkspacePath), rawRequest, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if _, consumed, err := daemon.consumeWorkerLifecycleRequest(*runtimeRun); err != nil || !consumed {
+		_ = store.Close()
+		t.Fatalf("daemon-owned workspace lifecycle handoff: consumed=%v err=%v", consumed, err)
 	}
 	_ = store.Close()
 

@@ -2387,6 +2387,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		finished := runnerProcessFinishedAt(status)
 		run.ProcessPID = 0
 		run.UpdatedAt = finished
+		if updated, consumed, consumeErr := d.consumeWorkerLifecycleRequest(run); consumeErr != nil {
+			return run, changed, consumeErr
+		} else if consumed {
+			return *updated, true, nil
+		}
 		note, err := resolveNote(project.VaultRoot, run.RecordID)
 		if err != nil {
 			return run, changed, err

@@ -1,15 +1,50 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
+
+const workerLifecycleRequestFile = ".tusker-worker-lifecycle.json"
 
 func (d *Daemon) applyWorkerLifecycle(req daemonControlRequest) error {
 	if d == nil {
 		return fmt.Errorf("worker lifecycle request is incomplete")
 	}
 	return applyWorkerLifecycle(d.store, req)
+}
+
+func workerLifecycleRequestPath(workspace string) string {
+	return filepath.Join(workspace, workerLifecycleRequestFile)
+}
+
+func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool, error) {
+	path := workerLifecycleRequestPath(run.WorkspacePath)
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if len(raw) > 32<<10 {
+		return nil, false, fmt.Errorf("worker lifecycle request is oversized")
+	}
+	var req daemonControlRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, false, fmt.Errorf("decode worker lifecycle request: %w", err)
+	}
+	if err := d.applyWorkerLifecycle(req); err != nil {
+		return nil, false, err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return nil, false, err
+	}
+	updated, err := d.store.FindRunScoped(run.ProjectID, run.RecordID)
+	return updated, true, err
 }
 
 func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
