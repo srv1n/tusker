@@ -185,6 +185,28 @@ func TestSupervisorDecisionAppendFailureIsNotDiscarded(t *testing.T) {
 	}
 }
 
+func TestSupervisorDecisionUsesProjectScopedRunIdentity(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sink := filepath.Join(t.TempDir(), "events.jsonl")
+	for _, projectID := range []string{"project-1", "project-2"} {
+		if err := store.UpsertRun(RunStatus{ProjectID: projectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", EventSinkPath: sink}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	(&Daemon{store: store}).emitSupervisorDecision(SupervisorDecision{DecisionID: "decision-1", ProjectID: "project-1", RecordID: "APP-T-0001", Kind: string(SupervisorDecisionStopForAudit), Reason: "test"})
+	status, err := store.ReadInvariantCircuitStatus()
+	if err != nil || status.Open {
+		t.Fatalf("project-local record ID collision opened invariant circuit: %#v err=%v", status, err)
+	}
+	if text, err := readText(sink); err != nil || !strings.Contains(text, `"project_id":"project-1"`) {
+		t.Fatalf("supervisor decision was not appended to scoped sink: %q err=%v", text, err)
+	}
+}
+
 func TestEventLogPersistenceResumeReplaysSupervisorDecisionBeforeProbe(t *testing.T) {
 	stateRoot := t.TempDir()
 	store, err := OpenRuntimeStore(stateRoot)

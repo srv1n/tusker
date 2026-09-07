@@ -4613,7 +4613,7 @@ func (d *Daemon) emitSupervisorDecision(decision SupervisorDecision) {
 		d.tripEventLogPersistenceCircuit("supervisor_decision_store", firstNonEmpty(decision.RecordID, decision.ItemID), err)
 		return
 	}
-	run, err := d.store.FindRun(firstNonEmpty(saved.RecordID, saved.ItemID))
+	run, err := d.store.FindRunScoped(saved.ProjectID, firstNonEmpty(saved.RecordID, saved.ItemID))
 	if err != nil {
 		d.tripEventLogPersistenceCircuit("supervisor_decision_lookup", firstNonEmpty(saved.RecordID, saved.ItemID), err)
 		return
