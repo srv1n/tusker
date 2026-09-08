@@ -2612,6 +2612,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				run.LeaseState, run.AttemptOutcome = string(LeaseStateReleased), string(AttemptOutcomeSucceeded)
 				run.LastError, run.UpdatedAt, run.Terminal = reason, finished, false
 				clearActiveExecution(&run)
+				d.scheduleProjectReconcile(project.ProjectID)
 				return run, true, nil
 			}
 			noteStatus := classification.trackerState
