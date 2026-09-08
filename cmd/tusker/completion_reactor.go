@@ -2107,9 +2107,9 @@ func completionTaskRepoRelativePath(repoRoot, vaultPath, taskID string) (string,
 
 func materializeReviewedDone(stageRoot, vaultPath, taskRel string, result ReviewResult, transaction *completionTransaction) error {
 	path := filepath.Join(stageRoot, filepath.FromSlash(taskRel))
-	if info, err := os.Lstat(path); err != nil {
+	if info, err := os.Lstat(path); err != nil && !os.IsNotExist(err) {
 		return err
-	} else if !info.Mode().IsRegular() {
+	} else if err == nil && !info.Mode().IsRegular() {
 		return tuskerError(errorInvalidTransition, "reviewed task must remain a regular file before completion materialization")
 	}
 	canonicalPath := filepath.Join(canonicalProjectPath(vaultPath), "work", "tasks", result.TaskID+".md")
