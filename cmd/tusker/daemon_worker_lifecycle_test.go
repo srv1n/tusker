@@ -84,6 +84,11 @@ func TestWorkerSubmitQueuesUntilTerminalReconciliation(t *testing.T) {
 func TestDaemonMaterializesSandboxedWorkerSubmissionCommit(t *testing.T) {
 	repo := t.TempDir()
 	initializeOrchestrationGitRepo(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("owned/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", ".gitignore")
+	runGitDir(t, repo, "commit", "-m", "ignore generated output")
 	if err := os.MkdirAll(filepath.Join(repo, "owned"), 0o755); err != nil {
 		t.Fatal(err)
 	}

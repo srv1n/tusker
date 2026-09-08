@@ -123,7 +123,7 @@ func materializeWorkerSubmissionCommit(run RunStatus, materialScope []string) (s
 	if _, err := runGit("read-tree", parent); err != nil {
 		return "", err
 	}
-	if _, err := runGit(append([]string{"add", "-A", "--"}, materialScope...)...); err != nil {
+	if _, err := runGit(append([]string{"add", "-f", "-A", "--"}, materialScope...)...); err != nil {
 		return "", err
 	}
 	tree, err := runGit("write-tree")
