@@ -1103,7 +1103,14 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			}
 			status := stringField(note.Data, "status")
 			if !containsString(wfFile.Data.Tracker.ActiveStates, status) {
-				continue
+				projected, _, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
+				if err != nil {
+					return err
+				}
+				if !ok || !containsString(wfFile.Data.Tracker.ActiveStates, stringField(projected.Data, "status")) {
+					continue
+				}
+				note = projected
 			}
 			recordID := trackerRecordID(note)
 			if recordID == "" {

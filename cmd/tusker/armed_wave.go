@@ -185,6 +185,10 @@ func armedWaveProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index,
 		for key, value := range projectedState {
 			data[key] = value
 		}
+		if stringField(data, "readiness") == "ready" && stringField(data, "status") == "backlog" {
+			data["status"] = "ready"
+			data["next_owner"] = "agent"
+		}
 		task.Data = data
 		idx.Tasks[id] = task
 	}

@@ -21,11 +21,6 @@ func TestArmedWaveDrain(t *testing.T) {
 	root := idx.Tasks["APP-T-0001"]
 	root.Data["status"], root.Data["readiness"], root.Data["proof_status"] = "done", "done", "satisfied"
 	idx.Tasks["APP-T-0001"] = root
-	for _, id := range []string{"APP-T-0002", "APP-T-0003"} {
-		task := idx.Tasks[id]
-		task.Data["status"], task.Data["readiness"], task.Data["next_owner"] = "ready", "ready", "agent"
-		idx.Tasks[id] = task
-	}
 	snapshot := buildArmedWaveSnapshot(vault, idx, wave, nil, time.Unix(0, 0).UTC())
 	assertEqual(t, []string{"APP-T-0002", "APP-T-0003"}, snapshot.Frontier, "later parallel frontier")
 
