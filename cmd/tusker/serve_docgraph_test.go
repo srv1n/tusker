@@ -241,7 +241,7 @@ func TestDocLinksResolveUniqueAliasesAndBacklinks(t *testing.T) {
 
 	var target serveDocgraphDetail
 	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=aliased", &target)
-	if !hasBacklink(target.Backlinks, "alias-source", "wiki") {
+	if !hasBacklink(target.Backlinks, "alias-source", "link") {
 		t.Fatalf("alias link did not register a backlink: %#v", target.Backlinks)
 	}
 }
