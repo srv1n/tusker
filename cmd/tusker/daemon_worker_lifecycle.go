@@ -18,6 +18,18 @@ func (d *Daemon) applyWorkerLifecycle(req daemonControlRequest) error {
 	return applyWorkerLifecycle(d.store, req)
 }
 
+func queueWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
+	run, err := validateWorkerLifecycle(store, req)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	return writeConfigTextAtomically(workerLifecycleRequestPath(run.WorkspacePath), string(payload))
+}
+
 func workerLifecycleRequestPath(workspace string) string {
 	return filepath.Join(workspace, workerLifecycleRequestFile)
 }

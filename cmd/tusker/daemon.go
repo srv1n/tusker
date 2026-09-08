@@ -147,7 +147,13 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		control, err = startDaemonControlServer(d.stateRoot, func(reqCtx context.Context, req daemonControlRequest) daemonControlResponse {
 			switch req.Command {
 			case "worker_lifecycle":
-				if err := d.applyWorkerLifecycle(req); err != nil {
+				var err error
+				if req.Worker != nil && req.Worker.Action == "submit" {
+					err = queueWorkerLifecycle(d.store, req)
+				} else {
+					err = d.applyWorkerLifecycle(req)
+				}
+				if err != nil {
 					return daemonControlResponse{OK: false, Message: err.Error()}
 				}
 				return daemonControlResponse{OK: true}

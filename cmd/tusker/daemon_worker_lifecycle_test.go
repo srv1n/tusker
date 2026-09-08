@@ -52,6 +52,35 @@ func TestSandboxedWorkerLifecycleUsesDaemonBoundaryWithoutRuntimeStore(t *testin
 	}
 }
 
+func TestWorkerSubmitQueuesUntilTerminalReconciliation(t *testing.T) {
+	store := fairDispatchTestStore(t)
+	workspace := t.TempDir()
+	run := fairDispatchTestRun("project-1", "APP-T-0001")
+	run.ActiveAttemptID = "attempt-1"
+	run.LeaseState = string(LeaseStateRunning)
+	run.LeaseGeneration = 2
+	run.WorkspacePath = workspace
+	run.StatusPath = filepath.Join(workspace, "status.json")
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	req := daemonControlRequest{Command: "worker_lifecycle", ProjectID: run.ProjectID, Identity: run.ActiveAttemptID, Worker: &daemonWorkerLifecycleRequest{
+		Action: "submit", AttemptID: run.ActiveAttemptID, RecordID: run.RecordID, Lane: run.Lane,
+		Workspace: workspace, StatusPath: run.StatusPath, LeaseGeneration: run.LeaseGeneration,
+		WorkRevision: run.WorkRevision, Deliverable: "implemented", Verification: "passed",
+	}}
+	if err := queueWorkerLifecycle(store, req); err != nil {
+		t.Fatal(err)
+	}
+	if !fileExists(workerLifecycleRequestPath(workspace)) {
+		t.Fatal("submit was not queued in the worker workspace")
+	}
+	stored, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || stored == nil || stored.LeaseState != string(LeaseStateRunning) {
+		t.Fatalf("submit bypassed terminal reconciliation: run=%#v err=%v", stored, err)
+	}
+}
+
 func TestDispatchedWorkerStartRefusesWithoutRuntimeStore(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "must-not-exist")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

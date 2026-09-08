@@ -11,7 +11,13 @@ func (s *serveServer) handleWorkerLifecycle(w http.ResponseWriter, r *http.Reque
 		serveJSON(w, http.StatusBadRequest, serveActionResult{OK: false, Refused: true, Reason: "invalid worker lifecycle request"})
 		return
 	}
-	if err := applyWorkerLifecycle(s.store, req); err != nil {
+	var err error
+	if req.Worker != nil && req.Worker.Action == "submit" {
+		err = queueWorkerLifecycle(s.store, req)
+	} else {
+		err = applyWorkerLifecycle(s.store, req)
+	}
+	if err != nil {
 		serveJSON(w, http.StatusConflict, serveActionResult{OK: false, Refused: true, Reason: err.Error()})
 		return
 	}
