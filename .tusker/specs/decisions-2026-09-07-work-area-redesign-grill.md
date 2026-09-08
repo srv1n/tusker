@@ -122,3 +122,18 @@ The user further clarified that initial task preparation should be detailed enou
 User requests a repeatable seeded test project entirely controllable by CLI: two or three waves, two manually startable in parallel, multiple simple timer-like tasks with observable progress and reset. They require CLI parity for UI capabilities so agents do not need computer access. Recorded in [[repeatable-work-testing]], including genuine deterministic attempts versus provider conformance, CLI contracts, cleanup boundaries and acceptance scenarios.
 
 User approves explicit configured fallback only. They prefer the existing Documents folder/file tree and clickable browsing shown in their screenshot; functional structure is good and needs visual polish, front-matter improvements and better CLI helpers. They explicitly expand this session to generic product/backend/CLI/UI design. No runtime implementation or cleanup is performed by this decision.
+
+
+## Model setup — manual first
+
+User prefers manual configuration now, populated from current harness model/reasoning catalogs through ACP/CLI where available, rather than investing in an automatic setup recommendation flow. Resolve the task's level when it starts; use the first configured model/profile and allow overrides. Earlier explicit-only fallback remains in force. Detailed requirements and compatibility defaults are in [[model-level-configuration]]. Existing source has four complexity values and partial/mocked settings, so three-level UI must preserve legacy routing rather than silently rewriting history.
+
+
+## Planning fidelity, wave promises and skill entry
+
+User identifies compaction loss as a major planning risk and wants accurate ongoing capture, then detailed task authoring/acceptance and dependency ordering on request. They explicitly defer formal spec-change controls: update the spec and tell the executing agent what changed. They approve compact completion receipts and request an authored one- or two-line wave promise stated as an enabled capability, such as OAuth sign-in or an embeddings request. They want minimal stage-specific guidance via progressive disclosure and are open to one or multiple skills. The proposed two-entry package, capture/coverage checks and concrete current skill conflicts are recorded in [[planning-handoff-and-agent-entry]]; package count is a recommendation, not a confirmed user decision. No installed skill or executing task was changed.
+
+
+## Correction — one Tusker operating skill, external design methods
+
+User rejects packaging a Tusker design/grilling skill. People can use any external specification method (including Matt Pocock grilling/domain-modeling skills). Tusker begins with its documentation format and creating/organizing tracked work. Confirmed one Tusker skill with progressive references covering documentation, task authoring, waves, CLI, configuration, daemon/runtime, execution and review. The previous two-entry recommendation is superseded; external conversation-capture suggestions are not mandatory Tusker procedures. Updated [[planning-handoff-and-agent-entry]] accordingly; no installed skills changed.

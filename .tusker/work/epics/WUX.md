@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-07T04:07:03Z"
-updated_at: "2026-09-07T06:07:41Z"
-state_rev: "sha256:9e8a9568920c467fdc2826cdb054feff475cb06182a3c74657a6ecb98dac238f"
+updated_at: "2026-09-07T07:39:29Z"
+state_rev: "sha256:3552320065b093ac77a822e0a9699489edaee8c6a3ff725cbc2a2bfa238320f0"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -56,6 +56,11 @@ TBD.
 | [[WUX-T-0006]] | ready | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[WUX-T-0008]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[WUX-T-0009]] | backlog | blocked_dependency | Wait for dependency WUX-T-0003 to reach done. |
+| [[WUX-T-0010]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[WUX-T-0011]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[WUX-T-0012]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[WUX-T-0013]] | ready | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[WUX-T-0014]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 
 ## Recently completed
 

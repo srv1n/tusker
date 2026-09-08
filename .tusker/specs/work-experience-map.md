@@ -95,3 +95,12 @@ User confirms workers have been assigned externally. Continue design in [[work-k
 ## Scope expansion — product experience
 
 The user expands the destination to coherent Tusker UI, CLI and backend experience. This supersedes the earlier UI-only design boundary for future specifications, while retaining the ownership of existing implementation packets and the prohibition on implicit execution. [[repeatable-work-testing]] specifies CLI-driven seeded parallel waves and safe reset. [[work-knowledge-and-retention]] records the approved existing Documents file tree, explicit-only model fallbacks, metadata helpers and retention. Remaining work is translating these new contracts into separately owned implementation tasks and evaluating the rendered Documents polish.
+
+
+## Implementation ownership — model and Documents streams
+
+The user authorized parallel implementation. Existing Codex task “Impleemnt Execution” continues model wave W-0014 sequentially. Documents wave W-0015 contains two independent tickets: WUX-T-0013 (Documents UI) and WUX-T-0014 (Documents CLI); native implementation subagents in this design task are running those directly. No resident wave dispatch, daemon start or automation setting change was performed. Repeatable testing remains with the user's other teammate.
+
+Explicit ownership amendment: Documents CLI may touch only documentation-command dispatch/help in cmd/tusker/cli.go and only Documentation sections of docs/system/cli.md, preserving model-command changes and rereading before narrow patches. The model owner was notified. UI owns features/knowledge and its named test/preview/report paths; it does not change Settings/Work/global CSS.
+
+Task-ergonomics review recommends retaining the current task/packet/capsule structure. A sample WUX-T-0010 capsule was 1,005 bytes, task 4,014 bytes and packet 5,035 bytes (bytes, not tokenizer counts). Improvements: task-specific artifact obligations, concise start-here guidance/spec anchors, named verification outcomes and measured repeated-context reduction through existing trust-roadmap work. No schema rewrite is authorized or justified by this sample. Overbroad artifact wording was corrected in the model delivery source and sent directly to its active owner: backend reports for backend tickets; screenshot/critic only for the UI ticket. Active lifecycle/proof records were not hand-edited or reimported.

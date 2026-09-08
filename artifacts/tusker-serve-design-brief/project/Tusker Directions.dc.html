@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#E6E4DF;color:#15140F;-webkit-font-smoothing:antialiased;font-family:Archivo,"Helvetica Neue",Arial,sans-serif}
+  a{color:#2F5CA8;text-decoration:none;border-bottom:1px solid rgba(47,92,168,.35)}
+  a:hover{color:#204480;border-bottom-color:#204480}
+</style>
+</helmet>
+
+<section style="padding:72px 72px 120px;display:flex;flex-direction:column;gap:44px">
+
+  <div style="max-width:760px;display:flex;flex-direction:column;gap:14px">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#7C776B">Turn 1 · visual direction · shell and Today</div>
+    <h1 style="margin:0;font-size:40px;line-height:1.1;font-weight:600;letter-spacing:-.025em">Two ways to be a calm release manager</h1>
+    <p style="margin:0;font-size:16px;line-height:1.6;color:#4A463C;text-wrap:pretty">Same information architecture, same content, same attention rules. What differs is whether Tusker reads as a printed release brief or as an operating console. Pick one and I'll build the full clickable IA on it — Plan, Deliveries, Knowledge, Settings, Diagnostics.</p>
+  </div>
+
+  <div style="display:flex;gap:72px;align-items:flex-start;flex-wrap:wrap">
+
+    <!-- ============================== OPTION 1A ============================== -->
+    <div id="1a" style="display:flex;flex-direction:column;gap:20px;width:1440px">
+      <div style="display:flex;align-items:baseline;gap:16px;padding-bottom:14px;border-bottom:2px solid #15140F">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:500;background:#15140F;color:#FBFAF7;padding:4px 9px">1a</span>
+        <span style="font-size:26px;font-weight:600;letter-spacing:-.02em">Ledger</span>
+        <span style="font-size:15px;color:#5A5548;max-width:640px">Editorial Swiss on warm paper. No cards, no chrome — hairlines and negative space do the grouping. Reads like the morning brief a release manager would print.</span>
+      </div>
+
+      <!-- ---------- 1a · Global Today ---------- -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#7C776B">Global Today · 1440</div>
+      <div style="width:1440px;height:1080px;background:#FBFAF7;border:1px solid #C9C5B8;display:flex;overflow:hidden;font-variant-numeric:tabular-nums">
+
+        <!-- nav -->
+        <aside style="width:240px;flex:none;border-right:1px solid #DEDBD2;display:flex;flex-direction:column;padding:26px 0 18px">
+          <div style="padding:0 24px 30px;display:flex;align-items:baseline;gap:8px">
+            <span style="font-size:19px;font-weight:600;letter-spacing:-.02em">tusker</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#8E887A">factory</span>
+          </div>
+          <div style="display:flex;flex-direction:column">
+            <div style="padding:9px 24px;background:#15140F;color:#FBFAF7;font-size:14px;font-weight:500">Today</div>
+            <div style="padding:9px 24px;font-size:14px;color:#4A463C">Search</div>
+          </div>
+          <div style="padding:34px 24px 10px;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#78736A">Projects</div>
+          <div style="display:flex;flex-direction:column">
+            <div style="padding:8px 24px;display:flex;align-items:center;justify-content:space-between;font-size:14px;color:#15140F">
+              <span>tusker</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;color:#B23B2C">1</span>
+            </div>
+            <div style="padding:8px 24px;display:flex;align-items:center;justify-content:space-between;font-size:14px;color:#15140F">
+              <span>tuskerbar</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;color:#B23B2C">1</span>
+            </div>
+            <div style="padding:8px 24px;font-size:14px;color:#4A463C">tusker-docs</div>
+          </div>
+          <div style="padding:22px 24px 0"><span style="font-size:13.5px;color:#7C776B">+ Add project</span></div>
+          <div style="margin-top:auto;padding:0 24px;display:flex;flex-direction:column;gap:14px">
+            <div style="font-size:13.5px;color:#4A463C">Settings</div>
+            <div style="border-top:1px solid #DEDBD2;padding-top:14px;display:flex;align-items:center;gap:9px">
+              <span style="width:7px;height:7px;background:#B8791C;flex:none"></span>
+              <span style="font-size:12.5px;color:#4A463C">Limited</span>
+            </div>
+          </div>
+        </aside>
+
+        <!-- content -->
+        <div style="flex:1;min-width:0;padding:40px 64px;display:flex;flex-direction:column;gap:40px">
+
+          <header style="display:flex;align-items:flex-end;justify-content:space-between;gap:32px;border-bottom:2px solid #15140F;padding-bottom:18px">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <h2 style="margin:0;font-size:34px;font-weight:600;letter-spacing:-.025em;line-height:1">Today</h2>
+              <sc-if value="{{ attSome }}" hint-placeholder-val="{{ true }}"><p style="margin:0;font-size:15.5px;color:#4A463C">Two decisions are waiting. Three deliveries are moving across two projects.</p></sc-if>
+              <sc-if value="{{ attNone }}" hint-placeholder-val="{{ false }}"><p style="margin:0;font-size:15.5px;color:#4A463C">Nothing needs you. Three deliveries are moving across two projects.</p></sc-if>
+            </div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#78736A">Tue 28 Jul · 10:32</div>
+          </header>
+
+          <sc-if value="{{ attSome }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:0">
+            <div style="display:flex;align-items:baseline;gap:12px;padding-bottom:12px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#15140F;font-weight:500">Needs your attention</span>
+              <span style="flex:1;border-bottom:1px solid #DEDBD2"></span>
+            </div>
+
+            <div style="border-top:2px solid #B23B2C;background:#FDF5F3;padding:22px 24px;display:grid;grid-template-columns:132px 1fr 200px;gap:28px;align-items:start">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#B23B2C;font-weight:500">Release failed</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tuskerbar</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">41m ago</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <h3 style="margin:0;font-size:19px;font-weight:600;letter-spacing:-.015em">Release failed after promotion; production is unchanged.</h3>
+                <p style="margin:0;font-size:14.5px;line-height:1.55;color:#4A463C;max-width:62ch">The notarized build was promoted to <code style="font-family:'JetBrains Mono',monospace;font-size:13px">main</code> and passed the full gate. The release profile stopped at signing, so nothing reached users. Rolling back is not required.</p>
+                <p style="margin:4px 0 0;font-size:13.5px;color:#7C776B">Affects — TuskerBar 0.9 notarized build · 5 of 5 outcomes verified</p>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px;align-items:stretch">
+                <button style="border:none;background:#B23B2C;color:#fff;padding:11px 14px;font-size:14px;font-weight:500;border-radius:3px;text-align:center">See what failed</button>
+                <button style="border:1px solid #C9C5B8;background:transparent;color:#15140F;padding:10px 14px;font-size:13.5px;border-radius:3px;text-align:center">Retry release</button>
+              </div>
+            </div>
+
+            <sc-if value="{{ attTwo }}" hint-placeholder-val="{{ true }}">
+            <div style="border-top:2px solid #B8791C;background:#FCF8F1;padding:22px 24px;margin-top:14px;display:grid;grid-template-columns:132px 1fr 200px;gap:28px;align-items:start">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#8C5D14;font-weight:500">Runner unavailable</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tusker</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">3h ago</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <h3 style="margin:0;font-size:19px;font-weight:600;letter-spacing:-.015em">The Build routine runner is unavailable. Tusker found another copy.</h3>
+                <p style="margin:0;font-size:14.5px;line-height:1.55;color:#4A463C;max-width:62ch">The configured executable no longer answers its version probe, so Tusker refused to claim work rather than start a run it could not finish. Two outcomes are queued behind it. Independent branches are still building.</p>
+                <p style="margin:4px 0 0;font-size:13.5px;color:#7C776B">Affects — Plan authorization binds to exact reviewed identity · 2 queued outcomes</p>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <button style="border:none;background:#15140F;color:#FBFAF7;padding:11px 14px;font-size:14px;font-weight:500;border-radius:3px">Use discovered copy</button>
+                <button style="border:1px solid #C9C5B8;background:transparent;color:#15140F;padding:10px 14px;font-size:13.5px;border-radius:3px">Open Diagnostics</button>
+              </div>
+            </div>
+            </sc-if>
+          </div>
+          </sc-if>
+
+          <div style="display:flex;flex-direction:column">
+            <div style="display:flex;align-items:baseline;gap:12px;padding-bottom:6px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#15140F;font-weight:500">Working across projects</span>
+              <span style="flex:1;border-bottom:1px solid #DEDBD2"></span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#78736A">3</span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:132px 1fr 260px 150px;gap:28px;align-items:center;padding:18px 0;border-bottom:1px solid #E7E4DB">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tusker</span>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <span style="font-size:16.5px;font-weight:500;letter-spacing:-.01em">Plan authorization binds to exact reviewed identity</span>
+                <span style="font-size:13.5px;color:#4A463C">Checking the work — independent review of 2 outcomes</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;gap:3px;height:4px">
+                  <span style="flex:1;background:#15140F"></span><span style="flex:1;background:#15140F"></span><span style="flex:1;background:#2F5CA8"></span><span style="flex:1;background:#E1DED4"></span><span style="flex:1;background:#E1DED4"></span>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#7C776B">4 of 7 outcomes verified</span>
+              </div>
+              <span style="font-size:13.5px;color:#2F5CA8;text-align:right">View delivery</span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:132px 1fr 260px 150px;gap:28px;align-items:center;padding:18px 0;border-bottom:1px solid #E7E4DB">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tusker</span>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <span style="font-size:16.5px;font-weight:500;letter-spacing:-.01em">Runner health is probed before any claim</span>
+                <span style="font-size:13.5px;color:#4A463C">Building — 2 tasks are implementing outcomes</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;gap:3px;height:4px">
+                  <span style="flex:1;background:#15140F"></span><span style="flex:1;background:#2F5CA8"></span><span style="flex:1;background:#E1DED4"></span><span style="flex:1;background:#E1DED4"></span><span style="flex:1;background:#E1DED4"></span>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#7C776B">1 of 3 outcomes verified</span>
+              </div>
+              <span style="font-size:13.5px;color:#2F5CA8;text-align:right">View delivery</span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:132px 1fr 260px 150px;gap:28px;align-items:center;padding:18px 0;border-bottom:1px solid #E7E4DB">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tuskerbar</span>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <span style="font-size:16.5px;font-weight:500;letter-spacing:-.01em">The resident runtime owns the departure timetable</span>
+                <span style="font-size:13.5px;color:#4A463C">Scheduled for promotion at 02:00 — full gate green</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;gap:3px;height:4px">
+                  <span style="flex:1;background:#15140F"></span><span style="flex:1;background:#15140F"></span><span style="flex:1;background:#15140F"></span><span style="flex:1;background:#15140F"></span><span style="flex:1;background:#E1DED4"></span>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#7C776B">5 of 5 outcomes verified</span>
+              </div>
+              <span style="font-size:13.5px;color:#2F5CA8;text-align:right">View delivery</span>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column">
+            <div style="display:flex;align-items:baseline;gap:12px;padding-bottom:6px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#15140F;font-weight:500">Recently delivered</span>
+              <span style="flex:1;border-bottom:1px solid #DEDBD2"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:132px 1fr 260px;gap:28px;align-items:center;padding:15px 0;border-bottom:1px solid #E7E4DB">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tusker</span>
+              <span style="font-size:16px;font-weight:500">Doctor reports typed divergence codes</span>
+              <span style="font-size:13.5px;color:#2E7A5A">Promoted to main · yesterday 02:14</span>
+            </div>
+            <div style="display:grid;grid-template-columns:132px 1fr 260px;gap:28px;align-items:center;padding:15px 0;border-bottom:1px solid #E7E4DB">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tusker</span>
+              <span style="font-size:16px;font-weight:500">Backlinks are computed, never hand-maintained</span>
+              <span style="font-size:13.5px;color:#4A463C">Integrated · 2 days ago</span>
+            </div>
+            <div style="display:grid;grid-template-columns:132px 1fr 260px;gap:28px;align-items:center;padding:15px 0;border-bottom:1px solid #E7E4DB">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">tuskerbar</span>
+              <span style="font-size:16px;font-weight:500">The menu bar shows exactly one health state</span>
+              <span style="font-size:13.5px;color:#2E7A5A">Released to production · 3 days ago</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ---------- 1a · Project Today ---------- -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#7C776B;margin-top:20px">Project Today · tusker · 1440</div>
+      <div style="width:1440px;height:1080px;background:#FBFAF7;border:1px solid #C9C5B8;display:flex;overflow:hidden;font-variant-numeric:tabular-nums">
+        <aside style="width:240px;flex:none;border-right:1px solid #DEDBD2;display:flex;flex-direction:column;padding:26px 0 18px">
+          <div style="padding:0 24px 30px;display:flex;align-items:baseline;gap:8px">
+            <span style="font-size:19px;font-weight:600;letter-spacing:-.02em">tusker</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#8E887A">factory</span>
+          </div>
+          <div style="display:flex;flex-direction:column">
+            <div style="padding:9px 24px;font-size:14px;color:#4A463C">Today</div>
+            <div style="padding:9px 24px;font-size:14px;color:#4A463C">Search</div>
+          </div>
+          <div style="padding:34px 24px 10px;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#78736A">Projects</div>
+          <div style="padding:8px 24px;display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:600">
+            <span>tusker</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;color:#B23B2C">1</span>
+          </div>
+          <div style="display:flex;flex-direction:column;border-left:2px solid #15140F;margin:4px 0 0 24px">
+            <div style="padding:7px 14px;background:#15140F;color:#FBFAF7;font-size:13.5px;font-weight:500">Today</div>
+            <div style="padding:7px 14px;font-size:13.5px;color:#4A463C;display:flex;justify-content:space-between"><span>Plan</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#2F5CA8">1 new</span></div>
+            <div style="padding:7px 14px;font-size:13.5px;color:#4A463C">Deliveries</div>
+            <div style="padding:7px 14px;font-size:13.5px;color:#4A463C">Knowledge</div>
+          </div>
+          <div style="padding:12px 24px 0;display:flex;flex-direction:column;gap:8px">
+            <div style="padding:8px 0;font-size:14px;color:#15140F;display:flex;justify-content:space-between"><span>tuskerbar</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#B23B2C">1</span></div>
+            <div style="font-size:14px;color:#4A463C">tusker-docs</div>
+            <div style="font-size:13.5px;color:#7C776B;padding-top:8px">+ Add project</div>
+          </div>
+          <div style="margin-top:auto;padding:0 24px;display:flex;flex-direction:column;gap:14px">
+            <div style="font-size:13.5px;color:#4A463C">Settings</div>
+            <div style="border-top:1px solid #DEDBD2;padding-top:14px;display:flex;align-items:center;gap:9px">
+              <span style="width:7px;height:7px;background:#B8791C;flex:none"></span>
+              <span style="font-size:12.5px;color:#4A463C">Limited</span>
+            </div>
+          </div>
+        </aside>
+
+        <div style="flex:1;min-width:0;padding:40px 64px;display:flex;flex-direction:column;gap:36px">
+          <header style="border-bottom:2px solid #15140F;padding-bottom:18px;display:flex;align-items:flex-end;justify-content:space-between;gap:32px">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:12px">
+                <h2 style="margin:0;font-size:34px;font-weight:600;letter-spacing:-.025em;line-height:1">tusker</h2>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#4A463C;border:1px solid #C9C5B8;padding:3px 8px">Automation on</span>
+              </div>
+              <p style="margin:0;font-size:15.5px;color:#4A463C;max-width:70ch">One runner needs attention. Two deliveries are moving, and a new plan of six outcomes is ready for your review.</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <button style="border:1px solid #C9C5B8;background:transparent;color:#15140F;padding:11px 16px;font-size:14px;border-radius:3px">Diagnostics</button>
+              <button style="border:none;background:#15140F;color:#FBFAF7;padding:12px 20px;font-size:14.5px;font-weight:500;border-radius:3px">Review plan</button>
+            </div>
+          </header>
+
+          <sc-if value="{{ attSome }}" hint-placeholder-val="{{ true }}">
+          <div>
+            <div style="display:flex;align-items:baseline;gap:12px;padding-bottom:12px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#15140F;font-weight:500">Needs attention</span>
+              <span style="flex:1;border-bottom:1px solid #DEDBD2"></span>
+            </div>
+            <div style="border-top:2px solid #B8791C;background:#FCF8F1;padding:22px 24px;display:grid;grid-template-columns:1fr 210px;gap:28px;align-items:start">
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#8C5D14;font-weight:500">Runner unavailable · 3h</span>
+                <h3 style="margin:0;font-size:20px;font-weight:600;letter-spacing:-.015em">The Build routine runner is unavailable. Tusker found another copy.</h3>
+                <p style="margin:0;font-size:14.5px;line-height:1.55;color:#4A463C;max-width:66ch">The configured executable stopped answering its version probe. Tusker refused to claim work rather than start a run it could not finish, and it will not substitute a different binary without you saying so.</p>
+                <p style="margin:2px 0 0;font-size:13.5px;color:#7C776B">Affects — 2 queued outcomes in “Plan authorization binds to exact reviewed identity”</p>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <button style="border:none;background:#15140F;color:#FBFAF7;padding:11px 14px;font-size:14px;font-weight:500;border-radius:3px">Use discovered copy</button>
+                <button style="border:1px solid #C9C5B8;background:transparent;color:#15140F;padding:10px 14px;font-size:13.5px;border-radius:3px">See evidence</button>
+              </div>
+            </div>
+          </div>
+          </sc-if>
+
+          <div>
+            <div style="display:flex;align-items:baseline;gap:12px;padding-bottom:6px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#15140F;font-weight:500">Working now</span>
+              <span style="flex:1;border-bottom:1px solid #DEDBD2"></span>
+            </div>
+            <div style="padding:20px 0;border-bottom:1px solid #E7E4DB;display:grid;grid-template-columns:1fr 300px;gap:36px;align-items:start">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <span style="font-size:18px;font-weight:500;letter-spacing:-.015em">Plan authorization binds to exact reviewed identity</span>
+                <span style="font-size:14px;color:#4A463C">Checking the work — an independent reviewer is reading 2 outcomes. Next: integrate together when review passes.</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:9px">
+                <div style="display:flex;gap:3px;height:5px"><span style="flex:1;background:#15140F"></span><span style="flex:1;background:#15140F"></span><span style="flex:1;background:#2F5CA8"></span><span style="flex:1;background:#E1DED4"></span><span style="flex:1;background:#E1DED4"></span></div>
+                <sc-if value="{{ showPhase }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#78736A">
+                  <span>Planned</span><span>Building</span><span style="color:#2F5CA8;font-weight:500">Checking</span><span>Integrating</span><span>Delivered</span>
+                </div>
+                </sc-if>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">4 of 7 outcomes verified</span>
+              </div>
+            </div>
+            <div style="padding:20px 0;border-bottom:1px solid #E7E4DB;display:grid;grid-template-columns:1fr 300px;gap:36px;align-items:start">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <span style="font-size:18px;font-weight:500;letter-spacing:-.015em">Runner health is probed before any claim</span>
+                <span style="font-size:14px;color:#4A463C">Building — 2 tasks are implementing outcomes. 2 more wait on the unavailable runner.</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:9px">
+                <div style="display:flex;gap:3px;height:5px"><span style="flex:1;background:#15140F"></span><span style="flex:1;background:#2F5CA8"></span><span style="flex:1;background:#E1DED4"></span><span style="flex:1;background:#E1DED4"></span><span style="flex:1;background:#E1DED4"></span></div>
+                <sc-if value="{{ showPhase }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#78736A">
+                  <span>Planned</span><span style="color:#2F5CA8;font-weight:500">Building</span><span>Checking</span><span>Integrating</span><span>Delivered</span>
+                </div>
+                </sc-if>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#7C776B">1 of 3 outcomes verified</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style="display:flex;align-items:baseline;gap:12px;padding-bottom:6px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#15140F;font-weight:500">Recently delivered</span>
+              <span style="flex:1;border-bottom:1px solid #DEDBD2"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;padding-top:16px">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div style="height:78px;background:repeating-linear-gradient(135deg,#F1EEE6 0 6px,#FBFAF7 6px 12px);border:1px solid #E1DED4;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#78736A">doctor report</div>
+                <span style="font-size:15px;font-weight:500;line-height:1.3">Doctor reports typed divergence codes</span>
+                <span style="font-size:13px;color:#2E7A5A">Promoted to main · yesterday 02:14</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div style="height:78px;background:repeating-linear-gradient(135deg,#F1EEE6 0 6px,#FBFAF7 6px 12px);border:1px solid #E1DED4;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#78736A">backlink graph</div>
+                <span style="font-size:15px;font-weight:500;line-height:1.3">Backlinks are computed, never hand-maintained</span>
+                <span style="font-size:13px;color:#4A463C">Integrated · 2 days ago</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div style="height:78px;background:repeating-linear-gradient(135deg,#F1EEE6 0 6px,#FBFAF7 6px 12px);border:1px solid #E1DED4;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#78736A">before / after</div>
+                <span style="font-size:15px;font-weight:500;line-height:1.3">Attempt records name their owning process</span>
+                <span style="font-size:13px;color:#4A463C">Integrated · 4 days ago</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:22px;padding-top:4px;font-size:13.5px;color:#7C776B">
+            <span style="color:#2F5CA8">More</span>
+            <span>Next promotion 02:00</span><span>·</span><span>2 of 2 workspaces busy</span><span>·</span><span>Knowledge changed 1h ago</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================== OPTION 1B ============================== -->
+    <div id="1b" style="display:flex;flex-direction:column;gap:20px;width:1440px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif">
+      <div style="display:flex;align-items:baseline;gap:16px;padding-bottom:14px;border-bottom:2px solid #15140F;font-family:Archivo,sans-serif">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:500;background:#15140F;color:#FBFAF7;padding:4px 9px">1b</span>
+        <span style="font-size:26px;font-weight:600;letter-spacing:-.02em">Console</span>
+        <span style="font-size:15px;color:#5A5548;max-width:640px">Cool neutral operating surface. Dark navigation, white panels on a light field, and a persistent right rail that holds runtime truth so the main column stays about outcomes.</span>
+      </div>
+
+      <!-- ---------- 1b · Global Today ---------- -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#7C776B">Global Today · 1440</div>
+      <div style="width:1440px;height:1080px;background:#F4F5F6;border:1px solid #D6D9DC;display:flex;overflow:hidden;font-variant-numeric:tabular-nums;color:#16181A">
+
+        <aside style="width:240px;flex:none;background:#16181A;color:#C9CDD2;display:flex;flex-direction:column;padding:22px 0 18px">
+          <div style="padding:0 20px 26px;display:flex;align-items:center;gap:9px">
+            <span style="width:22px;height:22px;background:#F4F5F6;color:#16181A;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;border-radius:6px">T</span>
+            <span style="font-size:16px;font-weight:600;color:#F4F5F6;letter-spacing:-.01em">tusker</span>
+          </div>
+          <div style="padding:0 10px;display:flex;flex-direction:column;gap:2px">
+            <div style="padding:9px 12px;background:#2A2E33;color:#fff;border-radius:8px;font-size:13.5px;font-weight:500;display:flex;justify-content:space-between"><span>Today</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:#B23B2C;color:#fff;border-radius:9px;padding:1px 7px">2</span></div>
+            <div style="padding:9px 12px;font-size:13.5px">Search</div>
+            <div style="padding:9px 12px;font-size:13.5px">Notifications</div>
+          </div>
+          <div style="padding:28px 22px 8px;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#6E757D">Projects</div>
+          <div style="padding:0 10px;display:flex;flex-direction:column;gap:2px">
+            <div style="padding:8px 12px;font-size:13.5px;display:flex;justify-content:space-between;color:#E7EAEC"><span>tusker</span><span style="width:7px;height:7px;border-radius:50%;background:#B8791C;align-self:center"></span></div>
+            <div style="padding:8px 12px;font-size:13.5px;display:flex;justify-content:space-between;color:#E7EAEC"><span>tuskerbar</span><span style="width:7px;height:7px;border-radius:50%;background:#B23B2C;align-self:center"></span></div>
+            <div style="padding:8px 12px;font-size:13.5px">tusker-docs</div>
+            <div style="padding:10px 12px;font-size:13px;color:#8A9199">+ Add project</div>
+          </div>
+          <div style="margin-top:auto;padding:0 10px;display:flex;flex-direction:column;gap:2px">
+            <div style="padding:9px 12px;font-size:13.5px">Settings</div>
+            <div style="margin:10px 12px 0;padding-top:14px;border-top:1px solid #2A2E33;display:flex;align-items:center;gap:9px">
+              <span style="width:7px;height:7px;border-radius:50%;background:#B8791C"></span>
+              <span style="font-size:12.5px;color:#AEB5BD">Limited · 1 runner</span>
+            </div>
+          </div>
+        </aside>
+
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <header style="background:#fff;border-bottom:1px solid #E3E5E8;padding:20px 32px;display:flex;align-items:center;justify-content:space-between;gap:24px">
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-.015em">Today</h2>
+              <sc-if value="{{ attSome }}" hint-placeholder-val="{{ true }}"><p style="margin:0;font-size:13.5px;color:#5B6169">Two decisions are waiting · three deliveries moving across two projects</p></sc-if>
+              <sc-if value="{{ attNone }}" hint-placeholder-val="{{ false }}"><p style="margin:0;font-size:13.5px;color:#5B6169">Nothing needs you · three deliveries moving across two projects</p></sc-if>
+            </div>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8A9199">updated 12s ago</span>
+          </header>
+
+          <div style="flex:1;display:flex;min-height:0">
+            <div style="flex:1;min-width:0;padding:26px 32px;display:flex;flex-direction:column;gap:26px;overflow:hidden">
+
+              <sc-if value="{{ attSome }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="font-size:13px;font-weight:600;letter-spacing:.01em">Needs your attention</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A9199">2</span>
+                </div>
+
+                <div style="background:#fff;border:1px solid #E3E5E8;border-left:3px solid #B23B2C;border-radius:10px;padding:18px 20px;display:grid;grid-template-columns:1fr 176px;gap:24px;align-items:start">
+                  <div style="display:flex;flex-direction:column;gap:7px">
+                    <div style="display:flex;align-items:center;gap:9px">
+                      <span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#B23B2C">Release failed</span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8A9199">tuskerbar · 41m</span>
+                    </div>
+                    <h3 style="margin:0;font-size:16.5px;font-weight:600;letter-spacing:-.01em">Release failed after promotion; production is unchanged.</h3>
+                    <p style="margin:0;font-size:13.5px;line-height:1.5;color:#5B6169;max-width:64ch">The notarized build reached <code style="font-family:'IBM Plex Mono',monospace;font-size:12.5px">main</code> and passed the full gate. The release profile stopped at signing, so nothing shipped to users and no rollback is needed.</p>
+                    <span style="font-size:12.5px;color:#8A9199">Affects TuskerBar 0.9 notarized build · 5 of 5 verified</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <button style="border:none;background:#B23B2C;color:#fff;padding:10px 12px;font-size:13.5px;font-weight:500;border-radius:8px">See what failed</button>
+                    <button style="border:1px solid #D6D9DC;background:#fff;color:#16181A;padding:9px 12px;font-size:13px;border-radius:8px">Retry release</button>
+                  </div>
+                </div>
+
+                <sc-if value="{{ attTwo }}" hint-placeholder-val="{{ true }}">
+                <div style="background:#fff;border:1px solid #E3E5E8;border-left:3px solid #B8791C;border-radius:10px;padding:18px 20px;display:grid;grid-template-columns:1fr 176px;gap:24px;align-items:start">
+                  <div style="display:flex;flex-direction:column;gap:7px">
+                    <div style="display:flex;align-items:center;gap:9px">
+                      <span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8C5D14">Runner unavailable</span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8A9199">tusker · 3h</span>
+                    </div>
+                    <h3 style="margin:0;font-size:16.5px;font-weight:600;letter-spacing:-.01em">The Build routine runner is unavailable. Tusker found another copy.</h3>
+                    <p style="margin:0;font-size:13.5px;line-height:1.5;color:#5B6169;max-width:64ch">The configured executable stopped answering its version probe, so Tusker refused to claim work instead of starting a run it could not finish. Independent branches are still building.</p>
+                    <span style="font-size:12.5px;color:#8A9199">Affects 2 queued outcomes · Plan authorization binds to exact reviewed identity</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <button style="border:none;background:#16181A;color:#fff;padding:10px 12px;font-size:13.5px;font-weight:500;border-radius:8px">Use discovered copy</button>
+                    <button style="border:1px solid #D6D9DC;background:#fff;color:#16181A;padding:9px 12px;font-size:13px;border-radius:8px">Open Diagnostics</button>
+                  </div>
+                </div>
+                </sc-if>
+              </div>
+              </sc-if>
+
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <span style="font-size:13px;font-weight:600">Working across projects</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A9199">3</span>
+                  </div>
+                  <span style="font-size:13px;color:#2F5CA8">See all</span>
+                </div>
+                <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;overflow:hidden">
+                  <div style="padding:15px 20px;border-bottom:1px solid #EDEFF1;display:grid;grid-template-columns:1fr 210px 120px;gap:20px;align-items:center">
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:14.5px;font-weight:500">Plan authorization binds to exact reviewed identity</span>
+                      <span style="font-size:12.5px;color:#5B6169">tusker · Checking the work — reviewing 2 outcomes</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <div style="height:4px;border-radius:2px;background:#EDEFF1;overflow:hidden"><span style="display:block;width:57%;height:100%;background:#2F5CA8"></span></div>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A9199">4 of 7 outcomes verified</span>
+                    </div>
+                    <span style="font-size:12.5px;font-weight:500;color:#2F5CA8;text-align:right">View delivery</span>
+                  </div>
+                  <div style="padding:15px 20px;border-bottom:1px solid #EDEFF1;display:grid;grid-template-columns:1fr 210px 120px;gap:20px;align-items:center">
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:14.5px;font-weight:500">Runner health is probed before any claim</span>
+                      <span style="font-size:12.5px;color:#5B6169">tusker · Building — 2 tasks implementing outcomes</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <div style="height:4px;border-radius:2px;background:#EDEFF1;overflow:hidden"><span style="display:block;width:33%;height:100%;background:#2F5CA8"></span></div>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A9199">1 of 3 outcomes verified</span>
+                    </div>
+                    <span style="font-size:12.5px;font-weight:500;color:#2F5CA8;text-align:right">View delivery</span>
+                  </div>
+                  <div style="padding:15px 20px;display:grid;grid-template-columns:1fr 210px 120px;gap:20px;align-items:center">
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:14.5px;font-weight:500">The resident runtime owns the departure timetable</span>
+                      <span style="font-size:12.5px;color:#5B6169">tuskerbar · Scheduled for promotion at 02:00</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <div style="height:4px;border-radius:2px;background:#EDEFF1;overflow:hidden"><span style="display:block;width:100%;height:100%;background:#2E7A5A"></span></div>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A9199">5 of 5 outcomes verified</span>
+                    </div>
+                    <span style="font-size:12.5px;font-weight:500;color:#2F5CA8;text-align:right">View delivery</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <span style="font-size:13px;font-weight:600">Recently delivered</span>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+                  <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:9px">
+                    <div style="height:64px;border-radius:6px;background:repeating-linear-gradient(135deg,#EEF0F2 0 6px,#F8F9FA 6px 12px);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#6E757D">doctor report</div>
+                    <span style="font-size:13.5px;font-weight:500;line-height:1.3">Doctor reports typed divergence codes</span>
+                    <span style="font-size:12px;color:#2E7A5A">Promoted to main · yesterday 02:14</span>
+                  </div>
+                  <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:9px">
+                    <div style="height:64px;border-radius:6px;background:repeating-linear-gradient(135deg,#EEF0F2 0 6px,#F8F9FA 6px 12px);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#6E757D">backlink graph</div>
+                    <span style="font-size:13.5px;font-weight:500;line-height:1.3">Backlinks are computed, never hand-maintained</span>
+                    <span style="font-size:12px;color:#5B6169">Integrated · 2 days ago</span>
+                  </div>
+                  <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:9px">
+                    <div style="height:64px;border-radius:6px;background:repeating-linear-gradient(135deg,#EEF0F2 0 6px,#F8F9FA 6px 12px);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#6E757D">menu bar states</div>
+                    <span style="font-size:13.5px;font-weight:500;line-height:1.3">The menu bar shows exactly one health state</span>
+                    <span style="font-size:12px;color:#2E7A5A">Released to production · 3 days ago</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <aside style="width:320px;flex:none;border-left:1px solid #E3E5E8;background:#FAFBFB;padding:26px 24px;display:flex;flex-direction:column;gap:26px">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199">Runtime</span>
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="width:8px;height:8px;border-radius:50%;background:#B8791C"></span>
+                  <span style="font-size:14.5px;font-weight:500">Limited</span>
+                </div>
+                <p style="margin:0;font-size:13px;line-height:1.5;color:#5B6169">One runner in <strong style="font-weight:500">tusker</strong> is unavailable. Everything else reconciles normally.</p>
+                <span style="font-size:12.5px;color:#2F5CA8">Open Diagnostics</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199">Next events</span>
+                <div style="display:flex;flex-direction:column;gap:9px">
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#16181A">Promotion window</span><span style="font-family:'IBM Plex Mono',monospace;color:#5B6169">02:00</span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#16181A">Review verdict due</span><span style="font-family:'IBM Plex Mono',monospace;color:#5B6169">~14m</span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#16181A">Retry after backoff</span><span style="font-family:'IBM Plex Mono',monospace;color:#5B6169">04:11</span></div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199">Capacity</span>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span>tusker</span><span style="font-family:'IBM Plex Mono',monospace;color:#5B6169">2 of 2 workspaces</span></div>
+                  <div style="height:4px;border-radius:2px;background:#EDEFF1;overflow:hidden"><span style="display:block;width:100%;height:100%;background:#16181A"></span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span>tuskerbar</span><span style="font-family:'IBM Plex Mono',monospace;color:#5B6169">0 of 2 workspaces</span></div>
+                  <div style="height:4px;border-radius:2px;background:#EDEFF1;overflow:hidden"><span style="display:block;width:2%;height:100%;background:#16181A"></span></div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px;border-top:1px solid #E3E5E8">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199;padding-top:18px">Latest knowledge</span>
+                <span style="font-size:13px;color:#16181A">Runner health probe contract</span>
+                <span style="font-size:12.5px;color:#8A9199">changed 1h ago · 4 backlinks</span>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---------- 1b · Project Today ---------- -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#7C776B;margin-top:20px">Project Today · tusker · 1440</div>
+      <div style="width:1440px;height:1080px;background:#F4F5F6;border:1px solid #D6D9DC;display:flex;overflow:hidden;font-variant-numeric:tabular-nums;color:#16181A">
+
+        <aside style="width:240px;flex:none;background:#16181A;color:#C9CDD2;display:flex;flex-direction:column;padding:22px 0 18px">
+          <div style="padding:0 20px 26px;display:flex;align-items:center;gap:9px">
+            <span style="width:22px;height:22px;background:#F4F5F6;color:#16181A;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;border-radius:6px">T</span>
+            <span style="font-size:16px;font-weight:600;color:#F4F5F6;letter-spacing:-.01em">tusker</span>
+          </div>
+          <div style="padding:0 10px;display:flex;flex-direction:column;gap:2px">
+            <div style="padding:9px 12px;font-size:13.5px;display:flex;justify-content:space-between"><span>Today</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:#B23B2C;color:#fff;border-radius:9px;padding:1px 7px">2</span></div>
+            <div style="padding:9px 12px;font-size:13.5px">Search</div>
+          </div>
+          <div style="padding:28px 22px 8px;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#6E757D">Projects</div>
+          <div style="padding:0 10px;display:flex;flex-direction:column;gap:2px">
+            <div style="padding:8px 12px;font-size:13.5px;color:#fff;font-weight:500;display:flex;justify-content:space-between"><span>tusker</span><span style="width:7px;height:7px;border-radius:50%;background:#B8791C;align-self:center"></span></div>
+            <div style="padding:2px 0 6px 12px;display:flex;flex-direction:column;gap:1px;border-left:1px solid #2A2E33;margin-left:12px">
+              <div style="padding:7px 12px;background:#2A2E33;color:#fff;border-radius:7px;font-size:13px;font-weight:500">Today</div>
+              <div style="padding:7px 12px;font-size:13px;display:flex;justify-content:space-between"><span>Plan</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#7FA0D6">1 new</span></div>
+              <div style="padding:7px 12px;font-size:13px">Deliveries</div>
+              <div style="padding:7px 12px;font-size:13px">Knowledge</div>
+            </div>
+            <div style="padding:8px 12px;font-size:13.5px;display:flex;justify-content:space-between;color:#E7EAEC"><span>tuskerbar</span><span style="width:7px;height:7px;border-radius:50%;background:#B23B2C;align-self:center"></span></div>
+            <div style="padding:8px 12px;font-size:13.5px">tusker-docs</div>
+            <div style="padding:10px 12px;font-size:13px;color:#8A9199">+ Add project</div>
+          </div>
+          <div style="margin-top:auto;padding:0 10px;display:flex;flex-direction:column;gap:2px">
+            <div style="padding:9px 12px;font-size:13.5px">Settings</div>
+            <div style="margin:10px 12px 0;padding-top:14px;border-top:1px solid #2A2E33;display:flex;align-items:center;gap:9px">
+              <span style="width:7px;height:7px;border-radius:50%;background:#B8791C"></span>
+              <span style="font-size:12.5px;color:#AEB5BD">Limited · 1 runner</span>
+            </div>
+          </div>
+        </aside>
+
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <header style="background:#fff;border-bottom:1px solid #E3E5E8;padding:18px 32px;display:flex;align-items:center;justify-content:space-between;gap:24px">
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <h2 style="margin:0;font-size:22px;font-weight:600;letter-spacing:-.015em">tusker</h2>
+                <span style="font-size:11px;font-weight:500;letter-spacing:.03em;text-transform:uppercase;color:#5B6169;background:#EDEFF1;border-radius:5px;padding:3px 7px">Automation on</span>
+              </div>
+              <p style="margin:0;font-size:13.5px;color:#5B6169">One runner needs attention · 2 deliveries moving · a 6-outcome plan is ready for review</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <button style="border:1px solid #D6D9DC;background:#fff;color:#16181A;padding:9px 14px;font-size:13.5px;border-radius:8px">Diagnostics</button>
+              <button style="border:none;background:#16181A;color:#fff;padding:10px 18px;font-size:13.5px;font-weight:500;border-radius:8px">Review plan</button>
+            </div>
+          </header>
+
+          <div style="flex:1;display:flex;min-height:0">
+            <div style="flex:1;min-width:0;padding:24px 32px;display:flex;flex-direction:column;gap:24px;overflow:hidden">
+
+              <sc-if value="{{ attSome }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;flex-direction:column;gap:11px">
+                <span style="font-size:13px;font-weight:600">Needs attention</span>
+                <div style="background:#fff;border:1px solid #E3E5E8;border-left:3px solid #B8791C;border-radius:10px;padding:18px 20px;display:grid;grid-template-columns:1fr 184px;gap:24px;align-items:start">
+                  <div style="display:flex;flex-direction:column;gap:7px">
+                    <div style="display:flex;align-items:center;gap:9px">
+                      <span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8C5D14">Runner unavailable</span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8A9199">3h</span>
+                    </div>
+                    <h3 style="margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em">The Build routine runner is unavailable. Tusker found another copy.</h3>
+                    <p style="margin:0;font-size:13.5px;line-height:1.5;color:#5B6169;max-width:66ch">The configured executable stopped answering its version probe. Tusker refused to claim work rather than start a run it could not finish, and it will not substitute a different binary without you saying so.</p>
+                    <span style="font-size:12.5px;color:#8A9199">Affects 2 queued outcomes in “Plan authorization binds to exact reviewed identity”</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <button style="border:none;background:#16181A;color:#fff;padding:10px 12px;font-size:13.5px;font-weight:500;border-radius:8px">Use discovered copy</button>
+                    <button style="border:1px solid #D6D9DC;background:#fff;color:#16181A;padding:9px 12px;font-size:13px;border-radius:8px">See evidence</button>
+                  </div>
+                </div>
+              </div>
+              </sc-if>
+
+              <div style="display:flex;flex-direction:column;gap:11px">
+                <span style="font-size:13px;font-weight:600">Working now</span>
+                <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px">
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:15.5px;font-weight:600;letter-spacing:-.01em">Plan authorization binds to exact reviewed identity</span>
+                      <span style="font-size:13.5px;color:#5B6169">Checking the work — an independent reviewer is reading 2 outcomes. Next: integrate together when review passes.</span>
+                    </div>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8A9199;white-space:nowrap">4 of 7 verified</span>
+                  </div>
+                  <sc-if value="{{ showPhase }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#16181A"></span><span style="font-size:11px;color:#8A9199">Planned</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#16181A"></span><span style="font-size:11px;color:#8A9199">Building</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#2F5CA8"></span><span style="font-size:11px;color:#2F5CA8;font-weight:500">Checking</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#E3E5E8"></span><span style="font-size:11px;color:#6E757D">Integrating</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#E3E5E8"></span><span style="font-size:11px;color:#6E757D">Delivered</span></span>
+                  </div>
+                  </sc-if>
+                </div>
+                <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px">
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:15.5px;font-weight:600;letter-spacing:-.01em">Runner health is probed before any claim</span>
+                      <span style="font-size:13.5px;color:#5B6169">Building — 2 tasks are implementing outcomes. 2 more wait on the unavailable runner.</span>
+                    </div>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8A9199;white-space:nowrap">1 of 3 verified</span>
+                  </div>
+                  <sc-if value="{{ showPhase }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#16181A"></span><span style="font-size:11px;color:#8A9199">Planned</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#2F5CA8"></span><span style="font-size:11px;color:#2F5CA8;font-weight:500">Building</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#E3E5E8"></span><span style="font-size:11px;color:#6E757D">Checking</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#E3E5E8"></span><span style="font-size:11px;color:#6E757D">Integrating</span></span>
+                    <span style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="height:4px;border-radius:2px;background:#E3E5E8"></span><span style="font-size:11px;color:#6E757D">Delivered</span></span>
+                  </div>
+                  </sc-if>
+                </div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:11px">
+                <span style="font-size:13px;font-weight:600">Recently delivered</span>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+                  <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:9px">
+                    <div style="height:56px;border-radius:6px;background:repeating-linear-gradient(135deg,#EEF0F2 0 6px,#F8F9FA 6px 12px);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#6E757D">doctor report</div>
+                    <span style="font-size:13.5px;font-weight:500;line-height:1.3">Doctor reports typed divergence codes</span>
+                    <span style="font-size:12px;color:#2E7A5A">Promoted to main · yesterday</span>
+                  </div>
+                  <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:9px">
+                    <div style="height:56px;border-radius:6px;background:repeating-linear-gradient(135deg,#EEF0F2 0 6px,#F8F9FA 6px 12px);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#6E757D">backlink graph</div>
+                    <span style="font-size:13.5px;font-weight:500;line-height:1.3">Backlinks are computed, never hand-maintained</span>
+                    <span style="font-size:12px;color:#5B6169">Integrated · 2 days ago</span>
+                  </div>
+                  <div style="background:#fff;border:1px solid #E3E5E8;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:9px">
+                    <div style="height:56px;border-radius:6px;background:repeating-linear-gradient(135deg,#EEF0F2 0 6px,#F8F9FA 6px 12px);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#6E757D">before / after</div>
+                    <span style="font-size:13.5px;font-weight:500;line-height:1.3">Attempt records name their owning process</span>
+                    <span style="font-size:12px;color:#5B6169">Integrated · 4 days ago</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <aside style="width:320px;flex:none;border-left:1px solid #E3E5E8;background:#FAFBFB;padding:24px;display:flex;flex-direction:column;gap:24px">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199">Ready for review</span>
+                <div style="background:#fff;border:1px solid #E3E5E8;border-radius:9px;padding:14px;display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:14px;font-weight:600;line-height:1.3">Promotion window hardening</span>
+                  <span style="font-size:12.5px;color:#5B6169">6 outcomes · 9 tasks, up to 3 at once · no release</span>
+                  <span style="font-size:12.5px;color:#2F5CA8;font-weight:500">Review plan</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199">Policy</span>
+                <div style="display:flex;flex-direction:column;gap:9px">
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span>Background work</span><span style="color:#2E7A5A;font-weight:500">On</span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span>Scheduled promotion</span><span style="color:#5B6169">Stage only</span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span>Release</span><span style="color:#8A9199">Off</span></div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px"><span>Paid triage</span><span style="color:#8A9199">Off</span></div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199">Capacity</span>
+                <div style="display:flex;justify-content:space-between;font-size:13px"><span>Workspaces</span><span style="font-family:'IBM Plex Mono',monospace;color:#5B6169">2 of 2 busy</span></div>
+                <div style="height:4px;border-radius:2px;background:#EDEFF1;overflow:hidden"><span style="display:block;width:100%;height:100%;background:#16181A"></span></div>
+                <span style="font-size:12.5px;color:#8A9199">Global ceiling 4 · fair share normal</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid #E3E5E8;padding-top:18px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8A9199">Latest knowledge</span>
+                <span style="font-size:13px">Runner health probe contract</span>
+                <span style="font-size:12.5px;color:#8A9199">changed 1h ago · 4 backlinks</span>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="max-width:760px;display:flex;flex-direction:column;gap:12px;padding-top:16px;border-top:1px solid #C9C5B8">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#7C776B">Where they differ, in decisions</div>
+    <div style="display:flex;flex-direction:column;gap:9px;font-size:14.5px;line-height:1.55;color:#3C382F">
+      <div><strong style="font-weight:600">Runtime truth.</strong> <a href="#1a">1a</a> keeps it out of the way — one health word in the nav, capacity in a “More” line. <a href="#1b">1b</a> gives it a permanent rail, which makes the machine legible but spends 320 px on it forever.</div>
+      <div><strong style="font-weight:600">Grouping.</strong> 1a groups with hairlines and space, so a healthy project is almost entirely white. 1b groups with panels, so density stays even whether there are two items or twelve.</div>
+      <div><strong style="font-weight:600">Attention.</strong> 1a uses a full-width band with a coloured top rule — one red region dominates naturally. 1b uses a left accent on a card, which scales to several items but reads quieter at a glance.</div>
+      <div><strong style="font-weight:600">Risk.</strong> 1a is more distinctive and more fragile: long outcome titles and dense diagnostics tables will fight the editorial grid. 1b is safer for Settings and Diagnostics, and less memorable.</div>
+    </div>
+  </div>
+
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;attentionCount&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;two&quot;,&quot;one&quot;,&quot;none&quot;],&quot;default&quot;:&quot;two&quot;,&quot;tsType&quot;:&quot;\&quot;two\&quot; | \&quot;one\&quot; | \&quot;none\&quot;&quot;,&quot;section&quot;:&quot;States&quot;},&quot;showPhaseDetail&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;States&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const a = this.props.attentionCount ?? "two";
+    return {
+      attTwo: a === "two",
+      attSome: a !== "none",
+      attNone: a === "none",
+      showPhase: this.props.showPhaseDetail ?? true
+    };
+  }
+}
+</script>
+</body>
+</html>

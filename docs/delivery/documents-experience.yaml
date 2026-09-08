@@ -1,0 +1,110 @@
+schema: tusker.delivery-plan/v2
+scope: documents-experience
+title: Improve Documents and bounded documentation discovery
+epic: WUX
+spec_refs:
+  - .tusker/specs/documents-experience.md
+  - .tusker/specs/work-knowledge-and-retention.md
+context_fingerprint: sha256:6eae6ce18075571a4f72daf65dc081b52003de02f12a32eba9ce2e586c24cea5
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+concurrency: 1
+summary: Two independent Documents slices. Import creates inert backlog work; execution and wave authorization remain separate operator actions.
+non_goals:
+  - Do not replace the filesystem-literal document tree with invented topic folders.
+  - Do not change runner execution, model routing, task orchestration, or repeatable testing.
+  - Do not add a document database, search dependency, graph service, editor framework, or second save protocol.
+  - Do not implement retention scheduling or purge files in this delivery.
+  - Do not silently duplicate or supersede the held trust-roadmap contracts FLW-T-0021, FLW-T-0024, or FLW-T-0026; reconcile overlapping ownership before implementation.
+requirements:
+  - id: R1
+    outcome: People can browse and read the existing Documents corpus with less visual noise while retaining familiar file navigation, editing, links, and safe diagram rendering.
+  - id: R2
+    outcome: Agents can discover one bounded documentation level, read one exact document or section, inspect relationships, and validate metadata through the CLI without broad corpus dumps or unsafe writes.
+tasks:
+  - source_key: ui-polish
+    title: Polish the Documents tree and reader
+    outcome: People can open a project document quickly, understand its current meaning, and navigate the corpus without metadata clutter or unsafe rendering.
+    acceptance:
+      - id: A1
+        outcome: The real folder/file tree preserves expansion, selection, filter, deep links, long-name access, keyboard focus, and narrow-screen rail behavior.
+      - id: A2
+        outcome: Reader hierarchy leads with title, kind, and status; routine front matter is behind a compact Details disclosure while editing and CAS conflict behavior remain intact.
+      - id: A3
+        outcome: Mermaid renders through the existing safe renderer, with an explicit source and readable error fallback; internal links, backlinks, and supersession navigation remain usable.
+      - id: A4
+        outcome: Desktop, tablet, and narrow rendered evidence covers long names, empty/loading/error states, keyboard traversal, Mermaid success/failure, and selected-file persistence, with a fresh screenshot-only critique.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: cd internal/serve/ui && bun test test/documents-polish.test.ts"
+        notes: The test names must exercise behavior and fail when zero tests execute; include tree keyboard/persistence, Details disclosure, Mermaid success/error, links, and CAS-safe editing cases.
+      - covers: A1,A2,A3,A4
+        check: "command: cd internal/serve/ui && bun run typecheck"
+        notes: Supporting check only; it does not replace browser interaction or rendered evidence.
+      - covers: A1,A2,A3,A4
+        check: "command: cd internal/serve/ui && npx --yes playwright screenshot --channel=chrome --viewport-size=1440,1000 --wait-for-selector='[data-documents-ready=\"true\"]' http://127.0.0.1:5191/previews/documents/ui/index.html ../../../docs/reports/documents/ui/desktop.png"
+        notes: Start the isolated localhost preview, create the owned report directory, exercise the named interactions, capture 1024x768 and 390x844 siblings, and obtain a fresh screenshot-only critic. No visual proof exists at authoring time.
+    artifact:
+      kind: screenshot_set
+      path: docs/reports/documents/ui/desktop.png
+      summary: Documents tree and reader desktop/tablet/narrow screenshots, interaction evidence, and independent screenshot-only critique; see report.md in the same directory.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - internal/serve/ui/src/features/knowledge/
+      - internal/serve/ui/previews/documents/ui/
+      - internal/serve/ui/test/documents-polish.test.ts
+      - docs/reports/documents/ui/
+    complexity: standard
+    risk: medium
+    priority: p1
+    size: m
+    domains: [project]
+    requirement_refs: [R1]
+    dependencies: []
+  - source_key: cli-discovery
+    title: Add bounded Documents discovery and metadata helpers
+    outcome: Agents can route to the smallest useful documentation context and safely validate or scaffold metadata through the existing docs command family.
+    acceptance:
+      - id: A1
+        outcome: A bounded browse command returns one directory level of real folders and direct managed files with stable human and JSON output, truncation metadata, discovery fields, and path-containment errors.
+      - id: A2
+        outcome: Exact document and section reads plus backlink inspection use the shared parser/resolver, expose supersession and provenance truthfully, and never dump unrelated documents.
+      - id: A3
+        outcome: A compact check command reports named header, duplicate-subject, supersession, and managed-link defects with repair guidance; scaffold assistance is non-destructive, validated, atomic, and never manufactures verification or rationale.
+      - id: A4
+        outcome: CLI help and current documentation describe shipped commands, read-only behavior, JSON shapes, bounds, and unsupported cases; focused tests prove deterministic output and zero writes for reads.
+    verification:
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./internal/docgraph -run '^(TestBrowse|TestReadSection|TestBacklinks|TestDocsMetadata)' -count=1 -v"
+        notes: The named tests must execute; use nested, long-name, superseded, broken-link, duplicate-subject, and bounded synthetic corpus fixtures.
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^(TestDocsBrowse|TestDocsRead|TestDocsBacklinks|TestDocsCheck|TestDocsScaffold)' -count=1 -v"
+        notes: Prove human/JSON agreement, stable errors, exact section selection, no read writes, safe path handling, and non-destructive metadata assistance.
+      - covers: A1,A2,A3,A4
+        check: "command: go test ./cmd/tusker -run '^(TestDocsFind|TestDocsMap|TestDocsValidation)' -count=1 -v"
+        notes: Supporting compatibility check; the shared resolver and generated map behavior must remain intact.
+    artifact:
+      kind: knowledge_link
+      path: docs/reports/documents/cli/report.md
+      summary: CLI command matrix with exact invocations, JSON examples, bounds, fixture cases, deterministic read-only proof, and first actionable failure if any.
+      acceptance_ids: [A1, A2, A3, A4]
+    owned_paths:
+      - internal/docgraph/
+      - cmd/tusker/docs_cmd.go
+      - cmd/tusker/docs_browse_cmd.go
+      - cmd/tusker/docs_read_cmd.go
+      - cmd/tusker/docs_check_cmd.go
+      - cmd/tusker/docs_browse_test.go
+      - cmd/tusker/docs_read_test.go
+      - cmd/tusker/docs_check_test.go
+      - docs/system/cli.md
+      - docs/system/knowledge-and-feedback.md
+      - docs/reports/documents/cli/
+    complexity: complex
+    risk: medium
+    priority: p1
+    size: m
+    domains: [project]
+    requirement_refs: [R2]
+    dependencies: []

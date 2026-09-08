@@ -1,0 +1,373 @@
+{
+  "schema": "tusker.delivery-plan/v2",
+  "scope": "remaining-product-20260907",
+  "title": "Finish task authoring, wave outcomes and lightweight evidence",
+  "epic": "WUX",
+  "spec_refs": [
+    ".tusker/specs/remaining-product-work.md"
+  ],
+  "concurrency": 1,
+  "tasks": [
+    {
+      "source_key": "coverage",
+      "title": "Expose requirement coverage when preparing tasks and waves",
+      "outcome": "Outcome: an agent can convert an externally authored specification into complete Tusker work and see exactly which requirements are covered or deliberately deferred before import. This is authoring assistance, not a Tusker interviewing skill. Existing FLW-T-0010 owns complete runtime packet preservation; do not redo it.\n\nImplementation scope and approach:\nInspect delivery_v2.go, delivery_doctor.go, delivery_review_cmd.go and delivery_verification_contract.go. Reuse requirements, requirement_refs and acceptance IDs. Extend the existing doctor/review result with a bounded coverage projection; explicit deferrals need a reason, not pretend tasks. Prefer existing schema support; add the smallest compatible field only if needed. Preserve legacy plans. Validate missing/unknown IDs and dependency cycles; expose the same result in CLI JSON and existing delivery review, without another review wizard. Retain detail in the canonical task contract, not a duplicated spec blob.\n\nOwnership: cmd/tusker/delivery_doctor.go, cmd/tusker/delivery_v2.go, cmd/tusker/delivery_review_cmd.go. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.\n\nNon-goals: no new scheduler, model harness, mandatory human code review, automatic start, formal active-spec revision locking, or implementation of the three assigned real-work test streams. Preserve existing task IDs and contracts. If behavior already exists, verify it and implement only the gap.\n\nWork level: Standard; use configured execution/review profiles at start, never hard-coded model names.\n\nReview: independent agent checks acceptance against changed material and actual test output. Human inspection is optional unless explicitly gated. Completion report leads with observed result, exact commands/PASS-FAIL, limitations and how to try it; no self-certified proof. Update affected current system documentation and shipped CLI help with the implementation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "A plan with multiple requirements and tasks reports each requirement with covering task and acceptance IDs; valid shared coverage works."
+        },
+        {
+          "id": "A2",
+          "outcome": "An omitted requirement is visibly uncovered; an explicit deferral retains its reason; unknown IDs fail with actionable paths. No semantic-completeness claim is made from structural lint."
+        },
+        {
+          "id": "A3",
+          "outcome": "Task non-goals, guidance, acceptance, verification, level and spec links survive import and readback; reuse existing packet tests rather than inventing a packet format."
+        },
+        {
+          "id": "A4",
+          "outcome": "Cycles and missing prerequisite references refuse safely; repeat import retains stable IDs and no command arms or starts work."
+        },
+        {
+          "id": "A5",
+          "outcome": "Existing plans without the new optional projection remain readable; focused positive/negative tests and CLI documentation describe the exact supported contract."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5",
+          "check": "command: go test ./cmd/tusker -run TestRemainingCoverage -count=1",
+          "notes": "Implementation must add this focused acceptance suite. This command has NOT been run and the suite does not exist yet. Cover all listed positive and negative cases; UI task must invoke its browser acceptance from this suite or include separately recorded browser proof."
+        }
+      ],
+      "dependencies": [],
+      "artifact": {
+        "kind": "diff_summary",
+        "path": "cmd/tusker/delivery_doctor.go",
+        "summary": "Reviewed implementation with acceptance-linked machine evidence and concise operator try-it instructions.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/delivery_doctor.go",
+        "cmd/tusker/delivery_v2.go",
+        "cmd/tusker/delivery_review_cmd.go"
+      ],
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1"
+      ]
+    },
+    {
+      "source_key": "wave-outcome",
+      "title": "Show the promised wave outcome separately from the completed result",
+      "outcome": "Outcome: before starting a wave the operator sees one or two plain-language sentences describing the capability they will gain; after completion they see what actually shipped. Example: You can sign in with Google and return to your original page. An implementation task list is not the summary.\n\nImplementation scope and approach:\nInspect v7_wave_cmd.go, v7_wave_brief.go, delivery_cmd.go, serve_delivery.go and Work wave components. First determine whether an existing authored summary can serve this purpose; reuse it, otherwise add a backward-compatible expected_outcome field. Wire create/import/read/update through supported CLI and the existing API. Render near the wave title and in detail with minimal typography, no extra decorative card. Actual completion remains derived from reviewed work/results; failed or partial waves cannot display the promise as achieved. Preserve manually written summaries through reconciliation and readback.\n\nOwnership: cmd/tusker/v7_wave_cmd.go, cmd/tusker/v7_wave_brief.go, cmd/tusker/serve_delivery.go, internal/serve/ui/src/features/work. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.\n\nNon-goals: no new scheduler, model harness, mandatory human code review, automatic start, formal active-spec revision locking, or implementation of the three assigned real-work test streams. Preserve existing task IDs and contracts. If behavior already exists, verify it and implement only the gap.\n\nWork level: Standard; use configured execution/review profiles at start, never hard-coded model names.\n\nReview: independent agent checks acceptance against changed material and actual test output. Human inspection is optional unless explicitly gated. Completion report leads with observed result, exact commands/PASS-FAIL, limitations and how to try it; no self-certified proof. Update affected current system documentation and shipped CLI help with the implementation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "CLI authored outcome survives import, reload and reconciliation and appears in wave show/brief structured output."
+        },
+        {
+          "id": "A2",
+          "outcome": "Overview and wave detail show the authored promise before start; older waves without a summary remain usable without invented text."
+        },
+        {
+          "id": "A3",
+          "outcome": "Actual results, limitations and partial/failed delivery are distinguishable from intended outcome; process exit alone cannot generate a success claim."
+        },
+        {
+          "id": "A4",
+          "outcome": "Supported CLI edits and UI reads share validation; empty/oversized text is handled explicitly with no silent destructive truncation."
+        },
+        {
+          "id": "A5",
+          "outcome": "Tests cover old/new wave serialization and reconciliation; browser proof covers before-start, complete and partial states with readable keyboard-accessible presentation."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5",
+          "check": "command: go test ./cmd/tusker -run TestRemainingWaveOutcome -count=1",
+          "notes": "Implementation must add this focused acceptance suite. This command has NOT been run and the suite does not exist yet. Cover all listed positive and negative cases; UI task must invoke its browser acceptance from this suite or include separately recorded browser proof."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "coverage",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "diff_summary",
+        "path": "cmd/tusker/v7_wave_cmd.go",
+        "summary": "Reviewed implementation with acceptance-linked machine evidence and concise operator try-it instructions.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/v7_wave_cmd.go",
+        "cmd/tusker/v7_wave_brief.go",
+        "cmd/tusker/serve_delivery.go",
+        "internal/serve/ui/src/features/work"
+      ],
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R2"
+      ]
+    },
+    {
+      "source_key": "optional-scratch",
+      "title": "Remove mandatory scratch journaling while preserving safe resume",
+      "outcome": "Outcome: workers can use their coding harness scratchpad and do not have to repeatedly write a Tusker PLAN.md. Tusker retains only the structured facts necessary for ownership, progress, handoff and truthful recovery.\n\nImplementation scope and approach:\nTrace daemon.go ensureTaskPlanFile and its prompt/read callers, work-session submit/resume, packet generation and scratch cleanup. Identify which PLAN.md facts are actually consumed. Move necessary resume facts into existing run/task handoff fields; do not create another journal. Make an absent plan normal on new and old tasks. Preserve old plan files until ordinary retention policy handles them. A restarted worker receives current task contract, claim/workspace, prior outcome/blocker and evidence pointers; omit transcript and repeated prose. Compare before/after prompt bytes and mandatory write counts for the same fixture.\n\nOwnership: cmd/tusker/daemon.go, cmd/tusker/work_session_cmd.go, cmd/tusker/scratch_retention.go. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.\n\nNon-goals: no new scheduler, model harness, mandatory human code review, automatic start, formal active-spec revision locking, or implementation of the three assigned real-work test streams. Preserve existing task IDs and contracts. If behavior already exists, verify it and implement only the gap.\n\nWork level: Demanding; use configured execution/review profiles at start, never hard-coded model names.\n\nReview: independent agent checks acceptance against changed material and actual test output. Human inspection is optional unless explicitly gated. Completion report leads with observed result, exact commands/PASS-FAIL, limitations and how to try it; no self-certified proof. Update affected current system documentation and shipped CLI help with the implementation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "A worker can prepare, execute and submit without PLAN.md or a replacement mandatory freeform journal."
+        },
+        {
+          "id": "A2",
+          "outcome": "Crash/resume and explicit handoff preserve claim/workspace, next actionable state, blockers and relevant evidence without replaying the full conversation."
+        },
+        {
+          "id": "A3",
+          "outcome": "Existing tasks with or without PLAN.md continue safely; this change does not delete old notes or weaken leases, proof, independent review or human gates."
+        },
+        {
+          "id": "A4",
+          "outcome": "Focused tests exercise prompt construction, missing notes and resume; report measured prompt bytes and mandatory writes before/after, with no fabricated token estimate."
+        },
+        {
+          "id": "A5",
+          "outcome": "Generated guidance and actual packet instructions agree that harness scratch is sufficient; optional Tusker scratch remains supported."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5",
+          "check": "command: go test ./cmd/tusker -run TestRemainingOptionalScratch -count=1",
+          "notes": "Implementation must add this focused acceptance suite. This command has NOT been run and the suite does not exist yet. Cover all listed positive and negative cases; UI task must invoke its browser acceptance from this suite or include separately recorded browser proof."
+        }
+      ],
+      "dependencies": [],
+      "artifact": {
+        "kind": "diff_summary",
+        "path": "cmd/tusker/daemon.go",
+        "summary": "Reviewed implementation with acceptance-linked machine evidence and concise operator try-it instructions.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/daemon.go",
+        "cmd/tusker/work_session_cmd.go",
+        "cmd/tusker/scratch_retention.go"
+      ],
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R3"
+      ]
+    },
+    {
+      "source_key": "artifact-retention",
+      "title": "Implement safe seven-day retention with Keep and durable evidence receipts",
+      "outcome": "Outcome: Tusker automatically removes owned transient output seven days after terminal completion while retaining task results, provenance and deliberately kept artifacts. Active work and human waits retain the evidence needed to finish. This implements the approved policy, not immediate close-time deletion.\n\nImplementation scope and approach:\nInspect scratch_retention.go, scratch_gc.go, v7_control_cmd.go, v7_proof_cmd.go and existing artifact metadata. Reconcile current close-time reap, fourteen-day GC and link-only protections through one eligibility predicate. Eligible artifacts are explicitly Tusker-owned scratch/log/intermediate and final report assets; never delete arbitrary linked source or external harness storage. Reuse existing resident maintenance scheduling; interactive sessions do not launch it. CLI supports dry-run, scoped apply, policy inspection and Keep/unkeep with the same API used by UI. Retain metadata after deleting bytes. Reopen before expiry protects artifacts again; a later terminal transition starts a new seven-day window. Reopen after expiry keeps the receipt expired and must not pretend bytes were restored. Keep has no automatic expiry until explicitly removed; unkeep reevaluates the existing terminal timestamp. Serialize deletion with Keep/reopen decisions and check paths/symlinks at deletion time.\n\nOwnership: cmd/tusker/scratch_retention.go, cmd/tusker/scratch_gc.go, cmd/tusker/v7_proof_cmd.go, cmd/tusker/v7_control_cmd.go. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.\n\nNon-goals: no new scheduler, model harness, mandatory human code review, automatic start, formal active-spec revision locking, or implementation of the three assigned real-work test streams. Preserve existing task IDs and contracts. If behavior already exists, verify it and implement only the gap.\n\nWork level: Demanding; use configured execution/review profiles at start, never hard-coded model names.\n\nReview: independent agent checks acceptance against changed material and actual test output. Human inspection is optional unless explicitly gated. Completion report leads with observed result, exact commands/PASS-FAIL, limitations and how to try it; no self-certified proof. Update affected current system documentation and shipped CLI help with the implementation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "At just before seven days artifacts remain; at/after seven days eligible bytes are removed by maintenance or explicit scoped GC; fake-clock tests need no real waiting."
+        },
+        {
+          "id": "A2",
+          "outcome": "Active/reopened work, pending human gates, Keep and published documentation assets are protected; final screenshot/benchmark bytes expire by default but concise results persist."
+        },
+        {
+          "id": "A3",
+          "outcome": "Dry-run reports each candidate and reason without deleting; external paths, symlink escapes and unknown ownership are refused."
+        },
+        {
+          "id": "A4",
+          "outcome": "Close, discard and periodic/manual cleanup obey one policy; duplicate runs are idempotent and partial filesystem failures retain an accurate receipt and retry path."
+        },
+        {
+          "id": "A5",
+          "outcome": "Expired receipts retain artifact type, source/provenance, recorded result and expiry time. Reopening does not restore deleted bytes or mark evidence freshly verified."
+        },
+        {
+          "id": "A6",
+          "outcome": "Tests cover Keep-versus-GC and reopen-versus-GC races, missing files, cancellation, restart and terminal timestamp resets. CLI/API expose availability without changing historical proof verdicts."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5,A6",
+          "check": "command: go test ./cmd/tusker -run TestRemainingArtifactRetention -count=1",
+          "notes": "Implementation must add this focused acceptance suite. This command has NOT been run and the suite does not exist yet. Cover all listed positive and negative cases; UI task must invoke its browser acceptance from this suite or include separately recorded browser proof."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "optional-scratch",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "diff_summary",
+        "path": "cmd/tusker/scratch_retention.go",
+        "summary": "Reviewed implementation with acceptance-linked machine evidence and concise operator try-it instructions.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/scratch_retention.go",
+        "cmd/tusker/scratch_gc.go",
+        "cmd/tusker/v7_proof_cmd.go",
+        "cmd/tusker/v7_control_cmd.go"
+      ],
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R4"
+      ]
+    },
+    {
+      "source_key": "evidence-view",
+      "title": "Show optional result artifacts, Keep and expired evidence in task detail",
+      "outcome": "Outcome: task detail leads with what was achieved, verification and how to try it. Available screenshots/performance reports are easy to open; an expired attachment stays visible as a truthful receipt. Merely attaching a screenshot never creates a human approval gate.\n\nImplementation scope and approach:\nUse the artifact-retention task API and existing task inspector/Work components. Show compact artifact-type labels such as Screenshot and Performance report, availability, and Keep control where relevant. Use artifact metadata rather than freeform tags to determine opening/expiry behavior; ordinary project tags remain independent. Read-only viewers cannot mutate retention. Preserve existing preview behavior, focus/keyboard navigation and explicit human-gate actions. Avoid a new top-level dashboard. On expiry or stale link refresh, replace the open action with Evidence expired and date while keeping recorded outcome/provenance accessible. Render limitations separately from success. Add a bounded browser fixture for available, kept, expired, missing, failed and human-wait cases.\n\nOwnership: internal/serve/ui/src/features/work. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.\n\nNon-goals: no new scheduler, model harness, mandatory human code review, automatic start, formal active-spec revision locking, or implementation of the three assigned real-work test streams. Preserve existing task IDs and contracts. If behavior already exists, verify it and implement only the gap.\n\nWork level: Standard; use configured execution/review profiles at start, never hard-coded model names.\n\nReview: independent agent checks acceptance against changed material and actual test output. Human inspection is optional unless explicitly gated. Completion report leads with observed result, exact commands/PASS-FAIL, limitations and how to try it; no self-certified proof. Update affected current system documentation and shipped CLI help with the implementation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Available screenshots/reports can be opened from task detail with keyboard and accessible labels; Keep state round-trips through CLI/API and survives reload."
+        },
+        {
+          "id": "A2",
+          "outcome": "Expired/missing artifacts do not present broken active preview actions or erase the summary/provenance; the UI distinguishes expiry from unknown load failure."
+        },
+        {
+          "id": "A3",
+          "outcome": "Artifacts alone do not request human approval; a genuine configured human gate remains explicit and cannot be satisfied by merely viewing evidence."
+        },
+        {
+          "id": "A4",
+          "outcome": "Completed, partial and failed tasks show truthful result/verification/limitations without requiring the human to perform code review."
+        },
+        {
+          "id": "A5",
+          "outcome": "Browser assertions cover focus, Keep permissions, API failures and stale-state refresh; source-to-API tests cover the same availability contract used by CLI."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5",
+          "check": "command: go test ./cmd/tusker -run TestRemainingEvidenceView -count=1",
+          "notes": "Implementation must add this focused acceptance suite. This command has NOT been run and the suite does not exist yet. Cover all listed positive and negative cases; UI task must invoke its browser acceptance from this suite or include separately recorded browser proof."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "artifact-retention",
+          "kind": "hard"
+        },
+        {
+          "task": "wave-outcome",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "diff_summary",
+        "path": "internal/serve/ui/src/features/work",
+        "summary": "Reviewed implementation with acceptance-linked machine evidence and concise operator try-it instructions.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/features/work"
+      ],
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R5"
+      ]
+    }
+  ],
+  "context_fingerprint": "sha256:164011ea0da5d7cc4dd06ab86f2ff9a4ea6a8cb8b6cd4d2eff0682d2ccf08d3b",
+  "factory_intake_contract_schema": "tusker.factory-intake-contract/v1",
+  "factory_intake_contract_version": "1.1.0",
+  "factory_intake_contract_fingerprint": "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
+  "requirements": [
+    {
+      "id": "R1",
+      "outcome": "Expose requirement coverage when preparing tasks and waves"
+    },
+    {
+      "id": "R2",
+      "outcome": "Show the promised wave outcome separately from the completed result"
+    },
+    {
+      "id": "R3",
+      "outcome": "Remove mandatory scratch journaling while preserving safe resume"
+    },
+    {
+      "id": "R4",
+      "outcome": "Implement safe seven-day retention with Keep and durable evidence receipts"
+    },
+    {
+      "id": "R5",
+      "outcome": "Show optional result artifacts, Keep and expired evidence in task detail"
+    }
+  ],
+  "summary": "Prepare complete task coverage, understandable wave promises and optional seven-day evidence retention. Start only after the three assigned real-work streams land; imported work remains inert."
+}
