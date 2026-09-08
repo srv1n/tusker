@@ -112,6 +112,27 @@ func NewResolver(corpus Corpus) *Resolver {
 			}
 		}
 	}
+	aliases := make(map[string]Document)
+	ambiguous := make(map[string]bool)
+	for _, doc := range docs {
+		for _, raw := range list(doc.Raw["aliases"]) {
+			alias := normalizeSubject(NormalizeReference(raw))
+			if alias == "" || ambiguous[alias] {
+				continue
+			}
+			if existing, ok := aliases[alias]; ok && existing.Subject != doc.Subject {
+				delete(aliases, alias)
+				ambiguous[alias] = true
+				continue
+			}
+			aliases[alias] = doc
+		}
+	}
+	for alias, doc := range aliases {
+		if _, isSubject := r.bySubject[alias]; !isSubject {
+			r.bySubject[alias] = doc
+		}
+	}
 	return r
 }
 
@@ -309,6 +330,16 @@ func ExtractReferences(body string) []string {
 			continue
 		}
 		visible = append(visible, line)
+	}
+	visibleText := resolverWikiLink.ReplaceAllStringFunc(strings.Join(visible, "\n"), func(link string) string {
+		return strings.Join(strings.Fields(link), " ")
+	})
+	for _, line := range strings.Split(visibleText, "\n") {
+		for _, match := range resolverWikiLink.FindAllStringSubmatch(line, -1) {
+			if len(match) > 1 {
+				add(match[1])
+			}
+		}
 		for _, match := range resolverMarkdownLink.FindAllStringSubmatchIndex(line, -1) {
 			if len(match) < 6 {
 				continue
@@ -322,11 +353,6 @@ func ExtractReferences(body string) []string {
 			} else if match[4] >= 0 {
 				add(line[match[4]:match[5]])
 			}
-		}
-	}
-	for _, match := range resolverWikiLink.FindAllStringSubmatch(strings.Join(visible, "\n"), -1) {
-		if len(match) > 1 {
-			add(match[1])
 		}
 	}
 	return refs
