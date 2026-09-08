@@ -1741,6 +1741,26 @@ func TestEarlyExitClassification(t *testing.T) {
 	}
 }
 
+func TestProjectedWorkerAttemptBecomesCurrentReviewSource(t *testing.T) {
+	store := fairDispatchTestStore(t)
+	run := fairDispatchTestRun("project-shared", "APP-T-0001")
+	run.ActiveAttemptID = "attempt-execute"
+	run.WorkRevision = 0
+	if err := store.SaveAttempt(RunAttempt{
+		AttemptID: run.ActiveAttemptID, ProjectID: run.ProjectID, RecordID: run.RecordID,
+		ItemID: run.ItemID, Lane: runLaneExecute, WorkRevision: 0,
+		Outcome: string(AttemptOutcomeEarlyExit), EndState: RunEndState{Schema: "tusker.run-end-state/v2", HeadSHA: "abc123"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run.WorkRevision = 1
+	updateRunAttemptFromRun(store, run, AttemptOutcomeSucceeded, 0, "", time.Now().UTC().Format(time.RFC3339))
+	source, err := reviewImplementationSource(store, run, Note{Data: map[string]any{"work_revision": 1}})
+	if err != nil || source != "abc123" {
+		t.Fatalf("projected execute attempt was not reviewable: source=%q err=%v", source, err)
+	}
+}
+
 func TestDispatchDeclinedOutcomeReleasesWithoutContinuation(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

@@ -2683,6 +2683,16 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				}
 				run.WorkRevision = revision
 			}
+			if run.Lane != runLaneReview {
+				// Projection advances the canonical work revision. Persist that identity
+				// before review-packet construction looks up its execute parent.
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
+				if endState.Schema != "" {
+					if err := saveAttemptEndStateForRun(d.store, run, endState); err != nil {
+						return run, changed, err
+					}
+				}
+			}
 			if err := writeReviewPacketEvidence(project.VaultRoot, note, run, d.store); err != nil {
 				return run, changed, err
 			}
@@ -2701,11 +2711,8 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run.NextRetryAt = ""
 			run.LastError = ""
 			run.Terminal = false
-			updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
-			if endState.Schema != "" {
-				if err := saveAttemptEndStateForRun(d.store, run, endState); err != nil {
-					return run, changed, err
-				}
+			if run.Lane == runLaneReview {
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
 			}
 			if strings.TrimSpace(run.SessionRef) != "" {
 				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", sessionResumable)
