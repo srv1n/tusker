@@ -5,7 +5,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestRunnerCatalogCommandBoundsOrphanedOutputPipe(t *testing.T) {
+	started := time.Now()
+	_, err := runnerCatalogCommand("sh", "-c", "sleep 30 & wait")
+	if err == nil {
+		t.Fatal("expected catalog command timeout")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("catalog command left an output pipe open for %s", elapsed)
+	}
+}
 
 func TestRunnerCatalogParsesInstalledCodexShape(t *testing.T) {
 	models := parseCodexModels([]byte(`{"models":[{"slug":"gpt-5.2","visibility":"visible","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"xhigh"}],"service_tiers":[{"id":"priority"}]}]}`))

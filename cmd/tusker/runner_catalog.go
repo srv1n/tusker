@@ -47,7 +47,11 @@ var runnerCatalogNow = func() time.Time { return time.Now().UTC() }
 var runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, name, args...).Output()
+	cmd := exec.CommandContext(ctx, name, args...)
+	// A wrapper may leave a child holding the output pipe after its parent is
+	// cancelled. Bound that cleanup too; catalog discovery is observation only.
+	cmd.WaitDelay = time.Second
+	return cmd.Output()
 }
 
 func runnerCatalogCmd(args Args) error {
