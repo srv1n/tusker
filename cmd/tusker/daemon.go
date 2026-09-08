@@ -2658,6 +2658,13 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					return run, true, nil
 				}
 			}
+			if workerSubmitted && run.Lane == runLaneExecute && completionReactorMode(wfFile.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
+				_, revision, projectionErr := projectSubmittedWorkerToCanonical(project.VaultRoot, run, endState)
+				if projectionErr != nil {
+					return run, changed, projectionErr
+				}
+				run.WorkRevision = revision
+			}
 			if err := writeReviewPacketEvidence(project.VaultRoot, note, run, d.store); err != nil {
 				return run, changed, err
 			}

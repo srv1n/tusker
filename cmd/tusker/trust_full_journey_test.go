@@ -226,6 +226,9 @@ class JourneyTest(unittest.TestCase):
 		_ = store.Close()
 		t.Fatal(err)
 	}
+	if updated.WorkRevision != 1 {
+		t.Fatalf("daemon did not project the first submitted candidate revision: %#v", updated)
+	}
 	proof, err := loadV7ProofReport(vault, taskID)
 	if err != nil || containsString(proof.ModeMissing, "artifact_contract:diff_summary evidence missing for A1") {
 		_ = store.Close()

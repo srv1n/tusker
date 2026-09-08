@@ -112,6 +112,36 @@ func projectCompletedWorktreeReviewToCanonical(canonicalVault string, run RunSta
 	return sourceSHA, workRevision, nil
 }
 
+func projectSubmittedWorkerToCanonical(canonicalVault string, run RunStatus, endState RunEndState) (string, int, error) {
+	if run.Lane != runLaneExecute || strings.TrimSpace(run.ActiveAttemptID) == "" || strings.TrimSpace(endState.HeadSHA) == "" {
+		return "", 0, tuskerError(errorInvalidTransition, "worker submission projection requires an execute attempt and committed source")
+	}
+	if head, ok := gitRevParse(run.WorkspacePath, "HEAD^{commit}"); !ok || head != endState.HeadSHA {
+		return "", 0, tuskerError(errorInvalidTransition, "worker submission projection source changed after daemon capture")
+	}
+	task, err := resolveV7Note(canonicalVault, run.ItemID, "task")
+	if err != nil {
+		return "", 0, err
+	}
+	data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
+	if err != nil {
+		return "", 0, err
+	}
+	if stringField(data, "status") != "review" || intField(data, "work_revision") != run.WorkRevision {
+		return "", 0, tuskerError("CAS_CONFLICT", "worker submission projection refused because canonical review state changed")
+	}
+	baseRev := stringField(data, "state_rev")
+	workRevision := run.WorkRevision + 1
+	data["work_revision"] = workRevision
+	data["source_sha"] = endState.HeadSHA
+	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	data["updated_by"] = "daemon:review-projection"
+	if _, err := saveV7DocumentCAS(task.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
+		return "", 0, err
+	}
+	return endState.HeadSHA, workRevision, nil
+}
+
 func projectExecutionReviewProjectionReason(err error) string {
 	if err == nil {
 		return ""
