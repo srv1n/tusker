@@ -210,6 +210,9 @@ func TestRealWorkFixtureSeedE2E(t *testing.T) {
 	// The default corpus validates: docs check must report valid.
 	exec := demoNewExec()
 	vaultPath := demoVaultPath(repo)
+	if got := backpressureCommands(vaultPath); len(got) != 1 || got[0] != "git diff --check" {
+		t.Fatalf("demo landing gate must be repository-neutral, got %v", got)
+	}
 	checked, err := exec.run(repo, "docs", "check", "--vault", vaultPath)
 	if err != nil {
 		t.Fatalf("docs check failed: %s", err.Error())
