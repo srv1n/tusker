@@ -177,13 +177,14 @@ func armedWaveProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index,
 	idx.Tasks = effectiveTasks
 	for _, id := range members {
 		task, ok := idx.Tasks[id]
-		if !ok || stringField(task.Data, "readiness") != "blocked_by_dependency" {
+		if !ok {
 			continue
 		}
-		projectedState := v7ProjectedTaskState(vaultPath, task, idx)
 		data := cloneNoteData(task.Data)
-		for key, value := range projectedState {
-			data[key] = value
+		if stringField(data, "readiness") == "blocked_by_dependency" {
+			for key, value := range v7ProjectedTaskState(vaultPath, task, idx) {
+				data[key] = value
+			}
 		}
 		if stringField(data, "readiness") == "ready" && stringField(data, "status") == "backlog" {
 			data["status"] = "ready"

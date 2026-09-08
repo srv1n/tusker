@@ -23,6 +23,13 @@ func TestArmedWaveDrain(t *testing.T) {
 	idx.Tasks["APP-T-0001"] = root
 	snapshot := buildArmedWaveSnapshot(vault, idx, wave, nil, time.Unix(0, 0).UTC())
 	assertEqual(t, []string{"APP-T-0002", "APP-T-0003"}, snapshot.Frontier, "later parallel frontier")
+	for _, id := range []string{"APP-T-0002", "APP-T-0003"} {
+		task := idx.Tasks[id]
+		task.Data["status"], task.Data["readiness"] = "backlog", "ready"
+		idx.Tasks[id] = task
+	}
+	snapshot = buildArmedWaveSnapshot(vault, idx, wave, nil, time.Unix(0, 0).UTC())
+	assertEqual(t, []string{"APP-T-0002", "APP-T-0003"}, snapshot.Frontier, "reconciled backlog frontier")
 
 	soft := idx.Tasks["APP-T-0002"]
 	soft.Data["status"], soft.Data["proof_status"] = "review", "satisfied"
