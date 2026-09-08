@@ -480,7 +480,7 @@ func prepareV7EvidenceArtifacts(vaultPath, taskID, evidenceID string, args Args)
 	artifactDir := filepath.Join(vaultPath, "evidence", taskID, "artifacts", evidenceID)
 	seenNames := map[string]int{}
 	for _, input := range inputs {
-		source, err := resolveDurableEvidenceSource(input)
+		source, err := resolveDurableEvidenceSourceFrom(args.String("_source-root"), input)
 		if err != nil {
 			return nil, "", err
 		}
@@ -548,6 +548,10 @@ func copyV7EvidenceArtifact(source, target string) error {
 }
 
 func resolveDurableEvidenceSource(input string) (string, error) {
+	return resolveDurableEvidenceSourceFrom("", input)
+}
+
+func resolveDurableEvidenceSourceFrom(root, input string) (string, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
 		return "", tuskerError(errorMissingArg, "empty evidence artifact path")
@@ -565,9 +569,15 @@ func resolveDurableEvidenceSource(input string) (string, error) {
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
 		return "", tuskerError(errorPathEscape, "evidence artifact path escapes the workspace: "+trimmed)
 	}
+	if strings.TrimSpace(root) != "" {
+		clean = filepath.Join(root, clean)
+	}
 	abs, err := filepath.Abs(clean)
 	if err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(root) != "" && !pathWithin(canonicalPath(root), canonicalPath(abs)) {
+		return "", tuskerError(errorPathEscape, "evidence artifact path escapes the trusted source workspace: "+trimmed)
 	}
 	if !fileExists(abs) {
 		return "", tuskerError(errorNotFound, "evidence artifact not found: "+trimmed)

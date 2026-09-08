@@ -2664,6 +2664,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				if err := markNoteReadyForReview(project.VaultRoot, note.AbsolutePath); err != nil {
 					return run, changed, err
 				}
+				if err := recordDaemonImplementationEvidence(project.VaultRoot, note, run); err != nil {
+					return run, changed, err
+				}
 			}
 			run.LeaseState = string(LeaseStateReleased)
 			run.AttemptOutcome = string(AttemptOutcomeSucceeded)
@@ -6995,6 +6998,20 @@ func markNoteReadyForReview(vaultPath, notePath string) error {
 	}
 	autoReindex(vaultPath)
 	return nil
+}
+
+func recordDaemonImplementationEvidence(vaultPath string, note Note, run RunStatus) error {
+	contract := mapField(note.Data, "artifact_contract")
+	path := stringField(contract, "path")
+	if path == "" || !fileExists(filepath.Join(run.WorkspacePath, filepath.FromSlash(path))) {
+		return nil
+	}
+	return evidenceV7AddCmd(Args{
+		"vault": vaultPath, "quiet": "true", "id": run.RecordID,
+		"kind": "verification_summary", "covers": strings.Join(normalizeList(contract["acceptance_ids"]), ","),
+		"summary": "Daemon-captured implementation artifact from attempt " + run.ActiveAttemptID,
+		"path": path, "_source-root": run.WorkspacePath, "by": "agent:" + strings.ToLower(run.ActiveAttemptID),
+	})
 }
 
 func daemonRunCmd(args Args) (returnErr error) {
