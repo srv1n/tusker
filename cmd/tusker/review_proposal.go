@@ -234,7 +234,7 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		return ReviewResult{}, fmt.Errorf("proposal run lease is no longer authoritative")
 	}
 	result := proposal.Result
-	if result.Runner != "" || result.RunnerProfile != "" || result.WorkerPolicyFP != "" || result.ResultRevision != "" || result.MaterialFingerprint != "" {
+	if result.Runner != "" || result.RunnerProfile != "" || result.WorkerPolicyFP != "" || result.ResultRevision != "" {
 		return ReviewResult{}, fmt.Errorf("worker proposal attempted to choose runner authority")
 	}
 	if result.Schema != reviewResultSchemaV2 {
@@ -299,6 +299,9 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	}
 	if material != expectedMaterial {
 		return ReviewResult{}, fmt.Errorf("proposal implementation parent does not match the current declared material")
+	}
+	if result.MaterialFingerprint != material {
+		return ReviewResult{}, fmt.Errorf("proposal implementation material fingerprint drifted")
 	}
 	result.MaterialFingerprint = material
 	proof, gates, err := reviewObjectiveSnapshots(project.VaultRoot, note)

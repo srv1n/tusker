@@ -549,7 +549,7 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 		TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: run.WorkRevision,
 		ImplementationSHA: facts.Head, AttemptID: attemptID,
 		Actor:  reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
-		Covers: []string{}, ProofFingerprint: proof, GateFingerprint: gates,
+		Covers: []string{}, ProofFingerprint: proof, GateFingerprint: gates, MaterialFingerprint: material,
 		Verdict: "changes_requested", Summary: "actionable", Findings: []string{"fix acceptance"},
 		CreatedAt: "2026-07-25T10:00:00Z",
 	}
