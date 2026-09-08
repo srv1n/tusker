@@ -4538,7 +4538,7 @@ func (d *Daemon) latestDispatchRun(fallback RunStatus) (RunStatus, error) {
 	if d == nil || d.store == nil || strings.TrimSpace(fallback.RecordID) == "" {
 		return fallback, nil
 	}
-	latest, err := d.store.FindRun(fallback.RecordID)
+	latest, err := d.store.FindRunScoped(fallback.ProjectID, fallback.RecordID)
 	if err != nil || latest == nil {
 		return fallback, err
 	}

@@ -102,7 +102,7 @@ func (d *Daemon) upsertRunWithStream(before, after RunStatus) error {
 		if strings.TrimSpace(before.ProjectID) == "" && strings.TrimSpace(before.RecordID) == "" {
 			context := map[string]any{"insert_conflict": true}
 			changedSummary := ""
-			if current, loadErr := d.store.FindRun(after.RecordID); loadErr == nil && current != nil {
+			if current, loadErr := d.store.FindRunScoped(after.ProjectID, after.RecordID); loadErr == nil && current != nil {
 				changed := runtimeRunChangedColumns(after, *current)
 				context["not_applied_columns"] = changed
 				if len(changed) > 0 {
@@ -118,7 +118,7 @@ func (d *Daemon) upsertRunWithStream(before, after RunStatus) error {
 		if !alreadyApplied {
 			context := map[string]any{}
 			changedSummary := ""
-			if current, loadErr := d.store.FindRun(after.RecordID); loadErr == nil && current != nil {
+			if current, loadErr := d.store.FindRunScoped(after.ProjectID, after.RecordID); loadErr == nil && current != nil {
 				if runtimeRunChangesCompatible(before, after, *current) {
 					retried, retryErr := d.store.UpsertRunIfSnapshot(*current, after)
 					if retryErr != nil {

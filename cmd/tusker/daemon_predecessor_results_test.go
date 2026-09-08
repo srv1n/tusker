@@ -33,3 +33,20 @@ func TestRenderDirectPredecessorResultsUsesProjectScopedRun(t *testing.T) {
 		t.Fatalf("project-scoped predecessor result not rendered: %s", got)
 	}
 }
+
+func TestLatestDispatchRunUsesProjectScope(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	for _, project := range []string{"first", "second"} {
+		if err := store.UpsertRun(RunStatus{ProjectID: project, RecordID: "APP-T-0001", ItemID: "APP-T-0001", WorkRevision: len(project)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := (&Daemon{store: store}).latestDispatchRun(RunStatus{ProjectID: "second", RecordID: "APP-T-0001"})
+	if err != nil || got.ProjectID != "second" {
+		t.Fatalf("project-scoped dispatch lookup = %#v, %v", got, err)
+	}
+}
