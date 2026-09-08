@@ -155,6 +155,11 @@ func TestReviewProposalRequiresCompleteSingleRawLogMarker(t *testing.T) {
 	if err != nil || !found || got.AttemptID != p.AttemptID {
 		t.Fatalf("identical replay markers must be idempotent: %#v found=%t err=%v", got, found, err)
 	}
+	wrapped, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"command": "tusker review submit", "aggregated_output": reviewProposalMarker + string(raw) + "\n"}})
+	got, found, err = scanReviewProposalLog(strings.NewReader(string(wrapped) + "\n"))
+	if err != nil || !found || got.AttemptID != p.AttemptID {
+		t.Fatalf("codex command output marker was not harvested: %#v found=%t err=%v", got, found, err)
+	}
 }
 
 func TestFrozenReviewProposalLogTreatsAbsenceAsNoProposalAndRejectsSymlink(t *testing.T) {

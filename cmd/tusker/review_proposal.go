@@ -159,6 +159,13 @@ func scanReviewProposalLogWithLimit(input io.Reader, maxBytes int64) (reviewProp
 	reader := bufio.NewReaderSize(limited, reviewProposalMax+len(reviewProposalMarker)+2)
 	var proposal reviewProposal
 	found := false
+	accept := func(candidate reviewProposal) error {
+		if found && !reflect.DeepEqual(candidate, proposal) {
+			return fmt.Errorf("conflicting proposal markers")
+		}
+		proposal, found = candidate, true
+		return nil
+	}
 	finish := func() (reviewProposal, bool, error) {
 		if limited.N == 0 {
 			return reviewProposal{}, false, fmt.Errorf("review proposal raw log exceeds %d-byte completion-authority limit", maxBytes)
@@ -187,15 +194,18 @@ func scanReviewProposalLogWithLimit(input io.Reader, maxBytes int64) (reviewProp
 			if len(line) > 0 && line[len(line)-1] == '\r' {
 				line = line[:len(line)-1]
 			}
-			if strings.HasPrefix(string(line), reviewProposalMarker) {
-				candidate, ok, parseErr := reviewProposalFromRawLog(append(append([]byte(nil), line...), '\n'))
+			payload := append(append([]byte(nil), line...), '\n')
+			if _, output, ok := rawLogCommandExecution(string(line)); ok && strings.Contains(output, reviewProposalMarker) {
+				payload = []byte(output)
+			}
+			if strings.Contains(string(payload), reviewProposalMarker) {
+				candidate, ok, parseErr := reviewProposalFromRawLog(payload)
 				if parseErr != nil || !ok {
 					return reviewProposal{}, false, firstNonNilError(parseErr, fmt.Errorf("proposal marker is malformed"))
 				}
-				if found && !reflect.DeepEqual(candidate, proposal) {
-					return reviewProposal{}, false, fmt.Errorf("conflicting proposal markers")
+				if err := accept(candidate); err != nil {
+					return reviewProposal{}, false, err
 				}
-				proposal, found = candidate, true
 			}
 		}
 		if err == io.EOF {
