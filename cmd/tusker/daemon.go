@@ -2674,7 +2674,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					out, dirtyErr := exec.Command("git", args...).Output()
 					dirtyMaterial = dirtyErr != nil || strings.TrimSpace(string(out)) != ""
 				}
-				if dirtyMaterial {
+				if dirtyMaterial && !workerSubmitted {
 					reason := "normalized run submission refused: implementation material is uncommitted; commit the owned changes before submitting"
 					updateRunAttemptFromRun(d.store, run, AttemptOutcomeEarlyExit, 0, reason, finished)
 					run, _ = d.scheduleContinuationRetry(run, wfFile.Data, reason)

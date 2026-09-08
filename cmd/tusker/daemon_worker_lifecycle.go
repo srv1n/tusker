@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -72,6 +73,12 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 		if err != nil {
 			return nil, false, err
 		}
+		if endState.Dirty {
+			endState.HeadSHA, err = materializeWorkerSubmissionCommit(*run, materialScope)
+			if err != nil {
+				return nil, false, err
+			}
+		}
 		if err := d.applyWorkerLifecycle(req); err != nil {
 			return nil, false, err
 		}
@@ -91,6 +98,39 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 	}
 	updated, err := d.store.FindRunScoped(run.ProjectID, run.RecordID)
 	return updated, true, err
+}
+
+func materializeWorkerSubmissionCommit(run RunStatus, materialScope []string) (string, error) {
+	tmp, err := os.MkdirTemp("", "tusker-worker-index-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	env := append(os.Environ(), "GIT_INDEX_FILE="+filepath.Join(tmp, "index"))
+	runGit := func(args ...string) (string, error) {
+		cmd := exec.Command("git", append([]string{"-C", run.WorkspacePath}, args...)...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", tuskerError("WORKER_PROJECTION_FAILED", firstActionableLine(string(out), err.Error()))
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	parent, err := runGit("rev-parse", "HEAD^{commit}")
+	if err != nil {
+		return "", err
+	}
+	if _, err := runGit("read-tree", parent); err != nil {
+		return "", err
+	}
+	if _, err := runGit(append([]string{"add", "-A", "--"}, materialScope...)...); err != nil {
+		return "", err
+	}
+	tree, err := runGit("write-tree")
+	if err != nil {
+		return "", err
+	}
+	return runGit("-c", "commit.gpgsign=false", "commit-tree", tree, "-p", parent, "-m", "Tusker worker submission "+run.RecordID)
 }
 
 func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {

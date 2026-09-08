@@ -116,8 +116,13 @@ func projectSubmittedWorkerToCanonical(canonicalVault string, run RunStatus, end
 	if run.Lane != runLaneExecute || strings.TrimSpace(run.ActiveAttemptID) == "" || strings.TrimSpace(endState.HeadSHA) == "" {
 		return "", 0, tuskerError(errorInvalidTransition, "worker submission projection requires an execute attempt and committed source")
 	}
-	if head, ok := gitRevParse(run.WorkspacePath, "HEAD^{commit}"); !ok || head != endState.HeadSHA {
+	if source, ok := gitRevParse(run.WorkspacePath, endState.HeadSHA+"^{commit}"); !ok || source != endState.HeadSHA {
 		return "", 0, tuskerError(errorInvalidTransition, "worker submission projection source changed after daemon capture")
+	}
+	if parent, ok := gitRevParse(run.WorkspacePath, endState.HeadSHA+"^"); !ok {
+		return "", 0, tuskerError(errorInvalidTransition, "worker submission projection source has no canonical parent")
+	} else if head, headOK := gitRevParse(run.WorkspacePath, "HEAD^{commit}"); !headOK || parent != head {
+		return "", 0, tuskerError(errorInvalidTransition, "worker submission projection source is not based on canonical HEAD")
 	}
 	task, err := resolveV7Note(canonicalVault, run.ItemID, "task")
 	if err != nil {

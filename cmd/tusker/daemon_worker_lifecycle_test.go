@@ -81,6 +81,35 @@ func TestWorkerSubmitQueuesUntilTerminalReconciliation(t *testing.T) {
 	}
 }
 
+func TestDaemonMaterializesSandboxedWorkerSubmissionCommit(t *testing.T) {
+	repo := t.TempDir()
+	initializeOrchestrationGitRepo(t, repo)
+	if err := os.MkdirAll(filepath.Join(repo, "owned"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "owned", "result.txt"), []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head, ok := gitRevParse(repo, "HEAD^{commit}")
+	if !ok {
+		t.Fatal("fixture HEAD is missing")
+	}
+	commit, err := materializeWorkerSubmissionCommit(RunStatus{RecordID: "APP-T-0001", WorkspacePath: repo}, []string{"owned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := gitRevParse(repo, "HEAD^{commit}"); got != head {
+		t.Fatalf("daemon projection moved shared HEAD: got %s want %s", got, head)
+	}
+	if parent, _ := gitRevParse(repo, commit+"^"); parent != head {
+		t.Fatalf("projection parent = %s want %s", parent, head)
+	}
+	content, err := gitOutputTrim(repo, "show", commit+":owned/result.txt")
+	if err != nil || content != "result" {
+		t.Fatalf("projected material = %q err=%v", content, err)
+	}
+}
+
 func TestDispatchedWorkerStartRefusesWithoutRuntimeStore(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "must-not-exist")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
