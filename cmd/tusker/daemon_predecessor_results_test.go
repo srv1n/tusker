@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -48,5 +49,22 @@ func TestLatestDispatchRunUsesProjectScope(t *testing.T) {
 	got, err := (&Daemon{store: store}).latestDispatchRun(RunStatus{ProjectID: "second", RecordID: "APP-T-0001"})
 	if err != nil || got.ProjectID != "second" {
 		t.Fatalf("project-scoped dispatch lookup = %#v, %v", got, err)
+	}
+}
+
+func TestDaemonEvidenceDoesNotInventKindOrCoverage(t *testing.T) {
+	workspace := t.TempDir()
+	if err := writeText(filepath.Join(workspace, "result.txt"), "result\n"); err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{RecordID: "APP-T-0001", WorkspacePath: workspace}
+	for _, contract := range []map[string]any{
+		{"kind": "unknown", "path": "result.txt", "acceptance_ids": []string{"A1"}},
+		{"kind": "diff_summary", "path": "result.txt"},
+	} {
+		note := Note{Data: map[string]any{"artifact_contract": contract}, Body: "## Acceptance\n\n- A1: works\n"}
+		if err := recordDaemonImplementationEvidence(t.TempDir(), note, run); err == nil {
+			t.Fatalf("unsafe artifact contract was accepted: %#v", contract)
+		}
 	}
 }

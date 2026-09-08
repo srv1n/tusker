@@ -7123,11 +7123,11 @@ func recordDaemonImplementationEvidence(vaultPath string, note Note, run RunStat
 	}
 	kinds := v7ArtifactContractEvidenceKinds(strings.ToLower(strings.TrimSpace(stringField(contract, "kind"))))
 	if len(kinds) == 0 {
-		kinds = []string{"verification_summary"}
+		return fmt.Errorf("artifact contract has no supported evidence kind")
 	}
 	covers := normalizeList(contract["acceptance_ids"])
 	if len(covers) == 0 {
-		covers = v7AcceptanceIDs(note.Body)
+		return fmt.Errorf("artifact contract has no explicit acceptance coverage")
 	}
 	return evidenceV7AddCmd(Args{
 		"vault": vaultPath, "quiet": "true", "id": run.RecordID,
