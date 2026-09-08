@@ -1547,6 +1547,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
+	if err := refreshRuntimeSentinelProjectNotes(sentinelProjects); err != nil {
+		return err
+	}
 	if _, err := d.refreshInvariantCircuitStatus(runtimeSentinelSnapshot{
 		Projects:       sentinelProjects,
 		Runs:           finalRuns,
@@ -4077,6 +4080,14 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if attemptID == "" {
 		attemptID = newRecordID()
 	}
+	// Dependency-unlocked armed-wave members are projected in memory during
+	// scheduling. Persist that projection before claiming the lease so the
+	// invariant monitor never observes an active backlog task.
+	if lane == runLaneExecute {
+		if _, err := reconcileV7ControlProjections(project.VaultRoot, []string{run.ItemID}, "daemon:dispatch", "dispatch"); err != nil {
+			return run, false, err
+		}
+	}
 	started := time.Now().UTC()
 	startedAt := started.Format(time.RFC3339)
 	leaseGeneration := run.LeaseGeneration + 1
@@ -4208,17 +4219,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	workspace, err := workspaceManager.Prepare(workspaceRequest)
 	if err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
-	}
-	// The daemon may unlock a soft-dependent task from the canonical DAG even
-	// though a newly-created worktree still contains its older
-	// blocked_by_dependency projection. Materialize that one authoritative task
-	// projection before seeding/starting the local attempt, otherwise `finish`
-	// records a handoff but correctly declines to request review from stale
-	// local dependency state.
-	if lane == runLaneExecute {
-		if _, err := reconcileV7ControlProjections(project.VaultRoot, []string{run.ItemID}, "daemon:dispatch", "dispatch"); err != nil {
-			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
-		}
 	}
 	if err := seedCanonicalV7TaskForPreparedWorkspace(project.VaultRoot, workspace, workspaceStrategy, lane, run.ItemID); err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)

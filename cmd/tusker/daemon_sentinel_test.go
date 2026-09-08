@@ -106,6 +106,19 @@ func TestSentinelIgnoresFreshHeartbeatForHandRun(t *testing.T) {
 	}
 }
 
+func TestSentinelRefreshesTrackerStateAfterDispatch(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Fresh tracker state", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	project := RegisteredProject{ProjectID: "app", VaultRoot: vault}
+	stale := mustTaskData(t, vault, "APP-T-0001")
+	snapshot := []runtimeSentinelProjectSnapshot{{Project: project, NotesByRecordID: map[string]Note{"APP-T-0001": {Data: stale}}}}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "ready", "readiness": "ready"})
+	if err := refreshRuntimeSentinelProjectNotes(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "ready", stringField(snapshot[0].NotesByRecordID["APP-T-0001"].Data, "status"), "post-dispatch sentinel status")
+}
+
 func TestSentinelCircuitOpenBlocksDispatchButServeReadsStatus(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Circuit blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)

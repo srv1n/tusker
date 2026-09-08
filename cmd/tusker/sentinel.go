@@ -65,6 +65,17 @@ type runtimeSentinelSnapshot struct {
 	Liveness       func(RunStatus) bool
 }
 
+func refreshRuntimeSentinelProjectNotes(projects []runtimeSentinelProjectSnapshot) error {
+	for i := range projects {
+		notes, err := listOperationalNotesFrontmatter(projects[i].Project.VaultRoot)
+		if err != nil {
+			return err
+		}
+		projects[i].NotesByID, projects[i].NotesByRecordID = daemonNoteMaps(notes)
+	}
+	return nil
+}
+
 func defaultRuntimeSentinelConfig() RuntimeSentinelConfig {
 	return RuntimeSentinelConfig{
 		Checks: []string{

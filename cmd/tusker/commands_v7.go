@@ -1895,6 +1895,11 @@ func reconcileV7Cmd(args Args) error {
 	}
 	for _, task := range idx.Tasks {
 		next := v7ProjectedTaskState(vaultPath, task, idx)
+		if stringField(task.Data, "status") == "backlog" && stringField(next, "readiness") == "ready" {
+			if wave, ok := idx.Waves[stringField(task.Data, "wave")]; ok && stringField(wave.Data, "authorization") == "armed" {
+				next["status"] = "ready"
+			}
+		}
 		projectionChanges := map[string]any{}
 		taskID := ""
 		nextRev, updated, err := mutateV7DocumentLocked(task.AbsolutePath, v7FrontmatterOrder["task"], func(data map[string]any, body string) (map[string]any, string, bool, error) {
@@ -2228,6 +2233,11 @@ func reconcileV7ControlProjections(vaultPath string, taskIDs []string, actor, so
 			continue
 		}
 		next := v7ProjectedTaskState(vaultPath, task, idx)
+		if stringField(task.Data, "status") == "backlog" && stringField(next, "readiness") == "ready" {
+			if wave, ok := idx.Waves[stringField(task.Data, "wave")]; ok && stringField(wave.Data, "authorization") == "armed" {
+				next["status"] = "ready"
+			}
+		}
 		data, body := cloneNoteData(task.Data), task.Body
 		baseRev := stringField(data, "state_rev")
 		updated := false

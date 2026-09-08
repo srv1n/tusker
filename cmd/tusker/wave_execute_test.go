@@ -269,6 +269,38 @@ func TestWaveDirectiveClaimRechecksAuthorizationUnderLock(t *testing.T) {
 	}
 }
 
+func TestWaveDescendantIsDurablyReadyBeforeLeaseClaim(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
+	installCodexSleepShimForTest(t)
+	vault, _, _ := waveExecuteTestFixture(t)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "done", "readiness": "done", "proof_status": "satisfied"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{"status": "backlog", "readiness": "blocked_by_dependency", "next_owner": "blocked_dependency"})
+	store, project, server := waveExecuteDaemonTestRuntime(t, vault)
+	var result serveWaveExecuteResult
+	servePost(t, server, "/api/waves/W-0001/execute?project=app", `{}`, &result)
+	canonical, err := resolveNote(vault, "APP-T-0002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, _, ok, err := armedWaveDispatchTaskProjection(vault, canonical)
+	if err != nil || !ok {
+		t.Fatalf("project descendant: ok=%t err=%v", ok, err)
+	}
+	run, wfFile := waveExecuteDispatchInput(t, store, project, note)
+	observed := ""
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, beforeRunLeaseClaim: func(RunStatus) {
+		current, resolveErr := resolveNote(vault, "APP-T-0002")
+		if resolveErr != nil {
+			t.Fatal(resolveErr)
+		}
+		observed = stringField(current.Data, "status")
+	}}
+	if _, _, err := daemon.dispatchRun(context.Background(), project, wfFile, note, run, runLaneExecute); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "ready", observed, "canonical status at lease claim")
+}
+
 func TestServeWaveExecuteDoesNotAuthorizeNewTaskWithoutDirective(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
 	installCodexSleepShimForTest(t)

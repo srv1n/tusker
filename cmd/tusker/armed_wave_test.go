@@ -43,6 +43,18 @@ func TestArmedWaveDrain(t *testing.T) {
 	}
 }
 
+func TestArmedWaveReconcilePersistsNewFrontierStatus(t *testing.T) {
+	vault, _, _ := armedWaveTestFixture(t)
+	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{"status": "backlog", "readiness": "blocked_by_dependency", "next_owner": "blocked_dependency"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "done", "readiness": "done", "proof_status": "satisfied"})
+	if _, err := reconcileV7ControlProjections(vault, []string{"APP-T-0002"}, "daemon:dispatch", "dispatch"); err != nil {
+		t.Fatal(err)
+	}
+	dependent := mustTaskData(t, vault, "APP-T-0002")
+	assertEqual(t, "ready", stringField(dependent, "status"), "new armed-wave frontier status")
+	assertEqual(t, "ready", stringField(dependent, "readiness"), "new armed-wave frontier readiness")
+}
+
 func TestArmedWaveFailureContainment(t *testing.T) {
 	vault, idx, wave := armedWaveTestFixture(t)
 	for _, id := range []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005"} {
