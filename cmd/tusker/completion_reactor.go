@@ -1929,10 +1929,13 @@ type completionGitTreeEntry struct {
 func stageExactCompletionTaskBlob(worktree, taskRel string, generated []byte) (completionGitTreeEntry, error) {
 	stage, err := gitOutputTrim(worktree, "ls-files", "--stage", "--", taskRel)
 	fields := strings.Fields(stage)
-	if err != nil || len(fields) < 3 || fields[2] != "0" {
+	if err != nil || (stage != "" && (len(strings.Split(stage, "\n")) != 1 || len(fields) < 3 || fields[2] != "0")) {
 		return completionGitTreeEntry{}, tuskerError(errorInvalidTransition, "reviewed task does not have one resolved stage-zero index entry")
 	}
-	mode := fields[0]
+	mode := "100644"
+	if stage != "" {
+		mode = fields[0]
+	}
 	if mode != "100644" {
 		return completionGitTreeEntry{}, tuskerError(errorInvalidTransition, "reviewed task must remain a regular non-executable file")
 	}

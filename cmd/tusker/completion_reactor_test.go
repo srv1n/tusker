@@ -2756,3 +2756,20 @@ func assertCompletionTerminalProjection(t *testing.T, vault string, result Revie
 	}
 	return task
 }
+
+func TestStageExactCompletionTaskBlobAddsNewTask(t *testing.T) {
+	repo := t.TempDir()
+	runGitDir(t, repo, "init")
+	path := ".tusker/work/tasks/APP-T-0001.md"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, path)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("reviewed task\n")
+	if err := os.WriteFile(filepath.Join(repo, path), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := stageExactCompletionTaskBlob(repo, path, raw)
+	if err != nil || entry.Mode != "100644" || entry.OID == "" {
+		t.Fatalf("new reviewed task was not staged exactly: entry=%#v err=%v", entry, err)
+	}
+}
