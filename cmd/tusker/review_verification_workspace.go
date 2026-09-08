@@ -8,7 +8,10 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 	if _, pending := v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body)); len(pending) == 0 {
 		return nil, nil
 	}
-	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	source, err := reviewImplementationSource(store, run, note)
+	if err != nil {
+		return nil, err
+	}
 	parent, material, err := reviewAttemptImplementation(store, run.ProjectID, run.RecordID, run.ActiveAttemptID, run.WorkRevision, source)
 	if err != nil {
 		return nil, err
@@ -29,12 +32,16 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 		if err != nil {
 			return err
 		}
+		currentSource, err := reviewImplementationSource(store, run, current)
+		if err != nil {
+			return err
+		}
 		scope, err := canonicalTaskMaterialScope(vault, current)
 		if err != nil {
 			return err
 		}
 		if strings.Join(scope, "\x00") != strings.Join(parent.EndState.MaterialScope, "\x00") ||
-			firstNonEmpty(stringField(current.Data, "source_sha"), stringField(current.Data, "source_commit")) != source ||
+			currentSource != source ||
 			intField(current.Data, "work_revision") != run.WorkRevision {
 			return tuskerError(errorInvalidTransition, "review verification implementation scope or source changed")
 		}
