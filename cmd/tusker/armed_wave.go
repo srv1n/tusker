@@ -319,7 +319,6 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 		return ""
 	}
 	repoRoot := v7RepoRoot(vaultPath)
-	integrationBranch := v7WaveIntegrationBranch(wave)
 	for _, edge := range v7TaskDependencyEdges(task, idx) {
 		dependencyID := edge.ID
 		dependency, ok := idx.Tasks[dependencyID]
@@ -330,6 +329,7 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 		if err != nil || filepath.IsAbs(rel) || strings.HasPrefix(filepath.Clean(rel), "..") {
 			return dependencyID + " integration state has an invalid task path"
 		}
+		integrationBranch := armedWaveDependencyIntegrationBranch(idx, wave, dependency)
 		integrated, ok, err := v7GitNoteAtRef(repoRoot, integrationBranch, filepath.ToSlash(rel))
 		if err != nil || !ok {
 			return dependencyID + " integration state is unavailable"
@@ -339,6 +339,13 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 		}
 	}
 	return ""
+}
+
+func armedWaveDependencyIntegrationBranch(idx v7Index, currentWave, dependency Note) string {
+	if dependencyWave, found := idx.Waves[stringField(dependency.Data, "wave")]; found {
+		return v7WaveIntegrationBranch(dependencyWave)
+	}
+	return v7WaveIntegrationBranch(currentWave)
 }
 
 func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map[string]RunStatus) string {

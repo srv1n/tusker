@@ -292,6 +292,16 @@ func TestArmedWaveSharedWorkspaceRequiresSerialProjectCapacity(t *testing.T) {
 	}
 }
 
+func TestArmedWaveReviewChecksCrossWaveDependencyOnItsOwnIntegrationBranch(t *testing.T) {
+	current := Note{Data: map[string]any{"id": "W-0002", "integration_branch": "integration/W-0002"}}
+	parent := Note{Data: map[string]any{"id": "W-0001", "integration_branch": "integration/W-0001"}}
+	dependency := Note{Data: map[string]any{"id": "APP-T-0001", "wave": "W-0001"}}
+	idx := v7Index{Waves: map[string]Note{"W-0001": parent, "W-0002": current}}
+	if got := armedWaveDependencyIntegrationBranch(idx, current, dependency); got != "integration/W-0001" {
+		t.Fatalf("cross-wave dependency branch = %q, want integration/W-0001", got)
+	}
+}
+
 func TestArmedWaveDelivery(t *testing.T) {
 	existing := WorkspaceMetadata{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", RepoRoot: "/repo", Strategy: string(WorkspaceStrategyWorktree)}
 	err := validateWorkspaceMetadata(existing, WorkspacePrepareRequest{ProjectID: "app", RecordID: "APP-T-0002", ItemID: "APP-T-0002", RepoRoot: "/repo", Strategy: WorkspaceStrategyWorktree})
