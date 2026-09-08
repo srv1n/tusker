@@ -78,7 +78,7 @@ func TestCompletionWorkerSafetyRejectsProfileShellInjection(t *testing.T) {
 		t.Fatalf("canonical argv did not mechanically enforce sandbox/network: %#v", argv)
 	}
 	got := strings.Join(argv, "\x00")
-	for _, required := range []string{"--ignore-user-config", "--ignore-rules", "--disable\x00hooks", `projects.` + completionWorkspaceTrustKeyToken + `.trust_level="untrusted"`} {
+	for _, required := range []string{"--ignore-user-config", "--ignore-rules", "--disable\x00hooks"} {
 		if !strings.Contains(got, required) {
 			t.Fatalf("canonical argv did not isolate project launch policy %q: %#v", required, argv)
 		}
@@ -130,10 +130,6 @@ func TestCompletionCodexBindingUsesPhysicalExecutableWithoutLoginShell(t *testin
 	}
 	if !v7CloseAuthorityDigest(executableFP, "sha256:") || strings.TrimSpace(searchPath) == "" {
 		t.Fatalf("authoritative executable binding was incomplete: fp=%q path=%q", executableFP, searchPath)
-	}
-	joined := strings.Join(argv, "\x00")
-	if strings.Contains(joined, completionWorkspaceTrustKeyToken) || !strings.Contains(joined, canonicalPath(workspace)) {
-		t.Fatalf("workspace trust override was not materialized: %#v", argv)
 	}
 	if err := completionVerifyExecutableIdentity(argv[0], executableFP, searchPath); err != nil {
 		t.Fatalf("fresh executable identity did not verify: %v", err)

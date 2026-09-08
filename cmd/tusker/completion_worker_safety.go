@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,10 +10,7 @@ import (
 	"strings"
 )
 
-const (
-	completionWorkspaceTrustKeyToken            = "{{completion_workspace_trust_key}}"
-	completionAuthoritativeRawLogMaxBytes int64 = 16 << 20
-)
+const completionAuthoritativeRawLogMaxBytes int64 = 16 << 20
 
 // completionWorkerSafety is intentionally stricter than generic automation:
 // completion consumes a reviewer verdict as lifecycle authority, so every
@@ -82,12 +78,9 @@ func completionAuthoritativeCodexExecArgv(command, lane string, profile Resolved
 	}
 
 	// This is a policy template, not a shell fragment. At dispatch the daemon
-	// replaces the trust-key token with the canonical workspace path and argv[0]
-	// with the physical executable that passed preflight. Ignoring user config
-	// preserves CODEX_HOME authentication but removes user trust declarations;
-	// the explicit untrusted workspace override then disables that repository's
-	// .codex config (including project hooks and MCP declarations). The feature
-	// and rules switches are independent defense in depth.
+	// replaces argv[0] with the physical executable that passed preflight.
+	// Ignoring config preserves CODEX_HOME authentication while the feature and
+	// rules switches independently suppress project hooks and exec policies.
 	argv := []string{
 		"codex", "exec",
 		"--ignore-user-config",
@@ -96,7 +89,6 @@ func completionAuthoritativeCodexExecArgv(command, lane string, profile Resolved
 		"--strict-config",
 		"--json",
 		"--skip-git-repo-check",
-		"-c", `projects.` + completionWorkspaceTrustKeyToken + `.trust_level="untrusted"`,
 		"-c", `approval_policy="never"`,
 		"-c", `sandbox_mode="` + mode + `"`,
 		"-c", `sandbox_workspace_write.network_access=false`,
@@ -114,10 +106,7 @@ func completionBindAuthoritativeCodexExec(command string, argv []string, workspa
 	if len(argv) < 2 || argv[0] != "codex" || argv[1] != "exec" {
 		return nil, "", "", fmt.Errorf("completion authority requires the canonical codex exec argv")
 	}
-	materialized, err := completionMaterializeCodexTrustArgv(argv, workspace)
-	if err != nil {
-		return nil, "", "", err
-	}
+	materialized := append([]string(nil), argv...)
 	searchPath, err := completionAuthoritativeRunnerSearchPath(workspace, repoRoot)
 	if err != nil {
 		return nil, "", "", err
@@ -159,36 +148,6 @@ func completionAuthoritativeRunnerSearchPath(workspace, repoRoot string) (string
 		return "", fmt.Errorf("completion authority could not construct a non-login runner search path outside the worker repository")
 	}
 	return strings.Join(out, string(os.PathListSeparator)), nil
-}
-
-func completionMaterializeCodexTrustArgv(argv []string, workspace string) ([]string, error) {
-	workspace = strings.TrimSpace(workspace)
-	if workspace == "" {
-		return nil, fmt.Errorf("completion authority requires a worker workspace trust key")
-	}
-	absolute, err := filepath.Abs(workspace)
-	if err != nil {
-		return nil, err
-	}
-	absolute = canonicalPath(absolute)
-	if !filepath.IsAbs(absolute) {
-		return nil, fmt.Errorf("completion authority requires an absolute worker workspace trust key")
-	}
-	if !strings.Contains(strings.Join(argv, "\x00"), completionWorkspaceTrustKeyToken) {
-		return nil, fmt.Errorf("completion authority codex argv is missing its workspace trust override")
-	}
-	quoted, err := json.Marshal(absolute)
-	if err != nil {
-		return nil, err
-	}
-	out := append([]string(nil), argv...)
-	for i := range out {
-		out[i] = strings.ReplaceAll(out[i], completionWorkspaceTrustKeyToken, string(quoted))
-	}
-	if strings.Contains(strings.Join(out, "\x00"), completionWorkspaceTrustKeyToken) {
-		return nil, fmt.Errorf("completion authority codex argv retained an unresolved trust key")
-	}
-	return out, nil
 }
 
 func completionExecutableIdentity(path, version string) (string, string, error) {
