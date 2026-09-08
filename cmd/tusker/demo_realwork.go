@@ -735,24 +735,11 @@ func demoRunReal(ctx context.Context, args Args, repoRoot string, manifest *demo
 	for _, name := range waves {
 		record.Results[name] = demoWaveResult{Wave: name}
 	}
-	// Ordinary readiness transitions first: without a resident daemon nothing
-	// recomputes next_owner until reconcile runs.
+	// Reconcile projections before authorization. Execute Wave and the resident
+	// daemon own frontier release; forcing every selected dependency to ready
+	// would bypass (and is correctly refused by) the lifecycle boundary.
 	if _, err := exec.run(repoRoot, "reconcile", "--vault", vaultPath); err != nil {
 		return nil, 0, err
-	}
-	for _, key := range selected {
-		rec := manifest.Tasks[key]
-		status := demoLiveTaskStatus(vaultPath, rec.TaskID)
-		if status == "backlog" || status == "rework" {
-			if _, err := exec.run(repoRoot, "status", rec.TaskID, "ready", "--reason", "real-harness run: ready for configured execution", "--vault", vaultPath); err != nil {
-				if gateID := demoOpenGateID(vaultPath, rec.TaskID); gateID != "" {
-					recordOutcomeInto(&record, manifest, key, "blocked", "", "", "")
-					record.Notes = append(record.Notes, fmt.Sprintf("task %s (%s) blocked on open gate %s: only the owning human can release it", key, rec.TaskID, gateID))
-					continue
-				}
-				return nil, 0, tuskerError(demoCodePrecondition, fmt.Sprintf("task %s (%s) could not move to ready: %s", key, rec.TaskID, err.Error()))
-			}
-		}
 	}
 	for _, name := range waves {
 		wave, ok := manifest.Waves[name]
