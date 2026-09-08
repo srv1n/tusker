@@ -20,19 +20,23 @@ export interface KnowledgeWikilinkOptions {
   resolve: (ref: string) => DocLinkRef | undefined;
 }
 
-interface WikilinkAttrs {
+export interface WikilinkAttrs {
   raw: string;
   ref: string;
   label: string;
 }
 
-const WIKILINK_RE = /^\[\[([^\]\n|]+)(?:\|([^\]\n]*))?\]\]/;
+const WIKILINK_RE = /^\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/;
+
+function normalizeWikilinkRef(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
 
 /** Parse a single `[[…]]` token into its stored attributes. */
-function parseWikilink(token: string): WikilinkAttrs {
+export function parseWikilink(token: string): WikilinkAttrs {
   const m = WIKILINK_RE.exec(token);
-  if (!m) return { raw: token, ref: token.replace(/^\[\[|\]\]$/g, "").trim(), label: "" };
-  return { raw: m[0], ref: (m[1] ?? "").trim(), label: (m[2] ?? "").trim() };
+  if (!m) return { raw: token, ref: normalizeWikilinkRef(token.replace(/^\[\[|\]\]$/g, "")), label: "" };
+  return { raw: m[0], ref: normalizeWikilinkRef(m[1] ?? ""), label: (m[2] ?? "").trim() };
 }
 
 function displayOf(a: WikilinkAttrs): string {
@@ -124,7 +128,7 @@ export const KnowledgeWikilink = Node.create<KnowledgeWikilinkOptions>({
   addInputRules() {
     return [
       nodeInputRule({
-        find: /(\[\[[^\]\n]+?\]\])$/,
+        find: /(\[\[[^\]]+?\]\])$/,
         type: this.type,
         getAttributes: (match) => parseWikilink(match[1] || match[0] || ""),
       }),
@@ -134,7 +138,7 @@ export const KnowledgeWikilink = Node.create<KnowledgeWikilinkOptions>({
   addPasteRules() {
     return [
       new PasteRule({
-        find: /(\[\[[^\]\n]+?\]\])/g,
+        find: /(\[\[[^\]]+?\]\])/g,
         handler: ({ chain, range, match }) => {
           chain()
             .deleteRange(range)

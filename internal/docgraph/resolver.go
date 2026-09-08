@@ -298,6 +298,7 @@ func ExtractReferences(body string) []string {
 		refs = append(refs, ref)
 	}
 	inFence := false
+	var visible []string
 	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
@@ -307,11 +308,7 @@ func ExtractReferences(body string) []string {
 		if inFence {
 			continue
 		}
-		for _, match := range resolverWikiLink.FindAllStringSubmatch(line, -1) {
-			if len(match) > 1 {
-				add(match[1])
-			}
-		}
+		visible = append(visible, line)
 		for _, match := range resolverMarkdownLink.FindAllStringSubmatchIndex(line, -1) {
 			if len(match) < 6 {
 				continue
@@ -325,6 +322,11 @@ func ExtractReferences(body string) []string {
 			} else if match[4] >= 0 {
 				add(line[match[4]:match[5]])
 			}
+		}
+	}
+	for _, match := range resolverWikiLink.FindAllStringSubmatch(strings.Join(visible, "\n"), -1) {
+		if len(match) > 1 {
+			add(match[1])
 		}
 	}
 	return refs
