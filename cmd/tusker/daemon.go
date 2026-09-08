@@ -2660,12 +2660,14 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			if err := writeReviewPacketEvidence(project.VaultRoot, note, run, d.store); err != nil {
 				return run, changed, err
 			}
-			if shouldDaemonPromoteCleanExitToReview(noteStatus) {
-				if err := markNoteReadyForReview(project.VaultRoot, note.AbsolutePath); err != nil {
-					return run, changed, err
-				}
+			if run.Lane != runLaneReview {
 				if err := recordDaemonImplementationEvidence(project.VaultRoot, note, run); err != nil {
-					return run, changed, err
+					return run, changed, fmt.Errorf("record implementation evidence: %w", err)
+				}
+			}
+			if shouldDaemonPromoteCleanExitToReview(noteStatus) {
+				if err := requestV7ReviewAfterHandoff(project.VaultRoot, run.RecordID, Args{"quiet": "true", "by": "daemon"}); err != nil {
+					return run, changed, fmt.Errorf("request review after handoff: %w", err)
 				}
 			}
 			run.LeaseState = string(LeaseStateReleased)
@@ -5112,15 +5114,13 @@ func writeReviewPacketEvidence(vaultPath string, note Note, run RunStatus, store
 		return err
 	}
 	if !strings.Contains(body, packetRel) {
+		baseRev := stringField(data, "state_rev")
 		date := todayISO()
 		body = appendSectionBullet(body, "## Evidence", fmt.Sprintf("- %s - review-packet: [[%s]] - generated daemon proof packet for attempt %s", date, packetRel, run.ActiveAttemptID), false)
 		body = appendWorkLogBullet(body, fmt.Sprintf("%s - daemon - generated review packet for attempt %s", date, run.ActiveAttemptID))
 		data["updated"] = date
-		content, err := serializeDocument(data, body, frontmatterOrderForType(stringField(data, "type")))
-		if err != nil {
-			return err
-		}
-		return writeText(note.AbsolutePath, content)
+		_, err := saveV7DocumentCAS(note.AbsolutePath, data, body, frontmatterOrderForType(stringField(data, "type")), baseRev)
+		return err
 	}
 	return nil
 }
@@ -7010,7 +7010,7 @@ func recordDaemonImplementationEvidence(vaultPath string, note Note, run RunStat
 		"vault": vaultPath, "quiet": "true", "id": run.RecordID,
 		"kind": "verification_summary", "covers": strings.Join(normalizeList(contract["acceptance_ids"]), ","),
 		"summary": "Daemon-captured implementation artifact from attempt " + run.ActiveAttemptID,
-		"path": path, "_source-root": run.WorkspacePath, "by": "agent:" + strings.ToLower(run.ActiveAttemptID),
+		"path":    path, "_source-root": run.WorkspacePath, "by": "agent:" + strings.ToLower(run.ActiveAttemptID),
 	})
 }
 

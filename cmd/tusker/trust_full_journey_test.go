@@ -226,6 +226,11 @@ class JourneyTest(unittest.TestCase):
 		_ = store.Close()
 		t.Fatal(err)
 	}
+	proof, err := loadV7ProofReport(vault, taskID)
+	if err != nil || containsString(proof.ModeMissing, "artifact_contract:diff_summary evidence missing for A1") {
+		_ = store.Close()
+		t.Fatalf("daemon did not capture implementation artifact evidence: %#v err=%v", proof, err)
+	}
 	_ = store.Close()
 
 	store, err = OpenRuntimeStore(DefaultStateRoot())
