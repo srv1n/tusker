@@ -6876,8 +6876,18 @@ func renderDirectPredecessorResults(store *RuntimeStore, projectID string, task 
 			lines = append(lines, "- `"+dependencyID+"`: completed result unavailable; dispatch must remain blocked")
 			continue
 		}
+		result, verification, material := run.FinalSummary, run.LogsSummary, run.ApplyRef
+		if attempts, attemptErr := store.ListAttemptsForRun(projectID, dependencyID); attemptErr == nil {
+			for _, attempt := range attempts {
+				if attempt.Lane == runLaneExecute && attempt.Outcome == string(AttemptOutcomeSucceeded) {
+					result, verification = attempt.FinalSummary, attempt.LogsSummary
+					material = firstNonEmpty(attempt.ApplyRef, material)
+					break
+				}
+			}
+		}
 		lines = append(lines, fmt.Sprintf("- `%s`: result=%s; verification=%s; material=%s; work_revision=%d", dependencyID,
-			safePacketText(run.FinalSummary, 1200), safePacketText(run.LogsSummary, 800), fallback(strings.TrimSpace(run.ApplyRef), "recorded in checkout"), run.WorkRevision))
+			safePacketText(result, 1200), safePacketText(verification, 800), fallback(strings.TrimSpace(material), "recorded in checkout"), run.WorkRevision))
 	}
 	if len(lines) == 1 {
 		lines = append(lines, "- None")
