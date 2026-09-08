@@ -99,6 +99,30 @@ func TestServeWaveExecuteQueuesOnlyExactArmedWaveWithAutomationOff(t *testing.T)
 	}
 }
 
+func TestWavePreflightAllowsOnlySerializedSharedWorkspace(t *testing.T) {
+	vault, _, wave := waveExecuteTestFixture(t)
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf.Data.Workspace.Strategy = string(WorkspaceStrategyShared)
+	wf.Data.Runtime.MaxActiveRunsPerProject = 1
+	env := greenWaveEnvironment()
+	applyWaveWorkflowEnvironment(&env, wave, wf.Data)
+	if got := buildWavePreflight(vault, idx, wave, env); !got.Checks["workspaceIsolation"] {
+		t.Fatalf("serialized shared workspace was rejected: %#v", got.Blockers)
+	}
+	wf.Data.Runtime.MaxActiveRunsPerProject = 2
+	applyWaveWorkflowEnvironment(&env, wave, wf.Data)
+	if got := buildWavePreflight(vault, idx, wave, env); got.Checks["workspaceIsolation"] {
+		t.Fatal("concurrent shared workspace passed preflight")
+	}
+}
+
 func TestWaveDirectiveRequiresCurrentTaskAuthorization(t *testing.T) {
 	vault, idx, wave := waveExecuteTestFixture(t)
 	now := time.Now().UTC()

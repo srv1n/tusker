@@ -244,6 +244,32 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		}
 	})
 
+	t.Run("shared_project_cap_serializes_candidates_across_waves", func(t *testing.T) {
+		store := fairDispatchTestStore(t)
+		first := fairDispatchTestCandidate("project-shared", "A-T-0001", "p1", "")
+		second := fairDispatchTestCandidate("project-shared", "B-T-0001", "p1", "")
+		for i, candidate := range []*daemonDispatchCandidate{&first, &second} {
+			candidate.ProjectLimit = 1
+			candidate.Workflow.Data.Workspace.Strategy = string(WorkspaceStrategyShared)
+			candidate.Workflow.Data.DispatchScope = automationDispatchScopeProjection{Effective: string(automationDispatchScopeAllEligible)}
+			candidate.Note.Data["wave"] = []string{"W-0001", "W-0002"}[i]
+			if err := store.UpsertRun(candidate.Run); err != nil {
+				t.Fatal(err)
+			}
+		}
+		daemon := &Daemon{store: store, stateRoot: store.stateRoot}
+		var order []string
+		daemon.fairDispatchRun = fairDispatchRecorder(&order)
+		if err := daemon.dispatchFairCandidates(context.Background(), []daemonDispatchCandidate{first, second}, 2); err != nil {
+			t.Fatal(err)
+		}
+		assertFairDispatchOrder(t, []string{"project-shared/A-T-0001"}, order)
+		blocked := fairDispatchFindRun(t, store, "project-shared", "B-T-0001")
+		if !strings.Contains(blocked.LastError, "project capacity reached (1/1)") {
+			t.Fatalf("second wave escaped shared project cap: %#v", blocked)
+		}
+	})
+
 	t.Run("free_named_resource_is_reserved_before_a_second_candidate_can_claim", func(t *testing.T) {
 		store := fairDispatchTestStore(t)
 		first := fairDispatchTestCandidate("project-a", "A-T-0001", "p1", "build-host")
