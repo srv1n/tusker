@@ -1774,6 +1774,7 @@ func v7VerificationCommand(check string) (string, bool) {
 
 func v7CommandInvokesTest(command string) bool {
 	return v7CommandInvokesAny(command, map[string][]string{
+		"test": nil, "[": nil,
 		"go": {"test"}, "cargo": {"test"}, "swift": {"test"}, "dotnet": {"test"},
 		"npm": {"test", "run:test"}, "pnpm": {"test", "run:test"}, "yarn": {"test"}, "bun": {"test"},
 		"pytest": nil, "jest": nil, "vitest": nil, "make": {"test"},

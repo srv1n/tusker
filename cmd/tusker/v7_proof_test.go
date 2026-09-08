@@ -641,6 +641,7 @@ func TestV7ProofCommandMatcherHandlesWrappedAndPositionedCommands(t *testing.T) 
 		{"focused_test", `make -j4 test`, true},
 		{"focused_test", `npm run test:unit`, true},
 		{"focused_test", `timeout 600 go test ./...`, true},
+		{"focused_test", `test "$(cat sample/result.txt)" = "ok"`, true},
 		{"focused_test", `tusker note --body "did X; go test passed"`, false},
 		{"focused_test", `echo go test ./...`, false},
 		{"focused_test", `go test-helper ./...`, false},
