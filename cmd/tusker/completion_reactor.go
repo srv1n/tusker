@@ -357,6 +357,14 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		return err
 	}
 	wave, hasWave := completionWaveForReviewedTask(project.VaultRoot, note)
+	taskDirected := false
+	if !hasWave {
+		wave, hasWave, err = d.taskDirectiveCompletionWave(project.ProjectID, project.VaultRoot, note, result.WorkRevision)
+		if err != nil {
+			return err
+		}
+		taskDirected = hasWave
+	}
 	if !hasWave {
 		// Binding after the reviewer froze TaskStateRev would invalidate the
 		// result. requestV7ReviewAfterHandoff owns singleton creation before
@@ -364,9 +372,24 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		// awaiting manual repair without lifecycle or Git mutation.
 		return nil
 	}
-	waveAuthorityKind, waveAuthorizationFP, waveMaterialFP, err := completionWaveAuthoritySnapshot(project.VaultRoot, wave)
-	if err != nil {
-		return err
+	var waveAuthorityKind, waveAuthorizationFP, waveMaterialFP string
+	if taskDirected {
+		idx, loadErr := loadV7Index(project.VaultRoot)
+		if loadErr != nil {
+			return loadErr
+		}
+		waveMaterialFP, _ = waveMaterialFingerprint(project.VaultRoot, idx, wave)
+		directive, directiveErr := d.store.RunDirective(project.ProjectID, result.TaskID)
+		if directiveErr != nil || directive == nil {
+			return firstNonNil(directiveErr, tuskerError(errorInvalidTransition, "task Play completion authority is unavailable"))
+		}
+		sum := sha256.Sum256([]byte(strings.Join([]string{project.ProjectID, result.TaskID, directive.Actor, directive.CreatedAt}, "\x00")))
+		waveAuthorityKind, waveAuthorizationFP = "task_directive", "sha256:"+hex.EncodeToString(sum[:])
+	} else {
+		waveAuthorityKind, waveAuthorizationFP, waveMaterialFP, err = completionWaveAuthoritySnapshot(project.VaultRoot, wave)
+		if err != nil {
+			return err
+		}
 	}
 	integrationRef := "refs/heads/" + v7WaveIntegrationBranch(wave)
 	// A newly armed wave may deliberately be ref-less.  Its authorization
@@ -429,6 +452,20 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 	default:
 		return tuskerError(errorInvalidArg, "stored review result has unknown verdict")
 	}
+}
+
+func (d *Daemon) taskDirectiveCompletionWave(projectID, vaultPath string, task Note, workRevision int) (Note, bool, error) {
+	authorized, err := d.taskDirectiveLifecycleAuthorized(projectID, RunStatus{RecordID: trackerRecordID(task), WorkRevision: workRevision})
+	if err != nil || !authorized {
+		return Note{}, false, err
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return Note{}, false, err
+	}
+	wave, ok := idx.Waves[stringField(task.Data, "wave")]
+	members := normalizeList(wave.Data["members"])
+	return wave, ok && len(members) == 1 && members[0] == resultTaskID(task), nil
 }
 
 func completionWaveForReviewedTask(vaultPath string, task Note) (Note, bool) {
@@ -546,6 +583,8 @@ func completionFrozenAuthorityComplete(transaction *completionTransaction, requi
 		return transaction.WaveAuthorizationFP != ""
 	case "implicit":
 		return transaction.WaveAuthorizationFP == ""
+	case "task_directive":
+		return transaction.WaveAuthorizationFP != ""
 	default:
 		return false
 	}
@@ -576,7 +615,7 @@ func authenticateCompletionFrozenAuthority(projectID string, result ReviewResult
 		return completionFrozenAuthorityRepairError(transaction, "wave or close authority snapshot is missing")
 	}
 	if !v7CloseAuthorityDigest(transaction.WaveMaterialFP, "sha256:") ||
-		(transaction.WaveAuthorityKind == "armed" && !v7CloseAuthorityDigest(transaction.WaveAuthorizationFP, "sha256:")) ||
+		((transaction.WaveAuthorityKind == "armed" || transaction.WaveAuthorityKind == "task_directive") && !v7CloseAuthorityDigest(transaction.WaveAuthorizationFP, "sha256:")) ||
 		(result.Verdict == "pass" && !v7CloseAuthorityDigest(transaction.CloseAuthorityFP, "sha256:")) ||
 		!v7CloseAuthorityDigest(transaction.WorkerPolicyFP, "sha256:") {
 		return completionFrozenAuthorityRepairError(transaction, "frozen authority fingerprint is malformed")
@@ -784,6 +823,10 @@ func completionPreCASAuthorizedWave(vaultPath string, transaction *completionTra
 		_, stored, compatible := completionWaveAuthorizationCompatibility(vaultPath, idx, current)
 		if !compatible || stored == "" || stored != transaction.WaveAuthorizationFP {
 			return Note{}, tuskerError(errorInvalidTransition, "completion wave authorization drifted from its frozen material authority")
+		}
+	case "task_directive":
+		if transaction.WaveAuthorizationFP == "" {
+			return Note{}, tuskerError(errorInvalidTransition, "task Play completion authority is missing")
 		}
 	default:
 		return Note{}, tuskerError(errorInvalidTransition, "completion transaction has unknown frozen wave authority kind")

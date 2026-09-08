@@ -40,10 +40,6 @@ func (s *serveServer) handleWaveExecute(w http.ResponseWriter, waveID string, bo
 		s.serveWaveExecuteFailure(w, err)
 		return
 	}
-	if snapshot.workflow.AutomationEnabled {
-		s.serveWaveExecuteRefusal(w, "project automation is already enabled; use the autonomous armed-wave scheduler instead of a manual wave execution")
-		return
-	}
 	if !snapshot.workflow.DispatchScope.isArmedWaves() {
 		s.serveWaveExecuteRefusal(w, "manual wave execution requires automation.dispatch_scope: armed_waves")
 		return

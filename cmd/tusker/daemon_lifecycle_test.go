@@ -1039,6 +1039,24 @@ func TestWorkspaceStrategySharedDefaultUsesRepoRootAndExemptsTuskerBookkeeping(t
 	assertEqual(t, repo, result.Path, "shared path")
 	assertEqual(t, string(WorkspaceStrategyShared), result.Metadata.Strategy, "shared metadata")
 	assertExists(t, filepath.Join(repo, ".tusker", "work", "runtime.md"))
+	if err := writeText(filepath.Join(repo, "task-output.txt"), "review me\n"); err != nil {
+		t.Fatal(err)
+	}
+	result, err = manager.Prepare(WorkspacePrepareRequest{
+		ProjectID: "project-1", ProjectKey: "APP", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		BranchName: "review/APP-T-0001/head", RepoRoot: repo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyShared,
+	})
+	if err != nil {
+		t.Fatalf("same-task shared review must inspect the dirty implementation: %v", err)
+	}
+	assertEqual(t, "review/APP-T-0001/head", result.Metadata.BranchName, "shared review metadata")
+	_, err = manager.Prepare(WorkspacePrepareRequest{
+		ProjectID: "project-1", ProjectKey: "APP", RecordID: "APP-T-0002", ItemID: "APP-T-0002",
+		RepoRoot: repo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyShared,
+	})
+	if err == nil || !strings.Contains(err.Error(), "clean working tree outside .tusker") {
+		t.Fatalf("different shared task must wait for a clean checkout, got %v", err)
+	}
 
 	dirtyRepo := t.TempDir()
 	if _, err := exec.Command("git", "-C", dirtyRepo, "init").CombinedOutput(); err != nil {

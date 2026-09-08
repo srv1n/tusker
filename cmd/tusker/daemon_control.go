@@ -53,12 +53,14 @@ type daemonControlResponse struct {
 }
 
 func runDirectiveBypassableBlocker(blocker string) bool {
-	switch strings.TrimSpace(blocker) {
-	case "project automation is disabled in its configuration":
+	blocker = strings.TrimSpace(blocker)
+	switch blocker {
+	case "project automation is disabled in its configuration",
+		"dispatch scope armed_waves requires task membership in a currently armed wave",
+		"wave is not durably armed":
 		return true
-	default:
-		return false
 	}
+	return strings.Contains(blocker, "wave ") && strings.Contains(blocker, " authorization is disarmed")
 }
 
 type daemonControlServer struct {

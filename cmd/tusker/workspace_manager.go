@@ -97,8 +97,15 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 		return WorkspacePrepareResult{}, err
 	}
 	if req.Strategy == WorkspaceStrategyShared {
-		if err := assertInPlaceWorkspaceReady(req.RepoRoot); err != nil {
-			return WorkspacePrepareResult{}, err
+		var continuing bool
+		if raw, readErr := readText(filepath.Join(workspacePath, ".tusker", "workspace.json")); readErr == nil {
+			var existing WorkspaceMetadata
+			continuing = json.Unmarshal([]byte(raw), &existing) == nil && existing.ProjectID == req.ProjectID && existing.RecordID == req.RecordID
+		}
+		if !continuing {
+			if err := assertInPlaceWorkspaceReady(req.RepoRoot); err != nil {
+				return WorkspacePrepareResult{}, err
+			}
 		}
 	} else if err := assertWorkspaceWithinRoot(workspacePath, root); err != nil {
 		return WorkspacePrepareResult{}, err
@@ -450,6 +457,9 @@ func workspacePathIsTuskerBookkeeping(path string) bool {
 func validateWorkspaceMetadata(metadata WorkspaceMetadata, req WorkspacePrepareRequest) error {
 	if metadata.ProjectID != "" && metadata.ProjectID != req.ProjectID {
 		return tuskerError(errorConfigInvalid, "workspace metadata project_id does not match requested project", withPath(req.RecordID))
+	}
+	if normalizeWorkspaceStrategy(req.Strategy) == WorkspaceStrategyShared {
+		return nil
 	}
 	if metadata.RecordID != "" && metadata.RecordID != req.RecordID {
 		return tuskerError(errorConfigInvalid, "workspace metadata record_id does not match requested record", withPath(req.RecordID))

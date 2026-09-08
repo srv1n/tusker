@@ -291,6 +291,7 @@ func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID strin
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: reason})
 		return
 	}
+	_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: project.ProjectID, Cause: "task_run_directive", Changes: []daemonControlChange{{ID: trackerRecordID(note), Kind: "run"}}}, 250*time.Millisecond)
 	s.refreshProjectSnapshot(project.ProjectID)
 	serveJSON(w, http.StatusOK, serveActionResult{OK: true, Reason: "queued for daemon dispatch", Command: "tusker task run"})
 }

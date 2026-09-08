@@ -418,7 +418,7 @@ func (d *Daemon) refreshFairExecuteCandidate(candidate daemonDispatchCandidate, 
 	} else if reason != "" {
 		return candidate, "post-reactor dispatch scope or wave constraint: " + reason, nil
 	}
-	if reason := daemonDispatchBlockedReason(candidate.Project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID); reason != "" {
+	if reason := daemonDispatchBlockedReasonWithAuthorization(candidate.Project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID, false); reason != "" {
 		return candidate, "post-reactor " + strings.TrimPrefix(reason, "dispatch blocked: "), nil
 	}
 	if blocked, planErr := d.executePlanBlockedReason(candidate.Project, candidate.Workflow, dispatchNotes, dispatchNote, run); planErr != nil {

@@ -1260,7 +1260,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				if reason := daemonDispatchBlockedReason(project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID); reason != "" {
+				if reason := daemonDispatchBlockedReasonWithAuthorization(project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID, false); reason != "" {
 					current.LastError = reason
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
@@ -1521,6 +1521,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if errorToIssue(err).Code != completionRepairRequiredError {
 				return err
 			}
+			log.Printf("completion reactor: project=%s repair_required: %v", project.ProjectID, err)
 		}
 		if err := d.store.DeleteRunsNotIn(project.ProjectID, keep); err != nil {
 			return err
@@ -1704,9 +1705,13 @@ func dispatchEligibilityAllows(note Note, notesByID map[string]Note, notesByReco
 }
 
 func daemonDispatchBlockedReason(vaultPath string, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) string {
+	return daemonDispatchBlockedReasonWithAuthorization(vaultPath, note, notesByID, notesByRecordID, true)
+}
+
+func daemonDispatchBlockedReasonWithAuthorization(vaultPath string, note Note, notesByID map[string]Note, notesByRecordID map[string]Note, includeAuthorization bool) string {
 	var blockers []string
 	if isV7TaskNote(note) {
-		blockers = append(blockers, v7TaskDispatchBlockers(vaultPath, note)...)
+		blockers = append(blockers, v7TaskDispatchBlockersWithAuthorization(vaultPath, note, includeAuthorization)...)
 	} else {
 		status := stringField(note.Data, "status")
 		if status != "ready" && status != "rework" {
@@ -2113,6 +2118,12 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 			return "", authErr
 		}
 		directed = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth) || consumedRunDirectiveMatchesTaskAuthority(project.VaultRoot, note, run, directive, auth, time.Now().UTC())
+	}
+	if !directed {
+		directed, directiveErr = d.taskDirectiveLifecycleAuthorized(project.ProjectID, run)
+		if directiveErr != nil {
+			return "", directiveErr
+		}
 	}
 	if directed {
 		filtered := blockers[:0]
@@ -3691,10 +3702,9 @@ func resolveRunnerForNote(note Note, wf Workflow) string {
 	return wf.Agents.Default
 }
 
-// scopeDispatchBlocker preserves the narrow human-directive exception: a
-// directive may bypass automation-off, but never dispatch-scope admission.
-// In particular, armed_waves remains an exact-wave authority boundary for
-// every fresh background claim, including a human-requested one.
+// scopeDispatchBlocker preserves the narrow human-directive exception: Task
+// Play authorizes one exact task even when no wave is armed. It never bypasses
+// dependency, resource, concurrency, or stale-material blockers.
 func (d *Daemon) scopeDispatchBlocker(project RegisteredProject, note Note, wf Workflow, runs map[string]RunStatus) (string, error) {
 	reason := armedWaveDispatchBlocker(project.VaultRoot, note, wf, runs)
 	if reason == "" || !runDirectiveBypassableBlocker(reason) {
@@ -3707,7 +3717,33 @@ func (d *Daemon) scopeDispatchBlocker(project RegisteredProject, note Note, wf W
 	if runDirectiveMatchesTaskAuthority(project.VaultRoot, note, directive, time.Now().UTC()) {
 		return "", nil
 	}
+	if run, ok := runs[trackerRecordID(note)]; ok {
+		authorized, authErr := d.taskDirectiveLifecycleAuthorized(project.ProjectID, run)
+		if authErr != nil {
+			return "", authErr
+		}
+		if authorized {
+			return "", nil
+		}
+	}
 	return reason, nil
+}
+
+func (d *Daemon) taskDirectiveLifecycleAuthorized(projectID string, run RunStatus) (bool, error) {
+	directive, err := d.store.RunDirective(projectID, run.RecordID)
+	if err != nil || directive == nil || directive.State != "consumed" || directive.WaveID != "" || directive.AuthorizationFingerprint != "" {
+		return false, err
+	}
+	attempts, err := d.store.ListAttemptsForRun(projectID, run.RecordID)
+	if err != nil {
+		return false, err
+	}
+	for _, attempt := range attempts {
+		if attempt.Lane == runLaneExecute && attempt.Outcome == string(AttemptOutcomeSucceeded) && attempt.WorkRevision == run.WorkRevision {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, bool, error) {
@@ -3742,6 +3778,12 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 			return run, false, authErr
 		}
 		directiveActive = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth) || consumedRunDirectiveMatchesTaskAuthority(project.VaultRoot, note, run, directive, auth, time.Now().UTC())
+	}
+	if !directiveActive {
+		directiveActive, err = d.taskDirectiveLifecycleAuthorized(project.ProjectID, run)
+		if err != nil {
+			return run, false, err
+		}
 	}
 	// Registry enablement controls whether this project is polled. The project
 	// configuration is the separate, authoritative opt-in for daemon spawning.

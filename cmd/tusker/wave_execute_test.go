@@ -79,11 +79,15 @@ func TestServeWaveExecuteQueuesOnlyExactArmedWaveWithAutomationOff(t *testing.T)
 	if directive, err := store.RunDirective("app", "APP-T-0007"); err != nil || directive != nil {
 		t.Fatalf("next-wave task was admitted: %#v err=%v", directive, err)
 	}
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", true); err != nil {
+		t.Fatal(err)
+	}
+	server.invalidateProjectSnapshot("app")
 
 	var replay serveWaveExecuteResult
 	servePost(t, server, "/api/waves/W-0001/execute?project=app", `{}`, &replay)
 	if !replay.OK || replay.Execution == nil || len(replay.Execution.QueuedTaskIDs) != 0 || len(replay.Execution.AlreadyQueuedTaskIDs) != len(first.Execution.QueuedTaskIDs) {
-		t.Fatalf("repeated execute was not idempotent: %#v", replay)
+		t.Fatalf("repeated execute with project automation enabled was not idempotent: %#v", replay)
 	}
 
 	writeArmedWaveTestFields(t, vault, map[string]any{"authorization_fingerprint": "sha256:stale"})
