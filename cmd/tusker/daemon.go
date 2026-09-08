@@ -6862,12 +6862,16 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 func renderDirectPredecessorResults(store *RuntimeStore, projectID string, task Note, workspacePath string) string {
 	revision, _ := gitFactOutput(workspacePath, "rev-parse", "HEAD")
 	lines := []string{"- Checkout revision: `" + fallback(strings.TrimSpace(revision), "unavailable") + "`"}
-	for _, dependencyID := range normalizeList(task.Data["dependencies"]) {
+	for _, dependency := range normalizeList(task.Data["dependencies"]) {
+		dependencyID := parseV7DependencyEdge(dependency).ID
+		if dependencyID == "" {
+			dependencyID = dependency
+		}
 		if store == nil {
 			lines = append(lines, "- `"+dependencyID+"`: completed result unavailable; dispatch must remain blocked")
 			continue
 		}
-		run, err := store.FindRun(dependencyID)
+		run, err := store.FindRunScoped(projectID, dependencyID)
 		if err != nil || run == nil || run.ProjectID != projectID || !run.Terminal || strings.TrimSpace(run.AttemptOutcome) != "succeeded" {
 			lines = append(lines, "- `"+dependencyID+"`: completed result unavailable; dispatch must remain blocked")
 			continue
