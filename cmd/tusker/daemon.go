@@ -3933,7 +3933,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 			run.WorkerPolicyFP = policyFP
 		}
 		command = baseCommand
-		if lane == runLaneReview && (workspaceStrategy == WorkspaceStrategyShared || canonicalPath(selectedWorkspacePath) == canonicalPath(project.RepoRoot)) {
+		if lane == runLaneReview && workspaceStrategy != WorkspaceStrategyShared && canonicalPath(selectedWorkspacePath) == canonicalPath(project.RepoRoot) {
 			return run, false, tuskerError(errorInvalidTransition, "completion authority requires an isolated noncanonical review workspace")
 		}
 	}
@@ -6370,10 +6370,16 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 			return "", snapshotErr
 		}
 		values["review.proof_fingerprint"], values["review.gate_fingerprint"] = proof, gates
+		if store == nil {
+			values["review.material_fingerprint"] = "unavailable-without-runtime-store"
+		}
 		if source, sourceErr := reviewImplementationSource(store, run, note); sourceErr == nil {
 			values["review.source_sha"] = source
-			if _, material, materialErr := reviewImplementationParent(store, project.VaultRoot, run.ProjectID, run.RecordID, run.WorkRevision, source, note); materialErr == nil {
-				values["review.material_fingerprint"] = material
+			if store != nil {
+				_, material, materialErr := reviewImplementationParent(store, project.VaultRoot, run.ProjectID, run.RecordID, run.WorkRevision, source, note)
+				if materialErr == nil {
+					values["review.material_fingerprint"] = material
+				}
 			}
 		}
 		values["review.verification_manifest"], _ = v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body))
@@ -6389,7 +6395,7 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 	if err != nil {
 		return "", tuskerError(errorConfigInvalid, err.Error(), withPath(wfFile.Path))
 	}
-	if ralphContext, err := renderRalphAttemptPromptContext(project, wfFile, note, attemptNumber, attemptID, lane, previousRun); err != nil {
+	if ralphContext, err := renderRalphAttemptPromptContext(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, previousRun, store); err != nil {
 		return "", err
 	} else if ralphContext != "" {
 		rendered = strings.TrimSpace(rendered) + "\n\n" + ralphContext
@@ -6736,7 +6742,7 @@ type taskPlanSnapshot struct {
 	Created  bool
 }
 
-func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowFile, note Note, attemptNumber int, attemptID, lane string, previousRun RunStatus) (string, error) {
+func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, previousRun RunStatus, store *RuntimeStore) (string, error) {
 	if !isV7TaskNote(note) || strings.TrimSpace(project.VaultRoot) == "" || !fileExists(project.VaultRoot) {
 		return "", nil
 	}
@@ -6766,9 +6772,12 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 	fmt.Fprintf(&b, "- Fresh context rule: this attempt is a new runner session/thread. Do not query or append to predecessor transcripts.\n")
 	fmt.Fprintf(&b, "- Resume state rule: the task packet, claim/workspace identity, prior structured outcome, blockers, and evidence pointers are authoritative. Harness scratch is optional.\n\n")
 	if lane == runLaneExecute {
-		fmt.Fprintf(&b, "- Lifecycle rule: this task is already claimed by attempt `%s`; do not run `tusker work start`. Finish with `tusker work submit %s --by %s --deliverable \"<summary>\" --verification \"<checks run>\" --gate-verdicts \"<acceptance-id>=pass\"`. The resident daemon owns global runtime writes.\n\n", attemptID, taskID, attemptID)
+		fmt.Fprintf(&b, "- Lifecycle rule: this task is already claimed by attempt `%s`; do not run `tusker work start`. Finish with `tusker work submit %s --by %s --deliverable \"Result: <what changed and works>; Handoff: <optional dependent context>; Limitations: <remaining constraints>\" --verification \"<checks run>\" --gate-verdicts \"<acceptance-id>=pass\"`. The resident daemon owns global runtime writes.\n\n", attemptID, taskID, attemptID)
 	}
 	fmt.Fprintf(&b, "### Task Packet\n\n%s\n", strings.TrimSpace(v7Packet(project.VaultRoot, note, idx, audience)))
+	if lane == runLaneExecute {
+		fmt.Fprintf(&b, "\n### Direct Predecessor Results Consumed\n\n%s\n", renderDirectPredecessorResults(store, project.ProjectID, note, workspacePath))
+	}
 	if plan.Path != "" {
 		fmt.Fprintf(&b, "\n### Optional Existing Scratch Note\n\n")
 		fmt.Fprintf(&b, "- Path: `%s`\n", plan.Display)
@@ -6793,6 +6802,28 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 		fmt.Fprintf(&b, "```markdown\n%s\n```\n", strings.TrimSpace(signs))
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+func renderDirectPredecessorResults(store *RuntimeStore, projectID string, task Note, workspacePath string) string {
+	revision, _ := gitFactOutput(workspacePath, "rev-parse", "HEAD")
+	lines := []string{"- Checkout revision: `" + fallback(strings.TrimSpace(revision), "unavailable") + "`"}
+	for _, dependencyID := range normalizeList(task.Data["dependencies"]) {
+		if store == nil {
+			lines = append(lines, "- `"+dependencyID+"`: completed result unavailable; dispatch must remain blocked")
+			continue
+		}
+		run, err := store.FindRun(dependencyID)
+		if err != nil || run == nil || run.ProjectID != projectID || !run.Terminal || strings.TrimSpace(run.AttemptOutcome) != "succeeded" {
+			lines = append(lines, "- `"+dependencyID+"`: completed result unavailable; dispatch must remain blocked")
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- `%s`: result=%s; verification=%s; material=%s; work_revision=%d", dependencyID,
+			safePacketText(run.FinalSummary, 1200), safePacketText(run.LogsSummary, 800), fallback(strings.TrimSpace(run.ApplyRef), "recorded in checkout"), run.WorkRevision))
+	}
+	if len(lines) == 1 {
+		lines = append(lines, "- None")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func ensureTaskPlanFile(vaultPath, taskID, title string) (taskPlanSnapshot, error) {

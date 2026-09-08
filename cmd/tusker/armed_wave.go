@@ -353,8 +353,8 @@ func armedWaveDispatchBlockerForArmedScope(vaultPath string, task Note, wf Workf
 	if !armed {
 		return "wave is not durably armed"
 	}
-	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared {
-		return "armed waves require an isolated worktree, clone, or copy workspace"
+	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared && wf.Runtime.MaxActiveRunsPerProject != 1 {
+		return "shared-checkout armed waves require runtime.max_active_runs_per_project = 1"
 	}
 	snapshot := buildArmedWaveSnapshot(vaultPath, idx, wave, runs, time.Now().UTC())
 	if stringField(task.Data, "status") == "review" {

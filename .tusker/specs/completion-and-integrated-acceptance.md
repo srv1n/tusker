@@ -9,7 +9,7 @@ read_when: "Joining the completed implementation streams and defining task, wave
 skip_when: "Reimplementing the existing fixture, lifecycle, model settings or retention slices."
 sources: [real-work-test-packets.md, remaining-product-work.md, planning-handoff-and-agent-entry.md]
 updates: [landing-and-completion]
-decisions_locked: false
+decisions_locked: true
 capsule:
   what: "Three bounded follow-ups: integrated baseline, completion contract, and live acceptance."
   use_when: "Assigning the final integration and testing work."
@@ -27,6 +27,14 @@ Current sources inspected for this design: scripts/test-real-work-project.sh, do
 These are implementation-ready Markdown contracts, not allocated task IDs. Existing assigned tasks remain their owners' work. Import remains subject to the existing cross-scope provenance repair; do not create duplicate tasks to bypass it.
 
 ## Agreed behavior and implementation recommendation
+
+The following execution decisions are locked for this acceptance effort:
+
+- Task Play authorizes that task through execution, required verification, independent review, landing and completion. Wave Play authorizes the selected wave's task DAG, including automatic release of eligible descendants and configured retries. A completed wave may make dependent waves eligible but never starts them.
+- The initial project execution model is one configured shared checkout and working branch, including `main` when explicitly selected, with one executing task at a time per project. Existing worktree, clone and copy strategies remain supported but are not prerequisites for a wave. Parallel shared-checkout execution is accepted only when existing ownership and resource leases prove source, Git/index and build-output safety; otherwise it remains serial.
+- A task-owned commit must be available on the configured working target before completion can unlock dependents. A private or otherwise unavailable commit is insufficient. Shared execution stages only task-owned changes, serializes Git/index and exclusive build operations, and preserves unrelated dirty files.
+- The executing agent supplies `Result`, optional `Handoff`, and `Limitations` through the existing submission. Tusker derives revision, changed files, verification and review references from recorded execution. Completion stores that submission; a dependent attempt receives relevant direct-predecessor results and handoffs without copying them into the durable task contract.
+- Before dependent execution, Tusker checks predecessor completion, predecessor material availability in the selected checkout/revision, execution-packet delivery, and required resource acquisition. The attempt records the revision and predecessor results it consumed. Reopened or changed prerequisites never silently alter a running attempt; unsafe cases block for revalidation.
 
 Three milestones, not three new durable task statuses:
 
@@ -73,11 +81,11 @@ Steps:
 - Keep task done and wave complete derived from existing proof/review/landing receipts. Verify dependent work actually starts from a revision containing prerequisite outputs.
 - Use an ordinary final acceptance/integration task with dependencies on the relevant wave completion boundaries. Reuse existing wave-check representation; if absent, use an ordinary terminal verification task, not a second workflow engine.
 - Show task/wave completion and pending final acceptance without labeling reviewed staging work released or approved. Lead final result with capability, evidence, limitations and how to try it.
-- Keep all starts manual under the current product policy. Human acceptance gates only their explicit scope; independent lanes remain eligible.
+- Keep task and wave starts manual. Once a wave is explicitly started, automatically release eligible descendants within that authorized DAG. Human acceptance gates only their explicit scope; independent lanes remain eligible.
 - Update current landing/completion documentation and skill guidance only after behavior is verified.
 
 Acceptance:
-A1. A reviewed task in an isolated worktree cannot unlock consumers until required landing makes its outputs available on their working target.
+A1. A reviewed task cannot unlock consumers until required landing makes its outputs available on their working target, regardless of workspace strategy.
 A2. Two linked waves complete on a staging target while final acceptance remains pending; downstream eligibility works without final-branch merge or automatic start.
 A3. Required wave checks failing or a wave-scoped human gate blocks dependent work. A final-only gate does not retroactively block unrelated waves.
 A4. Existing direct-to-final projects retain their behavior; no duplicate merge or obligatory human gate appears.
@@ -96,7 +104,7 @@ Outcome: an agent proves the supported flow through CLI, then hands the human an
 Test ladder (stop at the first failing prerequisite for each lane):
 1. Run the existing offline script on one explicitly disposable repository, with proof outside reset-owned paths. This establishes fixture/reset mechanics only.
 2. Read candidate daemon status, profiles/catalog and effective execute AND review routes. The operator independently starts/configures the resident runtime; an interactive agent does not launch nested workers or a daemon. Configure Luna explicitly for the first Codex test rather than accepting the report's Terra resolution as Luna proof.
-3. Run only standalone in real mode first. Observe actual claim/model/transport/progress, produced file, required checks/review/landing and closure. Record exact IDs and material. Then Alpha, then Alpha/Beta overlap, then Follow-up after prerequisites; explicit starts remain necessary.
+3. Run only standalone in real mode first. Observe actual claim/model/transport/progress, produced file, required checks/review/landing and closure. Record exact IDs and material. Then run Alpha serially in its shared checkout; Wave Play releases descendants automatically. Start Alpha and Beta explicitly for overlap only after shared-resource safety is proven, then start Follow-up after prerequisites.
 4. Exercise task/wave/final milestone scenarios from C2. Test failure/retry/cancel and review rejection on a real lane when supported; offline variants alone do not prove real recovery.
 5. Run live browser acceptance against the same project/candidate; prove SSE reconnect convergence, task detail, DAG, documents, wave promise/result and evidence availability. Capture screenshots. Required-case SKIPs are incomplete, not PASS.
 6. Test retention boundaries with injected time, not a seven-day wait. Keep/unkeep/expiry metadata must agree across CLI and UI.
@@ -105,7 +113,7 @@ Test ladder (stop at the first failing prerequisite for each lane):
 
 Acceptance:
 A1. Same-candidate offline, real standalone and wave results are separately evidenced; no timer fallback or synthetic closeout in the real lane.
-A2. Parallel overlap is observed, or precisely blocked by configured capacity. Increasing test-project capacity requires explicit operator configuration; never change unrelated project/global limits.
+A2. Serial shared-checkout execution is proven first. Parallel overlap is observed only where ownership/resource coordination makes it safe; otherwise it is precisely reported as unsupported or unverified rather than replaced by worktrees.
 A3. Dependent outputs are present in actual consumer workspaces; final acceptance matches C2 and uses source-bound evidence.
 A4. Live browser required cases pass with screenshots; connectivity/environment blocks identify the exact unavailable prerequisite.
 A5. Mixed identity proof is real or clearly unverified; fixture comments/defaults cannot masquerade as Muse execution.

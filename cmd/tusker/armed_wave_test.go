@@ -265,13 +265,18 @@ func writeArmedWaveTestFields(t *testing.T, vault string, fields map[string]any)
 	}
 }
 
-func TestArmedWaveWorkspaceIsolation(t *testing.T) {
+func TestArmedWaveSharedWorkspaceRequiresSerialProjectCapacity(t *testing.T) {
 	vault, idx, _ := armedWaveTestFixture(t)
 	task := idx.Tasks["APP-T-0001"]
 	wf := defaultWorkflow()
 	wf.Workspace.Strategy = string(WorkspaceStrategyShared)
-	if got := armedWaveDispatchBlocker(vault, task, wf, nil); !strings.Contains(got, "isolated") {
-		t.Fatalf("shared workspace was not rejected: %q", got)
+	wf.Runtime.MaxActiveRunsPerProject = 2
+	if got := armedWaveDispatchBlocker(vault, task, wf, nil); !strings.Contains(got, "require runtime.max_active_runs_per_project = 1") {
+		t.Fatalf("concurrent shared workspace was not rejected: %q", got)
+	}
+	wf.Runtime.MaxActiveRunsPerProject = 1
+	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "" {
+		t.Fatalf("serial shared workspace was rejected: %q", got)
 	}
 }
 

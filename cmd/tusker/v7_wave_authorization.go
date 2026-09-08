@@ -453,7 +453,10 @@ func applyWaveWorkflowEnvironment(env *wavePreflightEnvironment, wave Note, wf W
 		env.RunnerCompatible = wf.Agents.Default != "" && containsString(wf.Agents.Enabled, wf.Agents.Default)
 		env.ApprovalFree = strings.EqualFold(wf.Codex.ApprovalPolicy, "never") || strings.EqualFold(wf.Codex.ApprovalPolicy, "bypass")
 	}
-	env.IsolatedWorkspace = workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared
+	// The legacy field means that the workspace strategy is safe for this
+	// delivery. A shared checkout is safe only while project execution is
+	// serialized; other strategies retain their existing isolation contract.
+	env.IsolatedWorkspace = workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared || wf.Runtime.MaxActiveRunsPerProject == 1
 }
 
 func waveSkillCompatible(vaultPath string) bool {
