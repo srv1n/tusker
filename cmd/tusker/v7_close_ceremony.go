@@ -229,7 +229,8 @@ func v7CloseDependencyIndexAtRef(vaultPath, ref string, task Note, idx v7Index) 
 	if !v7GitRepo(repoRoot) {
 		return idx, tuskerError(errorInvalidTransition, "frozen close dependency ref is unavailable: "+ref)
 	}
-	if _, err := gitOutputTrim(repoRoot, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
+	ref, err := gitOutputTrim(repoRoot, "rev-parse", "--verify", ref+"^{commit}")
+	if err != nil {
 		return idx, tuskerError(errorInvalidTransition, "frozen close dependency ref is unavailable: "+ref)
 	}
 	idx.Tasks = cloneNoteMap(idx.Tasks)
@@ -246,7 +247,15 @@ func v7CloseDependencyIndexAtRef(vaultPath, ref string, task Note, idx v7Index) 
 		if err != nil || filepath.IsAbs(rel) || strings.HasPrefix(filepath.Clean(rel), "..") {
 			return idx, fmt.Errorf("frozen close dependency path escapes repository: %s", edge.ID)
 		}
-		integrated, ok, err := v7GitNoteAtRef(repoRoot, ref, filepath.ToSlash(rel))
+		dependencyRef := v7CloseDependencyGitRef(idx, task, dependency, ref)
+		if dependencyRef != ref {
+			unresolved := dependencyRef
+			dependencyRef, err = gitOutputTrim(repoRoot, "rev-parse", "--verify", unresolved+"^{commit}")
+			if err != nil {
+				return idx, tuskerError(errorInvalidTransition, "frozen close dependency ref is unavailable: "+unresolved)
+			}
+		}
+		integrated, ok, err := v7GitNoteAtRef(repoRoot, dependencyRef, filepath.ToSlash(rel))
 		if err != nil || !ok {
 			if err != nil {
 				return idx, err
@@ -270,6 +279,16 @@ func v7CloseDependencyIndexAtRef(vaultPath, ref string, task Note, idx v7Index) 
 		idx.Tasks[edge.ID] = integrated
 	}
 	return idx, nil
+}
+
+func v7CloseDependencyGitRef(idx v7Index, task, dependency Note, fallbackRef string) string {
+	dependencyWaveID := stringField(dependency.Data, "wave")
+	if dependencyWaveID != "" && dependencyWaveID != stringField(task.Data, "wave") {
+		if dependencyWave, found := idx.Waves[dependencyWaveID]; found {
+			return v7WaveIntegrationBranch(dependencyWave)
+		}
+	}
+	return fallbackRef
 }
 
 func applyV7TaskCloseProjection(data map[string]any, actor, now string, authority map[string]any) {

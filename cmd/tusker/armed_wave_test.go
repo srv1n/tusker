@@ -300,6 +300,10 @@ func TestArmedWaveReviewChecksCrossWaveDependencyOnItsOwnIntegrationBranch(t *te
 	if got := armedWaveDependencyIntegrationBranch(idx, current, dependency); got != "integration/W-0001" {
 		t.Fatalf("cross-wave dependency branch = %q, want integration/W-0001", got)
 	}
+	dependent := Note{Data: map[string]any{"id": "APP-T-0002", "wave": "W-0002"}}
+	if got := v7CloseDependencyGitRef(idx, dependent, dependency, "candidate-review-sha"); got != "integration/W-0001" {
+		t.Fatalf("cross-wave frozen close ref = %q, want integration/W-0001", got)
+	}
 }
 
 func TestArmedWaveDelivery(t *testing.T) {
