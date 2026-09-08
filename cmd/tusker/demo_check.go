@@ -321,6 +321,7 @@ func demoCheckOutputs(manifest *demoManifest, idx v7Index, repoRoot string) demo
 // attempt ID. Timer-lane-only histories skip.
 func demoCheckRealAttempts(manifest *demoManifest, exec *demoExec, repoRoot string) demoAssertion {
 	const name = "real-attempts-bound"
+	runtimeExec := demoExecForScope(exec, manifest.RuntimeScope, manifest.RuntimeStripScope)
 	var last *demoRunRecord
 	for i := len(manifest.Runs) - 1; i >= 0; i-- {
 		if manifest.Runs[i].Executor == "real-harness" {
@@ -342,7 +343,7 @@ func demoCheckRealAttempts(manifest *demoManifest, exec *demoExec, repoRoot stri
 		if profile.Attempt == "" {
 			return demoFailAs(name, "every real task binds a runtime attempt", key+" has no attempt ID", "")
 		}
-		if !demoAttemptKnown(exec, repoRoot, manifest.Tasks[key].TaskID, profile.Attempt) {
+		if !demoAttemptKnown(runtimeExec, repoRoot, manifest.Tasks[key].TaskID, profile.Attempt) {
 			return demoFailAs(name, "recorded attempts exist in runtime inspection", key+" attempt "+profile.Attempt+" not found", "")
 		}
 		checked++
