@@ -253,6 +253,13 @@ func TestDemoRuntimeAttemptReadsRunsInspectSchema(t *testing.T) {
 	if !ok || attempt.ID != "attempt-1" || attempt.Started == "" || attempt.Transport != "cloud" {
 		t.Fatalf("runs inspect attempt schema was not recognized: %#v", attempt)
 	}
+	base := &demoExec{Env: []string{"HOME=/tmp/home", "TUSKER_STATE_ROOT=/tmp/demo-local"}}
+	scoped := demoExecForScope(base, "default", true)
+	for _, entry := range scoped.Env {
+		if strings.HasPrefix(entry, "TUSKER_STATE_ROOT=") {
+			t.Fatalf("real attempt inspection retained demo-local runtime scope: %q", entry)
+		}
+	}
 }
 
 // TestRealWorkFixtureRealRefusal covers real-mode refusal with no

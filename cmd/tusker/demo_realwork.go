@@ -966,6 +966,7 @@ func recordOutcomeInto(record *demoRunRecord, manifest *demoManifest, key, outco
 // joins and attempt binding are asserted from runtime evidence rather than
 // driver sleeps.
 func demoCollectRealEvidence(exec *demoExec, repoRoot, vaultPath string, manifest *demoManifest, record *demoRunRecord, selected []string) {
+	runtimeExec := demoExecForScope(exec, manifest.RuntimeScope, manifest.RuntimeStripScope)
 	for _, key := range selected {
 		rec := manifest.Tasks[key]
 		status := demoLiveTaskStatus(vaultPath, rec.TaskID)
@@ -976,7 +977,7 @@ func demoCollectRealEvidence(exec *demoExec, repoRoot, vaultPath string, manifes
 		default:
 			outcome = "waiting"
 		}
-		attempts := demoRuntimeAttempts(exec, repoRoot, rec.TaskID)
+		attempts := demoRuntimeAttempts(runtimeExec, repoRoot, rec.TaskID)
 		profile := record.TaskProfiles[key]
 		if len(attempts) == 0 {
 			if outcome == "done" || outcome == "failed" {
