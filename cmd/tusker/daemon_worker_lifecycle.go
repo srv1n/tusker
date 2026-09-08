@@ -74,7 +74,11 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 			return nil, false, err
 		}
 		if endState.Dirty {
-			endState.HeadSHA, err = materializeWorkerSubmissionCommit(*run, materialScope)
+			commitScope, scopeErr := canonicalRunAuthoredScope(d.store, *run)
+			if scopeErr != nil {
+				return nil, false, scopeErr
+			}
+			endState.HeadSHA, err = materializeWorkerSubmissionCommit(*run, commitScope)
 			if err != nil {
 				return nil, false, err
 			}

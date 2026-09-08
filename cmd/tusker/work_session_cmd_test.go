@@ -12,6 +12,20 @@ import (
 	"time"
 )
 
+func TestTaskAuthoredMaterialScopeExcludesReferenceSpecs(t *testing.T) {
+	note := Note{Data: map[string]any{
+		"owned_paths":       []string{"owned"},
+		"generated_outputs": []string{"generated/out.txt"},
+		"knowledge_nodes":   []string{".tusker/knowledge/domain.md"},
+		"spec_refs":         []string{".tusker/specs/governing.md"},
+	}}
+	scope, err := taskAuthoredMaterialScope(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{".tusker/knowledge/domain.md", "generated/out.txt", "owned"}, scope, "authored commit scope")
+}
+
 func workSessionFixture(t *testing.T, count int) (string, RegisteredProject) {
 	t.Helper()
 	vault := automationTestVault(t)

@@ -628,6 +628,24 @@ func captureRunEndStateForMaterialScope(workspace string, materialScope []string
 }
 
 func canonicalRunMaterialScope(store *RuntimeStore, run RunStatus) ([]string, error) {
+	return canonicalRunTaskScope(store, run, canonicalTaskMaterialScope)
+}
+
+func canonicalRunAuthoredScope(store *RuntimeStore, run RunStatus) ([]string, error) {
+	return canonicalRunTaskScope(store, run, func(vault string, note Note) ([]string, error) {
+		scope, err := taskAuthoredMaterialScope(note)
+		if err != nil || stringField(note.Data, "work_kind") != "integrator" {
+			return scope, err
+		}
+		wf, err := loadWorkflow(vault)
+		if err != nil {
+			return nil, err
+		}
+		return normalizeWorkspaceMaterialScope(append(scope, wf.Data.Orchestration.SharedNamespaces...))
+	})
+}
+
+func canonicalRunTaskScope(store *RuntimeStore, run RunStatus, resolve func(string, Note) ([]string, error)) ([]string, error) {
 	if run.Lane != runLaneExecute {
 		return nil, nil
 	}
@@ -639,7 +657,7 @@ func canonicalRunMaterialScope(store *RuntimeStore, run RunStatus) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	scope, err := canonicalTaskMaterialScope(loaded[0].Project.VaultRoot, note)
+	scope, err := resolve(loaded[0].Project.VaultRoot, note)
 	if err != nil {
 		return nil, tuskerError(errorInvalidArg, "work session has invalid declared material scope: "+err.Error())
 	}

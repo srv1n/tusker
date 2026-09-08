@@ -556,9 +556,11 @@ func canonicalTaskMaterialScope(vault string, note Note) ([]string, error) {
 }
 
 func taskMaterialScope(note Note) ([]string, error) {
-	paths := append([]string{}, normalizeList(note.Data["owned_paths"])...)
-	paths = append(paths, normalizeList(note.Data["generated_outputs"])...)
-	paths = append(paths, normalizeList(note.Data["knowledge_nodes"])...)
+	paths, err := taskAuthoredMaterialScope(note)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, ref := range normalizeList(note.Data["spec_refs"]) {
 		ref = firstNonEmpty(wikiTarget(ref), ref)
 		if strings.Contains(ref, "://") || filepath.IsAbs(ref) {
@@ -566,6 +568,13 @@ func taskMaterialScope(note Note) ([]string, error) {
 		}
 		paths = append(paths, ref)
 	}
+	return normalizeWorkspaceMaterialScope(paths)
+}
+
+func taskAuthoredMaterialScope(note Note) ([]string, error) {
+	paths := append([]string{}, normalizeList(note.Data["owned_paths"])...)
+	paths = append(paths, normalizeList(note.Data["generated_outputs"])...)
+	paths = append(paths, normalizeList(note.Data["knowledge_nodes"])...)
 	return normalizeWorkspaceMaterialScope(paths)
 }
 
