@@ -270,7 +270,7 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	} else {
 		branchBase := ""
 		var workspaceErr error
-		branchName, branchBase, workspaceErr = v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane)
+		branchName, branchBase, workspaceErr = v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane, workspaceStrategy)
 		if workspaceErr != nil {
 			return runClaimResult{}, nil, workspaceErr
 		}

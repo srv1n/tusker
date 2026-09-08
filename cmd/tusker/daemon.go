@@ -3904,7 +3904,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	}
 	workspaceManager := NewWorkspaceManager()
 	workspaceStrategy := d.workspaceStrategyForDispatch(project, wfFile.Data, run)
-	branchName, branchBase, err := v7WorkspaceBranchForLane(project.VaultRoot, note, lane)
+	branchName, branchBase, err := v7WorkspaceBranchForLane(project.VaultRoot, note, lane, workspaceStrategy)
 	if err != nil {
 		return run, false, err
 	}

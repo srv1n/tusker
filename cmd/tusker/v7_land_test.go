@@ -55,7 +55,7 @@ func TestReviewWorkspaceIsPinnedToImplementationSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	branchName, branchBase, err := v7WorkspaceBranchForLane(vault, idx.Tasks["APP-T-0001"], runLaneReview)
+	branchName, branchBase, err := v7WorkspaceBranchForLane(vault, idx.Tasks["APP-T-0001"], runLaneReview, WorkspaceStrategyWorktree)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +74,19 @@ func TestReviewWorkspaceIsPinnedToImplementationSource(t *testing.T) {
 	defer func() { _ = manager.Cleanup(workspace.Path) }()
 	assertEqual(t, "review this exact delivery\n", mustReadIndexTest(t, filepath.Join(workspace.Path, "artifacts/delivery/APP-T-0001.svg")), "review workspace artifact")
 	assertEqual(t, branchName, strings.TrimSpace(gitDirOutput(t, workspace.Path, "rev-parse", "--abbrev-ref", "HEAD")), "review workspace branch checkout")
+}
+
+func TestSharedReviewWorkspaceDoesNotRequireWorkerOwnedBranch(t *testing.T) {
+	_, vault := newLandTestRepo(t, 1, "true")
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, _, err := v7WorkspaceBranchForLane(vault, idx.Tasks["APP-T-0001"], runLaneReview, WorkspaceStrategyShared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "task/APP-T-0001", branch, "shared workspace retains task identity without requiring its ref")
 }
 
 func TestArmedWaveLanding(t *testing.T) {

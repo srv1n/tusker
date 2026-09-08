@@ -3599,9 +3599,9 @@ func v7WorkspaceBranchForTask(vaultPath string, note Note) (string, string, erro
 // inspect a separate branch pinned to the exact implementation commit: a
 // second worktree cannot check out the task branch, and falling back to HEAD
 // makes the reviewer inspect a different delivery than the one it is judging.
-func v7WorkspaceBranchForLane(vaultPath string, note Note, lane string) (string, string, error) {
+func v7WorkspaceBranchForLane(vaultPath string, note Note, lane string, strategy WorkspaceStrategy) (string, string, error) {
 	branchName, branchBase, err := v7WorkspaceBranchForTask(vaultPath, note)
-	if err != nil || strings.TrimSpace(lane) != runLaneReview {
+	if err != nil || strings.TrimSpace(lane) != runLaneReview || strategy == WorkspaceStrategyShared {
 		return branchName, branchBase, err
 	}
 	taskID := trackerRecordID(note)
