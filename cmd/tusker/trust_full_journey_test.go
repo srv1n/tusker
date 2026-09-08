@@ -181,7 +181,8 @@ class JourneyTest(unittest.TestCase):
 		_ = store.Close()
 		t.Fatalf("bind daemon status path: ok=%v err=%v", ok, updateErr)
 	}
-	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, notifyWake: make(chan string, 1)}
+	t.Cleanup(daemon.stopNotifyTimers)
 	request := daemonWorkerLifecycleRequest{Action: "submit", AttemptID: runtimeRun.ActiveAttemptID, RecordID: runtimeRun.RecordID,
 		Lane: runtimeRun.Lane, Workspace: runtimeRun.WorkspacePath, StatusPath: runtimeRun.StatusPath,
 		LeaseGeneration: runtimeRun.LeaseGeneration, WorkRevision: runtimeRun.WorkRevision,
@@ -214,6 +215,12 @@ class JourneyTest(unittest.TestCase):
 	if err != nil || !changed {
 		_ = store.Close()
 		t.Fatalf("daemon terminal reconciliation: changed=%v err=%v", changed, err)
+	}
+	daemon.notifyMu.Lock()
+	_, reviewWakeScheduled := daemon.notifyTimers[runtimeRun.ProjectID]
+	daemon.notifyMu.Unlock()
+	if !reviewWakeScheduled {
+		t.Fatal("execute completion did not schedule review reconciliation")
 	}
 	if err := store.UpsertRun(updated); err != nil {
 		_ = store.Close()

@@ -2680,6 +2680,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeSucceeded), "", "", sessionResumable)
 			}
 			clearActiveExecution(&run)
+			d.scheduleProjectReconcile(project.ProjectID)
 			return run, true, nil
 		}
 		reason := classification.reason
