@@ -232,7 +232,7 @@ func (r *Resolver) ResolveCurrentFrom(sourcePath, ref string) (Resolution, bool)
 // and local ./ prefixes. External URLs, absolute paths, and empty anchors
 // return an empty string because they are outside this document graph.
 func NormalizeReference(ref string) string {
-	ref = strings.TrimSpace(strings.Trim(ref, "`"))
+	ref = strings.Join(strings.Fields(strings.Trim(ref, "`")), " ")
 	if ref == "" {
 		return ""
 	}

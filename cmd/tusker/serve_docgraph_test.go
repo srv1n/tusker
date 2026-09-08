@@ -223,7 +223,7 @@ func TestDocLinksResolveUniqueAliasesAndBacklinks(t *testing.T) {
 	seedDocgraphCorpus(t, server.repoRoot)
 	writeDocgraphDoc(t, server.repoRoot, ".tusker/specs/alias-source.md",
 		"title: \"Alias Source\"\nsubject: alias-source\npart_of: overview\nkeywords: [alias]\nstatus: active\n",
-		"# Alias Source\n\nSee [[12]] and [[../meta-harness/00 Meta-Harness Overview]].\n")
+		"# Alias Source\n\nSee [[12]] and [[../meta-harness/00 Meta-Harness\n Overview]].\n")
 	writeDocgraphDoc(t, server.repoRoot, ".tusker/specs/aliased.md",
 		"title: \"Aliased\"\nsubject: aliased\naliases: [\"12\", \"../meta-harness/00 Meta-Harness Overview\"]\npart_of: overview\nkeywords: [alias]\nstatus: active\n",
 		"# Aliased\n")
