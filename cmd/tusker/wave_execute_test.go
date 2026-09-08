@@ -161,7 +161,7 @@ func TestConsumedWaveDirectiveAuthorizationKeepsClaimedRunAuthorized(t *testing.
 	}
 }
 
-func TestServeWaveExecuteFencesDaemonClaimsToSelectedWave(t *testing.T) {
+func TestServeWaveExecuteKeepsIndependentWaveClaimsAuthorized(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
 	installCodexSleepShimForTest(t)
 	vault, _, _ := waveExecuteTestFixture(t)
@@ -217,10 +217,13 @@ func TestServeWaveExecuteFencesDaemonClaimsToSelectedWave(t *testing.T) {
 	if !reachedClaim {
 		t.Fatal("other-wave directive did not exercise the daemon claim boundary")
 	}
-	assertWaveExecuteNoClaim(t, store, project.ProjectID, run.RecordID)
+	claimed, err := store.FindRun(run.RecordID)
+	if err != nil || claimed == nil || claimed.LeaseState == string(LeaseStateUnclaimed) {
+		t.Fatalf("independent wave directive was not claimed: %#v err=%v", claimed, err)
+	}
 	directive, err := store.RunDirective(project.ProjectID, run.RecordID)
-	if err != nil || directive == nil || directive.State != "queued" {
-		t.Fatalf("other-wave directive was consumed: %#v err=%v", directive, err)
+	if err != nil || directive == nil || directive.State != "consumed" {
+		t.Fatalf("independent wave directive was not consumed: %#v err=%v", directive, err)
 	}
 }
 

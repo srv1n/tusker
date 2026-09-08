@@ -317,8 +317,35 @@ type waveExecutionScope struct {
 	EnabledProjectPolling    bool   `json:"enabled_project_polling"`
 }
 
-func waveExecutionScopeKey(projectID string) string {
-	return "wave_execute_scope:" + projectID
+func waveExecutionScopeKey(projectID, waveID string) string {
+	return "wave_execute_scope:" + projectID + ":" + waveID
+}
+
+func hasActiveWavePollingScopeTx(tx *sql.Tx, projectID, excludeKey string, now time.Time) (bool, error) {
+	prefix := "wave_execute_scope:" + projectID + ":"
+	rows, err := tx.Query(`SELECT key, value FROM daemon_settings WHERE substr(key, 1, ?) = ?`, len(prefix), prefix)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, raw string
+		if err := rows.Scan(&key, &raw); err != nil {
+			return false, err
+		}
+		if key == excludeKey {
+			continue
+		}
+		var scope waveExecutionScope
+		if json.Unmarshal([]byte(raw), &scope) != nil || !scope.EnabledProjectPolling {
+			continue
+		}
+		expiresAt, err := time.Parse(time.RFC3339Nano, scope.ExpiresAt)
+		if err == nil && expiresAt.After(now) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 type RunIdentityMetadata struct {
@@ -2271,7 +2298,7 @@ func (s *RuntimeStore) QueueWaveRunDirectives(projectID, waveID, fingerprint, au
 		defer tx.Rollback()
 		scope := waveExecutionScope{WaveID: waveID, AuthorizationFingerprint: fingerprint, WaveAuthorizedAt: authorizedAt, ExpiresAt: expiresAt, EnabledProjectPolling: enableProjectPolling}
 		var existingScopeJSON string
-		if scanErr := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, waveExecutionScopeKey(projectID)).Scan(&existingScopeJSON); scanErr == nil {
+		if scanErr := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, waveExecutionScopeKey(projectID, waveID)).Scan(&existingScopeJSON); scanErr == nil {
 			var existing waveExecutionScope
 			if json.Unmarshal([]byte(existingScopeJSON), &existing) == nil && existing.WaveID == waveID && existing.AuthorizationFingerprint == fingerprint && existing.WaveAuthorizedAt == authorizedAt {
 				scope.EnabledProjectPolling = scope.EnabledProjectPolling || existing.EnabledProjectPolling
@@ -2284,7 +2311,7 @@ func (s *RuntimeStore) QueueWaveRunDirectives(projectID, waveID, fingerprint, au
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, waveExecutionScopeKey(projectID), string(scopeJSON)); err != nil {
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, waveExecutionScopeKey(projectID, waveID), string(scopeJSON)); err != nil {
 			return err
 		}
 		if enableProjectPolling {
@@ -3065,7 +3092,8 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 		}
 		defer tx.Rollback()
 		var scopeJSON string
-		scopeErr := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, waveExecutionScopeKey(run.ProjectID)).Scan(&scopeJSON)
+		scopeKey := waveExecutionScopeKey(run.ProjectID, auth.DirectiveWaveID)
+		scopeErr := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, scopeKey).Scan(&scopeJSON)
 		var scope waveExecutionScope
 		if scopeErr == nil {
 			if err := json.Unmarshal([]byte(scopeJSON), &scope); err != nil {
@@ -3076,12 +3104,16 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 				return err
 			}
 			if !expiresAt.After(now) {
-				if scope.EnabledProjectPolling {
+				keepPolling, err := hasActiveWavePollingScopeTx(tx, run.ProjectID, scopeKey, now)
+				if err != nil {
+					return err
+				}
+				if scope.EnabledProjectPolling && !keepPolling {
 					if _, err := tx.Exec(`UPDATE projects SET enabled = 0, health = ?, last_error = '' WHERE project_id = ?`, string(projectHealthDisabled), run.ProjectID); err != nil {
 						return err
 					}
 				}
-				if _, err := tx.Exec(`DELETE FROM daemon_settings WHERE key = ?`, waveExecutionScopeKey(run.ProjectID)); err != nil {
+				if _, err := tx.Exec(`DELETE FROM daemon_settings WHERE key = ?`, scopeKey); err != nil {
 					return err
 				}
 				return tx.Commit()
