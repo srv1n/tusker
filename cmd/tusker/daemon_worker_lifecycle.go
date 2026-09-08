@@ -145,7 +145,7 @@ func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
 	w := req.Worker
 	args := Args{"id": run.RecordID, "project": run.ProjectID, "owner": run.LeaseOwner, "revision": fmt.Sprintf("%d", run.WorkRevision),
 		"deliverable": w.Deliverable, "verification": w.Verification, "gate-verdicts": w.GateVerdicts, "reason": w.Reason,
-		"actor": "agent:" + w.AttemptID, "quiet": "true"}
+		"actor": "agent:tusker-daemon", "quiet": "true"}
 	return runsLifecycleWithStore(store, args, w.Action, false)
 }
 
@@ -162,8 +162,9 @@ func validateWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) (*Ru
 		return nil, firstNonNil(err, fmt.Errorf("worker lifecycle run not found"))
 	}
 	if req.Identity != w.AttemptID || run.ActiveAttemptID != w.AttemptID || run.ProjectID != req.ProjectID ||
-		run.RecordID != w.RecordID || run.Lane != w.Lane || run.WorkspacePath != w.Workspace ||
-		run.StatusPath != w.StatusPath || run.LeaseGeneration != w.LeaseGeneration || run.WorkRevision != w.WorkRevision ||
+		run.RecordID != w.RecordID || run.Lane != w.Lane || !sameCanonicalProjectPath(run.WorkspacePath, w.Workspace) ||
+		filepath.Base(run.StatusPath) != filepath.Base(w.StatusPath) || !sameCanonicalProjectPath(filepath.Dir(run.StatusPath), filepath.Dir(w.StatusPath)) ||
+		run.LeaseGeneration != w.LeaseGeneration || run.WorkRevision != w.WorkRevision ||
 		!isDispatchingLeaseState(run.LeaseState) {
 		return nil, fmt.Errorf("worker lifecycle identity does not match the daemon-owned active run")
 	}

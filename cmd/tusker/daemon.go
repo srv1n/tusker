@@ -6004,7 +6004,7 @@ func latestRunnerEventSinkAt(path string) (time.Time, bool) {
 
 func daemonOwnedEventKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "", "attempt_started", "attempt_spawned", "supervisor_decision":
+	case "", "attempt_started", "attempt_spawned", "attempt_wrapper_spawned", "supervisor_decision":
 		return true
 	default:
 		return false
@@ -6047,6 +6047,10 @@ func runStallReason(run RunStatus, wf Workflow, now time.Time) (bool, string) {
 	timeout := heartbeatDeadThresholdForRun(run, wf)
 	if strings.TrimSpace(run.FirstEventAt) == "" {
 		startedAt, startedOK := parseRunTimestamp(firstNonEmpty(run.ProcessStartedAt, run.StartedAt, run.UpdatedAt))
+		deadline := firstEventDeadlineForRun(run, wf)
+		if startedOK && now.Sub(startedAt) > deadline {
+			return true, fmt.Sprintf("runner never started: no first event within %s of spawn", deadline)
+		}
 		if heartbeatCapable {
 			if lastHeartbeatAt, heartbeatOK := parseRunTimestamp(run.LastHeartbeatAt); heartbeatOK {
 				if now.Sub(lastHeartbeatAt) <= timeout {
@@ -6056,10 +6060,6 @@ func runStallReason(run RunStatus, wf Workflow, now time.Time) (bool, string) {
 					return true, fmt.Sprintf("runner heartbeat dead before first event (runner never started): no heartbeat since %s", lastHeartbeatAt.Format(time.RFC3339))
 				}
 			}
-		}
-		deadline := firstEventDeadlineForRun(run, wf)
-		if startedOK && now.Sub(startedAt) > deadline {
-			return true, fmt.Sprintf("runner never started: no first event within %s of spawn", deadline)
 		}
 		return false, ""
 	}
@@ -6086,14 +6086,14 @@ func runStallReason(run RunStatus, wf Workflow, now time.Time) (bool, string) {
 }
 
 func firstEventDeadlineForRun(run RunStatus, wf Workflow) time.Duration {
-	if wf.Codex.StallTimeoutMS > 0 && RunnerName(run.Runner) == RunnerCodex {
+	if wf.Codex.StallTimeoutMS > 0 {
 		return time.Duration(wf.Codex.StallTimeoutMS) * time.Millisecond
 	}
 	return daemonFirstEventDeadline
 }
 
 func heartbeatDeadThresholdForRun(run RunStatus, wf Workflow) time.Duration {
-	if wf.Codex.StallTimeoutMS > 0 && RunnerName(run.Runner) == RunnerCodex {
+	if wf.Codex.StallTimeoutMS > 0 {
 		return time.Duration(wf.Codex.StallTimeoutMS) * time.Millisecond
 	}
 	return daemonHeartbeatDeadThreshold
@@ -7107,9 +7107,17 @@ func recordDaemonImplementationEvidence(vaultPath string, note Note, run RunStat
 	if path == "" || !fileExists(filepath.Join(run.WorkspacePath, filepath.FromSlash(path))) {
 		return nil
 	}
+	kinds := v7ArtifactContractEvidenceKinds(strings.ToLower(strings.TrimSpace(stringField(contract, "kind"))))
+	if len(kinds) == 0 {
+		kinds = []string{"verification_summary"}
+	}
+	covers := normalizeList(contract["acceptance_ids"])
+	if len(covers) == 0 {
+		covers = v7AcceptanceIDs(note.Body)
+	}
 	return evidenceV7AddCmd(Args{
 		"vault": vaultPath, "quiet": "true", "id": run.RecordID,
-		"kind": "verification_summary", "covers": strings.Join(normalizeList(contract["acceptance_ids"]), ","),
+		"kind": kinds[0], "covers": strings.Join(covers, ","),
 		"summary": "Daemon-captured implementation artifact from attempt " + run.ActiveAttemptID,
 		"path":    path, "_source-root": run.WorkspacePath, "by": "agent:" + strings.ToLower(run.ActiveAttemptID),
 	})

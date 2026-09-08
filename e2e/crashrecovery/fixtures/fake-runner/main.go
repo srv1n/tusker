@@ -79,20 +79,22 @@ func main() {
 					fmt.Fprintf(os.Stderr, "fake-runner git end state failed: %v\n", err)
 					os.Exit(15)
 				}
-				if err := recordTaskProof(*tuskerBin); err != nil {
-					fmt.Fprintf(os.Stderr, "fake-runner proof transition failed: %v\n", err)
-					os.Exit(16)
-				}
-			}
-			if err := setTaskStatus(*tuskerBin, *completeStatus); err != nil {
-				fmt.Fprintf(os.Stderr, "fake-runner status transition failed: %v; capability=%s\n", err, capabilitySummary())
-				os.Exit(17)
-			}
-			if *completeStatus == "review" {
-				if err := commitWorkspaceEndState(); err != nil {
-					fmt.Fprintf(os.Stderr, "fake-runner committed end state failed: %v\n", err)
+				owned := filepath.Join(os.Getenv("TUSKER_WORKSPACE"), "owned", strings.ToLower(os.Getenv("TUSKER_ITEM_ID"))+".txt")
+				if err := os.MkdirAll(filepath.Dir(owned), 0o755); err != nil {
+					fmt.Fprintf(os.Stderr, "fake-runner output directory failed: %v\n", err)
 					os.Exit(15)
 				}
+				if err := os.WriteFile(owned, []byte("crash fixture completed\n"), 0o644); err != nil {
+					fmt.Fprintf(os.Stderr, "fake-runner output failed: %v\n", err)
+					os.Exit(15)
+				}
+				if err := submitTaskWork(*tuskerBin, "fake runner completed the crash-recovery fixture", "command check completed in the fixture"); err != nil {
+					fmt.Fprintf(os.Stderr, "fake-runner submit failed: %v\n", err)
+					os.Exit(16)
+				}
+			} else if err := setTaskStatus(*tuskerBin, *completeStatus); err != nil {
+				fmt.Fprintf(os.Stderr, "fake-runner status transition failed: %v; capability=%s\n", err, capabilitySummary())
+				os.Exit(17)
 			}
 		}
 		emitHeartbeat()
@@ -248,25 +250,7 @@ func runDeliveryFixture(tuskerBin string) error {
 	if err := run("test", "-s", artifactRel); err != nil {
 		return err
 	}
-	// The delivery plan has an artifact contract. A passing Verification row
-	// proves the command, while this copied evidence record makes the artifact
-	// durable and visible from the integration branch after landing.
-	if err := run(tuskerBin, "evidence", "add", taskID, "--kind", "automated_test", "--covers", "A1", "--path", artifactRel, "--command", focusedCheck, "--result", "pass", "--summary", "durable delivery artifact captured in the isolated workspace", "--by", "agent:e2e", "--local", "--quiet"); err != nil {
-		return err
-	}
-	if err := run(tuskerBin, "verify", "add", taskID, "--by", "agent:e2e", "--covers", "A1", "--check", focusedCheck, "--result", "pass", "--note", "focused artifact test passed in the isolated workspace", "--local", "--quiet"); err != nil {
-		return err
-	}
-	if err := requireSatisfiedProof(tuskerBin, workspace, taskID); err != nil {
-		return err
-	}
-	if err := run(tuskerBin, "finish", taskID, "--summary", "fixture implementation complete", "--request-review", "--local", "--quiet"); err != nil {
-		return err
-	}
-	if err := run("git", "add", "-A"); err != nil {
-		return err
-	}
-	return run("git", "commit", "-m", "deliver "+taskID)
+	return submitTaskWork(tuskerBin, "fixture implementation and durable artifact complete", focusedCheck)
 }
 
 func submitDeliveryReview(tuskerBin, taskID string) error {
@@ -314,31 +298,6 @@ func submitDeliveryReview(tuskerBin, taskID string) error {
 	return err
 }
 
-func requireSatisfiedProof(tuskerBin, workspace, taskID string) error {
-	type proofStatus struct {
-		TaskID         string   `json:"task_id"`
-		Status         string   `json:"status"`
-		Missing        []string `json:"missing"`
-		MachineMissing []string `json:"machine_missing"`
-	}
-
-	cmd := exec.Command(tuskerBin, "proof", "status", taskID, "--json", "--local")
-	cmd.Dir = workspace
-	cmd.Env = os.Environ()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("read back focused proof for %s: %w: %s", taskID, err, out)
-	}
-	var status proofStatus
-	if err := json.Unmarshal(out, &status); err != nil {
-		return fmt.Errorf("decode focused proof status for %s: %w: %s", taskID, err, out)
-	}
-	if status.TaskID != taskID || status.Status != "satisfied" || len(status.Missing) != 0 || len(status.MachineMissing) != 0 {
-		return fmt.Errorf("focused proof for %s is not satisfied before finish: task_id=%q status=%q missing=%v machine_missing=%v", taskID, status.TaskID, status.Status, status.Missing, status.MachineMissing)
-	}
-	return nil
-}
-
 func deliveryEvidenceForTask(taskID string) (string, string) {
 	base := "artifacts/delivery/" + strings.ToLower(taskID)
 	switch taskID {
@@ -359,21 +318,17 @@ func deliveryEvidenceForTask(taskID string) (string, string) {
 	}
 }
 
-func recordTaskProof(tuskerBin string) error {
+func submitTaskWork(tuskerBin, deliverable, verification string) error {
 	taskID := os.Getenv("TUSKER_ITEM_ID")
-	vault := workerVault()
-	if taskID == "" || vault == "" {
+	if taskID == "" || workerVault() == "" {
 		return fmt.Errorf("missing TUSKER_ITEM_ID or TUSKER_VAULT")
 	}
 	cmd := exec.Command(tuskerBin,
-		"verify", "add", taskID,
-		"--vault", vault,
-		"--covers", "A1",
-		"--check", "go test ./e2e/crashrecovery",
-		"--result", "pass",
-		"--note", "fake runner e2e completion proof",
-		"--by", "agent:fake-runner",
-		"--local",
+		"work", "submit", taskID,
+		"--by", os.Getenv("TUSKER_ATTEMPT_ID"),
+		"--deliverable", deliverable,
+		"--verification", verification,
+		"--gate-verdicts", "A1=pass",
 		"--quiet",
 	)
 	cmd.Env = os.Environ()

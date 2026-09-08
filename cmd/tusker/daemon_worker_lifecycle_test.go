@@ -81,6 +81,33 @@ func TestWorkerSubmitQueuesUntilTerminalReconciliation(t *testing.T) {
 	}
 }
 
+func TestWorkerSubmitAcceptsCanonicalWorkspaceAlias(t *testing.T) {
+	store := fairDispatchTestStore(t)
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	alias := filepath.Join(root, "alias")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+	run := fairDispatchTestRun("project-1", "APP-T-0001")
+	run.ActiveAttemptID, run.LeaseState, run.LeaseGeneration = "attempt-1", string(LeaseStateRunning), 2
+	run.WorkspacePath, run.StatusPath = workspace, filepath.Join(workspace, "status.json")
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	req := daemonControlRequest{Command: "worker_lifecycle", ProjectID: run.ProjectID, Identity: run.ActiveAttemptID, Worker: &daemonWorkerLifecycleRequest{
+		Action: "submit", AttemptID: run.ActiveAttemptID, RecordID: run.RecordID, Lane: run.Lane,
+		Workspace: alias, StatusPath: filepath.Join(alias, "status.json"), LeaseGeneration: run.LeaseGeneration,
+		WorkRevision: run.WorkRevision, Deliverable: "implemented", Verification: "passed",
+	}}
+	if err := queueWorkerLifecycle(store, req); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDaemonMaterializesSandboxedWorkerSubmissionCommit(t *testing.T) {
 	repo := t.TempDir()
 	initializeOrchestrationGitRepo(t, repo)

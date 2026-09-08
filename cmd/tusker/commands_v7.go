@@ -1518,9 +1518,9 @@ func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
 	if err != nil {
 		return err
 	}
-	if args.Bool("normalized-work-submit") && run != nil && LeaseState(run.LeaseState) == LeaseStateReleased && run.AttemptOutcome == string(AttemptOutcomeSucceeded) && run.LeaseGeneration == intArg(args, "lease-generation") {
+	if args.Bool("normalized-work-submit") && actor == "agent:tusker-daemon" && run != nil && LeaseState(run.LeaseState) == LeaseStateReleased && run.AttemptOutcome == string(AttemptOutcomeSucceeded) && run.LeaseGeneration == intArg(args, "lease-generation") {
 		auth, authErr := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
-		if authErr == nil && auth != nil && auth.Actor == actor && auth.LeaseGeneration == run.LeaseGeneration {
+		if authErr == nil && auth != nil && auth.LeaseGeneration == run.LeaseGeneration {
 			return nil
 		}
 	}

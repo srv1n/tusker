@@ -441,7 +441,7 @@ func TestCodexExecIdleHeartbeatReason(t *testing.T) {
 	}
 }
 
-func TestFirstEventDeadlineToleratesFreshWrapperHeartbeat(t *testing.T) {
+func TestFirstEventDeadlineOverridesFreshWrapperHeartbeat(t *testing.T) {
 	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	run := RunStatus{
 		Runner:           string(RunnerCodexExec),
@@ -450,8 +450,10 @@ func TestFirstEventDeadlineToleratesFreshWrapperHeartbeat(t *testing.T) {
 		LastHeartbeatAt:  started.Add(10 * time.Minute).Format(time.RFC3339),
 	}
 	stalled, reason := runStallReason(run, defaultWorkflow(), started.Add(10*time.Minute+time.Second))
-	assertEqual(t, false, stalled, "fresh wrapper heartbeat without first event stalled")
-	assertEqual(t, "", reason, "fresh wrapper heartbeat without first event reason")
+	assertEqual(t, true, stalled, "fresh wrapper heartbeat masked missing runner event")
+	if !strings.Contains(reason, "runner never started") {
+		t.Fatalf("expected first-event deadline reason, got %q", reason)
+	}
 }
 
 func TestFirstEventDeadlineReportsDeadWrapperHeartbeat(t *testing.T) {
@@ -465,8 +467,8 @@ func TestFirstEventDeadlineReportsDeadWrapperHeartbeat(t *testing.T) {
 	}
 	stalled, reason := runStallReason(run, defaultWorkflow(), heartbeatAt.Add(daemonHeartbeatDeadThreshold+time.Second))
 	assertEqual(t, true, stalled, "dead wrapper heartbeat before first event stalled")
-	if !strings.Contains(reason, "runner heartbeat dead before first event") {
-		t.Fatalf("expected dead heartbeat reason, got %q", reason)
+	if !strings.Contains(reason, "runner never started") {
+		t.Fatalf("expected first-event deadline reason, got %q", reason)
 	}
 }
 

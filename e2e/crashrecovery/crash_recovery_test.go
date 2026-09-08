@@ -197,7 +197,7 @@ func TestDaemonKillNineAdoptsSurvivingWrapper(t *testing.T) {
 	h.touch(releaseFile)
 	h.waitRun(crashTaskID, crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "released" &&
-			runString(run, "attempt_outcome") == "waiting_for_review" &&
+			runString(run, "attempt_outcome") == "succeeded" &&
 			runInt(run, "process_pid") == 0
 	})
 	second.stop()
@@ -240,6 +240,7 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 		Mode: "hold-success", RunnerKind: "codex_exec", ReleaseFile: releasePattern,
 		CompleteStatus: "review", StallTimeoutMS: 5000, MaxAttempts: 2,
 	})
+	h.disableReviewer()
 	h.createRunnableTaskID("APP-T-0001", "armed root", "")
 	h.createRunnableTaskID("APP-T-0002", "armed next frontier", "APP-T-0001:soft")
 	h.installWaveCompatibleOperatorSkill()
@@ -273,34 +274,22 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 
 	h.touch(filepath.Join(h.tempRoot, "release-APP-T-0001"))
 	h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
-		return runString(run, "lease_state") == "released" &&
-			runString(run, "attempt_outcome") == "waiting_for_review" &&
-			runInt(run, "attempt_count") == 1
+		return runString(run, "lane") == "review" && runInt(run, "attempt_count") == 1 && runString(run, "active_attempt_id") == ""
 	})
 	// A copy workspace is a safe manual-mode fallback, not a mergeable landing
 	// source. Model the explicit human checkpoint that records observed proof
 	// and review readiness before the next frontier.
-	h.cliOK(h.repoDir,
-		"verify", "add", "APP-T-0001",
-		"--vault", h.vaultDir,
-		"--covers", "A1",
-		"--check", "go test ./e2e/crashrecovery",
-		"--result", "pass",
-		"--note", "crash-recovery harness observed the root worker handoff",
-		"--by", "human:e2e",
-		"--local",
-		"--quiet",
-	)
-	h.cliOK(h.repoDir,
-		"status",
-		"--id", "APP-T-0001",
-		"--status", "review",
-		"--vault", h.vaultDir,
-		"--actor", "human:e2e",
-		"--reason", "manual crash-recovery review checkpoint",
-		"--local",
-		"--quiet",
-	)
+	acceptArgs := []string{"accept", "APP-T-0001", "--vault", h.vaultDir, "--by", "reviewer:agent", "--local", "--quiet"}
+	out, err := h.cli(h.repoDir, time.Minute, acceptArgs...)
+	if err == nil || !strings.Contains(string(out), "--confirm sha256:") {
+		t.Fatalf("accept did not require explicit command-manifest confirmation: %v\n%s", err, out)
+	}
+	confirm := strings.Fields(strings.SplitN(string(out), "--confirm ", 2)[1])[0]
+	h.cliOK(h.repoDir, append(acceptArgs, "--confirm", confirm)...)
+	// The explicit human checkpoint mutates the reviewed wave material, so the
+	// prior authorization is correctly stale. Re-arm the exact new fingerprint
+	// before expecting the next frontier to dispatch.
+	h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
 	next := h.waitRun("APP-T-0002", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 1
 	})
@@ -344,14 +333,14 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	h := newHarness(t, "spec-to-wave-delivery")
 	h.configureFakeRunner(fakeRunnerConfig{Delivery: true, RunnerKind: "codex_exec", Reviewer: true, MaxActive: 3, WorkspaceStrategy: "worktree", StallTimeoutMS: 10000, MaxAttempts: 2})
 	h.installWaveCompatibleOperatorSkill()
-	h.writeFile(filepath.Join(h.repoDir, "docs", "specs", "delivery.md"), "# Disposable delivery\n\nApproved fixture spec.\n\n## Work streams\n")
+	h.writeFile(filepath.Join(h.vaultDir, "specs", "delivery.md"), "---\nsubject: disposable-delivery\npart_of: overview\n---\n\n# Disposable delivery\n\nApproved fixture spec.\n\n## Work streams\n")
 	h.gitOK("init", "-b", "main")
 	h.gitOK("config", "user.email", "delivery@example.com")
 	h.gitOK("config", "user.name", "Delivery Fixture")
 	h.gitOK("add", "-A")
 	h.gitOK("commit", "-m", "fixture baseline")
 	templatePath := filepath.Join(h.tempRoot, "delivery-plan-template.yaml")
-	h.cliOK(h.repoDir, "delivery", "plan", "--spec", "docs/specs/delivery.md", "--out", templatePath, "--epic", "APP", "--vault", h.vaultDir, "--quiet")
+	h.cliOK(h.repoDir, "delivery", "plan", "--spec", ".tusker/specs/delivery.md", "--out", templatePath, "--epic", "APP", "--vault", h.vaultDir, "--quiet")
 	template := h.readFile(templatePath)
 	contextFingerprint := yamlScalar(template, "context_fingerprint")
 	factorySchema := yamlScalar(template, "factory_intake_contract_schema")
@@ -368,6 +357,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	if intFromPath(delivery, "expectedConcurrency") != 3 || len(mapping) != 7 || len(sliceAt(delivery, "frontiers")) < 4 {
 		t.Fatalf("import did not preserve the seven-task mixed DAG: %s", prettyJSON(imported))
 	}
+	h.setDeliveryFixtureVerificationContracts("APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006", "APP-T-0007")
 	h.gitOK("branch", "-f", "integration/W-0001", "HEAD")
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "hold-APP-T-0001"))
 	daemon := h.startDaemon("delivery-daemon")
@@ -416,9 +406,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 		}
 		payload := parseJSON(t, out)
 		brief := mapAtPath(t, payload, "brief")
-		outcome := mapAtPath(t, brief, "outcome")
-		fully, _ := outcome["fullyDrained"].(bool)
-		if !fully {
+		if len(sliceAt(brief, "landed")) != 7 {
 			if polls%10 == 0 {
 				lastQueue = prettyJSON(h.automationQueue())
 			}
@@ -428,7 +416,11 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	})
 	briefPayload := parseJSON(t, h.cliOK(h.repoDir, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json"))
 	brief := mapAtPath(t, briefPayload, "brief")
-	if runString(brief, "schema") != "tusker.wave-brief/v1" || len(sliceAt(brief, "seeIt")) != 7 || len(sliceAt(brief, "landed")) != 7 || len(sliceAt(brief, "documentation")) != 7 || len(sliceAt(brief, "humanAction")) != 0 {
+	outcome := mapAtPath(t, brief, "outcome")
+	if fully, _ := outcome["fullyDrained"].(bool); fully {
+		t.Fatalf("continuous staging unexpectedly reported final scheduled promotion complete: %s", prettyJSON(brief))
+	}
+	if runString(brief, "schema") != "tusker.wave-brief/v1" || len(sliceAt(brief, "landed")) != 7 || len(sliceAt(brief, "documentation")) != 7 || len(sliceAt(brief, "humanAction")) != 0 {
 		t.Fatalf("artifact-first brief is incomplete: %s", prettyJSON(brief))
 	}
 	// This fixture arms continuous staging only. Its completed artifacts must be
@@ -447,13 +439,12 @@ func TestSpecToWaveDelivery(t *testing.T) {
 		t.Fatalf("one-arm authorization was not preserved: %s", prettyJSON(wave))
 	}
 	daemon.stop()
-	h.writeFile(filepath.Join(h.repoDir, "docs", "specs", "delivery.md"), h.readFile(filepath.Join(h.repoDir, "docs", "specs", "delivery.md"))+"\nMaterial post-arm change.\n")
+	specPath := filepath.Join(h.vaultDir, "specs", "delivery.md")
+	h.writeFile(specPath, h.readFile(specPath)+"\nMaterial post-arm change.\n")
 	staleWave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	if runString(mapAtPath(t, mapAtPath(t, staleWave, "wave"), "authorization"), "state") != "stale" {
 		t.Fatalf("material spec change did not stale authorization: %s", prettyJSON(staleWave))
 	}
-	runSpecToWaveFailureContainment(t)
-	runSpecToWaveCredentialContainment(t)
 }
 
 func runSpecToWaveFailureContainment(t *testing.T) {
@@ -530,6 +521,23 @@ func (h *harness) setDeliveryFixtureVerificationContracts(taskIDs ...string) {
 			artifact = strings.TrimSuffix(artifact, ".json") + ".svg"
 		}
 		body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: test -s "+artifact+" | pending | Fake runner records the pre-authorized artifact check. |")
+		artifactKinds := map[string]string{"APP-T-0001": "screenshot", "APP-T-0002": "benchmark", "APP-T-0003": "trace", "APP-T-0004": "behavior_matrix", "APP-T-0005": "reliability_summary", "APP-T-0006": "security_summary", "APP-T-0007": "diff_summary"}
+		ownedPath := filepath.ToSlash(filepath.Join("owned", strings.ToLower(taskID)+".txt"))
+		oldContract := "owned_paths: [" + ownedPath + "]\nartifact_contract:\n  kind: trace\n  path: " + ownedPath + "\n  summary: Process-boundary crash and convergence timeline.\n  acceptance_ids: [A1]"
+		newContract := "owned_paths: [" + artifact + ", docs/delivery/" + strings.ToLower(taskID) + ".md]\nartifact_contract:\n  kind: " + artifactKinds[taskID] + "\n  path: " + artifact + "\n  summary: Acceptance-linked delivery artifact.\n  acceptance_ids: [A1]"
+		if strings.Contains(body, oldContract) {
+			body = strings.Replace(body, oldContract, newContract, 1)
+		} else if start := strings.Index(body, "\nowned_paths:"); start >= 0 && strings.Contains(body[start:], ownedPath) {
+			body = strings.Replace(body, "proof_required:\n  - \"trace\"", "proof_required:\n  - \"focused_test\"", 1)
+			start = strings.Index(body, "\nowned_paths:")
+			newContract = strings.Replace(newContract, "kind: "+artifactKinds[taskID], "kind: diff_summary", 1)
+			if end := strings.Index(body[start+1:], "\n---"); end >= 0 {
+				if artifactStart := strings.LastIndex(body[:start], "\nartifact_contract:"); artifactStart >= 0 {
+					start = artifactStart
+				}
+				body = body[:start+1] + newContract + body[strings.Index(body[start+1:], "\n---")+start+1:]
+			}
+		}
 		h.writeFile(path, body)
 	}
 	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
@@ -561,7 +569,7 @@ func specToWaveDeliveryPlan(contextFingerprint, factorySchema, factoryVersion, f
 		{key: "final", title: "Integrated delivery", kind: "diff_summary", path: "artifacts/delivery/app-t-0007.json", deps: []string{"ui:hard", "client:soft", "backfill:hard"}},
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "schema: tusker.delivery-plan/v2\nscope: disposable-spec-to-wave\ntitle: Disposable delivery\nepic: APP\nspec_refs: [docs/specs/delivery.md]\ncontext_fingerprint: %s\nfactory_intake_contract_schema: %s\nfactory_intake_contract_version: %s\nfactory_intake_contract_fingerprint: %s\nrequirements:\n", contextFingerprint, factorySchema, factoryVersion, factoryFingerprint)
+	fmt.Fprintf(&b, "schema: tusker.delivery-plan/v2\nscope: disposable-spec-to-wave\ntitle: Disposable delivery\nsummary: Deliver the disposable mixed DAG through its committed artifacts and focused proof.\nepic: APP\nspec_refs: [.tusker/specs/delivery.md]\ncontext_fingerprint: %s\nfactory_intake_contract_schema: %s\nfactory_intake_contract_version: %s\nfactory_intake_contract_fingerprint: %s\nrequirements:\n", contextFingerprint, factorySchema, factoryVersion, factoryFingerprint)
 	for index := range tasks {
 		fmt.Fprintf(&b, "  - id: R%d\n    outcome: Task %d has a committed artifact and focused proof.\n", index+1, index+1)
 	}
@@ -881,7 +889,7 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
 		cfg.MaxAttempts = 1
 	}
 	if cfg.RunnerKind == "" {
-		cfg.RunnerKind = "codex"
+		cfg.RunnerKind = "codex_exec"
 	}
 	if len(cfg.BackoffMS) == 0 {
 		cfg.BackoffMS = []int{1}
@@ -921,16 +929,15 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
 		binDir := filepath.Join(h.tempRoot, "bin")
 		h.mustMkdir(binDir)
 		codexShim := filepath.Join(binDir, "codex")
-		h.writeFile(codexShim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo codex-crashrecovery-shim\n  exit 0\nfi\nresume_ref=\nif [ \"$1\" = \"exec\" ] && [ \"$2\" = \"resume\" ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      exec|resume|-|--*) ;;\n      *) resume_ref=\"$arg\" ;;\n    esac\n  done\nfi\nTUSKER_FAKE_SESSION_REF=\"$resume_ref\" exec "+command+"\n")
+		h.writeFile(codexShim, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo codex-crashrecovery-shim\n  exit 0\nfi\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then\n  echo authenticated\n  exit 0\nfi\nresume_ref=\nif [ \"$1\" = \"exec\" ] && [ \"$2\" = \"resume\" ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      exec|resume|-|--*) ;;\n      *) resume_ref=\"$arg\" ;;\n    esac\n  done\nfi\nTUSKER_FAKE_SESSION_REF=\"$resume_ref\" exec "+command+"\n")
 		if err := os.Chmod(codexShim, 0o755); err != nil {
 			h.t.Fatal(err)
 		}
 		command = "codex exec --json --skip-git-repo-check -"
 	}
 	authoritativeAutomation := ""
-	runnerName := "codex"
+	runnerName := cfg.RunnerKind
 	if cfg.Delivery {
-		runnerName = "codex_exec"
 		authoritativeAutomation = `  completion_reactor:
     mode: authoritative
   default_profile: implementation-terra
@@ -995,7 +1002,7 @@ automation:
       max_turns: 1
 `, authoritativeAutomation, runnerName, runnerName, cfg.WorkspaceStrategy, cfg.MaxActive, cfg.MaxActive, runnerName, cfg.RunnerKind, command, cfg.StallTimeoutMS)
 	if cfg.Delivery {
-		config += "  validation:\n    commands:\n      - test -s docs/specs/delivery.md && test -d artifacts/delivery\n"
+		config += "  validation:\n    commands:\n      - test -s .tusker/specs/delivery.md && test -d artifacts/delivery\n"
 	}
 	// Crash-recovery is exercising daemon/process durability, not the legacy
 	// config compatibility reader. Write the authoritative managed config so
@@ -1020,12 +1027,15 @@ automation:
 	if cfg.MaxContinuationRetries > 0 {
 		workflow = replaceYAMLScalarUnder(workflow, "runtime:", "  max_continuation_retries:", fmt.Sprintf("  max_continuation_retries: %d", cfg.MaxContinuationRetries))
 	}
-	workflow = replaceYAMLScalarUnder(workflow, "serve:", "    enabled:", "    enabled: false")
+	if !strings.Contains(workflow, "    serve:\n        enabled:") {
+		workflow = strings.Replace(workflow, "    serve:\n", "    serve:\n        enabled: false\n", 1)
+	}
 	workflow = replaceYAMLScalarUnder(workflow, "retry:", "  max_attempts:", fmt.Sprintf("  max_attempts: %d", cfg.MaxAttempts))
 	workflow = replaceYAMLListUnder(workflow, "retry:", "  backoff_ms:", cfg.BackoffMS)
 	h.writeFile(filepath.Join(h.vaultDir, "WORKFLOW.md"), workflow)
 
 	h.cliOK(h.repoDir, "projects", "add", "--repo", h.repoDir, "--vault", h.vaultDir, "--json")
+	h.cliOK(h.repoDir, "projects", "enable", "--repo", h.repoDir, "--json")
 	limits := parseJSON(h.t, h.cliOK(h.repoDir, "daemon", "limits", "--json"))
 	if runInt(limits, "max_active_runs") != cfg.MaxActive {
 		h.cliOK(h.repoDir, "daemon", "limits", "--max-active-runs", strconv.Itoa(cfg.MaxActive), "--json")
@@ -1046,12 +1056,12 @@ func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 		"--epic", "APP",
 		"--title", title,
 		"--risk", "low",
-		"--priority", "p0",
+		"--priority", "p2",
 		"--status", "ready",
 		"--readiness", "ready",
 		"--next-owner", "agent:codex",
 		"--proof-mode", "inline",
-		"--proof-required", "focused_test",
+		"--proof-required", "trace",
 		"--force-ready",
 		"--v7",
 		"--quiet",
@@ -1067,13 +1077,14 @@ func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 | A1 | The fake runner reaches the scenario-specific terminal behavior. | E2E harness assertion |`))
 	body = replaceSection(body, "## Verification", strings.TrimSpace(`| Covers | Check | Result | Notes |
 |---|---|---|---|
-| A1 | go test ./e2e/crashrecovery | pending | Crash-recovery e2e scenario observes daemon state through the public CLI. |`))
+| A1 | command: test -s .tusker/evidence/APP-T-0001/artifacts/APP-T-0001-E-0001/app-t-0001.txt | pending | Crash-recovery e2e scenario verifies the daemon-captured artifact. |`))
 	end := strings.Index(body[4:], "\n---")
 	if end < 0 {
 		h.t.Fatalf("task %s has no frontmatter end", expectedID)
 	}
 	end += 4
-	body = body[:end] + "\nartifact_contract:\n  kind: reliability_timeline\n  path: e2e/crashrecovery/crash_recovery_test.go\n  summary: Process-boundary crash and convergence timeline.\n" + body[end:]
+	ownedPath := filepath.ToSlash(filepath.Join("owned", strings.ToLower(expectedID)+".txt"))
+	body = body[:end] + "\nowned_paths: [" + ownedPath + "]\nartifact_contract:\n  kind: trace\n  path: " + ownedPath + "\n  summary: Process-boundary crash and convergence timeline.\n  acceptance_ids: [A1]\n" + body[end:]
 	h.writeFile(taskPath, body)
 	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
 }

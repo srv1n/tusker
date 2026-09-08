@@ -847,6 +847,23 @@ func TestReconcileIdempotentReconcileConverges(t *testing.T) {
 	assertEqual(t, first.AttemptOutcome, second.AttemptOutcome, "second tick idempotent outcome")
 }
 
+func TestWrapperSpawnEventDoesNotCountAsRunnerFirstEvent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	log := NewEventLog(path)
+	if err := log.Append("attempt_wrapper_spawned", "attempt-1", RunnerCodexExec, nil); err != nil {
+		t.Fatal(err)
+	}
+	if at, ok := latestRunnerEventSinkAt(path); ok {
+		t.Fatalf("wrapper lifecycle event counted as runner output at %s", at)
+	}
+	if err := log.Append("fake_first_event", "attempt-1", RunnerCodexExec, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := latestRunnerEventSinkAt(path); !ok {
+		t.Fatal("runner output event was not observed")
+	}
+}
+
 // F3: killSpawnedRunProcess is the production kill path invoked on dispatchRun's
 // post-spawn lease-lost fences (a concurrent operator stop revoked the lease
 // after the child was spawned but before the row write; the stop's interrupt saw

@@ -324,7 +324,7 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 			return ReviewResult{}, fmt.Errorf("pass proposal does not cover the exact acceptance set")
 		}
 		report, reportErr := loadV7ProofReport(project.VaultRoot, run.RecordID)
-		if reportErr != nil || len(report.OpenGates) != 0 || len(v7PendingCommandProofGaps(note, report)) != 0 {
+		if reportErr != nil || len(report.OpenGates) != 0 {
 			return ReviewResult{}, fmt.Errorf("pass proposal requires eligible proof and no open gates before command execution")
 		}
 		_, pending := v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body))

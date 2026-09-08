@@ -134,6 +134,10 @@ func reviewSubmitCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	workerAttempt := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID"))
+	if workerAttempt != "" {
+		vault = firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_VAULT")), vault)
+	}
 	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	attemptID := strings.TrimSpace(args.String("attempt"))
 	verdict := strings.TrimSpace(args.String("verdict"))
@@ -151,7 +155,6 @@ func reviewSubmitCmd(args Args) error {
 	summary := strings.TrimSpace(args.String("summary"))
 	findings := uniqueStrings(splitCSV(args.String("finding")))
 	blocker := strings.TrimSpace(args.String("blocker"))
-	workerAttempt := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID"))
 	switch verdict {
 	case "pass":
 		accepted := uniqueStrings(v7AcceptanceIDs(note.Body))
