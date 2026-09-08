@@ -244,6 +244,17 @@ func TestRealWorkFixtureSeedE2E(t *testing.T) {
 	}
 }
 
+func TestDemoRuntimeAttemptReadsRunsInspectSchema(t *testing.T) {
+	record := map[string]any{
+		"AttemptID": "attempt-1", "StartedAt": "2026-09-08T17:00:00Z",
+		"FinishedAt": "2026-09-08T17:01:00Z", "Outcome": "succeeded", "CloudTaskID": "cloud-1",
+	}
+	attempt, ok := demoRuntimeAttemptFromRecord(record)
+	if !ok || attempt.ID != "attempt-1" || attempt.Started == "" || attempt.Transport != "cloud" {
+		t.Fatalf("runs inspect attempt schema was not recognized: %#v", attempt)
+	}
+}
+
 // TestRealWorkFixtureRealRefusal covers real-mode refusal with no
 // substitution: unknown harnesses, profile mismatches, and offline-only
 // flags are precondition/invalid errors, and no timer run is recorded.

@@ -1024,25 +1024,27 @@ func demoRuntimeAttempts(exec *demoExec, repoRoot, taskID string) []demoRuntimeA
 	attempts, _ := demoDig(inspected, "attempts").([]any)
 	for _, entry := range attempts {
 		record, _ := entry.(map[string]any)
-		if record == nil {
-			continue
-		}
-		attempt := demoRuntimeAttempt{
-			Started:   demoStringField(record, "started_at"),
-			Finished:  demoStringField(record, "finished_at"),
-			Outcome:   strings.ToLower(strings.TrimSpace(demoStringField(record, "outcome"))),
-			Transport: "unknown",
-		}
-		attempt.ID = demoStringField(record, "attempt_id", "id")
-		if demoStringField(record, "cloud_task_id") != "" {
-			attempt.Transport = "cloud"
-		}
-		if attempt.Started == "" {
+		attempt, ok := demoRuntimeAttemptFromRecord(record)
+		if !ok {
 			continue
 		}
 		out = append(out, attempt)
 	}
 	return out
+}
+
+func demoRuntimeAttemptFromRecord(record map[string]any) (demoRuntimeAttempt, bool) {
+	attempt := demoRuntimeAttempt{
+		ID:        demoStringField(record, "attempt_id", "AttemptID", "id"),
+		Started:   demoStringField(record, "started_at", "StartedAt"),
+		Finished:  demoStringField(record, "finished_at", "FinishedAt"),
+		Outcome:   strings.ToLower(strings.TrimSpace(demoStringField(record, "outcome", "Outcome"))),
+		Transport: "unknown",
+	}
+	if demoStringField(record, "cloud_task_id", "CloudTaskID") != "" {
+		attempt.Transport = "cloud"
+	}
+	return attempt, attempt.Started != ""
 }
 
 func demoRealInstructions(manifest *demoManifest, selected []string, profiles map[string]demoRealTaskProfile) []string {
