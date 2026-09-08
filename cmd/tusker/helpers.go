@@ -446,6 +446,12 @@ func discoverVault(startDir string) (string, error) {
 		if isVaultDir(child) || (fileExists(managedTuskerConfigPath(child)) && dirExists(child)) {
 			return child, nil
 		}
+		// Existing visible vaults remain discoverable, but the canonical
+		// repository-local location above always wins when both exist.
+		legacyChild := filepath.Join(dir, "tusker")
+		if isVaultDir(legacyChild) {
+			return legacyChild, nil
+		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			return "", nil

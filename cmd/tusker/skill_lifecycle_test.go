@@ -60,9 +60,9 @@ func TestSkillTaskManagementProtocol(t *testing.T) {
 	source := filepath.Join(root, "SKILL.md")
 	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
-		"Mutate tracker state only through the CLI", "hand edit corrupts compare-and-swap",
-		"tusker new task", "tusker status <TASK-ID>", "tusker verify add",
-		"tracker failure is not a source-code failure",
+		"Mutate tracker state only through the CLI", "without rewriting generated state",
+		"tusker new task", "tusker work start", "tusker verify add",
+		"Tracker failure stays separate from implementation results",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing %q", required)
@@ -92,9 +92,8 @@ func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
 	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "RUN.md"))
 	for _, required := range []string{
-		"A gate records one missing human fact",
-		"subjective acceptance (UX, brand, legal)",
-		"Settled facts and risk alone are not gates",
+		"Satisfy or waive a human gate only on that human's explicit instruction",
+		"Optional screenshots/performance reports are evidence, not automatic approval gates",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing human-approval rule %q", required)
@@ -106,8 +105,8 @@ func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
 	normalizedText := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
-		"Capture observable acceptance and non-goals", "One bounded outcome is one task",
-		"A gate records one missing human fact",
+		"observable acceptance IDs", "One bounded outcome is one task",
+		"Never manufacture proof",
 		"tusker show <TASK-ID> --capsule", "tusker proof status <TASK-ID>",
 	} {
 		if !strings.Contains(normalizedText, required) {

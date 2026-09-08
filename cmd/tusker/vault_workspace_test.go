@@ -104,7 +104,10 @@ func TestEnsureWorkspaceMountRepairsHistoricalTuskerSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ensureWorkspaceMount(mountPath, tracker, false); err != nil {
+	if err := ensureWorkspaceMount(mountPath, tracker, false); err == nil {
+		t.Fatal("expected foreign historical symlink repair to require force")
+	}
+	if err := ensureWorkspaceMount(mountPath, tracker, true); err != nil {
 		t.Fatal(err)
 	}
 

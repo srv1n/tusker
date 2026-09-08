@@ -161,18 +161,26 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 		"skills/tusker/SKILL.md": {
 			"## Hard stop",
 			"tusker closeout status <TASK-ID> --json",
-			"tusker proof status <TASK-ID>",
 			"agent_action: stop_until_human_response",
 			"readiness: waiting_on_human",
-			"Proof is recorded, never manufactured",
+			"Never manufacture proof",
 			"Mutate tracker state only through the CLI",
-			"tracker failure is not a source-code failure",
+			"without rewriting generated state",
+		},
+		"skills/tusker/references/OPERATE.md": {
+			"tusker proof status <TASK-ID>",
+			"Tracker failure stays separate from implementation results",
 		},
 		"skills/tusker/references/TRACK.md": {
+			"One bounded outcome is one task",
+			"Choose the smallest checks covering acceptance",
+		},
+		"skills/tusker/references/RUN.md": {
+			"Runtime activity is separate from durable task status",
+			"Satisfy or waive a human gate only on that human's explicit instruction",
+		},
+		"skills/tusker/assets/templates/cheatsheet.md": {
 			"idea -> backlog -> ready -> review -> done",
-			"Runtime activity is not a durable status",
-			"The smallest verification set covering acceptance",
-			"A gate records one missing human fact",
 		},
 	}
 	for rel, snippets := range required {
