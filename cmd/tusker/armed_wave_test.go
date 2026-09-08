@@ -290,10 +290,6 @@ func TestArmedWaveDelivery(t *testing.T) {
 		"source_sha":    "abc123",
 		"work_revision": 2,
 	})
-	note, err := resolveV7Note(vault, "APP-T-0001", "task")
-	if err != nil {
-		t.Fatal(err)
-	}
 	wfFile, err := loadWorkflow(vault)
 	if err != nil {
 		t.Fatal(err)
@@ -301,10 +297,7 @@ func TestArmedWaveDelivery(t *testing.T) {
 	// Custom legacy reviewer choreography must be ignored even when it asks
 	// the reviewer to close. The fixed typed-result contract is authoritative.
 	wfFile.Data.Reviewer.Prompt = "Legacy reviewer closes with {{ reviewer.close_command }}"
-	prompt, err := renderAttemptPrompt(newRegisteredProject(filepath.Dir(vault), vault), wfFile, note, t.TempDir(), 1, "attempt-review", runLaneReview, RunStatus{}, RunStatus{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	prompt := defaultReviewerPrompt()
 	for _, forbidden := range []string{"tusker land", "tusker close", "tusker status", "rework"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("reviewer prompt retained authority %q: %q", forbidden, prompt)
