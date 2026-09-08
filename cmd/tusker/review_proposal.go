@@ -310,7 +310,7 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	if material != expectedMaterial {
 		return ReviewResult{}, fmt.Errorf("proposal implementation parent does not match the current declared material")
 	}
-	if result.MaterialFingerprint != material {
+	if result.MaterialFingerprint != "" && result.MaterialFingerprint != material {
 		return ReviewResult{}, fmt.Errorf("proposal implementation material fingerprint drifted")
 	}
 	result.MaterialFingerprint = material
