@@ -20,6 +20,7 @@ HOST_OS ?= $(shell uname -s)
 VALIDATION_GATE := sh scripts/with-validation-lock.sh --
 DEMO_REPO ?= /private/tmp/tusker-manual-demo
 DEMO_SCENARIO ?= parallel-waves
+DEMO_CLI ?= tusker
 
 .DEFAULT_GOAL := help
 
@@ -163,17 +164,19 @@ sync-repo-contract: build ## Sync repo helper docs into REPO=/abs/path
 	@test -n "$(REPO)" || (echo "REPO is required: make sync-repo-contract REPO=/abs/path/to/repo" >&2; exit 1)
 	./"$(DIST_BIN)" sync-repo-contract --repo "$(REPO)"
 
-setup-demo: build ## Replace the owned manual demo with a new registered scenario; override DEMO_REPO=/abs/path
+setup-demo: ## Replace the owned manual demo using the installed CLI; override DEMO_REPO=/abs/path
 	@set -eu; \
+	command -v "$(DEMO_CLI)" >/dev/null || { echo "Installed Tusker CLI not found: $(DEMO_CLI). Run make install first." >&2; exit 1; }; \
+	cli="$(DEMO_CLI)"; \
 	repo="$(DEMO_REPO)"; \
 	case "$$repo" in /*) ;; *) echo "DEMO_REPO must be an absolute path" >&2; exit 1 ;; esac; \
 	if [ -e "$$repo" ]; then \
 		[ -f "$$repo/.tusker/demo/manifest.json" ] || { echo "Refusing to remove unmarked path: $$repo" >&2; exit 1; }; \
-		project_id="$$(./"$(DIST_BIN)" projects list --json | jq -r --arg repo "$$repo" '.projects[] | select(.repo_root == $$repo) | .project_id' | head -n1)"; \
-		if [ -n "$$project_id" ]; then ./"$(DIST_BIN)" projects remove "$$project_id" --json; fi; \
+		project_id="$$($$cli projects list --json | jq -r --arg repo "$$repo" '.projects[] | select(.repo_root == $$repo) | .project_id' | head -n1)"; \
+		if [ -n "$$project_id" ]; then "$$cli" projects remove "$$project_id" --json; fi; \
 		rm -rf -- "$$repo"; \
 	fi; \
-	seed="$$(./"$(DIST_BIN)" demo seed --repo "$$repo" --scenario "$(DEMO_SCENARIO)" --json)"; \
+	seed="$$($$cli demo seed --repo "$$repo" --scenario "$(DEMO_SCENARIO)" --json)"; \
 	printf '%s\n' "$$seed"; \
 	project_id="$$(printf '%s' "$$seed" | jq -r '.runtime_project_id')"; \
 	echo "Standalone: http://127.0.0.1:7420/p/$$project_id/waves/W-0001"; \
@@ -182,16 +185,18 @@ setup-demo: build ## Replace the owned manual demo with a new registered scenari
 demo: setup-demo ## Alias for setup-demo
 	@:
 
-demo-acceptance: build ## Run the disposable offline lifecycle, review, retry, rejection, and cancel journeys
+demo-acceptance: ## Run offline lifecycle, review, retry, rejection, and cancel journeys with the installed CLI
 	@set -eu; \
+	command -v "$(DEMO_CLI)" >/dev/null || { echo "Installed Tusker CLI not found: $(DEMO_CLI). Run make install first." >&2; exit 1; }; \
+	cli="$(DEMO_CLI)"; \
 	root="$$(mktemp -d /private/tmp/tusker-demo-acceptance.XXXXXX)"; \
 	for journey in full fail-once reject-once cancel; do \
 		repo="$$root/$$journey"; proof="$$root/proof/$$journey"; state="$$root/state-$$journey"; \
 		mkdir -p "$$proof"; \
 		if [ "$$journey" = full ]; then \
-			TUSKER_STATE_ROOT="$$state" scripts/test-real-work-project.sh --repo "$$repo" --candidate "$(CURDIR)/$(DIST_BIN)" --mode offline --proof-dir "$$proof"; \
+			TUSKER_STATE_ROOT="$$state" scripts/test-real-work-project.sh --repo "$$repo" --candidate "$$cli" --mode offline --proof-dir "$$proof"; \
 		else \
-			TUSKER_STATE_ROOT="$$state" scripts/test-real-work-project.sh --repo "$$repo" --candidate "$(CURDIR)/$(DIST_BIN)" --mode offline --proof-dir "$$proof" --variant "$$journey"; \
+			TUSKER_STATE_ROOT="$$state" scripts/test-real-work-project.sh --repo "$$repo" --candidate "$$cli" --mode offline --proof-dir "$$proof" --variant "$$journey"; \
 		fi; \
 	done; \
 	echo "Demo acceptance PASS. Fixture and proof: $$root"
