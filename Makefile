@@ -24,7 +24,7 @@ DEMO_SCENARIO ?= parallel-waves
 .DEFAULT_GOAL := help
 
 .NOTPARALLEL: check-unlocked ui-check-unlocked
-.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-preview-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked test-fast test-fast-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked check-fast check-fast-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract setup-demo demo release-artifacts tag-release codebasezip codebase zip
+.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-preview-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked test-fast test-fast-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked check-fast check-fast-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract setup-demo demo demo-acceptance release-artifacts tag-release codebasezip codebase zip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -181,6 +181,20 @@ setup-demo: build ## Replace the owned manual demo with a new registered scenari
 
 demo: setup-demo ## Alias for setup-demo
 	@:
+
+demo-acceptance: build ## Run the disposable offline lifecycle, review, retry, rejection, and cancel journeys
+	@set -eu; \
+	root="$$(mktemp -d /private/tmp/tusker-demo-acceptance.XXXXXX)"; \
+	for journey in full fail-once reject-once cancel; do \
+		repo="$$root/$$journey"; proof="$$root/proof/$$journey"; state="$$root/state-$$journey"; \
+		mkdir -p "$$proof"; \
+		if [ "$$journey" = full ]; then \
+			TUSKER_STATE_ROOT="$$state" scripts/test-real-work-project.sh --repo "$$repo" --candidate "$(CURDIR)/$(DIST_BIN)" --mode offline --proof-dir "$$proof"; \
+		else \
+			TUSKER_STATE_ROOT="$$state" scripts/test-real-work-project.sh --repo "$$repo" --candidate "$(CURDIR)/$(DIST_BIN)" --mode offline --proof-dir "$$proof" --variant "$$journey"; \
+		fi; \
+	done; \
+	echo "Demo acceptance PASS. Fixture and proof: $$root"
 
 release-artifacts: ## Build signed reproducible release artifacts from a clean trusted tag
 	@scripts/release-build.sh
