@@ -127,3 +127,14 @@ describe("inspector evidence and acceptance", () => {
     expect(stage.label.toLowerCase()).toContain("check");
   });
 });
+
+describe("inspector parked attempts", () => {
+  test("does not present a stopped review as active checking", () => {
+    const parked = { ...acceptedRun, outcome: "parked-no-progress" as const, liveness: "dead" as const };
+    expect(actualStage({ ...acceptedTask, status: "review" }, parked)).toEqual({
+      label: "Stopped — no progress", tone: "warn", live: false,
+    });
+    const task = { ...acceptedTask, status: "review" as const };
+    expect(render({ task, run: parked, selectedTaskId: task.id })).toContain("Latest attempt");
+  });
+});

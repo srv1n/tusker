@@ -49,6 +49,9 @@ export interface ActualStage {
 export function actualStage(task: TaskDetail, run: RunDetail | null): ActualStage {
   const liveOutcome = run?.outcome ?? null;
   const liveRunning = liveOutcome === "running";
+  if (liveOutcome === "parked-no-progress") {
+    return { label: "Stopped — no progress", tone: "warn", live: false };
+  }
   switch (task.status) {
     case "done":
       return { label: "Delivered", tone: "pass", live: false };

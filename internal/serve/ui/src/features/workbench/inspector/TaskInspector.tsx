@@ -258,7 +258,7 @@ function ReadyInspector({
           </section>
 
           <section aria-label="Active attempt" className="mt-6">
-            <h3 className="wux-inspector-h">Active attempt</h3>
+            <h3 className="wux-inspector-h">{stage.live ? "Active attempt" : "Latest attempt"}</h3>
             <dl className="space-y-2 text-[12.5px] leading-5">
               <div className="flex gap-2">
                 <dt className="w-20 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Identity</dt>
