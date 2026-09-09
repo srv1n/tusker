@@ -18,11 +18,13 @@ GO_PACKAGE_PARALLELISM ?= 1
 GO_TEST_PARALLELISM ?= 1
 HOST_OS ?= $(shell uname -s)
 VALIDATION_GATE := sh scripts/with-validation-lock.sh --
+DEMO_REPO ?= /private/tmp/tusker-manual-demo
+DEMO_SCENARIO ?= parallel-waves
 
 .DEFAULT_GOAL := help
 
 .NOTPARALLEL: check-unlocked ui-check-unlocked
-.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-preview-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked test-fast test-fast-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked check-fast check-fast-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract release-artifacts tag-release codebasezip codebase zip
+.PHONY: help build build-go build-go-unlocked require-macos mac-app mac-install mac-preview-install mac-uninstall mac-open mac-preview ui-install ui-test ui-build ui-check ui-check-unlocked fmt fmt-check test test-unlocked test-fast test-fast-unlocked vet vet-unlocked validate validate-unlocked check check-unlocked check-fast check-fast-unlocked release-test skill-doctor install install-cli install-bin install-user install-repo sync-repo-contract setup-demo demo release-artifacts tag-release codebasezip codebase zip
 
 help: ## Show available make targets
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -160,6 +162,25 @@ install-repo: build ## Install repo-local skills into REPO=/abs/path
 sync-repo-contract: build ## Sync repo helper docs into REPO=/abs/path
 	@test -n "$(REPO)" || (echo "REPO is required: make sync-repo-contract REPO=/abs/path/to/repo" >&2; exit 1)
 	./"$(DIST_BIN)" sync-repo-contract --repo "$(REPO)"
+
+setup-demo: build ## Replace the owned manual demo with a new registered scenario; override DEMO_REPO=/abs/path
+	@set -eu; \
+	repo="$(DEMO_REPO)"; \
+	case "$$repo" in /*) ;; *) echo "DEMO_REPO must be an absolute path" >&2; exit 1 ;; esac; \
+	if [ -e "$$repo" ]; then \
+		[ -f "$$repo/.tusker/demo/manifest.json" ] || { echo "Refusing to remove unmarked path: $$repo" >&2; exit 1; }; \
+		project_id="$$(./"$(DIST_BIN)" projects list --json | jq -r --arg repo "$$repo" '.projects[] | select(.repo_root == $$repo) | .project_id' | head -n1)"; \
+		if [ -n "$$project_id" ]; then ./"$(DIST_BIN)" projects remove "$$project_id" --json; fi; \
+		rm -rf -- "$$repo"; \
+	fi; \
+	seed="$$(./"$(DIST_BIN)" demo seed --repo "$$repo" --scenario "$(DEMO_SCENARIO)" --json)"; \
+	printf '%s\n' "$$seed"; \
+	project_id="$$(printf '%s' "$$seed" | jq -r '.runtime_project_id')"; \
+	echo "Standalone: http://127.0.0.1:7420/p/$$project_id/waves/W-0001"; \
+	echo "First wave: http://127.0.0.1:7420/p/$$project_id/waves/W-0002"
+
+demo: setup-demo ## Alias for setup-demo
+	@:
 
 release-artifacts: ## Build signed reproducible release artifacts from a clean trusted tag
 	@scripts/release-build.sh

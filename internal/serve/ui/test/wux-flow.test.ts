@@ -154,7 +154,8 @@ describe("WaveFlow graph model", () => {
     expect(displayStateFor("review", run("A", { lane: "review" }))).toBe("reviewing");
     expect(displayStateFor("review", undefined)).toBe("reviewing");
     expect(displayStateFor("blocked", undefined)).toBe("blocked");
-    expect(displayStateFor("ready", undefined)).toBe("queued");
+    expect(displayStateFor("ready", undefined)).toBe("ready");
+    expect(displayStateFor("backlog", undefined)).toBe("unknown");
     // A stale run behind in_progress is unknown, not executing.
     expect(
       displayStateFor("in_progress", run("A", { liveness: "stale", leaseStateRaw: "running" })),

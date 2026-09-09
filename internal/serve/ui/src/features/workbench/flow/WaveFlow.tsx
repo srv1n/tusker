@@ -72,6 +72,7 @@ function StateGlyph({ state }: { state: FlowDisplayState }) {
           <path d="M7 4.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2Z" fill="var(--color-accent)" />
         </svg>
       );
+    case "ready":
     case "queued":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">

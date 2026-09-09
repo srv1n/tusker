@@ -30,12 +30,13 @@ export interface DependencyFact {
   title?: string;
 }
 
-/** Truthful per-node progress. "failed" needs a terminal failed run; a
- *  quiet task with no run facts is "unknown", never "queued-by-inference". */
+/** Truthful per-node progress. "failed" needs a terminal failed run; a quiet
+ *  ready task with no run facts is ready, never "queued-by-inference". */
 export type FlowDisplayState =
   | "completed"
   | "executing"
   | "reviewing"
+  | "ready"
   | "queued"
   | "blocked"
   | "failed"
@@ -117,10 +118,11 @@ export function displayStateFor(
   if (status === "review") return "reviewing";
   if (status === "blocked") return "blocked";
   if (isFailedRun(run)) return "failed";
-  if (status === "ready" || status === "backlog") {
-    // A quiet ready/backlog task with no contradictory run is queued.
-    // A stale (non-live, non-failed) run means we no longer know: unknown.
-    if (!run) return "queued";
+  if (status === "ready") {
+    if (!run) return "ready";
+    return "unknown";
+  }
+  if (status === "backlog") {
     return "unknown";
   }
   return "unknown";
@@ -536,6 +538,7 @@ export const DISPLAY_STATE_LABEL: Record<FlowDisplayState, string> = {
   completed: "Completed",
   executing: "Executing",
   reviewing: "Reviewing",
+  ready: "Ready",
   queued: "Queued",
   blocked: "Blocked",
   failed: "Failed",
