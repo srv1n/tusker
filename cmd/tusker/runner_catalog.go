@@ -1,9 +1,15 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,39 +17,75 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
+	runnercore "tusker/internal/runner"
 )
 
 // RunnerCatalog is deliberately a machine-local observation, never project policy.
 type RunnerCatalog struct {
+	Schema     string                 `json:"schema"`
+	Version    int                    `json:"version"`
 	ObservedAt string                 `json:"observed_at"`
 	Harnesses  []RunnerCatalogHarness `json:"harnesses"`
 }
 
 type RunnerCatalogHarness struct {
-	Harness    string               `json:"harness"`
-	Source     string               `json:"source"`
-	Confidence string               `json:"confidence"`
-	Version    string               `json:"version,omitempty"`
-	Available  bool                 `json:"available"`
-	State      string               `json:"state"`
-	Models     []RunnerCatalogModel `json:"models,omitempty"`
-	Error      string               `json:"error,omitempty"`
+	Harness            string                `json:"harness"`
+	DisplayName        string                `json:"display_name"`
+	Group              string                `json:"group"`
+	Transports         []string              `json:"transports"`
+	Setup              string                `json:"setup"`
+	Source             string                `json:"source"`
+	Confidence         string                `json:"confidence"`
+	Version            string                `json:"version,omitempty"`
+	Available          bool                  `json:"available"`
+	ExecutableDetected bool                  `json:"executable_detected"`
+	Authentication     string                `json:"authentication"`
+	DiscoveryState     string                `json:"discovery_state"`
+	DiscoverySource    string                `json:"discovery_source"`
+	LastChecked        string                `json:"last_checked"`
+	Conformance        string                `json:"conformance"`
+	ManualEntry        bool                  `json:"manual_entry"`
+	State              string                `json:"state"`
+	Models             []RunnerCatalogModel  `json:"models,omitempty"`
+	Options            []RunnerCatalogOption `json:"options,omitempty"`
+	AccessControls     []ControlSupport      `json:"access_controls,omitempty"`
+	Extension          map[string]any        `json:"extension,omitempty"`
+	Error              string                `json:"error,omitempty"`
+	ErrorKind          string                `json:"error_kind,omitempty"`
+}
+
+// RunnerCatalogOption is intentionally not a generic form schema. Adapters
+// expose only bounded controls that Tusker already knows how to compile.
+type RunnerCatalogOption struct {
+	ID      string   `json:"id"`
+	Label   string   `json:"label"`
+	Kind    string   `json:"kind"` // boolean, enum, or scalar
+	Values  []string `json:"values,omitempty"`
+	Default any      `json:"default,omitempty"`
 }
 
 type RunnerCatalogModel struct {
-	Model        string   `json:"model"`
-	DisplayName  string   `json:"display_name,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Efforts      []string `json:"efforts"`
-	ServiceTiers []string `json:"service_tiers,omitempty"`
-	Default      bool     `json:"default"`
-	DefaultKnown bool     `json:"default_known"`
-	Visibility   string   `json:"visibility"`
-	Hidden       bool     `json:"hidden"`
+	Model         string   `json:"model"`
+	DisplayName   string   `json:"display_name,omitempty"`
+	Description   string   `json:"description,omitempty"`
+	Efforts       []string `json:"efforts"`
+	ServiceTiers  []string `json:"service_tiers,omitempty"`
+	Default       bool     `json:"default"`
+	DefaultKnown  bool     `json:"default_known"`
+	DefaultEffort string   `json:"default_effort,omitempty"`
+	Visibility    string   `json:"visibility"`
+	Hidden        bool     `json:"hidden"`
 }
 
 var runnerCatalogNow = func() time.Time { return time.Now().UTC() }
+var runnerCatalogStateRoot = DefaultStateRoot
+var runnerCatalogAppServerModels = codexAppServerModels
+var runnerCatalogMuseModels = museProfileModels
+var runnerCatalogMuseServerModels = museServerModels
+var runnerCatalogMuseProfilePath = museProfilePath
+var runnerCatalogCodexExecutable = resolveCodexExecutable
 var runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -55,7 +97,7 @@ var runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
 }
 
 func runnerCatalogCmd(args Args) error {
-	catalog := discoverRunnerCatalog(args.Bool("bundled"))
+	catalog := discoverRunnerCatalogWithRefresh(args.Bool("bundled"), args.Bool("refresh"))
 	if args.Bool("json") {
 		emitJSON(catalog)
 		return nil
@@ -73,29 +115,34 @@ func runnerCatalogCmd(args Args) error {
 }
 
 func discoverRunnerCatalog(bundled bool) RunnerCatalog {
-	result := RunnerCatalog{ObservedAt: runnerCatalogNow().Format(time.RFC3339), Harnesses: []RunnerCatalogHarness{}}
-	result.Harnesses = append(result.Harnesses, discoverCodexCatalog(bundled))
-	claude := RunnerCatalogHarness{Harness: "claude-code", Source: "declared", Confidence: "lower", Available: true, Models: []RunnerCatalogModel{{Model: "fable", Efforts: []string{"low", "medium", "high", "xhigh", "max"}, Visibility: "declared"}, {Model: "opus", Efforts: []string{"low", "medium", "high", "xhigh", "max"}, Visibility: "declared"}, {Model: "sonnet", Efforts: []string{"low", "medium", "high", "xhigh", "max"}, Visibility: "declared"}}}
-	if out, err := runnerCatalogCommand("claude", "--version"); err != nil {
-		claude.Available = false
-		claude.Error = err.Error()
-	} else {
-		claude.Version = strings.TrimSpace(string(out))
-		if _, err := runnerCatalogCommand("claude", "auth", "status", "--json"); err != nil {
-			claude.Available = false
-			claude.Error = err.Error()
-		} else if ready, _ := cachedRunnerReady("claude-code", "read-only"); !ready {
-			claude.Available = false
-			claude.Error = "run live conformance for Claude Code"
-		}
-	}
-	result.Harnesses = append(result.Harnesses, claude)
-	result.Harnesses = append(result.Harnesses, discoverMuseCatalog())
+	return discoverRunnerCatalogWithRefresh(bundled, false)
+}
+
+func discoverRunnerCatalogWithRefresh(bundled, refresh bool) RunnerCatalog {
+	result := RunnerCatalog{Schema: "tusker.runner-catalog/v1", Version: 1, ObservedAt: runnerCatalogNow().Format(time.RFC3339), Harnesses: []RunnerCatalogHarness{}}
+	result.Harnesses = append(result.Harnesses, discoverCodexCatalogCached(bundled, refresh))
+	result.Harnesses = append(result.Harnesses, discoverClaudeCatalog())
+	result.Harnesses = append(result.Harnesses, discoverMuseCatalogCached(refresh))
+	result.Harnesses = append(result.Harnesses, discoverMuseCLICatalog())
+	result.Harnesses = append(result.Harnesses,
+		futureCatalogHarness("opencode", "OpenCode"),
+		futureCatalogHarness("cursor", "Cursor"),
+		futureCatalogHarness("devin", "Devin"),
+	)
 	for i := range result.Harnesses {
 		h := &result.Harnesses[i]
+		if h.LastChecked == "" {
+			h.LastChecked = result.ObservedAt
+		}
+		if h.Conformance == "" {
+			h.Conformance = "not_checked"
+		}
 		switch {
+		case h.State != "":
 		case h.Available:
 			h.State = "available"
+		case h.ExecutableDetected:
+			h.State = "unsupported"
 		case h.Error != "":
 			h.State = "error"
 		default:
@@ -106,19 +153,348 @@ func discoverRunnerCatalog(bundled bool) RunnerCatalog {
 }
 
 func discoverMuseCatalog() RunnerCatalogHarness {
-	harness := RunnerCatalogHarness{Harness: "muse", Source: "live", Confidence: "none"}
-	if _, err := runnerCatalogCommand("codex", "--profile", "muse", "exec", "--help"); err != nil {
-		harness.Error = err.Error()
+	harness := catalogHarness("muse", "Muse", "supported", "Use the installed Muse catalog, validated against the configured Codex Muse execution profile.")
+	models, err := runnerCatalogMuseModels(context.Background())
+	if err != nil {
+		harness.Source, harness.ExecutableDetected, harness.Version = "live", museExecutableDetected(), museVersion()
+		harness.DiscoverySource, harness.ErrorKind, harness.Error = "muse_server:model/list + muse_profile:provider/models", museDiscoveryErrorKind(err), museDiscoveryErrorMessage(err)
 		return harness
 	}
-	ready, version := cachedRunnerReady("muse", "read-only")
-	if !ready {
-		harness.Error = "run live conformance for the Muse profile"
+	if len(models) == 0 {
+		harness.Source, harness.ExecutableDetected, harness.Version = "live", true, museVersion()
+		harness.DiscoverySource, harness.ErrorKind, harness.Error = "muse_server:model/list + muse_profile:provider/models", "implementation", "Muse discovery returned no selectable models"
 		return harness
 	}
-	harness.Available, harness.Confidence, harness.Version = true, "high", version
-	harness.Models = []RunnerCatalogModel{{Model: "muse-spark-1.3", Efforts: []string{"medium"}, Default: true, DefaultKnown: true, Visibility: "visible"}}
+	harness.Source, harness.DiscoverySource, harness.Confidence, harness.Available, harness.ExecutableDetected, harness.Authentication, harness.DiscoveryState, harness.Version, harness.Models = "live", "muse_server:model/list + muse_profile:provider/models", "high", true, true, "authenticated", "available", museVersion(), models
 	return harness
+}
+
+func discoverMuseCatalogCached(refresh bool) RunnerCatalogHarness {
+	return discoverCatalogCached("muse", museVersion(), "muse_server_provider", museProfileFingerprint(), refresh, discoverMuseCatalog)
+}
+
+func discoverMuseCLICatalog() RunnerCatalogHarness {
+	harness := catalogHarness(string(RunnerMuseCLI), "Muse CLI", "supported", "Install and authenticate Muse, then use Check setup or Run test for the direct CLI route.")
+	harness.Source = "installed"
+	harness.DiscoverySource = "muse --version + direct exec dialect"
+	harness.Version = museVersion()
+	harness.ExecutableDetected = museExecutableDetected()
+	harness.Available = harness.ExecutableDetected
+	harness.Confidence = "medium"
+	harness.AccessControls = nativeAccessControls(runnercore.HarnessDefinition{Provider: "muse", Dialect: "muse"}, nil)
+	if !harness.ExecutableDetected {
+		harness.State = "unsupported"
+		harness.DiscoveryState = "unsupported"
+		harness.Error = "direct Muse executable was not found"
+		harness.ErrorKind = "unsupported"
+	}
+	return harness
+}
+
+type museModelDiscoveryError struct {
+	Kind    string
+	Message string
+}
+
+func (e *museModelDiscoveryError) Error() string { return e.Message }
+
+type museProfileProvider struct {
+	BaseURL string `toml:"base_url"`
+	WireAPI string `toml:"wire_api"`
+	Auth    struct {
+		Command string `toml:"command"`
+	} `toml:"auth"`
+}
+
+type museProfileSettings struct {
+	Model           string                         `toml:"model"`
+	ModelProvider   string                         `toml:"model_provider"`
+	ReasoningEffort string                         `toml:"model_reasoning_effort"`
+	Providers       map[string]museProfileProvider `toml:"model_providers"`
+}
+
+var museDiscoveryTimeout = 10 * time.Second
+var museDiscoveryHTTPClient = &http.Client{}
+
+var museReasoningEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+// museProfileModels reads the installed Muse model/list catalog, then retains
+// only models that the configured `codex --profile muse exec` provider accepts.
+func museProfileModels(parent context.Context) ([]RunnerCatalogModel, error) {
+	ctx, cancel := context.WithTimeout(parent, museDiscoveryTimeout)
+	defer cancel()
+	settings, err := readMuseProfileSettings(runnerCatalogMuseProfilePath())
+	if err != nil {
+		return nil, err
+	}
+	provider, ok := settings.Providers[settings.ModelProvider]
+	if !ok || strings.TrimSpace(provider.BaseURL) == "" || strings.TrimSpace(provider.Auth.Command) == "" {
+		return nil, &museModelDiscoveryError{Kind: "implementation", Message: "Muse profile is missing its configured provider URL or authentication command"}
+	}
+	if provider.WireAPI != "responses" {
+		return nil, &museModelDiscoveryError{Kind: "unsupported", Message: "This Muse profile does not use the supported Responses API catalog"}
+	}
+	fields, parseErr := shellLikeFields(provider.Auth.Command)
+	if parseErr != nil || len(fields) == 0 {
+		return nil, &museModelDiscoveryError{Kind: "implementation", Message: "Muse profile authentication command is not a structured executable"}
+	}
+	auth := exec.CommandContext(ctx, fields[0], fields[1:]...)
+	token, err := auth.Output()
+	if err != nil || strings.TrimSpace(string(token)) == "" {
+		return nil, classifyMuseDiscoveryError(ctx, err, "Muse profile authentication command failed")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(provider.BaseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, &museModelDiscoveryError{Kind: "implementation", Message: "Muse profile has an invalid provider URL"}
+	}
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	response, err := museDiscoveryHTTPClient.Do(request)
+	if err != nil {
+		return nil, classifyMuseDiscoveryError(ctx, err, "Muse provider model discovery failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, &museModelDiscoveryError{Kind: "authentication", Message: "Muse provider authentication failed while listing models"}
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, &museModelDiscoveryError{Kind: "implementation", Message: fmt.Sprintf("Muse provider model discovery returned HTTP %d", response.StatusCode)}
+	}
+	var catalog struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&catalog); err != nil {
+		return nil, &museModelDiscoveryError{Kind: "implementation", Message: "Muse provider returned an invalid models response"}
+	}
+	providerModels := make(map[string]bool, len(catalog.Data))
+	for _, item := range catalog.Data {
+		providerModels[item.ID] = true
+	}
+	if !providerModels[settings.Model] {
+		return nil, &museModelDiscoveryError{Kind: "unsupported", Message: "The configured Muse model is not available to this execution profile"}
+	}
+	serverModels, err := runnerCatalogMuseServerModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]RunnerCatalogModel, 0, len(serverModels))
+	for _, model := range serverModels {
+		if !providerModels[model.Model] {
+			continue
+		}
+		model.DisplayName = firstNonEmpty(readableProfileName(model.Model), model.DisplayName)
+		model.Efforts = append([]string(nil), museReasoningEfforts...)
+		model.Default = model.Model == settings.Model
+		model.DefaultKnown = true
+		model.DefaultEffort = settings.ReasoningEffort
+		model.Visibility = "visible"
+		models = append(models, model)
+	}
+	if len(models) == 0 {
+		return nil, &museModelDiscoveryError{Kind: "unsupported", Message: "Installed Muse exposes no models accepted by this execution profile"}
+	}
+	return models, nil
+}
+
+type museServerModelList struct {
+	Models []struct {
+		ModelID      string `json:"modelId"`
+		DisplayLabel string `json:"displayLabel"`
+		Description  string `json:"description"`
+	} `json:"models"`
+}
+
+// museServerModels uses Muse's own versioned MSP model/list interface. It is
+// the same catalog that powers the native /model picker, rather than a broad
+// provider inventory containing non-coding or retired models.
+func museServerModels(parent context.Context) ([]RunnerCatalogModel, error) {
+	cmd := exec.CommandContext(parent, "muse", "serve", "--no-session-log")
+	cmd.WaitDelay = time.Second
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, &museModelDiscoveryError{Kind: "implementation", Message: "Muse discovery could not open stdin"}
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, &museModelDiscoveryError{Kind: "implementation", Message: "Muse discovery could not open stdout"}
+	}
+	var stderr limitedCatalogBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, classifyMuseServerDiscoveryError(parent, err, stderr.String())
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	defer func() {
+		_ = stdin.Close()
+		select {
+		case <-waited:
+		case <-time.After(time.Second):
+			_ = cmd.Process.Kill()
+			<-waited
+		}
+	}()
+
+	messages := make(chan codexAppServerMessage, 16)
+	readErr := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 1024), 1<<20)
+		for scanner.Scan() {
+			var message codexAppServerMessage
+			if err := json.Unmarshal(scanner.Bytes(), &message); err == nil && len(message.ID) > 0 {
+				messages <- message
+			}
+		}
+		readErr <- scanner.Err()
+	}()
+	write := func(id int, method string, params any) error {
+		return json.NewEncoder(stdin).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+	}
+	await := func(id int, target any) error {
+		for {
+			select {
+			case <-parent.Done():
+				return classifyMuseServerDiscoveryError(parent, parent.Err(), stderr.String())
+			case scanErr := <-readErr:
+				if scanErr != nil {
+					return classifyMuseServerDiscoveryError(parent, scanErr, stderr.String())
+				}
+				return classifyMuseServerDiscoveryError(parent, io.EOF, stderr.String())
+			case message := <-messages:
+				var responseID int
+				_ = json.Unmarshal(message.ID, &responseID)
+				if responseID != id {
+					continue
+				}
+				if message.Error != nil {
+					return classifyMuseServerDiscoveryError(parent, errors.New(message.Error.Message), stderr.String())
+				}
+				if err := json.Unmarshal(message.Result, target); err != nil {
+					return &museModelDiscoveryError{Kind: "implementation", Message: "Muse server returned an invalid model/list response"}
+				}
+				return nil
+			}
+		}
+	}
+	if err := write(1, "initialize", map[string]any{"clientInfo": map[string]string{"name": "tusker", "version": "1"}}); err != nil {
+		return nil, classifyMuseServerDiscoveryError(parent, err, stderr.String())
+	}
+	var initialized map[string]any
+	if err := await(1, &initialized); err != nil {
+		return nil, err
+	}
+	if err := json.NewEncoder(stdin).Encode(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}); err != nil {
+		return nil, classifyMuseServerDiscoveryError(parent, err, stderr.String())
+	}
+	var result museServerModelList
+	if err := write(2, "model/list", map[string]any{}); err != nil {
+		return nil, classifyMuseServerDiscoveryError(parent, err, stderr.String())
+	}
+	if err := await(2, &result); err != nil {
+		return nil, err
+	}
+	models := make([]RunnerCatalogModel, 0, len(result.Models))
+	for _, row := range result.Models {
+		if model := strings.TrimSpace(row.ModelID); model != "" {
+			models = append(models, RunnerCatalogModel{Model: model, DisplayName: strings.TrimSpace(row.DisplayLabel), Description: strings.TrimSpace(row.Description)})
+		}
+	}
+	return models, nil
+}
+
+func museProfilePath() string {
+	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
+		return filepath.Join(home, "muse.config.toml")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "muse.config.toml")
+}
+
+func museProfileFingerprint() string {
+	raw, err := os.ReadFile(runnerCatalogMuseProfilePath())
+	if err != nil {
+		return "profile=muse:missing"
+	}
+	return "profile=muse:" + fmt.Sprintf("%x", sha256.Sum256(raw))
+}
+
+func readMuseProfileSettings(path string) (museProfileSettings, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return museProfileSettings{}, &museModelDiscoveryError{Kind: "unsupported", Message: "The installed Muse profile is not configured"}
+		}
+		return museProfileSettings{}, &museModelDiscoveryError{Kind: "implementation", Message: "Muse profile could not be read"}
+	}
+	var settings museProfileSettings
+	if err := toml.Unmarshal(raw, &settings); err != nil {
+		return museProfileSettings{}, &museModelDiscoveryError{Kind: "implementation", Message: "Muse profile contains invalid TOML"}
+	}
+	if settings.Model == "" || settings.ModelProvider == "" || settings.ReasoningEffort == "" {
+		return museProfileSettings{}, &museModelDiscoveryError{Kind: "implementation", Message: "Muse profile is missing model, provider, or reasoning configuration"}
+	}
+	return settings, nil
+}
+
+func museDiscoveryErrorKind(err error) string {
+	var discovery *museModelDiscoveryError
+	if errors.As(err, &discovery) {
+		return discovery.Kind
+	}
+	return "implementation"
+}
+
+func museDiscoveryErrorMessage(err error) string {
+	var discovery *museModelDiscoveryError
+	if errors.As(err, &discovery) {
+		return discovery.Message
+	}
+	return "Muse profile discovery failed: " + safeOperatorErrorLeaf(err)
+}
+
+func classifyMuseDiscoveryError(ctx context.Context, err error, message string) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return &museModelDiscoveryError{Kind: "timeout", Message: "Muse model discovery timed out after 10 seconds"}
+	}
+	if err == nil {
+		return &museModelDiscoveryError{Kind: "implementation", Message: message}
+	}
+	return &museModelDiscoveryError{Kind: "authentication", Message: message}
+}
+
+func classifyMuseServerDiscoveryError(ctx context.Context, err error, stderr string) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return &museModelDiscoveryError{Kind: "timeout", Message: "Muse model discovery timed out after 10 seconds"}
+	}
+	message := strings.ToLower(strings.TrimSpace(firstNonEmpty(stderr, safeOperatorErrorLeaf(err))))
+	safe := safeOperatorErrorText(firstNonEmpty(stderr, errString(err)), 220)
+	switch {
+	case errors.Is(err, exec.ErrNotFound), strings.Contains(message, "unknown command"), strings.Contains(message, "unrecognized subcommand"), strings.Contains(message, "method not found"), strings.Contains(message, "not supported"):
+		return &museModelDiscoveryError{Kind: "unsupported", Message: "This installed Muse version does not support model discovery"}
+	case strings.Contains(message, "auth"), strings.Contains(message, "login"), strings.Contains(message, "unauthorized"), strings.Contains(message, "forbidden"), strings.Contains(message, "credential"):
+		return &museModelDiscoveryError{Kind: "authentication", Message: "Muse server authentication failed: " + safe}
+	default:
+		return &museModelDiscoveryError{Kind: "implementation", Message: "Muse server discovery failed: " + safe}
+	}
+}
+
+func discoverClaudeCatalog() RunnerCatalogHarness {
+	return futureCatalogHarness("claude-code", "Claude Code")
+}
+
+func catalogHarness(id, displayName, group, setup string) RunnerCatalogHarness {
+	return RunnerCatalogHarness{Harness: id, DisplayName: displayName, Group: group, Transports: []string{"cli"}, Setup: setup, Source: "installed", Confidence: "none", Authentication: "unknown", ManualEntry: true, DiscoveryState: "unsupported", Options: []RunnerCatalogOption{{ID: "permission_preset", Label: "Access", Kind: "enum", Values: []string{"read-only", "workspace-write-offline", "workspace-write-network", "danger-full-access"}, Default: "workspace-write-offline"}}}
+}
+
+func futureCatalogHarness(id, displayName string) RunnerCatalogHarness {
+	h := catalogHarness(id, displayName, "future", "No implemented adapter is available. Do not create a runnable profile.")
+	h.ManualEntry, h.Options, h.State, h.Error = false, nil, "unsupported", "future integration; no adapter or conformance route"
+	return h
 }
 
 func cachedRunnerReady(harness, preset string) (bool, string) {
@@ -135,44 +511,165 @@ func cachedRunnerReady(harness, preset string) (bool, string) {
 }
 
 func discoverCodexCatalog(bundled bool) RunnerCatalogHarness {
-	output, err := codexCatalogOutput(bundled)
-	if bundled && err != nil {
+	if bundled {
 		return bundledCodexCatalog()
 	}
+	models, err := runnerCatalogAppServerModels(context.Background())
 	if err != nil {
-		return RunnerCatalogHarness{Harness: "codex_exec", Source: "live", Confidence: "none", Available: false, Error: err.Error()}
-	}
-	models := parseCodexModels(output)
-	source := "live"
-	confidence := "high"
-	if bundled {
-		source = "bundled"
-		confidence = "medium"
+		harness := catalogHarness(string(RunnerCodexExec), "Codex", "supported", "Install and authenticate Codex, then use Check setup or Run test for a selected profile.")
+		harness.Source, harness.ExecutableDetected, harness.Version = "live", codexExecutableDetected(), codexVersion()
+		harness.DiscoverySource, harness.ErrorKind, harness.Error = "app_server:model/list", codexDiscoveryErrorKind(err), codexDiscoveryErrorMessage(err)
+		return harness
 	}
 	if len(models) == 0 {
-		return RunnerCatalogHarness{Harness: "codex_exec", Source: source, Confidence: "none", Error: "codex debug models returned no parseable models"}
+		harness := catalogHarness(string(RunnerCodexExec), "Codex", "supported", "Install and authenticate Codex, then use Check setup or Run test for a selected profile.")
+		harness.Source, harness.ExecutableDetected, harness.Version = "live", true, codexVersion()
+		harness.DiscoverySource, harness.ErrorKind, harness.Error = "app_server:model/list", "implementation", "Codex App Server returned no selectable models"
+		return harness
 	}
-	return RunnerCatalogHarness{Harness: "codex_exec", Source: source, Confidence: confidence, Available: true, Version: codexVersion(), Models: models}
+	harness := catalogHarness(string(RunnerCodexExec), "Codex", "supported", "Install and authenticate Codex, then use Check setup or Run test for a selected profile.")
+	harness.Source, harness.DiscoverySource, harness.Confidence, harness.Available, harness.ExecutableDetected, harness.DiscoveryState, harness.Version, harness.Models = "live", "app_server:model/list", "high", true, true, "available", codexVersion(), models
+	if executable := runnerCatalogCodexExecutable(); executable != "" {
+		if _, err := runnerCatalogCommand(executable, "login", "status"); err == nil {
+			harness.Authentication = "authenticated"
+		}
+	}
+	return harness
 }
 
-func codexCatalogOutput(bundled bool) ([]byte, error) {
-	args := []string{"debug", "models"}
+func discoverCodexCatalogCached(bundled, refresh bool) RunnerCatalogHarness {
+	version := codexVersion()
+	context := "installed"
 	if bundled {
-		args = append(args, "--bundled")
+		context = "bundled"
 	}
-	return runnerCatalogCommand("codex", args...)
+	return discoverCatalogCached(string(RunnerCodexExec), version, "app_server_stdio", context, refresh, func() RunnerCatalogHarness { return discoverCodexCatalog(bundled) })
+}
+
+type runnerCatalogCacheEntry struct {
+	CachedAt time.Time            `json:"cached_at"`
+	Harness  RunnerCatalogHarness `json:"harness"`
+}
+
+const runnerCatalogCacheTTL = 24 * time.Hour
+
+func discoverCatalogCached(id, version, transport, configContext string, refresh bool, discover func() RunnerCatalogHarness) RunnerCatalogHarness {
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte("v2\x00"+id+"\x00"+version+"\x00"+transport+"\x00"+configContext)))
+	path := filepath.Join(runnerCatalogStateRoot(), "runner-catalog", key+".json")
+	var cached runnerCatalogCacheEntry
+	raw, readErr := os.ReadFile(path)
+	cacheOK := readErr == nil && json.Unmarshal(raw, &cached) == nil && cached.Harness.Harness == id
+	if cacheOK && !refresh && runnerCatalogNow().Sub(cached.CachedAt) < runnerCatalogCacheTTL {
+		return cached.Harness
+	}
+	fresh := discover()
+	if fresh.DiscoveryState == "available" {
+		fresh.LastChecked = runnerCatalogNow().Format(time.RFC3339)
+		entry := runnerCatalogCacheEntry{CachedAt: runnerCatalogNow(), Harness: fresh}
+		if raw, err := json.MarshalIndent(entry, "", "  "); err == nil && ensureDir(filepath.Dir(path)) == nil {
+			_ = os.WriteFile(path, append(raw, '\n'), 0o600)
+		}
+		return fresh
+	}
+	if cacheOK {
+		cached.Harness.DiscoveryState, cached.Harness.State = "stale", "stale"
+		cached.Harness.Error = "refresh failed; retained the last successful discovery"
+		cached.Harness.LastChecked = runnerCatalogNow().Format(time.RFC3339)
+		return cached.Harness
+	}
+	return fresh
 }
 
 func codexVersion() string {
-	out, err := runnerCatalogCommand("codex", "--version")
+	executable := runnerCatalogCodexExecutable()
+	if executable == "" {
+		return ""
+	}
+	out, err := runnerCatalogCommand(executable, "--version")
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
 }
 
+func museVersion() string {
+	out, err := runnerCatalogCommand("muse", "--version")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func codexExecutableDetected() bool {
+	return runnerCatalogCodexExecutable() != ""
+}
+
+// resolveCodexExecutable rejects stale package-manager shims before discovery.
+// GUI processes inherit a different PATH from the shell, so LookPath alone can
+// find an executable wrapper whose bundled native binary has disappeared.
+func resolveCodexExecutable() string {
+	candidates := healthyCodexExecutables(context.Background())
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
+}
+
+func codexExecutablePaths() []string {
+	candidates := []string{}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir = strings.TrimSpace(dir); dir != "" {
+			candidates = append(candidates, filepath.Join(dir, "codex"))
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".bun", "bin", "codex"),
+			filepath.Join(home, ".local", "bin", "codex"),
+		)
+	}
+	candidates = append(candidates,
+		"/opt/homebrew/bin/codex",
+		"/usr/local/bin/codex",
+		"/Applications/ChatGPT.app/Contents/Resources/codex",
+	)
+	return candidates
+}
+
+func healthyCodexExecutables(parent context.Context) []string {
+	seen := map[string]bool{}
+	healthy := []string{}
+	for _, candidate := range codexExecutablePaths() {
+		candidate = filepath.Clean(candidate)
+		if seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+		cmd := exec.CommandContext(ctx, candidate, "--version")
+		cmd.WaitDelay = time.Second
+		out, err := cmd.Output()
+		cancel()
+		if err == nil && strings.Contains(strings.ToLower(string(out)), "codex") {
+			healthy = append(healthy, candidate)
+		}
+	}
+	return healthy
+}
+
+func museExecutableDetected() bool {
+	_, err := exec.LookPath("muse")
+	return err == nil
+}
+
 func bundledCodexCatalog() RunnerCatalogHarness {
-	return RunnerCatalogHarness{Harness: "codex_exec", Source: "bundled", Confidence: "medium", Available: false, Models: []RunnerCatalogModel{{Model: "gpt-5.x", Efforts: []string{"low", "medium", "high", "xhigh", "max", "ultra"}, Default: true, DefaultKnown: true, Visibility: "visible"}}}
+	harness := catalogHarness(string(RunnerCodexExec), "Codex", "supported", "Install and authenticate Codex, then use Check setup or Run test for a selected profile.")
+	harness.Source, harness.DiscoverySource, harness.Error = "bundled", "bundled", "bundled model discovery failed; no model IDs were invented"
+	return harness
 }
 
 func parseCodexModels(raw []byte) []RunnerCatalogModel {
@@ -207,18 +704,239 @@ func parseCodexModels(raw []byte) []RunnerCatalogModel {
 			efforts = stringSliceAny(m["supported_reasoning_levels"])
 		}
 		if len(efforts) == 0 {
+			efforts = stringSliceAny(m["supportedReasoningEfforts"])
+		}
+		if len(efforts) == 0 {
 			continue
 		}
-		defaultEffort := stringAny(m["default_reasoning_level"])
+		defaultEffort := firstNonEmpty(stringAny(m["default_reasoning_level"]), stringAny(m["defaultReasoningEffort"]))
 		if defaultEffort != "" {
 			efforts = uniqueCatalogStrings(append([]string{defaultEffort}, efforts...))
 		}
 		visibility := strings.ToLower(firstNonEmpty(stringAny(m["visibility"]), "visible"))
 		defaultValue, defaultKnown := boolFieldAny(m, "is_default", "isDefault", "default")
-		models = append(models, RunnerCatalogModel{Model: name, DisplayName: firstNonEmpty(stringAny(m["display_name"]), stringAny(m["displayName"])), Description: stringAny(m["description"]), Efforts: efforts, ServiceTiers: stringSliceAny(m["service_tiers"]), Default: defaultValue, DefaultKnown: defaultKnown, Visibility: visibility, Hidden: visibility == "hide" || visibility == "hidden" || boolAny(m["hidden"])})
+		serviceTiers := stringSliceAny(m["service_tiers"])
+		if len(serviceTiers) == 0 {
+			serviceTiers = stringSliceAny(m["serviceTiers"])
+		}
+		models = append(models, RunnerCatalogModel{Model: name, DisplayName: firstNonEmpty(stringAny(m["display_name"]), stringAny(m["displayName"])), Description: stringAny(m["description"]), Efforts: efforts, ServiceTiers: serviceTiers, Default: defaultValue, DefaultKnown: defaultKnown, DefaultEffort: defaultEffort, Visibility: visibility, Hidden: visibility == "hide" || visibility == "hidden" || boolAny(m["hidden"])})
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Model < models[j].Model })
 	return models
+}
+
+var codexAppServerDiscoveryTimeout = 10 * time.Second
+
+type codexAppServerMessage struct {
+	ID     json.RawMessage `json:"id"`
+	Result json.RawMessage `json:"result"`
+	Error  *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+type codexAppServerModelPage struct {
+	Data       []map[string]any `json:"data"`
+	NextCursor *string          `json:"nextCursor"`
+}
+
+type codexModelDiscoveryError struct {
+	Kind    string
+	Message string
+}
+
+func (e *codexModelDiscoveryError) Error() string { return e.Message }
+
+func codexDiscoveryErrorKind(err error) string {
+	var discovery *codexModelDiscoveryError
+	if errors.As(err, &discovery) {
+		return discovery.Kind
+	}
+	return "implementation"
+}
+
+func codexDiscoveryErrorMessage(err error) string {
+	var discovery *codexModelDiscoveryError
+	if errors.As(err, &discovery) {
+		return discovery.Message
+	}
+	return "Codex App Server discovery failed: " + safeOperatorErrorLeaf(err)
+}
+
+// codexAppServerModels reads the installed Codex App Server in the same default
+// Codex configuration and credential context that codex_exec uses. Discovery
+// must not select a model itself: model/list is the account-scoped source of truth.
+func codexAppServerModels(parent context.Context) ([]RunnerCatalogModel, error) {
+	ctx, cancel := context.WithTimeout(parent, codexAppServerDiscoveryTimeout)
+	defer cancel()
+	candidates := healthyCodexExecutables(ctx)
+	if len(candidates) == 0 {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, classifyCodexDiscoveryError(ctx, ctx.Err(), "")
+		}
+		return nil, &codexModelDiscoveryError{Kind: "unsupported", Message: "No working Codex executable was found in the installed locations"}
+	}
+	failures := []string{}
+	for _, executable := range candidates {
+		models, err := codexAppServerModelsAt(ctx, executable)
+		if err == nil && len(models) > 0 {
+			return models, nil
+		}
+		if err == nil {
+			failures = append(failures, filepath.Base(executable)+": App Server returned no selectable models")
+			continue
+		}
+		if codexDiscoveryErrorKind(err) == "authentication" || codexDiscoveryErrorKind(err) == "timeout" {
+			return nil, err
+		}
+		failures = append(failures, filepath.Base(executable)+": "+safeOperatorErrorLeaf(err))
+	}
+	return nil, &codexModelDiscoveryError{Kind: "unsupported", Message: "No installed Codex executable supports App Server model discovery: " + strings.Join(failures, "; ")}
+}
+
+func codexAppServerModelsAt(ctx context.Context, executable string) ([]RunnerCatalogModel, error) {
+	cmd := exec.CommandContext(ctx, executable, "app-server", "--stdio")
+	cmd.WaitDelay = time.Second
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, &codexModelDiscoveryError{Kind: "implementation", Message: "Codex App Server discovery could not open stdin"}
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, &codexModelDiscoveryError{Kind: "implementation", Message: "Codex App Server discovery could not open stdout"}
+	}
+	var stderr limitedCatalogBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, classifyCodexDiscoveryError(ctx, err, stderr.String())
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	defer func() {
+		_ = stdin.Close()
+		select {
+		case <-waited:
+		case <-time.After(time.Second):
+			_ = cmd.Process.Kill()
+			<-waited
+		}
+	}()
+
+	messages := make(chan codexAppServerMessage, 16)
+	readErr := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 1024), 1<<20)
+		for scanner.Scan() {
+			var message codexAppServerMessage
+			if err := json.Unmarshal(scanner.Bytes(), &message); err == nil && len(message.ID) > 0 {
+				messages <- message
+			}
+		}
+		readErr <- scanner.Err()
+	}()
+
+	write := func(id int, method string, params any) error {
+		return json.NewEncoder(stdin).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+	}
+	await := func(id int, target any) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return classifyCodexDiscoveryError(ctx, ctx.Err(), stderr.String())
+			case scanErr := <-readErr:
+				if scanErr != nil {
+					return classifyCodexDiscoveryError(ctx, scanErr, stderr.String())
+				}
+				return classifyCodexDiscoveryError(ctx, io.EOF, stderr.String())
+			case message := <-messages:
+				var responseID int
+				_ = json.Unmarshal(message.ID, &responseID)
+				if responseID != id {
+					continue
+				}
+				if message.Error != nil {
+					return classifyCodexDiscoveryError(ctx, errors.New(message.Error.Message), stderr.String())
+				}
+				if err := json.Unmarshal(message.Result, target); err != nil {
+					return &codexModelDiscoveryError{Kind: "implementation", Message: "Codex App Server returned an invalid model/list response"}
+				}
+				return nil
+			}
+		}
+	}
+	if err := write(1, "initialize", map[string]any{"clientInfo": map[string]string{"name": "tusker", "version": "1"}, "capabilities": map[string]any{}}); err != nil {
+		return nil, classifyCodexDiscoveryError(ctx, err, stderr.String())
+	}
+	var initialized map[string]any
+	if err := await(1, &initialized); err != nil {
+		return nil, err
+	}
+	if err := json.NewEncoder(stdin).Encode(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}); err != nil {
+		return nil, classifyCodexDiscoveryError(ctx, err, stderr.String())
+	}
+	all := []map[string]any{}
+	cursor := ""
+	for requestID := 2; ; requestID++ {
+		params := map[string]any{"limit": 100}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		if err := write(requestID, "model/list", params); err != nil {
+			return nil, classifyCodexDiscoveryError(ctx, err, stderr.String())
+		}
+		var page codexAppServerModelPage
+		if err := await(requestID, &page); err != nil {
+			return nil, err
+		}
+		all = append(all, page.Data...)
+		if page.NextCursor == nil || strings.TrimSpace(*page.NextCursor) == "" {
+			break
+		}
+		if *page.NextCursor == cursor {
+			return nil, &codexModelDiscoveryError{Kind: "implementation", Message: "Codex App Server repeated a model-list pagination cursor"}
+		}
+		cursor = *page.NextCursor
+	}
+	raw, err := json.Marshal(map[string]any{"models": all})
+	if err != nil {
+		return nil, &codexModelDiscoveryError{Kind: "implementation", Message: "Codex App Server models could not be decoded"}
+	}
+	return parseCodexModels(raw), nil
+}
+
+type limitedCatalogBuffer struct{ bytes.Buffer }
+
+func (b *limitedCatalogBuffer) Write(p []byte) (int, error) {
+	const limit = 4096
+	if b.Len() < limit {
+		_, _ = b.Buffer.Write(p[:min(len(p), limit-b.Len())])
+	}
+	return len(p), nil
+}
+
+func classifyCodexDiscoveryError(ctx context.Context, err error, stderr string) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return &codexModelDiscoveryError{Kind: "timeout", Message: "Codex App Server model discovery timed out after 10 seconds"}
+	}
+	message := strings.ToLower(strings.TrimSpace(firstNonEmpty(stderr, safeOperatorErrorLeaf(err))))
+	safe := safeOperatorErrorText(firstNonEmpty(stderr, errString(err)), 220)
+	switch {
+	case errors.Is(err, exec.ErrNotFound), strings.Contains(message, "unknown subcommand"), strings.Contains(message, "unrecognized subcommand"), strings.Contains(message, "method not found"), strings.Contains(message, "model/list") && strings.Contains(message, "unsupported"):
+		return &codexModelDiscoveryError{Kind: "unsupported", Message: "This installed Codex version does not support App Server model discovery"}
+	case strings.Contains(message, "auth"), strings.Contains(message, "login"), strings.Contains(message, "unauthorized"), strings.Contains(message, "forbidden"), strings.Contains(message, "credential"):
+		return &codexModelDiscoveryError{Kind: "authentication", Message: "Codex App Server authentication failed: " + safe}
+	default:
+		return &codexModelDiscoveryError{Kind: "implementation", Message: "Codex App Server discovery failed: " + safe}
+	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return "no diagnostic was returned"
+	}
+	return err.Error()
 }
 
 func stringAny(value any) string { out, _ := value.(string); return strings.TrimSpace(out) }
@@ -236,7 +954,7 @@ func stringSliceAny(value any) []string {
 	raw, _ := value.([]any)
 	out := []string{}
 	for _, v := range raw {
-		if s := firstNonEmpty(stringAny(v), stringAny(catalogMapStringAny(v)["effort"]), stringAny(catalogMapStringAny(v)["id"])); s != "" {
+		if s := firstNonEmpty(stringAny(v), stringAny(catalogMapStringAny(v)["effort"]), stringAny(catalogMapStringAny(v)["reasoningEffort"]), stringAny(catalogMapStringAny(v)["id"])); s != "" {
 			out = append(out, s)
 		}
 	}
@@ -510,14 +1228,15 @@ func catalogContainsString(values []string, want string) bool {
 
 func printRunnerHelp() {
 	fmt.Println(`Usage:
-  tusker runner catalog [--bundled] [--json]
+  tusker runner catalog [--bundled] [--refresh] [--json]
   tusker runner profiles [--bundled] [--write] [--json]
   tusker runner route <TASK-ID> --lane execute|review --json
   tusker runner test <id-or-profile> [--preset <preset>] [--live] [--exercise print|timer] [--script <executable>] [--json|--quiet]
   tusker runner conformance --harness <id-or-profile> [same flags]
 
 Catalog observes installed harnesses without authentication or model launch. --bundled
-selects an explicit bundled/offline Codex catalog source; it is not a runtime fallback.
+selects an explicit bundled/offline Codex catalog source; --refresh bypasses a fresh
+version/transport/context-keyed cache. Neither is a runtime fallback.
 Profiles previews an additive semantic profile bootstrap; --write updates the project
 config without enabling automation. Codex profiles use codex_exec by default. ACP
 profiles name the exact operator-installed endpoint; Tusker does not install one.

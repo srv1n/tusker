@@ -72,7 +72,7 @@ test("navigation order survives reload", () => {
     PROJECTS.map((id) => ({ id })),
     reloaded,
   ).map((project) => project.id);
-  expect(ordered).toEqual(["p-gamma", "p-alpha", "p-beta"]);
+  expect(ordered).toEqual(["p-beta", "p-gamma", "p-alpha"]);
 });
 
 test("navigation deep link wins", () => {

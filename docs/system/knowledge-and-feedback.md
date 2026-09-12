@@ -70,6 +70,10 @@ observation. A person can review and promote it into tracked work.
 - Name the actor.
 - Use one term for one idea.
 - Keep exact paths, commands, states, and numbers.
+- Lead with the reader's outcome. State the expected result and failure path.
+- Preserve negation, permission boundaries, uncertainty, and decision links.
+- Use an available external writing method when requested or installed; otherwise
+  these local requirements still apply.
 
 ## Code sources
 

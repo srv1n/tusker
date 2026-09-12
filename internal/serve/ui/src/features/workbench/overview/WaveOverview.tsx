@@ -49,9 +49,9 @@ function progressText(
 /**
  * Grouped wave overview (spec section 5).
  *
- * One row per wave; no repeated ticket inventory. The title itself is the
- * navigation control — there is no separate Open column. Descriptions render
- * only from supplied authored data; missing descriptions leave no filler.
+ * One card per wave; no repeated ticket inventory. The whole card is the
+ * navigation control. Descriptions render only from supplied authored data;
+ * missing descriptions leave no filler.
  */
 export function WaveOverview(props: WaveOverviewProps) {
   const groups = useMemo(
@@ -167,31 +167,31 @@ export function WaveOverview(props: WaveOverviewProps) {
                 const description = props.descriptions?.[entry.wave.id];
                 return (
                   <li key={entry.wave.id} className="wux-ov-row">
-                    <div className="wux-ov-main">
-                      <button
-                        type="button"
-                        className="wux-ov-title"
-                        onClick={() => props.onOpenWave(entry.wave.id)}
-                        aria-label={`Open wave ${entry.wave.title}`}
-                      >
-                        {entry.wave.title}
-                      </button>
-                      {description ? (
-                        <p className="wux-ov-desc">{description}</p>
-                      ) : null}
-                      <p className="wux-ov-progress">{progressText(entry)}</p>
-                      {entry.stateDetail ? (
-                        <p className="wux-ov-detail">{entry.stateDetail}</p>
-                      ) : null}
-                    </div>
-                    <div className="wux-ov-side">
-                      <span className={cn("wux-ov-state", GROUP_TONE[entry.group])}>
-                        {entry.stateLabel}
-                      </span>
-                      {entry.runningAlso ? (
-                        <span className="wux-ov-state wux-ov-tone-info">Running</span>
-                      ) : null}
-                    </div>
+                    <button
+                      type="button"
+                      className="wux-ov-card"
+                      onClick={() => props.onOpenWave(entry.wave.id)}
+                      aria-label={`Open wave ${entry.wave.title}`}
+                    >
+                      <div className="wux-ov-main">
+                        <span className="wux-ov-title">{entry.wave.title}</span>
+                        {description ? (
+                          <p className="wux-ov-desc">{description}</p>
+                        ) : null}
+                        <p className="wux-ov-progress">{progressText(entry)}</p>
+                        {entry.stateDetail ? (
+                          <p className="wux-ov-detail">{entry.stateDetail}</p>
+                        ) : null}
+                      </div>
+                      <div className="wux-ov-side">
+                        <span className={cn("wux-ov-state", GROUP_TONE[entry.group])}>
+                          {entry.stateLabel}
+                        </span>
+                        {entry.runningAlso ? (
+                          <span className="wux-ov-state wux-ov-tone-info">Running</span>
+                        ) : null}
+                      </div>
+                    </button>
                   </li>
                 );
               })}

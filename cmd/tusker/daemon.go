@@ -694,16 +694,28 @@ func (d *Daemon) PollOnce(ctx context.Context) error {
 	if err := d.store.ExpireRunDirectives(time.Now().UTC()); err != nil {
 		return err
 	}
+	if err := d.processAgentWakeups(""); err != nil {
+		return err
+	}
 	err := d.pollOnce(ctx, "")
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" && strings.Contains(err.Error(), "run changed while daemon poll was applying its snapshot") {
 		return nil
 	}
+	if err == nil {
+		err = d.processArchitectWaveReports("")
+	}
 	return err
 }
 
 func (d *Daemon) PollProjectOnce(ctx context.Context, projectID string) error {
-	return d.pollOnce(ctx, projectID)
+	if err := d.processAgentWakeups(projectID); err != nil {
+		return err
+	}
+	if err := d.pollOnce(ctx, projectID); err != nil {
+		return err
+	}
+	return d.processArchitectWaveReports(projectID)
 }
 
 func (d *Daemon) scheduleProjectReconcile(projectID string) {
@@ -3847,7 +3859,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 				return false, runnerErr.Error(), nil
 			}
 			command := commandForRunnerProfile(base, candidate)
-			if candidateRunner.Name() == RunnerCodexExec || candidateRunner.Name() == RunnerClaude {
+			if candidateRunner.Name() == RunnerCodexExec || candidateRunner.Name() == RunnerClaude || candidateRunner.Name() == RunnerMuseCLI {
 				policy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, candidate)
 				_, prepareErr := preparedRunnerForDispatch(project.VaultRoot, candidateRunner.Name(), command, candidate, policy, project.RepoRoot, runnerCommandSearchPath())
 				if prepareErr == nil {
@@ -3996,6 +4008,14 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		}
 	}
 	codexPolicy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, selectedProfile)
+	var privateFolders []string
+	if runner.Name() == RunnerClaude {
+		var privateFoldersErr error
+		privateFolders, privateFoldersErr = resolvedPrivateFoldersForStart(project.VaultRoot, selectedProfile.Definition.Access)
+		if privateFoldersErr != nil {
+			return run, false, privateFoldersErr
+		}
+	}
 	var preflight runnerCommandPreflightResult
 	var health runnerPreclaimHealthResult
 	if codexACPPlan != nil {
@@ -4007,7 +4027,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		}}
 	} else if len(authoritativeArgv) > 0 {
 		health = runnerPreclaimHealthWithSearchPath(runner.Name(), command, authoritativeSearchPath)
-	} else if runner.Name() == RunnerCodexExec || runner.Name() == RunnerClaude {
+	} else if runner.Name() == RunnerCodexExec || runner.Name() == RunnerClaude || runner.Name() == RunnerMuseCLI {
 		// The isolated workspace is materialized only after the atomic claim.
 		// Probe the identical executable/argv against the registered repository,
 		// which already exists, while keeping process spawn after workspace setup.
@@ -4342,6 +4362,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		RunnerHarness:       run.RunnerHarness,
 		RunnerModel:         run.RunnerModel,
 		RunnerEffort:        run.RunnerEffort,
+		PrivateFolders:      privateFolders,
 		NotePath:            note.AbsolutePath,
 		VaultPath:           project.VaultRoot,
 		CodexPolicy:         codexPolicy,
@@ -4445,6 +4466,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 			RunnerHarness:       startReq.RunnerHarness,
 			RunnerModel:         startReq.RunnerModel,
 			RunnerEffort:        startReq.RunnerEffort,
+			PrivateFolders:      append([]string(nil), startReq.PrivateFolders...),
 			NotePath:            startReq.NotePath,
 			VaultPath:           startReq.VaultPath,
 			CodexPolicy:         startReq.CodexPolicy,
@@ -6293,6 +6315,10 @@ func runnerForName(name string, wf Workflow) (Runner, string, error) {
 		return &CodexAppServerRunner{}, firstNonEmpty(command, wf.Codex.Command, "codex app-server"), nil
 	case RunnerCodexExec:
 		return &CodexExecRunner{}, firstNonEmpty(command, defaultCodexExecCommand()), nil
+	case RunnerMuse:
+		return &CodexExecRunner{}, firstNonEmpty(command, "codex --profile muse exec --json --skip-git-repo-check -"), nil
+	case RunnerMuseCLI:
+		return &MuseCLIRunner{}, firstNonEmpty(command, defaultMuseCLICommand()), nil
 	case RunnerCodexCloud:
 		config := wf.CodexCloud
 		if hasDefinition {
@@ -7171,6 +7197,11 @@ func daemonRunCmd(args Args) (returnErr error) {
 		markManagedDaemonProcessFailure(stateRoot, managed, daemonRestartCauseRunError)
 		return err
 	}
+	if _, err := reconcileAgentAccessApprovalsAtDaemonStart(daemon.store, time.Now().UTC()); err != nil {
+		_ = daemon.Close()
+		markManagedDaemonProcessFailure(stateRoot, managed, daemonRestartCauseRunError)
+		return err
+	}
 	daemon.guard = guard
 	defer func() {
 		if closeErr := daemon.Close(); closeErr != nil {
@@ -7638,24 +7669,40 @@ func projectsListCmd(args Args) error {
 		return err
 	}
 	projects := loadedRegisteredProjects(loaded)
+	runs, _ := store.ListRuns()
+	activeRuns := make(map[string]int)
+	for _, run := range runs {
+		if isDispatchingLeaseState(run.LeaseState) {
+			activeRuns[run.ProjectID]++
+		}
+	}
+	registry := inspectRegisteredProjectRegistry(projects)
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "count": len(projects), "projects": projects})
+		emitJSON(map[string]any{"ok": true, "count": len(projects), "projects": projects, "groups": registry.Groups, "registry": registry})
 		return nil
 	}
 	if len(projects) == 0 {
 		fmt.Println("(no registered projects)")
 		return nil
 	}
-	for _, project := range projects {
-		state := "enabled"
-		if !project.Enabled {
-			state = "disabled"
+	for _, group := range registry.Groups {
+		fmt.Printf("%s (%d checkout(s))\n", group.Name, len(group.Checkouts))
+		for index, project := range group.Checkouts {
+			state := "enabled"
+			if !project.Enabled {
+				state = "disabled"
+			}
+			label := filepath.Base(project.RepoRoot)
+			if index == 0 {
+				label = "Primary checkout"
+			}
+			inspection := inspectRegisteredCheckout(project, label, activeRuns[project.ProjectID])
+			line := fmt.Sprintf("  %s %-8s %-8s %s", formatRegisteredCheckout(inspection), state, project.Health, project.RepoRoot)
+			if strings.TrimSpace(project.LastError) != "" {
+				line += " (" + project.LastError + ")"
+			}
+			fmt.Println(line)
 		}
-		line := fmt.Sprintf("%s %-8s %-8s %s", project.ProjectID, state, project.Health, project.RepoRoot)
-		if strings.TrimSpace(project.LastError) != "" {
-			line += " (" + project.LastError + ")"
-		}
-		fmt.Println(line)
 	}
 	return nil
 }

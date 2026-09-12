@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"time"
 )
+
+const gitFactTimeout = 2 * time.Second
 
 type gitBranchFacts struct {
 	Branch         string  `json:"branch"`
@@ -89,11 +92,16 @@ func resolveDefaultBranch(workspace, configured string) string {
 }
 
 func gitFactOutput(workspace string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", workspace}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitFactTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", workspace}, args...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), ctx.Err())
+		}
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(string(out)), nil

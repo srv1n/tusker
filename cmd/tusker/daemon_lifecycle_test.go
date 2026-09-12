@@ -358,6 +358,34 @@ func TestDaemonQuarantineBrokenProject(t *testing.T) {
 	}
 }
 
+func TestArchitectWaveReportsSkipBrokenProject(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	missingRoot := filepath.Join(t.TempDir(), "missing")
+	project := RegisteredProject{
+		ProjectID:    "broken-wave-report",
+		ProjectKey:   "broken-wave-report",
+		Name:         "broken-wave-report",
+		RepoRoot:     missingRoot,
+		VaultRoot:    filepath.Join(missingRoot, ".tusker"),
+		WorkflowPath: filepath.Join(missingRoot, ".tusker", "WORKFLOW.md"),
+		Enabled:      true,
+	}
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Daemon{store: store}).PollProjectOnce(context.Background(), project.ProjectID); err != nil {
+		t.Fatalf("broken project must not terminate daemon reconciliation: %v", err)
+	}
+	projects, err := store.ListProjects()
+	if err != nil || len(projects) != 1 || projects[0].Visible {
+		t.Fatalf("missing project must be quarantined off the main screen: projects=%#v err=%v", projects, err)
+	}
+}
+
 func TestResumeQuarantinesBrokenRegistration(t *testing.T) {
 	vault := automationTestVault(t)
 	healthyRoot := filepath.Dir(vault)

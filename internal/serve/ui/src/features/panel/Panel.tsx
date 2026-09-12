@@ -53,8 +53,8 @@ function Section({ title, rows, onOpen }: { title: string; rows: TriageRow[]; on
   return (
     <section className="border-b border-line-soft px-3 py-2.5 last:border-b-0">
       <div className="mb-1.5 flex items-center justify-between">
-        <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">{title}</h2>
-        <span className="rounded-full border border-line bg-surface px-1.5 py-0.2 font-mono text-[10px] font-medium text-faint shadow-2xs">{rows.length}</span>
+        <h2 className="text-[11px] font-semibold text-muted">{title}</h2>
+        <span className="rounded-full border border-line bg-surface px-1.5 py-0.2 font-mono text-[10px] font-medium text-muted shadow-2xs">{rows.length}</span>
       </div>
       <div className="space-y-1">
         {rows.map((row) => (
@@ -62,10 +62,10 @@ function Section({ title, rows, onOpen }: { title: string; rows: TriageRow[]; on
             key={`${title}-${row.key}`}
             type="button"
             onClick={() => onOpen(row)}
-            className="flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-hover"
+            className="flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-hover"
           >
             <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-ink-soft">{row.id}</span>
-            <span className="min-w-0 flex-[2] truncate text-[12.5px] font-medium text-ink">{row.title || "Untitled task"}</span>
+            <span className="min-w-0 flex-[2] truncate text-[13px] font-medium text-ink">{row.title || "Untitled task"}</span>
             <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold ${row.tone === "failed" ? "border-fail/30 bg-fail-soft text-fail" : row.tone === "running" ? "border-info/30 bg-info-soft text-info" : "border-warn/30 bg-warn-soft text-warn"}`}>{row.chip}</span>
           </button>
         ))}
@@ -165,7 +165,7 @@ export function Panel() {
               type="button"
               onClick={openTaskSearch}
               aria-label="Search tasks"
-              className="rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink-soft shadow-2xs hover:bg-hover hover:text-ink transition-colors"
+              className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[11px] font-medium text-ink-soft shadow-2xs hover:bg-hover hover:text-ink transition-colors"
             >
               Search
             </button>
@@ -173,7 +173,7 @@ export function Panel() {
               type="button"
               onClick={openDesktop}
               aria-label="Open the main Tusker window"
-              className="rounded-lg border border-line bg-surface px-2.5 py-1 text-[11px] font-medium text-ink-soft shadow-2xs hover:bg-hover hover:text-ink transition-colors"
+              className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[11px] font-medium text-ink-soft shadow-2xs hover:bg-hover hover:text-ink transition-colors"
             >
               Open Tusker <span aria-hidden="true">↗</span>
             </button>
@@ -199,8 +199,8 @@ export function Panel() {
         {humanActionRows.length > 0 && (
           <section className="border-b border-line-soft px-3 py-3">
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Your action</h2>
-              <span className="font-mono text-[11px] text-faint">{humanActionRows.length}</span>
+              <h2 className="text-[11px] font-semibold text-muted">Your action</h2>
+              <span className="font-mono text-[11px] text-muted">{humanActionRows.length}</span>
             </div>
             <div className="space-y-2">
               {humanActionRows.map((item) => (

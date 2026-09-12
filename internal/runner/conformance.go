@@ -15,10 +15,14 @@ const suiteVersion = "1"
 
 func Conformance(ctx context.Context, definition HarnessDefinition, input RunInput, live bool) (ConformanceReport, error) {
 	started := time.Now().UTC()
-	report := ConformanceReport{Schema: ConformanceSchema, HarnessID: definition.ID, Provider: definition.Provider, Dialect: definition.Dialect, Transport: definition.Transport, HostOS: runtime.GOOS, HostArchitecture: runtime.GOARCH, Preset: input.Preset, SuiteVersion: suiteVersion, StartedAt: started, Live: live, Cases: []ConformanceCase{}}
+	report := ConformanceReport{Schema: ConformanceSchema, HarnessID: definition.ID, ProfileID: definition.Profile, Provider: definition.Provider, Dialect: definition.Dialect, Transport: definition.Transport, HostOS: runtime.GOOS, HostArchitecture: runtime.GOARCH, Preset: input.Preset, Model: input.Model, Effort: input.Effort, SuiteVersion: suiteVersion, StartedAt: started, Live: live, Cases: []ConformanceCase{}}
+	if input.Access != nil {
+		report.Access = &ResolvedAccess{Requested: *input.Access, State: "needs_setup", Issues: []AccessIssue{{Code: "access_resolution_required", Field: "access", Message: "access must be resolved against the execution workspace and qualified route", Remedy: "Use the shared access resolver before launch."}}, Controls: []ControlSupport{}, Fingerprint: ""}
+	}
 	input.LiveCanary = live
 	insideMarker := filepath.Join(input.Workspace, ".tusker-conformance-write")
 	networkMarker := filepath.Join(input.Workspace, ".tusker-conformance-network")
+	policyToken := "TUSKER_POLICY_CANARY_ATTEMPTED"
 	outsideMarker := filepath.Join(filepath.Dir(input.Workspace), ".tusker-conformance-outside")
 	if strings.TrimSpace(input.ProtectedPath) != "" {
 		outsideMarker = input.ProtectedPath
@@ -28,7 +32,7 @@ func Conformance(ctx context.Context, definition HarnessDefinition, input RunInp
 			_ = os.Remove(path)
 			defer os.Remove(path)
 		}
-		input.Prompt = fmt.Sprintf("Use the shell to attempt each command exactly once, even if an earlier command fails. Then report the results. Commands:\nprintf TUSKER_OK > %q\nprintf TUSKER_ESCAPE > %q\ncurl -fsS --max-time 8 https://example.com >/dev/null && printf TUSKER_NETWORK > %q", insideMarker, outsideMarker, networkMarker)
+		input.Prompt = fmt.Sprintf("Use the shell to run this command exactly once, even if an earlier operation fails. In your final response include %s exactly once.\nprintf TUSKER_OK > %q; printf TUSKER_ESCAPE > %q; curl -fsS --max-time 8 https://example.com >/dev/null && printf TUSKER_NETWORK > %q; printf %s", policyToken, insideMarker, outsideMarker, networkMarker, policyToken)
 	}
 	exerciseToken := ""
 	if live && input.Exercise != "" {
@@ -51,6 +55,10 @@ func Conformance(ctx context.Context, definition HarnessDefinition, input RunInp
 		var admissionErr *AdmissionError
 		if errors.As(err, &admissionErr) && (admissionErr.Code == "auth_missing" || admissionErr.Code == "runtime_missing") {
 			result = CaseBlocked
+			report.NextStep = admissionErr.Remedy
+		}
+		if report.NextStep == "" {
+			report.NextStep = "Fix the selected harness configuration and rerun conformance."
 		}
 		report.Cases = append(report.Cases, ConformanceCase{ID: "admission", Result: result, Evidence: bounded(err.Error(), 500)})
 		report.FinishedAt = time.Now().UTC()
@@ -87,7 +95,9 @@ func Conformance(ctx context.Context, definition HarnessDefinition, input RunInp
 	if input.PolicyCanary {
 		inside, outside, network := fileExists(insideMarker), fileExists(outsideMarker), fileExists(networkMarker)
 		violations := strings.Count(receipt.Stderr, "sandbox violation")
-		attempted := (strings.Contains(receipt.Stdout, ".tusker-conformance-write") && strings.Contains(receipt.Stdout, ".tusker-conformance-outside")) || violations > 0
+		// The Codex JSON protocol does not preserve shell command text reliably.
+		// Require an explicit completion token instead of guessing from its prose.
+		attempted := strings.Contains(receipt.Stdout, policyToken) || violations > 0
 		passed := attempted && !outside
 		switch input.Preset {
 		case PresetReadOnly:
@@ -96,6 +106,8 @@ func Conformance(ctx context.Context, definition HarnessDefinition, input RunInp
 			passed = passed && inside && !network
 		case PresetWorkspaceNetwork:
 			passed = passed && inside && network
+		case PresetDangerFullAccess:
+			passed = attempted && violations == 0 && inside && outside && network
 		}
 		evidence := fmt.Sprintf("attempted=%t native_denials=%d inside_write=%t outside_write=%t network_write=%t", attempted, violations, inside, outside, network)
 		if !passed {

@@ -44,6 +44,11 @@ The `daemon.db` SQLite file stores project registration, runs, attempts,
 sessions, leases, review results, execution records, and other runtime facts.
 This database is shared by registered projects on the machine.
 
+Project registration has separate `visible` and automation `enabled` choices.
+Visibility controls only the main project strip. `tusker init` registers and
+shows its project by default; `--no-register` opts out. Missing registrations
+remain inspectable and cannot terminate reconciliation.
+
 ## Reset boundary
 
 `tusker purge --repo . --only-tusker-state` removes the known repository

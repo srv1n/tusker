@@ -43,7 +43,7 @@ var FrontmatterOrder = map[string][]string{
 		"wave",
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
-		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "delivery_cross_scope_dependencies", "evidence_required",
+		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "delivery_cross_scope_dependencies", "evidence_required", "architect", "architect_source", "origin", "peer_contacts",
 		"delivery_source_key", "delivery_plan_scope", "delivery_contract_fingerprint", "requirement_refs", "artifact_contract", "work_kind", "owned_paths", "generated_outputs", "migration_keys", "resource_refs", "runner_profile", "work_level", "review_level", "complexity", "concurrency_group", "knowledge_nodes", "batch_gate_command", "batch_gate_run",
 		"accepted_by", "accepted_at", "closed_at", "close_authority", "superseded_by", "discarded_by", "discarded_at", "discard_reason",
 		"created_at", "created_by", "updated_at", "updated_by", "state_rev",
@@ -139,7 +139,28 @@ type TuskerRunnerSubagentPolicyConfig struct {
 	MaxConcurrent int   `yaml:"max_concurrent"`
 }
 
+// TuskerAgentAccessFolderConfig is deliberately a small, closed shape. The
+// access contract is a profile setting, not a general-purpose policy DSL.
+type TuskerAgentAccessFolderConfig struct {
+	Path   string `yaml:"path"`
+	Access string `yaml:"access"`
+}
+
+// TuskerAgentAccessConfig is optional for backwards compatibility. A nil
+// value means a profile retains its legacy permission_preset authority.
+type TuskerAgentAccessConfig struct {
+	Schema             string                          `yaml:"schema"`
+	Mode               string                          `yaml:"mode"`
+	Network            bool                            `yaml:"network"`
+	DestructiveActions string                          `yaml:"destructive_actions"`
+	Folders            []TuskerAgentAccessFolderConfig `yaml:"folders"`
+	PrivateFolders     []string                        `yaml:"private_folders"`
+}
+
 type TuskerRunnerProfileConfig struct {
+	Disabled          bool                             `yaml:"disabled"`
+	DisplayName       string                           `yaml:"display_name"`
+	EligibleTiers     []string                         `yaml:"eligible_tiers"`
 	Harness           string                           `yaml:"harness"`
 	Model             string                           `yaml:"model"`
 	Effort            string                           `yaml:"effort"`
@@ -148,6 +169,7 @@ type TuskerRunnerProfileConfig struct {
 	NativeContainment bool                             `yaml:"native_containment"`
 	Sandbox           TuskerRunnerSandboxConfig        `yaml:"sandbox"`
 	Subagents         TuskerRunnerSubagentPolicyConfig `yaml:"subagents"`
+	Access            *TuskerAgentAccessConfig         `yaml:"access,omitempty"`
 }
 
 type TuskerModelLevelConfig struct {
@@ -169,6 +191,9 @@ type TuskerAutomationRoutingRuleConfig struct {
 	Match   TuskerAutomationRoutingMatchConfig `yaml:"match"`
 }
 
+// TuskerAutomationDenyRuleConfig is a legacy declaration retained for
+// round-trip compatibility. It is not an execution authority; native runner
+// callbacks consume the fixed command-policy projection instead.
 type TuskerAutomationDenyRuleConfig struct {
 	ID                   string `yaml:"id"`
 	Pattern              string `yaml:"pattern"`
@@ -217,6 +242,8 @@ type TuskerAutomationConfig struct {
 	DefaultProfile    string                               `yaml:"default_profile"`
 	LaneProfiles      map[string]string                    `yaml:"lane_profiles"`
 	Profiles          map[string]TuskerRunnerProfileConfig `yaml:"profiles"`
+	PrivateFolders    []string                             `yaml:"private_folders"`
+	RemovedProfiles   []string                             `yaml:"removed_profiles"`
 	ModelLevels       map[string]TuskerModelLevelConfig    `yaml:"model_levels"`
 	Routing           []TuskerAutomationRoutingRuleConfig  `yaml:"routing"`
 	Denylist          []TuskerAutomationDenyRuleConfig     `yaml:"denylist"`

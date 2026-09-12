@@ -7,10 +7,9 @@ import (
 	"testing"
 
 	"tusker/internal/docgraph"
-	specskill "tusker/skills/spec"
 )
 
-func TestScaffoldDocumentationSystemCreatesMapAndSpecSkill(t *testing.T) {
+func TestScaffoldDocumentationSystemCreatesMapAndTuskerSkill(t *testing.T) {
 	repo := t.TempDir()
 	writes, err := scaffoldDocumentationSystem(repo)
 	if err != nil {
@@ -24,16 +23,14 @@ func TestScaffoldDocumentationSystemCreatesMapAndSpecSkill(t *testing.T) {
 		".tusker/specs/decisions",
 		".agents/skills/tusker/SKILL.md",
 		".agents/skills/tusker/references/SPECS.md",
-		".agents/skills/spec/SKILL.md",
 		".claude/skills/tusker/references/SPECS.md",
-		".claude/skills/spec/SKILL.md",
 	} {
 		path := filepath.Join(repo, filepath.FromSlash(relative))
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("scaffold missing %s: %v", relative, err)
 		}
 	}
-	if len(writes) != 10 {
+	if len(writes) != 8 {
 		t.Fatalf("unexpected write report: %#v", writes)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "docs/system/00-overview.md")); err != nil {
@@ -42,19 +39,9 @@ func TestScaffoldDocumentationSystemCreatesMapAndSpecSkill(t *testing.T) {
 	if issues, err := checkScaffoldMap(repo); err != nil || len(issues) != 0 {
 		t.Fatalf("fresh scaffold map validation: issues=%#v err=%v", issues, err)
 	}
-	source := specskill.Skill
-	for _, relative := range []string{filepath.Join(".agents", "skills", "spec", "SKILL.md"), filepath.Join(".claude", "skills", "spec", "SKILL.md")} {
-		got, err := os.ReadFile(filepath.Join(repo, relative))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(source) {
-			t.Fatalf("scaffolded %s differs from canonical spec skill", relative)
-		}
-	}
 }
 
-func TestScaffoldDocumentationSystemPreservesSpecSkill(t *testing.T) {
+func TestScaffoldDocumentationSystemPreservesExistingSpecSkill(t *testing.T) {
 	repo := t.TempDir()
 	for _, relative := range []string{filepath.Join(".agents", "skills", "spec", "SKILL.md"), filepath.Join(".claude", "skills", "spec", "SKILL.md")} {
 		path := filepath.Join(repo, relative)
@@ -70,7 +57,7 @@ func TestScaffoldDocumentationSystemPreservesSpecSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(writes) != 8 {
-		t.Fatalf("existing spec skills should not be rewritten: %#v", writes)
+		t.Fatalf("existing external spec skills must not affect the Tusker scaffold: %#v", writes)
 	}
 	for _, relative := range []string{filepath.Join(".agents", "skills", "spec", "SKILL.md"), filepath.Join(".claude", "skills", "spec", "SKILL.md")} {
 		got, err := os.ReadFile(filepath.Join(repo, relative))
@@ -125,7 +112,7 @@ func TestScaffoldDocumentationSystemIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestScaffoldSkillsStateSearchFirstAndCommandCreationRules(t *testing.T) {
+func TestExternalDesignSkillRouting(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := scaffoldDocumentationSystem(repo); err != nil {
 		t.Fatal(err)
@@ -133,19 +120,31 @@ func TestScaffoldSkillsStateSearchFirstAndCommandCreationRules(t *testing.T) {
 	for _, relative := range []string{
 		filepath.Join(".agents", "skills", "tusker", "references", "SPECS.md"),
 		filepath.Join(".claude", "skills", "tusker", "references", "SPECS.md"),
-		filepath.Join(".agents", "skills", "spec", "SKILL.md"),
-		filepath.Join(".claude", "skills", "spec", "SKILL.md"),
 	} {
 		body, err := os.ReadFile(filepath.Join(repo, relative))
 		if err != nil {
 			t.Fatalf("read materialized skill %s: %v", relative, err)
 		}
 		text := string(body)
+		if !strings.Contains(text, "external design") {
+			t.Fatalf("%s omits the external-design route", relative)
+		}
+		if !strings.Contains(text, "supplied adequate spec") {
+			t.Fatalf("%s does not skip design discussion for settled intent", relative)
+		}
+		if !strings.Contains(text, "available writing skill") || !strings.Contains(text, "otherwise") {
+			t.Fatalf("%s does not provide the missing optional-writing route", relative)
+		}
 		if !strings.Contains(text, "tusker docs find <query>") {
 			t.Fatalf("%s omits the search-first rule", relative)
 		}
 		if !strings.Contains(text, "tusker docs new") {
 			t.Fatalf("%s omits the create-through-command rule", relative)
+		}
+	}
+	for _, relative := range []string{filepath.Join(".agents", "skills", "spec"), filepath.Join(".claude", "skills", "spec")} {
+		if _, err := os.Stat(filepath.Join(repo, relative)); !os.IsNotExist(err) {
+			t.Fatalf("fresh scaffold created duplicate spec skill %s: %v", relative, err)
 		}
 	}
 }

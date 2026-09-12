@@ -54,6 +54,22 @@ func TestCompletionWorkerSafetyRejectsUnsafeProfiles(t *testing.T) {
 	}
 }
 
+func TestCompletionWorkerPolicyAllowsProjectProfileSelectedByComplexity(t *testing.T) {
+	wf := completionAuthorityTestWorkflow()
+	wf.RunnerProfiles["execute-fast"] = wf.RunnerProfiles["implementation-terra"]
+	wf.RunnerProfileSources["execute-fast"] = configSourceLocal
+	delete(wf.RunnerLaneProfiles, runLaneExecute)
+	note := Note{Data: map[string]any{"complexity": "routine"}}
+
+	profile, _, _, err := completionLaneWorkerPolicy(wf, note, runLaneExecute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Name != "execute-fast" {
+		t.Fatalf("profile=%q want execute-fast", profile.Name)
+	}
+}
+
 func TestCompletionWorkerSafetyRejectsProfileShellInjection(t *testing.T) {
 	profile := ResolvedRunnerProfile{Name: "reviewer", Source: configSourceProject, Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "read-only", Network: boolPtr(false)}}}
 	for _, command := range []string{

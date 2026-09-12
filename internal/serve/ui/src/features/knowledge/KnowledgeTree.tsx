@@ -22,9 +22,9 @@ import { kindMeta } from "./bits";
 import { buildDocTree, docMatches, ancestorFolderIds, type TreeFolder, type TreeNode } from "./tree";
 import { useTreeStore } from "./treeStore";
 
-const INDENT_STEP = 12;
+const INDENT_STEP = 16;
 const ROW_BASE_PAD = 8;
-const CHEVRON_SLOT = 14;
+const CHEVRON_SLOT = 16;
 
 function rowPad(depth: number): number {
   return ROW_BASE_PAD + depth * INDENT_STEP;
@@ -86,15 +86,15 @@ export function KnowledgeTree({
       className="flex h-full min-h-0 w-full flex-col bg-panel/40"
       role="region"
     >
-      <div className="flex-none border-b border-line px-1.5 py-1.5">
-        <label className="flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 transition-colors focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/10">
-          <Search size={12} className="flex-none text-faint" />
+      <div className="flex h-14 flex-none items-center p-2">
+        <label className="flex h-10 w-full items-center gap-2 rounded-lg border border-line bg-surface px-3 transition-colors focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/10">
+          <Search size={16} className="flex-none text-faint" />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter"
             aria-label="Filter documents"
-            className="w-full min-w-0 bg-transparent text-[12px] text-ink placeholder:text-faint focus:outline-none"
+            className="w-full min-w-0 bg-transparent text-[13px] text-ink placeholder:text-faint focus:outline-none"
           />
           {filter !== "" && (
             <button
@@ -103,13 +103,13 @@ export function KnowledgeTree({
               aria-label="Clear filter"
               className="flex-none text-faint transition-colors hover:text-ink"
             >
-              <X size={12} />
+              <X size={16} />
             </button>
           )}
         </label>
       </div>
 
-      <div className="tk-scroll min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
+      <div className="tk-scroll min-h-0 flex-1 overflow-y-auto p-2">
         {q.isError && docs.length === 0 ? (
           <ErrorRail error={q.error} onRetry={() => q.refetch()} />
         ) : docs.length === 0 ? (
@@ -159,7 +159,7 @@ function TreeNodeRow({
         data-selected={active ? "true" : undefined}
         title={node.title}
         className={cn(
-          "relative flex min-h-7 items-center rounded-md pr-2 transition-colors focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
+          "relative flex h-8 items-center rounded-lg pr-2 transition-colors focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
           active ? "bg-active text-ink" : "text-ink-soft hover:bg-hover",
         )}
         style={{ paddingLeft: rowPad(node.depth) }}
@@ -167,14 +167,14 @@ function TreeNodeRow({
         <Guides depth={node.depth} />
         <span className="flex-none" style={{ width: CHEVRON_SLOT }} />
         <FileText
-          size={14}
+          size={16}
           strokeWidth={1.75}
           className="flex-none opacity-80"
           style={{ color: `var(${kindMeta[node.kind].cssVar})` }}
         />
         <span
           className={cn(
-            "ml-1 min-w-0 flex-1 truncate text-left text-[12.5px]",
+            "ml-2 min-w-0 flex-1 truncate text-left text-[13px]",
             active && "font-medium",
           )}
         >
@@ -209,17 +209,17 @@ function FolderRow({
       <Guides depth={node.depth} />
       <span className="flex flex-none items-center justify-center" style={{ width: CHEVRON_SLOT }}>
         <ChevronRight
-          size={12}
+          size={16}
           strokeWidth={2}
           className={cn("text-faint transition-transform", expanded && "rotate-90")}
         />
       </span>
       {expanded ? (
-        <FolderOpen size={14} strokeWidth={1.75} className="flex-none text-faint" />
+        <FolderOpen size={16} strokeWidth={1.75} className="flex-none text-faint" />
       ) : (
-        <Folder size={14} strokeWidth={1.75} className="flex-none text-faint" />
+        <Folder size={16} strokeWidth={1.75} className="flex-none text-faint" />
       )}
-      <span className="ml-1 min-w-0 flex-1 truncate text-left text-[12.5px] text-ink-soft">
+      <span className="ml-2 min-w-0 flex-1 truncate text-left text-[13px] text-ink-soft">
         {node.name}
       </span>
     </>
@@ -229,7 +229,7 @@ function FolderRow({
     <>
       {filtering ? (
         <div
-          className="relative flex h-6 items-center pr-2"
+          className="relative flex h-8 items-center pr-2"
           style={{ paddingLeft: rowPad(node.depth) }}
           title={node.name}
         >
@@ -243,7 +243,7 @@ function FolderRow({
           aria-controls={childrenId}
           aria-label={`${expanded ? "Collapse" : "Expand"} ${node.name}`}
           title={node.name}
-          className="relative flex min-h-7 w-full items-center rounded-md pr-2 transition-colors hover:bg-hover focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          className="relative flex h-8 w-full items-center rounded-lg pr-2 transition-colors hover:bg-hover focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
           style={{ paddingLeft: rowPad(node.depth) }}
         >
           {inner}
@@ -287,7 +287,7 @@ function LoadingRail() {
         <div
           key={index}
           aria-hidden="true"
-          className={cn("h-7 animate-pulse rounded-md bg-hover", index % 3 === 2 ? "ml-5 w-4/5" : "w-full")}
+          className={cn("h-8 animate-pulse rounded-lg bg-hover", index % 3 === 2 ? "ml-6 w-4/5" : "w-full")}
         />
       ))}
     </div>

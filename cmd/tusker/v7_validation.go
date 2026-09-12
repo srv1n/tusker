@@ -2012,6 +2012,87 @@ func v7AcceptanceHasProof(body string) bool {
 	return strings.Contains(content, "| proof |") || strings.Contains(content, "proof:")
 }
 
+// v7PlannedAcceptanceProofGaps checks the handoff plan, not executed proof.
+// Pending exact checks, declared artifacts, gates, and explicit waivers count.
+func v7PlannedAcceptanceProofGaps(task Note, idx v7Index) (missing, unknown []string) {
+	acceptance := v7AcceptanceIDs(task.Body)
+	known, covered, unknownSet := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, id := range acceptance {
+		known[id] = true
+	}
+	add := func(covers []string) {
+		for _, id := range v7CoversToAcceptanceIDs(covers, acceptance) {
+			covered[id] = true
+		}
+		for _, id := range v7UnknownAcceptanceCovers(covers, known) {
+			unknownSet[id] = true
+		}
+	}
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if v7VerificationCheckLooksExact(row.Check) {
+			add(v7CoverTokens(row.CoverText))
+		}
+	}
+	if artifact := mapField(task.Data, "artifact_contract"); artifact != nil {
+		add(normalizeList(firstPresent(artifact, "acceptance_ids", "acceptance")))
+	}
+	add(v7AcceptanceWaivers(task.Data))
+	taskID := stringField(task.Data, "id")
+	for _, gate := range idx.Gates {
+		if !v7GateTouchesTask(gate, taskID) {
+			continue
+		}
+		covers := normalizeList(gate.Data["covers"])
+		if len(covers) == 0 && containsString(normalizeList(gate.Data["blocks"]), taskID) {
+			covers = []string{"ALL"}
+		}
+		add(covers)
+	}
+	for _, id := range acceptance {
+		if !covered[id] {
+			missing = append(missing, id)
+		}
+	}
+	for id := range unknownSet {
+		unknown = append(unknown, id)
+	}
+	sort.Strings(unknown)
+	return missing, unknown
+}
+
+func v7UnknownAcceptanceCovers(covers []string, known map[string]bool) []string {
+	unknown := map[string]bool{}
+	for _, cover := range covers {
+		token := strings.ToUpper(strings.Trim(strings.TrimSpace(cover), "` "))
+		if colon := strings.IndexByte(token, ':'); colon >= 0 {
+			token = token[colon+1:]
+		}
+		if token == "" || token == "ALL" {
+			continue
+		}
+		if v7AcceptanceRangeCover(token) {
+			parts := strings.SplitN(token, "-", 2)
+			start := atoiSafe(strings.TrimPrefix(normalizeV7AcceptanceID(parts[0]), "A"))
+			end := atoiSafe(strings.TrimPrefix(normalizeV7AcceptanceID(parts[1]), "A"))
+			for i := start; i <= end; i++ {
+				id := fmt.Sprintf("A%d", i)
+				if !known[id] {
+					unknown[id] = true
+				}
+			}
+			continue
+		}
+		if id := normalizeV7AcceptanceID(token); id != "" && !known[id] {
+			unknown[id] = true
+		}
+	}
+	out := make([]string, 0, len(unknown))
+	for id := range unknown {
+		out = append(out, id)
+	}
+	return out
+}
+
 func v7VagueAcceptanceItems(body string) []string {
 	content := sectionContent(body, "## Acceptance")
 	seen := map[string]bool{}

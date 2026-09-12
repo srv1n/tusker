@@ -51,6 +51,8 @@ type deliveryPlanV2 struct {
 	Summary             string                       `yaml:"summary,omitempty"`
 	Tasks               []deliveryPlanTask           `yaml:"tasks"`
 	HumanGates          []deliveryHumanGate          `yaml:"human_gates,omitempty"`
+	Architect           string                       `yaml:"architect,omitempty"`
+	Origin              string                       `yaml:"origin,omitempty"`
 	gateMapping         map[string]string
 }
 
@@ -114,13 +116,13 @@ type deliveryHumanGate struct {
 // V1 is an unknown-field error rather than a silently widened contract.
 func (v *deliveryPlanV2) UnmarshalYAML(value *yaml.Node) error {
 	root := deliveryYAMLMapping(value)
-	if err := deliveryKnownYAMLFields(root, map[string]bool{"schema": true, "scope": true, "title": true, "epic": true, "epic_contract": true, "spec_refs": true, "context_fingerprint": true, "required_capabilities": true, "factory_intake_contract_schema": true, "factory_intake_contract_version": true, "factory_intake_contract_fingerprint": true, "non_goals": true, "requirements": true, "deferrals": true, "concurrency": true, "runner_profile": true, "shared_resources": true, "owned_path_overlaps": true, "assumptions": true, "unresolved_decisions": true, "summary": true, "tasks": true, "human_gates": true}); err != nil {
+	if err := deliveryKnownYAMLFields(root, map[string]bool{"schema": true, "scope": true, "title": true, "epic": true, "epic_contract": true, "spec_refs": true, "context_fingerprint": true, "required_capabilities": true, "factory_intake_contract_schema": true, "factory_intake_contract_version": true, "factory_intake_contract_fingerprint": true, "non_goals": true, "requirements": true, "deferrals": true, "concurrency": true, "runner_profile": true, "shared_resources": true, "owned_path_overlaps": true, "assumptions": true, "unresolved_decisions": true, "summary": true, "tasks": true, "human_gates": true, "architect": true, "origin": true}); err != nil {
 		return err
 	}
 	tasks := deliveryYAMLField(root, "tasks")
 	if tasks != nil {
 		for _, task := range tasks.Content {
-			if err := deliveryKnownYAMLFields(task, map[string]bool{"source_key": true, "title": true, "outcome": true, "acceptance": true, "verification": true, "dependencies": true, "artifact": true, "owned_paths": true, "generated_outputs": true, "migration_keys": true, "resource_refs": true, "runner_profile": true, "complexity": true, "concurrency_group": true, "knowledge_nodes": true, "risk": true, "priority": true, "size": true, "domains": true, "requirement_refs": true}); err != nil {
+			if err := deliveryKnownYAMLFields(task, map[string]bool{"source_key": true, "title": true, "outcome": true, "acceptance": true, "verification": true, "dependencies": true, "artifact": true, "owned_paths": true, "generated_outputs": true, "migration_keys": true, "resource_refs": true, "runner_profile": true, "work_level": true, "review_level": true, "execute_profile": true, "review_profile": true, "complexity": true, "concurrency_group": true, "knowledge_nodes": true, "risk": true, "priority": true, "size": true, "domains": true, "requirement_refs": true, "architect": true, "origin": true, "peers": true}); err != nil {
 				return err
 			}
 			if deps := deliveryYAMLField(task, "dependencies"); deps != nil {

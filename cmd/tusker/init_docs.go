@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"tusker/internal/docgraph"
-	specskill "tusker/skills/spec"
 )
 
 type initDocWrite struct {
@@ -74,17 +73,6 @@ func scaffoldDocumentationSystem(repoRoot string) ([]initDocWrite, error) {
 		}
 		writes = append(writes, initDocWrite{path: destination, undo: undo})
 	}
-	for _, relative := range []string{filepath.Join(".agents", "skills", "spec"), filepath.Join(".claude", "skills", "spec")} {
-		destination := filepath.Join(repoRoot, relative)
-		if fileExists(filepath.Join(destination, "SKILL.md")) {
-			continue
-		}
-		if err := docsAdoptWriteText(repoRoot, filepath.ToSlash(filepath.Join(relative, "SKILL.md")), string(specskill.Skill)); err != nil {
-			return nil, err
-		}
-		writes = append(writes, initDocWrite{path: destination, undo: undo})
-	}
-
 	// A brand-new overview must have a valid generated map before init returns.
 	// Do not regenerate an existing corpus: idempotency means init never rewrites
 	// a user's overview or generated artifacts.

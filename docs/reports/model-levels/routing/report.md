@@ -1,19 +1,20 @@
 # Model-level routing acceptance
 
-Candidate: current dirty checkout on 2026-09-07. No daemon, automation dispatch,
+Candidate: current dirty checkout on 2026-09-09. No daemon, automation dispatch,
 claim, provider turn, or task lifecycle mutation was performed.
 
 | Acceptance | Measured result |
 | --- | --- |
 | Catalog truth | PASS. Focused tests cover live provenance, per-model reasoning values, and unavailable discovery. Configured profile values are returned as `configured_unverified`; availability remains a separate catalog observation. |
 | Inheritance and precedence | PASS. Tests cover built-in, global, project override/reset, explicit task profile, authored work level, and legacy frontier routing. |
-| Stable identity and fallback | PASS. Active-cycle retries retain recorded profile/model/effort. Only an ordered configured fallback follows a definitive preflight unavailability; an uncertain error stops selection. Fallback reason is stored on the run. |
-| Agent CLI | PASS. `models show`, `catalog`, `profile-set`, `set`, and `reset` expose JSON and guarded writes. Existing `runner route` remains the single effective-route explanation command. The measured `models show --json --compact` response was 1,481 bytes in the current checkout. |
+| Stable identity and fallback | PASS. Active-cycle retries retain recorded profile/model/effort. A disabled primary may use only its ordered configured fallback; an uncertain error stops selection. Fallback reason is stored on the run. |
+| Profile lifecycle | PASS. Disable blocks future direct selection without touching snapshots. Remove refuses level/lane/default/routing/non-terminal-task references under a config lock and revision guard; historical runs are retained. |
+| Agent CLI | PASS. `models show`, `catalog`, `profile-set`, `profile-disable`, `profile-enable`, `profile-remove`, `set`, and `reset` expose JSON and guarded writes. Existing `runner route` remains the single effective-route explanation command. |
 
 Focused command:
 
 ```text
-go test ./cmd/tusker -run 'Test(ModelLevels|ServeModelLevels|ServeCapabilities)' -count=1
+go test ./cmd/tusker -run 'Test(ModelLevels|ServeModelLevels)' -count=1
 Go test: 8 passed in 1 package
 ```
 

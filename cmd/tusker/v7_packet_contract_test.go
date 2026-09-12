@@ -14,6 +14,11 @@ func TestV7PacketPreservesCompleteTaskContract(t *testing.T) {
 	task.Data["generated_outputs"] = []string{"generated/billing.go"}
 	task.Data["migration_keys"] = []string{"billing-0042"}
 	task.Data["resource_refs"] = []string{"migration-slot"}
+	task.Data["requirement_refs"] = []string{"R1", "R2"}
+	task.Data["artifact_contract"] = map[string]any{
+		"kind": "behavior_matrix", "path": "docs/reports/billing.md",
+		"summary": "Billing behavior before and after the change.", "acceptance_ids": []string{"A1", "A24"},
+	}
 	var acceptance, verification strings.Builder
 	for i := 1; i <= 24; i++ {
 		fmt.Fprintf(&acceptance, "| A%d | Preserve outcome %d. | Mapped check. |\n", i, i)
@@ -37,6 +42,11 @@ func TestV7PacketPreservesCompleteTaskContract(t *testing.T) {
 			for _, expected := range []string{"internal/billing/", "generated/billing.go", "billing-0042", "migration-slot"} {
 				if !strings.Contains(packet, expected) {
 					t.Fatalf("packet lost ownership constraint %q", expected)
+				}
+			}
+			for _, expected := range []string{"Requirements: R1, R2", "kind=`behavior_matrix`", "path=`docs/reports/billing.md`", "covers=A1, A24", "Billing behavior before and after the change."} {
+				if !strings.Contains(packet, expected) {
+					t.Fatalf("packet lost canonical contract metadata %q", expected)
 				}
 			}
 		})

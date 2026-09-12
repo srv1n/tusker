@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	runnercore "tusker/internal/runner"
 	"tusker/internal/v7schema"
 
 	"gopkg.in/yaml.v3"
@@ -44,6 +45,9 @@ type RunnerSubagentPolicyDefinition struct {
 }
 
 type RunnerProfileDefinition struct {
+	Disabled          bool                           `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	DisplayName       string                         `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	EligibleTiers     []string                       `yaml:"eligible_tiers" json:"eligible_tiers"`
 	Harness           string                         `yaml:"harness" json:"harness"`
 	Model             string                         `yaml:"model" json:"model"`
 	Effort            string                         `yaml:"effort" json:"effort"`
@@ -52,6 +56,7 @@ type RunnerProfileDefinition struct {
 	NativeContainment bool                           `yaml:"native_containment,omitempty" json:"native_containment,omitempty"`
 	Sandbox           RunnerSandboxDefinition        `yaml:"sandbox" json:"sandbox"`
 	Subagents         RunnerSubagentPolicyDefinition `yaml:"subagents" json:"subagents"`
+	Access            *AgentAccessV1                 `yaml:"access,omitempty" json:"access,omitempty"`
 }
 
 type RunnerRoutingMatch struct {
@@ -69,6 +74,9 @@ type RunnerRoutingRule struct {
 }
 
 type RunnerDenyRule struct {
+	// Deprecated compatibility metadata. These regex declarations are retained
+	// for config round-tripping and provenance only; native callbacks use the
+	// fixed runnercore.CommandPolicy plus adapter-scoped target checks.
 	ID                   string `yaml:"id" json:"id"`
 	Pattern              string `yaml:"pattern" json:"pattern"`
 	Description          string `yaml:"description,omitempty" json:"description,omitempty"`
@@ -137,6 +145,8 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 	cfg.Automation.DefaultProfile = "default"
 	cfg.Automation.Profiles = map[string]v7schema.TuskerRunnerProfileConfig{
 		"default": {
+			DisplayName:      "Codex Standard",
+			EligibleTiers:    []string{"standard", "demanding"},
 			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "medium",
@@ -145,6 +155,8 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(true), MaxConcurrent: 2},
 		},
 		"execute-cheap": {
+			DisplayName:      "Codex Light",
+			EligibleTiers:    []string{"light", "standard"},
 			Harness:          string(RunnerCodexExec),
 			Model:            "gpt-5.x",
 			Effort:           "low",
@@ -153,6 +165,8 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(false), MaxConcurrent: 0},
 		},
 		"review-frontier": {
+			DisplayName:      "Claude Reviewer",
+			EligibleTiers:    []string{"light", "standard", "demanding"},
 			Harness:          string(RunnerClaude),
 			Model:            "claude-opus-4-8",
 			Effort:           "high",
@@ -161,6 +175,8 @@ func builtInTuskerConfig() v7TuskerConfigFile {
 			Subagents:        v7schema.TuskerRunnerSubagentPolicyConfig{Allowed: boolPtr(false), MaxConcurrent: 0},
 		},
 		"unrestricted-high": {
+			DisplayName:   "Codex Full Access",
+			EligibleTiers: []string{},
 			// Direct Codex is the fresh-install default. ACP remains an explicitly
 			// configured adapter and is never an automatic fallback.
 			Harness:          string(RunnerCodexExec),
@@ -266,6 +282,7 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 		}
 		mergeConfigRaw(effectiveRaw, appliedConfigRaw(layer))
 	}
+	applyRemovedProfiles(effectiveRaw)
 	// A project may explicitly clear the inherited profile map while relying
 	// on machine-local reconciliation to repopulate it.  In that transitional
 	// state an inherited default_profile would be a dangling reference and
@@ -402,6 +419,64 @@ func mergeConfigRaw(dst, src map[string]any) {
 	}
 }
 
+func applyRemovedProfiles(raw map[string]any) {
+	automation := mapAny(raw["automation"])
+	if automation == nil {
+		return
+	}
+	removed := cleanProfileList(normalizeList(automation["removed_profiles"]))
+	if len(removed) == 0 {
+		return
+	}
+	profiles := mapAny(automation["profiles"])
+	for _, name := range removed {
+		delete(profiles, name)
+	}
+	if defaultProfile, _ := automation["default_profile"].(string); containsString(removed, defaultProfile) {
+		delete(automation, "default_profile")
+	}
+	if laneProfiles := mapAny(automation["lane_profiles"]); laneProfiles != nil {
+		for lane, name := range laneProfiles {
+			if profile, _ := name.(string); containsString(removed, profile) {
+				delete(laneProfiles, lane)
+			}
+		}
+	}
+	if levels := mapAny(automation["model_levels"]); levels != nil {
+		for level, value := range levels {
+			mapping := mapAny(value)
+			if mapping == nil {
+				continue
+			}
+			for _, lane := range []string{"execute", "review"} {
+				mapping[lane] = removeProfileNames(normalizeList(mapping[lane]), removed)
+			}
+			levels[level] = mapping
+		}
+	}
+	if routing, ok := automation["routing"].([]any); ok {
+		filtered := routing[:0]
+		for _, value := range routing {
+			entry := mapAny(value)
+			profile, _ := entry["profile"].(string)
+			if !containsString(removed, profile) {
+				filtered = append(filtered, value)
+			}
+		}
+		automation["routing"] = filtered
+	}
+}
+
+func removeProfileNames(profiles, removed []string) []string {
+	out := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		if !containsString(removed, profile) {
+			out = append(out, profile)
+		}
+	}
+	return out
+}
+
 func cloneConfigValue(value any) any {
 	encoded, err := yaml.Marshal(value)
 	if err != nil {
@@ -421,6 +496,8 @@ var userGlobalConfigAllowlist = map[string]struct{}{
 	"automation.concurrency.max_active_runs":             {},
 	"automation.concurrency.max_active_runs_per_project": {},
 	"automation.profiles":                                {},
+	"automation.private_folders":                         {},
+	"automation.removed_profiles":                        {},
 	"automation.model_levels":                            {},
 }
 
@@ -578,6 +655,9 @@ func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if !layer.Present {
 		return nil
 	}
+	if err := validateAgentAccessRaw(appliedConfigRaw(layer), layer.Path); err != nil {
+		return err
+	}
 	_, tierPresent := lookupConfigValue(appliedConfigRaw(layer), "tier")
 	if (tierPresent || layer.Config.Tier != 0) && (layer.Config.Tier < 1 || layer.Config.Tier > 5) {
 		return tuskerError(errorConfigInvalid, "tier must be between 1 and 5", withPath(layer.Path))
@@ -646,9 +726,9 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	switch harness {
 	case RunnerCodexAppServer:
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("migrate to codex_exec or configure an operator-installed acp_v1 endpoint"))
-	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerClaude, RunnerACP, RunnerCodexACP:
+	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerMuse, RunnerMuseCLI, RunnerClaude, RunnerACP, RunnerCodexACP:
 	default:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_exec, claude-code, codex_cloud, or an operator-installed acp_v1 endpoint"))
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_exec, muse, muse_cli, claude-code, codex_cloud, or an operator-installed acp_v1 endpoint"))
 	}
 	if profile.NativeContainment && harness != RunnerACP {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.native_containment is valid only for acp_v1", name), withPath(path))
@@ -656,21 +736,34 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	if !validRunnerModelName(profile.Model) {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.model has unsupported value %q", name, profile.Model), withPath(path), withHint("use a known model family such as gpt-5.x, claude-opus-4-8, claude-fable-5, sonnet-4.6, or glm-5.2"))
 	}
-	if !validRunnerEffort(profile.Effort) || (harness == RunnerClaude && strings.EqualFold(strings.TrimSpace(profile.Effort), "ultra")) {
+	if strings.TrimSpace(profile.Effort) != "" && (!validRunnerEffort(profile.Effort) || (harness == RunnerClaude && strings.EqualFold(strings.TrimSpace(profile.Effort), "ultra"))) {
 		allowed := "low, medium, high, xhigh, max, ultra"
 		if harness == RunnerClaude {
 			allowed = "low, medium, high, xhigh, max"
 		}
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.effort must be one of %s", name, allowed), withPath(path))
 	}
-	if !validRunnerSandboxMode(profile.Sandbox.Mode) {
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.sandbox.mode must be one of read-only, workspace-write, danger-full-access", name), withPath(path))
-	}
-	if !validPermissionPreset(profile.PermissionPreset) {
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.permission_preset has unsupported value %q", name, profile.PermissionPreset), withPath(path))
+	if profile.Access == nil {
+		if !validRunnerSandboxMode(profile.Sandbox.Mode) {
+			return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.sandbox.mode must be one of read-only, workspace-write, danger-full-access", name), withPath(path))
+		}
+		if !validPermissionPreset(profile.PermissionPreset) {
+			return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.permission_preset has unsupported value %q", name, profile.PermissionPreset), withPath(path))
+		}
 	}
 	if profile.Subagents.MaxConcurrent < 0 {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.subagents.max_concurrent must be >= 0", name), withPath(path))
+	}
+	for _, tier := range profile.EligibleTiers {
+		if !validModelLevel(tier) {
+			return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.eligible_tiers contains unsupported tier %q", name, tier), withPath(path), withHint("use light, standard, or demanding"))
+		}
+	}
+	if err := validateAgentAccessDefinition(name, profile.Access, path); err != nil {
+		return err
+	}
+	if profile.Access != nil && strings.TrimSpace(profile.PermissionPreset) != "" {
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s cannot define both access and permission_preset", name), withPath(path), withHint("remove permission_preset when using access"))
 	}
 	return nil
 }
@@ -735,7 +828,15 @@ func runnerProfileSourcesFromLayers(profiles map[string]RunnerProfileDefinition,
 
 func runnerProfileExplicitInLayer(raw map[string]any, name string) bool {
 	base := "automation.profiles." + name + "."
-	for _, field := range []string{
+	hasAll := func(fields ...string) bool {
+		for _, field := range fields {
+			if _, present := lookupConfigValue(raw, base+field); !present {
+				return false
+			}
+		}
+		return true
+	}
+	if hasAll(
 		"harness",
 		"model",
 		"effort",
@@ -744,16 +845,29 @@ func runnerProfileExplicitInLayer(raw map[string]any, name string) bool {
 		"sandbox.network",
 		"subagents.allowed",
 		"subagents.max_concurrent",
-	} {
-		if _, present := lookupConfigValue(raw, base+field); !present {
-			return false
-		}
+	) {
+		return true
 	}
-	return true
+	return hasAll(
+		"harness",
+		"model",
+		"effort",
+		"access.schema",
+		"access.mode",
+		"access.network",
+		"access.destructive_actions",
+	)
 }
 
 func runnerProfileFromSchema(profile v7schema.TuskerRunnerProfileConfig) RunnerProfileDefinition {
+	var tiers []string
+	if profile.EligibleTiers != nil {
+		tiers = cleanProfileList(profile.EligibleTiers)
+	}
 	return RunnerProfileDefinition{
+		Disabled:          profile.Disabled,
+		DisplayName:       strings.TrimSpace(profile.DisplayName),
+		EligibleTiers:     tiers,
 		Harness:           strings.TrimSpace(profile.Harness),
 		Model:             strings.TrimSpace(profile.Model),
 		Effort:            strings.TrimSpace(profile.Effort),
@@ -768,6 +882,7 @@ func runnerProfileFromSchema(profile v7schema.TuskerRunnerProfileConfig) RunnerP
 			Allowed:       profile.Subagents.Allowed,
 			MaxConcurrent: profile.Subagents.MaxConcurrent,
 		},
+		Access: agentAccessFromSchema(profile.Access),
 	}
 }
 
@@ -822,9 +937,19 @@ func resolveRunnerProfileForNote(note Note, wf Workflow, lane string) (ResolvedR
 		if !ok {
 			return ResolvedRunnerProfile{}, true, tuskerError(errorConfigInvalid, "runner profile "+name+" is not defined")
 		}
+		if profile.Disabled {
+			return ResolvedRunnerProfile{}, true, tuskerError(errorInvalidTransition, "runner profile "+name+" is disabled", withHint("enable it or select another configured profile"))
+		}
 		return ResolvedRunnerProfile{Name: name, Source: source, Reason: reason, RuleName: ruleName, Definition: profile}, true, nil
 	}
-	if selected, ok, err := pick(stringField(note.Data, "runner_profile"), "task frontmatter", "runner_profile", ""); ok || err != nil {
+	profileField := "execute_profile"
+	if lane == runLaneReview {
+		profileField = "review_profile"
+	}
+	if selected, ok, err := pick(stringField(note.Data, profileField), "task frontmatter", profileField, ""); ok || err != nil {
+		return selected, err
+	}
+	if selected, ok, err := pick(stringField(note.Data, "runner_profile"), "task frontmatter", "runner_profile (legacy)", ""); ok || err != nil {
 		return selected, err
 	}
 	for _, rule := range wf.RunnerRouting {
@@ -955,6 +1080,8 @@ func runnerVendor(harness string) string {
 		return "codex"
 	case strings.HasPrefix(harness, "claude"):
 		return "claude"
+	case strings.HasPrefix(harness, "muse"):
+		return "muse"
 	default:
 		return harness
 	}
@@ -1018,6 +1145,13 @@ func commandForRunnerProfile(baseCommand string, selected ResolvedRunnerProfile)
 		if effort != "" && !commandHasFlag(command, "--effort") {
 			command += " --effort " + effort
 		}
+	case RunnerMuseCLI:
+		if model != "" && !commandHasFlag(command, "--model") {
+			command += " --model " + model
+		}
+		if effort != "" && !commandHasFlag(command, "--reasoning-effort") {
+			command += " --reasoning-effort " + effort
+		}
 	}
 	return command
 }
@@ -1050,9 +1184,25 @@ func codexPolicyForResolvedProfile(base CodexPolicy, lane string, selected Resol
 	if strings.TrimSpace(selected.Name) == "" {
 		return policy
 	}
+	if profile.Access != nil {
+		policy.CommandPolicy = runnercore.NewCommandPolicy(profile.Access.Mode == accessModeReview, profile.Access.DestructiveActions)
+	}
 	switch RunnerName(strings.TrimSpace(profile.Harness)) {
 	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexACP:
 	default:
+		return policy
+	}
+	if profile.Access != nil {
+		policy.ThreadSandbox, policy.TurnSandboxPolicy = "workspace-write", "workspace-write"
+		policy.TurnSandboxNetwork = boolPtr(profile.Access.Network)
+		if profile.Access.Mode == accessModeReview {
+			policy.ApprovalPolicy = "never"
+			policy.ThreadSandbox, policy.TurnSandboxPolicy = "read-only", "read-only"
+		} else if profile.Access.DestructiveActions == "ask" {
+			policy.ApprovalPolicy = "on-request"
+		} else {
+			policy.ApprovalPolicy = "never"
+		}
 		return policy
 	}
 	if strings.TrimSpace(profile.Sandbox.Mode) != "" {

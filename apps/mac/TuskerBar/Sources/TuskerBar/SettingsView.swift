@@ -57,7 +57,8 @@ final class SettingsWindowController {
             let host = NSHostingController(rootView: SettingsView(config: config))
             window = NSWindow(contentViewController: host)
             window?.title = "TuskerBar Settings"
-            window?.styleMask = [.titled, .closable, .miniaturizable]
+            // Single-pane settings: no minimize/maximize per HIG Settings.
+            window?.styleMask = [.titled, .closable]
             window?.setFrameAutosaveName("TuskerBarSettings")
         }
         window?.makeKeyAndOrderFront(nil)

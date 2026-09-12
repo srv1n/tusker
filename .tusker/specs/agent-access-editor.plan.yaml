@@ -1,0 +1,203 @@
+{
+  "schema": "tusker.delivery-plan/v2",
+  "scope": "agent-access-editor-2026-09-11",
+  "title": "Automatic project work with visible protected folders",
+  "epic": "AAC",
+  "spec_refs": [
+    ".tusker/specs/agent-access.md#Simple profile editor"
+  ],
+  "context_fingerprint": "sha256:8324102da05b1b10bc65c2a9c6afb66a569d798ba56fc6e3dc1a8dceeffca5eb",
+  "factory_intake_contract_schema": "tusker.factory-intake-contract/v1",
+  "factory_intake_contract_version": "1.1.0",
+  "factory_intake_contract_fingerprint": "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
+  "summary": "Users can edit and save one compact profile with automatic routine project work and protected folders; Advanced contains overrides, and unsupported native protection stays visible. This is a planning handoff, not a started run.",
+  "concurrency": 1,
+  "non_goals": [
+    "No product implementation or dispatch by this planning import.",
+    "No new permissions schema, OS sandbox, generic command-rule editor or silent migration.",
+    "No provider coverage claims beyond exact native evidence; installed/live qualification remains with existing AAC mapping and qualification work."
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "outcome": "The compact new-profile form applies quiet project defaults, uses catalog defaults honestly, keeps protected folders visible and hides infrequent controls in Advanced."
+    },
+    {
+      "id": "R2",
+      "outcome": "Existing ask/native profiles round-trip unchanged until explicit conversion or edits; Cancel, Save, reopen and restore preserve identity, tiers and restrictions."
+    },
+    {
+      "id": "R3",
+      "outcome": "Protected-folder authoring is validated, inherited versus profile-local scope is clear, edits are staged, and errors/revision conflicts preserve the draft."
+    },
+    {
+      "id": "R4",
+      "outcome": "Automatic bounded local compatibility checks retain fresh reports for the exact draft, reject stale responses and make no agent/model/canary calls."
+    },
+    {
+      "id": "R5",
+      "outcome": "Required versus optional provider support, native compatibility and Review-only network are accurately represented; missing protection never widens scope or admits execution."
+    },
+    {
+      "id": "R6",
+      "outcome": "Default routine work is automatic while recognized destructive and mandatory-denial requests are blocked without approval; Advanced Ask preserves the exact-request lifecycle."
+    },
+    {
+      "id": "R7",
+      "outcome": "Real styled browser evidence proves keyboard accessibility, light/dark contrast, 390px, 200% zoom, long paths and reachable Save."
+    },
+    {
+      "id": "R8",
+      "outcome": "Current docs and the compact completion report describe the shipped editor/defaults and exact source/fixture/installed/live limits without claiming unsupported provider protection."
+    }
+  ],
+  "assumptions": [
+    {
+      "source_key": "ownership",
+      "statement": "Original AAC tasks remain backlog/held despite source implementation. This is a bounded follow-up, consuming existing source and retaining original lifecycle state; reconcile shared-file ownership with Sarav before implementation."
+    },
+    {
+      "source_key": "defaults",
+      "statement": "The operator delegated default selection. Block recognized destructive actions without prompting for new profiles; keep existing authored Ask and Full access unchanged."
+    },
+    {
+      "source_key": "contact",
+      "statement": "Native origin thread and host were verified; no registered Tusker architect/origin address was found. Use the explicit Sarav relay described in the task."
+    }
+  ],
+  "unresolved_decisions": [],
+  "tasks": [
+    {
+      "source_key": "automatic-profile-editor",
+      "title": "Simplify agent profiles around automatic work and protected folders",
+      "outcome": "Replace the overloaded profile permission dashboard with a compact editable form centered on automatic project work and protected folders. Before: adding Codex shows repeated status cards, an ambiguous Actions selector, and unresolved adapter details above Save. After: choose agent/model, keep Work in projects, add protected folders, inspect one compatibility result, and save; Advanced contains infrequent controls. New profiles block recognized destructive actions without prompting. Existing ask/full-access profiles preserve their behavior until an explicit draft change is saved.\n\n## Implementation notes\nGoverning contract: .tusker/specs/agent-access.md#Simple profile editor, including all its child sections; read Defaults and scope and .tusker/specs/decisions/2026-09-11-agent-access-grill.md#d8-automatic-work-and-visible-protected-folders. The operator delegated default choices on 11 September 2026. The quiet default is work_in_projects, network true, destructive_actions deny, inherited shared private paths, no added references. Ask remains an Advanced choice. No new schema version or automatic-destructive value is needed. This task implements the redesigned settings/default-resolution flow; it cannot claim provider-native containment or universal scripting coverage.\n\nStart in internal/serve/ui/src/features/settings/app/ProfilesSection.tsx: openNew/profileDraft/updateDraft, ProfileEditor, checkSetupDraft, testDraft and save. Reuse CommandPolicyDetails as collapsed diagnostics or remove redundant presentation. Existing backend authority is serve_model_levels.go, serve_runner_conformance.go, agent_access.go and runner_conformance.go. Trace their callers before changing the shared new-default function and setup state. The local setup path must stay bounded and provider-free: no model turn, canary, test file writes or runner execution. Keep Run test explicit. Retain the whole resolved report keyed to the current draft, invalidate on edits, reject late responses, and distinguish setup success from a live test. Optional unsupported features do not invalidate the profile; selected unsupported restrictions do. Do not report requested values as operative guarantees. Review-only network must either be honestly supported or reported unavailable, never silently changed while On is shown.\n\nUse the existing app.css tokens, Button/Select/TextInput/Toggle components and browser fixture harness. Do not change global tokens. Main form: Agent, Model, Access, Protected folders, one compatibility row, Advanced collapsed, Save/Cancel. Native presets stay available in Advanced and show their real current value in the main Access row. Adding a private folder or toggling internet must not silently migrate an existing native profile; an explicit Use project access action stages the conversion, and draft cancellation/restoration must work. Advanced contains reasoning, internet, destructive Block/Ask, references, display name, tier eligibility and diagnostics/tests. No no-op Automatic option. Restore recommended defaults preserves protected paths, reference scope, profile ID and tier references. Protected-folder edits within the editor are profile-local and staged; inherited shared exclusions are read-only here and use the existing separate shared-manager save.\n\nSource problems observed for targeted repair: checkSetupDraft currently drops its access report; CommandPolicyDetails treats every unsupported control as required; summary text is derived before resolution; draft edits can leave stale reports; the current Actions option automatic is ignored; review-only effective network is forced off. Verify against current source because other owners are active. Changes apply at the common UI/API default and result seams, not copies in every component.\n\n## Surrounding work and ownership\nAAC-T-0001 through AAC-T-0007 / W-0020 are the original contracts. Current CLI state is backlog/held, while substantial implementation and reports exist in the shared dirty checkout; do not interpret task status as proof of missing or completed code. AAC-T-0005 originally owned this form, AAC-T-0006 consumes profile summaries/approvals, AAC-T-0002 and AAC-T-0003 own native mappings, and AAC-T-0007 owns installed/live qualification. This follow-up owns the revised UX/defaults and bounded status corrections against the source already present. No new hard prerequisite is declared because the required schema/API exists; original task lifecycle is not being rewritten. Coordinate exclusive editing of ProfilesSection, conformance and resolver files before starting, preserve unrelated changes, and return an ownership conflict to Sarav. Do not run concurrently with another owner of those files. This task's implementer integrates its own UI/API/default changes and documents downstream compatibility; native coverage expansion returns to the existing mapping owner rather than becoming a hidden rewrite here.\n\nThe current declarations say Codex/Muse private exclusions are unsupported, and the Claude compiler rejects workspace-write presets. Preserve truthful unavailability. Do not replace those facts with a green badge or claim this task alone makes the primary use case executable. The final report must separate UI/default completion from each exact native route's installed/live result, with NOT RUN where no proof exists. No fallback provider, OS sandbox, native runtime install, CLI-only override or paid test is authorized by this task contract.\n\n## Architect and origin contacts\nVerified native origin/architect: Codex task Design unified sandbox permissions, thread 01a08f12-a67e-7920-a511-9357daec477c, host local, repository /Users/sarav/Downloads/side/tusker. This identity was inspected with read_thread; no message/reply route was exercised. No registered Tusker task/execution address was verified for that conversation, so architect/origin metadata remains unset rather than fabricated. Sarav is the explicit fallback: include the task ID, acceptance ID, facts and recommended decision in the implementation task for relay to the origin. Ask only for conflicting requirements, missing contracts, ownership conflicts or changes to locked scope; decide routine implementation details locally. No live peer contact is asserted for the original tasks.\n\n## Non-goals\nNo implementation by the planning session, worker/daemon launch, automation changes, new agent adapter, new OS sandbox, general regex/rule editor, global palette/font/navigation rewrite, second settings store, runtime hot-swapping, blanket destructive allow, or silent native-profile migration. Do not reset, stash, clean, commit or overwrite unrelated dirty work. Existing full-access admission, tiers, profile IDs, reference permissions, private precedence and exact-request approvals remain intact.\n\n## Scenario-to-proof map\nA1: fresh profile with a catalog default and shared exclusions. Assert default fields, inherited list, one summary, collapsed Advanced, Save reachable at 1280x760. A missing model default requires an explicit choice. Browser journey plus backend defaults tests; use real styles.\nA2: existing ask and native full-access profiles. Model-only save round-trips permissions; explicit conversion stages access; Cancel and restore abandon it; Save/reopen persists only authored changes. Verify API payloads and persisted fixture configuration.\nA3: add/remove profile private path, inherited path, private workspace descendant, private ancestor conflict, duplicate/symlink path and save revision failure. Preserve drafts; do not mutate shared settings through profile Save. Backend validation and browser journey.\nA4: local setup with delayed out-of-order responses, edited private list, agent change and explicit test result. Only matching current reports render; setup causes zero model/canary/test-file calls. Verify API spies plus setup endpoint tests.\nA5: support fixtures for Codex, Claude, direct Muse and ACP. Same settings survive switches; optional unsupported capability is not a blocker; required missing/advisory/private control is. Unsupported profile can be saved as Needs setup but cannot launch. Review-only network is honest. Fixtures are not native qualification.\nA6: ordinary add/commit and file edit in project mode proceeds; recognized destructive/private/catastrophic requests under default deny create no Allow once record across available callback paths; Advanced ask offers only an eligible immutable request. Review-only denies writes. Disposable fixtures only, never actual personal paths.\nA7: keyboard tab order, focus, labeled add/remove, long paths, light/dark, 390px and 200% font/zoom. No horizontal overflow or clipped Save; at least 44px narrow controls. Capture default, edited, unsupported and saved states using the actual design system. Measure contrast from rendered styles.\nA8: current documentation and operator report accurately distinguish authored settings, effective support, local setup, fixtures and installed/live proof. The report records exact commands, nonzero case counts, screenshots and remaining native gaps; its mere existence is not acceptance.\n\n## Readiness review\nThe packet must let a junior implementer start with the existing form and shared defaults, preserve old profiles, follow explicit draft/save semantics, exercise the eight scenarios, and return unresolved scope/ownership to Sarav. Decisions and schema are settled. The missing routable architect contact has an explicit operator fallback. Installed private-folder support is an external limitation, not permission to broaden access or to mark the whole product finished. Planning review completed by inspecting the generated AAC-T-0008 packet and its governing Simple profile editor section. The packet retains the existing-source start path, all eight scenario/proof mappings, ownership and contact fallback. Tusker metadata uses the exact heading text, not a URL slug. Structural import and packet review are planning checks only; all implementation checks below begin pending. No task execution is authorized by importing this plan.\n\n## Knowledge delta\nPlanned refinement: new profile creation defaults to automatic routine project work with destructive actions blocked without prompts; protected folders remain visible, editable and saved through the existing profile authority. The simple editor and exact-draft local compatibility state replace the repeated access dashboard. Current docs must record the implemented default/migration behavior and native-support limits after proof; this planning record does not assert provider qualification.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "The compact new-profile form applies quiet project defaults, uses catalog defaults honestly, keeps protected folders visible and hides infrequent controls in Advanced."
+        },
+        {
+          "id": "A2",
+          "outcome": "Existing ask/native profiles round-trip unchanged until explicit conversion or edits; Cancel, Save, reopen and restore preserve identity, tiers and restrictions."
+        },
+        {
+          "id": "A3",
+          "outcome": "Protected-folder authoring is validated, inherited versus profile-local scope is clear, edits are staged, and errors/revision conflicts preserve the draft."
+        },
+        {
+          "id": "A4",
+          "outcome": "Automatic bounded local compatibility checks retain fresh reports for the exact draft, reject stale responses and make no agent/model/canary calls."
+        },
+        {
+          "id": "A5",
+          "outcome": "Required versus optional provider support, native compatibility and Review-only network are accurately represented; missing protection never widens scope or admits execution."
+        },
+        {
+          "id": "A6",
+          "outcome": "Default routine work is automatic while recognized destructive and mandatory-denial requests are blocked without approval; Advanced Ask preserves the exact-request lifecycle."
+        },
+        {
+          "id": "A7",
+          "outcome": "Real styled browser evidence proves keyboard accessibility, light/dark contrast, 390px, 200% zoom, long paths and reachable Save."
+        },
+        {
+          "id": "A8",
+          "outcome": "Current docs and the compact completion report describe the shipped editor/defaults and exact source/fixture/installed/live limits without claiming unsupported provider protection."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5,A7",
+          "check": "command: bun test --cwd internal/serve/ui tests/agent-access-journey.test.ts",
+          "notes": "Extend the existing real-component browser journey with the listed scenarios, nonzero tests and persisted request assertions; retain screenshots in docs/reports/agent-access-profiles/automatic-defaults/. Browser fixtures cannot prove installed native enforcement."
+        },
+        {
+          "covers": "A1,A2,A3,A4,A5",
+          "check": "command: go test ./cmd/tusker -run TestAgentAccessEditor -count=1 -timeout=120s",
+          "notes": "Add the named bounded cases in the existing agent_access_test.go and serve_runner_conformance_access_test.go for defaults, migration, scope, setup-only effects and unsupported combinations; zero cases is failure."
+        },
+        {
+          "covers": "A6",
+          "check": "command: go test ./cmd/tusker -run TestAgentAccessEditorNoPrompt -count=1 -timeout=120s",
+          "notes": "Add callback-path cases in existing agent_access_policy_test.go; inspect returned decisions and pending approval rows in temporary stores. Do not execute destructive commands."
+        },
+        {
+          "covers": "A4,A5,A6",
+          "check": "command: go test -race ./cmd/tusker -run TestAgentAccessEditor -count=1 -timeout=120s",
+          "notes": "Run once after implementation stabilizes; maintain separation between fixture callbacks and installed provider liveness."
+        },
+        {
+          "covers": "A1,A2,A3,A4,A5,A7",
+          "check": "command: bun run --cwd internal/serve/ui typecheck",
+          "notes": "Typecheck is supporting compilation evidence, not visual/behavioral proof."
+        },
+        {
+          "covers": "A1,A7",
+          "check": "command: bun run --cwd internal/serve/ui build",
+          "notes": "Use the real design system in captures; no alternate unstyled fixture UI. One delayed build."
+        },
+        {
+          "covers": "A8",
+          "check": "command: tusker docs check docs/system/serve-ui.md --json",
+          "notes": "Validate changed metadata; reviewer also compares documented UI/defaults and support claims to recorded behavior. Preserve the known unrelated decides_for failure if it remains; it does not establish a pass."
+        }
+      ],
+      "dependencies": [],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-access-profiles/automatic-defaults.md",
+        "summary": "Before/after editor behavior, saving and compatibility scenarios, screenshots and native qualification limits",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6",
+          "A7",
+          "A8"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/features/settings/app/ProfilesSection.tsx",
+        "internal/serve/ui/src/features/settings/app/CommandPolicyDetails.tsx",
+        "internal/serve/ui/tests/agent-access-journey.test.ts",
+        "internal/serve/ui/tests/agent-access-command-policy.test.ts",
+        "internal/serve/ui/test/agent-access-profiles.test.ts",
+        "internal/serve/ui/test/agent-access-command-policy.test.ts",
+        "cmd/tusker/agent_access.go",
+        "cmd/tusker/agent_access_test.go",
+        "cmd/tusker/agent_access_policy_test.go",
+        "cmd/tusker/serve_runner_conformance.go",
+        "cmd/tusker/serve_runner_conformance_access_test.go",
+        "cmd/tusker/runner_conformance.go",
+        "docs/system/serve-ui.md",
+        "docs/system/runners-and-acp.md",
+        "docs/reports/agent-access-profiles/automatic-defaults.md"
+      ],
+      "generated_outputs": [
+        "internal/serve/ui/dist",
+        "docs/reports/agent-access-profiles/automatic-defaults"
+      ],
+      "work_level": "standard",
+      "review_level": "demanding",
+      "complexity": "complex",
+      "risk": "high",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8"
+      ]
+    }
+  ]
+}

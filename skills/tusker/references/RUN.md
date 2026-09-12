@@ -1,50 +1,62 @@
-# Run and configuration
+# Run and verification
 
-A run directive is deliberate human authority; preparing tasks or waves does
-not start them. Interactive sessions implement work themselves. They never
-start a daemon, dispatch automation, or launch nested workers. A dispatched
-worker (`TUSKER_ATTEMPT_ID`) works only its claimed task and follows its packet.
+A run directive is deliberate human authority. Interactive sessions implement
+work themselves; they never start a daemon, dispatch automation, or launch
+nested workers. A dispatched worker (`TUSKER_ATTEMPT_ID`) follows its packet.
 
-## Resolve the execution configuration
-
-```sh
-tusker config resolve automation.model_levels --json
-tusker config resolve automation.profiles --json
-tusker daemon status --json
-```
-
-Tasks specify Light, Standard or Demanding. Ordered configured profiles are the only permitted fallbacks. Resolve profiles when each
-execution/review starts: global defaults, project configuration and explicit
-overrides determine the result. Keep task intent separate from actual harness,
-model, reasoning effort and ACP/CLI transport recorded on the run. Never
-hard-code model names or silently replace a failed profile/transport.
-
-For configuration changes, discover the current schema and runner commands
-through capabilities/help. Manual profiles are sufficient; model discovery is
-optional where supported. Execution and review can use different profiles;
-approval is a separate policy, human-owned only when explicitly gated.
-
-## Inspect and control
+Never hard-code a model or silently replace a failed transport. Inspect with:
 
 ```sh
-tusker runs inspect <TASK-ID>
+tusker work readiness <TASK-ID> --lane execute --json
+tusker runs inspect <TASK-ID> --json
 tusker runs logs <TASK-ID> --lines 50
-tusker wave show <WAVE-ID>
-tusker wave brief <WAVE-ID> --json
+tusker closeout status <TASK-ID> --json
 ```
 
-Use targeted help for installed manual task/wave controls. Report missing CLI
-parity instead of substituting an autonomous dispatch command. Operator service
-startup belongs in the operator shell. `tusker automation plan` is read-only.
-Observe a bounded run only when requested; do not become a polling coordinator.
+Runtime activity and task status differ. A heartbeat and lease establish
+liveness; exit success does not establish review. Re-read stale displays.
+Operator service startup stays in the operator shell.
 
-Runtime activity is separate from durable task status. A held lease and fresh
-heartbeat establish liveness; exit success alone does not establish reviewed
-completion. Reconnect/read current state before interpreting a stale display.
-Use closeout status to identify missing proof, review or gates.
+Before editing, read the complete packet and its exact governing sections.
+Check its surrounding-work dependencies, owned paths, and architect/origin/peer
+contacts. For missing context or contact-routing questions, read `HANDOFF.md`. Resolve routine implementation choices
+locally; return missing or conflicting product decisions to the recorded
+architect through an authorized supported route. If that route is unavailable,
+report the missing capability to the recorded fallback; never assume a message
+was delivered. Pause only dependent work and preserve any accepted clarification
+in the canonical contract through supported task operations.
+
+## Verification recipe
+
+Keep the packet's complete acceptance and conditions. Pick the smallest check;
+`tusker verify recipe <TASK-ID> --files
+<CHANGED-PATHS>` can suggest one. Before running it, record prerequisites,
+readiness, user action, expected state, mutations, evidence location, and
+cleanup. Preserve the command, result, first failure, and artifact path. The
+executor records PASS or FAIL with `tusker verify add`; a
+skip, zero-match test, source read, or old log is not a pass.
+
+Label limits honestly: **synthetic** proves only the fake/demo; **source** proves
+what was inspected, not execution; **local executed** proves that checkout and
+environment; **installed** proves the identified installed build; **human**
+proves only the named observation or acceptance. None implies remote/provider
+behavior without observing it.
+
+Prefer an existing test or demo. Disposable demos use an empty
+directory, retain `tusker demo check --json`, then preview and apply only their
+owned cleanup:
+
+```sh
+tusker demo reset --repo <DEMO-PATH> --dry-run --json
+tusker demo reset --repo <DEMO-PATH> --yes --json
+```
+
+Never delete shared evidence to make a check repeatable. Live wake/resume or
+message delivery stays unverified unless supported by inspected help/source and
+actually observed.
 
 ## Human gates
 
 Satisfy or waive a human gate only on that human's explicit instruction and
-attribute it to them. Optional screenshots/performance reports are evidence,
-not automatic approval gates. Report the gate ID and exact required action.
+attribute it. Screenshots and performance reports are evidence, not automatic
+approval gates. Report the gate ID and required action.

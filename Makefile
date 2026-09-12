@@ -176,7 +176,7 @@ setup-demo: ## Replace the owned manual demo using the installed CLI; override D
 		if [ -n "$$project_id" ]; then "$$cli" projects remove "$$project_id" --json; fi; \
 		rm -rf -- "$$repo"; \
 	fi; \
-	seed="$$($$cli demo seed --repo "$$repo" --scenario "$(DEMO_SCENARIO)" --json)"; \
+	seed="$$($$cli demo seed --repo "$$repo" --scenario "$(DEMO_SCENARIO)" --visible --json)"; \
 	printf '%s\n' "$$seed"; \
 	project_id="$$(printf '%s' "$$seed" | jq -r '.runtime_project_id')"; \
 	echo "Standalone: http://127.0.0.1:7420/p/$$project_id/waves/W-0001"; \

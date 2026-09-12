@@ -18,6 +18,21 @@ decisions_locked: false
 
 # Work-area redesign discussion record
 
+## September 10: compact project navigation approved
+
+This entry supersedes earlier decisions requiring an expandable project sidebar. Those entries remain below as rationale/history; [[work-area-redesign]] section 4 is the implementation authority.
+
+| Decision | Options and recommendation discussed | What the user actually said | Locked outcome |
+|---|---|---|---|
+| Project switching | Existing expanded tree; compact pinned/recent chips; single project dropdown. Recommended chips with navigation for only the selected project. | Many projects are inactive; the desktop sidebar wastes space. The user proposed project chips below the top bar with recency and pinning, then accepted the compact model. | Replace the permanent project sidebar with a project strip; show Work and Documents once for the selected project. |
+| Visible labels | Text plus icons versus icon-only utilities. The first sketch kept settings labels. | The user wants no App settings or Search text at the top, and the same minimal treatment for project settings. | Icon-only global search, global settings and project settings; retain accessible names and tooltips. |
+| Project identity | Repeat the project name beside local tabs versus rely on the selected chip. | Tusker is written in multiple places; highlighting already implies the selected project. | Keep the app identity once and the named chip; remove repeated project identity in surrounding navigation. Keep meaningful content titles. |
+| Overflow access | A few chips plus All projects picker versus all projects in a horizontal strip. Earlier recommendation used a picker. | The user prefers people can slide horizontally, minimizing clicks. | All navigable projects are directly reachable in a single horizontal scroll strip; no required All projects click or top-N cutoff. |
+| Recency and pins | Move a project left on every click versus stable targets with recent projects surfaced. Recommended stable pins and no reshuffle after each visible-chip click. | The user said the proposal makes perfect sense and requested the label and scrolling changes above. | Retain stable pins and recency while avoiding click-driven reshuffling. Applying recency on a fresh shell mount is an explicitly labeled implementation default, not a separate verbatim user demand. |
+| Delivery | Implement now versus prepare a handoff. | Write out the spec and tasks; the user will get another agent to take it to completion. | Author inert implementation tasks and acceptance. No application changes, worker launch or automation activation in this planning session. |
+
+Accessibility mechanics, exact overflow controls, the storage extension, session-stable ordering and verification sizes are reversible implementation defaults in the canonical spec. No unresolved product decision blocks this requested handoff.
+
 ## Scope and constraints supplied by the user
 
 The user described the UI as cluttered and redundant, calling out waves, tickets and the right-hand open area. They requested a spec before application code changes. The desired result is intuitive, minimal and enjoyable for daily use.
@@ -137,3 +152,12 @@ User identifies compaction loss as a major planning risk and wants accurate ongo
 ## Correction — one Tusker operating skill, external design methods
 
 User rejects packaging a Tusker design/grilling skill. People can use any external specification method (including Matt Pocock grilling/domain-modeling skills). Tusker begins with its documentation format and creating/organizing tracked work. Confirmed one Tusker skill with progressive references covering documentation, task authoring, waves, CLI, configuration, daemon/runtime, execution and review. The previous two-entry recommendation is superseded; external conversation-capture suggestions are not mandatory Tusker procedures. Updated [[planning-handoff-and-agent-entry]] accordingly; no installed skills changed.
+
+
+## September 11: full-height workspace with layered side navigation
+
+The operator found that the project strip, section tabs and feature headers consumed too much vertical space before document text and wave content began. They asked to move navigation into two or three side layers, keep project and section switching quick, preserve readable prose width, and adapt the hierarchy for mobile. After comparing a combined top row, picker/drawer and narrow rail, they requested the detailed implementation specification and smaller-agent tickets for the layered-side-navigation direction.
+
+Decision: narrow project rail + labeled section rail + optional contextual pane. Main content starts below one compact feature toolbar. Docs constrains prose width; graphs and boards use the remaining canvas. Desktop panes collapse explicitly; tablet uses contextual overlays; phone uses a project picker inside the feature toolbar and bottom section navigation. Widths, breakpoints and bounded restoration rules are implementation defaults in [[full-height-workspace]], not quoted user dimensions.
+
+This supersedes September 10 horizontal-strip placement, while preserving pins/order, identity, visibility and safe restoration. It does not authorize implementation dispatch or changes to application code during planning. The canonical detailed contract is [[full-height-workspace]]; tickets are in docs/plans/full-height-workspace/ and the corresponding inert delivery plan.

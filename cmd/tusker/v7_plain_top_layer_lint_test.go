@@ -130,6 +130,26 @@ func TestTopLayerLintFilenameSingleLetterExt(t *testing.T) {
 	}
 }
 
+func TestTopLayerLintSlashProse(t *testing.T) {
+	clean := "Small/medium/large contracts cover 10/100/1000-document repositories."
+	if got := v7TopLayerCodeWords(twoLayerBody(clean, "Nothing here.")); len(got) != 0 {
+		t.Fatalf("ordinary slash examples must stay prose: %#v", got)
+	}
+	if got := v7DocOpeningCodeWords("# Guide\n\n" + clean + "\n"); len(got) != 0 {
+		t.Fatalf("shared document-opening check must stay prose: %#v", got)
+	}
+
+	offenders := v7TopLayerCodeWords(twoLayerBody(
+		"The runner reads cmd/tusker/foo, opens guide.md, and calls `renderTask`.",
+		"Nothing here.",
+	))
+	for _, want := range []string{"cmd/tusker/foo", "guide.md", "renderTask"} {
+		if !containsString(offenders, want) {
+			t.Fatalf("real code token %q must be flagged: %#v", want, offenders)
+		}
+	}
+}
+
 // Mixed-case words are only code words when corroborating evidence backs them.
 // Marketing-style product names stay clean; genuine identifiers are flagged.
 func TestTopLayerLintMixedCaseEvidence(t *testing.T) {

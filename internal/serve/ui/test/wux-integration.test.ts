@@ -13,10 +13,16 @@ describe("work experience integration", () => {
   test("integration explicit deep link wins restore", () => expect(restoredPath("/p/a/waves", "/p/a/tasks/T-1")).toBe("/p/a/tasks/T-1"));
   test("integration completed entry shows results", () => { expect(initialWaveView(wave("closed"))).toBe("results"); expect(initialWaveView(wave("closed"), "flow")).toBe("flow"); });
   test("integration unavailable data never enables start", () => expect(waveStartability([wave("open")])["W-1"]).toEqual({ state: "unknown", reason: "Authoritative start readiness is not exposed by the current Serve API." }));
-  test("routed wave exposes the supported Wave Play action", () => {
+  test("routed wave exposes the supported Start action and execution status", () => {
     const source = readFileSync(new URL("../src/features/workbench/integration/WorkExperience.tsx", import.meta.url), "utf8");
     expect(source).toContain("useWaveExecute(projectId)");
-    expect(source).toContain("Wave Play");
+    expect(source).toContain('aria-label="Start wave"');
+    expect(source).toContain('execute.isPending ? "Starting…" : "Start"');
+    expect(source).not.toContain("Wave Play");
     expect(source).toContain("execute.mutate({ waveId: wave.id })");
+
+    const flow = readFileSync(new URL("../src/features/workbench/flow/WaveFlow.tsx", import.meta.url), "utf8");
+    expect(flow).toContain("Executing now:");
+    expect(flow).toContain("Nothing is executing now.");
   });
 });

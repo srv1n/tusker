@@ -28,7 +28,8 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         webView = WKWebView(frame: frame, configuration: webConfig)
         super.init()
         content.add(self, name: "tuskerShell")
-        window.appearance = NSAppearance(named: .darkAqua)
+        // Follow the system appearance: the served UI already adapts to
+        // light/dark, so forcing .darkAqua would strand light-mode users.
         window.title = "Tusker"
         window.collectionBehavior = [.fullScreenPrimary]
         window.isReleasedWhenClosed = false
@@ -164,7 +165,7 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         guard window.isVisible else { return }
         switch RuntimeSupervisor.shared.state {
         case .running, .external:
-            load(path: currentPath, kind: .live)
+            if !hasCommittedContent { load(path: currentPath, kind: .live) }
         case .failed:
             if !hasCommittedContent {
                 loaded = false

@@ -109,6 +109,8 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .running), .restart)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .checking), .ignore)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .failed("boom")), .ignore)
+        XCTAssertTrue(RuntimeLaunchPlan.shouldReuseHealthyRuntime(childRunning: true))
+        XCTAssertFalse(RuntimeLaunchPlan.shouldReuseHealthyRuntime(childRunning: false))
     }
 
     func testRuntimeLogRedactionCoversQuotedAndSpacedSecrets() {

@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	runnercore "tusker/internal/runner"
 )
 
 type codexRPCResponse struct {
@@ -34,6 +36,7 @@ type codexLiveHandle struct {
 	statusPath      string
 	runner          RunnerName
 	policy          CodexPolicy
+	privateFolders  []string
 	activeStates    []string
 	notePath        string
 	processPGID     int
@@ -134,6 +137,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		statusPath:      req.StatusPath,
 		runner:          RunnerCodex,
 		policy:          policy,
+		privateFolders:  append([]string(nil), req.PrivateFolders...),
 		activeStates:    append([]string{}, req.ActiveStates...),
 		notePath:        req.NotePath,
 		processPGID:     childPGID,
@@ -347,6 +351,29 @@ func (h *codexLiveHandle) turnStart(threadID, prompt string) (string, error) {
 	return resp.Turn.ID, err
 }
 
+// deliverAgentMessage steers the exact active regular turn. expectedTurnId is
+// the fence: a completed/replaced turn refuses the delivery instead of sending
+// context to whichever turn happens to be newest.
+func (h *codexLiveHandle) deliverAgentMessage(message AgentMessage) error {
+	threadID, _, turnID, _ := h.liveState()
+	if threadID == "" || turnID == "" {
+		return errors.New("Codex conversation has no active steerable turn")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), h.readTimeout())
+	defer cancel()
+	var response struct {
+		TurnID string `json:"turnId"`
+	}
+	err := h.request(ctx, "turn/steer", map[string]any{
+		"threadId": threadID, "expectedTurnId": turnID, "clientUserMessageId": message.ID,
+		"input": []map[string]any{{"type": "text", "text": message.Body, "text_elements": []any{}}},
+	}, &response)
+	if err == nil && response.TurnID != turnID {
+		return errors.New("Codex steer receipt named a different turn")
+	}
+	return err
+}
+
 func codexTurnSandboxPolicy(policy CodexPolicy, cwd string) map[string]any {
 	policy = withDefaultCodexPolicy(policy)
 	switch strings.TrimSpace(policy.TurnSandboxPolicy) {
@@ -515,7 +542,10 @@ func (h *codexLiveHandle) handleServerRequest(method, id string, params json.Raw
 
 	switch method {
 	case "item/commandExecution/requestApproval":
-		decision := h.evaluateCommandApproval(params)
+		decision, awaited := h.awaitCodexAgentAccessApproval(method, id, params)
+		if !awaited {
+			decision = h.evaluateCommandApproval(params)
+		}
 		h.recordApprovalDecision(method, decision)
 		h.writeRPCResult(id, appServerApprovalResult(decision, "accept", "reject"))
 	case "item/fileChange/requestApproval":
@@ -549,7 +579,10 @@ func (h *codexLiveHandle) handleServerRequest(method, id string, params json.Raw
 		h.recordApprovalDecision(method, decision)
 		h.writeRPCResult(id, appServerApprovalResult(decision, "approved", "denied"))
 	case "execCommandApproval":
-		decision := h.evaluateCommandApproval(params)
+		decision, awaited := h.awaitCodexAgentAccessApproval(method, id, params)
+		if !awaited {
+			decision = h.evaluateCommandApproval(params)
+		}
 		h.recordApprovalDecision(method, decision)
 		h.writeRPCResult(id, appServerApprovalResult(decision, "approved", "denied"))
 	case "account/chatgptAuthTokens/refresh":
@@ -574,20 +607,25 @@ func (h *codexLiveHandle) evaluateCommandApproval(params json.RawMessage) codexA
 		strings.TrimSpace(stringValue(payload["cmd"])),
 		strings.Join(stringListFromAny(payload["argv"]), " "),
 	)
+	destructive := destructiveAgentCommand(command)
+	writesWorkspace := commandWritesWorkspace(command)
+	if reason := commandPolicyRejectReason(h.policy, runnercore.CommandPolicyRequest{Mutating: writesWorkspace, Destructive: destructive, ReviewOnly: activeCodexPolicyIsReviewOnly(h.policy)}); reason != "" {
+		return h.rejectApproval("command", commandLooksMutating(command), reason, command)
+	}
+	if destructive {
+		return h.evaluateDestructiveCommandApproval(params)
+	}
 	mutating := commandLooksMutating(command)
 	decision := codexApprovalDecision{RequestType: "command", Decision: "accept", Subject: command, Mutating: mutating}
 	if command == "" {
 		return h.rejectApproval("command", mutating, "command approval request is missing a command", "")
 	}
-	if reason := h.policyDenialReason(mutating); reason != "" {
+	if reason := h.policyDenialReason(writesWorkspace); reason != "" {
 		return h.rejectApproval("command", mutating, reason, command)
 	}
 	cwd := approvalCWD(payload, h.workspaceRoot())
 	if ok, reason := h.pathAllowed(cwd, h.workspaceRoot()); !ok {
 		return h.rejectApproval("command", mutating, "command approval rejected: cwd "+reason, command)
-	}
-	if commandContainsUnsafeGitMutation(command) {
-		return h.rejectApproval("command", mutating, "command approval rejected: unsafe git state mutation is not allowed", command)
 	}
 	if commandMentionsSecretPath(command) {
 		return h.rejectApproval("command", mutating, "command approval rejected: command references a secret path", command)
@@ -609,6 +647,9 @@ func (h *codexLiveHandle) evaluateFileChangeApproval(params json.RawMessage) cod
 	}
 	payload := approvalPayload(params)
 	cwd := approvalCWD(payload, h.workspaceRoot())
+	if reason := commandPolicyRejectReason(h.policy, runnercore.CommandPolicyRequest{Mutating: true, ReviewOnly: activeCodexPolicyIsReviewOnly(h.policy)}); reason != "" {
+		return h.rejectApproval("file_change", true, reason, subject)
+	}
 	for _, path := range paths {
 		if approvalPathLooksSecret(path) {
 			return h.rejectApproval("file_change", true, "file change approval rejected: secret path is not writable", path)
@@ -807,7 +848,7 @@ func commandLooksMutating(command string) bool {
 	if lower == "" {
 		return false
 	}
-	if commandContainsUnsafeGitMutation(lower) {
+	if destructiveCommandUsesProtectedDevice(lower) || commandContainsUnsafeGitMutation(lower) {
 		return true
 	}
 	if strings.Contains(lower, ">>") || strings.Contains(lower, " >") || strings.Contains(lower, "| tee") || strings.Contains(lower, " tee ") {
@@ -826,18 +867,251 @@ func commandLooksMutating(command string) bool {
 	return false
 }
 
+// commandWritesWorkspace is broader than commandLooksMutating: routine Git
+// staging and commits write the repository, but do not need a destructive
+// allow-once card. Keeping those classifications separate lets project-write
+// execute them while the review lane still rejects them.
+func commandWritesWorkspace(command string) bool {
+	if commandLooksMutating(command) {
+		return true
+	}
+	subcommand, _, ok := gitCommandParts(command)
+	return ok && (subcommand == "add" || subcommand == "commit")
+}
+
 func commandContainsUnsafeGitMutation(command string) bool {
-	lower := strings.ToLower(command)
-	for _, marker := range []string{
-		"git add", "git am", "git apply", "git branch", "git checkout", "git cherry-pick", "git clean",
-		"git commit", "git merge", "git mv", "git pull", "git push", "git rebase", "git reset",
-		"git restore", "git rm", "git stash", "git switch", "git update-index",
-	} {
-		if strings.Contains(lower, marker) {
+	subcommand, args, ok := gitCommandParts(command)
+	if !ok {
+		return false
+	}
+	switch subcommand {
+	case "reset":
+		return gitHasFlag(args, "--hard")
+	case "clean":
+		return gitHasForceFlag(args) && !gitHasFlag(args, "-n", "--dry-run")
+	case "restore":
+		// A restore request with no path is not safely scoped; classify it so
+		// the boundary can reject it instead of letting it fall through.
+		return true
+	case "checkout":
+		return len(gitPathArguments(subcommand, args)) > 0 || gitHasFlag(args, "-f", "--force")
+	case "push":
+		return gitHasForceFlag(args) || gitHasForceRefspec(args)
+	case "branch":
+		return gitHasFlag(args, "-d", "-D", "--delete")
+	default:
+		return false
+	}
+}
+
+// gitCommandParts recognizes the installed Git CLI's command prefix without
+// trying to interpret the shell. The caller still rejects shell operators,
+// substitutions and wildcards before trusting any extracted target.
+func gitCommandParts(command string) (string, []string, bool) {
+	fields, err := shellLikeFields(command)
+	if err != nil {
+		return "", nil, false
+	}
+	for i, field := range fields {
+		if strings.ToLower(filepath.Base(field)) != "git" {
+			continue
+		}
+		j := i + 1
+		for j < len(fields) {
+			rawOption := fields[j]
+			option := strings.ToLower(rawOption)
+			switch {
+			case rawOption == "-c" || rawOption == "-C" || option == "--git-dir" || option == "--work-tree" || option == "--namespace" || option == "--exec-path" || option == "--super-prefix" || option == "--config-env":
+				j += 2
+			case strings.HasPrefix(rawOption, "-c") && len(rawOption) > 2,
+				strings.HasPrefix(rawOption, "-C") && len(rawOption) > 2,
+				strings.HasPrefix(option, "--git-dir=") || strings.HasPrefix(option, "--work-tree=") || strings.HasPrefix(option, "--namespace=") || strings.HasPrefix(option, "--exec-path=") || strings.HasPrefix(option, "--super-prefix=") || strings.HasPrefix(option, "--config-env="):
+				j++
+			case strings.HasPrefix(option, "-"):
+				j++
+			default:
+				return strings.ToLower(filepath.Base(fields[j])), fields[j+1:], true
+			}
+		}
+	}
+	return "", nil, false
+}
+
+// gitCommandUsesAlternateRepository identifies Git's process-wide repository
+// redirection options. Their targets are not safely represented by the
+// callback's ordinary cwd, so callers must reject them before auto-accepting
+// or persisting a one-time destructive approval.
+func gitCommandUsesAlternateRepository(command string) bool {
+	fields, err := shellLikeFields(command)
+	if err != nil {
+		return false
+	}
+	for i, field := range fields {
+		if strings.ToLower(filepath.Base(field)) != "git" {
+			continue
+		}
+		for j := i + 1; j < len(fields); j++ {
+			rawOption := fields[j]
+			option := strings.ToLower(rawOption)
+			switch {
+			case rawOption == "-C" || option == "--git-dir" || option == "--work-tree":
+				return true
+			case strings.HasPrefix(rawOption, "-C") && len(rawOption) > 2,
+				strings.HasPrefix(option, "--git-dir=") || strings.HasPrefix(option, "--work-tree="):
+				return true
+			case rawOption == "-c" || option == "--namespace" || option == "--exec-path" || option == "--super-prefix" || option == "--config-env":
+				j++
+			case strings.HasPrefix(rawOption, "-c") && len(rawOption) > 2,
+				strings.HasPrefix(option, "--namespace=") || strings.HasPrefix(option, "--exec-path=") || strings.HasPrefix(option, "--super-prefix=") || strings.HasPrefix(option, "--config-env="):
+				continue
+			case strings.HasPrefix(rawOption, "-"):
+				continue
+			default:
+				return false
+			}
+		}
+	}
+	return false
+}
+
+func gitHasFlag(args []string, flags ...string) bool {
+	for _, arg := range args {
+		for _, flag := range flags {
+			if strings.EqualFold(arg, flag) {
+				return true
+			}
+			// Git accepts clustered short options (for example, `clean -fd`).
+			// Only expand one-letter flags; long options and value-bearing
+			// options must remain exact.
+			if len(flag) == 2 && flag[0] == '-' && flag[1] != '-' && len(arg) > 2 && arg[0] == '-' && arg[1] != '-' && strings.Contains(strings.ToLower(arg[1:]), strings.ToLower(flag[1:])) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func gitHasForceFlag(args []string) bool {
+	if gitHasFlag(args, "-f", "--force", "--force-with-lease") {
+		return true
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(strings.ToLower(arg), "--force-with-lease=") {
+			return true
+		}
+	}
+	return gitHasForceRefspec(args)
+}
+
+func gitHasForceRefspec(args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "+") {
 			return true
 		}
 	}
 	return false
+}
+
+func gitPathArguments(subcommand string, args []string) []string {
+	separator := -1
+	for i, arg := range args {
+		if arg == "--" {
+			separator = i
+			break
+		}
+	}
+	if separator >= 0 {
+		return append([]string{}, args[separator+1:]...)
+	}
+	if subcommand != "restore" {
+		return nil
+	}
+	var paths []string
+	valueOptions := map[string]bool{"--source": true, "-s": true, "--pathspec-from-file": true}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if valueOptions[arg] {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--source=") || strings.HasPrefix(arg, "--pathspec-from-file=") || strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-") {
+			continue
+		}
+		paths = append(paths, arg)
+	}
+	return paths
+}
+
+func destructiveGitCommandTargets(command string) []string {
+	subcommand, args, ok := gitCommandParts(command)
+	if !ok {
+		return nil
+	}
+	paths := gitPathArguments(subcommand, args)
+	if subcommand == "reset" {
+		if separator := slicesIndex(args, "--"); separator >= 0 {
+			paths = append(paths, args[separator+1:]...)
+		} else {
+			for _, arg := range args {
+				if filepath.IsAbs(arg) || strings.HasPrefix(arg, ".") {
+					paths = append(paths, arg)
+				}
+			}
+		}
+	}
+	if subcommand == "clean" {
+		for _, arg := range args {
+			if arg == "--" {
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			paths = append(paths, arg)
+		}
+	}
+	return uniqueNonEmptyStrings(paths)
+}
+
+func slicesIndex(values []string, target string) int {
+	for i, value := range values {
+		if value == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func destructiveGitBoundaryReason(command string) string {
+	if gitCommandUsesAlternateRepository(command) {
+		return "destructive git command redirects repository scope; Tusker rejects it without approval"
+	}
+	subcommand, args, ok := gitCommandParts(command)
+	if !ok {
+		return ""
+	}
+	if subcommand == "push" && (gitHasForceFlag(args) || gitHasForceRefspec(args)) {
+		var targets []string
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "+") || arg == "--" {
+				continue
+			}
+			if strings.ContainsAny(arg, "*?") || arg == "--all" || arg == "--mirror" || arg == "--delete" {
+				return "destructive git push has an ambiguous target; Tusker rejects it without approval"
+			}
+			targets = append(targets, arg)
+		}
+		if len(targets) < 2 {
+			return "destructive git push has an ambiguous target; Tusker rejects it without approval"
+		}
+	}
+	if (subcommand == "restore" || subcommand == "checkout") && len(gitPathArguments(subcommand, args)) == 0 && subcommand == "restore" {
+		return "destructive git restore has an ambiguous target; Tusker rejects it without approval"
+	}
+	if subcommand == "checkout" && gitHasFlag(args, "-f", "--force") && len(gitPathArguments(subcommand, args)) == 0 {
+		return "destructive git checkout has an ambiguous target; Tusker rejects it without approval"
+	}
+	return ""
 }
 
 func commandMentionsSecretPath(command string) bool {

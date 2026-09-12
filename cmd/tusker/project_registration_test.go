@@ -42,7 +42,7 @@ func TestProjectRegistrationIsIdempotentAcrossCanonicalPaths(t *testing.T) {
 	}
 }
 
-func TestProjectRegistrationIsIdempotentAcrossLinkedWorktrees(t *testing.T) {
+func TestProjectRegistrationKeepsLinkedWorktreesAsDistinctCheckouts(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -67,12 +67,54 @@ func TestProjectRegistrationIsIdempotentAcrossLinkedWorktrees(t *testing.T) {
 	}
 	worktree := filepath.Join(t.TempDir(), "feature")
 	runGitDir(t, repo, "worktree", "add", "-b", "feature", worktree, "main")
-	existing, created, err := store.RegisterProject(newRegisteredProject(worktree, filepath.Join(worktree, defaultRepoVaultDir)))
-	if err != nil || created {
+	registeredWorktree, created, err := store.RegisterProject(newRegisteredProject(worktree, filepath.Join(worktree, defaultRepoVaultDir)))
+	if err != nil || !created {
 		t.Fatalf("worktree registration: created=%v err=%v", created, err)
 	}
-	if existing.ProjectID != registered.ProjectID {
-		t.Fatalf("worktree returned %s, want %s", existing.ProjectID, registered.ProjectID)
+	if registeredWorktree.ProjectID == registered.ProjectID {
+		t.Fatalf("worktree reused project ID %s", registered.ProjectID)
+	}
+	projects, err := store.ListProjects()
+	if err != nil || len(projects) != 2 {
+		t.Fatalf("registered checkouts: err=%v projects=%#v", err, projects)
+	}
+	groups := groupRegisteredProjects(projects)
+	if len(groups) != 1 || len(groups[0].Checkouts) != 2 {
+		t.Fatalf("linked worktrees were not grouped for navigation: %#v", groups)
+	}
+}
+
+func TestProjectGroupingSurvivesDeletedWorktree(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "tusker-test@example.invalid")
+	runGitDir(t, repo, "config", "user.name", "Tusker Test")
+	if err := writeText(filepath.Join(repo, "README.md"), "project\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", "README.md")
+	runGitDir(t, repo, "commit", "-m", "project")
+	worktree := filepath.Join(t.TempDir(), "feature")
+	runGitDir(t, repo, "worktree", "add", "-b", "feature", worktree, "main")
+
+	for _, root := range []string{repo, worktree} {
+		if _, created, err := store.RegisterProject(newRegisteredProject(root, filepath.Join(root, defaultRepoVaultDir))); err != nil || !created {
+			t.Fatalf("register %s: created=%v err=%v", root, created, err)
+		}
+	}
+	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
+	projects, err := store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if groups := groupRegisteredProjects(projects); len(groups) != 1 || len(groups[0].Checkouts) != 2 {
+		t.Fatalf("deleted worktree escaped its repository group: %#v", groups)
 	}
 }
 
@@ -122,6 +164,10 @@ func TestProjectRegistrationKeepsDistinctGitProjectIdentities(t *testing.T) {
 	projects, err := store.ListProjects()
 	if err != nil || len(projects) != 3 {
 		t.Fatalf("registrations: err=%v projects=%#v", err, projects)
+	}
+	groups := groupRegisteredProjects(projects)
+	if len(groups) != 2 {
+		t.Fatalf("independent repositories were grouped: %#v", groups)
 	}
 }
 

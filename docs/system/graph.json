@@ -1,10 +1,45 @@
 {
   "nodes": [
     {
+      "subject": "2026-09-10-agent-coordination-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-09-10-agent-coordination-grill.md",
+      "title": "Agent coordination decisions — 10 September 2026",
+      "status": "canonical"
+    },
+    {
+      "subject": "2026-09-11-agent-access-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-09-11-agent-access-grill.md",
+      "title": "Agent access decisions — 11 September 2026",
+      "status": "canonical"
+    },
+    {
+      "subject": "agent-access",
+      "kind": "spec",
+      "path": ".tusker/specs/agent-access.md",
+      "title": "Agent access: simple profiles, honest permissions",
+      "status": "canonical"
+    },
+    {
+      "subject": "agent-coordination",
+      "kind": "spec",
+      "path": ".tusker/specs/agent-coordination.md",
+      "title": "Agent contacts, clarification and autonomous wave continuation",
+      "status": "canonical"
+    },
+    {
       "subject": "cli",
       "kind": "canonical",
       "path": "docs/system/cli.md",
       "title": "CLI reference",
+      "status": "canonical"
+    },
+    {
+      "subject": "completion-and-integrated-acceptance",
+      "kind": "spec",
+      "path": ".tusker/specs/completion-and-integrated-acceptance.md",
+      "title": "Completion semantics and integrated acceptance",
       "status": "canonical"
     },
     {
@@ -29,6 +64,20 @@
       "status": "canonical"
     },
     {
+      "subject": "execution-observability",
+      "kind": "spec",
+      "path": ".tusker/specs/execution-observability.md",
+      "title": "Execution observability: names, lineage, and truthful multi-agent tracking",
+      "status": "canonical"
+    },
+    {
+      "subject": "execution-observability-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-07-29-execution-observability-grill.md",
+      "title": "Decision log: execution observability and direct-agent identity",
+      "status": "canonical"
+    },
+    {
       "subject": "execution-observability-system",
       "kind": "canonical",
       "path": "docs/system/execution-observability.md",
@@ -40,6 +89,13 @@
       "kind": "canonical",
       "path": "docs/system/factory-intake.md",
       "title": "Factory intake",
+      "status": "canonical"
+    },
+    {
+      "subject": "full-height-workspace",
+      "kind": "spec",
+      "path": ".tusker/specs/full-height-workspace.md",
+      "title": "Full-height workspace with layered side navigation",
       "status": "canonical"
     },
     {
@@ -99,6 +155,20 @@
       "status": "canonical"
     },
     {
+      "subject": "project-registration-and-visibility",
+      "kind": "spec",
+      "path": ".tusker/specs/project-registration-and-visibility.md",
+      "title": "Project registration and visibility",
+      "status": "canonical"
+    },
+    {
+      "subject": "project-registration-and-visibility-decisions",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-09-11-project-registration-and-visibility-grill.md",
+      "title": "Project registration and visibility decisions",
+      "status": "canonical"
+    },
+    {
       "subject": "proof-and-closeout",
       "kind": "canonical",
       "path": "docs/system/proof-and-closeout.md",
@@ -131,6 +201,13 @@
       "kind": "spec",
       "path": ".tusker/specs/real-work-ui-acceptance.md",
       "title": "Verify the live task wave and Documents experience against the seeded project",
+      "status": "canonical"
+    },
+    {
+      "subject": "remaining-product-work",
+      "kind": "spec",
+      "path": ".tusker/specs/remaining-product-work.md",
+      "title": "Remaining product work after the three real-work streams",
       "status": "canonical"
     },
     {
@@ -173,6 +250,13 @@
       "kind": "canonical",
       "path": "docs/system/skills.md",
       "title": "Skills",
+      "status": "canonical"
+    },
+    {
+      "subject": "skills-and-documentation",
+      "kind": "spec",
+      "path": ".tusker/specs/skills-and-documentation.md",
+      "title": "External skills and clear everyday documentation",
       "status": "canonical"
     },
     {
@@ -234,9 +318,174 @@
   ],
   "edges": [
     {
+      "from": "2026-09-10-agent-coordination-grill",
+      "to": "agent-coordination",
+      "kind": "decides_for"
+    },
+    {
+      "from": "2026-09-10-agent-coordination-grill",
+      "to": "agent-coordination",
+      "kind": "link"
+    },
+    {
+      "from": "2026-09-10-agent-coordination-grill",
+      "to": "agent-coordination",
+      "kind": "part_of"
+    },
+    {
+      "from": "2026-09-11-agent-access-grill",
+      "to": "agent-access",
+      "kind": "decides_for"
+    },
+    {
+      "from": "2026-09-11-agent-access-grill",
+      "to": "agent-access",
+      "kind": "link"
+    },
+    {
+      "from": "2026-09-11-agent-access-grill",
+      "to": "agent-access",
+      "kind": "part_of"
+    },
+    {
+      "from": "agent-access",
+      "to": "model-level-configuration",
+      "kind": "link"
+    },
+    {
+      "from": "agent-access",
+      "to": "runner-execution-boundary",
+      "kind": "link"
+    },
+    {
+      "from": "agent-access",
+      "to": "runners-and-acp",
+      "kind": "part_of"
+    },
+    {
+      "from": "agent-access",
+      "to": "2026-09-11-agent-access-grill",
+      "kind": "source"
+    },
+    {
+      "from": "agent-access",
+      "to": "model-level-configuration",
+      "kind": "source"
+    },
+    {
+      "from": "agent-access",
+      "to": "runner-execution-boundary",
+      "kind": "source"
+    },
+    {
+      "from": "agent-access",
+      "to": "cli",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-access",
+      "to": "runners-and-acp",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-access",
+      "to": "serve-ui",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "execution-observability",
+      "kind": "part_of"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "2026-09-10-agent-coordination-grill",
+      "kind": "source"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "completion-and-integrated-acceptance",
+      "kind": "source"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "execution-observability",
+      "kind": "source"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "source"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "runner-execution-boundary",
+      "kind": "source"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "cli",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "delivery-and-waves",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "execution-observability-system",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "orchestration",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "runners-and-acp",
+      "kind": "updates"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "serve-ui",
+      "kind": "updates"
+    },
+    {
       "from": "cli",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "completion-and-integrated-acceptance",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "part_of"
+    },
+    {
+      "from": "completion-and-integrated-acceptance",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "source"
+    },
+    {
+      "from": "completion-and-integrated-acceptance",
+      "to": "real-work-test-packets",
+      "kind": "source"
+    },
+    {
+      "from": "completion-and-integrated-acceptance",
+      "to": "remaining-product-work",
+      "kind": "source"
+    },
+    {
+      "from": "completion-and-integrated-acceptance",
+      "to": "landing-and-completion",
+      "kind": "updates"
+    },
+    {
+      "from": "decisions/2026-09-07-work-area-redesign-grill",
+      "to": "full-height-workspace",
+      "kind": "link"
     },
     {
       "from": "decisions/2026-09-07-work-area-redesign-grill",
@@ -309,14 +558,79 @@
       "kind": "source"
     },
     {
+      "from": "execution-observability",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "execution-observability",
+      "to": "cli",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability",
+      "to": "orchestration",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability",
+      "to": "overview",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability",
+      "to": "serve-ui",
+      "kind": "updates"
+    },
+    {
+      "from": "execution-observability-grill",
+      "to": "execution-observability",
+      "kind": "decides_for"
+    },
+    {
+      "from": "execution-observability-grill",
+      "to": "execution-observability",
+      "kind": "part_of"
+    },
+    {
       "from": "execution-observability-system",
       "to": "overview",
       "kind": "part_of"
     },
     {
       "from": "factory-intake",
+      "to": "delivery-and-waves",
+      "kind": "link"
+    },
+    {
+      "from": "factory-intake",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "full-height-workspace",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "full-height-workspace",
+      "to": "documents-experience",
+      "kind": "source"
+    },
+    {
+      "from": "full-height-workspace",
+      "to": "project-registration-and-visibility",
+      "kind": "source"
+    },
+    {
+      "from": "full-height-workspace",
+      "to": "work-area-redesign",
+      "kind": "source"
+    },
+    {
+      "from": "full-height-workspace",
+      "to": "serve-ui",
+      "kind": "updates"
     },
     {
       "from": "gates",
@@ -410,6 +724,16 @@
     },
     {
       "from": "planning-handoff-and-agent-entry",
+      "to": "agent-coordination",
+      "kind": "link"
+    },
+    {
+      "from": "planning-handoff-and-agent-entry",
+      "to": "skills-and-documentation",
+      "kind": "link"
+    },
+    {
+      "from": "planning-handoff-and-agent-entry",
       "to": "spec-to-proof",
       "kind": "link"
     },
@@ -436,6 +760,21 @@
     {
       "from": "platform-support",
       "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "project-registration-and-visibility",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "project-registration-and-visibility",
+      "to": "work-area-redesign",
+      "kind": "source"
+    },
+    {
+      "from": "project-registration-and-visibility-decisions",
+      "to": "project-registration-and-visibility",
       "kind": "part_of"
     },
     {
@@ -515,6 +854,46 @@
     },
     {
       "from": "real-work-ui-acceptance",
+      "to": "work-knowledge-and-retention",
+      "kind": "source"
+    },
+    {
+      "from": "remaining-product-work",
+      "to": "documents-experience",
+      "kind": "link"
+    },
+    {
+      "from": "remaining-product-work",
+      "to": "real-work-lifecycle-cli",
+      "kind": "link"
+    },
+    {
+      "from": "remaining-product-work",
+      "to": "real-work-test-repository",
+      "kind": "link"
+    },
+    {
+      "from": "remaining-product-work",
+      "to": "real-work-ui-acceptance",
+      "kind": "link"
+    },
+    {
+      "from": "remaining-product-work",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "part_of"
+    },
+    {
+      "from": "remaining-product-work",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "source"
+    },
+    {
+      "from": "remaining-product-work",
+      "to": "real-work-test-packets",
+      "kind": "source"
+    },
+    {
+      "from": "remaining-product-work",
       "to": "work-knowledge-and-retention",
       "kind": "source"
     },
@@ -599,8 +978,33 @@
       "kind": "part_of"
     },
     {
+      "from": "skills-and-documentation",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "part_of"
+    },
+    {
+      "from": "skills-and-documentation",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "source"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "2026-09-10-agent-coordination-grill",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "agent-coordination",
+      "kind": "link"
+    },
+    {
       "from": "spec-to-proof",
       "to": "delivery-and-waves",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "model-level-configuration",
       "kind": "link"
     },
     {
@@ -611,6 +1015,11 @@
     {
       "from": "spec-to-proof",
       "to": "overview",
+      "kind": "link"
+    },
+    {
+      "from": "spec-to-proof",
+      "to": "planning-handoff-and-agent-entry",
       "kind": "link"
     },
     {
@@ -635,6 +1044,11 @@
     },
     {
       "from": "tasks-and-proof",
+      "to": "proof-and-closeout",
+      "kind": "link"
+    },
+    {
+      "from": "tasks-and-proof",
       "to": "overview",
       "kind": "part_of"
     },
@@ -651,12 +1065,27 @@
     {
       "from": "work-area-build-packets",
       "to": "work-area-redesign",
+      "kind": "link"
+    },
+    {
+      "from": "work-area-build-packets",
+      "to": "work-area-redesign",
       "kind": "part_of"
     },
     {
       "from": "work-area-build-packets",
       "to": "work-area-redesign",
       "kind": "source"
+    },
+    {
+      "from": "work-area-redesign",
+      "to": "full-height-workspace",
+      "kind": "link"
+    },
+    {
+      "from": "work-area-redesign",
+      "to": "project-registration-and-visibility",
+      "kind": "link"
     },
     {
       "from": "work-area-redesign",

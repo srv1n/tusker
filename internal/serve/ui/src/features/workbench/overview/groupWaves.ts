@@ -21,6 +21,7 @@ export type StartabilityState = "ready" | "blocked" | "unknown";
 
 export interface Startability {
   state: StartabilityState;
+  /** Per-wave only; page-level error dedupe needs a backend-issued issue ID. */
   reason?: string;
 }
 
@@ -39,6 +40,21 @@ export interface WaveProgress {
   attention: number;
 }
 
+/**
+ * Stable row contract for the quiet-list consumer. This projection only ever
+ * offers navigation: start/review require a separately supplied, authoritative
+ * endpoint and must not be inferred from grouping.
+ */
+export interface OverviewRow {
+  primaryAction: "open";
+  secondary?: {
+    kind: "human-action" | "blocker" | "running" | "outcome" | "unavailable" | "history";
+    text: string;
+    /** Unshortened source fact for detail/disclosure surfaces. */
+    detail?: string;
+  };
+}
+
 export interface GroupedWave {
   wave: WaveSummary;
   group: OverviewGroupId;
@@ -49,6 +65,7 @@ export interface GroupedWave {
   /** Needs-you row that also has fresh execution; rendered as a secondary badge. */
   runningAlso: boolean;
   progress: WaveProgress;
+  row: OverviewRow;
 }
 
 export interface OverviewGroup {
@@ -84,7 +101,9 @@ export const GROUP_TITLES: Record<OverviewGroupId, string> = {
   running: "Running",
   ready: "Ready to start",
   planned: "Planned",
-  completed: "Completed",
+  // This compatible ID contains successful completions and terminal history.
+  // Naming the section History prevents cancelled work looking successful.
+  completed: "History",
   unavailable: "Status unavailable",
 };
 
@@ -105,7 +124,12 @@ const COMPLETED_STATUSES = new Set([
   "completed",
 ]);
 
-const HISTORY_STATUSES = new Set(["cancelled", "superseded"]);
+const HISTORY_STATUSES = new Set(["cancelled", "stopped", "superseded"]);
+const PENDING_PROMOTION_STATUSES = new Map([
+  ["pending_promotion", "Pending promotion"],
+  ["promotion_pending", "Pending promotion"],
+]);
+// `fullyDrained` never substitutes for one of these structured closeout states.
 
 /**
  * Authoritative completion only. `landedAt` or a terminal wave status.
@@ -115,7 +139,7 @@ const HISTORY_STATUSES = new Set(["cancelled", "superseded"]);
 export function isAuthoritativelyCompleted(wave: WaveSummary): boolean {
   if (wave.landedAt) return true;
   const status = (wave.status ?? "").toLowerCase();
-  return COMPLETED_STATUSES.has(status) || HISTORY_STATUSES.has(status);
+  return COMPLETED_STATUSES.has(status);
 }
 
 export function isHistoryOnly(wave: WaveSummary): boolean {
@@ -135,15 +159,39 @@ function memberIdsOf(wave: WaveSummary): Set<string> {
   ]);
 }
 
+/** First non-empty authored source string. */
+function firstText(...values: Array<string | null | undefined>): string | undefined {
+  return values.find((value) => value?.trim())?.trim();
+}
+
 /** Fresh actionable human decision on this wave's members or brief. */
 function hasFreshHumanNeed(
   wave: WaveSummary,
   memberTasks: TaskCapsule[],
-): boolean {
-  if (wave.brief.humanAction.length > 0) return true;
-  return memberTasks.some(
+): string | undefined {
+  const briefAction = wave.brief.humanAction
+    .map((item) => firstText(item.action))
+    .find(Boolean);
+  if (briefAction) return briefAction;
+
+  for (const task of memberTasks) {
+    for (const gate of task.openGates ?? []) {
+      const gateAction = firstText(
+        gate.action,
+        gate.ask,
+        gate.question ?? undefined,
+        gate.reason,
+        gate.whyAgentCannot,
+      );
+      if (gateAction) return gateAction;
+    }
+  }
+
+  // `hasGate` remains an authoritative gate fact even where this projection
+  // lacks the gate detail. Do not turn absent startability into a human gate.
+  return wave.brief.humanAction.length > 0 || memberTasks.some(
     (task) => task.hasGate || (task.openGates?.length ?? 0) > 0,
-  );
+  ) ? "Human action required." : undefined;
 }
 
 function hasFreshRun(
@@ -173,29 +221,53 @@ function progressOf(
   };
 }
 
+function row(secondary?: OverviewRow["secondary"]): OverviewRow {
+  return { primaryAction: "open", secondary };
+}
+
+function runningText(progress: WaveProgress): string {
+  return `${progress.moving} ${progress.moving === 1 ? "task" : "tasks"} running.`;
+}
+
+function authoredOutcome(wave: WaveSummary): string | undefined {
+  return firstText(wave.expectedOutcome, wave.brief.expectedOutcome);
+}
+
+function unavailableDetail(startability: Startability | undefined): string {
+  return startability?.reason
+    ? `Start status unavailable: ${startability.reason}`
+    : "Authoritative start status is unavailable.";
+}
+
+function isStartabilityUnknown(startability: Startability | undefined): boolean {
+  return !startability || startability.state === "unknown";
+}
+
 function plannedLabel(
   wave: WaveSummary,
   startability: Startability | undefined,
 ): { stateLabel: string; stateDetail?: string } {
   if (wave.authorization.state === "paused")
     return { stateLabel: "Paused", stateDetail: wave.authorization.action || undefined };
-  if (wave.authorization.state === "disarmed")
-    return {
-      stateLabel: "Not authorized",
-      stateDetail: wave.authorization.action || undefined,
-    };
   if (startability?.state === "blocked")
     return { stateLabel: "Blocked", stateDetail: startability.reason };
+  if (wave.authorization.state === "disarmed")
+    return {
+      stateLabel: "Not started",
+      stateDetail: wave.authorization.action || undefined,
+    };
   if (startability?.state === "unknown")
     return {
       stateLabel: "Planned",
-      stateDetail: startability.reason
-        ? `Start status unavailable: ${startability.reason}`
-        : "Start status unavailable.",
+      stateDetail: unavailableDetail(startability),
     };
   if (wave.authorization.state === "armed")
     return { stateLabel: "Planned", stateDetail: "Authorized." };
   return { stateLabel: "Planned" };
+}
+
+function pendingPromotionLabel(wave: WaveSummary): string | undefined {
+  return PENDING_PROMOTION_STATUSES.get((wave.status ?? "").toLowerCase());
 }
 
 function groupOneWave(
@@ -210,69 +282,87 @@ function groupOneWave(
   const progress = progressOf(memberTasks, runsByTask, attentionIds);
   const running = hasFreshRun(memberTasks, runsByTask);
 
-  if (isAuthoritativelyCompleted(wave)) {
+  if (isAuthoritativelyCompleted(wave) || isHistoryOnly(wave)) {
     const history = isHistoryOnly(wave);
+    const historyDetail = history ? "Ended without delivery." : authoredOutcome(wave);
     return {
       wave,
       group: "completed",
       stateLabel: history
         ? wave.status.charAt(0).toUpperCase() + wave.status.slice(1).toLowerCase()
         : "Completed",
-      stateDetail: history ? "Ended without delivery." : undefined,
+      stateDetail: history ? historyDetail : undefined,
       runningAlso: false,
       progress,
+      row: row(historyDetail ? {
+        kind: history ? "history" : "outcome",
+        text: historyDetail,
+        detail: historyDetail,
+      } : undefined),
     };
   }
 
   if (isWaveStale(wave)) {
     const need = hasFreshHumanNeed(wave, memberTasks);
+    const detail = need || running
+      ? "Freshness lost for a needs-you or running fact."
+      : "Required reads failed or are stale.";
     return {
       wave,
       group: "unavailable",
       stateLabel: "Status unavailable",
-      stateDetail: need || running
-        ? "Freshness lost for a needs-you or running fact."
-        : "Required reads failed or are stale.",
+      stateDetail: detail,
       runningAlso: false,
       progress,
+      row: row({ kind: "unavailable", text: detail, detail }),
     };
   }
 
   const need = hasFreshHumanNeed(wave, memberTasks);
   if (need) {
+    const detail = running ? `${need} Running.` : need;
     return {
       wave,
       group: "needs-you",
       stateLabel: "Needs you",
-      stateDetail:
-        startability?.state === "unknown"
-          ? startability.reason
-            ? `Start status unavailable: ${startability.reason}`
-            : "Start status unavailable."
-          : undefined,
+      stateDetail: detail,
       runningAlso: running,
       progress,
+      row: row({ kind: "human-action", text: detail, detail: need }),
     };
   }
 
   if (running) {
+    const detail = isStartabilityUnknown(startability)
+      ? `${runningText(progress)} ${unavailableDetail(startability)}`
+      : runningText(progress);
     return {
       wave,
       group: "running",
       stateLabel: "Running",
-      stateDetail:
-        startability?.state === "unknown"
-          ? startability.reason
-            ? `Start status unavailable: ${startability.reason}`
-            : "Start status unavailable."
-          : undefined,
+      stateDetail: detail,
       runningAlso: false,
       progress,
+      row: row({ kind: "running", text: detail, detail }),
+    };
+  }
+
+  const pendingPromotion = pendingPromotionLabel(wave);
+  if (pendingPromotion) {
+    return {
+      wave,
+      group: "planned",
+      stateLabel: pendingPromotion,
+      stateDetail: undefined,
+      runningAlso: false,
+      progress,
+      row: row({ kind: "blocker", text: pendingPromotion }),
     };
   }
 
   // Authoritative readiness only: armed/open/all-ready never imply runnable.
   if (startability?.state === "ready") {
+    const outcome = authoredOutcome(wave);
     return {
       wave,
       group: "ready",
@@ -280,10 +370,28 @@ function groupOneWave(
       stateDetail: startability.reason,
       runningAlso: false,
       progress,
+      row: row(outcome ? { kind: "outcome", text: outcome, detail: outcome } : undefined),
     };
   }
 
   const planned = plannedLabel(wave, startability);
+  if (
+    isStartabilityUnknown(startability) &&
+    wave.authorization.state !== "paused" &&
+    wave.authorization.state !== "disarmed"
+  ) {
+    const detail = unavailableDetail(startability);
+    return {
+      wave,
+      group: "unavailable",
+      stateLabel: "Start status unavailable",
+      stateDetail: detail,
+      runningAlso: false,
+      progress,
+      row: row({ kind: "unavailable", text: detail, detail }),
+    };
+  }
+  const outcome = authoredOutcome(wave);
   return {
     wave,
     group: "planned",
@@ -291,6 +399,9 @@ function groupOneWave(
     stateDetail: planned.stateDetail,
     runningAlso: false,
     progress,
+    row: row(planned.stateDetail
+      ? { kind: "blocker", text: planned.stateDetail, detail: planned.stateDetail }
+      : outcome ? { kind: "outcome", text: outcome, detail: outcome } : undefined),
   };
 }
 

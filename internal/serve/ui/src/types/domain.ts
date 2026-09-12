@@ -17,14 +17,10 @@ export type Lane = "execute" | "review";
 
 /** Task lifecycle, mirrors tusker task status. */
 export type TaskStatus =
-  | "backlog"
-  | "ready"
-  | "in_progress"
-  | "review"
-  | "blocked"
-  | "done";
+  "backlog" | "ready" | "in_progress" | "review" | "blocked" | "done";
 
-export type Readiness = "ready" | "blocked_dependency" | "blocked_gate" | "draft";
+export type Readiness =
+  "ready" | "blocked_dependency" | "blocked_gate" | "draft";
 export type Priority = "p0" | "p1" | "p2" | "p3";
 export type Risk = "low" | "medium" | "high" | "critical";
 
@@ -33,11 +29,7 @@ export type ProofStatus = "pending" | "pass" | "fail";
 
 /** The five human-gate kinds the needs-me queue routes (packet §4.1). */
 export type GateKind =
-  | "clarify"
-  | "provision"
-  | "approve-spec"
-  | "review"
-  | "failed";
+  "clarify" | "provision" | "approve-spec" | "review" | "failed";
 
 /** Run liveness derived from time-since-last-event (packet §4.2). */
 export type Liveness = "fresh" | "stale" | "dead";
@@ -66,7 +58,8 @@ export type KnownRunOutcome =
 export type RunOutcome = KnownRunOutcome | (string & {});
 
 /** Lease state, likewise an open enum so new daemon lease states still display. */
-export type LeaseState = "held" | "released" | "expired" | "unclaimed" | (string & {});
+export type LeaseState =
+  "held" | "released" | "expired" | "unclaimed" | (string & {});
 
 /** Result of POST /api/runs/:taskId/redrive — a redrive must never be silent. */
 export interface RedriveResult {
@@ -154,27 +147,78 @@ export interface DeliveryReview {
   ready: boolean;
   title: string;
   summary?: string;
-  whatWillBeDelivered: Array<{ requirement: string; outcome: string; nonGoals: string[]; links: DeliveryReviewLink[] }>;
+  whatWillBeDelivered: Array<{
+    requirement: string;
+    outcome: string;
+    nonGoals: string[];
+    links: DeliveryReviewLink[];
+  }>;
   howItWillBeProven: Array<{
-    requirements: string[]; title: string; outcome: string; acceptance: string[]; tests: string[]; artifacts: string[];
-    sourceKey: string; taskId?: string; taskHref?: string;
-    checks: Array<{ covers: string; check: string; notes?: string; href?: string }>;
-    artifactRefs: Array<{ kind: string; path: string; summary: string; acceptanceIds: string[]; href?: string }>;
+    requirements: string[];
+    title: string;
+    outcome: string;
+    acceptance: string[];
+    tests: string[];
+    artifacts: string[];
+    sourceKey: string;
+    taskId?: string;
+    taskHref?: string;
+    checks: Array<{
+      covers: string;
+      check: string;
+      notes?: string;
+      href?: string;
+    }>;
+    artifactRefs: Array<{
+      kind: string;
+      path: string;
+      summary: string;
+      acceptanceIds: string[];
+      href?: string;
+    }>;
     resourceRefs: string[];
   }>;
   howWorkFlows: {
-    frontiers: string[][]; expectedConcurrency: number; integration: string;
-    sharedResources: Array<{ sourceKey: string; kind: string; capacity?: number; capacityStatus: string; constraints: string[]; referencedBy: string[]; taskLinks: DeliveryReviewLink[] }>;
+    frontiers: string[][];
+    expectedConcurrency: number;
+    integration: string;
+    sharedResources: Array<{
+      sourceKey: string;
+      kind: string;
+      capacity?: number;
+      capacityStatus: string;
+      constraints: string[];
+      referencedBy: string[];
+      taskLinks: DeliveryReviewLink[];
+    }>;
     crossScopeDependencies: DeliveryCrossScopeDependency[];
-    warnings: string[]; waveId?: string; waveHref?: string;
+    warnings: string[];
+    waveId?: string;
+    waveHref?: string;
   };
   whatNeedsYourDecision: Array<{
-    title: string; action: string; why: string; sourceKey?: string; gateId?: string; gateHref?: string;
-    taskSourceKey?: string; taskId?: string; acceptanceIds: string[]; verification?: string;
+    title: string;
+    action: string;
+    why: string;
+    sourceKey?: string;
+    gateId?: string;
+    gateHref?: string;
+    taskSourceKey?: string;
+    taskId?: string;
+    acceptanceIds: string[];
+    verification?: string;
   }>;
   startBoundary: {
-    planFingerprint: string; planIdentity?: string; contextFingerprint?: string; authorization: string; readiness: string;
-    blockers: string[]; nextAction: string; state: DeliveryReviewState; stateLabel: string; actionHref?: string;
+    planFingerprint: string;
+    planIdentity?: string;
+    contextFingerprint?: string;
+    authorization: string;
+    readiness: string;
+    blockers: string[];
+    nextAction: string;
+    state: DeliveryReviewState;
+    stateLabel: string;
+    actionHref?: string;
   };
   nonGoals: string[];
 }
@@ -193,15 +237,34 @@ export interface DeliveryPlanSummary {
   taskCount: number;
   expectedConcurrency: number;
   runnerProfile?: string;
-  tasks: Array<{ sourceKey: string; title: string; runnerProfile?: string; complexity?: string; risk?: string }>;
+  tasks: Array<{
+    sourceKey: string;
+    title: string;
+    runnerProfile?: string;
+    complexity?: string;
+    risk?: string;
+  }>;
   state: "available" | "invalid";
   issue?: string;
 }
 
-export interface DeliveryReviewLink { label: string; href: string }
+export interface DeliveryReviewLink {
+  label: string;
+  href: string;
+}
 export type DeliveryReviewState =
-  | "held" | "invalid" | "changed" | "disabled" | "daemon-off" | "runner-blocked"
-  | "shared-workspace" | "gated" | "armed" | "running" | "parked" | "completed";
+  | "held"
+  | "invalid"
+  | "changed"
+  | "disabled"
+  | "daemon-off"
+  | "runner-blocked"
+  | "shared-workspace"
+  | "gated"
+  | "armed"
+  | "running"
+  | "parked"
+  | "completed";
 
 export interface DeliveryStartResult {
   schema: "tusker.delivery-start/v1";
@@ -239,33 +302,126 @@ export interface DiscardImpact {
   preservesHistory: boolean;
 }
 
-export type DocKind = "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
+export type DocKind =
+  "spec" | "decision" | "knowledge" | "task" | "epic" | "dashboard";
 
 // ----------------------------------------------------------------------------
 // Execution observability (read model; lifecycle dimensions never collapse)
 // ----------------------------------------------------------------------------
 
-export interface ExecutionCapability { action: string; available: boolean; target?: string; reason?: string; provider?: string; provider_owned: boolean }
-export interface ProviderCapabilityFact { name: string; state: "true" | "false" | "unknown" | string; provenance: string; fresh_at: string }
+export interface ExecutionCapability {
+  action: string;
+  available: boolean;
+  target?: string;
+  reason?: string;
+  provider?: string;
+  provider_owned: boolean;
+}
+export interface ProviderCapabilityFact {
+  name: string;
+  state: "true" | "false" | "unknown" | string;
+  provenance: string;
+  fresh_at: string;
+}
 export interface ExecutionLifecycle {
-  lease_state: string; attempt_outcome: string; session_ref: string; provider_status: string; delivery_state: string;
-  process_observed: boolean; admission_state: string; process_state: string; outcome_state: string; session_state: string;
-  child_attention_state: string; derived_phase: string;
+  lease_state: string;
+  attempt_outcome: string;
+  session_ref: string;
+  provider_status: string;
+  delivery_state: string;
+  process_observed: boolean;
+  admission_state: string;
+  process_state: string;
+  outcome_state: string;
+  session_state: string;
+  child_attention_state: string;
+  derived_phase: string;
 }
 export interface ExecutionNode {
-  execution_id: string; root_execution_id: string; parent_execution_id: string; project_id: string; node_kind: string;
-  display_name: string; effective_display_name: string; task_id: string; wave_id: string; bound_task_id: string; bound_wave_id: string;
-  binding_generation: number; binding_at: string; proof_eligible: boolean; attempt_id: string; source: string; provider: string;
-  provider_session_id: string; effective_provider_session_id: string; provider_child_handle: string; agent_type: string; created_at: string;
-  provider_status: string; provider_owned: boolean; provider_capabilities: ProviderCapabilityFact[]; lifecycle: ExecutionLifecycle;
-  active_children: number; failed_children: number; attention_children: number; partial_visibility: boolean; diagnostics: string[]; controls: ExecutionCapability[];
+  execution_id: string;
+  root_execution_id: string;
+  parent_execution_id: string;
+  project_id: string;
+  node_kind: string;
+  display_name: string;
+  effective_display_name: string;
+  task_id: string;
+  wave_id: string;
+  bound_task_id: string;
+  bound_wave_id: string;
+  binding_generation: number;
+  binding_at: string;
+  proof_eligible: boolean;
+  attempt_id: string;
+  source: string;
+  provider: string;
+  provider_session_id: string;
+  effective_provider_session_id: string;
+  provider_child_handle: string;
+  agent_type: string;
+  created_at: string;
+  provider_status: string;
+  provider_owned: boolean;
+  provider_capabilities: ProviderCapabilityFact[];
+  lifecycle: ExecutionLifecycle;
+  active_children: number;
+  failed_children: number;
+  attention_children: number;
+  partial_visibility: boolean;
+  diagnostics: string[];
+  controls: ExecutionCapability[];
 }
-export interface ExecutionEdge { parent_execution_id: string; child_execution_id: string; kind: string; created_at: string }
-export interface ExecutionGraph { schema: "tusker.execution-graph/v1"; nodes: ExecutionNode[]; edges: ExecutionEdge[]; next_cursor?: string; partial_visibility: boolean }
-export interface ExecutionTimelineRow { source_execution_id: string; source_epoch: string; source_sequence: number; provider: string; provider_event_id: string; observation_id: string; occurred_at: string; status: string; authoritative: boolean; cursor?: string }
-export interface ExecutionTimeline { schema: "tusker.execution-timeline/v1"; rows: ExecutionTimelineRow[]; next_cursor?: string; previous_cursor?: string; committed_tail?: string; reset?: boolean; gap?: boolean; stale_cursor?: boolean; older?: boolean; newer?: boolean }
-export interface ExecutionInbox { schema: "tusker.execution-graph/v1"; executions: ExecutionNode[]; read_only: boolean }
-export interface ExecutionBindingPreview { ok: boolean; task_id?: string; wave_id?: string; binding_generation?: number; conflicts?: number; proof_boundary: string; error?: string }
+export interface ExecutionEdge {
+  parent_execution_id: string;
+  child_execution_id: string;
+  kind: string;
+  created_at: string;
+}
+export interface ExecutionGraph {
+  schema: "tusker.execution-graph/v1";
+  nodes: ExecutionNode[];
+  edges: ExecutionEdge[];
+  next_cursor?: string;
+  partial_visibility: boolean;
+}
+export interface ExecutionTimelineRow {
+  source_execution_id: string;
+  source_epoch: string;
+  source_sequence: number;
+  provider: string;
+  provider_event_id: string;
+  observation_id: string;
+  occurred_at: string;
+  status: string;
+  authoritative: boolean;
+  cursor?: string;
+}
+export interface ExecutionTimeline {
+  schema: "tusker.execution-timeline/v1";
+  rows: ExecutionTimelineRow[];
+  next_cursor?: string;
+  previous_cursor?: string;
+  committed_tail?: string;
+  reset?: boolean;
+  gap?: boolean;
+  stale_cursor?: boolean;
+  older?: boolean;
+  newer?: boolean;
+}
+export interface ExecutionInbox {
+  schema: "tusker.execution-graph/v1";
+  executions: ExecutionNode[];
+  read_only: boolean;
+}
+export interface ExecutionBindingPreview {
+  ok: boolean;
+  task_id?: string;
+  wave_id?: string;
+  binding_generation?: number;
+  conflicts?: number;
+  proof_boundary: string;
+  error?: string;
+}
 
 // ----------------------------------------------------------------------------
 // Projects & navigation
@@ -273,9 +429,19 @@ export interface ExecutionBindingPreview { ok: boolean; task_id?: string; wave_i
 
 export interface ProjectSummary {
   id: string;
+  logicalId?: string;
   name: string;
   repoRoot: string;
   vaultRoot: string;
+  visible?: boolean;
+  auxiliary?: boolean;
+  checkouts?: CheckoutSummary[];
+  registryPreview?: {
+    duplicatePathAliases: string[];
+    relatedWorktreeGroups: string[][];
+    missingRegistrations: string[];
+    separateRepositoryIds: string[];
+  };
   automationEnabled: boolean;
   automationSource?: string;
   workspaceMode?: string;
@@ -300,6 +466,41 @@ export interface ProjectSummary {
     lastPollAt?: string;
     nextDueAt?: string;
   };
+}
+
+export interface CheckoutSummary {
+  id: string;
+  label: string;
+  repoRoot: string;
+  vaultRoot: string;
+  branch?: string;
+  head?: string;
+  git: boolean;
+  detached: boolean;
+  available: boolean;
+  activity: string;
+  activeRuns: number;
+  health: string;
+  error?: string;
+}
+
+export function projectContainsCheckout(
+  project: ProjectSummary,
+  checkoutId: string,
+): boolean {
+  return (
+    project.id === checkoutId ||
+    (project.checkouts ?? []).some((checkout) => checkout.id === checkoutId)
+  );
+}
+
+export function projectVisibleInNavigation(project: ProjectSummary): boolean {
+  return (
+    project.visible !== false &&
+    !project.auxiliary &&
+    (!project.checkouts?.length ||
+      project.checkouts.some((checkout) => checkout.available))
+  );
 }
 
 export interface ProjectRegistrationResult extends ActionResult {
@@ -388,7 +589,14 @@ export interface FactoryOperationsProjection {
     project: FactoryOperationsCapacityLimit;
     resourceHolds: FactoryOperationsResourceHold[];
   };
-  sectionOrder: ["delivered", "workingNow", "reviewOrRework", "blocked", "needsYourDecision", "nextFrontier"];
+  sectionOrder: [
+    "delivered",
+    "workingNow",
+    "reviewOrRework",
+    "blocked",
+    "needsYourDecision",
+    "nextFrontier",
+  ];
   delivered: FactoryOperationsItem[];
   workingNow: FactoryOperationsItem[];
   reviewOrRework: FactoryOperationsItem[];
@@ -530,11 +738,7 @@ export interface FailedNeed extends NeedBase {
 }
 
 export type NeedItem =
-  | ClarifyNeed
-  | ProvisionNeed
-  | ApproveSpecNeed
-  | ReviewNeed
-  | FailedNeed;
+  ClarifyNeed | ProvisionNeed | ApproveSpecNeed | ReviewNeed | FailedNeed;
 
 // ----------------------------------------------------------------------------
 // Runs
@@ -546,7 +750,11 @@ export interface RunSummary {
   taskTitle: string;
   projectId: string;
   runner: Runner;
+  runnerProfile?: string;
+  runnerHarness?: string;
   model: string;
+  runnerEffort?: string;
+  runnerFallbackReason?: string;
   lane: Lane;
   leaseState: LeaseState;
   /** Canonical runtime-store state, before the display lease is normalized. */
@@ -589,11 +797,35 @@ export interface RunDetail extends RunSummary {
   workspacePath: string;
   attempts: Attempt[];
   events: RunEvent[];
-  authorization?: { source: string; actor: string; trigger: string; project_automation_enabled: boolean; created_at: string };
-  identity?: { repo_root: string; workspace_path: string; workspace_mode: string; runner: string; branch?: string; head?: string };
-  session?: { session_ref: string; state: string; resumable: boolean; last_seen_at: string; last_error?: string };
+  authorization?: {
+    source: string;
+    actor: string;
+    trigger: string;
+    project_automation_enabled: boolean;
+    created_at: string;
+  };
+  identity?: {
+    repo_root: string;
+    workspace_path: string;
+    workspace_mode: string;
+    runner: string;
+    branch?: string;
+    head?: string;
+  };
+  session?: {
+    session_ref: string;
+    state: string;
+    resumable: boolean;
+    last_seen_at: string;
+    last_error?: string;
+  };
   resume?: { supported: boolean; command?: string; reason?: string };
-  delivery?: { summary?: string; verification?: string; proofStatus: string; artifact?: string };
+  delivery?: {
+    summary?: string;
+    verification?: string;
+    proofStatus: string;
+    artifact?: string;
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -618,12 +850,20 @@ export interface WaveSummary {
   id: string;
   title: string;
   status: string;
-	 expectedOutcome?: string | null;
+  expectedOutcome?: string | null;
   landedAt?: string | null;
   memberIds: string[];
   members: WaveTaskSummary[];
   counts: Record<string, number>;
-  authorization: { state: "disarmed" | "armed" | "paused" | "stale"; stale: boolean; action: string; fingerprint?: string; authorizedFingerprint?: string | null; actor?: string | null; at?: string | null };
+  authorization: {
+    state: "disarmed" | "armed" | "paused" | "stale";
+    stale: boolean;
+    action: string;
+    fingerprint?: string;
+    authorizedFingerprint?: string | null;
+    actor?: string | null;
+    at?: string | null;
+  };
   brief: WaveBrief;
 }
 
@@ -641,27 +881,79 @@ export interface ReviewBatchWave {
 }
 
 export interface WaveTaskDeliveryState {
-  taskId: string; title: string; taskHref: string;
+  taskId: string;
+  title: string;
+  taskHref: string;
   implementation: "absent" | "present";
-  proof: string; review: string; landing: string; documentation: string;
+  proof: string;
+  review: string;
+  landing: string;
+  documentation: string;
   firstActionableFailure?: string;
 }
 
 export interface WaveArtifactCard {
-  taskId: string; taskHref: string; kind: string; priority: number; summary: string;
-  acceptanceIds: string[]; evidenceRef: string; artifactRef?: string; evidenceHref: string;
+  taskId: string;
+  taskHref: string;
+  kind: string;
+  priority: number;
+  summary: string;
+  acceptanceIds: string[];
+  evidenceRef: string;
+  artifactRef?: string;
+  evidenceHref: string;
 }
 
 export interface WaveBrief {
-  schema: "tusker.wave-brief/v1"; waveId: string; title: string; waveHref: string;
-	 expectedOutcome?: string;
-  sectionOrder: ["outcome", "seeIt", "landed", "reworkParked", "humanAction", "documentation"];
-  outcome: { summary: string; fullyDrained: boolean; counts: Record<string, number>; tasks: WaveTaskDeliveryState[] };
+  schema: "tusker.wave-brief/v1";
+  waveId: string;
+  title: string;
+  waveHref: string;
+  expectedOutcome?: string;
+  sectionOrder: [
+    "outcome",
+    "seeIt",
+    "landed",
+    "reworkParked",
+    "humanAction",
+    "documentation",
+  ];
+  outcome: {
+    summary: string;
+    fullyDrained: boolean;
+    counts: Record<string, number>;
+    tasks: WaveTaskDeliveryState[];
+  };
   seeIt: WaveArtifactCard[];
-  landed: Array<{ taskId: string; title: string; taskHref: string; commit?: string; target?: string }>;
-  reworkParked: Array<{ taskId: string; title: string; taskHref: string; state: string; firstActionableFailure: string; affectedTaskIds: string[] }>;
-  humanAction: Array<{ gateId: string; gateHref: string; action: string; resumeId: string; blockedTaskIds: string[] }>;
-  documentation: Array<{ taskId: string; taskHref: string; node: string; nodeHref: string; state: string }>;
+  landed: Array<{
+    taskId: string;
+    title: string;
+    taskHref: string;
+    commit?: string;
+    target?: string;
+  }>;
+  reworkParked: Array<{
+    taskId: string;
+    title: string;
+    taskHref: string;
+    state: string;
+    firstActionableFailure: string;
+    affectedTaskIds: string[];
+  }>;
+  humanAction: Array<{
+    gateId: string;
+    gateHref: string;
+    action: string;
+    resumeId: string;
+    blockedTaskIds: string[];
+  }>;
+  documentation: Array<{
+    taskId: string;
+    taskHref: string;
+    node: string;
+    nodeHref: string;
+    state: string;
+  }>;
 }
 
 export interface TaskCapsule {
@@ -708,6 +1000,47 @@ export interface HumanAction {
   acceptance: AcceptanceRow[];
 }
 
+export type AgentAccessApprovalState =
+  "pending" | "allowed" | "denied" | "expired" | "cancelled";
+
+/** Safe projection of one native permission request. Raw arguments never cross this boundary. */
+export interface AgentAccessApproval {
+  requestId: string;
+  projectId: string;
+  taskId?: string;
+  attemptId: string;
+  executionId?: string;
+  sessionId: string;
+  nativeRequestId: string;
+  route: string;
+  policyFingerprint: string;
+  tool: string;
+  argsDigest: string;
+  redactedArguments: unknown;
+  workingDirectory?: string;
+  targets?: string[];
+  reason?: string;
+  nativeOptionId: string;
+  nativeOptionKind: string;
+  state: AgentAccessApprovalState;
+  stateRevision: number;
+  expiresAt: string;
+  liveUntil?: string;
+  decision?: string;
+  decisionActor?: string;
+  decisionAt?: string;
+  terminalReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentAccessApprovalResponse {
+  ok?: boolean;
+  refused?: boolean;
+  reason?: string;
+  approval?: AgentAccessApproval;
+}
+
 export interface VerificationRow {
   id: string;
   command: string;
@@ -720,18 +1053,23 @@ export interface EvidenceCard {
   label: string;
   kind: "file" | "log" | "image" | "link" | "diff";
   ref: string;
-	 href?: string;
-	 availability: "available" | "expired" | "missing";
-	 expiredAt?: string;
-	 kept: boolean;
+  href?: string;
+  availability: "available" | "expired" | "missing";
+  expiredAt?: string;
+  kept: boolean;
 }
 
 export interface TaskDetail extends TaskCapsule {
-	 artifactsKeep?: boolean;
-	 artifactsAvailability?: string;
-	 artifactsExpiredAt?: string;
+  contacts?: AgentContact[];
+  messages?: AgentMessage[];
+  artifactsKeep?: boolean;
+  artifactsAvailability?: string;
+  artifactsExpiredAt?: string;
   authoredWorkLevel?: "light" | "standard" | "demanding";
   authoredReviewLevel?: "light" | "standard" | "demanding";
+  authoredExecuteProfile?: string;
+  authoredReviewProfile?: string;
+  stateRevision?: string;
   effectiveExecute?: TaskRoutePreview;
   effectiveReview?: TaskRoutePreview;
   /** Intent, rendered as prose (markdown). */
@@ -745,6 +1083,7 @@ export interface TaskDetail extends TaskCapsule {
   gates: Array<{ id: string; kind: GateKind; owner: string }>;
   humanAction?: HumanAction;
   humanActions?: HumanAction[];
+  agentAccessApprovals?: AgentAccessApproval[];
   runHistory: RunSummary[];
   runDirective?: {
     state: "queued" | "consumed" | "lapsed";
@@ -755,15 +1094,40 @@ export interface TaskDetail extends TaskCapsule {
   };
 }
 
+export interface AgentContact {
+  projectId: string;
+  taskId: string;
+  role: "architect" | "origin" | "peer";
+  name?: string;
+  address: { kind: "task" | "execution"; id: string };
+  generation: number;
+}
+
+export interface AgentMessage {
+  id: string;
+  sender: string;
+  recipient: { kind: "task" | "execution"; id: string };
+  kind: "question" | "answer" | "instruction" | "wave_result" | "notice";
+  body: string;
+  replyTo?: string;
+  replyRequired: boolean;
+  yieldSender: boolean;
+  state: string;
+  transportState: string;
+  createdAt: string;
+}
+
 export interface TaskRoutePreview {
   work_level?: string;
   profile?: string;
   harness?: string;
   model?: string;
-  effort?: string;
+  effort: string;
   source?: string;
   reason?: string;
   fallbacks?: string[];
+  access?: AgentAccessV1;
+  resolved_access?: ResolvedAccess;
   blockers: string[];
 }
 
@@ -893,7 +1257,12 @@ export interface DocMeta {
   kind: DocKind;
   updatedAt: string;
   /** Structured frontmatter facts, shown as typed controls (never raw YAML). */
-  frontmatter: Array<{ key: string; value: string; locked: boolean; lockReason?: string }>;
+  frontmatter: Array<{
+    key: string;
+    value: string;
+    locked: boolean;
+    lockReason?: string;
+  }>;
 }
 
 export interface DocContent extends DocMeta {
@@ -996,7 +1365,70 @@ export interface DaemonStatus {
   } | null;
 }
 
-export type RunnerConformanceResult = "pass" | "fail" | "unsupported" | "blocked" | "not_run";
+export type RunnerConformanceResult =
+  "pass" | "fail" | "unsupported" | "blocked" | "not_run";
+
+export type AccessControl =
+  | "workspace_write"
+  | "reference_read"
+  | "reference_write"
+  | "private_read_deny"
+  | "private_write_deny"
+  | "network"
+  | "destructive_approval"
+  | "review_only";
+
+export interface AgentAccessFolder {
+  path: string;
+  access: "read" | "write";
+}
+export interface AgentAccessV1 {
+  schema: "tusker.agent-access/v1";
+  mode: "work_in_projects" | "review_only";
+  network: boolean;
+  destructive_actions: "ask" | "deny";
+  folders: AgentAccessFolder[];
+  private_folders: string[];
+}
+export interface ControlSupport {
+  control: AccessControl;
+  mechanism: "native_setting" | "native_hook" | "advisory" | "unsupported";
+  coverage: string;
+  evidence: string[];
+}
+export type CommandBehavior = "automatic" | "ask" | "block";
+export interface CommandRule {
+  id: string;
+  behavior: CommandBehavior;
+  examples: string[];
+  coverage: string;
+}
+export interface CommandPolicy {
+  routine: CommandBehavior;
+  destructive: CommandBehavior;
+  catastrophic: CommandBehavior;
+  private: CommandBehavior;
+  outside_workspace: CommandBehavior;
+  review_write: CommandBehavior;
+  rules?: CommandRule[];
+}
+export interface ResolvedAccess {
+  requested: AgentAccessV1 | string;
+  effective: Record<string, unknown>;
+  folders?: AgentAccessFolder[];
+  references?: string[];
+  private_folders?: string[];
+  controls: ControlSupport[];
+  command_policy?: CommandPolicy;
+  state: "ready" | "needs_setup" | "unsupported" | "stale";
+  issues: Array<{
+    code: string;
+    field: string;
+    message: string;
+    remedy: string;
+  }>;
+  fingerprint: string;
+}
 
 export interface RunnerConformanceReport {
   schema: "tusker.runner-conformance/v1";
@@ -1010,14 +1442,74 @@ export interface RunnerConformanceReport {
   live: boolean;
   ready: boolean;
   valid_until?: string;
-  cases: Array<{ id: string; result: RunnerConformanceResult; evidence?: string }>;
+  profile_id?: string;
+  configuration_hash?: string;
+  model?: string;
+  effort?: string;
+  next_step?: string;
+  cases: Array<{
+    id: string;
+    result: RunnerConformanceResult;
+    evidence?: string;
+  }>;
+  access?: ResolvedAccess;
+}
+
+export interface RunnerCatalogModel {
+  model: string;
+  display_name?: string;
+  description?: string;
+  efforts: string[];
+  default: boolean;
+  default_known: boolean;
+  default_effort?: string;
+  visibility: string;
+  hidden: boolean;
+}
+
+export interface RunnerCatalogOption {
+  id: string;
+  label: string;
+  kind: string;
+  values?: string[];
+  default?: string;
+}
+
+export interface RunnerCatalogHarness {
+  harness: string;
+  display_name: string;
+  group: string;
+  transports: string[];
+  source: string;
+  version?: string;
+  executable_detected?: boolean;
+  available: boolean;
+  discovery_state: string;
+  discovery_source?: string;
+  error?: string;
+  error_kind?:
+    "unsupported" | "authentication" | "timeout" | "implementation" | string;
+  manual_entry: boolean;
+  models?: RunnerCatalogModel[];
+  options?: RunnerCatalogOption[];
+  access_controls?: ControlSupport[];
+}
+
+export interface RunnerCatalog {
+  schema: "tusker.runner-catalog/v1";
+  observed_at: string;
+  harnesses: RunnerCatalogHarness[];
 }
 
 export interface ModelLevelProfile {
+  disabled?: boolean;
+  display_name?: string;
+  eligible_tiers: Array<"light" | "standard" | "demanding">;
   harness: string;
   model: string;
   effort: string;
   permission_preset?: string;
+  access?: AgentAccessV1;
 }
 
 export interface ModelLevelValue {
@@ -1030,6 +1522,16 @@ export interface ModelLevelsReport {
   schema: "tusker.model-levels/v1";
   revision: string;
   profiles: Record<string, ModelLevelProfile>;
-  profile_states: Record<string, "configured_unverified">;
-  levels: Array<{ level: "light" | "standard" | "demanding"; execute: ModelLevelValue; review: ModelLevelValue }>;
+  profile_states: Record<
+    string,
+    "configured_unverified" | "tested" | "disabled" | "unavailable"
+  >;
+  profile_references: Record<string, string[]>;
+  reference_check_complete: boolean;
+  levels: Array<{
+    level: "light" | "standard" | "demanding";
+    execute: ModelLevelValue;
+    review: ModelLevelValue;
+  }>;
+  private_folders?: string[];
 }

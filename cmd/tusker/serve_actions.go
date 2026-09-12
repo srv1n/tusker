@@ -175,6 +175,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleProjectRebindAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "automation":
 		s.handleProjectAutomationAction(w, parts[2], body)
+	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "visibility":
+		s.handleProjectVisibilityAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "settings":
 		s.handleProjectSettingsAction(w, parts[2], body)
 	case len(parts) == 3 && parts[1] == "setup" && (parts[2] == "doctor" || parts[2] == "repair"):
@@ -185,6 +187,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleRunAcknowledge(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
 		s.handleTaskStatusAction(w, parts[2], body)
+	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "route":
+		s.handleTaskRouteAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "run":
 		s.handleTaskRunDirective(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "discard":
@@ -199,10 +203,23 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleWaveExecute(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "gates" && (parts[3] == "satisfy" || parts[3] == "waive" || parts[3] == "obsolete"):
 		s.handleGateAction(w, parts[2], parts[3], body)
+	case len(parts) == 4 && parts[1] == "approvals" && parts[3] == "respond":
+		body["requestId"] = parts[2]
+		s.handleAgentAccessApprovalResponse(w, body, parts[2], "")
+	case len(parts) == 4 && parts[1] == "approvals" && (parts[3] == "allow-once" || parts[3] == "deny"):
+		body["requestId"] = parts[2]
+		s.handleAgentAccessApprovalResponse(w, body, parts[2], parts[3])
 	case len(parts) == 2 && parts[1] == "evidence":
 		s.handleEvidenceAddAction(w, body)
 	case len(parts) == 2 && parts[1] == "feedback":
 		s.handleFeedbackAddAction(w, body)
+	case len(parts) == 2 && parts[1] == "messages":
+		s.handleAgentMessageSend(w, body)
+	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "reply":
+		body["replyTo"] = parts[2]
+		s.handleAgentMessageSend(w, body)
+	case len(parts) == 4 && parts[1] == "messages" && (parts[3] == "consume" || parts[3] == "apply"):
+		s.handleAgentMessageState(w, parts[2], parts[3], body)
 	case len(parts) == 3 && parts[1] == "daemon":
 		s.handleDaemonAction(w, parts[2], body)
 	default:
@@ -520,6 +537,40 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 	})
 }
 
+func (s *serveServer) handleProjectVisibilityAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	raw, present := body["visible"]
+	if !present {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "project visibility action requires visible"})
+		return
+	}
+	projects, err := s.store.ListProjects()
+	if err == nil {
+		matched := false
+		for _, group := range groupRegisteredProjects(projects) {
+			if group.ID != projectID && !registeredProjectGroupContains(group, projectID) {
+				continue
+			}
+			matched = true
+			for _, checkout := range group.Checkouts {
+				if err = s.store.SetProjectVisible(checkout.ProjectID, serveActionBody{"visible": raw}.bool("visible")); err != nil {
+					break
+				}
+			}
+			break
+		}
+		if !matched {
+			err = tuskerError(errorNotFound, "project not found: "+projectID)
+		}
+	}
+	if err != nil {
+		result := serveCommandResult("tusker projects visibility", "", err)
+		result.ProjectID = projectID
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	serveJSON(w, http.StatusOK, serveActionResult{OK: true, ProjectID: projectID, Reason: "Project visibility updated", Command: "tusker projects visibility"})
+}
+
 func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, projectID string, body serveActionBody) {
 	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true, ProjectID: projectID})
 	if err != nil || len(loaded) != 1 {
@@ -628,6 +679,97 @@ func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID strin
 	s.invalidateProjectSnapshot(project.ProjectID)
 	s.decorateTaskActionResultForProject(&result, args["id"], project.ProjectID)
 	serveJSON(w, http.StatusOK, result)
+}
+
+// handleTaskRouteAction changes only future dispatch resolution. Active runs
+// retain their recorded identity in the runtime store.
+func (s *serveServer) handleTaskRouteAction(w http.ResponseWriter, taskID string, body serveActionBody) {
+	_, project, err := serveBaseArgsForBody(s, body)
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker task route", "", err))
+		return
+	}
+	actor, err := s.serveOperatorActor(body, "serve task route")
+	if err != nil {
+		status, result := serveOperatorActorResult("tusker task route", err)
+		serveJSON(w, status, result)
+		return
+	}
+	baseRevision := body.string("revision", "stateRevision")
+	if baseRevision == "" {
+		serveJSON(w, http.StatusUnprocessableEntity, serveActionResult{Refused: true, Reason: "task route update requires the current revision"})
+		return
+	}
+	taskID = strings.ToUpper(strings.TrimSpace(taskID))
+	note, err := resolveV7Note(project.VaultRoot, taskID, "task")
+	if err != nil {
+		serveJSON(w, http.StatusNotFound, serveCommandResult("tusker task route", "", err))
+		return
+	}
+	wfFile, err := loadWorkflow(project.VaultRoot)
+	if err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker task route", "", err))
+		return
+	}
+	data := cloneMap(note.Data)
+	setLevel := func(key, field string) error {
+		raw, present := body[key]
+		if !present {
+			return nil
+		}
+		value := strings.ToLower(strings.TrimSpace(toString(raw)))
+		if raw == nil || value == "" {
+			delete(data, field)
+			return nil
+		}
+		if !validModelLevel(value) {
+			return tuskerError(errorInvalidArg, key+" must be light, standard, or demanding")
+		}
+		data[field] = value
+		return nil
+	}
+	setProfile := func(key, field, lane string) error {
+		raw, present := body[key]
+		if !present {
+			return nil
+		}
+		value := strings.TrimSpace(toString(raw))
+		if raw == nil || value == "" {
+			delete(data, field)
+			return nil
+		}
+		candidate := Note{Data: map[string]any{field: value}}
+		if _, err := resolveRunnerProfileForNote(candidate, wfFile.Data, lane); err != nil {
+			return err
+		}
+		data[field] = value
+		return nil
+	}
+	if err := setLevel("workLevel", "work_level"); err == nil {
+		err = setLevel("reviewLevel", "review_level")
+	}
+	if err == nil {
+		err = setProfile("executeProfile", "execute_profile", runLaneExecute)
+	}
+	if err == nil {
+		err = setProfile("reviewProfile", "review_profile", runLaneReview)
+	}
+	if err != nil {
+		serveJSON(w, http.StatusUnprocessableEntity, serveCommandResult("tusker task route", "", err))
+		return
+	}
+	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	data["updated_by"] = actor
+	if _, err := saveV7DocumentCAS(note.AbsolutePath, data, note.Body, v7FrontmatterOrder["task"], baseRevision); err != nil {
+		serveJSON(w, http.StatusConflict, serveCommandResult("tusker task route", "", err))
+		return
+	}
+	if err := emitV7Event(project.VaultRoot, taskID, "task", "route_updated", actor, map[string]any{"work_level": data["work_level"], "review_level": data["review_level"], "execute_profile": data["execute_profile"], "review_profile": data["review_profile"]}); err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker task route", "", err))
+		return
+	}
+	s.invalidateProjectSnapshot(project.ProjectID)
+	serveJSON(w, http.StatusOK, serveActionResult{OK: true, Reason: "task route saved for future dispatch", TaskID: taskID, Command: "tusker task route"})
 }
 
 func (s *serveServer) handleTaskDiscardAction(w http.ResponseWriter, taskID string, body serveActionBody) {

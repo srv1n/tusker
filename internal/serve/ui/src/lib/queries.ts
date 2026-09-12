@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, requireAccepted } from "@/lib/api";
 import { liveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
-import type { DeliveryPlanList, DeliveryReview, DeliveryStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, RunDetail, WaveExecuteResult } from "@/types/domain";
+import type { AgentAccessApprovalResponse, DeliveryPlanList, DeliveryReview, DeliveryStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProjectSummary, RunDetail, WaveExecuteResult } from "@/types/domain";
 import type {
   DocgraphDocDetail,
   DocgraphSavePayload,
@@ -30,6 +30,7 @@ export const qk = {
   epics: (projectId?: string) => ["epics", projectId ?? "all"] as const,
   waves: (projectId?: string) => ["waves", projectId ?? "all"] as const,
   gates: (taskId?: string, projectId?: string) => ["gates", projectId ?? "all", taskId ?? "all"] as const,
+  agentAccessApprovals: (projectId?: string, taskId?: string) => ["agent-access-approvals", projectId ?? "all", taskId ?? "all"] as const,
   evidence: (taskId?: string, projectId?: string) => ["evidence", projectId ?? "all", taskId ?? "all"] as const,
   decisions: (epicId?: string, projectId?: string) => ["decisions", projectId ?? "all", epicId ?? "all"] as const,
   feedback: (projectId?: string) => ["feedback", projectId ?? "all"] as const,
@@ -106,6 +107,20 @@ export const useProjectAutomation = (projectId: string) => {
       void qc.invalidateQueries({ queryKey: qk.projects });
       void qc.invalidateQueries({ queryKey: qk.daemon });
     },
+  });
+};
+
+export const useProjectVisibility = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, visible }: { projectId: string; visible: boolean }) => api.setProjectVisibility(projectId, visible).then(requireAccepted),
+    onMutate: async ({ projectId, visible }) => {
+      await qc.cancelQueries({ queryKey: qk.projects });
+      const previous = qc.getQueryData<ProjectSummary[]>(qk.projects);
+      qc.setQueryData<ProjectSummary[]>(qk.projects, (projects) => projects?.map((project) => project.id === projectId ? { ...project, visible } : project));
+      return previous;
+    },
+    onError: (_error, _variables, previous) => qc.setQueryData(qk.projects, previous),
   });
 };
 
@@ -218,6 +233,21 @@ export const useWaves = (projectId?: string) =>
 
 export const useGates = (taskId?: string, projectId?: string) =>
   useQuery({ queryKey: qk.gates(taskId, projectId), queryFn: () => api.gates(taskId, projectId), refetchInterval: liveRefetchInterval });
+
+export const useAgentAccessApprovals = (projectId?: string, taskId?: string) =>
+  useQuery({ enabled: Boolean(projectId), queryKey: qk.agentAccessApprovals(projectId, taskId), queryFn: () => api.agentAccessApprovals(projectId!, taskId), refetchInterval: liveRefetchInterval });
+
+export const useAgentAccessApprovalAction = (projectId?: string, taskId?: string) => {
+  const qc = useQueryClient();
+  return useMutation<AgentAccessApprovalResponse, unknown, { requestId: string; expectedRevision: number; decision: "allow_once" | "deny" }>({
+    mutationFn: ({ requestId, expectedRevision, decision }) => api.agentAccessApprovalRespond(requestId, expectedRevision, decision, projectId).then(requireAccepted),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.agentAccessApprovals(projectId, taskId) });
+      if (taskId) void qc.invalidateQueries({ queryKey: qk.task(taskId, projectId) });
+      void qc.invalidateQueries({ queryKey: ["needs"] });
+    },
+  });
+};
 
 export const useEvidence = (taskId?: string, projectId?: string) =>
   useQuery({ queryKey: qk.evidence(taskId, projectId), queryFn: () => api.evidence(taskId, projectId), refetchInterval: liveRefetchInterval });
@@ -383,6 +413,14 @@ export const useRunTask = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.runTask(taskId, projectId).then(requireAccepted),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
+  });
+};
+
+export const useTaskRoute = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; executeProfile?: string | null; reviewProfile?: string | null }) => api.taskRoute(taskId, body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
   });
 };

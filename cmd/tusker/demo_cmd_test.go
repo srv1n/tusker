@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -173,6 +174,10 @@ func TestDemoRepeatableE2E(t *testing.T) {
 	manifest := demoManifestForTest(t, repo)
 	if len(manifest.Waves) != 4 || len(manifest.Tasks) != 13 {
 		t.Fatalf("seed mapping: %d waves %d tasks", len(manifest.Waves), len(manifest.Tasks))
+	}
+	config, err := os.ReadFile(filepath.Join(repo, ".tusker", "config.local.yaml"))
+	if err != nil || strings.Contains(string(config), "lane_profiles:") {
+		t.Fatalf("demo seed must not shadow model levels with lane profiles: %v\n%s", err, config)
 	}
 	if code := demoRunInner(t, "demo seed", Args{"repo": repo, "scenario": demoScenario}); code != demoExitOK {
 		t.Fatalf("reseed exit %d", code)

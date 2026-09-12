@@ -5,6 +5,18 @@ The corpus serves humans and agents: current behavior in `docs/system/`,
 proposals in `.tusker/specs/`, rationale in `.tusker/specs/decisions/`.
 Tusker accepts specifications produced by any planning method.
 
+For unresolved choices, use the host's available external design method and
+return its settled decisions or open questions here. A supplied adequate spec
+skips that discussion: preserve its decision links, then convert it to tasks
+using `TRACK.md`'s complete handoff and readiness review. Before conversion,
+settle cross-task interfaces, surrounding-work ownership and proof scenarios;
+carry the actual architect/origin contact into the handoff. A shorter worker
+context must not discard the decisions the planner already resolved.
+Tusker does not maintain a second interview protocol. For prose, use an
+available writing skill when present; otherwise keep the outcome, actor, exact
+commands, permission boundaries, uncertainty, expected result, and failure
+path explicit.
+
 Create through `tusker docs new <subject> --kind doc|spec`. Its template is
 front-matter authority; fill subject, discovery keywords, parent (`part_of`),
 read/skip conditions, described paths and applicable spec/decision links.

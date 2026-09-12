@@ -101,15 +101,19 @@ func (r *ACPRunner) Collect(ctx context.Context, req CollectRequest) (*CollectRe
 }
 
 type acpAttemptProvenance struct {
-	Runner    RunnerName
-	Principal string
-	Actor     string
-	AttemptID string
-	Adapter   string
-	ProcessID int
-	SessionID string
-	TurnID    string
-	ToolCall  string
+	ProjectID      string
+	TaskID         string
+	RuntimeStore   *RuntimeStore
+	PrivateFolders []string
+	Runner         RunnerName
+	Principal      string
+	Actor          string
+	AttemptID      string
+	Adapter        string
+	ProcessID      int
+	SessionID      string
+	TurnID         string
+	ToolCall       string
 }
 
 func (p acpAttemptProvenance) payload() map[string]any {
@@ -137,10 +141,11 @@ type acpLiveHandle struct {
 	attemptID string
 	runner    RunnerName
 
-	client   *acp.Client
-	log      *acpLogSink
-	eventLog *EventLog
-	req      StartRequest
+	client       *acp.Client
+	log          *acpLogSink
+	eventLog     *EventLog
+	req          StartRequest
+	runtimeStore *RuntimeStore
 
 	mu         sync.RWMutex
 	provenance acpAttemptProvenance
@@ -176,6 +181,9 @@ func (h *acpLiveHandle) close() {
 		}
 		if h.log != nil {
 			_ = h.log.Close()
+		}
+		if h.runtimeStore != nil {
+			_ = h.runtimeStore.Close()
 		}
 	})
 }
@@ -260,6 +268,7 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 		return nil, err
 	}
 	provenance.Runner = runner
+	provenance.PrivateFolders = append([]string(nil), req.PrivateFolders...)
 	prompt, err := readText(req.PromptPath)
 	if err != nil {
 		return nil, err
@@ -342,17 +351,25 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 		return nil, err
 	}
 	provenance.ProcessID = client.ProcessID()
+	runtimeStore, storeErr := OpenRuntimeStore(DefaultStateRoot())
+	if storeErr != nil {
+		_ = client.Close()
+		_ = log.Close()
+		return nil, fmt.Errorf("open runtime store for ACP permissions: %w", storeErr)
+	}
+	provenance.RuntimeStore = runtimeStore
 	handle = &acpLiveHandle{
-		projectID:  req.ProjectID,
-		recordID:   req.RecordID,
-		itemID:     req.ItemID,
-		attemptID:  req.AttemptID,
-		runner:     runner,
-		client:     client,
-		log:        log,
-		eventLog:   eventLog,
-		req:        req,
-		provenance: provenance,
+		projectID:    req.ProjectID,
+		recordID:     req.RecordID,
+		itemID:       req.ItemID,
+		attemptID:    req.AttemptID,
+		runner:       runner,
+		client:       client,
+		log:          log,
+		eventLog:     eventLog,
+		req:          req,
+		provenance:   provenance,
+		runtimeStore: runtimeStore,
 	}
 	log.bindTerminator(handle.close)
 	if log.overflowed() {
@@ -647,7 +664,7 @@ func resolveACPAttemptProvenance(req StartRequest, adapter string) (acpAttemptPr
 		// adapter identity fill the gap.
 		principal = "actor-derived:" + actor
 	}
-	return acpAttemptProvenance{Runner: RunnerACP, Principal: principal, Actor: actor, AttemptID: req.AttemptID, Adapter: adapter}, nil
+	return acpAttemptProvenance{ProjectID: req.ProjectID, TaskID: req.ItemID, Runner: RunnerACP, Principal: principal, Actor: actor, AttemptID: req.AttemptID, Adapter: adapter}, nil
 }
 
 func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy) []string {
@@ -704,6 +721,22 @@ func acpCancelDrain(policy CodexPolicy) time.Duration {
 }
 
 func evaluateCodexACPTransportPermission(ctx context.Context, eventLog *EventLog, provenance acpAttemptProvenance, request acp.PermissionRequest, workspace string, mode CodexACPMode, policy CodexPolicy) (acp.PermissionDecision, error) {
+	if approval, handled, approvalErr := awaitCodexACPAgentAccessApproval(ctx, provenance, request, workspace, policy); handled {
+		p := provenance
+		p.ToolCall = boundedACPObservation(request.ToolCallID)
+		_ = appendACPEvent(eventLog, "acp_permission_decided", p, map[string]any{
+			"operation_class": "execute",
+			"policy_rule":     "destructive_approval",
+			"outcome":         string(approval),
+			"reason_code": firstNonEmpty(func() string {
+				if approvalErr != nil {
+					return approvalErr.Error()
+				}
+				return "operator_decision"
+			}(), "operator_decision"),
+		})
+		return approval, approvalErr
+	}
 	normalized := DecodeCodexACPPermission(request)
 	allowed := map[string]bool{"read": true}
 	permissionPolicy := ACPPermissionPolicy{AllowedToolKinds: allowed, BudgetAuthorized: true}

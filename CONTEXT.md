@@ -24,3 +24,15 @@ _Avoid_: Treating a worker's own success claim as independent review.
 **Outcome review**:
 An assessment of a delivered result, such as its visual quality or measured performance. A person participates when the result requires an explicitly declared human judgment.
 _Avoid_: Using outcome review as a synonym for mandatory human code review.
+
+**Architect**:
+The agent responsible for interpreting an agreed objective, answering design questions and proposing subsequent work from the results.
+_Avoid_: Using architect as a synonym for the scheduler or the owner of every worker process.
+
+**Agent contact**:
+A durable reference to the conversation or task owner that another participant should address, including after an execution ends or resumes.
+_Avoid_: Using a display name, model name or temporary process as the recipient identity.
+
+**Clarification**:
+A question tied to particular work whose answer is needed to proceed or settle an ambiguity. It retains its question, recipient and reply together.
+_Avoid_: Treating every clarification as a human gate or a new implementation task.

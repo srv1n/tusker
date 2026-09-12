@@ -1,7 +1,7 @@
 /*
   App Settings (route "/settings") — application-wide configuration that applies
   across every project. Four tabs: General (appearance / defaults / daemon),
-  Runner profiles, Permissions, and Notifications. Projects override individual
+  Agents and Notifications. Projects override individual
   values under their own Details; provenance chips on each row say where a value
   comes from and therefore whether teammates see it.
 
@@ -13,25 +13,26 @@
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 import { GeneralSection } from "./app/GeneralSection";
-import { ProfilesSection } from "./app/ProfilesSection";
-import { PermissionsSection } from "./app/PermissionsSection";
+import { AgentsSection } from "./app/AgentsSection";
 import { NotificationsSection } from "./app/NotificationsSection";
-import { useServeCapabilities } from "@/lib/queries";
+import { useProjectVisibility, useProjects, useServeCapabilities } from "@/lib/queries";
+import { SectionLabel } from "@/components/ui/page";
+import { SettingsCard, SettingRow } from "./app/parts";
 
-type AppTab = "general" | "profiles" | "permissions" | "notifications";
+type AppTab = "general" | "projects" | "agents" | "notifications";
 
 const TABS: { key: AppTab; label: string }[] = [
   { key: "general", label: "General" },
-  { key: "profiles", label: "Runner profiles" },
-  { key: "permissions", label: "Permissions" },
+  { key: "projects", label: "All Projects" },
+  { key: "agents", label: "Agents" },
   { key: "notifications", label: "Notifications" },
 ];
 
 function SectionTabs({ value, onChange }: { value: AppTab; onChange: (t: AppTab) => void }) {
   return (
     <div className="mb-[26px] max-w-full overflow-x-auto overflow-y-hidden tk-scroll">
-      <div className="inline-flex overflow-hidden rounded-lg border border-line bg-surface">
-        {TABS.map((t, i) => {
+      <div className="inline-flex rounded-lg border border-line bg-panel p-0.5">
+        {TABS.map((t) => {
           const active = t.key === value;
           return (
             <button
@@ -40,11 +41,10 @@ function SectionTabs({ value, onChange }: { value: AppTab; onChange: (t: AppTab)
               aria-current={active ? "page" : undefined}
               onClick={() => onChange(t.key)}
               className={cn(
-                "whitespace-nowrap px-[14px] py-[7px] text-[12.5px] transition-colors",
-                i > 0 && "border-l border-line-soft",
+                "whitespace-nowrap rounded-md px-[14px] py-[7px] text-[12.5px] transition-colors",
                 active
-                  ? "bg-ink font-semibold text-surface"
-                  : "font-medium text-muted hover:bg-hover hover:text-ink-soft",
+                  ? "bg-raised font-semibold text-ink shadow-2xs"
+                  : "font-medium text-muted hover:text-ink-soft",
               )}
             >
               {t.label}
@@ -71,17 +71,39 @@ export function AppSettings() {
         </p>
 
         <SectionTabs value={tab} onChange={setTab} />
-        {unavailable && tab === "profiles" && (
+        {unavailable && tab === "agents" && (
           <p role="status" className="mb-4 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2 text-[12px] text-warn">
-            Runner profiles are reference-only in this Serve version. {unavailable.description}
+            Agents are reference-only in this Serve version. {unavailable.description}
           </p>
         )}
 
         {tab === "general" && <GeneralSection />}
-        {tab === "profiles" && <ProfilesSection />}
-        {tab === "permissions" && <PermissionsSection />}
+        {tab === "projects" && <ProjectsSection />}
+        {tab === "agents" && <AgentsSection />}
         {tab === "notifications" && <NotificationsSection />}
       </div>
+    </div>
+  );
+}
+
+function ProjectsSection() {
+  const projects = useProjects();
+  const visibility = useProjectVisibility();
+  return (
+    <div className="animate-rise">
+      <SectionLabel className="mb-[10px]">Main screen</SectionLabel>
+      <p className="mb-3 text-[12px] text-muted">Tusker discovers projects when you run <code>tusker init</code>. Choose which ones appear in the project strip.</p>
+      <SettingsCard>
+		{(projects.data ?? []).map((project) => (
+          <SettingRow
+            key={project.id}
+            label={project.name}
+            description={<><span className="break-all">{project.repoRoot}</span>{project.lastError ? <span className="mt-1 block text-fail">{project.lastError}</span> : null}</>}
+            control={<input type="checkbox" checked={project.visible !== false} disabled={visibility.isPending} onChange={(event) => visibility.mutate({ projectId: project.id, visible: event.currentTarget.checked })} aria-label={`Show ${project.name} on main screen`} className="h-4 w-4 accent-current" />}
+          />
+        ))}
+        {!projects.isLoading && (projects.data?.length ?? 0) === 0 && <div className="px-4 py-6 text-center text-[12px] text-muted">No initialized projects yet.</div>}
+      </SettingsCard>
     </div>
   );
 }

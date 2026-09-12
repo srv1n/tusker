@@ -59,6 +59,15 @@ func (r *LiveRegistry) Find(identity string) LiveRunnerHandle {
 	return nil
 }
 
+func (r *LiveRegistry) FindAttempt(attemptID string) LiveRunnerHandle {
+	if r == nil || attemptID == "" {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.byAttempt[attemptID]
+}
+
 var liveRegistry = NewLiveRegistry()
 
 var errLiveHandleNotFound = errors.New("live runner handle not found")

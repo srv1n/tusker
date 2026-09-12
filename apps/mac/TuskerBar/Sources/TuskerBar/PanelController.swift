@@ -34,7 +34,8 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         webView = WKWebView(frame: frame, configuration: webConfig)
         super.init()
         content.add(self, name: "tuskerShell")
-        panel.appearance = NSAppearance(named: .darkAqua)
+        // Follow the system appearance: the served UI already adapts to
+        // light/dark, so forcing .darkAqua would strand light-mode users.
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
@@ -245,7 +246,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         guard panel.isVisible else { return }
         switch RuntimeSupervisor.shared.state {
         case .running, .external:
-            load(path: currentPath, kind: .live)
+            if !hasCommittedContent { load(path: currentPath, kind: .live) }
         case .failed:
             if !hasCommittedContent {
                 loaded = false

@@ -5,12 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type projectPruneReport struct {
-	DryRun          bool     `json:"dry_run"`
-	RemovedProjects []string `json:"removed_projects"`
-	RemovedMounts   []string `json:"removed_mounts"`
+	DryRun          bool                                `json:"dry_run"`
+	RemovedProjects []string                            `json:"removed_projects"`
+	RemovedMounts   []string                            `json:"removed_mounts"`
+	Registry        registeredProjectRegistryInspection `json:"registry"`
 }
 
 // projectsPruneCmd previews registrations whose tracker roots no longer exist.
@@ -39,6 +41,12 @@ func projectsPruneCmd(args Args) error {
 	for _, projectID := range report.RemovedProjects {
 		fmt.Printf("  project %s\n", projectID)
 	}
+	for _, ids := range report.Registry.RelatedWorktreeGroups {
+		fmt.Printf("  related worktrees (kept separate): %s\n", strings.Join(ids, ", "))
+	}
+	for _, projectID := range report.Registry.MissingRegistrations {
+		fmt.Printf("  missing registration: %s\n", projectID)
+	}
 	return nil
 }
 
@@ -48,6 +56,7 @@ func pruneMissingRegisteredProjects(store *RuntimeStore, dryRun bool) (projectPr
 	if err != nil {
 		return report, err
 	}
+	report.Registry = inspectRegisteredProjectRegistry(projects)
 
 	missing := make([]RegisteredProject, 0)
 	for _, project := range projects {
@@ -61,6 +70,24 @@ func pruneMissingRegisteredProjects(store *RuntimeStore, dryRun bool) (projectPr
 	}
 	if len(missing) == 0 {
 		return report, nil
+	}
+	if !dryRun {
+		for _, project := range missing {
+			active, err := store.ListProjectNonTerminalRuns(project.ProjectID)
+			if err != nil {
+				return report, err
+			}
+			if blocking := projectRebindBlockingRuns(active); len(blocking) != 0 {
+				return report, projectRebindNonTerminalRunsError(project.ProjectID, blocking)
+			}
+			directives, err := store.ListActiveRunDirectives(project.ProjectID, time.Now().UTC())
+			if err != nil {
+				return report, err
+			}
+			if len(directives) != 0 {
+				return report, projectRebindActiveDirectivesError(project.ProjectID, directives)
+			}
+		}
 	}
 	if dryRun {
 		for _, project := range missing {

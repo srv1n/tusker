@@ -164,6 +164,12 @@ func quarantineRegisteredProjectLoadError(store *RuntimeStore, project Registere
 	if err := store.UpsertProject(project); err != nil {
 		return project, err
 	}
+	if _, err := os.Stat(project.VaultRoot); os.IsNotExist(err) {
+		project.Visible = false
+		if err := store.SetProjectVisible(project.ProjectID, false); err != nil {
+			return project, err
+		}
+	}
 	return project, nil
 }
 
@@ -187,6 +193,9 @@ func requireRegisteredProjectTrackerRoot(project RegisteredProject) error {
 func registeredProjectLoadErrorNeedsQuarantineWrite(project RegisteredProject, loadErr error) bool {
 	if loadErr == nil {
 		return false
+	}
+	if _, err := os.Stat(project.VaultRoot); project.Visible && os.IsNotExist(err) {
+		return true
 	}
 	return project.Health != projectHealthError || project.LastError != loadErr.Error()
 }

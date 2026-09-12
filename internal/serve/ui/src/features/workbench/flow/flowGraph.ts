@@ -78,6 +78,29 @@ export interface FlowGraph {
   cycles: string[][];
 }
 
+/** Remove arrows already implied by another path without changing reachability. */
+export function essentialFlowEdges(graph: Pick<FlowGraph, "nodes" | "edges">): FlowEdge[] {
+  const outgoing = new Map<string, FlowEdge[]>();
+  for (const node of graph.nodes) outgoing.set(node.id, []);
+  for (const edge of graph.edges) outgoing.get(edge.from)?.push(edge);
+
+  return graph.edges.filter((candidate) => {
+    if (candidate.cyclic) return true;
+    const seen = new Set([candidate.from]);
+    const pending = (outgoing.get(candidate.from) ?? [])
+      .filter((edge) => edge !== candidate)
+      .map((edge) => edge.to);
+    while (pending.length > 0) {
+      const id = pending.pop()!;
+      if (id === candidate.to) return false;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      for (const edge of outgoing.get(id) ?? []) pending.push(edge.to);
+    }
+    return true;
+  });
+}
+
 export const DEFAULT_VIEWPORT: FlowViewport = { x: 0, y: 0, scale: 1 };
 export const MIN_SCALE = 0.25;
 export const MAX_SCALE = 2.5;
@@ -384,6 +407,37 @@ export interface FlowLayout {
   width: number;
   height: number;
   layers: string[][];
+}
+
+export const TOP_DOWN_NODE_HEIGHT = 128;
+export const TOP_DOWN_GAP_X = 20;
+export const TOP_DOWN_GAP_Y = 88;
+export const TOP_DOWN_STAGE_GUTTER = 0;
+
+/** Transpose the dependency ranks into a top-to-bottom DAG for native scrolling. */
+export function layoutTopDownFlowGraph(graph: FlowGraph, order: string[] = []): FlowLayout {
+  const ranked = layoutFlowGraph(graph, order);
+  const widest = Math.max(1, ...ranked.layers.map((layer) => layer.length));
+  const contentWidth = widest * NODE_WIDTH + (widest - 1) * TOP_DOWN_GAP_X;
+  const positions: FlowLayout["positions"] = {};
+
+  ranked.layers.forEach((layer, depth) => {
+    const rowWidth = layer.length * NODE_WIDTH + Math.max(0, layer.length - 1) * TOP_DOWN_GAP_X;
+    const left = TOP_DOWN_STAGE_GUTTER + (contentWidth - rowWidth) / 2;
+    layer.forEach((id, index) => {
+      positions[id] = {
+        x: left + index * (NODE_WIDTH + TOP_DOWN_GAP_X),
+        y: depth * (TOP_DOWN_NODE_HEIGHT + TOP_DOWN_GAP_Y),
+      };
+    });
+  });
+
+  return {
+    positions,
+    width: TOP_DOWN_STAGE_GUTTER + contentWidth,
+    height: ranked.layers.length * TOP_DOWN_NODE_HEIGHT + Math.max(0, ranked.layers.length - 1) * TOP_DOWN_GAP_Y,
+    layers: ranked.layers,
+  };
 }
 
 /**

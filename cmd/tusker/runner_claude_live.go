@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	runnercore "tusker/internal/runner"
 )
 
 type claudeLiveHandle struct {
@@ -27,6 +29,7 @@ type claudeLiveHandle struct {
 	statusPath      string
 	runner          RunnerName
 	policy          CodexPolicy
+	privateFolders  []string
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -169,6 +172,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		statusPath:      req.StatusPath,
 		runner:          RunnerClaude,
 		policy:          policy,
+		privateFolders:  append([]string(nil), req.PrivateFolders...),
 		turnIndex:       -1,
 		eventLog:        NewEventLog(req.EventSinkPath),
 		runtimeStore:    runtimeStore,
@@ -443,7 +447,10 @@ func (h *claudeLiveHandle) handleControlRequest(payload map[string]any) {
 	var response any
 	switch subtype {
 	case "can_use_tool":
-		decision := h.evaluateToolApproval(request)
+		decision, awaited := h.awaitClaudeAgentAccessApproval(requestID, request)
+		if !awaited {
+			decision = h.evaluateToolApproval(request)
+		}
 		h.recordApprovalDecision("can_use_tool", decision)
 		if decision.Decision == "accept" {
 			response = map[string]any{
@@ -457,7 +464,10 @@ func (h *claudeLiveHandle) handleControlRequest(payload map[string]any) {
 			}
 		}
 	case "hook_callback":
-		decision := h.evaluateToolApproval(request)
+		decision, awaited := h.awaitClaudeAgentAccessApproval(requestID, request)
+		if !awaited {
+			decision = h.evaluateToolApproval(request)
+		}
 		h.recordApprovalDecision("hook_callback", decision)
 		permissionDecision := "allow"
 		if decision.Decision != "accept" {
@@ -502,7 +512,7 @@ func (h *claudeLiveHandle) observeStreamPayload(payload map[string]any) {
 }
 
 func (h *claudeLiveHandle) evaluateToolApproval(request map[string]any) codexApprovalDecision {
-	input, _ := request["input"].(map[string]any)
+	input := claudeToolInput(request)
 	toolName := firstNonEmpty(
 		strings.TrimSpace(stringValue(request["name"])),
 		strings.TrimSpace(stringValue(request["tool_name"])),
@@ -516,17 +526,94 @@ func (h *claudeLiveHandle) evaluateToolApproval(request map[string]any) codexApp
 	)
 	subject := firstNonEmpty(command, toolName)
 	mutating := claudeToolLooksMutating(toolName, command)
-	decision := codexApprovalDecision{RequestType: "tool", Decision: "accept", Subject: subject, Mutating: mutating}
-	if reason := h.policyDenialReason(mutating); reason != "" {
+	writesWorkspace := claudeToolWritesWorkspace(toolName, command)
+	if reason := commandPolicyRejectReason(h.policy, runnercore.CommandPolicyRequest{Mutating: writesWorkspace, Destructive: destructiveAgentCommand(command), ReviewOnly: activeCodexPolicyIsReviewOnly(h.policy)}); reason != "" {
 		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: reason, Subject: subject, Mutating: mutating}
 	}
-	if commandContainsUnsafeGitMutation(command) {
-		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: "tool approval rejected: unsafe git state mutation is not allowed", Subject: subject, Mutating: true}
+	decision := codexApprovalDecision{RequestType: "tool", Decision: "accept", Subject: subject, Mutating: mutating}
+	// Run the provider-neutral destructive boundary before policy handling. The
+	// native callback path already does this before creating a durable approval;
+	// keeping the direct evaluator aligned prevents a caller from accidentally
+	// bypassing those catastrophic/private/out-of-workspace checks.
+	if destructiveAgentCommand(command) {
+		if preflight := h.evaluateDestructiveToolApproval(request); preflight.Decision != "accept" {
+			return preflight
+		}
+	}
+	if reason := h.policyDenialReason(writesWorkspace); reason != "" {
+		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: reason, Subject: subject, Mutating: mutating}
+	}
+	if path := h.privateFolderPath(request); path != "" {
+		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: "tool approval rejected: private folder is excluded by the access policy", Subject: firstNonEmpty(path, subject), Mutating: mutating}
 	}
 	if commandMentionsSecretPath(command) {
 		return codexApprovalDecision{RequestType: "tool", Decision: "reject", Reason: "tool approval rejected: command references a secret path", Subject: subject, Mutating: true}
 	}
 	return decision
+}
+
+func (h *claudeLiveHandle) privateFolderPath(request map[string]any) string {
+	if h == nil || len(h.privateFolders) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		return ""
+	}
+	input := claudeToolInput(request)
+	cwd := strings.TrimSpace(stringValue(input["cwd"]))
+	if cwd == "" && h.cmd != nil {
+		cwd = h.cmd.Dir
+	}
+	for _, candidate := range approvalPaths(raw) {
+		if !filepath.IsAbs(candidate) && cwd != "" {
+			candidate = filepath.Join(cwd, candidate)
+		}
+		if h.pathInPrivateFolder(candidate) {
+			return candidate
+		}
+	}
+	// Shell commands cannot be parsed as a general-purpose interpreter, but an
+	// explicitly configured private path must not pass when it is present as a
+	// command argument. This covers exact/quoted path references without
+	// pretending to inspect arbitrary scripts.
+	command := firstNonEmpty(strings.TrimSpace(stringValue(input["command"])), strings.TrimSpace(stringValue(input["cmd"])), strings.Join(stringListFromAny(input["argv"]), " "))
+	for _, private := range h.privateFolders {
+		if private != "" && strings.Contains(command, private) {
+			return private
+		}
+	}
+	return ""
+}
+
+func claudeToolInput(request map[string]any) map[string]any {
+	for _, key := range []string{"input", "tool_input", "toolInput"} {
+		if input, ok := request[key].(map[string]any); ok {
+			return input
+		}
+	}
+	return nil
+}
+
+func (h *claudeLiveHandle) pathInPrivateFolder(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	canonicalPath, err := canonicalAccessPath(path, false)
+	if err != nil {
+		canonicalPath = filepath.Clean(path)
+	}
+	for _, private := range h.privateFolders {
+		canonicalPrivate, privateErr := canonicalAccessPath(private, false)
+		if privateErr != nil {
+			canonicalPrivate = filepath.Clean(private)
+		}
+		if accessPathContains(canonicalPrivate, canonicalPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func claudeToolLooksMutating(toolName, command string) bool {
@@ -536,6 +623,20 @@ func claudeToolLooksMutating(toolName, command string) bool {
 		return false
 	case "bash":
 		return commandLooksMutating(command)
+	case "write", "edit", "multiedit", "notebookedit", "todowrite":
+		return true
+	default:
+		return true
+	}
+}
+
+func claudeToolWritesWorkspace(toolName, command string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(toolName))
+	switch normalized {
+	case "read", "grep", "glob", "ls", "webfetch", "websearch":
+		return false
+	case "bash":
+		return commandWritesWorkspace(command)
 	case "write", "edit", "multiedit", "notebookedit", "todowrite":
 		return true
 	default:

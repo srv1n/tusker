@@ -1076,7 +1076,7 @@ func initCmd(args Args) error {
 			return err
 		}
 	}
-	registerDaemon := args.Bool("daemon")
+	registerDaemon := !args.Bool("no-register")
 	_, mountArgPresent := args["mount"]
 	_, withMountArgPresent := args["with-mount"]
 	noMount := args.Bool("no-mount")

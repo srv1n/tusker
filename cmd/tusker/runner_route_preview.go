@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	runnercore "tusker/internal/runner"
 )
 
 type runnerRoutePrecedence struct {
@@ -23,17 +25,20 @@ type runnerRoutePreview struct {
 	// ProfileDefinition exposes the complete resolved execution policy, not
 	// merely its display name. Callers can therefore explain the selected
 	// permission, sandbox, and subagent limits without re-resolving config.
-	ProfileDefinition RunnerProfileDefinition `json:"profile_definition,omitempty"`
-	Harness           string                  `json:"harness,omitempty"`
-	Model             string                  `json:"model,omitempty"`
-	Effort            string                  `json:"effort,omitempty"`
-	Source            string                  `json:"source,omitempty"`
-	Reason            string                  `json:"reason,omitempty"`
-	Rule              string                  `json:"rule,omitempty"`
-	Warnings          []string                `json:"warnings,omitempty"`
-	Fallbacks         []string                `json:"fallbacks,omitempty"`
-	Precedence        []runnerRoutePrecedence `json:"precedence"`
-	Blockers          []string                `json:"blockers"`
+	ProfileDefinition RunnerProfileDefinition   `json:"profile_definition,omitempty"`
+	Access            *AgentAccessV1            `json:"access,omitempty"`
+	ResolvedAccess    *ResolvedAccess           `json:"resolved_access,omitempty"`
+	CommandPolicy     *runnercore.CommandPolicy `json:"command_policy,omitempty"`
+	Harness           string                    `json:"harness,omitempty"`
+	Model             string                    `json:"model,omitempty"`
+	Effort            string                    `json:"effort,omitempty"`
+	Source            string                    `json:"source,omitempty"`
+	Reason            string                    `json:"reason,omitempty"`
+	Rule              string                    `json:"rule,omitempty"`
+	Warnings          []string                  `json:"warnings,omitempty"`
+	Fallbacks         []string                  `json:"fallbacks,omitempty"`
+	Precedence        []runnerRoutePrecedence   `json:"precedence"`
+	Blockers          []string                  `json:"blockers"`
 }
 
 // runnerRouteCmd intentionally avoids the automation context and runtime store:
@@ -75,8 +80,12 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 	complexity := strings.ToLower(strings.TrimSpace(stringField(note.Data, "complexity")))
 	preview := runnerRoutePreview{Schema: "tusker.runner-route/v1", ReadOnly: true, Task: stringField(note.Data, "id"), Lane: lane, Complexity: complexity, Blockers: []string{}}
 	preview.WorkLevel, _, _ = modelLevelForNote(note, lane)
+	profileField := "execute_profile"
+	if lane == runLaneReview {
+		profileField = "review_profile"
+	}
 	preview.Precedence = []runnerRoutePrecedence{
-		{Source: "task frontmatter", Reason: "runner_profile"}, {Source: "automation.routing", Reason: "first matching routing rule"},
+		{Source: "task frontmatter", Reason: profileField}, {Source: "task frontmatter", Reason: "runner_profile (legacy)"}, {Source: "automation.routing", Reason: "first matching routing rule"},
 		{Source: "automation.lane_profiles", Reason: "lane mapping"}, {Source: "automation.model_levels", Reason: "authored or compatible work level"}, {Source: "task complexity", Reason: "legacy semantic complexity role"},
 		{Source: "automation.default_profile", Reason: "project default or built-in default"},
 	}
@@ -90,13 +99,31 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 		preview.Blockers = append(preview.Blockers, err.Error())
 		return preview
 	}
+	if selected.Definition.Disabled {
+		candidates, candidatesErr := resolvedProfileCandidates(selected, wf)
+		if candidatesErr != nil {
+			preview.Blockers = append(preview.Blockers, candidatesErr.Error())
+			return preview
+		}
+		selected, _, err = selectModelProfile(candidates, func(ResolvedRunnerProfile) (bool, string, error) { return true, "", nil })
+		if err != nil {
+			preview.Blockers = append(preview.Blockers, err.Error())
+			return preview
+		}
+	}
 	preview.Profile, preview.ProfileDefinition = selected.Name, selected.Definition
+	preview.Access = selected.Definition.Access
+	if selected.Definition.Access != nil {
+		commandPolicy := runnercore.NewCommandPolicy(selected.Definition.Access.Mode == accessModeReview, selected.Definition.Access.DestructiveActions)
+		preview.CommandPolicy = &commandPolicy
+	}
 	preview.Harness, preview.Model, preview.Effort = selected.Definition.Harness, selected.Definition.Model, selected.Definition.Effort
 	preview.Source, preview.Reason, preview.Rule = selected.Source, selected.Reason, selected.RuleName
 	preview.Warnings = append([]string{}, selected.Warnings...)
 	preview.Fallbacks = append([]string{}, selected.Fallbacks...)
 	preview.Precedence = []runnerRoutePrecedence{
-		{Source: "task frontmatter", Reason: "runner_profile", Selected: selected.Source == "task frontmatter"},
+		{Source: "task frontmatter", Reason: profileField, Selected: selected.Source == "task frontmatter" && selected.Reason == profileField},
+		{Source: "task frontmatter", Reason: "runner_profile (legacy)", Selected: selected.Source == "task frontmatter" && strings.Contains(selected.Reason, "runner_profile")},
 		{Source: "automation.routing", Reason: "first matching routing rule", Selected: selected.Source == "automation.routing"},
 		{Source: "automation.lane_profiles", Reason: "lane mapping", Selected: selected.Source == "automation.lane_profiles"},
 		{Source: "automation.model_levels", Reason: "authored or compatible work level", Selected: strings.Contains(selected.Source, ":light") || strings.Contains(selected.Source, ":standard") || strings.Contains(selected.Source, ":demanding")},

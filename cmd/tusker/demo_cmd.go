@@ -18,7 +18,7 @@ func demoCmd(args Args) (int, error) {
 
 func printDemoHelp() {
 	fmt.Println(`Usage:
-  tusker demo seed --repo <dedicated-demo-path> --scenario parallel-waves [--with-human-gate] [--with-second-project] [--json]
+  tusker demo seed --repo <dedicated-demo-path> --scenario parallel-waves [--with-human-gate] [--with-second-project] [--visible] [--json]
   tusker demo status --repo <dedicated-demo-path> [--json]
   tusker demo run --repo <dedicated-demo-path> --waves alpha,beta [--fast] [--fail-once B3] [--reject-once C2] [--require-harness NAME] [--json]
   tusker demo run --repo <dedicated-demo-path> --waves standalone --mode real --require-harness NAME [--profile NAME] [--timeout 15m] [--json]
@@ -86,9 +86,10 @@ func demoSeed(args Args) (map[string]any, error) {
 	repoRoot := canonical
 	withGate := args.Bool("with-human-gate")
 	withSecond := args.Bool("with-second-project")
+	visible := args.Bool("visible")
 
 	if existing, loadErr := demoLoadManifest(repoRoot); loadErr == nil {
-		if existing.ScenarioVersion != demoScenarioVersion || existing.HumanGate != withGate {
+		if existing.ScenarioVersion != demoScenarioVersion || existing.HumanGate != withGate || existing.Visible != visible {
 			return nil, tuskerError(demoCodeSeedMismatch, "existing seed differs (version or options); reset before reseeding", withHint("tusker demo reset --repo "+repoRoot+" --yes"))
 		}
 		return demoSeedReport(repoRoot, existing, true), nil
@@ -133,7 +134,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	// run concurrently with two-task frontiers, so the demo project allows
 	// four live runs. This touches only the demo repo's local overlay, never
 	// unrelated global settings.
-	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  lane_profiles:\n    execute: execute-fast\n    review: review-independent\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
+	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
 		return nil, err
 	}
 	contextFP, factory, err := demoSeedContext(repoRoot, exec, vaultPath)
@@ -154,7 +155,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	manifest := &demoManifest{
 		Schema: demoManifestSchema, Scenario: demoScenario, ScenarioVersion: demoScenarioVersion,
 		RepoRoot: repoRoot, Vault: ".tusker", SeededAt: time.Now().UTC().Format(time.RFC3339),
-		SeededBy: actor, HumanGate: withGate,
+		SeededBy: actor, HumanGate: withGate, Visible: visible,
 		Waves: map[string]demoWaveRecord{}, Tasks: map[string]demoTaskRecord{}, Profiles: profiles,
 		CreatedPaths: createdPaths,
 	}

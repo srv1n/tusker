@@ -1,0 +1,632 @@
+{
+  "schema": "tusker.delivery-plan/v2",
+  "scope": "agent-coordination-20260910",
+  "title": "Agent contacts, clarification and autonomous wave continuation",
+  "architect": "execution:architect-W-0017",
+  "origin": "execution:architect-W-0017",
+  "epic_contract": {
+    "source_key": "agent-coordination",
+    "acronym_hint": "ACO",
+    "title": "Agent coordination without manual relaying",
+    "domains": [
+      "project"
+    ]
+  },
+  "spec_refs": [
+    ".tusker/specs/agent-coordination.md"
+  ],
+  "context_fingerprint": "sha256:1ac3b3fcb8189093f28f9801638f4b92b282a36f7f67d8967883de8e270262a4",
+  "factory_intake_contract_schema": "tusker.factory-intake-contract/v1",
+  "factory_intake_contract_version": "1.1.0",
+  "factory_intake_contract_fingerprint": "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
+  "summary": "Tasks can ask their architect or a peer and resume from answers; verified or stalled wave reports return to the architect for configured continuation, with no model-powered polling or copying.",
+  "concurrency": 1,
+  "requirements": [
+    {
+      "id": "C1",
+      "outcome": "Retain stable architect, origin and peer contacts across worker attempts."
+    },
+    {
+      "id": "C2",
+      "outcome": "Exchange durable, correlated and attributable messages and replies through CLI and UI."
+    },
+    {
+      "id": "C3",
+      "outcome": "Let blocked workers ask an architect or peer, yield and continue while independent work runs."
+    },
+    {
+      "id": "C4",
+      "outcome": "Return completed or stalled wave results and apply subsequent architect proposals."
+    },
+    {
+      "id": "C5",
+      "outcome": "Perform routing, status, waits and retry bookkeeping with zero model turns."
+    },
+    {
+      "id": "C6",
+      "outcome": "Qualify direct message and session capabilities per exact installed harness and endpoint."
+    },
+    {
+      "id": "C7",
+      "outcome": "Preserve identities, messages and single application through duplicates, races and restarts."
+    },
+    {
+      "id": "C8",
+      "outcome": "Implement configured automatic continuation while preserving current rollout settings."
+    },
+    {
+      "id": "C9",
+      "outcome": "Expose contacts, pending questions, delivery facts and controls in existing work screens."
+    },
+    {
+      "id": "C10",
+      "outcome": "Validate identity, scope, revision, permissions and ownership at mutation boundaries."
+    },
+    {
+      "id": "C11",
+      "outcome": "Prove the integrated scenario with model-call counts and separate offline, provider and UI evidence."
+    }
+  ],
+  "non_goals": [
+    "A new broker, resident orchestrator model or replacement scheduler.",
+    "Universal provider parity, remote-host provisioning or arbitrary peer broadcasts.",
+    "Changing live project automation or launching work during this planning handoff."
+  ],
+  "assumptions": [
+    {
+      "source_key": "contract-recommendations",
+      "statement": "Exact field names and the file decomposition are implementation recommendations; the product requirements and scenarios are confirmed."
+    },
+    {
+      "source_key": "capacity",
+      "statement": "The imported plan retains current single-run project capacity; its dependency graph leaves independently owned streams available when execution capacity is configured."
+    },
+    {
+      "source_key": "providers",
+      "statement": "Documented provider features need exact installed-route qualification; generic identity and messaging do not depend on universal harness support."
+    }
+  ],
+  "unresolved_decisions": [],
+  "tasks": [
+    {
+      "source_key": "contacts",
+      "title": "Keep architect and peer contacts attached to work",
+      "outcome": "Every task can retain its architect, planning origin and useful peer contacts after a worker finishes or restarts. People can inspect whom to ask without finding a conversation by hand. Done includes concrete contract examples and a behavior matrix. Scope is identity, endpoint binding and packet projection; message delivery and model execution belong to later tasks.\n\n## Implementation notes\nRead .tusker/specs/agent-coordination.md and its September 10 decision log. Implement the customer journeys using existing execution, runtime, packet, delivery and UI machinery. Preserve the dirty baseline and other owners. Use the supported interactive work-session protocol; do not launch a daemon or nested worker from an interactive session. The current automation pause is a rollout setting, not a reason to omit the mechanism. Keep configuration unchanged during implementation. Task ownership and real dependency edges govern integration. Proposed new filenames below are recommendations; trace actual callers before editing, resolve routine choices locally, and record the final contract in the named artifact. No model turn for routing, polling, summaries of unchanged state or relay. Use configured work/review levels, keep checks focused, and leave integrated builds/live qualification to the qualification task. Do not claim provider documentation or offline fixtures as a live harness pass. Independent review remains required; no new human code-review gate.\n\nExtend the existing execution ledger and attachment model, not a second agent registry. Use typed execution-root and task-owner addresses. Add optional authored coordination fields to schema and delivery import with visible wave inheritance, strict identity/project validation and backwards compatibility. Update the actual task packet emitter in commands_v7.go after tracing it. Store profile/host/native ID and capability evidence in replaceable endpoint bindings with generation and lineage; never weaken same-task resume checks. Define the typed mailbox/wakeup API, response shapes and stable verification case names for the other streams in contracts.md. Add a registration hook sufficient for independently implemented message CLI/Serve commands without duplicating the command router. Task recipient resolution must preserve a pending task address when no owner is running. Clarify exact-execution addressing for completed workers, unique owner resolution, unsupported native children and external-attachment admission.\n\nArtifact: docs/reports/agent-coordination/contracts.md. Required named check prefix: TestAgentContacts. Run the verification after implementation settles; the named cases must exist and be executed. Capture actual results in the artifact. A command that matches no tests is incomplete.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Architect, origin and typed peer contacts round-trip through authoring, import and compact packets, with explicit inheritance and legacy compatibility."
+        },
+        {
+          "id": "A2",
+          "outcome": "Retry, restart and replacement preserve logical contacts and lineage; ambiguous or wrong-project endpoints fail with an actionable result."
+        },
+        {
+          "id": "A3",
+          "outcome": "The contract artifact specifies message identity, receipts, wait conditions, wake capabilities and CLI/service shapes needed by independent implementation streams."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: go test ./cmd/tusker ./internal/v7schema -run 'TestAgentContacts|TestExecutionLedger|TestV7PacketContract' -count=1",
+          "notes": "Required cases use TestAgentContacts; zero cases is failure. The artifact records actual command output, contract examples and limitations."
+        }
+      ],
+      "dependencies": [],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-coordination/contracts.md",
+        "summary": "Keep architect and peer contacts attached to work",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/agent_contacts.go",
+        "cmd/tusker/agent_contacts_test.go",
+        "cmd/tusker/execution_ledger.go",
+        "cmd/tusker/runtime_store.go",
+        "internal/v7schema/schema.go",
+        "cmd/tusker/delivery_v2.go",
+        "cmd/tusker/delivery_cmd.go",
+        "cmd/tusker/commands_v7.go",
+        "cmd/tusker/capabilities_cmd.go",
+        "cmd/tusker/cli.go",
+        "docs/reports/agent-coordination/contracts.md"
+      ],
+      "work_level": "demanding",
+      "review_level": "demanding",
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "C1",
+        "C6",
+        "C7",
+        "C10"
+      ]
+    },
+    {
+      "source_key": "mailbox",
+      "title": "Store and exchange questions and replies durably",
+      "outcome": "An agent or person can address a question, receive a durable receipt and answer it without copying between conversations. The question and answer remain inspectable after a restart. Done is a request-and-response example set plus a failure matrix. Scope is durable messaging and public operations; this task does not launch recipient models.\n\n## Implementation notes\nRead .tusker/specs/agent-coordination.md and its September 10 decision log. Implement the customer journeys using existing execution, runtime, packet, delivery and UI machinery. Preserve the dirty baseline and other owners. Use the supported interactive work-session protocol; do not launch a daemon or nested worker from an interactive session. The current automation pause is a rollout setting, not a reason to omit the mechanism. Keep configuration unchanged during implementation. Task ownership and real dependency edges govern integration. Proposed new filenames below are recommendations; trace actual callers before editing, resolve routine choices locally, and record the final contract in the named artifact. No model turn for routing, polling, summaries of unchanged state or relay. Use configured work/review levels, keep checks focused, and leave integrated builds/live qualification to the qualification task. Do not claim provider documentation or offline fixtures as a live harness pass. Independent review remains required; no new human code-review gate.\n\nUse runtime SQLite transactions and existing authenticated CLI/Serve conventions. Implement send/ask/list/show/reply and recipient resolution through the contacts registration hook, plus a compact read projection for packets. Store immutable IDs, idempotency key, origin/project/revision, typed destination, correlation, reply-required/yield intent and bounded content/artifact refs. Persist before acknowledgment. Record transport acceptance, consumption, answer and application separately. Provide transaction-safe claim/settle and incoming-reply APIs to the scheduler. Handle duplicate enqueue, orphan or forged replies, concurrent receive/stop, expired questions, missing recipients, sender spoofing, unsafe paths and unknown delivery without claiming exactly-once provider execution. Add no daemon loop or independent service.\n\nArtifact: docs/reports/agent-coordination/mailbox.md. Required named check prefix: TestAgentMessages. Run the verification after implementation settles; the named cases must exist and be executed. Capture actual results in the artifact. A command that matches no tests is incomplete.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "A correlated question and reply survive store reopen and expose truthful distinct delivery, consumption and application states."
+        },
+        {
+          "id": "A2",
+          "outcome": "Duplicate requests and replies do not create duplicate work; invalid identity, unsafe input, conflicting revision and wrong-project routing fail without losing the original envelope."
+        },
+        {
+          "id": "A3",
+          "outcome": "CLI and service operations share one implementation and provide the documented contract for the worker, scheduler and interface."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: go test ./cmd/tusker -run 'TestAgentMessages|TestServeAgentMessages' -count=1",
+          "notes": "Required cases use TestAgentMessages; zero cases is failure. The artifact records actual command output, contract examples and limitations."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "contacts",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-coordination/mailbox.md",
+        "summary": "Store and exchange questions and replies durably",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/agent_messages.go",
+        "cmd/tusker/agent_messages_test.go",
+        "cmd/tusker/agent_message_commands.go",
+        "cmd/tusker/serve_agent_messages.go",
+        "cmd/tusker/serve_agent_messages_test.go",
+        "cmd/tusker/runtime_store.go",
+        "cmd/tusker/serve_command.go",
+        "docs/reports/agent-coordination/mailbox.md"
+      ],
+      "work_level": "demanding",
+      "review_level": "demanding",
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "C2",
+        "C7",
+        "C10"
+      ]
+    },
+    {
+      "source_key": "transports",
+      "title": "Reach supported agent conversations without a relay model",
+      "outcome": "Tusker can deliver a message directly through a supported installed harness and accurately explain unsupported controls. Expensive models are never started just to relay a message. Done is a provider capability matrix with source, protocol and installed evidence marked separately. Scope is transport and endpoint control; scheduling decisions belong to the clarification task.\n\n## Implementation notes\nRead .tusker/specs/agent-coordination.md and its September 10 decision log. Implement the customer journeys using existing execution, runtime, packet, delivery and UI machinery. Preserve the dirty baseline and other owners. Use the supported interactive work-session protocol; do not launch a daemon or nested worker from an interactive session. The current automation pause is a rollout setting, not a reason to omit the mechanism. Keep configuration unchanged during implementation. Task ownership and real dependency edges govern integration. Proposed new filenames below are recommendations; trace actual callers before editing, resolve routine choices locally, and record the final contract in the named artifact. No model turn for routing, polling, summaries of unchanged state or relay. Use configured work/review levels, keep checks focused, and leave integrated builds/live qualification to the qualification task. Do not claim provider documentation or offline fixtures as a live harness pass. Independent review remains required; no new human code-review gate.\n\nQualify the exact installed Codex, configured Muse, Claude and ACP routes using the primary sources in the spec and read-only version/protocol probes. Define operations for attach, idle resume/send, safe active delivery, turn observation, reply capture and uncertain-delivery reconciliation. Record capability state and freshness by version/profile/host/endpoint. Reuse existing argument compilers, structured events, admission and process supervision. Never infer external application access from an ID or infer a Tusker-callable API from an in-model SendMessage tool. Implement deterministic direct adapters for supported routes with fixture-backed protocol tests; preserve unsupported/unknown for other operations. Active injection remains optional per route, with queue-until-idle supplied by the scheduler. Preserve exact model/profile and provider permissions during resume. No private socket scraping, silent CLI-to-app-server fallback, new runtime installer or model-powered courier. Live paid canaries are performed by the final qualification task against this same surface.\n\nArtifact: docs/reports/agent-coordination/transports.md. Required named check prefix: TestAgentTransport. Run the verification after implementation settles; the named cases must exist and be executed. Capture actual results in the artifact. A command that matches no tests is incomplete.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Every supported operation is capability-gated per installed route, with explicit evidence level and no invented provider parity."
+        },
+        {
+          "id": "A2",
+          "outcome": "Supported fixture protocols address the exact session, preserve the profile and permissions, capture receipts, and expose uncertainty or refusal rather than false delivery."
+        },
+        {
+          "id": "A3",
+          "outcome": "No intermediary model is used to send, poll or reconcile a message; the capability matrix explains external attachment and active-turn limits for each evaluated route."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: go test ./internal/runner ./cmd/tusker -run 'TestAgentTransport|TestAgentCoordinationTransport|TestCodexExecContinuation' -count=1",
+          "notes": "Required cases use TestAgentTransport; zero cases is failure. The artifact records actual command output, contract examples and limitations."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "contacts",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-coordination/transports.md",
+        "summary": "Reach supported agent conversations without a relay model",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "internal/runner/coordination.go",
+        "internal/runner/coordination_test.go",
+        "internal/runner/types.go",
+        "internal/runner/prepare.go",
+        "internal/runner/policy.go",
+        "internal/runner/conformance.go",
+        "internal/runner/execute_acp.go",
+        "cmd/tusker/agent_transport.go",
+        "cmd/tusker/agent_transport_test.go",
+        "cmd/tusker/runner_conformance.go",
+        "cmd/tusker/runner_codex.go",
+        "cmd/tusker/runner_codex_live.go",
+        "cmd/tusker/runner_claude_live.go",
+        "docs/reports/agent-coordination/transports.md"
+      ],
+      "work_level": "demanding",
+      "review_level": "demanding",
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "C5",
+        "C6",
+        "C7",
+        "C10"
+      ]
+    },
+    {
+      "source_key": "clarification",
+      "title": "Wake the right agent and resume blocked work from its answer",
+      "outcome": "A blocked worker can ask its architect or a relevant peer, safely yield and continue when its answer arrives while other work progresses. The same behavior survives restarts without repeated model calls. Done is a runnable five-task scenario and wakeup ledger. Scope is targeted clarification and waiting; later-wave planning belongs to the next task.\n\n## Implementation notes\nRead .tusker/specs/agent-coordination.md and its September 10 decision log. Implement the customer journeys using existing execution, runtime, packet, delivery and UI machinery. Preserve the dirty baseline and other owners. Use the supported interactive work-session protocol; do not launch a daemon or nested worker from an interactive session. The current automation pause is a rollout setting, not a reason to omit the mechanism. Keep configuration unchanged during implementation. Task ownership and real dependency edges govern integration. Proposed new filenames below are recommendations; trace actual callers before editing, resolve routine choices locally, and record the final contract in the named artifact. No model turn for routing, polling, summaries of unchanged state or relay. Use configured work/review levels, keep checks focused, and leave integrated builds/live qualification to the qualification task. Do not claim provider documentation or offline fixtures as a live harness pass. Independent review remains required; no new human code-review gate.\n\nAdd deterministic mailbox consumption to the resident daemon, preserving existing ownership and generation fencing. At most one active turn per conversation; deliver into an active turn only when transport conformance permits, otherwise queue. Coalesce available questions without delaying blocking clarification; notices wait for relevant turns. Workers produce a durable wait/yield receipt or invoke the claimed CLI surface, then settle before releasing the model slot. Preserve workspace/progress, avoid false task completion, and resume the legitimate current attempt only after question and revision validation. Handle reply-before-yield, stop-during-send, late answer, endpoint replacement, retry and delivery-unknown. Reserve eligibility for architect clarification so parked workers cannot exhaust its capacity; detect required-reply wait cycles without an LLM. Reuse existing settings to preserve paused/enabled mode while implementing both paths. Put compact contact/question and command guidance into the actual packet; do not require an additional operating skill.\n\nArtifact: docs/reports/agent-coordination/clarification.md. Required named check prefix: TestAgentClarification. Run the verification after implementation settles; the named cases must exist and be executed. Capture actual results in the artifact. A command that matches no tests is incomplete.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "In a five-task scenario the fourth task asks its architect, independent work progresses and the correlated answer continues the correct task exactly once."
+        },
+        {
+          "id": "A2",
+          "outcome": "Busy recipients, no worker slot, restart, reply-before-yield, stale answer, user stop and wait cycles settle with truthful state and no orphaned execution."
+        },
+        {
+          "id": "A3",
+          "outcome": "Unchanged scheduler passes, status reads and receipt retries cause zero model invocations; a duplicate event does not produce another architect turn."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: go test ./cmd/tusker -run 'TestAgentClarification|TestAgentCoordinationWake|TestAgentCoordinationWait' -count=1",
+          "notes": "Required cases use TestAgentClarification; zero cases is failure. The artifact records actual command output, contract examples and limitations."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "mailbox",
+          "kind": "hard"
+        },
+        {
+          "task": "transports",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-coordination/clarification.md",
+        "summary": "Wake the right agent and resume blocked work from its answer",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/agent_coordination.go",
+        "cmd/tusker/agent_coordination_test.go",
+        "cmd/tusker/daemon.go",
+        "cmd/tusker/daemon_scheduler.go",
+        "cmd/tusker/work_session_cmd.go",
+        "cmd/tusker/workflow.go",
+        "cmd/tusker/workflow_validate.go",
+        "cmd/tusker/runtime_store.go",
+        "cmd/tusker/commands_v7.go",
+        "docs/reports/agent-coordination/clarification.md"
+      ],
+      "work_level": "demanding",
+      "review_level": "demanding",
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "C3",
+        "C5",
+        "C7",
+        "C8",
+        "C10"
+      ]
+    },
+    {
+      "source_key": "waves",
+      "title": "Return wave results to the architect and continue the objective",
+      "outcome": "The architect receives an accurate completed or stalled wave report and can propose the next work without the operator relaying it. Configured automatic continuation can run the next valid wave, and pause or stop retains pending work. Done is a two-wave behavior matrix with duplicate and restart evidence. Scope is successive-wave continuation within the agreed objective.\n\n## Implementation notes\nRead .tusker/specs/agent-coordination.md and its September 10 decision log. Implement the customer journeys using existing execution, runtime, packet, delivery and UI machinery. Preserve the dirty baseline and other owners. Use the supported interactive work-session protocol; do not launch a daemon or nested worker from an interactive session. The current automation pause is a rollout setting, not a reason to omit the mechanism. Keep configuration unchanged during implementation. Task ownership and real dependency edges govern integration. Proposed new filenames below are recommendations; trace actual callers before editing, resolve routine choices locally, and record the final contract in the named artifact. No model turn for routing, polling, summaries of unchanged state or relay. Use configured work/review levels, keep checks focused, and leave integrated builds/live qualification to the qualification task. Do not claim provider documentation or offline fixtures as a live harness pass. Independent review remains required; no new human code-review gate.\n\nUse the clarification mailbox/wakeup service and existing wave acceptance/proof facts. Completed and stalled reports differ; no-runnable-work with a blocked task must wake the architect without pretending success. Include compact exact evidence/revision links and remaining requirements. Accept structured next-wave, repair, needs-user and objective-complete proposals; use existing doctor/import/start and authority checks for changes. Persist trigger/report generation, architect turn, output proposal and applied wave ID, with deduplication and context checks so crashes never duplicate a wave. Extend authorization with explicit objective-level continuation policy and limits, not a hardcoded manual-per-wave blocker; current live settings remain unchanged. User pause/stop fences queued starts and preserves pending envelopes. A model output cannot satisfy missing review/proof or silently widen scope. Add explicit deterministic limits and escalation on repeated invalid output; never create an LLM polling loop.\n\nArtifact: docs/reports/agent-coordination/continuation.md. Required named check prefix: TestArchitectContinuation. Run the verification after implementation settles; the named cases must exist and be executed. Capture actual results in the artifact. A command that matches no tests is incomplete.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Successful and stalled waves each produce one truthful report for changed material, with exact acceptance and blocker evidence."
+        },
+        {
+          "id": "A2",
+          "outcome": "An architect proposal creates and starts a subsequent wave once when configured, surviving duplicate results, restart and stale-context rejection."
+        },
+        {
+          "id": "A3",
+          "outcome": "Paused mode retains messages and proposals; enabling continuation processes applicable work; user stop and limits prevent new turns or wave starts without losing the record."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: go test ./cmd/tusker -run 'TestArchitectContinuation|TestPilotWaveFrontier|TestWaveAuthorization' -count=1",
+          "notes": "Required cases use TestArchitectContinuation; zero cases is failure. The artifact records actual command output, contract examples and limitations."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "clarification",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-coordination/continuation.md",
+        "summary": "Return wave results to the architect and continue the objective",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/architect_continuation.go",
+        "cmd/tusker/architect_continuation_test.go",
+        "cmd/tusker/daemon.go",
+        "cmd/tusker/workflow.go",
+        "cmd/tusker/workflow_validate.go",
+        "cmd/tusker/runtime_store.go",
+        "cmd/tusker/delivery_v2.go",
+        "cmd/tusker/delivery_start_cmd.go",
+        "cmd/tusker/v7_wave_authorization.go",
+        "cmd/tusker/v7_wave_brief.go",
+        "docs/reports/agent-coordination/continuation.md"
+      ],
+      "work_level": "demanding",
+      "review_level": "demanding",
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "C4",
+        "C5",
+        "C7",
+        "C8",
+        "C10"
+      ]
+    },
+    {
+      "source_key": "interface",
+      "title": "Show contacts, questions and replies where people inspect work",
+      "outcome": "People can see whom a task asks, read outstanding questions and replies, and message or answer the relevant agent from the existing work screens. Delivery uncertainty and unsupported controls are clear. Done includes interaction screenshots and a tested scenario. Scope is the current task and execution interface, with no separate chat application.\n\n## Implementation notes\nRead .tusker/specs/agent-coordination.md and its September 10 decision log. Implement the customer journeys using existing execution, runtime, packet, delivery and UI machinery. Preserve the dirty baseline and other owners. Use the supported interactive work-session protocol; do not launch a daemon or nested worker from an interactive session. The current automation pause is a rollout setting, not a reason to omit the mechanism. Keep configuration unchanged during implementation. Task ownership and real dependency edges govern integration. Proposed new filenames below are recommendations; trace actual callers before editing, resolve routine choices locally, and record the final contract in the named artifact. No model turn for routing, polling, summaries of unchanged state or relay. Use configured work/review levels, keep checks focused, and leave integrated builds/live qualification to the qualification task. Do not claim provider documentation or offline fixtures as a live harness pass. Independent review remains required; no new human code-review gate.\n\nBuild against the mailbox contract using existing inspector, execution timeline, API/query and SSE patterns. Show architect, origin and peers separately from dependencies. Include effective recipient, wait reason, question/reply correlation, receipt states and applicable pause/continue controls. Reuse capability-gated forms and accessible focus/labels. Queue/held/unsupported/unknown/read/answered/applied are only shown when evidenced. A user reply or steering instruction uses the same backend envelope and revision checks. Add focused state tests and one reproducible browser entry that supports mocked contract coverage now and real service integration in qualification. Capture before/after images for task four waiting and receiving a reply, a peer message, unsupported delivery and narrow layout. The scheduler/transport streams do not own UI files; provide any contract discrepancy to their owner.\n\nArtifact: docs/reports/agent-coordination/interface.md. Required named check prefix: agent coordination. Run the verification after implementation settles; the named cases must exist and be executed. Capture actual results in the artifact. A command that matches no tests is incomplete.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "The task and execution screens expose durable contacts, pending questions and linked replies, distinguishing peer contacts from prerequisites."
+        },
+        {
+          "id": "A2",
+          "outcome": "Users can send or answer through the mailbox service with accessible controls and accurate queued, unsupported, unknown and replied states."
+        },
+        {
+          "id": "A3",
+          "outcome": "Focused browser interactions cover waiting, reply, peer contact, reconnect and narrow layout with before/after evidence."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: bun --cwd internal/serve/ui test test/agent-coordination.test.ts",
+          "notes": "Required cases use agent coordination; zero cases is failure. The artifact records actual command output, contract examples and limitations."
+        },
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: node internal/serve/ui/test/agent-coordination.browser.mjs --fixture",
+          "notes": "Create this scenario entry in the task; exercise the existing development/built service with fixture API responses. Require screenshots and nonzero executed cases."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "mailbox",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-coordination/interface.md",
+        "summary": "Show contacts, questions and replies where people inspect work",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/features/workbench/inspector/TaskInspector.tsx",
+        "internal/serve/ui/src/features/workbench/inspector/inspectorLogic.ts",
+        "internal/serve/ui/src/features/executions/ExecutionOperations.tsx",
+        "internal/serve/ui/src/lib/api.ts",
+        "internal/serve/ui/src/lib/queries.ts",
+        "internal/serve/ui/src/types/domain.ts",
+        "internal/serve/ui/test/agent-coordination.test.ts",
+        "internal/serve/ui/test/agent-coordination.browser.mjs",
+        "docs/reports/agent-coordination/interface.md",
+        "docs/reports/agent-coordination/before.png",
+        "docs/reports/agent-coordination/after-waiting.png",
+        "docs/reports/agent-coordination/after-reply.png",
+        "docs/reports/agent-coordination/after-peer.png",
+        "docs/reports/agent-coordination/after-unsupported.png",
+        "docs/reports/agent-coordination/after-narrow.png"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "C1",
+        "C2",
+        "C9"
+      ]
+    },
+    {
+      "source_key": "qualification",
+      "title": "Prove autonomous coordination and document the working system",
+      "outcome": "The integrated system demonstrates clarification, peer messaging and successive waves with visible evidence of which agents were called and why. Current user documentation matches what was actually exercised. Done is a reproducible report and rendered interface evidence, with installed-provider limitations distinguished from offline passes. This task qualifies the assembled mechanisms rather than expanding provider support.\n\n## Implementation notes\nRead .tusker/specs/agent-coordination.md and its September 10 decision log. Implement the customer journeys using existing execution, runtime, packet, delivery and UI machinery. Preserve the dirty baseline and other owners. Use the supported interactive work-session protocol; do not launch a daemon or nested worker from an interactive session. The current automation pause is a rollout setting, not a reason to omit the mechanism. Keep configuration unchanged during implementation. Task ownership and real dependency edges govern integration. Proposed new filenames below are recommendations; trace actual callers before editing, resolve routine choices locally, and record the final contract in the named artifact. No model turn for routing, polling, summaries of unchanged state or relay. Use configured work/review levels, keep checks focused, and leave integrated builds/live qualification to the qualification task. Do not claim provider documentation or offline fixtures as a live harness pass. Independent review remains required; no new human code-review gate.\n\nCreate scripts/test-agent-coordination.sh with offline and explicit live modes, reusing the existing runtime/fixture/test helpers. It must reject zero matched tests. Run the named five-task/two-wave scenario, restart at delivery boundaries, duplicates, stalled wave, peer question, busy/unsupported/missing recipient, wait-cycle, reply-before-yield, stale work, no slot, stop and configured continuation. Count actual model calls by recipient/wake reason and assert zero for unchanged ticks, projections and transport retries; never count fake fixture turns as real spend. Run a bounded live route canary through the independently running test runtime once the operator's test environment supports it, with exact installed version/profile/transport and no silent downgrade; do not launch a nested worker or change real project automation from this interactive task. Missing route readiness is an explicit unverified lane, not a reason to call the feature qualified or ask for broad generic permission. Use one serialized final UI typecheck/build and run the browser scenarios against built assets and the real fixture service. Update every owned docs/system page with shipped controls, receipt meanings and limitations only after the matching proof. Preserve unrelated current assets and record the final bound material. The report maps every C requirement to evidence, contains exact commands and first failures, and distinguishes offline/source, protocol, live-provider and rendered-UI proof.\n\nArtifact: docs/reports/agent-coordination/report.md. Required named check prefix: TestAgentCoordinationE2E. Run the verification after implementation settles; the named cases must exist and be executed. Capture actual results in the artifact. A command that matches no tests is incomplete.",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "The five-task/two-wave scenario and all specified race/recovery cases pass with preserved identities, replies, ownership and one next-wave application."
+        },
+        {
+          "id": "A2",
+          "outcome": "The model-call ledger proves zero bookkeeping turns and no duplicate wakeup from repeated events; each real architect turn has an actionable cause."
+        },
+        {
+          "id": "A3",
+          "outcome": "Built interface evidence agrees with runtime facts, and provider reports truthfully separate documented, probed, live-qualified and unsupported operations."
+        },
+        {
+          "id": "A4",
+          "outcome": "The six affected current system references describe verified behavior and limits, and every requirement has evidence or remains explicitly incomplete."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4",
+          "check": "command: bash scripts/test-agent-coordination.sh --offline",
+          "notes": "Required cases use TestAgentCoordinationE2E; zero cases is failure. The artifact records actual command output, contract examples and limitations."
+        },
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: bash scripts/test-agent-coordination.sh --live",
+          "notes": "Requires the independently running test runtime and qualified installed profiles. Report each missing live lane explicitly; offline proof cannot satisfy it."
+        },
+        {
+          "covers": "A3",
+          "check": "command: bun --cwd internal/serve/ui run typecheck",
+          "notes": "Run once after integration settles; report unrelated baseline failures."
+        },
+        {
+          "covers": "A3",
+          "check": "command: bun --cwd internal/serve/ui run build",
+          "notes": "One serialized final build, preserving unrelated generated work."
+        },
+        {
+          "covers": "A3",
+          "check": "command: node internal/serve/ui/test/agent-coordination.browser.mjs --live",
+          "notes": "Use the built service connected to the real fixture runtime; zero cases or fixture interception cannot claim live proof."
+        },
+        {
+          "covers": "A4",
+          "check": "command: tusker docs check --json",
+          "notes": "Validate the managed references and inspect the report's C1-C11 coverage against actual behavior."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "waves",
+          "kind": "hard"
+        },
+        {
+          "task": "interface",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/agent-coordination/report.md",
+        "summary": "Prove autonomous coordination and document the working system",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4"
+        ]
+      },
+      "owned_paths": [
+        "cmd/tusker/agent_coordination_e2e_test.go",
+        "scripts/test-agent-coordination.sh",
+        "docs/system/execution-observability.md",
+        "docs/system/orchestration.md",
+        "docs/system/runners-and-acp.md",
+        "docs/system/delivery-and-waves.md",
+        "docs/system/cli.md",
+        "docs/system/serve-ui.md",
+        "internal/serve/ui/dist",
+        "docs/reports/agent-coordination/report.md"
+      ],
+      "work_level": "demanding",
+      "review_level": "demanding",
+      "complexity": "complex",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7",
+        "C8",
+        "C9",
+        "C10",
+        "C11"
+      ],
+      "generated_outputs": [
+        "internal/serve/ui/dist"
+      ]
+    }
+  ]
+}

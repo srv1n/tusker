@@ -93,7 +93,7 @@ func TestSkillReservesHumanApprovalForHumanOnlyBoundaries(t *testing.T) {
 	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "RUN.md"))
 	for _, required := range []string{
 		"Satisfy or waive a human gate only on that human's explicit instruction",
-		"Optional screenshots/performance reports are evidence, not automatic approval gates",
+		"Screenshots and performance reports are evidence, not automatic approval gates",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("canonical skill missing human-approval rule %q", required)

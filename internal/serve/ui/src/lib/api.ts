@@ -41,7 +41,11 @@ import type {
   RunSummary,
   ReviewBatch,
   RunnerConformanceReport,
+  RunnerCatalog,
   ModelLevelsReport,
+  AgentAccessV1,
+  AgentAccessApproval,
+  AgentAccessApprovalResponse,
   TaskCapsule,
   TaskDetail,
   WaveSummary,
@@ -60,6 +64,13 @@ export type ServeCapabilityClass =
   | "unavailable";
 export interface ServeCapability { id: string; class: ServeCapabilityClass; mutable?: boolean; description: string }
 export interface ServeCapabilities { schema: string; capabilities: ServeCapability[] }
+
+export interface RunnerConformanceDraft {
+  id: string;
+  model: string;
+  effort: string;
+  access?: AgentAccessV1;
+}
 
 export interface ProjectRebindResult extends ActionResult {
   rebind?: {
@@ -144,10 +155,19 @@ async function post<T extends { ok?: boolean; refused?: boolean; reason?: string
     if (payload && !capabilityRefused && (payload.refused === true || payload.ok === false)) {
       throw new ActionRefusalError(payload, res.status);
     }
-    throw new ApiError(res.status, payload?.reason ?? payload?.error ?? `POST /api${path} → ${res.status}`);
+    throw new ApiError(res.status, responseFailureMessage(payload, `POST /api${path} → ${res.status}`));
   }
   if (payload === null) throw new ApiError(502, `POST /api${path} returned no JSON result`);
   return requireAccepted(payload);
+}
+
+function responseFailureMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== "object") return fallback;
+  const value = payload as { reason?: string; error?: string; next_step?: string; cases?: Array<{ id?: string; result?: string; evidence?: string }> };
+  if (value.reason || value.error) return value.reason || value.error || fallback;
+  if (value.next_step) return value.next_step;
+  const failed = value.cases?.find((item) => item.result === "fail" || item.result === "blocked");
+  return failed ? `${failed.id || "request"}: ${failed.evidence || failed.result}` : fallback;
 }
 
 export function withProject(path: string, projectId?: string): string {
@@ -237,18 +257,26 @@ export class DocSaveError extends ApiError {
 // ----------------------------------------------------------------------------
 
 export const api = {
+	agentMessage: (body: { projectId: string; recipientKind: string; recipientId: string; originTaskId: string; body: string; kind?: string; replyTo?: string; replyRequired?: boolean }) =>
+		serveOperatorActor().then((sender) => post<{ ok: boolean }>("/messages", { ...body, sender, idempotencyKey: crypto.randomUUID() })),
   capabilities: (): Promise<ServeCapabilities> => real("/capabilities"),
-  runnerConformance: (harness: string, preset: string, live = false, exercise = "", projectId?: string): Promise<RunnerConformanceReport> => {
+  runnerConformance: (harness: string, preset: string, live = false, exercise = "", projectId?: string, draft?: RunnerConformanceDraft, setup = false): Promise<RunnerConformanceReport> => {
     const path = withProject(`/runner/conformance?harness=${encodeURIComponent(harness)}&preset=${encodeURIComponent(preset)}&exercise=${encodeURIComponent(exercise)}`, projectId);
-    return live ? post<RunnerConformanceReport & { ok?: boolean }>(path, { harness, preset, exercise }) : real(path);
+    if (!live && !setup) return real(path);
+    return post<RunnerConformanceReport & { ok?: boolean }>(path, { harness, preset, exercise, ...(draft ? { draft: true, draftId: draft.id, model: draft.model, effort: draft.effort, ...(draft.access ? { access: draft.access } : {}) } : {}), ...(setup ? { setup: true } : {}) });
   },
-  modelLevels: (projectId?: string): Promise<ModelLevelsReport> => real(withProject("/models", projectId)),
+  modelCatalog: (refresh = false): Promise<RunnerCatalog> => real(`/models/catalog${refresh ? "?refresh=1" : ""}`),
+  modelLevels: (projectId?: string, scope = "project"): Promise<ModelLevelsReport> => real(withProject(`/models?scope=${encodeURIComponent(scope)}`, projectId)),
   modelLevelsSet: (level: string, lane: string, profiles: string[], revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
     post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "set", scope, level, lane, profiles, revision }),
   modelLevelsReset: (level: string, lane: string, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
     post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "reset", scope, level, lane, revision }),
-  modelProfileSet: (profile: { name: string; harness: string; model: string; effort: string; preset: string }, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
+  modelProfileSet: (profile: { name: string; displayName?: string; eligibleTiers?: string[]; harness: string; model: string; effort: string; preset?: string; access?: AgentAccessV1 }, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
     post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "profile-set", scope, ...profile, revision }),
+	modelPrivateFoldersSet: (privateFolders: string[], revision: string, scope = "global", projectId?: string): Promise<ModelLevelsReport> =>
+		post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "private-folders", scope, privateFolders, revision }),
+	modelProfileLifecycle: (action: "profile-disable" | "profile-enable" | "profile-remove", name: string, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
+		post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action, scope, name, revision }),
   executions: (params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionGraph> => {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value) as [string, string][]).toString();
     return real(withProject(`/executions${query ? `?${query}` : ""}`, projectId));
@@ -291,6 +319,9 @@ export const api = {
 
   setProjectAutomation: (projectId: string, enabled: boolean): Promise<ActionResult> =>
     post(`/projects/${projectId}/automation`, { enabled }),
+
+  setProjectVisibility: (projectId: string, visible: boolean): Promise<ActionResult> =>
+    post(`/projects/${encodeURIComponent(projectId)}/visibility`, { visible }),
 
   setProjectSettings: (
     projectId: string,
@@ -399,6 +430,15 @@ export const api = {
   gates: (taskId?: string, projectId?: string): Promise<GateDetail[]> =>
     real(withProject(`/gates${taskId ? `?task=${taskId}` : ""}`, projectId)),
 
+  agentAccessApprovals: (projectId: string, taskId?: string): Promise<{ approvals: AgentAccessApproval[] }> =>
+    real(withProject(`/approvals${taskId ? `?task=${encodeURIComponent(taskId)}` : ""}`, projectId)),
+
+  agentAccessApproval: (requestId: string, projectId?: string): Promise<AgentAccessApproval> =>
+    real(withProject(`/approvals/${encodeURIComponent(requestId)}`, projectId)),
+
+  agentAccessApprovalRespond: (requestId: string, expectedRevision: number, decision: "allow_once" | "deny", projectId?: string): Promise<AgentAccessApprovalResponse> =>
+    post<AgentAccessApprovalResponse>(withProject(`/approvals/${encodeURIComponent(requestId)}/respond`, projectId), { requestId, expectedRevision, decision, ...(projectId ? { projectId } : {}) }),
+
   evidence: (taskId?: string, projectId?: string): Promise<EvidenceDoc[]> =>
     real(withProject(`/evidence${taskId ? `?task=${taskId}` : ""}`, projectId)),
 
@@ -417,6 +457,8 @@ export const api = {
 
   // GET /api/tasks/:id
   task: (id: string, projectId?: string): Promise<TaskDetail> => real(withProject(`/tasks/${id}`, projectId)),
+  taskRoute: (id: string, body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; executeProfile?: string | null; reviewProfile?: string | null }, projectId?: string): Promise<ActionResult> =>
+    post<ActionResult>(withProject(`/tasks/${encodeURIComponent(id)}/route`, projectId), body),
 
   // GET /api/docs?project=
   docs: (projectId?: string): Promise<DocListEntry[]> =>

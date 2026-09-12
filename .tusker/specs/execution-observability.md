@@ -2,7 +2,7 @@
 title: "Execution observability: names, lineage, and truthful multi-agent tracking"
 subject: execution-observability
 keywords: [executions, agents, subagents, names, lineage, timelines, direct work]
-part_of: software-factory
+part_of: overview
 status: canonical
 created: 2026-07-29
 read_when: "Planning, implementing, or reviewing execution identity, direct Codex or Claude registration, child-agent tracking, run timelines, or the multi-agent operator UI."
@@ -14,7 +14,7 @@ updates:
   - docs/system/orchestration.md
   - docs/system/serve-ui.md
 sources:
-  - "[[software-factory]] and its standing rule that work registers in Tusker no matter who drives"
+  - "Historical software-factory specification and its standing rule that work registers in Tusker no matter who drives; the source is no longer in the managed corpus."
   - "Operator grill session 2026-07-29 — [[2026-07-29-execution-observability-grill]]"
   - "Tusker/Paseo architecture comparison against getpaseo/paseo commit 504b687f8952a0a7ec5b5fdc772b946ddf903a18"
 ---
@@ -76,7 +76,7 @@ cancellation, proof, or landing.
    report provider-native children or request separately managed work, but it
    does not recursively launch another Tusker runner.
 
-These decisions refine the existing [[software-factory]] decision that all work
+These decisions refine the historical software-factory decision that all work
 must register in Tusker.
 
 ## Plain-language model

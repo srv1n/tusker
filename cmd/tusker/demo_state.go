@@ -66,6 +66,7 @@ type demoManifest struct {
 	SeededAt        string                    `json:"seeded_at"`
 	SeededBy        string                    `json:"seeded_by"`
 	HumanGate       bool                      `json:"human_gate"`
+	Visible         bool                      `json:"visible,omitempty"`
 	SecondProject   string                    `json:"second_project,omitempty"`
 	Waves           map[string]demoWaveRecord `json:"waves"`
 	Tasks           map[string]demoTaskRecord `json:"tasks"`

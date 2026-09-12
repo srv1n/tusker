@@ -94,6 +94,10 @@ type deliveryPlanTask struct {
 	MigrationKeys    []string                 `yaml:"migration_keys,omitempty" json:"migration_keys,omitempty"`
 	ResourceRefs     []string                 `yaml:"resource_refs,omitempty" json:"resource_refs,omitempty"`
 	RunnerProfile    string                   `yaml:"runner_profile,omitempty" json:"runner_profile,omitempty"`
+	WorkLevel        string                   `yaml:"work_level,omitempty" json:"work_level,omitempty"`
+	ReviewLevel      string                   `yaml:"review_level,omitempty" json:"review_level,omitempty"`
+	ExecuteProfile   string                   `yaml:"execute_profile,omitempty" json:"execute_profile,omitempty"`
+	ReviewProfile    string                   `yaml:"review_profile,omitempty" json:"review_profile,omitempty"`
 	Complexity       string                   `yaml:"complexity,omitempty" json:"complexity,omitempty"`
 	ConcurrencyGroup string                   `yaml:"concurrency_group,omitempty" json:"concurrency_group,omitempty"`
 	KnowledgeNodes   []string                 `yaml:"knowledge_nodes,omitempty" json:"knowledge_nodes,omitempty"`
@@ -102,6 +106,9 @@ type deliveryPlanTask struct {
 	Size             string                   `yaml:"size,omitempty" json:"size,omitempty"`
 	Domains          []string                 `yaml:"domains,omitempty" json:"domains,omitempty"`
 	RequirementRefs  []string                 `yaml:"requirement_refs,omitempty" json:"requirement_refs,omitempty"`
+	Architect        string                   `yaml:"architect,omitempty" json:"architect,omitempty"`
+	Origin           string                   `yaml:"origin,omitempty" json:"origin,omitempty"`
+	Peers            map[string]string        `yaml:"peers,omitempty" json:"peers,omitempty"`
 }
 
 type deliveryAcceptance struct {
@@ -434,6 +441,11 @@ func validateDeliveryPlan(vaultPath string, plan deliveryPlan) ([]deliveryIssue,
 				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": invalid complexity " + task.Complexity})
 			}
 		}
+		for field, value := range map[string]string{"work_level": task.WorkLevel, "review_level": task.ReviewLevel} {
+			if value != "" && !validModelLevel(value) {
+				issues = append(issues, deliveryIssue{Code: "PLAN_CONTRACT_INVALID", Message: key + ": invalid " + field + " " + value})
+			}
+		}
 		qualifiedSeen := map[string]bool{}
 		for _, dep := range task.Dependencies {
 			kind := fallback(strings.ToLower(strings.TrimSpace(dep.Kind)), "hard")
@@ -750,8 +762,28 @@ func applyDeliveryImportGuarded(vaultPath string, plan deliveryPlan, report deli
 			"concurrency_group": task.ConcurrencyGroup, "knowledge_nodes": task.KnowledgeNodes, "wave": report.WaveID,
 			"created_at": createdAt, "created_by": createdBy, "updated_at": now, "updated_by": actor,
 		}
+		if architect := firstNonEmpty(task.Architect, plan.v2.Architect); strings.TrimSpace(architect) != "" {
+			data["architect"] = architect
+			data["architect_source"] = map[bool]string{true: "task", false: "wave"}[strings.TrimSpace(task.Architect) != ""]
+		}
+		if origin := firstNonEmpty(task.Origin, plan.v2.Origin); strings.TrimSpace(origin) != "" {
+			data["origin"] = origin
+		}
+		if len(task.Peers) > 0 {
+			data["peer_contacts"] = task.Peers
+		}
 		if complexity := strings.ToLower(strings.TrimSpace(task.Complexity)); complexity != "" {
 			data["complexity"] = complexity
+		}
+		for field, value := range map[string]string{"work_level": task.WorkLevel, "review_level": task.ReviewLevel} {
+			if value = strings.TrimSpace(value); value != "" {
+				data[field] = strings.ToLower(value)
+			}
+		}
+		for field, value := range map[string]string{"execute_profile": task.ExecuteProfile, "review_profile": task.ReviewProfile} {
+			if value = strings.TrimSpace(value); value != "" {
+				data[field] = value
+			}
 		}
 		if len(task.GeneratedOutputs) > 0 {
 			data["generated_outputs"] = task.GeneratedOutputs

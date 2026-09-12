@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	runnercore "tusker/internal/runner"
 )
 
 type RunnerName string
@@ -16,7 +18,11 @@ const (
 	RunnerCodexAppServer RunnerName = "codex_app_server"
 	RunnerCodexExec      RunnerName = "codex_exec"
 	RunnerCodexCloud     RunnerName = "codex_cloud"
-	RunnerClaude         RunnerName = "claude-code"
+	// RunnerMuse is the configured Codex profile route. It is CLI-only and
+	// deliberately does not imply ACP support.
+	RunnerMuse    RunnerName = "muse"
+	RunnerMuseCLI RunnerName = "muse_cli"
+	RunnerClaude  RunnerName = "claude-code"
 	// RunnerACP is a distinct persisted local transport kind. It deliberately
 	// does not alias codex_app_server, codex_exec, claude-code, or codex_cloud.
 	RunnerACP RunnerName = "acp_v1"
@@ -93,10 +99,15 @@ type StartRequest struct {
 	RunnerHarness       string
 	RunnerModel         string
 	RunnerEffort        string
-	NotePath            string
-	VaultPath           string
-	Budget              map[string]any
-	CodexPolicy         CodexPolicy
+	// PrivateFolders carries the resolved, canonical exclusions to live
+	// adapters. It is deliberately runtime-only policy input, not a profile
+	// store; Claude's PreToolUse evaluator needs the same list the resolver
+	// qualified before launch.
+	PrivateFolders []string
+	NotePath       string
+	VaultPath      string
+	Budget         map[string]any
+	CodexPolicy    CodexPolicy
 	// CodexACP is the serializable, non-secret provider admission plan for the
 	// concrete codex_acp runner.  Generic ACP launches leave it nil.
 	CodexACP        *CodexACPProviderPlan `json:"codex_acp,omitempty"`
@@ -137,6 +148,7 @@ type ResumeRequest struct {
 	RunnerHarness       string
 	RunnerModel         string
 	RunnerEffort        string
+	PrivateFolders      []string
 	NotePath            string
 	VaultPath           string
 	CodexPolicy         CodexPolicy
@@ -163,6 +175,10 @@ type CodexPolicy struct {
 	StallTimeoutMS     int
 	MaxTurns           int
 	Extensions         ExtensionPolicy
+	// CommandPolicy is the resolved fixed behavior projection for access
+	// profiles. A zero value preserves the historical evaluator for legacy
+	// permission_preset profiles.
+	CommandPolicy runnercore.CommandPolicy
 }
 
 type CodexCloudConfig struct {

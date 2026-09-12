@@ -779,6 +779,9 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		"next_source":           fallback(args.String("next-source"), "task"),
 		"next_ref":              fallback(args.String("next-ref"), id),
 		"next_action":           fallback(args.String("next-action"), "Execute the task contract and satisfy proof mode."),
+		"architect":             strings.TrimSpace(args.String("architect")),
+		"origin":                strings.TrimSpace(args.String("origin")),
+		"peer_contacts":         parseKeyValueList(args.String("peers")),
 		"domains":               splitCSV(args.String("domains")),
 		"gates":                 splitCSV(args.String("gates")),
 		"dependencies":          splitCSV(args.String("dependencies")),
@@ -806,6 +809,24 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 				return tuskerError(errorInvalidArg, field+" must be light, standard, or demanding")
 			}
 			data[strings.ReplaceAll(field, "-", "_")] = level
+		}
+	}
+	var profileWorkflow WorkflowFile
+	profileWorkflowLoaded := false
+	for _, item := range []struct{ flag, field, lane string }{{"execute-profile", "execute_profile", runLaneExecute}, {"review-profile", "review_profile", runLaneReview}} {
+		if profile := strings.TrimSpace(args.String(item.flag)); profile != "" {
+			if !profileWorkflowLoaded {
+				var err error
+				profileWorkflow, err = loadWorkflow(vaultPath)
+				if err != nil {
+					return err
+				}
+				profileWorkflowLoaded = true
+			}
+			if _, err := resolveRunnerProfileForNote(Note{Data: map[string]any{item.field: profile}}, profileWorkflow.Data, item.lane); err != nil {
+				return err
+			}
+			data[item.field] = profile
 		}
 	}
 	if len(specRefs) > 0 {
@@ -2884,6 +2905,8 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 		fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
 		fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
 		fmt.Fprintf(&b, "## Task contract\n\n%s\n\n", strings.TrimSpace(task.Body))
+		writeV7PacketCanonicalContract(&b, task)
+		writeV7PacketContacts(&b, task, false)
 		writeV7PacketOwnership(&b, task)
 		report := computeV7ProofReport(vaultPath, task, idx)
 		fmt.Fprintf(&b, "## Proof status\n\nMode: %s\nStatus: %s\nMissing: %s\n\n", report.Mode, report.Status, fallback(strings.Join(append(append([]string{}, report.Missing...), report.ModeMissing...), ", "), "none"))
@@ -2902,6 +2925,8 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 	fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
 	fmt.Fprintf(&b, "## Task contract\n\n%s\n\n", strings.TrimSpace(task.Body))
+	writeV7PacketCanonicalContract(&b, task)
+	writeV7PacketContacts(&b, task, true)
 	writeV7PacketOwnership(&b, task)
 	fmt.Fprintf(&b, "## Open gates\n\n")
 	for _, gate := range idx.Gates {
@@ -2916,6 +2941,81 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	fmt.Fprintf(&b, "## Branch policy\n\nProtected task/gate state fields must be changed through Tusker control operations on a control branch.\n\n")
 	fmt.Fprintf(&b, "## Close policy\n\n%s\n", v7ClosePolicySummary(vaultPath, task))
 	return b.String()
+}
+
+func writeV7PacketCanonicalContract(b *strings.Builder, task Note) {
+	requirements := normalizeList(task.Data["requirement_refs"])
+	artifact := mapField(task.Data, "artifact_contract")
+	if len(requirements) == 0 && artifact == nil {
+		return
+	}
+	fmt.Fprintf(b, "## Canonical contract metadata\n\n")
+	if len(requirements) > 0 {
+		fmt.Fprintf(b, "- Requirements: %s\n", strings.Join(requirements, ", "))
+	}
+	if artifact != nil {
+		fmt.Fprintf(b, "- Artifact: kind=`%s`; path=`%s`; covers=%s; summary=%s\n",
+			fallback(stringField(artifact, "kind"), "(missing)"),
+			fallback(stringField(artifact, "path"), "(missing)"),
+			fallback(strings.Join(normalizeList(firstPresent(artifact, "acceptance_ids", "acceptance")), ", "), "(missing)"),
+			fallback(stringField(artifact, "summary"), "(missing)"),
+		)
+	}
+	fmt.Fprintf(b, "\n")
+}
+
+func writeV7PacketContacts(b *strings.Builder, task Note, includeAsk bool) {
+	architect, origin := stringField(task.Data, "architect"), stringField(task.Data, "origin")
+	peers := normalizeStringMap(task.Data["peer_contacts"])
+	if architect == "" && origin == "" && len(peers) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## Coordination contacts\n\n")
+	if architect != "" {
+		fmt.Fprintf(b, "- Architect: `%s` (%s)\n", architect, fallback(stringField(task.Data, "architect_source"), "task"))
+	}
+	if origin != "" {
+		fmt.Fprintf(b, "- Origin: `%s`\n", origin)
+	}
+	keys := make([]string, 0, len(peers))
+	for key := range peers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Fprintf(b, "- Peer `%s`: `%s`\n", key, peers[key])
+	}
+	if includeAsk {
+		fmt.Fprintf(b, "- Ask: `tusker message ask --project %s --sender task:%s --recipient <address> --key <stable-key> --body <question> --yield --json`\n", stringField(task.Data, "project"), stringField(task.Data, "id"))
+	}
+	fmt.Fprintf(b, "\n")
+}
+
+func parseKeyValueList(raw string) map[string]string {
+	out := map[string]string{}
+	for _, item := range splitCSV(raw) {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			out[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return out
+}
+func normalizeStringMap(value any) map[string]string {
+	out := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]string:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[string]any:
+		for key, item := range typed {
+			if text, ok := item.(string); ok {
+				out[key] = text
+			}
+		}
+	}
+	return out
 }
 
 func writeV7PacketOwnership(b *strings.Builder, task Note) {
@@ -3854,6 +3954,13 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 		reasons = append(reasons, warning)
 	}
 	if idx, err := loadV7Index(vaultPath); err == nil {
+		missing, unknown := v7PlannedAcceptanceProofGaps(task, idx)
+		if len(missing) > 0 {
+			reasons = append(reasons, "acceptance missing planned proof: "+strings.Join(missing, ", "))
+		}
+		if len(unknown) > 0 {
+			reasons = append(reasons, "planned proof references unknown acceptance: "+strings.Join(unknown, ", "))
+		}
 		if upstreamID, held := v7HeldByFailedUpstream(task, idx); held {
 			reasons = append(reasons, v7UpstreamFailureHoldReason(upstreamID))
 		}
@@ -3989,6 +4096,7 @@ names, symbols, or commands here; those live in the appendix below.
 
 - What this is: TBD.
 - Why it matters: TBD.
+- Before/after example: TBD.
 - What "done" looks like: TBD — describe things someone can actually see.
 
 ## Acceptance
@@ -4006,13 +4114,22 @@ names, symbols, or commands here; those live in the appendix below.
 Builder appendix — only the person doing the hands-on work opens this. Keep the
 plain top section above free of jargon; put the technical detail here instead.
 
-- File map: TBD (verify the paths before editing).
-- Moving parts: TBD.
-- Exact commands: TBD.
+- Start here: TBD (verified entry points, current flow and existing authority to extend).
+- Governing decisions: TBD (exact spec headings; locked behavior versus suggestions).
+- Surrounding work: TBD (related tasks, upstream outputs, downstream consumers,
+  shared-file ownership and integration owner; explicitly state if none).
+- Constraints: TBD (invariants, migration and relevant failure/recovery behavior).
+- Contacts: TBD (verified architect/origin/peers and actual thread/host where
+  relevant; supported reply route, when to ask and fallback if unavailable).
+- Readiness review: TBD (packet and exact references suffice without chat history;
+  name remaining decisions, ownership or proof gaps before handoff).
 
 ## Verification
 
 Each Check must start with %s or %s.
+Notes name the scenario/setup, expected result, evidence location and limits.
+Map only acceptance outcomes the check actually exercises; zero matching tests
+does not prove acceptance.
 
 | Covers | Check | Result | Notes |
 |---|---|---|---|

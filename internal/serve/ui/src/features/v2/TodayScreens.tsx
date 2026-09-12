@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { ArrowRight, Waves } from "lucide-react";
 import { useNeeds, useProjects, useRuns, useTasks, useWaves } from "@/lib/queries";
-import type { NeedItem, ProjectSummary, RunSummary, TaskCapsule, WaveSummary } from "@/types/domain";
+import { projectContainsCheckout, type NeedItem, type ProjectSummary, type RunSummary, type TaskCapsule, type WaveSummary } from "@/types/domain";
 import {
   phaseTone,
   V2Empty,
@@ -176,7 +176,7 @@ export function ProjectTodayV2() {
   const tasksQ = useTasks(projectId);
   const runsQ = useRuns(projectId);
 
-  const project = projectsQ.data?.find((item) => item.id === projectId);
+  const project = projectsQ.data?.find((item) => projectContainsCheckout(item, projectId));
   const needs = needsQ.data ?? [];
   const waves = wavesQ.data ?? [];
   const tasks = tasksQ.data ?? [];

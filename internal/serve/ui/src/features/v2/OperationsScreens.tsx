@@ -8,7 +8,7 @@ import { PageHeader, PageScroll, SectionLabel } from "@/components/ui/page";
 import { QueryBoundary, SkeletonRows } from "@/components/ui/states";
 import { useDaemon, useFactoryOperations, useProjectAutomation, useProjectSettings, useProjects, useRuns, useWaves } from "@/lib/queries";
 import { cn } from "@/lib/cn";
-import type { DaemonStatus, FactoryOperationsProjection, ProjectSummary, RunSummary, WaveSummary } from "@/types/domain";
+import { projectContainsCheckout, type DaemonStatus, type FactoryOperationsProjection, type ProjectSummary, type RunSummary, type WaveSummary } from "@/types/domain";
 
 type SettingsTab = "basic" | "advanced";
 type DiagnosticsTab = "health" | "runtime" | "runners" | "queue" | "workspaces" | "doctor" | "audit";
@@ -45,8 +45,10 @@ export function SettingsV2() {
         </div>
         <QueryBoundary q={projects} loading={<SkeletonRows rows={5} />}>
           {(items) => {
-            const project = items.find((item) => item.id === projectId);
-            if (!project) return <MissingProject />;
+            const group = items.find((item) => projectContainsCheckout(item, projectId));
+            if (!group) return <MissingProject />;
+            const selected = group.checkouts?.find((checkout) => checkout.id === projectId);
+            const project = selected ? { ...group, id: selected.id, repoRoot: selected.repoRoot, vaultRoot: selected.vaultRoot, health: selected.health } : group;
             return tab === "basic" ? (
               <SettingsBasic project={project} operations={operations.data} automation={automation} settings={settings} />
             ) : (
@@ -151,6 +153,20 @@ function SettingsAdvanced({ project, operations }: { project: ProjectSummary; op
         <ReadOnlyRow name="Vault" value={project.vaultRoot || "Not served"} source="Registry" />
         <ReadOnlyRow name="Project health" value={project.health} source="Runtime" />
       </SettingGroup>
+      {(project.checkouts?.length ?? 0) > 1 ? (
+        <SettingGroup label="Registered checkouts">
+          {project.checkouts?.map((checkout) => (
+            <ReadOnlyRow
+              key={checkout.id}
+              name={checkout.branch ? checkout.detached ? `Detached · ${checkout.head ?? "unknown"}` : checkout.branch : checkout.label}
+              value={`${checkout.label} · ${checkout.available ? checkout.activity : "Unavailable"}`}
+              source={checkout.repoRoot}
+            />
+          ))}
+          <p className="text-[11px] leading-4 text-faint">Grouping is navigation-only. Cleanup preview: <span className="font-mono">tusker projects prune</span>.</p>
+          {project.registryPreview?.missingRegistrations.length ? <p className="text-[11px] leading-4 text-warn">Missing registrations: {project.registryPreview.missingRegistrations.join(", ")}</p> : null}
+        </SettingGroup>
+      ) : null}
       <SettingGroup label="Authority and promotion">
         <ReadOnlyRow name="Dispatch scope" value={operations ? operations.project.dispatchScope.effective : "Loading…"} source={operations?.project.dispatchScope.provenance ?? "Runtime"} />
         <ReadOnlyRow name="Completion mode" value={operations ? operations.project.completionMode.effective : "Loading…"} source={operations?.project.completionMode.provenance ?? "Runtime"} />

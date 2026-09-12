@@ -50,35 +50,42 @@ func v7SpecRefsPacketSection(vaultPath string, note Note) string {
 func v7SpecRefDisplayTargets(vaultPath string, refs []string) []string {
 	var out []string
 	for _, ref := range refs {
-		clean := v7CleanSpecRef(ref)
-		if clean == "" {
+		normalized := v7NormalizeSpecRef(ref)
+		if normalized == "" {
 			continue
 		}
-		readPath := v7SpecRefReadPath(vaultPath, clean)
-		if readPath != "" && readPath != clean {
-			out = append(out, "`"+clean+"` -> `"+readPath+"`")
+		readPath := v7SpecRefReadPath(vaultPath, normalized)
+		if readPath != "" && readPath != normalized {
+			out = append(out, "`"+normalized+"` -> `"+readPath+"`")
 			continue
 		}
-		out = append(out, "`"+clean+"`")
+		out = append(out, "`"+normalized+"`")
 	}
 	return out
 }
 
 func v7SpecRefReadPath(vaultPath, ref string) string {
-	ref = v7CleanSpecRef(ref)
+	normalized := v7NormalizeSpecRef(ref)
+	ref, anchor := v7CleanSpecRef(normalized), v7SpecRefAnchor(normalized)
 	if ref == "" {
 		return ""
 	}
+	withAnchor := func(value string) string {
+		if anchor == "" || value == "" {
+			return value
+		}
+		return value + "#" + anchor
+	}
 	if id := v7SpecRefDecisionID(ref); id != "" {
-		return vaultDisplayPath(vaultPath, filepath.ToSlash(filepath.Join("work", "decisions", id+".md")))
+		return withAnchor(vaultDisplayPath(vaultPath, filepath.ToSlash(filepath.Join("work", "decisions", id+".md"))))
 	}
 	if strings.HasPrefix(ref, "work/") {
-		return vaultDisplayPath(vaultPath, ref)
+		return withAnchor(vaultDisplayPath(vaultPath, ref))
 	}
 	if canonical := v7CanonicalSpecRef(vaultPath, ref); canonical != "" {
-		return canonical
+		return withAnchor(canonical)
 	}
-	return ref
+	return withAnchor(ref)
 }
 
 func v7CanonicalSpecRef(vaultPath, ref string) string {
@@ -166,8 +173,8 @@ func validateV7SpecTraceability(vaultPath string, notes []Note) []Issue {
 
 // v7DemandingTaskSpecRefIssue is shared by whole-vault traceability, task
 // readiness validation, and every ready-transition seam. Tier 1 keeps the
-// probationary warning-only behavior; the strict tiers require at least one
-// resolvable governing spec or decision.
+// probationary warning-only behavior; the strict tiers require every declared
+// governing spec or decision, including an exact section anchor, to resolve.
 func v7DemandingTaskSpecRefIssue(vaultPath string, note Note, where string) (Issue, bool) {
 	if effectiveV7Kind(note.Data) != "task" || !v7TaskIsDemanding(note.Data) || strings.TrimSpace(stringField(note.Data, "readiness")) != "ready" {
 		return Issue{}, false
@@ -190,9 +197,9 @@ func v7DemandingTaskSpecRefIssue(vaultPath string, note Note, where string) (Iss
 	}
 	return issue(
 		"TASK_SPEC_REF_REQUIRED",
-		"demanding ready task must declare at least one resolvable spec_refs link",
+		"demanding ready task must declare resolvable spec_refs links",
 		where,
-		"add a repo-relative spec/decision path or V7 decision id that resolves in this repository, or keep the task out of ready",
+		"make every mandatory repo-relative spec/decision path and section resolve, or keep the task out of ready",
 		map[string]any{"id": stringField(note.Data, "id")},
 	), true
 }
@@ -206,18 +213,17 @@ func v7TaskHasResolvableSpecRef(vaultPath string, refs []string) bool {
 		return false
 	}
 	for _, ref := range refs {
-		clean := v7CleanSpecRef(ref)
-		if clean != "" && v7SpecRefExists(vaultPath, clean, idx.Decisions) {
-			return true
+		if v7NormalizeSpecRef(ref) == "" || !v7SpecRefExists(vaultPath, ref, idx.Decisions) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func validateV7SpecRefs(vaultPath string, note Note, decisionIDs map[string]Note) []Issue {
 	var warnings []Issue
 	for _, ref := range normalizeList(note.Data["spec_refs"]) {
-		clean := v7CleanSpecRef(ref)
+		clean := v7NormalizeSpecRef(ref)
 		if clean == "" {
 			continue
 		}
@@ -230,19 +236,28 @@ func validateV7SpecRefs(vaultPath string, note Note, decisionIDs map[string]Note
 }
 
 func v7SpecRefExists(vaultPath, ref string, decisionIDs map[string]Note) bool {
-	if id := v7SpecRefDecisionID(ref); id != "" {
-		_, ok := decisionIDs[id]
-		return ok
+	clean, anchor := v7CleanSpecRef(ref), v7SpecRefAnchor(ref)
+	if id := v7SpecRefDecisionID(clean); id != "" {
+		note, ok := decisionIDs[id]
+		return ok && v7SpecRefSectionExists(note.Body, anchor)
 	}
-	if v7SpecRefPathEscapes(ref) {
+	if v7SpecRefPathEscapes(clean) {
 		return false
 	}
 	corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath))
 	if err != nil {
 		return false
 	}
-	resolved, ok := docgraph.ResolveReference(corpus, ref)
-	return ok && (resolved.Document.Kind == docgraph.KindSpec || resolved.Document.Kind == docgraph.KindDecision)
+	resolved, ok := docgraph.ResolveReference(corpus, clean)
+	return ok && (resolved.Document.Kind == docgraph.KindSpec || resolved.Document.Kind == docgraph.KindDecision) && v7SpecRefSectionExists(resolved.Document.Body, anchor)
+}
+
+func v7SpecRefSectionExists(body, anchor string) bool {
+	if anchor == "" {
+		return true
+	}
+	_, err := docgraph.ReadSection(body, anchor)
+	return err == nil
 }
 
 func v7SpecRefDecisionID(ref string) string {
@@ -277,6 +292,43 @@ func v7CleanSpecRef(ref string) string {
 		return ""
 	}
 	return strings.TrimPrefix(ref, "./")
+}
+
+func v7NormalizeSpecRef(ref string) string {
+	ref = strings.TrimSpace(strings.Trim(ref, "`"))
+	if ref == "" {
+		return ""
+	}
+	if strings.HasPrefix(ref, "[[") && strings.HasSuffix(ref, "]]") {
+		ref = strings.TrimSuffix(strings.TrimPrefix(ref, "[["), "]]")
+		if pipe := strings.IndexByte(ref, '|'); pipe >= 0 {
+			ref = ref[:pipe]
+		}
+	}
+	ref = strings.TrimSpace(ref)
+	base, anchor := ref, ""
+	if hash := strings.IndexByte(ref, '#'); hash >= 0 {
+		base, anchor = ref[:hash], strings.TrimSpace(ref[hash+1:])
+		if anchor == "" {
+			return ""
+		}
+	}
+	base = v7CleanSpecRef(base)
+	if base == "" {
+		return ""
+	}
+	if anchor != "" {
+		return base + "#" + anchor
+	}
+	return base
+}
+
+func v7SpecRefAnchor(ref string) string {
+	normalized := v7NormalizeSpecRef(ref)
+	if hash := strings.IndexByte(normalized, '#'); hash >= 0 {
+		return strings.TrimSpace(normalized[hash+1:])
+	}
+	return ""
 }
 
 func v7TraceabilityDocs(vaultPath string, decisionDocs []v7TraceabilityDoc) ([]v7TraceabilityDoc, []Issue) {

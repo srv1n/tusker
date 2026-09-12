@@ -13,10 +13,12 @@ import {
   buildFlowGraph,
   clampViewport,
   displayStateFor,
+  essentialFlowEdges,
   fitViewport,
   initialViewport,
   isLiveRun,
   layoutFlowGraph,
+  layoutTopDownFlowGraph,
   modelFor,
   panViewport,
   topologyKey,
@@ -207,6 +209,37 @@ describe("WaveFlow graph model", () => {
     // Node text widths honor the 220-280px implementation default.
     expect(NODE_WIDTH).toBeGreaterThanOrEqual(220);
     expect(NODE_WIDTH).toBeLessThanOrEqual(280);
+  });
+
+  test("flow dependencies point down while parallel tasks share a row", () => {
+    const fixture = thirtyFixture();
+    const graph = buildFlowGraph(fixture);
+    const layout = layoutTopDownFlowGraph(graph, fixture.memberIds);
+    for (const edge of graph.edges) {
+      expect(layout.positions[edge.from]!.y).toBeLessThan(layout.positions[edge.to]!.y);
+    }
+    for (const layer of layout.layers) {
+      expect(new Set(layer.map((id) => layout.positions[id]!.y)).size).toBe(1);
+    }
+  });
+
+  test("flow hides transitively redundant arrows without losing reachability", () => {
+    const graph = buildFlowGraph(thirtyFixture());
+    const essential = essentialFlowEdges(graph);
+    expect(essential.length).toBeLessThan(graph.edges.length);
+    const reachable = (edges: typeof graph.edges, from: string, to: string): boolean => {
+      const pending = [from];
+      const seen = new Set<string>();
+      while (pending.length > 0) {
+        const id = pending.pop()!;
+        if (id === to) return true;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        pending.push(...edges.filter((edge) => edge.from === id).map((edge) => edge.to));
+      }
+      return false;
+    };
+    for (const edge of graph.edges) expect(reachable(essential, edge.from, edge.to)).toBe(true);
   });
 
   test("flow unloaded members stay inspectable", () => {

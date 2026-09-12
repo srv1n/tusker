@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -46,6 +47,24 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 	if err != nil {
 		return 2, runnercore.ConformanceReport{}, err
 	}
+	var draftAccess *runnercore.AgentAccessV1
+	if args.Bool("draft") {
+		model, effort = strings.TrimSpace(args.String("model")), strings.TrimSpace(args.String("effort"))
+		// Setup checks intentionally do not require a model request. Live tests
+		// still require the exact selected model and reasoning level.
+		if args.Bool("live") && (model == "" || effort == "") {
+			return 2, runnercore.ConformanceReport{}, tuskerError(errorMissingArg, "draft conformance requires --model and --effort")
+		}
+		definition.ID = "draft-" + firstNonEmpty(strings.TrimSpace(args.String("draft-id")), harness)
+		definition.Profile = ""
+		if raw := strings.TrimSpace(args.String("access")); raw != "" {
+			var access runnercore.AgentAccessV1
+			if err := json.Unmarshal([]byte(raw), &access); err != nil {
+				return 2, runnercore.ConformanceReport{}, tuskerError(errorInvalidArg, "draft access must be a valid JSON object")
+			}
+			draftAccess = &access
+		}
+	}
 	live := args.Bool("live")
 	exercise := strings.TrimSpace(args.String("exercise"))
 	script := strings.TrimSpace(args.String("script"))
@@ -83,10 +102,58 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 		}
 		defer os.RemoveAll(workspace)
 	}
-	input := runnercore.RunInput{Workspace: workspace, Preset: preset, Model: model, Effort: effort, SearchPath: runnerCommandSearchPath(), Deadline: 30 * time.Minute, PolicyCanary: live, ProtectedPath: filepath.Join(vault, ".runner-conformance-sentinel"), Exercise: exercise, ExerciseScript: script}
+	// A conformance turn is a disposable check, not a user task. Keep it short;
+	// Execute remains cancellable through its context/process supervision.
+	input := runnercore.RunInput{Workspace: workspace, Preset: preset, Model: model, Effort: effort, SearchPath: runnerCommandSearchPath(), Deadline: 2 * time.Minute, PolicyCanary: live, ProtectedPath: filepath.Join(vault, ".runner-conformance-sentinel"), Exercise: exercise, ExerciseScript: script}
+	if draftAccess != nil {
+		levels, levelsErr := modelLevelsRead(vault)
+		if levelsErr != nil {
+			return 2, runnercore.ConformanceReport{}, levelsErr
+		}
+		// The live canary runs in its disposable workspace, while authored
+		// references are still compared against the project's real workspace.
+		projectWorkspace := v7RepoRoot(vault)
+		resolved, resolveErr := resolveAccess(RunnerProfileDefinition{Harness: harness, Model: model, Effort: effort, Access: draftAccess}, levels.PrivateFolders, AgentAccessResolutionContext{
+			Workspace: workspace, References: accessReferencesForProfile(draftAccess, projectWorkspace), Controls: nativeAccessControls(definition, draftAccess), Route: harness, Transport: string(definition.Transport),
+		})
+		if resolveErr != nil {
+			return 2, runnercore.ConformanceReport{}, resolveErr
+		}
+		input.Access, input.ResolvedAccess = draftAccess, &resolved
+	}
+	if definition.Profile != "" {
+		if configured, resolveErr := resolveTuskerConfig(vault); resolveErr == nil {
+			if profile, ok := runnerProfilesFromSchema(configured.Config.Automation.Profiles)[definition.Profile]; ok {
+				input.Access = profile.Access
+			}
+		}
+	}
+	if args.Bool("setup") {
+		now := time.Now().UTC()
+		report := runnercore.ConformanceReport{Schema: runnercore.ConformanceSchema, HarnessID: definition.ID, Provider: definition.Provider, Dialect: definition.Dialect, Transport: definition.Transport, HostOS: runtime.GOOS, HostArchitecture: runtime.GOARCH, Preset: input.Preset, Model: model, Effort: effort, StartedAt: now, FinishedAt: now, Live: false, Ready: false, Cases: []runnercore.ConformanceCase{{ID: "access_resolution", Result: runnercore.CasePass, Evidence: "resolved without runtime, authentication, handshake, canary, or model probes"}}}
+		if input.ResolvedAccess != nil {
+			report.Access = input.ResolvedAccess
+			if input.ResolvedAccess.State != "ready" {
+				report.Cases[0].Result = runnercore.CaseBlocked
+			}
+		}
+		return 0, report, nil
+	}
 	report, runErr := runnercore.Conformance(context.Background(), definition, input, live)
-	if cacheErr := saveConformanceReport(DefaultStateRoot(), report); cacheErr != nil {
-		return 2, report, cacheErr
+	if input.ResolvedAccess != nil {
+		report.Access = input.ResolvedAccess
+	}
+	if definition.Profile != "" {
+		resolved, resolveErr := resolveTuskerConfig(vault)
+		if resolveErr != nil {
+			return 2, report, resolveErr
+		}
+		report.ProfileRevision = configRevision(resolved.Raw)
+	}
+	if !args.Bool("draft") {
+		if cacheErr := saveConformanceReport(DefaultStateRoot(), report); cacheErr != nil {
+			return 2, report, cacheErr
+		}
 	}
 	if runErr == nil {
 		return 0, report, nil
@@ -110,6 +177,7 @@ func conformanceHarnessDefinition(vaultPath, name string) (runnercore.HarnessDef
 	if found {
 		name = strings.TrimSpace(profile.Harness)
 		definition.ID = profileName
+		definition.Profile = profileName
 		definition.Provider = runnerVendor(name)
 	}
 	command := ""
@@ -124,13 +192,14 @@ func conformanceHarnessDefinition(vaultPath, name string) (runnercore.HarnessDef
 		definition.Provider, definition.Transport, definition.Dialect = "acp", runnercore.TransportACP, ""
 		definition.NativeContainment = argsNativeContainment(profile)
 		command = profile.Command
+	case RunnerMuse:
+		definition.Provider, definition.Dialect, definition.Executable = "muse", "codex", "codex"
+		command = "codex --profile muse exec --json --skip-git-repo-check -"
+	case RunnerMuseCLI:
+		definition.Provider, definition.Dialect, definition.Executable = "muse", "muse", "muse"
+		command = defaultMuseCLICommand()
 	default:
-		if strings.EqualFold(name, "muse") {
-			definition.Provider, definition.Dialect, definition.Executable = "muse", "codex", "codex"
-			command = "codex --profile muse exec --json --skip-git-repo-check -"
-		} else {
-			return definition, "", "", tuskerError(errorConfigInvalid, "unknown harness or profile "+profileName)
-		}
+		return definition, "", "", tuskerError(errorConfigInvalid, "unknown harness or profile "+profileName)
 	}
 	if found && strings.TrimSpace(profile.Command) != "" {
 		command = profile.Command
@@ -197,6 +266,29 @@ func preparedRunnerForDispatch(vaultPath string, runner RunnerName, command stri
 		preset = permissionPresetForPolicy(policy)
 	}
 	input := runnercore.RunInput{Workspace: workspace, Preset: preset, Model: model, Effort: effort, SearchPath: searchPath}
+	if selected.Definition.Access != nil {
+		private := []string{}
+		if report, readErr := modelLevelsRead(vaultPath); readErr == nil {
+			private = append(private, report.PrivateFolders...)
+		}
+		resolved, resolveErr := resolveAccess(selected.Definition, private, AgentAccessResolutionContext{
+			Workspace: workspace, References: accessReferencesForProfile(selected.Definition.Access, workspace),
+			Controls: nativeAccessControls(definition, selected.Definition.Access), Route: string(runner), Transport: string(definition.Transport),
+		})
+		if resolveErr != nil {
+			return runnercore.PreparedLaunch{}, resolveErr
+		}
+		if resolved.State != "ready" {
+			reason := "resolved access is unsupported for selected route"
+			if len(resolved.Issues) > 0 {
+				reason = resolved.Issues[0].Code + ": " + resolved.Issues[0].Message
+			}
+			return runnercore.PreparedLaunch{}, &runnercore.AdmissionError{Code: "policy_unenforceable", HarnessID: definition.ID, Check: "access", Reason: reason, Remedy: "Choose a route with the required native controls or change the access request."}
+		}
+		input.Access = selected.Definition.Access
+		input.Preset = resolved.Effective.Preset
+		input.ResolvedAccess = &resolved
+	}
 	var cached runnercore.ConformanceReport
 	if definition.Provider == "muse" {
 		raw, readErr := os.ReadFile(conformanceReportCachePath(DefaultStateRoot(), runnercore.ConformanceReport{HarnessID: definition.ID, Preset: preset}))

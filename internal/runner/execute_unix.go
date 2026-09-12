@@ -141,7 +141,11 @@ func eventAttempt(p PreparedLaunch) string {
 	if p.LaunchHash == "" {
 		return ""
 	}
-	return p.HarnessID + ":" + strings.TrimPrefix(p.LaunchHash, "sha256:")[:12]
+	digest := strings.TrimPrefix(p.LaunchHash, "sha256:")
+	if len(digest) > 12 {
+		digest = digest[:12]
+	}
+	return p.HarnessID + ":" + digest
 }
 
 func classifyCLIResult(dialect, output string) (EventType, string, string) {
@@ -182,6 +186,24 @@ func classifyCLIResult(dialect, output string) (EventType, string, string) {
 						return EventFailed, bounded(result, 500), session
 					}
 				}
+			}
+		case "muse":
+			if stream, ok := value["stream"].(map[string]any); ok {
+				if id, ok := stream["id"].(string); ok && strings.TrimSpace(id) != "" {
+					session = strings.TrimSpace(id)
+				}
+			}
+			payloadType, _ := value["payload_type"].(string)
+			if payloadType == "" {
+				payloadType, _ = value["record_type"].(string)
+			}
+			switch strings.ToLower(strings.TrimSpace(payloadType)) {
+			case "run.terminal.completed", "terminal.completed":
+				seenFinal = true
+			case "run.terminal.failed", "terminal.failed", "run.terminal.error", "terminal.error":
+				seenFinal, failed = true, true
+			case "run.terminal.cancelled", "terminal.cancelled":
+				return EventCancelled, "Muse run cancelled", session
 			}
 		}
 	}

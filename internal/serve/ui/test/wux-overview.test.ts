@@ -121,7 +121,7 @@ describe("wave overview grouping", () => {
     expect(groupOf(result, "W-NEED")).toBe("needs-you");
     expect(groupOf(result, "W-RUN")).toBe("running");
     expect(groupOf(result, "W-READY")).toBe("ready");
-    expect(groupOf(result, "W-UNKNOWN")).toBe("planned");
+    expect(groupOf(result, "W-UNKNOWN")).toBe("unavailable");
     expect(groupOf(result, "W-PAUSED")).toBe("planned");
     expect(groupOf(result, "W-DONE")).toBe("completed");
     expect(groupOf(result, "W-CANCELLED")).toBe("completed");
@@ -131,9 +131,11 @@ describe("wave overview grouping", () => {
   test("overview unknown is not ready", () => {
     const result = groupWaves({ ...mixedInput(), startability: START });
     expect(groupOf(result, "W-UNKNOWN")).not.toBe("ready");
-    const planned = result.groups.find((group) => group.id === "planned");
-    const entry = planned?.waves.find((item) => item.wave.id === "W-UNKNOWN");
+    const unavailable = result.groups.find((group) => group.id === "unavailable");
+    const entry = unavailable?.waves.find((item) => item.wave.id === "W-UNKNOWN");
     expect(entry?.stateDetail).toContain("Start status unavailable");
+    expect(entry?.row.primaryAction).toBe("open");
+    expect(entry?.row.secondary?.detail).toContain("read failed");
     // Unknown startability never leaks into completed either.
     expect(groupOf(result, "W-DRAINED")).not.toBe("completed");
   });
@@ -158,12 +160,81 @@ describe("wave overview grouping", () => {
   test("overview completed is not drained", () => {
     const result = groupWaves({ ...mixedInput(), startability: START });
     // fullyDrained with no landedAt or terminal status is not completion.
-    expect(groupOf(result, "W-DRAINED")).toBe("planned");
+    expect(groupOf(result, "W-DRAINED")).toBe("unavailable");
     // Cancellation is history, never a successful completion label.
     const completed = result.groups.find((group) => group.id === "completed");
     const cancelled = completed?.waves.find((entry) => entry.wave.id === "W-CANCELLED");
     expect(cancelled?.stateLabel).toBe("Cancelled");
     expect(cancelled?.stateLabel).not.toBe("Completed");
+    expect(completed?.title).toBe("History");
+  });
+
+  test("overview preserves actionable gates, fresh running, and closeout facts", () => {
+    const input = mixedInput();
+    const result = groupWaves({
+      ...input,
+      runs: [...input.runs, makeRun({ taskId: "T-1" })],
+      startability: START,
+    });
+    const needsYou = result.groups.find((group) => group.id === "needs-you")?.waves[0];
+    expect(needsYou?.stateDetail).toContain("Sample decision for G-1");
+    expect(needsYou?.stateDetail).toContain("Running.");
+    expect(needsYou?.row).toEqual({
+      primaryAction: "open",
+      secondary: {
+        kind: "human-action",
+        text: "Sample decision for G-1 Running.",
+        detail: "Sample decision for G-1",
+      },
+    });
+
+    const gateWave = makeWave({ id: "W-GATE", title: "Choose region", memberIds: ["T-GATE"] });
+    const gateTask = makeTask({
+      id: "T-GATE",
+      title: "Choose staging region",
+      hasGate: true,
+      openGates: [{
+        id: "G-REGION", kind: "clarify", rawKind: "clarify", title: "Choose region",
+        status: "open", owner: "human", satisfied: false, blocking: true, blocks: [],
+        action: "Choose the staging region.",
+      }],
+    });
+    const gated = groupWaves({
+      waves: [gateWave], tasks: [gateTask], runs: [], startability: { "W-GATE": { state: "blocked", reason: "Waiting on gate." } },
+    });
+    expect(groupOf(gated, "W-GATE")).toBe("needs-you");
+    expect(gated.groups[0]?.waves[0]?.row.secondary?.text).toBe("Choose the staging region.");
+
+    const promotion = groupWaves({
+      waves: [makeWave({ id: "W-PROMOTE", title: "Promote release", status: "pending_promotion" })],
+      tasks: [], runs: [], startability: {},
+    });
+    const promotionEntry = promotion.groups.find((group) => group.id === "planned")?.waves[0];
+    expect(promotionEntry?.stateLabel).toBe("Pending promotion");
+    expect(promotionEntry?.row.primaryAction).toBe("open");
+    expect(groupOf(promotion, "W-PROMOTE")).not.toBe("completed");
+  });
+
+  test("overview distinguishes disarmed, blocked, and stopped from ready or completed", () => {
+    const waves = [
+      makeWave({ id: "W-DISARMED", title: "New work", authorization: { state: "disarmed", stale: false, action: "" } }),
+      makeWave({ id: "W-BLOCKED", title: "Wait on dependency" }),
+      makeWave({ id: "W-STOPPED", title: "Stopped work", status: "stopped" }),
+    ];
+    const result = groupWaves({
+      waves, tasks: [], runs: [],
+      startability: {
+        "W-BLOCKED": { state: "blocked", reason: "Dependency W-01 is incomplete." },
+      },
+    });
+    const disarmed = result.groups.find((group) => group.id === "planned")?.waves.find((wave) => wave.wave.id === "W-DISARMED");
+    const blocked = result.groups.find((group) => group.id === "planned")?.waves.find((wave) => wave.wave.id === "W-BLOCKED");
+    const stopped = result.groups.find((group) => group.id === "completed")?.waves[0];
+    expect(disarmed?.stateLabel).toBe("Not started");
+    expect(blocked?.stateLabel).toBe("Blocked");
+    expect(blocked?.row.secondary?.detail).toBe("Dependency W-01 is incomplete.");
+    expect(stopped?.stateLabel).toBe("Stopped");
+    expect(stopped?.stateLabel).not.toBe("Completed");
   });
 
   test("overview search filters titles and completed hides by default", () => {
@@ -225,9 +296,10 @@ describe("wave overview rendering", () => {
     }
     // Completed history hides behind its filter by default.
     expect(html).not.toContain("Shipped");
-    // Each visible wave title renders exactly once as a navigation button.
+    // Each visible wave title renders exactly once inside its full-card button.
     for (const title of ["Needs decision", "In flight", "Ready wave", "Stale read"]) {
-      expect(html.split(`>${title}</button>`).length - 1).toBe(1);
+      expect(html.split(`>${title}</span>`).length - 1).toBe(1);
+      expect(html).toMatch(new RegExp(`<button[^>]*wux-ov-card[^>]*>[\\s\\S]*>${title}</span>[\\s\\S]*</button>`));
     }
     expect(html).toContain("Open wave Needs decision");
     // No separate Open column and no repeated all-task ticket inventory.

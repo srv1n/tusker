@@ -22,6 +22,30 @@ routes an agent to repository facts.
 The installed skill can be a copy or a symlink. The source tree remains the
 authority for this repository.
 
+## External methods
+
+Tusker owns task capture, decision links, task contracts, proof, and review.
+It composes an external design method only for unresolved choices. On this host,
+`grilling` is available through the skill catalog; it returns settled decisions
+or open questions. A supplied adequate specification skips that discussion and
+goes straight to preserved spec and decision links plus Tusker task conversion.
+
+Writing guidance is optional. The pinned references are pstack
+[`technical-writing`](https://github.com/cursor/plugins/blob/7366ac128bdf95f45e6734f412b49a4031800169/pstack/skills/technical-writing/SKILL.md)
+and [`unslop`](https://github.com/cursor/plugins/blob/7366ac128bdf95f45e6734f412b49a4031800169/pstack/skills/unslop/SKILL.md),
+both at `7366ac128bdf95f45e6734f412b49a4031800169` under the repository's MIT
+license. Neither is installed in this host catalog. The Codex `skill-installer`
+supports a GitHub skill path, but do not install it automatically: it is
+Cursor-oriented and a user must choose the installation. To install a pinned
+copy, use its documented GitHub-URL option; to update, choose a new reviewed
+commit and repeat that explicit install. Keep the source URL and commit here;
+do not copy either external rule catalog into Tusker.
+
+When an optional method is missing, say so. Apply Tusker's local prose rule:
+lead with the outcome, name the actor, retain exact commands, identifiers,
+permission boundaries, and uncertainty, then state the expected result and
+failure path. No skill changes permissions or configured work/review levels.
+
 Documentation follows the same current-only route: `docs/system/` owns product
 behavior, `.tusker/specs/` owns governing contracts, and
 `.tusker/specs/decisions/` owns durable decisions. `docs/system/INDEX.md` and
@@ -48,6 +72,11 @@ unless the task requires them.
 
 Run `tusker skill doctor --strict --json` after a skill change. Run
 `tusker validate --json` after a project-skill or canon change.
+
+The source package is authoritative. `tusker skill sync --repo . --source
+<canonical-tusker-checkout>` refreshes managed repository copies only when the
+operator asks. `tusker init` preserves existing user-managed external skills;
+it does not refresh active or global installations.
 
 ## Code sources
 

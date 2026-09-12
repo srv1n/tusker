@@ -40,6 +40,10 @@ enum RuntimeLaunchPlan {
         }
     }
 
+    static func shouldReuseHealthyRuntime(childRunning: Bool) -> Bool {
+        childRunning
+    }
+
     static func manages(_ baseURL: URL) -> Bool {
         guard baseURL.scheme?.lowercased() == "http" else { return false }
         let host = baseURL.host?.lowercased()
@@ -213,11 +217,20 @@ final class RuntimeSupervisor {
         state = .checking
         startupTask = Task { [weak self] in
             guard let self else { return }
-            if await self.isHealthy() {
+            if await self.isHealthy(), RuntimeLaunchPlan.shouldReuseHealthyRuntime(childRunning: self.process?.isRunning == true) {
                 self.state = .running
                 self.startupTask = nil
                 self.startMonitoring()
                 return
+            }
+            if await self.isHealthy() {
+                do {
+                    try await self.stopExistingDaemon()
+                } catch {
+                    self.state = .failed(error.localizedDescription)
+                    self.startupTask = nil
+                    return
+                }
             }
             self.state = .starting
             do {
@@ -360,6 +373,33 @@ final class RuntimeSupervisor {
             writer.finish(Data())
             if self.logWriter === writer { self.logWriter = nil }
             throw error
+        }
+    }
+
+    private func stopExistingDaemon() async throws {
+        guard let executable = RuntimeLaunchPlan.executableURL(in: .main) else {
+            throw RuntimeStartupError("The app bundle is missing its Tusker runtime. Reinstall with `make install`.")
+        }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["daemon", "stop", "--json"]
+        var environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        environment["HOME"] = home
+        environment["PATH"] = RuntimeLaunchPlan.path(home: home, inherited: environment["PATH"])
+        process.environment = environment
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { _ in continuation.resume() }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+        guard process.terminationStatus == 0 else {
+            throw RuntimeStartupError("TuskerBar could not replace the existing local daemon.")
         }
     }
 

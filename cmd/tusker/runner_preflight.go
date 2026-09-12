@@ -474,6 +474,8 @@ func runnerExecutableNeedsHealthCheck(runner RunnerName, executable string) bool
 		return strings.Contains(base, "codex")
 	case RunnerClaude:
 		return strings.Contains(base, "claude")
+	case RunnerMuse, RunnerMuseCLI:
+		return strings.Contains(base, "muse")
 	default:
 		return false
 	}

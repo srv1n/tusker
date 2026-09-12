@@ -196,6 +196,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
               taskId={task.id}
               taskTitle={task.title}
               projectId={projectId}
+              approvals={task.agentAccessApprovals}
             />
           ))}
 

@@ -1,0 +1,675 @@
+{
+  "schema": "tusker.delivery-plan/v2",
+  "scope": "full-height-workspace-20260911",
+  "title": "Full-height Docs, Waves and Board with layered side navigation",
+  "epic": "WUX",
+  "spec_refs": [
+    ".tusker/specs/full-height-workspace.md"
+  ],
+  "context_fingerprint": "sha256:d12fbd10ead5643da3c234b3dcce1c0d12bcb0fab3c5733b6bccd8241a13a337",
+  "factory_intake_contract_schema": "tusker.factory-intake-contract/v1",
+  "factory_intake_contract_version": "1.1.0",
+  "factory_intake_contract_fingerprint": "sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18",
+  "summary": "People switch projects and sections from slim left rails and use Docs, Waves and Board from the top of a full-height workspace, with contextual panes and responsive navigation.",
+  "concurrency": 1,
+  "requirements": [
+    {
+      "id": "R1",
+      "outcome": "Docs, Waves and Board begin below one compact toolbar; default desktop first useful content is at y<=80px."
+    },
+    {
+      "id": "R2",
+      "outcome": "Visible logical projects and sections are directly selectable in two slim rails with readable identity and preserved global utilities."
+    },
+    {
+      "id": "R3",
+      "outcome": "Context panes collapse/resize independently; each navigation/content region scrolls without moving the root."
+    },
+    {
+      "id": "R4",
+      "outcome": "Validated project/checkout routes, preferences, view/scroll/selection and legacy data restore safely."
+    },
+    {
+      "id": "R5",
+      "outcome": "Docs preserves editing/saving and readable prose while reclaiming height and optional tree width."
+    },
+    {
+      "id": "R6",
+      "outcome": "Waves exposes contextual selection and full-height current top-down graphs/results without changing execution truth."
+    },
+    {
+      "id": "R7",
+      "outcome": "Board uses the remaining canvas with existing grouping, capabilities and restored mode."
+    },
+    {
+      "id": "R8",
+      "outcome": "Tablet/phone, keyboard/focus, enlarged text, errors, visibility and embedded-panel regressions remain usable."
+    },
+    {
+      "id": "R9",
+      "outcome": "Built-browser evidence and current documentation distinguish actual proof from live/installed limits."
+    }
+  ],
+  "non_goals": [
+    "Application implementation during planning; dispatch, daemon launch, native install or deployment.",
+    "Backend/project visibility or execution-authority changes, graph-engine replacement, new editor/save protocol, new packages or saved-view service."
+  ],
+  "assumptions": [
+    {
+      "source_key": "dimensions",
+      "statement": "Spec dimensions/breakpoints are reversible implementation defaults selected during planning, not direct user measurements."
+    },
+    {
+      "source_key": "contacts",
+      "statement": "No installed contact API or registered execution binding verified; Sarav in the assigning conversation is the explicit architect/origin fallback."
+    },
+    {
+      "source_key": "ownership",
+      "statement": "Pre-existing dirty changes and overlapping tasks are preserved; active claims must be resolved by the assigning operator before an implementation ticket starts."
+    },
+    {
+      "source_key": "capacity",
+      "statement": "The current runtime permits one active run per project, so this inert plan uses concurrency 1 without changing configuration. Docs and Waves have independent file ownership if the operator later assigns them separately."
+    }
+  ],
+  "unresolved_decisions": [],
+  "owned_path_overlaps": [
+    {
+      "source_key": "state-shell-barrel",
+      "tasks": [
+        "state",
+        "shell"
+      ],
+      "paths": [
+        "internal/serve/ui/src/features/workbench/navigation/index.ts"
+      ],
+      "strategy": "serialize"
+    },
+    {
+      "source_key": "waves-board-integration",
+      "tasks": [
+        "waves",
+        "board"
+      ],
+      "paths": [
+        "internal/serve/ui/src/features/workbench/integration/WorkExperience.tsx"
+      ],
+      "strategy": "serialize"
+    },
+    {
+      "source_key": "shell-responsive",
+      "tasks": [
+        "shell",
+        "responsive"
+      ],
+      "paths": [
+        "internal/serve/ui/src/features/workbench/navigation/workspace.css",
+        "internal/serve/ui/src/features/workbench/navigation/ProjectStrip.css",
+        "internal/serve/ui/src/features/workbench/navigation/ProjectStrip.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/WorkspaceSurface.tsx",
+        "internal/serve/ui/src/routes/__root.tsx",
+        "internal/serve/ui/src/router.tsx"
+      ],
+      "strategy": "serialize"
+    }
+  ],
+  "tasks": [
+    {
+      "source_key": "state",
+      "title": "Preserve checkout-scoped workspace views and pane preferences",
+      "outcome": "People return to the same document position, wave view or board mode after switching projects. Currently the navigation record retains last routes and opaque view state, while WorkExperience keeps important view state only in local component state. Deliver tolerant typed workspace-state helpers and focused migration tests before the new layouts consume them.\n\n## Implementation contract\nRead .tusker/specs/full-height-workspace.md sections 3\u20135 and 10\u201312.\n\n1. Trace every read/write/recordViewState caller in navigationState.ts and ProjectStrip.tsx. Preserve the existing storage key, pinned order, mounted-order policy and route validation. Add the spec's workspace namespace inside existing opaque project view state, keyed by actual checkout ID. Do not replace the record with a separate store.\n2. Export getWorkspaceViewState(state, routeProjectId) and updateWorkspaceViewState(state, routeProjectId, patch), with the exact WorkspaceViewState shape in section 5. Setters return an updated NavigationState and merge section fields; document how consumers persist through the root authority. Expose any needed visit/prune helper here so feature workers do not implement separate sanitizers. Section patch behavior must preserve unrelated project and section entries.\n3. Validate enums, coordinates, pane bounds and same-checkout Docs paths. Keep last-20 visit ordering explicit for document/wave maps. Preserve unrelated opaque properties and legacy pin/order/last-screen data. Add tests for duplicate/unknown IDs, wrong-project saved URLs, blocked storage, malformed JSON, NaN/Infinity, stale selected task IDs and independent checkouts. Selection membership remains validated by feature data, not guessed in this helper.\n4. Keep folder expansion/filter in treeStore; the Docs worker performs old railOpen migration using these new helpers. Define the migration signal clearly in the report: absent workspace context preference means default/migrate; false means intentionally closed. No implementation of component scrolling belongs here.\n\n## Start and boundaries\nRead AGENTS.md, the exact spec sections below, and all callers of the owned components. Obtain the supported interactive Tusker claim only after assignment; do not dispatch workers or start a daemon. Inventory the dirty baseline and current active claims before editing. Preserve other owners' changes. No backend/native app/package/global-theme edits, resets, installs, commits or deployment are part of this ticket. Use configured work/review levels; model suggestions are manual assignment advice only. Run the focused checks after the implementation settles; the final ticket owns the integrated build and dist. A runnable check with zero cases is a failure. No source-string assertion or screenshot alone proves an interaction.\n\n## Contacts and surrounding work\nArchitect/origin is Sarav in the assigning conversation. No routable Tusker execution contact was verified; the installed CLI has no agent/contact command. Return a conflict with acceptance ID, facts, decision needed and recommendation to the assigning session; if unavailable, leave that dependent work blocked for the operator while continuing independent work. Never fabricate an execution address or message another session without authorization. See spec section 10 for WUX-T-0013/0015/0016/0017/0019 and graph/inspector/board overlap. Older horizontal-strip acceptance is superseded. Resolve active owned-file claims before editing; historical ticket status does not prove code absent or complete.\n\n## Assignment and integration\nSuggested manual worker: Terra. Required upstream outputs: none; this establishes the shared state boundary. Dependencies are hard because consumers need those exports and the same owned source baseline. Own only state helpers, export barrel and named tests. Shell consumes this API; Docs, Waves and Board consume it after Shell. Shell later edits index.ts, so this task must finish first. New proposed workspace-state.test.ts is a real executable test, not proof already present.\n\n## Readiness review\nThis packet fixes the starting seams, invariant behavior, upstream boundary and scenario checks. Read it without relying on the design chat. No unresolved design question blocks the specified work; active ownership and prerequisite completion are checked at assignment. The report must distinguish expected behavior from observed PASS/FAIL, link each acceptance ID to evidence, and name any limitation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Old and malformed records load safely; pins, routes and opaque state survive adding the workspace namespace; blocked storage does not crash navigation."
+        },
+        {
+          "id": "A2",
+          "outcome": "Updates are isolated by checkout and section, merge partial patches, reject invalid paths/values and cap document/wave histories at the last 20 actual visits."
+        },
+        {
+          "id": "A3",
+          "outcome": "Exported helpers distinguish absent versus false pane preferences and preserve sibling data, making Docs rail migration and later feature restoration deterministic."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: cd internal/serve/ui && bun test test/workspace-state.test.ts test/project-strip-state.test.ts test/wux-navigation.test.ts",
+          "notes": "Create workspace tests with explicit migration, merge, identity, invalid-storage and bounded-history cases. Report actual named case counts. This proves model behavior only, not browser restoration."
+        }
+      ],
+      "dependencies": [],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/full-height-workspace/state/report.md",
+        "summary": "Acceptance-linked state results, actual commands and screenshots with provenance.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/features/workbench/navigation/navigationState.ts",
+        "internal/serve/ui/src/features/workbench/navigation/index.ts",
+        "internal/serve/ui/test/workspace-state.test.ts",
+        "internal/serve/ui/test/project-strip-state.test.ts",
+        "internal/serve/ui/test/wux-navigation.test.ts",
+        "docs/reports/full-height-workspace/state"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R3",
+        "R4"
+      ]
+    },
+    {
+      "source_key": "shell",
+      "title": "Build the desktop project and section rails with a shared feature surface",
+      "outcome": "People select any visible project or primary section directly from the left. Replace the current horizontal strip/top tabs with a 48px project rail and 88px labeled section rail. Deliver the real root shell and the shared full-height surface that Docs/Waves/Board can adopt independently.\n\n## Implementation contract\nRead .tusker/specs/full-height-workspace.md sections 2\u20135 and 9\u201312.\n\n1. Refactor existing ProjectStrip logic, preserving queries, visibility filter, checkout selection, initial restore, stable ordering, AddProjectForm, search, attention and utilities. Root mounts the navigation authority once; rail and mobile trigger access it without parallel persistence loops. Preserve the /panel embedded exemption and existing fault banners. Root no longer renders ProjectLayout's horizontal section tabs.\n2. Implement initials/collision/full-name access, vertically scrollable project targets, an explicit full-name overlay, pin/move controls, selected/focused project reveal and stable positions. Keep global utilities fixed below the scroller. Preserve All Projects hidden-project recovery and error/empty/loading states. Inspect AddProjectForm callers; retain that existing component without rewriting registration.\n3. Implement WorkspaceSurface.tsx with the exact section-4 props. The exported component owns context toggle/open/width, persisted desktop preference, accessible resize and one toolbar. Children fill remaining height and own scrolling. Provide the future mobile project trigger inside this toolbar, plus a route-aware fallback for legacy/global pages; the later responsive ticket owns final breakpoint behavior. No dynamic global header registration or new docking library.\n4. Remove obsolete horizontal strip CSS and update directly affected tests only where assertions conflict with the new layout. Keep current restoration tests. Do not claim all content geometry is fixed before feature tickets adopt the surface.\n5. Create test/full-height-workspace.browser.mjs with dynamic --case loading of test/full-height-workspace/<case>.mjs, a fixed allowlist shell/docs/waves/board/responsive/all and failure on unknown/zero cases. Each module exports async run({browser, baseURL, outputDir}); helper module owns browser/explicit common API setup and geometry assertions. Modules return named results; all requires every module. Per-feature modules own response overrides and screenshots. Missing downstream modules are expected until their tickets finish; shell case must already run. Do not swallow unknown API calls with generic success.\n6. Capture a before image before changing the shell and after-shell images at 1440/1920 widths. Report route selections and utility reachability. Leave installed app/daemon untouched.\n\n## Start and boundaries\nRead AGENTS.md, the exact spec sections below, and all callers of the owned components. Obtain the supported interactive Tusker claim only after assignment; do not dispatch workers or start a daemon. Inventory the dirty baseline and current active claims before editing. Preserve other owners' changes. No backend/native app/package/global-theme edits, resets, installs, commits or deployment are part of this ticket. Use configured work/review levels; model suggestions are manual assignment advice only. Run the focused checks after the implementation settles; the final ticket owns the integrated build and dist. A runnable check with zero cases is a failure. No source-string assertion or screenshot alone proves an interaction.\n\n## Contacts and surrounding work\nArchitect/origin is Sarav in the assigning conversation. No routable Tusker execution contact was verified; the installed CLI has no agent/contact command. Return a conflict with acceptance ID, facts, decision needed and recommendation to the assigning session; if unavailable, leave that dependent work blocked for the operator while continuing independent work. Never fabricate an execution address or message another session without authorization. See spec section 10 for WUX-T-0013/0015/0016/0017/0019 and graph/inspector/board overlap. Older horizontal-strip acceptance is superseded. Resolve active owned-file claims before editing; historical ticket status does not prove code absent or complete.\n\n## Assignment and integration\nSuggested manual worker: Terra. Required upstream outputs: state. Dependencies are hard because consumers need those exports and the same owned source baseline. Shell consumes state and establishes WorkspaceSurface plus browser helper exports for all feature tickets. It owns root/router/shared CSS/export barrel and shell harness only. Docs/Waves/Board do not edit those shared files. Responsive later owns those same shell files after all features complete. Proposed new source paths are WorkspaceSurface.tsx and workspace.css; retain existing filenames for the rail if that avoids unnecessary rename churn.\n\n## Readiness review\nThis packet fixes the starting seams, invariant behavior, upstream boundary and scenario checks. Read it without relying on the design chat. No unresolved design question blocks the specified work; active ownership and prerequisite completion are checked at assignment. The report must distinguish expected behavior from observed PASS/FAIL, link each acceptance ID to evidence, and name any limitation.\n\nRunner output contract: TUSKER_WORKSPACE_OUTPUT_DIR optionally overrides the default report root, resolved relative to repository root; each case writes beneath its own case directory. Case helpers needed by responsive are named exports from the feature case modules. No top-level side effects on importing a case.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "At desktop widths, root has exactly one project rail and one section rail, no project strip/top section row, and no blank outer top gutter; visible items require one click to select."
+        },
+        {
+          "id": "A2",
+          "outcome": "0/1/13/50 projects, long/duplicate names, hidden projects and multiple checkouts are usable; stable ordering, keyboard focus reveal and explicit overlays work without whole-page overflow."
+        },
+        {
+          "id": "A3",
+          "outcome": "Existing registration/recovery, search shortcut, attention, both settings scopes, secondary routes, valid restore and embedded /panel remain reachable with correct route ownership."
+        },
+        {
+          "id": "A4",
+          "outcome": "WorkspaceSurface exposes the settled props, one toolbar and optional context pane, including desktop collapse/resize and safe persisted width; its children have the remaining space."
+        },
+        {
+          "id": "A5",
+          "outcome": "The shell browser case runs real routed components and records geometry/interactions with explicit fixtures; all-case dispatch fails if a module or case is missing."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5",
+          "check": "command: TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5195 node internal/serve/ui/test/full-height-workspace.browser.mjs --case shell",
+          "notes": "Start Vite from internal/serve/ui with bun run dev -- --host 127.0.0.1 --port 5195 --strictPort. Reuse an already-installed Playwright via TUSKER_PLAYWRIGHT_MODULE. These are fixture-browser checks; no real service mutation. Prefix shell commands with rtk as instructed by AGENTS.md. Check shell bounding boxes, click counts, active routes, focus, resize and errors at 1440/1920. Exercise WorkspaceSurface in a bounded rendered component case until feature routes adopt it; label that limit."
+        },
+        {
+          "covers": "A3",
+          "check": "command: cd internal/serve/ui && bun test test/project-strip-state.test.ts test/project-strip-shell.test.ts tests/project-switching.test.ts",
+          "notes": "Supplemental existing state/navigation regressions; update only superseded layout assertions. Browser evidence is required for visual/accessibility outcomes."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "state",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/full-height-workspace/shell/report.md",
+        "summary": "Acceptance-linked shell results, actual commands and screenshots with provenance.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/routes/__root.tsx",
+        "internal/serve/ui/src/router.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/ProjectStrip.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/ProjectStrip.css",
+        "internal/serve/ui/src/features/workbench/navigation/WorkspaceSurface.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/workspace.css",
+        "internal/serve/ui/src/features/workbench/navigation/index.ts",
+        "internal/serve/ui/test/full-height-workspace.browser.mjs",
+        "internal/serve/ui/test/full-height-workspace/helpers.mjs",
+        "internal/serve/ui/test/full-height-workspace/shell.mjs",
+        "internal/serve/ui/test/project-strip-shell.test.ts",
+        "internal/serve/ui/test/navigation-simplification.test.ts",
+        "internal/serve/ui/tests/project-switching.test.ts",
+        "internal/serve/ui/test/project-strip.browser.mjs",
+        "docs/reports/full-height-workspace/shell"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R8"
+      ]
+    },
+    {
+      "source_key": "docs",
+      "title": "Give Docs a full-height reader and collapsible contextual tree",
+      "outcome": "People start reading directly below the document toolbar and can reclaim tree width without losing their place or draft. The current KnowledgeShell permanently docks its desktop tree, and KnowledgeReader adds a padded metadata/body stack. Adopt WorkspaceSurface while preserving the actual CAS editor and document graph.\n\n## Implementation contract\nRead .tusker/specs/full-height-workspace.md sections 4\u20136 and 9\u201312.\n\n1. Adapt KnowledgeShell and SectionToolbar callers across KnowledgeReader/List/Graph to WorkspaceSurface. Reuse KnowledgeTree, preserving folder/filter/selected-ancestor behavior. Remove conflicting duplicate pane/dialog ownership. Dock/collapse/overlay are presentation of the same tree; root project/section rails must not be repeated here.\n2. Keep treeStore as authority for folder/filter state. Old railOpen describes a narrow drawer, so never infer desktop docking from it; absent new Docs context preference uses the feature default and explicit false remains closed. Persist context open/width through shared state and maintain ephemeral overlay state separately. Wire scroll capture/restore after layout; anchors override restoration and background data refresh must not reposition the reader.\n3. Put subject, Save/dirty state, Details and Files/Graph into one feature toolbar. Collapse frontmatter using HeaderCard's existing details controls without duplicating the document heading. Set normal top inset to 16px and prose width target to 72ch. Wide editor blocks use existing capability or local overflow; preserve serialization, sanitized rendering, Mermaid fallback, backlinks and supersession notices.\n4. Preserve editor identity while resizing/collapsing/changing breakpoints. Trace useDocgraphEditor and navigation guard behavior before changing any route callback. Test dirty text, pending save, failed save and conflict while navigation controls open/close. Modify useDocgraphEditor only for a demonstrated draft-loss defect introduced/exposed by this navigation flow, retaining the same CAS protocol; no autosave rewrite.\n5. Implement the docs case module using the shell runner contract. Include at least two projects/checkouts, two documents, long prose, a wide code/table block, deep anchor and failed/conflicted save responses. Interact with the real editor and tree. Record before/after and collapsed/expanded images, geometry and exact editor/scroll observations.\n\n## Start and boundaries\nRead AGENTS.md, the exact spec sections below, and all callers of the owned components. Obtain the supported interactive Tusker claim only after assignment; do not dispatch workers or start a daemon. Inventory the dirty baseline and current active claims before editing. Preserve other owners' changes. No backend/native app/package/global-theme edits, resets, installs, commits or deployment are part of this ticket. Use configured work/review levels; model suggestions are manual assignment advice only. Run the focused checks after the implementation settles; the final ticket owns the integrated build and dist. A runnable check with zero cases is a failure. No source-string assertion or screenshot alone proves an interaction.\n\n## Contacts and surrounding work\nArchitect/origin is Sarav in the assigning conversation. No routable Tusker execution contact was verified; the installed CLI has no agent/contact command. Return a conflict with acceptance ID, facts, decision needed and recommendation to the assigning session; if unavailable, leave that dependent work blocked for the operator while continuing independent work. Never fabricate an execution address or message another session without authorization. See spec section 10 for WUX-T-0013/0015/0016/0017/0019 and graph/inspector/board overlap. Older horizontal-strip acceptance is superseded. Resolve active owned-file claims before editing; historical ticket status does not prove code absent or complete.\n\n## Assignment and integration\nSuggested manual worker: Terra. Required upstream outputs: shell. Dependencies are hard because consumers need those exports and the same owned source baseline. Docs depends on shell and owns only knowledge feature paths plus its cases/regressions. It can run beside Waves. WUX-T-0013 has overlapping reader/tree work; inspect active ownership and retain current polish. If shared surface needs a fix, report the exact props/geometry defect to the shell owner instead of editing it concurrently. knowledge.css is a proposed feature stylesheet; use the existing feature stylesheet if already present and record the exact owned substitution before editing.\n\n## Readiness review\nThis packet fixes the starting seams, invariant behavior, upstream boundary and scenario checks. Read it without relying on the design chat. No unresolved design question blocks the specified work; active ownership and prerequisite completion are checked at assignment. The report must distinguish expected behavior from observed PASS/FAIL, link each acceptance ID to evidence, and name any limitation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Docs reader/list/graph use one toolbar and one contextual tree; healthy desktop first content starts at y<=80px, prose width is constrained, and wide blocks never overflow the whole page."
+        },
+        {
+          "id": "A2",
+          "outcome": "Tree collapse/reopen/resize preserve filter, folder expansion, selected ancestors, document scroll and focus; independent tree scrolling does not scroll content."
+        },
+        {
+          "id": "A3",
+          "outcome": "Document/checkout switching and back navigation restore valid last Docs route/scroll while deep anchors win; invalid/deleted destinations recover without cross-project state leakage."
+        },
+        {
+          "id": "A4",
+          "outcome": "Opening navigation, resizing or changing breakpoints never remounts the editor or loses dirty content/selection; actual navigation preserves save/error/conflict protection and Cmd/Ctrl+S."
+        },
+        {
+          "id": "A5",
+          "outcome": "Files/Graph, metadata editing, Mermaid fallback, backlinks, supersession and error states remain accessible with the existing saving/rendering authority."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4,A5",
+          "check": "command: TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5195 node internal/serve/ui/test/full-height-workspace.browser.mjs --case docs",
+          "notes": "Start Vite from internal/serve/ui with bun run dev -- --host 127.0.0.1 --port 5195 --strictPort. Reuse an already-installed Playwright via TUSKER_PLAYWRIGHT_MODULE. These are fixture-browser checks; no real service mutation. Prefix shell commands with rtk as instructed by AGENTS.md. Assert first heading and scroll viewport boxes, 72ch computed rule, local overflow, editor value/selection and actual save requests; failure/conflict cases must exercise cancelled/retained navigation."
+        },
+        {
+          "covers": "A2,A3,A4,A5",
+          "check": "command: cd internal/serve/ui && bun test test/documents-polish.test.ts test/knowledge-wikilink.test.ts",
+          "notes": "Supplemental current document regressions. Existing source-text assertions do not replace browser checks."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "shell",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/full-height-workspace/docs/report.md",
+        "summary": "Acceptance-linked docs results, actual commands and screenshots with provenance.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/features/knowledge/KnowledgeShell.tsx",
+        "internal/serve/ui/src/features/knowledge/KnowledgeReader.tsx",
+        "internal/serve/ui/src/features/knowledge/KnowledgeList.tsx",
+        "internal/serve/ui/src/features/knowledge/KnowledgeGraph.tsx",
+        "internal/serve/ui/src/features/knowledge/KnowledgeTree.tsx",
+        "internal/serve/ui/src/features/knowledge/treeStore.ts",
+        "internal/serve/ui/src/features/knowledge/HeaderCard.tsx",
+        "internal/serve/ui/src/features/knowledge/knowledge.css",
+        "internal/serve/ui/src/features/knowledge/useDocgraphEditor.ts",
+        "internal/serve/ui/test/documents-polish.test.ts",
+        "internal/serve/ui/test/documents-polish.browser.mjs",
+        "internal/serve/ui/test/full-height-workspace/docs.mjs",
+        "docs/reports/full-height-workspace/docs"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1",
+        "R3",
+        "R4",
+        "R5",
+        "R8"
+      ]
+    },
+    {
+      "source_key": "waves",
+      "title": "Move Waves navigation left and start the graph below one toolbar",
+      "outcome": "People see useful wave rows or graph nodes near the top rather than after a large introduction and Execution plan banner. Add a contextual wave list to detail and preserve the existing top-down graph, query/state truth and inspector.\n\n## Implementation contract\nRead .tusker/specs/full-height-workspace.md sections 4\u20135, 7 and 10\u201312.\n\n1. Trace WorkOverview/WorkWave and all Shell callers. Replace the overview/detail wrappers with WorkspaceSurface; leave WorkBoard functional for its dependent ticket. Use the existing WaveOverview grouping and search/completed semantics. Move overview controls into toolbar without changing status precedence or startability.\n2. Add the proposed WaveContext.tsx using cached useWaves summaries, filter, current wave and overview link. No fetching full member details for every sidebar item. Read section 7 for active-outside-filter and loading/error behavior. Do not copy wave lists into navigationState.\n3. Put ID/title, Details outcome, truthful compact status, Flow/Results and existing guarded Start action in the toolbar. Keep complete title/outcome reachable. Remove WaveFlow's separate Execution plan header. Keep graph warnings and real execution errors visible; normal healthy geometry excludes only actual warning/error banners.\n4. Make graph region fill remaining height and scroll itself. Preserve layoutTopDownFlowGraph and existing node geometry/edges; no graph engine, zoom system or horizontal layout change. Fit the first node within y<=80px at default scale. Preserve selection and inspector return. Persist real scroll, chosen view and valid selection through workspace helpers; URL view wins and background completion cannot yank Flow into Results.\n5. Implement waves case with 5-task chain, parallel join, 30 long-title nodes, dependency warnings, failed reads, Results and a live fixture update. Observe actual scroll and node selection after project switching/inspector close. Exercise Start state/errors through fixtures only; record any existing command-authority defect separately rather than broadening execution changes.\n\n## Start and boundaries\nRead AGENTS.md, the exact spec sections below, and all callers of the owned components. Obtain the supported interactive Tusker claim only after assignment; do not dispatch workers or start a daemon. Inventory the dirty baseline and current active claims before editing. Preserve other owners' changes. No backend/native app/package/global-theme edits, resets, installs, commits or deployment are part of this ticket. Use configured work/review levels; model suggestions are manual assignment advice only. Run the focused checks after the implementation settles; the final ticket owns the integrated build and dist. A runnable check with zero cases is a failure. No source-string assertion or screenshot alone proves an interaction.\n\n## Contacts and surrounding work\nArchitect/origin is Sarav in the assigning conversation. No routable Tusker execution contact was verified; the installed CLI has no agent/contact command. Return a conflict with acceptance ID, facts, decision needed and recommendation to the assigning session; if unavailable, leave that dependent work blocked for the operator while continuing independent work. Never fabricate an execution address or message another session without authorization. See spec section 10 for WUX-T-0013/0015/0016/0017/0019 and graph/inspector/board overlap. Older horizontal-strip acceptance is superseded. Resolve active owned-file claims before editing; historical ticket status does not prove code absent or complete.\n\n## Assignment and integration\nSuggested manual worker: Terra. Required upstream outputs: shell. Dependencies are hard because consumers need those exports and the same owned source baseline. Waves consumes shell and can run beside Docs. It owns WorkExperience.tsx before Board; Board must wait to prevent shared-file collision. flowGraph.ts and TaskInspector.tsx are read-only dependencies: WUX-T-0005/0006 own their domain behavior. Request an ownership amendment if a demonstrated layout defect truly needs those files; routine redesign of graph/inspector is excluded.\n\n## Readiness review\nThis packet fixes the starting seams, invariant behavior, upstream boundary and scenario checks. Read it without relying on the design chat. No unresolved design question blocks the specified work; active ownership and prerequisite completion are checked at assignment. The report must distinguish expected behavior from observed PASS/FAIL, link each acceptance ID to evidence, and name any limitation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Overview rows and detail graph start within y<=80px in healthy desktop states; a single feature toolbar replaces the hero and Execution plan banner, and graph fills remaining height."
+        },
+        {
+          "id": "A2",
+          "outcome": "Wave context list has stable real IDs/order, useful filtering/current-item handling and distinct loading/empty/error states, with one-click wave selection and no per-wave detail fetch explosion."
+        },
+        {
+          "id": "A3",
+          "outcome": "Top-down dependencies, warnings, node state/selection, full titles/outcomes, Flow/Results, safe existing actions and task inspection remain available without inferred readiness or completion."
+        },
+        {
+          "id": "A4",
+          "outcome": "Graph scroll, view and valid selected task survive inspector and project/section round trips; URL selection wins, and background updates do not reset scroll or force Results."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4",
+          "check": "command: TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5195 node internal/serve/ui/test/full-height-workspace.browser.mjs --case waves",
+          "notes": "Start Vite from internal/serve/ui with bun run dev -- --host 127.0.0.1 --port 5195 --strictPort. Reuse an already-installed Playwright via TUSKER_PLAYWRIGHT_MODULE. These are fixture-browser checks; no real service mutation. Prefix shell commands with rtk as instructed by AGENTS.md. Assert canvas and first-node boxes, sidebar request count, all branch nodes reachable, Details content, state transitions, selected inspector and scroll restoration."
+        },
+        {
+          "covers": "A3,A4",
+          "check": "command: cd internal/serve/ui && bun test test/wux-flow.test.ts test/wux-integration.test.ts test/wux-overview.test.ts test/wux-results.test.ts",
+          "notes": "Current graph/status/integration behavior is a preserved baseline; source checks are supplemental only."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "shell",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/full-height-workspace/waves/report.md",
+        "summary": "Acceptance-linked waves results, actual commands and screenshots with provenance.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/features/workbench/integration/WorkExperience.tsx",
+        "internal/serve/ui/src/features/workbench/integration/integrationModel.ts",
+        "internal/serve/ui/src/features/workbench/flow/WaveFlow.tsx",
+        "internal/serve/ui/src/features/workbench/overview/WaveOverview.tsx",
+        "internal/serve/ui/src/features/workbench/results/WaveResults.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/WaveContext.tsx",
+        "internal/serve/ui/test/wux-flow.test.ts",
+        "internal/serve/ui/test/wux-integration.test.ts",
+        "internal/serve/ui/test/wux-overview.test.ts",
+        "internal/serve/ui/test/full-height-workspace/waves.mjs",
+        "docs/reports/full-height-workspace/waves"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1",
+        "R3",
+        "R4",
+        "R6",
+        "R8"
+      ]
+    },
+    {
+      "source_key": "board",
+      "title": "Give Board the remaining canvas and restore its view state",
+      "outcome": "People see board columns immediately below one toolbar and can switch away and back without losing mode or position. The current shared Shell caps the canvas at 1180px and TaskBoard owns another controls row. Adopt the shared surface and retain existing grouping and card behavior.\n\n## Implementation contract\nRead .tusker/specs/full-height-workspace.md sections 4\u20135, 8 and 10\u201312.\n\n1. Start from the Waves worker's completed WorkExperience.tsx changes. Replace only WorkBoard's remaining Shell usage with WorkspaceSurface and remove the now-unused Shell helper only after checking all remaining callers. Keep the Waves integration intact.\n2. Move TaskBoard board/list controls and available filters into toolbar via a small explicit prop/slot boundary. Keep the existing controlled mode callbacks, grouping, cards and inspector. No default contextual pane and no invented saved views or tag service.\n3. Let board use all available width/height; preserve current responsive grouping rather than changing lifecycle columns. Use one vertical content scroller; any needed horizontal scrolling stays inside the board. Persist actual mode, supported filters, scroll and valid selection with the state helpers.\n4. Implement the board case module using populated and empty projects, long titles, absent tag capability and task removal. Exercise mode switch, card inspector close, project return and back navigation. Test that all columns/cards remain reachable and that changing mode does not affect stored task status or send an execution request.\n\n## Start and boundaries\nRead AGENTS.md, the exact spec sections below, and all callers of the owned components. Obtain the supported interactive Tusker claim only after assignment; do not dispatch workers or start a daemon. Inventory the dirty baseline and current active claims before editing. Preserve other owners' changes. No backend/native app/package/global-theme edits, resets, installs, commits or deployment are part of this ticket. Use configured work/review levels; model suggestions are manual assignment advice only. Run the focused checks after the implementation settles; the final ticket owns the integrated build and dist. A runnable check with zero cases is a failure. No source-string assertion or screenshot alone proves an interaction.\n\n## Contacts and surrounding work\nArchitect/origin is Sarav in the assigning conversation. No routable Tusker execution contact was verified; the installed CLI has no agent/contact command. Return a conflict with acceptance ID, facts, decision needed and recommendation to the assigning session; if unavailable, leave that dependent work blocked for the operator while continuing independent work. Never fabricate an execution address or message another session without authorization. See spec section 10 for WUX-T-0013/0015/0016/0017/0019 and graph/inspector/board overlap. Older horizontal-strip acceptance is superseded. Resolve active owned-file claims before editing; historical ticket status does not prove code absent or complete.\n\n## Assignment and integration\nSuggested manual worker: Luna or Terra. Required upstream outputs: waves. Dependencies are hard because consumers need those exports and the same owned source baseline. Board follows Waves because both edit WorkExperience.tsx; it can overlap any still-running Docs work. Own TaskBoard and board-specific tests only. Request shared-surface corrections through the owner; responsive integrates shared shell after this ticket. Existing WUX-T-0008/0009 contracts are surrounding behavior, not permission for broad board/backend redesign.\n\n## Readiness review\nThis packet fixes the starting seams, invariant behavior, upstream boundary and scenario checks. Read it without relying on the design chat. No unresolved design question blocks the specified work; active ownership and prerequisite completion are checked at assignment. The report must distinguish expected behavior from observed PASS/FAIL, link each acceptance ID to evidence, and name any limitation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "Board uses the remaining canvas, has no 1180px content cap or duplicate toolbar, and its first column/list heading starts at y<=80px at normal desktop scale."
+        },
+        {
+          "id": "A2",
+          "outcome": "Existing board/list grouping, card/inspector actions and capability-gated filters remain usable; every column is reachable with scrolling local to the content region."
+        },
+        {
+          "id": "A3",
+          "outcome": "Mode, available filters, scroll and valid selection survive project/section round trips; deleted selections close safely, empty/error states stay distinct and navigation never changes task state."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3",
+          "check": "command: TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5195 node internal/serve/ui/test/full-height-workspace.browser.mjs --case board",
+          "notes": "Start Vite from internal/serve/ui with bun run dev -- --host 127.0.0.1 --port 5195 --strictPort. Reuse an already-installed Playwright via TUSKER_PLAYWRIGHT_MODULE. These are fixture-browser checks; no real service mutation. Prefix shell commands with rtk as instructed by AGENTS.md. Measure available width and first heading, exercise board/list/inspector and project return, assert no unexpected mutating API calls."
+        },
+        {
+          "covers": "A2,A3",
+          "check": "command: cd internal/serve/ui && bun test test/wux-board.test.ts",
+          "notes": "Supplemental existing grouping/filter checks; DOM/browser interactions establish restored view behavior."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "waves",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/full-height-workspace/board/report.md",
+        "summary": "Acceptance-linked board results, actual commands and screenshots with provenance.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/features/workbench/integration/WorkExperience.tsx",
+        "internal/serve/ui/src/features/workbench/board/TaskBoard.tsx",
+        "internal/serve/ui/test/wux-board.test.ts",
+        "internal/serve/ui/test/full-height-workspace/board.mjs",
+        "docs/reports/full-height-workspace/board"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1",
+        "R3",
+        "R4",
+        "R7",
+        "R8"
+      ]
+    },
+    {
+      "source_key": "responsive",
+      "title": "Finish tablet and phone navigation without stacked top bars",
+      "outcome": "People use the same hierarchy on smaller screens without squeezing multiple sidebars into the content. Desktop keeps the rails, tablet opens context as an overlay, and phone has one project trigger in the feature toolbar plus bottom section navigation.\n\n## Implementation contract\nRead .tusker/specs/full-height-workspace.md sections 2\u20135 and 9\u201312.\n\n1. Work only after Docs and Board (which includes Waves) adopt WorkspaceSurface. Implement the exact 1200/768 breakpoints in the shared shell/layout. Phone has no visible or focusable project/section rails; the project trigger joins feature toolbar controls. Global/legacy routes get one fallback phone toolbar, never a duplicated feature header. Preserve embedded /panel.\n2. Complete a single active navigation overlay with explicit close, Escape/outside dismissal, background inertness and focus restoration. Picker lists visible projects and global/project actions with clear settings scopes. Context drawers close on successful item selection; dirty navigation cancellation remains under the feature's save guard. Use the section-4 inspector/navigation mutual-exclusion rule without discarding stored selection.\n3. Implement bottom Waves/Board/Docs with aria-current, 44px phone targets, reserved 52px minimum height and safe-area padding. Long feature titles/secondary controls may truncate/overflow explicitly; primary save/error state and navigation stay reachable. Do not shrink text to force a fit.\n4. Cross breakpoints with document edits, open overlays, keyboard focus and nonzero scroll. Close ephemeral navigation UI, release traps, preserve editor/component identity and desktop pane preference. Verify keyboard focus moves only when its old control disappears.\n5. Implement responsive module at both sides of 768/1200 and at 390/320 phone widths, plus 200% zoom, reduced motion and dark mode. Use the existing docs/waves/board fixtures through their module helper exports; avoid editing their owned cases or shared production feature logic. Return feature-specific defects to their owners and rerun affected cases.\n\n## Start and boundaries\nRead AGENTS.md, the exact spec sections below, and all callers of the owned components. Obtain the supported interactive Tusker claim only after assignment; do not dispatch workers or start a daemon. Inventory the dirty baseline and current active claims before editing. Preserve other owners' changes. No backend/native app/package/global-theme edits, resets, installs, commits or deployment are part of this ticket. Use configured work/review levels; model suggestions are manual assignment advice only. Run the focused checks after the implementation settles; the final ticket owns the integrated build and dist. A runnable check with zero cases is a failure. No source-string assertion or screenshot alone proves an interaction.\n\n## Contacts and surrounding work\nArchitect/origin is Sarav in the assigning conversation. No routable Tusker execution contact was verified; the installed CLI has no agent/contact command. Return a conflict with acceptance ID, facts, decision needed and recommendation to the assigning session; if unavailable, leave that dependent work blocked for the operator while continuing independent work. Never fabricate an execution address or message another session without authorization. See spec section 10 for WUX-T-0013/0015/0016/0017/0019 and graph/inspector/board overlap. Older horizontal-strip acceptance is superseded. Resolve active owned-file claims before editing; historical ticket status does not prove code absent or complete.\n\n## Assignment and integration\nSuggested manual worker: Terra. Required upstream outputs: docs, board. Dependencies are hard because consumers need those exports and the same owned source baseline. Responsive follows Docs and Board and takes serialized ownership of shell files from Shell. It owns responsive cases, not state models or feature/editor code. Root/router/shared layout changes must preserve all earlier scenario checks. No native window/titlebar integration changes.\n\n## Readiness review\nThis packet fixes the starting seams, invariant behavior, upstream boundary and scenario checks. Read it without relying on the design chat. No unresolved design question blocks the specified work; active ownership and prerequisite completion are checked at assignment. The report must distinguish expected behavior from observed PASS/FAIL, link each acceptance ID to evidence, and name any limitation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "At 1200+ rails/context dock as configured; at 768\u20131199 context overlays; below 768 one toolbar and bottom sections replace rails with no stacked project/section strips."
+        },
+        {
+          "id": "A2",
+          "outcome": "All navigation overlays trap/release/restore focus correctly, are mutually exclusive, close on selection/Escape/outside click and leave background inert only while open; hidden rails cannot receive focus."
+        },
+        {
+          "id": "A3",
+          "outcome": "Breakpoint changes preserve desktop preferences, content scroll/selection and dirty editor identity; phone targets and safe-area reservation prevent obscured content or whole-page horizontal overflow."
+        },
+        {
+          "id": "A4",
+          "outcome": "All project/section/settings/secondary destinations remain reachable by keyboard and touch at 320/390 widths and enlarged text; embedded /panel keeps its original compact layout."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1,A2,A3,A4",
+          "check": "command: TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5195 node internal/serve/ui/test/full-height-workspace.browser.mjs --case responsive",
+          "notes": "Start Vite from internal/serve/ui with bun run dev -- --host 127.0.0.1 --port 5195 --strictPort. Reuse an already-installed Playwright via TUSKER_PLAYWRIGHT_MODULE. These are fixture-browser checks; no real service mutation. Prefix shell commands with rtk as instructed by AGENTS.md. Run specified boundary widths, focus/Tab/Escape/click cases, inspect hidden focusables and bottom content rectangles. Dirty-editor and restore checks are actual interactions, not screenshots alone."
+        },
+        {
+          "covers": "A1,A2,A3,A4",
+          "check": "command: TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5195 node internal/serve/ui/test/full-height-workspace.browser.mjs --case all",
+          "notes": "Start Vite from internal/serve/ui with bun run dev -- --host 127.0.0.1 --port 5195 --strictPort. Reuse an already-installed Playwright via TUSKER_PLAYWRIGHT_MODULE. These are fixture-browser checks; no real service mutation. Prefix shell commands with rtk as instructed by AGENTS.md. Rerun integrated browser modules after shared responsive changes. Any missing or zero-case module fails; preserve per-case results."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "docs",
+          "kind": "hard"
+        },
+        {
+          "task": "board",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/full-height-workspace/responsive/report.md",
+        "summary": "Acceptance-linked responsive results, actual commands and screenshots with provenance.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/src/routes/__root.tsx",
+        "internal/serve/ui/src/router.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/ProjectStrip.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/ProjectStrip.css",
+        "internal/serve/ui/src/features/workbench/navigation/WorkspaceSurface.tsx",
+        "internal/serve/ui/src/features/workbench/navigation/workspace.css",
+        "internal/serve/ui/test/full-height-workspace/responsive.mjs",
+        "docs/reports/full-height-workspace/responsive"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8"
+      ]
+    },
+    {
+      "source_key": "qualification",
+      "title": "Qualify the built full-height workspace and publish the handoff result",
+      "outcome": "The integrated workspace has reproducible evidence for its geometry, navigation and state behavior, and current documentation describes what actually passed. This ticket builds once, exercises the same cases against built assets and reports exact remaining limits; it does not redesign or install the app.\n\n## Implementation contract\nRead .tusker/specs/full-height-workspace.md sections 1\u201312.\n\n1. Confirm all six implementation outputs and read their acceptance-linked reports. Inspect the final diff for ownership and superseded horizontal navigation paths, without deleting another owner's work. Route defects back to the correct implementation ticket; do not patch source outside this ticket's owned paths.\n2. Run the exact focused test command below and then bun run build, which already runs tsc --noEmit. Record exit status and first actionable error; zero matched tests fails. Preserve unrelated baseline failures separately. Build only after all source work settles, and repeat only after a new relevant change.\n3. Serve dist with bun run preview -- --host 127.0.0.1 --port 5196 --strictPort. Execute --case all with TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5196. Preserve source-fixture evidence and copy/link built-run screenshots under qualification without overwriting source-run artifacts; use a runner output-directory override added by Shell. Check all screen/edge-state requirements in section 11, including the exact desktop top budgets and responsive boundaries.\n4. Write final requirement-to-evidence matrix with host, viewport/text scale, source revision/dirty baseline, actual commands/case counts, API fixture provenance and screenshot/geometry paths. Every R1\u2013R9 gets PASS/FAIL/NOT OBSERVED with reason. Required source/build/fixture failures prevent completion. Read-only live and installed-app checks are supplemental and must be explicitly unavailable if absent; do not substitute fixture evidence or restart/install anything.\n5. Update docs/system/serve-ui.md to describe verified layered navigation, settings scope, visible-project/checkout behavior, restoration, context panes and mobile navigation. Retain service/backend facts. Run scoped docs check, then docs map and validate; record unrelated corpus failures without broad repair. Normal independent review remains required; no invented human approval or aesthetic score.\n\n## Start and boundaries\nRead AGENTS.md, the exact spec sections below, and all callers of the owned components. Obtain the supported interactive Tusker claim only after assignment; do not dispatch workers or start a daemon. Inventory the dirty baseline and current active claims before editing. Preserve other owners' changes. No backend/native app/package/global-theme edits, resets, installs, commits or deployment are part of this ticket. Use configured work/review levels; model suggestions are manual assignment advice only. Run the focused checks after the implementation settles; the final ticket owns the integrated build and dist. A runnable check with zero cases is a failure. No source-string assertion or screenshot alone proves an interaction.\n\n## Contacts and surrounding work\nArchitect/origin is Sarav in the assigning conversation. No routable Tusker execution contact was verified; the installed CLI has no agent/contact command. Return a conflict with acceptance ID, facts, decision needed and recommendation to the assigning session; if unavailable, leave that dependent work blocked for the operator while continuing independent work. Never fabricate an execution address or message another session without authorization. See spec section 10 for WUX-T-0013/0015/0016/0017/0019 and graph/inspector/board overlap. Older horizontal-strip acceptance is superseded. Resolve active owned-file claims before editing; historical ticket status does not prove code absent or complete.\n\n## Assignment and integration\nSuggested manual worker: Terra. Required upstream outputs: responsive. Dependencies are hard because consumers need those exports and the same owned source baseline. Qualification follows Responsive and owns dist, final report and current Serve UI documentation only. It reviews all source outputs but returns fixes to their owners. New built evidence is owned beneath docs/reports/full-height-workspace/qualification. No live-service availability gate is invented; required built-browser failures stay open, and unobserved installed behavior is reported separately.\n\n## Readiness review\nThis packet fixes the starting seams, invariant behavior, upstream boundary and scenario checks. Read it without relying on the design chat. No unresolved design question blocks the specified work; active ownership and prerequisite completion are checked at assignment. The report must distinguish expected behavior from observed PASS/FAIL, link each acceptance ID to evidence, and name any limitation.\n",
+      "acceptance": [
+        {
+          "id": "A1",
+          "outcome": "All focused cases pass and the integrated UI builds; generated assets match the reviewed source and no missing/zero-case result is reported as PASS."
+        },
+        {
+          "id": "A2",
+          "outcome": "The complete browser matrix passes against built preview and records content/first-element top bounds, layout widths, independent scroll, accessible navigation and restoration for Docs/Waves/Board."
+        },
+        {
+          "id": "A3",
+          "outcome": "The final report maps R1\u2013R9 to actual evidence and separates source tests, fixture browser, built preview, read-only live service and installed macOS observations; all required failures remain explicit."
+        },
+        {
+          "id": "A4",
+          "outcome": "The current Serve UI reference matches observed implementation and navigation semantics; scoped documentation validation results and unrelated corpus failures are recorded."
+        }
+      ],
+      "verification": [
+        {
+          "covers": "A1",
+          "check": "command: cd internal/serve/ui && bun test test/workspace-state.test.ts test/project-strip-state.test.ts test/project-strip-shell.test.ts test/documents-polish.test.ts test/knowledge-wikilink.test.ts test/wux-flow.test.ts test/wux-integration.test.ts test/wux-overview.test.ts test/wux-results.test.ts test/wux-board.test.ts && bun run build",
+          "notes": "Run after integration. build includes typecheck. Capture focused test names/count, build result and exact unrelated baseline errors."
+        },
+        {
+          "covers": "A2,A3",
+          "check": "command: TUSKER_WORKSPACE_BASE_URL=http://127.0.0.1:5196 TUSKER_WORKSPACE_OUTPUT_DIR=docs/reports/full-height-workspace/qualification/browser node internal/serve/ui/test/full-height-workspace.browser.mjs --case all",
+          "notes": "Start built preview first. Runner must resolve output override relative to repo root. All cases and matrix scenarios must execute; screenshots alone do not prove interactions."
+        },
+        {
+          "covers": "A4",
+          "check": "command: tusker docs check docs/system/serve-ui.md --json",
+          "notes": "Inspect prose against actual browser report in addition to schema check. Then run docs map and validate; preserve unrelated failures."
+        }
+      ],
+      "dependencies": [
+        {
+          "task": "responsive",
+          "kind": "hard"
+        }
+      ],
+      "artifact": {
+        "kind": "behavior_matrix",
+        "path": "docs/reports/full-height-workspace/qualification/report.md",
+        "summary": "Acceptance-linked qualification results, actual commands and screenshots with provenance.",
+        "acceptance_ids": [
+          "A1",
+          "A2",
+          "A3",
+          "A4"
+        ]
+      },
+      "owned_paths": [
+        "internal/serve/ui/dist",
+        "docs/system/serve-ui.md",
+        "docs/reports/full-height-workspace/qualification"
+      ],
+      "work_level": "standard",
+      "review_level": "standard",
+      "complexity": "standard",
+      "risk": "medium",
+      "priority": "p1",
+      "size": "m",
+      "domains": [
+        "project"
+      ],
+      "requirement_refs": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9"
+      ],
+      "generated_outputs": [
+        "internal/serve/ui/dist"
+      ]
+    }
+  ]
+}

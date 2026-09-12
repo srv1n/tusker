@@ -1,10 +1,9 @@
 /*
-  WUX-T-0003 — persistent project and wave navigator state.
+  WUX-T-0015 — persistent project strip state.
 
-  One small versioned record holding project order, expanded projects, the
-  active project, the last internal route per project, and opaque per-project
-  view state (written by integration through recordViewState — graph/view
-  state lives in this same record, never in a second competing store).
+  One small versioned record holding the saved project order, pinned IDs,
+  cross-mount recency, the active project, the last internal route per project,
+  and opaque per-project view state.
 
   Persistence is local device/profile web storage keyed by stable project ID,
   never by title or branch. Blocked storage or malformed data must never
@@ -15,7 +14,7 @@
 */
 
 export const NAVIGATION_STORAGE_KEY = "tusker.wux.navigation.v1";
-export const NAVIGATION_STATE_VERSION = 1;
+export const NAVIGATION_STATE_VERSION = 2;
 
 /** Maximum wave shortcuts shown per expanded project. */
 export const MAX_WAVE_SHORTCUTS = 5;
@@ -23,11 +22,94 @@ export const MAX_WAVE_SHORTCUTS = 5;
 export interface NavigationState {
   version: number;
   orderedProjectIds: string[];
+  pinnedProjectIds: string[];
+  recentProjectIds: string[];
   expandedProjectIds: string[];
   activeProjectId: string | null;
   lastPathByProject: Record<string, string>;
   /** Opaque per-project view state (Work view/filter, wave view, selection, graph transform). */
   viewStateByProject: Record<string, unknown>;
+}
+
+export interface WorkspaceScrollOffset {
+  top: number;
+  left: number;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceDocsState {
+  contextOpen?: boolean;
+  contextWidth?: number;
+  scrollBySubject?: Record<string, WorkspaceScrollOffset>;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceWaveViewState {
+  view?: "flow" | "results";
+  scrollTop?: number;
+  scrollLeft?: number;
+  selectedTaskId?: string;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceWavesState {
+  contextOpen?: boolean;
+  contextWidth?: number;
+  overviewQuery?: string;
+  showCompleted?: boolean;
+  overviewScrollTop?: number;
+  byId?: Record<string, WorkspaceWaveViewState>;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceBoardState {
+  mode?: "board" | "list";
+  scrollTop?: number;
+  scrollLeft?: number;
+  selectedTaskId?: string;
+  selectedTags?: string[];
+  [key: string]: unknown;
+}
+
+export interface WorkspaceViewState {
+  lastDocsPath?: string;
+  docs?: WorkspaceDocsState;
+  waves?: WorkspaceWavesState;
+  board?: WorkspaceBoardState;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceDocsStatePatch {
+  contextOpen?: boolean;
+  contextWidth?: number;
+  scrollBySubject?: Record<string, WorkspaceScrollOffset | null>;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceWavesStatePatch {
+  contextOpen?: boolean;
+  contextWidth?: number;
+  overviewQuery?: string;
+  showCompleted?: boolean;
+  overviewScrollTop?: number;
+  byId?: Record<string, Partial<WorkspaceWaveViewState> | null>;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceBoardStatePatch {
+  mode?: "board" | "list";
+  scrollTop?: number;
+  scrollLeft?: number;
+  selectedTaskId?: string;
+  selectedTags?: string[];
+  [key: string]: unknown;
+}
+
+export interface WorkspaceViewStatePatch {
+  lastDocsPath?: string | null;
+  docs?: WorkspaceDocsStatePatch | null;
+  waves?: WorkspaceWavesStatePatch | null;
+  board?: WorkspaceBoardStatePatch | null;
 }
 
 export interface StorageLike {
@@ -40,6 +122,8 @@ export function emptyNavigationState(): NavigationState {
   return {
     version: NAVIGATION_STATE_VERSION,
     orderedProjectIds: [],
+    pinnedProjectIds: [],
+    recentProjectIds: [],
     expandedProjectIds: [],
     activeProjectId: null,
     lastPathByProject: {},
@@ -78,6 +162,8 @@ export function sanitizeNavigationState(raw: unknown, projectIds: string[]): Nav
   for (const id of projectIds) {
     if (!ordered.includes(id)) ordered.push(id);
   }
+  const pinned = knownIdList(raw.pinnedProjectIds ?? raw.pinnedIds, projectIds);
+  const recent = knownIdList(raw.recentProjectIds ?? raw.recentIds, projectIds);
   const expanded = knownIdList(raw.expandedProjectIds, projectIds);
   const active =
     typeof raw.activeProjectId === "string" && known.has(raw.activeProjectId)
@@ -94,12 +180,16 @@ export function sanitizeNavigationState(raw: unknown, projectIds: string[]): Nav
   const viewStateByProject: Record<string, unknown> = {};
   if (isRecord(raw.viewStateByProject)) {
     for (const [id, value] of Object.entries(raw.viewStateByProject)) {
-      if (known.has(id) && value !== undefined) viewStateByProject[id] = value;
+      // View state is also keyed by checkout route IDs. Keep it opaque so
+      // hiding/removing a project does not silently erase its saved workspace.
+      if (value !== undefined) viewStateByProject[id] = value;
     }
   }
   return {
     version: NAVIGATION_STATE_VERSION,
     orderedProjectIds: ordered,
+    pinnedProjectIds: pinned,
+    recentProjectIds: recent,
     expandedProjectIds: expanded,
     activeProjectId: active,
     lastPathByProject,
@@ -136,17 +226,88 @@ export function writeNavigationState(
   }
 }
 
-/** Order project records by saved order; unknown/new IDs append in source order. */
+/**
+ * Order only for a fresh shell mount. The rendered strip owns its order for
+ * the lifetime of that mount so a click cannot reshuffle the targets below it.
+ */
 export function orderProjects<T extends { id: string }>(
   projects: T[],
   state: NavigationState,
 ): T[] {
-  const rank = new Map(state.orderedProjectIds.map((id, index) => [id, index]));
+  const pinRank = new Map(state.pinnedProjectIds.map((id, index) => [id, index]));
+  const recentRank = new Map(state.recentProjectIds.map((id, index) => [id, index]));
+  const savedRank = new Map(state.orderedProjectIds.map((id, index) => [id, index]));
+  const sourceRank = new Map(projects.map((project, index) => [project.id, index]));
   return [...projects].sort((a, b) => {
-    const ra = rank.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-    const rb = rank.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-    return ra - rb;
+    const pa = pinRank.get(a.id);
+    const pb = pinRank.get(b.id);
+    if (pa !== undefined || pb !== undefined) {
+      if (pa === undefined) return 1;
+      if (pb === undefined) return -1;
+      return pa - pb;
+    }
+    const ra = recentRank.get(a.id);
+    const rb = recentRank.get(b.id);
+    if (ra !== undefined || rb !== undefined) {
+      if (ra === undefined) return 1;
+      if (rb === undefined) return -1;
+      return ra - rb;
+    }
+    const sa = savedRank.get(a.id);
+    const sb = savedRank.get(b.id);
+    if (sa !== undefined || sb !== undefined) {
+      if (sa === undefined) return 1;
+      if (sb === undefined) return -1;
+      if (sa !== sb) return sa - sb;
+    }
+    return (sourceRank.get(a.id) ?? 0) - (sourceRank.get(b.id) ?? 0);
   });
+}
+
+/** Toggle a stable project pin without changing the saved or recent order. */
+export function setProjectPinned(
+  state: NavigationState,
+  projectIds: string[],
+  projectId: string,
+  pinned: boolean,
+): NavigationState {
+  if (!projectIds.includes(projectId)) return state;
+  const ids = state.pinnedProjectIds.filter((id) => id !== projectId && projectIds.includes(id));
+  return {
+    ...state,
+    pinnedProjectIds: pinned ? [...ids, projectId] : ids,
+  };
+}
+
+export function toggleProjectPinned(
+  state: NavigationState,
+  projectIds: string[],
+  projectId: string,
+): NavigationState {
+  return setProjectPinned(state, projectIds, projectId, !state.pinnedProjectIds.includes(projectId));
+}
+
+/** Move a project within the saved pin order; unpinned projects are unaffected. */
+export function movePinnedProject(
+  state: NavigationState,
+  projectIds: string[],
+  projectId: string,
+  direction: -1 | 1,
+): ReorderResult {
+  const pinned = state.pinnedProjectIds.filter((id) => projectIds.includes(id));
+  const from = pinned.indexOf(projectId);
+  if (from < 0) return { state, movedId: null, position: 0, total: pinned.length };
+  const to = Math.min(pinned.length - 1, Math.max(0, from + direction));
+  if (to === from) return { state, movedId: projectId, position: from + 1, total: pinned.length };
+  const next = [...pinned];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved!);
+  return {
+    state: { ...state, pinnedProjectIds: next },
+    movedId: projectId,
+    position: to + 1,
+    total: next.length,
+  };
 }
 
 /** Replace the saved order; unknown/duplicate IDs are dropped, missing ones appended. */
@@ -266,9 +427,14 @@ export function recordProjectVisit(
   path: string,
 ): NavigationState {
   if (!projectIds.includes(projectId) || !isInternalPath(path)) return state;
+  let recent = state.recentProjectIds.filter((id) => projectIds.includes(id));
+  if (state.activeProjectId !== projectId) {
+    recent = [projectId, ...recent.filter((id) => id !== projectId)];
+  }
   return {
     ...state,
     activeProjectId: projectId,
+    recentProjectIds: recent,
     lastPathByProject: { ...state.lastPathByProject, [projectId]: path },
   };
 }
@@ -285,6 +451,288 @@ export function recordViewState(
     ...state,
     viewStateByProject: { ...state.viewStateByProject, [projectId]: value },
   };
+}
+
+const MAX_WORKSPACE_VISITS = 20;
+const MIN_CONTEXT_WIDTH = 200;
+const MAX_CONTEXT_WIDTH = 360;
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function finiteNonnegative(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function contextWidth(value: unknown): value is number {
+  return finiteNonnegative(value) && value >= MIN_CONTEXT_WIDTH && value <= MAX_CONTEXT_WIDTH;
+}
+
+function validDocsPath(path: unknown, routeProjectId: string): path is string {
+  if (typeof path !== "string" || !routeProjectId || !isInternalPath(path)) return false;
+  if (projectIdFromPath(path) !== routeProjectId) return false;
+  return /^\/p\/[^/]+\/(?:docs|knowledge)(?:\/|$)/.test(path);
+}
+
+function copyUnknown(source: Record<string, unknown>, known: readonly string[]): Record<string, unknown> {
+  const knownKeys = new Set(known);
+  return Object.fromEntries(Object.entries(source).filter(([key]) => !knownKeys.has(key)));
+}
+
+function cappedEntries<T>(entries: Record<string, T>): Record<string, T> {
+  const keys = Object.keys(entries);
+  if (keys.length <= MAX_WORKSPACE_VISITS) return entries;
+  return Object.fromEntries(keys.slice(-MAX_WORKSPACE_VISITS).map((key) => [key, entries[key]]));
+}
+
+function sanitizeScrollOffset(value: unknown): WorkspaceScrollOffset | null {
+  if (!isRecord(value) || !finiteNonnegative(value.top) || !finiteNonnegative(value.left)) return null;
+  return {
+    ...copyUnknown(value, ["top", "left"]),
+    top: value.top,
+    left: value.left,
+  };
+}
+
+function sanitizeScrollMap(value: unknown): Record<string, WorkspaceScrollOffset> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries: Record<string, WorkspaceScrollOffset> = {};
+  for (const [key, offset] of Object.entries(value)) {
+    if (!key) continue;
+    const next = sanitizeScrollOffset(offset);
+    if (next) entries[key] = next;
+  }
+  return cappedEntries(entries);
+}
+
+function sanitizeWaveView(value: unknown): WorkspaceWaveViewState | null {
+  if (!isRecord(value)) return null;
+  const next: WorkspaceWaveViewState = copyUnknown(value, ["view", "scrollTop", "scrollLeft", "selectedTaskId"]);
+  if (value.view === "flow" || value.view === "results") next.view = value.view;
+  if (finiteNonnegative(value.scrollTop)) next.scrollTop = value.scrollTop;
+  if (finiteNonnegative(value.scrollLeft)) next.scrollLeft = value.scrollLeft;
+  if (typeof value.selectedTaskId === "string" && value.selectedTaskId) next.selectedTaskId = value.selectedTaskId;
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+function sanitizeWaveMap(value: unknown): Record<string, WorkspaceWaveViewState> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries: Record<string, WorkspaceWaveViewState> = {};
+  for (const [key, view] of Object.entries(value)) {
+    if (!key) continue;
+    const next = sanitizeWaveView(view);
+    if (next) entries[key] = next;
+  }
+  return cappedEntries(entries);
+}
+
+function sanitizeDocsState(value: unknown): WorkspaceDocsState | undefined {
+  if (!isRecord(value)) return undefined;
+  const next: WorkspaceDocsState = copyUnknown(value, ["contextOpen", "contextWidth", "scrollBySubject"]);
+  if (typeof value.contextOpen === "boolean") next.contextOpen = value.contextOpen;
+  if (contextWidth(value.contextWidth)) next.contextWidth = value.contextWidth;
+  const scrollBySubject = sanitizeScrollMap(value.scrollBySubject);
+  if (scrollBySubject) next.scrollBySubject = scrollBySubject;
+  return next;
+}
+
+function sanitizeWavesState(value: unknown): WorkspaceWavesState | undefined {
+  if (!isRecord(value)) return undefined;
+  const next: WorkspaceWavesState = copyUnknown(value, ["contextOpen", "contextWidth", "overviewQuery", "showCompleted", "overviewScrollTop", "byId"]);
+  if (typeof value.contextOpen === "boolean") next.contextOpen = value.contextOpen;
+  if (contextWidth(value.contextWidth)) next.contextWidth = value.contextWidth;
+  if (typeof value.overviewQuery === "string") next.overviewQuery = value.overviewQuery;
+  if (typeof value.showCompleted === "boolean") next.showCompleted = value.showCompleted;
+  if (finiteNonnegative(value.overviewScrollTop)) next.overviewScrollTop = value.overviewScrollTop;
+  const byId = sanitizeWaveMap(value.byId);
+  if (byId) next.byId = byId;
+  return next;
+}
+
+function sanitizeBoardState(value: unknown): WorkspaceBoardState | undefined {
+  if (!isRecord(value)) return undefined;
+  const next: WorkspaceBoardState = copyUnknown(value, ["mode", "scrollTop", "scrollLeft", "selectedTaskId", "selectedTags"]);
+  if (value.mode === "board" || value.mode === "list") next.mode = value.mode;
+  if (finiteNonnegative(value.scrollTop)) next.scrollTop = value.scrollTop;
+  if (finiteNonnegative(value.scrollLeft)) next.scrollLeft = value.scrollLeft;
+  if (typeof value.selectedTaskId === "string" && value.selectedTaskId) next.selectedTaskId = value.selectedTaskId;
+  if (Array.isArray(value.selectedTags)) {
+    next.selectedTags = [...new Set(value.selectedTags.filter((tag): tag is string => typeof tag === "string" && tag.length > 0))];
+  }
+  return next;
+}
+
+function sanitizeWorkspaceViewState(value: unknown, routeProjectId: string): WorkspaceViewState {
+  if (!isRecord(value)) return {};
+  const next: WorkspaceViewState = copyUnknown(value, ["lastDocsPath", "docs", "waves", "board"]);
+  if (validDocsPath(value.lastDocsPath, routeProjectId)) next.lastDocsPath = value.lastDocsPath;
+  const docs = sanitizeDocsState(value.docs);
+  if (docs) next.docs = docs;
+  const waves = sanitizeWavesState(value.waves);
+  if (waves) next.waves = waves;
+  const board = sanitizeBoardState(value.board);
+  if (board) next.board = board;
+  return next;
+}
+
+function mergeScrollMap(
+  current: Record<string, WorkspaceScrollOffset> | undefined,
+  patch: Record<string, WorkspaceScrollOffset | null> | undefined,
+): Record<string, WorkspaceScrollOffset> | undefined {
+  if (!patch) return current;
+  const next = { ...(current ?? {}) };
+  let changed = false;
+  for (const [key, offset] of Object.entries(patch)) {
+    if (!key) continue;
+    const sanitized = offset === null ? null : sanitizeScrollOffset(offset);
+    if (offset !== null && !sanitized) continue;
+    delete next[key];
+    if (sanitized) next[key] = sanitized;
+    changed = true;
+  }
+  return changed ? cappedEntries(next) : current;
+}
+
+function mergeWaveMap(
+  current: Record<string, WorkspaceWaveViewState> | undefined,
+  patch: Record<string, Partial<WorkspaceWaveViewState> | null> | undefined,
+): Record<string, WorkspaceWaveViewState> | undefined {
+  if (!patch) return current;
+  const next = { ...(current ?? {}) };
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (!key) continue;
+    if (value === null) {
+      delete next[key];
+      changed = true;
+      continue;
+    }
+    if (!isRecord(value)) continue;
+    const currentValue = current?.[key] ?? {};
+    const merged = mergeWaveView(currentValue, value);
+    if (!merged) continue;
+    delete next[key];
+    next[key] = merged;
+    changed = true;
+  }
+  return changed ? cappedEntries(next) : current;
+}
+
+function mergeWaveView(
+  current: WorkspaceWaveViewState,
+  patch: Partial<WorkspaceWaveViewState>,
+): WorkspaceWaveViewState | null {
+  const next: WorkspaceWaveViewState = {
+    ...current,
+    ...copyUnknown(patch, ["view", "scrollTop", "scrollLeft", "selectedTaskId"]),
+  };
+  if (patch.view === "flow" || patch.view === "results") next.view = patch.view;
+  if (finiteNonnegative(patch.scrollTop)) next.scrollTop = patch.scrollTop;
+  if (finiteNonnegative(patch.scrollLeft)) next.scrollLeft = patch.scrollLeft;
+  if (typeof patch.selectedTaskId === "string" && patch.selectedTaskId) next.selectedTaskId = patch.selectedTaskId;
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+function mergeDocsState(current: WorkspaceDocsState | undefined, patch: WorkspaceDocsStatePatch): WorkspaceDocsState {
+  const next: WorkspaceDocsState = { ...(current ?? {}), ...copyUnknown(patch, ["contextOpen", "contextWidth", "scrollBySubject"]) };
+  if (typeof patch.contextOpen === "boolean") next.contextOpen = patch.contextOpen;
+  if (contextWidth(patch.contextWidth)) next.contextWidth = patch.contextWidth;
+  const scrollBySubject = mergeScrollMap(current?.scrollBySubject, patch.scrollBySubject);
+  if (scrollBySubject) next.scrollBySubject = scrollBySubject;
+  return next;
+}
+
+function mergeWavesState(current: WorkspaceWavesState | undefined, patch: WorkspaceWavesStatePatch): WorkspaceWavesState {
+  const next: WorkspaceWavesState = { ...(current ?? {}), ...copyUnknown(patch, ["contextOpen", "contextWidth", "overviewQuery", "showCompleted", "overviewScrollTop", "byId"]) };
+  if (typeof patch.contextOpen === "boolean") next.contextOpen = patch.contextOpen;
+  if (contextWidth(patch.contextWidth)) next.contextWidth = patch.contextWidth;
+  if (typeof patch.overviewQuery === "string") next.overviewQuery = patch.overviewQuery;
+  if (typeof patch.showCompleted === "boolean") next.showCompleted = patch.showCompleted;
+  if (finiteNonnegative(patch.overviewScrollTop)) next.overviewScrollTop = patch.overviewScrollTop;
+  const byId = mergeWaveMap(current?.byId, patch.byId);
+  if (byId) next.byId = byId;
+  return next;
+}
+
+function mergeBoardState(current: WorkspaceBoardState | undefined, patch: WorkspaceBoardStatePatch): WorkspaceBoardState {
+  const next: WorkspaceBoardState = { ...(current ?? {}), ...copyUnknown(patch, ["mode", "scrollTop", "scrollLeft", "selectedTaskId", "selectedTags"]) };
+  if (patch.mode === "board" || patch.mode === "list") next.mode = patch.mode;
+  if (finiteNonnegative(patch.scrollTop)) next.scrollTop = patch.scrollTop;
+  if (finiteNonnegative(patch.scrollLeft)) next.scrollLeft = patch.scrollLeft;
+  if (typeof patch.selectedTaskId === "string" && patch.selectedTaskId) next.selectedTaskId = patch.selectedTaskId;
+  if (Array.isArray(patch.selectedTags)) {
+    next.selectedTags = [...new Set(patch.selectedTags.filter((tag): tag is string => typeof tag === "string" && tag.length > 0))];
+  }
+  return next;
+}
+
+/** Read the typed workspace namespace for one checkout without mutating state. */
+export function getWorkspaceViewState(state: NavigationState, routeProjectId: string): WorkspaceViewState {
+  const projectView = state.viewStateByProject[routeProjectId];
+  return sanitizeWorkspaceViewState(isRecord(projectView) ? projectView.workspace : undefined, routeProjectId);
+}
+
+/**
+ * Merge workspace preferences into the existing opaque per-checkout record.
+ * Persistence remains the mounted root's responsibility: pass the returned
+ * state to writeNavigationState through that existing authority.
+ */
+export function updateWorkspaceViewState(
+  state: NavigationState,
+  routeProjectId: string,
+  patch: WorkspaceViewStatePatch,
+): NavigationState {
+  if (!routeProjectId || !isRecord(patch)) return state;
+  const rawProjectView = state.viewStateByProject[routeProjectId];
+  const projectView = isRecord(rawProjectView) ? rawProjectView : { value: rawProjectView };
+  const current = sanitizeWorkspaceViewState(projectView.workspace, routeProjectId);
+  const next: WorkspaceViewState = { ...current };
+
+  if (hasOwn(patch, "lastDocsPath")) {
+    if (patch.lastDocsPath === null) delete next.lastDocsPath;
+    else if (validDocsPath(patch.lastDocsPath, routeProjectId)) next.lastDocsPath = patch.lastDocsPath;
+  }
+  if (patch.docs === null) delete next.docs;
+  else if (isRecord(patch.docs)) next.docs = mergeDocsState(current.docs, patch.docs as WorkspaceDocsStatePatch);
+  if (patch.waves === null) delete next.waves;
+  else if (isRecord(patch.waves)) next.waves = mergeWavesState(current.waves, patch.waves as WorkspaceWavesStatePatch);
+  if (patch.board === null) delete next.board;
+  else if (isRecord(patch.board)) next.board = mergeBoardState(current.board, patch.board as WorkspaceBoardStatePatch);
+
+  if (Object.keys(next).length === 0 && !hasOwn(projectView, "workspace")) return state;
+  return {
+    ...state,
+    viewStateByProject: {
+      ...state.viewStateByProject,
+      [routeProjectId]: { ...projectView, workspace: next },
+    },
+  };
+}
+
+/** Mark a document as visited while retaining at most the last 20 offsets. */
+export function recordWorkspaceDocumentVisit(
+  state: NavigationState,
+  routeProjectId: string,
+  subject: string,
+  scroll?: WorkspaceScrollOffset,
+): NavigationState {
+  if (!subject) return state;
+  const current = getWorkspaceViewState(state, routeProjectId).docs?.scrollBySubject?.[subject];
+  return updateWorkspaceViewState(state, routeProjectId, {
+    docs: { scrollBySubject: { [subject]: scroll ?? current ?? { top: 0, left: 0 } } },
+  });
+}
+
+/** Mark a wave as visited while retaining at most the last 20 wave views. */
+export function recordWorkspaceWaveVisit(
+  state: NavigationState,
+  routeProjectId: string,
+  waveId: string,
+  view: Partial<WorkspaceWaveViewState> = {},
+): NavigationState {
+  if (!waveId) return state;
+  return updateWorkspaceViewState(state, routeProjectId, { waves: { byId: { [waveId]: view } } });
 }
 
 /** Only same-origin app paths restore; external URLs and protocol tricks never do. */
@@ -326,6 +774,16 @@ export interface NavigationTarget {
 export interface ResolveOptions {
   /** Explicit deep link — always wins over saved navigation when internal. */
   deepLink?: string | null;
+  /** Route IDs such as checkout aliases mapped to their logical project ID. */
+  routeOwners?: Readonly<Record<string, string>>;
+}
+
+function routeOwner(path: string, projectIds: string[], routeOwners?: Readonly<Record<string, string>>): string | null {
+  const routeId = projectIdFromPath(path);
+  if (routeId === null) return null;
+  if (projectIds.includes(routeId)) return routeId;
+  const owner = routeOwners?.[routeId];
+  return owner && projectIds.includes(owner) ? owner : null;
 }
 
 /**
@@ -343,11 +801,11 @@ export function resolveNavigationTarget(
   const deepLink = options.deepLink ?? null;
 
   if (deepLink !== null && isInternalPath(deepLink)) {
-    const deepProject = projectIdFromPath(deepLink);
-    if (deepProject !== null && projectIds.includes(deepProject)) {
+    const deepProject = routeOwner(deepLink, projectIds, options.routeOwners);
+    if (deepProject !== null) {
       return { projectId: deepProject, path: deepLink };
     }
-    if (deepProject !== null && !projectIds.includes(deepProject)) {
+    if (projectIdFromPath(deepLink) !== null) {
       if (first !== null) {
         return {
           projectId: first,
@@ -370,8 +828,8 @@ export function resolveNavigationTarget(
   }
   const saved = state.lastPathByProject[active];
   if (saved !== undefined && isInternalPath(saved)) {
-    const savedProject = projectIdFromPath(saved);
-    if (savedProject === null || savedProject === active || projectIds.includes(savedProject)) {
+    const savedProject = routeOwner(saved, projectIds, options.routeOwners);
+    if (savedProject === active) {
       return { projectId: active, path: saved };
     }
     // Saved route points at a removed project: fall back to this project's Work.

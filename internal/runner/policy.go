@@ -6,7 +6,7 @@ import (
 )
 
 func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []string, error) {
-	policy := EffectivePolicy{Preset: input.Preset, Approvals: "deny"}
+	policy := EffectivePolicy{Preset: input.Preset, Approvals: "deny", Workspace: strings.TrimSpace(input.Workspace)}
 	switch input.Preset {
 	case PresetReadOnly:
 		policy.Filesystem, policy.Network = "read-only", false
@@ -16,6 +16,12 @@ func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []stri
 		policy.Filesystem, policy.Network = "workspace-write", true
 	case PresetDangerFullAccess:
 		policy.Filesystem, policy.Network, policy.Approvals = "unrestricted", true, "bypass"
+	}
+	if input.ResolvedAccess != nil {
+		if input.ResolvedAccess.State != "ready" {
+			return policy, nil, admission(d, "policy_unenforceable", "access", "resolved access is not ready for this route")
+		}
+		policy = input.ResolvedAccess.Effective
 	}
 	if d.Transport == TransportACP {
 		if input.Preset == PresetDangerFullAccess {
@@ -42,6 +48,12 @@ func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []stri
 		if err != nil {
 			return policy, nil, err
 		}
+	case "muse":
+		var err error
+		args, err = compileMuseArgs(d, input, args, policy)
+		if err != nil {
+			return policy, nil, err
+		}
 	default:
 		return policy, nil, admission(d, "unsupported_dialect", "dialect", "unknown CLI dialect")
 	}
@@ -59,9 +71,20 @@ func compileCodexArgs(d HarnessDefinition, input RunInput, base []string, policy
 	if input.Preset == PresetDangerFullAccess {
 		compiled = append(compiled, "--dangerously-bypass-approvals-and-sandbox")
 	} else {
-		compiled = append(compiled, "--sandbox", policy.Filesystem, "-c", `approval_policy="never"`)
+		approval := "never"
+		if policy.Approvals == "ask" {
+			approval = "on-request"
+		}
+		compiled = append(compiled, "--sandbox", policy.Filesystem, "-c", fmt.Sprintf(`approval_policy="%s"`, approval))
 		if policy.Filesystem == "workspace-write" {
 			compiled = append(compiled, "-c", fmt.Sprintf("sandbox_workspace_write.network_access=%t", policy.Network))
+		}
+	}
+	if input.ResolvedAccess != nil {
+		for _, folder := range input.ResolvedAccess.Folders {
+			if folder.Access == "write" && folder.Path != "" && folder.Path != policy.Workspace {
+				compiled = append(compiled, "--add-dir", folder.Path)
+			}
 		}
 	}
 	if input.Model != "" {
@@ -108,10 +131,70 @@ func compileClaudeArgs(d HarnessDefinition, input RunInput, base []string, polic
 	return args, nil
 }
 
+// compileMuseArgs is deliberately narrow: direct Muse is a separate dialect
+// from the existing Codex profile route. Native flags are compiled here so a
+// configured shell command cannot widen the request.
+func compileMuseArgs(d HarnessDefinition, input RunInput, base []string, policy EffectivePolicy) ([]string, error) {
+	args := append([]string(nil), base...)
+	execAt := indexOf(args, "exec")
+	if execAt < 0 {
+		args = append(args, "exec")
+		execAt = len(args) - 1
+	}
+	compiled := []string{}
+	add := func(flag string, values ...string) {
+		if !contains(args, flag) {
+			compiled = append(compiled, flag)
+			compiled = append(compiled, values...)
+		}
+	}
+	if policy.Workspace != "" {
+		add("--workspace", policy.Workspace)
+	}
+	if input.Preset == PresetDangerFullAccess {
+		add("--yolo")
+	} else {
+		approval := "never"
+		if policy.Approvals == "ask" {
+			approval = "on-request"
+		}
+		add("--approval-mode", approval)
+		network := "restricted"
+		if policy.Network {
+			network = "enabled"
+		}
+		add("--sandbox-network", network)
+		if policy.Filesystem == "read-only" {
+			add("--disable-write")
+			add("--disable-shell")
+		}
+		if !policy.Network {
+			add("--disable-web-tools")
+		}
+	}
+	if input.Model != "" {
+		add("--model", input.Model)
+	}
+	if input.Effort != "" {
+		add("--reasoning-effort", input.Effort)
+	}
+	add("--json")
+	if input.ResumeSession != "" {
+		if !contains(args, "resume") {
+			args = append(args[:execAt+1], append([]string{"resume"}, args[execAt+1:]...)...)
+		}
+		compiled = append(compiled, input.ResumeSession)
+	}
+	if input.ResumeSession == "" && !contains(args, "-") {
+		compiled = append(compiled, "-")
+	}
+	return append(args[:execAt+1], append(compiled, args[execAt+1:]...)...), nil
+}
+
 func hasForbiddenPolicyArg(args []string) bool {
 	for _, arg := range args {
 		lower := strings.ToLower(strings.TrimSpace(arg))
-		for _, prefix := range []string{"--sandbox", "-s=", "--dangerously", "--approve-for-me", "--permission-mode", "--permission-prompts", "--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--settings", "--tools", "--add-dir", "-c", "--config"} {
+		for _, prefix := range []string{"--sandbox", "--sandbox-network", "-s=", "--dangerously", "--approve-for-me", "--permission-mode", "--permission-prompts", "--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--settings", "--tools", "--add-dir", "-c", "--config", "--yolo", "--workspace", "--approval-mode"} {
 			if lower == prefix || strings.HasPrefix(lower, prefix+"=") {
 				return true
 			}

@@ -91,6 +91,27 @@ func TestDeliveryPlanV2RejectsInvalidComplexity(t *testing.T) {
 	}
 }
 
+func TestDeliveryImportPreservesAuthoredTaskRoute(t *testing.T) {
+	vault := deliveryContextTestVault(t)
+	plan := validDeliveryPlan()
+	plan.Tasks[0].WorkLevel = "demanding"
+	plan.Tasks[0].ReviewLevel = "light"
+	plan.Tasks[0].ExecuteProfile = "worker-manual"
+	plan.Tasks[0].ReviewProfile = "reviewer-manual"
+	if err := deliveryImportCmd(Args{"vault": vault, "plan": writeDeliveryTestPlan(t, vault, plan), "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]string{"work_level": "demanding", "review_level": "light", "execute_profile": "worker-manual", "review_profile": "reviewer-manual"} {
+		if got := stringField(data, field); got != want {
+			t.Fatalf("%s=%q want %q", field, got, want)
+		}
+	}
+}
+
 func TestDeliveryImportAtomicDedupeAndRollback(t *testing.T) {
 	t.Parallel()
 	vault := deliveryContextTestVault(t)

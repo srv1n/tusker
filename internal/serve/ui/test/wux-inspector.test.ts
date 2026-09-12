@@ -102,6 +102,22 @@ describe("inspector execution identity", () => {
   });
 });
 
+describe("inspector task routing", () => {
+  test("shows the default tier, predicted routes, and recorded current identity", () => {
+    const task = {
+      ...readyTask,
+      effectiveExecute: { work_level: "standard", profile: "worker", model: "gpt-worker", effort: "medium", source: "model levels", blockers: [] },
+      effectiveReview: { work_level: "standard", profile: "reviewer", model: "gpt-review", effort: "high", source: "model levels", blockers: [] },
+    };
+    const run = { ...readyRun, runnerProfile: "actual-reviewer", runnerHarness: "codex_exec", model: "gpt-actual", lane: "review" as const };
+    const html = render({ task, run, executionIdentity: undefined });
+    expect(html).toContain("Tier 2 · Standard");
+    expect(html).toContain("Will execute");
+    expect(html).toContain("worker · gpt-worker · medium");
+    expect(html).toContain("actual-reviewer · gpt-actual · codex_exec · review");
+  });
+});
+
 describe("inspector evidence and acceptance", () => {
   test("inspector evidence keeps acceptance", () => {
     // Accepted delivery surfaces once, as the run's accepted result…

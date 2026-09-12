@@ -12,7 +12,8 @@ decides_for: ".tusker/specs/execution-observability.md"
 
 # Decision log: execution observability
 
-This grill refined the standing [[software-factory]] decision that work
+This grill refined the standing software-factory decision (a historical source
+no longer in the managed corpus) that work
 registers in Tusker no matter who drives it. It followed a code-level comparison
 between Tusker and Paseo, plus checks of the installed Codex and Claude command
 surfaces.

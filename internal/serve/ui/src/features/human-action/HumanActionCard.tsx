@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { ArrowLeft, CheckCircle2, ClipboardCheck, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, CheckCircle2, ClipboardCheck, LoaderCircle, RotateCcw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/controls";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { ProofChip } from "@/components/ui/chips";
 import type { HumanReceiptBridgeResult } from "@/lib/humanReceipt";
-import { useGateAction, useTaskStatusAction } from "@/lib/queries";
-import type { HumanAction } from "@/types/domain";
+import { useAgentAccessApprovalAction, useAgentAccessApprovals, useGateAction, useTaskStatusAction } from "@/lib/queries";
+import type { AgentAccessApproval, HumanAction } from "@/types/domain";
 
 /**
  * The one human-owned action surface. It accepts the served contract rather
@@ -17,6 +17,8 @@ export function HumanActionCard({
   taskTitle,
   projectId,
   blockedTaskIds,
+  approvals,
+  onRetry,
   compact = false,
 }: {
   action: HumanAction;
@@ -24,6 +26,8 @@ export function HumanActionCard({
   taskTitle: string;
   projectId?: string;
   blockedTaskIds?: string[];
+  approvals?: AgentAccessApproval[];
+  onRetry?: () => void;
   compact?: boolean;
 }) {
   const gateAction = useGateAction();
@@ -120,8 +124,8 @@ export function HumanActionCard({
       tabIndex={0}
       aria-labelledby={`human-action-${controlId}`}
       className={compact
-        ? "rounded-xl border border-accent/30 bg-accent-soft/30 p-3.5 shadow-2xs"
-        : "mb-7 rounded-xl border border-accent/30 bg-accent-soft/30 p-4 sm:p-5 shadow-xs"}
+        ? "rounded-xl border border-line bg-raised p-3.5 shadow-2xs"
+        : "mb-7 rounded-xl border border-line bg-raised p-4 sm:p-5 shadow-xs"}
     >
       <div className="flex items-start gap-3">
         <div className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-accent text-surface shadow-2xs">
@@ -143,24 +147,26 @@ export function HumanActionCard({
         </div>
       </div>
 
+      <AgentAccessApprovalList projectId={projectId} taskId={taskId} approvals={approvals} onRetry={onRetry} compact={compact} />
+
       <div className="mt-4 grid gap-3 text-[13px] leading-relaxed text-ink-soft">
         <div>
-          <div className="mb-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Do this</div>
+          <div className="mb-0.5 text-[11px] font-semibold text-muted">Do this</div>
           <p className="text-[13.5px] font-medium text-ink">{action.action}</p>
         </div>
         <div>
-          <div className="mb-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Why you’re needed</div>
+          <div className="mb-0.5 text-[11px] font-semibold text-muted">Why you’re needed</div>
           <p className="text-muted">{action.whyAgentCannot}</p>
         </div>
         <div>
-          <div className="mb-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Done when</div>
+          <div className="mb-0.5 text-[11px] font-semibold text-muted">Done when</div>
           <p className="text-muted">{action.completionCondition}</p>
         </div>
       </div>
 
       {action.acceptance.length > 0 && (
         <div className="mt-4 overflow-hidden rounded-xl border border-line bg-raised shadow-2xs">
-          <div className="border-b border-line bg-panel/60 px-3.5 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">
+          <div className="border-b border-line bg-panel/60 px-3.5 py-2 text-[11px] font-semibold text-muted">
             Review checklist
           </div>
           {action.acceptance.map((row) => (
@@ -263,4 +269,99 @@ export function HumanActionCard({
       </div>
     </section>
   );
+}
+
+function approvalIsLive(approval: AgentAccessApproval): boolean {
+  if (approval.state !== "pending" || approval.nativeOptionKind !== "allow_once" || !approval.nativeOptionId) return false;
+  const expiresAt = Date.parse(approval.expiresAt);
+  const liveUntil = Date.parse(approval.liveUntil || "");
+  return Number.isFinite(expiresAt) && Number.isFinite(liveUntil) && Date.now() < Math.min(expiresAt, liveUntil);
+}
+
+function approvalArgs(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    const encoded = JSON.stringify(value, null, 2);
+    return encoded === undefined ? "[redacted]" : encoded;
+  } catch {
+    return "[redacted]";
+  }
+}
+
+function approvalStateLabel(state: AgentAccessApproval["state"]): string {
+  return state === "allowed" ? "Allowed once" : state.charAt(0).toUpperCase() + state.slice(1);
+}
+
+/**
+ * Approval projection shared by the task page, compact inspector and needs
+ * panel. It is deliberately driven by the served immutable request rather
+ * than reconstructing command meaning in the browser.
+ */
+export function AgentAccessApprovalList({
+  projectId,
+  taskId,
+  approvals,
+  onRetry,
+  compact = false,
+}: {
+  projectId?: string;
+  taskId: string;
+  approvals?: AgentAccessApproval[];
+  onRetry?: () => void;
+  compact?: boolean;
+}) {
+  const query = useAgentAccessApprovals(projectId, taskId);
+  const respond = useAgentAccessApprovalAction(projectId, taskId);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [settled, setSettled] = useState<Record<string, AgentAccessApproval>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [, setClock] = useState(0);
+  const source = approvals ?? query.data?.approvals ?? [];
+  const unique = useMemo(() => Array.from(new Map(source.map((item) => [item.requestId, item])).values()), [source]);
+
+  useEffect(() => {
+    const pending = unique.filter((item) => item.state === "pending").map((item) => Date.parse(item.expiresAt)).filter(Number.isFinite);
+    if (pending.length === 0) return;
+    const timeout = window.setTimeout(() => setClock((value) => value + 1), Math.max(250, Math.min(...pending) - Date.now() + 50));
+    return () => window.clearTimeout(timeout);
+  }, [unique]);
+
+  const visible = unique.filter((item) => !dismissed.has(item.requestId));
+  if (visible.length === 0) return null;
+
+  const decide = async (approval: AgentAccessApproval, decision: "allow_once" | "deny") => {
+    if (!approvalIsLive(approval) || respond.isPending) return;
+    setErrors((old) => { const next = { ...old }; delete next[approval.requestId]; return next; });
+    try {
+      const result = await respond.mutateAsync({ requestId: approval.requestId, expectedRevision: approval.stateRevision, decision });
+      if (result.approval) setSettled((old) => ({ ...old, [approval.requestId]: result.approval! }));
+    } catch (error) {
+      setErrors((old) => ({ ...old, [approval.requestId]: error instanceof Error ? error.message : "Approval response failed; the request is still pending." }));
+    }
+  };
+
+  return <section data-agent-access-approvals aria-label="Agent access approvals" className={compact ? "mt-3 space-y-2" : "mt-5 space-y-3"}>
+    {visible.map((sourceApproval) => {
+      const approval = settled[sourceApproval.requestId] || sourceApproval;
+      return <ApprovalCard key={approval.requestId} approval={approval} error={errors[approval.requestId]} busy={respond.isPending} onDismiss={() => setDismissed((old) => new Set(old).add(approval.requestId))} onDecision={(decision) => void decide(approval, decision)} onRetry={onRetry} compact={compact} />;
+    })}
+  </section>;
+}
+
+function ApprovalCard({ approval, error, busy, onDismiss, onDecision, onRetry, compact }: { approval: AgentAccessApproval; error?: string; busy: boolean; onDismiss: () => void; onDecision: (decision: "allow_once" | "deny") => void; onRetry?: () => void; compact: boolean }) {
+  const live = approvalIsLive(approval);
+  const args = approvalArgs(approval.redactedArguments);
+  const tone = approval.state === "allowed" ? "pass" : approval.state === "denied" || approval.state === "expired" ? "warn" : "info";
+  const toneClasses = { pass: "border-pass/30 bg-pass-soft text-pass", warn: "border-warn/30 bg-warn-soft text-warn", info: "border-info/30 bg-info-soft text-info" } as const;
+  return <article data-testid={`agent-access-approval-${approval.requestId}`} data-approval-state={approval.state} className={`rounded-xl border p-3.5 ${toneClasses[tone]}`}>
+    <div className="flex items-start gap-2.5"><div className="mt-0.5 flex-none">{approval.state === "allowed" ? <ShieldCheck size={16} aria-hidden="true" /> : <ShieldAlert size={16} aria-hidden="true" />}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="text-[13px] font-semibold">Access request</h3><span className="rounded-full border border-current/25 px-2 py-0.5 text-[11px] font-semibold">{approvalStateLabel(approval.state)}</span></div><p className="mt-1 text-[12px] leading-relaxed opacity-85">{approval.tool} · {approval.route}</p></div>{approval.state === "pending" && <button type="button" onClick={onDismiss} className="rounded px-2 py-1 text-[12px] opacity-75 hover:bg-black/5 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/40">Dismiss</button>}</div>
+    <dl className={`mt-3 grid gap-2 text-[12px] ${compact ? "" : "sm:grid-cols-2"}`}><div><dt className="font-semibold opacity-75">Working folder</dt><dd className="mt-0.5 break-all font-mono text-[11px]">{approval.workingDirectory || "Unavailable"}</dd></div><div><dt className="font-semibold opacity-75">Targets</dt><dd className="mt-0.5 break-words">{approval.targets?.length ? approval.targets.join(", ") : "No resolved targets"}</dd></div></dl>
+    <div className="mt-3"><p className="text-[12px] font-semibold opacity-75">Redacted arguments</p><pre className="mt-1 max-h-[20rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-current/15 bg-black/5 p-2.5 font-mono text-[11px] leading-relaxed">{args}</pre></div>
+    {approval.reason && <p className="mt-3 text-[12px] leading-relaxed"><strong>Consequence:</strong> {approval.reason}</p>}
+    <p className="mt-2 break-words font-mono text-[10px] opacity-70">Request {approval.requestId} · revision {approval.stateRevision} · policy {approval.policyFingerprint} · args {approval.argsDigest}</p>
+    {approval.state === "pending" && <p className="mt-2 text-[12px] leading-relaxed">{live ? "Allow once applies only to this exact live request. Block denies it without replaying the command." : "This request is no longer demonstrably live. No approval action is available; retry creates a new request."}</p>}
+    {approval.state !== "pending" && approval.terminalReason && <p className="mt-2 text-[12px] leading-relaxed">{approval.terminalReason}</p>}
+    {error && <p role="alert" className="mt-2 rounded-lg border border-fail/30 bg-fail-soft px-2.5 py-2 text-[12px] text-fail">{error}</p>}
+    {approval.state === "pending" && <div className="mt-3 flex flex-wrap items-center gap-2">{live ? <><Button type="button" variant="danger" size="sm" disabled={busy} onClick={() => onDecision("deny")}>{busy ? <LoaderCircle className="animate-spin" size={13} /> : null}Block</Button><Button type="button" size="sm" disabled={busy} onClick={() => onDecision("allow_once")}>{busy ? <LoaderCircle className="animate-spin" size={13} /> : null}Allow once</Button></> : onRetry ? <Button type="button" size="sm" onClick={onRetry}>Retry</Button> : <span className="text-[12px] opacity-75">Retry from the task actions to create a new request.</span>}</div>}
+  </article>;
 }

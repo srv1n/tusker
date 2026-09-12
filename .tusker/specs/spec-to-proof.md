@@ -23,6 +23,23 @@ operate a scheduler by hand.
 This page captures the product direction requested on 5 September 2026.
 It is the intended behavior, not a claim that every part works today.
 
+## Current reading path
+
+Read the current direction in this order:
+
+1. [[planning-handoff-and-agent-entry#Current direction]] for the user/architect conversation, task handoff and the current proposal/open/deferred boundary.
+2. [[agent-coordination]] and its [September 10 decisions](decisions/2026-09-10-agent-coordination-grill.md) for durable questions, peer contact and configured wave continuation.
+3. [[model-level-configuration]] for current configuration-owned model routing; the fixed names in “Historical initial model roles and current cost boundary” below preserve the initial September 6 intent only.
+4. “Immediate delivery override — local pilot first” below for the current rollout boundary. It keeps starts manual while coordination is unqualified; it does not supersede the product requirement to build configurable continuation.
+
+**Settled:** task contracts preserve product constraints; proof is executor-owned; routine review is independent-agent work; routing resolves configured work/review levels; code owns bookkeeping; architect turns are reserved for product judgment and actionable questions.
+
+**Active proposals:** unimplemented field names, UI treatments, centralized storage and transport integrations remain proposals until their owning contracts are delivered and qualified.
+
+**Open:** which installed transports can truthfully wake/resume contacts, and what evidence is sufficient to enable configured continuation for a real objective.
+
+**Deferred:** central-service migration, broad multi-machine placement, automatic semantic routing and mandatory human review of routine work. Current live rollout remains manual-start until qualification.
+
 ## The flow
 
 ```mermaid
@@ -249,10 +266,12 @@ ACP is used where a compatible adapter exists. A CLI without ACP needs a support
 command adapter with truthful process, cancellation, result and usage behavior;
 ACP support does not make arbitrary CLIs interchangeable automatically.
 
-### Default model roles and cost boundary
+### Historical initial model roles and current cost boundary
 
 The task contract selects a named role; project policy resolves that role to an
-installed runner and records the actual result. The initial default routing is:
+installed runner and records the actual result. The table preserves the initial
+September 6 model intent; it is not the current routing authority. Current
+routing comes from configured work/review levels in [[model-level-configuration]]:
 
 | Role | Default profile | Current model intent |
 | --- | --- | --- |

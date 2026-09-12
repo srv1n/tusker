@@ -6,6 +6,7 @@
 
 | Task | Priority | Next action |
 |---|---|---|
+| [[SRV-T-0007]] | p1 | Execute the task contract and satisfy proof mode. |
 | [[WUX-T-0005]] | p1 | Execute the imported delivery contract and satisfy proof mode. |
 | [[WUX-T-0006]] | p1 | Execute the imported delivery contract and satisfy proof mode. |
 | [[WUX-T-0013]] | p1 | Execute the imported delivery contract and satisfy proof mode. |

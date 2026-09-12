@@ -6,11 +6,11 @@ acceptance contract, then only the source and documentation it needs.
 
 ## Author tasks and waves
 
-One bounded outcome is one task. Convert the supplied spec; interviewing is
-outside this skill. Each task needs outcome, scope/non-goals, relevant source
-paths and decisions, observable acceptance IDs, verification, dependencies,
-review expectations, and a configured work level. Reference canonical specs
-instead of copying them. Preserve enough guidance to execute without chat history.
+One bounded outcome is one task. Before creating, amending or reviewing a task handoff, read `HANDOFF.md`.
+It defines the planner's required discovery, surrounding-work and contact
+context, scenario-to-proof mapping, and packet-based readiness review. Complete
+that review before handing work to an implementer, regardless of work level.
+Use existing task fields and exact canonical references; no word-count quota.
 
 Use tags for cross-cutting groups such as auth. Epics are legacy compatibility,
 not required product structure. Check `tusker new task --help` for supported

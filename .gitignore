@@ -46,6 +46,9 @@ dist/
 !internal/serve/ui/dist/
 !internal/serve/ui/dist/**
 internal/serve/ui/.factory-operations-browser-*/
+internal/serve/ui/.access-journey-browser-*/
+internal/serve/ui/.approval-browser-*/
+internal/serve/ui/.profiles-browser-*/
 # ChatGPT browser handoff local state
 .chatgpt-handoff/*
 !.chatgpt-handoff/

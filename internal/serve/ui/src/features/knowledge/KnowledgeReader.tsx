@@ -109,17 +109,17 @@ function DocBody({
   }, []);
 
   return (
-    <main aria-label="Document reader" className="flex h-full flex-col">
-      <SectionToolbar
-        left={<ContextLabel kind={doc.kind} subject={doc.subject} />}
-        right={
-          <>
-            <AutoSaveTick state={ed.saveState} />
-            <SaveButton dirty={ed.dirty} saving={ed.saving} onSave={ed.save} />
-            <ViewSwitch projectId={projectId} active="files" />
-          </>
-        }
-      />
+    <main aria-label="Document reader" className="relative flex h-full flex-col">
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-end px-4 sm:px-6">
+        <div
+          aria-label="Document actions"
+          className="pointer-events-auto flex items-center gap-1 rounded-xl border border-line/80 bg-raised/90 p-1 shadow-md backdrop-blur-md"
+        >
+          <AutoSaveTick state={ed.saveState} />
+          <SaveButton dirty={ed.dirty} saving={ed.saving} onSave={ed.save} />
+          <ViewSwitch projectId={projectId} active="files" />
+        </div>
+      </div>
       <div className="tk-scroll flex-1 overflow-y-auto">
         <article className="mx-auto w-full max-w-[46rem] px-4 pb-24 pt-7 sm:px-6">
           {doc.successor && (

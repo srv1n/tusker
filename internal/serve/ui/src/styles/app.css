@@ -40,11 +40,13 @@
   --color-info-soft: var(--k-info-soft);
   --color-accent: var(--k-accent);
   --color-accent-soft: var(--k-accent-soft);
+  --color-accent-ink: var(--k-accent-ink);
 
-  /* Type families — self-hosted via @fontsource (no CDN) */
-  --font-sans: "Archivo", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
-  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* One future-facing family variable keeps the app and TipTap aligned.
+     Mono remains reserved for exact identifiers and commands. */
+  --font-sans: var(--tk-font-family);
+  --font-serif: var(--tk-display-font-family);
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
 
   /* Motion */
   --animate-rise: tkIn 0.18s ease both;
@@ -53,60 +55,76 @@
 
 /* ---- Light (Modern neutral slate/zinc canvas) ---- */
 :root {
-  --k-surface: #f9fafb;
-  --k-panel: #f3f4f6;
+  --tk-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --tk-display-font-family: var(--tk-font-family);
+  --tk-font-scale: 1;
+  /* Apple macOS text styles: Body 13/16, Title 3 15/20, Title 2 17/22,
+     Title 1 22/26, Large Title 26/32. */
+  --tk-prose-body-size: 13px;
+  --tk-prose-body-leading: 16px;
+  --tk-prose-h1-size: 26px;
+  --tk-prose-h1-leading: 32px;
+  --tk-prose-h2-size: 22px;
+  --tk-prose-h2-leading: 26px;
+  --tk-prose-h3-size: 17px;
+  --tk-prose-h3-leading: 22px;
+
+  --k-surface: #f7f8fa;
+  --k-panel: #f0f1f4;
   --k-raised: #ffffff;
-  --k-ink: #09090b;
-  --k-ink-soft: #27272a;
-  --k-muted: #71717a;
-  --k-faint: #a1a1aa;
-  --k-fainter: #d4d4d8;
+  --k-ink: #111318;
+  --k-ink-soft: #30343b;
+  --k-muted: #69707c;
+  --k-faint: #9299a4;
+  --k-fainter: #c9cdd4;
 
-  --k-line: #e4e4e7;
-  --k-line-soft: #f4f4f5;
-  --k-hover: #f4f4f5;
-  --k-active: #e4e4e7;
+  --k-line: #dfe2e7;
+  --k-line-soft: #eceef2;
+  --k-hover: #f1f3f6;
+  --k-active: #e7e9ef;
 
-  --k-fail: #dc2626;
-  --k-fail-soft: #fef2f2;
-  --k-pass: #059669;
-  --k-pass-soft: #ecfdf5;
-  --k-warn: #d97706;
-  --k-warn-soft: #fffbeb;
-  --k-info: #2563eb;
-  --k-info-soft: #eff6ff;
-  --k-accent: #7c3aed;
-  --k-accent-soft: #f5f3ff;
+  --k-fail: #bd2d36;
+  --k-fail-soft: #fff0f1;
+  --k-pass: #0d7538;
+  --k-pass-soft: #ecf9f0;
+  --k-warn: #945000;
+  --k-warn-soft: #fff6e7;
+  --k-info: #006f80;
+  --k-info-soft: #eaf8fa;
+  --k-accent: #5558e0;
+  --k-accent-soft: #eef0ff;
+  --k-accent-ink: #ffffff;
 
   color-scheme: light;
 }
 
 /* ---- Dark (Deep, crisp zinc & vibrant semantics) ---- */
 :root[data-theme="dark"] {
-  --k-surface: #09090b;
-  --k-panel: #111114;
-  --k-raised: #18181b;
-  --k-ink: #fafafa;
-  --k-ink-soft: #e4e4e7;
-  --k-muted: #a1a1aa;
-  --k-faint: #71717a;
-  --k-fainter: #3f3f46;
+  --k-surface: #08090a;
+  --k-panel: #0f1011;
+  --k-raised: #161718;
+  --k-ink: #ffffff;
+  --k-ink-soft: #d0d6e0;
+  --k-muted: #8a8f98;
+  --k-faint: #62666d;
+  --k-fainter: #383b3f;
 
-  --k-line: #27272a;
-  --k-line-soft: #1e1e24;
-  --k-hover: #1e1e24;
-  --k-active: #27272a;
+  --k-line: #23252a;
+  --k-line-soft: #1b1d20;
+  --k-hover: #1b1d20;
+  --k-active: #23252a;
 
-  --k-fail: #ef4444;
-  --k-fail-soft: #450a0a;
-  --k-pass: #10b981;
-  --k-pass-soft: #064e3b;
-  --k-warn: #f59e0b;
-  --k-warn-soft: #451a03;
-  --k-info: #3b82f6;
-  --k-info-soft: #172554;
-  --k-accent: #a78bfa;
-  --k-accent-soft: #2e1065;
+  --k-fail: #ff6b70;
+  --k-fail-soft: #321416;
+  --k-pass: #52d273;
+  --k-pass-soft: #102b19;
+  --k-warn: #f0ad4e;
+  --k-warn-soft: #30220e;
+  --k-info: #32c8d8;
+  --k-info-soft: #0b292d;
+  --k-accent: #e4f222;
+  --k-accent-soft: #282b0c;
+  --k-accent-ink: #08090a;
 
   color-scheme: dark;
 }
@@ -114,30 +132,29 @@
 /* System-following when the user hasn't pinned a theme. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --k-surface: #09090b;
-    --k-panel: #111114;
-    --k-raised: #18181b;
-    --k-ink: #fafafa;
-    --k-ink-soft: #e4e4e7;
-    --k-muted: #a1a1aa;
-    --k-faint: #71717a;
-    --k-fainter: #3f3f46;
-
-    --k-line: #27272a;
-    --k-line-soft: #1e1e24;
-    --k-hover: #1e1e24;
-    --k-active: #27272a;
-
-    --k-fail: #ef4444;
-    --k-fail-soft: #450a0a;
-    --k-pass: #10b981;
-    --k-pass-soft: #064e3b;
-    --k-warn: #f59e0b;
-    --k-warn-soft: #451a03;
-    --k-info: #3b82f6;
-    --k-info-soft: #172554;
-    --k-accent: #a78bfa;
-    --k-accent-soft: #2e1065;
+    --k-surface: #08090a;
+    --k-panel: #0f1011;
+    --k-raised: #161718;
+    --k-ink: #ffffff;
+    --k-ink-soft: #d0d6e0;
+    --k-muted: #8a8f98;
+    --k-faint: #62666d;
+    --k-fainter: #383b3f;
+    --k-line: #23252a;
+    --k-line-soft: #1b1d20;
+    --k-hover: #1b1d20;
+    --k-active: #23252a;
+    --k-fail: #ff6b70;
+    --k-fail-soft: #321416;
+    --k-pass: #52d273;
+    --k-pass-soft: #102b19;
+    --k-warn: #f0ad4e;
+    --k-warn-soft: #30220e;
+    --k-info: #32c8d8;
+    --k-info-soft: #0b292d;
+    --k-accent: #e4f222;
+    --k-accent-soft: #282b0c;
+    --k-accent-ink: #08090a;
 
     color-scheme: dark;
   }
@@ -153,6 +170,11 @@
     margin: 0;
     padding: 0;
     height: 100%;
+  }
+  #root {
+    /* Scale the complete rendered surface: Tailwind's fixed-pixel utilities,
+       TipTap prose, and their controls all move together. */
+    zoom: var(--tk-font-scale);
   }
   html {
     /* Phones in landscape inflate text without this. */
@@ -191,6 +213,13 @@
   }
 }
 
+/* This needs to beat Tailwind's later `.h-dvh` utility. `dvh` is viewport-
+   based rather than parent-based, so counter the root zoom here and preserve a
+   one-viewport app shell at every text size. */
+#root > .h-dvh {
+  height: calc(100dvh / var(--tk-font-scale));
+}
+
 /* iOS Safari force-zooms the page when a focused field's font-size is under
    16px. The control-room type scale is far denser than that, so on small
    coarse-pointer screens (phones — the drawer breakpoint is 1024px) bump form
@@ -204,20 +233,31 @@
   }
 }
 
-/* Thin modern scrollbars (.tk-scroll). */
-.tk-scroll::-webkit-scrollbar {
+/* Thin modern scrollbars across every scroll container. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: gray transparent;
+}
+*::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-.tk-scroll::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
-.tk-scroll::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--k-ink) 12%, transparent);
+*::-webkit-scrollbar-thumb {
+  background: gray;
   border-radius: 9999px;
 }
-.tk-scroll::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--k-ink) 25%, transparent);
+
+/* HIG Accessibility › Cognitive: honor Reduce Motion — decorative rise and
+   pulse never carry meaning, so they switch off entirely. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @keyframes tkIn {
@@ -230,6 +270,7 @@
     transform: none;
   }
 }
+
 @keyframes tkPulse {
   0%,
   100% {
@@ -237,6 +278,27 @@
   }
   50% {
     opacity: 0.3;
+  }
+}
+
+/* Profile settings keep the desktop density, but preserve comfortable touch
+   targets when the settings pane is narrow or zoomed. */
+@media (max-width: 639px) {
+  .profiles-access :is(button, select, input:not([type="checkbox"]):not([type="radio"])) {
+    min-height: 44px;
+  }
+  .profiles-access [role="switch"] {
+    min-width: 44px;
+  }
+  .profiles-access [role="switch"][aria-checked="true"] > span {
+    transform: translateX(28px);
+  }
+  .profiles-access fieldset label {
+    min-height: 44px;
+    align-items: center;
+  }
+  .profiles-access summary {
+    min-height: 44px;
   }
 }
 
@@ -262,11 +324,11 @@
 
 /* Body copy */
 .tk-prose p {
-  margin-top: 1rem;
-  margin-bottom: 1rem;
+  margin-top: 0.875rem;
+  margin-bottom: 0.875rem;
   font-family: var(--font-serif);
-  font-size: 16.5px;
-  line-height: 1.68;
+  font-size: var(--tk-prose-body-size);
+  line-height: var(--tk-prose-body-leading);
   color: var(--color-ink-soft);
 }
 
@@ -275,28 +337,27 @@
   margin-top: 0.5rem;
   margin-bottom: 1rem;
   font-family: var(--font-serif);
-  font-size: 32px;
-  font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
+  font-size: var(--tk-prose-h1-size);
+  font-weight: 400;
+  line-height: var(--tk-prose-h1-leading);
   color: var(--color-ink);
 }
 .tk-prose h2 {
   margin-top: 2.25rem;
   margin-bottom: 0.75rem;
   font-family: var(--font-serif);
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1.375;
-  letter-spacing: -0.01em;
+  font-size: var(--tk-prose-h2-size);
+  font-weight: 400;
+  line-height: var(--tk-prose-h2-leading);
   color: var(--color-ink);
 }
 .tk-prose h3 {
   margin-top: 1.75rem;
   margin-bottom: 0.5rem;
   font-family: var(--font-serif);
-  font-size: 16.5px;
-  font-weight: 600;
+  font-size: var(--tk-prose-h3-size);
+  font-weight: 400;
+  line-height: var(--tk-prose-h3-leading);
   color: var(--color-ink);
 }
 
@@ -307,8 +368,8 @@
   margin-bottom: 1rem;
   padding-left: 1.5rem;
   font-family: var(--font-serif);
-  font-size: 16px;
-  line-height: 1.65;
+  font-size: var(--tk-prose-body-size);
+  line-height: var(--tk-prose-body-leading);
   color: var(--color-ink-soft);
 }
 .tk-prose ul {
@@ -364,9 +425,9 @@
   background: color-mix(in srgb, var(--color-accent-soft) 40%, transparent);
   padding: 0.25rem 0.75rem 0.25rem 1rem;
   font-family: var(--font-serif);
-  font-size: 15.5px;
+  font-size: var(--tk-prose-body-size);
   font-style: italic;
-  line-height: 1.6;
+  line-height: var(--tk-prose-body-leading);
   color: var(--color-muted);
 }
 .tk-prose blockquote p {
@@ -453,7 +514,8 @@
 .tk-prose th {
   padding: 0.5rem 0.875rem;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
+  line-height: 13px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -463,7 +525,8 @@
 .tk-prose td {
   padding: 0.5rem 0.875rem;
   vertical-align: top;
-  font-size: 13.5px;
+  font-size: var(--tk-prose-body-size);
+  line-height: var(--tk-prose-body-leading);
   color: var(--color-ink-soft);
 }
 

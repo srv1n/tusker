@@ -34,6 +34,28 @@ func packetV7Cmd(args Args) error {
 	if !ok {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
+	if store, missing, openErr := openRuntimeStoreReadOnly(DefaultStateRoot()); openErr == nil && !missing {
+		if projectID, registered, projectErr := registeredProjectIDForVault(store, vaultPath); projectErr == nil && registered {
+			task.Data = cloneMap(task.Data)
+			task.Data["project"] = projectID
+			if contacts, contactErr := store.AgentContacts(projectID, id); contactErr == nil && len(contacts) > 0 {
+				peers := map[string]any{}
+				for _, contact := range contacts {
+					value := contact.Address.Kind + ":" + contact.Address.ID
+					switch contact.Role {
+					case "architect", "origin":
+						task.Data[contact.Role] = value
+					case "peer":
+						peers[contact.Name] = value
+					}
+				}
+				if len(peers) > 0 {
+					task.Data["peer_contacts"] = peers
+				}
+			}
+		}
+		_ = store.Close()
+	}
 	crossScope := deliveryCrossScopeReviewForTask(idx, task)
 	audience := fallback(args.String("for"), "agent")
 	if audience == "integrator" {
@@ -54,7 +76,37 @@ func packetV7Cmd(args Args) error {
 		}
 	}
 	content := appendV7PacketCrossScopeProjection(v7Packet(vaultPath, task, idx, audience), crossScope)
+	content = appendV7PacketAgentMessages(content, vaultPath, task)
 	return emitV7PacketStatus(args, vaultPath, id, audience, content, crossScope)
+}
+
+func appendV7PacketAgentMessages(content, vaultPath string, task Note) string {
+	store, missing, err := openRuntimeStoreReadOnly(DefaultStateRoot())
+	if err != nil || missing {
+		return content
+	}
+	defer store.Close()
+	projectID, registered, err := registeredProjectIDForVault(store, vaultPath)
+	if err != nil || !registered {
+		return content
+	}
+	messages, err := store.ListAgentMessages(projectID, "task", stringField(task.Data, "id"))
+	if err != nil || len(messages) == 0 {
+		return content
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(content, "\n"))
+	b.WriteString("\n\n## Outstanding agent messages\n\n")
+	for _, message := range messages {
+		if message.State == "applied" {
+			continue
+		}
+		fmt.Fprintf(&b, "- `%s` %s from `%s`: %s\n", message.ID, message.Kind, message.Sender, message.Body)
+		if message.ReplyRequired && message.Kind == "question" {
+			fmt.Fprintf(&b, "  Reply: `tusker message reply --project %s --sender task:%s --recipient %s --recipient-kind task --key <stable-key> --reply-to %s --body <answer> --json`\n", projectID, stringField(task.Data, "id"), message.Sender, message.ID)
+		}
+	}
+	return b.String()
 }
 
 func appendV7PacketCrossScopeProjection(content string, projection deliveryCrossScopeReviewProjection) string {

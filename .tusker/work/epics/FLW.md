@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-05T08:37:06Z"
-updated_at: "2026-09-07T05:30:28Z"
-state_rev: "sha256:21308110a2b8203e61573f91ec3ed641a2fdb78ca051cb68c07b2277d47252a6"
+updated_at: "2026-09-11T06:02:53Z"
+state_rev: "sha256:16fe86c7a0a43750fa90d0229c2605a4ba899243363d4512fb56893f006ea11d"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -78,6 +78,11 @@ TBD.
 | [[FLW-T-0028]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[FLW-T-0029]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
 | [[FLW-T-0030]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[FLW-T-0031]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[FLW-T-0032]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[FLW-T-0034]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[FLW-T-0035]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[FLW-T-0036]] | backlog | blocked_dependency | Wait for dependency FLW-T-0031 to reach done. |
 
 ## Recently completed
 
@@ -85,4 +90,4 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[FLW-T-0033]] | reviewer:agent | 2026-09-11T06:02:53Z |

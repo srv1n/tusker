@@ -89,7 +89,9 @@ assertion or partial wave, 5 wait timeout, 1 internal error.
 | Discover installed models and reasoning choices | `tusker models catalog --json` |
 | Read effective mappings with only referenced profiles | `tusker models show --json --compact` |
 | Read every profile for administration | `tusker models show --json` |
-| Create or update a profile | `tusker models profile-set --scope global\|project --name <name> --harness <harness> --model <id> --effort <effort> --preset <preset>` |
+| Create or update a profile | `tusker models profile-set --scope global\|project --name <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> --if-revision <sha256>` |
+| Disable or enable future use | `tusker models profile-disable\|profile-enable --scope global\|project --name <name> --if-revision <sha256>` |
+| Remove an unreferenced profile | `tusker models profile-remove --scope global\|project --name <name> --if-revision <sha256>` |
 | Set an ordered primary/fallback list | `tusker models set --scope global\|project --level <level> --lane execute\|review --profiles primary,fallback --if-revision <sha256>` |
 | Reset a project field to inheritance | `tusker models reset --scope project --level <level> --lane execute\|review --if-revision <sha256>` |
 | Author task-level choices | `tusker new task ... --work-level standard --review-level demanding` |
@@ -99,6 +101,50 @@ Writes are atomic and accept the revision returned by `models show`. Catalog
 entries carry their installed-harness provenance and supported reasoning values.
 Manual profile values remain configured even when discovery is unsupported; the
 first live preflight decides whether the route is actually available.
+
+Use `tusker runner test <profile> --json` for a no-spend setup check and append
+`--live` only to authorize one disposable, two-minute model turn. The report records
+the exact selected profile/model/effort/transport when known; a blocked setup reports
+an actionable next step without exposing credentials.
+
+Disable preserves configuration and history but blocks new selection; an explicit
+ordered fallback may still be selected after a disabled primary. Remove first
+reports/refuses live level, lane, routing, default, or unstarted task references.
+Historical run snapshots do not block removal. All lifecycle writes require the
+current revision and serialize the reference check with the config write.
+
+`eligible_tiers` on the profile is the authoritative membership list. A profile
+may belong to multiple tiers or none. Tier worker/reviewer arrays are assignments:
+their first entry is primary and later entries are explicit fallbacks. Assignments
+accept only enabled eligible profiles; changing membership never rewrites them.
+Profiles saved before this field existed derive membership from their current tier
+references until their next guarded save. The profile map key is its stable ID;
+`display_name` is editable, and omitted reasoning remains distinct from a named
+effort.
+
+For a direct native Muse profile, declare the route and access contract explicitly
+in the profile document, for example:
+
+```yaml
+profiles:
+  muse-direct:
+    display_name: Muse direct
+    harness: muse_cli
+    model: <installed-model-id>
+    access:
+      schema: tusker.agent-access/v1
+      mode: work_in_projects
+      network: true
+      destructive_actions: ask
+      folders: []
+      private_folders: []
+```
+
+The runner resolves this contract before `muse exec --json`, records the resolved
+fingerprint and execution identity, and blocks required native controls that the
+installed route cannot represent. A no-spend setup check or provider-free fixture
+can establish route and schema behavior; installed credentials and paid/live model
+turns require a separate explicit check with `tusker runner test <profile> --live`.
 
 Agent callers should read once, retain `revision`, make one guarded write, then
 use the returned document as the new state. A stale write fails with an

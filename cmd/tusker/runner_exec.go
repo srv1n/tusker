@@ -351,6 +351,18 @@ func monitorRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, rawLog *
 		exitCode = 130
 		outcome = AttemptOutcomeInterrupted
 		reason = "runner cancelled: " + ctx.Err().Error()
+	} else if runner == RunnerMuseCLI && exitCode == 0 {
+		if output, readErr := readText(req.RawLogPath); readErr == nil {
+			var session string
+			outcome, reason, session = classifyMuseCLIOutput(output)
+			if session != "" {
+				_ = eventLog.Append("muse_session_started", req.AttemptID, runner, map[string]any{"session_ref": session})
+			}
+		}
+		if outcome == AttemptOutcomeNone {
+			outcome = AttemptOutcomeFailed
+			reason = "Muse terminal result missing"
+		}
 	} else if exitCode != 0 {
 		outcome = AttemptOutcomeFailed
 		reason = fmt.Sprintf("runner exited with code %d", exitCode)

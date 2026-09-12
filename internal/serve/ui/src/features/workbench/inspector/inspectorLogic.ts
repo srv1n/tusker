@@ -21,7 +21,7 @@
 
 import type { RunDetail, TaskDetail } from "@/types/domain";
 
-export type Transport = "ACP" | "CLI exec";
+export type Transport = string;
 
 /** Stage-specific execution identity supplied by the host (integration). */
 export interface InspectorExecutionIdentity {
@@ -123,6 +123,11 @@ export function identityDisplay(
 export function identitySummary(display: IdentityDisplay): string {
   if (display.state === "unavailable") return UNAVAILABLE;
   return `${display.provider} · ${display.model} · ${display.transport} · ${display.stage}`;
+}
+
+export function observedRunIdentity(run: RunDetail | null): InspectorExecutionIdentity | undefined {
+  if (!run?.runnerProfile || !run.model || !run.runnerHarness) return undefined;
+  return { provider: run.runnerProfile, model: run.model, transport: run.runnerHarness, stage: run.lane, observed: true };
 }
 
 export { UNAVAILABLE as IDENTITY_UNAVAILABLE };

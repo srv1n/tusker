@@ -9,7 +9,8 @@ skip_when: "Planning dependencies or choosing a provider."
 
 # Proof and closeout
 
-Proof shows that a result meets one or more acceptance rows.
+Use proof to show which acceptance outcomes the result meets. A check result,
+review, and completed task are different things.
 
 ## Proof modes
 
@@ -21,10 +22,27 @@ Inline proof stores check results on the task. The other evidence-bearing modes
 can add evidence files. The default evidence budgets are zero for inline, one
 for card, three for artifact, and five for audit.
 
-## Record a result
+## Author command proof as pending
 
-Use `tusker verify add`. Store the exact command or manual check. Store `pass`
-or `fail`. Link the result to the acceptance row IDs.
+Use `tusker verify add` to store the exact command and link it to acceptance
+row IDs. A command row starts as `pending`:
+
+```sh
+tusker verify add APP-T-0001 \
+  --covers A1,A2 \
+  --check "command: go test ./cmd/tusker -run TestFocused -count=1" \
+  --result pending \
+  --note "Focused task behavior."
+```
+
+Expected result: Tusker records the row without running the command. During a
+valid pass review, the verification executor runs pending command rows in the
+bound implementation workspace and records `pass` or `fail`.
+
+`verify add` also accepts `blocked`, `skipped`, and `waived` when those states
+are true. A blocked row requires `--blocked-by`. None of these states counts as
+a passing command. A public caller cannot author `pass` or `fail`; Tusker
+refuses the row instead of trusting a claimed result.
 
 Raw logs belong in `.tusker/scratch/<TASK-ID>/`. Scratch is temporary. Move a
 durable artifact to an evidence record before close.
@@ -51,17 +69,23 @@ quality or substitute for an explicit acceptance decision.
 
 ## Review
 
-A reviewer submits a typed result for one task revision, work revision,
-implementation revision, proof fingerprint, and gate fingerprint. A review
-submission does not merge, land, move a ref, or close the task.
+Review answers three plain questions: does the result meet every acceptance
+row, does the proof support those outcomes, and are all gates clear? A valid
+review is independent of the implementation session and is bound to the exact
+task, work, implementation, proof, gate, and material revisions.
 
 The valid review results are pass, changes requested, and blocked. A later
 change makes a result stale when its bound facts change, including a changed
 artifact fingerprint or a changed proof snapshot. The implementation attempt
 and reviewer attempt remain separate authorities.
 
-For a live interactive review, start the review lane with `tusker work review
-<task-id> --by reviewer:<name>`. Its packet carries the review attempt, the
+For a live interactive review, start the review lane:
+
+```sh
+tusker work review APP-T-0001 --by reviewer:agent
+```
+
+Expected result: the returned packet carries the review attempt, the
 linked completed implementation attempt and actor, current proof and gate
 fingerprints, and a material fingerprint of the implementation workspace. Its
 workspace is that exact implementation workspace, rather than a fresh `HEAD`
@@ -76,15 +100,29 @@ proposal harvest use the same server-derived scope and reject a missing scope;
 whole-project gate-ledger checks retain their separate full-tree semantics. Use
 the packet's `next` command to submit the receipt. The path rejects a reviewer
 who is the
-implementation-session actor; it does not claim that structural checks
-establish human authority or subjective quality.
+implementation-session actor. It also refuses a stale task, proof, gate,
+implementation, or material fingerprint. Use the packet's reported next
+command after fixing the named problem. A structural check does not establish
+human authority or subjective quality.
+
+A pass must cover every acceptance ID exactly and have eligible objective
+proof with no open gates. `changes_requested` needs an actionable finding.
+`blocked` needs a machine, infrastructure, or human blocker; a human blocker
+also needs an open human-owned gate. Recording any verdict does not merge,
+land, move a ref, or close the task.
 
 ## Close checks
 
-The close path checks the current task, acceptance coverage, proof, gates,
-review authority, and repository state. The default close policy needs a
-reviewer or a person. Risk alone does not add a gate or required evidence kind.
-Project configuration can add exact evidence or gate rules.
+Close only after the current result has complete acceptance coverage, eligible
+proof, clear gates, a valid review, and an acceptable repository state. The
+default close policy needs a reviewer or a person. Risk alone does not add a
+gate or evidence kind. Project configuration can add exact evidence or gate
+rules.
+
+Expected result: `tusker close APP-T-0001` marks the current reviewed result
+done. If any required fact is missing or stale, close refuses and names the
+remaining action. Fix that fact and retry. Do not treat a successful command,
+an old review, or a submitted work session as completion.
 
 When only a person can finish the task, closeout writes a bounded checkpoint
 and sets `stop_until_human_response`. It does not invent approval.

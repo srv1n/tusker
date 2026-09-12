@@ -16,7 +16,31 @@ capsule:
 
 # Parallel UI build packets
 
+## September 10 compact navigation handoff
+
+Current implementation authority: [[work-area-redesign]] section 4. The user approved icon-only search/settings controls, no repeated project label beside Work/Documents, and all projects directly reachable in one horizontal scrolling strip. The older expanded-sidebar packet below is superseded for navigation only.
+
+Imported inert wave: [[W-0016]], Compact project navigation with direct horizontal scrolling. It remains disarmed; the user will assign implementation separately. The ordered tasks use Standard work/review levels and require no prerequisite from the older sidebar wave.
+
+| Task | Outcome | Depends on |
+|---|---|---|
+| [[WUX-T-0015]] Preserve project pins, recent order and return locations | Backward-compatible local state, stable mounted order and correct restoration | None |
+| [[WUX-T-0016]] Replace the project sidebar with a scrolling strip | Actual routed shell, icon scopes, direct overflow access and browser screenshots | WUX-T-0015 |
+| [[WUX-T-0017]] Qualify the compact navigation and update the user reference | Built-browser proof, read-only live checks, final evidence and current system docs | WUX-T-0016 |
+
+Canonical import input: .tusker/specs/compact-project-navigation.plan.yaml. Its NAV1–NAV7 requirements map to acceptance in the three allocated tasks. Do not create duplicate tickets or execute WUX-T-0003/WUX-T-0009 to restore the old sidebar. Their unrelated historical lifecycle and other component work are preserved.
+
+Copyable assignment:
+
+> Implement WUX-T-0015, WUX-T-0016 and WUX-T-0017 in that order. Start with `tusker show WUX-T-0015 --capsule` and `tusker packet WUX-T-0015 --for agent`, then read `.tusker/specs/work-area-redesign.md` section 4 and this handoff. Use the supported interactive work claim protocol and each task's current owned paths. The September 10 contract supersedes the expandable sidebar: icon-only search and both settings controls; one highlighted project chip supplying identity; one Work/Documents row; all projects in one horizontally scrolling strip with pins, stable click targets and saved return locations. Preserve project/checkout identity, existing actions, accessibility, old saved navigation and unrelated dirty work. Capture the actual shell before changing it, implement the state and shell, then run the named focused/browser checks and build once after changes settle. Complete the current Serve UI documentation and acceptance report, distinguishing fixtures, live service and installed Mac proof. Follow normal independent review and closeout; never call a missing check PASS. Keep automation disarmed; do not start a daemon, nested worker, real task execution or install/restart a shared runtime as a side effect.
+
+Planning validation: delivery doctor and dry-run/import passed on September 10; reimport retained the same task/wave IDs. Scoped documentation checks pass. Full validation still reports the same 52 errors and 102 warnings as the planning baseline, with no new findings and none on these tasks. Documentation map generation remains blocked by the pre-existing software-factory references in execution-observability documents. This records authored-contract validity only, not implemented UI behavior.
+
+Read-only W-0016 preflight confirms disarmed authorization, valid task contracts/artifacts/spec DAG, and the three ordered task frontiers. Unattended launch is blocked by existing daemon/reconciliation, workspace isolation, disabled project automation, runner/approval-policy and workflow-version checks. Those are not permission to activate or reconfigure the resident system; this handoff is for separately assigned interactive work. Preserve any actual claim/lifecycle refusal and report its exact cause rather than changing policy to force a start.
+
 ## How to assign work
+
+September 10 navigation revision: [[work-area-redesign]] section 4 supersedes the expanded-sidebar requirements and navigation/integration shell placement below. The compact-project-navigation delivery tasks are the current handoff for that replacement; older WUX-T-0003/WUX-T-0009 contracts remain historical records and must not be used to rebuild the sidebar. Other Work component scope remains unchanged. See the compact navigation handoff at the end of this document.
 
 Six leaf tickets can run concurrently through user-directed external subagents after each receives its own owned checkout/paths. This is independent of the imported resident-runner plan, whose concurrency is intentionally one and whose wave remains disarmed; starting that plan unchanged would serialize execution, not run six workers. The integration ticket has hard dependencies on all six. If compute or review capacity is limited, run navigation + overview first, then flow + inspector, then results + board. This is a scheduling convenience, not extra dependency edges.
 

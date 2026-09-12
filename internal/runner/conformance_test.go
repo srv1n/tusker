@@ -177,6 +177,28 @@ func TestHarnessFunctionalExercises(t *testing.T) {
 	}
 }
 
+func TestPolicyCanaryRequiresItsCompletionToken(t *testing.T) {
+	workspace, bin := fakeCodex(t, `printf '%s\n' '{"type":"item.completed","item":{"text":"TUSKER_POLICY_CANARY_ATTEMPTED"}}' '{"type":"turn.completed"}'`)
+	definition := HarnessDefinition{ID: "codex", Provider: "codex", Transport: TransportCLI, Dialect: "codex", Executable: "codex", Args: []string{"exec", "--json", "-"}, SchemaVersion: 1}
+	report, err := Conformance(context.Background(), definition, RunInput{Workspace: workspace, Preset: PresetReadOnly, SearchPath: bin, PolicyCanary: true}, true)
+	if err != nil || !report.Ready {
+		t.Fatalf("policy token conformance: report=%#v err=%v", report, err)
+	}
+}
+
+func TestFullAccessPolicyCanaryRequiresUnrestrictedAccess(t *testing.T) {
+	workspace := t.TempDir()
+	protected := filepath.Join(t.TempDir(), "outside")
+	body := "printf x > " + shellQuote(filepath.Join(workspace, ".tusker-conformance-write")) + "; printf x > " + shellQuote(filepath.Join(workspace, ".tusker-conformance-network")) + "; printf x > " + shellQuote(protected) + `
+printf '%s\n' '{"type":"item.completed","item":{"text":"TUSKER_POLICY_CANARY_ATTEMPTED"}}' '{"type":"turn.completed"}'`
+	_, bin := fakeCodex(t, body)
+	definition := HarnessDefinition{ID: "codex", Provider: "codex", Transport: TransportCLI, Dialect: "codex", Executable: "codex", Args: []string{"exec", "--json", "-"}, SchemaVersion: 1}
+	report, err := Conformance(context.Background(), definition, RunInput{Workspace: workspace, Preset: PresetDangerFullAccess, SearchPath: bin, PolicyCanary: true, ProtectedPath: protected}, true)
+	if err != nil || !report.Ready {
+		t.Fatalf("full-access policy conformance: report=%#v err=%v", report, err)
+	}
+}
+
 func fakeCodex(t *testing.T, body string) (string, string) {
 	t.Helper()
 	workspace, bin := t.TempDir(), t.TempDir()

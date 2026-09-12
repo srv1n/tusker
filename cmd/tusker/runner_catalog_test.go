@@ -1,6 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +31,261 @@ func TestRunnerCatalogParsesInstalledCodexShape(t *testing.T) {
 	}
 }
 
+func TestRunnerCatalogOffersFullAccess(t *testing.T) {
+	harness := catalogHarness("codex_exec", "Codex", "supported", "")
+	if len(harness.Options) != 1 || !catalogContainsString(harness.Options[0].Values, "danger-full-access") {
+		t.Fatalf("full access missing from catalog: %#v", harness.Options)
+	}
+}
+
+func TestCodexAppServerModelListInitializesAndPaginates(t *testing.T) {
+	root := t.TempDir()
+	log := filepath.Join(root, "requests.jsonl")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'codex-test'; exit 0; fi
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$TUSKER_APP_SERVER_LOG"
+  case "$line" in
+    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}' ;;
+    *'"method":"model/list"'*'"cursor":"next"'*) printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"data":[{"id":"two","model":"two","displayName":"Two","description":"second","hidden":false,"isDefault":false,"defaultReasoningEffort":"high","supportedReasoningEfforts":[{"reasoningEffort":"high","description":"deep"}]}]}}' ;;
+    *'"method":"model/list"'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"data":[{"id":"one","model":"one","displayName":"One","description":"first","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"fast"},{"reasoningEffort":"medium","description":"balanced"}]}],"nextCursor":"next"}}' ;;
+  esac
+done
+`
+	path := filepath.Join(root, "codex")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	t.Setenv("TUSKER_APP_SERVER_LOG", log)
+	models, err := codexAppServerModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].Model != "one" || models[0].DefaultEffort != "medium" || !models[0].Default || !catalogContainsString(models[1].Efforts, "high") {
+		t.Fatalf("models = %#v", models)
+	}
+	requests, err := os.ReadFile(log)
+	if err != nil || !strings.Contains(string(requests), `"method":"initialize"`) || !strings.Contains(string(requests), `"method":"initialized"`) || !strings.Contains(string(requests), `"cursor":"next"`) {
+		t.Fatalf("App Server protocol was incomplete: %v\n%s", err, requests)
+	}
+}
+
+func TestCodexAppServerModelListTimeoutCleansUp(t *testing.T) {
+	root := t.TempDir()
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'codex-test'; exit 0; fi
+while IFS= read -r line; do
+  case "$line" in *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}' ;; esac
+done
+`
+	path := filepath.Join(root, "codex")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	originalTimeout := codexAppServerDiscoveryTimeout
+	codexAppServerDiscoveryTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { codexAppServerDiscoveryTimeout = originalTimeout })
+	started := time.Now()
+	_, err := codexAppServerModels(context.Background())
+	if codexDiscoveryErrorKind(err) != "timeout" || time.Since(started) > time.Second {
+		t.Fatalf("timeout was not bounded and classified: err=%v elapsed=%s", err, time.Since(started))
+	}
+}
+
+func TestResolveCodexExecutableSkipsBrokenPATHShim(t *testing.T) {
+	root := t.TempDir()
+	broken := filepath.Join(root, "broken")
+	working := filepath.Join(root, "working")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(working, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, "codex"), []byte("#!/bin/sh\necho 'spawn vendor ENOENT' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	good := filepath.Join(working, "codex")
+	if err := os.WriteFile(good, []byte("#!/bin/sh\nprintf '%s\\n' 'codex-cli fixture'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", root)
+	t.Setenv("PATH", broken+string(os.PathListSeparator)+working)
+	if got := resolveCodexExecutable(); got != good {
+		t.Fatalf("resolved Codex = %q, want working shim %q", got, good)
+	}
+}
+
+func TestCodexAppServerFallsThroughVersionValidUnsupportedShim(t *testing.T) {
+	root := t.TempDir()
+	unsupported := filepath.Join(root, "unsupported")
+	working := filepath.Join(root, "working")
+	for _, dir := range []string{unsupported, working} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unsupportedScript := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'codex-cli old'; exit 0; fi
+while IFS= read -r line; do
+  case "$line" in *initialize*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}' ;; *model/list*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"method not found"}}' ;; esac
+done
+`
+	workingScript := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'codex-cli new'; exit 0; fi
+while IFS= read -r line; do
+  case "$line" in *initialize*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}' ;; *model/list*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"data":[{"id":"working","supportedReasoningEfforts":[{"reasoningEffort":"medium"}]}]}}' ;; esac
+done
+`
+	if err := os.WriteFile(filepath.Join(unsupported, "codex"), []byte(unsupportedScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(working, "codex"), []byte(workingScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", root)
+	t.Setenv("PATH", unsupported+string(os.PathListSeparator)+working)
+	models, err := codexAppServerModels(context.Background())
+	if err != nil || len(models) != 1 || models[0].Model != "working" {
+		t.Fatalf("models=%#v err=%v", models, err)
+	}
+}
+
+func TestCodexAppServerDiscoveryFailureKinds(t *testing.T) {
+	for _, tc := range []struct{ name, message, want string }{
+		{"unsupported", "Method not found: model/list", "unsupported"},
+		{"authentication", "authentication required", "authentication"},
+		{"implementation", "protocol response was malformed", "implementation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := codexDiscoveryErrorKind(classifyCodexDiscoveryError(context.Background(), errors.New(tc.message), "")); got != tc.want {
+				t.Fatalf("kind = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMuseProfileModelsUsesConfiguredProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/models" || request.Header.Get("Authorization") != "Bearer fixture-token" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"muse-spark-1.3"},{"id":"muse-spark-1.3-contributor"},{"id":"muse-spark-1.2"},{"id":"muse-spark-1.2-contributor"},{"id":"muse-voice-transcribe-1.0"}]}`))
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	auth := filepath.Join(root, "muse-token")
+	if err := os.WriteFile(auth, []byte("#!/bin/sh\nprintf '%s' fixture-token\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(root, "muse.config.toml")
+	config := "model = \"muse-spark-1.3\"\nmodel_provider = \"meta\"\nmodel_reasoning_effort = \"high\"\n\n[model_providers.meta]\nbase_url = \"" + server.URL + "/v1\"\nwire_api = \"responses\"\n\n[model_providers.meta.auth]\ncommand = \"" + auth + "\"\n"
+	if err := os.WriteFile(profile, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalPath, originalServer := runnerCatalogMuseProfilePath, runnerCatalogMuseServerModels
+	runnerCatalogMuseProfilePath = func() string { return profile }
+	runnerCatalogMuseServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{
+			{Model: "muse-spark-1.3", DisplayName: "muse-spark-1.3"},
+			{Model: "muse-spark-1.3-contributor", DisplayName: "muse-spark-1.3-contributor", Description: "Contributor"},
+			{Model: "muse-spark-1.2", DisplayName: "muse-spark-1.2"},
+			{Model: "muse-spark-1.2-contributor", DisplayName: "muse-spark-1.2-contributor", Description: "Contributor"},
+		}, nil
+	}
+	t.Cleanup(func() { runnerCatalogMuseProfilePath, runnerCatalogMuseServerModels = originalPath, originalServer })
+	models, err := museProfileModels(context.Background())
+	if err != nil || len(models) != 4 || models[0].Model != "muse-spark-1.3" || strings.Join(models[0].Efforts, ",") != strings.Join(museReasoningEfforts, ",") || !models[0].Default || models[1].Description != "Contributor" {
+		t.Fatalf("models=%#v err=%v", models, err)
+	}
+}
+
+func TestMuseProfileModelsClassifiesAuthenticationAndTimeout(t *testing.T) {
+	root := t.TempDir()
+	auth := filepath.Join(root, "muse-token")
+	if err := os.WriteFile(auth, []byte("#!/bin/sh\nprintf '%s' fixture-token\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile := func(baseURL string) string {
+		path := filepath.Join(root, "muse.config.toml")
+		config := "model = \"muse-spark-1.3\"\nmodel_provider = \"meta\"\nmodel_reasoning_effort = \"high\"\n\n[model_providers.meta]\nbase_url = \"" + baseURL + "\"\nwire_api = \"responses\"\n\n[model_providers.meta.auth]\ncommand = \"" + auth + "\"\n"
+		if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	originalPath, originalTimeout, originalServer := runnerCatalogMuseProfilePath, museDiscoveryTimeout, runnerCatalogMuseServerModels
+	t.Cleanup(func() {
+		runnerCatalogMuseProfilePath, museDiscoveryTimeout, runnerCatalogMuseServerModels = originalPath, originalTimeout, originalServer
+	})
+	runnerCatalogMuseServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "muse-spark-1.3"}}, nil
+	}
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "denied", http.StatusUnauthorized) }))
+	runnerCatalogMuseProfilePath = func() string { return writeProfile(authServer.URL) }
+	if _, err := museProfileModels(context.Background()); museDiscoveryErrorKind(err) != "authentication" {
+		t.Fatalf("authentication error=%v", err)
+	}
+	authServer.Close()
+	timeoutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) { <-request.Context().Done() }))
+	defer timeoutServer.Close()
+	runnerCatalogMuseProfilePath = func() string { return writeProfile(timeoutServer.URL) }
+	museDiscoveryTimeout = 20 * time.Millisecond
+	started := time.Now()
+	if _, err := museProfileModels(context.Background()); museDiscoveryErrorKind(err) != "timeout" || time.Since(started) > time.Second {
+		t.Fatalf("timeout error=%v elapsed=%s", err, time.Since(started))
+	}
+}
+
+func TestAgentCapabilityDiscovery(t *testing.T) {
+	originalRoot, originalNow := runnerCatalogStateRoot, runnerCatalogNow
+	defer func() { runnerCatalogStateRoot, runnerCatalogNow = originalRoot, originalNow }()
+	root := t.TempDir()
+	runnerCatalogStateRoot = func() string { return root }
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	runnerCatalogNow = func() time.Time { return now }
+
+	calls := 0
+	discover := func() RunnerCatalogHarness {
+		calls++
+		h := catalogHarness("codex_exec", "Codex", "supported", "setup")
+		h.Available, h.DiscoveryState, h.Models = true, "available", []RunnerCatalogModel{{Model: "gpt-real", Efforts: []string{"medium"}}}
+		return h
+	}
+	first := discoverCatalogCached("codex_exec", "1", "cli", "installed", false, discover)
+	second := discoverCatalogCached("codex_exec", "1", "cli", "installed", false, discover)
+	if calls != 1 || first.Models[0].Model != "gpt-real" || second.DiscoveryState != "available" {
+		t.Fatalf("fresh cache mismatch: calls=%d first=%#v second=%#v", calls, first, second)
+	}
+
+	now = now.Add(25 * time.Hour)
+	failed := discoverCatalogCached("codex_exec", "1", "cli", "installed", true, func() RunnerCatalogHarness {
+		h := catalogHarness("codex_exec", "Codex", "supported", "setup")
+		h.Error = "token=must-not-leak"
+		return h
+	})
+	if failed.DiscoveryState != "stale" || failed.Models[0].Model != "gpt-real" || strings.Contains(failed.Error, "must-not-leak") {
+		t.Fatalf("failed refresh did not retain safe stale data: %#v", failed)
+	}
+
+	_ = discoverCatalogCached("codex_exec", "2", "cli", "installed", false, discover)
+	_ = discoverCatalogCached("codex_exec", "2", "acp_stdio", "installed", false, discover)
+	if calls != 3 {
+		t.Fatalf("version/transport cache keys collapsed: calls=%d", calls)
+	}
+
+	future := discoverClaudeCatalog()
+	if future.Available || future.ManualEntry || future.State != "unsupported" {
+		t.Fatalf("future adapter became selectable: %#v", future)
+	}
+	if options := catalogHarness("codex_exec", "Codex", "supported", "setup").Options; len(options) != 1 || options[0].Kind != "enum" || !catalogContainsString(options[0].Values, "read-only") {
+		t.Fatalf("typed permission options missing: %#v", options)
+	}
+}
+
 func TestRunnerProfileBootstrap(t *testing.T) {
 	vault := automationTestVault(t)
 	path := managedTuskerConfigPath(vault)
@@ -34,9 +294,13 @@ func TestRunnerProfileBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalCommand := runnerCatalogCommand
-	defer func() { runnerCatalogCommand = originalCommand }()
+	originalAppServer := runnerCatalogAppServerModels
+	defer func() { runnerCatalogCommand, runnerCatalogAppServerModels = originalCommand, originalAppServer }()
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
 		return []byte(`{"models":[{"slug":"gpt-5-terra","visibility":"visible","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}`), nil
+	}
+	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "gpt-5-terra", Efforts: []string{"low", "medium", "high", "xhigh"}}}, nil
 	}
 	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "json": "true"}); err != nil {
 		t.Fatal(err)
@@ -96,12 +360,16 @@ automation:
 
 func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 	original := runnerCatalogCommand
-	defer func() { runnerCatalogCommand = original }()
+	originalAppServer := runnerCatalogAppServerModels
+	defer func() { runnerCatalogCommand, runnerCatalogAppServerModels = original, originalAppServer }()
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
 		if name == "codex" && len(args) > 0 && args[0] == "debug" {
 			return []byte(`{"models":[{"slug":"codex-auto-review","visibility":"hide","supported_reasoning_levels":[{"effort":"high"}]},{"slug":"gpt-5-terra","visibility":"visible","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}`), nil
 		}
 		return []byte("version"), nil
+	}
+	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "gpt-5-terra", Efforts: []string{"low", "medium", "high"}}}, nil
 	}
 	vault := automationTestVault(t)
 	if err := os.Remove(managedTuskerConfigPath(vault)); err != nil && !os.IsNotExist(err) {
@@ -133,24 +401,89 @@ func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 
 func TestRunnerCatalogHarnessIsolationAndBundled(t *testing.T) {
 	original := runnerCatalogCommand
-	defer func() { runnerCatalogCommand = original }()
+	originalAppServer := runnerCatalogAppServerModels
+	defer func() { runnerCatalogCommand, runnerCatalogAppServerModels = original, originalAppServer }()
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
 		if strings.Contains(strings.Join(args, " "), "--bundled") {
 			return []byte(`{"models":[{"slug":"gpt-5.2","supported_reasoning_levels":[{"effort":"low"}]}]}`), nil
 		}
 		return nil, errCatalogFixture{}
 	}
+	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) { return nil, errCatalogFixture{} }
 	catalog := discoverRunnerCatalog(false)
-	if catalog.Harnesses[0].Error == "" || catalog.Harnesses[1].Source != "declared" {
+	if catalog.Harnesses[0].Error == "" || catalog.Harnesses[1].DiscoveryState != "unsupported" {
 		t.Fatalf("expected isolated codex failure and declared claude: %#v", catalog)
 	}
 	catalog = discoverRunnerCatalog(true)
-	if catalog.Harnesses[0].Source != "bundled" || len(catalog.Harnesses[0].Models) != 1 {
+	if catalog.Harnesses[0].Source != "bundled" || len(catalog.Harnesses[0].Models) != 0 {
 		t.Fatalf("expected bundled catalog: %#v", catalog.Harnesses[0])
 	}
 	profiles := semanticBootstrapProfiles(catalog)
-	if profile, ok := profiles["execute-standard"].(map[string]any); !ok || profile["harness"] != string(RunnerCodexExec) || profile["model"] != "gpt-5.2" {
-		t.Fatalf("installed --bundled catalog did not produce truthful Codex profiles: %#v", profiles)
+	if len(profiles) != 0 {
+		t.Fatalf("bundled fallback invented runnable Codex profiles: %#v", profiles)
+	}
+}
+
+func TestModelHarnessPresets(t *testing.T) {
+	original := runnerCatalogCommand
+	originalAppServer := runnerCatalogAppServerModels
+	originalMuse := runnerCatalogMuseModels
+	defer func() {
+		runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogMuseModels = original, originalAppServer, originalMuse
+	}()
+	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
+		if name != "codex" {
+			return nil, errCatalogFixture{}
+		}
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "--profile muse exec --help"):
+			return []byte("usage"), nil
+		case strings.Contains(joined, "--profile muse debug models"):
+			return nil, errCatalogFixture{}
+		case strings.Contains(joined, "debug models"):
+			return []byte(`{"models":[{"slug":"gpt-installed","supported_reasoning_levels":[{"effort":"medium"}]}]}`), nil
+		default:
+			return []byte("codex-test"), nil
+		}
+	}
+	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "gpt-installed", Efforts: []string{"medium"}}}, nil
+	}
+	runnerCatalogMuseModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "muse-spark-1.3", Efforts: []string{"high"}, Default: true, DefaultKnown: true, DefaultEffort: "high"}}, nil
+	}
+	catalog := discoverRunnerCatalog(false)
+	if catalog.Schema != "tusker.runner-catalog/v1" || catalog.Version != 1 {
+		t.Fatalf("catalog version=%#v", catalog)
+	}
+	if codex := catalog.Harnesses[0]; !codex.ExecutableDetected || codex.Authentication != "authenticated" || codex.DiscoveryState != "available" || !codex.ManualEntry {
+		t.Fatalf("codex observation=%#v", codex)
+	}
+	muse := catalog.Harnesses[2]
+	if !muse.Available || !muse.ExecutableDetected || muse.Authentication != "authenticated" || muse.DiscoveryState != "available" || len(muse.Models) != 1 || muse.Models[0].Model != "muse-spark-1.3" || !muse.ManualEntry || muse.State != "available" {
+		t.Fatalf("muse must expose the configured live profile: %#v", muse)
+	}
+	for _, harness := range catalog.Harnesses[3:] {
+		if harness.Harness == string(RunnerMuseCLI) {
+			if harness.DisplayName != "Muse CLI" || len(harness.AccessControls) == 0 {
+				t.Fatalf("direct Muse route must expose native controls: %#v", harness)
+			}
+			continue
+		}
+		if harness.Group != "future" || harness.ManualEntry || harness.State != "unsupported" {
+			t.Fatalf("future preset must not be selectable: %#v", harness)
+		}
+	}
+	if _, command, err := runnerForName(string(RunnerMuse), defaultWorkflow()); err != nil || command != "codex --profile muse exec --json --skip-git-repo-check -" {
+		t.Fatalf("Muse route=%q err=%v", command, err)
+	}
+	server := newServeEmptyNeedsFixture(t)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7420/api/models/catalog", nil))
+	var fromAPI RunnerCatalog
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &fromAPI) != nil || fromAPI.Schema != catalog.Schema || len(fromAPI.Harnesses) != len(catalog.Harnesses) {
+		t.Fatalf("catalog API mismatch: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -264,7 +597,10 @@ func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 
 func TestProfileReconcileWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	original := runnerCatalogCommand
-	defer func() { runnerCatalogCommand = original }()
+	originalRoot := runnerCatalogStateRoot
+	defer func() { runnerCatalogCommand, runnerCatalogStateRoot = original, originalRoot }()
+	root := t.TempDir()
+	runnerCatalogStateRoot = func() string { return root }
 	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
 	vault := automationTestVault(t)
 	path := managedTuskerConfigPath(vault)

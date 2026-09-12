@@ -1,7 +1,7 @@
 ---
 subject: work-area-redesign
 title: Tusker work experience — implementation specification
-keywords: [work, sidebar, waves, DAG, results, task panel, board, tags]
+keywords: [work, project navigation, project rail, section rail, full height, pins, sidebar, waves, DAG, results, task panel, board, tags]
 part_of: overview
 describes: [internal/serve/ui/src]
 status: canonical
@@ -29,8 +29,8 @@ Approved decisions are binding. Numeric dimensions, ordering tie-breaks and inte
 
 ### Confirmed product structure
 
-- Projects remain visible in a reorderable, expandable sidebar. Order and navigation survive relaunch.
-- A project contains a few active/recent waves and Show more, not its entire task inventory.
+- Projects appear in a narrow left rail beside a labeled Waves / Board / Docs section rail. Section 4 and [[full-height-workspace]] supersede the September 10 horizontal strip.
+- Docs and wave detail may open a third contextual pane. Main content starts below one compact feature toolbar; project settings stays in the section rail.
 - Work has Waves and Board views. Wave overview is grouped, not a set of status tabs.
 - Running wave detail leads with a full readable dependency graph.
 - Selecting a task opens a temporary side panel; full task reading remains available.
@@ -58,7 +58,8 @@ A spec links to related tasks/waves/results; work links to its governing spec an
 
 | Pattern | Responsibility |
 |---|---|
-| Sidebar | Change project or jump to a recent/active wave |
+| Project strip | Switch projects directly; scroll to the rest; pin frequent projects |
+| Project navigation | Work, Documents and project settings for the selected project only |
 | Tabs | Alternate representations of the same subject: Waves/Board or Results/Flow |
 | Side panel | Inspect one task without losing graph/board context |
 | Full page | Read a long spec, complete task contract or substantial evidence |
@@ -69,26 +70,11 @@ No nested drawers, permanent empty inspector, duplicate Open column, decorative 
 
 ## 4. Navigation and persistence
 
-### Sidebar
+September 11 authority: [[full-height-workspace]] is the detailed navigation and full-height layout contract. Read sections 2–5 for geometry, project/checkout routing, visibility, shared feature layout and saved state; sections 6–9 define Docs, Waves, Board and responsive integration. It replaces the September 10 horizontal project strip and Work/Documents top row, including placement requirements in compact-project-navigation.plan.yaml and older shell packets. Historical task IDs/links below remain history, not authorization to rebuild the strip.
 
-Implementation default: 256px desktop width, compact but readable 14px main labels and at least 32px row targets. Project names may truncate visually but have complete accessible names and hover text. Selected item uses one quiet filled state. No repeated project-wide refresh icons or technical health paragraphs beside every project.
+Preserve pins, stable mounted ordering, validated route restoration, hidden-project recovery, logical-repository grouping and meaningful checkout selection. All Projects visibility semantics remain governed by [[project-registration-and-visibility]]. Existing registration, Search, Attention, settings scopes, secondary routes and embedded /panel remain available. The new plan changes navigation placement and content geometry, not backend execution authority.
 
-- Project header expands/collapses without navigating. Its name restores that project's last screen. Separate Work entry always opens its overview.
-- Preserve multiple expanded projects; selecting a wave expands its parent.
-- Show up to five wave shortcuts per expanded project, actual active waves before recent ones, deduplicated by stable ID. Show more navigates to the complete project Work view. It does not reveal another unbounded tree in place. Load shortcuts for expanded projects only, using cached per-project reads. Loading, no waves and a failed read are distinct; one failed project does not block the others. Do not poll every collapsed project just to populate hidden children.
-- Keep Add project available and reuse the existing registration flow. Adding/opening a project never grants execution permission.
-- Drag project headers to reorder. Provide Move up/Move down via keyboard-accessible secondary actions; reorder is not drag-only. Preserve focus after moving and announce position.
-- New projects append without reshuffling saved ones. Removed projects disappear without corrupting saved state. Duplicate or unknown saved IDs are ignored.
-
-### Restore rules
-
-Implementation default: local device/profile persistence using the app's existing web storage, keyed by stable project ID, not title or branch. This promises persistence within each browser profile or persistent Mac webview; cross-browser/cloud synchronization is not promised.
-
-Persist project order, expanded projects, active project, last internal route per project, Work view/filter, wave view, selected task and graph transform. Use one small versioned record with a tolerant reader; blocked storage or malformed data must never prevent navigation. Avoid writes on every pointer movement; save settled transforms.
-
-On launch at the app root, restore the last valid project route after project data loads. Explicit deep links always win over saved navigation. Switching projects restores that project's last screen. Clicking Work clears the detail destination but retains the overview's filters. Browser back/forward behaves normally; do not manufacture history loops.
-
-If a saved task/wave is gone, fall back to that project's Work with a brief explanation. If the project is gone, use the first available project, or the existing Add project empty state. Never automatically substitute another similarly named project.
+The implementation handoff is docs/plans/full-height-workspace/README.md and full-height-workspace.plan.yaml. Numerical layout defaults, bounded view state, owned source seams, scenario checks and operational limitations are specified there. In sections 5–10 below, the newer full-height document wins only for placement/scroll/width: status truth, safe actions, editor semantics and domain contracts remain intact. In particular, this layout wave preserves the current top-down graph rather than reinstating older horizontal/pan/zoom proposals.
 
 ## 5. Work overview
 
@@ -232,3 +218,20 @@ Detailed Documents redesign; first-run onboarding beyond existing Add project; r
 - `[[W-0013]]` is the imported delivery wave.
 
 <!-- tusker:delivery-import:02edf868de8ca802:end -->
+
+
+## September 9: restrained Work overview refinement
+
+The operator requested a less overwhelming Work overview and standalone smaller-agent implementation handoffs. This supersedes earlier card-density guidance: use plain wave rows with title, at most one useful secondary line (action/blocker, progress, or short authored outcome), and one truthful primary action. Move full descriptions and technical diagnostics to reachable detail surfaces. Never trade status/authorization truth for visual simplicity. Remove raw project IDs, redundant badges, zero-progress filler, oversized unassigned banner and permanently expanded unrelated factory diagnostics. Preserve project persistence, full DAG navigation, Waves/Board, search, historical distinctions and visible degraded live-update state.
+
+Standalone packets: docs/plans/work-overview-ux-handoffs/01-status-and-action-contract.md; 02-quiet-wave-list.md; 03-shell-and-sidebar.md; 04-integrated-visual-acceptance.md. Each includes full context and acceptance. These are handoff files, not new tracker IDs. 01 establishes grouping contract; 02 consumes it; 03 owns surrounding shell and can run independently subject to existing sidebar ownership; 04 performs integrated acceptance and shipped system documentation updates. No product implementation was started by writing these packets.
+
+<!-- tusker:delivery-import:145461374ff0a123:begin -->
+
+- `[[WUX-T-0017]]` implements delivery source `project-qualification`.
+- `[[WUX-T-0016]]` implements delivery source `project-shell`.
+- `[[WUX-T-0015]]` implements delivery source `project-state`.
+
+- `[[W-0016]]` is the imported delivery wave.
+
+<!-- tusker:delivery-import:145461374ff0a123:end -->

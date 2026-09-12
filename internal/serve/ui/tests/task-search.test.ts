@@ -38,11 +38,19 @@ describe("task search", () => {
     expect(gateDetailPath("backend", gate)).toBe("/p/backend/docs?path=AOS-T-0006&gate=AOS-G-0001");
   });
 
-  test("exposes the same palette globally, on mobile, in the sidebar, and in the panel", () => {
+  test("exposes the same palette globally, on mobile, and in the panel", () => {
     expect(source("src/routes/__root.tsx")).toContain("<TaskSearch />");
     expect(source("src/routes/__root.tsx")).toContain("onClick={openTaskSearch}");
-    expect(source("src/components/Sidebar.tsx")).toContain("onClick={openTaskSearch}");
+    expect(source("src/components/Sidebar.tsx")).not.toContain("openTaskSearch");
     expect(source("src/features/panel/Panel.tsx")).toContain("onClick={openTaskSearch}");
+  });
+
+  test("keeps sidebar focused on project navigation", () => {
+    const sidebar = source("src/components/Sidebar.tsx");
+    expect(sidebar).not.toContain('>Today<');
+    expect(sidebar).not.toContain("Notifications");
+    expect(sidebar).not.toContain('>Search<');
+    expect(source("src/routes/__root.tsx")).toContain("NotificationControl");
   });
 
   test("supports keyboard open, movement, selection, and escape", () => {

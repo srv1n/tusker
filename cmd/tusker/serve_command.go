@@ -435,6 +435,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleConfig(w, r)
 	case path == "/api/needs":
 		s.handleNeeds(w, r)
+	case path == "/api/approvals":
+		s.handleAgentAccessApprovals(w, r)
+	case strings.HasPrefix(path, "/api/approvals/"):
+		s.handleAgentAccessApproval(w, r, strings.TrimPrefix(path, "/api/approvals/"))
 	case path == "/api/digest":
 		s.handleDigest(w, r)
 	case path == "/api/summary":
@@ -493,6 +497,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleAttempt(w, r, strings.TrimPrefix(path, "/api/attempts/"))
 	case path == "/api/tasks":
 		s.handleTasks(w, r)
+	case path == "/api/messages":
+		s.handleAgentMessages(w, r)
+	case strings.HasPrefix(path, "/api/messages/"):
+		s.handleAgentMessage(w, r, strings.TrimPrefix(path, "/api/messages/"))
 	case strings.HasPrefix(path, "/api/tasks/"):
 		s.handleTask(w, r, strings.TrimPrefix(path, "/api/tasks/"))
 	case path == "/api/docs":
@@ -1361,35 +1369,69 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		projects = []RegisteredProject{project}
 	}
 	allRuns, _ := s.store.ListRuns()
+	runsByProject := make(map[string][]RunStatus)
+	for _, run := range allRuns {
+		runsByProject[run.ProjectID] = append(runsByProject[run.ProjectID], run)
+	}
 	target := strings.TrimSpace(r.URL.Query().Get("project"))
-	items := make([]serveProjectSummary, 0, len(projects))
-	for _, project := range projects {
-		if target != "" && target != project.ProjectID {
+	groups := groupRegisteredProjects(projects)
+	registry := inspectRegisteredProjectRegistry(projects)
+	registryPreview := serveRegistryPreview{
+		DuplicatePathAliases:  registry.DuplicatePathAliases,
+		RelatedWorktreeGroups: registry.RelatedWorktreeGroups,
+		MissingRegistrations:  registry.MissingRegistrations,
+		SeparateRepositoryIDs: registry.SeparateRepositoryIDs,
+	}
+	items := make([]serveProjectSummary, 0, len(groups))
+	for _, group := range groups {
+		if target != "" && target != group.ID && !registeredProjectGroupContains(group, target) {
 			continue
 		}
+		project := group.Checkouts[0]
+		auxiliary := true
+		visible := false
 		active := 0
 		var worst any
-		for _, run := range allRuns {
-			if run.ProjectID != project.ProjectID || !isDispatchingLeaseState(run.LeaseState) {
-				continue
-			}
-			active++
-			worst = serveWorstLiveness(worst, serveRunLiveness(run, s.now()))
-		}
 		needsCount := 0
+		checkouts := make([]serveCheckoutSummary, 0, len(group.Checkouts))
+		for checkoutIndex, checkout := range group.Checkouts {
+			auxiliary = auxiliary && registeredProjectAuxiliary(checkout)
+			visible = visible || checkout.Visible
+			checkoutActive := 0
+			for _, run := range runsByProject[checkout.ProjectID] {
+				if !isDispatchingLeaseState(run.LeaseState) {
+					continue
+				}
+				active++
+				checkoutActive++
+				worst = serveWorstLiveness(worst, serveRunLiveness(run, s.now()))
+			}
+			if cached, ok := s.cachedNeedsCount(checkout.ProjectID); ok {
+				needsCount += cached
+			}
+			label := filepath.Base(checkout.RepoRoot)
+			if checkoutIndex == 0 {
+				label = "Primary checkout"
+			}
+			facts := inspectRegisteredCheckout(checkout, label, checkoutActive)
+			checkouts = append(checkouts, serveCheckoutSummary{
+				ID: facts.ID, Label: facts.Label, RepoRoot: facts.RepoRoot, VaultRoot: facts.VaultRoot,
+				Branch: facts.Branch, Head: facts.Head, Git: facts.Git, Detached: facts.Detached,
+				Available: facts.Available, Activity: facts.Activity, ActiveRuns: facts.ActiveRuns,
+				Health: facts.Health, Error: facts.Error,
+			})
+		}
 		wf := defaultWorkflow()
 		if cached, ok := s.cachedSnapshotForProject(project.ProjectID); ok {
 			wf = cached.workflow
 		}
-		// The global project list is metadata-only. A needs count is available
-		// once that project has been read explicitly; do not wake every inactive
-		// vault just to populate a dashboard badge.
-		if cached, ok := s.cachedNeedsCount(project.ProjectID); ok {
-			needsCount = cached
-		}
 		items = append(items, serveProjectSummary{
-			ID: project.ProjectID, Name: project.Name,
+			ID: group.ID, LogicalID: group.ID, Name: group.Name,
 			RepoRoot: project.RepoRoot, VaultRoot: project.VaultRoot,
+			Auxiliary:               auxiliary,
+			Visible:                 visible,
+			Checkouts:               checkouts,
+			RegistryPreview:         registryPreview,
 			AutomationEnabled:       wf.AutomationEnabled,
 			AutomationSource:        configSourceBuiltIn,
 			DispatchScope:           wf.DispatchScope,
@@ -1407,6 +1449,30 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	serveJSON(w, http.StatusOK, items)
+}
+
+func registeredProjectAuxiliary(project RegisteredProject) bool {
+	manifestPath := filepath.Join(project.VaultRoot, "demo", "manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fileExists(manifestPath)
+	}
+	var marker struct {
+		Visible bool `json:"visible"`
+	}
+	if err := json.Unmarshal(raw, &marker); err != nil {
+		return true
+	}
+	return !marker.Visible
+}
+
+func registeredProjectGroupContains(group registeredProjectGroup, projectID string) bool {
+	for _, checkout := range group.Checkouts {
+		if checkout.ProjectID == projectID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *serveServer) handleNeeds(w http.ResponseWriter, r *http.Request) {
@@ -1740,26 +1806,35 @@ func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	detail := serveTaskDetail{
-		serveTaskCapsule:      serveTaskCapsuleFor(snap, task),
-		AuthoredWorkLevel:     stringField(task.Data, "work_level"),
-		AuthoredReviewLevel:   stringField(task.Data, "review_level"),
-		EffectiveExecute:      routePreviewForNote(task, snap.workflow, runLaneExecute),
-		EffectiveReview:       routePreviewForNote(task, snap.workflow, runLaneReview),
-		Intent:                sectionContent(task.Body, "## Intent"),
-		Acceptance:            serveAcceptanceRows(task),
-		NonGoals:              serveBullets(sectionContent(task.Body, "## Non-goals")),
-		Verification:          serveVerificationRows(task),
-		Evidence:              serveEvidenceCards(snap, task),
-		ArtifactsKeep:         boolField(task.Data, "artifacts_keep"),
-		ArtifactsAvailability: stringField(task.Data, "artifacts_availability"),
-		ArtifactsExpiredAt:    stringField(task.Data, "artifacts_expired_at"),
-		KnowledgeDelta:        sectionContent(task.Body, "## Knowledge delta"),
-		Deps:                  serveTaskDeps(snap, task),
-		Gates:                 serveGatesForTask(snap, stringField(task.Data, "id")),
-		HumanAction:           serveHumanActionForTask(snap, task),
-		HumanActions:          serveHumanActionsForTask(snap, task),
-		RunHistory:            serveRunHistory(s, snap, stringField(task.Data, "id")),
+		serveTaskCapsule:       serveTaskCapsuleFor(snap, task),
+		StateRevision:          stringField(task.Data, "state_rev"),
+		AuthoredWorkLevel:      stringField(task.Data, "work_level"),
+		AuthoredReviewLevel:    stringField(task.Data, "review_level"),
+		AuthoredExecuteProfile: stringField(task.Data, "execute_profile"),
+		AuthoredReviewProfile:  stringField(task.Data, "review_profile"),
+		EffectiveExecute:       routePreviewForNote(task, snap.workflow, runLaneExecute),
+		EffectiveReview:        routePreviewForNote(task, snap.workflow, runLaneReview),
+		Intent:                 sectionContent(task.Body, "## Intent"),
+		Acceptance:             serveAcceptanceRows(task),
+		NonGoals:               serveBullets(sectionContent(task.Body, "## Non-goals")),
+		Verification:           serveVerificationRows(task),
+		Evidence:               serveEvidenceCards(snap, task),
+		ArtifactsKeep:          boolField(task.Data, "artifacts_keep"),
+		ArtifactsAvailability:  stringField(task.Data, "artifacts_availability"),
+		ArtifactsExpiredAt:     stringField(task.Data, "artifacts_expired_at"),
+		KnowledgeDelta:         sectionContent(task.Body, "## Knowledge delta"),
+		Deps:                   serveTaskDeps(snap, task),
+		Gates:                  serveGatesForTask(snap, stringField(task.Data, "id")),
+		HumanAction:            serveHumanActionForTask(snap, task),
+		HumanActions:           serveHumanActionsForTask(snap, task),
+		RunHistory:             serveRunHistory(s, snap, stringField(task.Data, "id")),
 	}
+	detail.AgentAccessApprovals, _ = s.store.ListAgentAccessApprovals(snap.projectID, stringField(task.Data, "id"))
+	detail.Contacts, _ = s.store.AgentContacts(snap.projectID, stringField(task.Data, "id"))
+	if len(detail.Contacts) == 0 {
+		detail.Contacts = authoredAgentContacts(task)
+	}
+	detail.Messages, _ = s.store.ListAgentMessagesForTask(snap.projectID, stringField(task.Data, "id"))
 	if directive, directiveErr := s.store.RunDirective(snap.projectID, trackerRecordID(task)); directiveErr == nil && directive != nil {
 		detail.RunDirective = &serveRunDirective{State: directive.State, Actor: directive.Actor, CreatedAt: directive.CreatedAt, ExpiresAt: directive.ExpiresAt, Reason: directive.Reason}
 	}
@@ -2181,7 +2256,7 @@ func serveTaskDepIDs(task Note) []string {
 	var deps []string
 	for _, key := range []string{"dependencies", "deps", "blocked_by"} {
 		for _, dep := range normalizeList(task.Data[key]) {
-			dep = wikiTarget(dep)
+			dep = parseV7DependencyEdge(dep).ID
 			if dep != "" {
 				deps = append(deps, dep)
 			}
@@ -2392,7 +2467,7 @@ Endpoints:
   POST /api/waves/<wave-id>/land
   GET /api/tasks?project=<id>
   GET /api/tasks/<task-id>
-  POST /api/tasks/<task-id>/(status|discard|close|land)
+  POST /api/tasks/<task-id>/(route|status|discard|close|land)
   GET /api/gates[?task=<id>]
   POST /api/gates/<gate-id>/(satisfy|waive|obsolete)
   POST /api/human-receipts/(challenge|submit)

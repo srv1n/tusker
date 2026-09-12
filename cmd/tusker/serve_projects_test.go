@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,6 +24,34 @@ func TestServeProjectsExposeAdaptiveReconciliationStatus(t *testing.T) {
 	}
 	if summaries[0].DispatchScope.Effective != string(automationDispatchScopeArmedWaves) || summaries[0].DispatchScope.Provenance == "" {
 		t.Fatalf("dispatch scope projection missing from Serve: %#v", summaries[0].DispatchScope)
+	}
+}
+
+func TestRegisteredProjectAuxiliary(t *testing.T) {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	project := RegisteredProject{RepoRoot: repo, VaultRoot: vault}
+	if registeredProjectAuxiliary(project) {
+		t.Fatal("ordinary project classified as auxiliary")
+	}
+	if err := ensureDir(filepath.Join(vault, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(vault, "demo", "manifest.json"), "{}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if !registeredProjectAuxiliary(project) {
+		t.Fatal("demo project not classified as auxiliary")
+	}
+	if err := writeText(filepath.Join(vault, "demo", "manifest.json"), `{"visible":true}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if registeredProjectAuxiliary(project) {
+		t.Fatal("visible demo project classified as auxiliary")
+	}
+	project = RegisteredProject{RepoRoot: filepath.Join(repo, ".tusker", "scratch", "wave", "repo")}
+	if registeredProjectAuxiliary(project) {
+		t.Fatal("ordinary scratch project classified as auxiliary")
 	}
 }
 
@@ -65,7 +94,6 @@ func TestServeProjectRegistrationDefaultsAutomationOffAndSettingsCanEnableIt(t *
 	if len(summaries) != 2 {
 		t.Fatalf("expected both registered projects, got %#v", summaries)
 	}
-
 	var duplicate serveActionResult
 	servePost(t, server, "/api/projects", `{"repoRoot":"`+repo+`"}`, &duplicate)
 	if !duplicate.OK || duplicate.Refused || duplicate.ProjectID != registered.ProjectID {
@@ -89,6 +117,27 @@ func TestServeProjectRegistrationDefaultsAutomationOffAndSettingsCanEnableIt(t *
 		}
 	}
 	t.Fatal("enabled project disappeared")
+}
+
+func TestProjectVisibilityPersistsWithoutChangingAutomation(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := newRegisteredProject(t.TempDir(), filepath.Join(t.TempDir(), ".tusker"))
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	(&serveServer{store: store}).handleProjectVisibilityAction(response, project.ProjectID, serveActionBody{"visible": false})
+	projects, err := store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("projects=%#v err=%v", projects, err)
+	}
+	if projects[0].Visible || projects[0].Enabled {
+		t.Fatalf("visibility must be off without changing automation: %#v", projects[0])
+	}
 }
 
 func TestServeProjectRegistrationRejectsInvalidPathsWithoutPersisting(t *testing.T) {

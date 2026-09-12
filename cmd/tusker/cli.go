@@ -93,7 +93,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution", "demo":
+	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "demo":
 		return true
 	default:
 		return false
@@ -196,6 +196,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, versionCmd(args)
 	case "capabilities":
 		return 0, capabilitiesCmd(args)
+	case "message send", "message ask", "message reply", "message list", "message show", "message consume", "message apply":
+		return 0, agentMessageCmd(command, args)
 	case "acp":
 		if err := validateACPAdapterCommandArgs(args); err != nil {
 			return 0, tuskerError(errorInvalidArg, err.Error())
@@ -230,6 +232,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, modelsResetCmd(args)
 	case "models profile-set":
 		return 0, modelsProfileSetCmd(args)
+	case "models profile-disable", "models profile-enable", "models profile-remove":
+		return 0, modelsProfileLifecycleCmd(args, command)
 	case "new epic":
 		return 0, newV7Epic(args)
 	case "new task":
@@ -943,8 +947,8 @@ func printCommandHelp(command string) bool {
 		printResetHelp()
 	case "runner", "runner catalog", "runner profiles", "runner route", "runner conformance", "runner test":
 		printRunnerHelp()
-	case "models", "models show", "models catalog", "models set", "models reset", "models profile-set":
-		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set --scope global|project --name <name> --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] [--if-revision <sha256>] [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> [--if-revision <sha256>] [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review [--if-revision <sha256>] [--json]")
+	case "models", "models show", "models catalog", "models set", "models reset", "models profile-set", "models profile-disable", "models profile-enable", "models profile-remove":
+		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set --scope global|project --name <stable-id> [--display-name <name>] [--eligible-tiers <light,standard,demanding>] --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] --if-revision <sha256> [--json]\n  tusker models profile-disable|profile-enable|profile-remove --scope global|project --name <name> --if-revision <sha256> [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> --if-revision <sha256> [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review --if-revision <sha256> [--json]")
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()
 	case "status":
@@ -1450,7 +1454,8 @@ What it does:
   2. writes current workflow and configuration files
   3. writes .tusker/SKILL.md and knowledge/domains/** starter canon
   4. reindexes the vault and refreshes generated views
-  5. optionally injects pointers, installs repo-contract files, and mounts the
+  5. registers the project for Tusker app discovery without enabling automation
+  6. optionally injects pointers, installs repo-contract files, and mounts the
     tracker when explicitly requested
 
 Flags:
@@ -1468,6 +1473,7 @@ Flags:
   --no-pointers     skip pointer injection
   --no-contract     skip repo-contract helper docs
   --no-mount        skip Obsidian mounting
+  --no-register     skip Tusker app project discovery
 
 Examples:
   tusker init --yes
@@ -1507,7 +1513,7 @@ artifacts are left untouched; run tusker docs map after review. --apply and
 func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
-  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--work-level light|standard|demanding] [--review-level light|standard|demanding] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
+  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--work-level light|standard|demanding] [--review-level light|standard|demanding] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 

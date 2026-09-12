@@ -153,6 +153,55 @@ func TestV7VerificationDiagnosticsCarryGrammar(t *testing.T) {
 	}
 }
 
+func TestV7DispatchRequiresCompletePlannedAcceptanceCoverage(t *testing.T) {
+	vault := v7DispatchTestVault(t)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Planned coverage"}, newV7Task)
+	note := mustV7Task(t, vault, "APP-T-0001")
+	note.Data["status"] = "ready"
+	note.Data["readiness"] = "ready"
+	note.Data["proof_mode"] = "inline"
+	note.Data["proof_required"] = []string{"focused_test"}
+	note.Body = replaceSection(note.Body, "## Acceptance", strings.Join([]string{
+		"| ID | Outcome | Proof |",
+		"|---|---|---|",
+		"| A1 | The first outcome is observable. | Mapped verification. |",
+		"| A2 | The second outcome is observable. | Mapped artifact. |",
+	}, "\n"))
+	note.Body = replaceSection(note.Body, "## Verification", strings.Join([]string{
+		"| Covers | Check | Result | Notes |",
+		"|---|---|---|---|",
+		"| A1 | command: go test ./cmd/tusker -run TestFirst -count=1 | pending | Expected first result. |",
+	}, "\n"))
+
+	missing, unknown := v7PlannedAcceptanceProofGaps(note, mustIndex(t, vault))
+	if strings.Join(missing, ",") != "A2" || len(unknown) != 0 {
+		t.Fatalf("planned gaps = missing %v unknown %v", missing, unknown)
+	}
+	if !blockersContain(v7TaskDispatchBlockers(vault, note), "acceptance missing planned proof: A2") {
+		t.Fatal("dispatch must reject incomplete planned coverage")
+	}
+
+	note.Data["artifact_contract"] = map[string]any{
+		"kind": "behavior_matrix", "path": "docs/result.md", "summary": "Second outcome.", "acceptance_ids": []string{"A2"},
+	}
+	missing, unknown = v7PlannedAcceptanceProofGaps(note, mustIndex(t, vault))
+	if len(missing) != 0 || len(unknown) != 0 {
+		t.Fatalf("pending check plus artifact should cover the plan: missing %v unknown %v", missing, unknown)
+	}
+}
+
+func TestV7PlannedAcceptanceCoverageRejectsUnknownIDs(t *testing.T) {
+	vault := v7DispatchTestVault(t)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Unknown coverage"}, newV7Task)
+	note := mustV7Task(t, vault, "APP-T-0001")
+	note.Body = replaceSection(note.Body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Observable result. | Mapped verification. |")
+	note.Body = replaceSection(note.Body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A9 | command: go test ./... | pending | Wrong ID. |")
+	_, unknown := v7PlannedAcceptanceProofGaps(note, mustIndex(t, vault))
+	if strings.Join(unknown, ",") != "A9" {
+		t.Fatalf("unknown coverage = %v, want A9", unknown)
+	}
+}
+
 func blockersContain(blockers []string, substr string) bool {
 	for _, b := range blockers {
 		if strings.Contains(b, substr) {

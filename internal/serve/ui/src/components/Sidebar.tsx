@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { Bell, ChevronDown, Plus, RefreshCw, Search, X } from "lucide-react";
+import { ChevronDown, Folder, FolderOpen, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, Settings, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { openTaskSearch } from "@/features/search/TaskSearch";
-import { useDaemon, useProjectRefresh, useProjects, useRegisterProject } from "@/lib/queries";
-import type { ProjectSummary } from "@/types/domain";
+import { useProjectRefresh, useProjects, useRegisterProject } from "@/lib/queries";
+import { projectContainsCheckout, projectVisibleInNavigation, type ProjectSummary } from "@/types/domain";
+import { orderProjects, readNavigationState, setExpandedProjects, writeNavigationState, type NavigationState, type StorageLike } from "@/features/workbench/navigation/navigationState";
 
 const PRIMARY_PROJECT_NAV = [
   { label: "Work", to: "/p/$projectId/waves" as const },
@@ -19,13 +19,21 @@ const SECONDARY_PROJECT_NAV = [
   { label: "Diagnostics", to: "/p/$projectId/diagnostics" as const },
 ];
 
-export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
+function guardedStorage(): StorageLike | null {
+  try {
+    return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+export function Sidebar({ open = false, collapsed = false, onClose, onToggleCollapsed }: { open?: boolean; collapsed?: boolean; onClose?: () => void; onToggleCollapsed?: () => void }) {
   const projects = useProjects();
-  const daemon = useDaemon();
   const activeProject = useParams({ strict: false }).projectId as string | undefined;
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [addingProject, setAddingProject] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [navigation, setNavigation] = useState<NavigationState | null>(null);
+  const navigationProjectKey = useRef("");
   const asideRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
@@ -54,15 +62,20 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
     openerRef.current?.focus();
   }, [open]);
 
-  const health = daemon.isPending || projects.isPending
-    ? "Checking"
-    : !daemon.data?.connected
-      ? "Offline"
-      : projects.data?.some((project) => project.health === "error")
-      ? "Limited"
-      : "Healthy";
-  const healthTone = health === "Healthy" ? "text-pass" : health === "Limited" ? "text-warn" : health === "Offline" ? "text-fail" : "text-muted";
+  useEffect(() => {
+    if (!projects.data) return;
+    const ids = projects.data.map((project) => project.id);
+    const key = ids.join("\0");
+    if (navigationProjectKey.current === key) return;
+    navigationProjectKey.current = key;
+    setNavigation(readNavigationState(guardedStorage(), ids));
+  }, [projects.data]);
 
+  useEffect(() => {
+    if (navigation) writeNavigationState(guardedStorage(), navigation);
+  }, [navigation]);
+
+  const visibleProjects = projects.data?.filter(projectVisibleInNavigation) ?? [];
   return (
     <>
       {open && <button type="button" className="fixed inset-0 z-40 bg-black/35 lg:hidden" onClick={onClose} aria-label="Close navigation overlay" />}
@@ -71,130 +84,121 @@ export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: (
         tabIndex={-1}
         aria-label="Navigation"
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[240px] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 focus:outline-none lg:visible lg:static lg:z-auto lg:translate-x-0",
-          open ? "visible translate-x-0" : "max-lg:invisible -translate-x-full lg:translate-x-0",
+          "fixed inset-y-2 left-2 z-50 flex w-[256px] flex-none flex-col rounded-2xl border border-line bg-raised shadow-lg transition-[transform,width] duration-200 focus:outline-none lg:static lg:inset-auto lg:h-full lg:translate-x-0",
+          collapsed ? "lg:w-[72px]" : "lg:w-[256px]",
+          open ? "visible translate-x-0" : "invisible -translate-x-[calc(100%+1rem)] lg:visible lg:translate-x-0",
         )}
       >
-        <div className="flex h-[64px] items-center border-b border-line px-4">
-          <Link to="/" className="flex items-center gap-2.5">
-            <img src="/tusker-icon.png" alt="" aria-hidden="true" className="h-6.5 w-6.5 rounded-lg object-cover shadow-2xs" />
-            <span className="text-[18px] font-bold tracking-[-0.035em] text-ink">tusker</span>
-            <span className="rounded bg-hover px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-faint">factory</span>
-          </Link>
-          {onClose && (
-            <button type="button" onClick={onClose} aria-label="Close navigation" className="ml-auto rounded-lg p-1.5 text-faint hover:bg-hover hover:text-ink lg:hidden">
-              <X size={16} />
+        <div className={cn("flex h-12 shrink-0 items-center border-b border-line", collapsed ? "justify-center px-2" : "justify-end px-3.5") }>
+          <div className={cn("ml-auto flex items-center gap-1", collapsed && "ml-0") }>
+            <button
+              type="button"
+              onClick={() => void projects.refetch()}
+              disabled={projects.isFetching}
+              aria-busy={projects.isFetching}
+              aria-label="Refresh projects"
+              title={projects.isError ? "Refresh projects failed — try again" : "Refresh projects"}
+              className="rounded-lg p-1.5 text-faint transition-colors hover:bg-hover hover:text-ink disabled:cursor-wait disabled:opacity-50"
+            >
+              <RefreshCw size={15} className={projects.isFetching ? "animate-spin" : ""} />
             </button>
-          )}
+            {onToggleCollapsed && (
+              <button
+                type="button"
+                onClick={onToggleCollapsed}
+                aria-label={collapsed ? "Expand navigation" : "Minimize navigation"}
+                title={collapsed ? "Expand navigation" : "Minimize navigation"}
+                className="hidden rounded-lg p-1.5 text-faint transition-colors hover:bg-hover hover:text-ink lg:block"
+              >
+                {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+              </button>
+            )}
+            {onClose && (
+              <button type="button" onClick={onClose} aria-label="Close navigation" className="rounded-lg p-1.5 text-faint hover:bg-hover hover:text-ink lg:hidden">
+                <X size={16} />
+              </button>
+            )}
+          </div>
         </div>
 
-        <nav className="tk-scroll flex-1 overflow-y-auto px-2.5 py-4 space-y-1">
-          <RailLink active={pathname === "/"} to="/">
-            <span>Today</span>
-            <span className="font-mono text-[10px] text-faint">{projects.data?.reduce((sum, project) => sum + project.needsCount, 0) || ""}</span>
-          </RailLink>
-          <button
-            type="button"
-            onClick={openTaskSearch}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink transition-colors"
-          >
-            <Search size={14} />
-            <span>Search</span>
-            <span className="ml-auto rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[9px] text-faint shadow-2xs">⌘K</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setNotificationsOpen((value) => !value)}
-            aria-expanded={notificationsOpen}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-muted hover:bg-hover hover:text-ink transition-colors"
-            title="Notification history is not exposed by the current Serve API"
-          >
-            <Bell size={14} />
-            <span>Notifications</span>
-          </button>
-          {notificationsOpen && (
-            <p role="status" className="mx-1 mt-1 rounded-lg border border-warn/30 bg-warn-soft px-2.5 py-2 text-[11px] leading-4 text-warn">
-              Notification history is not exposed by the current Serve API.
-            </p>
-          )}
-
-          <div className="mb-1.5 mt-6 flex items-center justify-between px-3">
+        <nav className={cn("tk-scroll flex-1 space-y-1 overflow-y-auto py-2", collapsed ? "px-2" : "px-2.5") }>
+          <div className={cn("mb-1 mt-1 flex items-center justify-between px-3", collapsed && "sr-only") }>
             <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Projects</span>
-            <span className="font-mono text-[10px] text-faint">{projects.data?.length ?? 0}</span>
+            <span className="font-mono text-[10px] text-faint">{visibleProjects.length}</span>
           </div>
 
-          {projects.data?.map((project) => (
+          {(navigation ? orderProjects(visibleProjects, navigation) : visibleProjects).map((project) => (
             <ProjectGroup
               key={project.id}
               project={project}
-              active={project.id === activeProject}
+              active={projectContainsCheckout(project, activeProject ?? "")}
               pathname={pathname}
+              activeProjectId={activeProject}
+              collapsed={collapsed}
+              expanded={navigation?.expandedProjectIds.includes(project.id) ?? project.id === activeProject}
+              onExpandedChange={(expanded) => setNavigation((previous) => {
+                if (!previous) return previous;
+                const expandedProjectIds = new Set(previous.expandedProjectIds);
+                if (expanded) expandedProjectIds.add(project.id);
+                else expandedProjectIds.delete(project.id);
+                return setExpandedProjects(previous, projects.data?.map((item) => item.id) ?? [], [...expandedProjectIds]);
+              })}
             />
           ))}
 
           <button
             type="button"
-            onClick={() => setAddingProject((value) => !value)}
+            onClick={() => {
+              if (collapsed) { onToggleCollapsed?.(); return; }
+              setAddingProject((value) => !value);
+            }}
             aria-label={addingProject ? "Close add project form" : "Add project"}
-            className="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] font-medium text-muted hover:bg-hover hover:text-ink transition-colors"
+            title={collapsed ? "Expand navigation to add a project" : undefined}
+            className={cn("mt-2 flex w-full items-center gap-2 rounded-lg py-2 text-left text-[12px] font-medium text-muted transition-colors hover:bg-hover hover:text-ink", collapsed ? "justify-center px-2" : "px-3")}
           >
             {addingProject ? <X size={13} /> : <Plus size={13} />}
-            {addingProject ? "Cancel" : "Add project"}
+            <span className={collapsed ? "sr-only" : undefined}>{addingProject ? "Cancel" : "Add project"}</span>
           </button>
-          {addingProject && <AddProjectForm onDone={() => setAddingProject(false)} />}
+          {addingProject && !collapsed && <AddProjectForm onDone={() => setAddingProject(false)} />}
         </nav>
 
-        <div className="border-t border-line px-2.5 py-3 space-y-1">
-          <Link to="/settings" className={cn("block rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors", pathname === "/settings" ? "bg-active font-semibold text-ink" : "text-muted hover:bg-hover hover:text-ink")}>
-            Settings
+        <div className={cn("space-y-1 border-t border-line py-3", collapsed ? "px-2" : "px-2.5") }>
+          <Link to="/settings" title={collapsed ? "Settings" : undefined} className={cn("flex rounded-lg py-1.5 text-[12px] font-medium transition-colors", collapsed ? "justify-center px-2" : "px-3", pathname === "/settings" ? "bg-active font-semibold text-ink" : "text-muted hover:bg-hover hover:text-ink")}>
+            <Settings size={14} className={collapsed ? undefined : "mr-2"} />
+            <span className={collapsed ? "sr-only" : undefined}>Settings</span>
           </Link>
-          <div className="mt-2 flex items-center justify-between border-t border-line-soft px-3 pt-2.5 text-[11px]">
-            <span className="text-muted">Factory health</span>
-            <span className={cn("flex items-center gap-1.5 font-semibold", healthTone)}>
-              <span className={cn("h-1.5 w-1.5 rounded-full", health === "Healthy" ? "bg-pass" : health === "Limited" ? "bg-warn" : "bg-fail")} />
-              {health}
-            </span>
-          </div>
         </div>
       </aside>
     </>
   );
 }
 
-function RailLink({ active, to, children }: { active: boolean; to: "/"; children: React.ReactNode }) {
-  return (
-    <Link
-      to={to}
-      className={cn(
-        "flex items-center justify-between rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
-        active ? "bg-ink font-semibold text-surface shadow-2xs" : "text-ink hover:bg-hover",
-      )}
-    >
-      {children}
-    </Link>
-  );
-}
-
-function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; active: boolean; pathname: string }) {
+function ProjectGroup({ project, active, pathname, activeProjectId, collapsed, expanded, onExpandedChange }: { project: ProjectSummary; active: boolean; pathname: string; activeProjectId?: string; collapsed: boolean; expanded: boolean; onExpandedChange: (expanded: boolean) => void }) {
   const refresh = useProjectRefresh(project.id);
+  const routeProjectId = active && activeProjectId ? activeProjectId : project.id;
   const selected = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
-  const secondarySelected = SECONDARY_PROJECT_NAV.some((item) => selected(item.to.replace("$projectId", project.id)));
+  const secondarySelected = SECONDARY_PROJECT_NAV.some((item) => selected(item.to.replace("$projectId", routeProjectId)));
 
   return (
-    <div className="mb-1">
+    <div className="mb-0.5">
       <div className={cn(
-        "flex items-center rounded-lg text-[13px] transition-colors",
+        "group flex items-center rounded-lg text-[13px] transition-colors",
+        collapsed && "relative justify-center",
         active ? "bg-hover/80 font-semibold text-ink" : "text-ink-soft hover:bg-hover/50",
       )}>
         <Link
           to="/p/$projectId"
           params={{ projectId: project.id }}
-          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 hover:opacity-90"
+          onClick={() => { if (!collapsed) onExpandedChange(active ? !expanded : true); }}
+          aria-expanded={collapsed ? undefined : expanded}
+          aria-label={collapsed ? `${project.name}${project.needsCount > 0 ? `, ${project.needsCount} items need you` : ""}` : undefined}
+          title={collapsed ? project.name : undefined}
+          className={cn("flex min-w-0 items-center gap-2 py-1.5 hover:opacity-90", collapsed ? "justify-center px-2" : "flex-1 px-3")}
         >
-          <ChevronDown size={12} className={cn("text-faint transition-transform", active ? "" : "-rotate-90")} />
-          <span className="min-w-0 flex-1 truncate">{project.name}</span>
+          {expanded ? <FolderOpen size={14} strokeWidth={1.75} className="shrink-0 text-faint" /> : <Folder size={14} strokeWidth={1.75} className="shrink-0 text-faint" />}
+          <span className={cn("min-w-0 flex-1 truncate", collapsed && "sr-only")}>{project.name}</span>
           {project.needsCount > 0 && (
-            <span className="rounded-full bg-fail-soft px-1.5 py-0.2 font-mono text-[10px] font-semibold text-fail">
+            <span className={cn("rounded-full bg-fail-soft px-1.5 py-0.2 font-mono text-[10px] font-semibold text-fail", collapsed && "absolute right-1 top-0.5 h-1.5 w-1.5 p-0 text-[0]")}>
               {project.needsCount}
             </span>
           )}
@@ -206,35 +210,25 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
           aria-busy={refresh.isPending}
           aria-label={`Refresh ${project.name}`}
           title={refresh.isError ? "Refresh failed — try again" : "Refresh project"}
-          className="mr-2 rounded p-1 text-faint hover:bg-hover hover:text-ink disabled:cursor-wait disabled:opacity-50"
+          className={cn("mr-1 rounded p-1 text-fainter opacity-0 transition-opacity hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-wait disabled:opacity-50", collapsed && "hidden")}
         >
           <RefreshCw size={12} className={refresh.isPending ? "animate-spin" : ""} />
         </button>
       </div>
-      {refresh.error && (
+      {!collapsed && refresh.error && (
         <p role="alert" className="ml-7 truncate px-2 pb-1 text-[10px] text-fail" title={String(refresh.error)}>
           Refresh failed — check this project’s source.
         </p>
       )}
-      {project.health === "error" && (
-        <Link
-          to="/p/$projectId/settings"
-          params={{ projectId: project.id }}
-          aria-label={`Repair ${project.name} registration`}
-          className="ml-7 block px-2 pb-1 text-[10.5px] font-semibold text-warn hover:text-ink"
-        >
-          Repair in Settings
-        </Link>
-      )}
-      {active && (
-        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-line-soft pl-2">
+      {!collapsed && expanded && (
+        <div className="ml-5 mt-0.5 space-y-0.5 border-l border-line-soft pl-2">
           {PRIMARY_PROJECT_NAV.map((item) => {
-            const href = item.to.replace("$projectId", project.id);
+            const href = item.to.replace("$projectId", routeProjectId);
             return (
               <Link
                 key={item.label}
                 to={item.to}
-                params={{ projectId: project.id }}
+                params={{ projectId: routeProjectId }}
                 className={cn(
                   "block rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors",
                   selected(href) ? "bg-active font-semibold text-ink shadow-2xs" : "text-muted hover:bg-hover hover:text-ink",
@@ -251,12 +245,12 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
             </summary>
             <div className="mt-0.5 space-y-0.5">
               {SECONDARY_PROJECT_NAV.map((item) => {
-                const href = item.to.replace("$projectId", project.id);
+                const href = item.to.replace("$projectId", routeProjectId);
                 return (
                   <Link
                     key={item.label}
                     to={item.to}
-                    params={{ projectId: project.id }}
+                    params={{ projectId: routeProjectId }}
                     className={cn(
                       "block rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors",
                       selected(href) ? "bg-active font-semibold text-ink shadow-2xs" : "text-muted hover:bg-hover hover:text-ink",
@@ -274,7 +268,7 @@ function ProjectGroup({ project, active, pathname }: { project: ProjectSummary; 
   );
 }
 
-function AddProjectForm({ onDone }: { onDone: () => void }) {
+export function AddProjectForm({ onDone }: { onDone: () => void }) {
   const [repoRoot, setRepoRoot] = useState("");
   const [vaultRoot, setVaultRoot] = useState("");
   const [browsing, setBrowsing] = useState(false);

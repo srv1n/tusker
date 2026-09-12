@@ -9,6 +9,7 @@
 */
 
 import type { ThemePref } from "@/lib/theme";
+import { FONT_FAMILY_OPTIONS, useFontScale, type FontFamily, type FontScale } from "@/lib/font-scale";
 import { useTheme } from "@/lib/theme";
 import { useDaemon } from "@/lib/queries";
 import { SegmentedControl } from "@/components/ui/controls";
@@ -16,7 +17,7 @@ import type { SegmentOption } from "@/components/ui/controls";
 import { SectionLabel } from "@/components/ui/page";
 import { Dot, Mono } from "@/components/ui/primitives";
 import { Skeleton } from "@/components/ui/states";
-import { SettingRow, SettingsCard } from "./parts";
+import { SelectPill, SettingRow, SettingsCard } from "./parts";
 import { daemonRows, defaultRows } from "./mock";
 
 const themeOptions: SegmentOption<ThemePref>[] = [
@@ -25,8 +26,15 @@ const themeOptions: SegmentOption<ThemePref>[] = [
   { value: "dark", label: "Dark" },
 ];
 
+const fontScaleOptions: SegmentOption<FontScale>[] = [
+  { value: "small", label: <>A<sup>−</sup><span className="sr-only"> Small</span></> },
+  { value: "default", label: <>A<span className="sr-only"> Default</span></> },
+  { value: "large", label: <>A<sup>+</sup><span className="sr-only"> Large</span></> },
+];
+
 export function GeneralSection() {
   const { pref, setPref } = useTheme();
+  const { scale, setScale, family, setFamily } = useFontScale();
   const daemonQ = useDaemon();
   const livePort = daemonQ.data?.addr.split(":").pop();
   const connected = !!daemonQ.data?.connected;
@@ -49,11 +57,16 @@ export function GeneralSection() {
           }
         />
         <SettingRow
-          label="Density"
-          source="global"
-          locked
-          description="Persistence is not available yet."
-          control={<span className="font-mono text-[11.5px] text-muted">Comfortable · coming soon</span>}
+          label="Font"
+          source="local"
+          description="Uses the selected system font when it is installed; otherwise falls back safely."
+          control={<SelectPill value={family} options={FONT_FAMILY_OPTIONS} onChange={(value) => setFamily(value as FontFamily)} ariaLabel="Interface font" />}
+        />
+        <SettingRow
+          label="Text size"
+          source="local"
+          description="Scales the interface and document editor together."
+          control={<SegmentedControl<FontScale> size="sm" options={fontScaleOptions} value={scale} onChange={setScale} />}
         />
       </SettingsCard>
 

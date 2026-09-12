@@ -89,12 +89,20 @@ Run `tusker docs map --vault ./.tusker` after a system page changes.
 <!-- tusker:docs-map:begin -->
 ```mermaid
 graph TD
+  n_2026_09_10_agent_coordination_grill["Agent coordination decisions — 10 September 2026"]
+  n_2026_09_11_agent_access_grill["Agent access decisions — 11 September 2026"]
+  n_agent_access["Agent access: simple profiles, honest permissions"]
+  n_agent_coordination["Agent contacts, clarification and autonomous wave continuation"]
   n_cli["CLI reference"]
+  n_completion_and_integrated_acceptance["Completion semantics and integrated acceptance"]
   n_decisions_2026_09_07_work_area_redesign_grill["Work-area redesign discussion record"]
   n_delivery_and_waves["Delivery and waves"]
   n_documents_experience["Documents experience and bounded CLI discovery"]
+  n_execution_observability["Execution observability: names, lineage, and truthful multi-agent tracking"]
+  n_execution_observability_grill["Decision log: execution observability and direct-agent identity"]
   n_execution_observability_system["Execution observability"]
   n_factory_intake["Factory intake"]
+  n_full_height_workspace["Full-height workspace with layered side navigation"]
   n_gates["Gates"]
   n_knowledge_and_feedback["Knowledge and feedback"]
   n_landing_and_completion["Landing and completion"]
@@ -103,17 +111,21 @@ graph TD
   n_overview["System overview"]
   n_planning_handoff_and_agent_entry["Planning capture, task handoff and progressive agent guidance"]
   n_platform_support["Platform support"]
+  n_project_registration_and_visibility["Project registration and visibility"]
+  n_project_registration_and_visibility_decisions["Project registration and visibility decisions"]
   n_proof_and_closeout["Proof and closeout"]
   n_real_work_lifecycle_cli["Make real task execution and closeout consistent across CLI and UI"]
   n_real_work_test_packets["Real-product testing — three implementation assignments"]
   n_real_work_test_repository["Build a resettable test repository for actual coding-agent work"]
   n_real_work_ui_acceptance["Verify the live task wave and Documents experience against the seeded project"]
+  n_remaining_product_work["Remaining product work after the three real-work streams"]
   n_repeatable_work_testing["Repeatable work scenarios and CLI parity"]
   n_runner_boundary_decisions["Runner boundary decisions — 7 September 2026"]
   n_runner_execution_boundary["Use the operator's installed coding agents"]
   n_runners_and_acp["Runners and ACP"]
   n_serve_ui["Serve UI"]
   n_skills["Skills"]
+  n_skills_and_documentation["External skills and clear everyday documentation"]
   n_spec_to_proof["From product intent to proven work"]
   n_storage_and_runtime["Storage and runtime"]
   n_tasks_and_proof["Tasks and proof"]
@@ -122,7 +134,40 @@ graph TD
   n_work_area_redesign["Tusker work experience — implementation specification"]
   n_work_experience_map["Find the everyday Tusker work experience"]
   n_work_knowledge_and_retention["Project knowledge, model choices and lightweight evidence"]
+  n_2026_09_10_agent_coordination_grill -->|decides for| n_agent_coordination
+  n_2026_09_10_agent_coordination_grill -->|link| n_agent_coordination
+  n_2026_09_10_agent_coordination_grill -->|part of| n_agent_coordination
+  n_2026_09_11_agent_access_grill -->|decides for| n_agent_access
+  n_2026_09_11_agent_access_grill -->|link| n_agent_access
+  n_2026_09_11_agent_access_grill -->|part of| n_agent_access
+  n_agent_access -->|link| n_model_level_configuration
+  n_agent_access -->|link| n_runner_execution_boundary
+  n_agent_access -->|part of| n_runners_and_acp
+  n_agent_access -->|source| n_2026_09_11_agent_access_grill
+  n_agent_access -->|source| n_model_level_configuration
+  n_agent_access -->|source| n_runner_execution_boundary
+  n_agent_access -->|updates| n_cli
+  n_agent_access -->|updates| n_runners_and_acp
+  n_agent_access -->|updates| n_serve_ui
+  n_agent_coordination -->|part of| n_execution_observability
+  n_agent_coordination -->|source| n_2026_09_10_agent_coordination_grill
+  n_agent_coordination -->|source| n_completion_and_integrated_acceptance
+  n_agent_coordination -->|source| n_execution_observability
+  n_agent_coordination -->|source| n_planning_handoff_and_agent_entry
+  n_agent_coordination -->|source| n_runner_execution_boundary
+  n_agent_coordination -->|updates| n_cli
+  n_agent_coordination -->|updates| n_delivery_and_waves
+  n_agent_coordination -->|updates| n_execution_observability_system
+  n_agent_coordination -->|updates| n_orchestration
+  n_agent_coordination -->|updates| n_runners_and_acp
+  n_agent_coordination -->|updates| n_serve_ui
   n_cli -->|part of| n_overview
+  n_completion_and_integrated_acceptance -->|part of| n_planning_handoff_and_agent_entry
+  n_completion_and_integrated_acceptance -->|source| n_planning_handoff_and_agent_entry
+  n_completion_and_integrated_acceptance -->|source| n_real_work_test_packets
+  n_completion_and_integrated_acceptance -->|source| n_remaining_product_work
+  n_completion_and_integrated_acceptance -->|updates| n_landing_and_completion
+  n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_full_height_workspace
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_model_level_configuration
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_planning_handoff_and_agent_entry
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_repeatable_work_testing
@@ -137,8 +182,21 @@ graph TD
   n_documents_experience -->|source| n_knowledge_and_feedback
   n_documents_experience -->|source| n_tusker_trust_and_efficiency
   n_documents_experience -->|source| n_work_knowledge_and_retention
+  n_execution_observability -->|part of| n_overview
+  n_execution_observability -->|updates| n_cli
+  n_execution_observability -->|updates| n_orchestration
+  n_execution_observability -->|updates| n_overview
+  n_execution_observability -->|updates| n_serve_ui
+  n_execution_observability_grill -->|decides for| n_execution_observability
+  n_execution_observability_grill -->|part of| n_execution_observability
   n_execution_observability_system -->|part of| n_overview
+  n_factory_intake -->|link| n_delivery_and_waves
   n_factory_intake -->|part of| n_overview
+  n_full_height_workspace -->|part of| n_work_area_redesign
+  n_full_height_workspace -->|source| n_documents_experience
+  n_full_height_workspace -->|source| n_project_registration_and_visibility
+  n_full_height_workspace -->|source| n_work_area_redesign
+  n_full_height_workspace -->|updates| n_serve_ui
   n_gates -->|part of| n_overview
   n_knowledge_and_feedback -->|part of| n_overview
   n_landing_and_completion -->|part of| n_overview
@@ -157,12 +215,17 @@ graph TD
   n_overview -->|link| n_serve_ui
   n_overview -->|link| n_storage_and_runtime
   n_overview -->|link| n_tasks_and_proof
+  n_planning_handoff_and_agent_entry -->|link| n_agent_coordination
+  n_planning_handoff_and_agent_entry -->|link| n_skills_and_documentation
   n_planning_handoff_and_agent_entry -->|link| n_spec_to_proof
   n_planning_handoff_and_agent_entry -->|part of| n_spec_to_proof
   n_planning_handoff_and_agent_entry -->|source| n_decisions_2026_09_07_work_area_redesign_grill
   n_planning_handoff_and_agent_entry -->|source| n_spec_to_proof
   n_planning_handoff_and_agent_entry -->|source| n_work_knowledge_and_retention
   n_platform_support -->|part of| n_overview
+  n_project_registration_and_visibility -->|part of| n_overview
+  n_project_registration_and_visibility -->|source| n_work_area_redesign
+  n_project_registration_and_visibility_decisions -->|part of| n_project_registration_and_visibility
   n_proof_and_closeout -->|part of| n_overview
   n_real_work_lifecycle_cli -->|part of| n_real_work_test_packets
   n_real_work_lifecycle_cli -->|source| n_repeatable_work_testing
@@ -179,6 +242,14 @@ graph TD
   n_real_work_ui_acceptance -->|part of| n_real_work_test_packets
   n_real_work_ui_acceptance -->|source| n_repeatable_work_testing
   n_real_work_ui_acceptance -->|source| n_work_knowledge_and_retention
+  n_remaining_product_work -->|link| n_documents_experience
+  n_remaining_product_work -->|link| n_real_work_lifecycle_cli
+  n_remaining_product_work -->|link| n_real_work_test_repository
+  n_remaining_product_work -->|link| n_real_work_ui_acceptance
+  n_remaining_product_work -->|part of| n_planning_handoff_and_agent_entry
+  n_remaining_product_work -->|source| n_planning_handoff_and_agent_entry
+  n_remaining_product_work -->|source| n_real_work_test_packets
+  n_remaining_product_work -->|source| n_work_knowledge_and_retention
   n_repeatable_work_testing -->|part of| n_work_area_redesign
   n_repeatable_work_testing -->|source| n_work_area_redesign
   n_repeatable_work_testing -->|source| n_work_knowledge_and_retention
@@ -195,18 +266,28 @@ graph TD
   n_runners_and_acp -->|part of| n_overview
   n_serve_ui -->|part of| n_overview
   n_skills -->|part of| n_overview
+  n_skills_and_documentation -->|part of| n_planning_handoff_and_agent_entry
+  n_skills_and_documentation -->|source| n_planning_handoff_and_agent_entry
+  n_spec_to_proof -->|link| n_2026_09_10_agent_coordination_grill
+  n_spec_to_proof -->|link| n_agent_coordination
   n_spec_to_proof -->|link| n_delivery_and_waves
+  n_spec_to_proof -->|link| n_model_level_configuration
   n_spec_to_proof -->|link| n_orchestration
   n_spec_to_proof -->|link| n_overview
+  n_spec_to_proof -->|link| n_planning_handoff_and_agent_entry
   n_spec_to_proof -->|link| n_runner_execution_boundary
   n_spec_to_proof -->|link| n_tasks_and_proof
   n_spec_to_proof -->|part of| n_overview
   n_storage_and_runtime -->|part of| n_overview
+  n_tasks_and_proof -->|link| n_proof_and_closeout
   n_tasks_and_proof -->|part of| n_overview
   n_tusker_trust_and_efficiency -->|link| n_spec_to_proof
   n_tusker_trust_and_efficiency -->|part of| n_overview
+  n_work_area_build_packets -->|link| n_work_area_redesign
   n_work_area_build_packets -->|part of| n_work_area_redesign
   n_work_area_build_packets -->|source| n_work_area_redesign
+  n_work_area_redesign -->|link| n_full_height_workspace
+  n_work_area_redesign -->|link| n_project_registration_and_visibility
   n_work_area_redesign -->|link| n_work_area_build_packets
   n_work_area_redesign -->|part of| n_overview
   n_work_area_redesign -->|source| n_decisions_2026_09_07_work_area_redesign_grill

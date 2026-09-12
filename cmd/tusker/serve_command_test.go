@@ -388,6 +388,11 @@ func TestServeFieldsRosterAndEpics(t *testing.T) {
 	}
 }
 
+func TestServeTaskDepIDsRemoveEdgeHardness(t *testing.T) {
+	task := Note{Data: map[string]any{"dependencies": []string{"APP-T-0001:hard", "APP-T-0002:soft"}}}
+	assertEqual(t, []string{"APP-T-0001", "APP-T-0002"}, serveTaskDepIDs(task), "serve dependency ids")
+}
+
 func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 	writeServeTask(t, server.vaultPath, serveTaskSeed{ID: "APP-T-0010", Epic: "APP", Title: "Panel review", Status: "backlog", Readiness: "waiting_on_human", Risk: "medium", Priority: "p1"})

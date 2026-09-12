@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -609,7 +610,7 @@ for line in sys.stdin:
 	}
 }
 
-func TestCodexApprovalPolicyRejectsWorkspaceEscapesSecretsAndGitMutations(t *testing.T) {
+func TestCodexApprovalPolicyRejectsWorkspaceEscapesSecretsAndClassifiesGitMutations(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	handle := &codexLiveHandle{
 		cmd: &exec.Cmd{Dir: workspaceRoot},
@@ -631,13 +632,63 @@ func TestCodexApprovalPolicyRejectsWorkspaceEscapesSecretsAndGitMutations(t *tes
 	}
 
 	gitMutation := handle.evaluateCommandApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","command":"git reset --hard HEAD"}`))
-	if gitMutation.Decision != "reject" || !strings.Contains(gitMutation.Reason, "unsafe git state mutation") {
-		t.Fatalf("expected unsafe git mutation rejection, got %#v", gitMutation)
+	if gitMutation.Decision != "accept" || !gitMutation.Mutating {
+		t.Fatalf("expected bounded destructive git mutation to reach approval, got %#v", gitMutation)
+	}
+	for _, command := range []string{"git add result.txt", "git commit -m save"} {
+		if destructiveAgentCommand(command) || commandLooksMutating(command) {
+			t.Fatalf("ordinary git command was misclassified as destructive: %q", command)
+		}
+	}
+	for _, command := range []string{"git push --force", "git reset --hard ../outside", "git restore -- ../outside"} {
+		decision := handle.evaluateCommandApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","command":` + fmt.Sprintf("%q", command) + `}`))
+		if decision.Decision != "reject" {
+			t.Fatalf("unsafe git command was accepted: command=%q decision=%#v", command, decision)
+		}
 	}
 
 	inside := handle.evaluateFileChangeApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","changes":[{"path":"result.txt"}]}`))
 	if inside.Decision != "accept" {
 		t.Fatalf("expected in-workspace file change approval, got %#v", inside)
+	}
+}
+
+func TestDestructiveGitCallbackClassification(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	handle := &codexLiveHandle{
+		cmd:    &exec.Cmd{Dir: workspaceRoot},
+		policy: codexPolicyForLane(CodexPolicy{ApprovalPolicy: "on-failure", ThreadSandbox: "workspace-write", TurnSandboxPolicy: "workspace-write"}, runLaneExecute),
+	}
+	for _, tc := range []struct {
+		name, command string
+		wantDecision  string
+		wantMutating  bool
+	}{
+		{name: "hard reset", command: "git reset --hard HEAD", wantDecision: "accept", wantMutating: true},
+		{name: "clean", command: "git clean -fd", wantDecision: "accept", wantMutating: true},
+		{name: "restore path", command: "git restore -- result.txt", wantDecision: "accept", wantMutating: true},
+		{name: "checkout path", command: "git checkout -- result.txt", wantDecision: "accept", wantMutating: true},
+		{name: "bounded force push", command: "git push --force origin feature", wantDecision: "accept", wantMutating: true},
+		{name: "force push missing target", command: "git push --force", wantDecision: "reject", wantMutating: true},
+		{name: "ordinary add", command: "git add result.txt", wantDecision: "accept", wantMutating: false},
+		{name: "ordinary commit", command: "git commit -m save", wantDecision: "accept", wantMutating: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := handle.evaluateCommandApproval([]byte(`{"cwd":"` + filepath.ToSlash(workspaceRoot) + `","command":` + fmt.Sprintf("%q", tc.command) + `}`))
+			if decision.Decision != tc.wantDecision || decision.Mutating != tc.wantMutating {
+				t.Fatalf("command=%q decision=%#v, want decision=%s mutating=%v", tc.command, decision, tc.wantDecision, tc.wantMutating)
+			}
+		})
+	}
+	claude := &claudeLiveHandle{
+		cmd:    &exec.Cmd{Dir: workspaceRoot},
+		policy: handle.policy,
+	}
+	for _, command := range []string{"git reset --hard HEAD", "git clean -fd", "git restore -- result.txt", "git checkout -- result.txt", "git push --force origin feature"} {
+		decision := claude.evaluateToolApproval(map[string]any{"name": "Bash", "input": map[string]any{"command": command, "cwd": workspaceRoot}})
+		if decision.Decision != "accept" || !decision.Mutating {
+			t.Fatalf("Claude recognized destructive Git command did not reach approval: command=%q decision=%#v", command, decision)
+		}
 	}
 }
 

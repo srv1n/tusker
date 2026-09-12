@@ -185,16 +185,18 @@ const (
 )
 
 type RegisteredProject struct {
-	ProjectID    string        `json:"project_id"`
-	ProjectKey   string        `json:"project_key"`
-	Name         string        `json:"name"`
-	RepoRoot     string        `json:"repo_root"`
-	VaultRoot    string        `json:"vault_root"`
-	WorkflowPath string        `json:"workflow_path"`
-	Enabled      bool          `json:"enabled"`
-	Health       ProjectHealth `json:"health"`
-	LastPollAt   string        `json:"last_poll_at"`
-	LastError    string        `json:"last_error"`
+	ProjectID     string        `json:"project_id"`
+	ProjectKey    string        `json:"project_key"`
+	RepositoryKey string        `json:"repository_key"`
+	Name          string        `json:"name"`
+	RepoRoot      string        `json:"repo_root"`
+	VaultRoot     string        `json:"vault_root"`
+	WorkflowPath  string        `json:"workflow_path"`
+	Enabled       bool          `json:"enabled"`
+	Visible       bool          `json:"visible"`
+	Health        ProjectHealth `json:"health"`
+	LastPollAt    string        `json:"last_poll_at"`
+	LastError     string        `json:"last_error"`
 }
 
 // ProjectNonTerminalRun is the deliberately narrow operator view used when a
@@ -919,11 +921,13 @@ func (s *RuntimeStore) Migrate() error {
 		`CREATE TABLE IF NOT EXISTS projects (
 			project_id TEXT PRIMARY KEY,
 			project_key TEXT NOT NULL,
+			repository_key TEXT NOT NULL DEFAULT '',
 			name TEXT NOT NULL,
 			repo_root TEXT NOT NULL,
 			vault_root TEXT NOT NULL,
 			workflow_path TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
+			visible INTEGER NOT NULL DEFAULT 1,
 			health TEXT NOT NULL DEFAULT 'healthy',
 			last_poll_at TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT ''
@@ -1161,6 +1165,40 @@ func (s *RuntimeStore) Migrate() error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL DEFAULT ''
 		);`,
+		`CREATE TABLE IF NOT EXISTS agent_contacts (
+			project_id TEXT NOT NULL, task_id TEXT NOT NULL, role TEXT NOT NULL,
+			name TEXT NOT NULL DEFAULT '', address_kind TEXT NOT NULL,
+			address_id TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 1,
+			predecessor_id TEXT NOT NULL DEFAULT '', endpoint_json TEXT NOT NULL DEFAULT '{}',
+			updated_at TEXT NOT NULL, PRIMARY KEY(project_id, task_id, role, name)
+		);`,
+		`CREATE TABLE IF NOT EXISTS agent_messages (
+			id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL, project_id TEXT NOT NULL,
+			sender TEXT NOT NULL, recipient_kind TEXT NOT NULL, recipient_id TEXT NOT NULL,
+			origin_task_id TEXT NOT NULL DEFAULT '', origin_wave_id TEXT NOT NULL DEFAULT '',
+			work_revision INTEGER NOT NULL DEFAULT 0, route_generation INTEGER NOT NULL DEFAULT 0,
+			kind TEXT NOT NULL, body TEXT NOT NULL, reply_to TEXT NOT NULL DEFAULT '',
+			reply_required INTEGER NOT NULL DEFAULT 0, yield_sender INTEGER NOT NULL DEFAULT 0,
+			state TEXT NOT NULL DEFAULT 'queued', transport_state TEXT NOT NULL DEFAULT 'pending',
+			consumed_at TEXT NOT NULL DEFAULT '', answered_at TEXT NOT NULL DEFAULT '',
+			applied_at TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			UNIQUE(project_id, sender, idempotency_key)
+		);`,
+		`CREATE INDEX IF NOT EXISTS agent_messages_recipient ON agent_messages(project_id, recipient_kind, recipient_id, state, created_at);`,
+		`CREATE TABLE IF NOT EXISTS agent_wakeups (
+			id TEXT PRIMARY KEY, project_id TEXT NOT NULL, recipient_kind TEXT NOT NULL,
+			recipient_id TEXT NOT NULL, reason TEXT NOT NULL, message_ids_json TEXT NOT NULL DEFAULT '[]',
+			state TEXT NOT NULL DEFAULT 'queued', model_turns INTEGER NOT NULL DEFAULT 0,
+			claim_id TEXT NOT NULL DEFAULT '', claimed_at TEXT NOT NULL DEFAULT '',
+			idempotency_key TEXT NOT NULL, created_at TEXT NOT NULL,
+			UNIQUE(project_id,idempotency_key)
+		);`,
+		`CREATE TABLE IF NOT EXISTS architect_continuations (
+			id TEXT PRIMARY KEY, project_id TEXT NOT NULL, objective_id TEXT NOT NULL,
+			trigger_key TEXT NOT NULL, report_json TEXT NOT NULL, proposal_json TEXT NOT NULL DEFAULT '{}',
+			state TEXT NOT NULL DEFAULT 'pending', applied_wave_id TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			UNIQUE(project_id,objective_id,trigger_key)
+		);`,
 		`CREATE TABLE IF NOT EXISTS gate_ledger (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
@@ -1280,6 +1318,39 @@ func (s *RuntimeStore) Migrate() error {
 			consumed_at TEXT NOT NULL DEFAULT '',
 			revoked_at TEXT NOT NULL DEFAULT ''
 		);`,
+		`CREATE TABLE IF NOT EXISTS agent_access_approvals (
+			request_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			task_id TEXT NOT NULL DEFAULT '',
+			attempt_id TEXT NOT NULL,
+			execution_id TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL,
+			native_request_id TEXT NOT NULL,
+			route TEXT NOT NULL,
+			policy_fingerprint TEXT NOT NULL,
+			tool TEXT NOT NULL,
+			binding_digest TEXT NOT NULL,
+			args_digest TEXT NOT NULL,
+			redacted_arguments_json TEXT NOT NULL DEFAULT '{}',
+			working_directory TEXT NOT NULL DEFAULT '',
+			targets_json TEXT NOT NULL DEFAULT '[]',
+			reason TEXT NOT NULL DEFAULT '',
+			native_option_id TEXT NOT NULL,
+			native_option_kind TEXT NOT NULL DEFAULT 'allow_once',
+			state TEXT NOT NULL DEFAULT 'pending',
+			state_revision INTEGER NOT NULL DEFAULT 1,
+			expires_at TEXT NOT NULL,
+			live_until TEXT NOT NULL DEFAULT '',
+			decision TEXT NOT NULL DEFAULT '',
+			decision_actor TEXT NOT NULL DEFAULT '',
+			decision_at TEXT NOT NULL DEFAULT '',
+			terminal_reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(attempt_id, native_request_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS agent_access_approvals_lookup
+			ON agent_access_approvals(project_id, task_id, state, created_at);`,
 		`CREATE TABLE IF NOT EXISTS external_loop_events (
 			event_id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
@@ -1303,6 +1374,15 @@ func (s *RuntimeStore) Migrate() error {
 		if _, err := s.exec(stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn("projects", "visible", `ALTER TABLE projects ADD COLUMN visible INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("projects", "repository_key", `ALTER TABLE projects ADD COLUMN repository_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.backfillProjectRepositoryKeys(); err != nil {
+		return err
 	}
 	for _, column := range []struct {
 		name string
@@ -1493,6 +1573,22 @@ func (s *RuntimeStore) Migrate() error {
 	if err := s.ensureColumn("sessions", "last_message_ref", `ALTER TABLE sessions ADD COLUMN last_message_ref TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	for _, column := range []struct{ name, stmt string }{
+		{"claim_id", `ALTER TABLE agent_wakeups ADD COLUMN claim_id TEXT NOT NULL DEFAULT ''`},
+		{"claimed_at", `ALTER TABLE agent_wakeups ADD COLUMN claimed_at TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("agent_wakeups", column.name, column.stmt); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct{ name, stmt string }{
+		{"applied_wave_id", `ALTER TABLE architect_continuations ADD COLUMN applied_wave_id TEXT NOT NULL DEFAULT ''`},
+		{"last_error", `ALTER TABLE architect_continuations ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`},
+	} {
+		if err := s.ensureColumn("architect_continuations", column.name, column.stmt); err != nil {
+			return err
+		}
+	}
 	for _, column := range []struct {
 		name string
 		stmt string
@@ -1569,7 +1665,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		"run_identity_metadata", "attempts", "turns", "sessions", "supervisor_decisions",
 		"apply_inputs", "review_results", "gate_ledger", "batch_gate_runs", "completion_transactions",
 		"completion_authority_issuances", "resource_leases", "resource_lease_events", "daemon_settings",
-		"departure_runs", "landing_authority_issuances", "human_control_challenges", "external_loop_events",
+		"departure_runs", "landing_authority_issuances", "human_control_challenges", "agent_access_approvals", "external_loop_events", "agent_contacts", "agent_messages", "agent_wakeups", "architect_continuations",
 	} {
 		var count int
 		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, []any{table}, &count); err != nil || count != 1 {
@@ -1577,7 +1673,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		}
 	}
 	for _, required := range []struct{ table, column string }{
-		{"projects", "project_id"}, {"projects", "repo_root"}, {"projects", "vault_root"},
+		{"projects", "project_id"}, {"projects", "repo_root"}, {"projects", "vault_root"}, {"projects", "visible"}, {"projects", "repository_key"},
 		{"runs", "project_id"}, {"runs", "record_id"}, {"runs", "item_id"}, {"runs", "lease_generation"}, {"runs", "terminal"},
 		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"},
 		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"}, {"run_directives", "wave_id"}, {"run_directives", "authorization_fingerprint"}, {"run_directives", "wave_authorized_at"},
@@ -1591,6 +1687,8 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		{"gate_ledger", "project_id"}, {"gate_ledger", "record_id"},
 		{"resource_leases", "resource_name"}, {"resource_lease_events", "resource_name"},
 		{"external_loop_events", "project_id"}, {"external_loop_events", "record_id"}, {"external_loop_events", "idempotency_key"},
+		{"architect_continuations", "applied_wave_id"}, {"architect_continuations", "last_error"},
+		{"agent_wakeups", "claim_id"}, {"agent_wakeups", "claimed_at"},
 	} {
 		rows, err := s.query(`PRAGMA table_info(` + required.table + `)`)
 		if err != nil {
@@ -1611,7 +1709,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 			return false
 		}
 	}
-	for _, index := range []string{"projects_repo_root_unique", "projects_vault_root_unique", "resource_lease_events_resource", "external_loop_events_idempotency"} {
+	for _, index := range []string{"projects_repo_root_unique", "projects_vault_root_unique", "resource_lease_events_resource", "external_loop_events_idempotency", "agent_messages_recipient", "agent_access_approvals_lookup"} {
 		var count int
 		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, []any{index}, &count); err != nil || count != 1 {
 			return false
@@ -1703,15 +1801,45 @@ func (s *RuntimeStore) ensureColumn(tableName, columnName, stmt string) error {
 	return err
 }
 
+func (s *RuntimeStore) backfillProjectRepositoryKeys() error {
+	rows, err := s.query(`SELECT project_id, repo_root FROM projects WHERE repository_key = ''`)
+	if err != nil {
+		return err
+	}
+	type projectRoot struct{ id, root string }
+	var projects []projectRoot
+	for rows.Next() {
+		var project projectRoot
+		if err := rows.Scan(&project.id, &project.root); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		projects = append(projects, project)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, project := range projects {
+		if _, err := s.exec(`UPDATE projects SET repository_key = ? WHERE project_id = ? AND repository_key = ''`, registeredProjectRepositoryKey(project.root), project.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *RuntimeStore) UpsertProject(project RegisteredProject) error {
 	if project.Health == "" {
 		project.Health = projectHealthHealthy
 	}
+	if project.RepositoryKey == "" {
+		project.RepositoryKey = registeredProjectRepositoryKey(project.RepoRoot)
+	}
 	_, err := s.exec(`INSERT INTO projects (
-		project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, project_key, repository_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id) DO UPDATE SET
 		project_key=excluded.project_key,
+		repository_key=excluded.repository_key,
 		name=excluded.name,
 		repo_root=excluded.repo_root,
 		vault_root=excluded.vault_root,
@@ -1720,7 +1848,7 @@ func (s *RuntimeStore) UpsertProject(project RegisteredProject) error {
 		health=excluded.health,
 		last_poll_at=excluded.last_poll_at,
 		last_error=excluded.last_error`,
-		project.ProjectID, project.ProjectKey, project.Name, project.RepoRoot, project.VaultRoot, project.WorkflowPath,
+		project.ProjectID, project.ProjectKey, project.RepositoryKey, project.Name, project.RepoRoot, project.VaultRoot, project.WorkflowPath,
 		boolToInt(project.Enabled), string(project.Health), project.LastPollAt, project.LastError)
 	return err
 }
@@ -1737,7 +1865,10 @@ func (s *RuntimeStore) RegisterProject(project RegisteredProject) (RegisteredPro
 		return RegisteredProject{}, false, err
 	}
 	for _, existing := range projects {
-		if sameCanonicalProjectPath(existing.RepoRoot, project.RepoRoot) || sameCanonicalProjectPath(existing.VaultRoot, project.VaultRoot) || sameRegisteredGitProject(existing, project) {
+		// A path alias is the same checkout. A different path in the same Git
+		// common directory is a distinct registered checkout and must retain its
+		// own project ID, vault, and runtime associations.
+		if sameCanonicalProjectPath(existing.RepoRoot, project.RepoRoot) || sameCanonicalProjectPath(existing.VaultRoot, project.VaultRoot) {
 			return existing, false, nil
 		}
 	}
@@ -1745,19 +1876,6 @@ func (s *RuntimeStore) RegisterProject(project RegisteredProject) (RegisteredPro
 		return RegisteredProject{}, false, err
 	}
 	return project, true, nil
-}
-
-func sameRegisteredGitProject(existing, candidate RegisteredProject) bool {
-	existingCommon, err := gitCommonDirectory(existing.RepoRoot)
-	if err != nil {
-		return false
-	}
-	candidateCommon, err := gitCommonDirectory(candidate.RepoRoot)
-	if err != nil || existingCommon != candidateCommon {
-		return false
-	}
-	candidateConfig, err := resolveTuskerConfigForRepo(candidate.RepoRoot, true)
-	return err == nil && registeredProjectConfigIdentityMatches(existing, candidateConfig.Config.ProjectID)
 }
 
 func (s *RuntimeStore) EnsureProjectUniqueness() error {
@@ -1895,6 +2013,19 @@ func (s *RuntimeStore) SetProjectEnabled(projectID string, enabled bool) error {
 	return nil
 }
 
+func (s *RuntimeStore) SetProjectVisible(projectID string, visible bool) error {
+	result, err := s.exec(`UPDATE projects SET visible = ? WHERE project_id = ?`, boolToInt(visible), projectID)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return tuskerError(errorNotFound, "project not found: "+projectID)
+	}
+	return nil
+}
+
 // RebindProjectRegistration changes only the location metadata for an existing
 // disabled project identity. It deliberately never removes or recreates the
 // project row: runtime history is keyed by ProjectID and must survive a move.
@@ -1963,7 +2094,8 @@ func (s *RuntimeStore) RebindProjectRegistration(projectID, repoRoot, vaultRoot 
 		after.WorkflowPath = workflowPath(vaultRoot)
 		after.Health = projectHealthDisabled
 		after.LastError = ""
-		if _, txErr = tx.Exec(`UPDATE projects SET repo_root = ?, vault_root = ?, workflow_path = ?, enabled = ?, health = ?, last_error = ? WHERE project_id = ?`, after.RepoRoot, after.VaultRoot, after.WorkflowPath, 0, string(after.Health), after.LastError, projectID); txErr != nil {
+		after.RepositoryKey = registeredProjectRepositoryKey(after.RepoRoot)
+		if _, txErr = tx.Exec(`UPDATE projects SET repo_root = ?, vault_root = ?, workflow_path = ?, repository_key = ?, enabled = ?, health = ?, last_error = ? WHERE project_id = ?`, after.RepoRoot, after.VaultRoot, after.WorkflowPath, after.RepositoryKey, 0, string(after.Health), after.LastError, projectID); txErr != nil {
 			return txErr
 		}
 		beforeJSON, marshalErr := json.Marshal(before)
@@ -1993,10 +2125,10 @@ func (s *RuntimeStore) RebindProjectRegistration(projectID, repoRoot, vaultRoot 
 
 func registeredProjectByIDTx(tx *sql.Tx, projectID string) (RegisteredProject, error) {
 	var project RegisteredProject
-	var enabled int
+	var enabled, visible int
 	var health string
-	err := tx.QueryRow(`SELECT project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error FROM projects WHERE project_id = ?`, projectID).Scan(
-		&project.ProjectID, &project.ProjectKey, &project.Name, &project.RepoRoot, &project.VaultRoot, &project.WorkflowPath, &enabled, &health, &project.LastPollAt, &project.LastError,
+	err := tx.QueryRow(`SELECT project_id, project_key, repository_key, name, repo_root, vault_root, workflow_path, enabled, visible, health, last_poll_at, last_error FROM projects WHERE project_id = ?`, projectID).Scan(
+		&project.ProjectID, &project.ProjectKey, &project.RepositoryKey, &project.Name, &project.RepoRoot, &project.VaultRoot, &project.WorkflowPath, &enabled, &visible, &health, &project.LastPollAt, &project.LastError,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RegisteredProject{}, tuskerError(errorNotFound, "project not found: "+projectID)
@@ -2005,6 +2137,7 @@ func registeredProjectByIDTx(tx *sql.Tx, projectID string) (RegisteredProject, e
 		return RegisteredProject{}, err
 	}
 	project.Enabled = enabled != 0
+	project.Visible = visible != 0
 	project.Health = ProjectHealth(health)
 	return project, nil
 }
@@ -2110,7 +2243,7 @@ func projectRebindNonTerminalRunsError(projectID string, runs []ProjectNonTermin
 }
 
 func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
-	rows, err := s.query(`SELECT project_id, project_key, name, repo_root, vault_root, workflow_path, enabled, health, last_poll_at, last_error FROM projects ORDER BY name, repo_root`)
+	rows, err := s.query(`SELECT project_id, project_key, repository_key, name, repo_root, vault_root, workflow_path, enabled, visible, health, last_poll_at, last_error FROM projects ORDER BY name, repo_root`)
 	if err != nil {
 		return nil, err
 	}
@@ -2118,12 +2251,13 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 	var out []RegisteredProject
 	for rows.Next() {
 		var project RegisteredProject
-		var enabled int
+		var enabled, visible int
 		var health string
-		if err := rows.Scan(&project.ProjectID, &project.ProjectKey, &project.Name, &project.RepoRoot, &project.VaultRoot, &project.WorkflowPath, &enabled, &health, &project.LastPollAt, &project.LastError); err != nil {
+		if err := rows.Scan(&project.ProjectID, &project.ProjectKey, &project.RepositoryKey, &project.Name, &project.RepoRoot, &project.VaultRoot, &project.WorkflowPath, &enabled, &visible, &health, &project.LastPollAt, &project.LastError); err != nil {
 			return nil, err
 		}
 		project.Enabled = enabled != 0
+		project.Visible = visible != 0
 		project.Health = ProjectHealth(health)
 		out = append(out, project)
 	}
@@ -4161,6 +4295,16 @@ func (s *RuntimeStore) ForceRetryNow(identity string) (bool, error) {
 		return false, err
 	}
 	return affected > 0, nil
+}
+
+func (s *RuntimeStore) ForceRetryNowProject(projectID, identity string) (bool, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.exec(`UPDATE runs SET lease_state = ?, next_retry_at = ?, updated_at = ? WHERE project_id = ? AND (item_id = ? OR record_id = ?)`, string(LeaseStateRetryQueued), now, now, projectID, identity, identity)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
 }
 
 func (s *RuntimeStore) GetSetting(key string) (string, error) {

@@ -56,17 +56,6 @@ export interface RunnerProfile {
   builtin: boolean;
 }
 
-export interface PermissionPreset {
-  key: "full" | "guarded" | "workspace";
-  label: string;
-  desc: string;
-}
-
-export interface DenylistEntry {
-  pattern: string;
-  builtin: boolean;
-}
-
 // ---- Option lists ----------------------------------------------------------
 // TODO(api): harness / model / effort option lists come from the harness registry.
 export const runnerOptions = ["codex", "claude-code"];
@@ -99,24 +88,6 @@ export const runnerProfiles: RunnerProfile[] = [
   { name: "docs-fast", harness: "claude-code", model: "sonnet-4.6", effort: "low", preset: "Workspace-only", subagents: "none", builtin: true },
   { name: "review-frontier", harness: "claude-code", model: "opus-4.6", effort: "high", preset: "Guarded full access", subagents: "up to 2", builtin: true },
   { name: "guarded-yolo", harness: "codex", model: "gpt-5-codex", effort: "high", preset: "Guarded full access", subagents: "up to 5", builtin: true },
-];
-
-// ---- Permission presets ----------------------------------------------------
-export const permissionPresets: PermissionPreset[] = [
-  { key: "full", label: "Full access", desc: "No sandbox, no approvals — the operator’s usual mode." },
-  { key: "guarded", label: "Guarded full access", desc: "Full filesystem and network, but a denylist blocks destructive commands." },
-  { key: "workspace", label: "Workspace-only", desc: "Writes confined to the workspace; a separate toggle controls network access." },
-];
-
-// ---- Denylist --------------------------------------------------------------
-// Built-ins are non-deletable; operator entries append below and can be removed.
-// TODO(api): persist the operator-added patterns through the settings API.
-export const initialDenylist: DenylistEntry[] = [
-  { pattern: "git push --force", builtin: true },
-  { pattern: "rm -rf outside the workspace", builtin: true },
-  { pattern: "git reset --hard", builtin: true },
-  { pattern: "writes to *.env / credential files", builtin: true },
-  { pattern: "curl … | sh", builtin: false },
 ];
 
 // ---- Notifications ---------------------------------------------------------

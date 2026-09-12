@@ -16,7 +16,8 @@ canonical contract is [[runner-execution-boundary]].
 | Harness | Structured launch | Permission support |
 | --- | --- | --- |
 | `codex_exec` | `codex exec --json` | read-only, workspace write with explicit network off/on, and externally contained full access |
-| `muse` | `codex --profile muse exec --json` | the same compiler as Codex; the operator owns the Muse profile and authentication |
+| `muse` | `codex --profile muse exec --json` | the same CLI compiler as Codex; the operator owns the configured Muse profile and authentication; it is not ACP |
+| `muse_cli` | `muse exec --json` | direct Muse native workspace, approval, network, write and shell flags; private-folder exclusions and read-only external roots remain unavailable |
 | `claude-code` | `claude -p --output-format stream-json` | read-only and externally contained full access; workspace-write presets are unavailable because Claude does not expose a verified workspace boundary |
 | `acp_v1` | exact installed executable and argument array | bounded presets only when the endpoint is wrapped by separately verified native containment and passes a live ACP handshake; full access is unavailable |
 
@@ -26,15 +27,21 @@ requested preset into provider-native arguments, and pins the physical executabl
 identity. Admission failure leaves work unclaimed and records an actionable
 infrastructure block.
 
+For profiles with the `tusker.agent-access/v1` contract, preparation also pins the
+resolved access report and fingerprint. Required controls that are only advisory
+or unsupported make that route unavailable. The direct Muse route is distinct from
+the legacy `muse` Codex-profile route; Muse `serve`/MSP discovery is not used as an
+execution transport.
+
 ## Test a harness
 
-Run local admission checks without starting a model:
+**Check setup** runs local admission checks without starting a model:
 
 ```sh
 tusker runner test codex_exec --json
 ```
 
-Run one disposable model turn only when that spend is intended:
+**Run test** starts one disposable model turn only when that spend is intended:
 
 ```sh
 tusker runner test codex_exec --live --json
@@ -43,19 +50,46 @@ tusker runner test codex_exec --live --exercise timer --json
 tusker runner test codex_exec --preset workspace-write-offline --live --script ./scripts/my-canary --json
 ```
 
-The Settings > Runner profiles screen calls the same service through **Run local
-checks** and **Run live canary**. Reports use `tusker.runner-conformance/v1` and keep
-`ready: false` until a live canary succeeds. A live pass expires after 24 hours.
+The Settings service calls the same resident conformance path through **Check setup**
+and **Run test**. Reports use `tusker.runner-conformance/v1`, identify the selected
+profile/model/effort when one was supplied, and keep `ready: false` until a live
+canary succeeds. A live pass expires after 24 hours. The disposable turn is bounded
+to two minutes and its temporary workspace is removed afterwards.
 
 The catalog is a machine-local observation:
 
 ```sh
 tusker runner catalog --json
+tusker runner catalog --refresh --json
 ```
 
-It reports Codex, Muse, or Claude only after their installed commands respond to the
-required probes. ACP is profile-specific and becomes eligible through conformance,
-not by the existence of a bundled adapter.
+It reports executable detection, authentication state, discovery source/freshness and
+conformance as separate facts. Codex can return its installed model inventory. Muse
+has no claimed static inventory: unsupported discovery accepts exact manual
+model/effort values, marked unverified until an explicit profile test passes. Claude
+Code, OpenCode, Cursor, and Devin remain non-selectable future entries unless an
+implemented adapter passes its own prerequisites. ACP is profile-specific and becomes
+eligible through conformance, not by the existence of a bundled adapter.
+
+For Settings integration, the stable read/test examples are:
+
+```sh
+tusker models catalog --json
+tusker models profile-set --scope project --name muse-review --harness muse --model <exact-id> --effort high --preset read-only
+tusker runner test muse-review --json       # Check setup: no model turn
+tusker runner test muse-review --live --json # Run test: one explicit turn
+```
+
+`models catalog --json` includes `schema`, `version`, each preset's CLI transport,
+setup text, executable/authentication/discovery/conformance states, and its
+`last_checked` timestamp. The profile test report includes `profile_id`, `model`,
+`effort`, `transport`, case-level outcome, timestamps, and a safe `next_step` on
+admission failure. Neither output includes credential values.
+
+Successful model discovery is cached for 24 hours by adapter version, transport,
+and non-secret configuration context. `--refresh` bypasses a fresh entry; if it
+fails, the last successful models remain with `discovery_state: stale`. Bundled
+discovery failure returns no invented fallback IDs.
 
 ## Configuration-only onboarding
 
@@ -73,6 +107,27 @@ automation:
       sandbox: {mode: read-only, network: false}
       subagents: {allowed: false, max_concurrent: 0}
 ```
+
+The direct Muse route can be authored with the shared access contract:
+
+```yaml
+automation:
+  profiles:
+    muse-project:
+      harness: muse_cli
+      model: <installed-model-id>
+      effort: medium
+      access:
+        schema: tusker.agent-access/v1
+        mode: work_in_projects
+        network: true
+        destructive_actions: ask
+        folders: []
+        private_folders: []
+```
+
+Installed authentication and paid model turns remain separate setup/live
+evidence; missing credentials do not create a fallback route.
 
 A compatible installed ACP endpoint uses the same profile store. The executable
 must already be installed. `native_containment: true` is reserved for an endpoint
@@ -109,6 +164,11 @@ Tusker records profile, harness, model and effort on the run before claim. A ret
 in the same lane preserves that recorded cycle even if configuration changes.
 Unstarted work observes the newest valid configuration. Missing mappings and
 unknown profiles block before claim.
+
+Profiles can be disabled without erasing their definition or recorded run identity.
+A disabled profile is unavailable for new resolution; only an already-authored
+ordered fallback may replace it. Removal is revision-guarded and refuses references
+from level/lane/default/routing configuration or non-terminal task overrides.
 
 `automation.profiles` admits only operator-installed harnesses, so a
 simulated executor cannot be registered there: the repeatable demo declares

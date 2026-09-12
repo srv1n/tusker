@@ -1,3 +1,4 @@
+export { ProjectStrip } from "./ProjectStrip";
 export { ProjectNavigation } from "./ProjectNavigation";
 export type { ProjectNavigationProps, WaveLink, WaveReadState } from "./ProjectNavigation";
 export {
@@ -5,6 +6,8 @@ export {
   NAVIGATION_STATE_VERSION,
   NAVIGATION_STORAGE_KEY,
   emptyNavigationState,
+  getWorkspaceViewState,
+  movePinnedProject,
   isInternalPath,
   moveProject,
   orderProjects,
@@ -13,13 +16,18 @@ export {
   projectWorkPath,
   readNavigationState,
   recordProjectVisit,
+  recordWorkspaceDocumentVisit,
+  recordWorkspaceWaveVisit,
   recordViewState,
   reorderProject,
   resolveNavigationTarget,
   sanitizeNavigationState,
   setExpandedProjects,
+  setProjectPinned,
   setProjectOrder,
+  toggleProjectPinned,
   toggleProjectExpanded,
+  updateWorkspaceViewState,
   waveSectionKind,
   writeNavigationState,
 } from "./navigationState";
@@ -29,6 +37,16 @@ export type {
   ResolveOptions,
   ReorderResult,
   StorageLike,
+  WorkspaceBoardState,
+  WorkspaceBoardStatePatch,
+  WorkspaceDocsState,
+  WorkspaceDocsStatePatch,
+  WorkspaceScrollOffset,
+  WorkspaceViewState,
+  WorkspaceViewStatePatch,
+  WorkspaceWaveViewState,
+  WorkspaceWavesState,
+  WorkspaceWavesStatePatch,
   WaveReadSnapshot,
   WaveSectionKind,
 } from "./navigationState";

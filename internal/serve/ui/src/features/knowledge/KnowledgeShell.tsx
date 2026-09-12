@@ -85,7 +85,7 @@ export function KnowledgeShell({
   return (
     <div className="flex h-full min-h-0 w-full">
       {/* Static rail — wide viewports. */}
-      <aside aria-label="Documents explorer" className="hidden w-64 flex-none border-r border-line lg:block">
+      <aside aria-label="Documents explorer" className="hidden w-[280px] flex-none lg:block">
         <KnowledgeTree projectId={projectId} currentSubject={currentSubject} />
       </aside>
 
@@ -104,7 +104,7 @@ export function KnowledgeShell({
             ref={drawerRef}
             aria-label="Documents explorer"
             aria-modal="true"
-            className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col border-r border-line bg-surface shadow-lg focus:outline-none"
+            className="absolute inset-y-0 left-0 flex w-[280px] max-w-[calc(100%-32px)] flex-col bg-surface shadow-lg focus:outline-none"
             role="dialog"
             tabIndex={-1}
             onClickCapture={(event) => {

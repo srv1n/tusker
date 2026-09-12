@@ -157,14 +157,24 @@ func v7CollectLineCodeWords(line string, appendixSymbols map[string]bool, add fu
 	}
 }
 
-// v7PathLooksLikeCode keeps ordinary slash prose ("and/or", "he/she") from
-// being flagged: a code path either carries a file extension or has two or more
-// slashes (a real directory path).
+// v7PathLooksLikeCode keeps slash-separated alternatives from being flagged.
+// Extensionless paths still need a compact, directory-like segment; this
+// distinguishes paths such as cmd/tusker/foo and internal/serve/ui from prose
+// ladders such as small/medium/large and 10/100/1000-document.
 func v7PathLooksLikeCode(path string) bool {
 	if v7CodeFilePattern.MatchString(path) {
 		return true
 	}
-	return strings.Count(path, "/") >= 2
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		return false
+	}
+	for _, part := range parts {
+		if len(part) <= 4 && strings.IndexFunc(part, func(r rune) bool { return r < 'a' || r > 'z' }) == -1 {
+			return true
+		}
+	}
+	return false
 }
 
 // v7TokenIsMixedCase reports whether a token has an internal lowercase-to-

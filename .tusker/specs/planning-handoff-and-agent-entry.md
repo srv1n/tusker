@@ -23,6 +23,16 @@ The user wants a design partner to grill, sharpen terminology and preserve a fai
 
 This is a focused extension of [[spec-to-proof]], not a replacement corpus. It records intended behavior; current CLI/skills do not automatically satisfy it. No worker dispatch or installed-skill edits are performed by this specification.
 
+## Current direction
+
+**Settled choices.** External design methods keep the user and architect in the product conversation; Tusker owns durable documentation, bounded task contracts, configured work/review routing, proof and lifecycle state. Imported work is inert until authorized. Once authorized, Tusker—not the architect—owns mechanical scheduling, monitoring and message delivery. The [[agent-coordination]] contract adds targeted architect/peer questions and configured continuation across waves, while the current rollout may remain paused until that behavior is qualified.
+
+**Active proposals.** The `expected_outcome` wave field below is an authored-field proposal; reuse an existing purpose field if it already provides the same behavior. The operating-skill implementation and validation scenarios remain work to deliver, not claims about the installed runtime. The held [skills and documentation contract](skills-and-documentation.md) owns the September 11 auxiliary edits.
+
+**Open questions.** Qualification must establish which installed transports can resume or wake an existing conversation and when configured cross-wave continuation is safe to enable. Unsupported routes must remain explicit. Exact schema and UI names are implementation choices unless a linked decision says otherwise.
+
+**Deferred.** Formal active-spec locking, automatic change-impact scheduling, a Tusker-owned interview method and model-driven status relaying are out of scope. Current named models and effort are resolved from configured work/review levels; historical fixed-model examples are not runtime proof.
+
 ## Confirmed user decisions
 
 - External design skills own the conversation and specification development. Tusker owns its documentation format, discovery and the conversion of supplied intent into tracked work.
@@ -55,7 +65,7 @@ A task includes outcome, bounded context, non-goals, relevant spec/decision anch
 
 Choose dependency edges from actual prerequisites. Schema/interface agreement may unblock migrations, API implementation and frontend work; code layers do not impose a universal sequence. A frontend may start against an agreed contract before the backend exists. Two tasks touching the same file/resource need explicit coordination or serialization even if their features are independent. Reject cycles, missing dependencies and undocumented shared ownership through existing validation.
 
-Generating/importing work remains inert. The operator's explicit start authorization is separate. The planning agent delivers the contract and task/wave links, then returns to design; it does not automatically monitor workers, relay messages or close tasks.
+Generating/importing work remains inert by itself. The planning agent delivers the contract and task/wave links, then returns to design. The September 10 [[agent-coordination]] requirement adds durable architect and peer contacts: Tusker routes clarifications and wave results, waking the relevant agent only for an actionable turn. Configured continuation can validate and start subsequent waves within the agreed objective. The temporary unattended-execution pause is a rollout setting, not a design restriction. Tusker owns monitoring, message delivery and lifecycle mutation; the planning agent does not spend turns polling workers or relaying their status. This is intended behavior until the coordination implementation is qualified.
 
 ## Wave intended outcome
 
@@ -111,4 +121,4 @@ A later skill implementation must reconcile source versus generated/installed co
 
 ## Next decisions
 
-One Tusker entry skill is confirmed. Next, specify its exact reference structure, shared entry rules and stage acceptance examples, then emit bounded work for skill/source consistency, requirement-coverage handoff and authored wave outcomes. External planning capture cadence is not a required Tusker workflow. Reconcile existing trust/efficiency backlog before creating duplicate tickets. Formal active-spec locking, automatic change-impact scheduling and orchestration by the design agent are deferred.
+One Tusker entry skill is confirmed. The next product decision is when qualified, configured architect continuation may be enabled for a real objective; the current manual-start rollout remains the safe setting until that evidence exists. The held [skills and documentation work](skills-and-documentation.md) defines the September 11 follow-ups, including exact reference structure, shared entry rules, stage acceptance examples, requirement-coverage handoff and authored wave outcomes. Reconcile the existing trust/efficiency backlog before creating duplicate tickets. External planning capture cadence is not a required Tusker workflow. Formal active-spec locking, automatic change-impact scheduling and orchestration by the design agent remain deferred.

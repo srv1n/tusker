@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { ArrowRight, Waves } from "lucide-react";
 import { useNeeds, useProjects, useRuns, useTasks, useWaves } from "@/lib/queries";
-import type { NeedItem, ProjectSummary, RunSummary, TaskCapsule, WaveSummary } from "@/types/domain";
+import { projectContainsCheckout, type NeedItem, type ProjectSummary, type RunSummary, type TaskCapsule, type WaveSummary } from "@/types/domain";
+import { ProjectRegistrationRepair } from "./ProjectRegistrationRepair";
 import {
   phaseTone,
   ProductEmpty,
@@ -176,7 +177,9 @@ export function ProjectToday() {
   const tasksQ = useTasks(projectId);
   const runsQ = useRuns(projectId);
 
-  const project = projectsQ.data?.find((item) => item.id === projectId);
+  const group = projectsQ.data?.find((item) => projectContainsCheckout(item, projectId));
+  const checkout = group?.checkouts?.find((item) => item.id === projectId);
+  const project = group && checkout ? { ...group, id: checkout.id, repoRoot: checkout.repoRoot, vaultRoot: checkout.vaultRoot, health: checkout.health, lastError: checkout.error } : group;
   const needs = needsQ.data ?? [];
   const waves = wavesQ.data ?? [];
   const tasks = tasksQ.data ?? [];
@@ -214,6 +217,10 @@ export function ProjectToday() {
       }
     >
       {isLoading && <ProductLoading rows={3} />}
+
+      {project?.health === "error" && (
+        <ProjectRegistrationRepair project={project} needsAttention />
+      )}
 
       {!isLoading && (
         <>

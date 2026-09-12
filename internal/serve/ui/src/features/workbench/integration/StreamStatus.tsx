@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { formatStreamAge, getStreamStatus, subscribeStreamStatus } from "@/lib/stream";
+import { getStreamStatus, subscribeStreamStatus } from "@/lib/stream";
 
 /**
  * Honest liveness for the Work surface (real-work-ui-acceptance A4).
@@ -12,10 +12,12 @@ import { formatStreamAge, getStreamStatus, subscribeStreamStatus } from "@/lib/s
  */
 export function StreamStatusNote() {
   const status = useSyncExternalStore(subscribeStreamStatus, getStreamStatus, getStreamStatus);
+  const lastEvent = status.lastEventAt === null ? "No events received yet" : `Last event ${new Date(status.lastEventAt).toLocaleString()}`;
   return (
     <p
       data-testid="stream-status"
       aria-live="polite"
+      title={lastEvent}
       className="flex items-center gap-1.5 text-[11.5px] text-faint"
     >
       <span
@@ -25,9 +27,6 @@ export function StreamStatusNote() {
         className={`inline-block h-2 w-2 rounded-full ${status.connected ? "bg-pass" : "bg-warn"}`}
       />
       {status.connected ? "Live updates" : "Reconnecting — showing last known state"}
-      <span aria-hidden="true" className="font-mono text-[10.5px]">
-        · {formatStreamAge(status.lastEventAt)}
-      </span>
     </p>
   );
 }

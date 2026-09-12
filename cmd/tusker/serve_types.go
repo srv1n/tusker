@@ -66,9 +66,14 @@ type serveSnapshot struct {
 
 type serveProjectSummary struct {
 	ID                      string                            `json:"id"`
+	LogicalID               string                            `json:"logicalId"`
 	Name                    string                            `json:"name"`
 	RepoRoot                string                            `json:"repoRoot"`
 	VaultRoot               string                            `json:"vaultRoot"`
+	Auxiliary               bool                              `json:"auxiliary"`
+	Visible                 bool                              `json:"visible"`
+	Checkouts               []serveCheckoutSummary            `json:"checkouts"`
+	RegistryPreview         serveRegistryPreview              `json:"registryPreview"`
 	AutomationEnabled       bool                              `json:"automationEnabled"`
 	AutomationSource        string                            `json:"automationSource"`
 	DispatchScope           automationDispatchScopeProjection `json:"dispatchScope"`
@@ -84,6 +89,29 @@ type serveProjectSummary struct {
 	DaemonConnected         bool                              `json:"daemonConnected"`
 	LastPollAt              any                               `json:"lastPollAt"`
 	Reconciliation          adaptiveProjectReconcileStatus    `json:"reconciliation"`
+}
+
+type serveRegistryPreview struct {
+	DuplicatePathAliases  []string   `json:"duplicatePathAliases"`
+	RelatedWorktreeGroups [][]string `json:"relatedWorktreeGroups"`
+	MissingRegistrations  []string   `json:"missingRegistrations"`
+	SeparateRepositoryIDs []string   `json:"separateRepositoryIds"`
+}
+
+type serveCheckoutSummary struct {
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	RepoRoot   string `json:"repoRoot"`
+	VaultRoot  string `json:"vaultRoot"`
+	Branch     string `json:"branch,omitempty"`
+	Head       string `json:"head,omitempty"`
+	Git        bool   `json:"git"`
+	Detached   bool   `json:"detached"`
+	Available  bool   `json:"available"`
+	Activity   string `json:"activity"`
+	ActiveRuns int    `json:"activeRuns"`
+	Health     string `json:"health"`
+	Error      string `json:"error,omitempty"`
 }
 
 type serveDaemonStatus struct {
@@ -323,25 +351,31 @@ type serveTaskDependency struct {
 
 type serveTaskDetail struct {
 	serveTaskCapsule
-	AuthoredWorkLevel     string                 `json:"authoredWorkLevel,omitempty"`
-	AuthoredReviewLevel   string                 `json:"authoredReviewLevel,omitempty"`
-	EffectiveExecute      runnerRoutePreview     `json:"effectiveExecute"`
-	EffectiveReview       runnerRoutePreview     `json:"effectiveReview"`
-	Intent                string                 `json:"intent"`
-	Acceptance            []serveAcceptanceRow   `json:"acceptance"`
-	NonGoals              []string               `json:"nonGoals"`
-	Verification          []serveVerificationRow `json:"verification"`
-	Evidence              []serveEvidenceCard    `json:"evidence"`
-	ArtifactsKeep         bool                   `json:"artifactsKeep"`
-	ArtifactsAvailability string                 `json:"artifactsAvailability,omitempty"`
-	ArtifactsExpiredAt    string                 `json:"artifactsExpiredAt,omitempty"`
-	KnowledgeDelta        string                 `json:"knowledgeDelta,omitempty"`
-	Deps                  []serveTaskDependency  `json:"deps"`
-	Gates                 []serveGate            `json:"gates"`
-	HumanAction           *serveHumanAction      `json:"humanAction,omitempty"`
-	HumanActions          []serveHumanAction     `json:"humanActions"`
-	RunHistory            []serveRunSummary      `json:"runHistory"`
-	RunDirective          *serveRunDirective     `json:"runDirective,omitempty"`
+	StateRevision          string                 `json:"stateRevision"`
+	AuthoredWorkLevel      string                 `json:"authoredWorkLevel,omitempty"`
+	AuthoredReviewLevel    string                 `json:"authoredReviewLevel,omitempty"`
+	AuthoredExecuteProfile string                 `json:"authoredExecuteProfile,omitempty"`
+	AuthoredReviewProfile  string                 `json:"authoredReviewProfile,omitempty"`
+	EffectiveExecute       runnerRoutePreview     `json:"effectiveExecute"`
+	EffectiveReview        runnerRoutePreview     `json:"effectiveReview"`
+	Intent                 string                 `json:"intent"`
+	Acceptance             []serveAcceptanceRow   `json:"acceptance"`
+	NonGoals               []string               `json:"nonGoals"`
+	Verification           []serveVerificationRow `json:"verification"`
+	Evidence               []serveEvidenceCard    `json:"evidence"`
+	ArtifactsKeep          bool                   `json:"artifactsKeep"`
+	ArtifactsAvailability  string                 `json:"artifactsAvailability,omitempty"`
+	ArtifactsExpiredAt     string                 `json:"artifactsExpiredAt,omitempty"`
+	KnowledgeDelta         string                 `json:"knowledgeDelta,omitempty"`
+	Deps                   []serveTaskDependency  `json:"deps"`
+	Gates                  []serveGate            `json:"gates"`
+	HumanAction            *serveHumanAction      `json:"humanAction,omitempty"`
+	HumanActions           []serveHumanAction     `json:"humanActions"`
+	AgentAccessApprovals   []AgentAccessApproval  `json:"agentAccessApprovals,omitempty"`
+	RunHistory             []serveRunSummary      `json:"runHistory"`
+	RunDirective           *serveRunDirective     `json:"runDirective,omitempty"`
+	Contacts               []AgentContact         `json:"contacts"`
+	Messages               []AgentMessage         `json:"messages"`
 }
 
 type serveRunDirective struct {
@@ -353,32 +387,35 @@ type serveRunDirective struct {
 }
 
 type serveRunSummary struct {
-	TaskID            string                     `json:"taskId"`
-	TaskTitle         string                     `json:"taskTitle"`
-	ProjectID         string                     `json:"projectId"`
-	Runner            string                     `json:"runner"`
-	RunnerName        string                     `json:"runnerName"`
-	RunnerProfile     string                     `json:"runnerProfile"`
-	Model             any                        `json:"model"`
-	Lane              string                     `json:"lane"`
-	LeaseState        string                     `json:"leaseState"`
-	LeaseStateRaw     string                     `json:"leaseStateRaw"`
-	HandRun           bool                       `json:"handRun"`
-	ProcessRunning    bool                       `json:"processRunning"`
-	Outcome           string                     `json:"outcome"`
-	ElapsedSec        int                        `json:"elapsedSec"`
-	SinceLastEventSec int                        `json:"sinceLastEventSec"`
-	Liveness          string                     `json:"liveness"`
-	AttemptCount      int                        `json:"attemptCount"`
-	Terminal          any                        `json:"terminal"`
-	Error             any                        `json:"error"`
-	Infrastructure    *RunnerInfrastructureBlock `json:"infrastructure,omitempty"`
-	LastHeartbeatAt   any                        `json:"lastHeartbeatAt"`
-	NextWakeAt        any                        `json:"nextWakeAt"`
-	WorkspacePath     string                     `json:"workspacePath"`
-	WorkspaceMode     string                     `json:"workspaceMode"`
-	StartedAt         string                     `json:"startedAt"`
-	UpdatedAt         string                     `json:"updatedAt"`
+	TaskID               string                     `json:"taskId"`
+	TaskTitle            string                     `json:"taskTitle"`
+	ProjectID            string                     `json:"projectId"`
+	Runner               string                     `json:"runner"`
+	RunnerName           string                     `json:"runnerName"`
+	RunnerProfile        string                     `json:"runnerProfile"`
+	RunnerHarness        string                     `json:"runnerHarness"`
+	Model                any                        `json:"model"`
+	RunnerEffort         string                     `json:"runnerEffort"`
+	RunnerFallbackReason string                     `json:"runnerFallbackReason,omitempty"`
+	Lane                 string                     `json:"lane"`
+	LeaseState           string                     `json:"leaseState"`
+	LeaseStateRaw        string                     `json:"leaseStateRaw"`
+	HandRun              bool                       `json:"handRun"`
+	ProcessRunning       bool                       `json:"processRunning"`
+	Outcome              string                     `json:"outcome"`
+	ElapsedSec           int                        `json:"elapsedSec"`
+	SinceLastEventSec    int                        `json:"sinceLastEventSec"`
+	Liveness             string                     `json:"liveness"`
+	AttemptCount         int                        `json:"attemptCount"`
+	Terminal             any                        `json:"terminal"`
+	Error                any                        `json:"error"`
+	Infrastructure       *RunnerInfrastructureBlock `json:"infrastructure,omitempty"`
+	LastHeartbeatAt      any                        `json:"lastHeartbeatAt"`
+	NextWakeAt           any                        `json:"nextWakeAt"`
+	WorkspacePath        string                     `json:"workspacePath"`
+	WorkspaceMode        string                     `json:"workspaceMode"`
+	StartedAt            string                     `json:"startedAt"`
+	UpdatedAt            string                     `json:"updatedAt"`
 }
 
 type serveAttempt struct {

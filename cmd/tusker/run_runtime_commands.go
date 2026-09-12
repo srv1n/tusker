@@ -75,6 +75,8 @@ func resumeCapability(run *RunStatus, session *RunnerSession) runResumeCapabilit
 	switch RunnerName(run.Runner) {
 	case RunnerCodex, RunnerCodexExec, RunnerCodexAppServer:
 		return runResumeCapability{Supported: true, Command: "codex exec resume " + quoted}
+	case RunnerMuseCLI:
+		return runResumeCapability{Supported: true, Command: "muse exec --json --session-id " + quoted}
 	case RunnerClaude:
 		return runResumeCapability{Supported: true, Command: "claude --resume " + quoted}
 	default:

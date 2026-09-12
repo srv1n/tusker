@@ -61,6 +61,7 @@ test("workspace mode and concurrency persist through project settings API", () =
 
 test("advanced settings expose bounded registration repair without reset controls", () => {
   const settings = source("src/features/product/OperationsScreens.tsx");
+  const repair = source("src/features/product/ProjectRegistrationRepair.tsx");
   const api = source("src/lib/api.ts");
   const queries = source("src/lib/queries.ts");
   const sidebar = source("src/components/Sidebar.tsx");
@@ -69,23 +70,23 @@ test("advanced settings expose bounded registration repair without reset control
   expect(settings).toContain("Open registration repair");
   expect(settings).toContain("onOpenAdvanced={() => setTab(\"advanced\")}");
   expect(settings).toContain("<ProjectRegistrationRepair project={project} needsAttention={needsRegistrationRepair} />");
-  expect(settings).toContain("Rebinding requires background work to be off.");
-  expect(settings).toContain("project.automationEnabled || rebind.isPending");
-  expect(settings).toContain('aria-label="Repair repository path"');
-  expect(settings).toContain('aria-label="Repair vault path"');
-  expect(settings).toContain('aria-label="Browse repository folder"');
-  expect(settings).toContain('aria-label="Browse vault folder"');
-  expect(settings).toContain('replace(/\\/+$/, "")');
-  expect(settings).toContain("setVaultRoot(repositoryVault(path))");
-  expect(settings).toContain("Use repository/.tusker");
-  expect(settings).toContain('type="checkbox" checked={allowDirty}');
-  expect(settings).toContain('typeToConfirm: "ALLOW DIRTY"');
-  expect(settings).toContain('title: "Rebind project registration?"');
-  expect(settings).toContain("Check repair");
-  expect(settings).toContain("Apply repair");
-  expect(settings).toContain('dryRun: true');
-  expect(settings).toContain("setPreviewSelection(null)");
-  expect(settings).toContain("retained_queued_count");
+  expect(repair).toContain("Rebinding requires background work to be off.");
+  expect(repair).toContain("project.automationEnabled || rebind.isPending");
+  expect(repair).toContain('aria-label="Repair repository path"');
+  expect(repair).toContain('aria-label="Repair vault path"');
+  expect(repair).toContain('aria-label="Browse repository folder"');
+  expect(repair).toContain('aria-label="Browse vault folder"');
+  expect(repair).toContain('replace(/\\/+$/, "")');
+  expect(repair).toContain("setVaultRoot(repositoryVault(path))");
+  expect(repair).toContain("Use repository/.tusker");
+  expect(repair).toContain('type="checkbox" checked={allowDirty}');
+  expect(repair).toContain('typeToConfirm: "ALLOW DIRTY"');
+  expect(repair).toContain('title: "Rebind project registration?"');
+  expect(repair).toContain("Check repair");
+  expect(repair).toContain("Apply repair");
+  expect(repair).toContain('dryRun: true');
+  expect(repair).toContain("setPreviewSelection(null)");
+  expect(repair).toContain("retained_queued_count");
   expect(settings).not.toMatch(/<Button[^>]*(Reset|Retire)/i);
   expect(api).toContain("/rebind");
   expect(api).toContain("allowDirty?: boolean");
@@ -93,7 +94,6 @@ test("advanced settings expose bounded registration repair without reset control
   expect(api).toContain("dryRun?: boolean");
   expect(queries).toContain("useProjectRebind");
   expect(queries).toContain("query.queryKey.some((part) => part === projectId)");
-  expect(sidebar).toContain('to="/p/$projectId/settings"');
-  expect(sidebar).toContain("Repair in Settings");
-  expect(sidebar).toContain("project.health === \"error\"");
+  expect(sidebar).not.toContain("Repair in Settings");
+  expect(sidebar).not.toContain("Troubleshooting in Settings");
 });

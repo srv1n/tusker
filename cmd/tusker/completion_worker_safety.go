@@ -289,7 +289,7 @@ func completionLaneWorkerPolicy(wf Workflow, note Note, lane string) (ResolvedRu
 	}
 	declared, exists := wf.RunnerProfiles[profile.Name]
 	definitionSource := wf.RunnerProfileSources[profile.Name]
-	if profile.Name == "" || wf.RunnerLaneProfiles[lane] != profile.Name || !exists || strings.TrimSpace(declared.Harness) == "" ||
+	if profile.Name == "" || !exists || strings.TrimSpace(declared.Harness) == "" ||
 		(definitionSource != configSourceProject && definitionSource != configSourceLocal) {
 		return ResolvedRunnerProfile{}, nil, "", fmt.Errorf("completion authority requires an explicit project or machine-local profile for lane %q", lane)
 	}
@@ -373,7 +373,11 @@ func (d *Daemon) validateCompletionWorkerAuthority(project RegisteredProject, wf
 	if execute.Name == "" || review.Name == "" {
 		return fmt.Errorf("completion authority requires explicit named execute and review profiles")
 	}
-	if wf.RunnerLaneProfiles[runLaneExecute] != execute.Name || wf.RunnerLaneProfiles[runLaneReview] != review.Name || wf.RunnerProfiles[execute.Name].Harness == "" || wf.RunnerProfiles[review.Name].Harness == "" || execute.Source == configSourceBuiltIn || review.Source == configSourceBuiltIn {
+	executeSource := wf.RunnerProfileSources[execute.Name]
+	reviewSource := wf.RunnerProfileSources[review.Name]
+	if wf.RunnerProfiles[execute.Name].Harness == "" || wf.RunnerProfiles[review.Name].Harness == "" ||
+		(executeSource != configSourceProject && executeSource != configSourceLocal) ||
+		(reviewSource != configSourceProject && reviewSource != configSourceLocal) {
 		return fmt.Errorf("completion authority requires explicit project or machine-local lane profiles")
 	}
 	if err := completionWorkerSafety(d.stateRoot, workspaceForCompletionSafety(project, result.TaskID), execute); err != nil {

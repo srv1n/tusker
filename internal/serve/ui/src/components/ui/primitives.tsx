@@ -102,13 +102,15 @@ export function Card({
   className,
   children,
   interactive = false,
+  tone: t = "neutral",
   ...rest
-}: ComponentPropsWithoutRef<"div"> & { interactive?: boolean }) {
+}: ComponentPropsWithoutRef<"div"> & { interactive?: boolean; tone?: Tone }) {
   return (
     <div
       className={cn(
-        "rounded-xl border border-line bg-raised shadow-2xs",
-        interactive && "transition-all hover:border-line hover:shadow-xs hover:bg-hover/50 cursor-pointer",
+        "rounded-xl border bg-raised shadow-[inset_0_1px_0_color-mix(in_srgb,var(--k-ink)_3%,transparent)]",
+        t === "neutral" ? "border-line" : cn("border-current/20", tone[t].text),
+        interactive && "cursor-pointer transition-[transform,border-color,background-color] duration-150 hover:-translate-y-px hover:border-accent/45 hover:bg-hover/50 active:translate-y-0",
         className,
       )}
       {...rest}

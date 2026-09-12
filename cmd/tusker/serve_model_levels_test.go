@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -84,4 +85,132 @@ func TestServeModelLevelsRunIdentityIsActualOrUnavailable(t *testing.T) {
 	if strings.Contains(string(empty), "assumed") {
 		t.Fatalf("missing identity was fabricated: %s", empty)
 	}
+}
+
+func TestServeModelLevelsTaskRouteAuthoringRoundTrip(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, _ := server.store.ListProjects()
+	project := projects[0]
+	var tasks []serveTaskCapsule
+	serveDecode(t, server, "/api/tasks?project="+project.ProjectID, &tasks)
+	var before serveTaskDetail
+	serveDecode(t, server, "/api/tasks/"+tasks[0].ID+"?project="+project.ProjectID, &before)
+
+	body := `{"projectId":"` + project.ProjectID + `","revision":"` + before.StateRevision + `","workLevel":"demanding","reviewLevel":"light"}`
+	updated := servePostJSON(t, server, "/api/tasks/"+tasks[0].ID+"/route", body)
+	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"ok":true`) {
+		t.Fatalf("route update=%d %s", updated.Code, updated.Body.String())
+	}
+	var after serveTaskDetail
+	serveDecode(t, server, "/api/tasks/"+tasks[0].ID+"?project="+project.ProjectID, &after)
+	if after.AuthoredWorkLevel != "demanding" || after.AuthoredReviewLevel != "light" || after.EffectiveReview.WorkLevel != "light" {
+		t.Fatalf("route round trip = %#v", after)
+	}
+	stale := servePostJSON(t, server, "/api/tasks/"+tasks[0].ID+"/route", body)
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("stale route update=%d %s", stale.Code, stale.Body.String())
+	}
+}
+
+func TestServeModelLevelsProfileLifecycleContract(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, _ := server.store.ListProjects()
+	project := projects[0]
+	var initial modelLevelsReport
+	serveDecode(t, server, "/api/models?project="+project.ProjectID, &initial)
+	body := `{"action":"profile-set","scope":"project","name":"temporary","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec := servePostJSON(t, server, "/api/models", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create=%d %s", rec.Code, rec.Body.String())
+	}
+	var created modelLevelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	disable := `{"action":"profile-disable","scope":"project","name":"temporary","revision":"` + created.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec = servePostJSON(t, server, "/api/models", disable)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"temporary":"disabled"`) {
+		t.Fatalf("disable=%d %s", rec.Code, rec.Body.String())
+	}
+	var disabled modelLevelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &disabled); err != nil {
+		t.Fatal(err)
+	}
+	remove := `{"action":"profile-remove","scope":"project","name":"temporary","revision":"` + disabled.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec = servePostJSON(t, server, "/api/models", remove)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"temporary"`) {
+		t.Fatalf("remove=%d %s", rec.Code, rec.Body.String())
+	}
+	stale := servePostJSON(t, server, "/api/models", remove)
+	if stale.Code != http.StatusUnprocessableEntity || !strings.Contains(stale.Body.String(), "refresh") {
+		t.Fatalf("stale remove=%d %s", stale.Code, stale.Body.String())
+	}
+}
+
+func TestServeModelLevelsGlobalUnusedProfileCanBeRemoved(t *testing.T) {
+	t.Setenv("TUSKER_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	server := newServeEmptyNeedsFixture(t)
+	projects, _ := server.store.ListProjects()
+	project := projects[0]
+	var initial modelLevelsReport
+	serveDecode(t, server, "/api/models?scope=global&project="+project.ProjectID, &initial)
+	removeSeeded := `{"action":"profile-remove","scope":"global","name":"review-frontier","revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec := servePostJSON(t, server, "/api/models", removeSeeded)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"review-frontier"`) {
+		t.Fatalf("seeded global remove=%d %s", rec.Code, rec.Body.String())
+	}
+	var afterSeededRemove modelLevelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &afterSeededRemove); err != nil || len(afterSeededRemove.Levels[0].Review.Profiles) != 0 {
+		t.Fatalf("seeded global cleanup=%#v err=%v", afterSeededRemove, err)
+	}
+	create := `{"action":"profile-set","scope":"global","name":"global-unused","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","revision":"` + afterSeededRemove.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec = servePostJSON(t, server, "/api/models", create)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("global create=%d %s", rec.Code, rec.Body.String())
+	}
+	var created modelLevelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	remove := `{"action":"profile-remove","scope":"global","name":"global-unused","revision":"` + created.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec = servePostJSON(t, server, "/api/models", remove)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"global-unused"`) {
+		t.Fatalf("global remove=%d %s", rec.Code, rec.Body.String())
+	}
+	var afterRemove modelLevelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &afterRemove); err != nil {
+		t.Fatal(err)
+	}
+	referencedCreate := `{"action":"profile-set","scope":"global","name":"global-referenced","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","eligibleTiers":["light"],"revision":"` + afterRemove.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec = servePostJSON(t, server, "/api/models", referencedCreate)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("referenced create=%d %s", rec.Code, rec.Body.String())
+	}
+	var referenced modelLevelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &referenced); err != nil {
+		t.Fatal(err)
+	}
+	set := `{"action":"set","scope":"global","level":"light","lane":"execute","profiles":["global-referenced"],"revision":"` + referenced.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec = servePostJSON(t, server, "/api/models", set)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("global assignment=%d %s", rec.Code, rec.Body.String())
+	}
+	var assigned modelLevelsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &assigned); err != nil {
+		t.Fatal(err)
+	}
+	removeReferenced := `{"action":"profile-remove","scope":"global","name":"global-referenced","revision":"` + assigned.Revision + `","projectId":"` + project.ProjectID + `"}`
+	rec = servePostJSON(t, server, "/api/models", removeReferenced)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"global-referenced"`) {
+		t.Fatalf("referenced global remove=%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func servePostJSON(t *testing.T, server http.Handler, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420"+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	return rec
 }

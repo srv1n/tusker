@@ -35,6 +35,7 @@ func Prepare(ctx context.Context, definition HarnessDefinition, input RunInput) 
 	if info, statErr := os.Stat(workspace); statErr != nil || !info.IsDir() {
 		return PreparedLaunch{}, admission(definition, "invalid_workspace", "workspace", "workspace must be an existing directory")
 	}
+	input.Workspace = workspace
 	searchPath := input.SearchPath
 	if strings.TrimSpace(searchPath) == "" {
 		searchPath = os.Getenv("PATH")
@@ -113,6 +114,9 @@ func Prepare(ctx context.Context, definition HarnessDefinition, input RunInput) 
 		Capabilities: capabilities, AuthState: authState, PreparedAt: time.Now().UTC(), Deadline: deadline,
 		OutputLimit: limit, prompt: input.Prompt,
 	}
+	if input.ResolvedAccess != nil {
+		prepared.Access = input.ResolvedAccess
+	}
 	prepared.ConfigurationHash = hashJSON(struct {
 		Definition HarnessDefinition
 		Workspace  string
@@ -137,8 +141,8 @@ func validateDefinition(d HarnessDefinition, input RunInput) error {
 	if d.Transport != TransportCLI && d.Transport != TransportACP {
 		return admission(d, "invalid_configuration", "transport", "transport must be cli or acp_stdio")
 	}
-	if d.Transport == TransportCLI && d.Dialect != "codex" && d.Dialect != "claude" {
-		return admission(d, "unsupported_dialect", "dialect", "CLI dialect must be codex or claude")
+	if d.Transport == TransportCLI && d.Dialect != "codex" && d.Dialect != "claude" && d.Dialect != "muse" {
+		return admission(d, "unsupported_dialect", "dialect", "CLI dialect must be codex, claude, or muse")
 	}
 	if d.Transport == TransportACP && d.Dialect != "" && d.Dialect != "acp" {
 		return admission(d, "unsupported_dialect", "dialect", "ACP transport does not accept a CLI dialect")
@@ -248,7 +252,7 @@ func probeCapabilities(ctx context.Context, d HarnessDefinition, input RunInput,
 		}
 		return "negotiated", map[string]bool{"structured_events": true, "permission_denial": true, "resume": initialized.AgentCapabilities.ResumeSession, "load_session": initialized.AgentCapabilities.LoadSession}, nil
 	}
-	if d.Provider == "muse" {
+	if d.Provider == "muse" && d.Dialect != "muse" {
 		if input.LiveCanary {
 			return "pending_live_canary", map[string]bool{"structured_events": true, "permission_denial": true, "resume": true}, nil
 		}
@@ -256,6 +260,17 @@ func probeCapabilities(ctx context.Context, d HarnessDefinition, input RunInput,
 			return "verified_by_live_canary", map[string]bool{"structured_events": true, "permission_denial": true, "resume": true}, nil
 		}
 		return "unknown", nil, admission(d, "auth_missing", "auth", "Muse profile authentication has no noninteractive probe; run live conformance")
+	}
+	if d.Dialect == "muse" {
+		// Direct Muse has a provider-free echo mode, but no safe, universal
+		// noninteractive credential probe. Keep setup truthful while allowing
+		// local argv/protocol qualification and explicit live conformance to
+		// establish authentication.
+		caps := map[string]bool{"structured_events": true, "permission_denial": true, "resume": true}
+		if input.VerifiedAuth {
+			return "verified_by_live_canary", caps, nil
+		}
+		return "unknown", caps, nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, defaultProbeDeadline)
 	defer cancel()

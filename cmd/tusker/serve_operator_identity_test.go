@@ -25,6 +25,8 @@ func TestServeDurableMutationsRequireConfiguredOperator(t *testing.T) {
 		{name: "evidence", path: "/api/evidence?project=app", body: `{"id":"APP-T-0001","kind":"automated_test","covers":"A1"}`},
 		{name: "redrive", path: "/api/runs/APP-T-0008/redrive?project=app", body: `{}`},
 		{name: "acknowledge", path: "/api/runs/APP-T-0007/acknowledge?project=app", body: `{}`},
+		{name: "agent-message", path: "/api/messages", body: `{"projectId":"app","recipientKind":"task","recipientId":"APP-T-0001","body":"question","idempotencyKey":"q1"}`},
+		{name: "agent-message-consume", path: "/api/messages/missing/consume", body: `{"projectId":"app"}`},
 		{name: "docgraph", path: "/api/docgraph/doc?project=app&subject=alpha", body: `{"base_rev":"sha256:missing","body":"edited"}`},
 	}
 	for _, tc := range cases {
@@ -59,6 +61,8 @@ func TestServeDurableMutationsRejectForgedOperator(t *testing.T) {
 		{name: "evidence", path: "/api/evidence?project=app", body: `{"id":"APP-T-0001","actor":"human:forged","kind":"automated_test","covers":"A1"}`},
 		{name: "redrive", path: "/api/runs/APP-T-0008/redrive?project=app", body: `{"actor":"human:forged"}`},
 		{name: "acknowledge", path: "/api/runs/APP-T-0007/acknowledge?project=app", body: `{"actor":"human:forged"}`},
+		{name: "agent-message", path: "/api/messages", body: `{"projectId":"app","actor":"human:forged","recipientKind":"task","recipientId":"APP-T-0001","body":"question","idempotencyKey":"q1"}`},
+		{name: "agent-message-consume", path: "/api/messages/missing/consume", body: `{"projectId":"app","actor":"human:forged"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
