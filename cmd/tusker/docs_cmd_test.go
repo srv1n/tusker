@@ -64,6 +64,59 @@ func TestDocsNewRefusesDuplicateSubject(t *testing.T) {
 	}
 }
 
+func TestDocsNewUsesManagedRootAndIgnoresUnrelatedDebt(t *testing.T) {
+	repoRoot := t.TempDir()
+	vault := filepath.Join(repoRoot, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: project-guide\nstatus: canonical\n---\n# Project guide\n")
+	writeDocsFixture(t, repoRoot, "docs/system/broken.md", "---\nsubject: broken\npart_of: project-guide\nstatus: canonical\n---\n# Broken\n\nSee [[missing]].\n")
+
+	output := captureStdout(t, func() {
+		if err := docsNewCmd(Args{"vault": vault, "_pos": "sample", "kind": "spec", "print": "true", "json": "true"}); err != nil {
+			t.Fatalf("docs new: %v", err)
+		}
+	})
+	if !strings.Contains(output, `"written":false`) || !strings.Contains(output, "part_of: project-guide") {
+		t.Fatalf("unexpected scaffold output: %s", output)
+	}
+	if _, err := os.Stat(filepath.Join(vault, "specs", "sample.md")); !os.IsNotExist(err) {
+		t.Fatalf("--print mutated the repository: %v", err)
+	}
+	if err := docsNewCmd(Args{"vault": vault, "_pos": "sample", "kind": "spec", "quiet": "true"}); err != nil {
+		t.Fatalf("write locally valid scaffold: %v", err)
+	}
+	path := filepath.Join(vault, "specs", "sample.md")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(content, []byte("\nSee [[new-missing]].\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := docsCheckCmd(Args{"vault": vault, "_pos": ".tusker/specs/sample.md", "json": "true"}); err == nil {
+			t.Fatal("proper validation gate accepted the newly introduced dangling link")
+		}
+	})
+	if err := docsCheckCmd(Args{"vault": vault, "_pos": "docs/system/broken.md", "quiet": "true"}); err == nil {
+		t.Fatal("proper validation gate accepted the pre-existing dangling link")
+	}
+}
+
+func TestDocsNewExplainsMissingManagedRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	vault := filepath.Join(repoRoot, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := docsNewCmd(Args{"vault": vault, "_pos": "sample", "kind": "spec", "print": "true"})
+	if err == nil || !strings.Contains(err.Error(), "docs/system/00-overview.md must declare a subject") {
+		t.Fatalf("missing-root error = %v", err)
+	}
+}
+
 func TestDocsNewRefusesSymlinkedRootParentAndLeaf(t *testing.T) {
 	newArgs := func(vault string) Args {
 		return Args{"vault": vault, "_pos": "new-doc", "_pos0": "new-doc"}

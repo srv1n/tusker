@@ -372,12 +372,19 @@ func docsNewCmd(args Args) error {
 	if fileExists(absolute) {
 		return tuskerError(errorAlreadyExists, "a file already exists at "+relative+"; pick a different subject or update that file")
 	}
-	scaffold := docsScaffold(subject, kind)
+	parent, parentErr := docsScaffoldParent(corpus)
+	if parentErr != nil {
+		return parentErr
+	}
+	scaffold := docsScaffoldWithParent(subject, kind, parent)
 	candidate, parseErr := docgraph.ParseDocHeaders(relative, []byte(scaffold))
 	if parseErr != nil {
 		return tuskerError(errorInvalidField, "generated document scaffold is invalid: "+parseErr.Error(), withPath(relative))
 	}
-	validated := append(append([]docgraph.Document{}, corpus.Documents...), candidate)
+	validated := []docgraph.Document{
+		{Path: "docs/system/00-overview.md", Kind: docgraph.KindCanonical, Subject: parent},
+		candidate,
+	}
 	if issues := docgraph.ValidateCorpus(docgraph.Corpus{Documents: validated}); len(issues) > 0 {
 		return tuskerError(errorInvalidField, "generated document scaffold failed documentation validation", withPath(relative), withContext(issues))
 	}
@@ -416,12 +423,16 @@ func docsSubjectSlug(subject string) string {
 }
 
 func docsScaffold(subject, kind string) string {
+	return docsScaffoldWithParent(subject, kind, "overview")
+}
+
+func docsScaffoldWithParent(subject, kind, parent string) string {
 	created := time.Now().Local().Format("2006-01-02")
 	var builder strings.Builder
 	builder.WriteString("---\n")
 	fmt.Fprintf(&builder, "subject: %s            # unique key; the one right name for this document\n", subject)
 	builder.WriteString("keywords: []            # search aliases a reader might type instead of the subject\n")
-	builder.WriteString("part_of: overview       # subject of the parent document this sits under\n")
+	fmt.Fprintf(&builder, "part_of: %s       # subject of the parent document this sits under\n", parent)
 	builder.WriteString("describes: []           # coarse repository paths this document explains\n")
 	builder.WriteString("status: canonical       # canonical, or superseded (then set superseded_by)\n")
 	fmt.Fprintf(&builder, "created: %s      # date this document was first written\n", created)
@@ -435,4 +446,17 @@ func docsScaffold(subject, kind string) string {
 	builder.WriteString("---\n\n")
 	fmt.Fprintf(&builder, "# %s\n", subject)
 	return builder.String()
+}
+
+func docsScaffoldParent(corpus docgraph.Corpus) (string, error) {
+	for _, doc := range corpus.Documents {
+		if filepath.ToSlash(filepath.Clean(doc.Path)) != "docs/system/00-overview.md" {
+			continue
+		}
+		if subject := strings.TrimSpace(doc.Subject); subject != "" {
+			return subject, nil
+		}
+		break
+	}
+	return "", tuskerError(errorInvalidField, "docs new cannot select a parent: docs/system/00-overview.md must declare a subject; run tusker init or repair that managed root, then retry")
 }
