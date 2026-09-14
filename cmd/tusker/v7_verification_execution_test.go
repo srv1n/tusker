@@ -228,3 +228,58 @@ func TestVerificationDoesNotExecuteNonPendingCommandRows(t *testing.T) {
 		t.Fatal("non-pending command row executed")
 	}
 }
+
+func TestFilteredGoTestEvidenceRejectsSpoofAndUnsupportedSelectors(t *testing.T) {
+	repo := t.TempDir()
+	if err := writeText(filepath.Join(repo, "go.mod"), "module fixture\n\ngo 1.22\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(repo, "proof_test.go"), "package fixture\nimport \"testing\"\nfunc TestExists(t *testing.T) {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		command     string
+		wantError   string
+		wantMatches int
+	}{
+		{
+			name:        "compound shell cannot spoof zero match",
+			command:     "printf '=== RUN TestExists\\n'; go test ./... -run '^DefinitelyNoSuchTest$' -count=1 -v",
+			wantError:   "unsupported selector runner or shell syntax",
+			wantMatches: 0,
+		},
+		{
+			name:        "trusted go test json rejects zero match",
+			command:     "go test ./... -run '^DefinitelyNoSuchTest$' -count=1 -v",
+			wantError:   "no matched-test evidence",
+			wantMatches: 0,
+		},
+		{
+			name:        "trusted go test json counts a real match",
+			command:     "go test ./... -run '^TestExists$' -count=1 -v",
+			wantMatches: 1,
+		},
+		{
+			name:        "unsupported selector runner fails closed",
+			command:     "python3 -m unittest discover -s . -k DefinitelyNoSuchTest",
+			wantError:   "unsupported selector runner or shell syntax",
+			wantMatches: 0,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			observation, err := runV7VerificationCommand(repo, tc.command, 30*time.Second)
+			if tc.wantError == "" {
+				if err != nil {
+					t.Fatalf("matched command failed: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("error=%v, want %q", err, tc.wantError)
+			}
+			if observation.MatchCount != tc.wantMatches {
+				t.Fatalf("match count=%d, want %d", observation.MatchCount, tc.wantMatches)
+			}
+		})
+	}
+}

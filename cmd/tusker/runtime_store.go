@@ -366,44 +366,46 @@ type RunIdentityMetadata struct {
 }
 
 type RunAttempt struct {
-	AttemptID          string
-	ProjectID          string
-	RecordID           string
-	ItemID             string
-	Runner             string
-	Lane               string
-	WorkerPolicyFP     string
-	WorkRevision       int
-	WorkspacePath      string
-	SessionRef         string
-	ParentAttemptID    string
-	ChildType          string
-	BranchName         string
-	MergeRule          string
-	FanoutGroup        string
-	CloudTaskID        string
-	CloudStatus        string
-	CloudEnvironmentID string
-	CloudAttemptNumber int
-	PullRequestURL     string
-	ApplyRef           string
-	LogsSummary        string
-	FinalSummary       string
-	EndStateJSON       string      `json:"-"`
-	EndState           RunEndState `json:"end_state,omitempty"`
-	EndStateInvalid    bool        `json:"end_state_invalid,omitempty"`
-	EndStateError      string      `json:"end_state_error,omitempty"`
-	Outcome            string
-	ExitCode           int
-	TurnsUsed          int
-	PromptPath         string
-	EventSinkPath      string
-	RawLogPath         string
-	StatusPath         string
-	ProcessPID         int
-	LastError          string
-	StartedAt          string
-	FinishedAt         string
+	AttemptID              string
+	ProjectID              string
+	RecordID               string
+	ItemID                 string
+	Runner                 string
+	Lane                   string
+	WorkerPolicyFP         string
+	WorkRevision           int
+	WorkspacePath          string
+	SessionRef             string
+	ParentAttemptID        string
+	ChildType              string
+	BranchName             string
+	MergeRule              string
+	FanoutGroup            string
+	CloudTaskID            string
+	ProviderIdempotencyKey string
+	ExternalThreadCap      int `json:"-"`
+	CloudStatus            string
+	CloudEnvironmentID     string
+	CloudAttemptNumber     int
+	PullRequestURL         string
+	ApplyRef               string
+	LogsSummary            string
+	FinalSummary           string
+	EndStateJSON           string      `json:"-"`
+	EndState               RunEndState `json:"end_state,omitempty"`
+	EndStateInvalid        bool        `json:"end_state_invalid,omitempty"`
+	EndStateError          string      `json:"end_state_error,omitempty"`
+	Outcome                string
+	ExitCode               int
+	TurnsUsed              int
+	PromptPath             string
+	EventSinkPath          string
+	RawLogPath             string
+	StatusPath             string
+	ProcessPID             int
+	LastError              string
+	StartedAt              string
+	FinishedAt             string
 }
 
 // ReviewResult is the sole durable reviewer lifecycle output. It is keyed by
@@ -442,32 +444,35 @@ func (s *RuntimeStore) ReviewAttempt(attemptID string) (RunAttempt, error) {
 }
 
 type RunEndState struct {
-	Schema              string            `json:"schema"`
-	Branch              string            `json:"branch"`
-	HeadSHA             string            `json:"head_sha"`
-	WorktreePath        string            `json:"worktree_path"`
-	Dirty               bool              `json:"dirty"`
-	MaterialFingerprint string            `json:"material_fingerprint"`
-	MaterialScope       []string          `json:"material_scope,omitempty"`
-	GateVerdicts        map[string]string `json:"gate_verdicts"`
-	ReportedBranch      string            `json:"reported_branch,omitempty"`
-	ReportedHeadSHA     string            `json:"reported_head_sha,omitempty"`
-	Discrepancies       []string          `json:"discrepancies,omitempty"`
-	CapturedAt          string            `json:"captured_at"`
+	Schema               string            `json:"schema"`
+	Branch               string            `json:"branch"`
+	HeadSHA              string            `json:"head_sha"`
+	WorktreePath         string            `json:"worktree_path"`
+	Dirty                bool              `json:"dirty"`
+	MaterialFingerprint  string            `json:"material_fingerprint"`
+	MaterialScope        []string          `json:"material_scope,omitempty"`
+	GeneratedOutputScope []string          `json:"generated_output_scope,omitempty"`
+	GateVerdicts         map[string]string `json:"gate_verdicts"`
+	ReportedBranch       string            `json:"reported_branch,omitempty"`
+	ReportedHeadSHA      string            `json:"reported_head_sha,omitempty"`
+	Discrepancies        []string          `json:"discrepancies,omitempty"`
+	CapturedAt           string            `json:"captured_at"`
 }
 
 type RuntimeApplyInput struct {
-	ProjectID string `json:"project_id"`
-	RecordID  string `json:"record_id"`
-	ItemID    string `json:"item_id"`
-	Runner    string `json:"runner"`
-	JobID     string `json:"job_id"`
-	AttemptID string `json:"attempt_id"`
-	Path      string `json:"path"`
-	RelPath   string `json:"rel_path"`
-	Sha256    string `json:"sha256"`
-	Kind      string `json:"kind"`
-	CreatedAt string `json:"created_at"`
+	ProjectID    string `json:"project_id"`
+	RecordID     string `json:"record_id"`
+	ItemID       string `json:"item_id"`
+	Runner       string `json:"runner"`
+	JobID        string `json:"job_id"`
+	AttemptID    string `json:"attempt_id"`
+	EventID      string `json:"event_id"`
+	WorkRevision int    `json:"work_revision"`
+	Path         string `json:"path"`
+	RelPath      string `json:"rel_path"`
+	Sha256       string `json:"sha256"`
+	Kind         string `json:"kind"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type RunTurn struct {
@@ -1048,6 +1053,7 @@ func (s *RuntimeStore) Migrate() error {
 			workspace_path TEXT NOT NULL DEFAULT '',
 			session_ref TEXT NOT NULL DEFAULT '',
 			cloud_task_id TEXT NOT NULL DEFAULT '',
+			provider_idempotency_key TEXT NOT NULL DEFAULT '',
 			cloud_status TEXT NOT NULL DEFAULT '',
 			cloud_environment_id TEXT NOT NULL DEFAULT '',
 			cloud_attempt_number INTEGER NOT NULL DEFAULT 0,
@@ -1159,6 +1165,8 @@ func (s *RuntimeStore) Migrate() error {
 			runner TEXT NOT NULL DEFAULT '',
 			job_id TEXT NOT NULL DEFAULT '',
 			attempt_id TEXT NOT NULL DEFAULT '',
+			event_id TEXT NOT NULL DEFAULT '',
+			work_revision INTEGER NOT NULL DEFAULT 0,
 			path TEXT NOT NULL,
 			rel_path TEXT NOT NULL DEFAULT '',
 			sha256 TEXT NOT NULL DEFAULT '',
@@ -1387,6 +1395,21 @@ func (s *RuntimeStore) Migrate() error {
 	if err := s.ensureColumn("projects", "repository_key", `ALTER TABLE projects ADD COLUMN repository_key TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	for _, column := range []struct {
+		name string
+		stmt string
+	}{
+		{"event_id", `ALTER TABLE apply_inputs ADD COLUMN event_id TEXT NOT NULL DEFAULT ''`},
+		{"work_revision", `ALTER TABLE apply_inputs ADD COLUMN work_revision INTEGER NOT NULL DEFAULT 0`},
+	} {
+		if err := s.ensureColumn("apply_inputs", column.name, column.stmt); err != nil {
+			return err
+		}
+	}
+	if _, err := s.exec(`CREATE INDEX IF NOT EXISTS apply_inputs_scope
+		ON apply_inputs(project_id, record_id, work_revision, event_id, job_id, created_at)`); err != nil {
+		return err
+	}
 	if err := s.backfillProjectRepositoryKeys(); err != nil {
 		return err
 	}
@@ -1424,6 +1447,9 @@ func (s *RuntimeStore) Migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("run_authorizations", "attempt_id", `ALTER TABLE run_authorizations ADD COLUMN attempt_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("attempts", "provider_idempotency_key", `ALTER TABLE attempts ADD COLUMN provider_idempotency_key TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("runs", "work_revision", `ALTER TABLE runs ADD COLUMN work_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
@@ -1690,11 +1716,12 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"}, {"run_authorizations", "attempt_id"},
 		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"}, {"run_directives", "wave_id"}, {"run_directives", "authorization_fingerprint"}, {"run_directives", "wave_authorized_at"},
 		{"run_identity_metadata", "project_id"}, {"run_identity_metadata", "record_id"},
-		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"},
+		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"}, {"attempts", "provider_idempotency_key"},
 		{"turns", "attempt_id"}, {"turns", "project_id"}, {"turns", "record_id"},
 		{"sessions", "project_id"}, {"sessions", "record_id"}, {"sessions", "session_ref"},
 		{"supervisor_decisions", "project_id"}, {"supervisor_decisions", "record_id"}, {"supervisor_decisions", "decision_id"},
 		{"apply_inputs", "project_id"}, {"apply_inputs", "record_id"},
+		{"apply_inputs", "event_id"}, {"apply_inputs", "work_revision"},
 		{"review_results", "project_id"}, {"review_results", "record_id"},
 		{"gate_ledger", "project_id"}, {"gate_ledger", "record_id"},
 		{"resource_leases", "resource_name"}, {"resource_lease_events", "resource_name"},
@@ -2709,7 +2736,16 @@ func (s *RuntimeStore) checkpointCodexCloudTaskStarted(run RunStatus, checkpoint
 		return false, tuskerError(errorInvalidArg, "codex cloud checkpoint requires project, task, attempt, lease owner/generation, and cloud task id")
 	}
 	if !runUsesCodexCloud(run) {
-		return false, tuskerError(errorInvalidArg, "codex cloud checkpoint requires the codex_cloud runner")
+		// Named runner profiles preserve their configured alias in the run. A
+		// durable provider reservation is the store-level proof that the alias
+		// was admitted through the external-provider path.
+		reservationKey, err := s.ProviderIdempotencyKeyForAttempt(run.ProjectID, run.RecordID, run.ActiveAttemptID)
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(reservationKey) == "" {
+			return false, tuskerError(errorInvalidArg, "codex cloud checkpoint requires the codex_cloud runner or a provider reservation")
+		}
 	}
 	now = now.UTC()
 	if now.IsZero() {
@@ -3197,6 +3233,43 @@ type RuntimeLeaseClaimPrecondition struct {
 	ProjectConcurrencyLimit int
 }
 
+func externalThreadReservationCountTx(tx *sql.Tx, projectID, recordID string) (int, error) {
+	var reservations, legacyJobs int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM attempts
+		WHERE project_id = ? AND record_id = ? AND provider_idempotency_key != ''`, projectID, recordID).Scan(&reservations); err != nil {
+		return 0, err
+	}
+	if err := tx.QueryRow(`SELECT COUNT(DISTINCT event.job_id) FROM external_loop_events event
+		WHERE event.project_id = ? AND event.record_id = ? AND event.job_id != ''
+		AND NOT EXISTS (
+			SELECT 1 FROM attempts attempt
+			WHERE attempt.project_id = event.project_id AND attempt.record_id = event.record_id
+			AND attempt.cloud_task_id = event.job_id
+		)`, projectID, recordID).Scan(&legacyJobs); err != nil {
+		return 0, err
+	}
+	return reservations + legacyJobs, nil
+}
+
+func (s *RuntimeStore) ExternalThreadReservationCount(projectID, recordID string) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	return externalThreadReservationCountTx(tx, projectID, recordID)
+}
+
+func (s *RuntimeStore) ProviderIdempotencyKeyForAttempt(projectID, recordID, attemptID string) (string, error) {
+	var key string
+	err := s.queryRowScan(`SELECT provider_idempotency_key FROM attempts
+		WHERE project_id = ? AND record_id = ? AND attempt_id = ?`, []any{projectID, recordID, attemptID}, &key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return strings.TrimSpace(key), err
+}
+
 func (s *RuntimeStore) ClaimRunLease(projectID, recordID, owner string, generation int, ttl time.Duration, now time.Time, dispatchable bool, handRun bool, precondition RuntimeLeaseClaimPrecondition) (bool, error) {
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return false, tuskerError(errorInvalidArg, "lease claim requires project_id and record_id")
@@ -3294,6 +3367,15 @@ func (s *RuntimeStore) claimRunLeaseWithDaemonAttempt(run RunStatus, owner strin
 			return err
 		}
 		defer tx.Rollback()
+		if attempt.ProviderIdempotencyKey != "" && attempt.ExternalThreadCap > 0 {
+			count, err := externalThreadReservationCountTx(tx, run.ProjectID, run.RecordID)
+			if err != nil {
+				return err
+			}
+			if count >= attempt.ExternalThreadCap {
+				return nil
+			}
+		}
 		result, err := tx.Exec(`UPDATE runs
 			SET lease_state = 'claimed', lease_owner = ?, lease_generation = ?, lease_expires_at = ?, lease_host = ?,
 				last_heartbeat_at = ?, updated_at = ?, hand_run = 0, attempt_count = ?, active_attempt_id = ?,
@@ -3324,7 +3406,7 @@ func (s *RuntimeStore) claimRunLeaseWithDaemonAttempt(run RunStatus, owner strin
 		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, attempt_id, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, attempt.AttemptID, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, provider_idempotency_key, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.ProviderIdempotencyKey, attempt.Outcome, attempt.StartedAt); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -3381,6 +3463,15 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 			return err
 		}
 		defer tx.Rollback()
+		if attempt.ProviderIdempotencyKey != "" && attempt.ExternalThreadCap > 0 {
+			count, err := externalThreadReservationCountTx(tx, run.ProjectID, run.RecordID)
+			if err != nil {
+				return err
+			}
+			if count >= attempt.ExternalThreadCap {
+				return nil
+			}
+		}
 		var scopeJSON string
 		scopeKey := waveExecutionScopeKey(run.ProjectID, auth.DirectiveWaveID)
 		scopeErr := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, scopeKey).Scan(&scopeJSON)
@@ -3465,8 +3556,8 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 			VALUES(?,?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, attempt.AttemptID, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, provider_idempotency_key, outcome, started_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.ProviderIdempotencyKey, attempt.Outcome, attempt.StartedAt); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -3876,8 +3967,8 @@ func saveAttempt(executor runtimeAttemptExecutor, attempt RunAttempt) error {
 		}
 	}
 	_, err := executor.Exec(`INSERT INTO attempts (
-		attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, provider_idempotency_key, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(attempt_id) DO UPDATE SET
 		project_id=CASE WHEN attempts.project_id != '' THEN attempts.project_id ELSE excluded.project_id END,
 		record_id=CASE WHEN attempts.record_id != '' THEN attempts.record_id ELSE excluded.record_id END,
@@ -3894,6 +3985,7 @@ func saveAttempt(executor runtimeAttemptExecutor, attempt RunAttempt) error {
 		merge_rule=excluded.merge_rule,
 		fanout_group=excluded.fanout_group,
 		cloud_task_id=excluded.cloud_task_id,
+		provider_idempotency_key=CASE WHEN attempts.provider_idempotency_key != '' THEN attempts.provider_idempotency_key ELSE excluded.provider_idempotency_key END,
 		cloud_status=excluded.cloud_status,
 		cloud_environment_id=excluded.cloud_environment_id,
 		cloud_attempt_number=excluded.cloud_attempt_number,
@@ -3913,7 +4005,7 @@ func saveAttempt(executor runtimeAttemptExecutor, attempt RunAttempt) error {
 		last_error=excluded.last_error,
 		started_at=CASE WHEN attempts.started_at != '' THEN attempts.started_at ELSE excluded.started_at END,
 		finished_at=excluded.finished_at`,
-		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.EndStateJSON, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.TurnsUsed, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
+		attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.SessionRef, attempt.ParentAttemptID, attempt.ChildType, attempt.BranchName, attempt.MergeRule, attempt.FanoutGroup, attempt.CloudTaskID, attempt.ProviderIdempotencyKey, attempt.CloudStatus, attempt.CloudEnvironmentID, attempt.CloudAttemptNumber, attempt.PullRequestURL, attempt.ApplyRef, attempt.LogsSummary, attempt.FinalSummary, attempt.EndStateJSON, attempt.ProcessPID, attempt.Outcome, attempt.ExitCode, attempt.TurnsUsed, attempt.PromptPath, attempt.EventSinkPath, attempt.RawLogPath, attempt.StatusPath, attempt.LastError, attempt.StartedAt, attempt.FinishedAt)
 	return err
 }
 
@@ -4310,24 +4402,89 @@ func (s *RuntimeStore) UpsertApplyInput(input RuntimeApplyInput) (RuntimeApplyIn
 		input.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.exec(`INSERT INTO apply_inputs (
-		project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		project_id, record_id, item_id, runner, job_id, attempt_id, event_id, work_revision, path, rel_path, sha256, kind, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(project_id, record_id, sha256, path) DO UPDATE SET
 		item_id=excluded.item_id,
 		runner=excluded.runner,
 		job_id=excluded.job_id,
 		attempt_id=excluded.attempt_id,
+		event_id=excluded.event_id,
+		work_revision=excluded.work_revision,
 		rel_path=excluded.rel_path,
 		kind=excluded.kind`,
-		input.ProjectID, input.RecordID, input.ItemID, input.Runner, input.JobID, input.AttemptID, input.Path, input.RelPath, input.Sha256, input.Kind, input.CreatedAt)
+		input.ProjectID, input.RecordID, input.ItemID, input.Runner, input.JobID, input.AttemptID, input.EventID, input.WorkRevision, input.Path, input.RelPath, input.Sha256, input.Kind, input.CreatedAt)
 	return input, err
 }
 
 func (s *RuntimeStore) ListApplyInputsForRun(projectID, recordID string) ([]RuntimeApplyInput, error) {
-	rows, err := s.query(`SELECT project_id, record_id, item_id, runner, job_id, attempt_id, path, rel_path, sha256, kind, created_at
+	events, err := s.ListExternalLoopEvents(projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if strings.TrimSpace(event.Status) == "blocked" ||
+			normalizeExternalLoopStage(event.Stage) != externalLoopStageCollected ||
+			normalizeExternalLoopAction(event.Action) != externalLoopActionApplyPatch {
+			continue
+		}
+		revisionText, _ := externalLoopEventRevisionMaterial(event)
+		revision, parseErr := strconv.Atoi(revisionText)
+		if parseErr != nil {
+			continue
+		}
+		return s.ListApplyInputsForRunScope(projectID, recordID, revision, event.EventID, event.JobID)
+	}
+	// Unbound rows have no durable event/job identity. Without a live run
+	// scope, returning them would revive legacy or stale provider artifacts.
+	return nil, nil
+}
+
+// ListApplyInputsForRunScope returns only inputs belonging to one task
+// revision and an admitted collection event or explicitly named provider job.
+func (s *RuntimeStore) ListApplyInputsForRunScope(projectID, recordID string, workRevision int, eventID, jobID string) ([]RuntimeApplyInput, error) {
+	if strings.TrimSpace(eventID) == "" && strings.TrimSpace(jobID) == "" {
+		return nil, nil
+	}
+	return s.listApplyInputsForRun(projectID, recordID, true, workRevision, eventID, jobID)
+}
+
+func (s *RuntimeStore) listApplyInputsForRun(projectID, recordID string, scoped bool, workRevision int, eventID, jobID string) ([]RuntimeApplyInput, error) {
+	query := `SELECT project_id, record_id, item_id, runner, job_id, attempt_id, event_id, work_revision, path, rel_path, sha256, kind, created_at
 		FROM apply_inputs
-		WHERE project_id = ? AND record_id = ?
-		ORDER BY created_at ASC, rel_path ASC, path ASC`, projectID, recordID)
+		WHERE project_id = ? AND record_id = ?`
+	args := []any{projectID, recordID}
+	if scoped {
+		query += ` AND work_revision = ?`
+		args = append(args, workRevision)
+		if strings.TrimSpace(eventID) != "" {
+			// Inputs are normally bound to the admitted event. Keep unbound rows
+			// for the same event/job visible only during the crash window, and only
+			// when the provider job identity is present.
+			query += ` AND event_id = ?`
+			args = append(args, eventID)
+			if strings.TrimSpace(jobID) != "" {
+				query = strings.TrimSuffix(query, " AND event_id = ?")
+				query += ` AND (event_id = ? OR (event_id = '' AND job_id = ? AND NOT EXISTS (
+					SELECT 1 FROM apply_inputs current_input
+					WHERE current_input.project_id = apply_inputs.project_id
+					  AND current_input.record_id = apply_inputs.record_id
+					  AND current_input.work_revision = apply_inputs.work_revision
+					  AND current_input.event_id = ?
+				)))`
+				args = append(args, jobID, eventID)
+			}
+		} else if strings.TrimSpace(jobID) != "" {
+			query += ` AND event_id = '' AND job_id = ?`
+			args = append(args, jobID)
+		} else {
+			query += ` AND event_id = ''`
+		}
+	}
+	query += `
+		ORDER BY created_at ASC, rel_path ASC, path ASC`
+	rows, err := s.query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -4335,12 +4492,27 @@ func (s *RuntimeStore) ListApplyInputsForRun(projectID, recordID string) ([]Runt
 	var out []RuntimeApplyInput
 	for rows.Next() {
 		var input RuntimeApplyInput
-		if err := rows.Scan(&input.ProjectID, &input.RecordID, &input.ItemID, &input.Runner, &input.JobID, &input.AttemptID, &input.Path, &input.RelPath, &input.Sha256, &input.Kind, &input.CreatedAt); err != nil {
+		if err := rows.Scan(&input.ProjectID, &input.RecordID, &input.ItemID, &input.Runner, &input.JobID, &input.AttemptID, &input.EventID, &input.WorkRevision, &input.Path, &input.RelPath, &input.Sha256, &input.Kind, &input.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, input)
 	}
 	return out, rows.Err()
+}
+
+func (s *RuntimeStore) BindApplyInputsToExternalEvent(projectID, recordID string, workRevision int, jobID, eventID string) error {
+	projectID = strings.TrimSpace(projectID)
+	recordID = strings.TrimSpace(recordID)
+	jobID = strings.TrimSpace(jobID)
+	eventID = strings.TrimSpace(eventID)
+	if projectID == "" || recordID == "" || jobID == "" || eventID == "" {
+		return nil
+	}
+	_, err := s.exec(`UPDATE apply_inputs
+		SET event_id = ?
+		WHERE project_id = ? AND record_id = ? AND work_revision = ? AND job_id = ? AND event_id = ''`,
+		eventID, projectID, recordID, workRevision, jobID)
+	return err
 }
 
 const externalLoopCapsSettingPrefix = "external_loop_caps:"
@@ -4580,6 +4752,11 @@ func (s *RuntimeStore) AdmitExternalLoopEventWithOverrides(event ExternalLoopEve
 		}
 		admission.Caps = effectiveCaps
 		current := externalLoopCountersForEvents(events)
+		reservedThreads, err := externalThreadReservationCountTx(tx, event.ProjectID, event.RecordID)
+		if err != nil {
+			return err
+		}
+		current.ExternalThreads = maxInt(current.ExternalThreads, reservedThreads)
 		admission.Counters = current
 		findExisting := func(key string) (*ExternalLoopEvent, error) {
 			row := tx.QueryRow(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at

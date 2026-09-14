@@ -388,13 +388,17 @@ func workReconcileCmd(args Args) error {
 	if len(scope) == 0 {
 		return tuskerError(errorInvalidTransition, "work reconcile requires declared owned paths, generated outputs, or spec references before submission")
 	}
-	boundMaterial, err := workspaceTreeStateHashForPaths(run.WorkspacePath, scope)
+	generatedOutputScope, generatedErr := taskGeneratedOutputScope(note)
+	if generatedErr != nil {
+		return generatedErr
+	}
+	boundMaterial, err := workspaceTreeStateHashForPaths(run.WorkspacePath, scope, generatedOutputScope)
 	if err != nil {
 		emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, "", scope, "", "submit from the bound workspace or release and restart where the implementation lives"))
 		return tuskerError("WORKSPACE_MISMATCH", "work reconcile cannot read bound workspace material: "+err.Error(), withHint("submit from the bound workspace or release and restart where the implementation lives"))
 	}
 	if !workspacePathsCompatible(checkout, run.WorkspacePath) {
-		currentMaterial, hashErr := workspaceTreeStateHashForPaths(checkout, scope)
+		currentMaterial, hashErr := workspaceTreeStateHashForPaths(checkout, scope, generatedOutputScope)
 		if hashErr != nil || currentMaterial != boundMaterial {
 			emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, boundMaterial, scope, "", "release the stray claim and start where the implementation lives"))
 			return tuskerError("WORKSPACE_MISMATCH", "work reconcile refused: current checkout does not match the bound implementation workspace", withHint("run `tusker work submit "+id+"` from the bound workspace, or `tusker work cancel "+id+" --by "+run.LeaseOwner+" --reason <text>` then `tusker work start "+id+"` where the implementation lives"))

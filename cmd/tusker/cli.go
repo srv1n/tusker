@@ -1666,7 +1666,11 @@ Verified closures on a later pass:
 
 Use one JSON array for all findings or closures. Never repeat --finding or
 --closure; the array preserves every record. Blocking findings require stable
-id, acceptance, evidence, consequence, closure_condition, and exact material.`)
+id, acceptance, evidence, consequence, closure_condition, repair_scope, and
+exact material. Use repair_scope=material for source/implementation/artifact
+repair and repair_scope=proof when only verification or the task ledger must
+change; omitted scope is material. A later independent review must bind the
+exact current material; same material is valid only for proof-scoped findings.`)
 }
 
 func printVerifyHelp() {

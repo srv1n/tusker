@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -12,14 +14,50 @@ import (
 	"time"
 )
 
+func TestExternalLoopContinuationProfilePreservesOriginatingNamedPolicy(t *testing.T) {
+	network := true
+	wf := Workflow{RunnerProfiles: map[string]RunnerProfileDefinition{
+		"external-review": {
+			Harness:          string(RunnerCodexCloud),
+			Model:            "gpt-6-pro",
+			Effort:           "high",
+			PermissionPreset: "read-only",
+			Command:          "chatgpt-handoff resume",
+			Sandbox:          RunnerSandboxDefinition{Mode: "read-only", Network: &network},
+			Subagents:        RunnerSubagentPolicyDefinition{Allowed: boolPtr(false), MaxConcurrent: 0},
+		},
+	}}
+	run := RunStatus{
+		Runner:        "chatgpt-browser",
+		RunnerProfile: "external-review",
+		RunnerModel:   "gpt-6-pro",
+		RunnerEffort:  "high",
+	}
+
+	got := externalLoopContinuationProfile(wf, run, "chatgpt-browser")
+	assertEqual(t, "external-review", got.Name, "continuation profile name")
+	assertEqual(t, "chatgpt-browser", got.Definition.Harness, "continuation runner adapter")
+	assertEqual(t, "gpt-6-pro", got.Definition.Model, "continuation model")
+	assertEqual(t, "high", got.Definition.Effort, "continuation effort")
+	assertEqual(t, "read-only", got.Definition.PermissionPreset, "continuation permission preset")
+	assertEqual(t, "chatgpt-handoff resume", got.Definition.Command, "continuation command")
+	assertEqual(t, "read-only", got.Definition.Sandbox.Mode, "continuation sandbox")
+	if got.Definition.Sandbox.Network == nil || !*got.Definition.Sandbox.Network {
+		t.Fatalf("continuation sandbox network policy was lost: %#v", got.Definition.Sandbox)
+	}
+	if got.Definition.Subagents.Allowed == nil || *got.Definition.Subagents.Allowed || got.Definition.Subagents.MaxConcurrent != 0 {
+		t.Fatalf("continuation subagent policy was lost: %#v", got.Definition.Subagents)
+	}
+}
+
 func TestDaemonAutoAdvanceExternalCollectsAndDispatchesApplyInput(t *testing.T) {
 	vault := automationTestVault(t)
 	installCodexSleepShimForTest(t)
 	writeDaemonExternalLoopConfig(t, vault, defaultCodexExecCommand())
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon auto advance", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
-
 	sourceDir := writeExternalFetchFiles(t, map[string]string{
 		"fix.patch": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n",
 		"notes.md":  "# Review\n\nPatch is scoped.\n",
@@ -40,7 +78,7 @@ func TestDaemonAutoAdvanceExternalCollectsAndDispatchesApplyInput(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inputs) != 1 || inputs[0].RelPath != "architect/APP-T-0001/fix.patch" {
+	if len(inputs) != 1 || inputs[0].RelPath != filepath.ToSlash(filepath.Join("architect", "APP-T-0001", "jobs", externalArtifactScope("cgpt-auto-1"), "fix.patch")) {
 		t.Fatalf("expected one collected apply input, got %#v", inputs)
 	}
 	events, err := daemon.store.ListExternalLoopEvents(project.ProjectID, "APP-T-0001")
@@ -56,7 +94,7 @@ func TestDaemonAutoAdvanceExternalCollectsAndDispatchesApplyInput(t *testing.T) 
 	if !isDispatchingLeaseState(run.LeaseState) {
 		t.Fatalf("expected daemon to dispatch apply runner, got run %#v", run)
 	}
-	assertExists(t, filepath.Join(project.RepoRoot, "architect", "APP-T-0001", "fix.patch"))
+	assertExists(t, filepath.Join(project.RepoRoot, "architect", "APP-T-0001", "jobs", externalArtifactScope("cgpt-auto-1"), "fix.patch"))
 	if strings.TrimSpace(run.CloudTaskID) != "" {
 		t.Fatalf("apply run should not retain external cloud task id, got %#v", run)
 	}
@@ -112,6 +150,7 @@ func TestDaemonAutoAdvanceExternalApplyFailureDispatchesRepairContinuation(t *te
 	writeDaemonExternalLoopConfig(t, vault, `true`)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon repair continuation", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	// This continuation belongs to the external browser thread. Clear the
 	// legacy fixture's explicit direct profile so profile resolution preserves
@@ -136,7 +175,9 @@ func TestDaemonAutoAdvanceExternalApplyFailureDispatchesRepairContinuation(t *te
 		t.Fatal(err)
 	}
 	if !hasExternalLoopEvent(events, externalLoopStageApplyFailed, externalLoopActionContinueThreadOnFailure) {
-		t.Fatalf("expected apply_failed/continue_thread event, got %#v", events)
+		debugRun := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+		debugInputs, _ := listCurrentExternalApplyInputs(daemon.store, project.ProjectID, "APP-T-0001", debugRun)
+		t.Fatalf("expected apply_failed/continue_thread event, got %#v run=%#v inputs=%#v", events, debugRun, debugInputs)
 	}
 	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
 	assertEqual(t, "chatgpt-browser", run.Runner, "repair runner")
@@ -151,13 +192,55 @@ func TestDaemonAutoAdvanceExternalApplyFailureDispatchesRepairContinuation(t *te
 
 func TestDaemonAutoAdvanceExternalReviewAcceptedClosesLowRiskTask(t *testing.T) {
 	vault := automationTestVault(t)
-	writeDaemonExternalLoopConfig(t, vault, `true`)
+	writeDaemonExternalLoopConfig(t, vault, defaultCodexExecCommand())
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon accepted external review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	project := registerAutomationTestProject(t, vault)
+	initializeOrchestrationGitRepo(t, project.RepoRoot)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
-	project := registerAutomationTestProject(t, vault)
+	facts, err := captureGitBranchFacts(project.RepoRoot, "main", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"work_revision": 1, "source_sha": facts.Head, "proof_required": []string{"focused_test"}})
+	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0001")
+	if err := requestV7ReviewAfterHandoff(vault, "APP-T-0001", Args{"vault": vault, "quiet": "true", "by": "agent:test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := v7TestVerificationMutation(Args{
+		"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:gate",
+		"covers": "A1", "check": "command: go test ./cmd/tusker -run TestV7 -count=1",
+		"result": "pass", "note": "Current external-close fixture proof.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	material := seedExternalReviewParentAttempt(t, project, "APP-T-0001", facts.Head)
+	seedExternalReviewAttempt(t, project, "APP-T-0001", "attempt-external-review-1", "execute-external-apply")
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
 	sourceDir := writeExternalFetchFiles(t, map[string]string{
-		"review.md": "# RESULT\n\n```json\n{\"kind\":\"review\",\"verdict\":\"approve\",\"risk\":\"low\",\"summary\":\"All acceptance checks pass.\",\"findings\":[]}\n```\n",
+		"review.md": externalDaemonReviewPacket(t, ReviewResult{
+			Schema:              reviewResultSchema,
+			ProjectID:           project.ProjectID,
+			TaskID:              "APP-T-0001",
+			TaskStateRev:        stringField(note.Data, "state_rev"),
+			WorkRevision:        intField(note.Data, "work_revision"),
+			ImplementationSHA:   facts.Head,
+			AttemptID:           "attempt-external-review-1",
+			Actor:               "reviewer:agent",
+			Runner:              "chatgpt-browser",
+			RunnerProfile:       "external-review",
+			WorkerPolicyFP:      "sha256:" + strings.Repeat("a", 64),
+			Covers:              []string{"A1"},
+			ProofFingerprint:    "sha256:" + strings.Repeat("b", 64),
+			GateFingerprint:     "sha256:" + strings.Repeat("c", 64),
+			MaterialFingerprint: material,
+			Verdict:             "pass",
+			Summary:             "All acceptance checks pass.",
+			CreatedAt:           "2026-09-14T00:00:00Z",
+		}),
 	})
 	installFakeExternalCollectFetcher(t, sourceDir, []string{"review.md"})
 	seedReleasedExternalReviewRun(t, project, "APP-T-0001", "chatgpt-browser", "cgpt-review-accepted")
@@ -178,11 +261,14 @@ func TestDaemonAutoAdvanceExternalReviewAcceptedClosesLowRiskTask(t *testing.T) 
 	if !hasExternalLoopEvent(events, externalLoopStageCollected, externalLoopActionCloseTask) {
 		t.Fatalf("expected collected/close_task event, got %#v", events)
 	}
-	note, err := resolveNote(project.VaultRoot, "APP-T-0001")
+	note, err = resolveNote(project.VaultRoot, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "done", stringField(note.Data, "status"), "task status")
+	if stringField(note.Data, "status") != "done" {
+		run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
+		t.Fatalf("task status: expected %q, got %q events=%#v run=%#v note=%#v", "done", stringField(note.Data, "status"), events, run, note.Data)
+	}
 	if strings.TrimSpace(stringField(note.Data, "closed_at")) == "" {
 		t.Fatalf("expected task to be closed, got %#v", note.Data)
 	}
@@ -322,12 +408,18 @@ func TestDaemonAutoAdvanceExternalApplySuccessDispatchesExternalReview(t *testin
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
 	project := registerAutomationTestProject(t, vault)
-	// Keep the review continuation on the originating external browser runner;
-	// this fixture is not testing the local direct emergency profile.
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_profile", ""); err != nil {
+	initializeOrchestrationGitRepo(t, project.RepoRoot)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"work_revision": 1})
+	seedCollectedExternalApplyState(t, project, "APP-T-0001", "cgpt-original-review")
+	runGitDir(t, project.RepoRoot, "add", filepath.ToSlash(filepath.Join("architect", "APP-T-0001", "jobs", externalArtifactScope("cgpt-original-review"), "fix.patch")))
+	runGitDir(t, project.RepoRoot, "commit", "-m", "seed external apply artifact")
+	facts, err := captureGitBranchFacts(project.RepoRoot, "main", time.Now().UTC())
+	if err != nil {
 		t.Fatal(err)
 	}
-	seedCollectedExternalApplyState(t, project, "APP-T-0001", "cgpt-original-review")
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": facts.Head})
+	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0001")
+	seedExternalReviewParentAttempt(t, project, "APP-T-0001", facts.Head)
 	seedApplyResultRun(t, project, "APP-T-0001", string(LeaseStateReleased), string(AttemptOutcomeSucceeded), "")
 
 	daemon, err := NewDaemon(DefaultStateRoot())
@@ -447,7 +539,12 @@ func seedCollectedExternalApplyState(t *testing.T, project RegisteredProject, ta
 		t.Fatal(err)
 	}
 	defer store.Close()
-	artifactDir := filepath.Join(project.RepoRoot, "architect", taskID)
+	note, err := resolveNote(project.VaultRoot, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workRevision := intField(note.Data, "work_revision")
+	artifactDir := filepath.Join(project.RepoRoot, "architect", taskID, "jobs", externalArtifactScope(jobID))
 	if err := ensureDir(artifactDir); err != nil {
 		t.Fatal(err)
 	}
@@ -459,30 +556,32 @@ func seedCollectedExternalApplyState(t *testing.T, project RegisteredProject, ta
 	sum := sha256.Sum256(patchBody)
 	hash := hex.EncodeToString(sum[:])
 	if _, err := store.UpsertApplyInput(RuntimeApplyInput{
-		ProjectID: project.ProjectID,
-		RecordID:  taskID,
-		ItemID:    taskID,
-		Runner:    "chatgpt-browser",
-		JobID:     jobID,
-		AttemptID: "attempt-external-1",
-		Path:      patchPath,
-		RelPath:   filepath.ToSlash(filepath.Join("architect", taskID, "fix.patch")),
-		Sha256:    hash,
-		Kind:      "patch",
+		ProjectID:    project.ProjectID,
+		RecordID:     taskID,
+		ItemID:       taskID,
+		Runner:       "chatgpt-browser",
+		JobID:        jobID,
+		AttemptID:    "attempt-external-1",
+		WorkRevision: workRevision,
+		Path:         patchPath,
+		RelPath:      filepath.ToSlash(filepath.Join("architect", taskID, "jobs", externalArtifactScope(jobID), "fix.patch")),
+		Sha256:       hash,
+		Kind:         "patch",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	event := ExternalLoopEvent{
-		ProjectID: project.ProjectID,
-		RecordID:  taskID,
-		ItemID:    taskID,
-		Runner:    "chatgpt-browser",
-		JobID:     jobID,
-		AttemptID: "attempt-external-1",
-		Stage:     externalLoopStageCollected,
-		Action:    externalLoopActionApplyPatch,
-		Status:    "ok",
-		Reason:    "collected one external apply input",
+		ProjectID:   project.ProjectID,
+		RecordID:    taskID,
+		ItemID:      taskID,
+		Runner:      "chatgpt-browser",
+		JobID:       jobID,
+		AttemptID:   "attempt-external-1",
+		Stage:       externalLoopStageCollected,
+		Action:      externalLoopActionApplyPatch,
+		Status:      "ok",
+		Reason:      "collected one external apply input",
+		PayloadJSON: fmt.Sprintf(`{"work_revision":%d}`, workRevision),
 	}
 	event.IdempotencyKey = externalLoopIdempotencyKey(event)
 	if _, _, err := store.SaveExternalLoopEvent(event); err != nil {
@@ -492,6 +591,11 @@ func seedCollectedExternalApplyState(t *testing.T, project RegisteredProject, ta
 
 func seedApplyResultRun(t *testing.T, project RegisteredProject, taskID, leaseState, outcome, lastError string) {
 	t.Helper()
+	note, err := resolveNote(project.VaultRoot, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workRevision := intField(note.Data, "work_revision")
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)
@@ -499,22 +603,119 @@ func seedApplyResultRun(t *testing.T, project RegisteredProject, taskID, leaseSt
 	defer store.Close()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := store.UpsertRun(RunStatus{
-		ProjectID:      project.ProjectID,
-		RecordID:       taskID,
-		ItemID:         taskID,
-		Runner:         "codex_exec",
-		Lane:           runLaneExecute,
-		LeaseState:     leaseState,
-		AttemptOutcome: outcome,
-		WorkRevision:   1,
-		AttemptCount:   1,
-		LastError:      lastError,
-		UpdatedAt:      now,
-		StartedAt:      now,
-		LastEventAt:    now,
+		ProjectID:       project.ProjectID,
+		RecordID:        taskID,
+		ItemID:          taskID,
+		Runner:          "codex_exec",
+		Lane:            runLaneExecute,
+		LeaseGeneration: 1,
+		LeaseState:      leaseState,
+		AttemptOutcome:  outcome,
+		WorkRevision:    workRevision,
+		AttemptCount:    1,
+		LastError:       lastError,
+		UpdatedAt:       now,
+		StartedAt:       now,
+		LastEventAt:     now,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveRunAuthorization(RunAuthorization{
+		ProjectID: project.ProjectID, RecordID: taskID, LeaseGeneration: 1,
+		Source: "daemon_auto", Actor: "daemon", Trigger: "external_apply",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func refreshAutomationV7TaskContractFingerprint(t *testing.T, vault, taskID string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "tasks", taskID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedExternalReviewParentAttempt(t *testing.T, project RegisteredProject, taskID, source string) string {
+	t.Helper()
+	note, err := resolveNote(project.VaultRoot, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := canonicalTaskMaterialScope(project.VaultRoot, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := workspaceTreeStateHashForPaths(project.RepoRoot, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveAttempt(RunAttempt{
+		AttemptID: "execute-external-apply", ProjectID: project.ProjectID, RecordID: taskID, ItemID: taskID,
+		Runner: "codex_exec", Lane: runLaneExecute, WorkRevision: intField(note.Data, "work_revision"), WorkspacePath: project.RepoRoot,
+		Outcome: string(AttemptOutcomeSucceeded), EndState: RunEndState{
+			Schema: "tusker.run-end-state/v2", HeadSHA: source, WorktreePath: project.RepoRoot,
+			MaterialFingerprint: material, MaterialScope: scope,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return material
+}
+
+func seedExternalReviewAttempt(t *testing.T, project RegisteredProject, taskID, attemptID, parentAttemptID string) {
+	t.Helper()
+	note, err := resolveNote(project.VaultRoot, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveAttempt(RunAttempt{
+		AttemptID:       attemptID,
+		ProjectID:       project.ProjectID,
+		RecordID:        taskID,
+		ItemID:          taskID,
+		Runner:          "chatgpt-browser",
+		Lane:            runLaneReview,
+		WorkRevision:    intField(note.Data, "work_revision"),
+		WorkspacePath:   project.RepoRoot,
+		ParentAttemptID: parentAttemptID,
+		Outcome:         string(AttemptOutcomeSucceeded),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func externalDaemonReviewPacket(t *testing.T, result ReviewResult) string {
+	t.Helper()
+	result.ResultRevision = reviewResultFingerprint(result)
+	raw, err := json.Marshal(struct {
+		Kind string `json:"kind"`
+		ReviewResult
+	}{Kind: "review", ReviewResult: result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "# RESULT\n\n```json\n" + string(raw) + "\n```\n"
 }
 
 func hasExternalLoopEvent(events []ExternalLoopEvent, stage, action string) bool {

@@ -464,7 +464,10 @@ func reviewImplementationParent(store *RuntimeStore, vault, projectID, recordID 
 			continue
 		}
 		currentScope, scopeErr := canonicalTaskMaterialScope(vault, note)
-		if scopeErr != nil || strings.Join(currentScope, "\x00") != strings.Join(parent.EndState.MaterialScope, "\x00") {
+		currentGeneratedOutputScope, generatedScopeErr := taskGeneratedOutputScope(note)
+		if scopeErr != nil || generatedScopeErr != nil ||
+			strings.Join(currentScope, "\x00") != strings.Join(parent.EndState.MaterialScope, "\x00") ||
+			strings.Join(currentGeneratedOutputScope, "\x00") != strings.Join(parent.EndState.GeneratedOutputScope, "\x00") {
 			return RunAttempt{}, "", tuskerError(errorInvalidTransition, "review refused: declared implementation material scope changed after execute submission")
 		}
 		material, materialErr := verifiedImplementationWorkspaceMaterial(parent)
@@ -480,7 +483,7 @@ func verifiedImplementationWorkspaceMaterial(parent RunAttempt) (string, error) 
 	if strings.TrimSpace(parent.EndState.MaterialFingerprint) == "" || len(parent.EndState.MaterialScope) == 0 {
 		return "", tuskerError(errorInvalidTransition, "review session requires a declared implementation material scope and fingerprint")
 	}
-	material, err := workspaceTreeStateHashForPaths(parent.WorkspacePath, parent.EndState.MaterialScope)
+	material, err := workspaceTreeStateHashForPaths(parent.WorkspacePath, parent.EndState.MaterialScope, parent.EndState.GeneratedOutputScope)
 	if err != nil {
 		return "", tuskerError(errorInvalidTransition, "review session cannot read implementation workspace material: "+err.Error())
 	}
@@ -495,7 +498,7 @@ func workSessionReviewNext(run RunStatus, note Note, packet workSessionPacket) s
 	if packet.VerificationManifest != "" {
 		next += " --confirm-verification " + packet.VerificationManifest
 	}
-	return next + " --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<review summary>\"; for changes_requested append " + reviewerFindingFlagExample(packet.MaterialFingerprint) + "; for a repaired pass append " + reviewerClosureFlagExample(packet.MaterialFingerprint)
+	return next + " --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<review summary>\"; for changes_requested append " + reviewerFindingFlagExample(packet.MaterialFingerprint) + "; set repair_scope=material for source/implementation repair or repair_scope=proof for proof/task-ledger-only repair; for a repaired pass append " + reviewerClosureFlagExample(packet.MaterialFingerprint) + "; the later review must be independent and bind exact current material, with same material allowed only for proof scope"
 }
 
 func workSessionStartBlocker(blocker ReadinessBlocker) error {
@@ -683,6 +686,10 @@ func taskAuthoredMaterialScope(note Note) ([]string, error) {
 	paths = append(paths, normalizeList(note.Data["generated_outputs"])...)
 	paths = append(paths, normalizeList(note.Data["knowledge_nodes"])...)
 	return normalizeWorkspaceMaterialScope(paths)
+}
+
+func taskGeneratedOutputScope(note Note) ([]string, error) {
+	return normalizeWorkspaceMaterialScope(normalizeList(note.Data["generated_outputs"]))
 }
 
 func requireWorkSessionRevision(args Args) error {

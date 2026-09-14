@@ -23,23 +23,58 @@ func workspaceTreeStateHash(workspace string) (string, error) {
 // current worktree form, including untracked files. A nil scope is the gate
 // ledger's established whole-source scope; a non-empty scope is an immutable
 // work-session boundary and never widens to unrelated checkout paths.
-func workspaceTreeStateHashForPaths(workspace string, scope []string) (string, error) {
+//
+// generatedOutputRoots is optional so existing whole-source callers retain
+// their source-only behavior. When supplied, ignored files are enumerated only
+// below those exact declared roots; ignored files elsewhere remain invisible.
+func workspaceTreeStateHashForPaths(workspace string, scope []string, generatedOutputRoots ...[]string) (string, error) {
+	if len(generatedOutputRoots) > 1 {
+		return "", fmt.Errorf("workspace material hash accepts at most one generated-output root list")
+	}
 	scope, err := normalizeWorkspaceMaterialScope(scope)
 	if err != nil {
 		return "", err
+	}
+	var generated []string
+	if len(generatedOutputRoots) == 1 {
+		generated, err = normalizeWorkspaceMaterialScope(generatedOutputRoots[0])
+		if err != nil {
+			return "", err
+		}
 	}
 	tracked, err := gitFactOutput(workspace, "ls-files", "-c", "-o", "--exclude-standard", "-z")
 	if err != nil {
 		return "", err
 	}
+	paths := make(map[string]struct{})
+	addPaths := func(raw string) {
+		for _, rel := range strings.Split(raw, "\x00") {
+			if rel != "" {
+				paths[filepath.ToSlash(rel)] = struct{}{}
+			}
+		}
+	}
+	addPaths(tracked)
+	if len(generated) > 0 {
+		ignored, ignoreErr := gitFactOutput(workspace, append([]string{"--literal-pathspecs", "ls-files", "-o", "-i", "--exclude-standard", "-z", "--"}, generated...)...)
+		if ignoreErr != nil {
+			return "", ignoreErr
+		}
+		addPaths(ignored)
+	}
+	ordered := make([]string, 0, len(paths))
+	for rel := range paths {
+		ordered = append(ordered, rel)
+	}
+	sort.Strings(ordered)
 	hash := sha256.New()
 	if scope != nil {
 		for _, path := range scope {
 			_, _ = hash.Write([]byte("scope\x00" + path + "\x00"))
 		}
 	}
-	for _, rel := range strings.Split(tracked, "\x00") {
-		if rel == "" || gateLedgerIgnoresPath(rel) || (scope != nil && !workspaceMaterialScopeContains(scope, rel)) {
+	for _, rel := range ordered {
+		if gateLedgerIgnoresPath(rel) || (scope != nil && !workspaceMaterialScopeContains(scope, rel)) {
 			continue
 		}
 		_, _ = hash.Write([]byte(rel))
@@ -55,16 +90,26 @@ func workspaceTreeStateHashForPaths(workspace string, scope []string) (string, e
 			if readErr != nil {
 				return "", readErr
 			}
-			_, _ = hash.Write([]byte("<symlink>" + target))
+			_, _ = hash.Write([]byte("<symlink>"))
+			_, _ = hash.Write([]byte{0})
+			_, _ = hash.Write([]byte(target))
+			_, _ = hash.Write([]byte{0})
 		} else if info.IsDir() {
 			_, _ = hash.Write([]byte("<directory>"))
-		} else {
+		} else if info.Mode().IsRegular() {
+			if info.Mode().Perm()&0o111 != 0 {
+				_, _ = hash.Write([]byte("<regular:executable>"))
+			} else {
+				_, _ = hash.Write([]byte("<regular>"))
+			}
 			content, readErr := os.ReadFile(path)
 			if readErr != nil {
 				return "", readErr
 			}
 			fileHash := sha256.Sum256(content)
 			_, _ = hash.Write(fileHash[:])
+		} else {
+			_, _ = hash.Write([]byte(fmt.Sprintf("<special:%#o>", info.Mode()&os.ModeType)))
 		}
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil

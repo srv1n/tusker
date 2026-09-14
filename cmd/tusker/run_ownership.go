@@ -597,7 +597,7 @@ func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA str
 	return captureRunEndStateForMaterialScope(workspace, nil, gateVerdicts, reportedBranch, reportedSHA, now)
 }
 
-func captureRunEndStateForMaterialScope(workspace string, materialScope []string, gateVerdicts, reportedBranch, reportedSHA string, now time.Time) (RunEndState, error) {
+func captureRunEndStateForMaterialScope(workspace string, materialScope []string, gateVerdicts, reportedBranch, reportedSHA string, now time.Time, generatedOutputRoots ...[]string) (RunEndState, error) {
 	verdicts, err := parseGateVerdicts(gateVerdicts)
 	if err != nil {
 		return RunEndState{}, err
@@ -613,11 +613,21 @@ func captureRunEndStateForMaterialScope(workspace string, materialScope []string
 	if err != nil {
 		return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot normalize implementation material scope: "+err.Error())
 	}
-	material, err := workspaceTreeStateHashForPaths(workspace, materialScope)
+	var generated []string
+	if len(generatedOutputRoots) > 1 {
+		return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot normalize generated-output material scope: multiple root lists")
+	}
+	if len(generatedOutputRoots) == 1 {
+		generated, err = normalizeWorkspaceMaterialScope(generatedOutputRoots[0])
+		if err != nil {
+			return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot normalize generated-output material scope: "+err.Error())
+		}
+	}
+	material, err := workspaceTreeStateHashForPaths(workspace, materialScope, generated)
 	if err != nil {
 		return RunEndState{}, tuskerError("END_STATE_CAPTURE_FAILED", "cannot fingerprint authoritative workspace material: "+err.Error(), withContext(map[string]any{"worktree_path": workspace}))
 	}
-	state := RunEndState{Schema: "tusker.run-end-state/v2", Branch: facts.Branch, HeadSHA: facts.Head, WorktreePath: workspace, Dirty: facts.Dirty, MaterialFingerprint: material, MaterialScope: materialScope, GateVerdicts: verdicts, ReportedBranch: strings.TrimSpace(reportedBranch), ReportedHeadSHA: strings.TrimSpace(reportedSHA), CapturedAt: now.UTC().Format(time.RFC3339)}
+	state := RunEndState{Schema: "tusker.run-end-state/v2", Branch: facts.Branch, HeadSHA: facts.Head, WorktreePath: workspace, Dirty: facts.Dirty, MaterialFingerprint: material, MaterialScope: materialScope, GeneratedOutputScope: generated, GateVerdicts: verdicts, ReportedBranch: strings.TrimSpace(reportedBranch), ReportedHeadSHA: strings.TrimSpace(reportedSHA), CapturedAt: now.UTC().Format(time.RFC3339)}
 	if state.ReportedBranch != "" && state.ReportedBranch != state.Branch {
 		state.Discrepancies = append(state.Discrepancies, fmt.Sprintf("reported branch %s differs from harness branch %s", state.ReportedBranch, state.Branch))
 	}
@@ -628,7 +638,21 @@ func captureRunEndStateForMaterialScope(workspace string, materialScope []string
 }
 
 func canonicalRunMaterialScope(store *RuntimeStore, run RunStatus) ([]string, error) {
-	return canonicalRunTaskScope(store, run, canonicalTaskMaterialScope)
+	scope, _, err := canonicalRunMaterialScopeWithGeneratedOutputs(store, run)
+	return scope, err
+}
+
+func canonicalRunMaterialScopeWithGeneratedOutputs(store *RuntimeStore, run RunStatus) ([]string, []string, error) {
+	var generated []string
+	scope, err := canonicalRunTaskScope(store, run, func(vault string, note Note) ([]string, error) {
+		var generatedErr error
+		generated, generatedErr = taskGeneratedOutputScope(note)
+		if generatedErr != nil {
+			return nil, generatedErr
+		}
+		return canonicalTaskMaterialScope(vault, note)
+	})
+	return scope, generated, err
 }
 
 func canonicalRunAuthoredScope(store *RuntimeStore, run RunStatus) ([]string, error) {
@@ -790,11 +814,11 @@ func runsLifecycleWithStore(store *RuntimeStore, args Args, action string, outpu
 		if findErr != nil || current == nil {
 			return firstNonNil(findErr, tuskerError(errorNotFound, "run not found: "+id))
 		}
-		materialScope, scopeErr := canonicalRunMaterialScope(store, *current)
+		materialScope, generatedOutputScope, scopeErr := canonicalRunMaterialScopeWithGeneratedOutputs(store, *current)
 		if scopeErr != nil {
 			return scopeErr
 		}
-		endState, captureErr := captureRunEndStateForMaterialScope(current.WorkspacePath, materialScope, firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), args.String("branch"), firstNonEmpty(args.String("head-sha"), args.String("sha")), time.Now().UTC())
+		endState, captureErr := captureRunEndStateForMaterialScope(current.WorkspacePath, materialScope, firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), args.String("branch"), firstNonEmpty(args.String("head-sha"), args.String("sha")), time.Now().UTC(), generatedOutputScope)
 		if captureErr != nil {
 			return captureErr
 		}

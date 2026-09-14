@@ -18,7 +18,7 @@ func TestSoftwareFactoryProofProductionExecutorRejectsZeroMatch(t *testing.T) {
 	if err := writeText(filepath.Join(repo, "proof_test.go"), "package fixture\nimport \"testing\"\nfunc TestExists(t *testing.T) {}\n"); err != nil {
 		t.Fatal(err)
 	}
-	acceptPendingCommand(t, vault, id, "go test ./... -run '^DefinitelyNoSuchTest$' -count=1 -v")
+	acceptPendingCommand(t, vault, id, "printf '=== RUN TestExists\\n'; go test ./... -run '^DefinitelyNoSuchTest$' -count=1 -v")
 	task, err := resolveV7Note(vault, id, "task")
 	if err != nil {
 		t.Fatal(err)
@@ -27,8 +27,8 @@ func TestSoftwareFactoryProofProductionExecutorRejectsZeroMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(failures) != 1 || !strings.Contains(failures[0].Message, "no matched-test evidence") {
-		t.Fatalf("zero-match command retained PASS: %#v", failures)
+	if len(failures) != 1 || !strings.Contains(failures[0].Message, "unsupported selector runner or shell syntax") {
+		t.Fatalf("compound zero-match command retained PASS: %#v", failures)
 	}
 	rows := parseV7VerificationRows(mustBody(t, filepath.Join(vault, "work", "tasks", id+".md")))
 	if len(rows) != 1 || rows[0].Result != "fail" || !strings.Contains(rows[0].Notes, "match_count=0") {
@@ -135,7 +135,15 @@ func TestSoftwareFactoryProofProductionReceiptBindsCurrentMaterial(t *testing.T)
 }
 
 func softwareFactoryFinding(material string, kind string) string {
-	return `{"schema":"` + reviewerFindingSchema + `","id":"F-001","kind":"` + kind + `","acceptance":["A1"],"evidence":["receipt-1"],"consequence":"acceptance is unproven","closure_condition":"re-run the exact proof and attach its receipt","material_fingerprint":"` + material + `"}`
+	return softwareFactoryFindingWithScope(material, kind, "")
+}
+
+func softwareFactoryFindingWithScope(material, kind, repairScope string) string {
+	scope := ""
+	if repairScope != "" {
+		scope = `,"repair_scope":"` + repairScope + `"`
+	}
+	return `{"schema":"` + reviewerFindingSchema + `","id":"F-001","kind":"` + kind + `","acceptance":["A1"],"evidence":["receipt-1"],"consequence":"acceptance is unproven","closure_condition":"re-run the exact proof and attach its receipt"` + scope + `,"material_fingerprint":"` + material + `"}`
 }
 
 func softwareFactoryReviewResult(finding string, material string) ReviewResult {
@@ -184,6 +192,9 @@ func TestSoftwareFactoryProofRejectsUnresolvedReviewFindings(t *testing.T) {
 		"duplicate id": func(result *ReviewResult) {
 			result.Findings = []string{softwareFactoryFinding(material, "blocking"), softwareFactoryFinding(material, "advisory")}
 		},
+		"invalid repair scope": func(result *ReviewResult) {
+			result.Findings = []string{softwareFactoryFindingWithScope(material, "blocking", "ledger")}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := valid
@@ -196,7 +207,7 @@ func TestSoftwareFactoryProofRejectsUnresolvedReviewFindings(t *testing.T) {
 	}
 }
 
-func TestSoftwareFactoryProofDurableFindingClosureRequiresNewMaterialAndAttempt(t *testing.T) {
+func TestSoftwareFactoryProofDurableMaterialFindingClosureRequiresNewMaterialAndAttempt(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +243,16 @@ func TestSoftwareFactoryProofDurableFindingClosureRequiresNewMaterialAndAttempt(
 	if err := daemon.validateReviewFindingClosure("project", candidate); err == nil {
 		t.Fatal("pass without an explicit durable closure attestation was accepted")
 	}
+	sameMaterial := candidate
+	sameMaterial.ClosedFindings = []reviewerFindingClosure{{
+		Schema: reviewerFindingClosureSchema, ID: "F-001", ClosureCondition: "re-run the exact proof and attach its receipt",
+		Evidence: []string{"receipt-2"}, MaterialFingerprint: oldMaterial,
+	}}
+	sameMaterial.MaterialFingerprint = oldMaterial
+	sameMaterial.ResultRevision = reviewResultFingerprint(sameMaterial)
+	if err := daemon.validateReviewFindingClosure("project", sameMaterial); err == nil {
+		t.Fatal("material finding was closed without changing implementation material")
+	}
 	closure := reviewerFindingClosure{
 		Schema: reviewerFindingClosureSchema, ID: "F-001", ClosureCondition: "re-run the exact proof and attach its receipt",
 		Evidence: []string{"receipt-2"}, MaterialFingerprint: newMaterial,
@@ -248,6 +269,50 @@ func TestSoftwareFactoryProofDurableFindingClosureRequiresNewMaterialAndAttempt(
 	candidate.ResultRevision = reviewResultFingerprint(candidate)
 	if err := daemon.validateReviewFindingClosure("project", candidate); err == nil {
 		t.Fatal("same review attempt was allowed to close its own finding")
+	}
+}
+
+func TestSoftwareFactoryProofDurableProofFindingClosureAllowsSameMaterial(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	material := "sha256:" + strings.Repeat("3", 64)
+	prior := softwareFactoryReviewResult(softwareFactoryFindingWithScope(material, "blocking", reviewerFindingRepairScopeProof), material)
+	if _, err := store.SaveReviewResult(prior); err != nil {
+		t.Fatal(err)
+	}
+	candidate := prior
+	candidate.AttemptID = "review-proof-2"
+	candidate.Verdict = "pass"
+	candidate.Findings = nil
+	candidate.Summary = "proof independently verified"
+	candidate.ClosedFindings = []reviewerFindingClosure{{
+		Schema: reviewerFindingClosureSchema, ID: "F-001", ClosureCondition: "re-run the exact proof and attach its receipt",
+		Evidence: []string{"receipt-proof-2"}, MaterialFingerprint: material,
+	}}
+	for _, attempt := range []RunAttempt{
+		{AttemptID: prior.AttemptID, ProjectID: "project", RecordID: prior.TaskID, Lane: runLaneReview, WorkRevision: prior.WorkRevision, StartedAt: "2026-09-14T00:00:00Z"},
+		{AttemptID: candidate.AttemptID, ProjectID: "project", RecordID: candidate.TaskID, Lane: runLaneReview, WorkRevision: candidate.WorkRevision, StartedAt: "2026-09-14T01:00:00Z"},
+	} {
+		if err := store.SaveAttempt(attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidate.ResultRevision = reviewResultFingerprint(candidate)
+	if err := (&Daemon{store: store}).validateReviewFindingClosure("project", candidate); err != nil {
+		t.Fatalf("proof-only finding should close on unchanged exact material: %v", err)
+	}
+
+	stale := candidate
+	stale.ClosedFindings = []reviewerFindingClosure{{
+		Schema: reviewerFindingClosureSchema, ID: "F-001", ClosureCondition: "re-run the exact proof and attach its receipt",
+		Evidence: []string{"stale-receipt"}, MaterialFingerprint: "sha256:" + strings.Repeat("4", 64),
+	}}
+	stale.ResultRevision = reviewResultFingerprint(stale)
+	if err := (&Daemon{store: store}).validateReviewFindingClosure("project", stale); err == nil {
+		t.Fatal("closure bound to stale material was accepted")
 	}
 }
 

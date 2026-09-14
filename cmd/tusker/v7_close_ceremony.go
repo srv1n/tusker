@@ -23,6 +23,10 @@ type v7ClosePreflightRequest struct {
 	ExpectedStateRev  string
 	ExpectedTaskID    string
 	ExpectedTaskState string
+	// ReviewResult is supplied by the daemon's typed completion path. Direct
+	// close/accept leave it empty and resolve any current pass from the durable
+	// review-result store instead of trusting task prose or caller flags.
+	ReviewResult *ReviewResult
 	// SkipCommandVerification is reserved for an upstream authoritative review
 	// snapshot that already executed the exact command rows and rebound the
 	// task revision/fingerprint. Direct accept/close leave it false.
@@ -159,6 +163,12 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 	if err := v7DocTouchCheck(vaultPath, task); err != nil {
 		return v7ClosePreflightResult{}, err
 	}
+	// Review findings are durable close authority. Check them before invoking
+	// any mutable command proof, then repeat after execution because a receipt
+	// write can legitimately advance the task revision.
+	if err := v7CloseReviewFindingPreflight(vaultPath, task, request); err != nil {
+		return v7ClosePreflightResult{}, err
+	}
 	// Run mutable command proof only after every actor, gate, dependency,
 	// evidence, policy, acceptance, and docs check that can refuse without it.
 	// This prevents an ineligible close from becoming a shell trigger.
@@ -184,6 +194,9 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 			if err := enforceV7AcceptanceClose(vaultPath, task, idx, false); err != nil {
 				return v7ClosePreflightResult{}, err
 			}
+		}
+		if err := v7CloseReviewFindingPreflight(vaultPath, task, request); err != nil {
+			return v7ClosePreflightResult{}, err
 		}
 	}
 
@@ -215,6 +228,213 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 		RequiredEvidence: requiredEvidence, RequiredGateKinds: requiredGates,
 		DependencyAuthority: dependencies,
 	}, nil
+}
+
+// v7CloseReviewFindingPreflight is the review half of the close ceremony. The
+// task note is only a projection; blocking findings and their closures live in
+// the durable review-result store. Direct CLI/serve close therefore resolves a
+// current typed pass, while daemon completion supplies the exact result it has
+// already authenticated. Advisory findings never enter this guard.
+func v7CloseReviewFindingPreflight(vaultPath string, task Note, request v7ClosePreflightRequest) error {
+	taskID := strings.TrimSpace(stringField(task.Data, "id"))
+	store, missing, err := openRuntimeStoreReadOnly(DefaultStateRoot())
+	if err != nil {
+		return tuskerError(errorInvalidTransition, taskID+": close review authority unavailable: "+err.Error())
+	}
+	if missing {
+		// A project with no runtime history has no durable finding to close. A
+		// typed daemon result, however, cannot be authenticated without its store.
+		if request.ReviewResult != nil {
+			return tuskerError(errorInvalidTransition, taskID+": close review authority is unavailable")
+		}
+		return nil
+	}
+	defer store.Close()
+	projectID := v7ProjectID(vaultPath)
+	if registeredID, registered, lookupErr := registeredProjectIDForVault(store, vaultPath); lookupErr != nil {
+		return tuskerError(errorInvalidTransition, taskID+": close review authority unavailable: "+lookupErr.Error())
+	} else if registered && strings.TrimSpace(registeredID) != "" {
+		projectID = strings.TrimSpace(registeredID)
+	}
+	if request.ReviewResult != nil && strings.TrimSpace(request.ReviewResult.ProjectID) != "" {
+		projectID = strings.TrimSpace(request.ReviewResult.ProjectID)
+	}
+	if projectID == "" {
+		return tuskerError(errorInvalidTransition, taskID+": close review authority has no project identity")
+	}
+	rows, err := store.ListReviewResults(projectID)
+	if err != nil {
+		return tuskerError(errorInvalidTransition, taskID+": close review history unavailable: "+err.Error())
+	}
+	hasBlocking := false
+	for _, row := range rows {
+		if row.TaskID != taskID {
+			continue
+		}
+		if row.Repair != nil {
+			return row.Repair
+		}
+		result := row.Result
+		if result.Schema != reviewResultSchema || result.Verdict != "changes_requested" {
+			continue
+		}
+		for _, raw := range result.Findings {
+			finding, findingErr := parseReviewerFinding(raw)
+			if findingErr != nil {
+				return completionPersistedRowRepairError("review result", projectID, taskID, result.WorkRevision, result.AttemptID, result.ResultRevision, "blocking finding is invalid: "+findingErr.Error())
+			}
+			if finding.Kind == "blocking" {
+				hasBlocking = true
+				break
+			}
+		}
+	}
+
+	// The daemon already carries the exact typed candidate. Recheck it through
+	// the same durable validator used by reconciliation, including independent
+	// attempt, finding identity, closure condition, and exact material.
+	if request.ReviewResult != nil {
+		result := *request.ReviewResult
+		if result.Schema != reviewResultSchema || result.Verdict != "pass" {
+			return tuskerError(errorInvalidTransition, taskID+": close review result is not an authoritative pass")
+		}
+		if err := v7CloseReviewResultMatchesTask(task, result); err != nil {
+			return err
+		}
+		if hasBlocking || len(result.ClosedFindings) > 0 {
+			if err := (&Daemon{store: store}).validateReviewFindingClosure(projectID, result); err != nil {
+				return tuskerError(errorInvalidTransition, taskID+": close review finding preflight refused: "+err.Error())
+			}
+		}
+		later, laterErr := v7CloseLaterBlockingReviewExists(store, rows, result)
+		if laterErr != nil {
+			return tuskerError(errorInvalidTransition, taskID+": close review history unavailable: "+laterErr.Error())
+		}
+		if later {
+			return tuskerError(errorInvalidTransition, taskID+": close review result is stale behind a later blocking finding")
+		}
+		material, materialErr := reviewAttemptMaterialFingerprint(store, projectID, taskID, result.AttemptID, result.WorkRevision, result.ImplementationSHA)
+		if materialErr != nil {
+			return tuskerError(errorInvalidTransition, taskID+": close review material unavailable: "+materialErr.Error())
+		}
+		if !reviewMaterialFingerprintsEqual(material, result.MaterialFingerprint) {
+			return tuskerError(errorInvalidTransition, taskID+": close review material fingerprint drifted")
+		}
+		return nil
+	}
+	if !hasBlocking {
+		return nil
+	}
+
+	currentMaterial, materialErr := v7CloseCurrentMaterial(vaultPath, task)
+	if materialErr != nil {
+		return tuskerError(errorInvalidTransition, taskID+": close review material unavailable: "+materialErr.Error())
+	}
+	currentStateRev := stringField(task.Data, "state_rev")
+	currentWorkRevision := intField(task.Data, "work_revision")
+	currentSource := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"))
+	var candidateErr error
+	for _, row := range rows {
+		if row.TaskID != taskID || row.Repair != nil {
+			continue
+		}
+		candidate := row.Result
+		if candidate.Schema != reviewResultSchema || candidate.Verdict != "pass" ||
+			candidate.WorkRevision != currentWorkRevision || candidate.TaskStateRev != currentStateRev ||
+			(currentSource != "" && candidate.ImplementationSHA != currentSource) ||
+			!reviewMaterialFingerprintsEqual(candidate.MaterialFingerprint, currentMaterial) {
+			continue
+		}
+		if err := (&Daemon{store: store}).validateReviewFindingClosure(projectID, candidate); err == nil {
+			later, laterErr := v7CloseLaterBlockingReviewExists(store, rows, candidate)
+			if laterErr != nil {
+				return tuskerError(errorInvalidTransition, taskID+": close review history unavailable: "+laterErr.Error())
+			}
+			if later {
+				if candidateErr == nil {
+					candidateErr = fmt.Errorf("review result is stale behind a later blocking finding")
+				}
+				continue
+			}
+			return nil
+		} else if candidateErr == nil {
+			candidateErr = err
+		}
+	}
+	if candidateErr != nil {
+		return tuskerError(errorInvalidTransition, taskID+": close blocked by unresolved blocking review finding: "+candidateErr.Error())
+	}
+	return tuskerError(errorInvalidTransition, taskID+": close blocked by unresolved blocking review finding")
+}
+
+func v7CloseLaterBlockingReviewExists(store *RuntimeStore, rows []persistedReviewResultRow, candidate ReviewResult) (bool, error) {
+	if store == nil {
+		return false, fmt.Errorf("review store is unavailable")
+	}
+	attemptRows, err := store.ListAttemptsForRun(candidate.ProjectID, candidate.TaskID)
+	if err != nil {
+		return false, err
+	}
+	attempts := make(map[string]RunAttempt, len(attemptRows))
+	for _, attempt := range attemptRows {
+		attempts[attempt.AttemptID] = attempt
+	}
+	for _, row := range rows {
+		if row.TaskID != candidate.TaskID || row.Repair != nil {
+			continue
+		}
+		result := row.Result
+		if result.Schema != reviewResultSchema || result.Verdict != "changes_requested" || result.ResultRevision == candidate.ResultRevision {
+			continue
+		}
+		if result.WorkRevision < candidate.WorkRevision {
+			continue
+		}
+		if result.WorkRevision == candidate.WorkRevision && !completionReviewAttemptBefore(attempts, candidate.AttemptID, result.AttemptID, candidate.CreatedAt, result.CreatedAt) {
+			continue
+		}
+		for _, raw := range result.Findings {
+			finding, findingErr := parseReviewerFinding(raw)
+			if findingErr != nil {
+				return false, findingErr
+			}
+			if finding.Kind == "blocking" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func v7CloseReviewResultMatchesTask(task Note, result ReviewResult) error {
+	taskID := stringField(task.Data, "id")
+	if result.TaskID != taskID || result.WorkRevision != intField(task.Data, "work_revision") || result.TaskStateRev != stringField(task.Data, "state_rev") {
+		return tuskerError(errorInvalidTransition, taskID+": close review result is stale for the current task revision")
+	}
+	source := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"))
+	if source != "" && result.ImplementationSHA != source {
+		return tuskerError(errorInvalidTransition, taskID+": close review result is stale for the current implementation")
+	}
+	return nil
+}
+
+func v7CloseCurrentMaterial(vaultPath string, task Note) (string, error) {
+	repoRoot, err := canonicalV7VerificationWorkspaceRoot(v7RepoRoot(vaultPath))
+	if err != nil {
+		return "", err
+	}
+	scope, err := canonicalTaskMaterialScope(vaultPath, task)
+	if err != nil {
+		return "", err
+	}
+	if len(scope) == 0 {
+		scope = nil
+	}
+	generatedOutputScope, err := taskGeneratedOutputScope(task)
+	if err != nil {
+		return "", err
+	}
+	return workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
 }
 
 func v7ClosePreflightMessage(action, id, detail string) string {

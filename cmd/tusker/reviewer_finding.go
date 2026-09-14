@@ -10,6 +10,11 @@ import (
 
 const reviewerFindingSchema = "tusker.reviewer-finding/v1"
 
+const (
+	reviewerFindingRepairScopeMaterial = "material"
+	reviewerFindingRepairScopeProof    = "proof"
+)
+
 // reviewerFindingRecord is the machine-readable finding carried through an
 // authoritative review result. Keeping the record in the existing finding
 // string avoids a parallel review-result schema while making the blocking
@@ -22,13 +27,14 @@ type reviewerFindingRecord struct {
 	Evidence            []string `json:"evidence,omitempty"`
 	Consequence         string   `json:"consequence,omitempty"`
 	ClosureCondition    string   `json:"closure_condition,omitempty"`
+	RepairScope         string   `json:"repair_scope,omitempty"`
 	MaterialFingerprint string   `json:"material_fingerprint,omitempty"`
 }
 
 const reviewerFindingClosureSchema = "tusker.reviewer-finding-closure/v1"
 
 // reviewerFindingClosure is the durable attestation that a later independent
-// review re-checked one earlier blocking finding on the new exact material.
+// review re-checked one earlier blocking finding on the exact current material.
 // It lives on ReviewResult so the existing result revision and completion
 // transaction bind the attestation without introducing another store.
 type reviewerFindingClosure struct {
@@ -152,6 +158,13 @@ func parseReviewerFinding(text string) (reviewerFindingRecord, error) {
 	finding.Kind = strings.ToLower(strings.TrimSpace(finding.Kind))
 	finding.Consequence = strings.TrimSpace(finding.Consequence)
 	finding.ClosureCondition = strings.TrimSpace(finding.ClosureCondition)
+	finding.RepairScope = strings.ToLower(strings.TrimSpace(finding.RepairScope))
+	if finding.RepairScope == "" {
+		// Older findings did not classify the repair boundary. Keep them
+		// fail-closed: an omitted scope means the implementation material must
+		// change before the finding can be closed.
+		finding.RepairScope = reviewerFindingRepairScopeMaterial
+	}
 	finding.MaterialFingerprint = strings.TrimSpace(finding.MaterialFingerprint)
 	finding.Acceptance = sortedUniqueStrings(finding.Acceptance)
 	finding.Evidence = sortedUniqueStrings(finding.Evidence)
@@ -163,6 +176,9 @@ func parseReviewerFinding(text string) (reviewerFindingRecord, error) {
 	}
 	if finding.Kind != "blocking" && finding.Kind != "advisory" {
 		return finding, fmt.Errorf("review finding kind must be blocking or advisory")
+	}
+	if finding.RepairScope != reviewerFindingRepairScopeMaterial && finding.RepairScope != reviewerFindingRepairScopeProof {
+		return finding, fmt.Errorf("review finding repair_scope must be material or proof")
 	}
 	if !reviewerFindingListValid(finding.Acceptance, 128) || !reviewerFindingListValid(finding.Evidence, reviewResultMaxEvidenceChars) {
 		return finding, fmt.Errorf("review finding acceptance or evidence references are invalid")
@@ -198,11 +214,15 @@ func parseReviewFindingArgs(raw string) ([]string, error) {
 }
 
 func reviewerFindingFlagExample(material string) string {
-	return `--finding '[{"schema":"` + reviewerFindingSchema + `","id":"F-001","kind":"blocking","acceptance":["A1"],"evidence":["path-or-receipt"],"consequence":"acceptance is not met","closure_condition":"re-run A1 and attach the receipt","material_fingerprint":"` + material + `"},{"schema":"` + reviewerFindingSchema + `","id":"F-002","kind":"advisory","evidence":["path-or-receipt"]}]'`
+	return `--finding '[{"schema":"` + reviewerFindingSchema + `","id":"F-001","kind":"blocking","acceptance":["A1"],"evidence":["path-or-receipt"],"consequence":"acceptance is not met","closure_condition":"repair the implementation and re-run A1","repair_scope":"material","material_fingerprint":"` + material + `"},{"schema":"` + reviewerFindingSchema + `","id":"F-002","kind":"advisory","evidence":["path-or-receipt"]}]'`
 }
 
 func reviewerClosureFlagExample(material string) string {
-	return `--closure '[{"schema":"` + reviewerFindingClosureSchema + `","id":"F-001","closure_condition":"re-run A1 and attach the receipt","evidence":["path-or-receipt"],"material_fingerprint":"` + material + `"}]'`
+	return `--closure '[{"schema":"` + reviewerFindingClosureSchema + `","id":"F-001","closure_condition":"repair the implementation and re-run A1","evidence":["path-or-receipt"],"material_fingerprint":"` + material + `"}]'`
+}
+
+func reviewerFindingRequiresMaterialChange(finding reviewerFindingRecord) bool {
+	return finding.RepairScope != reviewerFindingRepairScopeProof
 }
 
 func validateReviewResultFindings(result ReviewResult, requireMaterial bool) error {

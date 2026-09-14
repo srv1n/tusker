@@ -19,6 +19,11 @@ func TestAutomationCollectExternalStoresPatchAndReviewEvidence(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workRevision := intField(note.Data, "work_revision")
 
 	sourceDir := writeExternalFetchFiles(t, map[string]string{
 		"fix.patch":  "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n",
@@ -30,25 +35,26 @@ func TestAutomationCollectExternalStoresPatchAndReviewEvidence(t *testing.T) {
 	payload := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_test", "covers": "A1"})
 	assertEqual(t, true, payload.OK, "json ok")
 	assertEqual(t, "apply_patch", payload.Collection.NextAction, "next action")
-	assertEqual(t, "architect/APP-T-0001", payload.Collection.ArtifactDir, "artifact dir")
-	assertEqual(t, []string{"architect/APP-T-0001/fix.patch"}, payload.Collection.Patches, "patches")
-	assertEqual(t, []string{"architect/APP-T-0001/notes.md"}, payload.Collection.ReviewPackets, "review packets")
-	assertEqual(t, []string{"architect/APP-T-0001/bundle.zip"}, payload.Collection.Bundles, "bundles")
+	scope := filepath.ToSlash(filepath.Join("architect", "APP-T-0001", "jobs", externalArtifactScope("cgpt_test")))
+	assertEqual(t, scope, payload.Collection.ArtifactDir, "artifact dir")
+	assertEqual(t, []string{scope + "/fix.patch"}, payload.Collection.Patches, "patches")
+	assertEqual(t, []string{scope + "/notes.md"}, payload.Collection.ReviewPackets, "review packets")
+	assertEqual(t, []string{scope + "/bundle.zip"}, payload.Collection.Bundles, "bundles")
 	if len(payload.Collection.EvidenceAdded) != 1 {
 		t.Fatalf("expected one evidence record, got %#v", payload.Collection.EvidenceAdded)
 	}
-	assertExists(t, filepath.Join(project.RepoRoot, "architect", "APP-T-0001", "fix.patch"))
+	assertExists(t, filepath.Join(project.RepoRoot, filepath.FromSlash(scope), "fix.patch"))
 
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	inputs, err := store.ListApplyInputsForRun(project.ProjectID, "APP-T-0001")
+	inputs, err := store.ListApplyInputsForRunScope(project.ProjectID, "APP-T-0001", workRevision, "", "cgpt_test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inputs) != 1 || inputs[0].RelPath != "architect/APP-T-0001/fix.patch" || inputs[0].Kind != "patch" {
+	if len(inputs) != 1 || inputs[0].RelPath != scope+"/fix.patch" || inputs[0].Kind != "patch" {
 		t.Fatalf("expected one patch apply input, got %#v", inputs)
 	}
 
@@ -68,6 +74,11 @@ func TestAutomationCollectExternalIsIdempotent(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workRevision := intField(note.Data, "work_revision")
 
 	sourceDir := writeExternalFetchFiles(t, map[string]string{
 		"fix.patch": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n",
@@ -96,7 +107,7 @@ func TestAutomationCollectExternalIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	inputs, err := store.ListApplyInputsForRun(project.ProjectID, "APP-T-0001")
+	inputs, err := store.ListApplyInputsForRunScope(project.ProjectID, "APP-T-0001", workRevision, "", "cgpt_same")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +127,8 @@ func TestAutomationCollectExternalNotesOnlyRecordsResearchArtifact(t *testing.T)
 
 	payload := runCollectExternalJSON(t, vault, Args{"id": "APP-T-0001", "runner": "chatgpt-browser", "job": "cgpt_notes", "covers": "A1"})
 	assertEqual(t, "record_research_artifact", payload.Collection.NextAction, "next action")
-	assertEqual(t, []string{"architect/APP-T-0001/notes.md"}, payload.Collection.ReviewPackets, "review packets")
+	scope := filepath.ToSlash(filepath.Join("architect", "APP-T-0001", "jobs", externalArtifactScope("cgpt_notes")))
+	assertEqual(t, []string{scope + "/notes.md"}, payload.Collection.ReviewPackets, "review packets")
 	if payload.Collection.Dispatchable {
 		t.Fatalf("notes-only collection should not dispatch directly")
 	}
@@ -159,11 +171,15 @@ func TestAutomationCollectExternalNoArtifactsEscalates(t *testing.T) {
 	}
 }
 
-func TestMirrorApplyInputsIntoWorkspaceCopiesTaskArtifactDir(t *testing.T) {
+func TestMirrorApplyInputsIntoWorkspaceCopiesOnlyCurrentInput(t *testing.T) {
 	vault := automationTestVault(t)
 	project := registerAutomationTestProject(t, vault)
 	artifactPath := filepath.Join(project.RepoRoot, "architect", "APP-T-0001", "fix.patch")
 	if err := writeText(artifactPath, "diff --git a/README.md b/README.md\n"); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(project.RepoRoot, "architect", "APP-T-0001", "stale.patch")
+	if err := writeText(stalePath, "old cycle patch\n"); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := sha256Path(artifactPath)
@@ -180,10 +196,13 @@ func TestMirrorApplyInputsIntoWorkspaceCopiesTaskArtifactDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	workspace := filepath.Join(t.TempDir(), "workspace")
-	if err := mirrorApplyInputsIntoWorkspace(store, project, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001"}, workspace); err != nil {
+	if err := mirrorApplyInputsIntoWorkspace(store, project, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", CloudTaskID: "cgpt"}, workspace); err != nil {
 		t.Fatal(err)
 	}
 	assertExists(t, filepath.Join(workspace, "architect", "APP-T-0001", "fix.patch"))
+	if fileExists(filepath.Join(workspace, "architect", "APP-T-0001", "stale.patch")) {
+		t.Fatal("mirror copied an unbound prior-cycle artifact")
+	}
 }
 
 func runCollectExternalJSON(t *testing.T, vault string, args Args) externalCollectJSONPayload {

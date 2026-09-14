@@ -87,6 +87,9 @@ func readCodexCloudTaskStartedCheckpoint(path, attemptID string) (codexCloudTask
 		return codexCloudTaskStartedCheckpoint{}, false, nil
 	}
 	text, err := readText(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return codexCloudTaskStartedCheckpoint{}, false, nil
+	}
 	if err != nil {
 		return codexCloudTaskStartedCheckpoint{}, false, err
 	}
@@ -155,6 +158,15 @@ func (r *CodexCloudRunner) Capabilities() RunnerCapabilities {
 	return RunnerCapabilities{StructuredEvents: true, MachineFinalStatus: true, ArtifactEnumeration: true}
 }
 
+// SupportsReservationLookup is intentionally narrow. The handoff adapter
+// accepts a caller-chosen job id and saves that job before browser submission;
+// native `codex cloud` currently exposes neither operation.
+func (r *CodexCloudRunner) SupportsReservationLookup() bool {
+	config := withDefaultCodexCloudConfig(r.Config)
+	return strings.Contains(config.Command, "chatgpt-handoff") && strings.Contains(config.Command, "tusker-start") &&
+		strings.Contains(config.StatusCommand, "chatgpt-handoff") && strings.Contains(config.StatusCommand, "{{cloud_task_id}}")
+}
+
 func (r *CodexCloudRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
 	config := withDefaultCodexCloudConfig(r.Config)
 	if command := strings.TrimSpace(req.Command); command != "" {
@@ -178,7 +190,11 @@ func (r *CodexCloudRunner) Start(ctx context.Context, req StartRequest) (*StartR
 	if err := preflightCodexCloudRawLog(req.RawLogPath); err != nil {
 		return nil, fmt.Errorf("preflight codex cloud raw log: %w", err)
 	}
-	command, err := r.commandForExecution(codexCloudCommand(config.Command, config, req, ""), req.RunnerPathPrefix)
+	startCommand := codexCloudCommand(config.Command, config, req, "")
+	if r.SupportsReservationLookup() && strings.TrimSpace(req.ProviderIdempotencyKey) != "" && !strings.Contains(config.Command, "{{provider_idempotency_key}}") {
+		startCommand += " --id " + shellSingleQuote(req.ProviderIdempotencyKey)
+	}
+	command, err := r.commandForExecution(startCommand, req.RunnerPathPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -203,10 +219,11 @@ func (r *CodexCloudRunner) Start(ctx context.Context, req StartRequest) (*StartR
 	}
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	payload := map[string]any{
-		"cloud_task_id":  snapshot.TaskID,
-		"remote_status":  snapshot.Status,
-		"environment_id": snapshot.EnvironmentID,
-		"attempt_number": snapshot.AttemptNumber,
+		"cloud_task_id":            snapshot.TaskID,
+		"provider_idempotency_key": req.ProviderIdempotencyKey,
+		"remote_status":            snapshot.Status,
+		"environment_id":           snapshot.EnvironmentID,
+		"attempt_number":           snapshot.AttemptNumber,
 	}
 	if launchErr != nil {
 		payload["start_command_error"] = launchErr.Error()
@@ -358,21 +375,22 @@ func validateCodexCloudRuntimeConfig(config CodexCloudConfig) error {
 
 func codexCloudCommand(command string, config CodexCloudConfig, req StartRequest, taskID string) string {
 	return replaceTemplateTokens(command, map[string]string{
-		"{{workspace_path}}":         req.WorkspacePath,
-		"{{prompt_path}}":            req.PromptPath,
-		"{{event_sink_path}}":        req.EventSinkPath,
-		"{{raw_log_path}}":           req.RawLogPath,
-		"{{status_path}}":            req.StatusPath,
-		"{{note_path}}":              req.NotePath,
-		"{{vault_path}}":             runnerWorkspaceVaultPath(req.WorkspacePath, req.VaultPath),
-		"{{environment_id}}":         config.EnvironmentID,
-		"{{apply_mode}}":             config.ApplyMode,
-		"{{pr_mode}}":                config.PRMode,
-		"{{cloud_task_id}}":          taskID,
-		"{{external_loop_stage}}":    req.ExternalLoop.Stage,
-		"{{external_loop_action}}":   req.ExternalLoop.Action,
-		"{{external_origin_job_id}}": req.ExternalLoop.OriginJobID,
-		"{{external_loop_event_id}}": req.ExternalLoop.EventID,
+		"{{workspace_path}}":           req.WorkspacePath,
+		"{{prompt_path}}":              req.PromptPath,
+		"{{event_sink_path}}":          req.EventSinkPath,
+		"{{raw_log_path}}":             req.RawLogPath,
+		"{{status_path}}":              req.StatusPath,
+		"{{note_path}}":                req.NotePath,
+		"{{vault_path}}":               runnerWorkspaceVaultPath(req.WorkspacePath, req.VaultPath),
+		"{{environment_id}}":           config.EnvironmentID,
+		"{{apply_mode}}":               config.ApplyMode,
+		"{{pr_mode}}":                  config.PRMode,
+		"{{cloud_task_id}}":            taskID,
+		"{{provider_idempotency_key}}": req.ProviderIdempotencyKey,
+		"{{external_loop_stage}}":      req.ExternalLoop.Stage,
+		"{{external_loop_action}}":     req.ExternalLoop.Action,
+		"{{external_origin_job_id}}":   req.ExternalLoop.OriginJobID,
+		"{{external_loop_event_id}}":   req.ExternalLoop.EventID,
 	})
 }
 
@@ -392,6 +410,7 @@ func codexCloudEnv(req StartRequest, config CodexCloudConfig, taskID string) []s
 		"TUSKER_CODEX_CLOUD_PR_MODE="+config.PRMode,
 		"TUSKER_CODEX_CLOUD_EXTERNAL_COLLECT="+fmt.Sprintf("%t", config.ExternalCollect),
 		"TUSKER_CODEX_CLOUD_TASK_ID="+taskID,
+		"TUSKER_PROVIDER_IDEMPOTENCY_KEY="+req.ProviderIdempotencyKey,
 		"TUSKER_EXTERNAL_LOOP_STAGE="+req.ExternalLoop.Stage,
 		"TUSKER_EXTERNAL_LOOP_ACTION="+req.ExternalLoop.Action,
 		"TUSKER_EXTERNAL_ORIGIN_JOB_ID="+req.ExternalLoop.OriginJobID,

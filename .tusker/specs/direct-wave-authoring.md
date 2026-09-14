@@ -431,7 +431,7 @@ plan, new scheduler, proof store, registry or model panel is introduced.
 | Required observation | Acceptance body names initiating action, receiver and observable result | Reviewer explicitly checks evidence sufficiency; a self-declared boundary label is not proof |
 | Interface dependency | Existing task edge plus body naming supplied interface, consumer operation, contract check and integration owner | Provider proves the promised interface; a downstream integration task owns final behavior, avoiding a dependency cycle |
 | Evidence | Existing verification receipts and evidence records | Bind to consumed task/source/artifact identity; required absent, failed, stale or zero-match evidence cannot satisfy acceptance |
-| Review findings | Existing typed review/attempt mechanism | Stable finding identity, acceptance reference, evidence, consequence and closure condition; independent closure on exact repaired material |
+| Review findings | Existing typed review/attempt mechanism | Stable finding identity, acceptance reference, evidence, consequence and closure condition; independent closure on exact current material, with changed material required for material repair and same material allowed only for proof-only repair |
 | Repair policy | Existing external-loop limits and cumulative runtime budgets | Reuse the existing two-continuation default; do not create a competing policy. Verify its scope and persistence across restart before claiming compliance |
 
 No new mandatory front-matter fields are approved here. Any machine-record

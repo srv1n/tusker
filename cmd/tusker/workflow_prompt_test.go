@@ -81,6 +81,8 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 		"--gate-fingerprint",
 		"--verdict pass|changes_requested|blocked",
 		`--finding '[{"schema":"tusker.reviewer-finding/v1"`,
+		"Set repair_scope to material",
+		"set it to proof",
 		`--closure '[{"schema":"tusker.reviewer-finding-closure/v1"`,
 	} {
 		if !strings.Contains(prompt, expected) {

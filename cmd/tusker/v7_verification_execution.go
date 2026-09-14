@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -246,7 +245,18 @@ type v7VerificationCommandObservation struct {
 
 func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (v7VerificationCommandObservation, error) {
 	started := time.Now().UTC()
-	cmd := exec.Command("/bin/sh", "-c", command)
+	filtered := v7FilteredTestCommand(command)
+	var cmd *exec.Cmd
+	if filtered {
+		args, ok := v7SupportedGoTestArgs(command)
+		if !ok {
+			message := "filtered test command uses unsupported selector runner or shell syntax; use a single go test -run invocation"
+			return v7RejectedVerificationCommandObservation(started, message)
+		}
+		cmd = exec.Command(args[0], args[1:]...)
+	} else {
+		cmd = exec.Command("/bin/sh", "-c", command)
+	}
 	cmd.Dir = filepath.Clean(repoRoot)
 	cmd.Env = v7VerificationCommandEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -282,8 +292,19 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 		return obs, errors.New(obs.Message)
 	}
 	if err == nil {
-		if count, required := v7FilteredTestMatchCount(command, string(outputBytes)); required {
+		if filtered {
+			if output.truncated {
+				obs.ExitCode = 1
+				obs.Message = "filtered test command produced truncated JSON test evidence"
+				return obs, errors.New(obs.Message)
+			}
+			count, parsed := v7FilteredTestMatchCount(command, string(outputBytes))
 			obs.MatchCount = count
+			if !parsed {
+				obs.ExitCode = 1
+				obs.Message = "filtered test command produced untrusted test evidence; use go test -json"
+				return obs, errors.New(obs.Message)
+			}
 			if count == 0 {
 				obs.ExitCode = 1
 				obs.Message = "filtered test command produced no matched-test evidence; use verbose or JSON test output"
@@ -300,6 +321,19 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 	}
 	obs.Message = fmt.Sprintf("exit status %d", obs.ExitCode)
 	return obs, err
+}
+
+func v7RejectedVerificationCommandObservation(started time.Time, message string) (v7VerificationCommandObservation, error) {
+	finished := time.Now().UTC()
+	digest := sha256.Sum256(nil)
+	obs := v7VerificationCommandObservation{
+		StartedAt:  started,
+		FinishedAt: finished,
+		ExitCode:   1,
+		Digest:     "sha256:" + hex.EncodeToString(digest[:]),
+		Message:    message,
+	}
+	return obs, errors.New(message)
 }
 
 func appendV7VerificationExecutionNote(row v7VerificationRow, observation v7VerificationCommandObservation, identity v7VerificationReceiptIdentity) string {
@@ -329,29 +363,194 @@ func appendV7VerificationExecutionNote(row v7VerificationRow, observation v7Veri
 	return strings.TrimSpace(row.Notes) + "; " + receipt
 }
 
-var v7TestCountPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?m)^=== RUN\s+`),
-	regexp.MustCompile(`"Action"\s*:\s*"run"`),
-}
-
 func v7FilteredTestCommand(check string) bool {
 	command, ok := v7VerificationCommand(check)
 	if !ok {
 		command = check
 	}
 	lower := strings.ToLower(command)
-	return strings.Contains(lower, "go test") && (strings.Contains(lower, "-run ") || strings.Contains(lower, "-run="))
+	if strings.Contains(lower, "go test") && (strings.Contains(lower, "-run ") || strings.Contains(lower, "-run=")) {
+		return true
+	}
+	return v7UnsupportedTestSelectorCommand(command)
 }
 
 func v7FilteredTestMatchCount(command, output string) (int, bool) {
 	if !v7FilteredTestCommand(command) {
 		return 0, false
 	}
+	count, parsed := v7GoTestJSONMatchCount(output)
+	return count, parsed
+}
+
+func v7GoTestJSONMatchCount(output string) (int, bool) {
 	count := 0
-	for _, pattern := range v7TestCountPatterns {
-		count += len(pattern.FindAllStringIndex(output, -1))
+	sawEvent := false
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event struct {
+			Action string `json:"Action"`
+			Test   string `json:"Test"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil || strings.TrimSpace(event.Action) == "" {
+			return 0, false
+		}
+		sawEvent = true
+		if event.Action == "run" && strings.TrimSpace(event.Test) != "" {
+			count++
+		}
 	}
-	return count, true
+	return count, sawEvent
+}
+
+// v7SupportedGoTestArgs is the only selector form for which the executor can
+// establish non-zero matches. It intentionally rejects shell composition and
+// wrappers so output from another process cannot impersonate go test events.
+func v7SupportedGoTestArgs(command string) ([]string, bool) {
+	segments := v7ShellCommandSegments(command)
+	if len(segments) != 1 {
+		return nil, false
+	}
+	args, ok := v7VerificationCommandFields(command)
+	if !ok || len(args) < 3 || args[0] != "go" || args[1] != "test" {
+		return nil, false
+	}
+	hasRun, hasJSON := false, false
+	for i := 2; i < len(args); i++ {
+		switch {
+		case args[i] == "-run":
+			if hasRun || i+1 >= len(args) || args[i+1] == "" {
+				return nil, false
+			}
+			hasRun = true
+			i++
+		case strings.HasPrefix(args[i], "-run="):
+			if hasRun || strings.TrimPrefix(args[i], "-run=") == "" {
+				return nil, false
+			}
+			hasRun = true
+		case args[i] == "-json" || strings.HasPrefix(args[i], "-json="):
+			hasJSON = true
+		}
+	}
+	if !hasRun {
+		return nil, false
+	}
+	if !hasJSON {
+		args = append(args[:2], append([]string{"-json"}, args[2:]...)...)
+	}
+	return args, true
+}
+
+// v7VerificationCommandFields is a small shell-word parser for the controlled
+// go test path. It preserves case in selectors while refusing shell operators,
+// unquoted expansions, and unterminated quoting.
+func v7VerificationCommandFields(command string) ([]string, bool) {
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	hasToken := false
+	flush := func() {
+		if hasToken {
+			fields = append(fields, current.String())
+			current.Reset()
+			hasToken = false
+		}
+	}
+	for _, r := range command {
+		if escaped {
+			current.WriteRune(r)
+			hasToken = true
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				continue
+			}
+			current.WriteRune(r)
+			hasToken = true
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+			hasToken = true
+		case '\\':
+			escaped = true
+			hasToken = true
+		case ' ', '\t':
+			flush()
+		default:
+			if strings.ContainsRune("&;|><`$()\n\r", r) {
+				return nil, false
+			}
+			current.WriteRune(r)
+			hasToken = true
+		}
+	}
+	if quote != 0 || escaped {
+		return nil, false
+	}
+	flush()
+	return fields, len(fields) > 0
+}
+
+func v7UnsupportedTestSelectorCommand(command string) bool {
+	for _, invocation := range v7ShellCommandInvocations(command) {
+		if !v7UnsupportedTestRunner(invocation) || !v7UnsupportedTestSelector(invocation) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func v7UnsupportedTestRunner(invocation v7ShellCommandInvocation) bool {
+	switch invocation.name {
+	case "cargo", "swift", "dotnet", "pytest", "jest", "vitest":
+		return v7ArgsContain(invocation.args, "test") || invocation.name == "pytest" || invocation.name == "jest" || invocation.name == "vitest"
+	case "python", "python3":
+		for i := 0; i+1 < len(invocation.args); i++ {
+			if invocation.args[i] == "-m" && (invocation.args[i+1] == "pytest" || invocation.args[i+1] == "unittest") {
+				return true
+			}
+		}
+	case "npm", "pnpm", "yarn", "bun":
+		return v7ArgsContain(invocation.args, "test") || v7ArgsContain(invocation.args, "run:test")
+	case "npx":
+		return v7ArgsContain(invocation.args, "jest") || v7ArgsContain(invocation.args, "vitest")
+	}
+	return false
+}
+
+func v7UnsupportedTestSelector(invocation v7ShellCommandInvocation) bool {
+	for _, arg := range invocation.args {
+		lower := strings.ToLower(arg)
+		for _, flag := range []string{"-k", "--filter", "--grep", "--test-filter", "--testnamepattern", "--test-name-pattern"} {
+			if lower == flag || strings.HasPrefix(lower, flag+"=") {
+				return true
+			}
+		}
+	}
+	if invocation.name == "cargo" {
+		seenTest := false
+		for _, arg := range invocation.args {
+			if !seenTest {
+				seenTest = arg == "test"
+				continue
+			}
+			if arg == "--" || !strings.HasPrefix(arg, "-") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func v7VerificationRowFingerprint(row v7VerificationRow) string {
@@ -390,10 +589,14 @@ func v7VerificationReceiptIdentityFor(vaultPath string, task Note, repoRoot stri
 	if err != nil {
 		return v7VerificationReceiptIdentity{}, nil, err
 	}
+	generatedOutputScope, err := taskGeneratedOutputScope(task)
+	if err != nil {
+		return v7VerificationReceiptIdentity{}, nil, err
+	}
 	if len(scope) == 0 {
 		scope = nil
 	}
-	material, err := workspaceTreeStateHashForPaths(repoRoot, scope)
+	material, err := workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
 	if err != nil {
 		return v7VerificationReceiptIdentity{}, nil, err
 	}
@@ -407,7 +610,7 @@ func v7VerificationReceiptIdentityFor(vaultPath string, task Note, repoRoot stri
 		if err := workspace.Verify(); err != nil {
 			return err
 		}
-		current, hashErr := workspaceTreeStateHashForPaths(repoRoot, scope)
+		current, hashErr := workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
 		if hashErr != nil {
 			return hashErr
 		}
@@ -452,6 +655,10 @@ func v7VerificationReceiptCurrent(task Note, row v7VerificationRow, currentMater
 		return false
 	}
 	if v7FilteredTestCommand(row.Check) {
+		command, _ := v7VerificationCommand(row.Check)
+		if _, ok := v7SupportedGoTestArgs(command); !ok {
+			return false
+		}
 		count, err := strconv.Atoi(fields["match_count"])
 		return err == nil && count > 0
 	}
@@ -477,10 +684,14 @@ func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, e
 	if err != nil {
 		return "", err
 	}
+	generatedOutputScope, err := taskGeneratedOutputScope(task)
+	if err != nil {
+		return "", err
+	}
 	if len(scope) == 0 {
 		scope = nil
 	}
-	return workspaceTreeStateHashForPaths(repoRoot, scope)
+	return workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
 }
 
 func v7VerificationReceiptRequirementMissingForMaterial(task Note, currentMaterial string, materialErr error) string {

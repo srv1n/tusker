@@ -289,6 +289,11 @@ func externalLoopApplyPolicy(ctx *automationCommandContext, note Note, input ext
 		return externalLoopPolicyResult{}, err
 	}
 	saved := admission.Event
+	if normalizeExternalLoopStage(saved.Stage) == externalLoopStageCollected && strings.TrimSpace(saved.JobID) != "" {
+		if err := ctx.Store.BindApplyInputsToExternalEvent(saved.ProjectID, saved.RecordID, intField(note.Data, "work_revision"), saved.JobID, saved.EventID); err != nil {
+			return externalLoopPolicyResult{}, err
+		}
+	}
 	if normalizeExternalLoopAction(saved.Action) == externalLoopActionEscalateHuman {
 		// The event is the durable correlation point. Saving the same semantic
 		// decision again after a crash converges on one deterministic decision ID.
@@ -378,11 +383,17 @@ func externalLoopStatus(ctx *automationCommandContext, note Note, caps ExternalL
 	} else if found {
 		caps = persisted
 	}
+	counters := externalLoopCountersForEvents(events)
+	if reserved, err := ctx.Store.ExternalThreadReservationCount(ctx.Project.ProjectID, recordID); err != nil {
+		return externalLoopStatusReport{}, err
+	} else {
+		counters.ExternalThreads = maxInt(counters.ExternalThreads, reserved)
+	}
 	return externalLoopStatusReport{
 		Schema:   externalLoopSchema,
 		TaskID:   stringField(note.Data, "id"),
 		RecordID: recordID,
-		Counters: externalLoopCountersForEvents(events),
+		Counters: counters,
 		Caps:     caps,
 		Events:   events,
 	}, nil
@@ -487,7 +498,7 @@ func externalLoopCountersWithEvent(counters ExternalLoopCounters, event External
 		out.DistinctJobIDs = append(out.DistinctJobIDs, jobID)
 		sort.Strings(out.DistinctJobIDs)
 	}
-	out.ExternalThreads = len(out.DistinctJobIDs)
+	out.ExternalThreads = maxInt(out.ExternalThreads, len(out.DistinctJobIDs))
 	return out
 }
 

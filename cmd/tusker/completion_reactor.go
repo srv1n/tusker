@@ -358,8 +358,11 @@ func completionReviewAttemptAfter(attempts map[string]RunAttempt, candidateID, c
 
 // validateReviewFindingClosure reads the durable review-result history rather
 // than the mutable task body. Every prior blocking finding must be explicitly
-// closed by a later attempt, with the exact closure condition and a different
-// material fingerprint. Advisory findings are intentionally excluded.
+// closed by a later attempt on the exact current material. Findings that name
+// source/material repair additionally require a different material fingerprint;
+// proof-only findings may close after a proof/task-ledger update that leaves
+// implementation material unchanged. Advisory findings are intentionally
+// excluded.
 func (d *Daemon) validateReviewFindingClosure(projectID string, result ReviewResult) error {
 	rows, err := d.store.ListReviewResults(projectID)
 	if err != nil {
@@ -419,7 +422,10 @@ func (d *Daemon) validateReviewFindingClosure(projectID string, result ReviewRes
 		if finding.ClosureCondition != closure.ClosureCondition {
 			return fmt.Errorf("closure condition for blocking review finding %s does not match the durable finding", id)
 		}
-		if finding.MaterialFingerprint == "" || finding.MaterialFingerprint == result.MaterialFingerprint {
+		if finding.MaterialFingerprint == "" {
+			return fmt.Errorf("blocking review finding %s is missing its reviewed material", id)
+		}
+		if reviewerFindingRequiresMaterialChange(finding.reviewerFindingRecord) && finding.MaterialFingerprint == result.MaterialFingerprint {
 			return fmt.Errorf("blocking review finding %s was not reviewed on new material", id)
 		}
 		if closure.MaterialFingerprint != result.MaterialFingerprint {
@@ -675,7 +681,8 @@ func completionCloseAuthorityProjectionSnapshot(vaultPath, integrationView strin
 	preflight, err := v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
 		Actor: result.Actor, Action: "close", RequireReview: true,
 		DependencyRef: integrationView, ExpectedTaskID: result.TaskID,
-		ExpectedStateRev: result.TaskStateRev, ExpectedTaskState: "review", SkipCommandVerification: true,
+		ExpectedStateRev: result.TaskStateRev, ExpectedTaskState: "review", ReviewResult: &result,
+		SkipCommandVerification: true,
 	})
 	if err != nil {
 		return completionCloseAuthorityProjection{}, err

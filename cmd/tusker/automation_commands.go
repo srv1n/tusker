@@ -639,7 +639,7 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	if runner != "" && !containsString(ctx.Workflow.Data.Agents.Enabled, runner) {
 		blockers = append(blockers, "runner "+runner+" is not enabled in workflow")
 	}
-	applyInputs, applyInputErr := ctx.Store.ListApplyInputsForRun(ctx.Project.ProjectID, recordID)
+	applyInputs, applyInputErr := listCurrentExternalApplyInputs(ctx.Store, ctx.Project.ProjectID, recordID, run)
 	if applyInputErr != nil {
 		blockers = append(blockers, "apply input store: "+applyInputErr.Error())
 	} else if len(applyInputs) > 1 {

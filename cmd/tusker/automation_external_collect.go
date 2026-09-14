@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -112,8 +113,9 @@ func automationCollectExternalCmd(args Args) error {
 func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, runner, jobID string, args Args) (externalCollectReport, error) {
 	taskID := stringField(note.Data, "id")
 	recordID := trackerRecordID(note)
-	artifactDirAbs := filepath.Join(ctx.Project.RepoRoot, "architect", taskID)
-	artifactDirRel := filepath.ToSlash(filepath.Join("architect", taskID))
+	artifactScope := externalArtifactScope(jobID)
+	artifactDirAbs := filepath.Join(ctx.Project.RepoRoot, "architect", taskID, "jobs", artifactScope)
+	artifactDirRel := filepath.ToSlash(filepath.Join("architect", taskID, "jobs", artifactScope))
 	fetch, err := runExternalCollectFetch(context.Background(), externalFetchRequest{
 		RepoRoot: ctx.Project.RepoRoot,
 		JobID:    jobID,
@@ -150,7 +152,7 @@ func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, r
 		TaskID:       taskID,
 		RecordID:     recordID,
 		Runner:       runner,
-		JobID:        firstNonEmpty(fetch.JobID, jobID),
+		JobID:        firstNonEmpty(jobID, fetch.JobID),
 		ArtifactDir:  artifactDirRel,
 		ReviewResult: reviewResult,
 		NextAction:   "escalate_human",
@@ -189,16 +191,17 @@ func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, r
 			continue
 		}
 		input := RuntimeApplyInput{
-			ProjectID: ctx.Project.ProjectID,
-			RecordID:  recordID,
-			ItemID:    taskID,
-			Runner:    runner,
-			JobID:     report.JobID,
-			AttemptID: run.ActiveAttemptID,
-			Path:      artifact.Path,
-			RelPath:   artifact.RelPath,
-			Sha256:    artifact.Sha256,
-			Kind:      "patch",
+			ProjectID:    ctx.Project.ProjectID,
+			RecordID:     recordID,
+			ItemID:       taskID,
+			Runner:       runner,
+			JobID:        report.JobID,
+			AttemptID:    run.ActiveAttemptID,
+			WorkRevision: intField(note.Data, "work_revision"),
+			Path:         artifact.Path,
+			RelPath:      artifact.RelPath,
+			Sha256:       artifact.Sha256,
+			Kind:         "patch",
 		}
 		stored, err := ctx.Store.UpsertApplyInput(input)
 		if err != nil {
@@ -583,7 +586,14 @@ func normalizeExternalArtifacts(repoRoot, destDir string, fetch externalFetchRes
 		sourceDir = filepath.Join(repoRoot, filepath.FromSlash(sourceDir))
 	}
 	var candidates []string
-	if sourceDir != "" && dirExists(sourceDir) {
+	// A provider may return a directory as a convenience, but walking it when
+	// explicit files are present re-imports artifacts from older provider
+	// cycles. The destination is already job-scoped, so directory discovery is
+	// safe only when the fetch returned no file list at all and the source is
+	// not a task-wide parent of the destination.
+	sourceIsDest := filepath.Clean(sourceDir) == filepath.Clean(destDir)
+	sourceContainsDest := samePathOrChild(destDir, sourceDir)
+	if len(fetch.Files) == 0 && sourceDir != "" && dirExists(sourceDir) && (sourceIsDest || !sourceContainsDest) {
 		if err := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -632,6 +642,11 @@ func normalizeExternalArtifacts(repoRoot, destDir string, fetch externalFetchRes
 	}
 	sort.Strings(normalized)
 	return uniqueStrings(normalized), nil
+}
+
+func externalArtifactScope(jobID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(jobID)))
+	return "job-" + hex.EncodeToString(sum[:])[:16]
 }
 
 func samePathOrChild(path, dir string) bool {
@@ -854,34 +869,85 @@ func mirrorApplyInputsIntoWorkspace(store *RuntimeStore, project RegisteredProje
 	if store == nil || strings.TrimSpace(workspacePath) == "" {
 		return nil
 	}
-	inputs, err := store.ListApplyInputsForRun(project.ProjectID, run.RecordID)
+	inputs, err := listCurrentExternalApplyInputs(store, project.ProjectID, run.RecordID, run)
 	if err != nil {
 		return err
 	}
 	if len(inputs) == 0 {
 		return nil
 	}
-	seenDirs := map[string]bool{}
 	for _, input := range inputs {
 		rel := filepath.ToSlash(firstNonEmpty(input.RelPath, input.Path))
 		if !strings.HasPrefix(rel, "architect/") {
 			continue
 		}
-		parts := strings.Split(rel, "/")
-		if len(parts) < 2 {
+		clean := filepath.Clean(filepath.FromSlash(rel))
+		if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
+			return tuskerError(errorPathEscape, "apply input path escapes repository: "+rel)
+		}
+		source := strings.TrimSpace(input.Path)
+		if source == "" {
+			source = filepath.Join(project.RepoRoot, clean)
+		}
+		if !samePathOrChild(source, project.RepoRoot) || !fileExists(source) {
 			continue
 		}
-		sourceDir := filepath.Join(project.RepoRoot, "architect", parts[1])
-		if seenDirs[sourceDir] || !dirExists(sourceDir) {
+		target := filepath.Join(workspacePath, clean)
+		if samePathOrChild(source, target) && samePathOrChild(target, source) {
 			continue
 		}
-		seenDirs[sourceDir] = true
-		targetDir := filepath.Join(workspacePath, "architect", parts[1])
-		if err := copyDirContents(sourceDir, targetDir); err != nil {
+		if err := copyFile(source, target); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func currentExternalApplyEvent(store *RuntimeStore, projectID, recordID string, run RunStatus) (*ExternalLoopEvent, error) {
+	if store == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
+		return nil, nil
+	}
+	events, err := store.ListExternalLoopEvents(projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	wantRevision := strconv.Itoa(run.WorkRevision)
+	liveJobID := firstNonEmpty(strings.TrimSpace(run.CloudTaskID), strings.TrimSpace(run.ApplyRef))
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if strings.TrimSpace(event.Status) == "blocked" ||
+			normalizeExternalLoopStage(event.Stage) != externalLoopStageCollected ||
+			normalizeExternalLoopAction(event.Action) != externalLoopActionApplyPatch {
+			continue
+		}
+		if revision, _ := externalLoopEventRevisionMaterial(event); revision != wantRevision {
+			continue
+		}
+		if liveJobID != "" && strings.TrimSpace(event.JobID) != liveJobID {
+			continue
+		}
+		return &event, nil
+	}
+	return nil, nil
+}
+
+func listCurrentExternalApplyInputs(store *RuntimeStore, projectID, recordID string, run RunStatus) ([]RuntimeApplyInput, error) {
+	event, err := currentExternalApplyEvent(store, projectID, recordID, run)
+	if err != nil {
+		return nil, err
+	}
+	if event == nil {
+		// Collection writes inputs before event admission. Recover that narrow
+		// crash window only when the live run still names the provider job; an
+		// unbound row without that identity is legacy/stale and must not drive an
+		// apply.
+		jobID := firstNonEmpty(strings.TrimSpace(run.CloudTaskID), strings.TrimSpace(run.ApplyRef))
+		if jobID == "" {
+			return nil, nil
+		}
+		return store.ListApplyInputsForRunScope(projectID, recordID, run.WorkRevision, "", jobID)
+	}
+	return store.ListApplyInputsForRunScope(projectID, recordID, run.WorkRevision, event.EventID, event.JobID)
 }
 
 func copyDirContents(sourceDir, targetDir string) error {

@@ -72,31 +72,32 @@ type RunnerCapabilities struct {
 }
 
 type StartRequest struct {
-	ProjectID           string
-	RecordID            string
-	ItemID              string
-	AttemptID           string
-	Lane                string
-	WorkRevision        int
-	LeaseGeneration     int
-	ActiveStates        []string
-	WorkingDir          string
-	WorkspacePath       string
-	RepoRoot            string
-	PromptPath          string
-	EventSinkPath       string
-	RawLogPath          string
-	RawLogMaxBytes      int64
-	StatusPath          string
-	Command             string
-	CommandArgv         []string
-	CommandExecutableFP string
-	CommandSearchPath   string
-	RunnerPathPrefix    string
-	RunnerProfile       string
-	RunnerHarness       string
-	RunnerModel         string
-	RunnerEffort        string
+	ProjectID              string
+	RecordID               string
+	ItemID                 string
+	AttemptID              string
+	ProviderIdempotencyKey string
+	Lane                   string
+	WorkRevision           int
+	LeaseGeneration        int
+	ActiveStates           []string
+	WorkingDir             string
+	WorkspacePath          string
+	RepoRoot               string
+	PromptPath             string
+	EventSinkPath          string
+	RawLogPath             string
+	RawLogMaxBytes         int64
+	StatusPath             string
+	Command                string
+	CommandArgv            []string
+	CommandExecutableFP    string
+	CommandSearchPath      string
+	RunnerPathPrefix       string
+	RunnerProfile          string
+	RunnerHarness          string
+	RunnerModel            string
+	RunnerEffort           string
 	// PrivateFolders carries the resolved, canonical exclusions to live
 	// adapters. It is deliberately runtime-only policy input, not a profile
 	// store; Claude's PreToolUse evaluator needs the same list the resolver

@@ -925,7 +925,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		for _, run := range runsByProject[loaded.Project.ProjectID] {
 			requiresBodies := externalLoopRunnerRequiresCollect(loaded.Workflow.Data, run.Runner)
 			if !requiresBodies {
-				inputs, err := d.store.ListApplyInputsForRun(loaded.Project.ProjectID, run.RecordID)
+				inputs, err := listCurrentExternalApplyInputs(d.store, loaded.Project.ProjectID, run.RecordID, run)
 				if err != nil {
 					return err
 				}
@@ -2696,11 +2696,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					}
 				} else {
 					verdictJSON, _ := json.Marshal(gateVerdictsFromTask(note))
-					materialScope, scopeErr := canonicalRunMaterialScope(d.store, run)
+					materialScope, generatedOutputScope, scopeErr := canonicalRunMaterialScopeWithGeneratedOutputs(d.store, run)
 					if scopeErr != nil {
 						endStateErr = scopeErr
 					} else {
-						endState, endStateErr = captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC())
+						endState, endStateErr = captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC(), generatedOutputScope)
 					}
 				}
 				if endStateErr != nil {
@@ -2785,7 +2785,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		changed = true
 	}
 	if run.ProcessPID == 0 {
-		if recovered, recoveredChanged, err := d.recoverUnstartedDirectedClaim(run, nowTime); err != nil || recoveredChanged {
+		if recovered, recoveredChanged, err := d.recoverUnstartedDirectedClaim(ctx, wfFile.Data, run, nowTime); err != nil || recoveredChanged {
 			return recovered, changed || recoveredChanged, err
 		}
 	}
@@ -2886,7 +2886,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	if result == nil {
 		return run, changed, nil
 	}
-	if runUsesCodexCloud(run) && strings.TrimSpace(result.CloudTaskID) != "" {
+	if workflowRunUsesCodexCloud(wfFile.Data, run) && strings.TrimSpace(result.CloudTaskID) != "" {
 		observationRun := run
 		observationRun.CloudTaskID = result.CloudTaskID
 		if observed, observeErr := (CodexExecutionAdapter{Store: d.store}).ObserveRunPayload(observationRun, map[string]any{
@@ -2963,11 +2963,28 @@ func runUsesCodexCloud(run RunStatus) bool {
 	return RunnerName(strings.TrimSpace(run.Runner)) == RunnerCodexCloud || RunnerName(strings.TrimSpace(run.RunnerHarness)) == RunnerCodexCloud
 }
 
-func (d *Daemon) recoverUnstartedDirectedClaim(run RunStatus, now time.Time) (RunStatus, bool, error) {
+func workflowRunUsesCodexCloud(wf Workflow, run RunStatus) bool {
+	if runUsesCodexCloud(run) {
+		return true
+	}
+	for _, name := range []string{run.Runner, run.RunnerHarness} {
+		if definition, ok := wf.Runners[strings.TrimSpace(name)]; ok && RunnerName(strings.TrimSpace(definition.Kind)) == RunnerCodexCloud {
+			return true
+		}
+	}
+	return false
+}
+
+func providerReservationKey(projectID, recordID, attemptID string, workRevision int, lane string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{strings.TrimSpace(projectID), strings.TrimSpace(recordID), strings.TrimSpace(attemptID), strconv.Itoa(workRevision), strings.TrimSpace(lane)}, "\x00")))
+	return "tusker-" + hex.EncodeToString(sum[:16])
+}
+
+func (d *Daemon) recoverUnstartedDirectedClaim(ctx context.Context, wf Workflow, run RunStatus, now time.Time) (RunStatus, bool, error) {
 	if LeaseState(run.LeaseState) != LeaseStateClaimed || run.ProcessPID != 0 || strings.TrimSpace(run.ActiveAttemptID) == "" {
 		return run, false, nil
 	}
-	if runUsesCodexCloud(run) {
+	if workflowRunUsesCodexCloud(wf, run) {
 		// A cloud provider has no local PID to register. Its start event is the
 		// durable operation checkpoint; never consume the directive and launch a
 		// second provider task while that checkpoint is absent or unreadable.
@@ -2982,11 +2999,45 @@ func (d *Daemon) recoverUnstartedDirectedClaim(run RunStatus, now time.Time) (Ru
 			return latest, false, nil
 		}
 		checkpoint, found, err := readCodexCloudTaskStartedCheckpoint(run.EventSinkPath, run.ActiveAttemptID)
-		if err != nil {
-			return run, false, fmt.Errorf("recover codex cloud start checkpoint without redispatch: %w", err)
+		checkpointReadErr := err
+		if checkpointReadErr != nil {
+			found = false
 		}
 		if !found {
-			return run, false, errors.New("recover codex cloud claim refused: no durable codex_cloud_task_started checkpoint")
+			reservationKey, keyErr := d.store.ProviderIdempotencyKeyForAttempt(run.ProjectID, run.RecordID, run.ActiveAttemptID)
+			if keyErr != nil {
+				return run, false, keyErr
+			}
+			if reservationKey != "" {
+				runner, _, runnerErr := runnerForName(run.Runner, wf)
+				if runnerErr == nil {
+					if cloud, ok := runner.(*CodexCloudRunner); ok && cloud.SupportsReservationLookup() {
+						if result, lookupErr := cloud.Reconcile(ctx, ReconcileRequest{CloudTaskID: reservationKey}); lookupErr == nil && result != nil && strings.TrimSpace(result.CloudTaskID) != "" {
+							checkpoint = codexCloudTaskStartedCheckpoint{
+								AttemptID: run.ActiveAttemptID, At: now.Format(time.RFC3339Nano), TaskID: result.CloudTaskID,
+								Status: result.CloudStatus, EnvironmentID: result.CloudEnvironmentID, AttemptNumber: result.CloudAttemptNumber,
+								PullRequestURL: result.PullRequestURL, ApplyRef: result.ApplyRef, LogsSummary: result.LogsSummary, FinalSummary: result.FinalSummary,
+							}
+							found = true
+						}
+					}
+				}
+			}
+			if !found {
+				reason := "codex cloud start acceptance is ambiguous; provider reservation requires reconciliation before redrive"
+				if checkpointReadErr != nil {
+					reason += "; local checkpoint unreadable: " + checkpointReadErr.Error()
+				}
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 0, reason, now.UTC().Format(time.RFC3339Nano))
+				run.LeaseState = string(LeaseStateParkedNoProgress)
+				run.AttemptOutcome = string(AttemptOutcomeBlocked)
+				run.NextRetryAt = ""
+				run.LastError = reason
+				run.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+				run.Terminal = true
+				clearActiveExecution(&run)
+				return run, true, nil
+			}
 		}
 		checkpointed, err := d.store.checkpointCodexCloudTaskStarted(run, checkpoint, now)
 		if err != nil {
@@ -3847,21 +3898,29 @@ func (d *Daemon) taskDirectiveLifecycleAuthorized(projectID string, run RunStatu
 }
 
 func (d *Daemon) dispatchRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string) (RunStatus, bool, error) {
-	return d.dispatchRunWithAttemptID(ctx, project, wfFile, note, run, lane, "")
+	return d.dispatchRunWithAttemptIDAndProfile(ctx, project, wfFile, note, run, lane, "", nil)
 }
 
 func (d *Daemon) dispatchRunWithAttemptID(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane, requestedAttemptID string) (RunStatus, bool, error) {
+	return d.dispatchRunWithAttemptIDAndProfile(ctx, project, wfFile, note, run, lane, requestedAttemptID, nil)
+}
+
+func (d *Daemon) dispatchRunWithResolvedProfile(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane string, profile ResolvedRunnerProfile) (RunStatus, bool, error) {
+	return d.dispatchRunWithAttemptIDAndProfile(ctx, project, wfFile, note, run, lane, "", &profile)
+}
+
+func (d *Daemon) dispatchRunWithAttemptIDAndProfile(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane, requestedAttemptID string, pinnedProfile *ResolvedRunnerProfile) (RunStatus, bool, error) {
 	var result RunStatus
 	var claimed bool
 	err := withScratchRetentionLock(project.VaultRoot, func() error {
 		var innerErr error
-		result, claimed, innerErr = d.dispatchRunWithAttemptIDUnlocked(ctx, project, wfFile, note, run, lane, requestedAttemptID)
+		result, claimed, innerErr = d.dispatchRunWithAttemptIDUnlocked(ctx, project, wfFile, note, run, lane, requestedAttemptID, pinnedProfile)
 		return innerErr
 	})
 	return result, claimed, err
 }
 
-func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane, requestedAttemptID string) (RunStatus, bool, error) {
+func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, note Note, run RunStatus, lane, requestedAttemptID string, pinnedProfile *ResolvedRunnerProfile) (RunStatus, bool, error) {
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
@@ -3915,12 +3974,22 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		return capped, false, nil
 	}
 	previousRun := run
-	selectedProfile, err := resolveRunProfileForLane(note, wfFile.Data, lane, run.Runner)
-	if err != nil {
-		return run, false, err
+	var selectedProfile ResolvedRunnerProfile
+	if pinnedProfile != nil {
+		selectedProfile = *pinnedProfile
+		if strings.TrimSpace(selectedProfile.Definition.Harness) == "" {
+			return run, false, tuskerError(errorConfigInvalid, "pinned dispatch profile requires a runner harness")
+		}
+	} else {
+		selectedProfile, err = resolveRunProfileForLane(note, wfFile.Data, lane, run.Runner)
+		if err != nil {
+			return run, false, err
+		}
+		selectedProfile = preserveResolvedRunIdentity(run, lane, selectedProfile)
 	}
-	selectedProfile = preserveResolvedRunIdentity(run, lane, selectedProfile)
-	if run.AttemptCount == 0 && len(selectedProfile.Fallbacks) > 0 {
+	// A pinned continuation is already resolved; generic lane fallbacks must
+	// not replace its originating runner.
+	if pinnedProfile == nil && run.AttemptCount == 0 && len(selectedProfile.Fallbacks) > 0 {
 		candidates, candidateErr := resolvedProfileCandidates(selectedProfile, wfFile.Data)
 		if candidateErr != nil {
 			return run, false, candidateErr
@@ -4256,6 +4325,16 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		Runner: run.Runner, Lane: lane, WorkerPolicyFP: run.WorkerPolicyFP, WorkRevision: run.WorkRevision, WorkspacePath: selectedWorkspacePath,
 		BranchName: branchName, ParentAttemptID: parentAttemptID, StartedAt: startedAt,
 	}
+	if workflowRunUsesCodexCloud(wfFile.Data, run) || externalLoopRunnerRequiresCollect(wfFile.Data, run.Runner) {
+		caps := externalLoopCapsFromWorkflow(wfFile.Data)
+		if persistedCaps, found, capsErr := d.store.ExternalLoopCapsFor(project.ProjectID, run.RecordID); capsErr != nil {
+			return run, false, capsErr
+		} else if found {
+			caps = persistedCaps
+		}
+		attemptIntent.ProviderIdempotencyKey = providerReservationKey(project.ProjectID, run.RecordID, attemptID, run.WorkRevision, lane)
+		attemptIntent.ExternalThreadCap = caps.MaxExternalThreads
+	}
 	var claimResult runClaimResult
 	if directiveQueued {
 		claimResult, err = ownership.claimExistingWithDirective(claimRun, attemptID, authorization, attemptIntent)
@@ -4409,38 +4488,39 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		})
 	}
 	startReq := StartRequest{
-		ProjectID:           project.ProjectID,
-		RecordID:            run.RecordID,
-		ItemID:              run.ItemID,
-		AttemptID:           attemptID,
-		Lane:                lane,
-		WorkRevision:        run.WorkRevision,
-		LeaseGeneration:     run.LeaseGeneration,
-		ActiveStates:        wfFile.Data.Tracker.ActiveStates,
-		WorkingDir:          workspace.Path,
-		WorkspacePath:       workspace.Path,
-		RepoRoot:            project.RepoRoot,
-		PromptPath:          promptPath,
-		EventSinkPath:       eventSinkPath,
-		RawLogPath:          rawLogPath,
-		RawLogMaxBytes:      authoritativeRawLogMaxBytes,
-		StatusPath:          statusPath,
-		Command:             command,
-		CommandArgv:         append([]string(nil), authoritativeArgv...),
-		CommandExecutableFP: authoritativeExecutableFP,
-		CommandSearchPath:   authoritativeSearchPath,
-		RunnerPathPrefix:    preflight.RunnerPathPrefix,
-		RunnerProfile:       run.RunnerProfile,
-		RunnerHarness:       run.RunnerHarness,
-		RunnerModel:         run.RunnerModel,
-		RunnerEffort:        run.RunnerEffort,
-		PrivateFolders:      privateFolders,
-		NotePath:            note.AbsolutePath,
-		VaultPath:           project.VaultRoot,
-		CodexPolicy:         codexPolicy,
-		ExternalLoop:        externalLaunch,
-		CodexACP:            codexACPPlan,
-		Actor:               authorization.Actor,
+		ProjectID:              project.ProjectID,
+		RecordID:               run.RecordID,
+		ItemID:                 run.ItemID,
+		AttemptID:              attemptID,
+		ProviderIdempotencyKey: attempt.ProviderIdempotencyKey,
+		Lane:                   lane,
+		WorkRevision:           run.WorkRevision,
+		LeaseGeneration:        run.LeaseGeneration,
+		ActiveStates:           wfFile.Data.Tracker.ActiveStates,
+		WorkingDir:             workspace.Path,
+		WorkspacePath:          workspace.Path,
+		RepoRoot:               project.RepoRoot,
+		PromptPath:             promptPath,
+		EventSinkPath:          eventSinkPath,
+		RawLogPath:             rawLogPath,
+		RawLogMaxBytes:         authoritativeRawLogMaxBytes,
+		StatusPath:             statusPath,
+		Command:                command,
+		CommandArgv:            append([]string(nil), authoritativeArgv...),
+		CommandExecutableFP:    authoritativeExecutableFP,
+		CommandSearchPath:      authoritativeSearchPath,
+		RunnerPathPrefix:       preflight.RunnerPathPrefix,
+		RunnerProfile:          run.RunnerProfile,
+		RunnerHarness:          run.RunnerHarness,
+		RunnerModel:            run.RunnerModel,
+		RunnerEffort:           run.RunnerEffort,
+		PrivateFolders:         privateFolders,
+		NotePath:               note.AbsolutePath,
+		VaultPath:              project.VaultRoot,
+		CodexPolicy:            codexPolicy,
+		ExternalLoop:           externalLaunch,
+		CodexACP:               codexACPPlan,
+		Actor:                  authorization.Actor,
 	}
 	if lane == runLaneReview {
 		startReq.Actor = reviewerActorForNote(wfFile.Data.Reviewer.Actor, note)
@@ -4548,7 +4628,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		start, err = runner.Start(ctx, startReq)
 	}
 	if err != nil {
-		if runUsesCodexCloud(run) && start != nil && strings.TrimSpace(start.CloudTaskID) != "" {
+		if workflowRunUsesCodexCloud(wfFile.Data, run) && start != nil && strings.TrimSpace(start.CloudTaskID) != "" {
 			// Codex Cloud may have accepted the remote operation before its
 			// event-ledger append failed. Adopt the returned provider identity
 			// while the claim is still fenced; scheduling a retry here would
@@ -7118,7 +7198,7 @@ func renderExternalLoopRuntimePromptContext(store *RuntimeStore, projectID, reco
 	if store == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return ""
 	}
-	inputs, _ := store.ListApplyInputsForRun(projectID, recordID)
+	inputs, _ := listCurrentExternalApplyInputs(store, projectID, recordID, run)
 	events, _ := store.ListExternalLoopEvents(projectID, recordID)
 	if len(inputs) == 0 && len(events) == 0 && strings.TrimSpace(run.LastError) == "" {
 		return ""

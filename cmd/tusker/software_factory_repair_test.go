@@ -1154,6 +1154,179 @@ func TestSoftwareFactoryRepairPreclaimIntentRecoveryClaimsExactlyOnce(t *testing
 	}
 }
 
+func TestSoftwareFactoryRepairProviderReservationCapsInitialContinuationFailureAndRestart(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := func(recordID string) RunStatus {
+		run := RunStatus{ProjectID: "project-1", RecordID: recordID, ItemID: recordID, Runner: "chatgpt-browser", Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeSucceeded), WorkRevision: 1}
+		if err := store.UpsertRun(run); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	claim := func(run RunStatus, attemptID, lane string) (bool, error) {
+		return store.claimRunLeaseWithDaemonAttempt(run, attemptID, run.LeaseGeneration+1, defaultRunLeaseTTL, time.Now().UTC(), RuntimeLeaseClaimPrecondition{
+			ExpectedLeaseState: LeaseState(run.LeaseState), ExpectedOwner: run.LeaseOwner, ExpectedLeaseGeneration: run.LeaseGeneration, ExpectedWorkRevision: run.WorkRevision,
+		}, RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll"}, RunAttempt{
+			AttemptID: attemptID, Runner: run.Runner, Lane: lane, WorkRevision: run.WorkRevision,
+			ProviderIdempotencyKey: providerReservationKey(run.ProjectID, run.RecordID, attemptID, run.WorkRevision, lane), ExternalThreadCap: 1,
+		})
+	}
+
+	first := seed("TASK-T-PROVIDER")
+	claimed, err := claim(first, "initial-provider-attempt", runLaneExecute)
+	if err != nil || !claimed {
+		t.Fatalf("initial provider reservation was not atomic with claim: claimed=%t err=%v", claimed, err)
+	}
+	if count, err := store.ExternalThreadReservationCount(first.ProjectID, first.RecordID); err != nil || count != 1 {
+		t.Fatalf("initial external thread count = %d, %v", count, err)
+	}
+	key, err := store.ProviderIdempotencyKeyForAttempt(first.ProjectID, first.RecordID, "initial-provider-attempt")
+	if err != nil || key == "" {
+		t.Fatalf("provider idempotency key was not persisted before Start: key=%q err=%v", key, err)
+	}
+
+	failed, err := store.FindRunScoped(first.ProjectID, first.RecordID)
+	if err != nil || failed == nil {
+		t.Fatal(err)
+	}
+	failed.LeaseState, failed.LeaseOwner = string(LeaseStateReleased), ""
+	failed.AttemptOutcome, failed.ActiveAttemptID = string(AttemptOutcomeFailed), ""
+	if err := store.UpsertRun(*failed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "initial-provider-attempt", ProjectID: first.ProjectID, RecordID: first.RecordID, Outcome: string(AttemptOutcomeFailed)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	failed, err = store.FindRunScoped(first.ProjectID, first.RecordID)
+	if err != nil || failed == nil {
+		t.Fatal(err)
+	}
+	claimed, err = claim(*failed, "continuation-provider-attempt", runLaneReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed {
+		t.Fatal("terminal provider failure was forgotten after restart and continuation exceeded the external-thread cap")
+	}
+	if count, err := store.ExternalThreadReservationCount(first.ProjectID, first.RecordID); err != nil || count != 1 {
+		t.Fatalf("failed provider reservation count after restart = %d, %v", count, err)
+	}
+
+	unrelated := seed("TASK-T-UNRELATED")
+	claimed, err = claim(unrelated, "unrelated-provider-attempt", runLaneExecute)
+	if err != nil || !claimed {
+		t.Fatalf("one task's exhausted provider cap stalled unrelated work: claimed=%t err=%v", claimed, err)
+	}
+}
+
+func TestSoftwareFactoryRepairProviderReservationCrashBeforeLocalWriteParksWithoutRedispatch(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC()
+	wf := defaultWorkflow()
+	wf.Runners["chatgpt-browser"] = RunnerDefinition{
+		Kind: string(RunnerCodexCloud), Command: "native-cloud-start", StatusCommand: "native-cloud-status {{cloud_task_id}}",
+	}
+	run := RunStatus{
+		ProjectID: "project-1", RecordID: "TASK-T-AMBIGUOUS", ItemID: "TASK-T-AMBIGUOUS", Runner: "chatgpt-browser", RunnerHarness: "chatgpt-browser",
+		Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeSucceeded), WorkRevision: 1,
+		EventSinkPath: filepath.Join(t.TempDir(), "never-written.events.jsonl"),
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	key := providerReservationKey(run.ProjectID, run.RecordID, "ambiguous-attempt", run.WorkRevision, run.Lane)
+	claimed, err := store.claimRunLeaseWithDaemonAttempt(run, "ambiguous-attempt", 1, defaultRunLeaseTTL, now, RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState: LeaseStateReleased, ExpectedWorkRevision: 1,
+	}, RunAuthorization{Source: "daemon_auto", Actor: "daemon"}, RunAttempt{
+		AttemptID: "ambiguous-attempt", Runner: run.Runner, Lane: run.Lane, WorkRevision: 1, ProviderIdempotencyKey: key, ExternalThreadCap: 2,
+	})
+	if err != nil || !claimed {
+		t.Fatalf("claim/reservation failed: claimed=%t err=%v", claimed, err)
+	}
+	claimedRun, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || claimedRun == nil {
+		t.Fatal(err)
+	}
+	parked, changed, err := (&Daemon{store: store}).recoverUnstartedDirectedClaim(context.Background(), wf, *claimedRun, now.Add(time.Second))
+	if err != nil || !changed {
+		t.Fatalf("ambiguous provider accept blocked daemon reconciliation: changed=%t err=%v", changed, err)
+	}
+	if parked.LeaseState != string(LeaseStateParkedNoProgress) || parked.AttemptOutcome != string(AttemptOutcomeBlocked) || !parked.Terminal || !strings.Contains(parked.LastError, "ambiguous") {
+		t.Fatalf("ambiguous provider accept was not durably fenced: %#v", parked)
+	}
+	if got, err := store.ProviderIdempotencyKeyForAttempt(run.ProjectID, run.RecordID, "ambiguous-attempt"); err != nil || got != key {
+		t.Fatalf("crash lost provider reservation: got=%q want=%q err=%v", got, key, err)
+	}
+	if err := store.UpsertRun(parked); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := RunStatus{ProjectID: run.ProjectID, RecordID: "TASK-T-AFTER-AMBIGUOUS", ItemID: "TASK-T-AFTER-AMBIGUOUS", Runner: string(RunnerCodexExec), Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeSucceeded), WorkRevision: 1}
+	if err := store.UpsertRun(unrelated); err != nil {
+		t.Fatal(err)
+	}
+	progressed, err := store.claimRunLeaseWithDaemonAttempt(unrelated, "unrelated-local-attempt", 1, defaultRunLeaseTTL, now.Add(2*time.Second), RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState: LeaseStateReleased, ExpectedWorkRevision: 1, ProjectConcurrencyLimit: 1,
+	}, RunAuthorization{Source: "daemon_auto", Actor: "daemon"}, RunAttempt{AttemptID: "unrelated-local-attempt", Runner: unrelated.Runner, Lane: unrelated.Lane, WorkRevision: 1})
+	if err != nil || !progressed {
+		t.Fatalf("ambiguous provider task stalled unrelated dispatch: claimed=%t err=%v", progressed, err)
+	}
+}
+
+func TestSoftwareFactoryRepairProviderReservationUsesHandoffIdAndLookup(t *testing.T) {
+	root := t.TempDir()
+	prompt := filepath.Join(root, "prompt.md")
+	if err := writeText(prompt, "review this\n"); err != nil {
+		t.Fatal(err)
+	}
+	key := "tusker-provider-key"
+	executor := &fakeCodexCloudExecutor{outputs: [][]byte{
+		[]byte(`{"task_id":"tusker-provider-key","status":"queued"}`),
+		[]byte(`{"task_id":"tusker-provider-key","status":"running"}`),
+	}}
+	runner := &CodexCloudRunner{Config: CodexCloudConfig{
+		EnvironmentID: "chatgpt-browser", ApplyMode: "manual", PRMode: "none", ExternalCollect: true,
+		Command: "chatgpt-handoff tusker-start --kind review --json", StatusCommand: "chatgpt-handoff tusker-status --job {{cloud_task_id}} --json", CollectCommand: "chatgpt-handoff tusker-collect --job {{cloud_task_id}} --json",
+	}, Executor: executor}
+	if !runner.SupportsReservationLookup() {
+		t.Fatal("handoff adapter reservation lookup was not detected")
+	}
+	started, err := runner.Start(context.Background(), StartRequest{
+		AttemptID: "attempt-1", ProviderIdempotencyKey: key, WorkspacePath: root, PromptPath: prompt,
+		EventSinkPath: filepath.Join(root, "events.jsonl"), RawLogPath: filepath.Join(root, "raw.log"), StatusPath: filepath.Join(root, "status.json"),
+	})
+	if err != nil || started.CloudTaskID != key {
+		t.Fatalf("handoff start did not finalize reservation: result=%#v err=%v", started, err)
+	}
+	if !strings.Contains(executor.requests[0].Command, "--id '"+key+"'") {
+		t.Fatalf("handoff start did not receive durable idempotency key: %q", executor.requests[0].Command)
+	}
+	assertContainsEnv(t, executor.requests[0].Env, "TUSKER_PROVIDER_IDEMPOTENCY_KEY="+key)
+	lookedUp, err := runner.Reconcile(context.Background(), ReconcileRequest{CloudTaskID: key})
+	if err != nil || lookedUp.CloudTaskID != key || lookedUp.CloudStatus != "running" {
+		t.Fatalf("handoff reservation lookup failed: result=%#v err=%v", lookedUp, err)
+	}
+	if !strings.Contains(executor.requests[1].Command, "tusker-status --job "+key) {
+		t.Fatalf("handoff recovery did not look up the reserved job: %q", executor.requests[1].Command)
+	}
+}
+
 func TestSoftwareFactoryRepairCodexCloudStartCheckpointPreventsRedispatch(t *testing.T) {
 	stateRoot := t.TempDir()
 	store, err := OpenRuntimeStore(stateRoot)
@@ -1184,8 +1357,12 @@ func TestSoftwareFactoryRepairCodexCloudStartCheckpointPreventsRedispatch(t *tes
 	}
 
 	now := time.Now().UTC()
+	wf := defaultWorkflow()
+	wf.Runners["chatgpt-browser"] = RunnerDefinition{
+		Kind: string(RunnerCodexCloud), Command: "native-cloud-start", StatusCommand: "native-cloud-status {{cloud_task_id}}",
+	}
 	run := RunStatus{
-		ProjectID: "project-1", RecordID: "TASK-T-CLOUD-CRASH", ItemID: "TASK-T-CLOUD-CRASH", Runner: "chatgpt-browser", RunnerHarness: string(RunnerCodexCloud),
+		ProjectID: "project-1", RecordID: "TASK-T-CLOUD-CRASH", ItemID: "TASK-T-CLOUD-CRASH", Runner: "chatgpt-browser", RunnerHarness: "chatgpt-browser",
 		Lane: runLaneExecute, LeaseState: string(LeaseStateClaimed), LeaseOwner: "attempt-cloud-crash", LeaseGeneration: 1,
 		AttemptOutcome: string(AttemptOutcomeNone), ActiveAttemptID: "attempt-cloud-crash", WorkRevision: 3,
 		AttemptCount: 1, WorkspacePath: workspace, PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath,
@@ -1198,13 +1375,13 @@ func TestSoftwareFactoryRepairCodexCloudStartCheckpointPreventsRedispatch(t *tes
 		AttemptID: "attempt-cloud-crash", ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
 		Runner: run.Runner, Lane: run.Lane, WorkRevision: run.WorkRevision, WorkspacePath: workspace,
 		PromptPath: promptPath, EventSinkPath: eventSinkPath, RawLogPath: rawLogPath, StatusPath: run.StatusPath,
-		Outcome: string(AttemptOutcomeNone), ProcessPID: 0, StartedAt: run.StartedAt,
+		ProviderIdempotencyKey: "tusker-cloud-crash-key", Outcome: string(AttemptOutcomeNone), ProcessPID: 0, StartedAt: run.StartedAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	daemon := &Daemon{store: store}
-	recovered, changed, err := daemon.recoverUnstartedDirectedClaim(run, now.Add(time.Second))
+	recovered, changed, err := daemon.recoverUnstartedDirectedClaim(context.Background(), wf, run, now.Add(time.Second))
 	if err != nil || !changed {
 		t.Fatalf("durable cloud start was not adopted after simulated crash: changed=%t err=%v run=%#v", changed, err, recovered)
 	}
@@ -1218,10 +1395,13 @@ func TestSoftwareFactoryRepairCodexCloudStartCheckpointPreventsRedispatch(t *tes
 	if len(attempts) != 1 || attempts[0].CloudTaskID != recovered.CloudTaskID {
 		t.Fatalf("cloud checkpoint did not atomically update attempt: %#v", attempts)
 	}
+	if key, err := store.ProviderIdempotencyKeyForAttempt(run.ProjectID, run.RecordID, run.ActiveAttemptID); err != nil || key != "tusker-cloud-crash-key" {
+		t.Fatalf("provider job finalization replaced its reservation key: key=%q err=%v", key, err)
+	}
 
 	// A restarted controller sees the already-adopted operation and proceeds to
 	// reconcile it; it must not requeue the consumed claim or call Start again.
-	restarted, changed, err := daemon.recoverUnstartedDirectedClaim(recovered, now.Add(2*time.Second))
+	restarted, changed, err := daemon.recoverUnstartedDirectedClaim(context.Background(), wf, recovered, now.Add(2*time.Second))
 	if err != nil || changed {
 		t.Fatalf("adopted cloud start was not idempotent: changed=%t err=%v run=%#v", changed, err, restarted)
 	}

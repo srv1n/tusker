@@ -47,7 +47,12 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 		if err != nil {
 			return err
 		}
+		generatedOutputScope, err := taskGeneratedOutputScope(current)
+		if err != nil {
+			return err
+		}
 		if strings.Join(scope, "\x00") != strings.Join(parent.EndState.MaterialScope, "\x00") ||
+			strings.Join(generatedOutputScope, "\x00") != strings.Join(parent.EndState.GeneratedOutputScope, "\x00") ||
 			currentSource != source ||
 			intField(current.Data, "work_revision") != run.WorkRevision {
 			return tuskerError(errorInvalidTransition, "review verification implementation scope or source changed")

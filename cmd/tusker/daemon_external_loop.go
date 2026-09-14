@@ -37,7 +37,6 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
 	if err != nil {
 		return d.recordDaemonExternalLoopBlock(project, wfFile, notes, note, run, "external collect failed for "+jobID+": "+err.Error())
 	}
-
 	policyCtx := collectCtx
 	dispatchExplanation := collectCtx.explainTask(note)
 	if collect.NextAction == externalLoopActionApplyPatch {
@@ -161,11 +160,15 @@ func (d *Daemon) autoAdvanceExternalApplyResult(ctx context.Context, project Reg
 	if latest, err := resolveNote(project.VaultRoot, trackerRecordID(note)); err == nil {
 		note = latest
 	}
-	inputs, err := d.store.ListApplyInputsForRun(project.ProjectID, run.RecordID)
+	inputs, err := listCurrentExternalApplyInputs(d.store, project.ProjectID, run.RecordID, run)
 	if err != nil {
 		return run, false, err
 	}
-	if len(inputs) == 0 {
+	currentEvent, err := currentExternalApplyEvent(d.store, project.ProjectID, run.RecordID, run)
+	if err != nil {
+		return run, false, err
+	}
+	if len(inputs) == 0 && (currentEvent == nil || strings.TrimSpace(currentEvent.JobID) != "") {
 		return run, false, nil
 	}
 	stage, action := externalLoopApplyResultDecision(wfFile.Data, note, run)
@@ -175,6 +178,9 @@ func (d *Daemon) autoAdvanceExternalApplyResult(ctx context.Context, project Reg
 
 	originRunner, jobID := externalLoopOriginForApplyResult(d.store, project.ProjectID, run.RecordID, inputs)
 	blockers := externalLoopApplyResultBlockers(wfFile.Data, originRunner, inputs)
+	if externalLoopActionMayOpenExternalThread(action) && strings.TrimSpace(jobID) == "" {
+		blockers = append(blockers, "external thread action requires a stable provider job id")
+	}
 	if len(blockers) > 0 {
 		action = externalLoopActionEscalateHuman
 	}
@@ -382,6 +388,34 @@ func externalLoopRunAttemptIdentity(run RunStatus) string {
 	return fmt.Sprintf("%s:rev-%d:attempt-%d:%s", strings.TrimSpace(run.Runner), run.WorkRevision, run.AttemptCount, strings.TrimSpace(run.AttemptOutcome))
 }
 
+func externalLoopContinuationProfile(wf Workflow, run RunStatus, externalRunner string) ResolvedRunnerProfile {
+	profile := ResolvedRunnerProfile{
+		Name:   strings.TrimSpace(run.RunnerProfile),
+		Source: "external continuation",
+		Reason: "preserve originating external runner",
+		Definition: RunnerProfileDefinition{
+			Harness: strings.TrimSpace(externalRunner),
+			Model:   strings.TrimSpace(run.RunnerModel),
+			Effort:  strings.TrimSpace(run.RunnerEffort),
+		},
+	}
+	if profile.Name != "" {
+		if definition, ok := wf.RunnerProfiles[profile.Name]; ok {
+			profile.Definition = definition
+			// The external runner name is the adapter identity used by the
+			// continuation. Keep the named profile's remaining policy intact.
+			profile.Definition.Harness = strings.TrimSpace(externalRunner)
+			if model := strings.TrimSpace(run.RunnerModel); model != "" {
+				profile.Definition.Model = model
+			}
+			if effort := strings.TrimSpace(run.RunnerEffort); effort != "" {
+				profile.Definition.Effort = effort
+			}
+		}
+	}
+	return profile
+}
+
 func dispatchExternalLoopContinuation(ctx *automationCommandContext, note Note, base RunStatus, externalRunner, lane string) (*RunStatus, error) {
 	externalRunner = strings.TrimSpace(externalRunner)
 	if externalRunner == "" {
@@ -408,7 +442,7 @@ func dispatchExternalLoopContinuation(ctx *automationCommandContext, note Note, 
 		return nil, err
 	}
 	daemon := &Daemon{stateRoot: ctx.StateRoot, store: ctx.Store, dispatchRefusalReason: ctx.DispatchRefusal}
-	updated, persisted, dispatchErr := daemon.dispatchRun(context.Background(), ctx.Project, ctx.Workflow, note, run, run.Lane)
+	updated, persisted, dispatchErr := daemon.dispatchRunWithResolvedProfile(context.Background(), ctx.Project, ctx.Workflow, note, run, run.Lane, externalLoopContinuationProfile(ctx.Workflow.Data, base, externalRunner))
 	if !persisted {
 		if dispatchErr != nil {
 			updated = daemon.scheduleRetry(updated, ctx.Workflow.Data, dispatchErr.Error())

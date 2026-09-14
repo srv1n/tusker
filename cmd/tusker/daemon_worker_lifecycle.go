@@ -65,11 +65,11 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 			return nil, false, err
 		}
 		verdictJSON, _ := json.Marshal(verdicts)
-		materialScope, err := canonicalRunMaterialScope(d.store, *run)
+		materialScope, generatedOutputScope, err := canonicalRunMaterialScopeWithGeneratedOutputs(d.store, *run)
 		if err != nil {
 			return nil, false, err
 		}
-		endState, err := captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC())
+		endState, err := captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC(), generatedOutputScope)
 		if err != nil {
 			return nil, false, err
 		}
