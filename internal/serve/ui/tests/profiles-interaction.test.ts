@@ -4,6 +4,17 @@ import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createServer } from "vite";
+import { availableProfileId } from "@/features/settings/app/ProfilesSection";
+
+test("new profiles get distinct stable IDs for the same model", () => {
+  const profiles = {
+    "codex_exec-gpt-5-6-sol": {},
+    "codex_exec-gpt-5-6-sol-2": {},
+  };
+  expect(availableProfileId("codex_exec", "gpt-5.6-sol", profiles)).toBe(
+    "codex_exec-gpt-5-6-sol-3",
+  );
+});
 
 test("Profiles add and edit flow keeps access in one understandable section", async () => {
   const playwright =
@@ -17,6 +28,14 @@ test("Profiles add and edit flow keeps access in one understandable section", as
     schema: "tusker.model-levels/v1",
     revision: "r1",
     profiles: {
+      "codex_exec-gpt-5-6-luna": {
+        display_name: "Existing Luna profile",
+        harness: "codex_exec",
+        model: "gpt-5.6-luna",
+        effort: "low",
+        permission_preset: "workspace-write-offline",
+        eligible_tiers: ["light"],
+      },
       seeded: {
         display_name: "Seeded reviewer",
         harness: "claude-code",
@@ -65,6 +84,7 @@ test("Profiles add and edit flow keeps access in one understandable section", as
         available: true,
         discovery_state: "available",
         discovery_source: "app_server:model/list",
+        last_checked: "2026-09-09T00:00:00Z",
         manual_entry: true,
         models: [
           {
@@ -282,6 +302,9 @@ createRoot(document.getElementById("root")).render(<AgentsSection />);
     expect(await page.getByLabel("Model", { exact: true }).inputValue()).toBe(
       "gpt-5.6-luna",
     );
+    await legacyForm
+      .getByRole("button", { name: "Rediscover models" })
+      .waitFor();
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await legacy.getByRole("heading", { name: "Legacy full" }).click();
     await page.getByRole("form", { name: "Edit profile" }).waitFor();
@@ -336,6 +359,7 @@ createRoot(document.getElementById("root")).render(<AgentsSection />);
     await page.getByRole("form", { name: "Edit profile" }).waitFor();
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Add profile" }).click();
+    await page.getByRole("form", { name: "Add profile" }).waitFor();
     expect(await page.getByLabel("Model", { exact: true }).inputValue()).toBe(
       "gpt-5.6-luna",
     );
@@ -432,13 +456,16 @@ createRoot(document.getElementById("root")).render(<AgentsSection />);
     await page.getByRole("button", { name: "Save profile", exact: true }).click();
     await page.getByText("Codex · Luna", { exact: true }).waitFor();
     expect(
-      await page.evaluate(() => (window as any).__lastProfileWrite.access),
+      await page.evaluate(() => (window as any).__lastProfileWrite),
     ).toMatchObject({
-      mode: "work_in_projects",
-      network: false,
-      destructive_actions: "deny",
-      folders: [],
-      private_folders: ["/tmp/private"],
+      name: "codex_exec-gpt-5-6-luna-2",
+      access: {
+        mode: "work_in_projects",
+        network: false,
+        destructive_actions: "deny",
+        folders: [],
+        private_folders: ["/tmp/private"],
+      },
     });
     await page.getByRole("button", { name: "Add profile" }).click();
     await page.setViewportSize({ width: 1280, height: 900 });

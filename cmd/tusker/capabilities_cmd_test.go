@@ -44,14 +44,14 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 		t.Fatalf("binary provenance = %#v", manifest.Binary)
 	}
 	assertSortedCapabilities(t, manifest)
-	for _, command := range []string{"automation", "capabilities", "daemon", "delivery", "docs", "projects", "reindex", "runs", "verify", "wave", "work"} {
+	for _, command := range []string{"automation", "capabilities", "daemon", "docs", "projects", "reindex", "runs", "verify", "wave", "work"} {
 		if !capabilitiesContainCommand(manifest.Commands, command) {
 			t.Fatalf("manifest omitted command family %q", command)
 		}
 	}
-	importCapability, ok := capabilityCommandNamed(manifest.Commands, "delivery import")
-	if !ok || !strings.Contains(importCapability.Purpose, "amend canonical task contracts") || !containsString(importCapability.Flags, "--dry-run") {
-		t.Fatalf("manifest omitted the supported task-contract amendment path: %#v", importCapability)
+	createCapability, ok := capabilityCommandNamed(manifest.Commands, "wave create")
+	if !ok || !containsString(createCapability.Flags, "--file") || !containsString(createCapability.Flags, "--request-key") {
+		t.Fatalf("manifest omitted the supported direct wave authoring path: %#v", createCapability)
 	}
 	if capabilitiesContainCommand(manifest.Commands, "hook") {
 		t.Fatal("Tusker must not advertise repository hook installation")
@@ -62,7 +62,7 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 	if !containsString(manifest.RunnerAdapters, string(RunnerCodexACP)) {
 		t.Fatalf("manifest omitted primary local runner %q: %#v", RunnerCodexACP, manifest.RunnerAdapters)
 	}
-	if !containsString(manifest.Schemas.Delivery, deliveryPlanV2Schema) || !containsString(manifest.Schemas.Review, reviewResultSchema) || !containsString(manifest.Schemas.Completion, completionTransactionSchema) || !containsString(manifest.Schemas.Receipt, v7LandingReceiptSchema) {
+	if !containsString(manifest.Schemas.Task, "tusker.task/v7") || !containsString(manifest.Schemas.Task, "tusker.wave/v7") || !containsString(manifest.Schemas.Review, reviewResultSchema) || !containsString(manifest.Schemas.Completion, completionTransactionSchema) || !containsString(manifest.Schemas.Receipt, v7LandingReceiptSchema) {
 		t.Fatalf("manifest omitted core schemas: %#v", manifest.Schemas)
 	}
 }
@@ -168,49 +168,6 @@ func TestCapabilityCompatibilityFailsClosed(t *testing.T) {
 	}
 }
 
-// TestDispatchCapabilitySkewRefusal binds the manifest's unavailable state to
-// the actual Start gate. It proves that a caller cannot turn stale capability
-// knowledge into a claim, imported task, or armed wave.
-func TestDispatchCapabilitySkewRefusal(t *testing.T) {
-	manifest, err := buildCapabilitiesManifest(&debug.BuildInfo{}, writeTempExecutable(t, "tusker-capability-skew"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(manifest.OptionalCapabilities) != 1 || manifest.OptionalCapabilities[0].Capability != strictV2ProofAuthorityCapability || manifest.OptionalCapabilities[0].Available {
-		t.Fatalf("manifest does not report unavailable strict capability: %#v", manifest.OptionalCapabilities)
-	}
-
-	vault := deliveryTestVault(t)
-	path := writeDeliveryV2TestPlan(t, vault, unavailableStrictCapabilityPlan())
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := snapshotDeliveryV2Records(t, vault)
-	previousObserver := v7MaterialEpochLockObserver
-	locked := false
-	v7MaterialEpochLockObserver = func() { locked = true }
-	t.Cleanup(func() { v7MaterialEpochLockObserver = previousObserver })
-
-	_, err = deliveryStart(Args{
-		"vault": vault, "plan": path, "by": "human:fixture", "quiet": "true",
-		"confirm": deliveryFingerprint(raw),
-	}, fixedWaveEnvironmentInspector(greenWaveEnvironment()))
-	issue := errorToIssue(err)
-	context, ok := issue.Context.(unavailableCapabilityContext)
-	if err == nil || issue.Code != errorInvalidArg || !strings.Contains(issue.Message, strictV2ProofAuthorityCapability) || !ok {
-		t.Fatalf("machine-readable Start refusal = %#v, err=%v", issue, err)
-	}
-	assertEqual(t, []string{strictV2ProofAuthorityCapability}, context.MissingCapabilities, "machine-readable missing capability")
-	if context.Installed.Schema != versionSchema || context.Installed.Version == "" || context.Remedy != unavailableCapabilityRemedy || issue.Hint != unavailableCapabilityRemedy {
-		t.Fatalf("machine-readable refusal context = %#v, issue = %#v", context, issue)
-	}
-	if locked {
-		t.Fatal("Start acquired the material epoch before capability refusal")
-	}
-	assertEqual(t, before, snapshotDeliveryV2Records(t, vault), "capability skew refusal is preclaim/prewrite")
-}
-
 func capabilitiesContainCommand(commands []capabilityCommand, name string) bool {
 	for _, command := range commands {
 		if command.Command == name {
@@ -255,7 +212,7 @@ func assertSortedCapabilities(t *testing.T, manifest capabilitiesManifest) {
 			t.Fatalf("command is not sorted: %#v", command)
 		}
 	}
-	if !capabilityStringsSorted(manifest.Schemas.Task) || !capabilityStringsSorted(manifest.Schemas.Delivery) || !capabilityStringsSorted(manifest.Schemas.Review) || !capabilityStringsSorted(manifest.Schemas.Completion) || !capabilityStringsSorted(manifest.Schemas.Receipt) || !capabilityStringsSorted(manifest.RunnerAdapters) {
+	if !capabilityStringsSorted(manifest.Schemas.Task) || !capabilityStringsSorted(manifest.Schemas.Review) || !capabilityStringsSorted(manifest.Schemas.Completion) || !capabilityStringsSorted(manifest.Schemas.Receipt) || !capabilityStringsSorted(manifest.RunnerAdapters) {
 		t.Fatalf("manifest collections are not sorted: %#v", manifest)
 	}
 }

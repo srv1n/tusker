@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,7 +16,7 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
 	if jobID == "" {
 		return d.recordDaemonExternalLoopBlock(project, wfFile, notes, note, run, "completed external runner did not expose cloud_task_id/apply_ref")
 	}
-	handled, err := externalLoopJobAlreadyHandled(d.store, project.ProjectID, run.RecordID, jobID)
+	handled, err := externalLoopJobAlreadyHandledForNote(d.store, project.ProjectID, run.RecordID, jobID, note)
 	if err != nil {
 		return run, false, err
 	}
@@ -51,21 +52,23 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
 	}
 
 	result := externalLoopAdvanceResult{
-		Schema:            externalLoopSchema,
-		TaskID:            stringField(note.Data, "id"),
-		RecordID:          trackerRecordID(note),
-		Runner:            run.Runner,
-		ApplyRunner:       applyRunner,
-		JobID:             jobID,
-		AttemptID:         run.ActiveAttemptID,
-		Stage:             externalLoopStageCollected,
-		NextAction:        collect.NextAction,
-		Reason:            externalLoopCollectReason(collect),
-		Dispatchable:      collect.Dispatchable,
-		Blockers:          append([]string{}, collect.Blockers...),
-		Caps:              externalLoopCapsFromWorkflow(wfFile.Data),
-		Collect:           &collect,
-		AutomationExplain: &dispatchExplanation,
+		Schema:              externalLoopSchema,
+		TaskID:              stringField(note.Data, "id"),
+		RecordID:            trackerRecordID(note),
+		Runner:              run.Runner,
+		ApplyRunner:         applyRunner,
+		JobID:               jobID,
+		AttemptID:           run.ActiveAttemptID,
+		WorkRevision:        intField(note.Data, "work_revision"),
+		MaterialFingerprint: externalLoopMaterialFingerprint(note, collect.ReviewResult),
+		Stage:               externalLoopStageCollected,
+		NextAction:          collect.NextAction,
+		Reason:              externalLoopCollectReason(collect),
+		Dispatchable:        collect.Dispatchable,
+		Blockers:            append([]string{}, collect.Blockers...),
+		Caps:                externalLoopCapsFromWorkflow(wfFile.Data),
+		Collect:             &collect,
+		AutomationExplain:   &dispatchExplanation,
 	}
 	policyInput := externalLoopPolicyInput{
 		TaskID:       result.TaskID,
@@ -92,13 +95,14 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
 	result.ProjectedCounters = policyResult.ProjectedCounters
 	result.Event = policyResult.Event
 	result.EventCreated = policyResult.EventCreated
+	result.Caps = policyResult.Caps
 
 	advanced := true
 	if result.NextAction == externalLoopActionApplyPatch {
 		result.Dispatchable = result.Dispatchable && len(result.Blockers) == 0
 		result.DispatchCommand = []string{"tusker", "automation", "dispatch", result.TaskID, "--json"}
 	}
-	if result.NextAction == externalLoopActionApplyPatch && result.Dispatchable && result.EventCreated {
+	if result.NextAction == externalLoopActionApplyPatch && result.Dispatchable && (result.EventCreated || externalLoopEffectNeedsReconciliation(run, result.Event)) {
 		policyCtx.ProjectRuns[trackerRecordID(note)] = externalLoopDispatchLeaseSnapshot(run, externalLoopApplyDispatchRun(project, note, run, applyRunner))
 		updated, dispatchErr := dispatchExternalApplyInput(policyCtx, note, dispatchExplanation, applyRunner)
 		if dispatchErr != nil {
@@ -110,7 +114,7 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
 		result.DispatchRun = updated
 		return *updated, true, nil
 	}
-	if (result.NextAction == externalLoopActionContinueThreadOnFailure || result.NextAction == externalLoopActionRequestReviewNext) && result.EventCreated && len(result.Blockers) == 0 {
+	if (result.NextAction == externalLoopActionContinueThreadOnFailure || result.NextAction == externalLoopActionRequestReviewNext) && (result.EventCreated || externalLoopEffectNeedsReconciliation(run, result.Event)) && len(result.Blockers) == 0 {
 		lane := runLaneExecute
 		if result.NextAction == externalLoopActionRequestReviewNext {
 			lane = runLaneReview
@@ -126,7 +130,7 @@ func (d *Daemon) autoAdvanceExternalLoop(ctx context.Context, project Registered
 		}
 		return *updated, true, nil
 	}
-	if result.NextAction == externalLoopActionCloseTask && result.EventCreated && len(result.Blockers) == 0 {
+	if result.NextAction == externalLoopActionCloseTask && (result.EventCreated || externalLoopCloseEffectNeedsReconciliation(note, result.Event)) && len(result.Blockers) == 0 {
 		if err := d.closeExternalLoopTask(project, wfFile, note, collect); err != nil {
 			run.LeaseState = string(LeaseStateReleased)
 			run.AttemptOutcome = string(AttemptOutcomeBlocked)
@@ -180,19 +184,21 @@ func (d *Daemon) autoAdvanceExternalApplyResult(ctx context.Context, project Reg
 		return run, false, err
 	}
 	result := externalLoopAdvanceResult{
-		Schema:       externalLoopSchema,
-		TaskID:       stringField(note.Data, "id"),
-		RecordID:     trackerRecordID(note),
-		Runner:       originRunner,
-		ApplyRunner:  run.Runner,
-		JobID:        jobID,
-		AttemptID:    externalLoopRunAttemptIdentity(run),
-		Stage:        stage,
-		NextAction:   action,
-		Reason:       reason,
-		Dispatchable: action == externalLoopActionRequestReviewNext || action == externalLoopActionContinueThreadOnFailure,
-		Blockers:     blockers,
-		Caps:         externalLoopCapsFromWorkflow(wfFile.Data),
+		Schema:              externalLoopSchema,
+		TaskID:              stringField(note.Data, "id"),
+		RecordID:            trackerRecordID(note),
+		Runner:              originRunner,
+		ApplyRunner:         run.Runner,
+		JobID:               jobID,
+		AttemptID:           externalLoopRunAttemptIdentity(run),
+		WorkRevision:        intField(note.Data, "work_revision"),
+		MaterialFingerprint: externalLoopMaterialFingerprint(note, nil),
+		Stage:               stage,
+		NextAction:          action,
+		Reason:              reason,
+		Dispatchable:        action == externalLoopActionRequestReviewNext || action == externalLoopActionContinueThreadOnFailure,
+		Blockers:            blockers,
+		Caps:                externalLoopCapsFromWorkflow(wfFile.Data),
 	}
 	policyInput := externalLoopPolicyInput{
 		TaskID:       result.TaskID,
@@ -219,9 +225,10 @@ func (d *Daemon) autoAdvanceExternalApplyResult(ctx context.Context, project Reg
 	result.ProjectedCounters = policyResult.ProjectedCounters
 	result.Event = policyResult.Event
 	result.EventCreated = policyResult.EventCreated
+	result.Caps = policyResult.Caps
 
 	if result.NextAction == externalLoopActionContinueThreadOnFailure || result.NextAction == externalLoopActionRequestReviewNext {
-		if !result.EventCreated || len(result.Blockers) > 0 {
+		if !(result.EventCreated || externalLoopEffectNeedsReconciliation(run, result.Event)) || len(result.Blockers) > 0 {
 			if len(result.Blockers) > 0 {
 				run.LeaseState = string(LeaseStateReleased)
 				run.AttemptOutcome = string(AttemptOutcomeBlocked)
@@ -444,6 +451,7 @@ func (d *Daemon) closeExternalLoopTask(project RegisteredProject, wfFile Workflo
 	}
 	acceptanceIDs := v7AcceptanceIDs(task.Body)
 	existing := parseV7VerificationRows(note.Body)
+	currentMaterial, materialErr := v7VerificationCurrentScopedMaterial(project.VaultRoot, task)
 	var rows []v7VerificationRow
 	hasCoveringRow := false
 	hasCoveringCommand := false
@@ -457,13 +465,16 @@ func (d *Daemon) closeExternalLoopTask(project RegisteredProject, wfFile Workflo
 		}
 		hasCoveringRow = true
 		switch strings.ToLower(strings.TrimSpace(row.Result)) {
-		case "pending", "pass":
-			if _, ok := v7VerificationCommand(row.Check); ok {
+		case "pass":
+			if _, ok := v7VerificationCommand(row.Check); ok && v7VerificationReceiptCurrent(task, row, currentMaterial, materialErr) {
 				hasCoveringCommand = true
 			}
-			row.Result = "pass"
-			row.Notes = summary
-			rows = append(rows, row)
+		case "pending":
+			if _, ok := v7VerificationCommand(row.Check); !ok {
+				row.Result = "pass"
+				row.Notes = summary
+				rows = append(rows, row)
+			}
 		}
 	}
 	if v7ExternalCloseMachineProofOutstanding(task, idx) && !hasCoveringCommand {
@@ -617,20 +628,26 @@ func (d *Daemon) externalLoopLaunchContext(projectID, recordID string) ExternalL
 	if err != nil {
 		return ExternalLoopLaunchContext{}
 	}
+	var carriedFindingIDs []string
 	for i := len(events) - 1; i >= 0; i-- {
 		event := events[i]
+		carriedFindingIDs = append(carriedFindingIDs, externalLoopBlockingFindingIDsFromPayload(event.PayloadJSON)...)
 		if strings.TrimSpace(event.Status) != "ok" {
 			continue
 		}
 		action := normalizeExternalLoopAction(event.Action)
 		switch action {
 		case externalLoopActionContinueThreadOnFailure, externalLoopActionRequestReviewNext:
+			reason := strings.TrimSpace(event.Reason)
+			if ids := sortedUniqueStrings(carriedFindingIDs); len(ids) > 0 {
+				reason = firstNonEmpty(reason, "repair continuation") + "; blocking finding IDs: " + strings.Join(ids, ", ")
+			}
 			return ExternalLoopLaunchContext{
 				Stage:       normalizeExternalLoopStage(event.Stage),
 				Action:      action,
 				OriginJobID: strings.TrimSpace(event.JobID),
 				EventID:     strings.TrimSpace(event.EventID),
-				Reason:      strings.TrimSpace(event.Reason),
+				Reason:      reason,
 			}
 		}
 	}
@@ -725,6 +742,10 @@ func externalLoopDispatchLeaseSnapshot(base, prepared RunStatus) RunStatus {
 }
 
 func externalLoopJobAlreadyHandled(store *RuntimeStore, projectID, recordID, jobID string) (bool, error) {
+	return externalLoopJobAlreadyHandledForNote(store, projectID, recordID, jobID, Note{})
+}
+
+func externalLoopJobAlreadyHandledForNote(store *RuntimeStore, projectID, recordID, jobID string, note Note) (bool, error) {
 	if store == nil || strings.TrimSpace(jobID) == "" {
 		return false, nil
 	}
@@ -736,26 +757,111 @@ func externalLoopJobAlreadyHandled(store *RuntimeStore, projectID, recordID, job
 		if strings.TrimSpace(event.JobID) != strings.TrimSpace(jobID) {
 			continue
 		}
-		switch normalizeExternalLoopStage(event.Stage) {
-		case externalLoopStageCollected, externalLoopStageBlocked:
+		if note.Data != nil && !externalLoopEventMatchesNote(event, note) {
+			continue
+		}
+		if normalizeExternalLoopAction(event.Action) == externalLoopActionEscalateHuman {
+			if handled, decisionErr := store.ExternalLoopSupervisorDecisionRecorded(projectID, recordID, event.EventID); decisionErr != nil {
+				return false, decisionErr
+			} else if !handled {
+				return false, nil
+			}
 			return true, nil
+		}
+		switch normalizeExternalLoopStage(event.Stage) {
+		case externalLoopStageBlocked:
+			// A blocked ledger row is only terminal after the canonical
+			// stop-for-human decision is durable. A crash or hand-written blocked
+			// event must remain eligible for reconciliation rather than becoming a
+			// blanket suppression on the next poll.
+			return store.ExternalLoopSupervisorDecisionRecorded(projectID, recordID, event.EventID)
+		case externalLoopStageCollected:
+			// Collection is only a durable admission checkpoint. Apply/review
+			// continuation effects are acknowledged by the run lease/attempt;
+			// if the controller restarted before that acknowledgement, retry the
+			// effect instead of suppressing it forever.
+			switch normalizeExternalLoopAction(event.Action) {
+			case externalLoopActionCloseTask:
+				if note.Data == nil {
+					return true, nil
+				}
+				return externalLoopTaskCloseEffectSatisfied(note), nil
+			case externalLoopActionRecordResearch:
+				return true, nil
+			default:
+				return false, nil
+			}
 		}
 	}
 	return false, nil
 }
 
-func externalLoopCloseTaskRecorded(store *RuntimeStore, projectID, recordID string) bool {
-	if store == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
+func externalLoopTaskCloseEffectSatisfied(note Note) bool {
+	status := strings.ToLower(strings.TrimSpace(stringField(note.Data, "status")))
+	return containsString([]string{"done", "cancelled", "superseded"}, status) || strings.TrimSpace(stringField(note.Data, "closed_at")) != ""
+}
+
+func externalLoopCloseEffectNeedsReconciliation(note Note, event *ExternalLoopEvent) bool {
+	return event != nil && normalizeExternalLoopStage(event.Stage) == externalLoopStageCollected &&
+		normalizeExternalLoopAction(event.Action) == externalLoopActionCloseTask &&
+		!externalLoopTaskCloseEffectSatisfied(note)
+}
+
+// externalLoopEventMatchesNote prevents an old admitted transition from being
+// reused after the task material is amended. A legacy event without payload is
+// treated as revision zero only; a material-bound event must match exactly.
+func externalLoopEventMatchesNote(event ExternalLoopEvent, note Note) bool {
+	eventRevision, eventMaterial := externalLoopEventRevisionMaterial(event)
+	noteRevision := strconv.Itoa(intField(note.Data, "work_revision"))
+	if eventRevision != noteRevision {
 		return false
+	}
+	noteMaterial := strings.TrimSpace(externalLoopMaterialFingerprint(note, nil))
+	return reviewMaterialFingerprintsEqual(eventMaterial, noteMaterial)
+}
+
+func externalLoopCloseTaskRecordedForCurrentRun(store *RuntimeStore, projectID, recordID string, note Note, run RunStatus) (bool, error) {
+	if store == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
+		return false, nil
 	}
 	events, err := store.ListExternalLoopEvents(projectID, recordID)
 	if err != nil {
-		return false
+		return false, err
 	}
+	currentMaterial := externalLoopCurrentMaterialFingerprint(store, projectID, recordID, note, run)
 	for _, event := range events {
-		if normalizeExternalLoopAction(event.Action) == externalLoopActionCloseTask && strings.TrimSpace(event.Status) == "ok" {
-			return true
+		if normalizeExternalLoopStage(event.Stage) != externalLoopStageCollected ||
+			normalizeExternalLoopAction(event.Action) != externalLoopActionCloseTask ||
+			strings.TrimSpace(event.Status) != "ok" {
+			continue
+		}
+		if !externalLoopEventMatchesNoteMaterial(event, note, currentMaterial) || !externalLoopTaskCloseEffectSatisfied(note) {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func externalLoopCurrentMaterialFingerprint(store *RuntimeStore, projectID, recordID string, note Note, run RunStatus) string {
+	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	if store != nil && run.Lane == runLaneReview && strings.TrimSpace(run.ActiveAttemptID) != "" && source != "" {
+		if material, err := reviewAttemptMaterialFingerprint(store, projectID, recordID, run.ActiveAttemptID, run.WorkRevision, source); err == nil {
+			return material
 		}
 	}
-	return false
+	return externalLoopMaterialFingerprint(note, nil)
+}
+
+func externalLoopEventMatchesNoteMaterial(event ExternalLoopEvent, note Note, currentMaterial string) bool {
+	eventRevision, eventMaterial := externalLoopEventRevisionMaterial(event)
+	noteRevision := strconv.Itoa(intField(note.Data, "work_revision"))
+	if eventRevision != noteRevision || strings.TrimSpace(eventMaterial) == "" {
+		return false
+	}
+	if strings.TrimSpace(currentMaterial) != "" {
+		return reviewMaterialFingerprintsEqual(eventMaterial, currentMaterial)
+	}
+	noteMaterial := strings.TrimSpace(externalLoopMaterialFingerprint(note, nil))
+	return reviewMaterialFingerprintsEqual(eventMaterial, noteMaterial)
 }

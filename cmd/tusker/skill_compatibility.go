@@ -20,16 +20,16 @@ const (
 )
 
 type skillCompatibilityContract struct {
-	Schema                   string                          `yaml:"schema" json:"schema"`
-	Version                  int                             `yaml:"version" json:"version"`
-	WorkflowMin              int                             `yaml:"workflow_min" json:"workflow_min"`
-	WorkflowMax              int                             `yaml:"workflow_max" json:"workflow_max"`
-	TrackerSchemaVersions    []int                           `yaml:"tracker_schema_versions" json:"tracker_schema_versions"`
-	WaveAuthorizationSchemas []string                        `yaml:"wave_authorization_schemas" json:"wave_authorization_schemas"`
-	FactoryIntakeContract    factoryIntakeContractProvenance `yaml:"factory_intake_contract" json:"factory_intake_contract"`
-	CanonicalSource          string                          `yaml:"canonical_source" json:"canonical_source"`
-	MaterializationSchema    string                          `yaml:"materialization_schema" json:"materialization_schema"`
-	PrimaryGuides            []string                        `yaml:"primary_guides" json:"primary_guides"`
+	Schema                   string                      `yaml:"schema" json:"schema"`
+	Version                  int                         `yaml:"version" json:"version"`
+	WorkflowMin              int                         `yaml:"workflow_min" json:"workflow_min"`
+	WorkflowMax              int                         `yaml:"workflow_max" json:"workflow_max"`
+	TrackerSchemaVersions    []int                       `yaml:"tracker_schema_versions" json:"tracker_schema_versions"`
+	WaveAuthorizationSchemas []string                    `yaml:"wave_authorization_schemas" json:"wave_authorization_schemas"`
+	AuthoringContract        authoringContractProvenance `yaml:"authoring_contract" json:"authoring_contract"`
+	CanonicalSource          string                      `yaml:"canonical_source" json:"canonical_source"`
+	MaterializationSchema    string                      `yaml:"materialization_schema" json:"materialization_schema"`
+	PrimaryGuides            []string                    `yaml:"primary_guides" json:"primary_guides"`
 }
 
 func loadSkillCompatibilityContract(raw []byte) (skillCompatibilityContract, error) {
@@ -74,7 +74,7 @@ func validateSkillCompatibilityContract(contract skillCompatibilityContract) err
 	if len(contract.PrimaryGuides) == 0 {
 		return fmt.Errorf("Tusker skill primary guide contract is incomplete")
 	}
-	if contract.FactoryIntakeContract.Schema == "" || contract.FactoryIntakeContract.Version == "" || contract.FactoryIntakeContract.Fingerprint == "" {
+	if contract.AuthoringContract.Schema == "" || contract.AuthoringContract.Version == "" || contract.AuthoringContract.Fingerprint == "" {
 		return fmt.Errorf("Tusker skill factory-intake compatibility is incomplete")
 	}
 	return nil
@@ -99,7 +99,7 @@ func skillCompatibilityStatusForPackage(root string) (string, string) {
 		!containsInt(have.TrackerSchemaVersions, 7) || !containsString(have.WaveAuthorizationSchemas, waveAuthorizationSchema) {
 		return "incompatible", "Tusker skill compatibility range does not support this binary"
 	}
-	if have.Version != want.Version || have.FactoryIntakeContract != want.FactoryIntakeContract ||
+	if have.Version != want.Version || have.AuthoringContract != want.AuthoringContract ||
 		have.CanonicalSource != want.CanonicalSource || have.MaterializationSchema != want.MaterializationSchema ||
 		strings.Join(have.PrimaryGuides, "\n") != strings.Join(want.PrimaryGuides, "\n") {
 		return "stale", "Tusker skill compatibility contract predates the installed binary"
@@ -107,16 +107,16 @@ func skillCompatibilityStatusForPackage(root string) (string, string) {
 	return "current", ""
 }
 
-func legacySkillMetadata(root string) (factoryIntakeContractProvenance, error) {
+func legacySkillMetadata(root string) (authoringContractProvenance, error) {
 	data, _, err := parseFrontmatterMustRead(filepath.Join(root, "SKILL.md"))
 	if err != nil {
-		return factoryIntakeContractProvenance{}, err
+		return authoringContractProvenance{}, err
 	}
 	metadata := mapField(data, "metadata")
-	return factoryIntakeContractProvenance{
-		Schema:      stringField(metadata, "factory_intake_contract_schema"),
-		Version:     stringField(metadata, "factory_intake_contract_version"),
-		Fingerprint: stringField(metadata, "factory_intake_contract_fingerprint"),
+	return authoringContractProvenance{
+		Schema:      stringField(metadata, "authoring_contract_schema"),
+		Version:     stringField(metadata, "authoring_contract_version"),
+		Fingerprint: stringField(metadata, "authoring_contract_fingerprint"),
 	}, nil
 }
 

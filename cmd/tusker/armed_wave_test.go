@@ -402,25 +402,17 @@ func armedWaveStateMap(snapshot armedWaveSnapshot) map[string]string {
 
 func armedWaveTestFixture(t *testing.T) (string, v7Index, Note) {
 	t.Helper()
-	vault := deliveryTestVault(t)
+	vault := v7DirectTestVault(t)
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs_per_project", 2); err != nil {
 		t.Fatal(err)
 	}
-	plan := validDeliveryPlan()
-	plan.Concurrency = 2
-	base := plan.Tasks[0]
-	plan.Tasks = []deliveryPlanTask{
-		base,
-		armedWavePlanTask(base, "parallel-a", []deliveryDependency{{Task: "schema", Kind: "hard"}}),
-		armedWavePlanTask(base, "parallel-b", []deliveryDependency{{Task: "schema", Kind: "hard"}}),
-		armedWavePlanTask(base, "soft-child", []deliveryDependency{{Task: "parallel-a", Kind: "soft"}}),
-		armedWavePlanTask(base, "hard-child", []deliveryDependency{{Task: "parallel-b", Kind: "hard"}}),
-		armedWavePlanTask(base, "independent", nil),
-	}
-	path := writeDeliveryTestPlan(t, vault, plan)
-	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "wave": "Drain", "quiet": "true"}); err != nil {
-		t.Fatalf("armed-wave fixture import: %#v", errorToIssue(err))
-	}
+	armedWaveDirectTask(t, vault, "APP-T-0001", nil)
+	armedWaveDirectTask(t, vault, "APP-T-0002", []string{"APP-T-0001:hard"})
+	armedWaveDirectTask(t, vault, "APP-T-0003", []string{"APP-T-0001:hard"})
+	armedWaveDirectTask(t, vault, "APP-T-0004", []string{"APP-T-0002:soft"})
+	armedWaveDirectTask(t, vault, "APP-T-0005", []string{"APP-T-0003:hard"})
+	armedWaveDirectTask(t, vault, "APP-T-0006", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006"}, map[string]any{"concurrency": 2})
 	armWaveForTest(t, vault)
 	idx, err := loadV7Index(vault)
 	if err != nil {
@@ -430,13 +422,18 @@ func armedWaveTestFixture(t *testing.T) (string, v7Index, Note) {
 	return vault, idx, wave
 }
 
-func armedWavePlanTask(base deliveryPlanTask, key string, deps []deliveryDependency) deliveryPlanTask {
-	task := base
-	task.SourceKey = key
-	task.Title = key
-	task.Dependencies = deps
-	task.OwnedPaths = []string{"cmd/tusker/" + key + ".go"}
-	task.KnowledgeNodes = nil
-	task.Artifact.Path = task.OwnedPaths[0]
-	return task
+func armedWaveDirectTask(t *testing.T, vault, id string, deps []string) {
+	t.Helper()
+	extra := map[string]any{
+		"status": "ready", "readiness": "ready",
+		"owned_paths": []any{"cmd/tusker/" + strings.ToLower(id) + ".go"},
+	}
+	if len(deps) > 0 {
+		edges := make([]any, 0, len(deps))
+		for _, dep := range deps {
+			edges = append(edges, dep)
+		}
+		extra["dependencies"] = edges
+	}
+	writeDirectTask(t, vault, id, "W-0001", extra)
 }

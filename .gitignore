@@ -54,3 +54,6 @@ internal/serve/ui/.profiles-browser-*/
 !.chatgpt-handoff/
 !.chatgpt-handoff/profile.md
 .chatgpt-handoff.json
+
+# Independently versioned local skill checkouts.
+/skills/apple-design/

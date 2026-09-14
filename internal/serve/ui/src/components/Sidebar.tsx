@@ -13,7 +13,6 @@ const PRIMARY_PROJECT_NAV = [
 ];
 
 const SECONDARY_PROJECT_NAV = [
-  { label: "Plan", to: "/p/$projectId/plan" as const },
   { label: "Board", to: "/p/$projectId/tasks" as const },
   { label: "Trains", to: "/p/$projectId/trains" as const },
   { label: "Diagnostics", to: "/p/$projectId/diagnostics" as const },

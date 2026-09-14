@@ -3,9 +3,9 @@ package main
 // Deterministic demo fixture: one standalone smoke task plus three waves,
 // thirteen tasks total.
 //
-// The fixture is data, not behavior. Seed renders it into native delivery
-// plans and imports them through the normal delivery import path; the demo
-// executor only drives supported CLI operations against the imported tasks.
+// The fixture is data, not behavior. Seed renders it into wave-authoring
+// input and creates it through the normal wave create path; the demo
+// executor only drives supported CLI operations against the created tasks.
 // Domain values and report contents are explicitly fictional.
 //
 // The standalone smoke task exercises the individual-task journey (ordinary

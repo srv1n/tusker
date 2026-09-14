@@ -500,10 +500,10 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	}
 
 	runCLI("new", "epic", "APP", "--title", "First-class harness provider setup")
-	runCLI("new", "task", "--epic", "APP", "--title", "Add direct OpenAI provider smoke harness", "--kind", "feature", "--risk", "low", "--priority", "p2")
-	runCLI("new", "task", "--epic", "APP", "--title", "Human next action", "--next-owner", "human:sarav")
-	runCLI("new", "task", "--epic", "APP", "--title", "Reviewer next action", "--next-owner", "reviewer")
-	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--next-owner", "agent")
+	runCLI("new", "task", "--epic", "APP", "--title", "Add direct OpenAI provider smoke harness", "--work-level", "standard", "--kind", "feature", "--risk", "low", "--priority", "p2")
+	runCLI("new", "task", "--epic", "APP", "--title", "Human next action", "--work-level", "light", "--next-owner", "human:sarav")
+	runCLI("new", "task", "--epic", "APP", "--title", "Reviewer next action", "--work-level", "light", "--next-owner", "reviewer")
+	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--work-level", "light", "--next-owner", "agent")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0004")
 	runCLI("new", "gate", "--blocks", "APP-T-0001", "--kind", "auth", "--owner", "human:sarav", "--action", "Complete OAuth.", "--verification", "Provider endpoint returns ready.", "--why-agent-cannot", "Human credentials or account access are required.")
@@ -2383,7 +2383,7 @@ func TestV7SpecObjectCreationCLIForms(t *testing.T) {
 	if code, err := run(command, args); err != nil || code != 0 {
 		t.Fatalf("new epic spec form failed: code=%d err=%v", code, err)
 	}
-	command, args = parseCLI([]string{"tusker", "new", "task", "--vault", vault, "--quiet", "--epic", "APP", "--title", "Spec task"})
+	command, args = parseCLI([]string{"tusker", "new", "task", "--vault", vault, "--quiet", "--epic", "APP", "--title", "Spec task", "--work-level", "standard"})
 	assertEqual(t, "new task", command, "new task command parse")
 	if code, err := run(command, args); err != nil || code != 0 {
 		t.Fatalf("new task spec form failed: code=%d err=%v", code, err)
@@ -3144,7 +3144,7 @@ func TestV7ProposalApplyCreatesTaskAndDecision(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "risk": "low", "priority": "p1", "evidence-required": "automated_test"}, proposalV7Cmd)
+	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "work-level": "standard", "review-level": "light", "review-reason": "bounded review", "risk": "low", "priority": "p1", "evidence-required": "automated_test"}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "apply", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	assertExists(t, filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
@@ -3153,6 +3153,9 @@ func TestV7ProposalApplyCreatesTaskAndDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "Proposed implementation task", stringField(taskData, "title"), "created task title")
+	assertEqual(t, "standard", stringField(taskData, "work_level"), "created task work level")
+	assertEqual(t, "light", stringField(taskData, "review_level"), "created task review level")
+	assertEqual(t, "bounded review", stringField(taskData, "review_reason"), "created task review reason")
 	assertEqual(t, "automated_test", normalizeList(taskData["evidence_required"])[0], "created task evidence")
 
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_decision", "epic": "APP", "title": "Proposed architecture decision", "decision": "Use repo-local proposal application."}, proposalV7Cmd)

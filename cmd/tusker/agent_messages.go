@@ -16,27 +16,28 @@ type AgentAddress struct {
 }
 
 type AgentMessage struct {
-	ID              string       `json:"id"`
-	IdempotencyKey  string       `json:"idempotencyKey"`
-	ProjectID       string       `json:"projectId"`
-	Sender          string       `json:"sender"`
-	Recipient       AgentAddress `json:"recipient"`
-	OriginTaskID    string       `json:"originTaskId,omitempty"`
-	OriginWaveID    string       `json:"originWaveId,omitempty"`
-	WorkRevision    int          `json:"workRevision,omitempty"`
-	RouteGeneration int          `json:"routeGeneration,omitempty"`
-	Kind            string       `json:"kind"`
-	Body            string       `json:"body"`
-	ReplyTo         string       `json:"replyTo,omitempty"`
-	ReplyRequired   bool         `json:"replyRequired"`
-	YieldSender     bool         `json:"yieldSender"`
-	State           string       `json:"state"`
-	TransportState  string       `json:"transportState"`
-	ConsumedAt      string       `json:"consumedAt,omitempty"`
-	AnsweredAt      string       `json:"answeredAt,omitempty"`
-	AppliedAt       string       `json:"appliedAt,omitempty"`
-	ExpiresAt       string       `json:"expiresAt,omitempty"`
-	CreatedAt       string       `json:"createdAt"`
+	ID                  string       `json:"id"`
+	IdempotencyKey      string       `json:"idempotencyKey"`
+	ProjectID           string       `json:"projectId"`
+	Sender              string       `json:"sender"`
+	Recipient           AgentAddress `json:"recipient"`
+	OriginTaskID        string       `json:"originTaskId,omitempty"`
+	OriginWaveID        string       `json:"originWaveId,omitempty"`
+	WorkRevision        int          `json:"workRevision,omitempty"`
+	RouteGeneration     int          `json:"routeGeneration,omitempty"`
+	RecipientGeneration int          `json:"recipientGeneration,omitempty"`
+	Kind                string       `json:"kind"`
+	Body                string       `json:"body"`
+	ReplyTo             string       `json:"replyTo,omitempty"`
+	ReplyRequired       bool         `json:"replyRequired"`
+	YieldSender         bool         `json:"yieldSender"`
+	State               string       `json:"state"`
+	TransportState      string       `json:"transportState"`
+	ConsumedAt          string       `json:"consumedAt,omitempty"`
+	AnsweredAt          string       `json:"answeredAt,omitempty"`
+	AppliedAt           string       `json:"appliedAt,omitempty"`
+	ExpiresAt           string       `json:"expiresAt,omitempty"`
+	CreatedAt           string       `json:"createdAt"`
 }
 
 func (m AgentMessage) validate() error {
@@ -106,7 +107,7 @@ func (s *RuntimeStore) putAgentMessage(m AgentMessage, operatorOverride bool) (A
 		}
 		return s.putAgentAnswer(m)
 	}
-	result, err := s.exec(`INSERT OR IGNORE INTO agent_messages(id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.ID, m.IdempotencyKey, m.ProjectID, m.Sender, m.Recipient.Kind, m.Recipient.ID, m.OriginTaskID, m.OriginWaveID, m.WorkRevision, m.RouteGeneration, m.Kind, m.Body, m.ReplyTo, m.ReplyRequired, m.YieldSender, m.State, m.TransportState, m.ConsumedAt, m.AnsweredAt, m.AppliedAt, m.ExpiresAt, m.CreatedAt)
+	result, err := s.exec(`INSERT OR IGNORE INTO agent_messages(id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.ID, m.IdempotencyKey, m.ProjectID, m.Sender, m.Recipient.Kind, m.Recipient.ID, m.OriginTaskID, m.OriginWaveID, m.WorkRevision, m.RouteGeneration, m.RecipientGeneration, m.Kind, m.Body, m.ReplyTo, m.ReplyRequired, m.YieldSender, m.State, m.TransportState, m.ConsumedAt, m.AnsweredAt, m.AppliedAt, m.ExpiresAt, m.CreatedAt)
 	if err != nil {
 		return AgentMessage{}, false, err
 	}
@@ -126,7 +127,7 @@ func (s *RuntimeStore) putAgentMessage(m AgentMessage, operatorOverride bool) (A
 
 func (s *RuntimeStore) ListAgentMessagesForTask(projectID, taskID string) ([]AgentMessage, error) {
 	typed := "task:" + taskID
-	rows, err := s.query(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages m WHERE project_id=? AND (origin_task_id=? OR (recipient_kind='task' AND recipient_id=?) OR sender=? OR EXISTS (SELECT 1 FROM agent_messages p WHERE p.project_id=m.project_id AND p.id=m.reply_to AND p.origin_task_id=?)) ORDER BY created_at,id`, projectID, taskID, taskID, typed, taskID)
+	rows, err := s.query(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages m WHERE project_id=? AND (origin_task_id=? OR (recipient_kind='task' AND recipient_id=?) OR sender=? OR EXISTS (SELECT 1 FROM agent_messages p WHERE p.project_id=m.project_id AND p.id=m.reply_to AND p.origin_task_id=?)) ORDER BY created_at,id`, projectID, taskID, taskID, typed, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +148,7 @@ type agentMessageScanner interface{ Scan(...any) error }
 func scanAgentMessageValue(row agentMessageScanner) (AgentMessage, error) {
 	var m AgentMessage
 	var rr, ys int
-	err := row.Scan(&m.ID, &m.IdempotencyKey, &m.ProjectID, &m.Sender, &m.Recipient.Kind, &m.Recipient.ID, &m.OriginTaskID, &m.OriginWaveID, &m.WorkRevision, &m.RouteGeneration, &m.Kind, &m.Body, &m.ReplyTo, &rr, &ys, &m.State, &m.TransportState, &m.ConsumedAt, &m.AnsweredAt, &m.AppliedAt, &m.ExpiresAt, &m.CreatedAt)
+	err := row.Scan(&m.ID, &m.IdempotencyKey, &m.ProjectID, &m.Sender, &m.Recipient.Kind, &m.Recipient.ID, &m.OriginTaskID, &m.OriginWaveID, &m.WorkRevision, &m.RouteGeneration, &m.RecipientGeneration, &m.Kind, &m.Body, &m.ReplyTo, &rr, &ys, &m.State, &m.TransportState, &m.ConsumedAt, &m.AnsweredAt, &m.AppliedAt, &m.ExpiresAt, &m.CreatedAt)
 	m.ReplyRequired, m.YieldSender = rr != 0, ys != 0
 	return m, err
 }
@@ -158,14 +159,14 @@ func (s *RuntimeStore) putAgentAnswer(m AgentMessage) (AgentMessage, bool, error
 		return AgentMessage{}, false, err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`INSERT OR IGNORE INTO agent_messages(id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.ID, m.IdempotencyKey, m.ProjectID, m.Sender, m.Recipient.Kind, m.Recipient.ID, m.OriginTaskID, m.OriginWaveID, m.WorkRevision, m.RouteGeneration, m.Kind, m.Body, m.ReplyTo, m.ReplyRequired, m.YieldSender, m.State, m.TransportState, m.ConsumedAt, m.AnsweredAt, m.AppliedAt, m.ExpiresAt, m.CreatedAt)
+	result, err := tx.Exec(`INSERT OR IGNORE INTO agent_messages(id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.ID, m.IdempotencyKey, m.ProjectID, m.Sender, m.Recipient.Kind, m.Recipient.ID, m.OriginTaskID, m.OriginWaveID, m.WorkRevision, m.RouteGeneration, m.RecipientGeneration, m.Kind, m.Body, m.ReplyTo, m.ReplyRequired, m.YieldSender, m.State, m.TransportState, m.ConsumedAt, m.AnsweredAt, m.AppliedAt, m.ExpiresAt, m.CreatedAt)
 	if err != nil {
 		return AgentMessage{}, false, err
 	}
 	n, _ := result.RowsAffected()
 	duplicate := n == 0
 	if duplicate {
-		existing, err := scanAgentMessageValue(tx.QueryRow(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND sender=? AND idempotency_key=?`, m.ProjectID, m.Sender, m.IdempotencyKey))
+		existing, err := scanAgentMessageValue(tx.QueryRow(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND sender=? AND idempotency_key=?`, m.ProjectID, m.Sender, m.IdempotencyKey))
 		if err != nil {
 			return AgentMessage{}, false, err
 		}
@@ -200,7 +201,7 @@ func normalizeAgentAddress(value, fallbackKind string) (AgentAddress, error) {
 func sameAgentMessageRequest(a, b AgentMessage) bool {
 	return a.ProjectID == b.ProjectID && a.Sender == b.Sender && a.Recipient == b.Recipient &&
 		a.OriginTaskID == b.OriginTaskID && a.OriginWaveID == b.OriginWaveID &&
-		a.WorkRevision == b.WorkRevision && a.RouteGeneration == b.RouteGeneration &&
+		a.WorkRevision == b.WorkRevision && a.RouteGeneration == b.RouteGeneration && a.RecipientGeneration == b.RecipientGeneration &&
 		a.Kind == b.Kind && a.Body == b.Body && a.ReplyTo == b.ReplyTo &&
 		a.ReplyRequired == b.ReplyRequired && a.YieldSender == b.YieldSender && a.ExpiresAt == b.ExpiresAt
 }
@@ -214,10 +215,10 @@ func (s *RuntimeStore) queueAgentMessageWakeup(m AgentMessage) error {
 }
 
 func (s *RuntimeStore) AgentMessage(projectID, id string) (AgentMessage, error) {
-	return s.scanAgentMessage(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND id=?`, projectID, id)
+	return s.scanAgentMessage(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND id=?`, projectID, id)
 }
 func (s *RuntimeStore) agentMessageByKey(projectID, sender, key string) (AgentMessage, error) {
-	return s.scanAgentMessage(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND sender=? AND idempotency_key=?`, projectID, sender, key)
+	return s.scanAgentMessage(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND sender=? AND idempotency_key=?`, projectID, sender, key)
 }
 func (s *RuntimeStore) scanAgentMessage(q string, args ...any) (AgentMessage, error) {
 	return scanAgentMessageValue(s.db.QueryRow(q, args...))
@@ -231,7 +232,7 @@ func (s *RuntimeStore) ListAgentMessages(projectID, recipientKind, recipientID s
 		}
 		recipientKind, recipientID = address.Kind, address.ID
 	}
-	rows, err := s.query(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND (?='' OR recipient_kind=?) AND (?='' OR recipient_id=?) ORDER BY created_at,id`, projectID, recipientKind, recipientKind, recipientID, recipientID)
+	rows, err := s.query(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND (?='' OR recipient_kind=?) AND (?='' OR recipient_id=?) ORDER BY created_at,id`, projectID, recipientKind, recipientKind, recipientID, recipientID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +241,7 @@ func (s *RuntimeStore) ListAgentMessages(projectID, recipientKind, recipientID s
 	for rows.Next() {
 		var m AgentMessage
 		var rr, ys int
-		if err := rows.Scan(&m.ID, &m.IdempotencyKey, &m.ProjectID, &m.Sender, &m.Recipient.Kind, &m.Recipient.ID, &m.OriginTaskID, &m.OriginWaveID, &m.WorkRevision, &m.RouteGeneration, &m.Kind, &m.Body, &m.ReplyTo, &rr, &ys, &m.State, &m.TransportState, &m.ConsumedAt, &m.AnsweredAt, &m.AppliedAt, &m.ExpiresAt, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.IdempotencyKey, &m.ProjectID, &m.Sender, &m.Recipient.Kind, &m.Recipient.ID, &m.OriginTaskID, &m.OriginWaveID, &m.WorkRevision, &m.RouteGeneration, &m.RecipientGeneration, &m.Kind, &m.Body, &m.ReplyTo, &rr, &ys, &m.State, &m.TransportState, &m.ConsumedAt, &m.AnsweredAt, &m.AppliedAt, &m.ExpiresAt, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		m.ReplyRequired, m.YieldSender = rr != 0, ys != 0

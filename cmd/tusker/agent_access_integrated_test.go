@@ -26,12 +26,12 @@ func TestAgentAccessIntegrated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	profile := RunnerProfileDefinition{Harness: string(RunnerMuseCLI), Model: "muse-fixture", Effort: "medium", Access: &AgentAccessV1{
+	profile := RunnerProfileDefinition{Harness: string(RunnerMuse), Model: "muse-fixture", Effort: "medium", Access: &AgentAccessV1{
 		Schema: agentAccessSchemaV1, Mode: accessModeProjects, Network: true, DestructiveActions: "ask", Folders: []AgentAccessFolder{}, PrivateFolders: []string{},
 	}}
-	definition := runnercore.HarnessDefinition{ID: string(RunnerMuseCLI), Provider: "muse", Dialect: "muse", Transport: runnercore.TransportCLI, Executable: museFixtureExecutable(t), Args: []string{"exec"}, SchemaVersion: 1}
+	definition := runnercore.HarnessDefinition{ID: string(RunnerMuse), Provider: "muse", Dialect: "muse", Transport: runnercore.TransportCLI, Executable: museFixtureExecutable(t), Args: []string{"exec"}, SchemaVersion: 1}
 	controls := nativeAccessControls(definition, profile.Access)
-	resolved, err := resolveAccess(profile, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: controls, Route: string(RunnerMuseCLI), Transport: "cli", Version: "Muse Code 1.1.1"})
+	resolved, err := resolveAccess(profile, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: controls, Route: string(RunnerMuse), Transport: "cli", Version: "Muse Code 1.1.1"})
 	if err != nil || resolved.State != "ready" {
 		t.Fatalf("profile setup did not resolve: %#v err=%v", resolved, err)
 	}
@@ -58,7 +58,7 @@ func TestAgentAccessIntegrated(t *testing.T) {
 
 	privateProfile := profile
 	privateProfile.Access = &AgentAccessV1{Schema: agentAccessSchemaV1, Mode: accessModeProjects, Network: true, DestructiveActions: "ask", PrivateFolders: []string{private}}
-	privateResolved, err := resolveAccess(privateProfile, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: nativeAccessControls(definition, privateProfile.Access), Route: string(RunnerMuseCLI), Transport: "cli"})
+	privateResolved, err := resolveAccess(privateProfile, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: nativeAccessControls(definition, privateProfile.Access), Route: string(RunnerMuse), Transport: "cli"})
 	if err != nil || privateResolved.State != "unsupported" || !containsAccessIssue(privateResolved.Issues, runnercore.AccessPrivateReadDeny) {
 		t.Fatalf("private-folder native gap was not surfaced: %#v err=%v", privateResolved, err)
 	}
@@ -70,7 +70,7 @@ func TestAgentAccessIntegrated(t *testing.T) {
 	copyAccess := *profile.Access
 	copyAccess.Network = false
 	noNetwork.Access = &copyAccess
-	changed, err := resolveAccess(noNetwork, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: controls, Route: string(RunnerMuseCLI), Transport: "cli", Version: "Muse Code 1.1.1"})
+	changed, err := resolveAccess(noNetwork, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: controls, Route: string(RunnerMuse), Transport: "cli", Version: "Muse Code 1.1.1"})
 	if err != nil || changed.Fingerprint == resolved.Fingerprint || changed.Effective.Network {
 		t.Fatalf("policy revision did not invalidate effective access: before=%#v after=%#v err=%v", resolved, changed, err)
 	}
@@ -81,7 +81,7 @@ func TestAgentAccessIntegrated(t *testing.T) {
 	deniedAccess := *profile.Access
 	deniedAccess.DestructiveActions = "deny"
 	denied.Access = &deniedAccess
-	deniedResolved, err := resolveAccess(denied, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: controls, Route: string(RunnerMuseCLI), Transport: "cli"})
+	deniedResolved, err := resolveAccess(denied, nil, AgentAccessResolutionContext{Workspace: workspace, Controls: controls, Route: string(RunnerMuse), Transport: "cli"})
 	if err != nil {
 		t.Fatal(err)
 	}

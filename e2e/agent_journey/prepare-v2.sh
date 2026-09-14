@@ -20,20 +20,5 @@ automation:
     strategy: shared
 EOF
 cp docs/specs/fresh-agent.md "$vault/specs/fresh-agent.md"
-"$candidate" delivery plan --spec docs/specs/fresh-agent.md --out "$vault/scratch/context.yaml"
-context=$(awk '/^context_fingerprint: / { print $2; exit }' "$vault/scratch/context.yaml")
-if [ -z "$context" ]; then
-  echo "candidate did not emit a V2 planning context fingerprint" >&2
-  exit 1
-fi
-python3 -c '
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-raw = path.read_text()
-needle = "sha256:REPLACE_WITH_PINNED_CONTEXT"
-if raw.count(needle) != 1:
-    raise SystemExit("delivery template has no single context placeholder")
-path.write_text(raw.replace(needle, sys.argv[2]))
-' delivery.yaml "$context"
-"$candidate" delivery import --plan delivery.yaml --by agent:fixture
+"$candidate" wave create --file wave-authoring.yaml --request-key fresh-agent --by agent:fixture
 "$candidate" projects add --repo . --vault "./$vault"

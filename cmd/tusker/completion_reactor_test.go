@@ -199,7 +199,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 
 	t.Run("changes requested crash after handback resumes release and audit", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, false)
-		result.Verdict, result.Blocker, result.Findings = "changes_requested", "", []string{"fix the exact acceptance regression"}
+		result.Verdict, result.Blocker, result.Findings = "changes_requested", "", []string{completionTestFinding(result.MaterialFingerprint, "F-CRASH", "fix the exact acceptance regression")}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
@@ -346,7 +346,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 	t.Run("old handback replay never rewinds a newer review", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, false)
 		defer daemon.Close()
-		result.Verdict, result.Findings = "changes_requested", []string{"old review finding"}
+		result.Verdict, result.Findings = "changes_requested", []string{completionTestFinding(result.MaterialFingerprint, "F-OLD", "old review finding")}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
@@ -409,13 +409,18 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 	t.Run("older same-work result cannot suppress later active handback", func(t *testing.T) {
 		vault, project, daemon, older := completionReactorFixture(t, false)
 		defer daemon.Close()
-		older.Verdict, older.Findings, older.CreatedAt = "changes_requested", []string{"obsolete finding"}, "2026-07-25T10:00:00Z"
+		older.Verdict, older.Findings, older.CreatedAt = "changes_requested", []string{completionTestFinding(older.MaterialFingerprint, "F-OBSOLETE", "obsolete finding")}, "2026-07-25T10:00:00Z"
 		older.ResultRevision = reviewResultFingerprint(older)
 		later := older
 		later.AttemptID = "review-2"
-		later.Findings = []string{"current finding"}
+		later.Findings = []string{completionTestFinding(later.MaterialFingerprint, "F-CURRENT", "current finding")}
 		later.CreatedAt = "2026-07-25T11:00:00Z"
 		later.ResultRevision = reviewResultFingerprint(later)
+		note, err := resolveV7Note(vault, later.TaskID, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seedCompletionReviewAttempt(t, daemon.store, project, note, later.AttemptID)
 		if _, err := daemon.store.SaveReviewResult(older); err != nil {
 			t.Fatal(err)
 		}
@@ -461,7 +466,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Run(terminalStatus, func(t *testing.T) {
 				vault, project, daemon, result := completionReactorFixture(t, false)
 				defer daemon.Close()
-				result.Verdict, result.Findings = "changes_requested", []string{"superseded finding"}
+				result.Verdict, result.Findings = "changes_requested", []string{completionTestFinding(result.MaterialFingerprint, "F-SUPERSEDED", "superseded finding")}
 				result.ResultRevision = reviewResultFingerprint(result)
 				if _, err := daemon.store.SaveReviewResult(result); err != nil {
 					t.Fatal(err)
@@ -504,7 +509,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 	t.Run("partial same revision handback finishes its own status flip", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, false)
 		defer daemon.Close()
-		result.Verdict, result.Findings = "changes_requested", []string{"partial finding"}
+		result.Verdict, result.Findings = "changes_requested", []string{completionTestFinding(result.MaterialFingerprint, "F-PARTIAL", "partial finding")}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
@@ -555,7 +560,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 	t.Run("old handback fails closed on unrelated same revision drift", func(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, false)
 		defer daemon.Close()
-		result.Verdict, result.Findings = "changes_requested", []string{"fenced finding"}
+		result.Verdict, result.Findings = "changes_requested", []string{completionTestFinding(result.MaterialFingerprint, "F-FENCED", "fenced finding")}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
@@ -885,7 +890,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		recordCompletionTestProof(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review",
-			"source_sha": source, "work_revision": 1,
+			"source_sha": source, "work_revision": 1, "owned_paths": []string{"predecessor.txt"},
 		})
 		armScheduledPromotionWaveForTest(t, vault, "W-0001")
 		armScheduledPromotionWaveForTest(t, vault, "W-0002")
@@ -906,6 +911,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		material := seedCompletionReviewAttempt(t, daemon.store, project, reviewed, "review-predecessor")
 		workerPolicyFP, err := completionWorkflowPolicyFingerprint(completionAuthorityTestWorkflow(), reviewed)
 		if err != nil {
 			t.Fatal(err)
@@ -915,7 +921,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			TaskStateRev: stringField(reviewed.Data, "state_rev"), WorkRevision: 1,
 			ImplementationSHA: source, AttemptID: "review-predecessor", Actor: "reviewer:agent",
 			Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP, Covers: []string{"A1"},
-			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "predecessor objective pass",
+			ProofFingerprint: proof, GateFingerprint: gates, MaterialFingerprint: material, Verdict: "pass", Summary: "predecessor objective pass",
 			CreatedAt: "2026-07-25T10:00:00Z",
 		}
 		result.ResultRevision = reviewResultFingerprint(result)
@@ -961,7 +967,7 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		recordCompletionTestProof(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review",
-			"source_sha": source, "work_revision": 1,
+			"source_sha": source, "work_revision": 1, "owned_paths": []string{"standalone.txt"},
 		})
 		before, err := resolveV7Note(vault, "APP-T-0001", "task")
 		if err != nil {
@@ -1012,12 +1018,13 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer daemon.Close()
+		material := seedCompletionReviewAttempt(t, daemon.store, project, reviewed, "review-standalone")
 		result := ReviewResult{
 			Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001",
 			TaskStateRev: stringField(reviewed.Data, "state_rev"), WorkRevision: 1,
 			ImplementationSHA: source, AttemptID: "review-standalone", Actor: "reviewer:agent",
 			Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP, Covers: []string{"A1"},
-			ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "standalone objective pass",
+			ProofFingerprint: proof, GateFingerprint: gates, MaterialFingerprint: material, Verdict: "pass", Summary: "standalone objective pass",
 			CreatedAt: "2026-07-25T10:00:00Z",
 		}
 		result.ResultRevision = reviewResultFingerprint(result)
@@ -2460,7 +2467,6 @@ func TestCompletionStagingRetainsUnrelatedIntegrationTaskControls(t *testing.T) 
 		"reviewed.txt": "exact\n",
 		siblingPath:    integrationSibling + "\n<!-- stale sibling control from worker -->\n",
 	})
-	recordCompletionTestProof(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status": "review", "readiness": "waiting_on_review", "source_sha": source, "work_revision": 1,
 	})
@@ -2481,6 +2487,52 @@ func TestCompletionStagingRetainsUnrelatedIntegrationTaskControls(t *testing.T) 
 	}
 }
 
+func seedCompletionReviewAttempt(t *testing.T, store *RuntimeStore, project RegisteredProject, note Note, attemptID string) string {
+	t.Helper()
+	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	if source == "" {
+		t.Fatal("completion fixture has no implementation source")
+	}
+	scope, err := canonicalTaskMaterialScope(project.VaultRoot, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scope) == 0 {
+		scope = []string{"reviewed.txt"}
+	}
+	worktree := filepath.Join(t.TempDir(), "review-material")
+	runGitDir(t, project.RepoRoot, "worktree", "add", "--detach", worktree, source)
+	t.Cleanup(func() { runGitDir(t, project.RepoRoot, "worktree", "remove", "--force", worktree) })
+	material, err := workspaceTreeStateHashForPaths(worktree, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentID := "execute-" + strings.ReplaceAll(strings.TrimSpace(attemptID), "/", "-")
+	if err := store.SaveAttempt(RunAttempt{
+		AttemptID: parentID, ProjectID: project.ProjectID, RecordID: stringField(note.Data, "id"), ItemID: stringField(note.Data, "id"),
+		Runner: "codex", Lane: runLaneExecute, WorkRevision: intField(note.Data, "work_revision"), WorkspacePath: worktree,
+		Outcome: string(AttemptOutcomeSucceeded), EndState: RunEndState{Schema: "tusker.run-end-state/v2", HeadSHA: source, WorktreePath: worktree, MaterialFingerprint: material, MaterialScope: scope},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{
+		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: stringField(note.Data, "id"), ItemID: stringField(note.Data, "id"),
+		Runner: "codex", Lane: runLaneReview, WorkRevision: intField(note.Data, "work_revision"), WorkspacePath: worktree, ParentAttemptID: parentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return material
+}
+
+func completionTestFinding(material, id, detail string) string {
+	raw, _ := json.Marshal(reviewerFindingRecord{
+		Schema: reviewerFindingSchema, ID: id, Kind: "blocking", Acceptance: []string{"A1"},
+		Evidence: []string{"review-receipt"}, Consequence: detail,
+		ClosureCondition: "re-run the exact acceptance proof", MaterialFingerprint: material,
+	})
+	return string(raw)
+}
+
 func completionReactorFixture(t *testing.T, exactSource bool) (string, RegisteredProject, *Daemon, ReviewResult) {
 	t.Helper()
 	repo, vault := newLandTestRepo(t, 1, "true")
@@ -2492,12 +2544,14 @@ func completionReactorFixture(t *testing.T, exactSource bool) (string, Registere
 		t.Fatal(err)
 	}
 	recordCompletionTestProof(t, vault, "APP-T-0001")
-	if exactSource {
-		sha := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"reviewed.txt": "exact\n"})
-		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "source_sha": sha, "work_revision": 1})
-	} else {
-		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "source_sha": "deadbeef", "work_revision": 1})
-	}
+	// Every authoritative v3 fixture carries the same durable execute -> review
+	// material binding that production completion requires. The historical
+	// exactSource switch only distinguished pass fixtures from handback fixtures;
+	// both now need a real material identity at the review boundary.
+	_ = exactSource
+	sha := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"reviewed.txt": "exact\n"})
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "source_sha": sha, "work_revision": 1, "owned_paths": []string{"reviewed.txt"}})
+	recordCompletionTestProof(t, vault, "APP-T-0001")
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	note, err := resolveV7Note(vault, "APP-T-0001", "task")
 	if err != nil {
@@ -2507,11 +2561,12 @@ func completionReactorFixture(t *testing.T, exactSource bool) (string, Registere
 	if err != nil {
 		t.Fatal(err)
 	}
+	material := seedCompletionReviewAttempt(t, daemon.store, project, note, "review-1")
 	workerPolicyFP, err := completionWorkflowPolicyFingerprint(completionAuthorityTestWorkflow(), note)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP, Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, Verdict: "pass", Summary: "objective pass", CreatedAt: "2026-07-25T10:00:00Z"}
+	result := ReviewResult{Schema: reviewResultSchema, ProjectID: project.ProjectID, TaskID: "APP-T-0001", TaskStateRev: stringField(note.Data, "state_rev"), WorkRevision: 1, ImplementationSHA: stringField(note.Data, "source_sha"), AttemptID: "review-1", Actor: "reviewer:agent", Runner: string(RunnerCodexExec), RunnerProfile: "reviewer-terra", WorkerPolicyFP: workerPolicyFP, Covers: []string{"A1"}, ProofFingerprint: proof, GateFingerprint: gates, MaterialFingerprint: material, Verdict: "pass", Summary: "objective pass", CreatedAt: "2026-07-25T10:00:00Z"}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return vault, project, daemon, result
 }
@@ -2528,11 +2583,12 @@ func completionChangesRequestedFixture(t *testing.T, taskCount int) (string, Reg
 	}
 	for index := 1; index <= taskCount; index++ {
 		taskID := "APP-T-" + padNumber(index)
-		recordCompletionTestProof(t, vault, taskID)
+		source := commitLandBranch(t, repo, "source/"+taskID, "integration/W-0001", map[string]string{"reviewed.txt": "exact\n"})
 		setAutomationV7TaskFields(t, vault, taskID, map[string]any{
 			"status": "review", "readiness": "waiting_on_review",
-			"source_sha": "reviewed-source-" + taskID, "work_revision": 1,
+			"source_sha": source, "work_revision": 1, "owned_paths": []string{"reviewed.txt"},
 		})
+		recordCompletionTestProof(t, vault, taskID)
 	}
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	results := make([]ReviewResult, 0, taskCount)
@@ -2540,7 +2596,7 @@ func completionChangesRequestedFixture(t *testing.T, taskCount int) (string, Reg
 		taskID := "APP-T-" + padNumber(index)
 		result := completionResultForReviewedTask(t, vault, project, taskID, "review-"+padNumber(index), "changes requested")
 		result.Verdict = "changes_requested"
-		result.Findings = []string{"fix " + taskID}
+		result.Findings = []string{completionTestFinding(result.MaterialFingerprint, "F-"+taskID, "fix "+taskID)}
 		result.ResultRevision = reviewResultFingerprint(result)
 		results = append(results, result)
 	}
@@ -2570,6 +2626,14 @@ func completionResultForReviewedTask(t *testing.T, vault string, project Registe
 		Verdict: "pass", Summary: summary,
 		CreatedAt: "2026-07-25T10:00:00Z",
 	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.MaterialFingerprint = seedCompletionReviewAttempt(t, store, project, task, attemptID)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	result.ResultRevision = reviewResultFingerprint(result)
 	return result
 }
@@ -2598,6 +2662,9 @@ func completionAuthorityTestWorkflow() Workflow {
 
 func recordCompletionTestProof(t *testing.T, vault, taskID string) {
 	t.Helper()
+	if task, err := resolveV7Note(vault, taskID, "task"); err == nil && len(normalizeList(task.Data["owned_paths"])) == 0 {
+		setAutomationV7TaskFields(t, vault, taskID, map[string]any{"owned_paths": []string{"reviewed.txt"}})
+	}
 	rows := strings.Join([]string{
 		"A1|go test ./cmd/tusker -run '^TestDeterministicReviewCompletion$' -count=1|pass|Focused completion proof passed.",
 		"A1|go test ./cmd/tusker -count=1|pass|Broad command proof passed.",

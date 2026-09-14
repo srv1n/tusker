@@ -1,0 +1,208 @@
+diff --git a/cmd/tusker/v7_wave_authorization.go b/cmd/tusker/v7_wave_authorization.go
+--- a/cmd/tusker/v7_wave_authorization.go
++++ b/cmd/tusker/v7_wave_authorization.go
+@@ -38,9 +38,11 @@ type wavePreflightEnvironment struct {
+ 	ApprovalFree       bool
+ 	IsolatedWorkspace  bool
+ 	IntegrationClean   bool
++	TaskRouteInspector waveTaskRouteInspector
+ }
+ 
+ type wavePreflightEnvironmentInspector func(vaultPath string, wave Note) wavePreflightEnvironment
++type waveTaskRouteInspector func(task Note, lane string) error
+ 
+ type waveCrossScopeProjection = deliveryCrossScopeReviewProjection
+ 
+@@ -433,6 +435,10 @@ func inspectWavePreflightEnvironmentReadOnly(vaultPath string, wave Note) wavePr
+ 
+ func applyWaveWorkflowEnvironment(env *wavePreflightEnvironment, wave Note, wf Workflow) {
+ 	env.WorkflowCompatible = wf.WorkflowVersion == 1 && wf.TrackerSchemaVersion == 7
++	env.TaskRouteInspector = func(task Note, lane string) error {
++		_, err := resolveRunProfileForLane(task, wf, lane, "")
++		return err
++	}
+ 	profileName := stringField(wave.Data, "runner_profile")
+ 	if profileName != "" {
+ 		profile, ok := wf.RunnerProfiles[profileName]
+@@ -554,6 +554,7 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
+ 	}
+ 	graph := map[string][]string{}
+ 	memberSet := makeSet(members...)
++	routeFailed := false
+ 	for _, id := range members {
+ 		task, ok := idx.Tasks[id]
+ 		if !ok {
+@@ -567,6 +574,15 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
+ 		for _, blocker := range contractBlockers {
+ 			report.addBlocker(waveBlockerTaskContracts, id+": "+blocker)
+ 		}
++		for _, lane := range []string{runLaneExecute, runLaneReview} {
++			if env.TaskRouteInspector == nil {
++				continue
++			}
++			if err := env.TaskRouteInspector(task, lane); err != nil {
++				routeFailed = true
++				report.addBlocker("", fmt.Sprintf("%s: %s route blocked: %s", id, lane, err))
++			}
++		}
+ 		report.TaskProof[id] = map[string]any{
+ 			"acceptance":   waveMaterialTable(sectionContent(task.Body, "## Acceptance"), []int{0, 1}),
+ 			"verification": waveMaterialTable(sectionContent(task.Body, "## Verification"), []int{0, 1}),
+@@ -617,6 +633,9 @@ func buildWavePreflight(vaultPath string, idx v7Index, wave Note, env wavePrefli
+ 	if len(report.Frontiers) == 0 && len(members) > 0 {
+ 		report.addBlocker(waveBlockerSpecDAG, "member dependency graph contains a cycle")
+ 	}
++	if routeFailed {
++		report.Checks["runner"] = false
++	}
+ 	for _, gate := range sortedV7Gates(idx) {
+ 		var affected []string
+ 		for _, id := range normalizeList(gate.Data["blocks"]) {
+@@ -847,7 +866,7 @@ func waveMaterialTable(section string, columns []int) []string {
+ 		if !strings.HasPrefix(line, "|") || strings.Contains(line, "---") {
+ 			continue
+ 		}
+-		cells := strings.Split(strings.Trim(line, "|"), "|")
++		cells := v7MarkdownTableCells(line)
+ 		if len(cells) == 0 || strings.EqualFold(strings.TrimSpace(cells[0]), "ID") || strings.EqualFold(strings.TrimSpace(cells[0]), "Covers") {
+ 			continue
+ 		}
+diff --git a/cmd/tusker/task_authoring_preflight_test.go b/cmd/tusker/task_authoring_preflight_test.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/tusker/task_authoring_preflight_test.go
+@@ -0,0 +1,134 @@
++package main
++
++import (
++	"encoding/json"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestTaskAuthoringPreflightReportsEffectiveExecuteAndReviewRoutes(t *testing.T) {
++	vault := deliveryTestVault(t)
++	plan := validDeliveryPlan()
++	planPath := writeDeliveryTestPlan(t, vault, plan)
++	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "Routes", "quiet": "true"}); err != nil {
++		t.Fatal(err)
++	}
++	for name, profile := range map[string]map[string]any{
++		"task-authoring-worker":   taskAuthoringRouteProfile("workspace-write-offline", "workspace-write", false),
++		"task-authoring-reviewer": taskAuthoringRouteProfile("read-only", "read-only", false),
++	} {
++		if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles."+name, profile); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard.execute", []string{"task-authoring-worker"}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard.review", []string{"task-authoring-reviewer"}); err != nil {
++		t.Fatal(err)
++	}
++
++	idx, err := loadV7Index(vault)
++	if err != nil {
++		t.Fatal(err)
++	}
++	wave := idx.Waves["W-0001"]
++	green := greenWaveEnvironment()
++	wf, err := loadWorkflow(vault)
++	if err != nil {
++		t.Fatal(err)
++	}
++	green.TaskRouteInspector = func(task Note, lane string) error {
++		_, err := resolveRunProfileForLane(task, wf.Data, lane, "")
++		return err
++	}
++	configured := buildWavePreflight(vault, idx, wave, green)
++	if !configured.Checks["runner"] {
++		t.Fatalf("configured execute/review routes were rejected: %#v", configured.Blockers)
++	}
++	if hasWaveBlocker(configured.Blockers, "route blocked") {
++		t.Fatalf("configured routes produced route blockers: %#v", configured.Blockers)
++	}
++
++	if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard.review", []string{}); err != nil {
++		t.Fatal(err)
++	}
++	wf, err = loadWorkflow(vault)
++	if err != nil {
++		t.Fatal(err)
++	}
++	green.TaskRouteInspector = func(task Note, lane string) error {
++		_, err := resolveRunProfileForLane(task, wf.Data, lane, "")
++		return err
++	}
++	idx, err = loadV7Index(vault)
++	if err != nil {
++		t.Fatal(err)
++	}
++	blocked := buildWavePreflight(vault, idx, idx.Waves["W-0001"], green)
++	if blocked.Checks["runner"] {
++		t.Fatalf("blank review mapping passed runner preflight: %#v", blocked)
++	}
++	for _, taskID := range []string{"APP-T-0001", "APP-T-0002"} {
++		want := taskID + ": review route blocked: standard review profile mapping is empty"
++		if !hasWaveBlocker(blocked.Blockers, want) {
++			t.Fatalf("missing per-member review route blocker %q: %#v", want, blocked.Blockers)
++		}
++		if hasWaveBlocker(blocked.Blockers, taskID+": execute route blocked") {
++			t.Fatalf("configured execute route unexpectedly blocked for %s: %#v", taskID, blocked.Blockers)
++		}
++	}
++}
++
++func TestTaskAuthoringPreflightPreservesPipedVerificationCommand(t *testing.T) {
++	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
++	vault := deliveryTestVault(t)
++	plan := validDeliveryPlan()
++	planPath := writeDeliveryTestPlan(t, vault, plan)
++	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "wave": "PipedProof", "quiet": "true"}); err != nil {
++		t.Fatal(err)
++	}
++	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
++	data, body, err := parseFrontmatterMustRead(taskPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	body = strings.Replace(body, "command: go test ./cmd/tusker -run TestDeliveryPlanSchemaRoundTrip -count=1", "command: printf 'left\\|right'", 1)
++	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := writeText(taskPath, content); err != nil {
++		t.Fatal(err)
++	}
++
++	output := captureStdout(t, func() {
++		if err := waveV7PreflightCmd(Args{"vault": vault, "_pos0": "W-0001", "json": "true"}); err != nil {
++			t.Fatal(err)
++		}
++	})
++	var payload struct {
++		Preflight wavePreflightReport `json:"preflight"`
++	}
++	if err := json.Unmarshal([]byte(output), &payload); err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(output, "command: printf 'left|right'") {
++		t.Fatalf("preflight did not retain the complete piped command: %s", output)
++	}
++	if payload.Preflight.TaskProof["APP-T-0001"] == nil {
++		t.Fatalf("preflight omitted task proof projection: %#v", payload.Preflight)
++	}
++}
++
++func taskAuthoringRouteProfile(permissionPreset, sandboxMode string, network bool) map[string]any {
++	return map[string]any{
++		"harness":           string(RunnerCodexExec),
++		"model":             "gpt-5.6-terra",
++		"effort":            "medium",
++		"permission_preset": permissionPreset,
++		"sandbox":           map[string]any{"mode": sandboxMode, "network": network},
++		"subagents":         map[string]any{"allowed": false, "max_concurrent": 0},
++	}
++}

@@ -93,7 +93,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "delivery", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "demo":
+	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "demo", "task":
 		return true
 	default:
 		return false
@@ -170,7 +170,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "delivery bind", "delivery import", "delivery start", "wave refingerprint", "wave re-fingerprint", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "demo seed", "demo run", "demo reset":
+	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "demo seed", "demo run", "demo reset":
 		return true
 	default:
 		return false
@@ -237,7 +237,7 @@ func runInner(command string, args Args) (int, error) {
 	case "new epic":
 		return 0, newV7Epic(args)
 	case "new task":
-		return 0, newV7Task(args)
+		return 0, newAuthoredV7Task(args)
 	case "new gate":
 		return 0, newV7Gate(args)
 	case "new decision":
@@ -269,8 +269,18 @@ func runInner(command string, args Args) (int, error) {
 		return 0, finishV7Cmd(args)
 	case "gate":
 		return 0, gateV7Cmd(args)
+	case "task update":
+		return 0, updateV7TaskCmd(args)
+	case "task start":
+		return 0, taskStartCmd(args)
+	case "task":
+		return 0, tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> --if-revision <state_rev> ...")
 	case "wave":
 		return 0, waveV7Cmd(args)
+	case "wave review":
+		return 0, waveReviewCmd(args)
+	case "wave start":
+		return 0, waveStartCmd(args)
 	case "wave create":
 		return 0, waveV7CreateCmd(args)
 	case "wave add":
@@ -283,41 +293,17 @@ func runInner(command string, args Args) (int, error) {
 		return 0, waveV7OutcomeCmd(args)
 	case "wave brief":
 		return 0, waveV7BriefCmd(args)
-	case "wave preflight":
-		return 0, waveV7PreflightCmd(args)
-	case "wave arm":
-		return 0, waveV7ArmCmd(args)
 	case "wave pause":
 		return 0, waveV7PauseCmd(args)
 	case "wave resume":
 		return 0, waveV7ResumeCmd(args)
-	case "wave disarm":
-		return 0, waveV7DisarmCmd(args)
-	case "wave refingerprint", "wave re-fingerprint":
-		return 0, waveV7RefingerprintCmd(args)
 	case "factory":
 		printFactoryOperationsHelp()
 		return 0, nil
 	case "factory operations":
 		return 0, factoryOperationsCmd(args)
-	case "delivery plan":
-		return 0, deliveryPlanCmd(args)
-	case "delivery context":
-		return 0, deliveryPlanningContextCmd(args)
-	case "delivery import":
-		return 0, deliveryImportCmd(args)
-	case "delivery bind":
-		return 0, deliveryBindCmd(args)
-	case "delivery review":
-		return 0, deliveryReviewCmd(args)
-	case "delivery start":
-		return 0, deliveryStartCmd(args)
 	case "review submit":
 		return 0, reviewSubmitCmd(args)
-	case "delivery doctor":
-		return 0, deliveryDoctorCmd(args)
-	case "delivery rollout":
-		return 0, deliveryRolloutCmd(args)
 	case "demo":
 		return demoCmd(args)
 	case "demo seed":
@@ -448,8 +434,6 @@ func runInner(command string, args Args) (int, error) {
 		return 0, stateV7Cmd(args)
 	case "migrate evidence-policy":
 		return 0, migrateV7EvidencePolicyCmd(args)
-	case "migrate close-policy":
-		return 0, migrateClosePolicyCmd(args)
 	case "reindex":
 		return 0, reindex(args)
 	case "reset", "relaunch":
@@ -701,10 +685,13 @@ func runInner(command string, args Args) (int, error) {
 	case "help evidence":
 		printEvidenceHelp()
 		return 0, nil
+	case "help review", "help review submit":
+		printReviewHelp()
+		return 0, nil
 	case "help actor", "help actor correction":
 		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
 		return 0, nil
-	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave outcome", "help wave brief", "help wave preflight", "help wave arm", "help wave pause", "help wave resume", "help wave disarm", "help wave refingerprint", "help wave re-fingerprint", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate":
+	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave outcome", "help wave brief", "help wave pause", "help wave resume", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate":
 		printV7Help()
 		return 0, nil
 	case "help feedback":
@@ -837,7 +824,7 @@ Start here:
   tusker init --yes
   tusker capabilities --json
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
-  tusker new task --vault ./.tusker --epic APP --title "Implement auth" --size m --risk medium
+  tusker new task --vault ./.tusker --title "Implement auth" --work-level standard --body-file task-body.md
 
 Commands:
   init                initialize or refresh a repo vault
@@ -951,6 +938,10 @@ func printCommandHelp(command string) bool {
 		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set --scope global|project --name <stable-id> [--display-name <name>] [--eligible-tiers <light,standard,demanding>] --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] --if-revision <sha256> [--json]\n  tusker models profile-disable|profile-enable|profile-remove --scope global|project --name <name> --if-revision <sha256> [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> --if-revision <sha256> [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review --if-revision <sha256> [--json]")
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()
+	case "task", "task update":
+		printNewHelp()
+	case "task start":
+		fmt.Println("Usage: tusker task start <TASK-ID> --mode interactive|background --by <actor> [--current-workspace] [--json]")
 	case "status":
 		printStatusHelp()
 	case "discard":
@@ -965,9 +956,9 @@ func printCommandHelp(command string) bool {
 		printClaimHelp()
 	case "evidence":
 		printEvidenceHelp()
-	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave preflight", "wave arm", "wave pause", "wave resume", "wave disarm", "wave refingerprint", "wave re-fingerprint", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
+	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave pause", "wave resume", "wave review", "wave start", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
-	case "handoff", "finish", "gate", "delivery", "delivery plan", "delivery context", "delivery bind", "delivery import", "delivery review", "delivery start", "delivery doctor", "delivery rollout", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy", "migrate close-policy":
+	case "handoff", "finish", "gate", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
@@ -1050,19 +1041,60 @@ func printOperatorCommandHelp(command string) {
 	switch {
 	case command == "wave":
 		fmt.Println(`Usage:
-  tusker wave create|add|remove|show|outcome|brief|preflight|arm|pause|resume|disarm|refingerprint ...
+  tusker wave create|add|remove|show|outcome|brief|review|start|pause|resume ...
 
 Purpose:
   Manage a named, task-backed delivery wave.`)
-	case command == "wave refingerprint" || command == "wave re-fingerprint":
+	case command == "wave create":
 		fmt.Println(`Usage:
-  tusker wave refingerprint <WAVE-ID> --dry-run [--json]
-  tusker wave refingerprint <WAVE-ID> --confirm <sha256:fingerprint> [--json]
+  tusker wave create "<title>" <TASK-ID>...
+  tusker wave create --file <path|-> --request-key <stable-key> [--json]
 
 Purpose:
-  Refresh stale imported factory-intake material without reauthoring or
-  arming the wave. The dry-run is read-only; confirmation preserves disarmed
-  state and cannot dispatch work.`)
+  Create a named, task-backed delivery wave. The --file mode atomically
+  authors a complete tusker.wave-authoring/v1 request (temporary task keys,
+  bodies, dependencies, and human actions) into durable TSK or epic task
+  records, gates, and an inert wave. An identical request_key and
+  fingerprint returns the existing records; a changed request under the same
+  key conflicts. Nothing is claimed or dispatched.`)
+	case command == "wave review":
+		fmt.Println(`Usage:
+  tusker wave review <WAVE-ID> [--json]
+
+Purpose:
+  Read the durable wave/task/gate projection: state, authorization, material
+  fingerprint, member eligibility, dependency frontiers, blockers with repair
+  actions, and controls. Read-only; no plan, factory, or runtime mutation.`)
+	case command == "wave start":
+		fmt.Println(`Usage:
+  tusker wave start <WAVE-ID> --mode background --by human:<name>|operator:<name> [--json]
+
+Purpose:
+  Validate wave material and execute/review routes, authorize the exact
+  current wave fingerprint, and queue only currently eligible roots as
+  durable run directives. Daemon polling advances each dependency frontier
+  automatically under the stored authorization; no second Start is needed.
+  An offline daemon leaves the wave authorized and Waiting; it is never
+  reported Running.`)
+	case command == "wave pause":
+		fmt.Println(`Usage:
+  tusker wave pause <WAVE-ID> --by human:<name>|operator:<name> [--json]
+
+Purpose:
+  Pause new wave-owned admissions while admitted attempts finish. Preserves
+  the exact authorization fingerprint, actor, and timestamp; the wave
+  projects Paused and no new workers or reviewers start. An explicit
+  task start inside a paused wave stays task-scoped and leaves the wave
+  paused.`)
+	case command == "wave resume":
+		fmt.Println(`Usage:
+  tusker wave resume <WAVE-ID> --by human:<name>|operator:<name> [--json]
+
+Purpose:
+  Restore a paused wave to armed without reauthorizing changed material.
+  Refuses when the current fingerprint differs from the stored
+  authorization; resume then lets daemon polling advance the remaining
+  dependency frontier automatically.`)
 	case strings.HasPrefix(command, "wave "):
 		fmt.Printf("Usage:\n  tusker %s ...\n\nPurpose:\n  Operate on a named delivery wave.\n", command)
 	case command == "land":
@@ -1209,27 +1241,29 @@ Examples:
 func printV7Help() {
 	fmt.Println(`Usage:
   tusker new epic --acronym APP --title "App foundation"
-  tusker new task --epic APP --title "Add login"
+  tusker new task --title "Add login" --work-level standard --body-file task-body.md
+  tusker task update APP-T-0001 --if-revision <state_rev> --title "Add login v2" --by agent:builder
+  tusker wave create --file .tusker/scratch/wave.yaml --request-key auth-wave-v1 --json
   tusker new gate --blocks APP-T-0001 --kind auth --owner human:sarav --action "Provision credentials." --verification "The provider reports ready."
   tusker verify add APP-T-0001 --covers A1 --check "command: go test ./..." --result pending
   tusker attempt handoff APP-T-0001
   tusker finish APP-T-0001 --request-review
   tusker review submit APP-T-0001 ...
   tusker close APP-T-0001
-  tusker wave preflight W-0001 --json
-  tusker wave arm W-0001 --by human:sarav
-  tusker delivery plan --spec docs/system/00-overview.md --out .tusker/scratch/delivery-plan.yaml
-  tusker delivery doctor --plan .tusker/scratch/delivery-plan.yaml --json
-  tusker delivery import --plan .tusker/scratch/delivery-plan.yaml --dry-run
-  tusker delivery review --plan .tusker/scratch/delivery-plan.yaml --json
-  tusker delivery start --plan .tusker/scratch/delivery-plan.yaml --confirm sha256:<fingerprint> --by human:<name>
+  tusker task start APP-T-0001 --mode interactive --by agent:builder --current-workspace --json
+  tusker wave start W-0001 --mode background --by human:sarav --json
+  tusker wave pause W-0001 --by human:sarav --json
+  tusker wave resume W-0001 --by human:sarav --json
   tusker migrate evidence-policy [--write] [--json]
-  tusker migrate close-policy [--write] [--json]
 
 Purpose:
   Manage repository work records, proof, gates, review, delivery, and closeout.
-  A Tusker delivery plan is inert until an authorized final start.
-  Planning, review, import, and preflight do not dispatch work.`)
+  Direct task and wave authoring is canonical: "new task --body-file" and
+  "wave create --file --request-key" write inert durable records, and
+  "task start"/"wave start" are the one-action scoped authorizations. A wave
+  Start arms the exact current material; daemon polling then advances each
+  dependency frontier automatically. "wave pause" blocks new admissions while
+  admitted attempts finish; "wave resume" restores unchanged authorization.`)
 }
 
 func printProjectsHelp() {
@@ -1316,7 +1350,7 @@ Examples:
 
 func printWorkSessionHelp() {
 	fmt.Println(`Usage:
-  tusker work start <task-id> --by <agent> [--source codex|claude|tusker_cli] [--json]
+  tusker work start <task-id> --by <agent> [--source codex|claude|tusker_cli] [--current-workspace] [--json]
   tusker work status <task-id> [--json]
   tusker work heartbeat <task-id> --by <agent> [--json]
   tusker work submit <task-id> --by <agent> --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass> [--json]
@@ -1333,6 +1367,9 @@ func printWorkSessionHelp() {
 
 Purpose:
   The canonical runtime ownership protocol for interactive tracked work.
+  --current-workspace is an explicit Codex/Claude self-implementation claim;
+  it validates the current repository and serializes ownership of that checkout.
+  The default work start keeps its configured isolated-workspace behavior.
   It never enables automation, arms a wave, starts a daemon, or launches a
   worker. Claim is an alias for work start.
   Supported lifecycle: ready -> work start -> work reconcile ->
@@ -1513,7 +1550,8 @@ artifacts are left untouched; run tusker docs map after review. --apply and
 func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
-  tusker new task [--vault <path>] --epic <ACR> --title <title> [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--work-level light|standard|demanding] [--review-level light|standard|demanding] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
+  tusker new task [--vault <path>] --title <title> --work-level light|standard|demanding --body-file <path|-> [--epic <ACR>] [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--review-level light|standard|demanding] [--review-reason <reason>] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
+  tusker task update <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] --by <actor> [--json]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 
@@ -1523,11 +1561,15 @@ Purpose:
 Notes:
   Task IDs are allocated only after a successful create. For ordered batches,
   pass explicit --id values; a refused create does not reserve an ID.
+  Without --epic a task is allocated in the standalone TSK-T-0001 namespace and
+  no epic is recorded. --body-file - reads the exact task body from stdin.
+  Every supplied spec_refs path and section anchor must resolve.
 
 Examples:
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
-  tusker new task --vault ./.tusker --epic APP --title "Implement auth" --risk medium --size m \
+  tusker new task --vault ./.tusker --title "Implement auth" --work-level standard --body-file task-body.md \
     --spec-refs .tusker/specs/auth.md --owned-paths cmd/auth.go,internal/auth --generated-outputs internal/auth/openapi.gen.go
+  tusker task update TSK-T-0001 --if-revision sha256:<rev> --title "Implement auth v2" --by agent:builder
   tusker new gate --vault ./.tusker --blocks APP-T-0001 --kind auth --owner human:sarav \
     --action "Provision staging OAuth credentials." \
     --verification "Provider ready check passes." \
@@ -1610,6 +1652,21 @@ Scratch retention:
   .tusker/scratch/ is raw exhaust and is not durable: scratch/<task-id>/ is
   deleted when the task closes, and 'tusker gc' sweeps anything older than 14
   days. Promote anything worth keeping to evidence before close.`)
+}
+
+func printReviewHelp() {
+	fmt.Println(`Usage:
+  tusker review submit <TASK-ID> --attempt <ATTEMPT-ID> --task-rev <REV> --source-sha <SHA> --work-rev <N> --proof-fingerprint <FP> --gate-fingerprint <FP> --material-fingerprint <FP> --verdict pass|changes_requested|blocked --covers <A1,A2> --summary "<summary>"
+
+Structured findings:
+  ` + reviewerFindingFlagExample("<material-fingerprint>") + `
+
+Verified closures on a later pass:
+  ` + reviewerClosureFlagExample("<repaired-material-fingerprint>") + `
+
+Use one JSON array for all findings or closures. Never repeat --finding or
+--closure; the array preserves every record. Blocking findings require stable
+id, acceptance, evidence, consequence, closure_condition, and exact material.`)
 }
 
 func printVerifyHelp() {

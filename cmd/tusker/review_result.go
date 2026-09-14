@@ -66,6 +66,18 @@ const (
 	reviewResultMaxEvidenceChars = 400
 )
 
+func reviewMaterialFingerprintValid(value string) bool {
+	value = strings.TrimSpace(value)
+	if v7CloseAuthorityDigest(value, "sha256:") {
+		return true
+	}
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
 func (s *RuntimeStore) SaveReviewResult(result ReviewResult) (bool, error) {
 	if err := normalizeReviewResult(&result); err != nil {
 		return false, err
@@ -153,7 +165,14 @@ func reviewSubmitCmd(args Args) error {
 	}
 	covers := uniqueStrings(splitCSV(args.String("covers")))
 	summary := strings.TrimSpace(args.String("summary"))
-	findings := uniqueStrings(splitCSV(args.String("finding")))
+	findings, findingErr := parseReviewFindingArgs(args.String("finding"))
+	if findingErr != nil {
+		return tuskerError(errorInvalidArg, findingErr.Error())
+	}
+	closedFindings, closureErr := parseReviewFindingClosures(args.String("closure"))
+	if closureErr != nil {
+		return tuskerError(errorInvalidArg, closureErr.Error())
+	}
 	blocker := strings.TrimSpace(args.String("blocker"))
 	switch verdict {
 	case "pass":
@@ -271,7 +290,7 @@ func reviewSubmitCmd(args Args) error {
 		// Worker stdout is an authority-less transport proposal. The daemon
 		// decides whether the exact active run qualifies for v3 completion
 		// policy; generic reviewers are persisted as audit-only v2 results.
-		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_PROJECT_ID")), v7ProjectID(vault)), TaskID: id, TaskStateRev: state, WorkRevision: workRevision, ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		result := ReviewResult{Schema: reviewResultSchemaV2, ProjectID: firstNonEmpty(strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_PROJECT_ID")), v7ProjectID(vault)), TaskID: id, TaskStateRev: state, WorkRevision: workRevision, ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, ClosedFindings: closedFindings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := normalizeReviewResultProposal(&result); err != nil {
 			return err
 		}
@@ -334,16 +353,24 @@ func reviewSubmitCmd(args Args) error {
 		}
 		note = fresh
 		state = stringField(note.Data, "state_rev")
-		proofFingerprint, gateFingerprint, policyErr = reviewObjectiveSnapshots(vault, note)
+		proofMaterial := ""
+		if workspace != nil {
+			proofMaterial = workspace.MaterialFingerprint
+		}
+		proofFingerprint, gateFingerprint, policyErr = reviewObjectiveSnapshotsForMaterial(vault, note, proofMaterial)
 		if policyErr != nil {
 			return policyErr
 		}
-		proof, proofErr := loadV7ProofReport(vault, id)
-		if proofErr != nil || proof.Status != "satisfied" || len(proof.OpenGates) != 0 {
+		proofIdx, proofErr := loadV7Index(vault)
+		if proofErr != nil {
+			return proofErr
+		}
+		proof := computeV7ProofReportForMaterial(vault, note, proofIdx, proofMaterial, nil)
+		if proof.Status != "satisfied" || len(proof.OpenGates) != 0 {
 			return tuskerError(errorInvalidTransition, "pass requires command-verified objective proof and gates")
 		}
 	}
-	result := ReviewResult{Schema: resultSchema, ProjectID: run.ProjectID, TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, WorkerPolicyFP: workerPolicyFP, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, MaterialFingerprint: materialFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := ReviewResult{Schema: resultSchema, ProjectID: run.ProjectID, TaskID: id, TaskStateRev: state, WorkRevision: intField(note.Data, "work_revision"), ImplementationSHA: impl, AttemptID: attemptID, Actor: actor, Runner: run.Runner, RunnerProfile: run.RunnerProfile, WorkerPolicyFP: workerPolicyFP, Covers: covers, ProofFingerprint: proofFingerprint, GateFingerprint: gateFingerprint, MaterialFingerprint: materialFingerprint, Verdict: verdict, Blocker: blocker, Summary: summary, Findings: findings, ClosedFindings: closedFindings, EvidenceRefs: uniqueStrings(splitCSV(args.String("evidence-ref"))), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := normalizeReviewResult(&result); err != nil {
 		return err
 	}
@@ -466,13 +493,19 @@ func reviewAttemptImplementation(store *RuntimeStore, projectID, recordID, attem
 }
 
 func validateInteractiveReviewIndependence(store *RuntimeStore, run RunStatus, attemptID, reviewer string, note Note) (string, error) {
-	if !run.HandRun {
+	// Generic review runs persist as audit-only v2 and predate the exact
+	// material authority. Only hand runs or the fully-attested completion lane
+	// need the implementation binding computed at submission time.
+	if !run.HandRun && (strings.TrimSpace(run.ExecutePolicyFP) == "" || strings.TrimSpace(run.WorkerPolicyFP) == "") {
 		return "", nil
 	}
 	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
 	material, err := reviewAttemptMaterialFingerprint(store, run.ProjectID, run.RecordID, attemptID, run.WorkRevision, source)
 	if err != nil {
 		return "", err
+	}
+	if !run.HandRun {
+		return material, nil
 	}
 	if run.LeaseGeneration <= 1 {
 		return "", tuskerError(errorInvalidTransition, "interactive review is missing implementation authorization provenance")
@@ -505,8 +538,15 @@ func normalizeReviewResult(result *ReviewResult) error {
 	result.GateFingerprint = strings.TrimSpace(result.GateFingerprint)
 	result.MaterialFingerprint = strings.TrimSpace(result.MaterialFingerprint)
 	result.Covers = sortedUniqueStrings(result.Covers)
-	result.Findings = sortedUniqueStrings(result.Findings)
+	result.Findings = append([]string(nil), result.Findings...)
+	for index := range result.Findings {
+		result.Findings[index] = strings.TrimSpace(result.Findings[index])
+	}
+	sort.Strings(result.Findings)
 	result.EvidenceRefs = sortedUniqueStrings(result.EvidenceRefs)
+	if err := normalizeReviewerFindingClosures(result.ClosedFindings); err != nil {
+		return tuskerError(errorInvalidArg, err.Error())
+	}
 	if (result.Schema != reviewResultSchema && result.Schema != reviewResultSchemaV2 && result.Schema != reviewResultSchemaV1) || result.ProjectID == "" || result.TaskID == "" || result.TaskStateRev == "" || result.WorkRevision < 0 || result.ImplementationSHA == "" || result.AttemptID == "" || result.Actor == "" || result.Runner == "" || result.ProofFingerprint == "" || result.GateFingerprint == "" {
 		return tuskerError(errorInvalidArg, "review result is missing immutable authority fields")
 	}
@@ -528,6 +568,16 @@ func normalizeReviewResult(result *ReviewResult) error {
 	for _, finding := range result.Findings {
 		if finding == "" || len(finding) > reviewResultMaxFindingChars {
 			return tuskerError(errorInvalidArg, "review finding must be non-empty and at most 800 characters")
+		}
+	}
+	if result.Schema == reviewResultSchema && result.Verdict == "changes_requested" {
+		if err := validateReviewResultFindings(*result, false); err != nil {
+			return tuskerError(errorInvalidArg, err.Error())
+		}
+	}
+	if result.Schema == reviewResultSchema {
+		if err := validateReviewerFindingClosures(*result); err != nil {
+			return tuskerError(errorInvalidArg, err.Error())
 		}
 	}
 	for _, ref := range result.EvidenceRefs {
@@ -575,9 +625,19 @@ func reviewFingerprint(note Note, scope string) string {
 }
 
 func reviewObjectiveSnapshots(vault string, note Note) (string, string, error) {
-	proof, err := loadV7ProofReport(vault, stringField(note.Data, "id"))
+	return reviewObjectiveSnapshotsForMaterial(vault, note, "")
+}
+
+func reviewObjectiveSnapshotsForMaterial(vault string, note Note, currentMaterial string) (string, string, error) {
+	idx, err := loadV7Index(vault)
 	if err != nil {
 		return "", "", err
+	}
+	var proof v7ProofReport
+	if currentMaterial == "" {
+		proof = computeV7ProofReport(vault, note, idx)
+	} else {
+		proof = computeV7ProofReportForMaterial(vault, note, idx, currentMaterial, nil)
 	}
 	proofView := struct {
 		Status                           string
@@ -589,10 +649,6 @@ func reviewObjectiveSnapshots(vault string, note Note) (string, string, error) {
 	}{proof.Status, proof.Acceptance, proof.Missing, proof.ModeMissing, proof.Covered, proof.InlineRows, proof.Evidence, proof.ProofOwner}
 	proofRaw, _ := json.Marshal(proofView)
 	proofSum := sha256.Sum256(proofRaw)
-	idx, err := loadV7Index(vault)
-	if err != nil {
-		return "", "", err
-	}
 	type gateView struct {
 		ID, Status, StateRev, Owner string
 		Blocking                    bool
@@ -662,9 +718,17 @@ func validatePersistedReviewResult(result ReviewResult) error {
 	if result.CreatedAt == "" {
 		return fmt.Errorf("v2 review result created_at is required")
 	}
+	if result.Schema == reviewResultSchema && !reviewMaterialFingerprintValid(result.MaterialFingerprint) {
+		return fmt.Errorf("authoritative review result requires an exact material fingerprint")
+	}
 	if _, err := time.Parse(time.RFC3339Nano, result.CreatedAt); err != nil {
 		if _, legacyErr := time.Parse(time.RFC3339, result.CreatedAt); legacyErr != nil {
 			return fmt.Errorf("review result created_at is not RFC3339")
+		}
+	}
+	if result.Schema == reviewResultSchema && result.Verdict == "changes_requested" {
+		if err := validateReviewResultFindings(result, true); err != nil {
+			return err
 		}
 	}
 	return nil

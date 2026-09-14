@@ -19,7 +19,6 @@ import { RouteFallback } from "@/components/RouteFallback";
     '/'                          Global Today
     '/settings'                  App settings
     '/p/$projectId/'             Project Today
-    '/p/$projectId/plan'         Plan inbox / review
     '/p/$projectId/epics'        Epic portfolio
     '/p/$projectId/waves'        Delivery waves
     '/p/$projectId/waves/$waveId' Wave detail
@@ -75,15 +74,6 @@ const overviewRoute = createRoute({
   component: lazyRouteComponent(
     () => import("@/features/product/TodayScreens"),
     "ProjectToday",
-  ),
-});
-
-const planRoute = createRoute({
-  getParentRoute: () => projectRoute,
-  path: "plan",
-  component: lazyRouteComponent(
-    () => import("@/features/delivery/DeliveryReview"),
-    "DeliveryReviewPage",
   ),
 });
 
@@ -230,7 +220,6 @@ const routeTree = rootRoute.addChildren([
   panelRoute,
   projectRoute.addChildren([
     overviewRoute,
-    planRoute,
     epicsRoute,
     wavesRoute,
     waveDetailRoute,

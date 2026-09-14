@@ -38,9 +38,9 @@ Each new task names a future focused Go acceptance suite to create as part of im
 Outcome: an agent can convert an externally authored specification into complete Tusker work and see exactly which requirements are covered or deliberately deferred before import. This is authoring assistance, not a Tusker interviewing skill. Existing FLW-T-0010 owns complete runtime packet preservation; do not redo it.
 
 Implementation scope and approach:
-Inspect delivery_v2.go, delivery_doctor.go, delivery_review_cmd.go and delivery_verification_contract.go. Reuse requirements, requirement_refs and acceptance IDs. Extend the existing doctor/review result with a bounded coverage projection; explicit deferrals need a reason, not pretend tasks. Prefer existing schema support; add the smallest compatible field only if needed. Preserve legacy plans. Validate missing/unknown IDs and dependency cycles; expose the same result in CLI JSON and existing delivery review, without another review wizard. Retain detail in the canonical task contract, not a duplicated spec blob.
+Inspect direct_authoring_cmd.go and direct_wave_authority.go — the wave authoring validation and review projection that replaced the delivery doctor/review surface. Reuse requirements, requirement_refs and acceptance IDs. Extend the existing review projection with a bounded coverage report; explicit deferrals need a reason, not pretend tasks. Prefer existing schema support; add the smallest compatible field only if needed. Preserve legacy waves. Validate missing/unknown IDs and dependency cycles; expose the same result in CLI JSON and the wave review projection, without another review wizard. Retain detail in the canonical task contract, not a duplicated spec blob.
 
-Ownership: cmd/tusker/delivery_doctor.go, cmd/tusker/delivery_v2.go, cmd/tusker/delivery_review_cmd.go. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.
+Ownership: cmd/tusker/direct_authoring_cmd.go, cmd/tusker/direct_wave_authority.go. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.
 
 Non-goals: no new scheduler, model harness, mandatory human code review, automatic start, formal active-spec revision locking, or implementation of the three assigned real-work test streams. Preserve existing task IDs and contracts. If behavior already exists, verify it and implement only the gap.
 
@@ -62,9 +62,9 @@ Verification: `command: go test ./cmd/tusker -run TestRemainingCoverage -count=1
 Outcome: before starting a wave the operator sees one or two plain-language sentences describing the capability they will gain; after completion they see what actually shipped. Example: You can sign in with Google and return to your original page. An implementation task list is not the summary.
 
 Implementation scope and approach:
-Inspect v7_wave_cmd.go, v7_wave_brief.go, delivery_cmd.go, serve_delivery.go and Work wave components. First determine whether an existing authored summary can serve this purpose; reuse it, otherwise add a backward-compatible expected_outcome field. Wire create/import/read/update through supported CLI and the existing API. Render near the wave title and in detail with minimal typography, no extra decorative card. Actual completion remains derived from reviewed work/results; failed or partial waves cannot display the promise as achieved. Preserve manually written summaries through reconciliation and readback.
+Inspect v7_wave_cmd.go, v7_wave_brief.go, direct_wave_authority.go, serve_actions.go and Work wave components. First determine whether an existing authored summary can serve this purpose; reuse it, otherwise add a backward-compatible expected_outcome field. Wire create/import/read/update through supported CLI and the existing API. Render near the wave title and in detail with minimal typography, no extra decorative card. Actual completion remains derived from reviewed work/results; failed or partial waves cannot display the promise as achieved. Preserve manually written summaries through reconciliation and readback.
 
-Ownership: cmd/tusker/v7_wave_cmd.go, cmd/tusker/v7_wave_brief.go, cmd/tusker/serve_delivery.go, internal/serve/ui/src/features/work. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.
+Ownership: cmd/tusker/v7_wave_cmd.go, cmd/tusker/v7_wave_brief.go, cmd/tusker/serve_actions.go, internal/serve/ui/src/features/work. Inspect named files and callers before editing; file hints are starting points, not permission to replace sibling work. Shared CLI registration, capabilities and system-doc sections require narrow edits after rereading the latest tree.
 
 Non-goals: no new scheduler, model harness, mandatory human code review, automatic start, formal active-spec revision locking, or implementation of the three assigned real-work test streams. Preserve existing task IDs and contracts. If behavior already exists, verify it and implement only the gap.
 
@@ -156,19 +156,6 @@ Verification: `command: go test ./cmd/tusker -run TestRemainingEvidenceView -cou
 
 ## Import status and handoff
 
-Import plan: `.tusker/specs/remaining-product-work.plan.yaml` (V2, complete contracts, acceptance, intended verification, source ownership, levels and DAG). Current project capacity is one; the plan preserves concurrency=1. The two logical lanes above are independent, but do not raise runtime capacity implicitly.
+Wave W-0026 carries this work: it was imported atomically and its durable task records plus the wave's migration receipt are the authority (the original plan input was removed during the direct-authoring cutover). Current project capacity is one; the wave preserves concurrency=1. The two logical lanes above are independent, but do not raise runtime capacity implicitly.
 
-Dry-run import refused on existing tracker state:
-
-```text
-CROSS_SCOPE_TARGET_DRIFT scope=factory-execution-control/v1 key=universal-work-session consumer=ORC-T-0055; re-import the original producer and consumer together
-```
-
-No new IDs were allocated. The lifecycle/tracker owner should inspect and reconcile the original producer/consumer provenance through supported CLI, not hand-edit or bypass it. This preparation task did not inspect or alter that unrelated contract. After repair:
-
-```sh
-tusker delivery import --plan .tusker/specs/remaining-product-work.plan.yaml --dry-run --json
-tusker delivery import --plan .tusker/specs/remaining-product-work.plan.yaml --json
-```
-
-Import remains inert. Revalidate current context if it has changed. Until import succeeds, give each implementation agent the common boundaries plus its complete task section in this document; source keys are labels, not invented Tusker IDs. Existing task contracts remain the authority for the already assigned work.
+The wave stays disarmed until a separate authorization decision. Until then, give each implementation agent the common boundaries plus its complete task section in this document. Existing task contracts remain the authority for the already assigned work.

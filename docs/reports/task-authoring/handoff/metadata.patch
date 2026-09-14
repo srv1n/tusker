@@ -1,0 +1,185 @@
+--- a/cmd/tusker/commands_v7.go
++++ b/cmd/tusker/commands_v7.go
+@@ -844,6 +844,7 @@
+ 	if reason := strings.TrimSpace(args.String("raw-artifacts-reason")); reason != "" {
+ 		data["raw_artifacts_reason"] = reason
+ 	}
++	omitEmptyV7TaskAuthoringFields(data)
+ 	body := v7TaskBody(id, title)
+ 	// --force-ready may bypass proof/dispatchability checks, never the strict
+ 	// governing-spec requirement for a demanding task. Report every applicable
+@@ -877,6 +878,24 @@
+ 		fmt.Printf("Created V7 task %s at %s\n", id, path)
+ 	}
+ 	return emitV7Event(vaultPath, id, "task", "created", actor, map[string]any{"path": filepath.ToSlash(filepath.Join("work", "tasks", id+".md"))})
++}
++
++func omitEmptyV7TaskAuthoringFields(data map[string]any) {
++	for _, key := range []string{
++		"architect", "origin", "runner_profile", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "evidence_required", "knowledge_nodes", "owned_paths",
++	} {
++		value, ok := data[key]
++		if !ok {
++			continue
++		}
++		if contacts, mapValue := value.(map[string]string); mapValue && len(contacts) == 0 {
++			delete(data, key)
++			continue
++		}
++		if isEmptyFrontmatterValue(value) {
++			delete(data, key)
++		}
++	}
+ }
+ 
+ func v7DefaultProofRequiredOwners(required []string) map[string]string {
+--- a/cmd/tusker/delivery_cmd.go
++++ b/cmd/tusker/delivery_cmd.go
+@@ -820,6 +820,9 @@
+ 				}
+ 			}
+ 		}
++		if existing == nil {
++			omitEmptyV7TaskAuthoringFields(data)
++		}
+ 		body := renderDeliveryTaskBody(id, task)
+ 		if len(plan.v2.NonGoals) > 0 {
+ 			body += "\n## Non-goals\n\n" + v7BulletList(plan.v2.NonGoals) + "\n"
+--- /dev/null
++++ b/cmd/tusker/task_authoring_metadata_test.go
+@@ -0,0 +1,135 @@
++package main
++
++import (
++	"path/filepath"
++	"testing"
++)
++
++func TestTaskAuthoringMetadataNewTaskOmitsEmptyOptionalFields(t *testing.T) {
++	vault := pickupV7TestVault(t)
++	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Minimal task"}, newV7Task)
++
++	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
++	data, body, err := parseFrontmatterMustRead(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, key := range []string{
++		"architect", "origin", "runner_profile", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "evidence_required", "knowledge_nodes", "owned_paths",
++	} {
++		if _, ok := data[key]; ok {
++			t.Fatalf("minimal task should omit empty %s: %#v", key, data[key])
++		}
++	}
++	assertEqual(t, "medium", stringField(data, "risk"), "default risk")
++	assertEqual(t, "p2", stringField(data, "priority"), "default priority")
++	assertEqual(t, "m", stringField(data, "size"), "default size")
++	assertEqual(t, "inline", stringField(data, "proof_mode"), "default proof mode")
++	assertEqual(t, []string{"focused_test", "broad_test"}, normalizeList(data["proof_required"]), "default proof requirements")
++	assertEqual(t, 0, intField(data, "evidence_budget"), "zero evidence budget")
++	if _, present := data["evidence_budget"]; !present {
++		t.Fatal("zero evidence cap must remain explicit; absence removes the cap")
++	}
++	assertEqual(t, false, boolField(data, "raw_artifacts_allowed"), "default raw artifact policy")
++	assertEqual(t, "task", stringField(data, "next_source"), "default next source")
++	assertEqual(t, "APP-T-0001", stringField(data, "next_ref"), "default next ref")
++	if !v7StateRevMatches(data, body, stringField(data, "state_rev")) {
++		t.Fatalf("new task state_rev does not match trimmed content")
++	}
++}
++
++func TestTaskAuthoringMetadataPreservesSuppliedFieldsAndCAS(t *testing.T) {
++	vault := pickupV7TestVault(t)
++	mustV7Proof(t, Args{
++		"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Configured task",
++		"architect": "execution:architect", "origin": "task:APP-T-0009", "peers": "reviewer=task:APP-T-0002",
++		"domains": "project,cli", "gates": "APP-G-0001", "dependencies": "APP-T-0009:hard",
++		"evidence-required": "automated_test", "owned-paths": "cmd/tusker/commands_v7.go",
++		"raw-artifacts-allowed": "false", "evidence-budget": "0", "next-source": "custom", "next-ref": "custom-ref",
++	}, newV7Task)
++
++	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
++	data, body, err := parseFrontmatterMustRead(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	assertEqual(t, "execution:architect", stringField(data, "architect"), "architect")
++	assertEqual(t, "task:APP-T-0009", stringField(data, "origin"), "origin")
++	assertEqual(t, map[string]string{"reviewer": "task:APP-T-0002"}, normalizeStringMap(data["peer_contacts"]), "peer contacts")
++	assertEqual(t, []string{"project", "cli"}, normalizeList(data["domains"]), "domains")
++	assertEqual(t, []string{"APP-G-0001"}, normalizeList(data["gates"]), "gates")
++	assertEqual(t, []string{"APP-T-0009:hard"}, normalizeList(data["dependencies"]), "dependencies")
++	assertEqual(t, []string{"automated_test"}, normalizeList(data["evidence_required"]), "required evidence")
++	assertEqual(t, []string{"cmd/tusker/commands_v7.go"}, normalizeList(data["owned_paths"]), "owned paths")
++	assertEqual(t, false, boolField(data, "raw_artifacts_allowed"), "explicit false raw artifact policy")
++	assertEqual(t, 0, intField(data, "evidence_budget"), "explicit zero evidence budget")
++	assertEqual(t, "custom", stringField(data, "next_source"), "explicit next source")
++	assertEqual(t, "custom-ref", stringField(data, "next_ref"), "explicit next ref")
++
++	baseRev := stringField(data, "state_rev")
++	updated := cloneMap(data)
++	updated["next_action"] = "Continue the configured task."
++	nextRev, err := saveV7DocumentCAS(path, updated, body, v7FrontmatterOrder["task"], baseRev)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if nextRev == baseRev {
++		t.Fatalf("CAS write did not advance state_rev: %q", nextRev)
++	}
++	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err == nil {
++		t.Fatal("stale CAS write unexpectedly succeeded")
++	}
++	after, afterBody, err := parseFrontmatterMustRead(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	assertEqual(t, 0, intField(after, "evidence_budget"), "CAS-preserved zero evidence budget")
++	if _, present := after["evidence_budget"]; !present {
++		t.Fatal("CAS must preserve the explicit zero evidence cap")
++	}
++	if !v7StateRevMatches(after, afterBody, stringField(after, "state_rev")) {
++		t.Fatalf("CAS-written task state_rev does not match content")
++	}
++}
++
++func TestTaskAuthoringMetadataImportedNewTaskOmitsEmptyFields(t *testing.T) {
++	vault := deliveryContextTestVault(t)
++	plan := validDeliveryPlan()
++	plan.Tasks = plan.Tasks[:1]
++	plan.Tasks[0].OwnedPaths = nil
++	plan.Tasks[0].KnowledgeNodes = nil
++	plan.Tasks[0].Domains = nil
++	plan.Tasks[0].RunnerProfile = ""
++	plan.Tasks[0].ConcurrencyGroup = ""
++	plan.Tasks[0].Architect = ""
++	plan.Tasks[0].Origin = ""
++	plan.Tasks[0].Peers = nil
++	plan.Tasks[0].Dependencies = nil
++	planPath := writeDeliveryTestPlan(t, vault, plan)
++	if err := deliveryImportCmd(Args{"vault": vault, "plan": planPath, "quiet": "true"}); err != nil {
++		t.Fatal(err)
++	}
++
++	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
++	data, body, err := parseFrontmatterMustRead(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, key := range []string{
++		"architect", "origin", "runner_profile", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "knowledge_nodes", "owned_paths", "evidence_required",
++	} {
++		if _, ok := data[key]; ok {
++			t.Fatalf("new imported task should omit empty %s: %#v", key, data[key])
++		}
++	}
++	assertEqual(t, false, boolField(data, "raw_artifacts_allowed"), "imported raw artifact policy")
++	assertEqual(t, 0, intField(data, "evidence_budget"), "imported evidence budget")
++	if _, present := data["evidence_budget"]; !present {
++		t.Fatal("import must preserve the explicit zero evidence cap")
++	}
++	assertEqual(t, "task", stringField(data, "next_source"), "imported next source")
++	assertEqual(t, "APP-T-0001", stringField(data, "next_ref"), "imported next ref")
++	if !v7StateRevMatches(data, body, stringField(data, "state_rev")) {
++		t.Fatalf("new imported task state_rev does not match trimmed content")
++	}
++}

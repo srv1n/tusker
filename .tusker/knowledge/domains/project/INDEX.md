@@ -7,17 +7,17 @@ title: "Project"
 status: "current"
 summary: "Durable project knowledge."
 capsule:
-  what: "Domain index for Project; routes agents to canon and owned knowledge files."
-  use_when: "Use when a task touches project behavior or needs the domain reading order."
   skip_when: "Skip when another domain is narrower or task proof/gates are the target."
+  use_when: "Use when a task touches project behavior or needs the domain reading order."
+  what: "Domain index for Project; routes agents to canon and owned knowledge files."
 source_of_truth:
   - "knowledge/domains/project/CANON.md"
 canonical_files:
   - "INDEX.md"
   - "CANON.md"
 created_at: "2026-09-05T08:36:27Z"
-updated_at: "2026-09-05T08:36:27Z"
-state_rev: "sha256:4bfafcccc10dfeb00ebabae92e5be777823b3820c5298ab16a1f908db4f3618a"
+updated_at: "2026-09-14T05:51:33Z"
+state_rev: "sha256:7357cbdf410718af3e090cc81863fb31f24d5d6487deff4eb6947222f074f2af"
 ---
 
 # Project

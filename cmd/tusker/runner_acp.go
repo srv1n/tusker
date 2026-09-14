@@ -415,6 +415,12 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 		handle.close()
 		return nil, err
 	}
+	if runner == RunnerDevin {
+		if err := configureDevinSession(ctx, client, session, policy, req.RunnerModel); err != nil {
+			handle.close()
+			return nil, err
+		}
+	}
 	if codexPlan != nil {
 		plan, configErr := applyCodexACPConfig(ctx, client, codexDescriptor, session)
 		if configErr != nil {
@@ -709,6 +715,36 @@ func acpDurationMS(value int) time.Duration {
 		return 0
 	}
 	return time.Duration(value) * time.Millisecond
+}
+
+func configureDevinSession(ctx context.Context, client *acp.Client, session acp.Session, policy CodexPolicy, model string) error {
+	if policy.ThreadSandbox != "workspace-write" || policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
+		return tuskerError(errorConfigInvalid, "Devin ACP requires sandboxed workspace-write with network enabled")
+	}
+	current, err := setDevinConfigOption(ctx, client, session, "mode", "smart")
+	if err != nil {
+		return tuskerError(errorConfigInvalid, "Devin ACP mode configuration failed: "+err.Error())
+	}
+	if _, err := setDevinConfigOption(ctx, client, current, "model", strings.TrimSpace(model)); err != nil {
+		return tuskerError(errorConfigInvalid, "Devin ACP model configuration failed: "+err.Error())
+	}
+	return nil
+}
+
+func setDevinConfigOption(ctx context.Context, client *acp.Client, session acp.Session, id, value string) (acp.Session, error) {
+	if value == "" {
+		return session, fmt.Errorf("%s is blank", id)
+	}
+	for _, option := range session.ConfigOptions {
+		if option.ID != id {
+			continue
+		}
+		if option.CurrentValue == value {
+			return session, nil
+		}
+		return client.SetConfigOption(ctx, id, value)
+	}
+	return session, fmt.Errorf("option %q was not advertised", id)
 }
 
 func acpCancelDrain(policy CodexPolicy) time.Duration {

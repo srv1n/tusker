@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"tusker/internal/acp"
 )
 
 func TestRunnerCatalogCommandBoundsOrphanedOutputPipe(t *testing.T) {
@@ -28,6 +30,22 @@ func TestRunnerCatalogParsesInstalledCodexShape(t *testing.T) {
 	models := parseCodexModels([]byte(`{"models":[{"slug":"gpt-5.2","visibility":"visible","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"xhigh"}],"service_tiers":[{"id":"priority"}]}]}`))
 	if len(models) != 1 || models[0].Model != "gpt-5.2" || !catalogContainsString(models[0].Efforts, "xhigh") || !catalogContainsString(models[0].ServiceTiers, "priority") {
 		t.Fatalf("unexpected parsed models: %#v", models)
+	}
+}
+
+func TestParseDevinModelsKeepsAccountCatalogAndACPOnlyChoices(t *testing.T) {
+	models, err := parseDevinModels([]byte(`{"families":[{"variants":[{"model_uid":"swe-2-high","label":"SWE-2 High","max_output_tokens":128000,"cost_summary":"priced"},{"model_uid":"swe-1-7","label":"SWE-1.7 Max"}]}]}`), acp.ConfigOption{
+		ID: "model", CurrentValue: "swe-1-6-slow", Options: []acp.ConfigOptionValue{{Value: "swe-1-6-slow", Name: "SWE-1.6 Slow"}},
+	})
+	if err != nil || len(models) != 3 {
+		t.Fatalf("Devin models=%#v err=%v", models, err)
+	}
+	byID := map[string]RunnerCatalogModel{}
+	for _, model := range models {
+		byID[model.Model] = model
+	}
+	if !strings.Contains(byID["swe-2-high"].Description, "128000") || byID["swe-2-high"].DefaultEffort != "high" || byID["swe-1-7"].DefaultEffort != "max" || !byID["swe-1-6-slow"].Default {
+		t.Fatalf("Devin models=%#v", models)
 	}
 }
 
@@ -164,79 +182,6 @@ func TestCodexAppServerDiscoveryFailureKinds(t *testing.T) {
 				t.Fatalf("kind = %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestMuseProfileModelsUsesConfiguredProvider(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/v1/models" || request.Header.Get("Authorization") != "Bearer fixture-token" {
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-			return
-		}
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"muse-spark-1.3"},{"id":"muse-spark-1.3-contributor"},{"id":"muse-spark-1.2"},{"id":"muse-spark-1.2-contributor"},{"id":"muse-voice-transcribe-1.0"}]}`))
-	}))
-	defer server.Close()
-	root := t.TempDir()
-	auth := filepath.Join(root, "muse-token")
-	if err := os.WriteFile(auth, []byte("#!/bin/sh\nprintf '%s' fixture-token\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	profile := filepath.Join(root, "muse.config.toml")
-	config := "model = \"muse-spark-1.3\"\nmodel_provider = \"meta\"\nmodel_reasoning_effort = \"high\"\n\n[model_providers.meta]\nbase_url = \"" + server.URL + "/v1\"\nwire_api = \"responses\"\n\n[model_providers.meta.auth]\ncommand = \"" + auth + "\"\n"
-	if err := os.WriteFile(profile, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	originalPath, originalServer := runnerCatalogMuseProfilePath, runnerCatalogMuseServerModels
-	runnerCatalogMuseProfilePath = func() string { return profile }
-	runnerCatalogMuseServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
-		return []RunnerCatalogModel{
-			{Model: "muse-spark-1.3", DisplayName: "muse-spark-1.3"},
-			{Model: "muse-spark-1.3-contributor", DisplayName: "muse-spark-1.3-contributor", Description: "Contributor"},
-			{Model: "muse-spark-1.2", DisplayName: "muse-spark-1.2"},
-			{Model: "muse-spark-1.2-contributor", DisplayName: "muse-spark-1.2-contributor", Description: "Contributor"},
-		}, nil
-	}
-	t.Cleanup(func() { runnerCatalogMuseProfilePath, runnerCatalogMuseServerModels = originalPath, originalServer })
-	models, err := museProfileModels(context.Background())
-	if err != nil || len(models) != 4 || models[0].Model != "muse-spark-1.3" || strings.Join(models[0].Efforts, ",") != strings.Join(museReasoningEfforts, ",") || !models[0].Default || models[1].Description != "Contributor" {
-		t.Fatalf("models=%#v err=%v", models, err)
-	}
-}
-
-func TestMuseProfileModelsClassifiesAuthenticationAndTimeout(t *testing.T) {
-	root := t.TempDir()
-	auth := filepath.Join(root, "muse-token")
-	if err := os.WriteFile(auth, []byte("#!/bin/sh\nprintf '%s' fixture-token\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeProfile := func(baseURL string) string {
-		path := filepath.Join(root, "muse.config.toml")
-		config := "model = \"muse-spark-1.3\"\nmodel_provider = \"meta\"\nmodel_reasoning_effort = \"high\"\n\n[model_providers.meta]\nbase_url = \"" + baseURL + "\"\nwire_api = \"responses\"\n\n[model_providers.meta.auth]\ncommand = \"" + auth + "\"\n"
-		if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	originalPath, originalTimeout, originalServer := runnerCatalogMuseProfilePath, museDiscoveryTimeout, runnerCatalogMuseServerModels
-	t.Cleanup(func() {
-		runnerCatalogMuseProfilePath, museDiscoveryTimeout, runnerCatalogMuseServerModels = originalPath, originalTimeout, originalServer
-	})
-	runnerCatalogMuseServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
-		return []RunnerCatalogModel{{Model: "muse-spark-1.3"}}, nil
-	}
-	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "denied", http.StatusUnauthorized) }))
-	runnerCatalogMuseProfilePath = func() string { return writeProfile(authServer.URL) }
-	if _, err := museProfileModels(context.Background()); museDiscoveryErrorKind(err) != "authentication" {
-		t.Fatalf("authentication error=%v", err)
-	}
-	authServer.Close()
-	timeoutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) { <-request.Context().Done() }))
-	defer timeoutServer.Close()
-	runnerCatalogMuseProfilePath = func() string { return writeProfile(timeoutServer.URL) }
-	museDiscoveryTimeout = 20 * time.Millisecond
-	started := time.Now()
-	if _, err := museProfileModels(context.Background()); museDiscoveryErrorKind(err) != "timeout" || time.Since(started) > time.Second {
-		t.Fatalf("timeout error=%v elapsed=%s", err, time.Since(started))
 	}
 }
 
@@ -402,14 +347,26 @@ func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 func TestRunnerCatalogHarnessIsolationAndBundled(t *testing.T) {
 	original := runnerCatalogCommand
 	originalAppServer := runnerCatalogAppServerModels
-	defer func() { runnerCatalogCommand, runnerCatalogAppServerModels = original, originalAppServer }()
+	originalDevin := runnerCatalogDevinModels
+	originalStateRoot := runnerCatalogStateRoot
+	defer func() {
+		runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogDevinModels, runnerCatalogStateRoot = original, originalAppServer, originalDevin, originalStateRoot
+	}()
+	root := t.TempDir()
+	runnerCatalogStateRoot = func() string { return root }
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
+		if name == "devin" && len(args) == 1 && args[0] == "--version" {
+			return []byte("devin 3000.10.21"), nil
+		}
 		if strings.Contains(strings.Join(args, " "), "--bundled") {
 			return []byte(`{"models":[{"slug":"gpt-5.2","supported_reasoning_levels":[{"effort":"low"}]}]}`), nil
 		}
 		return nil, errCatalogFixture{}
 	}
 	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) { return nil, errCatalogFixture{} }
+	runnerCatalogDevinModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "swe-1-6-slow", Efforts: []string{"medium"}}}, nil
+	}
 	catalog := discoverRunnerCatalog(false)
 	if catalog.Harnesses[0].Error == "" || catalog.Harnesses[1].DiscoveryState != "unsupported" {
 		t.Fatalf("expected isolated codex failure and declared claude: %#v", catalog)
@@ -427,31 +384,40 @@ func TestRunnerCatalogHarnessIsolationAndBundled(t *testing.T) {
 func TestModelHarnessPresets(t *testing.T) {
 	original := runnerCatalogCommand
 	originalAppServer := runnerCatalogAppServerModels
-	originalMuse := runnerCatalogMuseModels
+	originalMuseServer := runnerCatalogMuseServerModels
+	originalDevin := runnerCatalogDevinModels
+	originalCodexExecutable := runnerCatalogCodexExecutable
+	originalStateRoot := runnerCatalogStateRoot
 	defer func() {
-		runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogMuseModels = original, originalAppServer, originalMuse
+		runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogMuseServerModels, runnerCatalogDevinModels, runnerCatalogCodexExecutable, runnerCatalogStateRoot = original, originalAppServer, originalMuseServer, originalDevin, originalCodexExecutable, originalStateRoot
 	}()
+	root := t.TempDir()
+	t.Setenv("TUSKER_CONFIG", filepath.Join(root, "config.yaml"))
+	runnerCatalogStateRoot = func() string { return root }
+	runnerCatalogCodexExecutable = func() string { return "codex" }
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
+		if name == "devin" && len(args) == 1 && args[0] == "--version" {
+			return []byte("devin 3000.10.21"), nil
+		}
+		if name == "muse" && len(args) == 1 && args[0] == "--version" {
+			return []byte("Muse Code 1.1.1"), nil
+		}
 		if name != "codex" {
 			return nil, errCatalogFixture{}
 		}
-		joined := strings.Join(args, " ")
-		switch {
-		case strings.Contains(joined, "--profile muse exec --help"):
-			return []byte("usage"), nil
-		case strings.Contains(joined, "--profile muse debug models"):
-			return nil, errCatalogFixture{}
-		case strings.Contains(joined, "debug models"):
+		if strings.Contains(strings.Join(args, " "), "debug models") {
 			return []byte(`{"models":[{"slug":"gpt-installed","supported_reasoning_levels":[{"effort":"medium"}]}]}`), nil
-		default:
-			return []byte("codex-test"), nil
 		}
+		return []byte("codex-test"), nil
 	}
 	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
 		return []RunnerCatalogModel{{Model: "gpt-installed", Efforts: []string{"medium"}}}, nil
 	}
-	runnerCatalogMuseModels = func(context.Context) ([]RunnerCatalogModel, error) {
-		return []RunnerCatalogModel{{Model: "muse-spark-1.3", Efforts: []string{"high"}, Default: true, DefaultKnown: true, DefaultEffort: "high"}}, nil
+	runnerCatalogMuseServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "muse-spark-1.3", DisplayName: "Muse Spark 1.3"}}, nil
+	}
+	runnerCatalogDevinModels = func(context.Context) ([]RunnerCatalogModel, error) {
+		return []RunnerCatalogModel{{Model: "swe-1-6-slow", Efforts: []string{"medium"}, Default: true, DefaultKnown: true, DefaultEffort: "medium"}}, nil
 	}
 	catalog := discoverRunnerCatalog(false)
 	if catalog.Schema != "tusker.runner-catalog/v1" || catalog.Version != 1 {
@@ -461,13 +427,13 @@ func TestModelHarnessPresets(t *testing.T) {
 		t.Fatalf("codex observation=%#v", codex)
 	}
 	muse := catalog.Harnesses[2]
-	if !muse.Available || !muse.ExecutableDetected || muse.Authentication != "authenticated" || muse.DiscoveryState != "available" || len(muse.Models) != 1 || muse.Models[0].Model != "muse-spark-1.3" || !muse.ManualEntry || muse.State != "available" {
-		t.Fatalf("muse must expose the configured live profile: %#v", muse)
+	if muse.Harness != string(RunnerMuse) || !muse.Available || !muse.ExecutableDetected || muse.Authentication != "unknown" || muse.DiscoveryState != "available" || len(muse.Models) != 1 || muse.Models[0].Model != "muse-spark-1.3" || muse.Models[0].DefaultEffort != "high" || !muse.ManualEntry || muse.State != "available" {
+		t.Fatalf("native Muse CLI must expose its discovered catalog: %#v", muse)
 	}
 	for _, harness := range catalog.Harnesses[3:] {
-		if harness.Harness == string(RunnerMuseCLI) {
-			if harness.DisplayName != "Muse CLI" || len(harness.AccessControls) == 0 {
-				t.Fatalf("direct Muse route must expose native controls: %#v", harness)
+		if harness.Harness == string(RunnerDevin) {
+			if harness.Group != "supported" || !harness.Available || harness.Authentication != "authenticated" || len(harness.Models) != 1 || len(harness.Transports) != 1 || harness.Transports[0] != "acp_stdio" {
+				t.Fatalf("Devin route must remain manually configured: %#v", harness)
 			}
 			continue
 		}
@@ -475,8 +441,11 @@ func TestModelHarnessPresets(t *testing.T) {
 			t.Fatalf("future preset must not be selectable: %#v", harness)
 		}
 	}
-	if _, command, err := runnerForName(string(RunnerMuse), defaultWorkflow()); err != nil || command != "codex --profile muse exec --json --skip-git-repo-check -" {
+	if _, command, err := runnerForName(string(RunnerMuse), defaultWorkflow()); err != nil || command != "muse exec --json" {
 		t.Fatalf("Muse route=%q err=%v", command, err)
+	}
+	if runner, command, err := runnerForName(string(RunnerDevin), defaultWorkflow()); err != nil || runner.Name() != RunnerDevin || command != "devin acp" {
+		t.Fatalf("Devin route=%v command=%q err=%v", runner, command, err)
 	}
 	server := newServeEmptyNeedsFixture(t)
 	recorder := httptest.NewRecorder()

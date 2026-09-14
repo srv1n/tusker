@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -165,8 +166,6 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleHumanControlChallenge(w, body)
 	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "submit":
 		s.handleHumanControlReceiptSubmit(w, body)
-	case len(parts) == 3 && parts[1] == "delivery" && parts[2] == "start":
-		s.handleDeliveryStart(w, body)
 	case len(parts) == 2 && parts[1] == "projects":
 		s.handleProjectRegisterAction(w, body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "remove":
@@ -179,6 +178,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleProjectVisibilityAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "settings":
 		s.handleProjectSettingsAction(w, parts[2], body)
+	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "icon":
+		s.handleProjectIconAction(w, parts[2], body)
 	case len(parts) == 3 && parts[1] == "setup" && (parts[2] == "doctor" || parts[2] == "repair"):
 		s.handleSetupDoctorAction(w, body, parts[2] == "repair")
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
@@ -189,8 +190,6 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleTaskStatusAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "route":
 		s.handleTaskRouteAction(w, parts[2], body)
-	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "run":
-		s.handleTaskRunDirective(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "discard":
 		s.handleTaskDiscardAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "close":
@@ -199,8 +198,14 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleLandAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "waves" && parts[3] == "land":
 		s.handleLandAction(w, parts[2], body)
-	case len(parts) == 4 && parts[1] == "waves" && parts[3] == "execute":
-		s.handleWaveExecute(w, parts[2], body)
+	case len(parts) == 7 && parts[1] == "actions" && parts[2] == "projects" && parts[4] == "waves" && parts[6] == "start":
+		s.handleWaveStartAction(w, parts[3], parts[5], body)
+	case len(parts) == 7 && parts[1] == "actions" && parts[2] == "projects" && parts[4] == "waves" && parts[6] == "pause":
+		s.handleWavePauseAction(w, parts[3], parts[5], body)
+	case len(parts) == 7 && parts[1] == "actions" && parts[2] == "projects" && parts[4] == "waves" && parts[6] == "resume":
+		s.handleWaveResumeAction(w, parts[3], parts[5], body)
+	case len(parts) == 7 && parts[1] == "actions" && parts[2] == "projects" && parts[4] == "tasks" && parts[6] == "start":
+		s.handleTaskStartAction(w, parts[3], parts[5], body)
 	case len(parts) == 4 && parts[1] == "gates" && (parts[3] == "satisfy" || parts[3] == "waive" || parts[3] == "obsolete"):
 		s.handleGateAction(w, parts[2], parts[3], body)
 	case len(parts) == 4 && parts[1] == "approvals" && parts[3] == "respond":
@@ -226,91 +231,6 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 	return true
-}
-
-// handleTaskRunDirective records an operator's one-shot request. It never
-// launches a runner: only the resident daemon can consume the directive.
-// A directive is deliberate human execution authority, so it queues even when
-// project automation is disabled; automation.enabled gates autonomous
-// dispatch only.
-func (s *serveServer) handleTaskRunDirective(w http.ResponseWriter, taskID string, body serveActionBody) {
-	_, project, err := serveBaseArgsForBody(s, body)
-	if err != nil {
-		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
-		return
-	}
-	actor, err := s.serveOperatorActor(body, "serve task run")
-	if err != nil {
-		status := http.StatusOK
-		if serveErrorIssue(err).Code == "SERVE_OPERATOR_REQUIRED" {
-			status = http.StatusPreconditionFailed
-		}
-		serveJSON(w, status, serveCommandResult("tusker task run", "", err))
-		return
-	}
-	snap, err := s.loadSnapshotForProject(project.ProjectID)
-	if err != nil {
-		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
-		return
-	}
-	snap.queue = s.loadQueueExplanationsForProjectMode(project, true)
-	note, ok := snap.notesByID[strings.TrimSpace(taskID)]
-	if !ok || serveNoteKind(note) != "task" {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task not found"})
-		return
-	}
-	status := stringField(note.Data, "status")
-	if !containsString(snap.workflow.Tracker.ActiveStates, status) {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task is not runnable; it must be ready or rework"})
-		return
-	}
-	if run, ok := serveFindRun(snap.runs, trackerRecordID(note)); ok && isDispatchingLeaseState(run.LeaseState) {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task already has a live run"})
-		return
-	}
-	daemon, _ := s.store.DaemonStatus()
-	if !boolFromAny(daemon["daemon_alive"]) {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "daemon is not running; start it before queuing a one-shot run"})
-		return
-	}
-	if explanation, ok := snap.queue[stringField(note.Data, "id")]; ok {
-		blockers := make([]string, 0, len(explanation.Blockers))
-		for _, blocker := range explanation.Blockers {
-			if !runDirectiveBypassableBlocker(blocker) {
-				blockers = append(blockers, blocker)
-			}
-		}
-		if len(blockers) > 0 {
-			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task cannot be dispatched: " + strings.Join(blockers, "; ")})
-			return
-		}
-	} else {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "task dispatchability could not be verified; refresh the project and try again"})
-		return
-	}
-	now := time.Now().UTC()
-	directive := RunDirective{ProjectID: project.ProjectID, RecordID: trackerRecordID(note), Actor: actor, CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(10 * time.Minute).Format(time.RFC3339), State: "queued"}
-	queued, err := s.store.QueueRunDirective(directive)
-	if err != nil {
-		serveJSON(w, http.StatusOK, serveCommandResult("tusker task run", "", err))
-		return
-	}
-	if !queued {
-		reason := "task is already queued for dispatch"
-		if runs, listErr := s.store.ListRuns(); listErr == nil {
-			for _, run := range runs {
-				if run.ProjectID == project.ProjectID && run.RecordID == directive.RecordID && isDispatchingLeaseState(run.LeaseState) {
-					reason = "task already has a live run"
-					break
-				}
-			}
-		}
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: reason})
-		return
-	}
-	_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: project.ProjectID, Cause: "task_run_directive", Changes: []daemonControlChange{{ID: trackerRecordID(note), Kind: "run"}}}, 250*time.Millisecond)
-	s.refreshProjectSnapshot(project.ProjectID)
-	serveJSON(w, http.StatusOK, serveActionResult{OK: true, Reason: "queued for daemon dispatch", Command: "tusker task run"})
 }
 
 func (s *serveServer) serveOperatorActor(body serveActionBody, operation string) (string, error) {
@@ -614,6 +534,52 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 	serveJSON(w, http.StatusOK, result)
 }
 
+// handleProjectIconAction stores or clears an operator-uploaded project icon.
+// The upload is keyed by the logical project group so every checkout shares it,
+// and it outranks repository discovery when the icon endpoint serves a read.
+func (s *serveServer) handleProjectIconAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	if _, err := s.projectForSnapshot(projectID); err != nil {
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker projects icon", "", err))
+		return
+	}
+	key := s.projectIconGroupKey(projectID)
+	if body.bool("clear") {
+		err := clearStoredProjectIcon(key)
+		result := serveCommandResult("tusker projects icon", "", err)
+		result.ProjectID = projectID
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	raw := strings.TrimSpace(body.string("data"))
+	if raw == "" {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data is required"})
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(data) == 0 || len(data) > maxProjectIconBytes {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data must be a base64 image under 512 KiB"})
+		return
+	}
+	ext, _, ok := projectIconUploadType(data, strings.ToLower(strings.TrimSpace(body.string("mime"))))
+	if !ok {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon must be a PNG, JPEG, GIF, WebP, ICO, or SVG image"})
+		return
+	}
+	path := projectIconStorePath(key)
+	if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+		err = clearStoredProjectIcon(key)
+	}
+	if err == nil {
+		err = os.WriteFile(path+ext, data, 0o600)
+	}
+	result := serveCommandResult("tusker projects icon", "", err)
+	if result.OK {
+		result.Reason = "Project icon updated"
+	}
+	result.ProjectID = projectID
+	serveJSON(w, http.StatusOK, result)
+}
+
 var serveProjectSettingValidators = map[string]func(any) (any, error){
 	"workspace.strategy": func(raw any) (any, error) {
 		value := strings.TrimSpace(toString(raw))
@@ -719,7 +685,11 @@ func (s *serveServer) handleTaskRouteAction(w http.ResponseWriter, taskID string
 		}
 		value := strings.ToLower(strings.TrimSpace(toString(raw)))
 		if raw == nil || value == "" {
-			delete(data, field)
+			if field == "work_level" {
+				data[field] = "" // Explicitly unclassified; do not restore legacy defaults.
+			} else {
+				delete(data, field)
+			}
 			return nil
 		}
 		if !validModelLevel(value) {
@@ -745,8 +715,28 @@ func (s *serveServer) handleTaskRouteAction(w http.ResponseWriter, taskID string
 		data[field] = value
 		return nil
 	}
-	if err := setLevel("workLevel", "work_level"); err == nil {
+	err = setLevel("workLevel", "work_level")
+	if err == nil {
 		err = setLevel("reviewLevel", "review_level")
+	}
+	if err == nil {
+		classificationChanged := stringField(data, "work_level") != stringField(note.Data, "work_level") || stringField(data, "review_level") != stringField(note.Data, "review_level")
+		previousReason := strings.TrimSpace(stringField(note.Data, "review_reason"))
+		reason := previousReason
+		if _, present := body["reviewReason"]; present {
+			reason = strings.TrimSpace(body.string("reviewReason"))
+		}
+		workLevel, _, _ := modelLevelForNote(Note{Data: data}, runLaneExecute)
+		reviewLevel := stringField(data, "review_level")
+		if reviewLevel != "" && reviewLevel != workLevel {
+			if (classificationChanged || reason != previousReason) && reason == "" {
+				err = tuskerError(errorInvalidArg, "reviewReason is required when overriding the work tier for review")
+			} else if reason != "" {
+				data["review_reason"] = reason
+			}
+		} else {
+			delete(data, "review_reason")
+		}
 	}
 	if err == nil {
 		err = setProfile("executeProfile", "execute_profile", runLaneExecute)
@@ -764,7 +754,7 @@ func (s *serveServer) handleTaskRouteAction(w http.ResponseWriter, taskID string
 		serveJSON(w, http.StatusConflict, serveCommandResult("tusker task route", "", err))
 		return
 	}
-	if err := emitV7Event(project.VaultRoot, taskID, "task", "route_updated", actor, map[string]any{"work_level": data["work_level"], "review_level": data["review_level"], "execute_profile": data["execute_profile"], "review_profile": data["review_profile"]}); err != nil {
+	if err := emitV7Event(project.VaultRoot, taskID, "task", "route_updated", actor, map[string]any{"work_level": data["work_level"], "review_level": data["review_level"], "review_reason": data["review_reason"], "execute_profile": data["execute_profile"], "review_profile": data["review_profile"]}); err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker task route", "", err))
 		return
 	}
@@ -1153,23 +1143,7 @@ func (s *serveServer) decorateTaskActionResultForProject(result *serveActionResu
 	if !ok || serveNoteKind(task) != "task" {
 		return
 	}
-	detail := serveTaskDetail{
-		serveTaskCapsule:    serveTaskCapsuleFor(snap, task),
-		AuthoredWorkLevel:   stringField(task.Data, "work_level"),
-		AuthoredReviewLevel: stringField(task.Data, "review_level"),
-		EffectiveExecute:    routePreviewForNote(task, snap.workflow, runLaneExecute),
-		EffectiveReview:     routePreviewForNote(task, snap.workflow, runLaneReview),
-		Intent:              sectionContent(task.Body, "## Intent"),
-		Acceptance:          serveAcceptanceRows(task),
-		NonGoals:            serveBullets(sectionContent(task.Body, "## Non-goals")),
-		Verification:        serveVerificationRows(task),
-		Evidence:            serveEvidenceCards(snap, task),
-		KnowledgeDelta:      sectionContent(task.Body, "## Knowledge delta"),
-		Deps:                serveTaskDeps(snap, task),
-		Gates:               serveGatesForTask(snap, taskID),
-		HumanAction:         serveHumanActionForTask(snap, task),
-		RunHistory:          serveRunHistory(s, snap, taskID),
-	}
+	detail := s.taskDetailFor(snap, task)
 	result.Task = &detail
 	result.CanonicalStatus = detail.RawStatus
 }

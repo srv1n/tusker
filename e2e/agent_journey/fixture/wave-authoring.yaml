@@ -1,0 +1,62 @@
+schema: tusker.wave-authoring/v1
+request_key: fresh-agent
+title: Fresh agent journey
+outcome: Two isolated task contracts prove the fresh-agent boundary.
+spec_refs:
+  - .tusker/specs/fresh-agent.md
+concurrency: 1
+tasks:
+  - key: greeting
+    title: Implement greeting
+    work_level: light
+    spec_refs:
+      - .tusker/specs/fresh-agent.md
+    owned_paths:
+      - owned/greeting.txt
+    generated_outputs:
+      - owned/greeting.txt
+    body: |
+      # Implement greeting
+
+      ## Intent
+
+      Write only the greeting material.
+
+      ## Acceptance
+
+      | ID | Outcome |
+      | --- | --- |
+      | A1 | Greeting is exact. |
+
+      ## Verification
+
+      | Covers | Check | Result |
+      | --- | --- | --- |
+      | A1 | command: true | pending |
+  - key: sibling
+    title: Preserve sibling
+    work_level: light
+    spec_refs:
+      - .tusker/specs/fresh-agent.md
+    owned_paths:
+      - owned/sibling.txt
+    generated_outputs:
+      - owned/sibling.txt
+    body: |
+      # Preserve sibling
+
+      ## Intent
+
+      Keep sibling material independent.
+
+      ## Acceptance
+
+      | ID | Outcome |
+      | --- | --- |
+      | A1 | Sibling remains independent. |
+
+      ## Verification
+
+      | Covers | Check | Result |
+      | --- | --- | --- |
+      | A1 | command: true | pending |

@@ -43,6 +43,7 @@ type runInspection struct {
 	FailureClass             string                      `json:"failure_class,omitempty"`
 	Paths                    runtimeArtifactPaths        `json:"paths"`
 	Authorization            *RunAuthorization           `json:"authorization,omitempty"`
+	Authorizations           []RunAuthorization          `json:"authorizations"`
 	Identity                 *RunIdentityMetadata        `json:"identity,omitempty"`
 	Resume                   runResumeCapability         `json:"resume"`
 	Truncated                map[string]bool             `json:"truncated,omitempty"`
@@ -75,7 +76,7 @@ func resumeCapability(run *RunStatus, session *RunnerSession) runResumeCapabilit
 	switch RunnerName(run.Runner) {
 	case RunnerCodex, RunnerCodexExec, RunnerCodexAppServer:
 		return runResumeCapability{Supported: true, Command: "codex exec resume " + quoted}
-	case RunnerMuseCLI:
+	case RunnerMuse:
 		return runResumeCapability{Supported: true, Command: "muse exec --json --session-id " + quoted}
 	case RunnerClaude:
 		return runResumeCapability{Supported: true, Command: "claude --resume " + quoted}
@@ -249,6 +250,10 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 	if err != nil {
 		return runInspection{}, err
 	}
+	authorizations, err := store.ListRunAuthorizations(run.ProjectID, run.RecordID)
+	if err != nil {
+		return runInspection{}, err
+	}
 	identity, err := store.RunIdentity(run.ProjectID, run.RecordID)
 	if err != nil {
 		return runInspection{}, err
@@ -287,10 +292,11 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 			RawLog:    bestRunLogPath(*run, attempts),
 			Status:    run.StatusPath,
 		},
-		Authorization: authorization,
-		Identity:      identity,
-		Resume:        resumeCapability(run, latestSession),
-		Truncated:     truncated,
+		Authorization:  authorization,
+		Authorizations: authorizations,
+		Identity:       identity,
+		Resume:         resumeCapability(run, latestSession),
+		Truncated:      truncated,
 	}, nil
 }
 

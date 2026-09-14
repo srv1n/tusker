@@ -24,6 +24,9 @@ func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []stri
 		policy = input.ResolvedAccess.Effective
 	}
 	if d.Transport == TransportACP {
+		if d.Provider == "devin" {
+			return compileDevinACPArgs(d, input, policy)
+		}
 		if input.Preset == PresetDangerFullAccess {
 			return policy, nil, admission(d, "policy_unenforceable", "policy", "ACP full access is not admitted")
 		}
@@ -58,6 +61,22 @@ func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []stri
 		return policy, nil, admission(d, "unsupported_dialect", "dialect", "unknown CLI dialect")
 	}
 	return policy, args, nil
+}
+
+func compileDevinACPArgs(d HarnessDefinition, input RunInput, policy EffectivePolicy) (EffectivePolicy, []string, error) {
+	if input.Preset != PresetWorkspaceNetwork || policy.Filesystem != "workspace-write" || !policy.Network {
+		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP currently supports only sandboxed workspace-write with network enabled")
+	}
+	if policy.Approvals != "deny" {
+		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP currently supports destructive actions blocked, not operator approval")
+	}
+	if len(d.Args) != 1 || d.Args[0] != "acp" {
+		return policy, nil, admission(d, "policy_conflict", "policy", "Devin ACP command must be exactly 'devin acp'; Tusker compiles sandbox and model controls")
+	}
+	if strings.TrimSpace(input.Model) == "" {
+		return policy, nil, admission(d, "invalid_configuration", "model", "Devin ACP requires an exact discovered model")
+	}
+	return policy, []string{"--sandbox", "acp", "--model", input.Model}, nil
 }
 
 func compileCodexArgs(d HarnessDefinition, input RunInput, base []string, policy EffectivePolicy) []string {

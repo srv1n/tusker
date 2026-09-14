@@ -16,7 +16,12 @@ that this build can run. A machine-readable command list is also available.
 
 `tusker wave create ... --summary "<expected outcome>"` records the capability promised by a wave. `tusker wave outcome <WAVE-ID> --summary "<expected outcome>"` updates it. `wave show` and `wave brief` keep that promise separate from the derived completion result.
 
-Delivery-plan requirements may be intentionally omitted with `deferrals: [{requirement: R1, reason: "..."}]`. Delivery review reports every requirement as covered, deferred, or uncovered and names the covering task and acceptance IDs.
+Direct authoring is canonical: `tusker new task ... --body-file` writes one
+task whose body is the implementation contract, and `tusker wave create
+--file <request.yaml> --request-key <key>` atomically authors a complete
+`tusker.wave-authoring/v1` request. `--epic` and `--spec-refs` are optional;
+every supplied spec ref must resolve. Creation is inert — execution begins
+only at `task start` or `wave start`.
 
 | Need | Command |
 | --- | --- |
@@ -24,12 +29,24 @@ Delivery-plan requirements may be intentionally omitted with `deferrals: [{requi
 | Read one task | `tusker show <TASK-ID> --capsule` |
 | List work | `tusker list` |
 | Search tracker text | `tusker search <text>` |
-| Create a task | `tusker new task --vault ./.tusker --epic APP --title "..."` |
+| Create a task | `tusker new task --vault ./.tusker --title "..." --work-level standard --body-file task-body.md` |
+| Author a task batch | `tusker wave create --file wave.yaml --request-key <key> --json` |
+| Start one task | `tusker task start <TASK-ID> --mode interactive\|background --by <actor> [--current-workspace] --json` |
+| Start a wave | `tusker wave start <WAVE-ID> --mode background --by human:<name>\|operator:<name> --json` |
+| Pause / resume a wave | `tusker wave pause\|resume <WAVE-ID> --by human:<name>\|operator:<name> --json` |
 | Change task state | `tusker status <TASK-ID> <STATE> --reason "..."` |
 | Add a check result | `tusker verify add <TASK-ID> ...` |
 | Submit review | `tusker review submit <TASK-ID> ...` |
 | Close a task | `tusker close <TASK-ID>` |
 | Check the tracker | `tusker validate --vault ./.tusker --json` |
+
+One `wave start` durably authorizes the exact current wave material; daemon
+polling then releases each dependency frontier automatically — no second
+start. `wave pause` blocks new wave-owned admissions while admitted attempts
+finish; `wave resume` restores the same authorization and refuses when the
+material drifted. A task `start` inside a paused wave stays task-scoped and
+leaves the wave paused. `--mode background` persists a durable run directive
+for the configured runtime; it does not itself launch a runner.
 
 ## Project and runtime commands
 
@@ -65,7 +82,7 @@ native CLI. No daemon, GUI, or provider is required for the offline lane.
 | Assert named scenario invariants | `tusker demo check --repo <dir> --json` |
 | Preview or apply a guarded reset | `tusker demo reset --repo <dir> [--dry-run] [--yes] --json` |
 
-Seed imports native delivery plans and leaves every wave unstarted. The
+Seed authors tasks and waves directly and leaves every wave unstarted. The
 offline lane authorizes only the named waves, executes fixed delays with
 exact fixture bytes, promotes evidence while each run is active, checks
 results deterministically, and closes under reviewer authority. The real
@@ -94,7 +111,7 @@ assertion or partial wave, 5 wait timeout, 1 internal error.
 | Remove an unreferenced profile | `tusker models profile-remove --scope global\|project --name <name> --if-revision <sha256>` |
 | Set an ordered primary/fallback list | `tusker models set --scope global\|project --level <level> --lane execute\|review --profiles primary,fallback --if-revision <sha256>` |
 | Reset a project field to inheritance | `tusker models reset --scope project --level <level> --lane execute\|review --if-revision <sha256>` |
-| Author task-level choices | `tusker new task ... --work-level standard --review-level demanding` |
+| Author task-level choices | `tusker new task ... --work-level standard --review-level demanding --review-reason "Security-sensitive review"` |
 | Explain one task's effective route | `tusker runner route <TASK-ID> --lane execute\|review --json` |
 
 Writes are atomic and accept the revision returned by `models show`. Catalog
@@ -129,7 +146,7 @@ in the profile document, for example:
 profiles:
   muse-direct:
     display_name: Muse direct
-    harness: muse_cli
+    harness: muse
     model: <installed-model-id>
     access:
       schema: tusker.agent-access/v1

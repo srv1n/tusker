@@ -188,7 +188,7 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 	}
 
 	risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))
-	policy, err := v7ClosePolicyFor(vaultPath, risk)
+	policy, err := v7TaskClosePolicy(vaultPath, task.Data)
 	if err != nil {
 		return v7ClosePreflightResult{}, err
 	}

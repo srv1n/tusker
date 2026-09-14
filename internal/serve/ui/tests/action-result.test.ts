@@ -40,11 +40,11 @@ describe("mutation result contract", () => {
 });
 
 describe("transport error normalization", () => {
-  test.serial("turns a non-JSON delivery failure into ApiError", async () => {
+  test.serial("turns a non-JSON failure into ApiError", async () => {
     globalThis.fetch = (async () => new Response("upstream gateway error", { status: 502 })) as typeof fetch;
     try {
-      await api.deliveryReview("plan.yaml");
-      throw new Error("expected delivery failure");
+      await api.waveReview("app", "W-0001");
+      throw new Error("expected failure");
     } catch (error) {
       expect(error).toBeInstanceOf(ApiError);
       expect((error as ApiError).status).toBe(502);
@@ -61,11 +61,11 @@ describe("capability rotation", () => {
       if (init?.body) bodies.push(JSON.parse(String(init.body)));
       return jsonResponse(200, { ok: true, reason: "accepted" });
     }) as typeof fetch;
-    await api.runTask("APP-T-0001", "app");
-    await api.deliveryStart({ plan: "plan.yaml", confirm: "fp", planIdentity: "id" }, "app");
+    await api.taskStart("app", "APP-T-0001");
+    await api.waveControl("app", "W-0001", "start");
     expect(bodies).toEqual([
-      { actor: "human:operator" },
-      { plan: "plan.yaml", confirm: "fp", planIdentity: "id", actor: "human:operator" },
+      { actor: "human:operator", mode: "background" },
+      { actor: "human:operator", mode: "background" },
     ]);
     resetServeCapabilityCache();
   });
@@ -200,7 +200,7 @@ describe("capability rotation", () => {
           return jsonResponse(403, { ok: false, refused: true, reason: "refused mutation without serve capability" });
         }
         return jsonResponse(200, expectedMethod === "POST"
-          ? { schema: "tusker.delivery-start/v1", waveId: "W-1" }
+          ? { schema: "tusker.direct-start/v1", waveId: "W-1" }
           : { subject: "doc", body: "saved", rev: "2", warnings: [] });
       }) as typeof fetch;
       await expect(run()).resolves.toBeDefined();
@@ -210,7 +210,7 @@ describe("capability rotation", () => {
     };
 
     await exercise(
-      () => api.deliveryStart({ plan: "plan.yaml", confirm: "fp", planIdentity: "id" }),
+      () => api.waveControl("app", "W-0001", "start"),
       "POST",
     );
     await exercise(

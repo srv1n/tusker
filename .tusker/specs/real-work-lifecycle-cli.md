@@ -39,7 +39,7 @@ A real incident occurred on WUX-T-0013, implemented directly in the shared check
 
 Reproduce this safely on a disposable task, not by experimenting on the original task. Current code may have changed; report whether the incident reproduces and trace the active commands to their shared services.
 
-The existing repeatable demo reports three important limitations: normal wave arm requires resident runtime authority; normal review-submit requires stamped source identity; demo composes special authorization and reviewer close. Those are gaps to reconcile with the real runtime, not licenses to bypass it.
+The existing repeatable demo reports three important limitations: normal wave start requires resident runtime authority; normal review-submit requires stamped source identity; demo composes special authorization and reviewer close. Those are gaps to reconcile with the real runtime, not licenses to bypass it.
 
 ## Scope
 

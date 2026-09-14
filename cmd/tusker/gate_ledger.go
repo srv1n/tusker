@@ -105,12 +105,16 @@ func workspaceMaterialScopeContains(scope []string, rel string) bool {
 // excluded: adding proof or moving a task to review cannot change compiled code.
 func gateLedgerIgnoresPath(rel string) bool {
 	rel = filepath.ToSlash(rel)
+	if rel == ".tusker/Dashboard.md" {
+		return true
+	}
 	for _, prefix := range []string{
 		".tusker/work/",
 		".tusker/events/",
 		".tusker/evidence/",
 		".tusker/attempts/",
 		".tusker/dashboards/",
+		".tusker/locks/",
 		".tusker/scratch/",
 		".tusker/_generated/",
 	} {

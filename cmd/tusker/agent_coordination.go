@@ -18,7 +18,7 @@ type AgentWakeup struct {
 }
 
 func (s *RuntimeStore) ListQueuedAgentWakeups(project string) ([]AgentWakeup, error) {
-	rows, err := s.query(`SELECT id,project_id,recipient_kind,recipient_id,reason,message_ids_json,state,model_turns,idempotency_key,created_at,claim_id,claimed_at FROM agent_wakeups WHERE (state IN ('queued','held','unsupported') OR (state='delivering' AND claimed_at<?)) AND (?='' OR project_id=?) ORDER BY created_at,id`, time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), project, project)
+	rows, err := s.query(`SELECT id,project_id,recipient_kind,recipient_id,reason,message_ids_json,state,model_turns,idempotency_key,created_at,claim_id,claimed_at FROM agent_wakeups WHERE (state IN ('queued','held') OR (state='delivering' AND claimed_at<?)) AND (?='' OR project_id=?) ORDER BY created_at,id`, time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), project, project)
 	if err != nil {
 		return nil, err
 	}
@@ -84,13 +84,40 @@ func (d *Daemon) processAgentWakeups(project string) error {
 		}
 		if w.RecipientKind == "execution" {
 			record, recordErr := d.store.Execution(w.RecipientID)
-			if recordErr != nil || record == nil || record.ProjectID != w.ProjectID || record.AttemptID == "" {
+			if recordErr != nil || record == nil || record.ProjectID != w.ProjectID {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
+			}
+			if message.RecipientGeneration > 0 {
+				var matching int
+				if err := d.store.queryRowScan(`SELECT COUNT(*) FROM agent_contacts WHERE project_id=? AND address_kind='execution' AND address_id=? AND generation=?`, []any{w.ProjectID, record.ExecutionID, message.RecipientGeneration}, &matching); err != nil || matching != 1 {
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
+					_, _ = d.store.exec(`UPDATE agent_messages SET transport_state='stale' WHERE project_id=? AND id=?`, w.ProjectID, message.ID)
+					continue
+				}
+			}
+			if record.AttemptID == "" {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "unsupported")
+				_, _ = d.store.exec(`UPDATE agent_messages SET transport_state='unsupported' WHERE project_id=? AND id=?`, w.ProjectID, message.ID)
+				continue
+			}
+			provider, providerErr := d.store.ExecutionProvider(record.ExecutionID)
+			if providerErr != nil {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
+			}
+			if provider != "" && provider != "codex" {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "unsupported")
+				_, _ = d.store.exec(`UPDATE agent_messages SET transport_state='unsupported' WHERE project_id=? AND id=?`, w.ProjectID, message.ID)
 				continue
 			}
 			handle := liveRegistry.FindAttempt(record.AttemptID)
 			codex, ok := handle.(*codexLiveHandle)
 			if !ok || handle.ProjectID() != w.ProjectID || handle.AttemptID() != record.AttemptID {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
+			}
+			if _, _, turnID, _ := codex.liveState(); turnID == "" {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
 				continue
 			}
@@ -122,7 +149,7 @@ func (d *Daemon) processAgentWakeups(project string) error {
 func (s *RuntimeStore) ClaimAgentWakeup(id string) string {
 	claimID := "wake-claim-" + strings.ToLower(newRecordID())
 	now := time.Now().UTC()
-	result, err := s.exec(`UPDATE agent_wakeups SET state='delivering',claim_id=?,claimed_at=? WHERE id=? AND (state IN ('queued','held','unsupported') OR (state='delivering' AND claimed_at<?))`, claimID, now.Format(time.RFC3339Nano), id, now.Add(-time.Minute).Format(time.RFC3339Nano))
+	result, err := s.exec(`UPDATE agent_wakeups SET state='delivering',claim_id=?,claimed_at=? WHERE id=? AND (state IN ('queued','held') OR (state='delivering' AND claimed_at<?))`, claimID, now.Format(time.RFC3339Nano), id, now.Add(-time.Minute).Format(time.RFC3339Nano))
 	if err != nil {
 		return ""
 	}

@@ -307,6 +307,133 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 	return parkedRepair
 }
 
+type priorBlockingReviewFinding struct {
+	reviewerFindingRecord
+	AttemptID    string
+	CreatedAt    string
+	WorkRevision int
+}
+
+// completionReviewAttemptBefore orders same-revision review results by the
+// durable attempt record first. CreatedAt is reviewer-supplied metadata and
+// may be second-resolution (or equal across retries), so it is only a fallback
+// when an attempt timestamp is unavailable. Attempt IDs provide the final
+// deterministic tie-breaker for equal timestamps.
+func completionReviewAttemptBefore(attempts map[string]RunAttempt, candidateID, currentID, candidateCreatedAt, currentCreatedAt string) bool {
+	candidateID = strings.TrimSpace(candidateID)
+	currentID = strings.TrimSpace(currentID)
+	if candidateID == "" || currentID == "" || candidateID == currentID {
+		return false
+	}
+	if candidate, candidateOK := attempts[candidateID]; candidateOK {
+		if current, currentOK := attempts[currentID]; currentOK {
+			candidateAt, candidateTimeOK := completionTimestamp(candidate.StartedAt)
+			currentAt, currentTimeOK := completionTimestamp(current.StartedAt)
+			if candidateTimeOK && currentTimeOK {
+				if candidateAt.Before(currentAt) {
+					return true
+				}
+				if candidateAt.After(currentAt) {
+					return false
+				}
+			}
+		}
+	}
+	candidateAt, candidateTimeOK := completionTimestamp(candidateCreatedAt)
+	currentAt, currentTimeOK := completionTimestamp(currentCreatedAt)
+	if candidateTimeOK && currentTimeOK {
+		if candidateAt.Before(currentAt) {
+			return true
+		}
+		if candidateAt.After(currentAt) {
+			return false
+		}
+	}
+	return candidateID < currentID
+}
+
+func completionReviewAttemptAfter(attempts map[string]RunAttempt, candidateID, currentID, candidateCreatedAt, currentCreatedAt string) bool {
+	return completionReviewAttemptBefore(attempts, currentID, candidateID, currentCreatedAt, candidateCreatedAt)
+}
+
+// validateReviewFindingClosure reads the durable review-result history rather
+// than the mutable task body. Every prior blocking finding must be explicitly
+// closed by a later attempt, with the exact closure condition and a different
+// material fingerprint. Advisory findings are intentionally excluded.
+func (d *Daemon) validateReviewFindingClosure(projectID string, result ReviewResult) error {
+	rows, err := d.store.ListReviewResults(projectID)
+	if err != nil {
+		return err
+	}
+	attemptRows, err := d.store.ListAttemptsForRun(projectID, result.TaskID)
+	if err != nil {
+		return err
+	}
+	attempts := make(map[string]RunAttempt, len(attemptRows))
+	for _, attempt := range attemptRows {
+		attempts[attempt.AttemptID] = attempt
+	}
+	prior := map[string]priorBlockingReviewFinding{}
+	for _, row := range rows {
+		candidate := row.Result
+		if row.Repair != nil || candidate.TaskID != result.TaskID || candidate.Schema != reviewResultSchema || candidate.Verdict != "changes_requested" || candidate.ResultRevision == result.ResultRevision {
+			continue
+		}
+		if candidate.WorkRevision > result.WorkRevision ||
+			(candidate.WorkRevision == result.WorkRevision && !completionReviewAttemptBefore(attempts, candidate.AttemptID, result.AttemptID, candidate.CreatedAt, result.CreatedAt)) {
+			continue
+		}
+		for _, raw := range candidate.Findings {
+			finding, parseErr := parseReviewerFinding(raw)
+			if parseErr != nil {
+				return fmt.Errorf("prior blocking review finding is invalid: %w", parseErr)
+			}
+			if finding.Kind != "blocking" {
+				continue
+			}
+			current := prior[finding.ID]
+			if current.AttemptID == "" || candidate.WorkRevision > current.WorkRevision ||
+				(candidate.WorkRevision == current.WorkRevision && completionReviewAttemptAfter(attempts, candidate.AttemptID, current.AttemptID, candidate.CreatedAt, current.CreatedAt)) {
+				prior[finding.ID] = priorBlockingReviewFinding{reviewerFindingRecord: finding, AttemptID: candidate.AttemptID, CreatedAt: candidate.CreatedAt, WorkRevision: candidate.WorkRevision}
+			}
+		}
+	}
+	if len(prior) == 0 {
+		if len(result.ClosedFindings) != 0 {
+			return fmt.Errorf("review result closes findings that are not present in durable review history")
+		}
+		return nil
+	}
+	closures := map[string]reviewerFindingClosure{}
+	for _, closure := range result.ClosedFindings {
+		closures[closure.ID] = closure
+	}
+	for id, finding := range prior {
+		closure, ok := closures[id]
+		if !ok {
+			return fmt.Errorf("blocking review finding %s remains unclosed", id)
+		}
+		if finding.AttemptID == result.AttemptID {
+			return fmt.Errorf("blocking review finding %s was not closed by an independent review attempt", id)
+		}
+		if finding.ClosureCondition != closure.ClosureCondition {
+			return fmt.Errorf("closure condition for blocking review finding %s does not match the durable finding", id)
+		}
+		if finding.MaterialFingerprint == "" || finding.MaterialFingerprint == result.MaterialFingerprint {
+			return fmt.Errorf("blocking review finding %s was not reviewed on new material", id)
+		}
+		if closure.MaterialFingerprint != result.MaterialFingerprint {
+			return fmt.Errorf("closure for blocking review finding %s is not bound to the current material", id)
+		}
+	}
+	for id := range closures {
+		if _, ok := prior[id]; !ok {
+			return fmt.Errorf("review result closes unknown blocking finding %s", id)
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, result ReviewResult, mode completionReactorMode) error {
 	if err := validatePersistedReviewResult(result); err != nil {
 		return completionPersistedRowRepairError(
@@ -325,8 +452,11 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 		// v2 omitted worker-policy authority. A fresh v3 review is required.
 		return nil
 	}
+	var note Note
+	var noteErr error
+	var err error
 	if mode == completionReactorModeAuthoritative {
-		note, noteErr := resolveV7Note(project.VaultRoot, result.TaskID, "task")
+		note, noteErr = resolveV7Note(project.VaultRoot, result.TaskID, "task")
 		if noteErr != nil {
 			return noteErr
 		}
@@ -352,9 +482,19 @@ func (d *Daemon) reactToReviewResult(project RegisteredProject, wf Workflow, res
 			return d.completePassingReview(project, result, prior)
 		}
 	}
-	note, err := resolveV7Note(project.VaultRoot, result.TaskID, "task")
+	note, err = resolveV7Note(project.VaultRoot, result.TaskID, "task")
 	if err != nil {
 		return err
+	}
+	if mode == completionReactorModeAuthoritative {
+		if reason := completionReviewMaterialDrift(d.store, project.VaultRoot, note, result); reason != "" {
+			return completionPersistedRowRepairError("review result", project.ProjectID, result.TaskID, result.WorkRevision, result.AttemptID, result.ResultRevision, reason)
+		}
+		if result.Verdict == "pass" {
+			if err := d.validateReviewFindingClosure(project.ProjectID, result); err != nil {
+				return completionPersistedRowRepairError("review result", project.ProjectID, result.TaskID, result.WorkRevision, result.AttemptID, result.ResultRevision, err.Error())
+			}
+		}
 	}
 	wave, hasWave := completionWaveForReviewedTask(project.VaultRoot, note)
 	taskDirected := false
@@ -738,7 +878,7 @@ func completionWaveAuthoritySnapshot(vaultPath string, wave Note) (string, strin
 // If their integration ref is still absent, the newly frozen base is the
 // current clean default tip, and the stored fingerprint exactly matches the
 // otherwise identical pre-base material, completion may perform the intended
-// zero-old CAS. New Delivery Start waves include the base in material and do
+// zero-old CAS. New direct Start waves include the base in material and do
 // not enter this compatibility path.
 func completionWaveAuthorizationCompatibility(vaultPath string, idx v7Index, wave Note) (material, stored string, compatible bool) {
 	material, _ = waveMaterialFingerprint(vaultPath, idx, wave)
@@ -1332,18 +1472,23 @@ func completionReviewDrift(store *RuntimeStore, vaultPath string, note Note, res
 	if gates != result.GateFingerprint {
 		return "gate fingerprint drift"
 	}
-	if result.MaterialFingerprint != "" {
-		_, expectedMaterial, bindingErr := reviewImplementationParent(store, vaultPath, result.ProjectID, result.TaskID, result.WorkRevision, result.ImplementationSHA, note)
-		if bindingErr != nil {
-			return "current implementation binding unavailable: " + bindingErr.Error()
-		}
-		material, materialErr := reviewAttemptMaterialFingerprint(store, result.ProjectID, result.TaskID, result.AttemptID, result.WorkRevision, result.ImplementationSHA)
-		if materialErr != nil {
-			return "implementation material unavailable: " + materialErr.Error()
-		}
-		if material != result.MaterialFingerprint || material != expectedMaterial {
-			return "implementation material fingerprint drift"
-		}
+	return completionReviewMaterialDrift(store, vaultPath, note, result)
+}
+
+func completionReviewMaterialDrift(store *RuntimeStore, vaultPath string, note Note, result ReviewResult) string {
+	if !reviewMaterialFingerprintValid(result.MaterialFingerprint) {
+		return "review result is missing an exact implementation material fingerprint"
+	}
+	_, expectedMaterial, bindingErr := reviewImplementationParent(store, vaultPath, result.ProjectID, result.TaskID, result.WorkRevision, result.ImplementationSHA, note)
+	if bindingErr != nil {
+		return "current implementation binding unavailable: " + bindingErr.Error()
+	}
+	material, materialErr := reviewAttemptMaterialFingerprint(store, result.ProjectID, result.TaskID, result.AttemptID, result.WorkRevision, result.ImplementationSHA)
+	if materialErr != nil {
+		return "implementation material unavailable: " + materialErr.Error()
+	}
+	if material != result.MaterialFingerprint || material != expectedMaterial {
+		return "implementation material fingerprint drift"
 	}
 	return ""
 }

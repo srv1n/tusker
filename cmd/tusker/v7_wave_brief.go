@@ -78,6 +78,7 @@ type waveBriefRework struct {
 type waveBriefHumanAction struct {
 	GateID         string   `json:"gateId"`
 	GateHref       string   `json:"gateHref"`
+	Owner          string   `json:"owner,omitempty"`
 	Action         string   `json:"action"`
 	ResumeID       string   `json:"resumeId"`
 	BlockedTaskIDs []string `json:"blockedTaskIds"`
@@ -484,7 +485,7 @@ func validWaveHumanActions(idx v7Index, members []string) []waveBriefHumanAction
 		}
 		sort.Strings(blocks)
 		id := stringField(gate.Data, "id")
-		out = append(out, waveBriefHumanAction{GateID: id, GateHref: gateDeepLink(stringField(gate.Data, "project"), blocks[0], id), Action: action, ResumeID: id, BlockedTaskIDs: blocks})
+		out = append(out, waveBriefHumanAction{GateID: id, GateHref: gateDeepLink(stringField(gate.Data, "project"), blocks[0], id), Owner: stringField(gate.Data, "owner"), Action: action, ResumeID: id, BlockedTaskIDs: blocks})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GateID < out[j].GateID })
 	return out

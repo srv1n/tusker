@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, requireAccepted } from "@/lib/api";
 import { liveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
-import type { AgentAccessApprovalResponse, DeliveryPlanList, DeliveryReview, DeliveryStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProjectSummary, RunDetail, WaveExecuteResult } from "@/types/domain";
+import type { AgentAccessApprovalResponse, DirectStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProjectSummary, RunDetail, WaveReview } from "@/types/domain";
 import type {
   DocgraphDocDetail,
   DocgraphSavePayload,
@@ -41,8 +41,7 @@ export const qk = {
   doc: (path: string, projectId?: string) => ["doc", projectId ?? "all", path] as const,
   docgraph: (projectId?: string) => ["docgraph", projectId ?? "all"] as const,
   docgraphDoc: (projectId: string, subject: string) => ["docgraph", "doc", projectId, subject] as const,
-  deliveryReview: (plan: string, projectId?: string) => ["delivery", "review", projectId ?? "all", plan] as const,
-  deliveryPlans: (projectId?: string) => ["delivery", "plans", projectId ?? "all"] as const,
+  waveReview: (projectId: string | undefined, waveId: string) => ["wave-review", projectId ?? "all", waveId] as const,
   executions: (projectId: string, params: Record<string, string | undefined>) => ["executions", projectId, params] as const,
   executionInbox: (projectId: string) => ["executions", "inbox", projectId] as const,
   executionTimeline: (projectId: string, execution: string, params: Record<string, string | undefined>) => ["executions", "timeline", projectId, execution, params] as const,
@@ -301,21 +300,40 @@ export const useSaveDocgraphDoc = (projectId: string, subject: string) => {
   });
 };
 
-export const useDeliveryReview = (plan: string, projectId?: string) =>
-  useQuery<DeliveryReview>({ queryKey: qk.deliveryReview(plan, projectId), queryFn: () => api.deliveryReview(plan, projectId), enabled: plan.trim().length > 0 });
+export const useWaveReview = (waveId: string, projectId?: string) =>
+  useQuery<WaveReview>({ queryKey: qk.waveReview(projectId, waveId), queryFn: () => api.waveReview(projectId!, waveId), enabled: Boolean(projectId) && Boolean(waveId), refetchInterval: liveRefetchInterval });
 
-export const useDeliveryPlans = (projectId?: string) =>
-  useQuery<DeliveryPlanList>({ queryKey: qk.deliveryPlans(projectId), queryFn: () => api.deliveryPlans(projectId), refetchInterval: liveRefetchInterval });
+export async function invalidateWaveControlQueries(
+  qc: Pick<ReturnType<typeof useQueryClient>, "invalidateQueries">,
+  projectId: string,
+  waveId: string,
+): Promise<void> {
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: qk.waveReview(projectId, waveId) }),
+    qc.invalidateQueries({ queryKey: ["waves"] }),
+    qc.invalidateQueries({ queryKey: ["runs"] }),
+    qc.invalidateQueries({ queryKey: ["run"] }),
+    qc.invalidateQueries({ queryKey: ["tasks"] }),
+    qc.invalidateQueries({ queryKey: ["task"] }),
+    qc.invalidateQueries({ queryKey: ["needs"] }),
+  ]);
+}
 
-export const useDeliveryStart = (projectId?: string) => {
+export const useWaveControl = (projectId: string, waveId: string) => {
   const qc = useQueryClient();
-  return useMutation<DeliveryStartResult, unknown, { plan: string; confirm: string; planIdentity: string }>({
-    mutationFn: (body) => api.deliveryStart(body, projectId),
-    onSettled: (_data, _error, variables) => {
-      void qc.invalidateQueries({ queryKey: qk.deliveryReview(variables?.plan ?? "", projectId) });
-      void qc.invalidateQueries({ queryKey: qk.deliveryPlans(projectId) });
-      void qc.invalidateQueries({ queryKey: ["waves"] });
-      void qc.invalidateQueries({ queryKey: ["tasks"] });
+  return useMutation<DirectStartResult, unknown, "start" | "pause" | "resume">({
+    mutationFn: (action) => api.waveControl(projectId, waveId, action).then(requireAccepted),
+    onSettled: () => void invalidateWaveControlQueries(qc, projectId, waveId),
+  });
+};
+
+export const useTaskStart = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation<DirectStartResult, unknown, void>({
+    mutationFn: () => api.taskStart(projectId!, taskId).then(requireAccepted),
+    onSettled: () => {
+      invalidateOperatorState(qc, taskId, projectId);
+      void qc.invalidateQueries({ predicate: (query) => query.queryKey.includes("wave-review") });
     },
   });
 };
@@ -409,27 +427,11 @@ export const useTaskStatusAction = (taskId: string, projectId?: string) => {
   });
 };
 
-export const useRunTask = (taskId: string, projectId?: string) => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => api.runTask(taskId, projectId).then(requireAccepted),
-    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
-  });
-};
-
 export const useTaskRoute = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; executeProfile?: string | null; reviewProfile?: string | null }) => api.taskRoute(taskId, body, projectId).then(requireAccepted),
+    mutationFn: (body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; reviewReason?: string | null; executeProfile?: string | null; reviewProfile?: string | null }) => api.taskRoute(taskId, body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
-  });
-};
-
-export const useWaveExecute = (projectId?: string) => {
-  const qc = useQueryClient();
-  return useMutation<WaveExecuteResult, unknown, { waveId: string }>({
-    mutationFn: ({ waveId }) => api.waveExecute(waveId, projectId).then(requireAccepted),
-    onSettled: () => invalidateOperatorState(qc, undefined, projectId),
   });
 };
 

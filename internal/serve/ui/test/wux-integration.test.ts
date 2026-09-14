@@ -15,11 +15,10 @@ describe("work experience integration", () => {
   test("integration unavailable data never enables start", () => expect(waveStartability([wave("open")])["W-1"]).toEqual({ state: "unknown", reason: "Authoritative start readiness is not exposed by the current Serve API." }));
   test("routed wave exposes the supported Start action and execution status", () => {
     const source = readFileSync(new URL("../src/features/workbench/integration/WorkExperience.tsx", import.meta.url), "utf8");
-    expect(source).toContain("useWaveExecute(projectId)");
-    expect(source).toContain('aria-label="Start wave"');
-    expect(source).toContain('execute.isPending ? "Starting…" : "Start"');
+    expect(source).toContain("WaveAuthorityControls");
+    expect(source).not.toContain("useWaveExecute");
     expect(source).not.toContain("Wave Play");
-    expect(source).toContain("execute.mutate({ waveId: wave.id })");
+    expect(source).not.toContain("execute.mutate");
 
     const flow = readFileSync(new URL("../src/features/workbench/flow/WaveFlow.tsx", import.meta.url), "utf8");
     expect(flow).toContain("Executing now:");

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -69,6 +70,33 @@ func TestRuntimeSchemaMarkerCannotMaskMissingTableOrColumn(t *testing.T) {
 	}
 	if store.runtimeSchemaComplete() {
 		t.Fatal("schema marker incorrectly accepted missing authority table")
+	}
+}
+
+func TestRuntimeSchemaMarkerCannotMaskMissingAuthorizationAttempt(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.exec("ALTER TABLE run_authorizations DROP COLUMN attempt_id"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.exec("PRAGMA user_version = " + fmt.Sprint(runtimeSchemaVersion)); err != nil {
+		t.Fatal(err)
+	}
+	if store.runtimeSchemaComplete() {
+		t.Fatal("schema marker incorrectly accepted missing authorization attempt")
+	}
+	if err := store.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	var found int
+	if err := store.queryRowScan(`SELECT COUNT(*) FROM pragma_table_info('run_authorizations') WHERE name = 'attempt_id'`, nil, &found); err != nil {
+		t.Fatal(err)
+	}
+	if found != 1 {
+		t.Fatal("migration did not restore authorization attempt column")
 	}
 }
 

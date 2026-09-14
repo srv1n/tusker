@@ -45,43 +45,47 @@ type externalLoopStatusReport struct {
 }
 
 type externalLoopAdvanceResult struct {
-	Schema            string                     `json:"schema"`
-	TaskID            string                     `json:"task_id"`
-	RecordID          string                     `json:"record_id"`
-	Runner            string                     `json:"runner"`
-	ApplyRunner       string                     `json:"apply_runner,omitempty"`
-	JobID             string                     `json:"job_id,omitempty"`
-	AttemptID         string                     `json:"attempt_id,omitempty"`
-	Stage             string                     `json:"stage"`
-	NextAction        string                     `json:"next_action"`
-	Reason            string                     `json:"reason"`
-	Dispatchable      bool                       `json:"dispatchable"`
-	DispatchCommand   []string                   `json:"dispatch_command,omitempty"`
-	DispatchTriggered bool                       `json:"dispatch_triggered,omitempty"`
-	DispatchRun       *RunStatus                 `json:"dispatch_run,omitempty"`
-	Blockers          []string                   `json:"blockers,omitempty"`
-	Counters          ExternalLoopCounters       `json:"counters"`
-	ProjectedCounters ExternalLoopCounters       `json:"projected_counters"`
-	Caps              ExternalLoopCaps           `json:"caps"`
-	Event             *ExternalLoopEvent         `json:"event,omitempty"`
-	EventCreated      bool                       `json:"event_created"`
-	Collect           *externalCollectReport     `json:"collect,omitempty"`
-	AutomationExplain *automationTaskExplanation `json:"automation_explain,omitempty"`
+	Schema              string                     `json:"schema"`
+	TaskID              string                     `json:"task_id"`
+	RecordID            string                     `json:"record_id"`
+	Runner              string                     `json:"runner"`
+	ApplyRunner         string                     `json:"apply_runner,omitempty"`
+	JobID               string                     `json:"job_id,omitempty"`
+	AttemptID           string                     `json:"attempt_id,omitempty"`
+	WorkRevision        int                        `json:"work_revision"`
+	MaterialFingerprint string                     `json:"material_fingerprint,omitempty"`
+	Stage               string                     `json:"stage"`
+	NextAction          string                     `json:"next_action"`
+	Reason              string                     `json:"reason"`
+	Dispatchable        bool                       `json:"dispatchable"`
+	DispatchCommand     []string                   `json:"dispatch_command,omitempty"`
+	DispatchTriggered   bool                       `json:"dispatch_triggered,omitempty"`
+	DispatchRun         *RunStatus                 `json:"dispatch_run,omitempty"`
+	Blockers            []string                   `json:"blockers,omitempty"`
+	Counters            ExternalLoopCounters       `json:"counters"`
+	ProjectedCounters   ExternalLoopCounters       `json:"projected_counters"`
+	Caps                ExternalLoopCaps           `json:"caps"`
+	Event               *ExternalLoopEvent         `json:"event,omitempty"`
+	EventCreated        bool                       `json:"event_created"`
+	Collect             *externalCollectReport     `json:"collect,omitempty"`
+	AutomationExplain   *automationTaskExplanation `json:"automation_explain,omitempty"`
 }
 
 type externalLoopPolicyInput struct {
-	TaskID       string
-	RecordID     string
-	Runner       string
-	ApplyRunner  string
-	JobID        string
-	AttemptID    string
-	Stage        string
-	Action       string
-	Reason       string
-	Dispatchable bool
-	Blockers     []string
-	Payload      map[string]any
+	TaskID        string
+	RecordID      string
+	Runner        string
+	ApplyRunner   string
+	JobID         string
+	AttemptID     string
+	Stage         string
+	Action        string
+	Reason        string
+	Dispatchable  bool
+	Blockers      []string
+	Payload       map[string]any
+	CapsExplicit  bool
+	CapsOverrides ExternalLoopCaps
 }
 
 func automationExternalLoopCmd(args Args) error {
@@ -147,16 +151,18 @@ func automationAdvanceExternalCmd(args Args) error {
 	}
 	dispatchExplanation := explanation
 	result := externalLoopAdvanceResult{
-		Schema:            externalLoopSchema,
-		TaskID:            stringField(note.Data, "id"),
-		RecordID:          trackerRecordID(note),
-		Runner:            runner,
-		ApplyRunner:       applyRunner,
-		JobID:             jobID,
-		AttemptID:         strings.TrimSpace(args.String("attempt-id")),
-		Stage:             stage,
-		Caps:              externalLoopCapsFromArgs(ctx.Workflow.Data, args),
-		AutomationExplain: &explanation,
+		Schema:              externalLoopSchema,
+		TaskID:              stringField(note.Data, "id"),
+		RecordID:            trackerRecordID(note),
+		Runner:              runner,
+		ApplyRunner:         applyRunner,
+		JobID:               jobID,
+		AttemptID:           strings.TrimSpace(args.String("attempt-id")),
+		WorkRevision:        intField(note.Data, "work_revision"),
+		MaterialFingerprint: externalLoopMaterialFingerprint(note, nil),
+		Stage:               stage,
+		Caps:                externalLoopCapsFromArgs(ctx.Workflow.Data, args),
+		AutomationExplain:   &explanation,
 	}
 	var collect *externalCollectReport
 	if stage == externalLoopStageCollected {
@@ -174,6 +180,7 @@ func automationAdvanceExternalCmd(args Args) error {
 		result.Dispatchable = collected.Dispatchable
 		result.Blockers = append(result.Blockers, collected.Blockers...)
 		result.Reason = externalLoopCollectReason(collected)
+		result.MaterialFingerprint = externalLoopMaterialFingerprint(note, collected.ReviewResult)
 		if collected.NextAction == externalLoopActionApplyPatch {
 			applyRun := externalLoopApplyDispatchRun(ctx.Project, note, ctx.ProjectRuns[trackerRecordID(note)], applyRunner)
 			dispatchExplanation = ctx.explainTaskForRunner(note, applyRunner, &applyRun)
@@ -195,18 +202,20 @@ func automationAdvanceExternalCmd(args Args) error {
 		result.NextAction = action
 	}
 	policyInput := externalLoopPolicyInput{
-		TaskID:       result.TaskID,
-		RecordID:     result.RecordID,
-		Runner:       runner,
-		ApplyRunner:  applyRunner,
-		JobID:        jobID,
-		AttemptID:    result.AttemptID,
-		Stage:        stage,
-		Action:       result.NextAction,
-		Reason:       result.Reason,
-		Dispatchable: result.Dispatchable,
-		Blockers:     result.Blockers,
-		Payload:      externalLoopPayloadForResult(result),
+		TaskID:        result.TaskID,
+		RecordID:      result.RecordID,
+		Runner:        runner,
+		ApplyRunner:   applyRunner,
+		JobID:         jobID,
+		AttemptID:     result.AttemptID,
+		Stage:         stage,
+		Action:        result.NextAction,
+		Reason:        result.Reason,
+		Dispatchable:  result.Dispatchable,
+		Blockers:      result.Blockers,
+		Payload:       externalLoopPayloadForResult(result),
+		CapsExplicit:  externalLoopCapsOverridesPresent(args),
+		CapsOverrides: externalLoopCapsOverridesFromArgs(args),
 	}
 	policyResult, err := externalLoopApplyPolicy(ctx, note, policyInput, result.Caps)
 	if err != nil {
@@ -219,11 +228,12 @@ func automationAdvanceExternalCmd(args Args) error {
 	result.Event = policyResult.Event
 	result.EventCreated = policyResult.EventCreated
 	result.Reason = policyResult.Reason
+	result.Caps = policyResult.Caps
 	if result.NextAction == externalLoopActionApplyPatch {
 		result.Dispatchable = result.Dispatchable && len(result.Blockers) == 0
 		result.DispatchCommand = []string{"tusker", "automation", "dispatch", result.TaskID, "--json"}
 	}
-	if args.Bool("dispatch") && result.NextAction == externalLoopActionApplyPatch {
+	if args.Bool("dispatch") && result.NextAction == externalLoopActionApplyPatch && (result.EventCreated || externalLoopEffectNeedsReconciliation(run, result.Event)) {
 		dispatched, dispatchErr := dispatchExternalApplyInput(ctx, note, dispatchExplanation, applyRunner)
 		if dispatchErr != nil {
 			result.Blockers = append(result.Blockers, dispatchErr.Error())
@@ -252,59 +262,109 @@ type externalLoopPolicyResult struct {
 	ProjectedCounters ExternalLoopCounters
 	Event             *ExternalLoopEvent
 	EventCreated      bool
+	Caps              ExternalLoopCaps
 }
 
 func externalLoopApplyPolicy(ctx *automationCommandContext, note Note, input externalLoopPolicyInput, caps ExternalLoopCaps) (externalLoopPolicyResult, error) {
-	events, err := ctx.Store.ListExternalLoopEvents(ctx.Project.ProjectID, input.RecordID)
-	if err != nil {
-		return externalLoopPolicyResult{}, err
-	}
-	counters := externalLoopCountersForEvents(events)
 	action := normalizeExternalLoopAction(input.Action)
 	if action == "" {
 		action = externalLoopActionEscalateHuman
 	}
 	reason := firstNonEmpty(strings.TrimSpace(input.Reason), "external loop policy recorded "+input.Stage)
 	blockers := append([]string{}, input.Blockers...)
+	if action != externalLoopActionEscalateHuman && len(blockers) > 0 {
+		// Preserve the original requested action in the existing event payload,
+		// but do not leave a blocked transition without an operator decision.
+		payload := map[string]any{}
+		for key, value := range input.Payload {
+			payload[key] = value
+		}
+		payload["requested_action"] = action
+		input.Payload = payload
+		action = externalLoopActionEscalateHuman
+	}
 	event := externalLoopEventForInput(ctx, note, input, action, reason, blockers)
-	existing, err := ctx.Store.FindExternalLoopEventByKey(event.ProjectID, event.RecordID, event.IdempotencyKey)
+	admission, err := ctx.Store.AdmitExternalLoopEventWithOverrides(event, caps, input.CapsOverrides, input.CapsExplicit, blockers)
 	if err != nil {
 		return externalLoopPolicyResult{}, err
 	}
-	projected := counters
-	if existing == nil {
-		projected = externalLoopCountersWithEvent(counters, event)
-	}
-	if action != externalLoopActionEscalateHuman {
-		capBlockers := externalLoopCapBlockers(caps, counters, projected, action)
-		if len(capBlockers) > 0 {
-			blockers = append(blockers, capBlockers...)
-			action = externalLoopActionEscalateHuman
-			reason = "external loop cap reached"
-			event = externalLoopEventForInput(ctx, note, input, action, reason, blockers)
-			if existing, err = ctx.Store.FindExternalLoopEventByKey(event.ProjectID, event.RecordID, event.IdempotencyKey); err != nil {
-				return externalLoopPolicyResult{}, err
-			}
-			if existing == nil {
-				projected = externalLoopCountersWithEvent(counters, event)
-			} else {
-				projected = counters
-			}
+	saved := admission.Event
+	if normalizeExternalLoopAction(saved.Action) == externalLoopActionEscalateHuman {
+		// The event is the durable correlation point. Saving the same semantic
+		// decision again after a crash converges on one deterministic decision ID.
+		decisionReason := fmt.Sprintf("external loop escalation event %s: %s", saved.EventID, firstNonEmpty(strings.TrimSpace(saved.Reason), "operator decision required"))
+		if len(admission.Blockers) > 0 {
+			decisionReason += "; blockers: " + strings.Join(admission.Blockers, "; ")
+		}
+		if refs := externalLoopBlockingFindingRefsFromPayload(saved.PayloadJSON); len(refs) > 0 {
+			decisionReason += "; " + strings.Join(refs, "; ")
+		}
+		_, err := ctx.Store.SaveSupervisorDecision(SupervisorDecision{
+			ProjectID:     saved.ProjectID,
+			RecordID:      saved.RecordID,
+			ItemID:        saved.ItemID,
+			Runner:        saved.Runner,
+			AttemptID:     saved.AttemptID,
+			Kind:          string(SupervisorDecisionStopForHuman),
+			Reason:        decisionReason,
+			ContextSignal: "external_loop",
+			LeaseState:    "blocked",
+		})
+		if err != nil {
+			return externalLoopPolicyResult{}, err
 		}
 	}
-	saved, created, err := ctx.Store.SaveExternalLoopEvent(event)
-	if err != nil {
-		return externalLoopPolicyResult{}, err
-	}
 	return externalLoopPolicyResult{
-		NextAction:        action,
-		Reason:            reason,
-		Blockers:          uniqueStrings(blockers),
-		Counters:          counters,
-		ProjectedCounters: projected,
+		NextAction:        normalizeExternalLoopAction(saved.Action),
+		Reason:            saved.Reason,
+		Blockers:          sortedUniqueStrings(admission.Blockers),
+		Counters:          admission.Counters,
+		ProjectedCounters: admission.ProjectedCounters,
 		Event:             &saved,
-		EventCreated:      created,
+		EventCreated:      admission.Created,
+		Caps:              admission.Caps,
 	}, nil
+}
+
+// externalLoopEffectNeedsReconciliation identifies an admitted transition
+// whose consumer has not yet acknowledged the effect. A released terminal
+// run is the existing runtime checkpoint: dispatch may be retried there, but
+// claimed/running runs are left alone because their attempt already owns the
+// effect.
+func externalLoopEffectNeedsReconciliation(run RunStatus, event *ExternalLoopEvent) bool {
+	if event == nil || strings.TrimSpace(event.Status) == "blocked" {
+		return false
+	}
+	if revisionText := strings.TrimSpace(firstExternalLoopEventRevision(event)); revisionText != "" {
+		revision, err := strconv.Atoi(revisionText)
+		if err != nil || run.WorkRevision != revision {
+			return false
+		}
+	}
+	switch normalizeExternalLoopAction(event.Action) {
+	case externalLoopActionApplyPatch, externalLoopActionContinueThreadOnFailure, externalLoopActionRequestReviewNext:
+	default:
+		return false
+	}
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateReleased, LeaseStateRetryQueued:
+	default:
+		return false
+	}
+	switch AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) {
+	case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeCancelled, AttemptOutcomeWaitingForHuman:
+		return true
+	default:
+		return false
+	}
+}
+
+func firstExternalLoopEventRevision(event *ExternalLoopEvent) string {
+	if event == nil {
+		return ""
+	}
+	revision, _ := externalLoopEventRevisionMaterial(*event)
+	return revision
 }
 
 func externalLoopStatus(ctx *automationCommandContext, note Note, caps ExternalLoopCaps) (externalLoopStatusReport, error) {
@@ -312,6 +372,11 @@ func externalLoopStatus(ctx *automationCommandContext, note Note, caps ExternalL
 	events, err := ctx.Store.ListExternalLoopEvents(ctx.Project.ProjectID, recordID)
 	if err != nil {
 		return externalLoopStatusReport{}, err
+	}
+	if persisted, found, err := ctx.Store.ExternalLoopCapsFor(ctx.Project.ProjectID, recordID); err != nil {
+		return externalLoopStatusReport{}, err
+	} else if found {
+		caps = persisted
 	}
 	return externalLoopStatusReport{
 		Schema:   externalLoopSchema,
@@ -321,6 +386,32 @@ func externalLoopStatus(ctx *automationCommandContext, note Note, caps ExternalL
 		Caps:     caps,
 		Events:   events,
 	}, nil
+}
+
+func externalLoopCapsOverridesPresent(args Args) bool {
+	for _, key := range []string{"max-cycles", "max-repair-continuations", "max-external-threads", "wall-clock-timeout-hours"} {
+		if intArg(args, key) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func externalLoopCapsOverridesFromArgs(args Args) ExternalLoopCaps {
+	var overrides ExternalLoopCaps
+	if value := intArg(args, "max-cycles"); value > 0 {
+		overrides.MaxCycles = value
+	}
+	if value := intArg(args, "max-repair-continuations"); value > 0 {
+		overrides.MaxRepairContinuations = value
+	}
+	if value := intArg(args, "max-external-threads"); value > 0 {
+		overrides.MaxExternalThreads = value
+	}
+	if value := intArg(args, "wall-clock-timeout-hours"); value > 0 {
+		overrides.WallClockTimeoutHours = value
+	}
+	return overrides
 }
 
 func externalLoopCapsFromArgs(wf Workflow, args Args) ExternalLoopCaps {
@@ -443,8 +534,12 @@ func externalLoopEventForInput(ctx *automationCommandContext, note Note, input e
 	for key, value := range input.Payload {
 		payload[key] = value
 	}
-	payload["blockers"] = uniqueStrings(blockers)
+	payload["blockers"] = sortedUniqueStrings(blockers)
 	payload["apply_runner"] = input.ApplyRunner
+	payload["work_revision"] = intField(note.Data, "work_revision")
+	if material := firstNonEmpty(strings.TrimSpace(stringValue(payload["material_fingerprint"])), externalLoopMaterialFingerprint(note, nil)); material != "" {
+		payload["material_fingerprint"] = material
+	}
 	raw, _ := json.Marshal(payload)
 	event := ExternalLoopEvent{
 		ProjectID:   ctx.Project.ProjectID,
@@ -464,12 +559,14 @@ func externalLoopEventForInput(ctx *automationCommandContext, note Note, input e
 }
 
 func externalLoopIdempotencyKey(event ExternalLoopEvent) string {
+	workRevision, material := externalLoopEventRevisionMaterial(event)
 	source := strings.Join([]string{
-		strings.TrimSpace(event.Stage),
-		strings.TrimSpace(event.Action),
+		normalizeExternalLoopStage(event.Stage),
+		normalizeExternalLoopAction(event.Action),
 		strings.TrimSpace(event.JobID),
 		strings.TrimSpace(event.AttemptID),
-		strings.TrimSpace(event.Reason),
+		workRevision,
+		material,
 	}, "|")
 	sum := sha256.Sum256([]byte(source))
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -477,10 +574,14 @@ func externalLoopIdempotencyKey(event ExternalLoopEvent) string {
 
 func externalLoopPayloadForResult(result externalLoopAdvanceResult) map[string]any {
 	payload := map[string]any{
-		"task_id":      result.TaskID,
-		"stage":        result.Stage,
-		"next_action":  result.NextAction,
-		"dispatchable": result.Dispatchable,
+		"task_id":       result.TaskID,
+		"stage":         result.Stage,
+		"next_action":   result.NextAction,
+		"dispatchable":  result.Dispatchable,
+		"work_revision": result.WorkRevision,
+	}
+	if material := strings.TrimSpace(result.MaterialFingerprint); material != "" {
+		payload["material_fingerprint"] = material
 	}
 	if result.JobID != "" {
 		payload["job_id"] = result.JobID
@@ -491,8 +592,100 @@ func externalLoopPayloadForResult(result externalLoopAdvanceResult) map[string]a
 		payload["review_packets"] = result.Collect.ReviewPackets
 		payload["evidence_added"] = result.Collect.EvidenceAdded
 		payload["evidence_existing"] = result.Collect.EvidenceExisting
+		if result.Collect.ReviewResult != nil {
+			payload["review_verdict"] = result.Collect.ReviewResult.Verdict
+			payload["review_summary"] = result.Collect.ReviewResult.Summary
+			payload["review_findings"] = result.Collect.ReviewResult.Findings
+			if result.Collect.ReviewResult.Authority.Schema != "" {
+				payload["review_result"] = result.Collect.ReviewResult.Authority
+			}
+			if material := strings.TrimSpace(result.Collect.ReviewResult.MaterialFingerprint); material != "" {
+				payload["material_fingerprint"] = material
+			}
+			if ids := externalLoopBlockingFindingIDs(result.Collect.ReviewResult.Findings); len(ids) > 0 {
+				payload["blocking_finding_ids"] = ids
+			}
+		}
 	}
 	return payload
+}
+
+func externalLoopMaterialFingerprint(note Note, review *externalReviewResult) string {
+	if review != nil {
+		if material := strings.TrimSpace(review.MaterialFingerprint); material != "" {
+			return material
+		}
+	}
+	// Recompute the authored contract whenever the task body is available. A
+	// stale stored pin must not let an amended document inherit an old
+	// external-loop admission.
+	if strings.TrimSpace(note.Body) != "" {
+		return directWaveTaskContract(note)
+	}
+	if material := strings.TrimSpace(stringField(note.Data, "material_fingerprint")); material != "" {
+		return material
+	}
+	if contract := strings.TrimSpace(stringField(note.Data, "contract_fingerprint")); contract != "" {
+		return contract
+	}
+	return ""
+}
+
+func externalLoopEventRevisionMaterial(event ExternalLoopEvent) (string, string) {
+	var payload map[string]any
+	if strings.TrimSpace(event.PayloadJSON) == "" {
+		return "0", ""
+	}
+	if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil || payload == nil {
+		return "", ""
+	}
+	return strconv.Itoa(intField(payload, "work_revision")), strings.TrimSpace(stringValue(payload["material_fingerprint"]))
+}
+
+func externalLoopBlockingFindingIDs(raw []string) []string {
+	var ids []string
+	for _, value := range raw {
+		finding, err := parseReviewerFinding(value)
+		if err != nil || finding.Kind != "blocking" || strings.TrimSpace(finding.ID) == "" {
+			continue
+		}
+		ids = append(ids, finding.ID)
+	}
+	return sortedUniqueStrings(ids)
+}
+
+func externalLoopBlockingFindingIDsFromPayload(raw string) []string {
+	var payload map[string]any
+	if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &payload) != nil {
+		return nil
+	}
+	var ids []string
+	for _, value := range normalizeList(payload["blocking_finding_ids"]) {
+		if strings.TrimSpace(value) != "" {
+			ids = append(ids, strings.TrimSpace(value))
+		}
+	}
+	return sortedUniqueStrings(ids)
+}
+
+func externalLoopBlockingFindingRefsFromPayload(raw string) []string {
+	var payload map[string]any
+	if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &payload) != nil {
+		return nil
+	}
+	var refs []string
+	for _, value := range normalizeList(payload["review_findings"]) {
+		finding, err := parseReviewerFinding(value)
+		if err != nil || finding.Kind != "blocking" || strings.TrimSpace(finding.ID) == "" {
+			continue
+		}
+		ref := "finding ID " + finding.ID
+		if len(finding.Acceptance) > 0 {
+			ref += " acceptance IDs " + strings.Join(sortedUniqueStrings(finding.Acceptance), ",")
+		}
+		refs = append(refs, ref)
+	}
+	return sortedUniqueStrings(refs)
 }
 
 func externalLoopCollectReason(collect externalCollectReport) string {
@@ -620,8 +813,11 @@ func dispatchExternalApplyInput(ctx *automationCommandContext, note Note, explan
 	}
 	recordID := trackerRecordID(note)
 	run := ctx.effectiveRunForTask(note, applyRunner)
-	if current, ok := ctx.ProjectRuns[recordID]; ok && externalLoopRunnerRequiresCollect(ctx.Workflow.Data, current.Runner) && LeaseState(strings.TrimSpace(current.LeaseState)) == LeaseStateReleased {
-		run = externalLoopApplyDispatchRun(ctx.Project, note, current, applyRunner)
+	if current, ok := ctx.ProjectRuns[recordID]; ok {
+		// Keep the stored lease snapshot for ClaimRunLease while publishing the
+		// new runner/revision intent. This is recoverable if the controller stops
+		// after intent publication but before the claim.
+		run = externalLoopDispatchLeaseSnapshot(current, externalLoopApplyDispatchRun(ctx.Project, note, current, applyRunner))
 	}
 	if reason := strings.TrimSpace(ctx.DispatchRefusal); reason != "" {
 		return nil, tuskerError(errorInvalidTransition, reason, withContext(explanation))

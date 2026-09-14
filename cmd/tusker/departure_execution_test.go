@@ -542,12 +542,7 @@ func TestDepartureExecution(t *testing.T) {
 		var disarmedBytes map[string]string
 		scheduledPromotionBeforeDefaultPrepare = func() error {
 			hookCalled = true
-			if err := mutateWaveAuthorization(Args{
-				"vault": fixture.vault, "_pos0": "W-0001",
-				"by": "human:sara", "quiet": "true",
-			}, "disarmed", nil); err != nil {
-				return err
-			}
+			disarmDepartureWaveForTest(t, fixture.vault, "W-0001")
 			disarmedBytes = departureWaveMemberBytes(t, fixture.vault, "W-0001", "APP-T-0001")
 			return nil
 		}
@@ -1500,4 +1495,24 @@ func removeDeparturePromotionAudit(t *testing.T, vault, waveID, commit string) {
 func withDepartureState(run DepartureRun, state DepartureState) DepartureRun {
 	run.State = state
 	return run
+}
+
+func disarmDepartureWaveForTest(t *testing.T, vault, waveID string) {
+	t.Helper()
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave := idx.Waves[waveID]
+	data, body, err := parseFrontmatterMustRead(wave.AbsolutePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["authorization"] = "disarmed"
+	delete(data, "authorization_fingerprint")
+	delete(data, "authorized_by")
+	delete(data, "authorized_at")
+	if _, err := saveV7DocumentCAS(wave.AbsolutePath, data, body, v7FrontmatterOrder["wave"], stringField(data, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
 }

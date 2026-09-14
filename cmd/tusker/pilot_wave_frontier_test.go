@@ -103,7 +103,7 @@ func TestPilotWaveFrontierDispatchesOnlyQualifiedWork(t *testing.T) {
 
 func pilotArmedWaveFixture(t *testing.T) (string, v7Index, Note) {
 	t.Helper()
-	vault := deliveryTestVault(t)
+	vault := v7DirectTestVault(t)
 	if err := writeDefaultWorkflow(vault); err != nil {
 		t.Fatal(err)
 	}
@@ -117,28 +117,22 @@ func pilotArmedWaveFixture(t *testing.T) (string, v7Index, Note) {
 		t.Fatal(err)
 	}
 
-	plan := validDeliveryPlan()
-	plan.Concurrency = 2
-	base := plan.Tasks[0]
-	plan.Tasks = []deliveryPlanTask{
-		base,
-		armedWavePlanTask(base, "parallel-a", []deliveryDependency{{Task: "schema", Kind: "hard"}}),
-		armedWavePlanTask(base, "parallel-b", []deliveryDependency{{Task: "schema", Kind: "hard"}}),
-		armedWavePlanTask(base, "soft-child", []deliveryDependency{{Task: "parallel-a", Kind: "soft"}}),
-		armedWavePlanTask(base, "hard-child", []deliveryDependency{{Task: "parallel-b", Kind: "hard"}}),
-		armedWavePlanTask(base, "independent", nil),
+	newTask := func(id string, deps ...string) {
+		extra := map[string]any{
+			"status": "ready", "readiness": "ready", "next_owner": "agent", "work_revision": 1,
+		}
+		if len(deps) > 0 {
+			extra["dependencies"] = deps
+		}
+		writeDirectTask(t, vault, id, "W-0001", extra)
 	}
-	path := writeDeliveryTestPlan(t, vault, plan)
-	report, err := deliveryPlanDoctor(vault, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !report.OK {
-		t.Fatalf("pilot delivery plan is unsafe: %#v", report.Findings)
-	}
-	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "wave": "Drain", "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
+	newTask("APP-T-0001")
+	newTask("APP-T-0002", "APP-T-0001:hard")
+	newTask("APP-T-0003", "APP-T-0001:hard")
+	newTask("APP-T-0004", "APP-T-0002:soft")
+	newTask("APP-T-0005", "APP-T-0003:hard")
+	newTask("APP-T-0006")
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006"}, map[string]any{"concurrency": 2})
 	armWaveForTest(t, vault)
 	idx, err := loadV7Index(vault)
 	if err != nil {

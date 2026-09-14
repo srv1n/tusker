@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { X } from "lucide-react";
+import { Play, X } from "lucide-react";
 import type { RunDetail, TaskDetail } from "@/types/domain";
 import { api } from "@/lib/api";
+import { ActionResultLine } from "@/components/ui/action-feedback";
+import { useTaskStart } from "@/lib/queries";
 import { AgentAccessApprovalList, HumanActionCard } from "@/features/human-action/HumanActionCard";
+import { AgentCoordinationSummary, taskRunBlocker, TaskContractDisclosure, TaskRouting } from "@/features/product/TaskScreens";
 import { isSafeHref } from "@/features/editor/sanitize";
 import {
   acceptedDelivery,
@@ -179,10 +182,17 @@ function ReadyInspector({
   const failures = failingRows(task);
   const accepted = acceptedDelivery(run);
   const blockers = task.deps.filter((dep) => dep.status !== "done");
+  const humanActions = [...(task.humanActions ?? []), ...(task.humanAction ? [task.humanAction] : [])].filter((action, index, all) => all.findIndex((candidate) => candidate.gateId === action.gateId) === index);
+  const taskStart = useTaskStart(task.id, task.projectId);
+  const currentStatus = task.rawStatus ?? task.status;
+  const runBlocker = taskRunBlocker(task);
+  const runnable = !runBlocker;
+  const directiveQueued = task.runDirective?.state === "queued";
   const lastEvent = run?.events?.length ? run.events[run.events.length - 1] : null;
 	const [messageBody, setMessageBody] = useState("");
 	const [messageStatus, setMessageStatus] = useState("");
 	const [contactIndex, setContactIndex] = useState(0);
+	const [yieldSender, setYieldSender] = useState(false);
 	const [replyTo, setReplyTo] = useState<string | undefined>();
 	const replyMessage = task.messages?.find((message) => message.id === replyTo);
 	const contact = task.contacts?.[contactIndex] || task.contacts?.[0];
@@ -194,9 +204,10 @@ function ReadyInspector({
 		if (!recipient || !projectId || !messageBody.trim()) return;
 		setMessageStatus("Sending…");
 		try {
-			await api.agentMessage({ projectId, recipientKind: recipient.address.kind, recipientId: recipient.address.id, originTaskId: task.id, body: messageBody.trim(), kind: replyTo ? "answer" : "question", replyTo, replyRequired: !replyTo });
+			await api.agentMessage({ projectId, recipientKind: recipient.address.kind, recipientId: recipient.address.id, originTaskId: task.id, body: messageBody.trim(), kind: replyTo ? "answer" : "question", replyTo, replyRequired: !replyTo, yieldSender: !replyTo && yieldSender });
 			setMessageBody("");
 			setReplyTo(undefined);
+			setYieldSender(false);
 			setMessageStatus(replyTo ? "Answer saved for delivery." : "Question saved for delivery.");
 		} catch (error) {
 			setMessageStatus(error instanceof Error ? error.message : "Could not save question.");
@@ -225,18 +236,14 @@ function ReadyInspector({
             {stage.live && (
               <span className="font-mono text-[10.5px] text-faint">live run fact, durable status kept</span>
             )}
+            {!stage.live && currentStatus !== "done" ? <button type="button" className="wux-inspector-action wux-inspector-action-primary ml-auto inline-flex items-center gap-1.5" disabled={!runnable || taskStart.isPending || directiveQueued} onClick={() => taskStart.mutate()} aria-label={`Start task ${task.id}`} title={runBlocker ?? "Authorize this exact task for the configured runtime"}><Play size={13} aria-hidden="true" />{directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"}</button> : null}
           </div>
+          {runBlocker && !stage.live && currentStatus !== "done" ? <p role="status" className="mt-2 text-[11.5px] text-muted">{runBlocker}</p> : null}
+          <ActionResultLine className="mt-2" pending={taskStart.isPending} error={taskStart.error} result={taskStart.data} />
 
-          {task.humanAction ? (
+          {humanActions.length > 0 ? (
             <div className="mt-4" data-testid="inspector-decision">
-              <HumanActionCard
-                action={task.humanAction}
-                taskId={task.id}
-                taskTitle={task.title}
-                projectId={task.projectId}
-                approvals={task.agentAccessApprovals}
-                compact
-              />
+              {humanActions.map((action) => <div key={action.gateId} className="mb-3 last:mb-0"><p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Owner: {task.gates.find((gate) => gate.id === action.gateId)?.owner || "Human owner"}</p><HumanActionCard action={action} taskId={task.id} taskTitle={task.title} projectId={task.projectId} approvals={task.agentAccessApprovals} compact /></div>)}
             </div>
           ) : task.agentAccessApprovals?.length ? (
             <div className="mt-4" data-testid="inspector-decision">
@@ -286,15 +293,9 @@ function ReadyInspector({
             </div>
           </section>
 
-          <section aria-label="Task routing" className="mt-6">
-            <h3 className="wux-inspector-h">{stage.live ? "Running with" : "Routing"}</h3>
-            <dl className="space-y-2 text-[12.5px] leading-5">
-              <RouteRow label="Tier" value={tierLabel(task.effectiveExecute?.work_level)} />
-              <RouteRow label="Will execute" route={task.effectiveExecute} />
-              <RouteRow label="Will review" route={task.effectiveReview} />
-            </dl>
-            {(task.effectiveExecute?.blockers.length || task.effectiveReview?.blockers.length) ? <p role="alert" className="mt-3 text-[11.5px] text-warn">A configured route is unavailable. Open Models in Settings before starting.</p> : null}
-          </section>
+          <TaskContractDisclosure body={task.body} projectId={task.projectId ?? ""} />
+
+          {task.projectId ? <div className="mt-6"><TaskRouting detail={task} run={run} projectId={task.projectId} /></div> : null}
 
           <section aria-label="Active attempt" className="mt-6">
             <h3 className="wux-inspector-h">{stage.live ? "Active attempt" : "Latest attempt"}</h3>
@@ -318,14 +319,16 @@ function ReadyInspector({
             </dl>
           </section>
 
-		  <section aria-label="Agent coordination" className="mt-6" data-testid="agent-coordination">
+          <section aria-label="Agent coordination" className="mt-6" data-testid="agent-coordination">
 			<h3 className="wux-inspector-h">Agent coordination</h3>
-			{task.contacts?.length ? <dl className="space-y-2 text-[12.5px] leading-5">{task.contacts.map((contact) => <RouteRow key={`${contact.role}:${contact.name || ""}`} label={contact.role === "peer" ? contact.name || "Peer" : contact.role} value={`${contact.address.kind} · ${contact.address.id}`} />)}</dl> : <p className="text-[12.5px] text-muted">No contacts recorded.</p>}
-			{task.messages?.length ? <ol className="mt-3 space-y-2">{task.messages.map((message) => <li key={message.id} className="rounded-lg border border-line bg-raised px-3 py-2.5"><div className="text-[12.5px] text-ink">{message.body}</div><div className="mt-1 font-mono text-[10px] text-faint">{message.kind.replaceAll("_", " ")} · {message.sender} · {message.transportState} · {message.state}</div>{message.kind === "question" && message.recipient.kind === "task" && message.recipient.id === task.id && !task.messages?.some((answer) => answer.replyTo === message.id) ? <button type="button" onClick={() => setReplyTo(message.id)} className="mt-2 text-[11.5px] underline">Reply</button> : null}</li>)}</ol> : <p className="mt-2 text-[11.5px] text-faint">No questions or replies.</p>}
+			<AgentCoordinationSummary task={task} run={run} />
+			{!task.contacts?.length && <p className="mt-2 text-[12.5px] text-muted">No contacts recorded.</p>}
+			{task.messages?.length ? <ol className="mt-3 space-y-2">{task.messages.map((message) => <li key={message.id} className="rounded-lg border border-line bg-raised px-3 py-2.5"><div className="text-[12.5px] text-ink">{message.body}</div><div className="mt-1 font-mono text-[10px] text-faint">{message.kind.replaceAll("_", " ")} · {message.sender} · {message.transportState} · {message.state}{message.yieldSender ? " · sender yields" : ""}</div>{message.kind === "question" && message.recipient.kind === "task" && message.recipient.id === task.id && !task.messages?.some((answer) => answer.replyTo === message.id) ? <button type="button" onClick={() => setReplyTo(message.id)} className="mt-2 text-[11.5px] underline">Reply</button> : null}</li>)}</ol> : <p className="mt-2 text-[11.5px] text-faint">No questions or replies.</p>}
 			<form className="mt-3 space-y-2" onSubmit={sendMessage}>
 				{!replyTo && (task.contacts?.length || 0) > 1 ? <select aria-label="Message recipient" value={contactIndex} onChange={(event) => setContactIndex(Number(event.target.value))} className="w-full rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px] text-ink">{task.contacts?.map((item, index) => <option key={`${item.role}:${item.name || index}`} value={index}>{item.role === "peer" ? item.name || "Peer" : item.role}</option>)}</select> : null}
 				<label className="block text-[11.5px] text-muted" htmlFor={`agent-message-${task.id}`}>{replyTo ? `Reply to ${replyMessage?.sender}` : `Ask ${contact?.role === "peer" ? contact.name || "peer" : contact?.role || "contact"}`}</label>
 				<textarea id={`agent-message-${task.id}`} value={messageBody} onChange={(event) => setMessageBody(event.target.value)} disabled={!recipient || !task.projectId} rows={3} maxLength={32768} className="w-full rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px] text-ink" />
+				{!replyTo && <label className="flex items-center gap-2 text-[11.5px] text-muted"><input type="checkbox" checked={yieldSender} onChange={(event) => setYieldSender(event.target.checked)} />Pause sender until this question is answered</label>}
 				<button type="submit" disabled={!recipient || !task.projectId || !messageBody.trim()} className="wux-inspector-action">{replyTo ? "Send answer" : "Send question"}</button>
 				{replyTo ? <button type="button" onClick={() => setReplyTo(undefined)} className="wux-inspector-action">Cancel reply</button> : null}
 				{messageStatus ? <p role="status" className="text-[11.5px] text-muted">{messageStatus}</p> : null}
@@ -464,15 +467,4 @@ function ReadyInspector({
       </section>
     </div>
   );
-}
-
-function tierLabel(level?: string) {
-  return ({ light: "Tier 1 · Light", standard: "Tier 2 · Standard", demanding: "Tier 3 · Demanding" } as Record<string, string>)[level || "standard"];
-}
-
-function RouteRow({ label, route, value }: { label: string; route?: TaskDetail["effectiveExecute"]; value?: string }) {
-  const resolved = route?.profile ? [route.profile, route.model, route.effort].filter(Boolean).join(" · ") : route ? `Blocked · ${route.blockers.join("; ") || "unavailable"}` : value || "Unavailable";
-  const access = route?.resolved_access?.requested && typeof route.resolved_access.requested !== "string" ? route.resolved_access.requested : route?.access;
-  const accessSummary = access ? `${access.mode === "review_only" ? "Review only" : "Work in projects"} · Internet ${access.network ? "on" : "off"}` : route?.resolved_access?.state ? `Access ${route.resolved_access.state.replaceAll("_", " ")}` : undefined;
-  return <div className="flex gap-2"><dt className="w-20 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{label}</dt><dd className="text-ink">{value || resolved}{accessSummary ? <span className="block text-[11px] text-muted">{accessSummary}</span> : null}{route?.source ? <span className="block text-[10.5px] text-faint">{route.source}{route.reason ? ` · ${route.reason}` : ""}</span> : null}</dd></div>;
 }

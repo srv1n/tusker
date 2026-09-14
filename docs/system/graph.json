@@ -53,7 +53,14 @@
       "subject": "delivery-and-waves",
       "kind": "canonical",
       "path": "docs/system/delivery-and-waves.md",
-      "title": "Delivery and waves",
+      "title": "Tasks and waves",
+      "status": "canonical"
+    },
+    {
+      "subject": "direct-wave-authoring",
+      "kind": "spec",
+      "path": ".tusker/specs/direct-wave-authoring.md",
+      "title": "Direct task and wave authoring",
       "status": "canonical"
     },
     {
@@ -82,13 +89,6 @@
       "kind": "canonical",
       "path": "docs/system/execution-observability.md",
       "title": "Execution observability",
-      "status": "canonical"
-    },
-    {
-      "subject": "factory-intake",
-      "kind": "canonical",
-      "path": "docs/system/factory-intake.md",
-      "title": "Factory intake",
       "status": "canonical"
     },
     {
@@ -528,6 +528,31 @@
       "kind": "part_of"
     },
     {
+      "from": "direct-wave-authoring",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "part_of"
+    },
+    {
+      "from": "direct-wave-authoring",
+      "to": "agent-coordination",
+      "kind": "source"
+    },
+    {
+      "from": "direct-wave-authoring",
+      "to": "planning-handoff-and-agent-entry",
+      "kind": "source"
+    },
+    {
+      "from": "direct-wave-authoring",
+      "to": "cli",
+      "kind": "updates"
+    },
+    {
+      "from": "direct-wave-authoring",
+      "to": "delivery-and-waves",
+      "kind": "updates"
+    },
+    {
       "from": "documents-experience",
       "to": "tusker-trust-and-efficiency",
       "kind": "link"
@@ -594,16 +619,6 @@
     },
     {
       "from": "execution-observability-system",
-      "to": "overview",
-      "kind": "part_of"
-    },
-    {
-      "from": "factory-intake",
-      "to": "delivery-and-waves",
-      "kind": "link"
-    },
-    {
-      "from": "factory-intake",
       "to": "overview",
       "kind": "part_of"
     },
@@ -729,6 +744,11 @@
     },
     {
       "from": "planning-handoff-and-agent-entry",
+      "to": "model-level-configuration",
+      "kind": "link"
+    },
+    {
+      "from": "planning-handoff-and-agent-entry",
       "to": "skills-and-documentation",
       "kind": "link"
     },
@@ -771,6 +791,11 @@
       "from": "project-registration-and-visibility",
       "to": "work-area-redesign",
       "kind": "source"
+    },
+    {
+      "from": "project-registration-and-visibility-decisions",
+      "to": "project-registration-and-visibility",
+      "kind": "decides_for"
     },
     {
       "from": "project-registration-and-visibility-decisions",

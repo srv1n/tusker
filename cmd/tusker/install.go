@@ -394,25 +394,25 @@ func installSkillPayloadCopyFrom(destination, sourceArg string) error {
 	})
 }
 
-func skillCopySource(sourceArg string) ([]skillbundle.PayloadEntry, factoryIntakeContractProvenance, string, string, error) {
+func skillCopySource(sourceArg string) ([]skillbundle.PayloadEntry, authoringContractProvenance, string, string, error) {
 	if strings.TrimSpace(sourceArg) == "" {
 		entries, err := skillbundle.PayloadEntries()
 		if err != nil {
-			return nil, factoryIntakeContractProvenance{}, "", "", err
+			return nil, authoringContractProvenance{}, "", "", err
 		}
-		contract, err := embeddedFactoryIntakeContractProvenance()
+		contract, err := embeddedAuthoringContractProvenance()
 		return entries, contract, "embedded", portableSkillSourceIdentity("embedded"), err
 	}
 	source, err := canonicalSkillSourceDir(sourceArg)
 	if err != nil {
-		return nil, factoryIntakeContractProvenance{}, "", "", err
+		return nil, authoringContractProvenance{}, "", "", err
 	}
 	if err := validateCurrentCanonicalTuskerSkillPackage(source); err != nil {
-		return nil, factoryIntakeContractProvenance{}, "", "", err
+		return nil, authoringContractProvenance{}, "", "", err
 	}
-	contract, err := factoryIntakeContractProvenanceFromPackage(source)
+	contract, err := authoringContractProvenanceFromPackage(source)
 	if err != nil {
-		return nil, factoryIntakeContractProvenance{}, "", "", err
+		return nil, authoringContractProvenance{}, "", "", err
 	}
 	entries := []skillbundle.PayloadEntry{}
 	err = filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
@@ -449,7 +449,7 @@ func skillCopySource(sourceArg string) ([]skillbundle.PayloadEntry, factoryIntak
 		return nil
 	})
 	if err != nil {
-		return nil, factoryIntakeContractProvenance{}, "", "", err
+		return nil, authoringContractProvenance{}, "", "", err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Relative < entries[j].Relative })
 	return entries, contract, "canonical", portableSkillSourceIdentity("canonical"), nil

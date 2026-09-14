@@ -67,7 +67,7 @@ func ensureV7ImplicitSingletonDeliveryUnit(vaultPath, taskID string, args Args) 
 
 	// Creation spans the wave and its task back-pointer. Keep the material
 	// epoch held while reloading both records and commit them through the same
-	// guarded transaction used by delivery import.
+	// guarded transaction used by wave create.
 	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
 	if err != nil {
 		return "", false, err
@@ -84,7 +84,7 @@ func ensureV7ImplicitSingletonDeliveryUnit(vaultPath, taskID string, args Args) 
 	if waveID := stringField(task.Data, "wave"); waveID != "" {
 		return waveID, false, nil
 	}
-	if err := ensureDeliveryWorkNamespaces(vaultPath); err != nil {
+	if err := ensureV7WorkNamespaces(vaultPath); err != nil {
 		return "", false, err
 	}
 	id := nextV7WaveID(vaultPath)
@@ -133,7 +133,7 @@ func ensureV7ImplicitSingletonDeliveryUnit(vaultPath, taskID string, args Args) 
 	if err != nil {
 		return "", false, err
 	}
-	if err := commitDeliveryWritesGuardedWithLocks(map[string]string{wavePath: waveContent, task.AbsolutePath: taskContent}, 0, nil, []*v7DocumentLock{materialLock, taskLock}); err != nil {
+	if err := commitV7DocumentWritesWithLocks(map[string]string{wavePath: waveContent, task.AbsolutePath: taskContent}, 0, []*v7DocumentLock{materialLock, taskLock}); err != nil {
 		return "", false, err
 	}
 	if err := emitV7Event(vaultPath, id, "wave", "implicit_delivery_unit_created", actor, map[string]any{"task": taskID, "policy_mode": policy.Mode}); err != nil {

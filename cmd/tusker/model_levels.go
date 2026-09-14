@@ -81,6 +81,9 @@ func modelLevelForNote(note Note, lane string) (string, string, error) {
 	if lane == runLaneReview {
 		field = "review_level"
 	}
+	if _, explicitlyUnclassified := note.Data["work_level"]; explicitlyUnclassified && strings.TrimSpace(stringField(note.Data, "work_level")) == "" {
+		return "", "task frontmatter", tuskerError(errorConfigInvalid, "work_level is required for agent work; use light, standard, or demanding")
+	}
 	if explicit := strings.ToLower(strings.TrimSpace(stringField(note.Data, field))); explicit != "" {
 		if !validModelLevel(explicit) {
 			return "", "", tuskerError(errorConfigInvalid, field+" must be light, standard, or demanding")

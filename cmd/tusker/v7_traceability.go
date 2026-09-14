@@ -428,3 +428,17 @@ func v7WorkStreamRefID(raw string) string {
 	}
 	return ""
 }
+
+func v7SpecRefPath(vaultPath, ref string) string {
+	clean := v7CleanSpecRef(ref)
+	if clean == "" || v7SpecRefPathEscapes(clean) || filepath.IsAbs(clean) {
+		return ""
+	}
+	if id := v7SpecRefDecisionID(clean); id != "" {
+		return filepath.Join(vaultPath, "work", "decisions", id+".md")
+	}
+	if strings.HasPrefix(clean, "work/") {
+		return filepath.Join(vaultPath, filepath.FromSlash(clean))
+	}
+	return filepath.Join(v7RepoRoot(vaultPath), filepath.FromSlash(clean))
+}

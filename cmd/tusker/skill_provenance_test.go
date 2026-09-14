@@ -30,7 +30,7 @@ func TestMaterializedSkillProvenanceClassifiesFreshnessAndLocalEdits(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(manifestPath, strings.Replace(string(raw), "factory_intake_contract_version: 1.1.0", "factory_intake_contract_version: 0.0.0", 1)); err != nil {
+	if err := writeText(manifestPath, strings.Replace(string(raw), "authoring_contract_version: "+authoringContractSchemaVersionForTest(t), "authoring_contract_version: 0.0.0", 1)); err != nil {
 		t.Fatal(err)
 	}
 	if got := inspectSkillMaterialization(destination); got.Status != "incompatible" {
@@ -83,17 +83,17 @@ func TestSymlinkProvenanceReadsLiveTarget(t *testing.T) {
 	if got := inspectSkillMaterialization(link); got.Status != "current" {
 		t.Fatalf("retargeted symlink used stale cache: %#v", got)
 	}
-	assetPath := filepath.Join(second, "assets", "factory-intake-contract.yaml")
+	assetPath := filepath.Join(second, "assets", "authoring-contract.yaml")
 	asset, err := os.ReadFile(assetPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	currentContract, err := embeddedFactoryIntakeContractProvenance()
+	currentContract, err := embeddedAuthoringContractProvenance()
 	if err != nil {
 		t.Fatal(err)
 	}
 	staleAsset := strings.Replace(string(asset), "contract_version: "+currentContract.Version, "contract_version: 1.0.0", 1)
-	staleContract, err := factoryIntakeContractProvenanceFromRaw([]byte(staleAsset))
+	staleContract, err := authoringContractProvenanceFromRaw([]byte(staleAsset))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,68 +132,6 @@ func TestSkillBundleProvenanceIsPortable(t *testing.T) {
 				t.Fatalf("bundle provenance leaked local path %q: %s", forbidden, raw)
 			}
 		}
-	}
-}
-
-func TestWaveFactoryContractPreflightRejectsClaimedDriftAndKeepsLegacyCompatible(t *testing.T) {
-	repo := t.TempDir()
-	vault := filepath.Join(repo, ".tusker")
-	for _, destination := range []string{filepath.Join(repo, ".agents", "skills", "tusker"), filepath.Join(repo, ".claude", "skills", "tusker")} {
-		if err := installSkillPayloadCopy(destination); err != nil {
-			t.Fatal(err)
-		}
-	}
-	contract, err := embeddedFactoryIntakeContractProvenance()
-	if err != nil {
-		t.Fatal(err)
-	}
-	claimed := Note{Data: map[string]any{
-		"factory_intake_contract_schema":      contract.Schema,
-		"factory_intake_contract_version":     contract.Version,
-		"factory_intake_contract_fingerprint": contract.Fingerprint,
-	}}
-	if got := waveFactoryIntakeContractBlockers(vault, claimed); len(got) != 0 {
-		t.Fatalf("current factory wave blockers = %#v", got)
-	}
-	stale := claimed
-	stale.Data = cloneMap(claimed.Data)
-	stale.Data["factory_intake_contract_version"] = "0.0.0"
-	if got := strings.Join(waveFactoryIntakeContractBlockers(vault, stale), "\n"); !strings.Contains(got, "regenerate the V2 plan") {
-		t.Fatalf("stale planned contract blocker = %q", got)
-	}
-	if err := os.Remove(filepath.Join(repo, ".agents", "skills", "tusker", skillProvenanceFilename)); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(waveFactoryIntakeContractBlockers(vault, claimed), "\n"); !strings.Contains(got, "missing_provenance") || !strings.Contains(got, "tusker skill sync --repo .") {
-		t.Fatalf("missing installed provenance blocker = %q", got)
-	}
-	if err := installSkillPayloadCopy(filepath.Join(repo, ".agents", "skills", "tusker")); err != nil {
-		t.Fatal(err)
-	}
-	claudeManifest := filepath.Join(repo, ".claude", "skills", "tusker", skillProvenanceFilename)
-	raw, err := os.ReadFile(claudeManifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(claudeManifest, strings.Replace(string(raw), "factory_intake_contract_version: 1.1.0", "factory_intake_contract_version: 0.0.0", 1)); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(waveFactoryIntakeContractBlockers(vault, claimed), "\n"); !strings.Contains(got, ".claude skill is incompatible") || !strings.Contains(got, "tusker skill sync --repo .") {
-		t.Fatalf("mixed managed install blocker = %q", got)
-	}
-	if err := os.RemoveAll(filepath.Join(repo, ".agents", "skills", "tusker")); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(waveFactoryIntakeContractBlockers(vault, claimed), "\n"); !strings.Contains(got, ".agents skill is missing") {
-		t.Fatalf("missing managed surface blocker = %q", got)
-	}
-	legacy := Note{Data: map[string]any{}}
-	if got := waveFactoryIntakeContractBlockers(vault, legacy); len(got) != 0 {
-		t.Fatalf("legacy wave lost compatibility: %#v", got)
-	}
-	legacyV2 := Note{Data: map[string]any{"delivery_plan_schema": deliveryPlanV2Schema}}
-	if got := strings.Join(waveFactoryIntakeContractBlockers(vault, legacyV2), "\n"); !strings.Contains(got, "missing from a V2-derived wave") || !strings.Contains(got, "re-import") {
-		t.Fatalf("unclaimed legacy V2 wave remained executable: %q", got)
 	}
 }
 
@@ -273,14 +211,6 @@ func TestSymlinkMatchingMetadataWithoutCanonicalPackageIsIncompatible(t *testing
 			t.Fatalf("fake matching-metadata symlink = %#v", got)
 		}
 	}
-	contract, err := embeddedFactoryIntakeContractProvenance()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wave := Note{Data: map[string]any{"factory_intake_contract_schema": contract.Schema, "factory_intake_contract_version": contract.Version, "factory_intake_contract_fingerprint": contract.Fingerprint}}
-	if got := strings.Join(waveFactoryIntakeContractBlockers(filepath.Join(repo, ".tusker"), wave), "\n"); strings.Count(got, "is incompatible") != 2 {
-		t.Fatalf("fake targets did not block both managed surfaces: %q", got)
-	}
 }
 
 func TestSkillSyncRejectsRepoParentSymlinkWithoutTouchingExternalContent(t *testing.T) {
@@ -329,4 +259,13 @@ func TestSkillBundleRefusesBroadOrArbitraryExistingOutput(t *testing.T) {
 	if err := skillBundleCmd(Args{"repo": repo, "out": link, "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "not a symlink") {
 		t.Fatalf("bundle accepted symlink output: %v", err)
 	}
+}
+
+func authoringContractSchemaVersionForTest(t *testing.T) string {
+	t.Helper()
+	contract, err := embeddedAuthoringContractProvenance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contract.Version
 }

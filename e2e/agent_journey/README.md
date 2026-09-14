@@ -8,15 +8,15 @@ launching a worker; it derives the one valid context fingerprint from the
 pinned candidate and repository state.
 
 The fixture sets the existing project-local `automation.workspace.strategy`
-to `shared` before it derives the planning context. This is for one direct
+to `shared` before it authors the wave. This is for one direct
 interactive task with declared non-overlapping owned paths; it is not a daemon
 or wave setting. `work start` requires a clean Git tree outside `.tusker`.
 Because `tusker init` writes the shipped skills and `docs/system` into the
-fixture repository, establish those generated files and the pinned context as
+fixture repository, establish those generated files as
 the Git baseline before launching the implementer. The worker then leaves its
 scoped implementation material uncommitted for the submit protocol.
 
-The fixture has a locked spec and delivery plan with two independent owned
+The fixture has a locked spec and a wave-authoring request with two independent owned
 paths. The implementer prompt deliberately injects a failed first work session
 before recovery. The reviewer prompt requires the native `work review` packet
 and executes its `next` command verbatim after filling only its verdict,

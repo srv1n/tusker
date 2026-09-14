@@ -8,16 +8,18 @@ automation, or claim authority you were not given. Never change `HOME`,
 If any command reports a sandbox or registry write refusal, stop and return
 that exact refusal.
 
-1. Read `.tusker/specs/fresh-agent.md` and `delivery.yaml`.
-2. The release operator has already initialized and imported the pinned V2
-   plan. Read its capsule and use the exact task ID it reports. Register this
-   temporary project with `tusker projects add --repo . --vault ./.tusker` only
-   if it is not already registered; do not enable automation.
-3. Report the imported DAG and the exact task ID for `greeting`. Ensure the
-   task declares `owned/greeting.txt`; do not edit the sibling task. Make the
-   ordinary direct task ready with `tusker status <TASK-ID> ready --by
+1. Read `.tusker/specs/fresh-agent.md` and `wave-authoring.yaml`.
+2. The release operator has already initialized the vault and authored the
+   pinned wave through `tusker wave create --file wave-authoring.yaml`. Read
+   its review (`tusker wave review <WAVE-ID>`) and use the exact task ID it
+   reports. Register this temporary project with `tusker projects add --repo .
+   --vault ./.tusker` only if it is not already registered; do not enable
+   automation.
+3. Report the authored task graph and the exact task ID for `greeting`. Ensure
+   the task declares `owned/greeting.txt`; do not edit the sibling task. Make
+   the ordinary direct task ready with `tusker status <TASK-ID> ready --by
    agent:fresh-muse --reason "Ready for direct interactive work"`. This does
-   not arm a delivery wave or authorize a daemon.
+   not start the wave or authorize a daemon.
 4. Start the greeting through `tusker work start <TASK-ID> --by
    agent:fresh-muse --source codex`. Record its JSON packet. Deliberately fail
    that first session with `tusker work fail <TASK-ID> --by agent:fresh-muse

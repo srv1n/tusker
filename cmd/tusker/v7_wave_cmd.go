@@ -30,18 +30,10 @@ func waveV7Cmd(args Args) error {
 		return waveV7OutcomeCmd(shiftV7WaveArgs(args, 1))
 	case "brief":
 		return waveV7BriefCmd(shiftV7WaveArgs(args, 1))
-	case "preflight":
-		return waveV7PreflightCmd(shiftV7WaveArgs(args, 1))
-	case "arm":
-		return waveV7ArmCmd(shiftV7WaveArgs(args, 1))
 	case "pause":
 		return waveV7PauseCmd(shiftV7WaveArgs(args, 1))
 	case "resume":
 		return waveV7ResumeCmd(shiftV7WaveArgs(args, 1))
-	case "disarm":
-		return waveV7DisarmCmd(shiftV7WaveArgs(args, 1))
-	case "refingerprint", "re-fingerprint":
-		return waveV7RefingerprintCmd(shiftV7WaveArgs(args, 1))
 	default:
 		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show|brief|preflight|arm|pause|resume|disarm|refingerprint ...")
 	}
@@ -72,6 +64,9 @@ func waveV7CreateCmd(args Args) error {
 	}
 	if err := ensureV7ControlMutation(vaultPath, args); err != nil {
 		return err
+	}
+	if strings.TrimSpace(args.String("file")) != "" {
+		return waveV7DirectAuthoringCmd(vaultPath, args)
 	}
 	title := strings.TrimSpace(firstNonEmpty(args.String("title"), args.String("_pos0")))
 	if title == "" {

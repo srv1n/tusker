@@ -365,14 +365,10 @@ func TestRealWorkLifecycleAllowedParallelWaves(t *testing.T) {
 	if blockers := v7TaskDispatchBlockersWithAuthorization(vault, note, true); len(blockers) == 0 {
 		t.Fatal("disarmed wave member reports no authorization blocker")
 	}
-	if err := waveV7ArmCmd(Args{"vault": vault, "id": "W-0001", "local": "true", "by": "agent:w3"}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "human") {
-		t.Fatalf("agent arm was not refused on human authority: %v", err)
+	if err := waveStartCmd(Args{"vault": vault, "_pos0": "W-0001", "by": "agent:w3", "quiet": "true"}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "human") {
+		t.Fatalf("agent wave start was not refused on human authority: %v", err)
 	}
-	// The human arm runs through the same mutation service the CLI calls;
-	// the green preflight environment is the established test primitive for
-	// infrastructure preconditions, while the human authority stays real.
-	green := greenWaveEnvironment()
-	if err := mutateWaveAuthorization(Args{"vault": vault, "_pos0": "W-0001", "local": "true", "by": "human:sarav", "quiet": "true"}, "armed", &green); err != nil {
+	if err := waveStartCmd(Args{"vault": vault, "_pos0": "W-0001", "by": "human:sarav", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	idx, err := loadV7Index(vault)
@@ -387,7 +383,7 @@ func TestRealWorkLifecycleAllowedParallelWaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if run, _ := store.FindRun("APP-T-0004"); run != nil {
-		t.Fatalf("arming auto-started work: %#v", run)
+	if run, _ := store.FindRun("APP-T-0004"); run != nil && run.LeaseOwner != "" {
+		t.Fatalf("wave start auto-claimed work without the daemon: %#v", run)
 	}
 }

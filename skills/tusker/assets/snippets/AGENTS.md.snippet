@@ -1,24 +1,21 @@
 ## Tusker task tracking
 
-Use Tusker only for task contracts and task management: requirements,
-acceptance, dependencies, lifecycle state, proof, gates, and closeout.
+Use the `tusker` skill for tracked work and canonical repo-knowledge lookup.
+Load the guide for the current task stage; a status question needs no closeout
+procedure.
 
 - Inspect with `tusker show <TASK-ID> --capsule`, `tusker list`, or
   `tusker search`.
 - Create records with `tusker new epic|task|gate|decision`.
-- Change lifecycle state with `tusker status`, `tusker discard`, or
-  `tusker close`.
-- Record acceptance proof with `tusker verify add` and inspect it with
-  `tusker proof status`.
-- Use the CLI before direct markdown edits. Never hand-edit protected
-  lifecycle, proof, gate, or generated fields.
-- If task tracking is broken, report it separately. Do not turn tracker repair
-  into an unrequested prerequisite for source work.
+- Use the CLI before direct markdown edits to tracker records. Lifecycle,
+  proof, gates, and generated fields are CLI-managed.
+- Interactive implementation uses `tusker work start`; dispatched workers
+  follow their existing claim. Neither path authorizes another worker or daemon.
 
-Tusker task records do not grant authority over source changes, repository
-operations, releases, providers, credentials, or spending. Those remain under
-the user's request and repository rules.
+Tusker task records do not grant authority beyond the user's request and
+repository rules. Complete authorized work and affected checks; report tracker
+failures separately from implementation results.
 
 If `agent_action: stop_until_human_response` or
-`readiness: waiting_on_human` is present, stop changing Tusker state and report
-the exact human action plus task/gate ID.
+`readiness: waiting_on_human` is present, stop mutation of that work and report
+the task/gate ID and required human action. Continue independent authorized work.

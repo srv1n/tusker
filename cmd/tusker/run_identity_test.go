@@ -14,6 +14,14 @@ func TestSessionMetadataWorkspaceIdentityResume(t *testing.T) {
 	if err := store.SaveSession(RunnerSession{ProjectID: run.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: "session-1", WorkspacePath: identity.WorkspacePath, Resumable: true, State: "open"}); err != nil {
 		t.Fatal(err)
 	}
+	for _, auth := range []RunAuthorization{
+		{ProjectID: run.ProjectID, RecordID: run.RecordID, LeaseGeneration: 1, AttemptID: "attempt-worker", Source: "codex", Actor: "agent:worker", Trigger: "self_implementation;source=codex;conversation=worker;host=local"},
+		{ProjectID: run.ProjectID, RecordID: run.RecordID, LeaseGeneration: 2, AttemptID: "attempt-reviewer", Source: "codex", Actor: "reviewer:agent", Trigger: "work_review;source=codex;conversation=reviewer;host=local"},
+	} {
+		if err := store.SaveRunAuthorization(auth); err != nil {
+			t.Fatal(err)
+		}
+	}
 	inspection, err := buildRunInspection(store, &run)
 	if err != nil {
 		t.Fatal(err)
@@ -24,6 +32,11 @@ func TestSessionMetadataWorkspaceIdentityResume(t *testing.T) {
 	if !inspection.Resume.Supported || !strings.Contains(inspection.Resume.Command, "session-1") {
 		t.Fatalf("resume: %#v", inspection.Resume)
 	}
+	if len(inspection.Authorizations) != 2 || inspection.Authorizations[0].LeaseGeneration != 1 || inspection.Authorizations[1].LeaseGeneration != 2 {
+		t.Fatalf("authorization history: %#v", inspection.Authorizations)
+	}
+	assertEqual(t, "attempt-worker", inspection.Authorizations[0].AttemptID, "worker authorization attempt")
+	assertEqual(t, "attempt-reviewer", inspection.Authorizations[1].AttemptID, "reviewer authorization attempt")
 }
 
 func TestCodexSessionIdentityIgnoresNestedSubagentAndMessageIDs(t *testing.T) {

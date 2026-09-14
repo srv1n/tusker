@@ -39,18 +39,20 @@ describe("task search", () => {
   });
 
   test("exposes the same palette globally, on mobile, and in the panel", () => {
+    const projectStrip = source("src/features/workbench/navigation/ProjectStrip.tsx");
     expect(source("src/routes/__root.tsx")).toContain("<TaskSearch />");
-    expect(source("src/routes/__root.tsx")).toContain("onClick={openTaskSearch}");
+    expect(projectStrip).toContain("openTaskSearch()");
     expect(source("src/components/Sidebar.tsx")).not.toContain("openTaskSearch");
     expect(source("src/features/panel/Panel.tsx")).toContain("onClick={openTaskSearch}");
   });
 
   test("keeps sidebar focused on project navigation", () => {
     const sidebar = source("src/components/Sidebar.tsx");
+    const projectStrip = source("src/features/workbench/navigation/ProjectStrip.tsx");
     expect(sidebar).not.toContain('>Today<');
     expect(sidebar).not.toContain("Notifications");
     expect(sidebar).not.toContain('>Search<');
-    expect(source("src/routes/__root.tsx")).toContain("NotificationControl");
+    expect(projectStrip).toContain("NotificationControl");
   });
 
   test("supports keyboard open, movement, selection, and escape", () => {

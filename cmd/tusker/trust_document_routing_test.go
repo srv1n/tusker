@@ -11,8 +11,8 @@ import (
 	"tusker/internal/docgraph"
 )
 
-// TestTrustDocumentRouting is the focused contract check named by the
-// trust-4 delivery plan. It exercises the current corpus route, supersession,
+// TestTrustDocumentRouting is the focused contract check for the
+// trust-4 work item. It exercises the current corpus route, supersession,
 // broken-link reporting, and the bounded discovery journey at both fixture
 // sizes without reading the full document bodies.
 func TestTrustDocumentRouting(t *testing.T) {

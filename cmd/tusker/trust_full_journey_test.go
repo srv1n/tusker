@@ -93,31 +93,49 @@ class JourneyTest(unittest.TestCase):
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.validation.commands", []string{"true"}); err != nil {
 		t.Fatal(err)
 	}
-	plan := validDeliveryPlanV2()
-	plan.HumanGates = nil
-	plan.Scope, plan.Title, plan.SpecRefs = "trust-full-journey", "Trust full journey", []string{".tusker/specs/journey.md"}
-	plan.Epic, plan.EpicContract = "", &deliveryEpicContract{SourceKey: "trust-full-journey", AcronymHint: "JNY", Title: "Trust full journey"}
-	plan.Requirements = []deliveryRequirement{{ID: "R1", Outcome: "The implementation is confined to its declared material."}, {ID: "R2", Outcome: "The dependent task follows the implementation."}}
 	verificationCommand := "python3 -m unittest discover -s tests -p test_journey.py && printf x >> verification-count"
 	if scenario == "verification changes implementation" {
 		verificationCommand += " && printf 'changed after review' > owned/journey.txt"
 	}
-	plan.Tasks = []deliveryPlanTask{
-		{SourceKey: "implement", RequirementRefs: []string{"R1"}, Title: "Implement declared material", Outcome: "Write the locked implementation.", Acceptance: []deliveryAcceptance{{ID: "A1", Outcome: "The declared implementation exists."}}, Verification: []deliveryVerification{{Covers: "A1", Check: "command: " + verificationCommand}}, Artifact: deliveryArtifactContract{Kind: "diff_summary", Path: "owned/journey.txt", Summary: "Journey implementation.", AcceptanceIDs: []string{"A1"}}, OwnedPaths: []string{"owned/journey.txt"}, Priority: "p1", Risk: "low"},
-		{SourceKey: "dependent-doc", RequirementRefs: []string{"R2"}, Title: "Follow the implementation", Outcome: "Stay outside the implementation frontier until it succeeds.", Acceptance: []deliveryAcceptance{{ID: "A1", Outcome: "The dependency is durable."}}, Verification: []deliveryVerification{{Covers: "A1", Check: "command: true"}}, Dependencies: []deliveryDependency{{Task: "implement", Kind: "hard"}}, Artifact: deliveryArtifactContract{Kind: "diff_summary", Path: "docs/followup.md", Summary: "Dependent follow-up.", AcceptanceIDs: []string{"A1"}}, OwnedPaths: []string{"docs/followup.md"}, Priority: "p1", Risk: "low"},
+	trustJourneyCLI(t, vault, "new", "epic", "JNY", "--title", "Trust full journey")
+	journeyBody := func(title, outcome, check string) string {
+		return "# " + title + "\n\n## Intent\n\n" + outcome + "\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | " + outcome + " |\n\n## Verification\n\n| Covers | Check | Result |\n| --- | --- | --- |\n| A1 | command: " + check + " | pending |\n\n## Artifact\n\n- kind: diff_summary\n"
 	}
-	plan.ContextFingerprint = deliveryPlanV2ContextFingerprint(t, vault, plan)
-	rawPlan, err := yaml.Marshal(plan)
+	authoring := map[string]any{
+		"schema":      "tusker.wave-authoring/v1",
+		"request_key": "journey-" + strings.NewReplacer(" ", "-").Replace(scenario),
+		"title":       "Trust full journey",
+		"outcome":     "The implementation is confined to its declared material.",
+		"spec_refs":   []string{".tusker/specs/journey.md"},
+		"concurrency": 1,
+		"tasks": []map[string]any{
+			{
+				"key": "implement", "title": "Implement declared material", "work_level": "standard", "epic": "JNY",
+				"spec_refs":         []string{".tusker/specs/journey.md"},
+				"body":              journeyBody("Implement declared material", "The declared implementation exists.", verificationCommand),
+				"owned_paths":       []string{"owned/journey.txt"},
+				"generated_outputs": []string{"owned/journey.txt"},
+			},
+			{
+				"key": "dependent-doc", "title": "Follow the implementation", "work_level": "light", "epic": "JNY",
+				"body":              journeyBody("Follow the implementation", "The dependency is durable.", "true"),
+				"dependencies":      []map[string]any{{"task": "implement", "kind": "hard"}},
+				"owned_paths":       []string{"docs/followup.md"},
+				"generated_outputs": []string{"docs/followup.md"},
+			},
+		},
+	}
+	rawRequest, err := yaml.Marshal(authoring)
 	if err != nil {
 		t.Fatal(err)
 	}
-	planPath := filepath.Join(repo, "journey.yaml")
-	if err := os.WriteFile(planPath, rawPlan, 0o644); err != nil {
+	requestPath := filepath.Join(repo, "journey-wave.yaml")
+	if err := os.WriteFile(requestPath, rawRequest, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGitDir(t, repo, "add", ".")
 	runGitDir(t, repo, "commit", "-m", "seed journey contract")
-	trustJourneyCLI(t, vault, "delivery", "import", "--plan", planPath, "--by", "agent:fixture")
+	trustJourneyCLI(t, vault, "wave", "create", "--file", requestPath, "--by", "agent:fixture")
 
 	const taskID = "JNY-T-0001"
 	task, err := resolveV7Note(vault, taskID, "task")
@@ -125,14 +143,14 @@ class JourneyTest(unittest.TestCase):
 		t.Fatal(err)
 	}
 	if got := normalizeList(task.Data["owned_paths"]); strings.Join(got, ",") != "owned/journey.txt" || strings.Join(normalizeList(task.Data["spec_refs"]), ",") != ".tusker/specs/journey.md" {
-		t.Fatalf("delivery import lost declared material: %#v", task.Data)
+		t.Fatalf("direct authoring lost declared material: %#v", task.Data)
 	}
 	dependent, err := resolveV7Note(vault, "JNY-T-0002", "task")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := normalizeList(dependent.Data["dependencies"]); strings.Join(got, ",") != taskID+":hard" {
-		t.Fatalf("delivery import lost DAG edge: %#v", dependent.Data)
+		t.Fatalf("direct authoring lost DAG edge: %#v", dependent.Data)
 	}
 
 	trustJourneyReadyTask(t, vault, taskID)
@@ -188,8 +206,8 @@ class JourneyTest(unittest.TestCase):
 		LeaseGeneration: runtimeRun.LeaseGeneration, WorkRevision: runtimeRun.WorkRevision,
 		Deliverable: "recovered implementation", Verification: "A1 command will run during review", GateVerdicts: "A1=pass"}
 	lifecycleRequest := daemonControlRequest{Command: "worker_lifecycle", Identity: runtimeRun.ActiveAttemptID, ProjectID: runtimeRun.ProjectID, Worker: &request}
-	rawRequest, _ := json.Marshal(lifecycleRequest)
-	if err := os.WriteFile(workerLifecycleRequestPath(runtimeRun.WorkspacePath), rawRequest, 0o600); err != nil {
+	rawLifecycle, _ := json.Marshal(lifecycleRequest)
+	if err := os.WriteFile(workerLifecycleRequestPath(runtimeRun.WorkspacePath), rawLifecycle, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	statusRaw, _ := json.Marshal(runnerProcessStatus{ExitCode: 0, Outcome: string(AttemptOutcomeSucceeded), CompletedAt: time.Now().UTC().Format(time.RFC3339)})

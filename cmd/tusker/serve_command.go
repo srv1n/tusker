@@ -421,16 +421,22 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case path == "/api/delivery/plans":
-		s.handleDeliveryPlans(w, r)
-	case path == "/api/delivery/review":
-		s.handleDeliveryReview(w, r)
 	case path == "/api/stream":
 		s.handleStream(w, r)
 	case path == "/api/daemon":
 		s.handleDaemon(w, r)
 	case path == "/api/projects":
 		s.handleProjects(w, r)
+	case strings.HasPrefix(path, "/api/projects/"):
+		if projectID, ok := serveProjectIconID(path); ok {
+			s.handleProjectIcon(w, r, projectID)
+			return
+		}
+		if parts := strings.Split(strings.Trim(path, "/"), "/"); len(parts) == 6 && parts[3] == "waves" && parts[5] == "review" {
+			s.handleWaveReviewAPI(w, parts[2], parts[4])
+			return
+		}
+		serveJSON(w, http.StatusNotFound, map[string]any{"error": "project endpoint not found"})
 	case path == "/api/config":
 		s.handleConfig(w, r)
 	case path == "/api/needs":
@@ -1805,15 +1811,25 @@ func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id stri
 		serveJSON(w, http.StatusNotFound, map[string]any{"error": "task not found"})
 		return
 	}
+	detail := s.taskDetailFor(snap, task)
+	serveJSON(w, http.StatusOK, detail)
+}
+
+// taskDetailFor keeps task reads and post-action refreshes on the same contract.
+func (s *serveServer) taskDetailFor(snap serveSnapshot, task Note) serveTaskDetail {
 	detail := serveTaskDetail{
 		serveTaskCapsule:       serveTaskCapsuleFor(snap, task),
 		StateRevision:          stringField(task.Data, "state_rev"),
+		Architect:              stringField(task.Data, "architect"),
+		Origin:                 stringField(task.Data, "origin"),
 		AuthoredWorkLevel:      stringField(task.Data, "work_level"),
 		AuthoredReviewLevel:    stringField(task.Data, "review_level"),
+		AuthoredReviewReason:   stringField(task.Data, "review_reason"),
 		AuthoredExecuteProfile: stringField(task.Data, "execute_profile"),
 		AuthoredReviewProfile:  stringField(task.Data, "review_profile"),
 		EffectiveExecute:       routePreviewForNote(task, snap.workflow, runLaneExecute),
 		EffectiveReview:        routePreviewForNote(task, snap.workflow, runLaneReview),
+		Body:                   task.Body,
 		Intent:                 sectionContent(task.Body, "## Intent"),
 		Acceptance:             serveAcceptanceRows(task),
 		NonGoals:               serveBullets(sectionContent(task.Body, "## Non-goals")),
@@ -1834,11 +1850,16 @@ func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id stri
 	if len(detail.Contacts) == 0 {
 		detail.Contacts = authoredAgentContacts(task)
 	}
+	identity, identityErr := TaskAuthoringIdentityForTask(s.store, snap.projectID, task)
+	detail.AuthoringProvenance, detail.ContactBindings = identity.Provenance, identity.Contacts
+	if identityErr != nil {
+		detail.IdentityError = identityErr.Error()
+	}
 	detail.Messages, _ = s.store.ListAgentMessagesForTask(snap.projectID, stringField(task.Data, "id"))
 	if directive, directiveErr := s.store.RunDirective(snap.projectID, trackerRecordID(task)); directiveErr == nil && directive != nil {
 		detail.RunDirective = &serveRunDirective{State: directive.State, Actor: directive.Actor, CreatedAt: directive.CreatedAt, ExpiresAt: directive.ExpiresAt, Reason: directive.Reason}
 	}
-	serveJSON(w, http.StatusOK, detail)
+	return detail
 }
 
 func (s *serveServer) handleRoster(w http.ResponseWriter, r *http.Request) {
@@ -1926,11 +1947,14 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		group := serveWaveTaskGroup(snap, task)
 		counts[group]++
 		members = append(members, serveWaveTaskSummary{
-			ID:     taskID,
-			Title:  stringField(task.Data, "title"),
-			Group:  group,
-			Status: stringField(task.Data, "status"),
-			Proof:  firstNonEmpty(stringField(task.Data, "proof_status"), "pending"),
+			ID:               taskID,
+			Title:            stringField(task.Data, "title"),
+			Group:            group,
+			Status:           stringField(task.Data, "status"),
+			Proof:            firstNonEmpty(stringField(task.Data, "proof_status"), "pending"),
+			WorkLevel:        stringField(task.Data, "work_level"),
+			EffectiveExecute: routePreviewForNote(task, snap.workflow, runLaneExecute),
+			EffectiveReview:  routePreviewForNote(task, snap.workflow, runLaneReview),
 		})
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
@@ -1960,15 +1984,17 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		runs[firstNonEmpty(run.ItemID, run.RecordID)] = run
 	}
 	return serveWaveSummary{
-		ID:            stringField(wave.Data, "id"),
-		Title:         stringField(wave.Data, "title"),
-		Status:        stringField(wave.Data, "status"),
-		LandedAt:      nullIfBlank(stringField(wave.Data, "landed_at")),
-		MemberIDs:     normalizeList(wave.Data["members"]),
-		Members:       members,
-		Counts:        counts,
-		Authorization: waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
-		Brief:         buildWaveBriefWithRuns(idx, wave, runs),
+		ID:              stringField(wave.Data, "id"),
+		Title:           stringField(wave.Data, "title"),
+		ExpectedOutcome: stringField(wave.Data, "summary"),
+		Body:            wave.Body,
+		Status:          stringField(wave.Data, "status"),
+		LandedAt:        nullIfBlank(stringField(wave.Data, "landed_at")),
+		MemberIDs:       normalizeList(wave.Data["members"]),
+		Members:         members,
+		Counts:          counts,
+		Authorization:   waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
+		Brief:           buildWaveBriefWithRuns(idx, wave, runs),
 	}
 }
 

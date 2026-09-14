@@ -63,3 +63,9 @@ Implementation recommendation, not a claimed user choice: Represent both externa
 ## Follow-through
 
 Canonical contract: [[agent-coordination]]. The implementation plan emits independently owned identity, mailbox, transport, clarification, wave-continuation, UI and qualification tasks. Current system documents change with verified implementation; this planning session does not certify or launch the feature.
+
+## D9 — Wave-level supervision inspired by Fusion — 12 September 2026
+
+The user supplied Cognition's local Fusion article and clarified that Tusker operates above a fixed coding-agent pair: the primary frontier model owns design/specification/tasks and waves; Tusker performs routine coordination; workers ask material questions during execution; accepted or actionable stalled waves return to the architect. Persistent architect/worker contexts and compact briefs/results/feedback are useful transfers. Making the lead review every individual worker patch is not required by this product direction. Existing independent acceptance authority remains unchanged.
+
+The user requested detailed ordered tasks and recommendations among Luna XHigh, Terra High, Sol Low and Sol Medium. The canonical follow-up section records those recommendations and the fixed-route proof requirements. A two-correction pilot ceiling is a planning recommendation, not a user-approved global default. No cost saving is asserted from Cognition's results or from Tusker's earlier offline tests. Source: https://cognition.com/blog/local-fusion

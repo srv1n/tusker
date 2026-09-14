@@ -22,15 +22,15 @@ test("secondary task workflows are progressively disclosed one at a time", () =>
   expect(task).toContain('setActiveAction("")');
 });
 
-test("ready and rework tasks expose one-shot daemon dispatch with visible lifecycle state", () => {
-  expect(task).toContain("const runnable = currentStatus === \"ready\" || currentStatus === \"rework\"");
-  expect(task).toContain("runTask.mutate()");
+test("startable tasks expose direct task start with visible directive state", () => {
+  expect(task).toContain('const runnable = !runBlocker && currentStatus !== "in_progress" && currentStatus !== "blocked"');
+  expect(task).toContain("taskStart.mutate()");
   expect(task).not.toContain("human:serve");
-  expect(task).toContain('directiveQueued ? "Queued for dispatch" : "Run once"');
+  expect(task).toContain('directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"');
   for (const state of ["queued", "lapsed", "consumed"]) {
     expect(task).toContain(`task.runDirective.state === "${state}"`);
   }
-  expect(task).toContain("<ActionResultLine pending={runTask.isPending} error={runTask.error} result={runTask.data} />");
+  expect(task).toContain("<ActionResultLine pending={taskStart.isPending} error={taskStart.error} result={taskStart.data} />");
 });
 
 test("Serve evidence starts pending review without free-text acceptance authority", () => {

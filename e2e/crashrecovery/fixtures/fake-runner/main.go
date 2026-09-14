@@ -220,7 +220,7 @@ func runDeliveryFixture(tuskerBin string) error {
 		if err := run("test", "-s", relPath); err != nil {
 			return err
 		}
-		return submitDeliveryReview(tuskerBin, taskID)
+		return submitTaskReview(tuskerBin, taskID)
 	}
 	artifactDir := filepath.Join(workspace, "artifacts", "delivery")
 	docDir := filepath.Join(workspace, "docs", "delivery")
@@ -253,7 +253,7 @@ func runDeliveryFixture(tuskerBin string) error {
 	return submitTaskWork(tuskerBin, "fixture implementation and durable artifact complete", focusedCheck)
 }
 
-func submitDeliveryReview(tuskerBin, taskID string) error {
+func submitTaskReview(tuskerBin, taskID string) error {
 	prompt, err := os.ReadFile(os.Getenv("TUSKER_PROMPT_PATH"))
 	if err != nil {
 		return fmt.Errorf("read injected reviewer prompt: %w", err)

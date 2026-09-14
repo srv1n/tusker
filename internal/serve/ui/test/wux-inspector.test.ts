@@ -15,6 +15,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
+import { taskRunBlocker } from "../src/features/product/TaskScreens";
 import {
   acceptedDelivery,
   actualStage,
@@ -103,6 +104,13 @@ describe("inspector execution identity", () => {
 });
 
 describe("inspector task routing", () => {
+  test("a planned backlog task is startable without wave-first choreography", () => {
+    const planned = { ...readyTask, status: "backlog" as const, rawStatus: "backlog", readiness: "held" as const, hasGate: false, humanAction: undefined, humanActions: [], effectiveExecute: { profile: "worker", model: "gpt-worker", effort: "medium", harness: "codex_exec", blockers: [] }, effectiveReview: { profile: "reviewer", model: "gpt-review", effort: "high", harness: "codex_exec", blockers: [] } };
+    expect(taskRunBlocker(planned)).toBeUndefined();
+    const html = render({ task: planned, run: null });
+    expect(html).toContain(`aria-label="Start task ${planned.id}"`);
+  });
+
   test("shows the default tier, predicted routes, and recorded current identity", () => {
     const task = {
       ...readyTask,
@@ -112,9 +120,10 @@ describe("inspector task routing", () => {
     const run = { ...readyRun, runnerProfile: "actual-reviewer", runnerHarness: "codex_exec", model: "gpt-actual", lane: "review" as const };
     const html = render({ task, run, executionIdentity: undefined });
     expect(html).toContain("Tier 2 · Standard");
-    expect(html).toContain("Will execute");
+    expect(html).toContain(">Worker<");
     expect(html).toContain("worker · gpt-worker · medium");
-    expect(html).toContain("actual-reviewer · gpt-actual · codex_exec · review");
+    expect(html).toContain("Current reviewer:");
+    expect(html).toContain("actual-reviewer · gpt-actual · codex_exec");
   });
 });
 

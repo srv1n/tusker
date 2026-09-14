@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { Play } from "lucide-react";
 import { api } from "@/lib/api";
-import { qk, useRun, useRuns, useTask, useTasks, useWaveExecute, useWaves } from "@/lib/queries";
+import { qk, useRun, useRuns, useTask, useTasks, useWaves } from "@/lib/queries";
+import { WaveAuthorityControls, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
 import { TaskBoard } from "../board";
 import { WaveFlow, type FlowViewport } from "../flow";
 import { TaskInspector } from "../inspector/TaskInspector";
@@ -72,7 +72,6 @@ export function WorkWave() {
   const location = useRouterState({ select: (state) => state.location });
   const waves = useWaves(projectId);
   const runs = useRuns(projectId);
-  const execute = useWaveExecute(projectId);
   const wave = waves.data?.find((item) => item.id === waveId);
   // Member details use the canonical task key so stream events and run/wave
   // mutations invalidate them exactly like the inspector's useTask read.
@@ -97,9 +96,8 @@ export function WorkWave() {
   const view = wave ? (chosenView ?? enteredView ?? initialWaveView(wave, requested)) : "flow";
   if (waves.isPending || !wave) return <Shell><p role={waves.error ? "alert" : "status"} className="text-[13px] text-muted">{waves.error ? "Wave unavailable." : "Loading wave…"}</p></Shell>;
   return <Shell>
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{wave.id}</p><h2 className="mt-1 font-serif text-[26px] font-semibold">{wave.title}</h2>{(wave.expectedOutcome ?? wave.brief.expectedOutcome) && <p className="mt-2 max-w-2xl text-[13px] text-muted">{wave.expectedOutcome ?? wave.brief.expectedOutcome}</p>}</div><div className="flex gap-2"><button type="button" aria-label="Start wave" disabled={execute.isPending || Boolean(wave.landedAt)} onClick={() => execute.mutate({ waveId: wave.id })} className="inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-2 text-[12px] font-semibold text-surface disabled:opacity-50"><Play size={14} fill="currentColor" aria-hidden="true" />{execute.isPending ? "Starting…" : "Start"}</button><button type="button" aria-pressed={view === "flow"} onClick={() => setChosenView("flow")} className="rounded-md border border-line px-3 py-2 text-[12px]">Flow</button><button type="button" aria-pressed={view === "results"} onClick={() => setChosenView("results")} className="rounded-md border border-line px-3 py-2 text-[12px]">Results</button></div></div>
-    {Boolean(execute.error) && <p role="alert" className="mb-4 text-[12px] text-danger">{execute.error instanceof Error ? execute.error.message : "Wave could not be started."}</p>}
-    {execute.data?.execution && <p role="status" className="mb-4 text-[12px] text-muted">{execute.data.execution.queuedTaskIds.length > 0 ? `Queued ${execute.data.execution.queuedTaskIds.length} tasks.` : "Wave already queued."}</p>}
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{wave.id}</p><h2 className="mt-1 font-serif text-[26px] font-semibold">{wave.title}</h2>{(wave.expectedOutcome ?? wave.brief.expectedOutcome) && <p className="mt-2 max-w-2xl text-[13px] text-muted">{wave.expectedOutcome ?? wave.brief.expectedOutcome}</p>}</div><div className="flex gap-2"><WaveAuthorityControls projectId={projectId} waveId={wave.id} compact /><button type="button" aria-pressed={view === "flow"} onClick={() => setChosenView("flow")} className="rounded-md border border-line px-3 py-2 text-[12px]">Flow</button><button type="button" aria-pressed={view === "results"} onClick={() => setChosenView("results")} className="rounded-md border border-line px-3 py-2 text-[12px]">Results</button></div></div>
+    <WaveReviewDetail projectId={projectId} waveId={wave.id} showControls={false} />
     {view === "results" ? <WaveResults wave={wave} tasks={tasks} onOpenFlow={() => setChosenView("flow")} onOpenTask={setSelected} /> : <WaveFlow memberIds={wave.memberIds} tasks={tasks} runs={runs.data ?? []} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={details.some((query) => query.isPending)} error={details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />}
     <InspectorHost selected={selected} onClose={() => setSelected(null)} />
   </Shell>;

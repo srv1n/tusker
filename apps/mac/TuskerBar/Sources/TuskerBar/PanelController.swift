@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import WebKit
 
 @MainActor
@@ -176,6 +177,8 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             onBridgeNotify(payload["title"] as? String ?? "Tusker", payload["body"] as? String ?? "", payload["path"] as? String)
         case "pickFolder":
             if let requestID = payload["requestId"] as? String { presentFolderPicker(requestID: requestID) }
+        case "pickImage":
+            if let requestID = payload["requestId"] as? String { presentImagePicker(requestID: requestID) }
         case "requestHumanReceipt":
             guard let requestID = payload["requestId"] as? String else { return }
             guard let projectID = payload["projectId"] as? String,
@@ -273,6 +276,14 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         }
     }
 
+    private func presentImagePicker(requestID: String) {
+        let picker = NSOpenPanel()
+        Self.configureImagePicker(picker)
+        picker.beginSheetModal(for: panel) { [weak self] response in
+            self?.webView.evaluateJavaScript(Self.imagePickerResponseScript(requestID: requestID, url: response == .OK ? picker.url : nil))
+        }
+    }
+
     private func isConfiguredOrigin(_ url: URL?) -> Bool {
         guard let url, let configuredOrigin = Self.configuredOrigin(config.baseURL) else { return false }
         return Self.configuredOrigin(url) == configuredOrigin
@@ -297,6 +308,52 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         return "window.tuskerShell?.receiveFolderPick(\(json));"
     }
 
+    static func configureImagePicker(_ picker: NSOpenPanel) {
+        picker.canChooseFiles = true
+        picker.canChooseDirectories = false
+        picker.allowsMultipleSelection = false
+        picker.allowedContentTypes = [.image]
+        picker.prompt = "Choose"
+    }
+
+    static func imagePickerResponseScript(requestID: String, url: URL?) -> String {
+        var payload: [String: Any] = ["requestId": requestID]
+        if let url {
+            if let data = try? Data(contentsOf: url), !data.isEmpty, data.count <= 8 * 1024 * 1024 {
+                let mime = UTType(filenameExtension: url.pathExtension.lowercased())?.preferredMIMEType ?? "application/octet-stream"
+                payload["file"] = ["name": url.lastPathComponent, "mime": mime, "data": data.base64EncodedString()]
+            } else {
+                payload["error"] = "That image could not be read; keep the file under 8 MB."
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return "" }
+        return "window.tuskerShell?.receiveImagePick(\(json));"
+    }
+
+    static func imagePickerScript(origin: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["origin": origin]), let json = String(data: data, encoding: .utf8) else { return "" }
+        return """
+        (() => {
+          const config = \(json);
+          if (window.location.origin !== config.origin) return;
+          const shell = window.tuskerShell = window.tuskerShell || {};
+          const imageRequests = new Map();
+          shell.pickImage = () => new Promise((resolve) => {
+            const requestId = window.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random()}`;
+            imageRequests.set(requestId, resolve);
+            window.webkit.messageHandlers.tuskerShell.postMessage({method:'pickImage', requestId});
+          });
+          shell.receiveImagePick = ({requestId, file, error}) => {
+            const resolve = imageRequests.get(requestId);
+            if (!resolve) return;
+            imageRequests.delete(requestId);
+            if (typeof error === 'string' && error.length > 0) { resolve({ error }); return; }
+            resolve(file && typeof file.data === 'string' ? file : undefined);
+          };
+        })();
+        """
+    }
+
     static func humanReceiptResponseScript(requestID: String, result: HumanReceiptBridgeResult) -> String {
         var payload: [String: Any] = ["requestId": requestID, "result": NSNull()]
         if let data = try? JSONEncoder().encode(result),
@@ -312,6 +369,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         guard let data = try? JSONSerialization.data(withJSONObject: configuration), let json = String(data: data, encoding: .utf8) else { return "" }
         return """
         \(folderPickerScript(origin: origin))
+        \(imagePickerScript(origin: origin))
         \(humanReceiptScript(origin: origin))
         (() => {
           const config = \(json);

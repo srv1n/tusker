@@ -15,6 +15,24 @@
 
 export const NAVIGATION_STORAGE_KEY = "tusker.wux.navigation.v1";
 export const NAVIGATION_STATE_VERSION = 2;
+export const NAVIGATION_CHANGED_EVENT = "tusker.navigation.changed";
+
+export const PROJECT_ICON_NAMES = [
+  "audio",
+  "auto",
+  "code",
+  "database",
+  "folder",
+  "globe",
+  "mic",
+  "music",
+  "package",
+  "phone",
+  "sparkles",
+  "terminal",
+  "text",
+] as const;
+export type ProjectIconName = (typeof PROJECT_ICON_NAMES)[number];
 
 /** Maximum wave shortcuts shown per expanded project. */
 export const MAX_WAVE_SHORTCUTS = 5;
@@ -27,6 +45,7 @@ export interface NavigationState {
   expandedProjectIds: string[];
   activeProjectId: string | null;
   lastPathByProject: Record<string, string>;
+  projectIconById: Record<string, ProjectIconName>;
   /** Opaque per-project view state (Work view/filter, wave view, selection, graph transform). */
   viewStateByProject: Record<string, unknown>;
 }
@@ -127,6 +146,7 @@ export function emptyNavigationState(): NavigationState {
     expandedProjectIds: [],
     activeProjectId: null,
     lastPathByProject: {},
+    projectIconById: {},
     viewStateByProject: {},
   };
 }
@@ -147,6 +167,10 @@ function knownIdList(value: unknown, projectIds: string[]): string[] {
     out.push(entry);
   }
   return out;
+}
+
+export function isProjectIconName(value: unknown): value is ProjectIconName {
+  return typeof value === "string" && (PROJECT_ICON_NAMES as readonly string[]).includes(value);
 }
 
 /**
@@ -177,6 +201,12 @@ export function sanitizeNavigationState(raw: unknown, projectIds: string[]): Nav
       }
     }
   }
+  const projectIconById: Record<string, ProjectIconName> = {};
+  if (isRecord(raw.projectIconById)) {
+    for (const [id, value] of Object.entries(raw.projectIconById)) {
+      if (known.has(id) && isProjectIconName(value)) projectIconById[id] = value;
+    }
+  }
   const viewStateByProject: Record<string, unknown> = {};
   if (isRecord(raw.viewStateByProject)) {
     for (const [id, value] of Object.entries(raw.viewStateByProject)) {
@@ -193,6 +223,7 @@ export function sanitizeNavigationState(raw: unknown, projectIds: string[]): Nav
     expandedProjectIds: expanded,
     activeProjectId: active,
     lastPathByProject,
+    projectIconById,
     viewStateByProject,
   };
 }
@@ -285,6 +316,20 @@ export function toggleProjectPinned(
   projectId: string,
 ): NavigationState {
   return setProjectPinned(state, projectIds, projectId, !state.pinnedProjectIds.includes(projectId));
+}
+
+/** Store a local presentation choice without writing project or repository config. */
+export function setProjectIcon(
+  state: NavigationState,
+  projectIds: string[],
+  projectId: string,
+  icon: ProjectIconName,
+): NavigationState {
+  if (!projectIds.includes(projectId)) return state;
+  const projectIconById = { ...state.projectIconById };
+  if (icon === "auto") delete projectIconById[projectId];
+  else projectIconById[projectId] = icon;
+  return { ...state, projectIconById };
 }
 
 /** Move a project within the saved pin order; unpinned projects are unaffected. */

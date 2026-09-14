@@ -19,10 +19,6 @@ import type {
   ActionResult,
   ConfigResolution,
   SetupDoctorResult,
-  DeliveryErrorPayload,
-  DeliveryPlanList,
-  DeliveryReview,
-  DeliveryStartResult,
   AttemptDetail,
   DecisionDoc,
   DocContent,
@@ -49,7 +45,8 @@ import type {
   TaskCapsule,
   TaskDetail,
   WaveSummary,
-  WaveExecuteResult,
+  WaveReview,
+  DirectStartResult,
   ExecutionGraph,
   ExecutionInbox,
   ExecutionTimeline,
@@ -133,7 +130,11 @@ async function capabilityFetch(
 
 async function real<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`, { headers: { accept: "application/json" } });
-  if (!res.ok) throw new ApiError(res.status, `GET /api${path} → ${res.status}`);
+  if (!res.ok) {
+    const contentType = res.headers.get("content-type") ?? "";
+    const detail = contentType.includes("json") ? "" : " (non-JSON response)";
+    throw new ApiError(res.status, `GET /api${path} → ${res.status}${detail}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -202,37 +203,6 @@ export function requireAccepted<T extends { reason?: string; refused?: boolean; 
   return result;
 }
 
-export class DeliveryError extends ApiError {
-  constructor(status: number, public problem: DeliveryErrorPayload) {
-    super(status, problem.error.message);
-    this.name = "DeliveryError";
-  }
-}
-
-async function deliveryRequest<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
-  const init: RequestInit = {
-    method,
-    headers: { accept: "application/json", "content-type": "application/json" },
-    credentials: "same-origin",
-    body: body === undefined ? undefined : JSON.stringify(body),
-  };
-  const res = method === "POST" ? await capabilityFetch(`/api${path}`, init) : await fetch(`/api${path}`, init);
-  const payload = await res.json().catch(() => null) as T | DeliveryErrorPayload | { reason?: string; error?: string } | null;
-  if (!res.ok) {
-    if (payload === null) {
-      throw new ApiError(res.status, `${method} /api${path} returned a non-JSON error response`);
-    }
-    if (typeof (payload as DeliveryErrorPayload).error === "object") {
-      throw new DeliveryError(res.status, payload as DeliveryErrorPayload);
-    }
-    const failure = payload as { reason?: string; error?: string };
-    throw new ApiError(res.status, failure.reason ?? failure.error ?? `${method} /api${path} → ${res.status}`);
-  }
-  if (payload === null) {
-    throw new ApiError(502, `${method} /api${path} returned no JSON result`);
-  }
-  return payload as T;
-}
 
 /**
  * A refused document save. Unlike the read/action endpoints, the doc-save PUT
@@ -257,7 +227,7 @@ export class DocSaveError extends ApiError {
 // ----------------------------------------------------------------------------
 
 export const api = {
-	agentMessage: (body: { projectId: string; recipientKind: string; recipientId: string; originTaskId: string; body: string; kind?: string; replyTo?: string; replyRequired?: boolean }) =>
+	agentMessage: (body: { projectId: string; recipientKind: string; recipientId: string; originTaskId: string; body: string; kind?: string; replyTo?: string; replyRequired?: boolean; yieldSender?: boolean }) =>
 		serveOperatorActor().then((sender) => post<{ ok: boolean }>("/messages", { ...body, sender, idempotencyKey: crypto.randomUUID() })),
   capabilities: (): Promise<ServeCapabilities> => real("/capabilities"),
   runnerConformance: (harness: string, preset: string, live = false, exercise = "", projectId?: string, draft?: RunnerConformanceDraft, setup = false): Promise<RunnerConformanceReport> => {
@@ -293,14 +263,14 @@ export const api = {
   factoryOperations: (projectId?: string): Promise<FactoryOperationsProjection> =>
     real(withProject("/factory-operations", projectId)),
 
-  deliveryPlans: (projectId?: string): Promise<DeliveryPlanList> =>
-    real(withProject("/delivery/plans", projectId)),
+  waveReview: (projectId: string, waveId: string): Promise<WaveReview> =>
+    real(`/projects/${encodeURIComponent(projectId)}/waves/${encodeURIComponent(waveId)}/review`),
 
-  deliveryReview: (plan: string, projectId?: string): Promise<DeliveryReview> =>
-    deliveryRequest("GET", withProject(`/delivery/review?plan=${encodeURIComponent(plan)}`, projectId)),
+  waveControl: (projectId: string, waveId: string, action: "start" | "pause" | "resume"): Promise<DirectStartResult> =>
+    serveOperatorActor().then((actor) => post<DirectStartResult & { ok?: boolean; refused?: boolean }>(`/actions/projects/${encodeURIComponent(projectId)}/waves/${encodeURIComponent(waveId)}/${action}`, { actor, mode: "background" })),
 
-  deliveryStart: (body: { plan: string; confirm: string; planIdentity: string }, projectId?: string): Promise<DeliveryStartResult> =>
-    serveOperatorActor().then((actor) => deliveryRequest("POST", withProject("/delivery/start", projectId), { ...body, actor })),
+  taskStart: (projectId: string, taskId: string): Promise<DirectStartResult> =>
+    serveOperatorActor().then((actor) => post<DirectStartResult & { ok?: boolean; refused?: boolean }>(`/actions/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/start`, { actor, mode: "background" })),
 
   // GET /api/daemon
   daemon: (): Promise<DaemonStatus> => real("/daemon"),
@@ -328,6 +298,22 @@ export const api = {
     body: { workspaceMode?: string; maxActiveRunsPerProject?: number; key?: string; value?: unknown },
   ): Promise<ActionResult> =>
     post(`/projects/${projectId}/settings`, body),
+
+  // POST /api/projects/:id/icon — stores an operator-uploaded icon that
+  // outranks repository discovery; { clear: true } restores discovery.
+  setProjectIconImage: (projectId: string, icon: { data: string; mime: string }): Promise<ActionResult> =>
+    post(`/projects/${encodeURIComponent(projectId)}/icon`, icon),
+
+  clearProjectIconImage: (projectId: string): Promise<ActionResult> =>
+    post(`/projects/${encodeURIComponent(projectId)}/icon`, { clear: true }),
+
+  // HEAD /api/projects/:id/icon — reports whether an uploaded icon is stored.
+  projectIconSource: (projectId: string): Promise<"uploaded" | "discovered" | null> =>
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/icon`, { method: "HEAD" }).then((res) => {
+      if (!res.ok) return null;
+      const source = res.headers.get("x-tusker-icon-source");
+      return source === "uploaded" || source === "discovered" ? source : null;
+    }),
 
   removeProject: (projectId: string): Promise<ActionResult> =>
     post(`/projects/${encodeURIComponent(projectId)}/remove`),
@@ -379,9 +365,6 @@ export const api = {
   taskStatus: (taskId: string, body: { status: string; reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/status`, projectId), { ...body, actor })),
 
-  runTask: (taskId: string, projectId?: string): Promise<ActionResult> =>
-    serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/run`, projectId), { actor })),
-
   discardTask: (
     taskId: string,
     body: { dryRun?: boolean; reason?: string; actor?: string; dependents?: "detach" | "discard" },
@@ -399,9 +382,6 @@ export const api = {
 
   landWave: (waveId: string, projectId?: string): Promise<ActionResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/waves/${waveId}/land`, projectId), { actor })),
-
-  waveExecute: (waveId: string, projectId?: string): Promise<WaveExecuteResult> =>
-    serveOperatorActor().then((actor) => post(withProject(`/waves/${encodeURIComponent(waveId)}/execute`, projectId), { actor })),
 
   gateAction: (
     gateId: string,
@@ -457,7 +437,7 @@ export const api = {
 
   // GET /api/tasks/:id
   task: (id: string, projectId?: string): Promise<TaskDetail> => real(withProject(`/tasks/${id}`, projectId)),
-  taskRoute: (id: string, body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; executeProfile?: string | null; reviewProfile?: string | null }, projectId?: string): Promise<ActionResult> =>
+  taskRoute: (id: string, body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; reviewReason?: string | null; executeProfile?: string | null; reviewProfile?: string | null }, projectId?: string): Promise<ActionResult> =>
     post<ActionResult>(withProject(`/tasks/${encodeURIComponent(id)}/route`, projectId), body),
 
   // GET /api/docs?project=

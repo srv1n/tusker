@@ -498,24 +498,27 @@ func applyV7CreateTaskProposal(vaultPath, target, targetKind string, fields map[
 		taskID = fmt.Sprintf("%s-T-%s", target, padNumber(nextV7Sequence(vaultPath, target, "task")))
 	}
 	args := Args{
-		"vault":        vaultPath,
-		"quiet":        "true",
-		"id":           taskID,
-		"epic":         target,
-		"title":        title,
-		"risk":         fallback(strings.ToLower(toString(fields["risk"])), "medium"),
-		"priority":     fallback(strings.ToLower(toString(fields["priority"])), "p2"),
-		"size":         fallback(strings.ToLower(toString(fields["size"])), "m"),
-		"next-owner":   fallback(firstNonEmpty(toString(fields["next_owner"]), toString(fields["next-owner"])), "agent"),
-		"next-action":  fallback(firstNonEmpty(toString(fields["next_action"]), toString(fields["next-action"])), "Execute the task contract and attach evidence."),
-		"domains":      toString(fields["domains"]),
-		"dependencies": toString(fields["dependencies"]),
-		"by":           actor,
+		"vault":         vaultPath,
+		"quiet":         "true",
+		"id":            taskID,
+		"epic":          target,
+		"title":         title,
+		"risk":          fallback(strings.ToLower(toString(fields["risk"])), "medium"),
+		"priority":      fallback(strings.ToLower(toString(fields["priority"])), "p2"),
+		"size":          fallback(strings.ToLower(toString(fields["size"])), "m"),
+		"next-owner":    fallback(firstNonEmpty(toString(fields["next_owner"]), toString(fields["next-owner"])), "agent"),
+		"next-action":   fallback(firstNonEmpty(toString(fields["next_action"]), toString(fields["next-action"])), "Execute the task contract and attach evidence."),
+		"domains":       toString(fields["domains"]),
+		"dependencies":  toString(fields["dependencies"]),
+		"work-level":    firstNonEmpty(toString(fields["work_level"]), toString(fields["work-level"])),
+		"review-level":  firstNonEmpty(toString(fields["review_level"]), toString(fields["review-level"])),
+		"review-reason": firstNonEmpty(toString(fields["review_reason"]), toString(fields["review-reason"])),
+		"by":            actor,
 	}
 	if evidence := firstNonEmpty(toString(fields["evidence_required"]), toString(fields["evidence-required"])); evidence != "" {
 		args["evidence-required"] = evidence
 	}
-	if err := newV7Task(args); err != nil {
+	if err := newAuthoredV7Task(args); err != nil {
 		return "", err
 	}
 	return taskID, nil
@@ -587,7 +590,7 @@ func v7ProposalFields(args Args, action string) (map[string]any, error) {
 		}
 		fields["status"] = status
 	case "create_task":
-		for _, key := range []string{"id", "title", "summary", "risk", "priority", "size", "domains", "dependencies", "evidence-required", "next-owner", "next-action"} {
+		for _, key := range []string{"id", "title", "summary", "risk", "priority", "size", "work-level", "review-level", "review-reason", "domains", "dependencies", "evidence-required", "next-owner", "next-action"} {
 			if value := args.String(key); value != "" {
 				fields[key] = value
 			}

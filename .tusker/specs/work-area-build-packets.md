@@ -28,7 +28,7 @@ Imported inert wave: [[W-0016]], Compact project navigation with direct horizont
 | [[WUX-T-0016]] Replace the project sidebar with a scrolling strip | Actual routed shell, icon scopes, direct overflow access and browser screenshots | WUX-T-0015 |
 | [[WUX-T-0017]] Qualify the compact navigation and update the user reference | Built-browser proof, read-only live checks, final evidence and current system docs | WUX-T-0016 |
 
-Canonical import input: .tusker/specs/compact-project-navigation.plan.yaml. Its NAV1–NAV7 requirements map to acceptance in the three allocated tasks. Do not create duplicate tickets or execute WUX-T-0003/WUX-T-0009 to restore the old sidebar. Their unrelated historical lifecycle and other component work are preserved.
+Canonical input: the authored wave W-0016 and its three task records (the original plan input was removed after migration; the wave record carries the import receipt). Its NAV1–NAV7 requirements map to acceptance in the three allocated tasks. Do not create duplicate tickets or execute WUX-T-0003/WUX-T-0009 to restore the old sidebar. Their unrelated historical lifecycle and other component work are preserved.
 
 Copyable assignment:
 
@@ -40,7 +40,7 @@ Read-only W-0016 preflight confirms disarmed authorization, valid task contracts
 
 ## How to assign work
 
-September 10 navigation revision: [[work-area-redesign]] section 4 supersedes the expanded-sidebar requirements and navigation/integration shell placement below. The compact-project-navigation delivery tasks are the current handoff for that replacement; older WUX-T-0003/WUX-T-0009 contracts remain historical records and must not be used to rebuild the sidebar. Other Work component scope remains unchanged. See the compact navigation handoff at the end of this document.
+September 10 navigation revision: [[work-area-redesign]] section 4 supersedes the expanded-sidebar requirements and navigation/integration shell placement below. The compact-project-navigation wave tasks are the current handoff for that replacement; older WUX-T-0003/WUX-T-0009 contracts remain historical records and must not be used to rebuild the sidebar. Other Work component scope remains unchanged. See the compact navigation handoff at the end of this document.
 
 Six leaf tickets can run concurrently through user-directed external subagents after each receives its own owned checkout/paths. This is independent of the imported resident-runner plan, whose concurrency is intentionally one and whose wave remains disarmed; starting that plan unchanged would serialize execution, not run six workers. The integration ticket has hard dependencies on all six. If compute or review capacity is limited, run navigation + overview first, then flow + inspector, then results + board. This is a scheduling convenience, not extra dependency edges.
 

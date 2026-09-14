@@ -253,11 +253,10 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 
 	first := h.startDaemon("armed-daemon-1")
 	h.waitForAutomationStatus(crashRunWait)
-	arm := parseJSON(t, h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
-	armWave := mapAtPath(t, arm, "preflight")
-	armFingerprint := runString(armWave, "fingerprint")
+	start := parseJSON(t, h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
+	armFingerprint := runString(start, "materialFingerprint")
 	if armFingerprint == "" {
-		t.Fatalf("arm did not persist a material fingerprint: %s", prettyJSON(arm))
+		t.Fatalf("wave start did not persist a material fingerprint: %s", prettyJSON(start))
 	}
 
 	root := h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
@@ -287,9 +286,9 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 	confirm := strings.Fields(strings.SplitN(string(out), "--confirm ", 2)[1])[0]
 	h.cliOK(h.repoDir, append(acceptArgs, "--confirm", confirm)...)
 	// The explicit human checkpoint mutates the reviewed wave material, so the
-	// prior authorization is correctly stale. Re-arm the exact new fingerprint
-	// before expecting the next frontier to dispatch.
-	h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
+	// prior authorization is correctly stale. Restart authorizes the exact new
+	// fingerprint before the next frontier dispatches.
+	h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
 	next := h.waitRun("APP-T-0002", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "attempt_count") == 1
 	})
@@ -339,36 +338,26 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	h.gitOK("config", "user.name", "Delivery Fixture")
 	h.gitOK("add", "-A")
 	h.gitOK("commit", "-m", "fixture baseline")
-	templatePath := filepath.Join(h.tempRoot, "delivery-plan-template.yaml")
-	h.cliOK(h.repoDir, "delivery", "plan", "--spec", ".tusker/specs/delivery.md", "--out", templatePath, "--epic", "APP", "--vault", h.vaultDir, "--quiet")
-	template := h.readFile(templatePath)
-	contextFingerprint := yamlScalar(template, "context_fingerprint")
-	factorySchema := yamlScalar(template, "factory_intake_contract_schema")
-	factoryVersion := yamlScalar(template, "factory_intake_contract_version")
-	factoryFingerprint := yamlScalar(template, "factory_intake_contract_fingerprint")
-	if contextFingerprint == "" || factorySchema == "" || factoryVersion == "" || factoryFingerprint == "" {
-		t.Fatalf("delivery plan scaffold omitted V2 provenance: %s", template)
-	}
-	planPath := filepath.Join(h.tempRoot, "delivery-plan.yaml")
-	h.writeFile(planPath, specToWaveDeliveryPlan(contextFingerprint, factorySchema, factoryVersion, factoryFingerprint))
-	imported := parseJSON(t, h.cliOK(h.repoDir, "delivery", "import", "--plan", planPath, "--wave", "Disposable delivery", "--vault", h.vaultDir, "--json"))
-	delivery := mapAtPath(t, imported, "delivery")
-	mapping, _ := delivery["taskMapping"].(map[string]any)
-	if intFromPath(delivery, "expectedConcurrency") != 3 || len(mapping) != 7 || len(sliceAt(delivery, "frontiers")) < 4 {
-		t.Fatalf("import did not preserve the seven-task mixed DAG: %s", prettyJSON(imported))
+	requestPath := filepath.Join(h.tempRoot, "wave-authoring.yaml")
+	h.writeFile(requestPath, specToWaveAuthoringRequest())
+	authored := parseJSON(t, h.cliOK(h.repoDir, "wave", "create", "--file", requestPath, "--request-key", "spec-to-wave", "--vault", h.vaultDir, "--json"))
+	waveReport := mapAtPath(t, authored, "wave")
+	mapping, _ := waveReport["taskMapping"].(map[string]any)
+	if intFromPath(waveReport, "expectedConcurrency") != 3 || len(mapping) != 7 || len(sliceAt(waveReport, "frontiers")) < 3 {
+		t.Fatalf("wave authoring did not preserve the seven-task mixed DAG: %s", prettyJSON(authored))
 	}
 	h.setDeliveryFixtureVerificationContracts("APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006", "APP-T-0007")
 	h.gitOK("branch", "-f", "integration/W-0001", "HEAD")
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "hold-APP-T-0001"))
 	daemon := h.startDaemon("delivery-daemon")
 	h.waitForAutomationStatus(crashRunWait)
-	preflight := parseJSON(t, h.cliOK(h.repoDir, "wave", "preflight", "W-0001", "--vault", h.vaultDir, "--json"))
-	if ok, _ := preflight["ok"].(bool); !ok {
-		t.Fatalf("preflight failed: %s", prettyJSON(preflight))
+	review := mapAtPath(t, parseJSON(t, h.cliOK(h.repoDir, "wave", "review", "W-0001", "--vault", h.vaultDir, "--json")), "review")
+	if len(sliceAt(review, "blockers")) != 0 {
+		t.Fatalf("wave review reported blockers: %s", prettyJSON(review))
 	}
-	arm := parseJSON(t, h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
-	if runString(mapAtPath(t, arm, "preflight"), "fingerprint") == "" {
-		t.Fatalf("arm omitted fingerprint: %s", prettyJSON(arm))
+	start := parseJSON(t, h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
+	if runString(start, "materialFingerprint") == "" {
+		t.Fatalf("wave start omitted fingerprint: %s", prettyJSON(start))
 	}
 	root := h.waitRun("APP-T-0001", crashRunWait, func(run map[string]any) bool {
 		return runString(run, "lease_state") == "running" && runInt(run, "process_pid") > 0
@@ -452,7 +441,7 @@ func runSpecToWaveFailureContainment(t *testing.T) {
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "fail-APP-T-0002"))
 	daemon := h.startDaemon("failure-daemon")
 	h.waitForAutomationStatus(crashRunWait)
-	h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
+	h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
 	eventually(t, 90*time.Second, 200*time.Millisecond, func() (bool, string) {
 		failed := h.latestRun("APP-T-0002")
 		briefRaw, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
@@ -469,7 +458,7 @@ func runSpecToWaveCredentialContainment(t *testing.T) {
 	h := newSmallDeliveryWave(t, true)
 	daemon := h.startDaemon("credential-daemon")
 	h.waitForAutomationStatus(crashRunWait)
-	h.cliOK(h.repoDir, "wave", "arm", "W-0001", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
+	h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
 	eventually(t, 90*time.Second, 200*time.Millisecond, func() (bool, string) {
 		raw, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
 		if err != nil {
@@ -554,7 +543,7 @@ func yamlScalar(document, key string) string {
 	return ""
 }
 
-func specToWaveDeliveryPlan(contextFingerprint, factorySchema, factoryVersion, factoryFingerprint string) string {
+func specToWaveAuthoringRequest() string {
 	type task struct {
 		key, title, kind, path string
 		deps                   []string
@@ -569,13 +558,14 @@ func specToWaveDeliveryPlan(contextFingerprint, factorySchema, factoryVersion, f
 		{key: "final", title: "Integrated delivery", kind: "diff_summary", path: "artifacts/delivery/app-t-0007.json", deps: []string{"ui:hard", "client:soft", "backfill:hard"}},
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "schema: tusker.delivery-plan/v2\nscope: disposable-spec-to-wave\ntitle: Disposable delivery\nsummary: Deliver the disposable mixed DAG through its committed artifacts and focused proof.\nepic: APP\nspec_refs: [.tusker/specs/delivery.md]\ncontext_fingerprint: %s\nfactory_intake_contract_schema: %s\nfactory_intake_contract_version: %s\nfactory_intake_contract_fingerprint: %s\nrequirements:\n", contextFingerprint, factorySchema, factoryVersion, factoryFingerprint)
-	for index := range tasks {
-		fmt.Fprintf(&b, "  - id: R%d\n    outcome: Task %d has a committed artifact and focused proof.\n", index+1, index+1)
-	}
-	b.WriteString("concurrency: 3\ntasks:\n")
+	b.WriteString("schema: tusker.wave-authoring/v1\ntitle: Disposable delivery\noutcome: Deliver the disposable mixed DAG through its committed artifacts and focused proof.\nconcurrency: 3\nspec_refs: [.tusker/specs/delivery.md]\ntasks:\n")
 	for index, item := range tasks {
-		fmt.Fprintf(&b, "  - source_key: %s\n    requirement_refs: [R%d]\n    title: %s\n    outcome: %s is objectively delivered and documented.\n    acceptance:\n      - id: A1\n        outcome: %s has a committed artifact and focused proof.\n    verification:\n      - covers: A1\n        check: 'command: fixture delivery assertion'\n", item.key, index+1, item.title, item.title, item.title)
+		id := fmt.Sprintf("APP-T-%04d", index+1)
+		body := fmt.Sprintf("# %s\n\n## Intent\n\n%s is objectively delivered and documented.\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | %s has a committed artifact and focused proof. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: fixture delivery assertion | pending | |\n", item.title, item.title, item.title)
+		fmt.Fprintf(&b, "  - key: %s\n    title: %s\n    work_level: standard\n    epic: APP\n    owned_paths: [%s, docs/delivery/%s.md]\n    body: |\n", item.key, item.title, item.path, strings.ToLower(id))
+		for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
+			fmt.Fprintf(&b, "      %s\n", line)
+		}
 		if len(item.deps) > 0 {
 			b.WriteString("    dependencies:\n")
 			for _, dep := range item.deps {
@@ -583,7 +573,6 @@ func specToWaveDeliveryPlan(contextFingerprint, factorySchema, factoryVersion, f
 				fmt.Fprintf(&b, "      - task: %s\n        kind: %s\n", parts[0], parts[1])
 			}
 		}
-		fmt.Fprintf(&b, "    artifact:\n      kind: %s\n      path: %s\n      summary: Acceptance-linked %s artifact.\n      acceptance_ids: [A1]\n    owned_paths: [%s, docs/delivery/%s.md]\n    knowledge_nodes: [docs/delivery/%s.md]\n    risk: medium\n    priority: p1\n    domains: [project]\n", item.kind, item.path, item.kind, item.path, strings.ToLower("APP-T-"+fmt.Sprintf("%04d", index+1)), strings.ToLower("APP-T-"+fmt.Sprintf("%04d", index+1)))
 	}
 	return b.String()
 }

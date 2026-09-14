@@ -142,6 +142,19 @@ function profileId(harness: string, model: string): string {
   return `${harness}-${suffix || "profile"}`;
 }
 
+export function availableProfileId(
+  harness: string,
+  model: string,
+  profiles: Record<string, unknown>,
+): string {
+  const base = profileId(harness, model);
+  if (!profiles[base]) return base;
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${base}-${suffix}`;
+    if (!profiles[candidate]) return candidate;
+  }
+}
+
 function profileDraft(name: string, profile: ModelLevelProfile): Draft {
   return {
     name,
@@ -316,7 +329,11 @@ export function ProfilesSection({
     setSetupStates({});
     setDraft({
       ...EMPTY_DRAFT,
-      name: profileId(harnessID, model?.model || ""),
+      name: availableProfileId(
+        harnessID,
+        model?.model || "",
+        levels?.profiles || {},
+      ),
       harness: harnessID,
       model: model?.model || "",
       effort: defaultEffort(model),
@@ -345,7 +362,11 @@ export function ProfilesSection({
         !levels?.profiles[old.name] &&
         (next.harness !== undefined || next.model !== undefined)
       )
-        updated.name = profileId(updated.harness, updated.model);
+        updated.name = availableProfileId(
+          updated.harness,
+          updated.model,
+          levels?.profiles || {},
+        );
       return updated;
     });
   }
@@ -587,7 +608,13 @@ export function ProfilesSection({
               ...old,
               model: nextModel.model,
               effort: defaultEffort(nextModel),
-              name: old.name || profileId(old.harness, nextModel.model),
+              name:
+                old.name ||
+                availableProfileId(
+                  old.harness,
+                  nextModel.model,
+                  levels?.profiles || {},
+                ),
             }
           : old;
       });
@@ -1111,18 +1138,30 @@ function ProfileEditor({
           </Select>
         </label>
         {discoveryReady && (
-          <label className="grid content-start gap-1.5 text-[12px] font-medium text-muted">
+          <div className="grid content-start gap-1.5 text-[12px] font-medium text-muted">
             <span className="flex items-center justify-between gap-2">
-              Model{" "}
-              <Chip
-                tone="info"
-                variant="soft"
-                className="rounded-md text-[10px]"
-              >
-                Discovered
-              </Chip>
+              <label htmlFor="profile-model">Model</label>
+              <span className="flex items-center gap-1">
+                <Chip
+                  tone="info"
+                  variant="soft"
+                  className="rounded-md text-[10px]"
+                >
+                  Discovered
+                </Chip>
+                <button
+                  type="button"
+                  aria-label="Rediscover models"
+                  disabled={refreshing}
+                  onClick={onRefresh}
+                  className="rounded px-1.5 py-1 text-[11px] text-muted underline hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
+                >
+                  {refreshing ? "Refreshing…" : "Refresh"}
+                </button>
+              </span>
             </span>
             <Select
+              id="profile-model"
               aria-label="Model"
               value={draft.model}
               onChange={(event) => onChange({ model: event.target.value })}
@@ -1134,7 +1173,12 @@ function ProfileEditor({
                 </option>
               ))}
             </Select>
-          </label>
+            {harness?.last_checked && (
+              <span className="text-[10px] font-normal text-faint">
+                Checked {new Date(harness.last_checked).toLocaleString()}
+              </span>
+            )}
+          </div>
         )}
         {discoveryReady && (
           <label className="grid content-start gap-1.5 text-[12px] font-medium text-muted">
@@ -1551,14 +1595,6 @@ function ProfileEditor({
         <Button type="button" onClick={onClose}>
           Cancel
         </Button>
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={onRefresh}
-          className="ml-auto rounded px-2 py-2 text-[12px] text-muted hover:bg-hover hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
-        >
-          {refreshing ? "Refreshing…" : "Refresh models"}
-        </button>
       </div>
       <p className="mt-3 text-[12px] text-muted">
         Save persists this profile only. Setup checks are local; Run test is

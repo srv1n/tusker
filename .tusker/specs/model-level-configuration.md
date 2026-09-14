@@ -30,7 +30,7 @@ This is an implementation specification, not a change to active routing or autho
 
 Read-only source inspection found named profiles containing harness/model/effort and execution policy, a layered resolver, and `tusker runner route <TASK-ID> --lane execute|review --json`. Reuse these. Global profile routing is not currently enabled merely because a global configuration layer exists. Current task complexity values are routine, standard, complex and frontier. Earlier inspection found mock Settings rows; September 9 inspection finds a live Models form inside App Settings → Runner profiles, but project/ticket usability and installed acceptance remain incomplete; existing route/catalog commands do not establish a complete authoritative model list for every transport.
 
-Likely source owners: `cmd/tusker/runner_profiles.go`, `runner_catalog.go`, `runner_route_preview.go`, `commands_v7.go`, `v7_validation.go`, delivery import, run persistence, serve projections/actions and `internal/serve/ui/src/features/settings`. Verify names and active edits before implementation. Never replace the current dirty baseline.
+Likely source owners: `cmd/tusker/runner_profiles.go`, `runner_catalog.go`, `runner_route_preview.go`, `commands_v7.go`, `v7_validation.go`, wave authoring, run persistence, serve projections/actions and `internal/serve/ui/src/features/settings`. Verify names and active edits before implementation. Never replace the current dirty baseline.
 
 ## Discovery contract
 

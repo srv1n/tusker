@@ -1,6 +1,6 @@
 ---
 name: tusker
-description: Track work and navigate repo knowledge through the Tusker CLI. Use when a repository contains .tusker, a Tusker ID is named, work must be recorded, or a repo-knowledge question needs a canonical answer.
+description: Manage Tusker tasks, proof, gates, and repository knowledge. Use when tracking work with Tusker, inspecting a Tusker ID, or finding canonical repo documentation.
 ---
 
 # Tusker
@@ -9,12 +9,17 @@ Mutate tracker state only through the CLI. Use targeted `--help` for syntax;
 `tusker capabilities --json` resolves command/version uncertainty. Report refusals
 without rewriting generated state or expanding the assignment.
 
-Interactive sessions implement work through interactive claims; never launch
-a daemon or nested worker. With `TUSKER_ATTEMPT_ID`, follow the existing claim.
+Interactive sessions implement authorized work through interactive claims;
+never launch a daemon or nested worker. With `TUSKER_ATTEMPT_ID`, follow the
+existing claim. Task records do not expand the user's authorization.
+
+For status or a simple lookup, use `tusker show <ID> --capsule`, `tusker list`,
+or `tusker search <term>`. Stop reading when the evidence answers the request.
 
 ## Route by stage
 
-Read the guide for the current stage; load another only when the task crosses stages.
+Read the guide for the current stage. Follow another reference only when its
+condition applies; creating a handoff needs more context than checking status.
 
 | Request | Read |
 |---|---|
@@ -26,21 +31,17 @@ Read the guide for the current stage; load another only when the task crosses st
 | Existing-repo onboarding | `references/REPO_ONBOARDING.md` |
 | Xcode generated build-state failure | `references/XCODE_BUILD_STATE.md` |
 
-For a read-only answer, stay here: `tusker show <ID> --capsule`, `tusker list`, `tusker search <term>`. Read histories or logs only to resolve a specific missing fact.
+## Completion
 
-## Design and writing composition
-
-For unresolved product choices, use an available external design method such as
-`grilling`; it returns settled decisions or open questions. Do not copy that
-method's interview into Tusker. When intent is already settled, skip design
-discussion and capture the supplied specification and decision links before
-creating Tusker task contracts.
-
-For prose authoring or review, prefer an available writing skill. Otherwise use
-the local rule: lead with the outcome, name the actor, preserve exact commands,
-permissions, identifiers, and uncertainty, and state the expected result and
-failure path. Tusker owns those local constraints and task conversion.
+Finish the requested outcome within the owned scope. For prose-only edits,
+review the text; run builds or tests only when requested or an executable
+contract changes. For implementation, fix failures caused by the change and
+rerun affected checks. For tracked work, record proof and submit through the
+lifecycle; submission is not review or closeout. Report any remaining gate.
 
 ## Hard stop
 
-`agent_action: stop_until_human_response` or `readiness: waiting_on_human` stops mutation of that work. Inspect `tusker closeout status <TASK-ID> --json`; report the gate and required action. Never manufacture proof or resolve human gates without their authority.
+`agent_action: stop_until_human_response` or `readiness: waiting_on_human` stops
+mutation of that work. Inspect `tusker closeout status <TASK-ID> --json`; report
+the gate and required action. Continue independent authorized work. Never
+manufacture proof or resolve human gates without their authority.

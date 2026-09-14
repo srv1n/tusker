@@ -134,11 +134,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	// run concurrently with two-task frontiers, so the demo project allows
 	// four live runs. This touches only the demo repo's local overlay, never
 	// unrelated global settings.
-	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
-		return nil, err
-	}
-	contextFP, factory, err := demoSeedContext(repoRoot, exec, vaultPath)
-	if err != nil {
+	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  profiles:\n    execute-fast:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: workspace-write-offline\n      sandbox:\n        mode: workspace-write\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n    review-independent:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: workspace-write-offline\n      sandbox:\n        mode: workspace-write\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n  model_levels:\n    standard:\n      execute: [execute-fast]\n      review: [review-independent]\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
 		return nil, err
 	}
 	createdPaths, err := demoSeedRealWorkFiles(repoRoot)
@@ -159,25 +155,21 @@ func demoSeed(args Args) (map[string]any, error) {
 		Waves: map[string]demoWaveRecord{}, Tasks: map[string]demoTaskRecord{}, Profiles: profiles,
 		CreatedPaths: createdPaths,
 	}
+	mappings := map[string]map[string]string{}
 	for _, wave := range demoFixtureWaves() {
-		planPath, err := demoRenderPlan(repoRoot, vaultPath, wave, withGate && wave.Name == "follow-up", contextFP, factory)
+		mapping, waveID, err := demoAuthorWave(exec, repoRoot, vaultPath, wave, withGate && wave.Name == "follow-up", actor)
 		if err != nil {
 			return nil, err
 		}
-		report, err := exec.run(repoRoot, "delivery", "import", "--plan", planPath, "--by", actor, "--vault", vaultPath)
-		if err != nil {
+		mappings[wave.Name] = mapping
+		if _, err := demoGit(repoRoot, "branch", "-f", "integration/"+waveID, "HEAD"); err != nil {
 			return nil, err
-		}
-		mapping := demoStringMap(demoDig(report, "delivery", "taskMapping"))
-		waveID := demoEnvelopeString(report, "delivery", "waveId")
-		if waveID == "" {
-			return nil, tuskerError(demoCodePrecondition, "delivery import did not report a wave for "+wave.Scope)
 		}
 		record := demoWaveRecord{Name: wave.Name, WaveID: waveID, Title: wave.Title, Scope: wave.Scope, Epic: wave.Epic}
 		for _, task := range wave.Tasks {
 			taskID, ok := mapping[task.Key]
 			if !ok || taskID == "" {
-				return nil, tuskerError(demoCodePrecondition, "delivery import did not map task "+task.Key)
+				return nil, tuskerError(demoCodePrecondition, "wave create did not map task "+task.Key)
 			}
 			record.Members = append(record.Members, taskID)
 			deps := append([]string{}, task.Deps...)
@@ -193,12 +185,16 @@ func demoSeed(args Args) (map[string]any, error) {
 		}
 		manifest.Waves[wave.Name] = record
 	}
+	if err := demoApplyCrossScopeDeps(exec, repoRoot, vaultPath, mappings, actor); err != nil {
+		return nil, err
+	}
 
 	if _, err := exec.run(repoRoot, "new", "decision", "--epic", demoEpicAlpha, "--title", demoDecisionTitle, "--vault", vaultPath); err != nil {
 		return nil, err
 	}
-	// Roots are ready to start; branches, joins and the follow-up stay
-	// backlog until their dependencies are really satisfied.
+	// Roots are marked ready so the demo scheduler can claim them directly;
+	// branches, joins and the follow-up stay backlog until their
+	// dependencies are really satisfied.
 	for key, task := range manifest.Tasks {
 		if len(fixtureDeps(key)) > 0 {
 			continue
@@ -358,92 +354,134 @@ func demoSeedProfiles(repoRoot string) (map[string]string, error) {
 	return map[string]string{"implement": demoProfileImplement, "review": demoProfileReview, "plan": demoProfilePlan}, nil
 }
 
-func demoSeedContext(repoRoot string, exec *demoExec, vaultPath string) (string, map[string]string, error) {
-	contextPath := filepath.Join(demoDir(repoRoot), "context.yaml")
-	if err := ensureDir(demoDir(repoRoot)); err != nil {
-		return "", nil, err
+// demoEnsureEpic creates the wave's epic when absent; wave authoring requires
+// the epic to already exist.
+func demoEnsureEpic(exec *demoExec, repoRoot, vaultPath string, wave demoWaveDef) error {
+	if fileExists(filepath.Join(vaultPath, "work", "epics", wave.Epic+".md")) {
+		return nil
 	}
-	if _, err := exec.run(repoRoot, "delivery", "plan", "--spec", ".tusker/specs/demo-parallel-waves.md", "--out", contextPath, "--vault", vaultPath); err != nil {
-		return "", nil, err
-	}
-	raw, err := os.ReadFile(contextPath)
-	if err != nil {
-		return "", nil, err
-	}
-	var doc map[string]any
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return "", nil, err
-	}
-	str := func(key string) string {
-		value, _ := doc[key].(string)
-		return strings.TrimSpace(value)
-	}
-	fingerprint, schema, version, factoryFP := str("context_fingerprint"), str("factory_intake_contract_schema"), str("factory_intake_contract_version"), str("factory_intake_contract_fingerprint")
-	if fingerprint == "" || schema == "" || version == "" || factoryFP == "" {
-		return "", nil, tuskerError(demoCodePrecondition, "delivery plan did not emit planning context")
-	}
-	return fingerprint, map[string]string{"schema": schema, "version": version, "fingerprint": factoryFP}, nil
+	_, err := exec.run(repoRoot, "new", "epic", wave.Epic, "--title", wave.EpicTitle, "--vault", vaultPath)
+	return err
 }
 
-func demoRenderPlan(repoRoot, vaultPath string, wave demoWaveDef, withGate bool, contextFP string, factory map[string]string) (string, error) {
+// demoAuthorWave renders a tusker.wave-authoring/v1 request and creates the
+// wave through `wave create --file`. Creation is inert and idempotent on the
+// stable request key, so reseed replays cleanly.
+func demoAuthorWave(exec *demoExec, repoRoot, vaultPath string, wave demoWaveDef, withGate bool, actor string) (map[string]string, string, error) {
+	if err := demoEnsureEpic(exec, repoRoot, vaultPath, wave); err != nil {
+		return nil, "", err
+	}
+	path, err := demoRenderWaveAuthoring(repoRoot, wave, withGate)
+	if err != nil {
+		return nil, "", err
+	}
+	report, err := exec.run(repoRoot, "wave", "create", "--file", path, "--request-key", "demo-"+wave.Name, "--by", actor, "--vault", vaultPath)
+	if err != nil {
+		return nil, "", err
+	}
+	mapping := demoStringMap(demoDig(report, "wave", "taskMapping"))
+	waveID := demoEnvelopeString(report, "wave", "waveId")
+	if waveID == "" {
+		return nil, "", tuskerError(demoCodePrecondition, "wave create did not report a wave for "+wave.Scope)
+	}
+	return mapping, waveID, nil
+}
+
+func demoTaskBody(wave demoWaveDef, task demoTaskDef) string {
+	check := fmt.Sprintf("command: test \"$(cat %s)\" = \"%s\"", task.Artifact, task.Content)
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n## Outcome\n\n%s\n\n## Requirement\n\n%s\n", task.Title, task.Outcome, wave.Requirement)
+	b.WriteString("\n## Context\n\n" + demoTaskContext(wave, task) + "\n")
+	b.WriteString("\n## Acceptance\n\n| ID | Outcome | Proof |\n| --- | --- | --- |\n| A1 | " + task.Acceptance + " | command: " + check + " |\n")
+	b.WriteString("\n## Verification\n\n| Covers | Check | Result |\n| --- | --- | --- |\n| A1 | " + check + " | pending |\n")
+	b.WriteString("\n## Artifact\n\n- kind: diff_summary\n- path: " + task.Artifact + "\n- summary: " + task.Title + ".\n- acceptance_ids: A1\n")
+	return b.String()
+}
+
+func demoRenderWaveAuthoring(repoRoot string, wave demoWaveDef, withGate bool) (string, error) {
 	var tasks []map[string]any
 	for _, task := range wave.Tasks {
-		check := fmt.Sprintf("command: test \"$(cat %s)\" = \"%s\"", task.Artifact, task.Content)
 		entry := map[string]any{
-			"source_key": task.Key, "requirement_refs": []string{"R1"},
-			"title": task.Title, "outcome": task.Outcome + "\n\n" + demoTaskContext(wave, task),
-			"acceptance":   []map[string]any{{"id": "A1", "outcome": task.Acceptance}},
-			"verification": []map[string]any{{"covers": "A1", "check": check}},
-			"artifact":     map[string]any{"kind": "diff_summary", "path": task.Artifact, "summary": task.Title + ".", "acceptance_ids": []string{"A1"}},
-			"owned_paths":  []string{task.Artifact},
-			"priority":     "p1", "risk": "low",
-		}
-		if task.Complexity != "" {
-			entry["complexity"] = task.Complexity
+			"key": task.Key, "title": task.Title,
+			"work_level":        demoWorkLevel(task.Complexity),
+			"body":              demoTaskBody(wave, task),
+			"epic":              wave.Epic,
+			"owned_paths":       []string{task.Artifact},
+			"generated_outputs": []string{task.Artifact},
 		}
 		var deps []map[string]any
 		for _, dep := range task.Deps {
 			deps = append(deps, map[string]any{"task": dep})
-		}
-		if cross, ok := demoCrossScopeDeps()[task.Key]; ok {
-			for _, dep := range cross {
-				deps = append(deps, map[string]any{"task": dep[1], "scope": dep[0], "kind": "hard"})
-			}
 		}
 		if len(deps) > 0 {
 			entry["dependencies"] = deps
 		}
 		tasks = append(tasks, entry)
 	}
-	plan := map[string]any{
-		"schema": "tusker.delivery-plan/v2", "scope": wave.Scope, "title": wave.Title,
-		"epic_contract":                  map[string]any{"source_key": strings.ToLower(wave.Epic) + "-epic", "acronym_hint": wave.Epic, "title": wave.EpicTitle},
-		"spec_refs":                      []string{".tusker/specs/demo-parallel-waves.md"},
-		"context_fingerprint":            contextFP,
-		"factory_intake_contract_schema": factory["schema"], "factory_intake_contract_version": factory["version"], "factory_intake_contract_fingerprint": factory["fingerprint"],
-		"requirements": []map[string]any{{"id": "R1", "outcome": wave.Requirement}},
-		"concurrency":  2, "summary": wave.Title + ".",
-		"tasks": tasks,
+	request := map[string]any{
+		"schema": "tusker.wave-authoring/v1", "request_key": "demo-" + wave.Name,
+		"title": wave.Title, "outcome": wave.Requirement,
+		"spec_refs":   []string{".tusker/specs/demo-parallel-waves.md"},
+		"concurrency": 2,
+		"tasks":       tasks,
 	}
 	if withGate {
-		plan["human_gates"] = []map[string]any{{
-			"source_key": "signoff", "task_source_key": "c4", "kind": "signoff",
-			"title": "Demo signoff for the combined report", "owner": "human:demo-approver",
+		request["human_actions"] = []map[string]any{{
+			"key": "signoff", "task": "c4", "owner": "human:demo-approver",
 			"action":           "Read sample/followup/report.txt and confirm the fixture bytes.",
 			"verification":     "The approver confirms the combined report matches the fixture.",
 			"why_agent_cannot": "Only the named human approver can sign off; the timer executor never acts as a human.",
-			"acceptance_ids":   []string{"A1"},
 		}}
 	}
-	raw, err := yaml.Marshal(plan)
+	raw, err := yaml.Marshal(request)
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(demoDir(repoRoot), "plan-"+wave.Name+".yaml")
+	path := filepath.Join(demoDir(repoRoot), "wave-"+wave.Name+".yaml")
+	if err := ensureDir(demoDir(repoRoot)); err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// demoApplyCrossScopeDeps pins the follow-up entry task to the alpha and beta
+// report tasks through canonical durable dependencies after their waves exist.
+func demoApplyCrossScopeDeps(exec *demoExec, repoRoot, vaultPath string, mappings map[string]map[string]string, actor string) error {
+	cross := demoCrossScopeDeps()
+	if len(cross) == 0 {
+		return nil
+	}
+	waveByKey := map[string]string{}
+	for _, wave := range demoFixtureWaves() {
+		for _, task := range wave.Tasks {
+			waveByKey[task.Key] = wave.Name
+		}
+	}
+	for key, deps := range cross {
+		taskID := mappings[waveByKey[key]][key]
+		if taskID == "" {
+			return tuskerError(demoCodePrecondition, "wave create did not map task "+key)
+		}
+		var edges []string
+		for _, dep := range deps {
+			target := mappings[waveByKey[dep[1]]][dep[1]]
+			if target == "" {
+				return tuskerError(demoCodePrecondition, "wave create did not map cross-scope target "+dep[1])
+			}
+			edges = append(edges, target+":hard")
+		}
+		taskData, _, err := parseFrontmatterMustRead(filepath.Join(vaultPath, "work", "tasks", taskID+".md"))
+		if err != nil {
+			return err
+		}
+		if _, err := exec.run(repoRoot, "task", "update", taskID, "--if-revision", stringField(taskData, "state_rev"), "--dependencies", strings.Join(edges, ","), "--by", actor, "--vault", vaultPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func demoRegisterProject(repoRoot string, exec *demoExec, vaultPath string) (string, error) {
@@ -537,7 +575,7 @@ func demoSeedReport(repoRoot string, manifest *demoManifest, repeated bool) map[
 
 func demoUnmetCapabilities() []map[string]string {
 	return []map[string]string{
-		{"capability": "wave arm", "requires": "resident daemon reconciling an automation-enabled project", "demo_behavior": "demo run records demo-level authorization per named wave; native waves stay disarmed"},
+		{"capability": "wave start", "requires": "resident daemon reconciling an automation-enabled project", "demo_behavior": "demo run records demo-level authorization per named wave; native waves stay disarmed"},
 		{"capability": "review submit lane", "requires": "daemon completion reactor stamping work revision and source identity", "demo_behavior": "deterministic reviewer checks run inside demo run; close executes verification under reviewer authority"},
 		{"capability": "runner route for demo-timer profiles", "requires": "operator-installed demo-timer harness adapter", "demo_behavior": "profiles are declared and labeled; no silent substitution to another harness"},
 	}

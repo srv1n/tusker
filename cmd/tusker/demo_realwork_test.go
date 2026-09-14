@@ -12,16 +12,16 @@ import (
 	"testing"
 )
 
-func TestDemoExecuteWaveUsesSupportedServeAction(t *testing.T) {
+func TestDemoStartWaveUsesSupportedServeAction(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/capability", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"capability":"test-token"}`))
 	})
-	mux.HandleFunc("/api/waves/W-0001/execute", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("project") != "project-1" || r.Header.Get(serveCapabilityHeader) != "test-token" {
-			t.Fatalf("execute request missing project or capability: %s %#v", r.URL.String(), r.Header)
+	mux.HandleFunc("/api/actions/projects/project-1/waves/W-0001/start", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get(serveCapabilityHeader) != "test-token" {
+			t.Fatalf("Wave Start request missing method or capability: %s %#v", r.Method, r.Header)
 		}
-		_, _ = w.Write([]byte(`{"ok":true,"execution":{"waveId":"W-0001","queuedTaskIds":["APP-T-0001"]}}`))
+		_, _ = w.Write([]byte(`{"schema":"tusker.direct-start/v1","subject":"W-0001","scope":"wave","state":"Running","authorization":"armed","queuedTaskIds":["APP-T-0001"],"replayed":false}`))
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -29,9 +29,9 @@ func TestDemoExecuteWaveUsesSupportedServeAction(t *testing.T) {
 	demoServeBaseURL = server.URL
 	t.Cleanup(func() { demoServeBaseURL = previous })
 
-	receipt, err := demoExecuteWave(context.Background(), "project-1", "W-0001")
-	if err != nil || receipt.WaveID != "W-0001" || len(receipt.QueuedTaskIDs) != 1 {
-		t.Fatalf("supported Execute Wave action failed: receipt=%#v err=%v", receipt, err)
+	result, err := demoStartWave(context.Background(), "project-1", "W-0001")
+	if err != nil || result.Authorization != "armed" || len(result.QueuedTaskIDs) != 1 {
+		t.Fatalf("supported Wave Start action failed: result=%#v err=%v", result, err)
 	}
 }
 

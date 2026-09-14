@@ -14,7 +14,7 @@ import (
 )
 
 func isACPRunner(runner RunnerName) bool {
-	return runner == RunnerACP || runner == RunnerCodexACP
+	return runner == RunnerACP || runner == RunnerCodexACP || runner == RunnerDevin
 }
 
 type runnerWrapperRequest struct {
@@ -217,7 +217,7 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 			execReq.ResumeMode = true
 		}
 		return executeRunnerCommand(ctx, runner, execReq, RunnerCapabilities{StructuredEvents: true, ResumeSession: true, MachineFinalStatus: true, UsageMetrics: true})
-	case RunnerMuseCLI:
+	case RunnerMuse:
 		execReq := runnerExecRequest{
 			ProjectID: req.Start.ProjectID, RecordID: req.Start.RecordID, ItemID: req.Start.ItemID, AttemptID: req.Start.AttemptID,
 			Lane: req.Start.Lane, WorkRevision: req.Start.WorkRevision, LeaseGeneration: req.Start.LeaseGeneration, WorkingDir: req.Start.WorkingDir, WorkspacePath: req.Start.WorkspacePath,
@@ -235,7 +235,7 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 			execReq.ResumeMode = true
 		}
 		return executeRunnerCommand(ctx, runner, execReq, RunnerCapabilities{StructuredEvents: true, ResumeSession: true, MachineFinalStatus: true, UsageMetrics: true})
-	case RunnerACP:
+	case RunnerACP, RunnerDevin:
 		if req.Resume != nil {
 			return nil, tuskerError(errorInvalidTransition, string(runner)+" wrapper refuses a resume request before a provider adapter enables negotiated resume")
 		}

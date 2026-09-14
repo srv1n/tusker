@@ -65,7 +65,7 @@ func TestModelLevelsPrecedenceFallbackAndStableCycle(t *testing.T) {
 		"fallback":         {Harness: string(RunnerClaude), Model: "claude-fallback", Effort: "medium"},
 		"explicit":         {Harness: string(RunnerCodexExec), Model: "gpt-explicit", Effort: "low"},
 		"execute-frontier": {Harness: string(RunnerCodexExec), Model: "gpt-frontier", Effort: "max"},
-	}, ModelLevels: map[string]ModelLevelDefinition{"standard": {Execute: []string{"primary", "fallback"}}, "demanding": {Execute: []string{"primary"}}}}
+	}, ModelLevels: map[string]ModelLevelDefinition{"standard": {Execute: []string{"primary", "fallback"}, Review: []string{"primary", "fallback"}}, "demanding": {Execute: []string{"primary"}}}}
 
 	note := Note{Data: map[string]any{"id": "APP-T-0001", "work_level": "standard", "complexity": "routine"}}
 	selected, err := resolveRunnerProfileForNote(note, wf, runLaneExecute)
@@ -78,8 +78,12 @@ func TestModelLevelsPrecedenceFallbackAndStableCycle(t *testing.T) {
 		t.Fatalf("explicit precedence = %#v err=%v", selected, err)
 	}
 	delete(note.Data, "runner_profile")
-	delete(note.Data, "work_level")
 	note.Data["complexity"] = "frontier"
+	selected, err = resolveRunnerProfileForNote(note, wf, runLaneReview)
+	if err != nil || selected.Name != "primary" || !strings.Contains(selected.Source, "standard") {
+		t.Fatalf("review did not inherit explicit work level: %#v err=%v", selected, err)
+	}
+	delete(note.Data, "work_level")
 	selected, err = resolveRunnerProfileForNote(note, wf, runLaneExecute)
 	if err != nil || selected.Name != "execute-frontier" {
 		t.Fatalf("legacy frontier changed: %#v err=%v", selected, err)

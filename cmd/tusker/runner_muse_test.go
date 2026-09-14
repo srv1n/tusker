@@ -34,19 +34,12 @@ func TestAgentAccessMuse(t *testing.T) {
 }
 
 func TestMuseNativeRoute(t *testing.T) {
-	runner, command, err := runnerForName(string(RunnerMuseCLI), defaultWorkflow())
+	runner, command, err := runnerForName(string(RunnerMuse), defaultWorkflow())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := runner.(*MuseCLIRunner); !ok || command != defaultMuseCLICommand() {
+	if _, ok := runner.(*MuseRunner); !ok || command != defaultMuseCLICommand() {
 		t.Fatalf("direct Muse route = %T %q", runner, command)
-	}
-	legacy, legacyCommand, err := runnerForName(string(RunnerMuse), defaultWorkflow())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := legacy.(*CodexExecRunner); !ok || !strings.HasPrefix(legacyCommand, "codex --profile muse exec") {
-		t.Fatalf("legacy Muse route changed = %T %q", legacy, legacyCommand)
 	}
 	if museCLIResumeArgv([]string{"muse", "exec", "--json"}, "session-1")[len(museCLIResumeArgv([]string{"muse", "exec", "--json"}, "session-1"))-1] != "session-1" {
 		t.Fatal("direct Muse resume did not bind the requested session")

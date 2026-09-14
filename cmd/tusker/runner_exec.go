@@ -351,7 +351,7 @@ func monitorRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, rawLog *
 		exitCode = 130
 		outcome = AttemptOutcomeInterrupted
 		reason = "runner cancelled: " + ctx.Err().Error()
-	} else if runner == RunnerMuseCLI && exitCode == 0 {
+	} else if runner == RunnerMuse && exitCode == 0 {
 		if output, readErr := readText(req.RawLogPath); readErr == nil {
 			var session string
 			outcome, reason, session = classifyMuseCLIOutput(output)

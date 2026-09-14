@@ -263,6 +263,15 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	// review-result storage, completion transactions, and receipts all use one
 	// stable runtime key. The raw proposal remains the canonical audit input.
 	result.ProjectID = project.ProjectID
+	// Normalize the authority-less transport while it is still v2. A worker
+	// closure may carry the exact material it reviewed, but the daemon has not
+	// yet recomputed that material. Deferring v3 closure validation until after
+	// the binding below keeps worker proposals transport-only without weakening
+	// the final authoritative checks.
+	result.Runner, result.RunnerProfile = "proposal", "proposal"
+	if err := normalizeReviewResult(&result); err != nil {
+		return ReviewResult{}, err
+	}
 	loaded, err := loadProjectContents(d.store, project, false)
 	if err != nil {
 		return ReviewResult{}, err
@@ -276,9 +285,6 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		return ReviewResult{}, err
 	}
 	result.Runner, result.RunnerProfile = run.Runner, run.RunnerProfile
-	if err := normalizeReviewResult(&result); err != nil {
-		return ReviewResult{}, err
-	}
 	expectedTaskRevision := stringField(note.Data, "state_rev")
 	expectedSourceSHA, sourceErr := reviewImplementationSource(d.store, run, note)
 	if sourceErr != nil {
@@ -314,6 +320,9 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		return ReviewResult{}, fmt.Errorf("proposal implementation material fingerprint drifted")
 	}
 	result.MaterialFingerprint = material
+	if err := normalizeReviewResult(&result); err != nil {
+		return ReviewResult{}, err
+	}
 	proof, gates, err := reviewObjectiveSnapshots(project.VaultRoot, note)
 	if err != nil || result.ProofFingerprint != proof || result.GateFingerprint != gates {
 		return ReviewResult{}, fmt.Errorf("proposal proof or gate snapshot drifted")
@@ -336,6 +345,7 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	// review gate executes those rows on the bound implementation workspace,
 	// then reloads the task to bind the observed proof snapshot.
 	commandProofExecuted := false
+	commandProofMaterial := ""
 	if result.Verdict == "pass" {
 		workspace, targetErr := reviewCommandVerificationWorkspace(d.store, project.VaultRoot, note, run)
 		if targetErr != nil {
@@ -351,10 +361,13 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		}
 		note = fresh
 		result.TaskStateRev = stringField(note.Data, "state_rev")
+		if workspace != nil {
+			commandProofMaterial = workspace.MaterialFingerprint
+		}
 		commandProofExecuted = true
 	}
 	if commandProofExecuted {
-		proof, gates, err = reviewObjectiveSnapshots(project.VaultRoot, note)
+		proof, gates, err = reviewObjectiveSnapshotsForMaterial(project.VaultRoot, note, commandProofMaterial)
 		result.ProofFingerprint = proof
 	}
 	if err != nil || result.GateFingerprint != gates {
@@ -362,8 +375,12 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 	}
 	switch result.Verdict {
 	case "pass":
-		report, reportErr := loadV7ProofReport(project.VaultRoot, run.RecordID)
-		if reportErr != nil || report.Status != "satisfied" || len(report.OpenGates) != 0 {
+		proofIdx, reportErr := loadV7Index(project.VaultRoot)
+		if reportErr != nil {
+			return ReviewResult{}, reportErr
+		}
+		report := computeV7ProofReportForMaterial(project.VaultRoot, note, proofIdx, commandProofMaterial, nil)
+		if report.Status != "satisfied" || len(report.OpenGates) != 0 {
 			return ReviewResult{}, fmt.Errorf("pass proposal requires currently satisfied proof and gates")
 		}
 	case "blocked":

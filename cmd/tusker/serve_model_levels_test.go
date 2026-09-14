@@ -33,7 +33,20 @@ func TestServeModelLevelsReadWriteConflictAndCLIAgreement(t *testing.T) {
 		t.Fatalf("task routes unavailable: %#v %#v", detail.EffectiveExecute, detail.EffectiveReview)
 	}
 
-	body := `{"action":"set","scope":"project","level":"standard","lane":"execute","profiles":["execute-cheap"],"revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
+	profileBody := `{"action":"profile-set","scope":"project","name":"manual-test","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","eligibleTiers":["standard"],"revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
+	profileReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/models", strings.NewReader(profileBody))
+	profileReq.Header.Set("Content-Type", "application/json")
+	profileRec := httptest.NewRecorder()
+	server.ServeHTTP(profileRec, profileReq)
+	if profileRec.Code != http.StatusOK || !strings.Contains(profileRec.Body.String(), `"manual-test"`) || !strings.Contains(profileRec.Body.String(), `"configured_unverified"`) {
+		t.Fatalf("profile-set status=%d body=%s", profileRec.Code, profileRec.Body.String())
+	}
+	var created modelLevelsReport
+	if err := json.Unmarshal(profileRec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"action":"set","scope":"project","level":"standard","lane":"execute","profiles":["manual-test"],"revision":"` + created.Revision + `","projectId":"` + project.ProjectID + `"}`
 	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/models", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -45,15 +58,6 @@ func TestServeModelLevelsReadWriteConflictAndCLIAgreement(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil || updated.Revision == initial.Revision || !updated.Levels[1].Execute.Overridden {
 		t.Fatalf("updated=%#v err=%v", updated, err)
 	}
-	profileBody := `{"action":"profile-set","scope":"project","name":"manual-test","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","revision":"` + updated.Revision + `","projectId":"` + project.ProjectID + `"}`
-	profileReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/models", strings.NewReader(profileBody))
-	profileReq.Header.Set("Content-Type", "application/json")
-	profileRec := httptest.NewRecorder()
-	server.ServeHTTP(profileRec, profileReq)
-	if profileRec.Code != http.StatusOK || !strings.Contains(profileRec.Body.String(), `"manual-test"`) || !strings.Contains(profileRec.Body.String(), `"configured_unverified"`) {
-		t.Fatalf("profile-set status=%d body=%s", profileRec.Code, profileRec.Body.String())
-	}
-
 	stale := httptest.NewRecorder()
 	staleReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/models", strings.NewReader(body))
 	staleReq.Header.Set("Content-Type", "application/json")
@@ -96,14 +100,14 @@ func TestServeModelLevelsTaskRouteAuthoringRoundTrip(t *testing.T) {
 	var before serveTaskDetail
 	serveDecode(t, server, "/api/tasks/"+tasks[0].ID+"?project="+project.ProjectID, &before)
 
-	body := `{"projectId":"` + project.ProjectID + `","revision":"` + before.StateRevision + `","workLevel":"demanding","reviewLevel":"light"}`
+	body := `{"projectId":"` + project.ProjectID + `","revision":"` + before.StateRevision + `","workLevel":"demanding","reviewLevel":"light","reviewReason":"The resulting static contract has a bounded checklist."}`
 	updated := servePostJSON(t, server, "/api/tasks/"+tasks[0].ID+"/route", body)
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"ok":true`) {
 		t.Fatalf("route update=%d %s", updated.Code, updated.Body.String())
 	}
 	var after serveTaskDetail
 	serveDecode(t, server, "/api/tasks/"+tasks[0].ID+"?project="+project.ProjectID, &after)
-	if after.AuthoredWorkLevel != "demanding" || after.AuthoredReviewLevel != "light" || after.EffectiveReview.WorkLevel != "light" {
+	if after.AuthoredWorkLevel != "demanding" || after.AuthoredReviewLevel != "light" || after.EffectiveReview.WorkLevel != "light" || after.AuthoredReviewReason != "The resulting static contract has a bounded checklist." {
 		t.Fatalf("route round trip = %#v", after)
 	}
 	stale := servePostJSON(t, server, "/api/tasks/"+tasks[0].ID+"/route", body)

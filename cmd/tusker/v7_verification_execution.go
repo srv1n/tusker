@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +26,15 @@ const v7VerificationCommandMaxOutput = 64 << 10
 type v7VerificationExecutionFailure struct {
 	Row     v7VerificationRow
 	Message string
+}
+
+const v7VerificationReceiptSchema = "tusker.verification-receipt/v1"
+
+type v7VerificationReceiptIdentity struct {
+	ContractFingerprint string
+	WorkRevision        int
+	SourceRevision      string
+	MaterialFingerprint string
 }
 
 // v7VerificationCommandTimeoutFor returns the bounded per-row timeout. The
@@ -56,8 +67,9 @@ func executeV7CommandVerificationRows(vaultPath string, task Note, args Args, ac
 // A workspace target is supplied only by the trusted review coordinator after
 // resolving the durable execute parent. It is never selected by a CLI flag.
 type v7VerificationWorkspace struct {
-	Path   string
-	Verify func() error
+	Path                string
+	Verify              func() error
+	MaterialFingerprint string
 }
 
 func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, args Args, actor string, trustedWorker bool, workspace *v7VerificationWorkspace) (Note, v7ProofReport, []v7VerificationExecutionFailure, error) {
@@ -93,8 +105,12 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			if err != nil {
 				return err
 			}
+			material, err := v7VerificationMaterialForReport(vaultPath, current, workspace)
+			if err != nil {
+				return err
+			}
 			fresh = current
-			report = computeV7ProofReport(vaultPath, current, idx)
+			report = computeV7ProofReportForMaterial(vaultPath, current, idx, material, nil)
 			return nil
 		}
 		if len(pending) > 0 && !trustedWorker {
@@ -132,8 +148,13 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 		if err != nil {
 			return err
 		}
+		identity, verifyMaterial, err := v7VerificationReceiptIdentityFor(vaultPath, current, repoRoot, workspace)
+		if err != nil {
+			return err
+		}
 		deadline := time.Now().Add(v7VerificationCommandTimeoutFor(args))
 		changed := false
+		observations := map[int]v7VerificationCommandObservation{}
 		for i, row := range rows {
 			if !strings.EqualFold(strings.TrimSpace(row.Result), "pending") {
 				continue
@@ -153,7 +174,7 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 				failure := v7VerificationExecutionFailure{Row: rows[i], Message: observed.Message}
 				failures = append(failures, failure)
 			}
-			rows[i].Notes = appendV7VerificationExecutionNote(row.Notes, observed)
+			observations[i] = observed
 			rows[i].BlockedBy = ""
 			changed = true
 		}
@@ -162,16 +183,25 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			if err != nil {
 				return err
 			}
-			fresh = current
-			report = computeV7ProofReport(vaultPath, current, idx)
-			return nil
-		}
-		if workspace != nil {
-			// A command may change the implementation. Such a run must not stamp
-			// passing proof onto the material snapshot reviewed before execution.
-			if err := workspace.Verify(); err != nil {
+			material, err := v7VerificationMaterialForReport(vaultPath, current, workspace)
+			if err != nil {
 				return err
 			}
+			fresh = current
+			report = computeV7ProofReportForMaterial(vaultPath, current, idx, material, nil)
+			return nil
+		}
+		// Review commands may not change the implementation under review.
+		// Direct commands bind their receipt to the resulting scoped material.
+		if err := verifyMaterial(); err != nil {
+			return err
+		}
+		identity, _, err = v7VerificationReceiptIdentityFor(vaultPath, current, repoRoot, workspace)
+		if err != nil {
+			return err
+		}
+		for i, observed := range observations {
+			rows[i].Notes = appendV7VerificationExecutionNote(rows[i], observed, identity)
 		}
 		body = replaceSection(body, "## Verification", renderV7VerificationTable(rows))
 		idx, err := loadV7Index(vaultPath)
@@ -179,7 +209,7 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			return err
 		}
 		current.Body = body
-		report = computeV7ProofReport(vaultPath, current, idx)
+		report = computeV7ProofReportForMaterial(vaultPath, current, idx, identity.MaterialFingerprint, nil)
 		if report.Status == "satisfied" && len(v7PacketStubAcceptanceItems(body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
 			report.Status = "partial"
 		}
@@ -211,6 +241,7 @@ type v7VerificationCommandObservation struct {
 	Message    string
 	TimedOut   bool
 	Truncated  bool
+	MatchCount int
 }
 
 func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (v7VerificationCommandObservation, error) {
@@ -251,6 +282,14 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 		return obs, errors.New(obs.Message)
 	}
 	if err == nil {
+		if count, required := v7FilteredTestMatchCount(command, string(outputBytes)); required {
+			obs.MatchCount = count
+			if count == 0 {
+				obs.ExitCode = 1
+				obs.Message = "filtered test command produced no matched-test evidence; use verbose or JSON test output"
+				return obs, errors.New(obs.Message)
+			}
+		}
 		obs.ExitCode = 0
 		obs.Message = "pass"
 		return obs, nil
@@ -263,7 +302,7 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 	return obs, err
 }
 
-func appendV7VerificationExecutionNote(existing string, observation v7VerificationCommandObservation) string {
+func appendV7VerificationExecutionNote(row v7VerificationRow, observation v7VerificationCommandObservation, identity v7VerificationReceiptIdentity) string {
 	parts := []string{fmt.Sprintf("tusker gate executed at %s", observation.FinishedAt.Format(time.RFC3339Nano)), fmt.Sprintf("exit=%d", observation.ExitCode), "output_sha256=" + observation.Digest}
 	if observation.TimedOut {
 		parts = append(parts, "timeout")
@@ -271,11 +310,191 @@ func appendV7VerificationExecutionNote(existing string, observation v7Verificati
 	if observation.Truncated {
 		parts = append(parts, "output_truncated")
 	}
+	receiptFields := []string{
+		v7VerificationReceiptSchema,
+		"contract=" + identity.ContractFingerprint,
+		"work_revision=" + strconv.Itoa(identity.WorkRevision),
+		"source=" + fallback(identity.SourceRevision, "-"),
+		"material=" + identity.MaterialFingerprint,
+		"row=" + v7VerificationRowFingerprint(row),
+	}
+	if v7FilteredTestCommand(row.Check) {
+		receiptFields = append(receiptFields, "match_count="+strconv.Itoa(observation.MatchCount))
+	}
+	parts = append(parts, strings.Join(receiptFields, " "))
 	receipt := strings.Join(parts, "; ")
-	if strings.TrimSpace(existing) == "" || existing == "-" {
+	if strings.TrimSpace(row.Notes) == "" || row.Notes == "-" {
 		return receipt
 	}
-	return strings.TrimSpace(existing) + "; " + receipt
+	return strings.TrimSpace(row.Notes) + "; " + receipt
+}
+
+var v7TestCountPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)^=== RUN\s+`),
+	regexp.MustCompile(`"Action"\s*:\s*"run"`),
+}
+
+func v7FilteredTestCommand(check string) bool {
+	command, ok := v7VerificationCommand(check)
+	if !ok {
+		command = check
+	}
+	lower := strings.ToLower(command)
+	return strings.Contains(lower, "go test") && (strings.Contains(lower, "-run ") || strings.Contains(lower, "-run="))
+}
+
+func v7FilteredTestMatchCount(command, output string) (int, bool) {
+	if !v7FilteredTestCommand(command) {
+		return 0, false
+	}
+	count := 0
+	for _, pattern := range v7TestCountPatterns {
+		count += len(pattern.FindAllStringIndex(output, -1))
+	}
+	return count, true
+}
+
+func v7VerificationRowFingerprint(row v7VerificationRow) string {
+	raw, _ := json.Marshal(v7VerificationManifestRow{Covers: strings.TrimSpace(row.CoverText), Command: strings.TrimSpace(row.Check)})
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func v7VerificationMaterialForReport(vaultPath string, task Note, workspace *v7VerificationWorkspace) (string, error) {
+	if workspace == nil {
+		return v7VerificationCurrentScopedMaterial(vaultPath, task)
+	}
+	if workspace.Verify == nil {
+		return "", tuskerError(errorInvalidTransition, "verification workspace lacks an implementation binding")
+	}
+	if err := workspace.Verify(); err != nil {
+		return "", err
+	}
+	repoRoot, err := canonicalV7VerificationWorkspaceRoot(workspace.Path)
+	if err != nil {
+		return "", err
+	}
+	identity, _, err := v7VerificationReceiptIdentityFor(vaultPath, task, repoRoot, workspace)
+	if err != nil {
+		return "", err
+	}
+	return identity.MaterialFingerprint, nil
+}
+
+func v7VerificationReceiptIdentityFor(vaultPath string, task Note, repoRoot string, workspace *v7VerificationWorkspace) (v7VerificationReceiptIdentity, func() error, error) {
+	contract := directWaveTaskContractFingerprint(task.Data, task.Body)
+	if stored := strings.TrimSpace(stringField(task.Data, "contract_fingerprint")); stored == "" || stored != contract {
+		return v7VerificationReceiptIdentity{}, nil, tuskerError(errorEvidenceGate, stringField(task.Data, "id")+": verification task contract fingerprint is stale")
+	}
+	scope, err := canonicalTaskMaterialScope(vaultPath, task)
+	if err != nil {
+		return v7VerificationReceiptIdentity{}, nil, err
+	}
+	if len(scope) == 0 {
+		scope = nil
+	}
+	material, err := workspaceTreeStateHashForPaths(repoRoot, scope)
+	if err != nil {
+		return v7VerificationReceiptIdentity{}, nil, err
+	}
+	if workspace != nil && strings.TrimSpace(workspace.MaterialFingerprint) != "" && material != workspace.MaterialFingerprint {
+		return v7VerificationReceiptIdentity{}, nil, tuskerError(errorEvidenceGate, "verification workspace material does not match the reviewed implementation")
+	}
+	verify := func() error {
+		if workspace == nil {
+			return nil
+		}
+		if err := workspace.Verify(); err != nil {
+			return err
+		}
+		current, hashErr := workspaceTreeStateHashForPaths(repoRoot, scope)
+		if hashErr != nil {
+			return hashErr
+		}
+		if current != material {
+			return tuskerError(errorEvidenceGate, "verification command changed the scoped implementation material")
+		}
+		return nil
+	}
+	return v7VerificationReceiptIdentity{
+		ContractFingerprint: contract,
+		WorkRevision:        intField(task.Data, "work_revision"),
+		SourceRevision:      firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")),
+		MaterialFingerprint: material,
+	}, verify, nil
+}
+
+func v7VerificationReceiptCurrent(task Note, row v7VerificationRow, currentMaterial string, materialErr error) bool {
+	if _, command := v7VerificationCommand(row.Check); !command {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(row.Result), "pass") || materialErr != nil || strings.TrimSpace(currentMaterial) == "" {
+		return false
+	}
+	marker := v7VerificationReceiptSchema + " "
+	pos := strings.LastIndex(row.Notes, marker)
+	if pos < 0 {
+		return false
+	}
+	fields := map[string]string{}
+	for _, token := range strings.Fields(row.Notes[pos+len(marker):]) {
+		key, value, ok := strings.Cut(strings.TrimRight(token, ";"), "=")
+		if ok {
+			fields[key] = value
+		}
+	}
+	contract := directWaveTaskContractFingerprint(task.Data, task.Body)
+	stored := strings.TrimSpace(stringField(task.Data, "contract_fingerprint"))
+	if stored == "" || stored != contract || fields["contract"] != contract || fields["row"] != v7VerificationRowFingerprint(row) {
+		return false
+	}
+	if fields["work_revision"] != strconv.Itoa(intField(task.Data, "work_revision")) || fields["source"] != fallback(firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")), "-") || fields["material"] != currentMaterial {
+		return false
+	}
+	if v7FilteredTestCommand(row.Check) {
+		count, err := strconv.Atoi(fields["match_count"])
+		return err == nil && count > 0
+	}
+	return true
+}
+
+func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, error) {
+	hasCommand := false
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if _, ok := v7VerificationCommand(row.Check); ok {
+			hasCommand = true
+			break
+		}
+	}
+	if !hasCommand {
+		return "", nil
+	}
+	repoRoot, err := canonicalV7VerificationWorkspaceRoot(v7RepoRoot(vaultPath))
+	if err != nil {
+		return "", err
+	}
+	scope, err := canonicalTaskMaterialScope(vaultPath, task)
+	if err != nil {
+		return "", err
+	}
+	if len(scope) == 0 {
+		scope = nil
+	}
+	return workspaceTreeStateHashForPaths(repoRoot, scope)
+}
+
+func v7VerificationReceiptRequirementMissingForMaterial(task Note, currentMaterial string, materialErr error) string {
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if !v7VerificationReceiptCurrent(task, row, currentMaterial, materialErr) {
+			return "command proof for " + fallback(strings.TrimSpace(row.CoverText), "unknown acceptance") + " is missing or stale for the current task contract/work/source"
+		}
+	}
+	return ""
+}
+
+func v7VerificationReceiptRequirementMissing(vaultPath string, task Note) string {
+	material, err := v7VerificationCurrentScopedMaterial(vaultPath, task)
+	return v7VerificationReceiptRequirementMissingForMaterial(task, material, err)
 }
 
 type v7VerificationManifestRow struct {
@@ -397,6 +616,13 @@ func v7PendingCommandProofGaps(task Note, report v7ProofReport) []string {
 		}
 	}
 	for _, gap := range report.ModeMissing {
+		if strings.HasPrefix(gap, "verification_receipt:") {
+			// Pending command rows are allowed through the read-only preflight so
+			// the shared executor can create their receipts. The post-execution
+			// proof gate rechecks every command row and still rejects stale or
+			// non-PASS receipts.
+			continue
+		}
 		if strings.HasPrefix(gap, "proof_required:") {
 			required := strings.TrimPrefix(gap, "proof_required:")
 			matched := false

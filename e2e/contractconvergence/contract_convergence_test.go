@@ -45,10 +45,10 @@ func TestContractConvergence(t *testing.T) {
 	before := snapshotRepositoryAuthority(t, repo)
 
 	tests := []string{
-		// Typed phase/readiness and inert held import.
+		// Direct task/wave authoring and inert creation.
 		"TestReadinessContract",
-		"TestDeliveryPhaseReadinessSeparation",
-		"TestDeliveryReviewEnvironmentStatesHaveOneTruthfulAction",
+		"TestDirectWaveAuthoringBatchCreatesDurableGraph",
+		"TestDirectWaveAuthorityReviewUsesOnlyDurableMaterial",
 
 		// Interactive admission, exact typed refusals, CAS lifecycle, reclaim,
 		// and proof that work notifications cannot become dispatch.
@@ -62,8 +62,6 @@ func TestContractConvergence(t *testing.T) {
 		"TestWorkSessionNotificationIsExactRunHintAndDoesNotSpawn",
 
 		// Independent fleet dimensions and authority-scoped repair.
-		"TestDeliveryRolloutPreservation",
-		"TestDeliveryRolloutQuarantine",
 		"TestScopedFleetRepair",
 		"TestFleetHealthDimensions",
 		"TestMixedFleetCoreRepairPreservesOtherScopes",
@@ -71,7 +69,6 @@ func TestContractConvergence(t *testing.T) {
 		// Binary/package compatibility, every install shape, deterministic
 		// repair, and bounded progressive disclosure.
 		"TestInstalledCapabilityManifest",
-		"TestCanonicalSkillCompatibilityMatchesFactoryIntakeContract",
 		"TestMaterializedSkillProvenanceClassifiesFreshnessAndLocalEdits",
 		"TestSymlinkProvenanceReadsLiveTarget",
 		"TestSkillBundleProvenanceIsPortable",
@@ -187,7 +184,7 @@ func installAuthorityTraps(t *testing.T, root string) (string, string) {
 		probe := ""
 		switch name {
 		case "codex":
-			probe = "if [ \"$*\" = \"debug models\" ]; then exit 127; fi\n"
+			probe = "if [ \"$*\" = \"debug models\" ] || [ \"$*\" = \"--version\" ]; then exit 127; fi\n"
 		case "claude":
 			probe = "if [ \"$*\" = \"--version\" ]; then exit 127; fi\n"
 		}
@@ -249,6 +246,16 @@ func snapshotRepositoryAuthority(t *testing.T, repo string) string {
 	var snapshot strings.Builder
 	for _, args := range commands {
 		raw := commandOutput(t, "", "git", append([]string{"-C", repo}, args...)...)
+		if args[0] == "show-ref" {
+			lines := strings.Split(raw, "\n")
+			kept := lines[:0]
+			for _, line := range lines {
+				if !strings.Contains(line, " refs/codex/turn-diffs/") {
+					kept = append(kept, line)
+				}
+			}
+			raw = strings.Join(kept, "\n")
+		}
 		fmt.Fprintf(&snapshot, "$ git %s\n%s", strings.Join(args, " "), raw)
 	}
 	return snapshot.String()

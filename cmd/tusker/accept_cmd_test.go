@@ -26,7 +26,10 @@ func acceptTestVaultWithTask(t *testing.T) (string, string) {
 
 func acceptTestGreenProof(t *testing.T, vault, id string) {
 	t.Helper()
-	if _, err := upsertV7Verification(vault, id, v7VerificationRow{CoverText: "A1", Check: "command: python3 -m unittest discover -s .", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
+	if repo := v7RepoRoot(vault); !v7GitRepo(repo) {
+		runGit(t, "-C", repo, "init", "-q")
+	}
+	if err := v7TestVerificationMutation(Args{"vault": vault, "quiet": "true", "id": id, "by": "reviewer:gate", "covers": "A1", "check": "command: python3 -m unittest discover -s .", "result": "pass", "note": "Existing gate receipt."}); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 }

@@ -48,9 +48,9 @@ automation:
 tusker config resolve automation.workspace.strategy --vault ./.tusker --json
 ```
 
-Commit or ignore fixture artifacts before checking cleanliness. Fresh setup uses `codex_exec`;
-inspect `tusker config resolve automation.profiles --vault ./.tusker --json`.
-ACP requires a configured supported runner; inspect runner help, never silently substitute a transport.
+Keep fixture artifacts in their owned disposable location. Inspect
+`tusker config resolve automation.profiles --vault ./.tusker --json` for the
+configured runner; do not assume a default or substitute a transport.
 
 ## Canon and delivery
 
@@ -62,15 +62,16 @@ tusker docs find auth --vault ./.tusker
 ```
 
 Record source-backed facts in `docs/system/`;
-track delivery work as tasks. An open, disarmed, backlog/held wave with no
-attempts or reviews can be amended without changing scope or source keys:
+track work as tasks. Author tasks directly or batch them with a wave
+authoring request:
 
 ```sh
-tusker delivery import --plan <plan.yaml> --dry-run --vault ./.tusker --json
-tusker delivery import --plan <plan.yaml> --vault ./.tusker
+tusker new task --title "Fix billing" --work-level standard --vault ./.tusker
+tusker wave create --file <request.yaml> --request-key <stable-key> --vault ./.tusker
 ```
 
-Progressed plans need explicit rework/control, not repeated import.
+Creation is inert. `tusker wave start`/`tusker task start` are the only
+authorization actions; started waves need explicit control, not re-authoring.
 
 ## Validate
 

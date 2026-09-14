@@ -312,6 +312,7 @@ type callResult struct {
 
 type pendingCall struct {
 	id                     string
+	method                 string
 	done                   chan callResult
 	settled                chan struct{}
 	settleOnce             sync.Once
@@ -897,6 +898,11 @@ func parseConfigOptions(raw json.RawMessage) ([]ConfigOption, error) {
 			}
 			return nil, fmt.Errorf("config option %q: %w", option.ID, err)
 		}
+		// Some ACP agents advertise a dynamic select before its values are
+		// available. A later session/update may provide concrete choices.
+		if len(rawValues) == 0 {
+			continue
+		}
 		grouped := false
 		for _, rawValue := range rawValues {
 			var shape map[string]json.RawMessage
@@ -1140,6 +1146,11 @@ func (c *Client) validateUpdateEnvelope(params json.RawMessage, sequence uint64)
 		return nil
 	}
 	if c.session == nil {
+		for _, pending := range c.pending {
+			if pending.method == "session/new" {
+				return nil
+			}
+		}
 		return errors.New("session/update arrived without an active or restoring session")
 	}
 	if envelope.SessionID != c.session.ID {
@@ -1379,7 +1390,7 @@ func (c *Client) prepareCall(method string, params any, prompt bool) (*pendingCa
 		return nil, rpcMessage{}, fmt.Errorf("%w: ACP request frame for %s is %d bytes, limit %d", ErrProtocol, method, len(frame), c.cfg.Limits.MaxFrameBytes)
 	}
 	c.nextID = nextID
-	p := &pendingCall{id: id, done: make(chan callResult, 1), settled: make(chan struct{}), writeDone: make(chan struct{}), phase: DeliveryNotSent, prompt: prompt}
+	p := &pendingCall{id: id, method: method, done: make(chan callResult, 1), settled: make(chan struct{}), writeDone: make(chan struct{}), phase: DeliveryNotSent, prompt: prompt}
 	c.pending[id] = p
 	if prompt {
 		c.activePrompt = p
@@ -1654,6 +1665,11 @@ func (c *Client) handleRequest(msg rpcMessage) {
 				return
 			}
 			c.enqueueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
+			return
+		}
+		// Devin emits this informational extension while MCP availability changes.
+		// It carries no client action and must not poison otherwise valid ACP traffic.
+		if msg.Method == "_cognition.ai/mcp/serversChanged" || msg.Method == "_cognition.ai/output" {
 			return
 		}
 		// Unknown notifications have no response channel. Fail closed rather

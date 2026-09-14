@@ -571,7 +571,7 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 		ImplementationSHA: facts.Head, AttemptID: attemptID,
 		Actor:  reviewerActorForNote(wfFile.Data.Reviewer.Actor, note),
 		Covers: []string{}, ProofFingerprint: proof, GateFingerprint: gates, MaterialFingerprint: material,
-		Verdict: "changes_requested", Summary: "actionable", Findings: []string{"fix acceptance"},
+		Verdict: "changes_requested", Summary: "actionable", Findings: []string{completionTestFinding(material, "F-BOUNDARY", "fix acceptance")},
 		CreatedAt: "2026-07-25T10:00:00Z",
 	}
 	raw, err := json.Marshal(reviewProposal{Schema: reviewProposalSchema, AttemptID: attemptID, Result: result})

@@ -184,20 +184,6 @@ func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testi
 				t.Fatalf("healthy .claude package = %#v", state)
 			}
 
-			contract, err := embeddedFactoryIntakeContractProvenance()
-			if err != nil {
-				t.Fatal(err)
-			}
-			claimed := Note{Data: map[string]any{
-				"factory_intake_contract_schema":      contract.Schema,
-				"factory_intake_contract_version":     contract.Version,
-				"factory_intake_contract_fingerprint": contract.Fingerprint,
-			}}
-			blockers := strings.Join(waveFactoryIntakeContractBlockers(filepath.Join(repo, ".tusker"), claimed), "\n")
-			if !strings.Contains(blockers, ".agents skill is incompatible") || strings.Contains(blockers, ".claude skill is") {
-				t.Fatalf("asymmetric claimed-wave blockers = %q", blockers)
-			}
-
 			dry, err := runSetupDoctor(setupDoctorInput{RepoRoot: repo, Source: goodRoot}, false)
 			if err != nil {
 				t.Fatal(err)
@@ -213,9 +199,6 @@ func TestAsymmetricManagedSkillMetadataBlocksClaimedWaveAndSetupRepairs(t *testi
 			finding = findingByCode(repaired, "skill_install_incompatible")
 			if !repaired.OK || finding == nil || !finding.Changed || finding.Provenance == nil || finding.Provenance.Status != "current" {
 				t.Fatalf("asymmetric setup repair = %#v in %#v", finding, repaired)
-			}
-			if got := waveFactoryIntakeContractBlockers(filepath.Join(repo, ".tusker"), claimed); len(got) != 0 {
-				t.Fatalf("claimed-wave blockers remained after repair: %#v", got)
 			}
 		})
 	}
@@ -266,7 +249,7 @@ name: another-skill
 	assertEqual(t, filepath.Join(canonical, "skills", "tusker"), mapString(payload, "skill_source"), "reported canonical source")
 }
 
-func TestSkillSyncRejectsCanonicalLookalikeWithoutExactFactoryContract(t *testing.T) {
+func TestSkillSyncRejectsCanonicalLookalikeWithoutExactAuthoringContract(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(string) error
@@ -281,7 +264,7 @@ func TestSkillSyncRejectsCanonicalLookalikeWithoutExactFactoryContract(t *testin
 			sourceRoot := t.TempDir()
 			writeCanonicalTuskerSkillFixture(t, sourceRoot)
 			source := filepath.Join(sourceRoot, "skills", "tusker")
-			if err := tt.mutate(filepath.Join(source, "assets", "factory-intake-contract.yaml")); err != nil {
+			if err := tt.mutate(filepath.Join(source, "assets", "authoring-contract.yaml")); err != nil {
 				t.Fatal(err)
 			}
 			if got := classifySkillSyncSource(sourceRoot, "").Kind; got != "invalid" {
@@ -321,7 +304,7 @@ func TestSkillSyncRejectsCanonicalLookalikeWithoutExactFactoryContract(t *testin
 func TestSetupRepairRejectsCanonicalLookalikeWithoutFalseSuccess(t *testing.T) {
 	sourceRoot := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, sourceRoot)
-	if err := writeText(filepath.Join(sourceRoot, "skills", "tusker", "assets", "factory-intake-contract.yaml"), "schema: [unterminated\n"); err != nil {
+	if err := writeText(filepath.Join(sourceRoot, "skills", "tusker", "assets", "authoring-contract.yaml"), "schema: [unterminated\n"); err != nil {
 		t.Fatal(err)
 	}
 	repo := t.TempDir()
@@ -355,7 +338,7 @@ func TestSetupRepairRejectsCanonicalLookalikeWithoutFalseSuccess(t *testing.T) {
 func TestSymlinkInstallRejectsCanonicalLookalikeBeforeDestinationMutation(t *testing.T) {
 	sourceRoot := t.TempDir()
 	writeCanonicalTuskerSkillFixture(t, sourceRoot)
-	if err := os.Remove(filepath.Join(sourceRoot, "skills", "tusker", "assets", "factory-intake-contract.yaml")); err != nil {
+	if err := os.Remove(filepath.Join(sourceRoot, "skills", "tusker", "assets", "authoring-contract.yaml")); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(t.TempDir(), "managed", "tusker")
@@ -790,11 +773,11 @@ description: Operate Tusker.
 			t.Fatal(err)
 		}
 	}
-	contract, err := os.ReadFile(filepath.Join("..", "..", "skills", "tusker", "assets", "factory-intake-contract.yaml"))
+	contract, err := os.ReadFile(filepath.Join("..", "..", "skills", "tusker", "assets", "authoring-contract.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(root, "assets", "factory-intake-contract.yaml"), string(contract)); err != nil {
+	if err := writeText(filepath.Join(root, "assets", "authoring-contract.yaml"), string(contract)); err != nil {
 		t.Fatal(err)
 	}
 	compatibility, err := os.ReadFile(filepath.Join("..", "..", "skills", "tusker", "assets", skillCompatibilityFilename))

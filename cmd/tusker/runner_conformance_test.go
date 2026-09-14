@@ -69,8 +69,8 @@ func TestAgentProfileTestIdentity(t *testing.T) {
 	vault := automationTestVault(t)
 	bin := t.TempDir()
 	argsPath := filepath.Join(t.TempDir(), "muse-argv")
-	command := filepath.Join(bin, "codex")
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'codex-muse-test 1'; exit 0; fi\nprintf '%%s\\n' \"$@\" > %q\nprintf '%%s\\n' '{\"type\":\"turn.completed\"}' '.tusker-conformance-write .tusker-conformance-outside'\n", argsPath)
+	command := filepath.Join(bin, "muse")
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'Muse Code 1.1.1'; exit 0; fi\nprintf '%%s\\n' \"$@\" > %q\nprintf '%%s\\n' '{\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"muse-session-fixture\"},\"record_type\":\"reconciliation\",\"payload_type\":\"run.terminal.completed\",\"payload\":{\"text\":\"TUSKER_POLICY_CANARY_ATTEMPTED\"}}'\n", argsPath)
 	if err := writeText(command, script); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAgentProfileTestIdentity(t *testing.T) {
 	}
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.muse-profile", map[string]any{
 		"harness": "muse", "model": "muse-manual", "effort": "high", "permission_preset": "read-only",
-		"command": command + " --profile muse exec --json -", "sandbox": map[string]any{"mode": "read-only", "network": false}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0},
+		"command": command + " exec --json", "sandbox": map[string]any{"mode": "read-only", "network": false}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestAgentProfileTestIdentity(t *testing.T) {
 	}
 	firstFingerprint := report.ConfigurationHash
 	argv, err := os.ReadFile(argsPath)
-	if err != nil || !strings.Contains(string(argv), "muse-manual") || !strings.Contains(string(argv), "--profile") {
+	if err != nil || !strings.Contains(string(argv), "muse-manual") || !strings.Contains(string(argv), "--model") {
 		t.Fatalf("selected Muse profile was not invoked exactly: %q %v", argv, err)
 	}
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.muse-profile.model", "muse-edited"); err != nil {

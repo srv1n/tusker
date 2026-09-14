@@ -1,3 +1,3 @@
 name: tusker
-description: Use Tusker for task creation, lifecycle state, acceptance, proof, gates, and closeout whenever a repository contains .tusker or a Tusker task is named.
+description: Manage Tusker tasks, proof, gates, and repository knowledge. Use when tracking work with Tusker, inspecting a Tusker ID, or finding canonical repo documentation.
 entrypoint: SKILL.md

@@ -8,7 +8,7 @@ test("project navigation keeps primary destinations and exposes secondary routes
   const delivery = source("src/features/product/DeliveryScreens.tsx");
   const today = source("src/features/product/TodayScreens.tsx");
 
-  for (const label of ["Work", "Documents", "Settings", "More", "Board", "Plan", "Trains", "Diagnostics"]) expect(sidebar).toContain(label);
+  for (const label of ["Work", "Documents", "Settings", "More", "Board", "Trains", "Diagnostics"]) expect(sidebar).toContain(label);
   for (const destination of ["/p/$projectId/waves", "/p/$projectId/knowledge", "/p/$projectId/settings", "/p/$projectId/tasks", "/p/$projectId/diagnostics"]) expect(sidebar).toContain(destination);
   expect(sidebar).toContain("open={secondarySelected}");
   expect(sidebar).toContain("Refresh failed — check this project’s source.");

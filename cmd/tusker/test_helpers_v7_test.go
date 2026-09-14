@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -30,10 +31,71 @@ func runV7TestMutation(args Args, fn func(Args) error) error {
 	}
 	vault := args.String("vault")
 	taskID := firstNonEmpty(args.String("id"), args.String("_pos1"))
+	if err := ensureV7TestReceiptScope(vault, taskID); err != nil {
+		return err
+	}
 	if err := removeSupersededV7TestPendingRows(vault, taskID, rows); err != nil {
 		return err
 	}
-	_, err = upsertV7Verifications(vault, taskID, rows, fallback(args.String("by"), "reviewer:gate"), args)
+	actor := fallback(args.String("by"), "reviewer:gate")
+	if _, err = upsertV7Verifications(vault, taskID, rows, actor, args); err != nil {
+		return err
+	}
+	note, err := resolveV7Note(vault, taskID, "task")
+	if err != nil {
+		return err
+	}
+	repo := v7RepoRoot(vault)
+	if !v7GitRepo(repo) {
+		if err := exec.Command("git", "-C", repo, "init", "-q").Run(); err != nil {
+			return err
+		}
+	}
+	identity, _, err := v7VerificationReceiptIdentityFor(vault, note, repo, nil)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		if _, command := v7VerificationCommand(rows[i].Check); command && strings.EqualFold(rows[i].Result, "pass") {
+			rows[i].Notes = appendV7VerificationExecutionNote(rows[i], v7VerificationCommandObservation{ExitCode: 0, Digest: "sha256:test-fixture", MatchCount: 1}, identity)
+		}
+	}
+	_, err = upsertV7Verifications(vault, taskID, rows, actor, args)
+	return err
+}
+
+// Legacy unit fixtures sometimes name the control directory "vault" instead
+// of ".tusker". Give their synthetic receipts one stable source file so later
+// task-ledger writes cannot masquerade as implementation drift.
+func ensureV7TestReceiptScope(vault, taskID string) error {
+	if filepath.Base(filepath.Clean(vault)) == ".tusker" {
+		return nil
+	}
+	note, err := resolveV7Note(vault, taskID, "task")
+	if err != nil {
+		return err
+	}
+	scope, err := canonicalTaskMaterialScope(vault, note)
+	if err != nil || len(scope) > 0 {
+		return err
+	}
+	rel := filepath.ToSlash(filepath.Join(".tusker-test-fixtures", strings.ToLower(taskID)+".txt"))
+	path := filepath.Join(v7RepoRoot(vault), filepath.FromSlash(rel))
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if !fileExists(path) {
+		if err := writeText(path, "stable verification fixture\n"); err != nil {
+			return err
+		}
+	}
+	data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+	if err != nil {
+		return err
+	}
+	data["owned_paths"] = []string{rel}
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
+	_, err = saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev"))
 	return err
 }
 

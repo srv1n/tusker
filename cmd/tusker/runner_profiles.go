@@ -726,9 +726,9 @@ func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinitio
 	switch harness {
 	case RunnerCodexAppServer:
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness uses retired value %q", name, profile.Harness), withPath(path), withHint("migrate to codex_exec or configure an operator-installed acp_v1 endpoint"))
-	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerMuse, RunnerMuseCLI, RunnerClaude, RunnerACP, RunnerCodexACP:
+	case RunnerCodex, RunnerCodexExec, RunnerCodexCloud, RunnerMuse, RunnerClaude, RunnerACP, RunnerDevin, RunnerCodexACP:
 	default:
-		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_exec, muse, muse_cli, claude-code, codex_cloud, or an operator-installed acp_v1 endpoint"))
+		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.harness has unsupported value %q", name, profile.Harness), withPath(path), withHint("use codex_exec, muse, claude-code, codex_cloud, or an operator-installed acp_v1 endpoint"))
 	}
 	if profile.NativeContainment && harness != RunnerACP {
 		return tuskerError(errorConfigInvalid, fmt.Sprintf("automation.profiles.%s.native_containment is valid only for acp_v1", name), withPath(path))
@@ -921,6 +921,19 @@ func runnerDenylistFromSchema(in []v7schema.TuskerAutomationDenyRuleConfig) []Ru
 
 func resolveRunnerProfileForNote(note Note, wf Workflow, lane string) (ResolvedRunnerProfile, error) {
 	lane = firstNonEmpty(strings.TrimSpace(lane), runLaneExecute)
+	// An explicitly present but blank work_level is an authored refusal to
+	// classify the task. Check it before any task profile or legacy runner
+	// override so persisted compatibility fields cannot turn an unclassified
+	// task into runnable work. This check is deliberately independent of
+	// modelLevelForNote: a valid review_level must not hide a blank work_level.
+	if explicitUnclassifiedWorkLevel(note) {
+		return ResolvedRunnerProfile{}, tuskerError(errorConfigInvalid, "work_level is required for agent work; use light, standard, or demanding")
+	}
+	// Keep the model-level validator here as well so an explicit invalid review
+	// level cannot be hidden by a lane profile override.
+	if _, _, levelErr := modelLevelForNote(note, lane); levelErr != nil {
+		return ResolvedRunnerProfile{}, levelErr
+	}
 	if complexity := strings.TrimSpace(stringField(note.Data, "complexity")); complexity != "" && !validTaskComplexity(complexity) {
 		return ResolvedRunnerProfile{}, tuskerError(errorConfigInvalid, "task complexity must be routine, standard, complex, or frontier")
 	}
@@ -964,7 +977,7 @@ func resolveRunnerProfileForNote(note Note, wf Workflow, lane string) (ResolvedR
 		}
 	}
 	levelField := "work_level"
-	if lane == runLaneReview {
+	if lane == runLaneReview && strings.TrimSpace(stringField(note.Data, "review_level")) != "" {
 		levelField = "review_level"
 	}
 	if strings.TrimSpace(stringField(note.Data, levelField)) != "" {
@@ -1022,6 +1035,11 @@ func validTaskComplexity(value string) bool {
 	default:
 		return false
 	}
+}
+
+func explicitUnclassifiedWorkLevel(note Note) bool {
+	_, present := note.Data["work_level"]
+	return present && strings.TrimSpace(stringField(note.Data, "work_level")) == ""
 }
 
 // An absent complexity preserves compatibility by using the configured default.
@@ -1145,7 +1163,7 @@ func commandForRunnerProfile(baseCommand string, selected ResolvedRunnerProfile)
 		if effort != "" && !commandHasFlag(command, "--effort") {
 			command += " --effort " + effort
 		}
-	case RunnerMuseCLI:
+	case RunnerMuse:
 		if model != "" && !commandHasFlag(command, "--model") {
 			command += " --model " + model
 		}
@@ -1188,7 +1206,7 @@ func codexPolicyForResolvedProfile(base CodexPolicy, lane string, selected Resol
 		policy.CommandPolicy = runnercore.NewCommandPolicy(profile.Access.Mode == accessModeReview, profile.Access.DestructiveActions)
 	}
 	switch RunnerName(strings.TrimSpace(profile.Harness)) {
-	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexACP:
+	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerACP, RunnerDevin, RunnerCodexACP:
 	default:
 		return policy
 	}

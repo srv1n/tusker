@@ -36,6 +36,9 @@ func executionCmd(args Args, action string) error {
 
 	switch action {
 	case "register":
+		if strings.TrimSpace(args.String("contact-role")) != "" {
+			return executionRegisterContact(args, store, projectID, vaultPath, actor)
+		}
 		source := strings.TrimSpace(args.String("source"))
 		if source == "" {
 			source = "direct"
@@ -176,9 +179,95 @@ func executionGraphFilterArgs(args Args) ExecutionGraphFilter {
 	return ExecutionGraphFilter{ExecutionID: firstNonEmpty(args.String("execution"), args.String("execution-id")), RootID: firstNonEmpty(args.String("root"), args.String("root-id")), ParentID: firstNonEmpty(args.String("parent"), args.String("parent-id")), TaskID: firstNonEmpty(args.String("task"), args.String("task-id")), WaveID: firstNonEmpty(args.String("wave"), args.String("wave-id")), Source: args.String("source"), Provider: args.String("provider"), ProviderID: firstNonEmpty(args.String("provider-id"), args.String("provider-session-id")), AgentType: args.String("agent-type"), Binding: args.String("binding"), Lifecycle: args.String("lifecycle"), Name: firstNonEmpty(args.String("name"), args.String("search")), Attention: args.String("attention"), Cursor: args.String("cursor"), Limit: limit}
 }
 
+func executionRegisterContact(args Args, store *RuntimeStore, projectID, vaultPath, actor string) error {
+	taskID := strings.TrimSpace(firstNonEmpty(args.String("task"), args.String("task-id")))
+	waveID := strings.TrimSpace(firstNonEmpty(args.String("wave"), args.String("wave-id")))
+	if (taskID == "") == (waveID == "") {
+		return tuskerError(errorInvalidArg, "execution register contact requires exactly one of --task or --wave")
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	subjectID, subjectKind := taskID, "task"
+	if taskID != "" {
+		if _, ok := idx.Tasks[taskID]; !ok {
+			return tuskerError(errorNotFound, "task not found: "+taskID)
+		}
+	} else {
+		if _, ok := idx.Waves[waveID]; !ok {
+			return tuskerError(errorNotFound, "wave not found: "+waveID)
+		}
+		subjectID = waveID
+		subjectKind = "wave"
+	}
+	role := strings.TrimSpace(args.String("contact-role"))
+	if role != "architect" && role != "origin" && role != "peer" {
+		return tuskerError(errorInvalidArg, "contact-role must be architect, origin, or peer")
+	}
+	name := strings.TrimSpace(args.String("contact-name"))
+	if role == "peer" && name == "" {
+		return tuskerError(errorMissingField, "peer contact requires --contact-name")
+	}
+	if role != "peer" && name != "" {
+		return tuskerError(errorInvalidArg, "--contact-name is only valid for peer contacts")
+	}
+	by, byPresent := args["by"]
+	if !byPresent || strings.TrimSpace(fmt.Sprint(by)) == "" {
+		return tuskerError(errorMissingField, "external contact registration requires an explicit --by human:<name> or operator:<name>")
+	}
+	if !strings.HasPrefix(actor, "human:") && !strings.HasPrefix(actor, "operator:") {
+		return tuskerError(errorInvalidArg, "external contact registration requires --by human:<name> or operator:<name>")
+	}
+	harness := strings.ToLower(strings.TrimSpace(args.String("harness")))
+	source := strings.TrimSpace(args.String("source"))
+	if expected, ok := externalContactSource[harness]; !ok || source != expected {
+		return tuskerError(errorInvalidArg, "contact harness/source pairing must be codex/direct_codex, claude-code/direct_claude, or devin/direct_devin")
+	}
+	rawGeneration, ok := args["if-generation"]
+	if !ok {
+		return tuskerError(errorMissingField, "external contact registration requires --if-generation; use 0 to create")
+	}
+	generation, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(rawGeneration)))
+	if err != nil || generation < 0 {
+		return tuskerError(errorInvalidArg, "--if-generation must be a non-negative integer")
+	}
+	contact, record, err := store.RegisterExternalAgentContact(ExternalContactRegistrationInput{
+		ProjectID: projectID, SubjectID: subjectID, SubjectKind: subjectKind,
+		Role: role, Name: name,
+		Harness: args.String("harness"), Provider: args.String("provider"),
+		ConversationID: firstNonEmpty(args.String("conversation-id"), args.String("conversation_id")),
+		ConnectionID:   firstNonEmpty(args.String("connection-id"), args.String("connection_id")),
+		Source:         args.String("source"), Actor: actor, ExpectedGeneration: generation,
+	})
+	if err != nil {
+		return err
+	}
+	view, err := store.ExecutionView(record.ExecutionID)
+	if err != nil {
+		return err
+	}
+	binding, err := store.ResolveAgentContactBinding(projectID, subjectID, role, name)
+	if err != nil {
+		binding = AgentContactBinding{Contact: contact, State: AgentContactBindingUnbound, Reason: "contact binding could not be resolved"}
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "created": contact.Generation == 1, "contact": contact, "execution": view, "binding": binding})
+		return nil
+	}
+	fmt.Printf("%s %s %s\n", contact.Address.ID, contact.Role, view.EffectiveDisplayName)
+	return nil
+}
+
+var externalContactSource = map[string]string{
+	"codex":       "direct_codex",
+	"claude-code": "direct_claude",
+	"devin":       "direct_devin",
+}
+
 func validDirectExecutionSource(source string) bool {
 	switch strings.TrimSpace(source) {
-	case "direct", "direct_codex", "direct_claude", "codex_cloud":
+	case "direct", "direct_codex", "direct_claude", "codex_cloud", "direct_devin":
 		return true
 	default:
 		return false
@@ -257,7 +346,9 @@ func printExecutionHelp() {
 	fmt.Println(`Usage: tusker execution <action> [flags]
 
 Actions:
-  register  Allocate an immutable direct-execution ID before provider launch
+  register  Allocate an immutable direct-execution ID before provider launch;
+            with --contact-role, register a pre-existing external conversation
+            as an architect/origin/peer contact on a durable task or wave
   attach    Idempotently correlate a provider session or cloud task
   rename    Add an audited display-name change
   bind      Bind an execution to a task's canonical wave

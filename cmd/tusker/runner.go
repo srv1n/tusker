@@ -18,11 +18,9 @@ const (
 	RunnerCodexAppServer RunnerName = "codex_app_server"
 	RunnerCodexExec      RunnerName = "codex_exec"
 	RunnerCodexCloud     RunnerName = "codex_cloud"
-	// RunnerMuse is the configured Codex profile route. It is CLI-only and
-	// deliberately does not imply ACP support.
-	RunnerMuse    RunnerName = "muse"
-	RunnerMuseCLI RunnerName = "muse_cli"
-	RunnerClaude  RunnerName = "claude-code"
+	RunnerMuse           RunnerName = "muse"
+	RunnerClaude         RunnerName = "claude-code"
+	RunnerDevin          RunnerName = "devin"
 	// RunnerACP is a distinct persisted local transport kind. It deliberately
 	// does not alias codex_app_server, codex_exec, claude-code, or codex_cloud.
 	RunnerACP RunnerName = "acp_v1"

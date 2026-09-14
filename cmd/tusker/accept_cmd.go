@@ -147,6 +147,16 @@ func v7AcceptPreflight(vaultPath string, args Args, task Note, idx v7Index, acto
 // v7ProofGreenForAccept reports whether every proof row is green — the same
 // condition the close ceremony enforces before acceptance.
 func v7ProofGreenForAccept(task Note, report v7ProofReport) bool {
+	for _, gap := range report.ModeMissing {
+		if strings.HasPrefix(gap, "verification_receipt:") {
+			return false
+		}
+	}
+	for _, row := range report.InlineRows {
+		if _, command := v7VerificationCommand(row.Check); command && !strings.EqualFold(strings.TrimSpace(row.Result), "pass") {
+			return false
+		}
+	}
 	if strings.EqualFold(stringField(task.Data, "proof_status"), "waived") {
 		return true
 	}

@@ -1,0 +1,68 @@
+{
+  "schema": "tusker.direct-wave-real-vault-evidence/v1",
+  "proof_class": "local_executed",
+  "vault": ".tusker",
+  "runtime_started": false,
+  "provider_exercised": false,
+  "initial_inspect": {
+    "fingerprint": "sha256:0ba8e1a439ca65eb7591d089cf9c4c2d7f6e5f151b2a7974ff97e0bfad054138",
+    "ready": false,
+    "blockers": [
+      "ORC-T-0055 missing pinned target record ORC-T-0041",
+      "ORC-T-0066 missing pinned target record ORC-T-0041",
+      "ORC-T-0079 missing pinned target record ORC-T-0041",
+      "ORC-T-0081 missing pinned target record ORC-T-0048",
+      "planning-handoff-completion.plan.json content drift against W-0023"
+    ]
+  },
+  "partial_apply": {
+    "fingerprint": "sha256:0ba8e1a439ca65eb7591d089cf9c4c2d7f6e5f151b2a7974ff97e0bfad054138",
+    "allow_partial": true,
+    "result": "converted every unblocked durable legacy unit and materialized remaining-product-work.plan.yaml as W-0026 / WUX-T-0027 through WUX-T-0031; five blocked units remained untouched"
+  },
+  "explicit_plan_mapping": {
+    "plan": ".tusker/specs/planning-handoff-completion.plan.json",
+    "plan_sha256": "57c8c22030147416780fdf2f052232a36394d01238da07d0bd7eb43c02d06f57",
+    "wave": "W-0023",
+    "validated_targets": ["FLW-T-0037", "FLW-T-0038", "FLW-T-0039", "FLW-T-0040", "FLW-T-0041"]
+  },
+  "final_inspect": {
+    "fingerprint": "sha256:754463ef960fe25f1abe809d01ca66bfcdce71cb9b2c1162ecb480996cf2a6cd",
+    "ready": true
+  },
+  "final_apply": {
+    "fingerprint": "sha256:754463ef960fe25f1abe809d01ca66bfcdce71cb9b2c1162ecb480996cf2a6cd",
+    "applied": ["ORC-T-0055", "ORC-T-0066", "ORC-T-0079", "ORC-T-0081"],
+    "created_missing_targets": false,
+    "authorized_work": false
+  },
+  "preserved_unresolved_dependencies": [
+    {"consumer": "ORC-T-0055", "status": "superseded", "target": "ORC-T-0041", "kind": "hard", "target_contract_fingerprint": "sha256:21eb60a4f23d8e6be72bb407b7ddbeb1439983500e905cfd7bfc974c05860aa7"},
+    {"consumer": "ORC-T-0066", "status": "backlog", "readiness": "held", "target": "ORC-T-0041", "kind": "hard", "target_contract_fingerprint": "sha256:21eb60a4f23d8e6be72bb407b7ddbeb1439983500e905cfd7bfc974c05860aa7"},
+    {"consumer": "ORC-T-0079", "status": "cancelled", "target": "ORC-T-0041", "kind": "hard", "target_contract_fingerprint": "sha256:21eb60a4f23d8e6be72bb407b7ddbeb1439983500e905cfd7bfc974c05860aa7"},
+    {"consumer": "ORC-T-0081", "status": "cancelled", "target": "ORC-T-0048", "kind": "hard", "target_contract_fingerprint": "sha256:473527718a2bafc167b8d8b63fef68002525a53cec92e4ee27ca420e863193b5"}
+  ],
+  "post_apply_inspect": {
+    "fingerprint": "sha256:7e9523f2c5e83b7ac60b329abe2c4608b319c23dadc60f9f1a13cb1aee2b4911",
+    "ready": true,
+    "remaining_actions": "delete_after_conversion only"
+  },
+  "delete_after_conversion": [
+    ".tusker/specs/agent-access-editor.plan.yaml",
+    ".tusker/specs/agent-access.plan.yaml",
+    ".tusker/specs/agent-coordination.plan.yaml",
+    ".tusker/specs/compact-project-navigation.plan.yaml",
+    ".tusker/specs/direct-wave-authoring.bootstrap.plan.json",
+    ".tusker/specs/full-height-workspace.plan.yaml",
+    ".tusker/specs/planning-handoff-completion.plan.json",
+    ".tusker/specs/project-registration-and-visibility.plan.yaml",
+    ".tusker/specs/remaining-product-work.plan.yaml",
+    ".tusker/specs/skills-docs.plan.yaml"
+  ],
+  "legacy_work_frontmatter_scan": {
+    "result": "zero frontmatter fields",
+    "historical_text_allowlist": [
+      ".tusker/work/tasks/CFX-T-0001.md contains delivery_source_key only inside a historical verification command in the Markdown body"
+    ]
+  }
+}

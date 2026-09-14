@@ -1113,6 +1113,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				}
 			}
 		}
+		if err := d.advanceAuthorizedWaveFrontiers(project); err != nil {
+			return err
+		}
 		stateActiveRuns := countDispatchCapacityProjectRunsByState(projectRuns, noteStatusByRecord)
 
 		for _, note := range notes {
@@ -1380,10 +1383,14 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if _, skipped := skipReviewDispatch[recordID]; skipped {
 				continue
 			}
-			if externalLoopCloseTaskRecorded(d.store, project.ProjectID, recordID) {
+			current := projectRuns[recordID]
+			closed, closeErr := externalLoopCloseTaskRecordedForCurrentRun(d.store, project.ProjectID, recordID, note, current)
+			if closeErr != nil {
+				return closeErr
+			}
+			if closed {
 				continue
 			}
-			current := projectRuns[recordID]
 			reviewAttempts, err := d.store.ListAttemptsForRun(project.ProjectID, recordID)
 			if err != nil {
 				return err
@@ -2115,6 +2122,25 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 	return run, true, nil
 }
 
+func (d *Daemon) advanceAuthorizedWaveFrontiers(project RegisteredProject) error {
+	idx, err := loadV7Index(project.VaultRoot)
+	if err != nil {
+		return err
+	}
+	waveIDs := make([]string, 0, len(idx.Waves))
+	for id := range idx.Waves {
+		waveIDs = append(waveIDs, id)
+	}
+	sort.Strings(waveIDs)
+	now := time.Now().UTC()
+	for _, waveID := range waveIDs {
+		if _, err := queueAuthorizedWaveFrontier(project.VaultRoot, d.store, project.ProjectID, waveID, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile WorkflowFile, notes []Note, note Note, run RunStatus) (string, error) {
 	ctx, err := d.automationContextForDaemon(project, wfFile, notes, run)
 	if err != nil {
@@ -2138,7 +2164,8 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 		if authErr != nil {
 			return "", authErr
 		}
-		directed = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth) || consumedRunDirectiveMatchesTaskAuthority(project.VaultRoot, note, run, directive, auth, time.Now().UTC())
+		directed = runDirectiveAuthorizationMatchesTaskAuthority(project.VaultRoot, note, run, auth) || consumedRunDirectiveMatchesTaskAuthority(project.VaultRoot, note, run, directive, auth, time.Now().UTC()) ||
+			runDirectiveAdmittedContinuityMatchesTaskAuthority(project.VaultRoot, note, run, auth) || consumedRunDirectiveContinuityMatchesTaskAuthority(project.VaultRoot, note, run, directive, auth, time.Now().UTC())
 	}
 	if !directed {
 		directed, directiveErr = d.taskDirectiveLifecycleAuthorized(project.ProjectID, run)
@@ -2859,7 +2886,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	if result == nil {
 		return run, changed, nil
 	}
-	if RunnerName(run.Runner) == RunnerCodexCloud && strings.TrimSpace(result.CloudTaskID) != "" {
+	if runUsesCodexCloud(run) && strings.TrimSpace(result.CloudTaskID) != "" {
 		observationRun := run
 		observationRun.CloudTaskID = result.CloudTaskID
 		if observed, observeErr := (CodexExecutionAdapter{Store: d.store}).ObserveRunPayload(observationRun, map[string]any{
@@ -2932,9 +2959,54 @@ func (d *Daemon) recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
 	return run, true
 }
 
+func runUsesCodexCloud(run RunStatus) bool {
+	return RunnerName(strings.TrimSpace(run.Runner)) == RunnerCodexCloud || RunnerName(strings.TrimSpace(run.RunnerHarness)) == RunnerCodexCloud
+}
+
 func (d *Daemon) recoverUnstartedDirectedClaim(run RunStatus, now time.Time) (RunStatus, bool, error) {
 	if LeaseState(run.LeaseState) != LeaseStateClaimed || run.ProcessPID != 0 || strings.TrimSpace(run.ActiveAttemptID) == "" {
 		return run, false, nil
+	}
+	if runUsesCodexCloud(run) {
+		// A cloud provider has no local PID to register. Its start event is the
+		// durable operation checkpoint; never consume the directive and launch a
+		// second provider task while that checkpoint is absent or unreadable.
+		if strings.TrimSpace(run.CloudTaskID) != "" {
+			latest, err := d.latestDispatchRun(run)
+			if err != nil {
+				return run, false, err
+			}
+			if latest.LeaseState != run.LeaseState || latest.LeaseOwner != run.LeaseOwner || latest.LeaseGeneration != run.LeaseGeneration || latest.ActiveAttemptID != run.ActiveAttemptID {
+				return latest, true, nil
+			}
+			return latest, false, nil
+		}
+		checkpoint, found, err := readCodexCloudTaskStartedCheckpoint(run.EventSinkPath, run.ActiveAttemptID)
+		if err != nil {
+			return run, false, fmt.Errorf("recover codex cloud start checkpoint without redispatch: %w", err)
+		}
+		if !found {
+			return run, false, errors.New("recover codex cloud claim refused: no durable codex_cloud_task_started checkpoint")
+		}
+		checkpointed, err := d.store.checkpointCodexCloudTaskStarted(run, checkpoint, now)
+		if err != nil {
+			// The event ledger retains the provider task id. Keep this claim fenced
+			// when SQLite cannot adopt it; retrying via Start would duplicate work.
+			return run, false, fmt.Errorf("checkpoint codex cloud task %q before redispatch: %w", checkpoint.TaskID, err)
+		}
+		latest, err := d.latestDispatchRun(run)
+		if err != nil {
+			return run, false, err
+		}
+		if latest.LeaseState != run.LeaseState || latest.LeaseOwner != run.LeaseOwner || latest.LeaseGeneration != run.LeaseGeneration || latest.ActiveAttemptID != run.ActiveAttemptID {
+			return latest, true, nil
+		}
+		if checkpointed {
+			return latest, true, nil
+		}
+		// The operation was already adopted by an earlier recovery pass. Let
+		// the normal cloud Reconcile path poll that exact provider task.
+		return latest, false, nil
 	}
 	if statusPath := runnerStatusPathForRun(run); statusPath != "" && fileExists(statusPath) {
 		return run, false, nil
@@ -3859,7 +3931,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 				return false, runnerErr.Error(), nil
 			}
 			command := commandForRunnerProfile(base, candidate)
-			if candidateRunner.Name() == RunnerCodexExec || candidateRunner.Name() == RunnerClaude || candidateRunner.Name() == RunnerMuseCLI {
+			if candidateRunner.Name() == RunnerCodexExec || candidateRunner.Name() == RunnerClaude || candidateRunner.Name() == RunnerMuse {
 				policy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, candidate)
 				_, prepareErr := preparedRunnerForDispatch(project.VaultRoot, candidateRunner.Name(), command, candidate, policy, project.RepoRoot, runnerCommandSearchPath())
 				if prepareErr == nil {
@@ -4027,7 +4099,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		}}
 	} else if len(authoritativeArgv) > 0 {
 		health = runnerPreclaimHealthWithSearchPath(runner.Name(), command, authoritativeSearchPath)
-	} else if runner.Name() == RunnerCodexExec || runner.Name() == RunnerClaude || runner.Name() == RunnerMuseCLI {
+	} else if runner.Name() == RunnerCodexExec || runner.Name() == RunnerClaude || runner.Name() == RunnerMuse {
 		// The isolated workspace is materialized only after the atomic claim.
 		// Probe the identical executable/argv against the registered repository,
 		// which already exists, while keeping process spawn after workspace setup.
@@ -4476,6 +4548,28 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		start, err = runner.Start(ctx, startReq)
 	}
 	if err != nil {
+		if runUsesCodexCloud(run) && start != nil && strings.TrimSpace(start.CloudTaskID) != "" {
+			// Codex Cloud may have accepted the remote operation before its
+			// event-ledger append failed. Adopt the returned provider identity
+			// while the claim is still fenced; scheduling a retry here would
+			// create a second remote task.
+			checkpointed, checkpointErr := d.store.checkpointCodexCloudTaskStarted(run, codexCloudTaskStartedCheckpoint{
+				AttemptID: startReq.AttemptID, At: start.StartedAt, TaskID: start.CloudTaskID, Status: start.CloudStatus,
+				EnvironmentID: start.CloudEnvironmentID, AttemptNumber: start.CloudAttemptNumber,
+				PullRequestURL: start.PullRequestURL, ApplyRef: start.ApplyRef, LogsSummary: start.LogsSummary, FinalSummary: start.FinalSummary,
+			}, time.Now().UTC())
+			if checkpointErr != nil {
+				return run, true, fmt.Errorf("codex cloud start returned task %q but durable checkpoint failed; refusing redispatch: %w", start.CloudTaskID, checkpointErr)
+			}
+			latest, latestErr := d.latestDispatchRun(run)
+			if latestErr != nil {
+				return run, true, latestErr
+			}
+			if checkpointed || strings.TrimSpace(latest.CloudTaskID) != "" {
+				return latest, true, err
+			}
+			return run, true, fmt.Errorf("codex cloud start returned task %q but checkpoint did not persist; refusing redispatch: %w", start.CloudTaskID, err)
+		}
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
 		attempt.FinishedAt = time.Now().UTC().Format(time.RFC3339)
@@ -6316,9 +6410,7 @@ func runnerForName(name string, wf Workflow) (Runner, string, error) {
 	case RunnerCodexExec:
 		return &CodexExecRunner{}, firstNonEmpty(command, defaultCodexExecCommand()), nil
 	case RunnerMuse:
-		return &CodexExecRunner{}, firstNonEmpty(command, "codex --profile muse exec --json --skip-git-repo-check -"), nil
-	case RunnerMuseCLI:
-		return &MuseCLIRunner{}, firstNonEmpty(command, defaultMuseCLICommand()), nil
+		return &MuseRunner{}, firstNonEmpty(command, defaultMuseCLICommand()), nil
 	case RunnerCodexCloud:
 		config := wf.CodexCloud
 		if hasDefinition {
@@ -6327,6 +6419,10 @@ func runnerForName(name string, wf Workflow) (Runner, string, error) {
 		return &CodexCloudRunner{Config: config}, firstNonEmpty(command, config.Command), nil
 	case RunnerClaude:
 		return &ClaudeRunner{}, firstNonEmpty(command, wf.Claude.Command), nil
+	case RunnerACP:
+		return &ACPRunner{runner: runnerKind}, command, nil
+	case RunnerDevin:
+		return &ACPRunner{runner: runnerKind}, firstNonEmpty(command, "devin acp"), nil
 	case RunnerCodexACP:
 		if !hasDefinition {
 			return nil, "", tuskerError(errorConfigInvalid, "codex_acp requires a complete named runner definition")

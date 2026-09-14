@@ -137,6 +137,9 @@ func TestCodexCloudRunnerPreservesTaskIDWhenPostLaunchEventAppendFails(t *testin
 	if err == nil || !strings.Contains(err.Error(), "cloud-task-preserved") || !strings.Contains(err.Error(), rawLogPath) {
 		t.Fatalf("expected durable recovery details for post-launch event failure, got result=%#v err=%v", result, err)
 	}
+	if result == nil || result.CloudTaskID != "cloud-task-preserved" {
+		t.Fatalf("post-launch tracking failure must retain provider task identity: %#v", result)
+	}
 	raw, readErr := readText(rawLogPath)
 	if readErr != nil || !strings.Contains(raw, "cloud-task-preserved") {
 		t.Fatalf("cloud task id was not preserved in raw log: %q err=%v", raw, readErr)

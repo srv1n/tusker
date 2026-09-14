@@ -16,9 +16,9 @@ canonical contract is [[runner-execution-boundary]].
 | Harness | Structured launch | Permission support |
 | --- | --- | --- |
 | `codex_exec` | `codex exec --json` | read-only, workspace write with explicit network off/on, and externally contained full access |
-| `muse` | `codex --profile muse exec --json` | the same CLI compiler as Codex; the operator owns the configured Muse profile and authentication; it is not ACP |
-| `muse_cli` | `muse exec --json` | direct Muse native workspace, approval, network, write and shell flags; private-folder exclusions and read-only external roots remain unavailable |
+| `muse` | `muse exec --json` | native Muse workspace, approval, network, write and shell flags; private-folder exclusions and read-only external roots remain unavailable |
 | `claude-code` | `claude -p --output-format stream-json` | read-only and externally contained full access; workspace-write presets are unavailable because Claude does not expose a verified workspace boundary |
+| `devin` | installed `devin acp` with Tusker-compiled `--sandbox`, exact ACP model, and `smart` mode | workspace write with internet on and destructive actions blocked; offline, review-only, private-folder, external-root, operator-approval, and full-access profiles fail closed |
 | `acp_v1` | exact installed executable and argument array | bounded presets only when the endpoint is wrapped by separately verified native containment and passes a live ACP handshake; full access is unavailable |
 
 Transport is selected before claim and never falls back silently. Preparation
@@ -29,9 +29,8 @@ infrastructure block.
 
 For profiles with the `tusker.agent-access/v1` contract, preparation also pins the
 resolved access report and fingerprint. Required controls that are only advisory
-or unsupported make that route unavailable. The direct Muse route is distinct from
-the legacy `muse` Codex-profile route; Muse `serve`/MSP discovery is not used as an
-execution transport.
+or unsupported make that route unavailable. Muse `serve`/MSP is used for catalog
+discovery, never as an execution transport or mislabeled as ACP.
 
 ## Test a harness
 
@@ -65,11 +64,13 @@ tusker runner catalog --refresh --json
 
 It reports executable detection, authentication state, discovery source/freshness and
 conformance as separate facts. Codex can return its installed model inventory. Muse
-has no claimed static inventory: unsupported discovery accepts exact manual
-model/effort values, marked unverified until an explicit profile test passes. Claude
-Code, OpenCode, Cursor, and Devin remain non-selectable future entries unless an
-implemented adapter passes its own prerequisites. ACP is profile-specific and becomes
-eligible through conformance, not by the existence of a bundled adapter.
+CLI discovers its installed account catalog through MSP `model/list`; the selected
+profile still executes through `muse exec --json`, and authentication remains unknown
+until an explicit profile test passes. Claude Code is supported; OpenCode and Cursor remain non-selectable future entries. Devin's
+catalog intersects `devin models list --format json` metadata with the exact model
+choices advertised by ACP `session/new`; unsupported account models are not offered.
+ACP is profile-specific and becomes eligible through conformance, not merely by the
+existence of an installed executable.
 
 For Settings integration, the stable read/test examples are:
 
@@ -114,7 +115,7 @@ The direct Muse route can be authored with the shared access contract:
 automation:
   profiles:
     muse-project:
-      harness: muse_cli
+      harness: muse
       model: <installed-model-id>
       effort: medium
       access:
@@ -150,6 +151,31 @@ automation:
 
 Unknown CLI event or permission semantics require a small adapter in
 `internal/runner`; arbitrary shell commands are not a harness API.
+
+Devin uses its installed ACP endpoint directly:
+
+```yaml
+automation:
+  profiles:
+    devin-project:
+      harness: devin
+      model: <exact-discovered-acp-model>
+      effort: medium
+      command: devin acp
+      access:
+        schema: tusker.agent-access/v1
+        mode: work_in_projects
+        network: true
+        destructive_actions: deny
+        folders: []
+        private_folders: []
+      subagents: {allowed: false, max_concurrent: 0}
+```
+
+Tusker owns the Devin launch controls: the authored command stays exactly `devin acp`,
+then preparation adds `--sandbox` and the selected model, while session setup applies
+ACP `mode=smart`. A profile asking for an unsupported access shape is rejected before
+claim instead of weakening to a broader mode.
 
 ## Work levels
 

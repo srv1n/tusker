@@ -11,14 +11,12 @@ domains:
   - "project"
 spec_refs:
   - ".tusker/specs/agent-coordination.md"
-delivery_source_key: "agent-coordination"
-delivery_plan_scope: "agent-coordination-20260910"
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-10T17:14:29Z"
-updated_at: "2026-09-10T17:14:29Z"
-state_rev: "sha256:f3a01012e98c06b0a4921404ce78ad540e57cb7ea2084ea6ecaf5e8a73ff3eab"
+updated_at: "2026-09-13T17:20:09Z"
+state_rev: "sha256:34006902826646b34dc419ddf7d4fd2570cac2944ab9772d8ac75bac18ded392"
 ---
 
 # ACO · Agent coordination without manual relaying

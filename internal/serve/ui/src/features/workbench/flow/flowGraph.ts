@@ -37,6 +37,7 @@ export type FlowDisplayState =
   | "executing"
   | "reviewing"
   | "ready"
+  | "backlog"
   | "queued"
   | "blocked"
   | "failed"
@@ -51,6 +52,8 @@ export interface FlowNode {
   state: FlowDisplayState;
   /** Compact model name, present only for live runs with verified identity. */
   model?: string;
+  /** Effective or authored work tier; routing identity remains in the inspector. */
+  tier?: string;
   /** Direct prerequisite ids (edges point dep -> this node). */
   depIds: string[];
   /** True when the id is a wave member whose detail was not supplied. */
@@ -146,7 +149,7 @@ export function displayStateFor(
     return "unknown";
   }
   if (status === "backlog") {
-    return "unknown";
+    return "backlog";
   }
   return "unknown";
 }
@@ -218,6 +221,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
       title: task.title || id,
       state: displayStateFor(task.status, run),
       model: modelFor(run),
+      tier: task.effectiveExecute?.work_level ?? task.authoredWorkLevel,
       depIds: task.deps.map((dep) => dep.id),
     });
     nodeIds.add(id);
@@ -593,6 +597,7 @@ export const DISPLAY_STATE_LABEL: Record<FlowDisplayState, string> = {
   executing: "Executing",
   reviewing: "Reviewing",
   ready: "Ready",
+  backlog: "Backlog",
   queued: "Queued",
   blocked: "Blocked",
   failed: "Failed",

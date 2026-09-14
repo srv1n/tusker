@@ -9,8 +9,8 @@ import (
 	"tusker/internal/docgraph"
 )
 
-// TestTrustDocsLifecycle is the focused contract check named by the trust-5
-// delivery plan. It keeps the executable check at the shared docgraph seam;
+// TestTrustDocsLifecycle is the focused contract check for the trust-5
+// work item. It keeps the executable check at the shared docgraph seam;
 // installed skill provenance remains owned by the contract/install worker.
 func TestTrustDocsLifecycle(t *testing.T) {
 	root := t.TempDir()

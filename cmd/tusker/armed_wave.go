@@ -349,6 +349,13 @@ func armedWaveDependencyIntegrationBranch(idx v7Index, currentWave, dependency N
 }
 
 func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map[string]RunStatus) string {
+	// Record integrity is checked before scope, continuation, or directive
+	// bypass: a queued Start must never execute contract bytes that were edited
+	// out of band after authorization. This reason is deliberately absent from
+	// runDirectiveBypassableBlocker, so no directive can waive it.
+	if reason := directWaveTaskContractStaleReason(task); reason != "" {
+		return reason
+	}
 	return automationDispatchScopeBlocker(vaultPath, task, wf, runs)
 }
 

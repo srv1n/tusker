@@ -33,7 +33,6 @@ var serveCapabilityRegistry = []serveCapability{
 	{ID: "docgraph", Class: "authoritative_mutable", Mutable: true, Description: "CAS-protected knowledge document editing."},
 	{ID: "decisions", Class: "authoritative_read_only", Description: "Decision records."},
 	{ID: "roster", Class: "authoritative_read_only", Description: "Runner and handoff projection."},
-	{ID: "delivery", Class: "authoritative_mutable", Mutable: true, Description: "Guarded delivery review and start."},
 	{ID: "executions", Class: "authoritative_mutable", Mutable: true, Description: "Execution lineage and guarded binding."},
 	{ID: "stream", Class: "cached_projection", Description: "Live invalidation hints; reconnect/read APIs remain authoritative."},
 	{ID: "app-preferences", Class: "local_preference", Description: "Browser/native preferences, not daemon state."},

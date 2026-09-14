@@ -14,7 +14,7 @@ if [ "${TUSKER_RUN_LIVE_TESTS:-0}" = 1 ]; then
   for preset in read-only workspace-write-offline workspace-write-network; do
     go run ./cmd/tusker runner conformance --harness codex_exec --preset "$preset" --live --json >/dev/null
   done
-  if codex --profile muse exec --help >/dev/null 2>&1; then
+  if muse exec --help >/dev/null 2>&1; then
     for preset in read-only workspace-write-offline workspace-write-network; do
       go run ./cmd/tusker runner conformance --harness muse --preset "$preset" --live --json >/dev/null
     done

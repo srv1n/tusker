@@ -1,0 +1,187 @@
+diff --git a/skills/tusker/references/HANDOFF.md b/skills/tusker/references/HANDOFF.md
+index 9cc2f419..7f601c09 100644
+--- a/skills/tusker/references/HANDOFF.md
++++ b/skills/tusker/references/HANDOFF.md
+@@ -3,8 +3,31 @@
+ One bounded outcome is one task. The planner owns discovery, settled design and
+ the handoff; the implementer owns execution within it. A lighter work level is
+ not permission to omit context or ask the worker to rediscover product intent.
+-Use configured work/review levels rather than fixed model names. Interviewing
+-is outside this skill; unresolved product decisions return to planning.
++Every new agent task explicitly selects `work_level`: Tier 1 = `light`,
++Tier 2 = `standard`, and Tier 3 = `demanding`. Review follows the work level;
++write `review_level` only for an override, with its task-specific reason. The
++levels select configured harness/model profiles. Do not put model names in a
++task as routing advice. An explicit `execute_profile` or `review_profile` is an
++operator configuration override and must resolve at preflight.
++
++If a human must supply intent, credentials or a decision, use an existing named
++human gate. A human gate is an execution condition, not a fourth tier or a
++`work_kind: human` task. An architect may implement its own task through an
++explicit authorized work claim recording the actual conversation and scope,
++while retaining author provenance and independent review. An architect contact
++alone does not imply self-implementation.
++Interviewing is outside this skill; unresolved product decisions return to
++planning.
++
++| Work level | Choose for |
++|---|---|
++| Light | A bounded change with settled interfaces and a prescribed check. |
++| Standard | Ordinary cross-file implementation, integration or a settled test procedure. |
++| Demanding | Technical ambiguity, shared-state races, security or recovery design. |
++
++Classify the work the agent must decide, not the number of words in its ticket.
++Return newly discovered design problems to their owner instead of silently
++expanding a Light or Standard assignment.
+ 
+ Before authoring, inspect the current source flow and callers, governing spec
+ sections, and overlapping tasks. Then write the following in the existing task
+@@ -36,6 +59,12 @@ Do not fabricate execution IDs from wave names or assume a chat UUID is a
+ registered Tusker execution. Record the verified native thread ID and host in
+ the implementation notes when needed to reach the architect through host tools.
+ 
++If no Tusker route is verified, leave typed contact metadata empty and record
++the native thread/host as **unbound provenance**, with a return-to-origin or
++operator action. Show the missing binding as a blocker for work requiring
++automatic architect communication. Independent work may use the explicit
++authorized fallback; never describe it as a working automatic route.
++
+ Distinguish architect (design decisions), origin (request/result destination),
+ and named peers (specific shared interfaces or ownership). One contact may fill
+ multiple roles. Record whether the route was inspected or actually exercised;
+@@ -56,13 +85,25 @@ documentation and the affected task contract, not solely in chat history.
+ 
+ Inspect the generated packet and its exact references as a fresh reader, with
+ no reliance on the planning conversation. For held work, `tusker packet <ID>
+---for agent --force` is inspection only, never execution authorization.
+-Record a short readiness review in the implementation notes: how to start,
+-what must remain true, which surrounding work matters, how each outcome is
+-proved, and who resolves uncertainty. Name remaining gaps; do not mark the
+-handoff ready while an essential decision, dependency contract or ownership
+-boundary is missing. An unavailable live contact can use an explicit fallback
+-when no unresolved decision prevents work.
++--for agent --force` is inspection only, never execution authorization. Confirm
++that the packet (or `tusker show <ID> --capsule`) preserves the authored
++`work_level`, `review_level`, ownership and contact/fallback facts.
++
++For configured-harness execution, resolve both lanes for every task:
++
++```sh
++tusker runner route <TASK-ID> --lane execute --json
++tusker runner route <TASK-ID> --lane review --json
++```
++
++An empty, unknown or blocked route is a readiness blocker; exit code zero alone
++does not prove a usable route. Record a short readiness review in the
++implementation notes: how to start, what must remain true, which surrounding
++work matters, how each outcome is proved, who resolves uncertainty, and every
++route blocker. A self-implementation claim records its actual executor rather
++than asserting that this conversation matches the configured Play profile;
++retain the required independent review route. A held draft may carry route blockers for planning, but never
++call it ready or imply that it can run.
+ 
+ Run the existing import dry-run/preflight checks for structural validity.
+ Those reject malformed contracts and proof mappings; they do not judge whether
+@@ -70,3 +111,9 @@ the design is complete or a command proves the claimed scenario. The planner's
+ readiness review supplies that semantic check. If an independent planning
+ review is already assigned, give that reviewer only the packet and references.
+ Do not start another agent or add a human approval gate just for this step.
++
++The handoff is complete only when one bounded outcome, its requirements,
++surrounding ownership, proof map, artifact, tier/review selection, and contact
++or explicit unbound fallback are visible in the packet, both runner lanes
++resolve without blockers, and remaining gaps are recorded. Otherwise leave the
++work held and label the missing gate.
+diff --git a/skills/tusker/references/TRACK.md b/skills/tusker/references/TRACK.md
+index 1e1257ed..dec06125 100644
+--- a/skills/tusker/references/TRACK.md
++++ b/skills/tusker/references/TRACK.md
+@@ -1,50 +1,55 @@
+ # Track
+ 
+-Inspect existing work with `tusker show <TASK-ID> --capsule`; use
+-`tusker packet <TASK-ID> --for agent` when implementing. Read the complete
+-acceptance contract, then only the source and documentation it needs.
++Inspect work with `tusker show <TASK-ID> --capsule`; implement from
++`tusker packet <TASK-ID> --for agent`. Read the complete acceptance contract,
++then only its required source and documentation.
+ 
+ ## Author tasks and waves
+ 
+-One bounded outcome is one task. Before creating, amending or reviewing a task handoff, read `HANDOFF.md`.
+-It defines the planner's required discovery, surrounding-work and contact
+-context, scenario-to-proof mapping, and packet-based readiness review. Complete
+-that review before handing work to an implementer, regardless of work level.
+-Use existing task fields and exact canonical references; no word-count quota.
++One bounded outcome is one task. Before creating, amending or reviewing a
++handoff, read `HANDOFF.md` for classification, surrounding work, contacts,
++proof mapping and the mandatory fresh-reader review. Explicitly select
++`work_level`; review follows unless overridden. Human responsibilities use
++named human gates. Configured profiles own model/harness choices.
+ 
+-Use tags for cross-cutting groups such as auth. Epics are legacy compatibility,
+-not required product structure. Check `tusker new task --help` for supported
+-fields; source scope includes `--owned-paths cmd/auth.go,internal/auth` and
+-`--generated-outputs`. Never invent flags for proposed schema fields.
++Use tags for cross-cutting groups. Epics remain compatibility metadata.
++Check `tusker new task --help` for supported fields, including `--owned-paths`
++and `--generated-outputs`; do not invent flags.
+ 
+-For batches, use the delivery plan schema exposed by `tusker delivery --help`.
+-Map every accepted requirement to task acceptance or an explicit deferral.
+-Dependencies express required outputs/contracts; independent ownership can run
+-in parallel. Give each wave a one-to-two-line expected user capability, distinct
+-from its eventual result. Use a supported description if no dedicated field exists.
++Batch handoff includes creating or binding its wave, membership, dependency
++order and a short expected user capability. Map accepted requirements to task
++acceptance or explicit deferral. Dependencies express required outputs and
++shared ownership. Standalone tasks remain valid; do not require a one-member
++wave for an independent task.
+ 
+ ```sh
+ tusker delivery import --plan <plan.yaml> --dry-run --json
+ tusker delivery import --plan <plan.yaml>
+ tusker wave preflight <WAVE-ID>
++tusker runner route <TASK-ID> --lane execute --json
++tusker runner route <TASK-ID> --lane review --json
+ ```
+ 
+-Re-import only eligible open/disarmed backlog/held plans, preserving `scope`
+-and `source_key`. Progressed contracts may refuse amendments: report the exact
+-refusal and requested change. `tusker update` installs skills, not task edits.
+-Task creation/preflight does not authorize execution.
++Inspect JSON blockers, not just exit status. Verify classification, ownership
++and contacts in generated packets/capsules. Held drafts may retain explicit
++setup gaps; never describe them as execution-ready.
++
++Re-import eligible open/disarmed backlog/held plans with stable `scope` and
++`source_key`. Report progressed-contract refusals and the required amendment;
++`tusker update` installs skills, not task edits. Import/preflight do not start
++work or authorize execution.
+ 
+ ## Implement and close
+ 
+-Interactive ownership uses `tusker work start`, `status`, `submit`, `review`,
+-and `release`; inspect `tusker work --help` and obey the returned workspace and
+-claim. Dispatched workers retain their existing claim. Record implementation,
+-verification and review separately; submit is not completion. Follow
+-`tusker closeout status <TASK-ID> --json` for the next supported transition.
+-
+-Proof needs executor-recorded PASS/FAIL bound to the reviewed material:
+-`tusker verify add <TASK-ID> --covers A1 --check "command: go test ./..." --result pending`.
+-Choose the smallest checks covering acceptance. Attach available screenshots or
+-reports; require human review only for an explicit human gate. Keep transient
+-logs in CLI-managed scratch when needed; use the harness scratchpad otherwise.
+-Never manufacture proof or rewrite lifecycle fields to clear a refusal.
++Use `tusker work start`, `status`, `submit`, `review`, and `release`; inspect
++`tusker work --help` and obey its workspace/claim. Dispatched workers retain
++their claim. Self implementation requires an explicit authorized claim and
++independent review. Submission is not completion; follow
++`tusker closeout status <TASK-ID> --json`.
++
++Add planned checks with `tusker verify add <TASK-ID> --covers A1 --check
++"command: go test ./..." --result pending`. Only the executor records command
++PASS/FAIL. Choose checks covering real acceptance, attach required evidence,
++and reserve human review for explicit human gates. Use CLI-managed scratch
++for transient logs. Never manufacture proof or rewrite lifecycle fields to
++clear a refusal.

@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,25 +19,27 @@ import (
 // caller, not a second runtime projection.  The run row remains the sole
 // authority for owner, generation, workspace, branch and liveness.
 type workSessionPacket struct {
-	Schema                string            `json:"schema"`
-	Action                string            `json:"action"`
-	TaskID                string            `json:"task_id"`
-	Owner                 string            `json:"owner,omitempty"`
-	Revision              int               `json:"work_revision,omitempty"`
-	Workspace             string            `json:"workspace,omitempty"`
-	Branch                string            `json:"branch,omitempty"`
-	Head                  string            `json:"head,omitempty"`
-	LeaseExpiry           string            `json:"lease_expires_at,omitempty"`
-	Packet                string            `json:"packet,omitempty"`
-	Next                  string            `json:"next"`
-	Run                   *RunStatus        `json:"run,omitempty"`
-	Authorization         *RunAuthorization `json:"authorization,omitempty"`
-	ProofFingerprint      string            `json:"proof_fingerprint,omitempty"`
-	GateFingerprint       string            `json:"gate_fingerprint,omitempty"`
-	ImplementationAttempt string            `json:"implementation_attempt_id,omitempty"`
-	ImplementationActor   string            `json:"implementation_actor,omitempty"`
-	MaterialFingerprint   string            `json:"material_fingerprint,omitempty"`
-	VerificationManifest  string            `json:"verification_manifest,omitempty"`
+	Schema                string                   `json:"schema"`
+	Action                string                   `json:"action"`
+	TaskID                string                   `json:"task_id"`
+	Owner                 string                   `json:"owner,omitempty"`
+	Revision              int                      `json:"work_revision,omitempty"`
+	Workspace             string                   `json:"workspace,omitempty"`
+	Branch                string                   `json:"branch,omitempty"`
+	Head                  string                   `json:"head,omitempty"`
+	LeaseExpiry           string                   `json:"lease_expires_at,omitempty"`
+	Packet                string                   `json:"packet,omitempty"`
+	Next                  string                   `json:"next"`
+	Run                   *RunStatus               `json:"run,omitempty"`
+	Authorization         *RunAuthorization        `json:"authorization,omitempty"`
+	ProofFingerprint      string                   `json:"proof_fingerprint,omitempty"`
+	GateFingerprint       string                   `json:"gate_fingerprint,omitempty"`
+	ImplementationAttempt string                   `json:"implementation_attempt_id,omitempty"`
+	ImplementationActor   string                   `json:"implementation_actor,omitempty"`
+	ImplementationMode    string                   `json:"implementation_mode,omitempty"`
+	AuthoringProvenance   *TaskAuthoringProvenance `json:"authoring_provenance,omitempty"`
+	MaterialFingerprint   string                   `json:"material_fingerprint,omitempty"`
+	VerificationManifest  string                   `json:"verification_manifest,omitempty"`
 }
 
 func workSessionCmd(args Args, action string) error {
@@ -97,9 +101,29 @@ func workSessionStartCmd(args Args) error {
 	// This entry point is for a user-directed owner.  The daemon has its own
 	// snapshot-bound claim path; accepting daemon_auto here would let an
 	// interactive shell impersonate a dispatcher.
+	currentWorkspace := args.Bool("current-workspace")
+	authoringContext := TaskAuthoringContextFromEnvironment()
 	source := firstNonEmpty(args.String("source"), "tusker_cli")
+	if currentWorkspace && strings.TrimSpace(args.String("source")) == "" {
+		// A current-workspace claim is a host-bound self implementation. Infer
+		// the provider only from the existing trusted session markers.
+		if authoringContext.Source == "codex" || authoringContext.Source == "claude" {
+			source = authoringContext.Source
+		}
+	}
 	if source != "tusker_cli" && source != "codex" && source != "claude" {
 		return tuskerError(errorInvalidArg, "work start source must be tusker_cli, codex, or claude")
+	}
+	if currentWorkspace {
+		if source == "tusker_cli" {
+			return tuskerError(errorInvalidTransition, "--current-workspace requires a trusted interactive Codex or Claude session")
+		}
+		if kind := agentSessionKind(); !strings.HasPrefix(kind, "interactive ") {
+			return tuskerError(errorInvalidTransition, "--current-workspace requires a trusted interactive agent session", withContext(map[string]any{"execution_role": kind}))
+		}
+		if !nativeConversationKnown(authoringContext) {
+			return tuskerError(errorInvalidTransition, "--current-workspace requires a native conversation id")
+		}
 	}
 	args["source"] = source
 	if args.String("owner") == "" {
@@ -130,6 +154,17 @@ func workSessionStartCmd(args Args) error {
 		Packet: v7Packet(ctx.Project.VaultRoot, note, workSessionV7Index(ctx.Notes), "agent"),
 		Next:   workSessionNext(*result.Run),
 		Run:    result.Run, Authorization: result.Authorization,
+	}
+	if provenance, ok, provenanceErr := TaskAuthoringProvenanceFromTask(note.Data); provenanceErr == nil && ok {
+		packet.AuthoringProvenance = &provenance
+	}
+	if result.Run.Lane == runLaneExecute {
+		packet.ImplementationActor = result.Run.LeaseOwner
+		if currentWorkspace {
+			packet.ImplementationMode = "current_conversation"
+		} else {
+			packet.ImplementationMode = "isolated_workspace"
+		}
 	}
 	if result.Run.Lane == runLaneReview {
 		packet.ProofFingerprint = args.String("review-proof-fingerprint")
@@ -228,7 +263,15 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 			ctx.ProjectRuns[trackerRecordID(note)] = projected
 		}
 	}
-	if blockers := workSessionAdmissionBlockersForLane(note, workSessionV7Index(ctx.Notes), ctx.NotesByID, ctx.NotesByRecordID, lane); len(blockers) > 0 {
+	admissionNote := note
+	if args.Bool("explicit-start") && isV7TaskNote(note) && lane == runLaneExecute {
+		projected := cloneNoteData(note.Data)
+		if strings.EqualFold(stringField(projected, "status"), "backlog") {
+			projected["status"] = "ready"
+		}
+		admissionNote = Note{AbsolutePath: note.AbsolutePath, RelativePath: note.RelativePath, Data: projected, Body: note.Body}
+	}
+	if blockers := workSessionAdmissionBlockersForLane(admissionNote, workSessionV7Index(ctx.Notes), ctx.NotesByID, ctx.NotesByRecordID, lane); len(blockers) > 0 {
 		return runClaimResult{}, nil, workSessionStartBlocker(blockers[0])
 	}
 	run := ctx.effectiveRunForTask(note, automationResolveRunner(note, ctx.Workflow.Data))
@@ -262,26 +305,40 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 		args["review-proof-fingerprint"], args["review-gate-fingerprint"] = proof, gates
 	}
 	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
+	currentWorkspace := args.Bool("current-workspace")
+	authoringContext := TaskAuthoringContextFromEnvironment()
+	if currentWorkspace && lane == runLaneReview {
+		return runClaimResult{}, nil, tuskerError(errorInvalidTransition, "--current-workspace is only valid for execute sessions")
+	}
 	branchName := ""
 	if reviewBinding != nil {
 		// Review the same immutable-at-claim material the implementation submitted.
 		// A new worktree at HEAD would erase an uncommitted implementation diff.
 		run.WorkspacePath, branchName = reviewBinding.WorkspacePath, reviewBinding.Branch
 	} else {
-		branchBase := ""
-		var workspaceErr error
-		branchName, branchBase, workspaceErr = v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane, workspaceStrategy)
-		if workspaceErr != nil {
-			return runClaimResult{}, nil, workspaceErr
+		if currentWorkspace {
+			var workspaceErr error
+			run.WorkspacePath, branchName, workspaceErr = currentConversationWorkspace(ctx.Project.RepoRoot)
+			if workspaceErr != nil {
+				return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), workspaceErr.Error()))
+			}
+			workspaceStrategy = WorkspaceStrategyInPlace
+		} else {
+			branchBase := ""
+			var workspaceErr error
+			branchName, branchBase, workspaceErr = v7WorkspaceBranchForLane(ctx.Project.VaultRoot, note, run.Lane, workspaceStrategy)
+			if workspaceErr != nil {
+				return runClaimResult{}, nil, workspaceErr
+			}
+			if branchName == "" && v7GitRepo(ctx.Project.RepoRoot) {
+				branchName = v7TaskBranchName(trackerRecordID(note))
+			}
+			workspace, prepareErr := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey, RecordID: run.RecordID, ItemID: run.ItemID, BranchName: branchName, BranchBase: branchBase, RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot, WorkspaceRoot: ctx.Workflow.Data.Workspace.Root, Strategy: workspaceStrategy, WorkRevision: run.WorkRevision, MaxLiveWorktrees: ctx.Workflow.Data.Workspace.MaxLiveWorktrees})
+			if prepareErr != nil {
+				return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), prepareErr.Error()))
+			}
+			run.WorkspacePath = workspace.Path
 		}
-		if branchName == "" && v7GitRepo(ctx.Project.RepoRoot) {
-			branchName = v7TaskBranchName(trackerRecordID(note))
-		}
-		workspace, prepareErr := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey, RecordID: run.RecordID, ItemID: run.ItemID, BranchName: branchName, BranchBase: branchBase, RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot, WorkspaceRoot: ctx.Workflow.Data.Workspace.Root, Strategy: workspaceStrategy, WorkRevision: run.WorkRevision, MaxLiveWorktrees: ctx.Workflow.Data.Workspace.MaxLiveWorktrees})
-		if prepareErr != nil {
-			return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), prepareErr.Error()))
-		}
-		run.WorkspacePath = workspace.Path
 	}
 	owner := args.String("owner")
 	service := newRunOwnershipService(ctx.Store)
@@ -290,10 +347,23 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	// Interactive work owns a user-directed session, not an unattended dispatch
 	// slot. Same-task and owned-path safety stay in the ownership service.
 	service.projectConcurrencyLimit = 0
+	if currentWorkspace {
+		// The current repository is one physical workspace. Reuse the
+		// ownership transaction's project concurrency fence so a self claim
+		// cannot race another active run into the same checkout, including
+		// when their declared paths happen not to overlap.
+		service.projectConcurrencyLimit = 1
+	}
 	identity := runIdentityForClaim(run, ctx.Project.RepoRoot, run.WorkspacePath, string(workspaceStrategy), branchName)
 	trigger := "work_start"
+	if currentWorkspace {
+		trigger = SelfImplementationTrigger(authoringContext)
+	}
 	if lane == runLaneReview {
 		trigger = "work_review"
+		if reviewer := TaskAuthoringContextFromEnvironment(); nativeConversationKnown(reviewer) {
+			trigger = strings.Replace(SelfImplementationTrigger(reviewer), "self_implementation", "work_review", 1)
+		}
 	}
 	result, err := service.claimWorkSessionWithAuthorizationWithParent(run, owner, RunAuthorization{Source: args.String("source"), Actor: owner, Trigger: trigger, ProjectAutomationEnabled: ctx.Workflow.Data.AutomationEnabled}, identity, args.String("implementation-attempt"))
 	if err != nil {
@@ -304,6 +374,34 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	}
 	closeOnError = false
 	return result, ctx, nil
+}
+
+// currentConversationWorkspace validates the explicit self-implementation
+// mode against the process cwd and the registered project repository. It
+// deliberately skips WorkspaceManager.Prepare: that manager's shared mode
+// rejects dirty trees, while a current conversation is explicitly claiming
+// the already-open tree. The ordinary isolated-workspace path is unchanged.
+func currentConversationWorkspace(repoRoot string) (string, string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", "", fmt.Errorf("cannot inspect current workspace: %w", err)
+	}
+	repoRoot, cwd = canonicalPath(repoRoot), canonicalPath(cwd)
+	if repoRoot == "" || cwd == "" || repoRoot != cwd {
+		return "", "", fmt.Errorf("current directory %q is not the registered project repository %q", cwd, repoRoot)
+	}
+	if !v7GitRepo(repoRoot) {
+		return "", "", fmt.Errorf("current workspace %q is not a git repository", repoRoot)
+	}
+	resolved, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--show-toplevel").Output()
+	if err != nil || canonicalPath(strings.TrimSpace(string(resolved))) != repoRoot {
+		return "", "", fmt.Errorf("git repository root does not match registered project repository %q", repoRoot)
+	}
+	branch, err := currentGitBranchIn(repoRoot)
+	if err != nil || strings.TrimSpace(branch) == "" || strings.TrimSpace(branch) == "HEAD" {
+		return "", "", errors.New("current workspace must be on a named git branch")
+	}
+	return repoRoot, strings.TrimSpace(branch), nil
 }
 
 type reviewImplementation struct {
@@ -331,10 +429,19 @@ func reviewImplementationBinding(store *RuntimeStore, run RunStatus, note Note, 
 	if materialErr != nil {
 		return reviewImplementation{}, materialErr
 	}
-	var actor string
-	err := store.queryRowScan(`SELECT actor FROM run_authorizations WHERE project_id=? AND record_id=? AND lease_generation=?`, []any{run.ProjectID, run.RecordID, run.LeaseGeneration}, &actor)
+	var actor, trigger string
+	err := store.queryRowScan(`SELECT actor, trigger FROM run_authorizations WHERE project_id=? AND record_id=? AND lease_generation=?`, []any{run.ProjectID, run.RecordID, run.LeaseGeneration}, &actor, &trigger)
 	if err != nil || strings.TrimSpace(actor) == "" {
 		return reviewImplementation{}, firstNonNil(err, tuskerError(errorInvalidTransition, "review session requires durable implementation session provenance"))
+	}
+	if strings.HasPrefix(strings.TrimSpace(trigger), "self_implementation;") {
+		implementation, reviewer := selfImplementationTriggerContext(trigger), TaskAuthoringContextFromEnvironment()
+		if !nativeConversationKnown(implementation) || !nativeConversationKnown(reviewer) {
+			return reviewImplementation{}, tuskerError(errorInvalidTransition, "review session cannot establish an independent native conversation")
+		}
+	}
+	if SameAuthoringConversation(trigger, TaskAuthoringContextFromEnvironment()) {
+		return reviewImplementation{}, tuskerError(errorInvalidTransition, "review session cannot be independent from the implementing native conversation")
 	}
 	wf, err := loadWorkflow(vault)
 	if err != nil {
@@ -388,7 +495,7 @@ func workSessionReviewNext(run RunStatus, note Note, packet workSessionPacket) s
 	if packet.VerificationManifest != "" {
 		next += " --confirm-verification " + packet.VerificationManifest
 	}
-	return next + " --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<review summary>\""
+	return next + " --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<review summary>\"; for changes_requested append " + reviewerFindingFlagExample(packet.MaterialFingerprint) + "; for a repaired pass append " + reviewerClosureFlagExample(packet.MaterialFingerprint)
 }
 
 func workSessionStartBlocker(blocker ReadinessBlocker) error {

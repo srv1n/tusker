@@ -6,20 +6,19 @@ import (
 	"strings"
 )
 
-// MuseCLIRunner is intentionally separate from RunnerMuse. RunnerMuse keeps
-// the historical `codex --profile muse` route; this adapter invokes the
-// installed Muse binary directly and is only admitted with prepared argv.
-type MuseCLIRunner struct{}
+// MuseRunner invokes the installed Muse binary directly and is only
+// admitted with prepared argv.
+type MuseRunner struct{}
 
-func (r *MuseCLIRunner) Name() RunnerName { return RunnerMuseCLI }
+func (r *MuseRunner) Name() RunnerName { return RunnerMuse }
 
-func (r *MuseCLIRunner) Capabilities() RunnerCapabilities {
+func (r *MuseRunner) Capabilities() RunnerCapabilities {
 	// Muse exec has structured output and session IDs, but its headless CLI
 	// does not expose a Tusker approval callback we can safely keep open.
 	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true}
 }
 
-func (r *MuseCLIRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
+func (r *MuseRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
 	if strings.TrimSpace(req.Command) == "" {
 		req.Command = defaultMuseCLICommand()
 	}
@@ -33,9 +32,9 @@ func (r *MuseCLIRunner) Start(ctx context.Context, req StartRequest) (*StartResu
 	return startDetachedRunnerWrapper(ctx, r.Name(), req, nil, r.Capabilities())
 }
 
-func (r *MuseCLIRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
+func (r *MuseRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
 	if strings.TrimSpace(req.SessionRef) == "" {
-		return nil, tuskerError(errorMissingArg, "muse_cli resume requires session_ref")
+		return nil, tuskerError(errorMissingArg, "muse resume requires session_ref")
 	}
 	command := firstNonEmpty(strings.TrimSpace(req.Command), defaultMuseCLICommand())
 	argv := append([]string(nil), req.CommandArgv...)
@@ -60,16 +59,16 @@ func (r *MuseCLIRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeR
 	return startDetachedRunnerWrapper(ctx, r.Name(), startReq, &req, r.Capabilities())
 }
 
-func (r *MuseCLIRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {
+func (r *MuseRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {
 	if strings.TrimSpace(req.SessionRef) == "" {
 		return &ReconcileResult{LeaseState: LeaseStateReleased, Outcome: AttemptOutcomeAbandoned, Reason: "missing session ref"}, nil
 	}
 	return &ReconcileResult{LeaseState: LeaseStateRetryQueued, Outcome: AttemptOutcomeNone, Reason: "session is resumable"}, nil
 }
 
-func (r *MuseCLIRunner) Interrupt(ctx context.Context, req InterruptRequest) error { return nil }
+func (r *MuseRunner) Interrupt(ctx context.Context, req InterruptRequest) error { return nil }
 
-func (r *MuseCLIRunner) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
+func (r *MuseRunner) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	return &CollectResult{Artifacts: map[string]string{}}, nil
 }
 
@@ -78,16 +77,16 @@ func defaultMuseCLICommand() string { return "muse exec --json" }
 func museCLIArgv(command string, policy CodexPolicy, workspace, model, effort string) ([]string, error) {
 	fields, err := shellLikeFields(strings.TrimSpace(command))
 	if err != nil || len(fields) == 0 {
-		return nil, tuskerError(errorConfigInvalid, "muse_cli command must be structured and parseable")
+		return nil, tuskerError(errorConfigInvalid, "muse command must be structured and parseable")
 	}
 	if fields[0] != "muse" && !strings.HasSuffix(fields[0], "/muse") {
-		return nil, tuskerError(errorConfigInvalid, "muse_cli policy can only be enforced for the direct Muse executable")
+		return nil, tuskerError(errorConfigInvalid, "muse policy can only be enforced for the direct Muse executable")
 	}
 	if len(fields) == 1 || fields[1] != "exec" {
-		return nil, tuskerError(errorConfigInvalid, "muse_cli requires a direct muse exec command")
+		return nil, tuskerError(errorConfigInvalid, "muse requires a direct muse exec command")
 	}
 	if museCLIHasPolicyOverride(fields) {
-		return nil, tuskerError(errorConfigInvalid, "muse_cli command cannot override workspace, approval mode, or full-access policy")
+		return nil, tuskerError(errorConfigInvalid, "muse command cannot override workspace, approval mode, or full-access policy")
 	}
 	add := func(flag string, values ...string) {
 		if !commandHasFlag(strings.Join(fields, " "), flag) {
@@ -215,4 +214,4 @@ func museSessionID(value any) string {
 	return ""
 }
 
-var _ Runner = (*MuseCLIRunner)(nil)
+var _ Runner = (*MuseRunner)(nil)

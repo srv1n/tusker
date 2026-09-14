@@ -69,21 +69,16 @@ func agentMessageCmd(command string, args Args) error {
 		kind = "answer"
 		recipient = firstNonEmpty(recipient, args.String("to"))
 	}
+	recipientGeneration := 0
 	if recipient == "" && args.String("contact") != "" {
 		taskID := args.String("task")
 		role, name := args.String("contact"), ""
 		if strings.HasPrefix(role, "peer:") {
 			role, name = "peer", strings.TrimPrefix(role, "peer:")
 		}
-		if contacts, contactErr := store.AgentContacts(project, taskID); contactErr != nil {
-			return contactErr
-		} else {
-			for _, contact := range contacts {
-				if contact.Role == role && contact.Name == name {
-					recipientKind, recipient = contact.Address.Kind, contact.Address.ID
-					break
-				}
-			}
+		if contact, _, contactErr := store.ResolveEffectiveAgentContact(project, taskID, role, name); contactErr == nil {
+			recipientKind, recipient = contact.Address.Kind, contact.Address.ID
+			recipientGeneration = contact.Generation
 		}
 	}
 	if recipient == "" && args.String("contact") != "" {
@@ -119,7 +114,7 @@ func agentMessageCmd(command string, args Args) error {
 	} else {
 		return tuskerError(errorInvalidArg, "message recipient is invalid: "+parseErr.Error())
 	}
-	m := AgentMessage{IdempotencyKey: args.String("key"), ProjectID: project, Sender: sender, Recipient: AgentAddress{Kind: recipientKind, ID: recipient}, OriginTaskID: firstNonEmpty(args.String("task"), strings.TrimSpace(os.Getenv("TUSKER_ITEM_ID"))), OriginWaveID: args.String("wave"), WorkRevision: workRevision, RouteGeneration: routeGeneration, Kind: kind, Body: args.String("body"), ReplyTo: args.String("reply-to"), ReplyRequired: command == "message ask" || args.Bool("reply-required"), YieldSender: args.Bool("yield")}
+	m := AgentMessage{IdempotencyKey: args.String("key"), ProjectID: project, Sender: sender, Recipient: AgentAddress{Kind: recipientKind, ID: recipient}, OriginTaskID: firstNonEmpty(args.String("task"), strings.TrimSpace(os.Getenv("TUSKER_ITEM_ID"))), OriginWaveID: args.String("wave"), WorkRevision: workRevision, RouteGeneration: routeGeneration, RecipientGeneration: recipientGeneration, Kind: kind, Body: args.String("body"), ReplyTo: args.String("reply-to"), ReplyRequired: command == "message ask" || args.Bool("reply-required"), YieldSender: args.Bool("yield")}
 	stored, duplicate, err := store.PutAgentMessage(m)
 	if err != nil {
 		return tuskerError(errorInvalidArg, fmt.Sprintf("message rejected: %v", err))

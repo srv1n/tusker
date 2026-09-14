@@ -8,14 +8,14 @@ title: "Project Canon"
 status: "current"
 summary: "Current durable truth for Project."
 capsule:
-  what: "Current durable truth, invariants, and constraints for Project."
-  use_when: "Use before changing behavior owned by project or reviewing a domain-impacting task."
   skip_when: "Skip when you only need task proof, runtime events, or generated packets."
+  use_when: "Use before changing behavior owned by project or reviewing a domain-impacting task."
+  what: "Current durable truth, invariants, and constraints for Project."
 source_of_truth:
   - "knowledge/domains/project/CANON.md"
 created_at: "2026-09-05T08:36:27Z"
-updated_at: "2026-09-05T08:36:27Z"
-state_rev: "sha256:8b64493a1fc87812d5e00ef8a90e07633afb492089896dd761f7e15f95a52339"
+updated_at: "2026-09-14T05:51:33Z"
+state_rev: "sha256:897874950c0cea80732f0b63232fea617fc8a0003dd4a6655d23771f4f2bcfc7"
 ---
 
 # Project Canon

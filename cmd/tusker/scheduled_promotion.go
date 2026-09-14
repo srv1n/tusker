@@ -663,7 +663,7 @@ func scheduledPromotionTaskAcceptedReview(vaultPath string, task Note) error {
 		strings.TrimSpace(stringField(task.Data, "closed_at")) == "" {
 		return tuskerError(errorInvalidTransition, "promotion candidate refusal: task_review_provenance_missing:"+taskID)
 	}
-	policy, err := v7ClosePolicyFor(vaultPath, strings.ToLower(fallback(stringField(task.Data, "risk"), "medium")))
+	policy, err := v7TaskClosePolicy(vaultPath, task.Data)
 	if err != nil {
 		return err
 	}

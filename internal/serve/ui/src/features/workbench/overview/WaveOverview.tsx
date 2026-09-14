@@ -149,7 +149,7 @@ export function WaveOverview(props: WaveOverviewProps) {
           <p className="wux-ov-empty-title">No waves match.</p>
           <p className="wux-ov-empty-detail">
             {props.waves.length === 0
-              ? "Reviewed plans will appear here once they are authorized as delivery boundaries."
+              ? "Authored waves will appear here before or after they are started."
               : "Adjust the search or show completed waves."}
           </p>
         </div>

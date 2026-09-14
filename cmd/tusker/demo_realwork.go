@@ -746,14 +746,14 @@ func demoRunReal(ctx context.Context, args Args, repoRoot string, manifest *demo
 		if !ok || strings.TrimSpace(wave.WaveID) == "" {
 			return nil, 0, tuskerError(demoCodePrecondition, "real-harness run has no registered wave for "+name)
 		}
-		receipt, err := demoExecuteWave(ctx, manifest.RuntimeProjectID, wave.WaveID)
+		result, err := demoStartWave(ctx, manifest.RuntimeProjectID, wave.WaveID)
 		if err != nil {
 			return nil, 0, err
 		}
-		result := record.Results[name]
-		result.Authorized = true
-		record.Results[name] = result
-		record.Notes = append(record.Notes, fmt.Sprintf("wave %s authorized and queued by supported Execute Wave action (%d new, %d already queued); execution uses configured profiles through the resident runtime, never the timer lane", name, len(receipt.QueuedTaskIDs), len(receipt.AlreadyQueuedTaskIDs)))
+		entry := record.Results[name]
+		entry.Authorized = true
+		record.Results[name] = entry
+		record.Notes = append(record.Notes, fmt.Sprintf("wave %s authorized by supported Wave Start action (%d tasks queued); execution uses configured profiles through the resident runtime, never the timer lane", name, len(result.QueuedTaskIDs)))
 	}
 	manifest.Runs = append(manifest.Runs, record)
 	runIndex := len(manifest.Runs) - 1
@@ -820,7 +820,7 @@ func demoRunReal(ctx context.Context, args Args, repoRoot string, manifest *demo
 	}
 }
 
-func demoExecuteWave(ctx context.Context, projectID, waveID string) (*serveWaveExecuteReceipt, error) {
+func demoStartWave(ctx context.Context, projectID, waveID string) (*directStartResult, error) {
 	if strings.TrimSpace(projectID) == "" {
 		return nil, tuskerError(demoCodePrecondition, "real-harness run is not registered in the resident runtime", withHint("reset and reseed the fixture after installing the current Tusker candidate"))
 	}
@@ -831,15 +831,15 @@ func demoExecuteWave(ctx context.Context, projectID, waveID string) (*serveWaveE
 	if err := demoHTTPJSON(ctx, http.MethodGet, base+"/api/capability", "", &capability); err != nil {
 		return nil, tuskerError(demoCodePrecondition, "resident runtime is unavailable: "+err.Error(), withHint("install and open the current TuskerBar candidate, then rerun"))
 	}
-	var result serveWaveExecuteResult
-	endpoint := base + "/api/waves/" + url.PathEscape(waveID) + "/execute?project=" + url.QueryEscape(projectID)
+	var result directStartResult
+	endpoint := base + "/api/actions/projects/" + url.PathEscape(projectID) + "/waves/" + url.PathEscape(waveID) + "/start"
 	if err := demoHTTPJSON(ctx, http.MethodPost, endpoint, capability.Capability, &result); err != nil {
-		return nil, tuskerError(demoCodePrecondition, "Execute Wave request failed: "+err.Error())
+		return nil, tuskerError(demoCodePrecondition, "Wave Start request failed: "+err.Error())
 	}
-	if !result.OK || result.Refused || result.Execution == nil {
-		return nil, tuskerError(demoCodePrecondition, "Execute Wave refused: "+firstNonEmpty(result.Reason, "no execution receipt"))
+	if len(result.Blockers) > 0 || result.Authorization != "armed" {
+		return nil, tuskerError(demoCodePrecondition, "Wave Start refused: "+firstNonEmpty(result.Reason, "wave did not arm"))
 	}
-	return result.Execution, nil
+	return &result, nil
 }
 
 func demoHTTPJSON(ctx context.Context, method, endpoint, capability string, out any) error {

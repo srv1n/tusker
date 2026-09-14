@@ -8,13 +8,13 @@ import (
 )
 
 type v7PacketStatusProjection struct {
-	Schema                 string                             `json:"schema"`
-	ReadOnly               bool                               `json:"readOnly"`
-	TaskID                 string                             `json:"taskId"`
-	Audience               string                             `json:"audience"`
-	Content                string                             `json:"content"`
-	Path                   string                             `json:"path,omitempty"`
-	CrossScopeDependencies deliveryCrossScopeReviewProjection `json:"crossScopeDependencies"`
+	Schema              string                             `json:"schema"`
+	ReadOnly            bool                               `json:"readOnly"`
+	TaskID              string                             `json:"taskId"`
+	Audience            string                             `json:"audience"`
+	Content             string                             `json:"content"`
+	Path                string                             `json:"path,omitempty"`
+	DependencyContracts dependencyContractReviewProjection `json:"dependencyContracts"`
 }
 
 func packetV7Cmd(args Args) error {
@@ -56,14 +56,14 @@ func packetV7Cmd(args Args) error {
 		}
 		_ = store.Close()
 	}
-	crossScope := deliveryCrossScopeReviewForTask(idx, task)
+	contracts := dependencyContractReviewForTask(idx, task)
 	audience := fallback(args.String("for"), "agent")
 	if audience == "integrator" {
 		if stringField(task.Data, "work_kind") != "integrator" {
 			return tuskerError(errorInvalidArg, id+": integrator packet requires work_kind: integrator")
 		}
-		content := appendV7PacketCrossScopeProjection(integratorPacket(vaultPath, task, idx), crossScope)
-		return emitV7PacketStatus(args, vaultPath, id, audience, content, crossScope)
+		content := appendV7PacketDependencyContracts(integratorPacket(vaultPath, task, idx), contracts)
+		return emitV7PacketStatus(args, vaultPath, id, audience, content, contracts)
 	}
 	if audience == "agent" && !args.Bool("force") {
 		if reasons := v7TaskDispatchBlockers(vaultPath, task); len(reasons) > 0 {
@@ -75,9 +75,9 @@ func packetV7Cmd(args Args) error {
 			)
 		}
 	}
-	content := appendV7PacketCrossScopeProjection(v7Packet(vaultPath, task, idx, audience), crossScope)
+	content := appendV7PacketDependencyContracts(v7Packet(vaultPath, task, idx, audience), contracts)
 	content = appendV7PacketAgentMessages(content, vaultPath, task)
-	return emitV7PacketStatus(args, vaultPath, id, audience, content, crossScope)
+	return emitV7PacketStatus(args, vaultPath, id, audience, content, contracts)
 }
 
 func appendV7PacketAgentMessages(content, vaultPath string, task Note) string {
@@ -109,16 +109,16 @@ func appendV7PacketAgentMessages(content, vaultPath string, task Note) string {
 	return b.String()
 }
 
-func appendV7PacketCrossScopeProjection(content string, projection deliveryCrossScopeReviewProjection) string {
+func appendV7PacketDependencyContracts(content string, projection dependencyContractReviewProjection) string {
 	if len(projection.Dependencies) == 0 {
 		return content
 	}
-	rendered := renderDeliveryCrossScopeReview(projection.Dependencies)
-	rendered = strings.TrimPrefix(rendered, "Cross-scope hard dependencies\n")
-	return strings.TrimRight(content, "\n") + "\n\n## Cross-scope hard dependencies\n\n" + rendered
+	rendered := renderDependencyContractReview(projection.Dependencies)
+	rendered = strings.TrimPrefix(rendered, "Pinned dependency contracts\n")
+	return strings.TrimRight(content, "\n") + "\n\n## Pinned dependency contracts\n\n" + rendered
 }
 
-func emitV7PacketStatus(args Args, vaultPath, id, audience, content string, crossScope deliveryCrossScopeReviewProjection) error {
+func emitV7PacketStatus(args Args, vaultPath, id, audience, content string, contracts dependencyContractReviewProjection) error {
 	path := ""
 	if args.Bool("write") {
 		path = filepath.Join(vaultPath, "_generated", "packets", id+"."+audience+".md")
@@ -129,7 +129,7 @@ func emitV7PacketStatus(args Args, vaultPath, id, audience, content string, cros
 	if args.Bool("json") {
 		emitJSON(v7PacketStatusProjection{
 			Schema: "tusker.task-packet/v1", ReadOnly: true, TaskID: id, Audience: audience,
-			Content: content, Path: path, CrossScopeDependencies: crossScope,
+			Content: content, Path: path, DependencyContracts: contracts,
 		})
 		return nil
 	}

@@ -845,7 +845,7 @@ func testFactoryIncrementalCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit_all_eligible_and_V1_import_remain_compatible", func(t *testing.T) {
+	t.Run("explicit_all_eligible_remains_compatible", func(t *testing.T) {
 		resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{{
 			Name: configSourceProject, Path: ".tusker/config.yaml", Present: true,
 			Raw: map[string]any{"automation": map[string]any{"dispatch_scope": "all_eligible"}},
@@ -861,20 +861,6 @@ func testFactoryIncrementalCompatibility(t *testing.T) {
 				"id": "LEGACY-T-0001", "status": "ready",
 			}}, wf, nil) != "" {
 			t.Fatalf("explicit all_eligible compatibility=%#v", scope)
-		}
-
-		vault := deliveryTestVault(t)
-		path := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
-		if err := deliveryImportCmd(Args{
-			"vault": vault, "plan": path, "dry-run": "true", "quiet": "true",
-		}); err != nil {
-			t.Fatalf("V1 dry-run regressed: %v", err)
-		}
-		if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
-			t.Fatalf("V1 import regressed: %v", err)
-		}
-		if !fileExists(filepath.Join(vault, "work", "tasks", "APP-T-0001.md")) {
-			t.Fatal("V1 import did not preserve task allocation")
 		}
 	})
 

@@ -27,6 +27,7 @@ declare global {
       openFull?: (path: string) => void;
       onNavigate?: (path: string) => boolean;
       pickFolder?: () => Promise<string | undefined>;
+      pickImage?: () => Promise<{ name: string; mime: string; data: string } | { error: string } | undefined>;
       requestHumanReceipt?: (request: HumanReceiptRequest) => Promise<HumanReceiptBridgeResult | null>;
     };
   }

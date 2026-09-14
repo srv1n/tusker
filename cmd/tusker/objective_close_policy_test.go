@@ -107,7 +107,7 @@ func TestHumanGateBoundary(t *testing.T) {
 	if !issuesContainCode(errs, "GATE_HUMAN_OWNS_AGENT_CAPABLE_WORK") {
 		t.Fatalf("validation path missed invalid gate: %#v", errs)
 	}
-	// Delivery-plan import uses this same policy function before materializing a gate.
+	// Direct wave authoring uses this same policy function before materializing a gate.
 	if err := validateV7GateCreationPolicy("signoff", "human:owner", true, "Approve implementation already settled by the spec.", "Human approves.", "High risk.", ""); err == nil {
 		t.Fatal("import-policy path accepted an invalid human gate")
 	}

@@ -43,7 +43,7 @@ This is an implementation specification, not a claim of shipped behavior. Produc
 1. An architect proposes tasks one through five. Task four encounters an ambiguity and asks the architect through Tusker. It saves its progress and yields when the answer is required. The other independent tasks continue. Tusker delivers the question once to an available architect turn; the reply is tied to the question and reaches the current owner of task four.
 2. Task four needs a contract detail from task two. It can address task two's owner using its durable contact. The message does not create a scheduling dependency or let either worker edit the other's owned files. An actual prerequisite still belongs in the task dependency graph.
 3. Four tasks finish and the remaining task is blocked. Tusker reports that exact state to the architect; it does not call the wave successful or wait forever for all tasks to succeed. A stalled wave and a successful wave are different inputs to the same continuation mechanism.
-4. A wave passes its required verification, review and landing. Tusker sends its result and outstanding requirements to the original architect conversation. The architect proposes a subsequent wave, a repair, an explicit user decision or completion of the objective. Tusker validates and applies the proposal through the existing delivery machinery.
+4. A wave passes its required verification, review and landing. Tusker sends its result and outstanding requirements to the original architect conversation. The architect proposes a subsequent wave, a repair, an explicit user decision or completion of the objective. Tusker validates and applies the proposal through the existing wave authoring machinery.
 5. A daemon restarts, a worker retries or an architect session is replaced. The task retains whom to ask; messages and replies remain linked; a message accepted before the crash is not lost and a repeated notification does not create a duplicate wave.
 6. The operator can register an existing external conversation or have Tusker start one through a supported installed harness. Unsupported control is visible. The same contact and message model supports both without promising access to every application's private session store.
 
@@ -63,7 +63,7 @@ This is an implementation specification, not a claim of shipped behavior. Produc
 | C10 | Scope, sender identity, permissions, current revisions and ownership are validated at every message or lifecycle mutation. |
 | C11 | Qualification proves both coordination behavior and model-call counts, separating offline fixtures, installed protocol probes and live model evidence. |
 
-## Existing foundations and gaps
+## Existing foundations and gaps — historical September 10 survey
 
 Source inspected September 10, with a dirty checkout preserved:
 
@@ -71,7 +71,7 @@ Source inspected September 10, with a dirty checkout preserved:
 - Execution registration and attachments already support direct work. The existing execution inbox means unbound executions; it is not a message inbox.
 - Runtime sessions and resolveResumeSession in cmd/tusker/daemon.go support same-task continuity. Their project, record, revision and workspace checks remain valid for implementation attempts; do not weaken them to create a cross-wave architect.
 - internal/runner contains installed-harness admission, structured events, session receipts and resume argument compilation. Existing CLI and ACP adapters are the starting point.
-- Task dependencies, delivery validation/import, leases, independent review, proof and landing remain their current authorities.
+- Task dependencies, wave authoring validation, leases, independent review, proof and landing remain their current authorities.
 - There is no task-level architect contact or durable routed message/reply contract in the inspected schema. Execution lineage is observation; it does not yet provide the desired conversation service.
 
 ## Identity and task contracts
@@ -136,7 +136,7 @@ A parked worker must not consume all capacity needed to wake its architect. Dete
 
 The architect receives a concise deterministic report: intended outcome, accepted results/revisions, verification and review, failed or waiting tasks, unresolved questions, spec changes and remaining requirements. Attach links and machine-generated facts rather than full worker transcripts. The architect can read deeper evidence when its judgment needs it.
 
-Its structured result is one of answer, next-wave proposal, repair proposal, needs-user or objective-complete proposal. Existing delivery doctor/import and task/review/landing rules validate mutations. A response saying complete cannot manufacture acceptance or mark a blocked wave successful.
+Its structured result is one of answer, next-wave proposal, repair proposal, needs-user or objective-complete proposal. Existing wave authoring validation and task/review/landing rules validate mutations. A response saying complete cannot manufacture acceptance or mark a blocked wave successful.
 
 Persist the continuation trigger, architect turn, resulting proposal and applied wave mapping. Bind the proposal to the objective, triggering report and current context; a repeated response cannot import or dispatch a second copy. If material changes before application, report the conflict with a bounded validation delta rather than blindly executing a stale plan.
 
@@ -203,15 +203,85 @@ Confirmed: remove manual relaying; task-to-architect and peer questions are requ
 
 Open implementation facts: exact installed external-session attachment, active delivery and receipt reconciliation per harness. Resolve with source/protocol qualification, not another product permission question. Provider API availability does not block the generic identity/mailbox work.
 
+## Wave supervision follow-up — 12 September 2026
+
+The user clarified that Tusker should coordinate waves above individual harness sessions. The frontier architect owns the objective, specification, task design, material ambiguity and wave-level decisions. Workers own exploration within their assignments, implementation, local choices, tests and result evidence. Tusker owns delivery, scheduling, waiting, ownership, deduplication and aggregation in code. Ordinary independent review and acceptance remain their existing authorities.
+
+Cognition describes Fusion as a persistent lead/sidekick pair exchanging compact work briefs and feedback. We adopt that separation of contexts. Tusker's intended difference is that the architect normally reviews a completed or actionable stalled wave, with earlier wakeups for material questions. We do not require an additional premium-model verdict for every worker patch. Cognition's reported benchmark savings are not evidence of savings in Tusker. [Cognition, Introducing Fusion in Devin Desktop & CLI](https://cognition.com/blog/local-fusion).
+
+### Locked boundaries for the follow-up
+
+1. Keep architect and worker contexts separate and persistent. An execution contact identifies a registered conversation; a task contact identifies its legitimate current owner. A repeated ticket ID alone does not prove provider conversation continuity. Native IDs remain in endpoint bindings; task packets carry stable contact references and an inspectable route.
+2. An assignment brief carries goal, constraints, relevant context, acceptance IDs and escalation criteria, plus task/work/spec revision and effective contacts. A worker return carries patch/base identity, check-to-acceptance mapping, actual results, risks and decisions needed. Use existing task, artifact and message fields; add only missing fields at their existing authority.
+3. An architect decision packet contains the triggering event/material revision, intended outcome, accepted results with their acceptance authority, patch/base references, checks and independent review/landing facts, failed or waiting work, actual pending questions, remaining requirements and risks. Missing, stale, failed and accepted are different states. A worker report cannot manufacture an accepted result.
+4. Reports use deterministic projections and stable ordering, with a bounded summary, explicit omission counts and retrievable evidence references. Preserve unresolved blockers/questions when trimming. No transcript ingestion or summarizer model. Deduplication includes relevant evidence, acceptance, question and revision changes; unrelated timestamps do not wake the architect.
+5. Stalled-wave detection covers failed/blocked work and dependency deadlock even without a question. Active work, a future eligible retry and temporary capacity contention are different from a decision-requiring stall. A user pause keeps reports inspectable but prevents new turns. Store concrete reasons and distinguish an actionable coordination deadlock from ordinary waiting.
+6. At a wave boundary, the architect can propose more work, a bounded correction, a user decision or objective completion. Corrections name target task/execution, reviewed patch/revision, acceptance gaps and requested changes. Deliver to the existing legitimate context; apply rework through existing lifecycle rules. Never reopen accepted/closed work, reset budgets or widen ownership merely because a supervisor requested it.
+7. For the first correction pilot, recommend a ceiling of two accepted correction rounds per task/material lineage, with duplicates and transport retries excluded. Reuse existing limit/stop machinery; preserve current runtime defaults. An exhausted ceiling produces one inspectable escalation. This is a proposed pilot setting, not a confirmed global default.
+8. Preserve one durable wakeup per message if required by the existing claim contract. Several individually claimed pending messages may share a safe recipient turn without merging identities or receipts. Do not delay an urgent blocking question solely to await a batch, and do not create a second active owner.
+9. Qualify one exact installed Codex route first. Task continuation, idle execution resume, busy delivery, reply capture and uncertain reconciliation have separate evidence. Missing/ambiguous endpoints remain held; no silent new conversation, provider switch or native-history injection workaround. Broad adapter expansion waits for the first complete loop.
+10. Measure total work cost at comparable quality, including architect preparation, corrections, review, retries, failures and worker execution. Preserve actual input/output/cached usage when reported; mark missing usage unknown. Keep measured provider charges separate from estimates and subscription accounting. Persistent contexts can help cache reuse but do not prove cache hits.
+
+### Shared handoff and ownership contract
+
+The existing contact/message/continuation stores remain authoritative. ACO-T-0001 first verifies the current production callers and binds the task handoff to actual source/build/endpoint facts. The planner used the supplied review and public interfaces, not a new implementation source audit. Function names quoted by that review are starting points to verify, not freshly certified defects.
+
+Current public observations on September 12: W-0017 is disarmed and its seven original tasks are held/backlog despite implementation receipts. The installed CLI lists an empty execution graph for this project. The earlier `execution:architect-W-0017` contact is not a verified registration and must not be carried into this handoff as usable. The native origin is the accessible Codex task **Design autonomous agent waves**, ID `01a08c41-dfd3-7e30-88c1-bd7941082497`, host `local`; visibility was checked with the host task tool. That does not certify Tusker write access to it. Until a supported attachment is verified, leave typed architect/origin metadata empty and return a blocking decision to this native origin/operator through an authorized host surface. Do not fabricate an execution ID from the native UUID or wave name.
+
+ACO-T-0001 publishes the exact route tuple (harness/version/profile/host/transport/native conversation/registered execution/generation/ownership), field-to-authority map and source ownership map in the existing contracts report. These are downstream handoff inputs. Routine coding choices stay with the worker. Escalate conflicting requirements, missing upstream contracts, shared-file ownership conflicts or a proposed change to these locked boundaries. A question includes task and acceptance IDs, observed facts, the exact decision and a recommendation.
+
+The packet producer consumes structured fields without changing acceptance authority. The report producer reads authoritative task/proof/review/landing material. The transport resolves the registered execution; the scheduler owns claiming/yield/resume. The wave continuation consumer accepts only validated proposals bound to the report and current material. UI and cost views consume these projections; they do not create independent truth.
+
+Shared runtime files must have one editing owner at a time. Serialize changes to agent_coordination.go, runtime_store.go, daemon.go and runner integrations, or use isolated branches with a named integration owner and explicit handoffs. Concurrent runner/ACP bug work already owns dirty changes in this checkout. Preserve it; do not reset, rebuild/reinstall over it or treat its changes as this plan's baseline proof.
+
+### Implementation order and model recommendations
+
+These are task-specific recommendations, not comparative benchmarks or automatic routing changes. The user requested exact choices. OpenAI describes Luna as cost-sensitive, Terra as a balance of intelligence and cost, and Sol as the stronger professional-work tier; the assignment below is our engineering judgment. [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna), [Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra), [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol).
+
+| Order | Task | Recommended execution | Independent review | Why |
+| --- | --- | --- | --- | --- |
+| 1 | ACO-T-0001 — Bind the baseline, contacts and handoff interfaces | Sol Low | Sol Medium | Bounded source discovery and interface judgment; avoid another broad audit. |
+| 2A | ACO-T-0005 — Produce decision-ready completed/stalled reports | Terra High | Sol Low | Aggregate authoritative facts and reason about stalls. |
+| 2B | ACO-T-0002 — Give workers compact briefs, questions and results | Luna XHigh | Terra High | Constrained packet/projection work after interfaces are pinned. |
+| 3A | ACO-T-0003 — Resume one exact persistent architect conversation | Sol Medium | Sol Medium | Endpoint ownership, process lifecycle and restart correctness. |
+| 3B | ACO-T-0004 — Yield workers and resume from correlated answers | Sol Medium | Sol Medium | Reply/yield races, leases, peer routing and single-slot progress. |
+| 4 | ACO-T-0008 — Make wave judgment and bounded corrections explicit | Sol Medium | Sol Medium | Revision-fenced side effects, stop and acceptance boundaries. |
+| 5A | ACO-T-0006 — Show decision context and truthful delivery in the inspector | Luna XHigh | Terra High | Reuse stable projections and existing controls. |
+| 5B | ACO-T-0010 — Attribute turns, usage and correction cost | Terra High | Sol Low | Join existing ledger facts without double-counting or invented costs. |
+| 6 | ACO-T-0009 — Establish public/offline regression evidence | Luna XHigh | Sol Low | Execute explicit scenarios against public seams; no architecture invention. |
+| 7 | ACO-T-0007 — Qualify the live loop and compare complete task cost | Sol Low | Sol Medium | Drive a fixed experiment; return protocol defects to the owning task. |
+
+Start 2A/2B after 1. Task 3A follows the report producer because both own agent_coordination.go; its integration handoff is a declared dependency. Then run 3B. Usage contract/test design for 5B can start after 1; its recording integration follows 4. UI fixtures can start from 2A/2B, but final UI acceptance needs 3/4. Regression fixture authoring can start as soon as contracts exist; its final pass waits for assembled changes. Live setup is an external test dependency, not a prerequisite for the report, packet, UI or offline work. The imported wave retains existing capacity and is not armed by this plan.
+
+Do not assume Luna XHigh is equivalent to Terra High or Sol Low. Use Luna when fields and checks are explicit; use Terra for aggregation and moderate cross-module changes; use Sol Medium for ownership, recovery and lifecycle decisions. A worker that discovers a missing contract should return one concrete question instead of repeatedly retrying at higher effort. Fixed-pair runtime trials keep the selected architect/worker models stable; changing a model is an explicit new trial, not a hidden fallback.
+
+Current model configuration includes Luna XHigh, Terra High and Sol Low profiles, but does not expose an exact Sol Medium profile. Task notes record the recommended settings; work/review levels remain supported metadata. Do not launch by assuming a level name resolves to that recommendation: inspect the actual route and explicitly select an exact profile/session setting before execution. No global profile or automation change is part of this task-authoring pass.
+
+### Follow-up qualification matrix
+
+- Q1: direct public ask/reply and packet commands work on a pinned candidate; replay/conflicting keys/authentication/correlation retain prior acceptance coverage.
+- Q2: an idle architect receives the question in the same native conversation; the worker releases a single slot, receives the correlated reply and resumes with the expected context/workspace. Include a context marker supplied only in initial conversation setup, never reinserted into subsequent briefs.
+- Q3: busy recipient either receives verified exact-turn delivery or visibly waits for a safe turn; no second owner. Restart after persistence and after durable answer preserves identities. Crash after remote acceptance without a local receipt is separately reconciled or stays explicitly uncertain without blind resend.
+- Q4: peer-only clarification does not wake the architect; reply-before-yield, stale reply and explicit wait-cycle cases preserve ownership and authority.
+- Q5: four accepted tasks plus one failed/blocked task with zero questions produces one actionable stalled report. Future retry/capacity wait is not falsely reported as an irrecoverable stall. New material evidence generates a new report even if task statuses do not change; unchanged polling adds no model call.
+- Q6: one wave's accepted report wakes the architect once; a targeted correction returns to the legitimate worker, consumes a correction round once and preserves normal review. Exhausted limits and acknowledged stop prevent new turns. A valid subsequent wave is created once through wave authoring validation; no second manual Play.
+- Q7: UI labels match message/ownership/report facts after refresh and at a narrow viewport. Missing evidence and uncertain delivery remain explicit.
+- Q8: fixed architect, same small task set and acceptance criteria, separate fresh workspaces and recorded cache conditions compare Luna XHigh and Terra High workers. Start with correctness and one pair; comparative runs require a bounded test budget. Include failed attempts and reviewer/architect corrections. Small samples are exploratory, and missing usage or unmatched quality prevents a savings claim.
+
+Tests that use stores or callbacks are state-machine/integration tests. Public CLI, protocol fixtures, real-provider loops, rendered UI and comparative-cost trials receive separate labels and receipts. Proposed named checks in task contracts must be implemented and actually run; a zero-match Go test invocation never satisfies acceptance. Reuse existing test runners and the M1 pilot; do not build another orchestration test framework.
+
 <!-- tusker:delivery-import:54f0d0dc809d3614:begin -->
 
 ## Work streams
 
+- `[[ACO-T-0010]]` implements delivery source `accounting`.
 - `[[ACO-T-0004]]` implements delivery source `clarification`.
 - `[[ACO-T-0001]]` implements delivery source `contacts`.
 - `[[ACO-T-0006]]` implements delivery source `interface`.
 - `[[ACO-T-0002]]` implements delivery source `mailbox`.
 - `[[ACO-T-0007]]` implements delivery source `qualification`.
+- `[[ACO-T-0009]]` implements delivery source `regressions`.
+- `[[ACO-T-0008]]` implements delivery source `supervision`.
 - `[[ACO-T-0003]]` implements delivery source `transports`.
 - `[[ACO-T-0005]]` implements delivery source `waves`.
 

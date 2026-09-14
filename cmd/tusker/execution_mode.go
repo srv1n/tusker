@@ -9,7 +9,7 @@ func agentSessionKind() string {
 	if strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")) != "" {
 		return "dispatched Tusker worker"
 	}
-	if strings.TrimSpace(os.Getenv("CODEX_SHELL")) != "" || strings.TrimSpace(os.Getenv("CODEX_THREAD_ID")) != "" {
+	if strings.TrimSpace(os.Getenv("CODEX_SHELL")) != "" || strings.TrimSpace(os.Getenv("CODEX_THREAD_ID")) != "" || strings.TrimSpace(os.Getenv("CODEX_SESSION_ID")) != "" {
 		return "interactive Codex session"
 	}
 	if strings.TrimSpace(os.Getenv("CLAUDECODE")) != "" || strings.TrimSpace(os.Getenv("CLAUDE_CODE_ENTRYPOINT")) != "" {

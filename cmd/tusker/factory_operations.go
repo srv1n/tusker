@@ -820,7 +820,7 @@ func factoryOperationsFrontierState(facts factoryOperationsFacts, task Note, hel
 		}
 		if waveFact.Stale || waveFact.State == "stale" {
 			return "stale_authorization", "The wave material no longer matches its armed fingerprint.",
-				"Tusker will refuse new claims until the wave is preflighted and explicitly re-armed.", factoryOperationsWaveSafeAction(waveID, "stale"), true
+				"Tusker will refuse new claims until the wave is reviewed and explicitly re-authorized.", factoryOperationsWaveSafeAction(waveID, "stale"), true
 		}
 		if waveFact.State != "armed" {
 			return waveFact.State, "Wave authorization is " + fallback(waveFact.State, "disarmed") + ".",
@@ -878,9 +878,9 @@ func factoryOperationsWaveSafeAction(waveID, state string) string {
 	case "paused":
 		return "tusker wave resume " + waveID + " --by human:$USER"
 	case "stale":
-		return "tusker wave preflight " + waveID + " --json"
+		return "tusker wave start " + waveID + " --mode background --by human:$USER --json"
 	default:
-		return "tusker wave preflight " + waveID + " --json"
+		return "tusker wave start " + waveID + " --mode background --by human:$USER --json"
 	}
 }
 

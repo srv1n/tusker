@@ -138,9 +138,10 @@ without one, and there is no CLI bypass. The repeatable demo
 (`tusker demo seed --with-human-gate`) exercises this: the gated task cannot
 even move to ready until the owning human releases it.
 
-Delivery plans can declare cross-scope dependencies (`task` plus producer
-`scope`, hard only). The demo follow-up wave uses them to join two
-independently imported waves, and readiness reports the real blockers.
+A task can also pin a dependency on a producer in another scope through a
+`dependency_contract` (target task plus contract fingerprint, hard only). A
+cross-scope edge whose producer has not yet materialized stays visibly
+blocked, and readiness reports the real blocker rather than a dead reference.
 
 ## Read one task
 
@@ -151,7 +152,7 @@ work.
 Worker and reviewer packets preserve the complete task body, including
 non-goals, verification commands, and artifact requirements. They also include
 declared owned paths, generated outputs, migration keys, and shared resources.
-Delivery import carries plan non-goals into each task.
+Direct authoring carries the task's authored non-goals in the body itself.
 
 ## Code sources
 

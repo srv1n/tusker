@@ -32,17 +32,17 @@ func TestTrustFreshAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := filepath.Clean(filepath.Join(wd, "..", "..", "e2e", "agent_journey"))
-	planPath := filepath.Join(fixture, "fixture", "delivery.yaml")
-	planBytes, err := os.ReadFile(planPath)
+	fixturePath := filepath.Join(fixture, "fixture", "wave-authoring.yaml")
+	fixtureBytes, err := os.ReadFile(fixturePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fixturePlan deliveryPlanV2
-	if err := yaml.Unmarshal(planBytes, &fixturePlan); err != nil {
+	var fixtureRequest directWaveAuthoringRequest
+	if err := yaml.Unmarshal(fixtureBytes, &fixtureRequest); err != nil {
 		t.Fatal(err)
 	}
-	if fixturePlan.Schema != deliveryPlanV2Schema || len(fixturePlan.Tasks) != 2 || strings.Join(fixturePlan.SpecRefs, ",") != ".tusker/specs/fresh-agent.md" || strings.Join(fixturePlan.Tasks[0].OwnedPaths, ",") != "owned/greeting.txt" || strings.Join(fixturePlan.Tasks[1].OwnedPaths, ",") != "owned/sibling.txt" {
-		t.Fatalf("fresh fixture does not declare two isolated V2 task contracts: %#v", fixturePlan)
+	if fixtureRequest.Schema != "tusker.wave-authoring/v1" || len(fixtureRequest.Tasks) != 2 || strings.Join(fixtureRequest.SpecRefs, ",") != ".tusker/specs/fresh-agent.md" || strings.Join(fixtureRequest.Tasks[0].OwnedPaths, ",") != "owned/greeting.txt" || strings.Join(fixtureRequest.Tasks[1].OwnedPaths, ",") != "owned/sibling.txt" {
+		t.Fatalf("fresh fixture does not declare two isolated authored task contracts: %#v", fixtureRequest)
 	}
 	for _, promptName := range []string{"IMPLEMENTER_PROMPT.md", "REVIEWER_PROMPT.md"} {
 		prompt, readErr := os.ReadFile(filepath.Join(fixture, promptName))
@@ -77,8 +77,6 @@ func TestTrustFreshAgent(t *testing.T) {
 	}
 	vault := filepath.Join(repo, ".tusker")
 	trustJourneyCLI(t, vault, "init", "--vault", vault, "--yes", "--vault-only", "--no-mount")
-	plan := validDeliveryPlanV2()
-	plan.HumanGates = nil
 	canonicalSpec := filepath.Join(vault, "specs", "fresh-agent.md")
 	if err := os.MkdirAll(filepath.Dir(canonicalSpec), 0o755); err != nil {
 		t.Fatal(err)
@@ -86,29 +84,13 @@ func TestTrustFreshAgent(t *testing.T) {
 	if err := os.WriteFile(canonicalSpec, specBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	plan.Scope, plan.Title, plan.SpecRefs = "fresh-agent-test", "Fresh agent test", []string{".tusker/specs/fresh-agent.md"}
-	plan.Concurrency = 1
-	plan.Epic, plan.EpicContract = "", &deliveryEpicContract{SourceKey: "fresh-agent-test", AcronymHint: "FSH", Title: "Fresh agent test"}
-	plan.Requirements = []deliveryRequirement{{ID: "R1", Outcome: "Greeting material stays isolated."}, {ID: "R2", Outcome: "Sibling material stays isolated."}}
-	plan.Tasks = []deliveryPlanTask{
-		{SourceKey: "greeting", RequirementRefs: []string{"R1"}, Title: "Implement greeting", Outcome: "Write only the greeting material.", Acceptance: []deliveryAcceptance{{ID: "A1", Outcome: "Greeting is exact."}}, Verification: []deliveryVerification{{Covers: "A1", Check: "command: true"}}, Artifact: deliveryArtifactContract{Kind: "diff_summary", Path: "owned/greeting.txt", Summary: "Greeting artifact.", AcceptanceIDs: []string{"A1"}}, OwnedPaths: []string{"owned/greeting.txt"}, Priority: "p1", Risk: "low"},
-		{SourceKey: "sibling", RequirementRefs: []string{"R2"}, Title: "Preserve sibling", Outcome: "Keep sibling material independent.", Acceptance: []deliveryAcceptance{{ID: "A1", Outcome: "Sibling remains independent."}}, Verification: []deliveryVerification{{Covers: "A1", Check: "command: true"}}, Artifact: deliveryArtifactContract{Kind: "diff_summary", Path: "owned/sibling.txt", Summary: "Sibling artifact.", AcceptanceIDs: []string{"A1"}}, OwnedPaths: []string{"owned/sibling.txt"}, Priority: "p1", Risk: "low"},
-	}
-	plan.ContextFingerprint = deliveryPlanV2ContextFingerprint(t, vault, plan)
-	rawPlan, err := yaml.Marshal(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "delivery.yaml"), rawPlan, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	trustJourneyCLI(t, vault, "delivery", "import", "--plan", "delivery.yaml", "--by", "agent:fixture")
+	trustJourneyCLI(t, vault, "wave", "create", "--file", fixturePath, "--by", "agent:fixture")
 	trustJourneyCLI(t, vault, "projects", "add", "--repo", repo, "--vault", vault)
 
-	const taskID = "FSH-T-0001"
+	const taskID = "APP-T-0001"
 	refusal := trustJourneyCLIRefusal(t, vault, "work", "start", taskID, "--by", "agent:fresh-muse", "--source", "codex")
 	if workSessionErrorCode(refusal) != "WORK_SESSION_NOT_READY" {
-		t.Fatalf("held imported fixture returned the wrong start refusal: %v", refusal)
+		t.Fatalf("held authored fixture returned the wrong start refusal: %v", refusal)
 	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {

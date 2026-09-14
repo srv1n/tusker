@@ -56,12 +56,19 @@ func runnerRouteCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	wfFile, err := loadWorkflow(vault)
+	note, err := resolveV7Note(vault, id, "task")
 	if err != nil {
 		return err
 	}
-	note, err := resolveV7Note(vault, id, "task")
+	wfFile, err := loadWorkflow(vault)
 	if err != nil {
+		if args.Bool("json") {
+			emitJSON(runnerRoutePreview{
+				Schema: "tusker.runner-route/v1", ReadOnly: true, Task: stringField(note.Data, "id"), Lane: lane,
+				Blockers: []string{runnerRouteBlocker(err)}, Precedence: runnerRoutePrecedenceTable(lane),
+			})
+			return nil
+		}
 		return err
 	}
 	preview := routePreviewForNote(note, wfFile.Data, lane)
@@ -69,7 +76,7 @@ func runnerRouteCmd(args Args) error {
 		emitJSON(preview)
 		return nil
 	}
-	fmt.Printf("%s %s: %s\n", preview.Task, preview.Lane, firstNonEmpty(preview.Profile, "blocked"))
+	fmt.Printf("%s %s: %s\n", preview.Task, preview.Lane, firstNonEmpty(preview.Profile, preview.Harness, "blocked"))
 	for _, blocker := range preview.Blockers {
 		fmt.Println("blocker: " + blocker)
 	}
@@ -79,35 +86,40 @@ func runnerRouteCmd(args Args) error {
 func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview {
 	complexity := strings.ToLower(strings.TrimSpace(stringField(note.Data, "complexity")))
 	preview := runnerRoutePreview{Schema: "tusker.runner-route/v1", ReadOnly: true, Task: stringField(note.Data, "id"), Lane: lane, Complexity: complexity, Blockers: []string{}}
-	preview.WorkLevel, _, _ = modelLevelForNote(note, lane)
+	var levelErr error
+	preview.WorkLevel, _, levelErr = modelLevelForNote(note, lane)
 	profileField := "execute_profile"
 	if lane == runLaneReview {
 		profileField = "review_profile"
 	}
-	preview.Precedence = []runnerRoutePrecedence{
-		{Source: "task frontmatter", Reason: profileField}, {Source: "task frontmatter", Reason: "runner_profile (legacy)"}, {Source: "automation.routing", Reason: "first matching routing rule"},
-		{Source: "automation.lane_profiles", Reason: "lane mapping"}, {Source: "automation.model_levels", Reason: "authored or compatible work level"}, {Source: "task complexity", Reason: "legacy semantic complexity role"},
-		{Source: "automation.default_profile", Reason: "project default or built-in default"},
-	}
+	preview.Precedence = runnerRoutePrecedenceTable(lane)
 	if complexity != "" && !validTaskComplexity(complexity) {
 		preview.Blockers = append(preview.Blockers, "invalid task complexity: "+complexity)
 		return preview
 	}
+	if levelErr != nil {
+		preview.Blockers = append(preview.Blockers, runnerRouteBlocker(levelErr))
+		return preview
+	}
 	preview.SemanticRole = semanticRunnerRole(complexity, lane)
-	selected, err := resolveRunProfileForLane(note, wf, lane, "")
+	// The daemon still accepts the legacy per-lane runner for projects that
+	// have no named profile. Use that same compatibility input here so a
+	// read-only preview cannot advertise the built-in profile while dispatch
+	// later selects the workflow's legacy runner.
+	selected, err := resolveRunProfileForLane(note, wf, lane, legacyRunnerForLane(note, wf, lane))
 	if err != nil {
-		preview.Blockers = append(preview.Blockers, err.Error())
+		preview.Blockers = append(preview.Blockers, runnerRouteBlocker(err))
 		return preview
 	}
 	if selected.Definition.Disabled {
 		candidates, candidatesErr := resolvedProfileCandidates(selected, wf)
 		if candidatesErr != nil {
-			preview.Blockers = append(preview.Blockers, candidatesErr.Error())
+			preview.Blockers = append(preview.Blockers, runnerRouteBlocker(candidatesErr))
 			return preview
 		}
 		selected, _, err = selectModelProfile(candidates, func(ResolvedRunnerProfile) (bool, string, error) { return true, "", nil })
 		if err != nil {
-			preview.Blockers = append(preview.Blockers, err.Error())
+			preview.Blockers = append(preview.Blockers, runnerRouteBlocker(err))
 			return preview
 		}
 	}
@@ -131,4 +143,52 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 		{Source: "automation.default_profile", Reason: "project default or built-in default", Selected: selected.Source == "automation.default_profile" || selected.Source == configSourceBuiltIn},
 	}
 	return preview
+}
+
+// legacyRunnerForLane is the compatibility input used by the daemon's fresh
+// run setup. Named task/routing/model-level profiles take precedence inside
+// resolveRunProfileForLane; this value only matters when resolution falls back
+// to the old workflow runner fields.
+func legacyRunnerForLane(note Note, wf Workflow, lane string) string {
+	if strings.TrimSpace(lane) == runLaneReview {
+		return firstNonEmpty(wf.Reviewer.Runner, wf.Agents.Default)
+	}
+	return resolveRunnerForNote(note, wf)
+}
+
+func runnerRoutePrecedenceTable(lane string) []runnerRoutePrecedence {
+	profileField := "execute_profile"
+	if lane == runLaneReview {
+		profileField = "review_profile"
+	}
+	return []runnerRoutePrecedence{
+		{Source: "task frontmatter", Reason: profileField},
+		{Source: "task frontmatter", Reason: "runner_profile (legacy)"},
+		{Source: "automation.routing", Reason: "first matching routing rule"},
+		{Source: "automation.lane_profiles", Reason: "lane mapping"},
+		{Source: "automation.model_levels", Reason: "authored or compatible work level"},
+		{Source: "task complexity", Reason: "legacy semantic complexity role"},
+		{Source: "automation.default_profile", Reason: "project default or built-in default"},
+	}
+}
+
+// runnerRouteBlocker preserves the resolver's repair hint and structured path
+// in read-only output. Error() alone intentionally contains only the message,
+// which made missing mappings look like unexplained generic runner failures.
+func runnerRouteBlocker(err error) string {
+	if err == nil {
+		return ""
+	}
+	issue := errorToIssue(err)
+	message := strings.TrimSpace(issue.Message)
+	if message == "" {
+		message = strings.TrimSpace(err.Error())
+	}
+	if issue.Path != "" && !strings.Contains(message, issue.Path) {
+		message += " (path: " + issue.Path + ")"
+	}
+	if issue.Hint != "" {
+		message += "; repair: " + strings.TrimSpace(issue.Hint)
+	}
+	return message
 }

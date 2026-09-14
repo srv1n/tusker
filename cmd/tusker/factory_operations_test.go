@@ -38,14 +38,14 @@ func TestFactoryOperationsProjection(t *testing.T) {
 				mutate: func(f *factoryOperationsFacts) {
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "disarmed", IntegrationRef: "integration/W-0001"}
 				},
-				section: "blocked", wantState: "disarmed", wantAction: "tusker wave preflight W-0001 --json",
+				section: "blocked", wantState: "disarmed", wantAction: "tusker wave start W-0001 --mode background --by human:$USER --json",
 			},
 			{
 				name: "stale authorization",
 				mutate: func(f *factoryOperationsFacts) {
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "stale", Stale: true, CurrentFingerprint: "sha256:new", AuthorizedFingerprint: "sha256:old", IntegrationRef: "integration/W-0001"}
 				},
-				section: "blocked", wantState: "stale_authorization", wantAction: "tusker wave preflight W-0001 --json",
+				section: "blocked", wantState: "stale_authorization", wantAction: "tusker wave start W-0001 --mode background --by human:$USER --json",
 			},
 			{
 				name: "legacy broad scope preserves named wave authorization",
@@ -56,7 +56,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					}
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "stale", Stale: true, IntegrationRef: "integration/W-0001"}
 				},
-				section: "blocked", wantState: "stale_authorization", wantAction: "tusker wave preflight W-0001 --json",
+				section: "blocked", wantState: "stale_authorization", wantAction: "tusker wave start W-0001 --mode background --by human:$USER --json",
 			},
 			{
 				name: "live run wins over stale authorization",

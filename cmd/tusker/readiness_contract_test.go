@@ -21,7 +21,7 @@ func TestReadinessContract(t *testing.T) {
   },
   "blockers": [
     {"id":"contract","kind":"contract_invalid","authority":"contract","affects":["contract"],"task_id":"APP-T-0001","reason":"Task contract is invalid.","remedy":"Repair the task contract."},
-    {"id":"import","kind":"import_missing","authority":"import","affects":["import"],"project_id":"app","reason":"Import is missing.","remedy":"Import the reviewed delivery plan."},
+    {"id":"import","kind":"import_missing","authority":"import","affects":["import"],"project_id":"app","reason":"Import is missing.","remedy":"Authorize the reviewed wave."},
     {"id":"interactive","kind":"interactive_owner","authority":"interactive","affects":["interactive"],"task_id":"APP-T-0001","reason":"A work session owns the task.","remedy":"Wait for the owner to release it."},
     {"id":"automation","kind":"automation_disabled","authority":"automation","affects":["automation"],"project_id":"app","reason":"Automation is disabled.","remedy":"Enable automation through the approved control."},
     {"id":"authorization","kind":"authorization_missing","authority":"authorization","affects":["authorization"],"wave_id":"W-0001","reason":"Wave authorization is absent.","remedy":"Have the authorized operator arm the exact wave."},

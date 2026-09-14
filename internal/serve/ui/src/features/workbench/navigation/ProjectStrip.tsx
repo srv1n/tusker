@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import { Bell, ChevronDown, ChevronUp, Ellipsis, FolderPlus, PanelLeftClose, PanelLeftOpen, Pin, RefreshCw, Search, Settings } from "lucide-react";
+import { Bell, BookOpen, ChevronDown, ChevronUp, Ellipsis, FolderPlus, LayoutGrid, ListOrdered, PanelLeftClose, PanelLeftOpen, Pin, RefreshCw, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { openTaskSearch } from "@/features/search/TaskSearch";
 import { useNeeds, useProjectRefresh, useProjects } from "@/lib/queries";
 import { projectContainsCheckout, projectVisibleInNavigation, type CheckoutSummary, type NeedItem, type ProjectSummary } from "@/types/domain";
 import { AddProjectForm } from "@/components/Sidebar";
 import {
+  NAVIGATION_CHANGED_EVENT,
   movePinnedProject,
   orderProjects,
   projectIdFromPath,
@@ -20,7 +21,14 @@ import {
   type NavigationState,
   type StorageLike,
 } from "./navigationState";
+import { PROJECT_ICON_CHANGED_EVENT, projectIconChoice, projectInitials } from "./projectIcons";
 import "./ProjectStrip.css";
+
+const PROJECT_SECTION_NAV = [
+  { label: "Waves", to: "/p/$projectId/waves" as const, icon: ListOrdered },
+  { label: "Board", to: "/p/$projectId/tasks" as const, icon: LayoutGrid },
+  { label: "Docs", to: "/p/$projectId/knowledge" as const, icon: BookOpen },
+] as const;
 
 function guardedStorage(): StorageLike | null {
   try {
@@ -55,11 +63,6 @@ function currentPath(pathname: string): string {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }
 
-function projectInitials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  return (words.length > 1 ? words.slice(0, 2).map((word) => word[0]) : [words[0]?.slice(0, 2) ?? "?"]).join("").toUpperCase();
-}
-
 function projectRailLabel(project: ProjectSummary, projects: ProjectSummary[]): string {
   const initials = projectInitials(project.name);
   const matching = projects.filter((item) => projectInitials(item.name) === initials);
@@ -76,6 +79,7 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
   const [navigation, setNavigation] = useState<NavigationState | null>(null);
   const [mountedOrderIds, setMountedOrderIds] = useState<string[]>([]);
   const [addingProject, setAddingProject] = useState(false);
+  const [iconEpoch, setIconEpoch] = useState(0);
   const [announcement, setAnnouncement] = useState("");
   const [menuProjectId, setMenuProjectId] = useState<string | null>(null);
   const projectRailRef = useRef<HTMLElement>(null);
@@ -125,6 +129,23 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
   useEffect(() => {
     if (navigation) writeNavigationState(guardedStorage(), navigation);
   }, [navigation]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setNavigation(readNavigationState(guardedStorage(), projectIds));
+    window.addEventListener(NAVIGATION_CHANGED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(NAVIGATION_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [projectIds]);
+
+  useEffect(() => {
+    const bump = () => setIconEpoch((epoch) => epoch + 1);
+    window.addEventListener(PROJECT_ICON_CHANGED_EVENT, bump);
+    return () => window.removeEventListener(PROJECT_ICON_CHANGED_EVENT, bump);
+  }, []);
 
   useEffect(() => {
     if (!navigation || initialRestoreDoneRef.current) return;
@@ -205,27 +226,33 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
   };
 
   return (
-    <aside ref={projectRailRef} className={cn("project-rail relative flex h-full flex-none flex-col bg-raised transition-[width] duration-200", expanded ? "w-40" : "w-14")} aria-label="Project navigation">
-      <div className={cn("project-strip-track flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden p-2", expanded ? "items-stretch" : "items-center")} data-project-strip>
+    <aside ref={projectRailRef} className={cn("project-rail relative flex h-full flex-none flex-col border-r border-line-soft bg-raised transition-[width] duration-200", expanded ? "w-52" : "w-14")} aria-label="Project navigation">
+      <div className={cn("project-strip-track flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden py-2", expanded ? "items-stretch px-2" : "items-center px-1")} data-project-strip>
           {orderedProjects.map((project) => {
             const selected = activeProjectId === project.id;
             const pinned = navigation?.pinnedProjectIds.includes(project.id) ?? false;
+            const selectedIcon = projectIconChoice(navigation?.projectIconById[project.id]);
             return (
-              <button
-                key={project.id}
-                type="button"
-                data-project-chip={project.id}
-                aria-current={selected ? "page" : undefined}
-                aria-label={selected ? `${project.name}, current project` : project.name}
-                title={project.name}
-                onClick={() => openProject(project)}
-                className={cn("project-strip-chip relative inline-flex h-10 shrink-0 items-center rounded-lg text-[10px] font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-info", expanded ? "w-full justify-start gap-2 px-2 text-left" : "w-10 justify-center", selected ? "bg-ink text-surface" : "text-ink-soft hover:bg-hover")}
+              <div key={project.id} className={cn("project-strip-group flex shrink-0 flex-col", expanded ? "w-full" : selected ? "w-12" : "w-10", selected && "items-center rounded-xl bg-panel p-1 ring-1 ring-inset ring-line")}>
+                <button
+                  type="button"
+                  data-project-chip={project.id}
+                  aria-current={selected ? "page" : undefined}
+                  aria-label={selected ? `${project.name}, current project` : project.name}
+                  title={project.name}
+                  onClick={() => openProject(project)}
+                  className={cn("project-strip-chip relative inline-flex h-10 shrink-0 items-center rounded-lg text-[10px] font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-info", expanded ? "w-full justify-start gap-2 px-2 text-left" : "w-10 justify-center", selected ? "bg-raised text-ink shadow-sm" : "text-ink-soft hover:bg-hover")}
               >
-                <span aria-hidden="true">{projectRailLabel(project, orderedProjects)}</span>
+                {selectedIcon ? <selectedIcon.Icon size={18} aria-hidden="true" className={cn("shrink-0", selectedIcon.className)} /> : <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-panel text-[10px] font-bold text-ink-soft">
+                  <span aria-hidden="true">{projectRailLabel(project, orderedProjects)}</span>
+                  <img src={`/api/projects/${encodeURIComponent(project.id)}/icon?v=${iconEpoch}`} alt="" aria-hidden="true" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full rounded-lg object-cover" onError={(event) => { event.currentTarget.hidden = true; }} />
+                </span>}
                 <span className={expanded ? "min-w-0 truncate text-[12px] font-medium" : "sr-only"}>{project.name}</span>
-                {pinned && <Pin size={9} aria-hidden="true" className="absolute -right-1 -top-1 rounded-full bg-raised p-0.5 text-muted" />}
-                {project.needsCount > 0 && <span className={cn("absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] leading-none", selected ? "bg-fail text-white" : "bg-fail-soft text-fail")} aria-label={`${project.needsCount} need${project.needsCount === 1 ? "" : "s"} you`}>{project.needsCount}</span>}
-              </button>
+                  {pinned && <Pin size={9} aria-hidden="true" className="absolute -right-1 -top-1 rounded-full bg-raised p-0.5 text-muted" />}
+                  {project.needsCount > 0 && <span className={cn("absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] leading-none", selected ? "bg-fail text-white" : "bg-fail-soft text-fail")} aria-label={`${project.needsCount} need${project.needsCount === 1 ? "" : "s"} you`}>{project.needsCount}</span>}
+                </button>
+                {selected && <ProjectSubtree expanded={expanded} projectId={activeRouteId ?? project.id} pathname={location.pathname} />}
+              </div>
             );
           })}
           {orderedProjects.length === 0 && <span className="px-1 text-center text-[10px] text-muted">No projects</span>}
@@ -259,6 +286,42 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
       {addingProject && <div className="absolute left-full top-2 z-40 ml-2 w-80"><AddProjectForm onDone={() => setAddingProject(false)} /></div>}
       <div aria-live="polite" role="status" className="sr-only">{announcement}</div>
     </aside>
+  );
+}
+
+function ProjectSubtree({ expanded, projectId, pathname }: { expanded: boolean; projectId: string; pathname: string }) {
+  const selected = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
+  const linkClass = (active: boolean) => cn(
+    "flex h-10 items-center rounded-lg text-[12px] font-medium transition-colors",
+    expanded ? "w-full gap-2 px-2" : "w-10 justify-center",
+    active ? "bg-info-soft text-info" : "text-muted hover:bg-hover hover:text-ink",
+  );
+  const route = (to: string) => to.replace("$projectId", projectId);
+  const secondarySelected = ["/p/$projectId/trains", "/p/$projectId/diagnostics"].some((to) => selected(route(to)));
+
+  return (
+    <nav aria-label={`${projectId} destinations`} className={cn("project-subtree mt-1 flex flex-col gap-1", expanded ? "ml-5 border-l border-line-soft pl-2" : "w-10")}>
+      {PROJECT_SECTION_NAV.map(({ label, to, icon: Icon }) => (
+        <Link key={label} to={to} params={{ projectId }} aria-current={selected(route(to)) ? "page" : undefined} title={label} className={linkClass(selected(route(to)))}>
+          <Icon size={18} aria-hidden="true" />
+          <span className={expanded ? undefined : "sr-only"}>{label}</span>
+        </Link>
+      ))}
+      <Link to="/p/$projectId/settings" params={{ projectId }} aria-current={selected(route("/p/$projectId/settings")) ? "page" : undefined} title="Project settings" className={linkClass(selected(route("/p/$projectId/settings")))}>
+        <Settings size={18} aria-hidden="true" />
+        <span className={expanded ? undefined : "sr-only"}>Settings</span>
+      </Link>
+      <details className={cn("project-subtree-more group", !expanded && "relative")}>
+        <summary aria-label="More project destinations" title="More project destinations" className={cn(linkClass(secondarySelected), "cursor-pointer list-none") }>
+          <Ellipsis size={18} aria-hidden="true" />
+          <span className={expanded ? undefined : "sr-only"}>More</span>
+        </summary>
+        <div className={cn("mt-1 space-y-1", expanded ? "" : "absolute bottom-0 left-full z-30 ml-2 hidden min-w-40 rounded-lg border border-line bg-raised p-1 shadow-lg group-hover:block group-focus-within:block group-open:block")}>
+          <Link to="/p/$projectId/trains" params={{ projectId }} className="block rounded-md px-2.5 py-2 text-[12px] text-ink-soft hover:bg-hover hover:text-ink">Trains</Link>
+          <Link to="/p/$projectId/diagnostics" params={{ projectId }} className="block rounded-md px-2.5 py-2 text-[12px] text-ink-soft hover:bg-hover hover:text-ink">Diagnostics</Link>
+        </div>
+      </details>
+    </nav>
   );
 }
 

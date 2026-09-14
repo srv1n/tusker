@@ -266,6 +266,8 @@ type PreparedLaunch struct {
 	Executable         string           `json:"executable"`
 	ExecutableIdentity string           `json:"executable_identity"`
 	Version            string           `json:"version"`
+	Model              string           `json:"model,omitempty"`
+	Effort             string           `json:"effort,omitempty"`
 	Argv               []string         `json:"argv"`
 	CWD                string           `json:"cwd"`
 	Environment        []string         `json:"-"`

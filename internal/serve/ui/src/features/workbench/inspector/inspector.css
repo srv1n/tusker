@@ -142,8 +142,13 @@
   font-weight: 500;
 }
 
-.wux-inspector-action:hover {
+.wux-inspector-action:not(:disabled):hover {
   background: var(--k-hover);
+}
+
+.wux-inspector-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .wux-inspector-action:focus-visible {

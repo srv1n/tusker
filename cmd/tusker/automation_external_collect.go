@@ -38,11 +38,13 @@ type externalCollectReport struct {
 }
 
 type externalReviewResult struct {
-	Kind     string   `json:"kind,omitempty"`
-	Verdict  string   `json:"verdict,omitempty"`
-	Risk     string   `json:"risk,omitempty"`
-	Summary  string   `json:"summary,omitempty"`
-	Findings []string `json:"findings,omitempty"`
+	Authority           ReviewResult `json:"-"`
+	Kind                string       `json:"kind,omitempty"`
+	Verdict             string       `json:"verdict,omitempty"`
+	Risk                string       `json:"risk,omitempty"`
+	Summary             string       `json:"summary,omitempty"`
+	MaterialFingerprint string       `json:"material_fingerprint,omitempty"`
+	Findings            []string     `json:"findings,omitempty"`
 }
 
 type externalFetchResult struct {
@@ -133,7 +135,16 @@ func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, r
 	if err != nil {
 		return externalCollectReport{}, err
 	}
-	reviewResult := externalReviewResultFromArtifacts(classified)
+	reviewResult, reviewParseErr := externalReviewResultFromArtifacts(classified)
+	if reviewParseErr == nil && reviewResult != nil {
+		if err := validateExternalReviewAuthority(ctx, note, run, reviewResult); err != nil {
+			reviewParseErr = err
+			// Do not let an untrusted/stale DTO become event material identity;
+			// the blocker remains durable, but only an authority-validated review
+			// can bind a workspace fingerprint to a transition.
+			reviewResult = nil
+		}
+	}
 	report := externalCollectReport{
 		Schema:       externalCollectSchema,
 		TaskID:       taskID,
@@ -217,6 +228,11 @@ func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, r
 		report.NextAction = externalLoopActionRecordResearch
 		report.Dispatchable = false
 	}
+	if reviewParseErr != nil {
+		report.NextAction = externalLoopActionEscalateHuman
+		report.Dispatchable = false
+		report.Blockers = append(report.Blockers, "external review result parse failed: "+reviewParseErr.Error())
+	}
 	report.Blockers = uniqueStrings(report.Blockers)
 	sort.Strings(report.Patches)
 	sort.Strings(report.ReviewPackets)
@@ -298,7 +314,7 @@ func normalizeExternalFetchFiles(values map[string]any) []string {
 
 var externalJSONFenceRE = regexp.MustCompile("(?is)```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?```")
 
-func externalReviewResultFromArtifacts(artifacts []externalArtifact) *externalReviewResult {
+func externalReviewResultFromArtifacts(artifacts []externalArtifact) (*externalReviewResult, error) {
 	for _, artifact := range artifacts {
 		if artifact.Kind != "review_packet" {
 			continue
@@ -307,14 +323,16 @@ func externalReviewResultFromArtifacts(artifacts []externalArtifact) *externalRe
 		if err != nil {
 			continue
 		}
-		if result, ok := parseExternalReviewResult(text); ok {
-			return &result
+		if result, ok, parseErr := parseExternalReviewResult(text); parseErr != nil {
+			return nil, parseErr
+		} else if ok {
+			return &result, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
-func parseExternalReviewResult(text string) (externalReviewResult, bool) {
+func parseExternalReviewResult(text string) (externalReviewResult, bool, error) {
 	var candidates []string
 	trimmed := strings.TrimSpace(text)
 	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
@@ -325,31 +343,184 @@ func parseExternalReviewResult(text string) (externalReviewResult, bool) {
 			candidates = append(candidates, strings.TrimSpace(match[1]))
 		}
 	}
+	if len(candidates) == 0 {
+		return externalReviewResult{}, false, nil
+	}
 	for _, candidate := range candidates {
 		var values map[string]any
 		if err := json.Unmarshal([]byte(candidate), &values); err != nil {
-			continue
+			return externalReviewResult{}, false, fmt.Errorf("review result JSON is invalid: %w", err)
 		}
 		kind := strings.ToLower(strings.TrimSpace(stringValue(values["kind"])))
-		verdict := strings.TrimSpace(firstNonEmpty(stringValue(values["verdict"]), stringValue(values["status"]), stringValue(values["result"])))
-		if verdict == "" {
+		if kind != "" && kind != "review" && kind != "architect" {
 			continue
 		}
-		if kind != "" && kind != "review" && kind != "architect" && !externalReviewVerdictKnown(verdict) {
+		if _, ok := values["schema"]; !ok {
+			return externalReviewResult{}, false, fmt.Errorf("external review result must carry authoritative %s DTO", reviewResultSchema)
+		}
+		findings, err := normalizeExternalReviewFindings(values["findings"])
+		if err != nil {
+			return externalReviewResult{}, false, err
+		}
+		values["findings"] = findings
+		authorityRaw, err := json.Marshal(values)
+		if err != nil {
+			return externalReviewResult{}, false, fmt.Errorf("external review result could not be canonicalized: %w", err)
+		}
+		var authority ReviewResult
+		if err := json.Unmarshal(authorityRaw, &authority); err != nil {
+			return externalReviewResult{}, false, fmt.Errorf("external review result is not a valid %s DTO: %w", reviewResultSchema, err)
+		}
+		if err := normalizeReviewResult(&authority); err != nil {
+			return externalReviewResult{}, false, fmt.Errorf("external review result is not a valid %s DTO: %w", reviewResultSchema, err)
+		}
+		if authority.Schema != reviewResultSchema {
+			return externalReviewResult{}, false, fmt.Errorf("external review result schema must be %s", reviewResultSchema)
+		}
+		if err := validatePersistedReviewResult(authority); err != nil {
+			return externalReviewResult{}, false, fmt.Errorf("external review result is not authoritative: %w", err)
+		}
+		if authority.Verdict == "" {
 			continue
 		}
 		result := externalReviewResult{
-			Kind:    firstNonEmpty(kind, "review"),
-			Verdict: verdict,
-			Risk:    strings.TrimSpace(stringValue(values["risk"])),
-			Summary: strings.TrimSpace(stringValue(values["summary"])),
+			Authority: authority,
+			Kind:      firstNonEmpty(kind, "review"),
+			Verdict:   authority.Verdict,
+			// Risk is task policy, not a field in the authoritative v3 DTO. Do
+			// not let provider metadata downgrade a high-risk task into an
+			// auto-close-eligible result; callers fall back to the canonical task
+			// risk when this transport field is empty.
+			Risk:                "",
+			Summary:             authority.Summary,
+			MaterialFingerprint: authority.MaterialFingerprint,
+			Findings:            authority.Findings,
 		}
-		for _, item := range normalizeList(values["findings"]) {
-			result.Findings = append(result.Findings, item)
-		}
-		return result, true
+		return result, true, nil
 	}
-	return externalReviewResult{}, false
+	return externalReviewResult{}, false, nil
+}
+
+// validateExternalReviewAuthority applies the same durable implementation
+// binding used by the v3 review-result/completion path. The provider artifact
+// is transport only until its task, attempt, source, and exact workspace
+// material all match the current canonical review run.
+func validateExternalReviewAuthority(ctx *automationCommandContext, note Note, run RunStatus, result *externalReviewResult) error {
+	if ctx == nil || ctx.Store == nil || result == nil {
+		return fmt.Errorf("external review authority context is unavailable")
+	}
+	authority := result.Authority
+	recordID := trackerRecordID(note)
+	if run.Lane != runLaneReview || strings.TrimSpace(run.ActiveAttemptID) == "" {
+		return fmt.Errorf("external review authority requires the current review attempt")
+	}
+	if authority.ProjectID != ctx.Project.ProjectID || authority.TaskID != recordID || authority.AttemptID != run.ActiveAttemptID || authority.WorkRevision != run.WorkRevision || authority.WorkRevision != intField(note.Data, "work_revision") {
+		return fmt.Errorf("external review authority task, project, attempt, or work revision is stale")
+	}
+	if authority.TaskStateRev != stringField(note.Data, "state_rev") {
+		return fmt.Errorf("external review authority task revision is stale")
+	}
+	expectedSource := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	if expectedSource == "" || authority.ImplementationSHA != expectedSource {
+		return fmt.Errorf("external review authority implementation source is stale")
+	}
+	if authority.Actor != reviewerActorForNote(ctx.Workflow.Data.Reviewer.Actor, note) {
+		return fmt.Errorf("external review authority reviewer actor is not authorized")
+	}
+	if strings.TrimSpace(run.Runner) != "" && authority.Runner != run.Runner {
+		return fmt.Errorf("external review authority runner drifted")
+	}
+	if strings.TrimSpace(run.RunnerProfile) != "" && authority.RunnerProfile != run.RunnerProfile {
+		return fmt.Errorf("external review authority runner profile drifted")
+	}
+	if strings.TrimSpace(run.WorkerPolicyFP) != "" && authority.WorkerPolicyFP != run.WorkerPolicyFP {
+		return fmt.Errorf("external review authority worker policy drifted")
+	}
+	_, expectedMaterial, bindingErr := reviewImplementationParent(ctx.Store, ctx.Project.VaultRoot, ctx.Project.ProjectID, recordID, run.WorkRevision, authority.ImplementationSHA, note)
+	if bindingErr != nil {
+		return fmt.Errorf("external review authority implementation binding is unavailable: %w", bindingErr)
+	}
+	material, materialErr := reviewAttemptMaterialFingerprint(ctx.Store, ctx.Project.ProjectID, recordID, run.ActiveAttemptID, run.WorkRevision, authority.ImplementationSHA)
+	if materialErr != nil {
+		return fmt.Errorf("external review authority workspace material is unavailable: %w", materialErr)
+	}
+	if !reviewMaterialFingerprintsEqual(material, expectedMaterial) || !reviewMaterialFingerprintsEqual(material, authority.MaterialFingerprint) {
+		return fmt.Errorf("external review authority material fingerprint is stale or arbitrary")
+	}
+	return nil
+}
+
+func reviewMaterialFingerprintsEqual(left, right string) bool {
+	left = strings.TrimPrefix(strings.TrimSpace(left), "sha256:")
+	right = strings.TrimPrefix(strings.TrimSpace(right), "sha256:")
+	return left != "" && left == right
+}
+
+// normalizeExternalReviewFindings keeps structured findings as canonical JSON
+// instead of relying on fmt.Sprint's map formatting. A malformed structured
+// finding is a progression blocker: silently dropping it could turn a
+// changes_requested review into an unqualified apply or close.
+func normalizeExternalReviewFindings(value any) ([]string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	var items []any
+	switch typed := value.(type) {
+	case []any:
+		items = typed
+	case []string:
+		for _, item := range typed {
+			items = append(items, item)
+		}
+	default:
+		items = []any{value}
+	}
+	findings := make([]string, 0, len(items))
+	for _, item := range items {
+		switch typed := item.(type) {
+		case string:
+			text := strings.TrimSpace(typed)
+			if text == "" {
+				continue
+			}
+			if strings.HasPrefix(text, "{") {
+				var object map[string]any
+				if err := json.Unmarshal([]byte(text), &object); err != nil {
+					return nil, fmt.Errorf("external review finding JSON is invalid: %w", err)
+				}
+				canonical, err := canonicalExternalReviewFinding(object)
+				if err != nil {
+					return nil, err
+				}
+				findings = append(findings, canonical)
+				continue
+			}
+			findings = append(findings, text)
+		case map[string]any:
+			canonical, err := canonicalExternalReviewFinding(typed)
+			if err != nil {
+				return nil, err
+			}
+			findings = append(findings, canonical)
+		default:
+			return nil, fmt.Errorf("external review finding must be a string or object, got %T", item)
+		}
+	}
+	return findings, nil
+}
+
+func canonicalExternalReviewFinding(value map[string]any) (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("external review finding object is null")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("external review finding could not be canonicalized: %w", err)
+	}
+	if _, err := parseReviewerFinding(string(encoded)); err != nil {
+		return "", fmt.Errorf("external review finding is invalid: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func externalReviewVerdictKnown(verdict string) bool {

@@ -96,12 +96,12 @@ graph TD
   n_cli["CLI reference"]
   n_completion_and_integrated_acceptance["Completion semantics and integrated acceptance"]
   n_decisions_2026_09_07_work_area_redesign_grill["Work-area redesign discussion record"]
-  n_delivery_and_waves["Delivery and waves"]
+  n_delivery_and_waves["Tasks and waves"]
+  n_direct_wave_authoring["Direct task and wave authoring"]
   n_documents_experience["Documents experience and bounded CLI discovery"]
   n_execution_observability["Execution observability: names, lineage, and truthful multi-agent tracking"]
   n_execution_observability_grill["Decision log: execution observability and direct-agent identity"]
   n_execution_observability_system["Execution observability"]
-  n_factory_intake["Factory intake"]
   n_full_height_workspace["Full-height workspace with layered side navigation"]
   n_gates["Gates"]
   n_knowledge_and_feedback["Knowledge and feedback"]
@@ -176,6 +176,11 @@ graph TD
   n_decisions_2026_09_07_work_area_redesign_grill -->|part of| n_work_area_redesign
   n_decisions_2026_09_07_work_area_redesign_grill -->|source| n_work_area_redesign
   n_delivery_and_waves -->|part of| n_overview
+  n_direct_wave_authoring -->|part of| n_planning_handoff_and_agent_entry
+  n_direct_wave_authoring -->|source| n_agent_coordination
+  n_direct_wave_authoring -->|source| n_planning_handoff_and_agent_entry
+  n_direct_wave_authoring -->|updates| n_cli
+  n_direct_wave_authoring -->|updates| n_delivery_and_waves
   n_documents_experience -->|link| n_tusker_trust_and_efficiency
   n_documents_experience -->|link| n_work_knowledge_and_retention
   n_documents_experience -->|part of| n_work_knowledge_and_retention
@@ -190,8 +195,6 @@ graph TD
   n_execution_observability_grill -->|decides for| n_execution_observability
   n_execution_observability_grill -->|part of| n_execution_observability
   n_execution_observability_system -->|part of| n_overview
-  n_factory_intake -->|link| n_delivery_and_waves
-  n_factory_intake -->|part of| n_overview
   n_full_height_workspace -->|part of| n_work_area_redesign
   n_full_height_workspace -->|source| n_documents_experience
   n_full_height_workspace -->|source| n_project_registration_and_visibility
@@ -216,6 +219,7 @@ graph TD
   n_overview -->|link| n_storage_and_runtime
   n_overview -->|link| n_tasks_and_proof
   n_planning_handoff_and_agent_entry -->|link| n_agent_coordination
+  n_planning_handoff_and_agent_entry -->|link| n_model_level_configuration
   n_planning_handoff_and_agent_entry -->|link| n_skills_and_documentation
   n_planning_handoff_and_agent_entry -->|link| n_spec_to_proof
   n_planning_handoff_and_agent_entry -->|part of| n_spec_to_proof
@@ -225,6 +229,7 @@ graph TD
   n_platform_support -->|part of| n_overview
   n_project_registration_and_visibility -->|part of| n_overview
   n_project_registration_and_visibility -->|source| n_work_area_redesign
+  n_project_registration_and_visibility_decisions -->|decides for| n_project_registration_and_visibility
   n_project_registration_and_visibility_decisions -->|part of| n_project_registration_and_visibility
   n_proof_and_closeout -->|part of| n_overview
   n_real_work_lifecycle_cli -->|part of| n_real_work_test_packets

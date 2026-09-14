@@ -253,7 +253,7 @@ func v7GateHardClosureFingerprint(gate map[string]any, idx v7Index) (string, []s
 			incomplete = append(incomplete, id+" (missing)")
 			return
 		}
-		if edge, blocked := v7CrossScopeIntegrityBlocker(task, idx); blocked {
+		if edge, blocked := v7DependencyContractIntegrityBlocker(task, idx); blocked {
 			incomplete = append(incomplete, edge.ID+" (stale material)")
 		}
 		for _, edge := range v7TaskDependencyEdges(task, idx) {
@@ -284,9 +284,9 @@ func v7GateHardClosureFingerprint(gate map[string]any, idx v7Index) (string, []s
 		}
 		row := map[string]any{
 			"id":           id,
-			"contract":     stringField(task.Data, "delivery_contract_fingerprint"),
+			"contract":     stringField(task.Data, "contract_fingerprint"),
 			"dependencies": sortedStrings(normalizeList(task.Data["dependencies"])),
-			"cross_scope":  task.Data["delivery_cross_scope_dependencies"],
+			"cross_scope":  task.Data["dependency_contracts"],
 		}
 		if hardTargets[id] {
 			row["material_epoch"] = stringField(task.Data, "state_rev")
@@ -295,7 +295,7 @@ func v7GateHardClosureFingerprint(gate map[string]any, idx v7Index) (string, []s
 	}
 	sort.Slice(rows, func(i, j int) bool { return stringField(rows[i], "id") < stringField(rows[j], "id") })
 	raw, _ := yaml.Marshal(rows)
-	return deliveryFingerprint(raw), uniqueStrings(incomplete)
+	return v7Fingerprint(raw), uniqueStrings(incomplete)
 }
 
 func v7GateAuthorityReceiptCurrent(gate Note, idx v7Index) bool {
@@ -534,10 +534,28 @@ func v7ReviewerIntegratedDependencyIndex(vaultPath string, args Args, task Note,
 	return projected
 }
 
+func v7TaskClosePolicy(vaultPath string, taskData map[string]any) (v7ClosePolicy, error) {
+	if raw, ok := taskData["close_policy_snapshot"]; ok && raw != nil {
+		if snap, ok := raw.(map[string]any); ok {
+			policy := v7ClosePolicy{
+				RequiredAcceptor: stringField(snap, "required_acceptor"),
+				RequiredEvidence: normalizeList(snap["required_evidence"]),
+				RequiredGates:    normalizeList(snap["required_gates"]),
+			}
+			if policy.RequiredAcceptor == "" {
+				policy.RequiredAcceptor = "reviewer_agent"
+			}
+			return policy, nil
+		}
+	}
+	risk := strings.ToLower(fallback(stringField(taskData, "risk"), "medium"))
+	return v7ClosePolicyFor(vaultPath, risk)
+}
+
 func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string) error {
 	id := stringField(task.Data, "id")
 	risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))
-	policy, err := v7ClosePolicyFor(vaultPath, risk)
+	policy, err := v7TaskClosePolicy(vaultPath, task.Data)
 	if err != nil {
 		return err
 	}
@@ -569,7 +587,11 @@ func enforceV7AcceptanceClose(vaultPath string, task Note, idx v7Index, allowPen
 	if allowPendingCommands {
 		missing = v7PendingCommandProofGaps(task, report)
 	}
-	if len(missing) == 0 || stringField(task.Data, "proof_status") == "waived" {
+	receiptMissing := v7VerificationReceiptRequirementMissing(vaultPath, task)
+	if receiptMissing != "" && !allowPendingCommands {
+		missing = append(missing, "verification_receipt:"+receiptMissing)
+	}
+	if len(missing) == 0 || (stringField(task.Data, "proof_status") == "waived" && receiptMissing == "") {
 		return nil
 	}
 	id := stringField(task.Data, "id")

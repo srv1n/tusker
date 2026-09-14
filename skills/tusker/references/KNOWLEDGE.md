@@ -4,10 +4,11 @@ One visible corpus serves humans and agents: `docs/system/` describes current
 behavior, `.tusker/specs/` proposed change, and `.tusker/specs/decisions/`
 recorded rationale. Do not create an agent-only memory corpus.
 
-Start with `tusker docs find <query>`. Read the top matching front matter and
-section whose `read_when` applies; use supported `docs read`, `browse`, or
-`backlinks` after checking help. One question normally costs one or two file
-reads. An answer comes from a current doc read now, or is **not in canon**.
+For a known document or packet reference, read its governing section directly.
+Otherwise use `tusker docs find <query>` and the matching `read_when` section.
+Expand to `docs browse` or `docs backlinks` only if that leaves a specific gap;
+check targeted help when syntax is uncertain. A documented answer comes from a
+current doc read now, or is **not in canon**.
 
 ## Truth labels
 
@@ -19,15 +20,16 @@ reads. An answer comes from a current doc read now, or is **not in canon**.
 | historical rationale | past decision, not current behavior |
 | inference | conclusion from cited inputs, uncertainty retained |
 
-## Resume recipe
+## Resume and resolve gaps
 
-1. Read `tusker show <TASK-ID> --capsule`, then the runnable packet. Preserve
-   full acceptance, conditions, non-goals, and ownership.
-2. Follow only its domain route and exact owning sections.
-3. Inspect narrow source only for an unresolved implementation fact. Read a
-   decision section or bounded history only when rationale is requested and
-   still missing.
-4. Label every answer with the authority above. Missing intent stays unknown.
+Use the capsule for task status and the full packet for implementation. Preserve
+acceptance, conditions, non-goals, and ownership. Follow its exact references;
+a domain index helps only when the owning document is not already identified.
+
+Inspect source to establish implementation facts; read decisions or bounded
+history when rationale is needed. Cite the authority supporting the claim and
+retain unknowns. A source read can answer a code question without establishing
+runtime behavior or the author's intent.
 
 Old discussion conflicting with current canon is history. Code conflicting
 with docs is **code/doc drift**: source is the best inspected implementation
@@ -37,10 +39,7 @@ present reconstructed intent as a decision.
 
 Distinguish **changed docs** (contract moved), **broken harness** (the check
 could not observe the product), and **product regression** (a valid check
-reached it and observed the wrong result). Use existing contacts/messages only
-after confirming the command is supported. Never claim an unobserved live wake
-or resume.
+observed the wrong result). See `RUN.md` when recording executed proof.
 
-For authoring, use the documentation route. Keep current behavior, decisions,
-rationale, and source references in one durable account; scratch and execution
-transcripts are not another knowledge system.
+For authoring, use `SPECS.md`. Keep current behavior and rationale in their
+owning documents; scratch and execution transcripts are not another canon.

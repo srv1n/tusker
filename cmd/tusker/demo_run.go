@@ -331,11 +331,11 @@ func demoRun(args Args) (map[string]any, int, error) {
 		},
 	}
 	for _, name := range waves {
-		// Explicit per-wave authorization at the demo level. Native wave arm
+		// Explicit per-wave authorization at the demo level. Native wave start
 		// stays untouched: it requires a resident daemon, which the demo
 		// never starts. Each wave result is recorded separately.
 		scheduler.record.Results[name] = demoWaveResult{Wave: name, Authorized: true}
-		scheduler.note(fmt.Sprintf("wave %s authorized by demo run %s (native arm requires a resident daemon; not started)", name, scheduler.record.RunID))
+		scheduler.note(fmt.Sprintf("wave %s authorized by demo run %s (native wave start requires a resident daemon; not started)", name, scheduler.record.RunID))
 	}
 
 	selected := scheduler.selectedKeys()

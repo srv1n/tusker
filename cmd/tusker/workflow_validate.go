@@ -193,7 +193,7 @@ func validateRunnerDefinitions(wf Workflow, filePath string) error {
 		}
 		kind := RunnerName(firstNonEmpty(strings.TrimSpace(definition.Kind), name))
 		switch kind {
-		case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexCloud, RunnerMuse, RunnerMuseCLI, RunnerClaude, RunnerCodexACP:
+		case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerCodexCloud, RunnerMuse, RunnerClaude, RunnerACP, RunnerDevin, RunnerCodexACP:
 		default:
 			return tuskerError(errorConfigInvalid, "runner "+name+" has unsupported kind "+string(kind), withPath(filePath))
 		}

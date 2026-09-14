@@ -1,31 +1,35 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-test("delivery start says what it authorizes and where execution is observed", () => {
-  const source = readFileSync("src/features/delivery/DeliveryReview.tsx", "utf8");
+test("direct wave authority is projected, not re-derived", () => {
+  const source = readFileSync("src/features/workbench/integration/WaveAuthority.tsx", "utf8");
 
-  expect(source).toContain('"Authorize delivery"');
-  expect(source).toContain("does not launch a runner in this request");
-  expect(source).toContain('"Delivery authorized"');
-  expect(source).toContain("Open delivery status for the DAG, task status, and logs.");
-  expect(source).not.toContain("choose Run once");
-  expect(source).not.toContain('"Delivery started"');
+  expect(source).toContain("WaveAuthorityControls");
+  expect(source).toContain("useWaveReview");
+  expect(source).toContain("useWaveControl");
+  expect(source).toContain("data-wave-authority");
+  expect(source).toContain("data-wave-state");
+  expect(source).toContain("data-wave-control");
+  expect(source).not.toContain("Authorize delivery");
+  expect(source).not.toContain("planFingerprint");
+  expect(source).not.toContain("DeliveryError");
 });
 
-test("work surfaces expose real task execution and an honest wave gap", () => {
+test("work surfaces expose direct task start and wave controls", () => {
   const tasks = readFileSync("src/features/product/TaskScreens.tsx", "utf8");
   const delivery = readFileSync("src/features/product/DeliveryScreens.tsx", "utf8");
   const api = readFileSync("src/lib/api.ts", "utf8");
 
-  expect(tasks).toContain("useRunTask(taskId, projectId)");
-  expect(tasks).toContain('aria-label={`Execute ${detail.id} once`}');
+  expect(tasks).toContain("useTaskStart(taskId, projectId)");
+  expect(tasks).toContain('aria-label={`Start task ${detail.id}`}');
   expect(tasks).toContain("ActionResultLine");
+  expect(tasks).toContain("Authorized — waiting for runtime");
   expect(delivery).toContain('<ProductSection title="Tickets"');
   expect(delivery).toContain('<ProductSection title="Dependency DAG">');
   expect(delivery).toContain("renderMermaid(source)");
-  expect(api).toContain('`/waves/${encodeURIComponent(waveId)}/execute`');
-  expect(delivery).toContain('wave.authorization.fingerprint ?? ""');
-  expect(delivery).not.toContain("Confirm the current authorization fingerprint");
-  expect(delivery).toContain("Queues the latest version of this wave for daemon dispatch.");
-  expect(delivery).toContain("alreadyQueuedTaskIds");
+  expect(delivery).toContain("WaveAuthorityControls");
+  expect(api).toContain('/waves/${encodeURIComponent(waveId)}/review');
+  expect(api).toContain('/actions/projects/${encodeURIComponent(projectId)}/waves/');
+  expect(api).toContain('/actions/projects/${encodeURIComponent(projectId)}/tasks/');
+  expect(delivery).not.toContain("Play is blocked");
 });

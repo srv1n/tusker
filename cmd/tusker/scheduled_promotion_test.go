@@ -1136,10 +1136,7 @@ func TestScheduledPromotionPreRefReplayRejectsDisarmedWave(t *testing.T) {
 	if err != nil || durable == nil || durable.Promotion.AttemptedAt == "" {
 		t.Fatalf("load durable pre-ref intent: %#v err=%v", durable, err)
 	}
-	if err := mutateWaveAuthorization(Args{
-		"vault": vault, "_pos0": "W-0001",
-		"by": "human:operator", "quiet": "true",
-	}, "disarmed", nil); err != nil {
+	if _, err := directWavePause(vault, store, "W-0001", "human:operator"); err != nil {
 		t.Fatal(err)
 	}
 	wavePath := filepath.Join(vault, "work", "waves", "W-0001.md")
@@ -1199,28 +1196,26 @@ func TestScheduledPromotionFinalAuthorityEpochLinearizesManagedDisarm(t *testing
 			writerAttempted <- struct{}{}
 		}
 		go func() {
-			writerDone <- mutateWaveAuthorization(Args{
-				"vault": vault, "_pos0": "W-0001",
-				"by": "human:operator", "quiet": "true",
-			}, "disarmed", nil)
+			_, err := directWavePause(vault, store, "W-0001", "human:operator")
+			writerDone <- err
 		}()
 		select {
 		case <-writerAttempted:
 			v7MaterialEpochLockObserver = nil
 		case err := <-writerDone:
 			if err != nil {
-				return errors.New("managed disarm failed before the material epoch: " + err.Error())
+				return errors.New("managed pause failed before the material epoch: " + err.Error())
 			}
-			return errors.New("managed disarm completed before the material epoch")
+			return errors.New("managed pause completed before the material epoch")
 		case <-time.After(5 * time.Second):
-			return errors.New("managed disarm did not reach the material epoch")
+			return errors.New("managed pause did not reach the material epoch")
 		}
 		select {
 		case err := <-writerDone:
 			if err != nil {
-				return errors.New("managed disarm crossed the held material epoch: " + err.Error())
+				return errors.New("managed pause crossed the held material epoch: " + err.Error())
 			}
-			return errors.New("managed disarm crossed the held material epoch")
+			return errors.New("managed pause crossed the held material epoch")
 		default:
 			return nil
 		}
@@ -1233,108 +1228,23 @@ func TestScheduledPromotionFinalAuthorityEpochLinearizesManagedDisarm(t *testing
 	select {
 	case err := <-writerDone:
 		if err != nil {
-			t.Fatalf("managed disarm failed after the ref epoch: %v", err)
+			t.Fatalf("managed pause failed after the ref epoch: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("managed disarm remained blocked after the ref epoch")
+		t.Fatal("managed pause remained blocked after the ref epoch")
 	}
 	if hookCalls != 1 {
 		t.Fatalf("final authority hook calls=%d, want 1", hookCalls)
 	}
 	if after := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); after != commit || after == mainBefore {
-		t.Fatalf("promotion did not linearize before disarm: before=%s after=%s commit=%s", mainBefore, after, commit)
+		t.Fatalf("promotion did not linearize before pause: before=%s after=%s commit=%s", mainBefore, after, commit)
 	}
 	wave, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", "W-0001.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stringField(wave, "authorization"); got != "disarmed" {
-		t.Fatalf("managed disarm did not apply after promotion: authorization=%q", got)
-	}
-}
-
-func TestScheduledPromotionFinalAuthorityEpochLinearizesDeliveryReimport(t *testing.T) {
-	repo, vault := newLandTestRepo(t, 1, "test -f epoch-reimport.txt")
-	if err := writeText(filepath.Join(repo, "docs", "specs", "delivery.md"), "# Delivery\n"); err != nil {
-		t.Fatal(err)
-	}
-	planPath := writeDeliveryTestPlan(t, vault, validDeliveryPlan())
-	importArgs := Args{"vault": vault, "plan": planPath, "by": "human:test", "quiet": "true"}
-	if err := deliveryImportCmd(importArgs); err != nil {
-		t.Fatal(err)
-	}
-	runGitDir(t, repo, "add", "-A")
-	runGitDir(t, repo, "commit", "-m", "record reimport contract")
-	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
-
-	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"epoch-reimport.txt": "candidate\n"})
-	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	if err := landFrozenSourcesAsIssuedDeparture(t, repo, vault,
-		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:reimport-fixture", "_pos0": "APP-T-0001"},
-		map[string]string{"APP-T-0001": sourceSHA},
-	); err != nil {
-		t.Fatal(err)
-	}
-	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-25T02:00:00Z")
-	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
-	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
-	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f epoch-reimport.txt"}, "")
-	armScheduledPromotionWaveForTest(t, vault, "W-0001")
-	commitScheduledPromotionWorkflowForTest(t, repo, vault)
-	mainBefore := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
-
-	store, err := OpenRuntimeStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:41:00Z")
-
-	oldFinalHook := scheduledPromotionAfterFinalAuthority
-	oldEpochObserver := v7MaterialEpochLockObserver
-	defer func() {
-		scheduledPromotionAfterFinalAuthority = oldFinalHook
-		v7MaterialEpochLockObserver = oldEpochObserver
-	}()
-	importAttempted := make(chan struct{}, 1)
-	importDone := make(chan error, 1)
-	scheduledPromotionAfterFinalAuthority = func() error {
-		v7MaterialEpochLockObserver = func() {
-			importAttempted <- struct{}{}
-		}
-		go func() {
-			importDone <- deliveryImportCmd(cloneArgs(importArgs))
-		}()
-		select {
-		case <-importAttempted:
-			v7MaterialEpochLockObserver = nil
-		case err := <-importDone:
-			return fmt.Errorf("delivery re-import entered the final ref-CAS gap: %v", err)
-		case <-time.After(5 * time.Second):
-			return errors.New("delivery re-import did not reach the material epoch")
-		}
-		select {
-		case err := <-importDone:
-			return fmt.Errorf("delivery re-import crossed the held material epoch: %v", err)
-		default:
-			return nil
-		}
-	}
-
-	commit, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-importDone:
-		if err != nil {
-			t.Fatalf("same-contract delivery re-import failed after the ref epoch: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("delivery re-import remained blocked after the ref epoch")
-	}
-	if after := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); after != commit || after == mainBefore {
-		t.Fatalf("promotion did not linearize before delivery re-import: before=%s after=%s commit=%s", mainBefore, after, commit)
+	if got := stringField(wave, "authorization"); got != "paused" {
+		t.Fatalf("managed pause did not apply after promotion: authorization=%q", got)
 	}
 }
 

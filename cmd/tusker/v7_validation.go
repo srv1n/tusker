@@ -109,7 +109,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 	}
 	id := stringField(data, "id")
 	policy := v7ValidationPolicyFor(ctx.VaultPath)
-	for _, field := range []string{"schema", "kind", "id", "project", "title", "status", "risk", "priority"} {
+	for _, field := range []string{"schema", "kind", "id", "project", "title", "status"} {
 		if stringField(data, field) == "" {
 			*errors = append(*errors, issue(errorMissingField, fmt.Sprintf(`missing required frontmatter "%s"`, field), where, "", map[string]any{"field": field}))
 		}
@@ -212,7 +212,7 @@ func validateV7DoneTaskClosePolicy(note Note, ctx validationContext, where strin
 	}
 	risk := strings.ToLower(fallback(stringField(data, "risk"), "medium"))
 	actor := stringField(data, "accepted_by")
-	policy, err := v7ClosePolicyFor(ctx.VaultPath, risk)
+	policy, err := v7TaskClosePolicy(ctx.VaultPath, data)
 	if err != nil {
 		*errors = append(*errors, issue(errorConfigInvalid, err.Error(), "config.yaml", "", map[string]any{"risk": risk}))
 		return
@@ -359,7 +359,7 @@ var v7OperatorArtifactKinds = makeSet(
 func validateV7ArtifactContract(note Note, where string, errors *[]Issue) {
 	value, exists := note.Data["artifact_contract"]
 	if !exists || value == nil {
-		return // Legacy/manual tasks remain valid; delivery import/preflight require it.
+		return // Legacy/manual tasks remain valid; direct wave authoring requires it.
 	}
 	contract := mapField(note.Data, "artifact_contract")
 	kind := strings.ToLower(strings.TrimSpace(stringField(contract, "kind")))
@@ -516,7 +516,7 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_branch must be "+v7IntegrationBranchName(id), where, "", map[string]any{"field": "integration_branch"}))
 	}
 	if base := stringField(data, "integration_base_sha"); base != "" && !v7GitObjectID(base) {
-		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_base_sha must be a Git object ID", where, "re-import the delivery plan from the configured default branch", map[string]any{"field": "integration_base_sha"}))
+		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_base_sha must be a Git object ID", where, "recreate the wave with `tusker wave create` from the configured default branch", map[string]any{"field": "integration_base_sha"}))
 	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/waves/"+id+".md") {
 		*errors = append(*errors, issue(errorPathMismatch, "V7 wave path must be .tusker/work/waves/"+id+".md", where, "", nil))
@@ -533,10 +533,10 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 	}
 	authorization := fallback(stringField(data, "authorization"), "disarmed")
 	if authorization != "disarmed" && authorization != "armed" && authorization != "paused" {
-		*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave authorization: "+authorization, where, "use `tusker wave arm|pause|resume|disarm`", map[string]any{"field": "authorization"}))
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave authorization: "+authorization, where, "use `tusker wave start|pause|resume`", map[string]any{"field": "authorization"}))
 	}
 	if (authorization == "armed" || authorization == "paused") && stringField(data, "authorization_fingerprint") == "" {
-		*errors = append(*errors, issue(errorMissingField, authorization+" V7 wave requires authorization_fingerprint", where, "re-run wave preflight and arm", map[string]any{"field": "authorization_fingerprint"}))
+		*errors = append(*errors, issue(errorMissingField, authorization+" V7 wave requires authorization_fingerprint", where, "re-authorize current material with `tusker wave start "+id+" --mode background --by <actor>`", map[string]any{"field": "authorization_fingerprint"}))
 	}
 	members := normalizeList(data["members"])
 	seen := map[string]bool{}

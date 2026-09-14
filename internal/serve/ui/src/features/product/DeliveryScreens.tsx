@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQueries } from "@tanstack/react-query";
-import { ArrowRight, FileCheck2, GitMerge, Network, Pause, Play, ShieldAlert } from "lucide-react";
+import { ArrowRight, FileCheck2, GitMerge, Network, Pause, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";
-import { ActionResultLine } from "@/components/ui/action-feedback";
 import { renderMermaid } from "@/features/editor/mermaid";
-import { useEpics, useFactoryOperations, useRuns, useTasks, useWaveExecute, useWaves } from "@/lib/queries";
-import type { EpicSummary, RunSummary, TaskCapsule, WaveSummary } from "@/types/domain";
+import { Markdown } from "@/features/docs/Markdown";
+import { RouteFact, routeSummary } from "./TaskScreens";
+import { WaveAuthorityControls, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
+import { useEpics, useFactoryOperations, useRuns, useTasks, useWaves } from "@/lib/queries";
+import type { EpicSummary, RunSummary, TaskCapsule, TaskRoutePreview, WaveSummary } from "@/types/domain";
 import {
   ProductEmpty,
   ProductLabel,
   ProductLoading,
   ProductPage,
-  ProductButton,
   ProductPhaseStrip,
   ProductRow,
   ProductSection,
@@ -39,6 +40,13 @@ const bucketCopy: Record<WaveBucket, { title: string; empty: string }> = {
 };
 
 const bucketOrder: WaveBucket[] = ["running", "checking", "needsYou", "blocked", "ready", "delivered"];
+
+function routeRowLabel(route?: TaskRoutePreview): string {
+  const summary = routeSummary(route);
+  const provenance = route?.source ? ` · Source: ${route.source}${route.reason ? ` · ${route.reason}` : ""}` : "";
+  const blockers = route?.blockers?.length ? ` · Blocked: ${route.blockers.join("; ")}` : "";
+  return `${summary}${provenance}${blockers}`;
+}
 
 function useProjectId(): string {
   return (useParams({ strict: false }) as ProductRouteParams).projectId ?? "";
@@ -141,7 +149,7 @@ export function Waves() {
     <ProductPage title="Work" wide>
       {error ? <ProductUnavailable>Could not load the delivery projection. {error instanceof Error ? error.message : "Try refreshing this project."}</ProductUnavailable> : null}
       {loading ? <ProductLoading rows={4} /> : null}
-      {!loading && !error && rows.length === 0 ? <ProductEmpty title="No waves yet" detail="Reviewed plans will appear here once they are authorized as delivery boundaries." /> : null}
+      {!loading && !error && rows.length === 0 ? <ProductEmpty title="No waves yet" detail="Authored waves appear here once they are created for this project." /> : null}
       {!loading && rows.length > 0 ? (
         <div className="border-t-2 border-ink">
           {rows.map(({ wave, tasks }) => {
@@ -210,11 +218,12 @@ export function WaveDetail({ waveId: requestedWaveId }: { waveId?: string } = {}
   const summary = `${tasks.filter((task) => task.bucket === "delivered").length} landed · ${tasks.filter((task) => task.bucket === "running").length} running · ${tasks.filter((task) => task.bucket === "needsYou").length} waiting on you · ${tasks.filter((task) => task.bucket === "blocked").length} blocked`;
 
   return (
-    <ProductPage title={wave.title} intro={wave.brief.outcome.summary || summary} wide actions={<WaveExecuteBoundary projectId={projectId} wave={wave} />}>
+    <ProductPage title={wave.title} intro={wave.expectedOutcome || wave.brief.outcome.summary || summary} wide actions={<WaveAuthorityControls projectId={projectId} waveId={wave.id} compact />}>
       <div className="mb-8 flex flex-wrap items-center gap-3">
         <ProductStatus tone={phaseTone(phase)}>{waveStatusLabel(wave, tasks)}</ProductStatus>
         <span className="font-mono text-[11px] text-faint">{summary} · {tasks.length} tasks</span>
       </div>
+      {wave.body && <details className="mb-8 rounded-lg border border-line bg-panel/40 px-4 py-3"><summary className="cursor-pointer text-[12px] font-medium text-muted hover:text-ink">Read the full wave brief</summary><Markdown markdown={wave.body} projectId={projectId} className="mt-4" /></details>}
       <details className="mb-10 rounded-lg border border-line bg-panel/40 px-4 py-3">
         <summary className="cursor-pointer text-[12px] font-medium text-muted hover:text-ink">Delivery details</summary>
         <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -229,6 +238,17 @@ export function WaveDetail({ waveId: requestedWaveId }: { waveId?: string } = {}
         </div>
       </details>
 
+      <WaveReviewDetail projectId={projectId} waveId={wave.id} showControls={false} />
+
+      <ProductSection title="Execution routes" count={wave.memberIds.length}>
+        <div className="space-y-3">
+          {wave.memberIds.map((taskId) => {
+            const member = wave.members.find((item) => item.id === taskId);
+            return <div key={taskId} className="rounded-lg border border-line bg-panel p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-mono text-[10.5px] text-faint">{taskId}</span><span className="text-[12.5px] font-semibold text-ink">{member?.title || taskId}</span>{member?.workLevel && <ProductStatus>{`Tier ${member.workLevel}`}</ProductStatus>}</div><div className="grid gap-4 sm:grid-cols-2"><RouteFact label="Will execute" route={member?.effectiveExecute} /><RouteFact label="Will review" route={member?.effectiveReview} /></div></div>;
+          })}
+        </div>
+      </ProductSection>
+
       <ProductSection title="Dependency DAG">
         <DependencyDag projectId={projectId} tasks={tasks} />
       </ProductSection>
@@ -240,7 +260,7 @@ export function WaveDetail({ waveId: requestedWaveId }: { waveId?: string } = {}
               <ProductRow
                 key={action.gateId}
                 title={action.action}
-                detail={`${action.blockedTaskIds.length} task${action.blockedTaskIds.length === 1 ? "" : "s"} blocked`}
+                detail={`${action.owner || "Human owner"} · ${action.blockedTaskIds.length} task${action.blockedTaskIds.length === 1 ? "" : "s"} blocked${action.why ? ` · ${action.why}` : ""}`}
                 status={<ProductStatus tone="warn">Action required</ProductStatus>}
                 action={<a href={action.gateHref} className="text-[12px] font-medium text-info hover:text-ink">Open action</a>}
               />
@@ -262,7 +282,7 @@ export function WaveDetail({ waveId: requestedWaveId }: { waveId?: string } = {}
                 <ProductRow
                   key={task.id}
                   title={task.title}
-                  detail={task.run?.error || task.run?.outcome === "running" ? task.run?.error ?? "Work is executing." : task.hasGate ? "A human decision is required before this branch can continue." : task.readiness.replaceAll("_", " ")}
+                  detail={task.run?.error || task.run?.outcome === "running" ? task.run?.error ?? "Work is executing." : task.hasGate ? "A human decision is required before this branch can continue." : (() => { const member = wave.members.find((item) => item.id === task.id); return member ? `${member.workLevel ? `Tier ${member.workLevel} · ` : ""}Worker: ${routeRowLabel(member.effectiveExecute)} · Reviewer: ${routeRowLabel(member.effectiveReview)}` : task.readiness.replaceAll("_", " "); })()}
                   status={<ProductStatus tone={phaseTone(task.bucket === "needsYou" ? "waiting" : task.bucket)}>{task.bucket === "needsYou" ? "Waiting on you" : task.bucket === "checking" ? "Checking" : task.bucket === "ready" ? "Ready" : task.bucket === "delivered" ? "Landed" : task.bucket}</ProductStatus>}
                   action={<><Link to="/p/$projectId/tasks/$taskId" params={{ projectId, taskId: task.id }} className="text-[12px] font-medium text-info hover:text-ink">Task</Link>{task.run && <Link to="/p/$projectId/runs/$taskId" params={{ projectId, taskId: task.id }} className="text-[12px] font-medium text-info hover:text-ink">Logs</Link>}</>}
                 />
@@ -283,33 +303,6 @@ export function WaveDetail({ waveId: requestedWaveId }: { waveId?: string } = {}
       </ProductSection>
     </ProductPage>
   );
-}
-
-function WaveExecuteBoundary({ projectId, wave }: { projectId: string; wave: WaveSummary }) {
-  const execute = useWaveExecute(projectId);
-  const authorizationFingerprint = wave.authorization.fingerprint ?? "";
-  useEffect(() => {
-    execute.reset();
-  }, [execute.reset, wave.id, authorizationFingerprint]);
-  const terminal = Boolean(wave.landedAt) || ["landed", "closed", "cancelled", "superseded"].includes(wave.status);
-  const blocker = terminal
-    ? "This wave is terminal."
-    : !authorizationFingerprint
-      ? "The current wave version is unavailable. Refresh before executing."
-      : undefined;
-  const submit = () => {
-    if (blocker || execute.isPending) return;
-    execute.mutate({ waveId: wave.id });
-  };
-  const receipt = execute.data?.execution;
-  const queued = receipt?.queuedTaskIds ?? [];
-  const alreadyQueued = receipt?.alreadyQueuedTaskIds ?? [];
-  return <div className="max-w-[24rem] text-right">
-    {blocker ? <p role="status" className="mt-1 text-[10.5px] leading-4 text-warn">Blocked: {blocker}</p> : <p className="mt-1 text-left text-[10.5px] leading-4 text-muted">Queues the latest version of this wave for daemon dispatch. It does not enable project automation.</p>}
-    <ProductButton tone="primary" disabled={Boolean(blocker) || execute.isPending} onClick={submit} aria-label={`Execute wave ${wave.id}`} title={blocker ?? "Queue the latest wave version for daemon dispatch"}><Play size={13} />{execute.isPending ? "Queueing wave…" : "Execute wave"}</ProductButton>
-    <ActionResultLine className="mt-2 text-left" pending={execute.isPending} error={execute.error} result={execute.data} />
-    {receipt && <div className="mt-2 text-left text-[11px] leading-4 text-muted" role="status"><p>{queued.length > 0 ? `Queued ${queued.length} task${queued.length === 1 ? "" : "s"} for daemon dispatch.` : "No new task directives were needed."}{alreadyQueued.length > 0 ? ` ${alreadyQueued.length} already queued.` : ""}</p><a href={receipt.statusLink} className="font-semibold text-info hover:text-ink">Open delivery status</a></div>}
-  </div>;
 }
 
 function DependencyDag({ projectId, tasks }: { projectId: string; tasks: WaveTask[] }) {

@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-05T08:37:06Z"
-updated_at: "2026-09-07T05:30:28Z"
-state_rev: "sha256:ceaf2615fdb15989aeb770c349a95e61c765d96448461932c62b25887b070122"
+updated_at: "2026-09-14T05:51:42Z"
+state_rev: "sha256:928f65e0f5fefee6877c24c17311d1a1a08cf2a25f15464623554fc3bf2e0ba9"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -48,7 +48,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[CFX-T-0001]] | backlog | agent | Execute the imported delivery contract and satisfy proof mode. |
+| [[CFX-T-0001]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 

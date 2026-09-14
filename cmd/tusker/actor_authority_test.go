@@ -15,8 +15,8 @@ func TestV7ActorAuthorityFamilies(t *testing.T) {
 		want      string
 		wantError string
 	}{
-		{name: "human-required missing", resolve: func(a Args) (string, error) { return v7HumanActor(a, "wave arm") }, args: Args{}, wantError: "explicit qualified actor"},
-		{name: "human-required canonical", resolve: func(a Args) (string, error) { return v7HumanActor(a, "wave arm") }, args: Args{"by": " HUMAN: sarav "}, want: "human:sarav"},
+		{name: "human-required missing", resolve: func(a Args) (string, error) { return v7HumanActor(a, "wave start") }, args: Args{}, wantError: "explicit qualified actor"},
+		{name: "human-required canonical", resolve: func(a Args) (string, error) { return v7HumanActor(a, "wave start") }, args: Args{"by": " HUMAN: sarav "}, want: "human:sarav"},
 		{name: "reviewer-required canonical", resolve: func(a Args) (string, error) { return v7ReviewerOrHumanActor(a, "accept") }, args: Args{"by": " REVIEWER: independent "}, want: "reviewer:independent"},
 		{name: "agent-default", resolve: func(a Args) (string, error) { return v7AgentDefaultActor(a, "task status") }, args: Args{"USER": "ignored"}, want: "agent:" + defaultActorName()},
 	}
@@ -42,7 +42,7 @@ func TestV7ActorAuthorityRejectsHumanFromEveryAgentSession(t *testing.T) {
 			clearAgentSessionEnvForTest(t)
 			t.Setenv(key, "session")
 			for _, resolve := range []func(Args) (string, error){
-				func(a Args) (string, error) { return v7HumanActor(a, "wave arm") },
+				func(a Args) (string, error) { return v7HumanActor(a, "wave start") },
 				func(a Args) (string, error) { return v7ReviewerOrHumanActor(a, "close") },
 				func(a Args) (string, error) { return v7AgentDefaultActor(a, "task status") },
 			} {

@@ -90,7 +90,7 @@ const projection: FactoryOperationsProjection = {
         authorizedFingerprint: "sha256:old",
         integrationRef: "integration/W-0001",
         integrationSha: "fedcba9876543210",
-        safeAction: "tusker wave preflight W-0001 --json",
+        safeAction: "tusker wave start W-0001 --mode background --by human:$USER --json",
         href: "/p/app/ops#wave-W-0001",
       },
     ],
@@ -204,7 +204,7 @@ test("one ordered operations projection renders the full product state matrix", 
   }
   expect(html).toContain("Accepted factory surface");
   expect(html).toContain("integration/W-0001");
-  expect(html).toContain("tusker wave preflight W-0001 --json");
+  expect(html).toContain("tusker wave start W-0001 --mode background --by human:$USER --json");
   expect(html).toContain("Choose the customer-visible retention policy.");
   expect(html).toContain("preserving legacy all_eligible authority");
   expect(html).toContain("set automation.dispatch_scope: all_eligible");

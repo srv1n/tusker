@@ -145,3 +145,13 @@ Common preconditions: local `main` is inventoried and assembled without absorbin
 | 12 | Human acceptance handoff | Reset preview/apply/reseed; confirm zero active runs and ready `s1`, Alpha and Beta; print PID and candidate URL. Human opens `s1`, then Alpha, then Alpha+Beta, then Follow-up/final acceptance. | Fixture is idle; visible progress/review/completion matches CLI; subjective acceptance is separate. | Active lease/run refuses handoff until supported cancellation settles. Human acceptance is never inferred. | Seed/status JSON, PID/URL/candidate and checklist. Leave idle; do not press Play. |
 
 Execution order is fixed: combined focused checks → offline fixture → real standalone → one wave → overlapping waves/follow-up → browser/SSE → mixed providers → fresh human fixture. `scripts/test-real-work-project.sh` owns machine entry points; `docs/reports/real-work/ui/manual-walkthrough.md` owns human actions. The final report enumerates `PASS`, `FAIL`, `BLOCKED`, and `NOT TESTED` with the first actionable error for every incomplete lane.
+
+<!-- tusker:delivery-import:e97af9326db7fb15:begin -->
+
+## Work streams
+
+- `[[FLW-T-0042]]` implements delivery source `landing-completion-docs`.
+
+- `[[W-0024]]` is the imported delivery wave.
+
+<!-- tusker:delivery-import:e97af9326db7fb15:end -->

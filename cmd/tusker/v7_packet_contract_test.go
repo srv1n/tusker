@@ -53,31 +53,39 @@ func TestV7PacketPreservesCompleteTaskContract(t *testing.T) {
 	}
 }
 
-func TestDeliveryImportPreservesNonGoalsInPackets(t *testing.T) {
-	vault := deliveryTestVault(t)
-	plan := operationalDeliveryPlanV2()
-	path := writeDeliveryV2TestPlan(t, vault, plan)
-	if err := deliveryImportCmd(Args{"vault": vault, "plan": path, "quiet": "true"}); err != nil {
+func TestWaveAuthoringPreservesNonGoalsInPackets(t *testing.T) {
+	vault := v7DirectTestVault(t)
+	nonGoals := []string{"Do not change billing or deploy the service.", "Do not widen the declared owned paths."}
+	tasks := []map[string]any{}
+	for _, key := range []string{"one", "two"} {
+		body := "# Authored " + key + "\n\n## Intent\n\nDeliver " + key + ".\n\n## Non-goals\n\n" + strings.Join(nonGoals, "\n") + "\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | Works. |\n"
+		tasks = append(tasks, map[string]any{"key": key, "title": "Authored " + key, "work_level": "light", "body": body})
+	}
+	path := writeDirectIntakeRequest(t, vault, map[string]any{
+		"schema": "tusker.wave-authoring/v1", "request_key": "packet-nongoals",
+		"title": "Packet non-goals", "outcome": "Packets preserve exact authored bodies.", "tasks": tasks,
+	})
+	if err := waveV7CreateCmd(Args{"vault": vault, "file": path, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	idx := mustIndex(t, vault)
 	checked := 0
 	for _, task := range idx.Tasks {
-		if stringField(task.Data, "delivery_plan_scope") != plan.Scope {
+		if stringField(task.Data, "wave") == "" {
 			continue
 		}
 		checked++
 		for _, audience := range []string{"agent", "reviewer"} {
 			packet := v7Packet(vault, task, idx, audience)
-			for _, nonGoal := range plan.NonGoals {
+			for _, nonGoal := range nonGoals {
 				if !strings.Contains(packet, nonGoal) {
-					t.Fatalf("%s packet lost imported non-goal %q", audience, nonGoal)
+					t.Fatalf("%s packet lost authored non-goal %q", audience, nonGoal)
 				}
 			}
 		}
 	}
-	if checked != len(plan.Tasks) {
-		t.Fatalf("checked %d imported tasks, want %d", checked, len(plan.Tasks))
+	if checked != len(tasks) {
+		t.Fatalf("checked %d authored tasks, want %d", checked, len(tasks))
 	}
 }
 

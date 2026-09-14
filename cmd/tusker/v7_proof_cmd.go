@@ -310,6 +310,7 @@ func proofV7SetModeCmd(args Args) error {
 		return err
 	}
 	baseRev := stringField(data, "state_rev")
+	priorContract := directWaveTaskContractFingerprint(data, body)
 	data["proof_mode"] = mode
 	required := splitCSV(firstNonEmpty(args.String("required"), args.String("proof-required")))
 	if len(required) == 0 {
@@ -327,6 +328,10 @@ func proofV7SetModeCmd(args Args) error {
 	if reason := strings.TrimSpace(args.String("raw-artifacts-reason")); reason != "" {
 		data["raw_artifacts_reason"] = reason
 	}
+	if directWaveTaskContractFingerprint(data, body) != priorContract {
+		body, _ = invalidateV7PassedVerificationRows(body)
+	}
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -428,12 +433,17 @@ func verifyV7RemoveCmd(args Args) error {
 			return err
 		}
 		rows := parseV7VerificationRows(body)
+		priorContract := directWaveTaskContractFingerprint(data, body)
 		if index > len(rows) {
 			return tuskerError(errorInvalidArg, fmt.Sprintf("verify remove --index %d is outside %d verification row%s", index, len(rows), plural(len(rows))))
 		}
 		removed = rows[index-1]
 		rows = append(rows[:index-1], rows[index:]...)
 		body = replaceSection(body, "## Verification", renderV7VerificationTable(rows))
+		if directWaveTaskContractFingerprint(data, body) != priorContract {
+			body, _ = invalidateV7PassedVerificationRows(body)
+		}
+		data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
 		idx, err := loadV7Index(vaultPath)
 		if err != nil {
 			return err
@@ -595,10 +605,22 @@ func upsertV7VerificationsLocked(vaultPath, taskID string, rows []v7Verification
 	if err != nil {
 		return "", err
 	}
+	if err := validateV7VerificationCoverage(body, rows); err != nil {
+		return "", err
+	}
 	baseRev := stringField(data, "state_rev")
+	priorContract := directWaveTaskContractFingerprint(data, body)
+	originalBody := body
 	for _, row := range rows {
 		body = upsertV7VerificationRow(body, row)
 	}
+	if directWaveTaskContractFingerprint(data, body) != priorContract {
+		body, _ = invalidateV7PassedVerificationRows(originalBody)
+		for _, row := range rows {
+			body = upsertV7VerificationRow(body, row)
+		}
+	}
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return "", err
@@ -622,6 +644,44 @@ func upsertV7VerificationsLocked(vaultPath, taskID string, rows []v7Verification
 		}
 	}
 	return report.Status, nil
+}
+
+func validateV7VerificationCoverage(body string, rows []v7VerificationRow) error {
+	acceptanceIDs := v7AcceptanceIDs(body)
+	if len(acceptanceIDs) == 0 {
+		return nil
+	}
+	known := makeSet(acceptanceIDs...)
+	for _, row := range rows {
+		for _, raw := range v7CoverTokens(row.CoverText) {
+			token := strings.ToUpper(strings.Trim(strings.TrimSpace(raw), "` "))
+			if strings.Contains(token, ":") {
+				token = strings.SplitN(token, ":", 2)[1]
+			}
+			if token == "ALL" {
+				continue
+			}
+			if strings.Contains(token, "-") {
+				parts := strings.SplitN(token, "-", 2)
+				start := atoiSafe(strings.TrimPrefix(normalizeV7AcceptanceID(parts[0]), "A"))
+				end := atoiSafe(strings.TrimPrefix(normalizeV7AcceptanceID(parts[1]), "A"))
+				if start > 0 && end >= start {
+					for number := start; number <= end; number++ {
+						id := fmt.Sprintf("A%d", number)
+						if _, ok := known[id]; !ok {
+							return tuskerError(errorInvalidField, "verification row references unknown acceptance id: "+id)
+						}
+					}
+					continue
+				}
+			}
+			id := normalizeV7AcceptanceID(token)
+			if _, ok := known[id]; !ok {
+				return tuskerError(errorInvalidField, "verification row references unknown acceptance id: "+fallback(token, "(missing)"))
+			}
+		}
+	}
+	return nil
 }
 
 func withV7ProofWriteLock(vaultPath, taskID string, args Args, retryCommand string, fn func() error) error {
@@ -774,6 +834,24 @@ func upsertV7VerificationRow(body string, row v7VerificationRow) string {
 	return replaceSection(body, "## Verification", table)
 }
 
+func invalidateV7PassedVerificationRows(body string) (string, int) {
+	rows := parseV7VerificationRows(body)
+	invalidated := 0
+	for i := range rows {
+		switch strings.ToLower(strings.TrimSpace(rows[i].Result)) {
+		case "pass", "waived":
+			rows[i].Result = "pending"
+			rows[i].Notes = appendV7ProofNote(rows[i].Notes, "invalidated by task contract amendment")
+			rows[i].BlockedBy = ""
+			invalidated++
+		}
+	}
+	if invalidated == 0 {
+		return body, 0
+	}
+	return replaceSection(body, "## Verification", renderV7VerificationTable(rows)), invalidated
+}
+
 func renderV7VerificationTable(rows []v7VerificationRow) string {
 	hasBlocker := false
 	for _, row := range rows {
@@ -915,6 +993,11 @@ func v7EscapedAt(value string, pos int) bool {
 }
 
 func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofReport {
+	material, materialErr := v7VerificationCurrentScopedMaterial(vaultPath, task)
+	return computeV7ProofReportForMaterial(vaultPath, task, idx, material, materialErr)
+}
+
+func computeV7ProofReportForMaterial(vaultPath string, task Note, idx v7Index, currentMaterial string, materialErr error) v7ProofReport {
 	taskID := stringField(task.Data, "id")
 	mode := strings.ToLower(fallback(stringField(task.Data, "proof_mode"), defaultV7ProofMode(stringField(task.Data, "risk"))))
 	acceptanceIDs := v7AcceptanceIDs(task.Body)
@@ -925,7 +1008,12 @@ func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofRepor
 		Covered:    map[string][]string{},
 	}
 	for _, row := range parseV7VerificationRows(task.Body) {
-		report.InlineRows = append(report.InlineRows, evaluateV7ReplayVerificationRow(vaultPath, row))
+		row = evaluateV7ReplayVerificationRow(vaultPath, row)
+		if !v7VerificationReceiptCurrent(task, row, currentMaterial, materialErr) {
+			row.Result = "fail"
+			row.Notes = appendV7ProofNote(row.Notes, "verification receipt is missing or stale for the current task contract/work/source/material")
+		}
+		report.InlineRows = append(report.InlineRows, row)
 	}
 	for _, row := range report.InlineRows {
 		if strings.EqualFold(row.Result, "blocked") && strings.TrimSpace(row.BlockedBy) != "" {
@@ -976,6 +1064,9 @@ func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofRepor
 	}
 	if mode == "none" {
 		report.ModeMissing = v7ProofModeRequirementMissing(vaultPath, task, idx)
+		if missing := v7VerificationReceiptRequirementMissingForMaterial(task, currentMaterial, materialErr); missing != "" {
+			report.ModeMissing = append(report.ModeMissing, "verification_receipt:"+missing)
+		}
 		report.Status = v7ComputedProofStatus(task, report)
 		classifyV7ProofReport(&report, task, idx)
 		return report
@@ -986,6 +1077,9 @@ func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofRepor
 		}
 	}
 	report.ModeMissing = v7ProofModeRequirementMissing(vaultPath, task, idx)
+	if missing := v7VerificationReceiptRequirementMissingForMaterial(task, currentMaterial, materialErr); missing != "" {
+		report.ModeMissing = append(report.ModeMissing, "verification_receipt:"+missing)
+	}
 	report.Status = v7ComputedProofStatus(task, report)
 	classifyV7ProofReport(&report, task, idx)
 	return report
@@ -2047,6 +2141,13 @@ func v7ComputedProofStatus(task Note, report v7ProofReport) string {
 		return "partial"
 	}
 	return "pending"
+}
+
+func appendV7ProofNote(existing, note string) string {
+	if strings.TrimSpace(existing) == "" || existing == "-" {
+		return note
+	}
+	return strings.TrimSpace(existing) + "; " + note
 }
 
 func v7HasSubstantiveVerificationRows(rows []v7VerificationRow) bool {

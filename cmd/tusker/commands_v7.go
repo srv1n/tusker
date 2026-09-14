@@ -666,12 +666,16 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 			return err
 		}
 	}
-	epic, err := requireArg(args, "epic")
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
 	if err != nil {
 		return err
 	}
-	epic = strings.ToUpper(epic)
-	if !epicAcronymPattern.MatchString(epic) {
+	defer func() { _ = materialLock.Close() }()
+	epic := strings.ToUpper(strings.TrimSpace(args.String("epic")))
+	epicSupplied := epic != ""
+	if epic == "" {
+		epic = "TSK"
+	} else if !epicAcronymPattern.MatchString(epic) {
 		return tuskerError(errorInvalidArg, fmt.Sprintf(`--epic must be 3 uppercase letters, got "%s"`, epic))
 	}
 	title, err := requireArg(args, "title")
@@ -713,20 +717,27 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	if _, ok := v7Readiness[readiness]; !ok {
 		return tuskerError(errorInvalidField, "invalid V7 readiness: "+readiness)
 	}
-	risk := strings.ToLower(fallback(args.String("risk"), "medium"))
-	if _, ok := risks[risk]; !ok {
-		return tuskerError(errorInvalidField, "invalid risk: "+risk)
+	risk := strings.ToLower(strings.TrimSpace(args.String("risk")))
+	if risk != "" {
+		if _, ok := risks[risk]; !ok {
+			return tuskerError(errorInvalidField, "invalid risk: "+risk)
+		}
 	}
-	priority := strings.ToLower(fallback(args.String("priority"), "p2"))
-	if _, ok := priorities[priority]; !ok {
-		return tuskerError(errorInvalidField, "invalid priority: "+priority)
+	effectiveRisk := fallback(risk, "medium")
+	priority := strings.ToLower(strings.TrimSpace(args.String("priority")))
+	if priority != "" {
+		if _, ok := priorities[priority]; !ok {
+			return tuskerError(errorInvalidField, "invalid priority: "+priority)
+		}
 	}
-	size := strings.ToLower(fallback(args.String("size"), "m"))
-	if _, ok := sizes[size]; !ok {
-		return tuskerError(errorInvalidField, "invalid size: "+size)
+	size := strings.ToLower(strings.TrimSpace(args.String("size")))
+	if size != "" {
+		if _, ok := sizes[size]; !ok {
+			return tuskerError(errorInvalidField, "invalid size: "+size)
+		}
 	}
 	requestedEvidenceRequired := splitCSV(args.String("evidence-required"))
-	defaultProofMode := defaultV7ProofMode(risk)
+	defaultProofMode := defaultV7ProofMode(effectiveRisk)
 	if args.String("proof-mode") == "" && len(requestedEvidenceRequired) > 0 && defaultProofMode == "inline" {
 		defaultProofMode = "card"
 	}
@@ -764,12 +775,8 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		"id":                    id,
 		"project":               v7ProjectID(vaultPath),
 		"title":                 title,
-		"epic":                  epic,
 		"status":                status,
 		"readiness":             readiness,
-		"priority":              priority,
-		"risk":                  risk,
-		"size":                  size,
 		"proof_mode":            proofMode,
 		"proof_status":          "pending",
 		"proof_required":        proofRequired,
@@ -779,6 +786,7 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		"next_source":           fallback(args.String("next-source"), "task"),
 		"next_ref":              fallback(args.String("next-ref"), id),
 		"next_action":           fallback(args.String("next-action"), "Execute the task contract and satisfy proof mode."),
+		"work_level":            taskWorkLevel(args.String("work-level"), args.String("complexity")),
 		"architect":             strings.TrimSpace(args.String("architect")),
 		"origin":                strings.TrimSpace(args.String("origin")),
 		"peer_contacts":         parseKeyValueList(args.String("peers")),
@@ -790,6 +798,18 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		"created_by":            actor,
 		"updated_at":            now,
 		"updated_by":            actor,
+	}
+	if epicSupplied {
+		data["epic"] = epic
+	}
+	if priority != "" {
+		data["priority"] = priority
+	}
+	if risk != "" {
+		data["risk"] = risk
+	}
+	if size != "" {
+		data["size"] = size
 	}
 	if workKind := strings.ToLower(strings.TrimSpace(args.String("work-kind"))); workKind != "" {
 		if workKind != "implementation" && workKind != "integrator" {
@@ -811,6 +831,18 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 			data[strings.ReplaceAll(field, "-", "_")] = level
 		}
 	}
+	workLevel := strings.TrimSpace(stringField(data, "work_level"))
+	reviewLevel := strings.TrimSpace(stringField(data, "review_level"))
+	reviewReason := strings.TrimSpace(args.String("review-reason"))
+	if reviewReason != "" && reviewLevel == "" {
+		return tuskerError(errorInvalidArg, "--review-reason requires --review-level")
+	}
+	if reviewLevel != "" && reviewLevel != workLevel && reviewReason == "" {
+		return tuskerError(errorInvalidArg, "--review-level override requires --review-reason")
+	}
+	if reviewReason != "" {
+		data["review_reason"] = reviewReason
+	}
 	var profileWorkflow WorkflowFile
 	profileWorkflowLoaded := false
 	for _, item := range []struct{ flag, field, lane string }{{"execute-profile", "execute_profile", runLaneExecute}, {"review-profile", "review_profile", runLaneReview}} {
@@ -830,6 +862,15 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		}
 	}
 	if len(specRefs) > 0 {
+		idx, err := loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+		for _, ref := range specRefs {
+			if !v7SpecRefExists(vaultPath, ref, idx.Decisions) {
+				return tuskerError(errorInvalidArg, "spec_ref does not resolve inside the repository: "+ref)
+			}
+		}
 		data["spec_refs"] = specRefs
 	}
 	if len(ownedPaths) > 0 {
@@ -844,7 +885,17 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	if reason := strings.TrimSpace(args.String("raw-artifacts-reason")); reason != "" {
 		data["raw_artifacts_reason"] = reason
 	}
+	if err := CaptureTaskAuthoringProvenanceFromEnvironment(data); err != nil {
+		return tuskerError(errorInvalidField, err.Error())
+	}
+	omitEmptyV7TaskAuthoringFields(data)
 	body := v7TaskBody(id, title)
+	if bodyFile := strings.TrimSpace(args.String("body-file")); bodyFile != "" {
+		body, err = v7AuthoringBodyFile(vaultPath, bodyFile)
+		if err != nil {
+			return err
+		}
+	}
 	// --force-ready may bypass proof/dispatchability checks, never the strict
 	// governing-spec requirement for a demanding task. Report every applicable
 	// blocker together so callers can fix the contract in one pass.
@@ -865,18 +916,76 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 			withContext(map[string]any{"id": id, "dispatch_blockers": readyBlockers}),
 		)
 	}
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
 	if err != nil {
 		return err
 	}
-	if err := writeText(path, content); err != nil {
+	eventPath, eventContent, err := prepareV7Event(vaultPath, id, "task", "created", actor, map[string]any{"path": filepath.ToSlash(filepath.Join("work", "tasks", id+".md"))}, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if err := ensureDir(filepath.Dir(eventPath)); err != nil {
+		return err
+	}
+	if err := commitV7DocumentWritesWithLocks(map[string]string{path: content, eventPath: eventContent}, 0, []*v7DocumentLock{materialLock}); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Created V7 task %s at %s\n", id, path)
 	}
-	return emitV7Event(vaultPath, id, "task", "created", actor, map[string]any{"path": filepath.ToSlash(filepath.Join("work", "tasks", id+".md"))})
+	return nil
+}
+
+func taskWorkLevel(explicit, complexity string) string {
+	if explicit = strings.ToLower(strings.TrimSpace(explicit)); explicit != "" {
+		return explicit
+	}
+	switch strings.ToLower(strings.TrimSpace(complexity)) {
+	case "routine":
+		return "light"
+	case "complex", "frontier":
+		return "demanding"
+	default:
+		return "standard"
+	}
+}
+
+func newAuthoredV7Task(args Args) error {
+	for _, flag := range []string{"execute-profile", "review-profile"} {
+		if strings.TrimSpace(args.String(flag)) != "" {
+			return tuskerError(errorInvalidArg, "--"+flag+" is not accepted for direct task authoring; routing is owned by configured profiles")
+		}
+	}
+	if strings.TrimSpace(args.String("work-level")) == "" {
+		return tuskerError(errorMissingField, "--work-level is required for new agent tasks; use light, standard, or demanding")
+	}
+	if _, ok := args["body-file"]; !ok || strings.TrimSpace(args.String("body-file")) == "" {
+		return tuskerError(errorMissingField, "--body-file is required for new agent tasks; use a path or - for stdin")
+	}
+	return newV7Task(args)
+}
+
+func omitEmptyV7TaskAuthoringFields(data map[string]any) {
+	for _, key := range []string{
+		"architect", "origin", "runner_profile", "work_level", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "evidence_required", "knowledge_nodes", "owned_paths",
+	} {
+		value, ok := data[key]
+		if !ok {
+			continue
+		}
+		if contacts, mapValue := value.(map[string]string); mapValue && len(contacts) == 0 {
+			delete(data, key)
+			continue
+		}
+		if isEmptyFrontmatterValue(value) {
+			delete(data, key)
+		}
+	}
 }
 
 func v7DefaultProofRequiredOwners(required []string) map[string]string {
@@ -1539,9 +1648,9 @@ func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
 	if err != nil {
 		return err
 	}
-	if args.Bool("normalized-work-submit") && actor == "agent:tusker-daemon" && run != nil && LeaseState(run.LeaseState) == LeaseStateReleased && run.AttemptOutcome == string(AttemptOutcomeSucceeded) && run.LeaseGeneration == intArg(args, "lease-generation") {
+	if args.Bool("normalized-work-submit") && run != nil && LeaseState(run.LeaseState) == LeaseStateReleased && run.AttemptOutcome == string(AttemptOutcomeSucceeded) && run.LeaseGeneration == intArg(args, "lease-generation") {
 		auth, authErr := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
-		if authErr == nil && auth != nil && auth.LeaseGeneration == run.LeaseGeneration {
+		if authErr == nil && auth != nil && auth.LeaseGeneration == run.LeaseGeneration && auth.Actor == actor {
 			return nil
 		}
 	}
@@ -1898,7 +2007,11 @@ func reconcileV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if revRepairs > 0 {
+	contractRebases, foreignContracts, err := reconcileV7ContractFingerprints(vaultPath)
+	if err != nil {
+		return err
+	}
+	if revRepairs > 0 || contractRebases > 0 {
 		idx, err = loadV7Index(vaultPath)
 		if err != nil {
 			return err
@@ -1971,7 +2084,7 @@ func reconcileV7Cmd(args Args) error {
 	}
 	if !args.Bool("quiet") {
 		openDoneGates := len(v7DoneTaskOpenGateViolations(idx))
-		fmt.Printf("Reconciled %d V7 task projection%s, %d wave projection%s, %d task wave pointer%s, repaired %d stale object rev%s, %d epic managed block%s, %d stale lease%s, and detected %d done/open-gate violation%s.\n", changed, plural(changed), waveChanges, plural(waveChanges), taskWavePointers, plural(taskWavePointers), revRepairs, plural(revRepairs), epicBlocks, plural(epicBlocks), staleLeases, plural(staleLeases), openDoneGates, plural(openDoneGates))
+		fmt.Printf("Reconciled %d V7 task projection%s, %d wave projection%s, %d task wave pointer%s, repaired %d stale object rev%s, rebased %d era contract pin%s (%d foreign pin%s left flagged), %d epic managed block%s, %d stale lease%s, and detected %d done/open-gate violation%s.\n", changed, plural(changed), waveChanges, plural(waveChanges), taskWavePointers, plural(taskWavePointers), revRepairs, plural(revRepairs), contractRebases, plural(contractRebases), foreignContracts, plural(foreignContracts), epicBlocks, plural(epicBlocks), staleLeases, plural(staleLeases), openDoneGates, plural(openDoneGates))
 	}
 	return nil
 }
@@ -2373,43 +2486,237 @@ func reconcileV7ObjectStateRevs(vaultPath string) (int, error) {
 		if len(order) == 0 {
 			order = frontmatterOrderForType(kind)
 		}
-		currentID := ""
-		previousRev := ""
-		nextRev, updated, err := mutateV7DocumentLocked(note.AbsolutePath, order, func(data map[string]any, body string) (map[string]any, string, bool, error) {
-			previousRev = stringField(data, "state_rev")
-			if previousRev == "" || v7StateRevMatches(data, body, previousRev) {
-				return data, body, false, nil
-			}
-			currentNote := note
-			currentNote.Data = data
-			currentNote.Body = body
-			if err := guardV7ReconcileTerminalTaskStateRevRepair(vaultPath, currentNote, data); err != nil {
-				return nil, "", false, err
-			}
-			if _, ok := data["updated_at"]; ok {
-				data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-			}
-			if _, ok := data["updated_by"]; ok {
-				data["updated_by"] = "tusker:reconcile"
-			}
-			currentID = stringField(data, "id")
-			kind = effectiveV7Kind(data)
-			return data, body, true, nil
-		})
+		ok, err := repairV7ObjectStateRev(vaultPath, note, order)
 		if err != nil {
 			return repaired, err
 		}
-		if !updated {
-			continue
+		if ok {
+			repaired++
 		}
-		if _, ok := v7EventObjectKinds[kind]; ok {
-			if err := emitV7Event(vaultPath, currentID, kind, "updated", "tusker:reconcile", map[string]any{"source": "state_rev_repair", "previous_state_rev": previousRev, "state_rev": nextRev, "path": note.RelativePath}); err != nil {
-				return repaired, err
-			}
-		}
-		repaired++
 	}
 	return repaired, nil
+}
+
+// v7StateRevRepairInjectCommitFailAfter is a test hook that aborts the repair
+// transaction after N writes.
+var v7StateRevRepairInjectCommitFailAfter int
+
+// repairV7ObjectStateRev rewrites one stale state_rev under the document lock.
+// The repair and its audit event commit through the same document transaction:
+// an event write that failed after the repair would otherwise leave a mutated
+// record whose next reconcile pass sees a valid rev and skips it, losing the
+// audit trail permanently.
+func repairV7ObjectStateRev(vaultPath string, note Note, order []string) (bool, error) {
+	materialLock, err := acquireV7MaterialEpochLockForDocument(note.AbsolutePath)
+	if err != nil {
+		return false, err
+	}
+	if materialLock != nil {
+		defer func() { _ = materialLock.Close() }()
+	}
+	lock, err := acquireV7DocumentLock(note.AbsolutePath, v7DocumentLockTimeout)
+	if err != nil {
+		return false, err
+	}
+	data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+	if err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	previousRev := stringField(data, "state_rev")
+	if previousRev == "" || v7StateRevMatches(data, body, previousRev) {
+		_ = lock.Close()
+		return false, nil
+	}
+	currentNote := note
+	currentNote.Data = data
+	currentNote.Body = body
+	if err := guardV7ReconcileTerminalTaskStateRevRepair(vaultPath, currentNote, data); err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	now := time.Now().UTC()
+	if _, ok := data["updated_at"]; ok {
+		data["updated_at"] = now.Format(time.RFC3339)
+	}
+	if _, ok := data["updated_by"]; ok {
+		data["updated_by"] = "tusker:reconcile"
+	}
+	nextRev := v7StateRev(data, body)
+	data["state_rev"] = nextRev
+	content, err := serializeDocument(data, body, order)
+	if err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	writes := map[string]string{note.AbsolutePath: content}
+	kind := effectiveV7Kind(data)
+	if _, evented := v7EventObjectKinds[kind]; evented {
+		eventPath, eventContent, err := prepareV7Event(vaultPath, stringField(data, "id"), kind, "updated", "tusker:reconcile", map[string]any{"source": "state_rev_repair", "previous_state_rev": previousRev, "state_rev": nextRev, "path": note.RelativePath}, now)
+		if err != nil {
+			_ = lock.Close()
+			return false, err
+		}
+		if err := ensureDir(filepath.Dir(eventPath)); err != nil {
+			_ = lock.Close()
+			return false, err
+		}
+		writes[eventPath] = eventContent
+	}
+	if err := commitV7DocumentWritesWithLocks(writes, v7StateRevRepairInjectCommitFailAfter, []*v7DocumentLock{lock}); err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	_ = lock.Close()
+	invalidateCachedNote(note.AbsolutePath)
+	return true, nil
+}
+
+// v7CommittedObjectBytes returns the last committed revision of a vault
+// object. The commit object is the trusted historical body a contract rebase
+// is authenticated against. Injectable for tests.
+var v7CommittedObjectBytes = func(vaultPath, absPath string) ([]byte, bool) {
+	repoRoot := v7RepoRoot(vaultPath)
+	rel, err := filepath.Rel(repoRoot, absPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return nil, false
+	}
+	out, err := exec.Command("git", "-C", repoRoot, "show", "HEAD:"+filepath.ToSlash(rel)).Output()
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// v7ContractRebaseInjectCommitFailAfter is a test hook that aborts the
+// rebase transaction after N writes.
+var v7ContractRebaseInjectCommitFailAfter int
+
+// v7CommittedContractMaterialMatches reports whether the record's contract
+// material equals the contract material of its last committed revision. The
+// legacy fingerprint truncated Acceptance/Verification rows to their first
+// two cells, so a stored pin that matches the legacy canon cannot authenticate
+// the omitted authored cells — comparing the complete current-canon material
+// of the committed bytes against the live bytes can.
+func v7CommittedContractMaterialMatches(vaultPath, absPath string, data map[string]any, body string) bool {
+	raw, ok := v7CommittedObjectBytes(vaultPath, absPath)
+	if !ok {
+		return false
+	}
+	committedData, committedBody, err := parseFrontmatter(string(raw))
+	if err != nil {
+		return false
+	}
+	return directWaveTaskContractFingerprint(committedData, committedBody) == directWaveTaskContractFingerprint(data, body)
+}
+
+// reconcileV7ContractFingerprints rebases stored task contract pins that were
+// written under a superseded fingerprint algorithm. A stored pin is only
+// rebased when two proofs hold: it still matches the legacy canon of the
+// current bytes (the pin came from the known old algorithm), and a trusted
+// historical body — the last committed revision — carries identical contract
+// material under the current canon (the cells the legacy canon omitted were
+// not edited out of band). Records without a committed receipt, and pins
+// matching neither known canon, are classified foreign and left flagged for an
+// explicit `task update` rebind.
+func reconcileV7ContractFingerprints(vaultPath string) (int, int, error) {
+	notes, err := listAllNotes(vaultPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	rebased := 0
+	foreign := 0
+	for _, note := range notes {
+		if !isV7StoreObject(note.Data) || effectiveV7Kind(note.Data) != "task" {
+			continue
+		}
+		data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
+		if err != nil {
+			return rebased, foreign, err
+		}
+		stored := strings.TrimSpace(stringField(data, "contract_fingerprint"))
+		if stored == "" || stored == directWaveTaskContractFingerprint(data, body) {
+			continue
+		}
+		if stored != legacyDirectWaveTaskContractFingerprint(data, body) {
+			foreign++
+			continue
+		}
+		ok, err := rebaseV7ContractFingerprint(vaultPath, note.AbsolutePath, note.RelativePath)
+		if err != nil {
+			return rebased, foreign, err
+		}
+		if ok {
+			rebased++
+		} else {
+			foreign++
+		}
+	}
+	return rebased, foreign, nil
+}
+
+// rebaseV7ContractFingerprint replaces a verified legacy-era pin with the
+// current contract fingerprint. The task mutation and its audit event are
+// committed through the same document transaction so a failed event write can
+// never strand an unaudited rebase.
+func rebaseV7ContractFingerprint(vaultPath, filePath, relPath string) (bool, error) {
+	materialLock, err := acquireV7MaterialEpochLockForDocument(filePath)
+	if err != nil {
+		return false, err
+	}
+	if materialLock != nil {
+		defer func() { _ = materialLock.Close() }()
+	}
+	lock, err := acquireV7DocumentLock(filePath, v7DocumentLockTimeout)
+	if err != nil {
+		return false, err
+	}
+	data, body, err := parseFrontmatterMustRead(filePath)
+	if err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	stored := strings.TrimSpace(stringField(data, "contract_fingerprint"))
+	nextPin := directWaveTaskContractFingerprint(data, body)
+	if stored == "" || stored == nextPin ||
+		stored != legacyDirectWaveTaskContractFingerprint(data, body) ||
+		!v7CommittedContractMaterialMatches(vaultPath, filePath, data, body) {
+		_ = lock.Close()
+		return false, nil
+	}
+	now := time.Now().UTC()
+	data["contract_fingerprint"] = nextPin
+	data["updated_at"] = now.Format(time.RFC3339)
+	data["updated_by"] = "tusker:reconcile"
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	eventPath, eventContent, err := prepareV7Event(vaultPath, stringField(data, "id"), "task", "updated", "tusker:reconcile", map[string]any{
+		"source":                        "contract_fingerprint_rebase",
+		"receipt":                       "committed-record",
+		"previous_contract_fingerprint": stored,
+		"contract_fingerprint":          nextPin,
+		"state_rev":                     data["state_rev"],
+		"path":                          relPath,
+	}, now)
+	if err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	if err := ensureDir(filepath.Dir(eventPath)); err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	if err := commitV7DocumentWritesWithLocks(map[string]string{filePath: content, eventPath: eventContent}, v7ContractRebaseInjectCommitFailAfter, []*v7DocumentLock{lock}); err != nil {
+		_ = lock.Close()
+		return false, err
+	}
+	_ = lock.Close()
+	invalidateCachedNote(filePath)
+	return true, nil
 }
 
 func briefV7Cmd(args Args) error {
@@ -2904,6 +3211,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 		fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 		fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
 		fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
+		writeV7PacketWaveContext(&b, task, idx)
 		fmt.Fprintf(&b, "## Task contract\n\n%s\n\n", strings.TrimSpace(task.Body))
 		writeV7PacketCanonicalContract(&b, task)
 		writeV7PacketContacts(&b, task, false)
@@ -2924,10 +3232,12 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	writeV7PacketWarnings(&b, vaultPath, task)
 	fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 	fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
+	writeV7PacketWaveContext(&b, task, idx)
 	fmt.Fprintf(&b, "## Task contract\n\n%s\n\n", strings.TrimSpace(task.Body))
 	writeV7PacketCanonicalContract(&b, task)
 	writeV7PacketContacts(&b, task, true)
 	writeV7PacketOwnership(&b, task)
+	writeV7PacketExecutionEntry(&b, task)
 	fmt.Fprintf(&b, "## Open gates\n\n")
 	for _, gate := range idx.Gates {
 		if stringField(gate.Data, "status") == "open" && containsString(normalizeList(gate.Data["blocks"]), id) {
@@ -2946,10 +3256,27 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 func writeV7PacketCanonicalContract(b *strings.Builder, task Note) {
 	requirements := normalizeList(task.Data["requirement_refs"])
 	artifact := mapField(task.Data, "artifact_contract")
-	if len(requirements) == 0 && artifact == nil {
+	workLevel := strings.ToLower(strings.TrimSpace(stringField(task.Data, "work_level")))
+	reviewLevel := strings.ToLower(strings.TrimSpace(stringField(task.Data, "review_level")))
+	reviewReason := strings.TrimSpace(stringField(task.Data, "review_reason"))
+	if len(requirements) == 0 && artifact == nil && workLevel == "" && reviewLevel == "" && reviewReason == "" {
 		return
 	}
 	fmt.Fprintf(b, "## Canonical contract metadata\n\n")
+	if workLevel != "" || reviewLevel != "" {
+		reviewLabel := fallback(reviewLevel, "(missing)")
+		reviewSuffix := ""
+		if reviewLevel == "" && workLevel != "" {
+			reviewLabel = workLevel
+			reviewSuffix = " (inherited)"
+		} else if reviewLevel != "" {
+			reviewSuffix = " (explicit override)"
+		}
+		fmt.Fprintf(b, "- Work level: `%s`\n- Review level: `%s`%s\n", fallback(workLevel, "(missing)"), reviewLabel, reviewSuffix)
+	}
+	if reviewReason != "" {
+		fmt.Fprintf(b, "- Review override reason: %s\n", reviewReason)
+	}
 	if len(requirements) > 0 {
 		fmt.Fprintf(b, "- Requirements: %s\n", strings.Join(requirements, ", "))
 	}
@@ -2960,6 +3287,43 @@ func writeV7PacketCanonicalContract(b *strings.Builder, task Note) {
 			fallback(strings.Join(normalizeList(firstPresent(artifact, "acceptance_ids", "acceptance")), ", "), "(missing)"),
 			fallback(stringField(artifact, "summary"), "(missing)"),
 		)
+	}
+	fmt.Fprintf(b, "\n")
+}
+
+func writeV7PacketWaveContext(b *strings.Builder, task Note, idx v7Index) {
+	waveID := strings.TrimSpace(stringField(task.Data, "wave"))
+	if waveID == "" {
+		return
+	}
+	wave, ok := idx.Waves[waveID]
+	if !ok {
+		return
+	}
+	outcome := firstNonEmpty(strings.TrimSpace(stringField(wave.Data, "summary")), sectionContent(wave.Body, "## Intended result"))
+	shared := sectionContent(wave.Body, "## Shared context")
+	if outcome == "" && shared == "" {
+		return
+	}
+	fmt.Fprintf(b, "## Wave context\n\n- Wave: %s\n", waveID)
+	if outcome != "" {
+		fmt.Fprintf(b, "- Outcome: %s\n", outcome)
+	}
+	if shared != "" {
+		fmt.Fprintf(b, "\n%s\n", shared)
+	}
+	fmt.Fprintf(b, "\n")
+}
+
+func writeV7PacketExecutionEntry(b *strings.Builder, task Note) {
+	id := stringField(task.Data, "id")
+	fmt.Fprintf(b, "## Execution entry\n\n")
+	fmt.Fprintf(b, "Task and wave creation are inert: nothing runs until an explicit Start. Eligibility is computed from current dependencies, gates, routes, and proof.\n\n")
+	fmt.Fprintf(b, "- One task, interactive in this workspace: `tusker task start %s --mode interactive --by <agent> --current-workspace --json`\n", id)
+	fmt.Fprintf(b, "- One task, background through the configured runtime: `tusker task start %s --mode background --by <actor> --json`\n", id)
+	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
+		fmt.Fprintf(b, "- Whole wave: `tusker wave start %s --mode background --by human:<name>|operator:<name> --json`. One Start authorizes the exact current material and the daemon advances each dependency frontier automatically.\n", waveID)
+		fmt.Fprintf(b, "- `tusker wave pause %s --by human:<name>|operator:<name>` blocks new wave admissions while admitted attempts finish; `tusker wave resume %s --by human:<name>|operator:<name>` restores the same authorization. An explicit task Start inside a paused wave stays task-scoped and leaves the wave paused.\n", waveID, waveID)
 	}
 	fmt.Fprintf(b, "\n")
 }
@@ -3310,7 +3674,7 @@ func v7DomainContext(vaultPath string, task Note) string {
 
 func v7ClosePolicySummary(vaultPath string, task Note) string {
 	risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))
-	policy, err := v7ClosePolicyFor(vaultPath, risk)
+	policy, err := v7TaskClosePolicy(vaultPath, task.Data)
 	if err != nil {
 		policy = defaultV7ClosePolicy(risk)
 	}
@@ -3529,8 +3893,7 @@ func appendV7EvidenceLink(taskPath, evidenceID, kind, summary string) error {
 	return err
 }
 
-func emitV7Event(vaultPath, objectID, objectKind, eventKind, actor string, payload map[string]any) error {
-	now := time.Now().UTC()
+func prepareV7Event(vaultPath, objectID, objectKind, eventKind, actor string, payload map[string]any, now time.Time) (path string, content string, err error) {
 	eventID := newRecordID()
 	event := map[string]any{
 		"schema":      "tusker.event/v1",
@@ -3545,9 +3908,21 @@ func emitV7Event(vaultPath, objectID, objectKind, eventKind, actor string, paylo
 	if payload != nil {
 		event["payload"] = payload
 	}
+	raw, err := json.MarshalIndent(event, "", "  ")
+	if err != nil {
+		return "", "", err
+	}
 	name := fmt.Sprintf("%s--%s--%s.json", objectID, now.Format("20060102T150405Z"), eventID)
-	path := filepath.Join(vaultPath, "events", now.Format("2006"), now.Format("01"), name)
-	return writeJSON(path, event)
+	path = filepath.Join(vaultPath, "events", now.Format("2006"), now.Format("01"), name)
+	return path, string(raw) + "\n", nil
+}
+
+func emitV7Event(vaultPath, objectID, objectKind, eventKind, actor string, payload map[string]any) error {
+	path, content, err := prepareV7Event(vaultPath, objectID, objectKind, eventKind, actor, payload, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	return writeText(path, content)
 }
 
 func nextV7Sequence(vaultPath, epic, kind string) int {
@@ -3906,6 +4281,15 @@ func v7TaskDispatchBlockersWithStates(vaultPath string, task Note, includeAuthor
 // index, so wave-scope blockers there are noise, not contract defects.
 func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string) []string {
 	reasons := append([]string{}, v7DispatchStateBlockers(task, triggerStates)...)
+	// Contract-pin drift is an admission blocker: queued or stored
+	// authorizations must never execute bytes that were edited out of band. It
+	// is gated on includeAuthorizationState so live-execute monitoring does not
+	// revoke attempts that were already claimed.
+	if includeAuthorizationState {
+		if reason := directWaveTaskContractStaleReason(task); reason != "" {
+			reasons = append(reasons, reason)
+		}
+	}
 	// Strict tiers require a real governing link even when --force-ready was
 	// supplied. Tier 1 intentionally keeps the warning-only probation path.
 	if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, task, stringField(task.Data, "id")); ok && tuskerTier(vaultPath) >= 2 {

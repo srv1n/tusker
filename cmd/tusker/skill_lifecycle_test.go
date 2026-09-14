@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestSkillSymlinkTargetIsRelativeInsideTheRepo(t *testing.T) {
@@ -114,7 +116,7 @@ func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 		}
 	}
 
-	contract := canonicalFactoryIntakeContractForTest(t)
+	contract := canonicalAuthoringContractForTest(t)
 	for _, guardrail := range []string{
 		"tracked_modifying_work_requires_work_start",
 		"dispatched_worker_verifies_existing_claim",
@@ -122,10 +124,10 @@ func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 		"deterministic_handlers_own_close_and_successor_wake",
 		"epic_is_never_execution_authority",
 		"project_automation_is_separate_explicit_opt_in",
-		"fresh_dispatch_scope_is_armed_waves",
+		"fresh_dispatch_scope_is_authorized_waves",
 	} {
 		if !containsString(contract.Guardrails, guardrail) {
-			t.Fatalf("factory intake contract missing execution guardrail %q", guardrail)
+			t.Fatalf("authoring contract missing execution guardrail %q", guardrail)
 		}
 	}
 
@@ -156,4 +158,20 @@ func normalizedSkillGuidance(t *testing.T, root string, files ...string) string 
 		guidance.WriteByte('\n')
 	}
 	return strings.Join(strings.Fields(guidance.String()), " ")
+}
+
+func canonicalAuthoringContractForTest(t *testing.T) authoringContract {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "skills", "tusker", "assets", "authoring-contract.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract authoringContract
+	if err := yaml.Unmarshal(raw, &contract); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuthoringContract(contract); err != nil {
+		t.Fatal(err)
+	}
+	return contract
 }

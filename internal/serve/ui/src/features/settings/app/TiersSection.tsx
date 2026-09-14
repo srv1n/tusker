@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { Card } from "@/components/ui/primitives";
 import type { ModelLevelsReport } from "@/types/domain";
 
 const TIERS = { light: "Tier 1 · Light", standard: "Tier 2 · Standard", demanding: "Tier 3 · Demanding" } as const;
@@ -36,7 +37,7 @@ export function TiersSection({ projectId, scope = "global" }: { projectId?: stri
     <div className="mb-4"><h2 id="tiers-title" className="font-serif text-[20px] font-semibold text-ink">Tiers</h2><p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-muted">Choose eligible primary workers and reviewers. Fallbacks are only used when explicitly ordered here.</p></div>
     {error && <p role="alert" className="mb-3 rounded-md border border-danger/25 bg-danger-soft px-3 py-2 text-[12px] text-danger">{error}</p>}
     {!levels && !error && <p className="text-[13px] text-muted">Loading tier assignments…</p>}
-    <div className="divide-y divide-line rounded-[10px] border border-line bg-surface">{levels?.levels.map((row) => <div key={row.level} className="grid gap-3 px-4 py-4 md:grid-cols-[10rem_1fr_1fr]">
+    <Card className="divide-y divide-line-soft overflow-hidden">{levels?.levels.map((row) => <div key={row.level} className="grid gap-3 px-4 py-4 md:grid-cols-[10rem_1fr_1fr]">
       <div><h3 className="text-[13px] font-semibold text-ink">{TIERS[row.level]}</h3><p className="mt-1 text-[10px] text-muted">{scope === "project" ? `Inherited from ${row.execute.source}` : "Global default"}</p></div>
       {(["execute", "review"] as const).map((lane) => {
         const selected = names(row.level, lane); const choices = eligible(row.level);
@@ -53,6 +54,6 @@ export function TiersSection({ projectId, scope = "global" }: { projectId?: stri
           <div className="mt-2 flex gap-2"><button type="button" disabled={saving} onClick={() => void save(row.level, lane)} className="text-[11px] text-ink underline disabled:opacity-40">Save changes</button>{scope === "project" && row[lane].overridden && <button type="button" disabled={saving} onClick={() => void api.modelLevelsReset(row.level, lane, levels.revision, scope, projectId).then(setLevels).catch((cause) => setError(cause instanceof ApiError ? cause.message : String(cause)))} className="text-[11px] text-muted underline disabled:opacity-40">Reset</button>}</div>
         </div>;
       })}
-    </div>)}</div>
+    </div>)}</Card>
   </section>;
 }

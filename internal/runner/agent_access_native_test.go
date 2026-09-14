@@ -18,7 +18,7 @@ func TestAgentAccessNative(t *testing.T) {
 		t.Fatalf("Codex native mapping = policy=%#v argv=%#v", policy, argv)
 	}
 
-	musePolicy, museArgv, err := compilePolicy(HarnessDefinition{ID: "muse_cli", Provider: "muse", Transport: TransportCLI, Dialect: "muse", Executable: "muse", Args: []string{"exec"}}, RunInput{Workspace: workspace, Preset: PresetReadOnly})
+	musePolicy, museArgv, err := compilePolicy(HarnessDefinition{ID: "muse", Provider: "muse", Transport: TransportCLI, Dialect: "muse", Executable: "muse", Args: []string{"exec"}}, RunInput{Workspace: workspace, Preset: PresetReadOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +47,20 @@ func TestAgentAccessDestructive(t *testing.T) {
 	}
 }
 
+func TestDevinACPPolicyCompiler(t *testing.T) {
+	workspace := t.TempDir()
+	definition := HarnessDefinition{ID: "devin", Provider: "devin", Transport: TransportACP, Executable: "devin", Args: []string{"acp"}, NativeContainment: true}
+	policy, argv, err := compilePolicy(definition, RunInput{Workspace: workspace, Preset: PresetWorkspaceNetwork, Model: "swe-1-6-slow"})
+	if err != nil || !policy.Network || !containsPair(argv, "--model", "swe-1-6-slow") || len(argv) < 2 || argv[0] != "--sandbox" || argv[1] != "acp" {
+		t.Fatalf("Devin mapping policy=%#v argv=%#v err=%v", policy, argv, err)
+	}
+	for _, preset := range []PermissionPreset{PresetReadOnly, PresetWorkspaceOffline, PresetDangerFullAccess} {
+		if _, _, err := compilePolicy(definition, RunInput{Workspace: workspace, Preset: preset, Model: "swe-1-6-slow"}); err == nil || !strings.Contains(err.Error(), "policy_unenforceable") {
+			t.Fatalf("Devin admitted unsupported preset %s: %v", preset, err)
+		}
+	}
+}
+
 func TestMusePolicyArgsCannotOverrideRequestedPolicy(t *testing.T) {
 	workspace := t.TempDir()
 	for _, tc := range []struct {
@@ -63,7 +77,7 @@ func TestMusePolicyArgsCannotOverrideRequestedPolicy(t *testing.T) {
 		{name: "sandbox network equals", args: []string{"--sandbox-network=enabled"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := HarnessDefinition{ID: "muse_cli", Provider: "muse", Transport: TransportCLI, Dialect: "muse", Executable: "muse", Args: append([]string{"exec"}, tc.args...)}
+			d := HarnessDefinition{ID: "muse", Provider: "muse", Transport: TransportCLI, Dialect: "muse", Executable: "muse", Args: append([]string{"exec"}, tc.args...)}
 			_, _, err := compilePolicy(d, RunInput{Workspace: workspace, Preset: PresetReadOnly})
 			if err == nil || !strings.Contains(err.Error(), "policy_conflict") {
 				t.Fatalf("Muse policy override was admitted: %v", err)
@@ -74,7 +88,7 @@ func TestMusePolicyArgsCannotOverrideRequestedPolicy(t *testing.T) {
 
 func TestMuseOfflinePolicyCannotEnableNetwork(t *testing.T) {
 	workspace := t.TempDir()
-	d := HarnessDefinition{ID: "muse_cli", Provider: "muse", Transport: TransportCLI, Dialect: "muse", Executable: "muse", Args: []string{"exec"}}
+	d := HarnessDefinition{ID: "muse", Provider: "muse", Transport: TransportCLI, Dialect: "muse", Executable: "muse", Args: []string{"exec"}}
 	_, argv, err := compilePolicy(d, RunInput{Workspace: workspace, Preset: PresetWorkspaceOffline})
 	if err != nil {
 		t.Fatal(err)

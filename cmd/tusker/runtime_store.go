@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -285,6 +287,7 @@ type RunAuthorization struct {
 	ProjectID                         string `json:"project_id"`
 	RecordID                          string `json:"record_id"`
 	LeaseGeneration                   int    `json:"lease_generation"`
+	AttemptID                         string `json:"attempt_id,omitempty"`
 	Source                            string `json:"source"`
 	Actor                             string `json:"actor"`
 	Trigger                           string `json:"trigger"`
@@ -407,28 +410,29 @@ type RunAttempt struct {
 // the reviewed task revision and reviewer attempt, so prose and process exit
 // cannot be mistaken for acceptance.
 type ReviewResult struct {
-	Schema              string   `json:"schema"`
-	ProjectID           string   `json:"project_id"`
-	TaskID              string   `json:"task_id"`
-	TaskStateRev        string   `json:"task_state_rev"`
-	WorkRevision        int      `json:"work_revision"`
-	ImplementationSHA   string   `json:"implementation_sha"`
-	AttemptID           string   `json:"attempt_id"`
-	Actor               string   `json:"actor"`
-	Runner              string   `json:"runner"`
-	RunnerProfile       string   `json:"runner_profile"`
-	WorkerPolicyFP      string   `json:"worker_policy_fingerprint"`
-	Covers              []string `json:"covers"`
-	ProofFingerprint    string   `json:"proof_fingerprint"`
-	GateFingerprint     string   `json:"gate_fingerprint"`
-	MaterialFingerprint string   `json:"material_fingerprint,omitempty"`
-	Verdict             string   `json:"verdict"`
-	Blocker             string   `json:"blocker,omitempty"`
-	Summary             string   `json:"summary"`
-	Findings            []string `json:"findings,omitempty"`
-	EvidenceRefs        []string `json:"evidence_refs,omitempty"`
-	ResultRevision      string   `json:"result_revision"`
-	CreatedAt           string   `json:"created_at"`
+	Schema              string                   `json:"schema"`
+	ProjectID           string                   `json:"project_id"`
+	TaskID              string                   `json:"task_id"`
+	TaskStateRev        string                   `json:"task_state_rev"`
+	WorkRevision        int                      `json:"work_revision"`
+	ImplementationSHA   string                   `json:"implementation_sha"`
+	AttemptID           string                   `json:"attempt_id"`
+	Actor               string                   `json:"actor"`
+	Runner              string                   `json:"runner"`
+	RunnerProfile       string                   `json:"runner_profile"`
+	WorkerPolicyFP      string                   `json:"worker_policy_fingerprint"`
+	Covers              []string                 `json:"covers"`
+	ProofFingerprint    string                   `json:"proof_fingerprint"`
+	GateFingerprint     string                   `json:"gate_fingerprint"`
+	MaterialFingerprint string                   `json:"material_fingerprint,omitempty"`
+	Verdict             string                   `json:"verdict"`
+	Blocker             string                   `json:"blocker,omitempty"`
+	Summary             string                   `json:"summary"`
+	Findings            []string                 `json:"findings,omitempty"`
+	ClosedFindings      []reviewerFindingClosure `json:"closed_findings,omitempty"`
+	EvidenceRefs        []string                 `json:"evidence_refs,omitempty"`
+	ResultRevision      string                   `json:"result_revision"`
+	CreatedAt           string                   `json:"created_at"`
 }
 
 func (s *RuntimeStore) ReviewAttempt(attemptID string) (RunAttempt, error) {
@@ -999,6 +1003,7 @@ func (s *RuntimeStore) Migrate() error {
 			project_id TEXT NOT NULL,
 			record_id TEXT NOT NULL,
 			lease_generation INTEGER NOT NULL,
+			attempt_id TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL,
 			actor TEXT NOT NULL,
 			trigger TEXT NOT NULL DEFAULT '',
@@ -1177,6 +1182,7 @@ func (s *RuntimeStore) Migrate() error {
 			sender TEXT NOT NULL, recipient_kind TEXT NOT NULL, recipient_id TEXT NOT NULL,
 			origin_task_id TEXT NOT NULL DEFAULT '', origin_wave_id TEXT NOT NULL DEFAULT '',
 			work_revision INTEGER NOT NULL DEFAULT 0, route_generation INTEGER NOT NULL DEFAULT 0,
+			recipient_generation INTEGER NOT NULL DEFAULT 0,
 			kind TEXT NOT NULL, body TEXT NOT NULL, reply_to TEXT NOT NULL DEFAULT '',
 			reply_required INTEGER NOT NULL DEFAULT 0, yield_sender INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL DEFAULT 'queued', transport_state TEXT NOT NULL DEFAULT 'pending',
@@ -1417,6 +1423,9 @@ func (s *RuntimeStore) Migrate() error {
 	if err := s.ensureColumn("gate_ledger", "provider_receipt_json", `ALTER TABLE gate_ledger ADD COLUMN provider_receipt_json TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("run_authorizations", "attempt_id", `ALTER TABLE run_authorizations ADD COLUMN attempt_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("runs", "work_revision", `ALTER TABLE runs ADD COLUMN work_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
@@ -1581,6 +1590,9 @@ func (s *RuntimeStore) Migrate() error {
 			return err
 		}
 	}
+	if err := s.ensureColumn("agent_messages", "recipient_generation", `ALTER TABLE agent_messages ADD COLUMN recipient_generation INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
 	for _, column := range []struct{ name, stmt string }{
 		{"applied_wave_id", `ALTER TABLE architect_continuations ADD COLUMN applied_wave_id TEXT NOT NULL DEFAULT ''`},
 		{"last_error", `ALTER TABLE architect_continuations ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`},
@@ -1675,7 +1687,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 	for _, required := range []struct{ table, column string }{
 		{"projects", "project_id"}, {"projects", "repo_root"}, {"projects", "vault_root"}, {"projects", "visible"}, {"projects", "repository_key"},
 		{"runs", "project_id"}, {"runs", "record_id"}, {"runs", "item_id"}, {"runs", "lease_generation"}, {"runs", "terminal"},
-		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"},
+		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"}, {"run_authorizations", "attempt_id"},
 		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"}, {"run_directives", "wave_id"}, {"run_directives", "authorization_fingerprint"}, {"run_directives", "wave_authorized_at"},
 		{"run_identity_metadata", "project_id"}, {"run_identity_metadata", "record_id"},
 		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"},
@@ -2504,6 +2516,37 @@ func (s *RuntimeStore) QueueWaveRunDirectives(projectID, waveID, fingerprint, au
 	return queued, already, err
 }
 
+func (s *RuntimeStore) ReplacePausedWaveDirectiveWithTaskDirective(projectID, recordID, waveID, fingerprint, authorizedAt, actor, taskFingerprint string, now time.Time, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" || strings.TrimSpace(waveID) == "" || strings.TrimSpace(fingerprint) == "" || strings.TrimSpace(authorizedAt) == "" || strings.TrimSpace(actor) == "" || strings.TrimSpace(taskFingerprint) == "" || ttl <= 0 {
+		return false, tuskerError(errorInvalidArg, "paused-wave directive replacement requires project, record, wave, fingerprints, authorized_at, actor, and expiry")
+	}
+	now = now.UTC()
+	createdAt, expiresAt := now.Format(time.RFC3339Nano), now.Add(ttl).Format(time.RFC3339Nano)
+	changed := false
+	err := s.withBusyRetry(func() error {
+		changed = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		result, err := tx.Exec(`UPDATE run_directives SET wave_id = '', authorization_fingerprint = ?, wave_authorized_at = '', actor = ?, created_at = ?, expires_at = ?, state = 'queued', reason = ''
+			WHERE project_id = ? AND record_id = ? AND state = 'queued' AND wave_id = ? AND authorization_fingerprint = ? AND wave_authorized_at = ? AND julianday(expires_at) > julianday(?)`,
+			taskFingerprint, actor, createdAt, expiresAt,
+			projectID, recordID, waveID, fingerprint, authorizedAt, createdAt)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = rows == 1
+		return tx.Commit()
+	})
+	return changed, err
+}
+
 func (s *RuntimeStore) RunDirective(projectID, recordID string) (*RunDirective, error) {
 	var directive RunDirective
 	if err := s.queryRowScan(`SELECT project_id, record_id, actor, created_at, expires_at, state, reason, wave_id, authorization_fingerprint, wave_authorized_at FROM run_directives WHERE project_id = ? AND record_id = ?`, []any{projectID, recordID}, &directive.ProjectID, &directive.RecordID, &directive.Actor, &directive.CreatedAt, &directive.ExpiresAt, &directive.State, &directive.Reason, &directive.WaveID, &directive.AuthorizationFingerprint, &directive.WaveAuthorizedAt); err != nil {
@@ -2653,6 +2696,119 @@ func (s *RuntimeStore) requeueUnstartedDirectedClaim(run RunStatus, now time.Tim
 		return nil
 	})
 	return recovered, err
+}
+
+// checkpointCodexCloudTaskStarted adopts the provider operation identity from
+// the durable event ledger into the claimed run and attempt. Codex Cloud has
+// no local process to register, so this transaction is the recovery fence for
+// the daemon's post-launch/pre-persistence gap. A lease or operation-identity
+// mismatch is never repaired by overwriting the newer owner; the caller must
+// then leave the claim fenced instead of redispatching an unknown operation.
+func (s *RuntimeStore) checkpointCodexCloudTaskStarted(run RunStatus, checkpoint codexCloudTaskStartedCheckpoint, now time.Time) (bool, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" || strings.TrimSpace(run.ActiveAttemptID) == "" || run.LeaseGeneration <= 0 || strings.TrimSpace(run.LeaseOwner) == "" || strings.TrimSpace(checkpoint.TaskID) == "" {
+		return false, tuskerError(errorInvalidArg, "codex cloud checkpoint requires project, task, attempt, lease owner/generation, and cloud task id")
+	}
+	if !runUsesCodexCloud(run) {
+		return false, tuskerError(errorInvalidArg, "codex cloud checkpoint requires the codex_cloud runner")
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	updatedAt := now.Format(time.RFC3339Nano)
+	eventAt := firstNonEmpty(strings.TrimSpace(checkpoint.At), updatedAt)
+	checkpoint.TaskID = strings.TrimSpace(checkpoint.TaskID)
+	persisted := false
+	err := s.withBusyRetry(func() error {
+		persisted = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		var currentTaskID, currentStatus, currentEnvironment string
+		var currentAttemptNumber int
+		var leaseState, leaseOwner, activeAttemptID string
+		var leaseGeneration, processPID int
+		if err := tx.QueryRow(`SELECT lease_state, lease_owner, lease_generation, active_attempt_id, process_pid,
+			cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number
+			FROM runs WHERE project_id = ? AND record_id = ?`, run.ProjectID, run.RecordID).Scan(
+			&leaseState, &leaseOwner, &leaseGeneration, &activeAttemptID, &processPID,
+			&currentTaskID, &currentStatus, &currentEnvironment, &currentAttemptNumber); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errors.New("codex cloud checkpoint run disappeared")
+			}
+			return err
+		}
+		if leaseState != string(LeaseStateClaimed) || leaseOwner != run.LeaseOwner || leaseGeneration != run.LeaseGeneration || activeAttemptID != run.ActiveAttemptID || processPID != 0 {
+			return nil
+		}
+		if currentTaskID != "" && currentTaskID != checkpoint.TaskID {
+			return fmt.Errorf("codex cloud checkpoint task id %q conflicts with stored task id %q", checkpoint.TaskID, currentTaskID)
+		}
+		var attemptTaskID, attemptStatus, attemptEnvironment string
+		var attemptNumber, attemptPID int
+		if err := tx.QueryRow(`SELECT cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, process_pid
+			FROM attempts WHERE attempt_id = ? AND project_id = ? AND record_id = ?`, run.ActiveAttemptID, run.ProjectID, run.RecordID).Scan(
+			&attemptTaskID, &attemptStatus, &attemptEnvironment, &attemptNumber, &attemptPID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("codex cloud checkpoint attempt %q is missing", run.ActiveAttemptID)
+			}
+			return err
+		}
+		if attemptPID != 0 {
+			return nil
+		}
+		if attemptTaskID != "" && attemptTaskID != checkpoint.TaskID {
+			return fmt.Errorf("codex cloud checkpoint task id %q conflicts with attempt task id %q", checkpoint.TaskID, attemptTaskID)
+		}
+
+		mergedStatus := firstNonEmpty(strings.TrimSpace(checkpoint.Status), currentStatus, attemptStatus)
+		mergedEnvironment := firstNonEmpty(strings.TrimSpace(checkpoint.EnvironmentID), currentEnvironment, attemptEnvironment)
+		mergedAttemptNumber := checkpoint.AttemptNumber
+		if mergedAttemptNumber <= 0 {
+			mergedAttemptNumber = currentAttemptNumber
+		}
+		if mergedAttemptNumber <= 0 {
+			mergedAttemptNumber = attemptNumber
+		}
+		changed := currentTaskID != checkpoint.TaskID || attemptTaskID != checkpoint.TaskID || currentStatus != mergedStatus || currentEnvironment != mergedEnvironment || currentAttemptNumber != mergedAttemptNumber
+		result, err := tx.Exec(`UPDATE runs SET cloud_task_id = ?, cloud_status = ?, cloud_environment_id = ?, cloud_attempt_number = ?,
+			last_event_at = ?, first_event_at = CASE WHEN first_event_at = '' THEN ? ELSE first_event_at END,
+			last_heartbeat_at = ?, updated_at = ?
+			WHERE project_id = ? AND record_id = ? AND lease_state = 'claimed' AND lease_owner = ?
+			AND lease_generation = ? AND active_attempt_id = ? AND process_pid = 0`,
+			checkpoint.TaskID, mergedStatus, mergedEnvironment, mergedAttemptNumber,
+			eventAt, eventAt, eventAt, updatedAt,
+			run.ProjectID, run.RecordID, run.LeaseOwner, run.LeaseGeneration, run.ActiveAttemptID)
+		if err != nil {
+			return err
+		}
+		if rows, err := result.RowsAffected(); err != nil {
+			return err
+		} else if rows == 0 {
+			return nil
+		}
+		result, err = tx.Exec(`UPDATE attempts SET cloud_task_id = ?, cloud_status = ?, cloud_environment_id = ?, cloud_attempt_number = ?
+			WHERE attempt_id = ? AND project_id = ? AND record_id = ? AND process_pid = 0`,
+			checkpoint.TaskID, mergedStatus, mergedEnvironment, mergedAttemptNumber,
+			run.ActiveAttemptID, run.ProjectID, run.RecordID)
+		if err != nil {
+			return err
+		}
+		if rows, err := result.RowsAffected(); err != nil {
+			return err
+		} else if rows == 0 {
+			return fmt.Errorf("codex cloud checkpoint attempt %q disappeared during adoption", run.ActiveAttemptID)
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		persisted = changed
+		return nil
+	})
+	return persisted, err
 }
 
 // registerRunnerWrapperSpawn is the durable handoff from a committed attempt
@@ -3165,7 +3321,7 @@ func (s *RuntimeStore) claimRunLeaseWithDaemonAttempt(run RunStatus, owner strin
 		if rows == 0 {
 			return nil
 		}
-		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, attempt_id, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, attempt.AttemptID, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
@@ -3305,8 +3461,8 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 		if claimRows == 0 {
 			return nil
 		}
-		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at)
-			VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, attempt_id, source, actor, trigger, project_automation_enabled, created_at)
+			VALUES(?,?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, attempt.AttemptID, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at)
@@ -3383,7 +3539,7 @@ func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner 
 		if rows == 0 {
 			return nil
 		}
-		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, attempt_id, source, actor, trigger, project_automation_enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?)`, auth.ProjectID, auth.RecordID, auth.LeaseGeneration, attempt.AttemptID, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
@@ -3960,7 +4116,11 @@ func (s *RuntimeStore) SaveRuntimeSupervisorDecision(decision RuntimeSupervisorD
 		return decision, tuskerError(errorInvalidArg, "supervisor decision kind is required")
 	}
 	if strings.TrimSpace(decision.DecisionID) == "" {
-		decision.DecisionID = newRecordID()
+		if strings.TrimSpace(decision.ContextSignal) == "external_loop" {
+			decision.DecisionID = deterministicSupervisorDecisionID(decision)
+		} else {
+			decision.DecisionID = newRecordID()
+		}
 	}
 	if strings.TrimSpace(decision.CreatedAt) == "" {
 		decision.CreatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -4009,6 +4169,49 @@ func (s *RuntimeStore) SaveRuntimeSupervisorDecision(decision RuntimeSupervisorD
 	return decision, err
 }
 
+// deterministicSupervisorDecisionID makes replaying the same durable decision
+// converge on one row. CreatedAt is intentionally excluded: a restart may
+// reconstruct the decision at a different wall-clock instant, but it must not
+// create a second request or event for the same transition.
+func deterministicSupervisorDecisionID(decision RuntimeSupervisorDecision) string {
+	reasonIdentity := strings.TrimSpace(decision.Reason)
+	if strings.TrimSpace(decision.ContextSignal) == "external_loop" {
+		const prefix = "external loop escalation event "
+		if strings.HasPrefix(reasonIdentity, prefix) {
+			if eventID, _, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(reasonIdentity, prefix)), ":"); ok {
+				reasonIdentity = prefix + strings.TrimSpace(eventID)
+			}
+		}
+	}
+	parts := []string{
+		strings.TrimSpace(decision.ProjectID),
+		strings.TrimSpace(decision.RecordID),
+		strings.TrimSpace(decision.ItemID),
+		strings.TrimSpace(decision.Runner),
+		strconv.Itoa(decision.WorkRevision),
+		strings.TrimSpace(decision.AttemptID),
+		strings.TrimSpace(decision.ParentAttemptID),
+		strings.TrimSpace(decision.SessionRef),
+		strings.TrimSpace(decision.ParentSessionRef),
+		strings.TrimSpace(decision.TargetAttemptID),
+		strings.TrimSpace(decision.TargetSessionRef),
+		strings.TrimSpace(decision.Kind),
+		reasonIdentity,
+		strings.TrimSpace(decision.BranchName),
+		strings.TrimSpace(decision.WorkspacePath),
+		strings.TrimSpace(decision.ValidationDelta),
+		strings.TrimSpace(decision.MergeRule),
+		strings.TrimSpace(decision.LeaseState),
+		strings.TrimSpace(decision.ContextSignal),
+		strconv.Itoa(decision.InputTokens),
+		strconv.Itoa(decision.OutputTokens),
+		strconv.Itoa(decision.TotalTokens),
+		strconv.Itoa(decision.ContextWindowTokens),
+	}
+	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "decision-" + hex.EncodeToString(digest[:])
+}
+
 func (s *RuntimeStore) SaveSupervisorDecision(decision SupervisorDecision) (SupervisorDecision, error) {
 	return s.SaveRuntimeSupervisorDecision(decision)
 }
@@ -4027,6 +4230,34 @@ func (s *RuntimeStore) ListRuntimeSupervisorDecisionsForRun(projectID, recordID 
 
 func (s *RuntimeStore) ListSupervisorDecisionsForRun(projectID, recordID string) ([]SupervisorDecision, error) {
 	return s.ListRuntimeSupervisorDecisionsForRun(projectID, recordID)
+}
+
+// ExternalLoopSupervisorDecisionRecorded is the secondary-effect checkpoint
+// for an external-loop escalation. The event ledger is not enough: a crash
+// after event admission but before the canonical supervisor decision must be
+// retried, while a decision that already exists must not be emitted twice.
+func (s *RuntimeStore) ExternalLoopSupervisorDecisionRecorded(projectID, recordID, eventID string) (bool, error) {
+	projectID, recordID, eventID = strings.TrimSpace(projectID), strings.TrimSpace(recordID), strings.TrimSpace(eventID)
+	if projectID == "" || recordID == "" || eventID == "" {
+		return false, nil
+	}
+	rows, err := s.query(`SELECT kind, reason FROM supervisor_decisions
+		WHERE project_id = ? AND record_id = ? AND context_signal = 'external_loop'`, projectID, recordID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	prefix := "external loop escalation event " + eventID + ":"
+	for rows.Next() {
+		var kind, reason string
+		if err := rows.Scan(&kind, &reason); err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(kind) == string(SupervisorDecisionStopForHuman) && strings.HasPrefix(strings.TrimSpace(reason), prefix) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *RuntimeStore) ListRuntimeSupervisorDecisionsForAttempt(attemptID string) ([]RuntimeSupervisorDecision, error) {
@@ -4112,6 +4343,451 @@ func (s *RuntimeStore) ListApplyInputsForRun(projectID, recordID string) ([]Runt
 	return out, rows.Err()
 }
 
+const externalLoopCapsSettingPrefix = "external_loop_caps:"
+
+func externalLoopCapsSettingKey(projectID, recordID string) string {
+	return externalLoopCapsSettingPrefix + strings.TrimSpace(projectID) + ":" + strings.TrimSpace(recordID)
+}
+
+type ExternalLoopAdmission struct {
+	Event             ExternalLoopEvent
+	Created           bool
+	Counters          ExternalLoopCounters
+	ProjectedCounters ExternalLoopCounters
+	Caps              ExternalLoopCaps
+	Blockers          []string
+}
+
+type externalLoopCapsState struct {
+	Caps             ExternalLoopCaps `json:"caps"`
+	FirstAdmissionAt string           `json:"first_admission_at,omitempty"`
+}
+
+func decodeExternalLoopCapsState(raw string) (externalLoopCapsState, error) {
+	var envelope struct {
+		Caps             *ExternalLoopCaps `json:"caps"`
+		FirstAdmissionAt string            `json:"first_admission_at"`
+	}
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return externalLoopCapsState{}, err
+	}
+	if envelope.Caps != nil {
+		return externalLoopCapsState{Caps: normalizeExternalLoopCaps(*envelope.Caps), FirstAdmissionAt: strings.TrimSpace(envelope.FirstAdmissionAt)}, nil
+	}
+	var legacy ExternalLoopCaps
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+		return externalLoopCapsState{}, err
+	}
+	return externalLoopCapsState{Caps: normalizeExternalLoopCaps(legacy)}, nil
+}
+
+func (s *RuntimeStore) loadExternalLoopCapsTx(tx *sql.Tx, projectID, recordID string) (externalLoopCapsState, bool, error) {
+	var raw string
+	err := tx.QueryRow(`SELECT value FROM daemon_settings WHERE key = ?`, externalLoopCapsSettingKey(projectID, recordID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return externalLoopCapsState{}, false, nil
+	}
+	if err != nil {
+		return externalLoopCapsState{}, false, err
+	}
+	state, err := decodeExternalLoopCapsState(raw)
+	if err != nil {
+		return externalLoopCapsState{}, false, fmt.Errorf("stored external loop caps are invalid: %w", err)
+	}
+	return state, true, nil
+}
+
+func (s *RuntimeStore) ExternalLoopCapsFor(projectID, recordID string) (ExternalLoopCaps, bool, error) {
+	var raw string
+	err := s.queryRowScan(`SELECT value FROM daemon_settings WHERE key = ?`, []any{externalLoopCapsSettingKey(projectID, recordID)}, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ExternalLoopCaps{}, false, nil
+	}
+	if err != nil {
+		return ExternalLoopCaps{}, false, err
+	}
+	state, err := decodeExternalLoopCapsState(raw)
+	if err != nil {
+		return ExternalLoopCaps{}, false, fmt.Errorf("stored external loop caps are invalid: %w", err)
+	}
+	return state.Caps, true, nil
+}
+
+func mergeExternalLoopCaps(base, overrides ExternalLoopCaps) ExternalLoopCaps {
+	if overrides.MaxCycles > 0 {
+		base.MaxCycles = overrides.MaxCycles
+	}
+	if overrides.MaxRepairContinuations > 0 {
+		base.MaxRepairContinuations = overrides.MaxRepairContinuations
+	}
+	if overrides.MaxExternalThreads > 0 {
+		base.MaxExternalThreads = overrides.MaxExternalThreads
+	}
+	if overrides.WallClockTimeoutHours > 0 {
+		base.WallClockTimeoutHours = overrides.WallClockTimeoutHours
+	}
+	return normalizeExternalLoopCaps(base)
+}
+
+func parseExternalLoopAdmissionTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("timestamp is empty")
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339, value)
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed.UTC(), nil
+}
+
+func earliestExternalLoopAdmissionAt(events []ExternalLoopEvent) string {
+	var earliest time.Time
+	for _, event := range events {
+		parsed, err := parseExternalLoopAdmissionTime(event.CreatedAt)
+		if err != nil || parsed.IsZero() || (!earliest.IsZero() && !parsed.Before(earliest)) {
+			continue
+		}
+		earliest = parsed
+	}
+	if earliest.IsZero() {
+		return ""
+	}
+	return earliest.Format(time.RFC3339Nano)
+}
+
+func externalLoopWallClockTimeoutBlocker(firstAdmissionAt string, caps ExternalLoopCaps, now time.Time) string {
+	started, err := parseExternalLoopAdmissionTime(firstAdmissionAt)
+	if err != nil || caps.WallClockTimeoutHours <= 0 {
+		return ""
+	}
+	deadline := started.Add(time.Duration(caps.WallClockTimeoutHours) * time.Hour)
+	if now.UTC().Before(deadline) {
+		return ""
+	}
+	return fmt.Sprintf("external loop wall-clock timeout reached: started %s, deadline %s", started.Format(time.RFC3339Nano), deadline.Format(time.RFC3339Nano))
+}
+
+func scanExternalLoopEvent(scan func(...any) error) (ExternalLoopEvent, error) {
+	var event ExternalLoopEvent
+	err := scan(&event.EventID, &event.ProjectID, &event.RecordID, &event.ItemID, &event.Runner, &event.JobID, &event.AttemptID, &event.Stage, &event.Action, &event.Status, &event.Reason, &event.PayloadJSON, &event.IdempotencyKey, &event.CreatedAt)
+	return event, err
+}
+
+func listExternalLoopEventsTx(tx *sql.Tx, projectID, recordID string) ([]ExternalLoopEvent, error) {
+	rows, err := tx.Query(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+		FROM external_loop_events
+		WHERE project_id = ? AND record_id = ?
+		ORDER BY created_at ASC, event_id ASC`, projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []ExternalLoopEvent
+	for rows.Next() {
+		event, err := scanExternalLoopEvent(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func (s *RuntimeStore) AdmitExternalLoopEvent(event ExternalLoopEvent, caps ExternalLoopCaps, capsExplicit bool, blockers []string) (ExternalLoopAdmission, error) {
+	if capsExplicit {
+		return s.AdmitExternalLoopEventWithOverrides(event, caps, caps, true, blockers)
+	}
+	return s.AdmitExternalLoopEventWithOverrides(event, caps, ExternalLoopCaps{}, false, blockers)
+}
+
+func (s *RuntimeStore) AdmitExternalLoopEventWithOverrides(event ExternalLoopEvent, caps, overrides ExternalLoopCaps, capsExplicit bool, blockers []string) (ExternalLoopAdmission, error) {
+	if strings.TrimSpace(event.ProjectID) == "" {
+		return ExternalLoopAdmission{}, tuskerError(errorInvalidArg, "project_id is required")
+	}
+	if strings.TrimSpace(event.RecordID) == "" {
+		return ExternalLoopAdmission{}, tuskerError(errorInvalidArg, "record_id is required")
+	}
+	if strings.TrimSpace(event.Stage) == "" {
+		return ExternalLoopAdmission{}, tuskerError(errorInvalidArg, "external loop stage is required")
+	}
+	if strings.TrimSpace(event.Action) == "" {
+		return ExternalLoopAdmission{}, tuskerError(errorInvalidArg, "external loop action is required")
+	}
+	caps = normalizeExternalLoopCaps(caps)
+	if strings.TrimSpace(event.IdempotencyKey) == "" {
+		event.IdempotencyKey = externalLoopIdempotencyKey(event)
+	}
+	if strings.TrimSpace(event.EventID) == "" {
+		event.EventID = newRecordID()
+	}
+	if strings.TrimSpace(event.CreatedAt) == "" {
+		event.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	admission := ExternalLoopAdmission{}
+	err := s.withBusyRetry(func() error {
+		admission = ExternalLoopAdmission{}
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		storedCaps, foundCaps, err := s.loadExternalLoopCapsTx(tx, event.ProjectID, event.RecordID)
+		if err != nil {
+			return err
+		}
+		effectiveCaps := caps
+		firstAdmissionAt := ""
+		if foundCaps {
+			effectiveCaps = storedCaps.Caps
+			firstAdmissionAt = storedCaps.FirstAdmissionAt
+		}
+		if capsExplicit {
+			// An explicit CLI override applies on the first admission as well as
+			// after restart. Once a persisted envelope exists, merge only the
+			// fields the caller actually supplied so an unrelated/defaulted cap
+			// cannot silently relax the durable authority.
+			effectiveCaps = mergeExternalLoopCaps(effectiveCaps, overrides)
+		}
+
+		events, err := listExternalLoopEventsTx(tx, event.ProjectID, event.RecordID)
+		if err != nil {
+			return err
+		}
+		if firstAdmissionAt == "" {
+			firstAdmissionAt = earliestExternalLoopAdmissionAt(events)
+			if firstAdmissionAt == "" {
+				firstAdmissionAt = event.CreatedAt
+			}
+		}
+		if _, err := parseExternalLoopAdmissionTime(firstAdmissionAt); err != nil {
+			return fmt.Errorf("external loop first admission timestamp is invalid: %w", err)
+		}
+		state := externalLoopCapsState{Caps: effectiveCaps, FirstAdmissionAt: firstAdmissionAt}
+		if !foundCaps || storedCaps.Caps != effectiveCaps || storedCaps.FirstAdmissionAt != firstAdmissionAt {
+			rawCaps, marshalErr := json.Marshal(state)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, err := tx.Exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?)
+				ON CONFLICT(key) DO UPDATE SET value = excluded.value`, externalLoopCapsSettingKey(event.ProjectID, event.RecordID), string(rawCaps)); err != nil {
+				return err
+			}
+		}
+		admission.Caps = effectiveCaps
+		current := externalLoopCountersForEvents(events)
+		admission.Counters = current
+		findExisting := func(key string) (*ExternalLoopEvent, error) {
+			row := tx.QueryRow(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+				FROM external_loop_events WHERE project_id = ? AND record_id = ? AND idempotency_key = ?`, event.ProjectID, event.RecordID, key)
+			found, scanErr := scanExternalLoopEvent(row.Scan)
+			if errors.Is(scanErr, sql.ErrNoRows) {
+				return nil, nil
+			}
+			if scanErr != nil {
+				return nil, scanErr
+			}
+			return &found, nil
+		}
+		findSameTransition := func(candidateAction string) *ExternalLoopEvent {
+			for i := range events {
+				candidate := events[i]
+				if normalizeExternalLoopStage(candidate.Stage) != normalizeExternalLoopStage(event.Stage) ||
+					normalizeExternalLoopAction(candidate.Action) != candidateAction ||
+					strings.TrimSpace(candidate.JobID) != strings.TrimSpace(event.JobID) ||
+					strings.TrimSpace(candidate.AttemptID) != strings.TrimSpace(event.AttemptID) {
+					continue
+				}
+				candidateRevision, candidateMaterial := externalLoopEventRevisionMaterial(candidate)
+				eventRevision, eventMaterial := externalLoopEventRevisionMaterial(event)
+				if candidateRevision != eventRevision || candidateMaterial != eventMaterial {
+					continue
+				}
+				return &candidate
+			}
+			return nil
+		}
+		action := normalizeExternalLoopAction(event.Action)
+		if action == "" {
+			return tuskerError(errorInvalidArg, "external loop action is invalid")
+		}
+		if externalLoopActionMayOpenExternalThread(action) && strings.TrimSpace(event.JobID) == "" {
+			blockers = sortedUniqueStrings(append(blockers, "external thread action requires a stable provider job id"))
+			event.PayloadJSON = externalLoopPayloadWithRequestedAction(event.PayloadJSON, action)
+			event.Action = externalLoopActionEscalateHuman
+			event.Status = "blocked"
+			event.Reason = "external thread identity missing"
+			event.PayloadJSON = externalLoopPayloadWithBlockers(event.PayloadJSON, blockers)
+			event.IdempotencyKey = externalLoopIdempotencyKey(event)
+			action = externalLoopActionEscalateHuman
+		}
+		if existing, err := findUnacknowledgedExternalLoopEscalationTx(tx, events, event); err != nil {
+			return err
+		} else if existing != nil {
+			admission.Event = *existing
+			admission.ProjectedCounters = current
+			admission.Blockers = sortedUniqueStrings(append(append([]string{}, blockers...), externalLoopBlockersFromPayload(existing.PayloadJSON)...))
+			return tx.Commit()
+		}
+		if existing, err := findExisting(event.IdempotencyKey); err != nil {
+			return err
+		} else if existing != nil {
+			admission.Event = *existing
+			admission.ProjectedCounters = current
+			admission.Blockers = sortedUniqueStrings(append(append([]string{}, blockers...), externalLoopBlockersFromPayload(existing.PayloadJSON)...))
+			return tx.Commit()
+		}
+		if existing := findSameTransition(action); existing != nil {
+			admission.Event = *existing
+			admission.ProjectedCounters = current
+			admission.Blockers = sortedUniqueStrings(append(append([]string{}, blockers...), externalLoopBlockersFromPayload(existing.PayloadJSON)...))
+			return tx.Commit()
+		}
+		event.Action = action
+		admission.Blockers = sortedUniqueStrings(append([]string{}, blockers...))
+		projected := externalLoopCountersWithEvent(current, event)
+		if action != externalLoopActionEscalateHuman {
+			capBlockers := externalLoopCapBlockers(effectiveCaps, current, projected, action)
+			if timeoutBlocker := externalLoopWallClockTimeoutBlocker(firstAdmissionAt, effectiveCaps, time.Now().UTC()); timeoutBlocker != "" {
+				capBlockers = append(capBlockers, timeoutBlocker)
+			}
+			if len(capBlockers) > 0 {
+				admission.Blockers = sortedUniqueStrings(append(admission.Blockers, capBlockers...))
+				event.PayloadJSON = externalLoopPayloadWithRequestedAction(event.PayloadJSON, action)
+				event.Action = externalLoopActionEscalateHuman
+				event.Status = "blocked"
+				event.Reason = "external loop cap reached"
+				event.PayloadJSON = externalLoopPayloadWithBlockers(event.PayloadJSON, admission.Blockers)
+				event.IdempotencyKey = externalLoopIdempotencyKey(event)
+				if existing, err := findExisting(event.IdempotencyKey); err != nil {
+					return err
+				} else if existing != nil {
+					admission.Event = *existing
+					admission.ProjectedCounters = current
+					admission.Blockers = sortedUniqueStrings(append(admission.Blockers, externalLoopBlockersFromPayload(existing.PayloadJSON)...))
+					return tx.Commit()
+				} else if existing := findSameTransition(externalLoopActionEscalateHuman); existing != nil {
+					admission.Event = *existing
+					admission.ProjectedCounters = current
+					admission.Blockers = sortedUniqueStrings(append(admission.Blockers, externalLoopBlockersFromPayload(existing.PayloadJSON)...))
+					return tx.Commit()
+				}
+				projected = externalLoopCountersWithEvent(current, event)
+			}
+		}
+		if event.Status == "" {
+			event.Status = "ok"
+			if len(admission.Blockers) > 0 {
+				event.Status = "blocked"
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO external_loop_events (
+			event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt); err != nil {
+			return err
+		}
+		admission.Event = event
+		admission.Created = true
+		admission.ProjectedCounters = projected
+		return tx.Commit()
+	})
+	if err != nil {
+		return ExternalLoopAdmission{}, err
+	}
+	return admission, nil
+}
+
+func externalLoopPayloadWithBlockers(raw string, blockers []string) string {
+	payload := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &payload)
+	}
+	payload["blockers"] = sortedUniqueStrings(blockers)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return string(encoded)
+}
+
+func externalLoopPayloadWithRequestedAction(raw, action string) string {
+	payload := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &payload)
+	}
+	if strings.TrimSpace(action) != "" {
+		if _, exists := payload["requested_action"]; !exists {
+			payload["requested_action"] = normalizeExternalLoopAction(action)
+		}
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return string(encoded)
+}
+
+func externalLoopBlockersFromPayload(raw string) []string {
+	var payload map[string]any
+	if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &payload) != nil {
+		return nil
+	}
+	return sortedUniqueStrings(normalizeList(payload["blockers"]))
+}
+
+func findUnacknowledgedExternalLoopEscalationTx(tx *sql.Tx, events []ExternalLoopEvent, candidate ExternalLoopEvent) (*ExternalLoopEvent, error) {
+	candidateRevision, candidateMaterial := externalLoopEventRevisionMaterial(candidate)
+	for index := range events {
+		event := events[index]
+		// An unacknowledged stop is scoped to the provider job and exact
+		// material, not to a caller-supplied attempt spelling. Otherwise an
+		// explicit advance could bypass the stop merely by supplying a new
+		// attempt-id while requesting a different action variant.
+		if normalizeExternalLoopAction(event.Action) != externalLoopActionEscalateHuman || strings.TrimSpace(event.Status) != "blocked" ||
+			strings.TrimSpace(event.JobID) != strings.TrimSpace(candidate.JobID) {
+			continue
+		}
+		eventRevision, eventMaterial := externalLoopEventRevisionMaterial(event)
+		if eventRevision != candidateRevision || eventMaterial != candidateMaterial {
+			continue
+		}
+		rows, err := tx.Query(`SELECT kind, reason FROM supervisor_decisions
+			WHERE project_id = ? AND record_id = ? AND context_signal = 'external_loop'`, event.ProjectID, event.RecordID)
+		if err != nil {
+			return nil, err
+		}
+		prefix := "external loop escalation event " + strings.TrimSpace(event.EventID) + ":"
+		recorded := false
+		for rows.Next() {
+			var kind, reason string
+			if err := rows.Scan(&kind, &reason); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if strings.TrimSpace(kind) == string(SupervisorDecisionStopForHuman) && strings.HasPrefix(strings.TrimSpace(reason), prefix) {
+				recorded = true
+				break
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if !recorded {
+			return &event, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalLoopEvent, bool, error) {
 	if strings.TrimSpace(event.ProjectID) == "" {
 		return event, false, tuskerError(errorInvalidArg, "project_id is required")
@@ -4126,12 +4802,7 @@ func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalL
 		return event, false, tuskerError(errorInvalidArg, "external loop action is required")
 	}
 	if strings.TrimSpace(event.IdempotencyKey) == "" {
-		event.IdempotencyKey = strings.Join([]string{event.Stage, event.Action, event.JobID, event.AttemptID, event.Reason}, "|")
-	}
-	if existing, err := s.FindExternalLoopEventByKey(event.ProjectID, event.RecordID, event.IdempotencyKey); err != nil {
-		return event, false, err
-	} else if existing != nil {
-		return *existing, false, nil
+		event.IdempotencyKey = externalLoopIdempotencyKey(event)
 	}
 	if strings.TrimSpace(event.EventID) == "" {
 		event.EventID = newRecordID()
@@ -4139,11 +4810,40 @@ func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalL
 	if strings.TrimSpace(event.CreatedAt) == "" {
 		event.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.exec(`INSERT INTO external_loop_events (
-		event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt)
-	return event, true, err
+	var saved ExternalLoopEvent
+	created := false
+	err := s.withBusyRetry(func() error {
+		created = false
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		result, err := tx.Exec(`INSERT INTO external_loop_events (
+			event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(project_id, record_id, idempotency_key) DO NOTHING`,
+			event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		created = rows == 1
+		row := tx.QueryRow(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+			FROM external_loop_events WHERE project_id = ? AND record_id = ? AND idempotency_key = ?`, event.ProjectID, event.RecordID, event.IdempotencyKey)
+		saved, err = scanExternalLoopEvent(row.Scan)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+	if err != nil {
+		return event, false, err
+	}
+	return saved, created, nil
 }
 
 func (s *RuntimeStore) FindExternalLoopEventByKey(projectID, recordID, idempotencyKey string) (*ExternalLoopEvent, error) {
@@ -4524,19 +5224,19 @@ func (s *RuntimeStore) SaveRunAuthorization(auth RunAuthorization) error {
 	if auth.CreatedAt == "" {
 		auth.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at)
-		VALUES(?,?,?,?,?,?,?,?)
-		ON CONFLICT(project_id, record_id, lease_generation) DO UPDATE SET source=excluded.source, actor=excluded.actor, trigger=excluded.trigger, project_automation_enabled=excluded.project_automation_enabled, created_at=excluded.created_at`,
-		auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt)
+	_, err := s.exec(`INSERT INTO run_authorizations(project_id, record_id, lease_generation, attempt_id, source, actor, trigger, project_automation_enabled, created_at)
+		VALUES(?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(project_id, record_id, lease_generation) DO UPDATE SET attempt_id=excluded.attempt_id, source=excluded.source, actor=excluded.actor, trigger=excluded.trigger, project_automation_enabled=excluded.project_automation_enabled, created_at=excluded.created_at`,
+		auth.ProjectID, auth.RecordID, auth.LeaseGeneration, auth.AttemptID, auth.Source, auth.Actor, auth.Trigger, boolToInt(auth.ProjectAutomationEnabled), auth.CreatedAt)
 	return err
 }
 
 func (s *RuntimeStore) LatestRunAuthorization(projectID, recordID string) (*RunAuthorization, error) {
 	var auth RunAuthorization
 	var enabled int
-	err := s.queryRowScan(`SELECT project_id, record_id, lease_generation, source, actor, trigger, project_automation_enabled, created_at
+	err := s.queryRowScan(`SELECT project_id, record_id, lease_generation, attempt_id, source, actor, trigger, project_automation_enabled, created_at
 		FROM run_authorizations WHERE project_id=? AND record_id=? ORDER BY lease_generation DESC LIMIT 1`, []any{projectID, recordID},
-		&auth.ProjectID, &auth.RecordID, &auth.LeaseGeneration, &auth.Source, &auth.Actor, &auth.Trigger, &enabled, &auth.CreatedAt)
+		&auth.ProjectID, &auth.RecordID, &auth.LeaseGeneration, &auth.AttemptID, &auth.Source, &auth.Actor, &auth.Trigger, &enabled, &auth.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -4545,6 +5245,26 @@ func (s *RuntimeStore) LatestRunAuthorization(projectID, recordID string) (*RunA
 	}
 	auth.ProjectAutomationEnabled = enabled != 0
 	return &auth, nil
+}
+
+func (s *RuntimeStore) ListRunAuthorizations(projectID, recordID string) ([]RunAuthorization, error) {
+	rows, err := s.db.Query(`SELECT project_id, record_id, lease_generation, attempt_id, source, actor, trigger, project_automation_enabled, created_at
+		FROM run_authorizations WHERE project_id=? AND record_id=? ORDER BY lease_generation`, projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RunAuthorization
+	for rows.Next() {
+		var auth RunAuthorization
+		var enabled int
+		if err := rows.Scan(&auth.ProjectID, &auth.RecordID, &auth.LeaseGeneration, &auth.AttemptID, &auth.Source, &auth.Actor, &auth.Trigger, &enabled, &auth.CreatedAt); err != nil {
+			return nil, err
+		}
+		auth.ProjectAutomationEnabled = enabled != 0
+		out = append(out, auth)
+	}
+	return out, rows.Err()
 }
 
 func (s *RuntimeStore) SaveRunIdentity(identity RunIdentityMetadata) error {

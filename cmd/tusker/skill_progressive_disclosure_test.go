@@ -17,11 +17,11 @@ func TestSkillContractCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	factory, err := embeddedFactoryIntakeContractProvenance()
+	factory, err := embeddedAuthoringContractProvenance()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contract.Schema != skillCompatibilitySchema || contract.FactoryIntakeContract != factory {
+	if contract.Schema != skillCompatibilitySchema || contract.AuthoringContract != factory {
 		t.Fatalf("compatibility contract = %#v", contract)
 	}
 

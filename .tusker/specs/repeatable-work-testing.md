@@ -26,7 +26,7 @@ The user requested this specification, including two parallel waves containing s
 
 ## Reuse and boundaries
 
-Reuse the native task contracts, delivery import, wave authorization, attempt lifecycle, event stream, review/proof and query paths. Existing `e2e/agent_journey/fixture` provides a disposable offline repository and two-task contract; extend or compose that pattern. Existing WUX component previews remain useful visual fixtures but cannot prove real transitions; the integration preview currently has no-op task/wave navigation callbacks.
+Reuse the native task contracts, direct task and wave authoring, wave authorization, attempt lifecycle, event stream, review/proof and query paths. Existing `e2e/agent_journey/fixture` provides a disposable offline repository and two-task contract; extend or compose that pattern. Existing WUX component previews remain useful visual fixtures but cannot prove real transitions; the integration preview currently has no-op task/wave navigation callbacks.
 
 Implement a tiny deterministic test runner through the existing runner boundary. It executes fixed local fixture operations (delay, write an owned file, emit bounded progress, return a declared result), not an LLM or new general agent harness. Use existing executable-runner facilities if they cover this. Keep test profiles explicitly labeled and scoped to demo projects. A test run is a real Tusker attempt with a simulated coding agent; it proves orchestration, not ACP/provider compatibility or independent judgment quality.
 

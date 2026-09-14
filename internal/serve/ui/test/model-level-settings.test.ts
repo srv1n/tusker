@@ -19,13 +19,15 @@ test("tier settings use live three-level configuration with guarded saves", () =
   expect(api).toContain('action: "profile-set"');
 });
 
-test("task routing shows the effective tier and recorded attempt identity", () => {
+test("task routing is three immediate choices with compact missing-model copy", () => {
   expect(tasks).toContain("Tier 2 · Standard");
-  expect(tasks).toContain("Will execute");
-  expect(tasks).toContain("Will review");
+  expect(tasks).toContain('aria-label="Task worker profile"');
+  expect(tasks).toContain('aria-label="Task reviewer profile"');
   expect(tasks).toContain("detail.authoredWorkLevel");
   expect(tasks).toContain("actualRouteLabel");
-  expect(tasks).toContain("Recorded identity is stable for this attempt.");
+  expect(tasks).toContain("No model is configured for");
+  expect(tasks).toContain("update({ executeProfile: value || null })");
+  expect(tasks).not.toContain("Advanced overrides");
 });
 
 test("tiers preserve explicit fallbacks and project inheritance", () => {

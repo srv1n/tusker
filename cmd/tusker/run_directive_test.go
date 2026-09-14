@@ -24,9 +24,9 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	}
 	defer guard.Close()
 
-	var result serveActionResult
-	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:test-operator"}`, &result)
-	if !result.OK || result.Refused {
+	var result directStartResult
+	servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0001/start", `{"actor":"human:test-operator","mode":"background"}`, &result)
+	if result.Authorization != "authorized" || result.Replayed {
 		t.Fatalf("expected queued directive, got %#v", result)
 	}
 	directive, err := server.store.RunDirective("app", "APP-T-0001")
@@ -39,7 +39,7 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	assertEqual(t, "queued", directive.State, "directive state")
 	assertEqual(t, "human:test-operator", directive.Actor, "trusted directive actor")
 	var forged serveActionResult
-	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:forged"}`, &forged)
+	servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0001/start", `{"actor":"human:forged"}`, &forged)
 	if !forged.Refused || !strings.Contains(forged.Reason, "does not match") {
 		t.Fatalf("expected configured operator to reject forged request actor, got %#v", forged)
 	}
@@ -51,10 +51,10 @@ func TestRunDirectiveRecorded(t *testing.T) {
 	}
 	assertEqual(t, "queued", detail.RunDirective.State, "task detail directive state")
 
-	var duplicate serveActionResult
-	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{"actor":"human:test-operator"}`, &duplicate)
-	if !duplicate.Refused || !strings.Contains(duplicate.Reason, "already queued") {
-		t.Fatalf("expected duplicate refusal, got %#v", duplicate)
+	var duplicate directStartResult
+	servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0001/start", `{"actor":"human:test-operator","mode":"background"}`, &duplicate)
+	if !duplicate.Replayed || duplicate.Authorization != "authorized" {
+		t.Fatalf("expected idempotent replay of the queued directive, got %#v", duplicate)
 	}
 	directive, err = server.store.RunDirective("app", "APP-T-0001")
 	if err != nil {
@@ -66,7 +66,7 @@ func TestRunDirectiveRecorded(t *testing.T) {
 func TestServeRunDirectiveRequiresConfiguredOperator(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 	server.operatorActor = ""
-	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/tasks/APP-T-0001/run?project=app", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/actions/projects/app/tasks/APP-T-0001/start", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -99,9 +99,9 @@ func TestServeRunDirectiveQueuesWithAutomationDisabled(t *testing.T) {
 	}
 	defer guard.Close()
 
-	var result serveActionResult
-	servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{}`, &result)
-	if !result.OK || result.Refused {
+	var result directStartResult
+	servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0001/start", `{"mode":"background"}`, &result)
+	if result.Authorization != "authorized" {
 		t.Fatalf("expected queued directive with automation disabled, got %#v", result)
 	}
 	directive, err := server.store.RunDirective("app", "APP-T-0001")
@@ -314,10 +314,12 @@ func TestRunDirectiveRefusals(t *testing.T) {
 	t.Run("daemon down", func(t *testing.T) {
 		server := newServeEmptyNeedsFixture(t)
 		makeServeTaskDispatchable(t, server, "APP-T-0001")
-		var result serveActionResult
-		servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{}`, &result)
-		if !result.Refused || !strings.Contains(strings.ToLower(result.Reason), "daemon") {
-			t.Fatalf("expected daemon-down refusal, got %#v", result)
+		// A start directive is durable: it queues for the daemon to consume
+		// when it next polls, so no resident daemon is required to start.
+		var result directStartResult
+		servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0001/start", `{"mode":"background"}`, &result)
+		if result.Authorization != "authorized" {
+			t.Fatalf("expected durable directive to queue without a resident daemon, got %#v", result)
 		}
 	})
 
@@ -329,8 +331,8 @@ func TestRunDirectiveRefusals(t *testing.T) {
 		}
 		defer guard.Close()
 		var result serveActionResult
-		servePost(t, server, "/api/tasks/APP-T-0001/run?project=app", `{}`, &result)
-		if !result.Refused || !strings.Contains(result.Reason, "not runnable") {
+		servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0001/start", `{"mode":"background"}`, &result)
+		if !result.Refused || !strings.Contains(result.Reason, "accepts backlog, ready, or rework") {
 			t.Fatalf("expected non-runnable refusal, got %#v", result)
 		}
 	})
@@ -343,8 +345,8 @@ func TestRunDirectiveRefusals(t *testing.T) {
 		}
 		defer guard.Close()
 		var result serveActionResult
-		servePost(t, server, "/api/tasks/APP-T-0003/run?project=app", `{}`, &result)
-		if !result.Refused || !strings.Contains(result.Reason, "live run") {
+		servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0003/start", `{"mode":"background"}`, &result)
+		if !result.Refused || !strings.Contains(result.Reason, "ACTIVE_OWNER") {
 			t.Fatalf("expected live-run refusal, got %#v", result)
 		}
 	})
@@ -357,8 +359,8 @@ func TestRunDirectiveRefusals(t *testing.T) {
 		}
 		defer guard.Close()
 		var result serveActionResult
-		servePost(t, server, "/api/tasks/APP-T-0006/run?project=app", `{}`, &result)
-		if !result.Refused || !strings.Contains(result.Reason, "cannot be dispatched") || !strings.Contains(result.Reason, "dependency") {
+		servePost(t, server, "/api/actions/projects/app/tasks/APP-T-0006/start", `{"mode":"background"}`, &result)
+		if !result.Refused || !strings.Contains(result.Reason, "DEPENDENCY_WAITING") || !strings.Contains(result.Reason, "APP-T-0005") {
 			t.Fatalf("expected canonical blocker refusal, got %#v", result)
 		}
 	})

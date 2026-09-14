@@ -1,9 +1,243 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
+
+const reviewerFindingSchema = "tusker.reviewer-finding/v1"
+
+// reviewerFindingRecord is the machine-readable finding carried through an
+// authoritative review result. Keeping the record in the existing finding
+// string avoids a parallel review-result schema while making the blocking
+// contract durable and independently checkable.
+type reviewerFindingRecord struct {
+	Schema              string   `json:"schema"`
+	ID                  string   `json:"id"`
+	Kind                string   `json:"kind"`
+	Acceptance          []string `json:"acceptance,omitempty"`
+	Evidence            []string `json:"evidence,omitempty"`
+	Consequence         string   `json:"consequence,omitempty"`
+	ClosureCondition    string   `json:"closure_condition,omitempty"`
+	MaterialFingerprint string   `json:"material_fingerprint,omitempty"`
+}
+
+const reviewerFindingClosureSchema = "tusker.reviewer-finding-closure/v1"
+
+// reviewerFindingClosure is the durable attestation that a later independent
+// review re-checked one earlier blocking finding on the new exact material.
+// It lives on ReviewResult so the existing result revision and completion
+// transaction bind the attestation without introducing another store.
+type reviewerFindingClosure struct {
+	Schema              string   `json:"schema"`
+	ID                  string   `json:"id"`
+	ClosureCondition    string   `json:"closure_condition"`
+	Evidence            []string `json:"evidence"`
+	MaterialFingerprint string   `json:"material_fingerprint"`
+}
+
+func normalizeReviewerFindingClosures(closures []reviewerFindingClosure) error {
+	seen := map[string]bool{}
+	for index := range closures {
+		closure := &closures[index]
+		closure.Schema = strings.TrimSpace(closure.Schema)
+		closure.ID = strings.TrimSpace(closure.ID)
+		closure.ClosureCondition = strings.TrimSpace(closure.ClosureCondition)
+		closure.MaterialFingerprint = strings.TrimSpace(closure.MaterialFingerprint)
+		closure.Evidence = sortedUniqueStrings(closure.Evidence)
+		if closure.Schema != reviewerFindingClosureSchema {
+			return fmt.Errorf("review finding closure schema must be %s", reviewerFindingClosureSchema)
+		}
+		if !reviewerFindingIDValid(closure.ID) || seen[closure.ID] {
+			return fmt.Errorf("review finding closure id is missing or duplicated")
+		}
+		seen[closure.ID] = true
+		if closure.ClosureCondition == "" || len(closure.ClosureCondition) > reviewResultMaxFindingChars {
+			return fmt.Errorf("review finding closure condition is missing or too long")
+		}
+		if len(closure.Evidence) == 0 || !reviewerFindingListValid(closure.Evidence, reviewResultMaxEvidenceChars) {
+			return fmt.Errorf("review finding closure requires evidence references")
+		}
+		if closure.MaterialFingerprint != "" && !reviewMaterialFingerprintValid(closure.MaterialFingerprint) {
+			return fmt.Errorf("review finding closure material fingerprint is invalid")
+		}
+	}
+	sort.Slice(closures, func(i, j int) bool { return closures[i].ID < closures[j].ID })
+	return nil
+}
+
+func parseReviewFindingClosures(raw string) ([]reviewerFindingClosure, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var closures []reviewerFindingClosure
+	if strings.HasPrefix(raw, "[") {
+		if err := json.Unmarshal([]byte(raw), &closures); err != nil {
+			return nil, fmt.Errorf("review finding closures are not valid JSON: %w", err)
+		}
+	} else {
+		var closure reviewerFindingClosure
+		if err := json.Unmarshal([]byte(raw), &closure); err != nil {
+			return nil, fmt.Errorf("review finding closure is not valid JSON: %w", err)
+		}
+		closures = []reviewerFindingClosure{closure}
+	}
+	if err := normalizeReviewerFindingClosures(closures); err != nil {
+		return nil, err
+	}
+	return closures, nil
+}
+
+func validateReviewerFindingClosures(result ReviewResult) error {
+	if len(result.ClosedFindings) == 0 {
+		return nil
+	}
+	if result.Verdict != "pass" {
+		return fmt.Errorf("finding closures are only valid on a pass result")
+	}
+	if err := normalizeReviewerFindingClosures(result.ClosedFindings); err != nil {
+		return err
+	}
+	if result.Schema == reviewResultSchema {
+		if !reviewMaterialFingerprintValid(result.MaterialFingerprint) {
+			return fmt.Errorf("review finding closures require exact reviewed material")
+		}
+		for _, closure := range result.ClosedFindings {
+			if closure.MaterialFingerprint != result.MaterialFingerprint {
+				return fmt.Errorf("review finding closure material fingerprint drifted")
+			}
+		}
+	}
+	return nil
+}
+
+func reviewerFindingIDValid(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func reviewerFindingListValid(values []string, max int) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || len(strings.TrimSpace(value)) > max {
+			return false
+		}
+	}
+	return true
+}
+
+func parseReviewerFinding(text string) (reviewerFindingRecord, error) {
+	var finding reviewerFindingRecord
+	raw := strings.TrimSpace(text)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return finding, fmt.Errorf("review finding must be a JSON %s record", reviewerFindingSchema)
+	}
+	if err := json.Unmarshal([]byte(raw), &finding); err != nil {
+		return finding, fmt.Errorf("review finding is not valid JSON: %w", err)
+	}
+	finding.Schema = strings.TrimSpace(finding.Schema)
+	finding.ID = strings.TrimSpace(finding.ID)
+	finding.Kind = strings.ToLower(strings.TrimSpace(finding.Kind))
+	finding.Consequence = strings.TrimSpace(finding.Consequence)
+	finding.ClosureCondition = strings.TrimSpace(finding.ClosureCondition)
+	finding.MaterialFingerprint = strings.TrimSpace(finding.MaterialFingerprint)
+	finding.Acceptance = sortedUniqueStrings(finding.Acceptance)
+	finding.Evidence = sortedUniqueStrings(finding.Evidence)
+	if finding.Schema != reviewerFindingSchema {
+		return finding, fmt.Errorf("review finding schema must be %s", reviewerFindingSchema)
+	}
+	if !reviewerFindingIDValid(finding.ID) {
+		return finding, fmt.Errorf("review finding id is missing or unstable")
+	}
+	if finding.Kind != "blocking" && finding.Kind != "advisory" {
+		return finding, fmt.Errorf("review finding kind must be blocking or advisory")
+	}
+	if !reviewerFindingListValid(finding.Acceptance, 128) || !reviewerFindingListValid(finding.Evidence, reviewResultMaxEvidenceChars) {
+		return finding, fmt.Errorf("review finding acceptance or evidence references are invalid")
+	}
+	if finding.Kind == "blocking" {
+		if len(finding.Acceptance) == 0 || len(finding.Evidence) == 0 || finding.Consequence == "" || finding.ClosureCondition == "" {
+			return finding, fmt.Errorf("blocking review finding requires acceptance, evidence, consequence, and closure_condition")
+		}
+	}
+	return finding, nil
+}
+
+func parseReviewFindingArgs(raw string) ([]string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if strings.HasPrefix(trimmed, "[") {
+		var records []json.RawMessage
+		if err := json.Unmarshal([]byte(trimmed), &records); err != nil {
+			return nil, fmt.Errorf("review findings are not valid JSON: %w", err)
+		}
+		findings := make([]string, len(records))
+		for i, record := range records {
+			findings[i] = strings.TrimSpace(string(record))
+		}
+		return findings, nil
+	}
+	// JSON findings contain commas, so splitCSV cannot be used for a
+	// structured record. Keep malformed JSON intact so the caller returns the
+	// useful schema error instead of a collection of misleading fragments.
+	if strings.HasPrefix(trimmed, "{") {
+		return []string{trimmed}, nil
+	}
+	return splitCSV(raw), nil
+}
+
+func reviewerFindingFlagExample(material string) string {
+	return `--finding '[{"schema":"` + reviewerFindingSchema + `","id":"F-001","kind":"blocking","acceptance":["A1"],"evidence":["path-or-receipt"],"consequence":"acceptance is not met","closure_condition":"re-run A1 and attach the receipt","material_fingerprint":"` + material + `"},{"schema":"` + reviewerFindingSchema + `","id":"F-002","kind":"advisory","evidence":["path-or-receipt"]}]'`
+}
+
+func reviewerClosureFlagExample(material string) string {
+	return `--closure '[{"schema":"` + reviewerFindingClosureSchema + `","id":"F-001","closure_condition":"re-run A1 and attach the receipt","evidence":["path-or-receipt"],"material_fingerprint":"` + material + `"}]'`
+}
+
+func validateReviewResultFindings(result ReviewResult, requireMaterial bool) error {
+	if result.Verdict != "changes_requested" {
+		return nil
+	}
+	blocking := 0
+	seenIDs := map[string]bool{}
+	for _, raw := range result.Findings {
+		finding, err := parseReviewerFinding(raw)
+		if err != nil {
+			return err
+		}
+		if seenIDs[finding.ID] {
+			return fmt.Errorf("review finding id %s is duplicated", finding.ID)
+		}
+		seenIDs[finding.ID] = true
+		if finding.Kind != "blocking" {
+			continue
+		}
+		blocking++
+		if requireMaterial {
+			if strings.TrimSpace(result.MaterialFingerprint) == "" || finding.MaterialFingerprint == "" {
+				return fmt.Errorf("blocking review finding must bind the reviewed material")
+			}
+			if finding.MaterialFingerprint != result.MaterialFingerprint {
+				return fmt.Errorf("blocking review finding material fingerprint drifted")
+			}
+		}
+	}
+	if blocking == 0 {
+		return fmt.Errorf("changes_requested requires at least one blocking review finding")
+	}
+	return nil
+}
 
 // reviewerFindingSection is the task-body heading under which a reviewer's
 // finding is pasted so the person who did the work sees it when the task

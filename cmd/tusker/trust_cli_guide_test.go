@@ -34,7 +34,7 @@ func TestTrustCliGuideUsesExecutorRecordedCommandProof(t *testing.T) {
 		"strategy: shared",
 		"Fresh setup uses `codex_exec`",
 		"tusker docs new auth --kind spec --vault ./.tusker",
-		"tusker delivery import --plan <plan.yaml> --dry-run --vault ./.tusker --json",
+		"tusker wave create --file <request.yaml> --request-key <stable-key> --vault ./.tusker",
 	} {
 		if !strings.Contains(string(onboarding), want) {
 			t.Fatalf("onboarding omits actionable downstream remedy %q", want)

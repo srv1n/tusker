@@ -3,8 +3,10 @@ export { ProjectNavigation } from "./ProjectNavigation";
 export type { ProjectNavigationProps, WaveLink, WaveReadState } from "./ProjectNavigation";
 export {
   MAX_WAVE_SHORTCUTS,
+  NAVIGATION_CHANGED_EVENT,
   NAVIGATION_STATE_VERSION,
   NAVIGATION_STORAGE_KEY,
+  PROJECT_ICON_NAMES,
   emptyNavigationState,
   getWorkspaceViewState,
   movePinnedProject,
@@ -23,6 +25,7 @@ export {
   resolveNavigationTarget,
   sanitizeNavigationState,
   setExpandedProjects,
+  setProjectIcon,
   setProjectPinned,
   setProjectOrder,
   toggleProjectPinned,
@@ -34,6 +37,7 @@ export {
 export type {
   NavigationState,
   NavigationTarget,
+  ProjectIconName,
   ResolveOptions,
   ReorderResult,
   StorageLike,

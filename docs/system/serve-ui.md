@@ -15,7 +15,7 @@ state and the shared runtime store.
 The default project policy binds Serve to `127.0.0.1:7420`. The service returns
 the embedded web files and an unversioned `/api` surface. Read endpoints cover
 projects, tasks, epics, waves, gates, evidence, documents, runs, executions,
-delivery review, and diagnostics.
+wave review, and diagnostics.
 
 Mutations use guarded handlers. The service checks method, origin, content
 type, mutation capability, project identity, and operator identity where the
@@ -107,8 +107,8 @@ The profile access contract is resolved before execution and is retained with th
 run identity. Native routes compile the supported workspace, network, write,
 shell, and approval controls into their CLI invocation; a required control that
 the selected route cannot express blocks the run rather than silently falling
-back. `muse_cli` is the direct `muse exec --json` route and is distinct from the
-legacy Muse-compatible profile route. The no-spend setup check can prove route,
+back. Muse profiles use `muse exec --json`. MSP supplies catalog discovery and is
+not an ACP execution route. The no-spend setup check can prove route,
 installed executable metadata, and provider-free fixtures; it does not qualify a
 paid or live model turn.
 

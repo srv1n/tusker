@@ -28,6 +28,8 @@ type serveServer struct {
 	humanControlPublicKey []byte
 	requestAdmission      chan struct{}
 	streamAdmission       chan struct{}
+	iconMu                sync.Mutex
+	iconCache             map[string]projectIconScanResult
 }
 
 type serveSnapshotEntry struct {
@@ -184,23 +186,28 @@ type serveEpicSummary struct {
 }
 
 type serveWaveSummary struct {
-	ID            string                 `json:"id"`
-	Title         string                 `json:"title"`
-	Status        string                 `json:"status"`
-	LandedAt      any                    `json:"landedAt"`
-	MemberIDs     []string               `json:"memberIds"`
-	Members       []serveWaveTaskSummary `json:"members"`
-	Counts        map[string]int         `json:"counts"`
-	Authorization map[string]any         `json:"authorization"`
-	Brief         waveBrief              `json:"brief"`
+	ID              string                 `json:"id"`
+	Title           string                 `json:"title"`
+	ExpectedOutcome string                 `json:"expectedOutcome,omitempty"`
+	Body            string                 `json:"body,omitempty"`
+	Status          string                 `json:"status"`
+	LandedAt        any                    `json:"landedAt"`
+	MemberIDs       []string               `json:"memberIds"`
+	Members         []serveWaveTaskSummary `json:"members"`
+	Counts          map[string]int         `json:"counts"`
+	Authorization   map[string]any         `json:"authorization"`
+	Brief           waveBrief              `json:"brief"`
 }
 
 type serveWaveTaskSummary struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Group  string `json:"group"`
-	Status string `json:"status"`
-	Proof  string `json:"proof"`
+	ID               string             `json:"id"`
+	Title            string             `json:"title"`
+	Group            string             `json:"group"`
+	Status           string             `json:"status"`
+	Proof            string             `json:"proof"`
+	WorkLevel        string             `json:"workLevel,omitempty"`
+	EffectiveExecute runnerRoutePreview `json:"effectiveExecute"`
+	EffectiveReview  runnerRoutePreview `json:"effectiveReview"`
 }
 
 // serveReviewBatch is the wave-boundary review projection. Members are the
@@ -351,31 +358,38 @@ type serveTaskDependency struct {
 
 type serveTaskDetail struct {
 	serveTaskCapsule
-	StateRevision          string                 `json:"stateRevision"`
-	AuthoredWorkLevel      string                 `json:"authoredWorkLevel,omitempty"`
-	AuthoredReviewLevel    string                 `json:"authoredReviewLevel,omitempty"`
-	AuthoredExecuteProfile string                 `json:"authoredExecuteProfile,omitempty"`
-	AuthoredReviewProfile  string                 `json:"authoredReviewProfile,omitempty"`
-	EffectiveExecute       runnerRoutePreview     `json:"effectiveExecute"`
-	EffectiveReview        runnerRoutePreview     `json:"effectiveReview"`
-	Intent                 string                 `json:"intent"`
-	Acceptance             []serveAcceptanceRow   `json:"acceptance"`
-	NonGoals               []string               `json:"nonGoals"`
-	Verification           []serveVerificationRow `json:"verification"`
-	Evidence               []serveEvidenceCard    `json:"evidence"`
-	ArtifactsKeep          bool                   `json:"artifactsKeep"`
-	ArtifactsAvailability  string                 `json:"artifactsAvailability,omitempty"`
-	ArtifactsExpiredAt     string                 `json:"artifactsExpiredAt,omitempty"`
-	KnowledgeDelta         string                 `json:"knowledgeDelta,omitempty"`
-	Deps                   []serveTaskDependency  `json:"deps"`
-	Gates                  []serveGate            `json:"gates"`
-	HumanAction            *serveHumanAction      `json:"humanAction,omitempty"`
-	HumanActions           []serveHumanAction     `json:"humanActions"`
-	AgentAccessApprovals   []AgentAccessApproval  `json:"agentAccessApprovals,omitempty"`
-	RunHistory             []serveRunSummary      `json:"runHistory"`
-	RunDirective           *serveRunDirective     `json:"runDirective,omitempty"`
-	Contacts               []AgentContact         `json:"contacts"`
-	Messages               []AgentMessage         `json:"messages"`
+	StateRevision          string                   `json:"stateRevision"`
+	Architect              string                   `json:"architect,omitempty"`
+	Origin                 string                   `json:"origin,omitempty"`
+	AuthoringProvenance    *TaskAuthoringProvenance `json:"authoringProvenance,omitempty"`
+	ContactBindings        []AgentContactBinding    `json:"contactBindings,omitempty"`
+	IdentityError          string                   `json:"identityError,omitempty"`
+	AuthoredWorkLevel      string                   `json:"authoredWorkLevel,omitempty"`
+	AuthoredReviewLevel    string                   `json:"authoredReviewLevel,omitempty"`
+	AuthoredReviewReason   string                   `json:"authoredReviewReason,omitempty"`
+	AuthoredExecuteProfile string                   `json:"authoredExecuteProfile,omitempty"`
+	AuthoredReviewProfile  string                   `json:"authoredReviewProfile,omitempty"`
+	EffectiveExecute       runnerRoutePreview       `json:"effectiveExecute"`
+	EffectiveReview        runnerRoutePreview       `json:"effectiveReview"`
+	Body                   string                   `json:"body"`
+	Intent                 string                   `json:"intent"`
+	Acceptance             []serveAcceptanceRow     `json:"acceptance"`
+	NonGoals               []string                 `json:"nonGoals"`
+	Verification           []serveVerificationRow   `json:"verification"`
+	Evidence               []serveEvidenceCard      `json:"evidence"`
+	ArtifactsKeep          bool                     `json:"artifactsKeep"`
+	ArtifactsAvailability  string                   `json:"artifactsAvailability,omitempty"`
+	ArtifactsExpiredAt     string                   `json:"artifactsExpiredAt,omitempty"`
+	KnowledgeDelta         string                   `json:"knowledgeDelta,omitempty"`
+	Deps                   []serveTaskDependency    `json:"deps"`
+	Gates                  []serveGate              `json:"gates"`
+	HumanAction            *serveHumanAction        `json:"humanAction,omitempty"`
+	HumanActions           []serveHumanAction       `json:"humanActions"`
+	AgentAccessApprovals   []AgentAccessApproval    `json:"agentAccessApprovals,omitempty"`
+	RunHistory             []serveRunSummary        `json:"runHistory"`
+	RunDirective           *serveRunDirective       `json:"runDirective,omitempty"`
+	Contacts               []AgentContact           `json:"contacts"`
+	Messages               []AgentMessage           `json:"messages"`
 }
 
 type serveRunDirective struct {

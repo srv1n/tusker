@@ -48,6 +48,12 @@ func executeACP(ctx context.Context, prepared PreparedLaunch, sink EventSink) (E
 	if _, err = client.Initialize(runCtx); err == nil {
 		_, err = client.NewSession(runCtx)
 	}
+	if err == nil && prepared.Provider == "devin" {
+		_, err = client.SetConfigOption(runCtx, "mode", "smart")
+		if err == nil {
+			_, err = client.SetConfigOption(runCtx, "model", prepared.Model)
+		}
+	}
 	var result acp.PromptResult
 	if err == nil {
 		result, err = client.Prompt(runCtx, prepared.prompt)

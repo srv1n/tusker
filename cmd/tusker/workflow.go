@@ -398,9 +398,13 @@ Checklist:
 2. Run the smallest verification needed to prove the acceptance contract.
    Pending inline verification is expected before independent review. When the command passes, confirm the injected verification manifest in the typed pass result; do not require a pre-existing evidence card.
 3. Risk alone does not justify a human gate. Create or honor one only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
-4. Record any acceptance gap as an actionable typed finding.
+4. Record every acceptance gap as a typed finding. Put all findings in one JSON array; never repeat ` + "`--finding`" + `.
 
 Submit exactly one result for the injected review attempt: ` + "`tusker review submit {{ note.id }} --attempt {{ attempt.id }} --task-rev {{ review.task_rev }} --source-sha {{ review.source_sha }} --work-rev {{ review.work_rev }} --proof-fingerprint {{ review.proof_fingerprint }} --gate-fingerprint {{ review.gate_fingerprint }} --material-fingerprint {{ review.material_fingerprint }} --confirm-verification {{ review.verification_manifest }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
+
+For changes_requested, append ` + "`" + reviewerFindingFlagExample("{{ review.material_fingerprint }}") + "`" + `. Keep every blocking and advisory record in that one array. A blocking record requires stable id, acceptance, evidence, consequence, closure_condition, and the injected material fingerprint.
+
+For a later pass that independently verifies repaired findings, append ` + "`" + reviewerClosureFlagExample("{{ review.material_fingerprint }}") + "`" + `. Copy each prior blocking finding id and closure_condition exactly, add current evidence, and bind the injected repaired-material fingerprint.
 
 Explicit blocking gates must be reported in the typed result; do not change gate or task state.`)
 }

@@ -208,7 +208,7 @@ export function WaveFlow(props: WaveFlowProps) {
                     {node.kind !== "task" && <span className="ml-auto font-mono text-[9.5px] uppercase tracking-wide text-faint">{NODE_KIND_LABEL[node.kind]}</span>}
                   </span>
                   <span className="mt-2 line-clamp-2 text-[13.5px] font-semibold leading-snug text-ink">{node.title}</span>
-                  <span className="mt-1.5 block truncate font-mono text-[10.5px] text-faint">{node.id}{node.model ? ` · ${node.model}` : ""}</span>
+                  <span className="mt-1.5 block truncate font-mono text-[10.5px] text-faint">{node.id}{node.tier ? ` · Tier ${{ light: 1, standard: 2, demanding: 3 }[node.tier] ?? node.tier}` : ""}{node.model ? ` · ${node.model}` : ""}</span>
                   {node.depIds.length > 0 && <span className="mt-2 block truncate border-t border-line pt-2 text-[10.5px] text-muted" title={node.depIds.join(", ")}>After {node.depIds.join(", ")}</span>}
                 </button>
                 );

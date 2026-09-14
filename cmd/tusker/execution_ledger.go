@@ -82,7 +82,7 @@ type ProviderChildExecutionInput struct {
 
 // ExecutionView combines immutable identity with append-only operator facts.
 // The ledger record is never rewritten: renames, provider correlation and
-// delivery binding all have their own audited history.
+// task binding all have their own audited history.
 type ExecutionView struct {
 	ExecutionRecord
 	EffectiveDisplayName string `json:"effective_display_name"`
@@ -555,6 +555,24 @@ func (s *RuntimeStore) ExecutionView(id string) (*ExecutionView, error) {
 	return view, nil
 }
 
+func (s *RuntimeStore) ExecutionProvider(executionID string) (string, error) {
+	record, err := s.Execution(executionID)
+	if err != nil || record == nil {
+		return "", err
+	}
+	provider := strings.ToLower(strings.TrimSpace(record.Provider))
+	if provider != "" {
+		return provider, nil
+	}
+	if err := s.queryRowScan(`SELECT provider FROM execution_attachment_events WHERE execution_id=? ORDER BY created_at DESC, event_id DESC LIMIT 1`, []any{executionID}, &provider); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.ToLower(strings.TrimSpace(provider)), nil
+}
+
 // executionForProviderRun resolves a provider-owned session to its original
 // execution before considering the current Tusker attempt. A resumed attempt
 // is a new immutable execution in Tusker's lineage, but it does not take
@@ -631,7 +649,7 @@ func (s *RuntimeStore) attemptDescendsFrom(projectID, attemptID, ancestorAttempt
 }
 
 func (s *RuntimeStore) ListUnboundDirectExecutions(projectID string) ([]ExecutionView, error) {
-	rows, err := s.query(`SELECT execution_id FROM execution_records WHERE project_id = ? AND node_kind = 'root' AND source IN ('direct_codex','direct_claude','codex_cloud','direct') ORDER BY created_at DESC`, strings.TrimSpace(projectID))
+	rows, err := s.query(`SELECT execution_id FROM execution_records WHERE project_id = ? AND node_kind = 'root' AND source IN ('direct_codex','direct_claude','codex_cloud','direct_devin','direct') ORDER BY created_at DESC`, strings.TrimSpace(projectID))
 	if err != nil {
 		return nil, err
 	}

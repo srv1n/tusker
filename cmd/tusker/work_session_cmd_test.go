@@ -520,6 +520,10 @@ func TestWorkSessionInteractiveReviewReceiptBindsImplementer(t *testing.T) {
 	if packet.Action != "review" || packet.Run == nil || packet.Run.Lane != runLaneReview || packet.Run.ActiveAttemptID == "" || packet.ImplementationAttempt != attempts[0].AttemptID || packet.Workspace != attempts[0].WorkspacePath || packet.ImplementationActor != "agent:implementer" || packet.ProofFingerprint == "" || packet.GateFingerprint == "" || packet.MaterialFingerprint == "" || !strings.Contains(packet.Next, "--material-fingerprint "+packet.MaterialFingerprint) {
 		t.Fatalf("review packet lacks native provenance: %#v", packet)
 	}
+	authorizations, err := store.ListRunAuthorizations(run.ProjectID, run.RecordID)
+	if err != nil || len(authorizations) != 2 || authorizations[0].AttemptID != attempts[0].AttemptID || authorizations[1].AttemptID != packet.Run.ActiveAttemptID {
+		t.Fatalf("authorization attempt bindings: %#v err=%v", authorizations, err)
+	}
 	current, err := resolveV7Note(vault, "APP-T-0001", "task")
 	if err != nil {
 		t.Fatal(err)

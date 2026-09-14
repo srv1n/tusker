@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "@tanstack/react-router";
-import { AlertTriangle, CircleOff, LockKeyhole } from "lucide-react";
+import { AlertTriangle, CircleOff, LockKeyhole, Sparkles } from "lucide-react";
 import { Button, Select, SegmentedControl, TextInput, Toggle } from "@/components/ui/controls";
 import { ActionResultLine } from "@/components/ui/action-feedback";
 import { Card, Chip, Dot, Mono } from "@/components/ui/primitives";
@@ -9,7 +9,10 @@ import { QueryBoundary, SkeletonRows } from "@/components/ui/states";
 import { useDaemon, useFactoryOperations, useProjectAutomation, useProjectSettings, useProjects, useRuns, useWaves } from "@/lib/queries";
 import { cn } from "@/lib/cn";
 import { projectContainsCheckout, type DaemonStatus, type FactoryOperationsProjection, type ProjectSummary, type RunSummary, type WaveSummary } from "@/types/domain";
+import { api } from "@/lib/api";
 import { TiersSection } from "@/features/settings/app/TiersSection";
+import { NAVIGATION_CHANGED_EVENT, readNavigationState, setProjectIcon, writeNavigationState, type ProjectIconName, type StorageLike } from "@/features/workbench/navigation/navigationState";
+import { PROJECT_ICON_CHANGED_EVENT, projectIconChoices } from "@/features/workbench/navigation/projectIcons";
 import { ProjectRegistrationRepair } from "./ProjectRegistrationRepair";
 
 type SettingsTab = "basic" | "models" | "advanced";
@@ -38,7 +41,7 @@ export function Settings() {
           title="Settings"
           subtitle="Effective project policy, with the source of each value made explicit."
         />
-        <div className="mb-7 border-b-2 border-ink pb-4">
+        <div className="mb-7 border-b border-line pb-4">
           <SegmentedControl
             value={tab}
             onChange={setTab}
@@ -53,7 +56,7 @@ export function Settings() {
             const selected = group.checkouts?.find((checkout) => checkout.id === projectId);
             const project = selected ? { ...group, id: selected.id, repoRoot: selected.repoRoot, vaultRoot: selected.vaultRoot, health: selected.health } : group;
             return tab === "basic" ? (
-              <SettingsBasic project={project} operations={operations.data} automation={automation} settings={settings} onOpenAdvanced={() => setTab("advanced")} />
+              <SettingsBasic project={project} projectIds={items.map((item) => item.id)} operations={operations.data} automation={automation} settings={settings} onOpenAdvanced={() => setTab("advanced")} />
             ) : (
               <SettingsAdvanced project={project} operations={operations.data} />
             );
@@ -67,12 +70,14 @@ export function Settings() {
 
 function SettingsBasic({
   project,
+  projectIds,
   operations,
   automation,
   settings,
   onOpenAdvanced,
 }: {
   project: ProjectSummary;
+  projectIds: string[];
   operations: FactoryOperationsProjection | undefined;
   automation: ReturnType<typeof useProjectAutomation>;
   settings: ReturnType<typeof useProjectSettings>;
@@ -99,6 +104,14 @@ function SettingsBasic({
           <Button type="button" size="sm" variant="primary" onClick={onOpenAdvanced}>Open registration repair</Button>
         </Card>
       ) : null}
+      <SettingGroup label="Appearance">
+        <SettingRow
+          name="Project icon"
+          detail="Pick an icon, upload an image, or let Tusker use a repository icon when one is discoverable."
+          source="Local"
+          control={<ProjectIconPicker key={project.logicalId ?? project.id} projectId={project.logicalId ?? project.id} projectIds={projectIds} />}
+        />
+      </SettingGroup>
       <SettingGroup label="Automation">
         <SettingRow
           name="Background work"
@@ -138,11 +151,11 @@ function SettingsBasic({
           source={project.concurrencySource ?? "Project"}
           control={<TextInput aria-label="Project concurrent tasks" inputMode="numeric" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className="w-28 font-mono" />}
         />
-        <div className="flex justify-end border-b border-line pb-4">
+        <div className="flex flex-wrap items-center justify-end gap-3 bg-panel px-4 py-3">
+          <ActionResultLine pending={settings.isPending} error={settings.error} result={settings.data} />
+          <ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />
           <Button variant="primary" disabled={settings.isPending} onClick={saveExecution}>{settings.isPending ? "Saving…" : "Save execution settings"}</Button>
         </div>
-        <ActionResultLine pending={settings.isPending} error={settings.error} result={settings.data} />
-        <ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />
       </SettingGroup>
 
       <SettingGroup label="Notifications">
@@ -152,11 +165,155 @@ function SettingsBasic({
   );
 }
 
+function localNavigationStorage(): StorageLike | null {
+  try {
+    return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+const PROJECT_ICON_UPLOAD_MAX_BYTES = 96 * 1024;
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the image file"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Center-crops an uploaded image to a square and re-encodes it small enough for
+ * the action-body limit. SVGs pass through untouched; other formats get a
+ * size ladder that trades resolution for a payload that always fits.
+ */
+async function rasterizeProjectIcon(file: File): Promise<{ data: string; mime: string }> {
+  if (file.type === "image/svg+xml") {
+    if (file.size > PROJECT_ICON_UPLOAD_MAX_BYTES) throw new Error("That SVG is too large for an icon upload.");
+    return { data: await blobToBase64(file), mime: "image/svg+xml" };
+  }
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error("That image format can't be processed in this browser.");
+  }
+  const crop = Math.min(bitmap.width, bitmap.height);
+  const sx = (bitmap.width - crop) / 2;
+  const sy = (bitmap.height - crop) / 2;
+  for (const [size, type] of [[256, "image/png"], [128, "image/png"], [256, "image/webp"], [128, "image/webp"]] as const) {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (!context) continue;
+    context.drawImage(bitmap, sx, sy, crop, crop, 0, 0, size, size);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.92));
+    if (blob && blob.size <= PROJECT_ICON_UPLOAD_MAX_BYTES) {
+      const encoded = { data: await blobToBase64(blob), mime: blob.type || type };
+      bitmap.close();
+      return encoded;
+    }
+  }
+  bitmap.close();
+  throw new Error("Couldn't compress that image under the icon size limit.");
+}
+
+function ProjectIconPicker({ projectId, projectIds }: { projectId: string; projectIds: string[] }) {
+  const [selected, setSelected] = useState<ProjectIconName>(() => readNavigationState(localNavigationStorage(), projectIds).projectIconById[projectId] ?? "auto");
+  const [iconSource, setIconSource] = useState<"uploaded" | "discovered" | null>(null);
+  const [iconVersion, setIconVersion] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let live = true;
+    api.projectIconSource(projectId).then((source) => { if (live) setIconSource(source); }).catch(() => {});
+    return () => { live = false; };
+  }, [projectId, iconVersion]);
+
+  const choose = (icon: ProjectIconName) => {
+    const storage = localNavigationStorage();
+    const state = readNavigationState(storage, projectIds);
+    writeNavigationState(storage, setProjectIcon(state, projectIds, projectId, icon));
+    setSelected(icon);
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(NAVIGATION_CHANGED_EVENT));
+  };
+  const upload = async (file: File) => {
+    setBusy(true);
+    setError("");
+    try {
+      const icon = await rasterizeProjectIcon(file);
+      await api.setProjectIconImage(projectId, icon);
+      choose("auto");
+      setIconVersion((version) => version + 1);
+      window.dispatchEvent(new Event(PROJECT_ICON_CHANGED_EVENT));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Icon upload failed.");
+    } finally {
+      setBusy(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+  const pick = () => {
+    const pickImage = window.tuskerShell?.pickImage;
+    if (pickImage) {
+      void pickImage()
+        .then((picked) => {
+          if (!picked) return;
+          if ("error" in picked) { setError(picked.error); return; }
+          const bytes = Uint8Array.from(atob(picked.data), (char) => char.charCodeAt(0));
+          void upload(new File([bytes], picked.name, { type: picked.mime }));
+        })
+        .catch(() => setError("The image picker did not respond."));
+      return;
+    }
+    fileInput.current?.click();
+  };
+  const clearUploaded = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.clearProjectIconImage(projectId);
+      setIconVersion((version) => version + 1);
+      window.dispatchEvent(new Event(PROJECT_ICON_CHANGED_EVENT));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Icon removal failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex max-w-[280px] flex-wrap items-center gap-1" role="group" aria-label="Project icon">
+        <button type="button" aria-label="Automatic project icon" title="Automatic" aria-pressed={selected === "auto"} onClick={() => choose("auto")} className={cn("flex h-8 w-8 items-center justify-center rounded-md border transition-colors", selected === "auto" ? "border-ink bg-ink text-surface" : "border-line text-muted hover:bg-hover hover:text-ink")}><Sparkles size={15} aria-hidden="true" /></button>
+        {projectIconChoices.map(({ name, label, Icon, className }) => <button key={name} type="button" aria-label={`${label} project icon`} title={label} aria-pressed={selected === name} onClick={() => choose(name)} className={cn("flex h-8 w-8 items-center justify-center rounded-md border transition-colors", selected === name ? "border-ink bg-ink" : "border-line hover:bg-hover")}><Icon size={15} aria-hidden="true" className={selected === name ? "text-surface" : className} /></button>)}
+      </div>
+      <div className="flex items-center gap-2">
+        <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); }} />
+        {iconSource === "uploaded" ? (
+          <>
+            <img src={`/api/projects/${encodeURIComponent(projectId)}/icon?v=${iconVersion}`} alt="Uploaded project icon" className="h-8 w-8 rounded-md border border-line object-cover" />
+            <Button type="button" size="sm" disabled={busy} onClick={pick}>Replace</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void clearUploaded()}>Remove</Button>
+          </>
+        ) : (
+          <Button type="button" size="sm" disabled={busy} onClick={pick}>{busy ? "Processing…" : "Upload image"}</Button>
+        )}
+        {iconSource === "discovered" ? <span className="text-[11px] text-faint">Using an icon found in the repository</span> : null}
+      </div>
+      {error ? <p role="alert" className="text-[11px] text-fail">{error}</p> : null}
+    </div>
+  );
+}
+
 function SettingsAdvanced({ project, operations }: { project: ProjectSummary; operations: FactoryOperationsProjection | undefined }) {
   const needsRegistrationRepair = project.health === "error";
   return (
     <div className="space-y-8">
-      <aside className="border-l-2 border-line bg-panel px-4 py-3 text-[13px] leading-relaxed text-muted">
+      <aside className="rounded-xl border border-dashed border-line bg-panel px-4 py-3 text-[13px] leading-relaxed text-muted">
         Advanced values are read-only except for the bounded registration repair below. It changes only the Serve project pointer; it does not reset or retire task state.
       </aside>
       <SettingGroup label="Project and repository">
@@ -175,8 +332,10 @@ function SettingsAdvanced({ project, operations }: { project: ProjectSummary; op
               source={checkout.repoRoot}
             />
           ))}
-          <p className="text-[11px] leading-4 text-faint">Grouping is navigation-only. Cleanup preview: <span className="font-mono">tusker projects prune</span>.</p>
-          {project.registryPreview?.missingRegistrations.length ? <p className="text-[11px] leading-4 text-warn">Missing registrations: {project.registryPreview.missingRegistrations.join(", ")}</p> : null}
+          <div className="space-y-1 px-4 py-3">
+            <p className="text-[11px] leading-4 text-faint">Grouping is navigation-only. Cleanup preview: <span className="font-mono">tusker projects prune</span>.</p>
+            {project.registryPreview?.missingRegistrations.length ? <p className="text-[11px] leading-4 text-warn">Missing registrations: {project.registryPreview.missingRegistrations.join(", ")}</p> : null}
+          </div>
         </SettingGroup>
       ) : null}
       <ProjectRegistrationRepair project={project} needsAttention={needsRegistrationRepair} />
@@ -301,8 +460,8 @@ function AuditTab({ operations, waves }: { operations: FactoryOperationsProjecti
   return <div className="space-y-6"><FactGrid facts={[["Generated", operations.generatedAt], ["Armed waves", String(operations.authority.waves.length)], ["Visible waves", String(waves.length)], ["Resource holds", String(operations.capacity.resourceHolds.length)], ["Needs decision", String(operations.needsYourDecision.length)], ["Delivered records", String(operations.delivered.length)]]} /><section><SectionLabel className="mb-2">Wave authorization</SectionLabel><div className="space-y-2">{waves.length ? waves.map((wave) => <Card key={wave.id} className="flex flex-wrap items-center justify-between gap-3 p-3"><div><Mono className="text-[10.5px] text-faint">{wave.id}</Mono><span className="ml-2 text-[13px] font-medium text-ink-soft">{wave.title}</span></div><div className="flex items-center gap-2"><Chip tone={wave.authorization.state === "armed" ? "pass" : "warn"} mono>{wave.authorization.state}</Chip><Mono className="text-[10px] text-faint">{wave.authorization.action}</Mono></div></Card>) : <EmptyReadout text="No wave records." />}</div></section></div>;
 }
 
-function SettingGroup({ label, children }: { label: string; children: ReactNode }) { return <section><div className="mb-2 flex items-center gap-3"><SectionLabel className="text-ink">{label}</SectionLabel><span className="h-px flex-1 bg-line" /></div><div className="border-t border-line">{children}</div></section>; }
-function SettingRow({ name, detail, source, control }: { name: string; detail: string; source: string; control: ReactNode }) { return <div className="grid gap-3 border-b border-line px-2 py-4 md:grid-cols-[minmax(250px,1fr)_minmax(200px,280px)_110px] md:items-center"><div><h3 className="text-[14px] font-medium text-ink">{name}</h3><p className="mt-1 text-[12px] leading-relaxed text-muted">{detail}</p></div><div>{control}</div><Mono className="text-[9.5px] uppercase tracking-[0.08em] text-faint md:text-right">{source}</Mono></div>; }
+function SettingGroup({ label, children }: { label: string; children: ReactNode }) { return <section><SectionLabel className="mb-[10px] text-ink">{label}</SectionLabel><Card className="divide-y divide-line-soft overflow-hidden">{children}</Card></section>; }
+function SettingRow({ name, detail, source, control }: { name: string; detail: string; source: string; control: ReactNode }) { return <div className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(250px,1fr)_minmax(200px,280px)_110px] md:items-center"><div><h3 className="text-[14px] font-medium text-ink">{name}</h3><p className="mt-1 text-[12px] leading-relaxed text-muted">{detail}</p></div><div>{control}</div><Mono className="text-[9.5px] uppercase tracking-[0.08em] text-faint md:text-right">{source}</Mono></div>; }
 function UnavailableRow({ name, detail }: { name: string; detail: string }) { return <SettingRow name={name} detail={detail} source="Unavailable" control={<span className="inline-flex items-center gap-1.5 text-[12px] text-faint"><LockKeyhole size={12} /> {unavailable}</span>} />; }
 function ReadOnlyRow({ name, value, source }: { name: string; value: string; source: string }) { return <SettingRow name={name} detail="Served as an effective value; this surface does not expose an edit control." source={source} control={<ReadValue value={value} />} />; }
 function ReadValue({ value }: { value: string }) { return <Mono className="block break-words text-[11px] text-ink-soft">{value}</Mono>; }

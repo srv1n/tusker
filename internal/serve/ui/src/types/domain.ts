@@ -108,182 +108,11 @@ export interface ActionResult {
   discard?: DiscardImpact;
 }
 
-export interface WaveExecutionReceipt {
-  waveId: string;
-  authorizationFingerprint: string;
-  queuedTaskIds: string[];
-  alreadyQueuedTaskIds: string[];
-  statusLink: string;
-}
-
-export interface WaveExecuteResult extends ActionResult {
-  execution?: WaveExecutionReceipt;
-}
-
-export interface DeliveryCrossScopeDependency {
-  consumerTaskId?: string;
-  consumerSourceKey: string;
-  scope: string;
-  sourceKey: string;
-  taskId?: string;
-  kind: "hard";
-  persistedContractFingerprint?: string;
-  contractProvenance: "persisted" | "prospective" | "missing" | "invalid";
-  targetIntegrity: "resolved" | "missing" | "corrupt";
-  producerState: string;
-  producerLifecycle: "complete" | "incomplete" | "failed" | "unknown";
-  blockerClass: "none" | "structural" | "lifecycle";
-  satisfied: boolean;
-  repair?: string;
-  implication: string;
-  taskHref?: string;
-}
-
-// Delivery intake is deliberately a product projection. These are the exact
-// five CLI review sections, not a second client-side planner.
-export interface DeliveryReview {
-  schema: "tusker.delivery-review/v1";
-  readOnly: true;
-  ready: boolean;
-  title: string;
-  summary?: string;
-  whatWillBeDelivered: Array<{
-    requirement: string;
-    outcome: string;
-    nonGoals: string[];
-    links: DeliveryReviewLink[];
-  }>;
-  howItWillBeProven: Array<{
-    requirements: string[];
-    title: string;
-    outcome: string;
-    acceptance: string[];
-    tests: string[];
-    artifacts: string[];
-    sourceKey: string;
-    taskId?: string;
-    taskHref?: string;
-    checks: Array<{
-      covers: string;
-      check: string;
-      notes?: string;
-      href?: string;
-    }>;
-    artifactRefs: Array<{
-      kind: string;
-      path: string;
-      summary: string;
-      acceptanceIds: string[];
-      href?: string;
-    }>;
-    resourceRefs: string[];
-  }>;
-  howWorkFlows: {
-    frontiers: string[][];
-    expectedConcurrency: number;
-    integration: string;
-    sharedResources: Array<{
-      sourceKey: string;
-      kind: string;
-      capacity?: number;
-      capacityStatus: string;
-      constraints: string[];
-      referencedBy: string[];
-      taskLinks: DeliveryReviewLink[];
-    }>;
-    crossScopeDependencies: DeliveryCrossScopeDependency[];
-    warnings: string[];
-    waveId?: string;
-    waveHref?: string;
-  };
-  whatNeedsYourDecision: Array<{
-    title: string;
-    action: string;
-    why: string;
-    sourceKey?: string;
-    gateId?: string;
-    gateHref?: string;
-    taskSourceKey?: string;
-    taskId?: string;
-    acceptanceIds: string[];
-    verification?: string;
-  }>;
-  startBoundary: {
-    planFingerprint: string;
-    planIdentity?: string;
-    contextFingerprint?: string;
-    authorization: string;
-    readiness: string;
-    blockers: string[];
-    nextAction: string;
-    state: DeliveryReviewState;
-    stateLabel: string;
-    actionHref?: string;
-  };
-  nonGoals: string[];
-}
-
-export interface DeliveryPlanList {
-  schema: "tusker.delivery-plan-list/v1";
-  readOnly: true;
-  plans: DeliveryPlanSummary[];
-}
-
-export interface DeliveryPlanSummary {
-  path: string;
-  title: string;
-  summary?: string;
-  specRefs: string[];
-  taskCount: number;
-  expectedConcurrency: number;
-  runnerProfile?: string;
-  tasks: Array<{
-    sourceKey: string;
-    title: string;
-    runnerProfile?: string;
-    complexity?: string;
-    risk?: string;
-  }>;
-  state: "available" | "invalid";
-  issue?: string;
-}
-
-export interface DeliveryReviewLink {
-  label: string;
-  href: string;
-}
-export type DeliveryReviewState =
-  | "held"
-  | "invalid"
-  | "changed"
-  | "disabled"
-  | "daemon-off"
-  | "runner-blocked"
-  | "shared-workspace"
-  | "gated"
-  | "armed"
-  | "running"
-  | "parked"
-  | "completed";
-
-export interface DeliveryStartResult {
-  schema: "tusker.delivery-start/v1";
-  waveId: string;
-  planFingerprint: string;
-  contextFingerprint: string;
-  authorizationFingerprint: string;
-  firstFrontier: string[];
-  expectedConcurrency: number;
-  integrationLane: string;
-  statusLink: string;
-  replayed: boolean;
-  nextAction?: string;
-}
-
-export interface DeliveryErrorPayload {
-  schema: "tusker.serve-delivery-error/v1";
-  error: ActionIssue;
-}
+export interface DirectStartBlocker { code: string; taskId?: string; reason: string; action: string }
+export interface DirectStartControl { action: "wave start" | "wave pause" | "wave resume" | "task start"; enabled: boolean; scope: string; reason?: string }
+export interface WaveReviewMember { taskId: string; title: string; state: string; waitingReason?: string; dependencies?: string[]; executeRoute?: string; reviewRoute?: string; acceptance?: string[]; verification?: string[]; instructions?: string }
+export interface WaveReview { schema: "tusker.wave-review/v1"; waveId: string; title: string; outcome: string; state: "Planned" | "Running" | "Paused" | "Waiting" | "Completed"; authorization: "inert" | "authorized" | "paused" | "stale"; materialFingerprint: string; members: WaveReviewMember[]; frontiers: string[][]; blockers: DirectStartBlocker[]; controls: DirectStartControl[] }
+export interface DirectStartResult { schema: "tusker.direct-start/v1"; subject: string; scope: "task" | "wave"; state: string; authorization: string; materialFingerprint?: string; reason?: string; queuedTaskIds?: string[]; claimedTaskIds?: string[]; replayed: boolean; blockers?: DirectStartBlocker[]; controls?: DirectStartControl[] }
 
 export interface DiscardDependent {
   id: string;
@@ -844,6 +673,9 @@ export interface WaveTaskSummary {
   group: string;
   status: string;
   proof: string;
+  workLevel?: "light" | "standard" | "demanding";
+  effectiveExecute?: TaskRoutePreview;
+  effectiveReview?: TaskRoutePreview;
 }
 
 export interface WaveSummary {
@@ -851,6 +683,7 @@ export interface WaveSummary {
   title: string;
   status: string;
   expectedOutcome?: string | null;
+  body?: string;
   landedAt?: string | null;
   memberIds: string[];
   members: WaveTaskSummary[];
@@ -944,6 +777,8 @@ export interface WaveBrief {
     gateId: string;
     gateHref: string;
     action: string;
+    owner?: string;
+    why?: string;
     resumeId: string;
     blockedTaskIds: string[];
   }>;
@@ -1060,13 +895,27 @@ export interface EvidenceCard {
 }
 
 export interface TaskDetail extends TaskCapsule {
+	architect?: string;
+	origin?: string;
+	/** Canonical authored task contract, including implementation guidance and non-goals. */
+	body?: string;
+  authoringProvenance?: {
+    source: string;
+    conversation_id?: string;
+    host?: string;
+    captured_at: string;
+    binding_state: "bound" | "unbound";
+  };
   contacts?: AgentContact[];
+  contactBindings?: AgentContactBinding[];
+  identityError?: string;
   messages?: AgentMessage[];
   artifactsKeep?: boolean;
   artifactsAvailability?: string;
   artifactsExpiredAt?: string;
   authoredWorkLevel?: "light" | "standard" | "demanding";
   authoredReviewLevel?: "light" | "standard" | "demanding";
+  authoredReviewReason?: string;
   authoredExecuteProfile?: string;
   authoredReviewProfile?: string;
   stateRevision?: string;
@@ -1101,6 +950,20 @@ export interface AgentContact {
   name?: string;
   address: { kind: "task" | "execution"; id: string };
   generation: number;
+}
+
+export interface AgentContactBinding {
+  contact: AgentContact;
+  state: "bound" | "unbound" | string;
+  reason?: string;
+  provider?: string;
+  execution?: {
+    execution_id?: string;
+    effective_display_name?: string;
+    effective_provider_session_id?: string;
+    session_ref?: string;
+    attempt_id?: string;
+  };
 }
 
 export interface AgentMessage {
@@ -1486,6 +1349,7 @@ export interface RunnerCatalogHarness {
   available: boolean;
   discovery_state: string;
   discovery_source?: string;
+  last_checked?: string;
   error?: string;
   error_kind?:
     "unsupported" | "authentication" | "timeout" | "implementation" | string;

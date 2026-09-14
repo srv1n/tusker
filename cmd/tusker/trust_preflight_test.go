@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -8,7 +9,7 @@ import (
 
 // TestTrustPreflight exercises the public mutation/read paths against the
 // same contract defect. It is intentionally not a wrapper around validators:
-// status, next, daemon dispatch, and delivery Start each use their production
+// status, next, daemon dispatch, and direct Start each use their production
 // entry point and read-only refusals must leave their input untouched.
 func TestTrustPreflight(t *testing.T) {
 	t.Run("status ready next and dispatch reject a placeholder contract", func(t *testing.T) {
@@ -80,16 +81,58 @@ func TestTrustPreflight(t *testing.T) {
 		}
 	})
 
-	t.Run("delivery start refuses stale confirmation without writes", func(t *testing.T) {
-		vault := deliveryTestVault(t)
-		plan := validDeliveryPlanV2()
-		plan.HumanGates = nil
-		path := writeDeliveryV2TestPlan(t, vault, plan)
-		before := snapshotDeliveryRecords(t, vault)
-		_, err := deliveryStart(Args{"vault": vault, "plan": path, "by": "human:test", "confirm": "sha256:stale", "quiet": "true"}, nil)
-		if err == nil || !strings.Contains(err.Error(), "confirmed plan fingerprint differs") {
-			t.Fatalf("delivery Start accepted stale confirmation: %v", err)
+	t.Run("wave resume refuses stale material without extra writes", func(t *testing.T) {
+		vault, store, _ := authorityFixture(t)
+		writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+		writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+		if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err != nil {
+			t.Fatal(err)
 		}
-		assertEqual(t, before, snapshotDeliveryRecords(t, vault), "stale delivery start must not write")
+		if _, err := directWavePause(vault, store, "W-0001", "human:test"); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotTrustVaultFiles(t, vault)
+		taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+		data, body, err := parseFrontmatterMustRead(taskPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data["title"] = "Amended while paused"
+		data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
+		data["state_rev"] = v7StateRev(data, body)
+		content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(taskPath, content); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := directWaveResume(vault, store, "W-0001", "human:test"); err == nil {
+			t.Fatal("wave resume accepted stale material")
+		}
+		after := snapshotTrustVaultFiles(t, vault)
+		for path, content := range before {
+			if path == taskPath || strings.HasPrefix(path, filepath.Join(vault, "events")+string(filepath.Separator)) {
+				continue
+			}
+			if after[path] != content {
+				t.Fatalf("stale resume wrote %s", path)
+			}
+		}
 	})
+}
+
+func snapshotTrustVaultFiles(t *testing.T, vault string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	if err := filepath.WalkDir(vault, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		out[path] = mustReadIndexTest(t, path)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

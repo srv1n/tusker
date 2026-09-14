@@ -622,7 +622,7 @@ func TestV7ProofMatchingRejectsKeywordTheater(t *testing.T) {
 		t.Fatalf("keyword-only evidence must not satisfy focused_test: %#v", report)
 	}
 
-	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: go test ./cmd/tusker -run TestV7ProofMatchingRejectsKeywordTheater -count=1", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
+	if err := v7TestVerificationMutation(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:gate", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestV7ProofMatchingRejectsKeywordTheater -count=1", "result": "pass", "note": "Existing gate receipt."}); err != nil {
 		t.Fatal(err)
 	}
 	report = computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))

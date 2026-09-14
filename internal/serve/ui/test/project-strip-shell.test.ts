@@ -16,10 +16,16 @@ test("project rail shell exposes the navigation surfaces", () => {
   expect(root).not.toContain("<Sidebar ");
   expect(strip).toContain('data-project-strip');
   expect(strip).toContain('"project-rail relative');
-  expect(root).toContain('aria-label="Project sections"');
-  expect(root).toContain('"section-rail relative flex flex-none flex-col bg-surface');
-  expect(root).toContain('sectionExpanded: !value.sectionExpanded');
-  expect(strip).toContain('"project-rail relative flex h-full flex-none flex-col bg-raised');
+  expect(root).not.toContain('aria-label="Project sections"');
+  expect(root).not.toContain('"section-rail relative flex flex-none flex-col bg-surface');
+  expect(root).not.toContain('sectionExpanded: !value.sectionExpanded');
+  expect(strip).toContain('"project-rail relative flex h-full flex-none flex-col');
+  expect(strip).toContain('border-r border-line-soft bg-raised');
+  expect(strip).toContain("<ProjectSubtree expanded={expanded}");
+  expect(strip).toContain('expanded ? "w-52" : "w-14"');
+  expect(strip).toContain('selected && "items-center rounded-xl bg-panel p-1 ring-1 ring-inset ring-line"');
+  expect(strip).toContain('selected ? "bg-raised text-ink shadow-sm"');
+  expect(strip).toContain('active ? "bg-info-soft text-info"');
   expect(strip).toContain('aria-label={expanded ? "Minimize project navigation" : "Expand project navigation"}');
   expect(strip).toContain('"project-strip-track flex min-h-0 flex-1 flex-col gap-2');
   expect(knowledgeShell).toContain('w-[280px]');
@@ -31,8 +37,8 @@ test("project rail shell exposes the navigation surfaces", () => {
   expect(strip).toContain('Notifications, ${count} items need you');
   expect(strip).toContain("App settings");
   expect(strip).toContain('aria-label="App actions"');
-  for (const label of ["Waves", "Board", "Docs", "Settings"]) expect(root).toContain(`>${label}</span>`);
-  expect(root).toContain('aria-label="More project destinations"');
+  for (const label of ["Waves", "Board", "Docs", "Settings"]) expect(strip).toContain(label);
+  expect(strip).toContain('aria-label="More project destinations"');
   expect(strip).toContain("toggleProjectPinned");
   expect(strip).toContain("movePinnedProject");
   expect(strip).toContain("overflow-y-auto");
@@ -45,11 +51,10 @@ test("project rail shell exposes the navigation surfaces", () => {
 
 test("secondary actions keep registration, refresh and project destinations reachable", () => {
   const strip = source("src/features/workbench/navigation/ProjectStrip.tsx");
-  const root = source("src/routes/__root.tsx");
   const sidebar = source("src/components/Sidebar.tsx");
 
   for (const label of ["Add project", "Refresh projects", "Refresh project"]) expect(strip).toContain(label);
-  for (const label of ["Plan", "Trains", "Diagnostics"]) expect(root).toContain(label);
+  for (const label of ["Trains", "Diagnostics"]) expect(strip).toContain(label);
   expect(strip).toContain("<AddProjectForm");
   expect(sidebar).toContain("Registers only. Daemon automation stays off.");
 });

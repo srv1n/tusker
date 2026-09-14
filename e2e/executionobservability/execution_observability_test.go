@@ -21,7 +21,7 @@ import (
 )
 
 // executionObservabilityFixture is deliberately stable, compact input to the
-// broader factory regression. It records the operator-facing facts this
+// broader direct-authoring regression. It records the operator-facing facts this
 // focused suite proves, while the invoked tests keep the raw graph, timeline,
 // and lifecycle fixtures next to the code they exercise.
 type executionObservabilityFixture struct {

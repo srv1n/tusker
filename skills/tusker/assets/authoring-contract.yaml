@@ -1,0 +1,80 @@
+schema: tusker.authoring-contract/v1
+contract_version: 2.0.0
+title: Canonical direct-authoring routing contract
+description: >-
+  Routes a semantically understood request plus explicit structural scope to an
+  inert analysis, direct task, or direct wave-authoring path.
+product_questions:
+  - desired outcome
+  - observable acceptance and important failure cases
+  - constraints, priorities, and non-goals
+  - unresolved authority, credential, legal, or subjective decisions
+authoring_mechanics:
+  - task and epic identities
+  - dependencies, waves, and runners
+  - proof modes, evidence locations, retry policy, and daemon lifecycle
+  - direct wave authoring, review, and scoped start mechanics
+decision_table:
+  - id: analysis
+    intent: analysis
+    route: read_only_analysis
+    durable_mutation: none
+    execution_authority: none
+    remedy: Answer from repository evidence; ask only a material product question.
+  - id: unattended
+    intent: unattended_delivery
+    route: direct_wave_authoring
+    durable_mutation: inert_wave_authoring_receipt
+    execution_authority: scoped_wave_start
+    remedy: Author the wave through tusker.wave-authoring/v1, review the result, then use one scoped wave start action.
+  - id: planned_or_structural_multi_unit
+    intent: planning_or_tasking
+    route: direct_wave_authoring
+    durable_mutation: inert_wave_authoring_receipt
+    execution_authority: none
+    remedy: Author the wave through tusker.wave-authoring/v1; do not hand-create a task series.
+  - id: singleton_record
+    intent: singleton_record
+    scope: singleton
+    route: direct_task
+    durable_mutation: held_or_backlog_singleton
+    execution_authority: none
+    remedy: Create one genuine singleton contract; do not manufacture a wave.
+  - id: bounded_direct_implementation
+    intent: implementation
+    scope: singleton
+    route: direct_interactive
+    durable_mutation: singleton_contract_only
+    execution_authority: explicit_direct_request
+    remedy: Deliver the one bounded change interactively; inspect for a live automated owner first.
+  - id: implementation_with_multi_unit_scope
+    intent: implementation
+    scope: multi_unit
+    route: direct_wave_authoring
+    durable_mutation: inert_wave_authoring_receipt
+    execution_authority: scoped_wave_start
+    remedy: Author the wave first; unattended execution requires the scoped wave start action.
+structural_multi_unit_signals:
+  - independently_provable_outcomes
+  - multiple_domains
+  - concurrent_lanes
+  - shared_scarce_resource
+  - rollout_or_recovery_phase
+  - multiple_implementation_units
+  - multiple_reviewer_packets
+guardrails:
+  - analysis_is_read_only
+  - creation_is_inert
+  - tracked_modifying_work_requires_work_start
+  - dispatched_worker_verifies_existing_claim
+  - reviewer_submits_typed_result_only
+  - deterministic_handlers_own_close_and_successor_wake
+  - epic_is_never_execution_authority
+  - project_automation_is_separate_explicit_opt_in
+  - fresh_dispatch_scope_is_authorized_waves
+  - start_does_not_enable_project_automation
+  - start_does_not_start_or_install_daemon
+  - start_does_not_authorize_release_or_paid_work
+  - start_does_not_satisfy_human_gates
+  - start_does_not_include_unrelated_work
+  - start_authorizes_only_the_current_material

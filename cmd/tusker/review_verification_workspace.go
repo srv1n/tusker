@@ -5,7 +5,14 @@ import "strings"
 // Resolve the exact execute parent rather than accepting a caller-controlled
 // working directory or silently testing the unchanged base checkout.
 func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note Note, run RunStatus) (*v7VerificationWorkspace, error) {
-	if _, pending := v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body)); len(pending) == 0 {
+	hasCommand := false
+	for _, row := range parseV7VerificationRows(note.Body) {
+		if _, ok := v7VerificationCommand(row.Check); ok {
+			hasCommand = true
+			break
+		}
+	}
+	if !hasCommand {
 		return nil, nil
 	}
 	source, err := reviewImplementationSource(store, run, note)
@@ -57,5 +64,5 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 	if err := verify(); err != nil {
 		return nil, err
 	}
-	return &v7VerificationWorkspace{Path: parent.WorkspacePath, Verify: verify}, nil
+	return &v7VerificationWorkspace{Path: parent.WorkspacePath, Verify: verify, MaterialFingerprint: material}, nil
 }

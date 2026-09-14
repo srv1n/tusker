@@ -22,6 +22,7 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         let content = WKUserContentController()
         let origin = PanelController.configuredOrigin(config.baseURL) ?? ""
         content.addUserScript(WKUserScript(source: PanelController.folderPickerScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        content.addUserScript(WKUserScript(source: PanelController.imagePickerScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         content.addUserScript(WKUserScript(source: PanelController.humanReceiptScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let webConfig = WKWebViewConfiguration()
         webConfig.userContentController = content
@@ -219,6 +220,13 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
             PanelController.configureFolderPicker(picker)
             picker.beginSheetModal(for: window) { [weak self] response in
                 self?.webView.evaluateJavaScript(PanelController.folderPickerResponseScript(requestID: requestID, path: response == .OK ? picker.url?.path : nil))
+            }
+        case "pickImage":
+            guard let requestID = payload["requestId"] as? String else { return }
+            let picker = NSOpenPanel()
+            PanelController.configureImagePicker(picker)
+            picker.beginSheetModal(for: window) { [weak self] response in
+                self?.webView.evaluateJavaScript(PanelController.imagePickerResponseScript(requestID: requestID, url: response == .OK ? picker.url : nil))
             }
         case "requestHumanReceipt":
             guard let requestID = payload["requestId"] as? String else { return }

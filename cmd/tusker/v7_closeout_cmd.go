@@ -381,7 +381,7 @@ func v7CloseoutFingerprint(vaultPath string, task Note, idx v7Index, closeout No
 	taskID := stringField(task.Data, "id")
 	report := computeV7ProofReport(vaultPath, task, idx)
 	report, closeoutTerminal := v7CloseoutTerminalReport(vaultPath, task, report)
-	closePolicy, err := v7ClosePolicyFor(vaultPath, strings.ToLower(fallback(stringField(task.Data, "risk"), "medium")))
+	closePolicy, err := v7TaskClosePolicy(vaultPath, task.Data)
 	if err != nil {
 		closePolicy = defaultV7ClosePolicy(strings.ToLower(fallback(stringField(task.Data, "risk"), "medium")))
 	}

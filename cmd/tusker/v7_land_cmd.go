@@ -3651,7 +3651,7 @@ func ensureV7WaveIntegrationBranch(vaultPath string, wave Note) error {
 	}
 	current, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+v7DefaultBranch(vaultPath))
 	if err != nil || current != frozen {
-		return tuskerError(errorInvalidTransition, "integration base drifted before first completion; regenerate delivery review and Start")
+		return tuskerError(errorInvalidTransition, "integration base drifted before first completion; rerun wave review and re-authorize with `tusker wave start`")
 	}
 	// Supplying the all-zero old value makes this a create-only CAS. A racing
 	// completion cannot silently overwrite another integration lane.

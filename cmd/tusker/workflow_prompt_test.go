@@ -80,6 +80,8 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 		"--proof-fingerprint",
 		"--gate-fingerprint",
 		"--verdict pass|changes_requested|blocked",
+		`--finding '[{"schema":"tusker.reviewer-finding/v1"`,
+		`--closure '[{"schema":"tusker.reviewer-finding-closure/v1"`,
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("expected reviewer prompt to contain %q, got:\n%s", expected, prompt)
@@ -88,6 +90,58 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 	for _, forbidden := range []string{"auto-close", "tusker status", "tusker merge", "tusker land", "tusker close", "tusker rework", "git update-ref", "git checkout"} {
 		if strings.Contains(strings.ToLower(prompt), forbidden) {
 			t.Fatalf("reviewer prompt retained forbidden authority %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestGeneratedReviewerFindingArraySurvivesCLIParsing(t *testing.T) {
+	material := "sha256:" + strings.Repeat("b", 64)
+	next := workSessionReviewNext(
+		RunStatus{ItemID: "APP-T-0001", ActiveAttemptID: "review-1", LeaseOwner: "reviewer:agent", WorkRevision: 2},
+		Note{Data: map[string]any{"state_rev": "sha256:task", "source_sha": "abc123"}},
+		workSessionPacket{ProofFingerprint: "sha256:proof", GateFingerprint: "sha256:gates", MaterialFingerprint: material},
+	)
+	prefix := "--finding '"
+	start := strings.Index(next, prefix)
+	if start < 0 {
+		t.Fatalf("generated review command lacks structured finding syntax: %s", next)
+	}
+	start += len(prefix)
+	end := strings.Index(next[start:], "'")
+	if end < 0 {
+		t.Fatalf("generated finding array is not shell quoted: %s", next)
+	}
+	raw := next[start : start+end]
+	_, args := parseCLI([]string{"tusker", "review", "submit", "APP-T-0001", "--finding", raw})
+	findings, err := parseReviewFindingArgs(args.String("finding"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("generated CLI lost a finding: %#v", findings)
+	}
+	for _, finding := range findings {
+		if _, err := parseReviewerFinding(finding); err != nil {
+			t.Fatalf("generated finding does not satisfy the parser: %v\n%s", err, finding)
+		}
+	}
+	if err := validateReviewResultFindings(ReviewResult{Verdict: "changes_requested", Findings: findings}, false); err != nil {
+		t.Fatalf("generated finding array does not satisfy review validation: %v", err)
+	}
+
+	duplicateRaw := strings.Replace(raw, `"id":"F-002"`, `"id":"F-001"`, 1)
+	duplicates, err := parseReviewFindingArgs(duplicateRaw)
+	if err != nil || len(duplicates) != 2 {
+		t.Fatalf("duplicate records disappeared during parsing: %#v err=%v", duplicates, err)
+	}
+	if err := validateReviewResultFindings(ReviewResult{Verdict: "changes_requested", Findings: duplicates}, false); err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("duplicate finding ID was silently discarded: %v", err)
+	}
+
+	help := captureStdout(t, printReviewHelp)
+	for _, required := range []string{reviewerFindingSchema, reviewerFindingClosureSchema, "Use one JSON array", "Never repeat --finding"} {
+		if !strings.Contains(help, required) {
+			t.Fatalf("review help lacks %q:\n%s", required, help)
 		}
 	}
 }

@@ -2,7 +2,7 @@
 schema: tusker.project-skill/v7
 name: project-knowledge
 kind: project_skill
-description: "Route through this repository's current domain canon without treating task proof or runtime state as source truth."
+description: "Find or update this repository's domain canon when a task needs repository-specific facts."
 capsule:
   what: ""
   use_when: ""
@@ -12,57 +12,45 @@ source_of_truth: [knowledge/domains]
 
 # Project knowledge skill
 
-## Read This When
+Use this route for repository-specific facts. The Tusker operator skill owns
+task lifecycle, proof, gates, and CLI procedures.
 
-- You need durable repository-specific canon before implementation.
-- A task packet routes you to one or more project domains.
-- You are updating project knowledge after behavior, policy, or interfaces changed.
+## Find the relevant canon
 
-## Do Not Read This When
-
-- You only need Tusker task lifecycle, proof, gates, closeout, or CLI semantics.
-- You are looking for raw proof logs, task history, attempts, events, generated packets, or local runtime state.
-
-## First Action
-
-Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the routed domains from that packet unless the task contract names a narrower file.
-
-For broad, high-risk, or agent-heavy changes, humans and reviewers may run `tusker packet <TASK-ID> --for explainer` to build a mental model before reading the raw diff. Explainer packets are not proof, approval, or project canon.
-
-## Routing Algorithm
-
-1. Read this `SKILL.md`.
-2. Use the task packet or intent to choose the narrowest matching domain.
-3. Read that domain `INDEX.md`.
-4. Read that domain `CANON.md`.
-5. Open deeper runbooks, decisions, interfaces, invariants, sources, or glossary entries only when the domain files route you there.
+For tracked implementation, read `tusker packet <TASK-ID> --for agent` and its
+governing sections; retain the complete acceptance and ownership contract.
+An exact document reference can be read directly. Otherwise choose the
+narrowest domain below: its `INDEX.md` locates the owning `CANON.md` section
+or leaf. Expand only when the request or an unresolved fact needs more context.
 
 ## Domains
 
 <!-- tusker:domains:begin -->
-| Intent | Read first | Canon | Notes |
+| Domain | Read when | Read first | Canon |
 |---|---|---|---|
 <!-- tusker:domains:end -->
 
 ## Repo Command Policy
 
-- Put repository-specific command rules here or in routed runbooks: validation commands, build-lock/status commands, token/noise wrappers, and forbidden expensive probes.
-- Keep root `AGENTS.md` and `CLAUDE.md` as managed Tusker bootstrap pointers; do not copy Tusker workflow mechanics there.
-- Agents should prefer path-scoped status/search, lock/status commands over process-table probes, redirected validation logs, and command + PASS/FAIL summaries.
+Keep repository-specific validation, build-lock/status commands, token/noise
+wrappers, and expensive-probe restrictions here or in the owning runbook.
+Root `AGENTS.md` and `CLAUDE.md` use managed Tusker bootstrap pointers alongside
+user-owned instructions; keep detailed procedures in their owning documents.
 
 ## Updating Canon
 
-- Update the narrowest owning domain `CANON.md` when durable truth changes.
-- Create or update a leaf node only when the canon needs a stable runbook, interface, invariant, decision, glossary entry, or source attribution.
-- Run `tusker validate --json` after changing project knowledge.
-- Do not put proof logs, task history, attempts, event streams, generated packets, explainer packets, or raw terminal output in canon.
+Update the owning canon or leaf when durable behavior, policy, or interfaces
+change. Preserve decisions and source links; separate documented contracts,
+inspected implementation, observed behavior, and unresolved facts.
 
 ## Forbidden Source Truth
 
-- Do not publish task records, evidence logs, attempts, event files, generated output, runtime state, or raw logs as project skill source.
-- Forbidden paths include `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`, `_system/**`, `dashboards/**`, packet caches, `.tusker-*`, raw logs, and local absolute paths.
-- Raw external input belongs in `knowledge/domains/<domain>/sources/`.
-- Root `docs/` can contain current system and contribution guides. Project canon stays under `knowledge/domains/`.
+Project canon stays under `knowledge/domains/`; raw external input belongs in
+the owning domain's `sources/`. Root `docs/` can hold current system guides.
+Task records, proof logs, attempts, events, generated packets, runtime state,
+and machine-local absolute paths are not project-skill source truth. Keep
+`work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`,
+`_system/**`, `dashboards/**`, and `.tusker-*` out of published canon.
 
 ## Validation
 

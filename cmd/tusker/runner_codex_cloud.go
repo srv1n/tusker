@@ -63,6 +63,92 @@ type codexCloudSnapshot struct {
 	FinalSummary   string
 }
 
+// codexCloudTaskStartedCheckpoint is the durable provider-operation identity
+// written to the attempt event ledger before Start returns.  A cloud launch
+// has no local PID, so recovery must be able to rebuild the run/attempt rows
+// from this checkpoint when the daemon dies in the return-to-persistence gap.
+type codexCloudTaskStartedCheckpoint struct {
+	AttemptID      string
+	At             string
+	TaskID         string
+	Status         string
+	EnvironmentID  string
+	AttemptNumber  int
+	PullRequestURL string
+	ApplyRef       string
+	LogsSummary    string
+	FinalSummary   string
+}
+
+func readCodexCloudTaskStartedCheckpoint(path, attemptID string) (codexCloudTaskStartedCheckpoint, bool, error) {
+	path = strings.TrimSpace(path)
+	attemptID = strings.TrimSpace(attemptID)
+	if path == "" || attemptID == "" {
+		return codexCloudTaskStartedCheckpoint{}, false, nil
+	}
+	text, err := readText(path)
+	if err != nil {
+		return codexCloudTaskStartedCheckpoint{}, false, err
+	}
+	var checkpoint codexCloudTaskStartedCheckpoint
+	found := false
+	for lineNumber, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return codexCloudTaskStartedCheckpoint{}, false, fmt.Errorf("parse codex cloud event ledger line %d: %w", lineNumber+1, err)
+		}
+		if strings.TrimSpace(event.Kind) != "codex_cloud_task_started" {
+			continue
+		}
+		if strings.TrimSpace(event.AttemptID) != attemptID {
+			return codexCloudTaskStartedCheckpoint{}, false, fmt.Errorf("codex cloud task-start checkpoint belongs to attempt %q, want %q", strings.TrimSpace(event.AttemptID), attemptID)
+		}
+		payload := event.Payload
+		if payload == nil {
+			return codexCloudTaskStartedCheckpoint{}, false, errors.New("codex cloud task-start checkpoint has no payload")
+		}
+		next := codexCloudTaskStartedCheckpoint{
+			AttemptID:      attemptID,
+			At:             strings.TrimSpace(event.At),
+			TaskID:         strings.TrimSpace(stringValue(payload["cloud_task_id"])),
+			Status:         strings.TrimSpace(stringValue(payload["remote_status"])),
+			EnvironmentID:  strings.TrimSpace(stringValue(payload["environment_id"])),
+			AttemptNumber:  intFromAny(payload["attempt_number"]),
+			PullRequestURL: strings.TrimSpace(stringValue(payload["pull_request_url"])),
+			ApplyRef:       strings.TrimSpace(stringValue(payload["apply_ref"])),
+			LogsSummary:    strings.TrimSpace(stringValue(payload["logs_summary"])),
+			FinalSummary:   strings.TrimSpace(stringValue(payload["final_summary"])),
+		}
+		if next.TaskID == "" {
+			return codexCloudTaskStartedCheckpoint{}, false, errors.New("codex cloud task-start checkpoint has no cloud task id")
+		}
+		if found && checkpoint.TaskID != next.TaskID {
+			return codexCloudTaskStartedCheckpoint{}, false, fmt.Errorf("codex cloud event ledger contains conflicting task ids %q and %q", checkpoint.TaskID, next.TaskID)
+		}
+		if !found {
+			checkpoint = next
+			found = true
+			continue
+		}
+		// Replays of the same durable start event are harmless. Preserve the
+		// first identity and fill any fields that were absent in that record.
+		checkpoint.Status = firstNonEmpty(checkpoint.Status, next.Status)
+		checkpoint.EnvironmentID = firstNonEmpty(checkpoint.EnvironmentID, next.EnvironmentID)
+		if checkpoint.AttemptNumber == 0 {
+			checkpoint.AttemptNumber = next.AttemptNumber
+		}
+		checkpoint.PullRequestURL = firstNonEmpty(checkpoint.PullRequestURL, next.PullRequestURL)
+		checkpoint.ApplyRef = firstNonEmpty(checkpoint.ApplyRef, next.ApplyRef)
+		checkpoint.LogsSummary = firstNonEmpty(checkpoint.LogsSummary, next.LogsSummary)
+		checkpoint.FinalSummary = firstNonEmpty(checkpoint.FinalSummary, next.FinalSummary)
+	}
+	return checkpoint, found, nil
+}
+
 func (r *CodexCloudRunner) Name() RunnerName { return RunnerCodexCloud }
 
 func (r *CodexCloudRunner) Capabilities() RunnerCapabilities {
@@ -128,10 +214,7 @@ func (r *CodexCloudRunner) Start(ctx context.Context, req StartRequest) (*StartR
 	if rawLogErr != nil {
 		payload["raw_log_error"] = rawLogErr.Error()
 	}
-	if err := eventLog.Append("codex_cloud_task_started", req.AttemptID, r.Name(), payload); err != nil {
-		return nil, codexCloudTrackingError(snapshot.TaskID, req.RawLogPath, err, rawLogErr)
-	}
-	return &StartResult{
+	startResult := &StartResult{
 		StartedAt:          startedAt,
 		StatusPath:         req.StatusPath,
 		Capabilities:       r.Capabilities(),
@@ -147,7 +230,14 @@ func (r *CodexCloudRunner) Start(ctx context.Context, req StartRequest) (*StartR
 		ApplyRef:           snapshot.ApplyRef,
 		LogsSummary:        snapshot.LogsSummary,
 		FinalSummary:       snapshot.FinalSummary,
-	}, nil
+	}
+	if err := eventLog.Append("codex_cloud_task_started", req.AttemptID, r.Name(), payload); err != nil {
+		// Return the provider operation identity alongside the error. The daemon
+		// can checkpoint it into the claimed run/attempt and fence recovery even
+		// when the event-ledger append itself failed after the remote launch.
+		return startResult, codexCloudTrackingError(snapshot.TaskID, req.RawLogPath, err, rawLogErr)
+	}
+	return startResult, nil
 }
 
 func (r *CodexCloudRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {

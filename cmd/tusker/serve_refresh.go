@@ -28,6 +28,7 @@ func (s *serveServer) handleProjectRefresh(w http.ResponseWriter, projectID stri
 		return
 	}
 	projectID = project.ProjectID
+	s.invalidateProjectIcon(project.RepoRoot)
 	now := s.now()
 	s.refreshMu.Lock()
 	if s.refreshedAt == nil {

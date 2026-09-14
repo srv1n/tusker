@@ -7,15 +7,15 @@ import (
 )
 
 type showTaskStatusProjection struct {
-	Schema                 string                             `json:"schema"`
-	ReadOnly               bool                               `json:"readOnly"`
-	ID                     string                             `json:"id"`
-	Kind                   string                             `json:"kind"`
-	Title                  string                             `json:"title"`
-	Status                 string                             `json:"status"`
-	Readiness              string                             `json:"readiness,omitempty"`
-	Capsule                string                             `json:"capsule"`
-	CrossScopeDependencies deliveryCrossScopeReviewProjection `json:"crossScopeDependencies"`
+	Schema              string                             `json:"schema"`
+	ReadOnly            bool                               `json:"readOnly"`
+	ID                  string                             `json:"id"`
+	Kind                string                             `json:"kind"`
+	Title               string                             `json:"title"`
+	Status              string                             `json:"status"`
+	Readiness           string                             `json:"readiness,omitempty"`
+	Capsule             string                             `json:"capsule"`
+	DependencyContracts dependencyContractReviewProjection `json:"dependencyContracts"`
 }
 
 func showCmd(args Args) error {
@@ -41,9 +41,9 @@ func showCmd(args Args) error {
 	if args.String("section") != "" {
 		mode = "section"
 	}
-	crossScope := newDeliveryCrossScopeReviewProjection()
+	contracts := newDependencyContractReviewProjection()
 	if noteDisplayKind(note.Data) == "task" && (mode == "capsule" || args.Bool("json")) {
-		crossScope, err = deliveryCrossScopeReviewForTaskAtVault(vaultPath, note)
+		contracts, err = dependencyContractReviewForTaskAtVault(vaultPath, note)
 		if err != nil {
 			return err
 		}
@@ -54,7 +54,7 @@ func showCmd(args Args) error {
 			ID: stringField(note.Data, "id"), Kind: noteDisplayKind(note.Data),
 			Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status"),
 			Readiness: stringField(note.Data, "readiness"), Capsule: strings.TrimSpace(renderCapsuleWithVault(note, vaultPath)),
-			CrossScopeDependencies: crossScope,
+			DependencyContracts: contracts,
 		})
 		return nil
 	}
@@ -86,7 +86,7 @@ func showCmd(args Args) error {
 		printSectionOrFallback(note, heading)
 	default:
 		content := renderCapsuleWithVault(note, vaultPath)
-		if projected := renderDeliveryCrossScopeReview(crossScope.Dependencies); projected != "" {
+		if projected := renderDependencyContractReview(contracts.Dependencies); projected != "" {
 			content += "\n" + projected
 		}
 		fmt.Print(content)

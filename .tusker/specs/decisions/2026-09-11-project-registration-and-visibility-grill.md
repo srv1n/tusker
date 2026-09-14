@@ -2,6 +2,7 @@
 title: "Project registration and visibility decisions"
 subject: project-registration-and-visibility-decisions
 part_of: project-registration-and-visibility
+decides_for: .tusker/specs/project-registration-and-visibility.md
 status: canonical
 read_when: "You need the operator rationale behind automatic registration and selectable main-screen projects."
 skip_when: "You only need the current contract; read [[project-registration-and-visibility]]."

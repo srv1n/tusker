@@ -105,6 +105,13 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 	// A conformance turn is a disposable check, not a user task. Keep it short;
 	// Execute remains cancellable through its context/process supervision.
 	input := runnercore.RunInput{Workspace: workspace, Preset: preset, Model: model, Effort: effort, SearchPath: runnerCommandSearchPath(), Deadline: 2 * time.Minute, PolicyCanary: live, ProtectedPath: filepath.Join(vault, ".runner-conformance-sentinel"), Exercise: exercise, ExerciseScript: script}
+	if definition.Profile != "" {
+		if configured, resolveErr := resolveTuskerConfig(vault); resolveErr == nil {
+			if profile, ok := runnerProfilesFromSchema(configured.Config.Automation.Profiles)[definition.Profile]; ok {
+				draftAccess = profile.Access
+			}
+		}
+	}
 	if draftAccess != nil {
 		levels, levelsErr := modelLevelsRead(vault)
 		if levelsErr != nil {
@@ -120,13 +127,6 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 			return 2, runnercore.ConformanceReport{}, resolveErr
 		}
 		input.Access, input.ResolvedAccess = draftAccess, &resolved
-	}
-	if definition.Profile != "" {
-		if configured, resolveErr := resolveTuskerConfig(vault); resolveErr == nil {
-			if profile, ok := runnerProfilesFromSchema(configured.Config.Automation.Profiles)[definition.Profile]; ok {
-				input.Access = profile.Access
-			}
-		}
 	}
 	if args.Bool("setup") {
 		now := time.Now().UTC()
@@ -192,10 +192,11 @@ func conformanceHarnessDefinition(vaultPath, name string) (runnercore.HarnessDef
 		definition.Provider, definition.Transport, definition.Dialect = "acp", runnercore.TransportACP, ""
 		definition.NativeContainment = argsNativeContainment(profile)
 		command = profile.Command
+	case RunnerDevin:
+		definition.Provider, definition.Transport, definition.Dialect = "devin", runnercore.TransportACP, ""
+		definition.NativeContainment = true
+		command = "devin acp"
 	case RunnerMuse:
-		definition.Provider, definition.Dialect, definition.Executable = "muse", "codex", "codex"
-		command = "codex --profile muse exec --json --skip-git-repo-check -"
-	case RunnerMuseCLI:
 		definition.Provider, definition.Dialect, definition.Executable = "muse", "muse", "muse"
 		command = defaultMuseCLICommand()
 	default:
@@ -210,14 +211,12 @@ func conformanceHarnessDefinition(vaultPath, name string) (runnercore.HarnessDef
 	}
 	definition.Executable, definition.Args = fields[0], append([]string(nil), fields[1:]...)
 	definition.Args = removeGeneratedProfileArgs(definition.Dialect, definition.Args, profile.Model, profile.Effort)
-	if definition.Dialect == "codex" && strings.Contains(" "+strings.Join(definition.Args, " ")+" ", " --profile muse ") {
-		definition.Provider = "muse"
-	}
 	return definition, strings.TrimSpace(profile.Model), strings.TrimSpace(profile.Effort), nil
 }
 
 func argsNativeContainment(profile RunnerProfileDefinition) bool {
-	return strings.TrimSpace(profile.Harness) == string(RunnerACP) && profile.NativeContainment
+	harness := strings.TrimSpace(profile.Harness)
+	return harness == string(RunnerACP) && profile.NativeContainment
 }
 
 func removeGeneratedProfileArgs(dialect string, args []string, model, effort string) []string {

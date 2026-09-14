@@ -40,8 +40,8 @@ import {
   useFeedbackAdd,
   useGateAction,
   useLandTask,
-  useRunTask,
   useTask,
+  useTaskStart,
   useTaskStatusAction,
 } from "@/lib/queries";
 import { Button, Select, TextInput } from "@/components/ui/controls";
@@ -54,6 +54,7 @@ import { FrontmatterInlineControl, PropertyPanel } from "./PropertyPanel";
 import { KindEyebrow, ResultChip } from "./bits";
 import { MergeReadiness } from "./banners";
 import { HumanActionCard } from "@/features/human-action/HumanActionCard";
+import { taskRunBlocker } from "@/features/product/TaskScreens";
 import type { MergeCheck } from "./types";
 import {
   taskDocPath,
@@ -427,7 +428,7 @@ function TaskProseBlock({
 }
 
 function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: string }) {
-  const runTask = useRunTask(task.id, projectId);
+  const taskStart = useTaskStart(task.id, projectId);
   const statusAction = useTaskStatusAction(task.id, projectId);
   const closeTask = useCloseTask(task.id, projectId);
   const discardTask = useDiscardTask(task.id, projectId);
@@ -456,7 +457,7 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   // Shared busy flag: the whole panel disables while any one action is in
   // flight, so a slow POST can't be double-fired from another button.
   const busy =
-    runTask.isPending ||
+    taskStart.isPending ||
     statusAction.isPending ||
     closeTask.isPending ||
     discardTask.isPending ||
@@ -468,7 +469,8 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
   const currentStatus =
     task.rawStatus ??
     (task.status === "in_progress" || task.status === "blocked" ? "ready" : task.status);
-  const runnable = currentStatus === "ready" || currentStatus === "rework";
+  const runBlocker = taskRunBlocker(task);
+  const runnable = !runBlocker && currentStatus !== "in_progress" && currentStatus !== "blocked";
   const terminalWave = Boolean(task.waveTerminal);
   const directiveQueued = task.runDirective?.state === "queued";
   const statusOptions = [
@@ -553,9 +555,9 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
       <div className="space-y-2.5 p-3">
         {runnable && (
           <div className="space-y-2 border-b border-line-soft pb-2.5">
-            <Button type="button" size="sm" variant="primary" className="w-full" disabled={busy || directiveQueued} onClick={() => runTask.mutate()}>
+            <Button type="button" size="sm" variant="primary" className="w-full" disabled={busy || directiveQueued} onClick={() => taskStart.mutate()} aria-label={`Start task ${task.id}`}>
               <Play size={12} />
-              {directiveQueued ? "Queued for dispatch" : "Run once"}
+              {directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"}
             </Button>
             {task.runDirective && (
               <div className="text-[11px] leading-relaxed text-muted" role="status">
@@ -564,9 +566,10 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
                 {task.runDirective.state === "consumed" && `Claimed from the one-shot request by ${task.runDirective.actor}.`}
               </div>
             )}
-            <ActionResultLine pending={runTask.isPending} error={runTask.error} result={runTask.data} />
+            <ActionResultLine pending={taskStart.isPending} error={taskStart.error} result={taskStart.data} />
           </div>
         )}
+        {runBlocker && <p role="status" className="border-b border-line-soft pb-2.5 text-[11px] leading-4 text-warn">{runBlocker}</p>}
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-fainter">

@@ -316,6 +316,11 @@ func setDirectEmergencyProfileForAutomationTest(t *testing.T, vault string) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_profile", "test-emergency-codex-exec"); err != nil {
 		t.Fatal(err)
 	}
+	for _, lane := range []string{"execute", "review"} {
+		if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard."+lane, []string{"test-emergency-codex-exec"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func directEmergencyRunnerProfileForTest() map[string]any {

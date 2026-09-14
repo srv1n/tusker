@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -743,8 +741,9 @@ func demoReset(args Args) (map[string]any, error) {
 		}, err
 	}
 	// Re-seed the fixture contracts onto the cleaned vault: same scenario,
-	// same options, stable contract identities (delivery import reissues the
-	// same task/wave IDs for the same plans). Freshness lives in attempts:
+	// same options, stable contract identities (wave create reissues the
+	// same task/wave IDs for the same authoring input). Freshness lives in
+	// attempts:
 	// every later run claims new runtime attempt IDs.
 	fresh, err := demoReseed(repoRoot, manifest, exec)
 	if err != nil {
@@ -950,40 +949,21 @@ func demoReseed(repoRoot string, manifest *demoManifest, exec *demoExec) (*demoR
 		return nil, err
 	}
 	manifest.CreatedPaths = created
-	contextPath := filepath.Join(demoDir(repoRoot), "context.yaml")
-	raw, err := os.ReadFile(contextPath)
-	if err != nil {
-		return nil, err
-	}
-	var doc map[string]any
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return nil, err
-	}
-	str := func(key string) string {
-		value, _ := doc[key].(string)
-		return strings.TrimSpace(value)
-	}
-	contextFP := str("context_fingerprint")
-	factory := map[string]string{"schema": str("factory_intake_contract_schema"), "version": str("factory_intake_contract_version"), "fingerprint": str("factory_intake_contract_fingerprint")}
 	result := &demoReseedResult{waves: map[string]string{}, tasks: map[string]string{}}
+	mappings := map[string]map[string]string{}
 	for _, wave := range demoFixtureWaves() {
-		planPath, err := demoRenderPlan(repoRoot, vaultPath, wave, manifest.HumanGate && wave.Name == "follow-up", contextFP, factory)
+		mapping, waveID, err := demoAuthorWave(exec, repoRoot, vaultPath, wave, manifest.HumanGate && wave.Name == "follow-up", actor)
 		if err != nil {
 			return nil, err
 		}
-		report, err := exec.run(repoRoot, "delivery", "import", "--plan", planPath, "--by", actor, "--vault", vaultPath)
-		if err != nil {
-			return nil, err
-		}
-		mapping := demoStringMap(demoDig(report, "delivery", "taskMapping"))
-		waveID := demoEnvelopeString(report, "delivery", "waveId")
+		mappings[wave.Name] = mapping
 		record := manifest.Waves[wave.Name]
 		record.WaveID = waveID
 		record.Members = nil
 		for _, task := range wave.Tasks {
 			taskID, ok := mapping[task.Key]
 			if !ok || taskID == "" {
-				return nil, tuskerError(demoCodePrecondition, "delivery import did not map task "+task.Key)
+				return nil, tuskerError(demoCodePrecondition, "wave create did not map task "+task.Key)
 			}
 			record.Members = append(record.Members, taskID)
 			rec := manifest.Tasks[task.Key]
@@ -994,6 +974,9 @@ func demoReseed(repoRoot string, manifest *demoManifest, exec *demoExec) (*demoR
 		}
 		manifest.Waves[wave.Name] = record
 		result.waves[wave.Name] = waveID
+	}
+	if err := demoApplyCrossScopeDeps(exec, repoRoot, vaultPath, mappings, actor); err != nil {
+		return nil, err
 	}
 	for _, task := range manifest.Tasks {
 		if len(task.Deps) > 0 {

@@ -11,14 +11,12 @@ domains:
   - "project"
 spec_refs:
   - ".tusker/specs/agent-access.md"
-delivery_source_key: "agent-access"
-delivery_plan_scope: "delivery-6ce73c0808b446b8"
 next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-11T06:50:02Z"
-updated_at: "2026-09-11T06:50:02Z"
-state_rev: "sha256:bde9c329b1d3a2a8c490fe8b0f356f5dd23898ce0b91c3560d7469c307f21327"
+updated_at: "2026-09-13T17:20:10Z"
+state_rev: "sha256:2a9156e345fb809c1ae64abd6a46e96c337b35949cfc8d31ac307cfdba874241"
 ---
 
 # AAC · Simple agent access with native permissions

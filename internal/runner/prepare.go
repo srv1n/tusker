@@ -109,7 +109,7 @@ func Prepare(ctx context.Context, definition HarnessDefinition, input RunInput) 
 	}
 	prepared := PreparedLaunch{
 		HarnessID: definition.ID, Provider: definition.Provider, Transport: definition.Transport, Dialect: definition.Dialect,
-		Executable: physical, ExecutableIdentity: identity, Version: version, Argv: argv, CWD: workspace,
+		Executable: physical, ExecutableIdentity: identity, Version: version, Model: input.Model, Effort: input.Effort, Argv: argv, CWD: workspace,
 		Environment: env, EnvironmentNames: envNames, RequestedPreset: input.Preset, EffectivePolicy: policy,
 		Capabilities: capabilities, AuthState: authState, PreparedAt: time.Now().UTC(), Deadline: deadline,
 		OutputLimit: limit, prompt: input.Prompt,

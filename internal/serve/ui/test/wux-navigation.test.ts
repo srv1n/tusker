@@ -10,6 +10,7 @@ import {
   resolveNavigationTarget,
   sanitizeNavigationState,
   setExpandedProjects,
+  setProjectIcon,
   waveSectionKind,
   writeNavigationState,
   type StorageLike,
@@ -109,6 +110,16 @@ test("navigation deep link wins", () => {
   expect(gone.projectId).toBe("p-alpha");
   expect(gone.path).toBe(projectWorkPath("p-alpha"));
   expect(typeof gone.notice).toBe("string");
+});
+
+test("project icon choice persists locally and auto restores discovery", () => {
+  const storage = memoryStorage();
+  const state = setProjectIcon(emptyNavigationState(), PROJECTS, "p-alpha", "audio");
+  expect(writeNavigationState(storage, state)).toBe(true);
+  expect(readNavigationState(storage, PROJECTS).projectIconById).toEqual({ "p-alpha": "audio" });
+
+  const automatic = setProjectIcon(state, PROJECTS, "p-alpha", "auto");
+  expect(automatic.projectIconById).toEqual({});
 });
 
 test("navigation missing project fallback", () => {
