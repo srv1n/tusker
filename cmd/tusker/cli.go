@@ -170,7 +170,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "demo seed", "demo run", "demo reset":
+	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo reset":
 		return true
 	default:
 		return false
@@ -253,6 +253,9 @@ func runInner(command string, args Args) (int, error) {
 		return 0, workSessionCmd(args, strings.TrimPrefix(command, "work "))
 	case "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile":
 		return 0, workRealLifecycleCmd(args, strings.TrimPrefix(command, "work "))
+	case "work recover":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, workRecoverCmd(args)
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		return 0, executionCmd(args, strings.TrimSpace(strings.TrimPrefix(command, "execution")))
 	case "claim":
@@ -948,7 +951,7 @@ func printCommandHelp(command string) bool {
 		printDiscardHelp()
 	case "next":
 		printNextHelp()
-	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review", "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile":
+	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review", "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile", "work recover":
 		printWorkSessionHelp()
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		printExecutionHelp()
@@ -1364,6 +1367,7 @@ func printWorkSessionHelp() {
   tusker work cancel <task-id> --by <owner> --reason <text> [--json]
   tusker work retry <task-id> --by <agent> [--json]
   tusker work profile <task-id> [--lane execute|review] [--json]
+  tusker work recover <task-id> --action rerun_checks --by human:<name>|operator:<name> --vault <path> [--json]
 
 Purpose:
   The canonical runtime ownership protocol for interactive tracked work.

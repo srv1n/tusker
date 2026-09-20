@@ -74,6 +74,10 @@ func TestReviewDispatchStopsAtConfiguredCycleCap(t *testing.T) {
 	if got := reviewerAttemptCount(attempts); got != 2 {
 		t.Fatalf("review attempts=%d", got)
 	}
+	note.Data["verified_at"] = "2026-09-16T05:59:54Z"
+	if !reviewDispatchAllowed(t.TempDir(), note, wf, RunStatus{}, 0) {
+		t.Fatal("a reopened review must retain prior verification evidence without suppressing independent review")
+	}
 }
 
 func TestReviewerPolicyRejectsUnboundedCycleConfiguration(t *testing.T) {

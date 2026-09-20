@@ -64,6 +64,7 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 		SinceLastEventSec:    serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
 		Liveness:             serveRunLiveness(run, s.now()),
 		AttemptCount:         maxInt(run.AttemptCount, len(turnsByAttempt(turns))),
+		ActiveAttemptID:      run.ActiveAttemptID,
 		Terminal:             run.Terminal,
 		Error:                nullIfBlank(run.LastError),
 		Infrastructure:       run.Infrastructure,
@@ -253,6 +254,20 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 	}
 }
 
+// serveAttemptOutcome keeps the active attempt aligned with the canonical run
+// liveness. An attempt row is intentionally durable before it has a terminal
+// outcome, so mapping an active "none" outcome through the lease fallback
+// would incorrectly paint a live reviewer as released.
+func (s *serveServer) serveAttemptOutcome(run RunStatus, attempt RunAttempt) string {
+	if attempt.AttemptID == run.ActiveAttemptID {
+		current := serveRunOutcome(run, s.now())
+		if current == "running" || current == "stale" {
+			return current
+		}
+	}
+	return serveRunOutcomeFromAttempt(attempt.Outcome, run.LeaseState)
+}
+
 func serveRunHeartbeatFresh(run RunStatus, now time.Time) bool {
 	heartbeatAt, ok := parseRunTimestamp(run.LastHeartbeatAt)
 	return ok && now.Sub(heartbeatAt) <= daemonHeartbeatDeadThreshold
@@ -405,6 +420,85 @@ type serveRedriveResult struct {
 	TaskID          string `json:"taskId"`
 	CanonicalStatus string `json:"canonicalStatus"`
 	LeaseState      string `json:"leaseState"`
+}
+
+type serveRecoveryResult struct {
+	OK       bool   `json:"ok"`
+	Refused  bool   `json:"refused"`
+	Admitted bool   `json:"admitted"`
+	Action   string `json:"action"`
+	TaskID   string `json:"taskId"`
+	Lane     string `json:"lane,omitempty"`
+	Reason   string `json:"reason"`
+}
+
+// queueReviewRecovery reuses the one-shot directive consumed by the normal
+// daemon. It never resets AttemptCount: automatic recovery remains inside the
+// originally authorized retry window.
+func queueReviewRecovery(store *RuntimeStore, task Note, wave Note, run RunStatus, actor string, maxAttempts int, now time.Time, allowLaneChange ...bool) (serveRecoveryResult, error) {
+	result := serveRecoveryResult{Action: "retry_review", TaskID: stringField(task.Data, "id"), Lane: runLaneReview}
+	if current, err := store.FindRunScoped(run.ProjectID, run.RecordID); err != nil {
+		return result, err
+	} else if current != nil {
+		run = *current
+	}
+	canChangeLane := len(allowLaneChange) > 0 && allowLaneChange[0]
+	if !strings.EqualFold(stringField(task.Data, "status"), "review") || (run.Lane != runLaneReview && !canChangeLane) {
+		result.Refused, result.Reason = true, "retry review is only available for a failed independent-review lane"
+		return result, nil
+	}
+	if reason := reviewRecoveryOperationalBlocker(wave, run, maxAttempts); reason != "" {
+		result.Refused, result.Reason = true, reason
+		return result, nil
+	}
+	fingerprint := stringField(wave.Data, "authorization_fingerprint")
+	authorizedAt := stringField(wave.Data, "authorized_at")
+	prepared := prepareRunForLaneDispatch(run, runLaneReview, run.Runner)
+	prepared.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+	if err := store.UpsertRun(prepared); err != nil {
+		return result, err
+	}
+	queued, err := store.QueueRunDirective(RunDirective{
+		ProjectID: run.ProjectID, RecordID: run.RecordID, Actor: actor,
+		CreatedAt: now.UTC().Format(time.RFC3339Nano), ExpiresAt: now.UTC().Add(directRunDirectiveTTL).Format(time.RFC3339Nano),
+		WaveID: stringField(wave.Data, "id"), AuthorizationFingerprint: fingerprint, WaveAuthorizedAt: authorizedAt,
+	})
+	if err != nil {
+		return result, err
+	}
+	if !queued {
+		result.OK, result.Reason = true, "review recovery is already queued or owned"
+		return result, nil
+	}
+	result.OK, result.Admitted, result.Reason = true, true, "review retry queued on the existing review lane; implementation will not rerun"
+	return result, nil
+}
+
+func reviewRecoveryOperationalBlocker(wave Note, run RunStatus, maxAttempts int) string {
+	if runProcessGroupAlive(run) || isDispatchingLeaseState(run.LeaseState) {
+		return "an owner is already active for this review"
+	}
+	if maxAttempts > 0 && run.AttemptCount >= maxAttempts {
+		return fmt.Sprintf("review attempt limit exhausted (%d); authorize one new bounded execution window", maxAttempts)
+	}
+	if strings.EqualFold(stringField(wave.Data, "authorization"), "paused") {
+		return "wave is paused; recovery will not secretly resume it"
+	}
+	if !strings.EqualFold(stringField(wave.Data, "authorization"), "armed") || stringField(wave.Data, "authorization_fingerprint") == "" || stringField(wave.Data, "authorized_at") == "" {
+		return "the existing wave execution window is not current"
+	}
+	// The queued review directive is bound to the stored authorization
+	// fingerprint; if wave material drifted since then it can never match
+	// runDirectiveMatchesTaskAuthority and would sit until TTL expiry. Refuse
+	// up front with the real recovery action instead of admitting silently.
+	if vault := v7VaultPathForLandingAudit(wave); vault != "" {
+		if idx, err := loadV7Index(vault); err == nil {
+			if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
+				return "wave material changed since authorization; re-authorize with `tusker wave start` before retrying review"
+			}
+		}
+	}
+	return ""
 }
 
 // serveRedriveRefusal decides whether a redrive is meaningless for the task's

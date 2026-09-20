@@ -65,7 +65,7 @@ test("stream keys map to live query invalidations", () => {
     ["docgraph", "tusker"],
     ["docgraph", "doc", "tusker"],
   ]);
-  expect(streamKeyToQueryKeys("review:batch", "tusker")).toEqual([qk.needs("tusker"), ["tasks", "tusker"], qk.runs("tusker"), ["projects"], qk.reviewBatch("tusker")]);
+  expect(streamKeyToQueryKeys("review:batch", "tusker")).toEqual([qk.needs("tusker"), ["tasks", "tusker"], qk.runs("tusker"), ["projects"], qk.reviewBatch("tusker"), ["wave-review", "tusker"]]);
 
   const { client, invalidations } = recorder();
   invalidateStreamEvent(client, {
@@ -173,6 +173,7 @@ test("unscoped stream events retain family-wide invalidation for warm project ca
     ["runs"],
     ["projects"],
     ["review", "batch"],
+    ["wave-review"],
   ]);
 });
 

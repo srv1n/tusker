@@ -10,6 +10,7 @@ export interface TaskBoardProps {
   mode: "board" | "list";
   onModeChange: (value: "board" | "list") => void;
   onSelectTask: (id: string) => void;
+  taskIds?: string[];
   tagsByTaskId?: Record<string, string[]>;
   selectedTags: string[];
   onSelectedTagsChange: (tags: string[]) => void;
@@ -63,12 +64,14 @@ export function TaskBoard({
   mode,
   onModeChange,
   onSelectTask,
+  taskIds,
   tagsByTaskId,
   selectedTags,
   onSelectedTagsChange,
   tagsAvailable,
 }: TaskBoardProps) {
-  const visibleTasks = filterBoardTasks({ tasks, selectedTags, tagsByTaskId, tagsAvailable });
+  const scopedTasks = taskIds ? tasks.filter((task) => taskIds.includes(task.id)) : tasks;
+  const visibleTasks = filterBoardTasks({ tasks: scopedTasks, selectedTags, tagsByTaskId, tagsAvailable });
   const tags = availableTags(tagsByTaskId);
   const toggleTag = (tag: string) => {
     onSelectedTagsChange(selectedTags.includes(tag) ? selectedTags.filter((value) => value !== tag) : [...selectedTags, tag]);
@@ -78,8 +81,8 @@ export function TaskBoard({
     <section aria-label="Task board" className="space-y-5" data-testid="task-board">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
         <div>
-          <ProductLabel>Tasks</ProductLabel>
-          <p className="mt-1 text-[12px] text-muted">{visibleTasks.length} of {tasks.length} tasks</p>
+          <ProductLabel>{taskIds ? "Unassigned tasks" : "Tasks"}</ProductLabel>
+          <p className="mt-1 text-[12px] text-muted">{visibleTasks.length} of {scopedTasks.length} tasks</p>
         </div>
         <div className="flex border border-line bg-raised" aria-label="Task view">
           <ProductButton aria-pressed={mode === "board"} tone={mode === "board" ? "primary" : "text"} className="rounded-none border-0" onClick={() => onModeChange("board")}>

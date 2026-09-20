@@ -67,6 +67,14 @@ func TaskAuthoringContextFromEnvironment() TaskAuthoringContext {
 		source, conversationID = "claude", value
 	} else if strings.TrimSpace(os.Getenv("CLAUDECODE")) != "" || strings.TrimSpace(os.Getenv("CLAUDE_CODE_ENTRYPOINT")) != "" {
 		source = "claude"
+	} else if strings.TrimSpace(os.Getenv("CHISEL_SESSION_DB")) != "" {
+		// Devin exports only the session database path, not a per-process
+		// session identifier. cwd/recency resolution against that database is
+		// not an identity boundary (two sessions can share a directory), so a
+		// Devin session is classified but never carries a native conversation
+		// id: --current-workspace and same-conversation review fencing fail
+		// closed until Devin exports an immutable id (e.g. DEVIN_SESSION_ID).
+		source = "devin"
 	}
 	if source == "" {
 		return TaskAuthoringContext{}
@@ -206,7 +214,7 @@ func selfImplementationTriggerContext(trigger string) TaskAuthoringContext {
 
 func nativeConversationKnown(context TaskAuthoringContext) bool {
 	context = normalizeTaskAuthoringContext(context)
-	return (context.Source == "codex" || context.Source == "claude") && context.ConversationID != ""
+	return (context.Source == "codex" || context.Source == "claude" || context.Source == "devin") && context.ConversationID != ""
 }
 
 // SameAuthoringConversation reports whether an implementation self claim and

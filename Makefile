@@ -71,7 +71,7 @@ ui-install: ## Install the pinned Serve UI dependency graph
 	cd "$(UI_DIR)" && bun install --frozen-lockfile
 
 ui-test: ui-install ## Test the Serve UI
-	cd "$(UI_DIR)" && bun test
+	cd "$(UI_DIR)" && bun test --max-concurrency=1
 
 ui-build: ui-install ## Build the Serve UI assets embedded by the Go binary
 	cd "$(UI_DIR)" && bun run build

@@ -33,6 +33,7 @@ import type {
   ProjectSummary,
   ProjectRegistrationResult,
   RedriveResult,
+  RecoveryResult,
   RunDetail,
   RunSummary,
   ReviewBatch,
@@ -186,6 +187,10 @@ export class ApiError extends Error {
   }
 }
 
+function isWaveReview(response: WaveReview | { refused?: boolean; reason?: string }): response is WaveReview {
+  return "schema" in response && response.schema === "tusker.wave-review/v1";
+}
+
 /** A mutation reached Serve, but the control plane declined it in-band. */
 export type ActionFailureKind = "refused" | "validation";
 export class ActionRefusalError<T extends { reason?: string; refused?: boolean; ok?: boolean; issue?: { code?: string } }> extends ApiError {
@@ -264,7 +269,10 @@ export const api = {
     real(withProject("/factory-operations", projectId)),
 
   waveReview: (projectId: string, waveId: string): Promise<WaveReview> =>
-    real(`/projects/${encodeURIComponent(projectId)}/waves/${encodeURIComponent(waveId)}/review`),
+    real<WaveReview | { refused?: boolean; reason?: string }>(`/projects/${encodeURIComponent(projectId)}/waves/${encodeURIComponent(waveId)}/review`).then((review) => {
+      if (!isWaveReview(review)) throw new ApiError(502, review.reason || "Wave review returned an invalid response.");
+      return review;
+    }),
 
   waveControl: (projectId: string, waveId: string, action: "start" | "pause" | "resume"): Promise<DirectStartResult> =>
     serveOperatorActor().then((actor) => post<DirectStartResult & { ok?: boolean; refused?: boolean }>(`/actions/projects/${encodeURIComponent(projectId)}/waves/${encodeURIComponent(waveId)}/${action}`, { actor, mode: "background" })),
@@ -347,6 +355,9 @@ export const api = {
   redrive: (taskId: string, projectId?: string): Promise<RedriveResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/runs/${taskId}/redrive`, projectId), { actor })),
 
+  recover: (taskId: string, action: "retry_review" | "rerun_checks", projectId?: string): Promise<RecoveryResult> =>
+    serveOperatorActor().then((actor) => post(withProject(`/runs/${taskId}/recover`, projectId), { actor, action })),
+
   // POST /api/runs/:taskId/acknowledge — retires a settled failed run via the
   // same path as `tusker runs retire`, clearing it from attention. Success
   // returns an ActionResult; a still-active run is refused with 409/400 whose
@@ -386,7 +397,7 @@ export const api = {
   gateAction: (
     gateId: string,
     action: "satisfy" | "waive" | "obsolete",
-    body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean },
+    body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean; materialRevision?: string },
     projectId?: string,
   ): Promise<ActionResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/gates/${gateId}/${action}`, projectId), { ...body, actor })),

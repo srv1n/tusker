@@ -778,6 +778,7 @@ func runsClaimCmd(args Args) error {
 }
 
 func runsLifecycleCmd(args Args, action string) error {
+	args["interactive-work-session"] = "true"
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -861,6 +862,15 @@ func runsLifecycleWithStore(store *RuntimeStore, args Args, action string, outpu
 		statusArgs["vault"] = loaded[0].Project.VaultRoot
 		if err := statusCmd(statusArgs); err != nil {
 			return err
+		}
+		if args.Bool("interactive-work-session") && run.Lane == runLaneExecute {
+			if err := projectInteractiveSubmissionToCanonical(store, loaded[0].Project.VaultRoot, *run, owner); err != nil {
+				return err
+			}
+			run, err = findRunScopedRequired(store, run.ProjectID, run.RecordID, "submit")
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if output {

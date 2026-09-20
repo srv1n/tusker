@@ -98,10 +98,25 @@ export const useProjectRebind = (projectId: string) => {
   });
 };
 
+export function applyProjectAutomationReadback(projects: ProjectSummary[] | undefined, projectId: string, automationEnabled: boolean, automationSource?: string) {
+  return projects?.map((project) => ({
+    ...project,
+    ...(project.id === projectId ? { automationEnabled, automationSource } : {}),
+    checkouts: project.checkouts?.map((checkout) => checkout.id === projectId
+      ? { ...checkout, automationEnabled, automationSource }
+      : checkout),
+  }));
+}
+
 export const useProjectAutomation = (projectId: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (enabled: boolean) => api.setProjectAutomation(projectId, enabled).then(requireAccepted),
+    onSuccess: (result) => {
+      const automationEnabled = result.automationEnabled;
+      if (automationEnabled === undefined) return;
+      qc.setQueryData<ProjectSummary[]>(qk.projects, (projects) => applyProjectAutomationReadback(projects, projectId, automationEnabled, result.automationSource));
+    },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.projects });
       void qc.invalidateQueries({ queryKey: qk.daemon });
@@ -300,8 +315,15 @@ export const useSaveDocgraphDoc = (projectId: string, subject: string) => {
   });
 };
 
+export const waveReviewQuery = (waveId: string, projectId?: string) => ({
+  queryKey: qk.waveReview(projectId, waveId),
+  queryFn: () => api.waveReview(projectId!, waveId),
+  enabled: Boolean(projectId) && Boolean(waveId),
+  refetchInterval: liveRefetchInterval,
+});
+
 export const useWaveReview = (waveId: string, projectId?: string) =>
-  useQuery<WaveReview>({ queryKey: qk.waveReview(projectId, waveId), queryFn: () => api.waveReview(projectId!, waveId), enabled: Boolean(projectId) && Boolean(waveId), refetchInterval: liveRefetchInterval });
+  useQuery<WaveReview>(waveReviewQuery(waveId, projectId));
 
 export async function invalidateWaveControlQueries(
   qc: Pick<ReturnType<typeof useQueryClient>, "invalidateQueries">,
@@ -333,7 +355,6 @@ export const useTaskStart = (taskId: string, projectId?: string) => {
     mutationFn: () => api.taskStart(projectId!, taskId).then(requireAccepted),
     onSettled: () => {
       invalidateOperatorState(qc, taskId, projectId);
-      void qc.invalidateQueries({ predicate: (query) => query.queryKey.includes("wave-review") });
     },
   });
 };
@@ -349,6 +370,15 @@ export const useRedrive = (taskId: string, projectId?: string) => {
   return useMutation({
     mutationKey: ["redrive", taskId],
     mutationFn: () => api.redrive(taskId, projectId).then(requireAccepted),
+    onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
+  });
+};
+
+export const useRecovery = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: ["recovery", projectId ?? "all", taskId],
+    mutationFn: (action: "retry_review" | "rerun_checks") => api.recover(taskId, action, projectId).then(requireAccepted),
     onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
   });
 };
@@ -411,6 +441,7 @@ function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?:
   void qc.invalidateQueries({ queryKey: ["evidence"] });
   void qc.invalidateQueries({ queryKey: ["decisions"] });
   void qc.invalidateQueries({ queryKey: ["feedback"] });
+  void qc.invalidateQueries({ queryKey: projectId ? ["wave-review", projectId] : ["wave-review"] });
   void qc.invalidateQueries({ queryKey: qk.daemon });
   if (taskId) {
     void qc.invalidateQueries({ queryKey: qk.task(taskId, projectId) });
@@ -463,7 +494,7 @@ export const useLandTask = (taskId: string, projectId?: string) => {
 export const useGateAction = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { gateId: string; action: "satisfy" | "waive" | "obsolete"; body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean }; taskId?: string; projectId?: string }) =>
+    mutationFn: (input: { gateId: string; action: "satisfy" | "waive" | "obsolete"; body: { reason?: string; evidence?: string; evidenceRefs?: string[]; actor?: string; force?: boolean; materialRevision?: string }; taskId?: string; projectId?: string }) =>
       api.gateAction(input.gateId, input.action, input.body, input.projectId).then(requireAccepted),
     onSettled: (_data, _err, input) => invalidateOperatorState(qc, input?.taskId, input?.projectId),
   });

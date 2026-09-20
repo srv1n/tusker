@@ -398,8 +398,8 @@ func runnerStatusReadyForReconcile(run RunStatus) bool {
 
 func sentinelAttemptCountWithinCaps(project runtimeSentinelProjectSnapshot, runs []RunStatus) []runtimeInvariantViolation {
 	capValue := project.Workflow.Retry.MaxAttempts
-	if continuation := maxContinuationRetries(project.Workflow); continuation > capValue {
-		capValue = continuation
+	if continuationTotal := 1 + maxContinuationRetries(project.Workflow); continuationTotal > capValue {
+		capValue = continuationTotal
 	}
 	if capValue <= 0 {
 		return nil

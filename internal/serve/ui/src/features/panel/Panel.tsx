@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useNeeds, useProjects, useReviewBatch, useRuns } from "@/lib/queries";
 import { isTuskerShellMode } from "@/routes/__root";
-import type { HumanReceiptBridgeResult, HumanReceiptRequest } from "@/lib/humanReceipt";
 import type { NeedItem, RunSummary, TaskCapsule } from "@/types/domain";
 import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import {
@@ -28,7 +27,6 @@ declare global {
       onNavigate?: (path: string) => boolean;
       pickFolder?: () => Promise<string | undefined>;
       pickImage?: () => Promise<{ name: string; mime: string; data: string } | { error: string } | undefined>;
-      requestHumanReceipt?: (request: HumanReceiptRequest) => Promise<HumanReceiptBridgeResult | null>;
     };
   }
 }

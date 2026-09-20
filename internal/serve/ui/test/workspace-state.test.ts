@@ -65,11 +65,13 @@ test("workspace updates merge by checkout and reject invalid values without losi
   const next = updateWorkspaceViewState(initial, "alpha", {
     lastDocsPath: DOC_PATH,
     docs: { contextOpen: false, contextWidth: 240 },
+    waves: { overviewQuery: "alpha", overviewFilter: "running" },
     board: { mode: "list", selectedTaskId: "stale-task", selectedTags: ["urgent", "urgent", ""] },
   });
   expect(getWorkspaceViewState(next, "alpha")).toMatchObject({
     lastDocsPath: DOC_PATH,
     docs: { contextOpen: false, contextWidth: 240 },
+    waves: { overviewQuery: "alpha", overviewFilter: "running" },
     board: { mode: "list", selectedTaskId: "stale-task", selectedTags: ["urgent"] },
   });
   expect(next.viewStateByProject.alpha).toMatchObject({ legacy: { graph: { x: 12 } } });

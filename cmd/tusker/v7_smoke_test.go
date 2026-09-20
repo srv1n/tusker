@@ -50,9 +50,7 @@ func TestV7TaskGateEvidenceAttemptReconcileFlow(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implemented V7 smoke slice."}, attemptV7HandoffCmd)
 	assertExists(t, filepath.Join(vault, "attempts", "APP-T-0001", "APP-T-0001-A-0001.md"))
-	must(Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Provider endpoint returned ready."}, func(args Args) error {
-		return gateV7TransitionWithTrustedHumanReceiptForTest(t, args.String("vault"), args.String("id"), "satisfied", args.String("by"))
-	})
+	must(Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Provider endpoint returned ready."}, func(args Args) error { return gateV7Transition(args, "satisfied") })
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 
 	data, _, err = parseFrontmatterMustRead(taskPath)
@@ -2814,7 +2812,7 @@ func TestV7GateControlEagerlyReconcilesTaskProjectionAndDashboards(t *testing.T)
 	blockedRev := stringField(data, "state_rev")
 
 	must(Args{"vault": vault, "quiet": "true", "local": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Setup complete."}, func(args Args) error {
-		return gateV7TransitionWithTrustedHumanReceiptForTest(t, args.String("vault"), args.String("id"), "satisfied", args.String("by"))
+		return gateV7Transition(args, "satisfied")
 	})
 	data, _, err = parseFrontmatterMustRead(taskPath)
 	if err != nil {

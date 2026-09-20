@@ -20,12 +20,12 @@ var directWaveRemovalScanRoots = []string{
 }
 
 var directWaveRemovalAllowlist = map[string]bool{
-	"cmd/tusker/direct_wave_removal_test.go":               true,
-	"cmd/tusker/direct_authoring_test.go":                  true,
-	"cmd/tusker/direct_wave_authority_test.go":             true,
+	"cmd/tusker/direct_wave_removal_test.go":   true,
+	"cmd/tusker/direct_authoring_test.go":      true,
+	"cmd/tusker/direct_wave_authority_test.go": true,
 	// Packet guidance tests assert the removed vocabulary is absent, so they
 	// necessarily name the forbidden tokens.
-	"cmd/tusker/direct_wave_packet_test.go":                 true,
+	"cmd/tusker/direct_wave_packet_test.go":                true,
 	"internal/serve/ui/test/direct-wave-authority.test.ts": true,
 	"internal/serve/ui/test/pilot-start-readiness.test.ts": true,
 	"internal/serve/ui/test/wux-integration.test.ts":       true,

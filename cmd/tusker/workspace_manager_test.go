@@ -125,6 +125,28 @@ func TestWorkspacePrepareReportsOnlyFirstMaterialization(t *testing.T) {
 	}
 }
 
+func TestWorkspaceManagerSeparatesProjectsWithSameKey(t *testing.T) {
+	stateRoot := t.TempDir()
+	manager := NewWorkspaceManager()
+	first, err := manager.Prepare(WorkspacePrepareRequest{
+		ProjectID: "project-1", ProjectKey: "repo", RecordID: "record-1", ItemID: "APP-T-0001",
+		RepoRoot: t.TempDir(), StateRoot: stateRoot, Strategy: WorkspaceStrategyCopy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Prepare(WorkspacePrepareRequest{
+		ProjectID: "project-2", ProjectKey: "repo", RecordID: "record-1", ItemID: "APP-T-0001",
+		RepoRoot: t.TempDir(), StateRoot: stateRoot, Strategy: WorkspaceStrategyCopy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Path == second.Path || !strings.Contains(second.Path, "repo__project-2") {
+		t.Fatalf("same-key projects reused one workspace: first=%q second=%q", first.Path, second.Path)
+	}
+}
+
 func TestWorkspaceManagerRejectsMismatchedBranchMetadata(t *testing.T) {
 	stateRoot := t.TempDir()
 	manager := NewWorkspaceManager()

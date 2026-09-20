@@ -47,6 +47,14 @@ func TestArmedWaveReconcilePersistsNewFrontierStatus(t *testing.T) {
 	vault, _, _ := armedWaveTestFixture(t)
 	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{"status": "backlog", "readiness": "blocked_by_dependency", "next_owner": "blocked_dependency"})
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "done", "readiness": "done", "proof_status": "satisfied"})
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, _ := armedWaveProjectedIndex(vault, idx, idx.Waves["W-0001"])
+	if reason := directWaveTaskContractStaleReason(projected.Tasks["APP-T-0002"]); reason != "" {
+		t.Fatalf("dependency-unlocked projection failed admission: %s", reason)
+	}
 	if _, err := reconcileV7ControlProjections(vault, []string{"APP-T-0002"}, "daemon:dispatch", "dispatch"); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +137,30 @@ func TestArmedWaveProjection(t *testing.T) {
 	wave.Data["authorization_fingerprint"] = "stale"
 	stale := buildArmedWaveSnapshot(vault, idx, wave, nil, time.Unix(0, 0).UTC())
 	assertEqual(t, armedWaveStaleAuthorization, armedWaveStateMap(stale)["APP-T-0006"], "stale authorization")
+}
+
+func TestArmedWaveIntegrationProjectionDoesNotHideNewerCanonicalRecovery(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+	armWaveForTest(t, vault)
+	landed, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected, ok, err := armedWaveIntegrationTaskProjection(vault, landed); err != nil || !ok || stringField(projected.Data, "status") != "done" {
+		t.Fatalf("ordinary landed task did not project integration status: status=%q ok=%t err=%v", stringField(projected.Data, "status"), ok, err)
+	}
+	setWaveTaskState(t, vault, "APP-T-0001", "review", "waiting_on_review", "2026-07-08T02:00:00Z")
+	armWaveForTest(t, vault)
+
+	task, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected, ok, err := armedWaveIntegrationTaskProjection(vault, task); err != nil {
+		t.Fatal(err)
+	} else if !ok || stringField(projected.Data, "status") != "review" {
+		t.Fatalf("newer canonical recovery was replaced by integration status %q from %s", stringField(projected.Data, "status"), gitRevisionForTest(t, repo, "integration/W-0001"))
+	}
 }
 
 func TestArmedWaveProjectionSurfaces(t *testing.T) {

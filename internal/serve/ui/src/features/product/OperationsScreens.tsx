@@ -54,7 +54,10 @@ export function Settings() {
             const group = items.find((item) => projectContainsCheckout(item, projectId));
             if (!group) return <MissingProject />;
             const selected = group.checkouts?.find((checkout) => checkout.id === projectId);
-            const project = selected ? { ...group, id: selected.id, repoRoot: selected.repoRoot, vaultRoot: selected.vaultRoot, health: selected.health } : group;
+            const project = selected ? {
+              ...group, id: selected.id, repoRoot: selected.repoRoot, vaultRoot: selected.vaultRoot, health: selected.health,
+              automationEnabled: selected.automationEnabled, automationSource: selected.automationSource ?? group.automationSource,
+            } : group;
             return tab === "basic" ? (
               <SettingsBasic project={project} projectIds={items.map((item) => item.id)} operations={operations.data} automation={automation} settings={settings} onOpenAdvanced={() => setTab("advanced")} />
             ) : (
@@ -68,7 +71,7 @@ export function Settings() {
   );
 }
 
-function SettingsBasic({
+export function SettingsBasic({
   project,
   projectIds,
   operations,
@@ -85,12 +88,17 @@ function SettingsBasic({
 }) {
   const [workspaceMode, setWorkspaceMode] = useState(project.workspaceMode ?? "shared");
   const [concurrency, setConcurrency] = useState(String(project.maxActiveRunsPerProject ?? ""));
+  const automationPending = useRef(false);
   const saveExecution = () => {
     const parsed = Number(concurrency);
     settings.mutate({
       workspaceMode,
       ...(Number.isFinite(parsed) && parsed > 0 ? { maxActiveRunsPerProject: parsed } : {}),
     });
+  };
+  const setAutomation = (enabled: boolean) => {
+    if (!beginAutomationToggle(automationPending)) return;
+    automation.mutate(enabled, { onSettled: () => { automationPending.current = false; } });
   };
 
   return (
@@ -117,8 +125,9 @@ function SettingsBasic({
           name="Background work"
           detail="Allows the resident daemon to pick up authorized work for this project. Registration alone never enables it."
           source={project.automationSource ?? "Project"}
-          control={<Toggle checked={project.automationEnabled} disabled={automation.isPending} onChange={(enabled) => automation.mutate(enabled)} label={project.automationEnabled ? "On" : "Off"} />}
+          control={<Toggle checked={project.automationEnabled} disabled={automation.isPending || automationPending.current} onChange={setAutomation} ariaLabel={`Background work (${project.automationEnabled ? "On" : "Off"})`} label={project.automationEnabled ? "On" : "Off"} />}
         />
+        <ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />
         <SettingRow
           name="Authorized scope"
           detail="The current dispatch policy is served by the factory projection. It is not editable from Serve."
@@ -153,7 +162,6 @@ function SettingsBasic({
         />
         <div className="flex flex-wrap items-center justify-end gap-3 bg-panel px-4 py-3">
           <ActionResultLine pending={settings.isPending} error={settings.error} result={settings.data} />
-          <ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />
           <Button variant="primary" disabled={settings.isPending} onClick={saveExecution}>{settings.isPending ? "Saving…" : "Save execution settings"}</Button>
         </div>
       </SettingGroup>
@@ -163,6 +171,12 @@ function SettingsBasic({
       </SettingGroup>
     </div>
   );
+}
+
+export function beginAutomationToggle(pending: { current: boolean }) {
+  if (pending.current) return false;
+  pending.current = true;
+  return true;
 }
 
 function localNavigationStorage(): StorageLike | null {

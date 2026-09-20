@@ -2,21 +2,33 @@ import { useEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Play, X } from "lucide-react";
-import type { RunDetail, TaskDetail } from "@/types/domain";
+import type { RunDetail, TaskDetail, WaveReviewMember } from "@/types/domain";
 import { api } from "@/lib/api";
+import { duration } from "@/lib/time";
 import { ActionResultLine } from "@/components/ui/action-feedback";
-import { useTaskStart } from "@/lib/queries";
+import { statusLabelOf } from "@/components/ui/tone";
+import { useRecovery, useTaskStart } from "@/lib/queries";
 import { AgentAccessApprovalList, HumanActionCard } from "@/features/human-action/HumanActionCard";
 import { AgentCoordinationSummary, taskRunBlocker, TaskContractDisclosure, TaskRouting } from "@/features/product/TaskScreens";
 import { isSafeHref } from "@/features/editor/sanitize";
 import {
   acceptedDelivery,
   actualStage,
+  currentAttemptRecord,
   failingRows,
+  historicalAttemptRecords,
   identityDisplay,
   identitySummary,
+  laneLabel,
+  latestRunEvent,
+  nextActionForStage,
+  outcomeLabel,
   observedRunIdentity,
+  proofStatusForCurrentAttempt,
+  resolveVisibleRun,
   resolveVisibleTask,
+  stageFromWaveReviewMember,
+  visibleTaskIntent,
   type InspectorExecutionIdentity,
 } from "./inspectorLogic";
 import "./inspector.css";
@@ -30,6 +42,8 @@ export interface TaskInspectorProps {
   loading: boolean;
   error?: string;
   executionIdentity?: InspectorExecutionIdentity;
+  /** Authoritative wave state when the drawer is opened from a wave. */
+  reviewMember?: WaveReviewMember;
   onClose: () => void;
   onOpenTask: (id: string) => void;
 }
@@ -74,6 +88,7 @@ export function TaskInspector({
   loading,
   error,
   executionIdentity,
+  reviewMember,
   onClose,
   onOpenTask,
 }: TaskInspectorProps) {
@@ -97,6 +112,7 @@ export function TaskInspector({
   if (!selectedTaskId) return null;
 
   const visible = resolveVisibleTask(task, selectedTaskId);
+  const visibleRun = resolveVisibleRun(run, selectedTaskId);
 
   if (error && !visible) {
     return (
@@ -127,7 +143,7 @@ export function TaskInspector({
     );
   }
 
-  return <ReadyInspector task={visible} run={run} executionIdentity={executionIdentity} panelRef={panelRef} onClose={onClose} onOpenTask={onOpenTask} />;
+  return <ReadyInspector task={visible} run={visibleRun} executionIdentity={executionIdentity} reviewMember={reviewMember} panelRef={panelRef} onClose={onClose} onOpenTask={onOpenTask} />;
 }
 
 function InspectorHeader({
@@ -142,10 +158,10 @@ function InspectorHeader({
   return (
     <div className="wux-inspector-head">
       <div className="min-w-0 flex-1">
-        <div className="truncate font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-faint">
+        <div data-testid="inspector-header-id" className="break-words font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-faint">
           {eyebrow}
         </div>
-        <h2 className="mt-1 text-[17px] font-semibold leading-snug tracking-[-0.015em] text-ink">
+        <h2 data-testid="inspector-header-title" className="mt-1 break-words text-[17px] font-semibold leading-snug tracking-[-0.015em] text-ink">
           {title}
         </h2>
       </div>
@@ -166,6 +182,7 @@ function ReadyInspector({
   task,
   run,
   executionIdentity,
+  reviewMember,
   panelRef,
   onClose,
   onOpenTask,
@@ -173,22 +190,43 @@ function ReadyInspector({
   task: TaskDetail;
   run: RunDetail | null;
   executionIdentity?: InspectorExecutionIdentity;
+  reviewMember?: WaveReviewMember;
   panelRef: Ref<HTMLElement>;
   onClose: () => void;
   onOpenTask: (id: string) => void;
 }) {
-  const stage = actualStage(task, run);
+  const stage = stageFromWaveReviewMember(reviewMember) ?? actualStage(task, run);
+  const taskIntent = visibleTaskIntent(task);
   const identity = identityDisplay(executionIdentity ?? observedRunIdentity(run));
   const failures = failingRows(task);
   const accepted = acceptedDelivery(run);
   const blockers = task.deps.filter((dep) => dep.status !== "done");
   const humanActions = [...(task.humanActions ?? []), ...(task.humanAction ? [task.humanAction] : [])].filter((action, index, all) => all.findIndex((candidate) => candidate.gateId === action.gateId) === index);
   const taskStart = useTaskStart(task.id, task.projectId);
+  const recovery = useRecovery(task.id, task.projectId);
   const currentStatus = task.rawStatus ?? task.status;
   const runBlocker = taskRunBlocker(task);
   const runnable = !runBlocker;
   const directiveQueued = task.runDirective?.state === "queued";
-  const lastEvent = run?.events?.length ? run.events[run.events.length - 1] : null;
+  const lastEvent = latestRunEvent(run);
+  const currentAttempt = currentAttemptRecord(run);
+  const staleProofCount = task.verification.filter((row) => proofStatusForCurrentAttempt(row.result, run) === "not-current").length + task.acceptance.filter((row) => proofStatusForCurrentAttempt(row.proof, run) === "not-current").length;
+  const previousAttempts = historicalAttemptRecords(run);
+  const attemptLane = currentAttempt?.lane ?? run?.lane ?? "execute";
+  const attemptDescription = run
+    ? currentAttempt
+      ? `${outcomeLabel({ lane: attemptLane, outcome: currentAttempt.outcome })} · attempt ${currentAttempt.n}`
+      : `${outcomeLabel(run)} · attempt ${run.attemptCount}`
+    : "Unavailable — no runtime record";
+  const reviewMemberStopsStart = Boolean(reviewMember && (
+    reviewMember.phase === "proof_blocked" ||
+    reviewMember.phase === "failed" ||
+    reviewMember.state === "blocked" ||
+    reviewMember.state === "cancelled" ||
+    reviewMember.phase === "completed" ||
+    reviewMember.state === "completed"
+  ));
+  const showStart = !reviewMemberStopsStart && !stage.live && !["done", "review", "blocked"].includes(currentStatus);
 	const [messageBody, setMessageBody] = useState("");
 	const [messageStatus, setMessageStatus] = useState("");
 	const [contactIndex, setContactIndex] = useState(0);
@@ -233,13 +271,15 @@ function ReadyInspector({
         <div className="wux-inspector-body">
           <div className="flex flex-wrap items-center gap-2">
             <StageChip label={stage.label} tone={stage.tone} />
-            {stage.live && (
-              <span className="font-mono text-[10.5px] text-faint">live run fact, durable status kept</span>
-            )}
-            {!stage.live && currentStatus !== "done" ? <button type="button" className="wux-inspector-action wux-inspector-action-primary ml-auto inline-flex items-center gap-1.5" disabled={!runnable || taskStart.isPending || directiveQueued} onClick={() => taskStart.mutate()} aria-label={`Start task ${task.id}`} title={runBlocker ?? "Authorize this exact task for the configured runtime"}><Play size={13} aria-hidden="true" />{directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"}</button> : null}
+            {reviewMember?.phase === "failed" && reviewMember.lane === "review" ? <button type="button" className="wux-inspector-action wux-inspector-action-primary ml-auto" disabled={recovery.isPending} aria-busy={recovery.isPending} onClick={() => recovery.mutate("retry_review")}>{recovery.isPending ? "Queuing review…" : "Retry review"}</button> : null}
+            {reviewMember?.phase === "proof_blocked" ? <button type="button" className="wux-inspector-action wux-inspector-action-primary ml-auto" disabled={recovery.isPending || reviewMember.proofInvalidation?.kind === "unavailable"} aria-busy={recovery.isPending} onClick={() => recovery.mutate("rerun_checks")} title={reviewMember.proofInvalidation?.kind === "unavailable" ? reviewMember.proofInvalidation.explanation : "Run the current verification commands"}>{recovery.isPending ? "Running checks…" : "Rerun checks"}</button> : null}
+            {showStart ? <button type="button" className="wux-inspector-action wux-inspector-action-primary ml-auto inline-flex items-center gap-1.5" disabled={!runnable || taskStart.isPending || directiveQueued} onClick={() => taskStart.mutate()} aria-label={`Start task ${task.id}`} title={runBlocker ?? "Authorize this exact task for the configured runtime"}><Play size={13} aria-hidden="true" />{directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"}</button> : null}
           </div>
-          {runBlocker && !stage.live && currentStatus !== "done" ? <p role="status" className="mt-2 text-[11.5px] text-muted">{runBlocker}</p> : null}
+          <p data-testid="inspector-next-action" role="status" className="mt-2 text-[12px] leading-5 text-muted">{reviewMember?.proofInvalidation?.explanation ?? (reviewMember?.phase === "failed" && reviewMember.waitingReason ? reviewMember.waitingReason : reviewMember?.phase === "proof_blocked" ? "Run the required verification again before this task can be accepted." : nextActionForStage(task, run, stage))}</p>
+          {reviewMember?.proofInvalidation ? <div data-testid="inspector-proof-invalidation" className="mt-2 rounded-lg border border-line-soft bg-panel px-3 py-2 text-[11.5px] leading-5 text-muted"><strong className="text-ink-soft">Why current proof is invalid:</strong> {reviewMember.proofInvalidation.explanation}{reviewMember.proofInvalidation.previous ? <div><span className="font-medium text-ink-soft">Previous verified material:</span> <code className="break-all">{reviewMember.proofInvalidation.previous}</code></div> : null}{reviewMember.proofInvalidation.current ? <div><span className="font-medium text-ink-soft">Latest attempted material:</span> <code className="break-all">{reviewMember.proofInvalidation.current}</code></div> : null}<div>The complete receipt history remains under Exact verification below.</div></div> : null}
+          {runBlocker && showStart ? <p role="status" className="mt-1 text-[11.5px] text-muted">{runBlocker}</p> : null}
           <ActionResultLine className="mt-2" pending={taskStart.isPending} error={taskStart.error} result={taskStart.data} />
+          <ActionResultLine className="mt-2" pending={recovery.isPending} error={recovery.error} result={recovery.data} />
 
           {humanActions.length > 0 ? (
             <div className="mt-4" data-testid="inspector-decision">
@@ -252,7 +292,7 @@ function ReadyInspector({
           ) : blockers.length > 0 ? (
             <p data-testid="inspector-decision" className="mt-4 rounded-lg border border-warn/30 bg-warn-soft px-4 py-3 text-[12.5px] leading-relaxed text-warn">
               <strong>Blocked by prerequisites.</strong>{" "}
-              {blockers.map((dep) => `${dep.id} (${dep.status})`).join(" · ")}
+              {blockers.map((dep) => `${dep.id} (${statusLabelOf(dep.status)})`).join(" · ")}
             </p>
           ) : null}
           {run?.outcome === "failed" && (
@@ -273,6 +313,11 @@ function ReadyInspector({
               {" — "}details in the disclosures below.
             </p>
           )}
+          {staleProofCount > 0 && (
+            <p data-testid="inspector-stale-proof" className="mt-4 rounded-lg border border-warn/30 bg-warn-soft px-4 py-3 text-[12.5px] leading-relaxed text-warn">
+              <strong>Previous proof is not current.</strong> Run the check again for this attempt before treating it as proof.
+            </p>
+          )}
 
           <section aria-label="What this task achieves" className="mt-6">
             <h3 className="wux-inspector-h">What this task achieves</h3>
@@ -288,9 +333,10 @@ function ReadyInspector({
                     ),
                 }}
               >
-                {task.intent || "No intent recorded."}
+                {taskIntent.markdown}
               </ReactMarkdown>
             </div>
+            {taskIntent.fromTitle ? <p className="mt-2 text-[11.5px] text-muted">Authored intent is unavailable; this uses the task title.</p> : null}
           </section>
 
           <TaskContractDisclosure body={task.body} projectId={task.projectId ?? ""} />
@@ -298,30 +344,37 @@ function ReadyInspector({
           {task.projectId ? <div className="mt-6"><TaskRouting detail={task} run={run} projectId={task.projectId} /></div> : null}
 
           <section aria-label="Active attempt" className="mt-6">
-            <h3 className="wux-inspector-h">{stage.live ? "Active attempt" : "Latest attempt"}</h3>
+            <h3 className="wux-inspector-h">{stage.live ? "Current attempt" : "Latest attempt"}</h3>
             <dl className="space-y-2 text-[12.5px] leading-5">
               <div className="flex gap-2">
-                <dt className="w-20 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Identity</dt>
-                <dd data-testid="inspector-identity" className="text-ink">{identitySummary(identity)}</dd>
+                <dt className="w-24 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Profile / model</dt>
+                <dd data-testid="inspector-attempt-profile" className="min-w-0 break-words text-ink">{identity.state === "identity" && run ? run.runnerProfile || identity.provider : "Unavailable"} · {identity.state === "identity" && run ? run.model || identity.model : "Unavailable"}</dd>
               </div>
               <div className="flex gap-2">
-                <dt className="w-20 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Run</dt>
-                <dd data-testid="inspector-run" className="text-muted">
-                  {run ? `${run.lane} · ${run.outcome.replaceAll("-", " ")} · attempt ${run.attemptCount}` : "Unavailable — no runtime record"}
+                <dt className="w-24 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Identity</dt>
+                <dd data-testid="inspector-identity" className="min-w-0 break-words text-ink">{identitySummary(identity)}</dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-24 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Attempt</dt>
+                <dd data-testid="inspector-run" className="min-w-0 break-words text-muted">
+                  {attemptDescription}
+                  {currentAttempt?.id ? <span data-testid="inspector-current-attempt-id"> · {currentAttempt.id}</span> : null}
                 </dd>
               </div>
               <div className="flex gap-2">
-                <dt className="w-20 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Last event</dt>
-                <dd data-testid="inspector-event" className="text-muted">
-                  {lastEvent ? lastEvent.text : "Unavailable"}
+                <dt className="w-24 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Last activity</dt>
+                <dd data-testid="inspector-event" className="min-w-0 break-words text-muted">
+                  {lastEvent ? <><time dateTime={lastEvent.ts}>{lastEvent.ts}</time>{run ? <> · <span data-testid="inspector-staleness">{run.liveness === "fresh" ? "Fresh activity" : run.liveness === "stale" ? "No recent activity" : "Process not observed"}</span> · {Number.isFinite(run.sinceLastEventSec) ? `${duration(Math.max(0, run.sinceLastEventSec))} ago` : "age unavailable"}</> : null}<div className="text-ink-soft">{lastEvent.text}</div></> : <span data-testid="inspector-staleness">Unavailable — no activity recorded</span>}
                 </dd>
               </div>
+              {task.projectId && run ? <div className="flex gap-2"><dt className="w-24 flex-none font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Details</dt><dd className="min-w-0 break-words"><a data-testid="inspector-open-run" href={`/p/${encodeURIComponent(task.projectId)}/runs/${encodeURIComponent(task.id)}`} className="text-info underline">Open run logs and details <span aria-hidden="true">→</span></a></dd></div> : null}
             </dl>
+            {previousAttempts.length > 0 ? <details data-testid="inspector-history" className="mt-3"><summary>Previous attempts ({previousAttempts.length})</summary><ul className="mt-2 space-y-1.5 text-[11.5px] text-muted">{previousAttempts.map((history) => <li key={history.id ?? `${history.lane ?? "execute"}:${history.n}:${history.startedAt}`} className="break-words"><span data-testid="inspector-historical-attempt">{laneLabel(history.lane)} · attempt {history.n} · {history.outcome.replaceAll("-", " ")}{history.id ? ` · ${history.id}` : ""}</span>{history.runner ? ` · ${history.runner}` : ""}</li>)}</ul></details> : null}
           </section>
 
-          <section aria-label="Agent coordination" className="mt-6" data-testid="agent-coordination">
-			<h3 className="wux-inspector-h">Agent coordination</h3>
-			<AgentCoordinationSummary task={task} run={run} />
+		  <details className="mt-6" data-testid="agent-coordination">
+			<summary>Agent coordination (technical details)</summary>
+			<div className="mt-3"><AgentCoordinationSummary task={task} run={run} />
 			{!task.contacts?.length && <p className="mt-2 text-[12.5px] text-muted">No contacts recorded.</p>}
 			{task.messages?.length ? <ol className="mt-3 space-y-2">{task.messages.map((message) => <li key={message.id} className="rounded-lg border border-line bg-raised px-3 py-2.5"><div className="text-[12.5px] text-ink">{message.body}</div><div className="mt-1 font-mono text-[10px] text-faint">{message.kind.replaceAll("_", " ")} · {message.sender} · {message.transportState} · {message.state}{message.yieldSender ? " · sender yields" : ""}</div>{message.kind === "question" && message.recipient.kind === "task" && message.recipient.id === task.id && !task.messages?.some((answer) => answer.replyTo === message.id) ? <button type="button" onClick={() => setReplyTo(message.id)} className="mt-2 text-[11.5px] underline">Reply</button> : null}</li>)}</ol> : <p className="mt-2 text-[11.5px] text-faint">No questions or replies.</p>}
 			<form className="mt-3 space-y-2" onSubmit={sendMessage}>
@@ -332,8 +385,8 @@ function ReadyInspector({
 				<button type="submit" disabled={!recipient || !task.projectId || !messageBody.trim()} className="wux-inspector-action">{replyTo ? "Send answer" : "Send question"}</button>
 				{replyTo ? <button type="button" onClick={() => setReplyTo(undefined)} className="wux-inspector-action">Cancel reply</button> : null}
 				{messageStatus ? <p role="status" className="text-[11.5px] text-muted">{messageStatus}</p> : null}
-			</form>
-		  </section>
+			</form></div>
+		  </details>
 
           {accepted ? (
             <section aria-label="Accepted result" className="mt-6">
@@ -348,7 +401,7 @@ function ReadyInspector({
             <h3 className="wux-inspector-h">Available evidence</h3>
             {task.evidence.length === 0 ? (
               <p data-testid="inspector-evidence-empty" className="text-[12.5px] leading-5 text-muted">
-                No evidence attached yet.
+                No additional attachments. Check results are listed below.
               </p>
             ) : (
               <>
@@ -381,21 +434,26 @@ function ReadyInspector({
               ) : (
                 <ul className="mt-2 space-y-2">
                   {task.acceptance.map((row) => (
+                    (() => {
+                      const proof = proofStatusForCurrentAttempt(row.proof, run);
+                      return (
                     <li key={row.id} className="flex items-start gap-2 text-[12.5px] leading-5">
                       <span className="font-mono text-[10.5px] text-faint">{row.id}</span>
                       <span className="flex-1 text-ink">{row.text}</span>
                       <span
                         className={`inline-flex rounded-full border px-2 py-0.5 text-[10.5px] font-medium ${
-                          row.proof === "pass"
+                          proof === "pass"
                             ? "border-pass/30 bg-pass-soft text-pass"
-                            : row.proof === "fail"
+                            : proof === "fail"
                               ? "border-fail/30 bg-fail-soft text-fail"
                               : "border-line bg-panel/60 text-muted"
                         }`}
                       >
-                        {row.proof}
+                        {proof === "not-current" ? "not current" : proof}
                       </span>
                     </li>
+                      );
+                    })()
                   ))}
                 </ul>
               )}
@@ -408,13 +466,18 @@ function ReadyInspector({
               ) : (
                 <ul className="mt-2 space-y-3">
                   {task.verification.map((row) => (
+                    (() => {
+                      const result = proofStatusForCurrentAttempt(row.result, run);
+                      return (
                     <li key={row.id} className="text-[12px]">
                       <code className="block break-words font-mono text-[11px] leading-5 text-ink-soft">{row.command}</code>
-                      <span className="mt-1 inline-flex rounded-full border border-line bg-panel/60 px-2 py-0.5 text-[10.5px] font-medium text-muted">
-                        {row.result}
+                      <span className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10.5px] font-medium ${result === "pass" ? "border-pass/30 bg-pass-soft text-pass" : result === "fail" ? "border-fail/30 bg-fail-soft text-fail" : "border-line bg-panel/60 text-muted"}`}>
+                        {result === "not-current" ? "not current" : result}
                       </span>
                       {row.detail && <p className="mt-1 leading-5 text-muted">{row.detail}</p>}
                     </li>
+                      );
+                    })()
                   ))}
                 </ul>
               )}

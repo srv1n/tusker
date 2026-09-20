@@ -20,6 +20,7 @@ var directTaskStartInjectBeforeLock func()
 type directStartBlocker struct {
 	Code   string `json:"code" yaml:"code"`
 	TaskID string `json:"taskId,omitempty" yaml:"taskId,omitempty"`
+	GateID string `json:"gateId,omitempty" yaml:"gateId,omitempty"`
 	Reason string `json:"reason" yaml:"reason"`
 	Action string `json:"action" yaml:"action"`
 }
@@ -31,31 +32,86 @@ type directStartControl struct {
 	Reason  string `json:"reason,omitempty" yaml:"reason,omitempty"`
 }
 
+// directWaveMemberRecovery names the single supported recovery action for a
+// failed or proof-blocked member, mirroring the eligibility checks the
+// recovery endpoints apply: a projected enabled action must actually admit.
+// Actions map to existing operator surfaces: retry_task (run redrive),
+// rerun_checks (verification recovery), retry_review (review lane recovery).
+type directWaveMemberRecovery struct {
+	Action      string `json:"action" yaml:"action"`
+	Enabled     bool   `json:"enabled" yaml:"enabled"`
+	Reason      string `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Attempts    int    `json:"attempts,omitempty" yaml:"attempts,omitempty"`
+	MaxAttempts int    `json:"maxAttempts,omitempty" yaml:"maxAttempts,omitempty"`
+}
+
 type directWaveReviewMember struct {
-	TaskID        string   `json:"taskId" yaml:"taskId"`
-	Title         string   `json:"title" yaml:"title"`
-	State         string   `json:"state" yaml:"state"`
-	WaitingReason string   `json:"waitingReason,omitempty" yaml:"waitingReason,omitempty"`
-	Dependencies  []string `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
-	ExecuteRoute  string   `json:"executeRoute,omitempty" yaml:"executeRoute,omitempty"`
-	ReviewRoute   string   `json:"reviewRoute,omitempty" yaml:"reviewRoute,omitempty"`
-	Acceptance    []string `json:"acceptance,omitempty" yaml:"acceptance,omitempty"`
-	Verification  []string `json:"verification,omitempty" yaml:"verification,omitempty"`
-	Instructions  string   `json:"instructions,omitempty" yaml:"instructions,omitempty"`
+	TaskID string `json:"taskId" yaml:"taskId"`
+	Title  string `json:"title" yaml:"title"`
+	State  string `json:"state" yaml:"state"`
+	Phase  string `json:"phase,omitempty" yaml:"phase,omitempty"`
+	Lane   string `json:"lane,omitempty" yaml:"lane,omitempty"`
+	// Responsible names the actor that must act next: a lease owner for live
+	// work, a gate owner for human-blocked work, "operator" when recovery needs
+	// a human/operator decision, and "daemon" for waits the scheduler resolves.
+	Responsible string `json:"responsible,omitempty" yaml:"responsible,omitempty"`
+	// CompletionReported is deliberately separate from State. A task can have
+	// reported completion but still lack current acceptance evidence.
+	CompletionReported bool                        `json:"completionReported,omitempty" yaml:"completionReported,omitempty"`
+	WaitingReason      string                      `json:"waitingReason,omitempty" yaml:"waitingReason,omitempty"`
+	Recovery           *directWaveMemberRecovery   `json:"recovery,omitempty" yaml:"recovery,omitempty"`
+	Dependencies       []string                    `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
+	ExecuteRoute       string                      `json:"executeRoute,omitempty" yaml:"executeRoute,omitempty"`
+	ReviewRoute        string                      `json:"reviewRoute,omitempty" yaml:"reviewRoute,omitempty"`
+	Acceptance         []string                    `json:"acceptance,omitempty" yaml:"acceptance,omitempty"`
+	Verification       []string                    `json:"verification,omitempty" yaml:"verification,omitempty"`
+	Instructions       string                      `json:"instructions,omitempty" yaml:"instructions,omitempty"`
+	ProofInvalidation  *v7VerificationInvalidation `json:"proofInvalidation,omitempty" yaml:"proofInvalidation,omitempty"`
+}
+
+type directWaveReviewHumanAction struct {
+	TaskID    string           `json:"taskId" yaml:"taskId"`
+	TaskTitle string           `json:"taskTitle" yaml:"taskTitle"`
+	Action    serveHumanAction `json:"action" yaml:"action"`
 }
 
 type directWaveReview struct {
-	Schema              string                   `json:"schema" yaml:"schema"`
-	WaveID              string                   `json:"waveId" yaml:"waveId"`
-	Title               string                   `json:"title" yaml:"title"`
-	Outcome             string                   `json:"outcome" yaml:"outcome"`
-	State               string                   `json:"state" yaml:"state"`
-	Authorization       string                   `json:"authorization" yaml:"authorization"`
-	MaterialFingerprint string                   `json:"materialFingerprint" yaml:"materialFingerprint"`
-	Members             []directWaveReviewMember `json:"members" yaml:"members"`
-	Frontiers           [][]string               `json:"frontiers" yaml:"frontiers"`
-	Blockers            []directStartBlocker     `json:"blockers,omitempty" yaml:"blockers,omitempty"`
-	Controls            []directStartControl     `json:"controls" yaml:"controls"`
+	Schema              string                        `json:"schema" yaml:"schema"`
+	WaveID              string                        `json:"waveId" yaml:"waveId"`
+	Title               string                        `json:"title" yaml:"title"`
+	Outcome             string                        `json:"outcome" yaml:"outcome"`
+	State               string                        `json:"state" yaml:"state"`
+	Authorization       string                        `json:"authorization" yaml:"authorization"`
+	MaterialFingerprint string                        `json:"materialFingerprint" yaml:"materialFingerprint"`
+	Members             []directWaveReviewMember      `json:"members" yaml:"members"`
+	Frontiers           [][]string                    `json:"frontiers" yaml:"frontiers"`
+	HumanActions        []directWaveReviewHumanAction `json:"humanActions,omitempty" yaml:"humanActions,omitempty"`
+	Blockers            []directStartBlocker          `json:"blockers" yaml:"blockers"`
+	Controls            []directStartControl          `json:"controls" yaml:"controls"`
+}
+
+func directWaveHumanActionProjection(idx v7Index, members []string) []directWaveReviewHumanAction {
+	snap := serveSnapshot{gates: make([]Note, 0, len(idx.Gates))}
+	for _, gate := range idx.Gates {
+		snap.gates = append(snap.gates, gate)
+	}
+	seen := map[string]bool{}
+	actions := []directWaveReviewHumanAction{}
+	for _, id := range members {
+		task, ok := idx.Tasks[id]
+		if !ok {
+			continue
+		}
+		for _, action := range serveHumanActionsForTask(snap, task) {
+			if seen[action.GateID] {
+				continue
+			}
+			seen[action.GateID] = true
+			actions = append(actions, directWaveReviewHumanAction{TaskID: id, TaskTitle: stringField(task.Data, "title"), Action: action})
+		}
+	}
+	sort.Slice(actions, func(i, j int) bool { return actions[i].Action.GateID < actions[j].Action.GateID })
+	return actions
 }
 
 type directStartResult struct {
@@ -196,6 +252,25 @@ func directWaveStrictBlocker(vaultPath string, idx v7Index, task Note, wave Note
 	return v7VerificationReceiptRequirementMissing(vaultPath, task)
 }
 
+func directWaveProofBlocker(vaultPath string, task Note) (code, reason string) {
+	cause := v7VerificationReceiptInvalidation(vaultPath, task)
+	if cause == nil {
+		return "", ""
+	}
+	reason = cause.Explanation
+	switch cause.Kind {
+	case "missing":
+		code = "STRICT_PROOF_MISSING"
+	case "failed":
+		code = "STRICT_PROOF_FAILED"
+	case "unavailable":
+		code = "STRICT_PROOF_UNAVAILABLE"
+	default:
+		code = "STRICT_PROOF_STALE"
+	}
+	return code, reason
+}
+
 func directWaveDependencyContractBlocker(task Note, idx v7Index) string {
 	contracts, _ := task.Data["dependency_contracts"].([]any)
 	edges := map[string]string{}
@@ -244,40 +319,50 @@ func directWaveDependencyContractBlocker(task Note, idx v7Index) string {
 	return ""
 }
 
-func directWaveLiveOwner(runs map[string]RunStatus, recordID string) string {
+func directWaveLiveRun(runs map[string]RunStatus, recordID string, now time.Time) *RunStatus {
 	run, ok := runs[recordID]
-	if !ok {
-		return ""
+	if !ok || run.Terminal || runFreshness(&run, now) != "fresh" {
+		return nil
 	}
 	if isDispatchingLeaseState(run.LeaseState) || LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateRunning {
-		return firstNonEmpty(run.LeaseOwner, "active run")
+		return &run
 	}
-	return ""
+	return nil
 }
 
 func directWaveReviewRuntimeStore() (*RuntimeStore, error) {
 	stateRoot := DefaultStateRoot()
 	if !fileExists(runtimeStoreDBPath(stateRoot)) {
-		return nil, nil
+		return nil, fmt.Errorf("runtime store does not exist")
 	}
 	return OpenRuntimeStoreReadOnly(stateRoot)
 }
 
-func directWaveRunAdmittedByWave(store *RuntimeStore, projectID, recordID, waveID, fingerprint, authorizedAt string) bool {
-	if store == nil || fingerprint == "" {
+func directWaveRunAdmittedByWave(store *RuntimeStore, run RunStatus, waveID, fingerprint, authorizedAt string) bool {
+	if store == nil || fingerprint == "" || run.ProjectID == "" || run.RecordID == "" || run.LeaseGeneration <= 0 || run.ActiveAttemptID == "" {
 		return false
 	}
-	if directive, err := store.RunDirective(projectID, recordID); err == nil && directive != nil && directive.WaveID == waveID && directive.AuthorizationFingerprint == fingerprint && directive.WaveAuthorizedAt == authorizedAt {
-		return true
+	directive, err := store.RunDirective(run.ProjectID, run.RecordID)
+	if err != nil || directive == nil || directive.WaveID != waveID || directive.AuthorizationFingerprint != fingerprint || directive.WaveAuthorizedAt != authorizedAt {
+		return false
 	}
-	if auth, err := store.LatestRunAuthorization(projectID, recordID); err == nil && auth != nil && auth.DirectiveWaveID == waveID && auth.DirectiveAuthorizationFingerprint == fingerprint && auth.DirectiveWaveAuthorizedAt == authorizedAt {
-		return true
+	auth, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	if err != nil || auth == nil {
+		return false
 	}
-	return false
+	return auth.LeaseGeneration == run.LeaseGeneration && auth.AttemptID == run.ActiveAttemptID && auth.Source == "human_run_directive"
 }
 
 func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, waveID string, runtimeErr error) (directWaveReview, error) {
-	review := directWaveReview{Schema: directWaveReviewSchema, WaveID: waveID, Controls: []directStartControl{}}
+	review := directWaveReview{
+		Schema:       directWaveReviewSchema,
+		WaveID:       waveID,
+		Members:      []directWaveReviewMember{},
+		Frontiers:    [][]string{},
+		HumanActions: []directWaveReviewHumanAction{},
+		Blockers:     []directStartBlocker{},
+		Controls:     []directStartControl{},
+	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return review, err
@@ -289,8 +374,14 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	}
 	review.Title = stringField(wave.Data, "title")
 	review.Outcome = firstNonEmpty(stringField(wave.Data, "outcome"), stringField(wave.Data, "summary"))
+	waveStatus := strings.ToLower(stringField(wave.Data, "status"))
+	waveTerminal := waveStatus == "cancelled" || waveStatus == "superseded"
+	if waveTerminal {
+		review.Blockers = append(review.Blockers, directStartBlocker{Code: "WAVE_TERMINAL", Reason: "wave " + waveID + " is " + waveStatus, Action: "create a new wave for new work"})
+	}
 	members := uniqueStrings(normalizeList(wave.Data["members"]))
 	sort.Strings(members)
+	review.HumanActions = directWaveHumanActionProjection(idx, members)
 	fingerprint, issues := waveMaterialFingerprint(vaultPath, idx, wave)
 	review.MaterialFingerprint = fingerprint
 	for _, issue := range issues {
@@ -318,10 +409,23 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	} else {
 		wfErr = loadErr
 	}
+	// Runtime rows are keyed by the registered project id, which may differ from
+	// the authored project field in .tusker/config.yaml (resolveV7ProjectID).
+	// Normalize to the registered id so run/directive lookups never silently
+	// miss every row.
+	if store != nil {
+		if registeredID, registered, regErr := registeredProjectIDForVault(store, vaultPath); regErr == nil && registered && strings.TrimSpace(registeredID) != "" {
+			projectID = registeredID
+		}
+	}
 	runs := map[string]RunStatus{}
+	var projectRuns []RunStatus
+	var directives []RunDirective
 	if runtimeErr != nil {
 		review.Blockers = append(review.Blockers, directStartBlocker{Code: "RUNTIME_UNAVAILABLE", Reason: "runtime state is unavailable: " + runtimeErr.Error(), Action: "restore the runtime store and rerun wave review"})
-	} else if store != nil {
+	} else if store == nil {
+		review.Blockers = append(review.Blockers, directStartBlocker{Code: "RUNTIME_UNAVAILABLE", Reason: "runtime state is unavailable: runtime store is missing", Action: "restore the runtime store and rerun wave review"})
+	} else {
 		if list, listErr := store.ListRuns(); listErr != nil {
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "RUNTIME_UNAVAILABLE", Reason: "runtime state is unavailable: " + listErr.Error(), Action: "restore the runtime store and rerun wave review"})
 		} else {
@@ -329,13 +433,73 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 				if projectID != "" && run.ProjectID != projectID {
 					continue
 				}
-				key := firstNonEmpty(run.ItemID, run.RecordID)
+				projectRuns = append(projectRuns, run)
+				// Runtime rows are canonically scoped by project + tracker record.
+				// ItemID is display identity and may differ from the persisted key.
+				key := firstNonEmpty(run.RecordID, run.ItemID)
 				if key != "" {
 					runs[key] = run
 				}
 			}
 		}
+		if list, directiveErr := store.ListActiveRunDirectives(projectID, time.Now().UTC()); directiveErr == nil {
+			directives = list
+		}
 	}
+	// Frontier occupancy mirrors queueAuthorizedWaveFrontier: a member holding
+	// a dispatch-capacity lease (claimed/running/retry_queued) or a queued
+	// directive bound to the current authorization occupies a wave slot, while
+	// only claimed/running rows consume the project's active-run budget. A
+	// dispatchable member past either ceiling is capacity-waiting, not failed.
+	recordToMember := map[string]string{}
+	for _, memberID := range members {
+		if memberTask, ok := idx.Tasks[memberID]; ok {
+			recordToMember[trackerRecordID(memberTask)] = memberID
+		}
+	}
+	occupied := map[string]bool{}
+	// occupiedWaveBound marks members whose only occupancy is a queued
+	// wave-bound directive: that directive cannot dispatch while the wave is
+	// paused (it was never consumed, so admitted-lease continuity does not
+	// apply), but a task-scoped start replaces it and dispatches immediately.
+	occupiedWaveBound := map[string]bool{}
+	for _, run := range projectRuns {
+		if taskID, ok := recordToMember[firstNonEmpty(run.RecordID, run.ItemID)]; ok && isDispatchCapacityLeaseState(run.LeaseState) {
+			occupied[taskID] = true
+		}
+	}
+	for _, directive := range directives {
+		taskID, ok := recordToMember[directive.RecordID]
+		if !ok {
+			continue
+		}
+		// A directive bound to this wave's superseded authorization can never
+		// match again and is rebound on queue, so it holds no slot.
+		if directive.WaveID == waveID && (directive.AuthorizationFingerprint != fingerprint || directive.WaveAuthorizedAt != armedAt) {
+			continue
+		}
+		occupied[taskID] = true
+		if directive.WaveID == waveID {
+			occupiedWaveBound[taskID] = true
+		}
+	}
+	waveLimit := intField(wave.Data, "concurrency")
+	if waveLimit <= 0 {
+		waveLimit = maxInt(1, len(members))
+	}
+	waveOccupied := 0
+	for _, id := range members {
+		if occupied[id] {
+			waveOccupied++
+		}
+	}
+	projectActive := 0
+	for _, run := range projectRuns {
+		if runConsumesDispatchCapacity(run) {
+			projectActive++
+		}
+	}
+	projectCap := projectActiveRunLimit(wf)
 	landed := armedWaveLandedMembers(wave)
 	frontiers, cycle := directWaveFrontiers(members, idx)
 	if cycle != nil {
@@ -383,39 +547,124 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		if reason := directWaveDependencyContractBlocker(task, idx); reason != "" {
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "DEPENDENCY_CONTRACT_INVALID", TaskID: id, Reason: reason, Action: "rebind the dependency contract for " + id})
 		}
-		if reason := directWaveStrictBlocker(vaultPath, idx, task, wave); reason != "" {
-			review.Blockers = append(review.Blockers, directStartBlocker{Code: "STRICT_PROOF_STALE", TaskID: id, Reason: reason, Action: "re-run current command proof for " + id})
-		}
 		recordID := trackerRecordID(task)
-		owner := directWaveLiveOwner(runs, firstNonEmpty(recordID, id))
-		admitted := owner != "" && !stale && (authState == "armed" || authState == "paused") && directWaveRunAdmittedByWave(store, projectID, recordID, waveID, armedFingerprint, armedAt)
+		storedRun, hasStoredRun := runs[firstNonEmpty(recordID, id)]
+		member.ProofInvalidation = v7VerificationReceiptInvalidation(vaultPath, task)
+		workspaceErr := error(nil)
+		if store != nil && hasStoredRun {
+			var workspace *v7VerificationWorkspace
+			if workspace, workspaceErr = recoveryCommandVerificationWorkspace(store, vaultPath, task, storedRun); workspaceErr == nil {
+				member.ProofInvalidation = v7VerificationReceiptInvalidationForWorkspace(vaultPath, task, workspace)
+			}
+		}
+		proofCode, proofStale := "", ""
+		if member.ProofInvalidation != nil {
+			proofStale = member.ProofInvalidation.Explanation
+			switch member.ProofInvalidation.Kind {
+			case "missing":
+				proofCode = "STRICT_PROOF_MISSING"
+			case "failed":
+				proofCode = "STRICT_PROOF_FAILED"
+			case "unavailable":
+				proofCode = "STRICT_PROOF_UNAVAILABLE"
+			default:
+				proofCode = "STRICT_PROOF_STALE"
+			}
+		}
+		if proofStale != "" && strings.EqualFold(stringField(task.Data, "status"), "done") {
+			review.Blockers = append(review.Blockers, directStartBlocker{Code: proofCode, TaskID: id, Reason: proofStale, Action: "re-run current command proof for " + id})
+		}
+		liveRun := directWaveLiveRun(runs, firstNonEmpty(recordID, id), time.Now().UTC())
+		owner := ""
+		if liveRun != nil {
+			owner = firstNonEmpty(liveRun.LeaseOwner, "active run")
+			member.Lane = liveRun.Lane
+		}
+		admitted := liveRun != nil && !stale && (authState == "armed" || authState == "paused") && directWaveRunAdmittedByWave(store, *liveRun, waveID, armedFingerprint, armedAt)
 		status := strings.ToLower(stringField(task.Data, "status"))
+		member.CompletionReported = status == "done"
+		currentReviewResult := false
+		if store != nil && hasStoredRun && storedRun.Lane == runLaneReview {
+			currentReviewResult, _ = store.HasReviewResultForWork(projectID, recordID, intField(task.Data, "work_revision"), stringField(task.Data, "state_rev"))
+		}
 		depWait := directWaveMemberDependencyWait(task, idx)
 		switch {
 		// Contract staleness dominates lifecycle status: a done member whose
 		// stored pin no longer covers its bytes cannot certify the wave as
 		// complete, and a stale member is never startable. Live admitted work
 		// still reports running — the recorded blocker flags the drift.
-		case taskStale == "" && (landed[id] && status == "done" || status == "done"):
+		case taskStale == "" && proofStale == "" && (landed[id] && status == "done" || status == "done"):
 			member.State = "completed"
+			member.Phase = "completed"
+		case owner != "" && admitted && liveRun.Lane == runLaneReview:
+			member.State = "reviewing"
+			member.Phase = "reviewing"
+			member.WaitingReason = "active reviewer " + owner
+		case hasStoredRun && storedRun.Lane == runLaneReview && status != "rework" && AttemptOutcome(storedRun.AttemptOutcome) != AttemptOutcomeNone && AttemptOutcome(storedRun.AttemptOutcome) != AttemptOutcomeSucceeded && strings.TrimSpace(storedRun.AttemptOutcome) != "":
+			member.State = "blocked"
+			member.Phase = "failed"
+			member.Lane = storedRun.Lane
+			member.WaitingReason = firstNonEmpty(storedRun.LastError, "runtime "+storedRun.AttemptOutcome)
+			review.Blockers = append(review.Blockers, directStartBlocker{Code: "RUNTIME_FAILED", TaskID: id, Reason: member.WaitingReason, Action: "inspect the failed review attempt for " + id})
+		case status == "review" && hasStoredRun && storedRun.Terminal && storedRun.Lane == runLaneReview && !currentReviewResult:
+			member.State = "blocked"
+			member.Phase = "failed"
+			member.Lane = storedRun.Lane
+			member.WaitingReason = "the previous review result does not match the current task snapshot"
+			review.Blockers = append(review.Blockers, directStartBlocker{Code: "REVIEW_SNAPSHOT_STALE", TaskID: id, Reason: member.WaitingReason, Action: "retry independent review for " + id})
+		case status == "review" && proofStale != "":
+			// A submitted member whose recorded checks no longer cover current
+			// material is blocked on proof, not on a reviewer: re-running the
+			// checks is the one supported action. Review-lane failures above
+			// keep their own diagnosis and recovery.
+			member.State = "waiting"
+			member.Phase = "proof_blocked"
+			member.WaitingReason = proofStale
 		case status == "review":
 			member.State = "waiting"
+			member.Phase = "awaiting_review"
 			member.WaitingReason = firstNonEmpty(member.WaitingReason, "awaiting independent review")
 		case owner != "" && admitted:
 			member.State = "running"
+			member.Phase = "executing"
 			member.WaitingReason = "active owner " + owner
+		case status == "done" && proofStale != "":
+			member.State = "waiting"
+			member.Phase = "proof_blocked"
+			member.WaitingReason = proofStale
+		case hasStoredRun && storedRun.Terminal && AttemptOutcome(storedRun.AttemptOutcome) != AttemptOutcomeNone && AttemptOutcome(storedRun.AttemptOutcome) != AttemptOutcomeSucceeded && strings.TrimSpace(storedRun.AttemptOutcome) != "" && !(status == "rework" && storedRun.Lane == runLaneReview):
+			member.State = "blocked"
+			member.Phase = "failed"
+			member.Lane = storedRun.Lane
+			member.WaitingReason = firstNonEmpty(storedRun.LastError, "runtime "+storedRun.AttemptOutcome)
+			review.Blockers = append(review.Blockers, directStartBlocker{Code: "RUNTIME_FAILED", TaskID: id, Reason: member.WaitingReason, Action: "inspect the failed " + firstNonEmpty(storedRun.Lane, "runtime") + " attempt for " + id})
 		case taskStale != "":
 			member.State = "waiting"
 			member.WaitingReason = "task contract drifted from its stored fingerprint; rebind required"
 		case member.State == "waiting":
+		case status == "rework":
+			// A reviewer requested changes: this is ordinary implementation
+			// state, not an infrastructure or wave-setup failure. The execute
+			// lane re-admits it through the normal frontier.
+			member.State = "ready"
+			member.Phase = "rework"
+			member.WaitingReason = "review requested changes; another implementation attempt is dispatchable"
 		case depWait != "":
+			// Dependency waiting is expected DAG behavior: a member state, not
+			// a diagnostic blocker.
 			member.State = "waiting"
 			member.WaitingReason = "waiting for dependency " + depWait
-			review.Blockers = append(review.Blockers, directStartBlocker{Code: "DEPENDENCY_WAITING", TaskID: id, Reason: "dependency " + depWait + " is unfinished", Action: "complete " + depWait + " first"})
 		case armedWaveTaskHumanBlocked(idx, task):
 			member.State = "waiting"
 			member.WaitingReason = "open blocking human gate"
-			review.Blockers = append(review.Blockers, directStartBlocker{Code: "HUMAN_GATE_OPEN", TaskID: id, Reason: "an open human gate blocks " + id, Action: "complete the human gate for " + id})
+			gateID := ""
+			for _, action := range review.HumanActions {
+				if containsString(action.Action.BlockedTaskIDs, id) {
+					gateID = action.Action.GateID
+					break
+				}
+			}
+			review.Blockers = append(review.Blockers, directStartBlocker{Code: "HUMAN_GATE_OPEN", TaskID: id, GateID: gateID, Reason: "open human gate " + gateID + " blocks " + id, Action: "open " + id + " in the Tusker Mac app and confirm " + gateID})
 		default:
 			member.State = "ready"
 		}
@@ -424,11 +673,93 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 			member.WaitingReason = firstNonEmpty(member.WaitingReason, "task is held by "+owner)
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "ACTIVE_OWNER", TaskID: id, Reason: "task is held by " + owner + " outside this wave's authorization", Action: "wait for the owner to release or reclaim the lease"})
 		}
+		// Capacity annotation: a dispatchable member that already holds a
+		// frontier slot (queued directive or held lease) is waiting on the
+		// daemon's next claim, and a dispatchable member past the wave
+		// concurrency ceiling is waiting on a sibling slot. Neither is a
+		// failure or a setup problem — the scheduler resolves them.
+		if member.State == "ready" {
+			switch {
+			case review.Authorization == "paused":
+				// A paused wave admits no new frontier work, but every member
+				// stays dispatchable through a task-scoped start — the one
+				// supported pause bypass. Keep the member ready so that
+				// control stays enabled; the phase and reason carry the pause.
+				member.Phase = "paused"
+				member.Responsible = "operator"
+				switch {
+				case occupiedWaveBound[id]:
+					member.WaitingReason = "queued under wave authorization; dispatches when the wave resumes, or sooner through a task-scoped start"
+				case occupied[id]:
+					member.Phase = "queued"
+					member.Responsible = "daemon"
+					member.WaitingReason = "queued for dispatch"
+				default:
+					member.WaitingReason = "wave is paused; a task-scoped start dispatches without resuming, and resume re-admits queued work but does not retry failures"
+				}
+			case occupied[id]:
+				member.State = "waiting"
+				member.Responsible = "daemon"
+				if member.Phase == "" {
+					member.Phase = "queued"
+				}
+				if projectCap > 0 && projectActive >= projectCap {
+					if member.Phase == "queued" {
+						member.Phase = "capacity_wait"
+					}
+					slotReason := fmt.Sprintf("waiting for an execution slot — project capacity %d/%d in use", projectActive, projectCap)
+					if member.WaitingReason != "" {
+						member.WaitingReason += "; " + slotReason
+					} else {
+						member.WaitingReason = slotReason
+					}
+				} else {
+					member.WaitingReason = firstNonEmpty(member.WaitingReason, "queued for dispatch")
+				}
+			case waveOccupied >= waveLimit && (review.Authorization == "authorized" || review.Authorization == "stale"):
+				// Past the wave concurrency ceiling nothing is queued for this
+				// member, so a task-scoped start still dispatches — keep the
+				// member ready and let the phase carry the capacity wait.
+				if member.Phase == "" {
+					member.Phase = "capacity_wait"
+				}
+				member.Responsible = "daemon"
+				slotReason := fmt.Sprintf("waiting for a wave execution slot — concurrency %d/%d in use", waveOccupied, waveLimit)
+				if member.WaitingReason != "" {
+					member.WaitingReason += "; " + slotReason
+				} else {
+					member.WaitingReason = slotReason
+				}
+			}
+		}
+		member.Recovery = directWaveMemberRecoveryFor(task, wave, storedRun, hasStoredRun, workspaceErr, member, wf.Retry.MaxAttempts)
 		review.Members = append(review.Members, member)
+	}
+	// Dependency waits resolve through the dependency's own lifecycle: when the
+	// dependency is progressing the daemon owns the wait; when it failed or is
+	// missing the operator acts on the dependency's recovery, not this member.
+	memberByID := make(map[string]*directWaveReviewMember, len(review.Members))
+	for i := range review.Members {
+		memberByID[review.Members[i].TaskID] = &review.Members[i]
+	}
+	for i := range review.Members {
+		m := &review.Members[i]
+		if m.Responsible != "" || !strings.HasPrefix(m.WaitingReason, "waiting for dependency ") {
+			continue
+		}
+		depID := strings.TrimSpace(strings.TrimPrefix(m.WaitingReason, "waiting for dependency "))
+		if dep, ok := memberByID[depID]; ok {
+			switch {
+			case dep.State == "running" || dep.State == "reviewing" || dep.Phase == "queued" || dep.Phase == "capacity_wait":
+				m.Responsible = "daemon"
+			default:
+				m.Responsible = "operator"
+			}
+		}
 	}
 	anyRunning, allDone := false, len(members) > 0
 	for _, member := range review.Members {
-		if member.State == "running" {
+		if member.State == "running" || member.State == "reviewing" {
 			anyRunning = true
 		}
 		if member.State != "completed" {
@@ -436,6 +767,8 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		}
 	}
 	switch {
+	case waveTerminal:
+		review.State = "Cancelled"
 	case allDone:
 		review.State = "Completed"
 	case review.Authorization == "paused":
@@ -454,6 +787,8 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		}
 	}
 	switch {
+	case review.State == "Cancelled":
+		review.Controls = append(review.Controls, directStartControl{Action: "wave start", Enabled: false, Scope: waveID, Reason: "wave is " + waveStatus})
 	case review.State == "Completed":
 		review.Controls = append(review.Controls, directStartControl{Action: "wave start", Enabled: false, Scope: waveID, Reason: "wave is already complete"})
 	case review.State == "Paused":
@@ -468,15 +803,81 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		review.Controls = append(review.Controls, directStartControl{Action: "wave start", Enabled: !globalBlocked, Scope: waveID, Reason: startReason})
 	}
 	for _, member := range review.Members {
-		control := directStartControl{Action: "task start", Enabled: member.State == "ready" || member.State == "planned", Scope: member.TaskID}
+		control := directStartControl{Action: "task start", Enabled: !waveTerminal && (member.State == "ready" || member.State == "planned"), Scope: member.TaskID}
 		if !control.Enabled {
 			control.Reason = firstNonEmpty(member.WaitingReason, "task is not eligible")
+			if waveTerminal {
+				control.Reason = "wave is " + waveStatus
+			}
 		} else if review.State == "Paused" {
 			control.Reason = "wave " + waveID + " remains paused; this start is task-scoped only"
 		}
 		review.Controls = append(review.Controls, control)
 	}
 	return review, nil
+}
+
+// directWaveMemberRecoveryFor names the one supported recovery action for a
+// failed or proof-blocked member and mirrors the same eligibility the recovery
+// endpoints enforce, so a projected enabled action actually admits. Actions
+// map to existing operator surfaces: retry_task is `tusker redrive` (or the
+// serve redrive endpoint), rerun_checks is verification recovery, and
+// retry_review is the review-lane recovery queue.
+func directWaveMemberRecoveryFor(task Note, wave Note, run RunStatus, hasRun bool, workspaceErr error, member directWaveReviewMember, maxAttempts int) *directWaveMemberRecovery {
+	status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
+	recovery := &directWaveMemberRecovery{Attempts: run.AttemptCount, MaxAttempts: maxAttempts}
+	switch member.Phase {
+	case "proof_blocked":
+		recovery.Action = "rerun_checks"
+		switch {
+		case !hasRun:
+			recovery.Reason = "no submitted run workspace to re-verify"
+		case workspaceErr != nil:
+			recovery.Reason = workspaceErr.Error()
+		default:
+			// rerun_checks ends by queueing the review lane, so the review
+			// window's operational blockers are rerun_checks blockers too.
+			if blocker := reviewRecoveryOperationalBlocker(wave, run, maxAttempts); blocker != "" {
+				recovery.Reason = blocker
+			} else {
+				recovery.Enabled = true
+			}
+		}
+	case "failed":
+		if member.Lane == runLaneReview {
+			recovery.Action = "retry_review"
+			switch {
+			case !hasRun || run.Lane != runLaneReview:
+				recovery.Reason = "no failed review lane to retry"
+			case status != "review":
+				recovery.Reason = "task is not awaiting review (status " + fallback(status, "missing") + ")"
+			default:
+				if blocker := reviewRecoveryOperationalBlocker(wave, run, maxAttempts); blocker != "" {
+					recovery.Reason = blocker
+				} else {
+					recovery.Enabled = true
+				}
+			}
+		} else {
+			recovery.Action = "retry_task"
+			switch refused, reason := serveRedriveRefusal(status, run); {
+			case !hasRun:
+				recovery.Reason = "no run to retry"
+			case directWaveTaskContractStaleReason(task) != "":
+				recovery.Reason = "task contract drifted from its stored fingerprint; rebind before retry"
+			case refused:
+				recovery.Reason = reason
+			default:
+				recovery.Enabled = true
+				if strings.EqualFold(stringField(wave.Data, "authorization"), "paused") {
+					recovery.Reason = "wave is paused; the retried attempt dispatches on its already-admitted authorization"
+				}
+			}
+		}
+	default:
+		return nil
+	}
+	return recovery
 }
 
 func waveReviewCmd(args Args) error {
@@ -577,7 +978,7 @@ func directWaveStartRefusal(review directWaveReview) error {
 	}
 	for _, blocker := range review.Blockers {
 		switch blocker.Code {
-		case "ROUTE_INVALID", "STRICT_PROOF_STALE", "DEPENDENCY_CONTRACT_INVALID", "CONTRACT_FINGERPRINT_STALE", "ACTIVE_OWNER":
+		case "WAVE_TERMINAL", "ROUTE_INVALID", "DEPENDENCY_CONTRACT_INVALID", "CONTRACT_FINGERPRINT_STALE", "ACTIVE_OWNER":
 			return tuskerError(errorInvalidTransition, "wave start refused: "+blocker.Code+" "+blocker.TaskID+" "+blocker.Reason)
 		}
 	}
@@ -699,7 +1100,7 @@ func directWaveStart(vault string, store *RuntimeStore, waveID, actor string) (d
 	}
 	result.Authorization = "authorized"
 	result.MaterialFingerprint = fingerprint
-	result.Reason = "Authorized — waiting for runtime"
+	result.Reason = "Authorized — waiting for prerequisites"
 	if directWaveStartInjectCrashBeforeQueue != nil && directWaveStartInjectCrashBeforeQueue() {
 		return result, nil
 	}
@@ -708,7 +1109,7 @@ func directWaveStart(vault string, store *RuntimeStore, waveID, actor string) (d
 		return result, err
 	}
 	result.QueuedTaskIDs = queued
-	result.Replayed = alreadyArmed && len(queued) == 0
+	result.Replayed = alreadyArmed
 	if len(eligible) > 0 || len(queued) > 0 {
 		_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: project.Project.ProjectID, Cause: "wave_start", Changes: []daemonControlChange{{ID: waveID, Kind: "wave", Eligibility: []string{"runtime", "authorization"}}}}, 250*time.Millisecond)
 	}
@@ -787,6 +1188,14 @@ func directTaskBackgroundStart(vault string, store *RuntimeStore, taskID, actor 
 	if !ok {
 		return result, tuskerError(errorNotFound, "task "+taskID+" does not resolve")
 	}
+	if waveID := stringField(task.Data, "wave"); waveID != "" {
+		if wave, ok := idx.Waves[waveID]; ok {
+			waveStatus := strings.ToLower(stringField(wave.Data, "status"))
+			if waveStatus == "cancelled" || waveStatus == "superseded" {
+				return result, tuskerError(errorInvalidTransition, "WAVE_TERMINAL "+waveID+": wave is "+waveStatus)
+			}
+		}
+	}
 	if reason := directWaveTaskContractStaleReason(task); reason != "" {
 		return result, tuskerError(errorInvalidTransition, "CONTRACT_FINGERPRINT_STALE "+reason)
 	}
@@ -807,13 +1216,6 @@ func directTaskBackgroundStart(vault string, store *RuntimeStore, taskID, actor 
 		return result, findErr
 	} else if current != nil && isDispatchingLeaseState(current.LeaseState) {
 		return result, tuskerError(errorInvalidTransition, "ACTIVE_OWNER "+taskID+": held by "+current.LeaseOwner)
-	}
-	var wave Note
-	if waveID := stringField(task.Data, "wave"); waveID != "" {
-		wave = idx.Waves[waveID]
-	}
-	if reason := directWaveStrictBlocker(vault, idx, task, wave); reason != "" {
-		return result, tuskerError(errorInvalidTransition, "STRICT_PROOF_STALE "+taskID+": "+reason)
 	}
 	if reason := directWaveDependencyContractBlocker(task, idx); reason != "" {
 		return result, tuskerError(errorInvalidTransition, "DEPENDENCY_CONTRACT_INVALID "+taskID+": "+reason)
@@ -902,6 +1304,11 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 	wave.Data = data
 	wave.Body = body
 	idx.Waves[waveID] = wave
+	status := strings.ToLower(stringField(data, "status"))
+	if status == "cancelled" || status == "superseded" {
+		_ = waveLock.Close()
+		return nil, nil
+	}
 	fingerprint, issues := waveMaterialFingerprint(vault, idx, wave)
 	stored := stringField(data, "authorization_fingerprint")
 	authorizedAt := stringField(data, "authorized_at")
@@ -925,6 +1332,12 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 		limit = 1
 	}
 	occupied := map[string]bool{}
+	recordToTask := map[string]string{}
+	for _, member := range members {
+		if task, ok := idx.Tasks[member]; ok {
+			recordToTask[trackerRecordID(task)] = member
+		}
+	}
 	runs, err := store.ListRuns()
 	if err != nil {
 		_ = waveLock.Close()
@@ -935,13 +1348,9 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 			continue
 		}
 		if isDispatchCapacityLeaseState(run.LeaseState) || isDispatchingLeaseState(run.LeaseState) {
-			occupied[firstNonEmpty(run.ItemID, run.RecordID)] = true
-		}
-	}
-	recordToTask := map[string]string{}
-	for _, member := range members {
-		if task, ok := idx.Tasks[member]; ok {
-			recordToTask[trackerRecordID(task)] = member
+			if taskID, ok := recordToTask[firstNonEmpty(run.RecordID, run.ItemID)]; ok {
+				occupied[taskID] = true
+			}
 		}
 	}
 	directives, err := store.ListActiveRunDirectives(projectID, now)
@@ -992,10 +1401,18 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 		_ = waveLock.Close()
 		return nil, tuskerError(errorInvalidTransition, "wave route admission blocked: "+strings.Join(routeBlockers, "; "))
 	}
-	queued, _, err := store.QueueWaveRunDirectives(projectID, waveID, fingerprint, authorizedAt, authorizedBy, candidates, now, directRunDirectiveTTL, false)
+	candidateRecords := make([]string, 0, len(candidates))
+	for _, taskID := range candidates {
+		candidateRecords = append(candidateRecords, trackerRecordID(idx.Tasks[taskID]))
+	}
+	queuedRecords, _, err := store.QueueWaveRunDirectives(projectID, waveID, fingerprint, authorizedAt, authorizedBy, candidateRecords, now, directRunDirectiveTTL, false)
 	_ = waveLock.Close()
 	if err != nil {
 		return nil, err
+	}
+	queued := make([]string, 0, len(queuedRecords))
+	for _, recordID := range queuedRecords {
+		queued = append(queued, firstNonEmpty(recordToTask[recordID], recordID))
 	}
 	return queued, nil
 }
@@ -1113,7 +1530,13 @@ func directWaveResume(vault string, store *RuntimeStore, waveID, actor string) (
 		_ = waveLock.Close()
 		return result, tuskerError(errorInvalidTransition, "wave "+waveID+" is not paused; only a paused wave can be resumed")
 	}
+	// Directives and run rows are keyed by the registered project id, not the
+	// authored project field: a resume that queues under the authored key would
+	// write directives the daemon's registered project can never see.
 	projectID, _ := resolveV7ProjectID(vault)
+	if registeredID, registered, regErr := registeredProjectIDForVault(store, vault); regErr == nil && registered && strings.TrimSpace(registeredID) != "" {
+		projectID = registeredID
+	}
 	review, err := buildDirectWaveReview(vault, store, projectID, waveID, nil)
 	if err != nil {
 		_ = waveLock.Close()
@@ -1162,7 +1585,7 @@ func directWaveResume(vault string, store *RuntimeStore, waveID, actor string) (
 			break
 		}
 	}
-	result.Reason = "Authorized — resumed; waiting for runtime"
+	result.Reason = "Resumed — the stored authorization is restored and queued work re-admits for dispatch; failed attempts are not retried automatically"
 	_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: projectID, Cause: "wave_resume", Changes: []daemonControlChange{{ID: waveID, Kind: "wave", Eligibility: []string{"runtime", "authorization"}}}}, 250*time.Millisecond)
 	return result, nil
 }

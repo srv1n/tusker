@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskCapsule } from "../src/types/domain";
+import { TaskBoard } from "../src/features/workbench/board/TaskBoard";
 import { filterBoardTasks, matchesAllSelectedTags } from "../src/features/workbench/board/boardModel";
 
 const task = (id: string, status: TaskCapsule["status"] = "backlog") => ({ id, status } as TaskCapsule);
@@ -25,4 +28,15 @@ test("board live state preserves durable status", () => {
   const next = { ...durable, liveRun: true };
   expect(next.status).toBe("ready");
   expect(filterBoardTasks({ tasks: [next], tagsAvailable: false, selectedTags: [] })).toEqual([next]);
+});
+
+test("unassigned scope renders only its task IDs", () => {
+  const tasks = [{ ...task("one"), title: "Unassigned" }, { ...task("two"), title: "Assigned" }];
+  const html = renderToStaticMarkup(createElement(TaskBoard, {
+    tasks, runs: [], mode: "list", onModeChange: () => {}, onSelectTask: () => {},
+    taskIds: ["one"], selectedTags: [], onSelectedTagsChange: () => {}, tagsAvailable: false,
+  }));
+  expect(html).toContain("Unassigned tasks");
+  expect(html).toContain("Unassigned");
+  expect(html).not.toContain("Assigned");
 });

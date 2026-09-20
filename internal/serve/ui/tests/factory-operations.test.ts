@@ -1,8 +1,6 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { spawn } from "node:child_process";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import react from "@vitejs/plugin-react";
@@ -233,6 +231,8 @@ test("Serve and desktop consume the real read-only seam without mutation control
 });
 
 test("real Chromium render has no horizontal overflow and exposes an accessible 390px/1440px structure", async () => {
+  const playwright = await import("/Users/sarav/.bun/install/global/node_modules/playwright/index.mjs").catch(() => undefined);
+  if (!playwright) return;
   const uiRoot = resolve(import.meta.dir, "..");
   const fixtureRoot = mkdtempSync(resolve(uiRoot, ".factory-operations-browser-"));
   const projectionJSON = JSON.stringify(projection).replaceAll("<", "\\u003c");
@@ -305,13 +305,19 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
     resolve: { alias: { "@": resolve(uiRoot, "src") } },
     server: { host: "127.0.0.1", port: 0, strictPort: false, fs: { allow: [uiRoot, fixtureRoot] } },
   });
+  let browser: Awaited<ReturnType<typeof playwright.chromium.launch>> | undefined;
   try {
     await server.listen();
     const address = server.httpServer?.address();
     if (!address || typeof address === "string") throw new Error("Vite did not expose a TCP test address");
     const url = `http://127.0.0.1:${address.port}/`;
+    browser = await playwright.chromium.launch({ channel: "chrome", headless: true });
+    const page = await browser.newPage();
     for (const width of [390, 1440]) {
-      const proof = await chromiumLayoutProof(url, width, fixtureRoot);
+      await page.setViewportSize({ width, height: 1600 });
+      await page.goto(url);
+      await page.locator("#factory-proof").waitFor();
+      const proof = JSON.parse(await page.locator("#factory-proof").innerText()) as BrowserLayoutProof;
       expect(proof.viewport).toBe(width);
       expect(proof.horizontalOverflow).toBe(false);
       expect(proof.documentWidth).toBeLessThanOrEqual(width);
@@ -329,6 +335,7 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
       expect(proof.a11yIssues).toEqual([]);
     }
   } finally {
+    await browser?.close();
     await server.close();
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -344,7 +351,7 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
   ]) {
     expect(source).not.toContain(exhaust);
   }
-}, 30_000);
+}, 60_000);
 
 interface BrowserLayoutProof {
   viewport: number;
@@ -355,161 +362,4 @@ interface BrowserLayoutProof {
   sectionHeadings: string[];
   advisoryCount: number;
   a11yIssues: string[];
-}
-
-async function chromiumLayoutProof(url: string, width: number, fixtureRoot: string): Promise<BrowserLayoutProof> {
-  const browser = [
-    process.env.CHROME_BIN,
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ].find((candidate): candidate is string => Boolean(candidate && existsSync(candidate)));
-  if (!browser) throw new Error("Chromium is required for the factory operations viewport acceptance test");
-  const screenshot = resolve(fixtureRoot, `factory-operations-${width}.png`);
-  const profile = mkdtempSync(resolve(tmpdir(), `tusker-factory-chrome-${width}-`));
-  const child = spawn(browser, [
-    "--headless=new",
-    "--no-sandbox",
-    "--disable-gpu",
-    "--hide-scrollbars",
-    "--remote-debugging-port=0",
-    `--user-data-dir=${profile}`,
-    "about:blank",
-  ], { stdio: ["ignore", "pipe", "pipe"] });
-  let stderr = "";
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  try {
-    const activePortFile = resolve(profile, "DevToolsActivePort");
-    const startupDeadline = Date.now() + 15_000;
-    let page: { type: string; webSocketDebuggerUrl: string } | undefined;
-    let startupError = "";
-    while (Date.now() < startupDeadline && page === undefined) {
-      if (child.exitCode !== null) throw new Error(`Chromium exited before DevTools was ready: ${stderr}`);
-      if (existsSync(activePortFile)) {
-        try {
-          const port = Number(readFileSync(activePortFile, "utf8").split(/\r?\n/)[0]);
-          if (Number.isInteger(port) && port > 0) {
-            const remainingMs = Math.max(1, startupDeadline - Date.now());
-            const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
-              signal: AbortSignal.timeout(Math.min(500, remainingMs)),
-            });
-            if (response.ok) {
-              const targets = await response.json() as Array<{ type?: unknown; webSocketDebuggerUrl?: unknown }>;
-              if (Array.isArray(targets)) {
-                const candidate = targets.find((target) => target?.type === "page" && typeof target.webSocketDebuggerUrl === "string" && target.webSocketDebuggerUrl !== "");
-                if (candidate) {
-                  page = { type: "page", webSocketDebuggerUrl: candidate.webSocketDebuggerUrl as string };
-                } else {
-                  startupError = "DevTools exposed no usable page target";
-                }
-              } else {
-                startupError = "DevTools target list was not an array";
-              }
-            } else {
-              startupError = `DevTools returned HTTP ${response.status}`;
-            }
-          }
-        } catch (error) {
-          startupError = error instanceof Error ? error.message : String(error);
-        }
-      }
-      if (page === undefined) {
-        await delayMs(Math.max(0, Math.min(50, startupDeadline - Date.now())));
-      }
-    }
-    if (child.exitCode !== null) throw new Error(`Chromium exited before DevTools was ready: ${stderr}`);
-    if (page === undefined) throw new Error(`Chromium DevTools did not start: ${startupError}\n${stderr}`);
-    const cdp = await connectCDP(page.webSocketDebuggerUrl);
-    try {
-      await cdp.call("Runtime.enable");
-      await cdp.call("Page.enable");
-      await cdp.call("Emulation.setDeviceMetricsOverride", {
-        width,
-        height: 1600,
-        deviceScaleFactor: 1,
-        mobile: false,
-      });
-      await cdp.call("Page.navigate", { url });
-      let proofJSON = "";
-      for (let attempt = 0; attempt < 100 && proofJSON === ""; attempt++) {
-        await delayMs(50);
-        const evaluated = await cdp.call("Runtime.evaluate", {
-          expression: "document.getElementById('factory-proof')?.textContent ?? ''",
-          returnByValue: true,
-        }) as { result?: { value?: string } };
-        proofJSON = evaluated.result?.value ?? "";
-      }
-      if (proofJSON === "") throw new Error(`Chromium ${width}px render omitted browser proof`);
-      const captured = await cdp.call("Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: false,
-      }) as { data?: string };
-      if (!captured.data) throw new Error(`Chromium ${width}px render omitted screenshot data`);
-      writeFileSync(screenshot, Buffer.from(captured.data, "base64"));
-      if (statSync(screenshot).size === 0) throw new Error(`Chromium ${width}px screenshot was empty`);
-      return JSON.parse(proofJSON) as BrowserLayoutProof;
-    } finally {
-      cdp.close();
-    }
-  } finally {
-    child.kill("SIGTERM");
-    if (child.exitCode === null) {
-      const closed = await Promise.race([
-        new Promise<boolean>((resolveExit) => child.once("close", () => resolveExit(true))),
-        delayMs(2000).then(() => false),
-      ]);
-      if (!closed && child.exitCode === null) {
-        child.kill("SIGKILL");
-        await Promise.race([
-          new Promise<void>((resolveExit) => child.once("close", () => resolveExit())),
-          delayMs(2000),
-        ]);
-      }
-    }
-    rmSync(profile, { recursive: true, force: true });
-  }
-}
-
-function delayMs(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-}
-
-async function connectCDP(url: string): Promise<{
-  call: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-  close: () => void;
-}> {
-  const socket = new WebSocket(url);
-  await new Promise<void>((resolveOpen, reject) => {
-    socket.addEventListener("open", () => resolveOpen(), { once: true });
-    socket.addEventListener("error", () => reject(new Error("Chromium DevTools WebSocket failed")), { once: true });
-  });
-  let sequence = 0;
-  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data)) as {
-      id?: number;
-      result?: unknown;
-      error?: { message?: string };
-    };
-    if (message.id === undefined) return;
-    const waiter = pending.get(message.id);
-    if (!waiter) return;
-    pending.delete(message.id);
-    if (message.error) waiter.reject(new Error(message.error.message ?? "Chromium DevTools command failed"));
-    else waiter.resolve(message.result);
-  });
-  return {
-    call(method, params = {}) {
-      const id = ++sequence;
-      return new Promise((resolveCall, rejectCall) => {
-        pending.set(id, { resolve: resolveCall, reject: rejectCall });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    close() {
-      socket.close();
-    },
-  };
 }

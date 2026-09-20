@@ -162,10 +162,6 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleRunnerConformance(w, r, body)
 	case len(parts) == 2 && parts[1] == "models":
 		s.handleModelLevels(w, r, body)
-	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "challenge":
-		s.handleHumanControlChallenge(w, body)
-	case len(parts) == 3 && parts[1] == "human-receipts" && parts[2] == "submit":
-		s.handleHumanControlReceiptSubmit(w, body)
 	case len(parts) == 2 && parts[1] == "projects":
 		s.handleProjectRegisterAction(w, body)
 	case len(parts) == 4 && parts[1] == "projects" && parts[3] == "remove":
@@ -184,6 +180,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleSetupDoctorAction(w, body, parts[2] == "repair")
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
 		s.handleRunRedrive(w, r, parts[2], body)
+	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "recover":
+		s.handleRunRecovery(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "acknowledge":
 		s.handleRunAcknowledge(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
@@ -236,20 +234,25 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 func (s *serveServer) serveOperatorActor(body serveActionBody, operation string) (string, error) {
 	// Serve is an HTTP boundary. The capability-authenticated local UI uses the
 	// server's explicitly configured operator actor. A request actor, when
-	// present, must normalize to that same identity; it cannot forge a second
-	// human. Neither path consults USER/LOGNAME.
+	// present, must normalize to that same identity. Neither path consults
+	// USER/LOGNAME or upgrades an agent into a human identity.
 	configured := strings.TrimSpace(s.operatorActor)
 	if configured == "" {
-		return "", tuskerError("SERVE_OPERATOR_REQUIRED", operation+" requires an explicitly configured human operator actor", withHint("start Serve with --by human:<name> or set TUSKER_SERVE_OPERATOR=human:<name>"))
+		return "", tuskerError("SERVE_OPERATOR_REQUIRED", operation+" requires an explicitly configured operator actor", withHint("start Serve with --by <qualified-actor> or set TUSKER_SERVE_OPERATOR=<qualified-actor>"))
 	}
-	actor, err := v7HumanActor(Args{"by": configured}, operation)
-	if err != nil {
-		return "", err
+	actor, ok := normalizeV7ProposalActor(configured)
+	if !ok {
+		return "", tuskerError(errorInvalidField, operation+" requires a qualified configured operator actor")
+	}
+	if strings.SplitN(actor, ":", 2)[0] == "human" && agentSessionKind() != "" {
+		return "", tuskerError(errorInvalidTransition,
+			operation+" cannot use human actor "+actor+" from "+agentSessionKind(),
+			withHint("run the mutation from a human terminal with explicit --by human:<name>; no agent break-glass contract exists"))
 	}
 	if raw := body.string("actor", "by"); raw != "" {
-		requested, requestErr := v7HumanActor(Args{"by": raw}, operation)
-		if requestErr != nil {
-			return "", requestErr
+		requested, valid := normalizeV7ProposalActor(raw)
+		if !valid {
+			return "", tuskerError(errorInvalidField, operation+" requires a qualified request actor")
 		}
 		if requested != actor {
 			return "", tuskerError(errorInvalidTransition, operation+" actor does not match the configured Serve operator", withContext(map[string]any{"configured_actor": actor, "requested_actor": requested}))
@@ -446,14 +449,35 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 		serveJSON(w, http.StatusOK, result)
 		return
 	}
+	projects, err := s.store.ListProjects()
+	persisted := false
+	if err == nil {
+		for _, candidate := range projects {
+			if candidate.ProjectID == projectID {
+				project = &candidate
+				persisted = true
+				break
+			}
+		}
+	}
+	if err != nil || !persisted || project == nil || project.Enabled != enabled {
+		if err == nil {
+			err = tuskerError(errorConfigInvalid, "project automation did not persist")
+		}
+		result := serveCommandResult("tusker projects automation", "", err)
+		result.ProjectID = projectID
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	s.invalidateProjectSnapshot(projectID)
 	state := "disabled"
 	if enabled {
 		state = "enabled"
 		go s.warmSnapshot(projectID)
 	}
 	serveJSON(w, http.StatusOK, serveActionResult{
-		OK: true, ProjectID: projectID, Reason: "Daemon automation " + state + " for " + project.Name,
-		Command: "tusker projects " + state,
+		OK: true, ProjectID: projectID, AutomationEnabled: &project.Enabled, AutomationSource: "Project runtime",
+		Reason: "Daemon automation " + state + " for " + project.Name, Command: "tusker projects " + state,
 	})
 }
 
@@ -878,6 +902,14 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker gate", "", projectErr))
 		return
 	}
+	gateID = strings.ToUpper(strings.TrimSpace(gateID))
+	if expected := body.string("materialRevision", "material_revision"); expected != "" {
+		gate, gateErr := resolveV7Note(project.VaultRoot, gateID, "gate")
+		if gateErr != nil || expected != stringField(gate.Data, "state_rev") {
+			serveJSON(w, http.StatusOK, serveCommandResult("tusker gate "+action+" "+gateID, "", tuskerError("GATE_MATERIAL_STALE", gateID+": gate material changed; reload and review the current action")))
+			return
+		}
+	}
 	actor, actorErr := s.serveOperatorActor(body, "serve gate "+action)
 	if actorErr != nil {
 		status, result := serveOperatorActorResult("tusker gate", actorErr)
@@ -885,7 +917,7 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 		return
 	}
 	args["_pos0"] = action
-	args["id"] = strings.ToUpper(strings.TrimSpace(gateID))
+	args["id"] = gateID
 	args["by"] = actor
 	if reason := body.string("reason"); reason != "" {
 		args["reason"] = reason
@@ -1446,7 +1478,7 @@ func (s *serveServer) serveAttemptDetailChecked(run RunStatus, attempt RunAttemp
 		ProjectID:      attempt.ProjectID,
 		Runner:         attempt.Runner,
 		Lane:           serveLane(firstNonEmpty(attempt.Lane, run.Lane)),
-		Outcome:        serveRunOutcomeFromAttempt(attempt.Outcome, run.LeaseState),
+		Outcome:        s.serveAttemptOutcome(run, attempt),
 		StartedAt:      attempt.StartedAt,
 		FinishedAt:     attempt.FinishedAt,
 		DurationSec:    serveDurationSec(attempt.StartedAt, firstNonEmpty(attempt.FinishedAt, run.UpdatedAt), s.now()),

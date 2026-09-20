@@ -72,6 +72,16 @@ export interface RedriveResult {
   leaseState?: string;
 }
 
+export interface RecoveryResult {
+  ok: boolean;
+  refused?: boolean;
+  admitted?: boolean;
+  action: "retry_review" | "rerun_checks";
+  taskId: string;
+  lane?: Lane | "verify";
+  reason: string;
+}
+
 /** Result of POST /api/runs/:taskId/interrupt with canonical store readback. */
 export interface InterruptResult {
   ok: boolean;
@@ -105,13 +115,18 @@ export interface ActionResult {
   feedbackPath?: string;
   canonicalStatus?: string;
   projectId?: string;
+  automationEnabled?: boolean;
+  automationSource?: string;
   discard?: DiscardImpact;
 }
 
-export interface DirectStartBlocker { code: string; taskId?: string; reason: string; action: string }
+export interface DirectStartBlocker { code: string; taskId?: string; gateId?: string; reason: string; action: string }
 export interface DirectStartControl { action: "wave start" | "wave pause" | "wave resume" | "task start"; enabled: boolean; scope: string; reason?: string }
-export interface WaveReviewMember { taskId: string; title: string; state: string; waitingReason?: string; dependencies?: string[]; executeRoute?: string; reviewRoute?: string; acceptance?: string[]; verification?: string[]; instructions?: string }
-export interface WaveReview { schema: "tusker.wave-review/v1"; waveId: string; title: string; outcome: string; state: "Planned" | "Running" | "Paused" | "Waiting" | "Completed"; authorization: "inert" | "authorized" | "paused" | "stale"; materialFingerprint: string; members: WaveReviewMember[]; frontiers: string[][]; blockers: DirectStartBlocker[]; controls: DirectStartControl[] }
+export interface ProofInvalidation { kind: "missing" | "failed" | "unavailable" | "changed"; dimension: string; previous?: string; current?: string; nextActor: string; recovery: "rerun_checks"; explanation: string }
+export interface WaveReviewMemberRecovery { action: "retry_task" | "rerun_checks" | "retry_review"; enabled: boolean; reason?: string; attempts?: number; maxAttempts?: number }
+export interface WaveReviewMember { taskId: string; title: string; state: string; phase?: "executing" | "awaiting_review" | "reviewing" | "proof_blocked" | "failed" | "completed" | "paused" | "capacity_wait" | "rework" | "queued"; lane?: Lane; responsible?: string; recovery?: WaveReviewMemberRecovery; completionReported?: boolean; waitingReason?: string; dependencies?: string[]; executeRoute?: string; reviewRoute?: string; acceptance?: string[]; verification?: string[]; instructions?: string; proofInvalidation?: ProofInvalidation }
+export interface WaveReviewHumanAction { taskId: string; taskTitle: string; action: HumanAction }
+export interface WaveReview { schema: "tusker.wave-review/v1"; waveId: string; title: string; outcome: string; state: "Planned" | "Running" | "Paused" | "Waiting" | "Completed" | "Cancelled"; authorization: "inert" | "authorized" | "paused" | "stale"; materialFingerprint: string; members: WaveReviewMember[]; frontiers: string[][]; humanActions?: WaveReviewHumanAction[]; blockers: DirectStartBlocker[]; controls: DirectStartControl[] }
 export interface DirectStartResult { schema: "tusker.direct-start/v1"; subject: string; scope: "task" | "wave"; state: string; authorization: string; materialFingerprint?: string; reason?: string; queuedTaskIds?: string[]; claimedTaskIds?: string[]; replayed: boolean; blockers?: DirectStartBlocker[]; controls?: DirectStartControl[] }
 
 export interface DiscardDependent {
@@ -302,6 +317,8 @@ export interface CheckoutSummary {
   label: string;
   repoRoot: string;
   vaultRoot: string;
+  automationEnabled: boolean;
+  automationSource?: string;
   branch?: string;
   head?: string;
   git: boolean;
@@ -599,6 +616,8 @@ export interface RunSummary {
   sinceLastEventSec: number;
   liveness: Liveness;
   attemptCount: number;
+  /** The canonical attempt currently owned by this run, when one is active. */
+  activeAttemptId?: string;
   terminal?: boolean;
   error?: string | null;
   lastHeartbeatAt?: string | null;
@@ -608,10 +627,15 @@ export interface RunSummary {
 }
 
 export interface Attempt {
+  /** Stable runtime-store identity. `n` is only the display sequence. */
+  id?: string;
   n: number;
+  runner?: string;
+  lane?: "execute" | "review";
   outcome: RunOutcome;
   durationSec: number;
   startedAt: string;
+  finishedAt?: string;
 }
 
 export interface RunEvent {
@@ -830,6 +854,7 @@ export interface HumanAction {
   whyAgentCannot: string;
   completionCondition: string;
   gateId: string;
+  materialRevision: string;
   blockedTaskIds?: string[];
   covers: string[];
   acceptance: AcceptanceRow[];

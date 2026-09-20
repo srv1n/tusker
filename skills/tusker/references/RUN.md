@@ -86,4 +86,7 @@ artifact references. Unknown cost or delivery remains unknown.
 
 Satisfy or waive a human gate only on that human's explicit instruction and
 attribute it. Screenshots and performance reports are evidence, not automatic
-approval gates. Report the gate ID and required action.
+approval gates. Report the existing gate ID, affected task/wave, and Tusker Mac
+app destination; an already approved decision must not create a replacement
+gate. Existing wave authority may continue eligible work, but approval never
+starts an inert wave or resumes a paused one.

@@ -106,6 +106,10 @@ type realWorkProgress struct {
 
 // workRealLifecycleCmd dispatches the parity subcommands owned by this packet.
 func workRealLifecycleCmd(args Args, action string) error {
+	args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+	if err := scopeWorkSessionProject(args); err != nil {
+		return err
+	}
 	switch action {
 	case "readiness":
 		return workReadinessCmd(args)
@@ -308,7 +312,7 @@ func workCancelCmd(args Args) error {
 	if err := runsLifecycleCmd(args, "release"); err != nil {
 		return err
 	}
-	workSessionNotifyRun(args.String("id"))
+	workSessionNotifyRun(args.String("project"), args.String("id"))
 	return nil
 }
 
@@ -494,7 +498,7 @@ func ensureFileAttemptForWorkSession(vault, taskID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	run, err := store.FindRun(trackerRecordID(note))
+	run, err := findRunForVault(store, vault, trackerRecordID(note))
 	if err != nil {
 		return "", err
 	}
@@ -562,7 +566,7 @@ func ensureFileAttemptForHandoff(vault, taskID, actor string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	run, err := store.FindRun(trackerRecordID(note))
+	run, err := findRunForVault(store, vault, trackerRecordID(note))
 	if err != nil {
 		return "", err
 	}
@@ -594,7 +598,7 @@ func refuseUnrelatedFileAttempt(vault, taskID string, idx v7Index) (string, erro
 	if err != nil {
 		return "", err
 	}
-	run, err := store.FindRun(trackerRecordID(note))
+	run, err := findRunForVault(store, vault, trackerRecordID(note))
 	if err != nil {
 		return "", err
 	}

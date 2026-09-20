@@ -293,7 +293,30 @@ func workspacePathForRequest(req WorkspacePrepareRequest) (string, string, error
 	if err != nil {
 		return "", "", err
 	}
+	if workspaceRootOwnedByOtherProject(root, req) {
+		root += "__" + sanitizeWorkspaceKey(req.ProjectID)
+	}
 	return filepath.Join(root, workspaceKey), root, nil
+}
+
+func workspaceRootOwnedByOtherProject(root string, req WorkspacePrepareRequest) bool {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	foreign := false
+	for _, entry := range entries {
+		raw, readErr := readText(filepath.Join(root, entry.Name(), ".tusker", "workspace.json"))
+		var metadata WorkspaceMetadata
+		if readErr != nil || json.Unmarshal([]byte(raw), &metadata) != nil {
+			continue
+		}
+		if metadata.ProjectID == req.ProjectID || canonicalPath(metadata.RepoRoot) == canonicalPath(req.RepoRoot) {
+			return false
+		}
+		foreign = foreign || metadata.ProjectID != "" && metadata.RepoRoot != ""
+	}
+	return foreign
 }
 
 func workspaceRootForRequest(req WorkspacePrepareRequest) (string, error) {

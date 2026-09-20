@@ -156,6 +156,14 @@
   color: var(--color-ink);
 }
 
+.wux-ov-id {
+  display: block;
+  margin-top: 0.15rem;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-faint);
+}
+
 .wux-ov-card:hover .wux-ov-title {
   color: var(--color-info);
 }

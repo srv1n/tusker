@@ -89,6 +89,7 @@ func serveHumanActionForGate(task Note, gate Note) *serveHumanAction {
 		WhyAgentCannot:      why,
 		CompletionCondition: completion,
 		GateID:              stringField(gate.Data, "id"),
+		MaterialRevision:    stringField(gate.Data, "state_rev"),
 		BlockedTaskIDs:      serveGateBlockIDs(gate),
 		Covers:              coveredIDs,
 		Acceptance:          coveredAcceptance,

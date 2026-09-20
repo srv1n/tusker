@@ -1644,7 +1644,7 @@ func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := store.FindRun(trackerRecordID(note))
+	run, err := findRunForVault(store, vaultPath, trackerRecordID(note))
 	if err != nil {
 		return err
 	}

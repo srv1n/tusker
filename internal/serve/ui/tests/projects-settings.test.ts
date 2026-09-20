@@ -33,10 +33,19 @@ test("project registration offers native folder browsing without pretending brow
 test("project settings own the explicit daemon automation choice", () => {
   const settings = source("src/features/product/OperationsScreens.tsx");
   const api = source("src/lib/api.ts");
+  const controls = source("src/components/ui/controls.tsx");
 
   expect(settings).toContain("<Toggle");
   expect(settings).toContain("project.automationEnabled");
+  expect(settings).toContain("ariaLabel={`Background work");
+  expect(settings).toContain("automationPending.current");
   expect(settings).toContain("Registration alone never enables it.");
+  expect(settings).toContain("<ActionResultLine pending={automation.isPending}");
+  expect(settings).not.toContain("<ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />\n          <Button variant=\"primary\"");
+  expect(controls).toContain('role="switch"');
+  expect(controls).toContain("aria-label={ariaLabel}");
+  expect(controls).toContain("aria-checked={checked}");
+  expect(controls).toContain("focus-visible:ring-2");
   expect(api).toContain("post(`/projects/${projectId}/automation`, { enabled })");
 });
 

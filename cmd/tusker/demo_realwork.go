@@ -836,7 +836,7 @@ func demoStartWave(ctx context.Context, projectID, waveID string) (*directStartR
 	if err := demoHTTPJSON(ctx, http.MethodPost, endpoint, capability.Capability, &result); err != nil {
 		return nil, tuskerError(demoCodePrecondition, "Wave Start request failed: "+err.Error())
 	}
-	if len(result.Blockers) > 0 || result.Authorization != "armed" {
+	if len(result.Blockers) > 0 || result.Authorization != "authorized" {
 		return nil, tuskerError(demoCodePrecondition, "Wave Start refused: "+firstNonEmpty(result.Reason, "wave did not arm"))
 	}
 	return &result, nil
@@ -977,7 +977,7 @@ func demoCollectRealEvidence(exec *demoExec, repoRoot, vaultPath string, manifes
 		default:
 			outcome = "waiting"
 		}
-		attempts := demoRuntimeAttempts(runtimeExec, repoRoot, rec.TaskID)
+		attempts := demoRuntimeAttempts(runtimeExec, repoRoot, manifest.RuntimeProjectID, rec.TaskID)
 		profile := record.TaskProfiles[key]
 		if len(attempts) == 0 {
 			if outcome == "done" || outcome == "failed" {
@@ -1010,15 +1010,20 @@ func demoCollectRealEvidence(exec *demoExec, repoRoot, vaultPath string, manifes
 
 type demoRuntimeAttempt struct {
 	ID        string
+	Lane      string
 	Started   string
 	Finished  string
 	Outcome   string
 	Transport string
 }
 
-func demoRuntimeAttempts(exec *demoExec, repoRoot, taskID string) []demoRuntimeAttempt {
+func demoRuntimeAttempts(exec *demoExec, repoRoot, projectID, taskID string) []demoRuntimeAttempt {
 	var out []demoRuntimeAttempt
-	inspected, err := exec.run(repoRoot, "runs", "inspect", taskID)
+	args := []string{"runs", "inspect", taskID}
+	if strings.TrimSpace(projectID) != "" {
+		args = append(args, "--project", projectID)
+	}
+	inspected, err := exec.run(repoRoot, args...)
 	if err != nil {
 		return out
 	}
@@ -1037,6 +1042,7 @@ func demoRuntimeAttempts(exec *demoExec, repoRoot, taskID string) []demoRuntimeA
 func demoRuntimeAttemptFromRecord(record map[string]any) (demoRuntimeAttempt, bool) {
 	attempt := demoRuntimeAttempt{
 		ID:        demoStringField(record, "attempt_id", "AttemptID", "id"),
+		Lane:      strings.ToLower(strings.TrimSpace(demoStringField(record, "lane", "Lane"))),
 		Started:   demoStringField(record, "started_at", "StartedAt"),
 		Finished:  demoStringField(record, "finished_at", "FinishedAt"),
 		Outcome:   strings.ToLower(strings.TrimSpace(demoStringField(record, "outcome", "Outcome"))),

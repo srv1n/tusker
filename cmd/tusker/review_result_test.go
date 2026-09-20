@@ -318,6 +318,13 @@ func TestReviewResultProtocolSavedResultSuppressesDuplicateReviewDispatch(t *tes
 	result.ProjectID = project.ProjectID
 	result.WorkRevision = 2
 	result.AttemptID = "review-1"
+	// Suppression is snapshot-exact: the stored result must name the task's
+	// current state_rev, the same pin a real reviewer records at submit time.
+	note, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.TaskStateRev = stringField(note.Data, "state_rev")
 	if _, err := daemon.store.SaveReviewResult(result); err != nil {
 		t.Fatal(err)
 	}

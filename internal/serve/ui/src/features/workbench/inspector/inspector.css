@@ -45,6 +45,13 @@
   border-bottom: 1px solid var(--k-line);
 }
 
+/* Task ids are usually short, but imported ids and titles must not widen the
+   fixed panel or hide the very identity the operator is inspecting. */
+.wux-inspector-head [data-testid="inspector-header-id"],
+.wux-inspector-head [data-testid="inspector-header-title"] {
+  overflow-wrap: anywhere;
+}
+
 .wux-inspector-close {
   flex: none;
   display: inline-flex;
@@ -143,12 +150,16 @@
 }
 
 .wux-inspector-action:not(:disabled):hover {
+  border-color: var(--k-ink-soft);
   background: var(--k-hover);
 }
 
 .wux-inspector-action:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  border-color: var(--k-line);
+  background: var(--k-panel);
+  color: var(--k-faint);
+  opacity: 1;
 }
 
 .wux-inspector-action:focus-visible {
@@ -160,6 +171,17 @@
   border-color: transparent;
   background: var(--k-ink);
   color: var(--k-surface);
+}
+
+.wux-inspector-action-primary:not(:disabled):hover {
+  border-color: var(--k-ink);
+  background: var(--k-ink-soft);
+}
+
+.wux-inspector-action-primary:disabled {
+  border-color: var(--k-line);
+  background: var(--k-line-soft);
+  color: var(--k-muted);
 }
 
 .wux-inspector-skeleton {

@@ -1396,7 +1396,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				return err
 			}
 			reviewCycles := reviewerAttemptCount(reviewAttempts)
-			hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, recordID, intField(note.Data, "work_revision"))
+			hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, recordID, intField(note.Data, "work_revision"), stringField(note.Data, "state_rev"))
 			if err != nil {
 				return err
 			}
@@ -1965,10 +1965,10 @@ func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStat
 	if v7TerminalHumanWait(vaultPath, note, wf) {
 		return false
 	}
-	if stringField(note.Data, "verified_at") != "" || stringField(note.Data, "closed_at") != "" {
+	if stringField(note.Data, "closed_at") != "" {
 		return false
 	}
-	risk := strings.ToLower(strings.TrimSpace(stringField(note.Data, "risk")))
+	risk := strings.ToLower(strings.TrimSpace(fallback(stringField(note.Data, "risk"), "low")))
 	if !reviewerPolicyCoversRisk(wf.Reviewer, risk) {
 		return false
 	}
@@ -2730,6 +2730,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					return run, changed, projectionErr
 				}
 				run.WorkRevision = revision
+				if note, projectionErr = recordProviderVerificationReceipts(project.VaultRoot, run, endState.MaterialFingerprint); projectionErr != nil {
+					return run, changed, projectionErr
+				}
 			}
 			if run.Lane != runLaneReview {
 				// Projection advances the canonical work revision. Persist that identity
@@ -3667,7 +3670,11 @@ func attemptCreationCapReason(kind attemptCreationKind, reason string) string {
 }
 
 func attemptCreationKindForDispatch(run RunStatus) attemptCreationKind {
-	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
+	state := LeaseState(strings.TrimSpace(run.LeaseState))
+	if state == LeaseStateUnclaimed && run.AttemptCount > 0 && strings.TrimSpace(run.SessionRef) != "" {
+		return attemptCreationContinuation
+	}
+	if state != LeaseStateRetryQueued {
 		return attemptCreationFreshDispatch
 	}
 	if strings.HasPrefix(strings.TrimSpace(run.LastError), "redriven by ") ||
@@ -7953,16 +7960,32 @@ func openRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, bool, error) {
 }
 
 func setProjectAutomation(store *RuntimeStore, project RegisteredProject, enabled bool) error {
+	projectLocalConfigWriteMu.Lock()
+	defer projectLocalConfigWriteMu.Unlock()
 	report, err := configResolveForPaths(project.RepoRoot, project.VaultRoot, true, "automation.enabled")
 	if err != nil {
 		return err
 	}
+	path := managedTuskerLocalConfigPath(project.VaultRoot)
+	previous, existed, err := readConfigText(path)
+	if err != nil {
+		return err
+	}
+	changed := boolFromAny(report.Value) != enabled
 	if boolFromAny(report.Value) != enabled {
-		if _, err := setProjectLocalConfigWithReadback(project.VaultRoot, "automation.enabled", enabled); err != nil {
+		if _, err := setProjectLocalConfigWithReadbackUnlocked(project.VaultRoot, "automation.enabled", enabled); err != nil {
 			return err
 		}
 	}
-	return store.SetProjectEnabled(project.ProjectID, enabled)
+	if err := store.SetProjectEnabled(project.ProjectID, enabled); err != nil {
+		if changed {
+			if restoreErr := restoreConfigText(path, previous, existed); restoreErr != nil {
+				return errors.Join(err, restoreErr)
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func setProjectEnabledCmd(args Args, enabled bool) error {

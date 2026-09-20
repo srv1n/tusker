@@ -430,6 +430,9 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 	if len(task.HumanAction.Acceptance) != 2 || task.HumanAction.Acceptance[0].ID != "A1" || task.HumanAction.Acceptance[1].ID != "A3" {
 		t.Fatalf("expected only covered acceptance rows, got %#v", task.HumanAction.Acceptance)
 	}
+	if task.HumanAction.MaterialRevision == "" {
+		t.Fatal("human action omitted gate material revision")
+	}
 	var review serveReviewBatch
 	serveDecode(t, server, "/api/review/batch", &review)
 	if len(review.Unwaved) != 1 || review.Unwaved[0].ID != "APP-T-0010" || review.Unwaved[0].Status != "review" {
@@ -442,13 +445,23 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 		t.Fatalf("refused completion must keep human action readback visible, got %#v", refused)
 	}
 
-	var rawApproval serveActionResult
-	servePost(t, server, "/api/gates/APP-G-0010/satisfy", `{"projectId":"app","taskId":"APP-T-0010","evidence":"Panel behavior confirmed."}`, &rawApproval)
-	if !rawApproval.Refused || rawApproval.Issue == nil || rawApproval.Issue.Code != humanControlReceiptRequiredCode {
-		t.Fatalf("raw Serve approval bypassed native receipt: %#v", rawApproval)
+	var approval serveActionResult
+	servePost(t, server, "/api/gates/APP-G-0010/satisfy", fmt.Sprintf(`{"projectId":"wrong-project","taskId":"APP-T-0010","materialRevision":%q,"evidence":"Panel behavior confirmed."}`, task.HumanAction.MaterialRevision), &approval)
+	if !approval.Refused {
+		t.Fatalf("wrong-project approval was accepted: %#v", approval)
 	}
-	if err := gateV7TransitionWithTrustedHumanReceiptForTest(t, server.vaultPath, "APP-G-0010", "satisfied", "human:sarav"); err != nil {
-		t.Fatal(err)
+	servePost(t, server, "/api/gates/APP-G-0010/satisfy", `{"projectId":"app","taskId":"APP-T-0010","materialRevision":"sha256:stale","evidence":"Panel behavior confirmed."}`, &approval)
+	if !approval.Refused || approval.Issue == nil || approval.Issue.Code != "GATE_MATERIAL_STALE" {
+		t.Fatalf("stale approval changed the gate: %#v", approval)
+	}
+	servePost(t, server, "/api/gates/APP-G-0010/satisfy", fmt.Sprintf(`{"projectId":"app","taskId":"APP-T-0010","materialRevision":%q,"evidence":"Panel behavior confirmed."}`, task.HumanAction.MaterialRevision), &approval)
+	if !approval.OK || approval.Refused {
+		t.Fatalf("authenticated Serve approval failed: %#v", approval)
+	}
+	var duplicate serveActionResult
+	servePost(t, server, "/api/gates/APP-G-0010/satisfy", fmt.Sprintf(`{"projectId":"app","taskId":"APP-T-0010","materialRevision":%q,"evidence":"Panel behavior confirmed."}`, task.HumanAction.MaterialRevision), &duplicate)
+	if !duplicate.Refused {
+		t.Fatalf("duplicate stale click was accepted: %#v", duplicate)
 	}
 	server.invalidateProjectSnapshot("app")
 	serveDecode(t, server, "/api/tasks/APP-T-0010", &task)
@@ -735,6 +748,44 @@ func TestServeRunDetailUsesCanonicalCompletedRunRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, 2, len(turns), "raw usage rows remain available for forensic use")
+}
+
+func TestServeRunDetailPreservesWorkerAndReviewerAttempts(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	now := time.Date(2026, 7, 6, 6, 30, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	workerStarted := "2026-07-06T06:00:00Z"
+	workerFinished := "2026-07-06T06:12:00Z"
+	reviewerStarted := "2026-07-06T06:20:00Z"
+	if err := server.store.UpsertRun(RunStatus{
+		ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexAppServer), RunnerProfile: "reviewer", RunnerHarness: "codex_exec", RunnerModel: "review-model",
+		Lane: runLaneReview, LeaseState: string(LeaseStateRunning), AttemptOutcome: string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-review", AttemptCount: 1, LastHeartbeatAt: now.Add(-5 * time.Second).Format(time.RFC3339),
+		StartedAt: workerStarted, UpdatedAt: now.Format(time.RFC3339), LastEventAt: now.Add(-5 * time.Second).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range []RunAttempt{
+		{AttemptID: "attempt-worker", ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexAppServer), Lane: runLaneExecute, Outcome: string(AttemptOutcomeSucceeded), StartedAt: workerStarted, FinishedAt: workerFinished},
+		{AttemptID: "attempt-review", ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexAppServer), Lane: runLaneReview, Outcome: string(AttemptOutcomeNone), StartedAt: reviewerStarted},
+	} {
+		if err := server.store.SaveAttempt(attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var detail serveRunDetail
+	serveDecode(t, server, "/api/runs/APP-T-0001", &detail)
+	assertEqual(t, "attempt-review", detail.ActiveAttemptID, "canonical active attempt")
+	assertEqual(t, 2, len(detail.Attempts), "worker and reviewer attempts remain distinct")
+	assertEqual(t, "attempt-worker", detail.Attempts[0].ID, "worker attempt id")
+	assertEqual(t, "execute", detail.Attempts[0].Lane, "worker attempt lane")
+	assertEqual(t, "2026-07-06T06:12:00Z", detail.Attempts[0].FinishedAt, "worker finish timestamp")
+	assertEqual(t, "attempt-review", detail.Attempts[1].ID, "reviewer attempt id")
+	assertEqual(t, "review", detail.Attempts[1].Lane, "reviewer attempt lane")
+	assertEqual(t, "running", detail.Attempts[1].Outcome, "active reviewer outcome")
+	assertEqual(t, "", detail.Attempts[1].FinishedAt, "active reviewer has no finish timestamp")
 }
 
 func TestServeReadParityEndpointsSerialize(t *testing.T) {

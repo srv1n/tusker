@@ -44,6 +44,9 @@ type workSessionPacket struct {
 
 func workSessionCmd(args Args, action string) error {
 	args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+	if err := scopeWorkSessionProject(args); err != nil {
+		return err
+	}
 	switch action {
 	case "start":
 		return workSessionStartCmd(args)
@@ -62,6 +65,37 @@ func workSessionCmd(args Args, action string) error {
 	default:
 		return tuskerError(errorInvalidArg, "unknown work action: "+action)
 	}
+}
+
+func scopeWorkSessionProject(args Args) error {
+	if strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")) != "" {
+		projectID := strings.TrimSpace(os.Getenv("TUSKER_PROJECT_ID"))
+		if projectID == "" {
+			return tuskerError(errorInvalidTransition, "dispatched worker project identity is incomplete")
+		}
+		args["project"] = projectID
+		return nil
+	}
+	if strings.TrimSpace(args.String("project")) != "" {
+		return nil
+	}
+	vault, err := resolveVaultPath(args, false)
+	if err != nil {
+		return err
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	projectID, registered, err := registeredProjectIDForVault(store, vault)
+	if err != nil {
+		return err
+	}
+	if registered {
+		args["project"] = projectID
+	}
+	return nil
 }
 
 func workSessionReviewCmd(args Args) error {
@@ -107,16 +141,16 @@ func workSessionStartCmd(args Args) error {
 	if currentWorkspace && strings.TrimSpace(args.String("source")) == "" {
 		// A current-workspace claim is a host-bound self implementation. Infer
 		// the provider only from the existing trusted session markers.
-		if authoringContext.Source == "codex" || authoringContext.Source == "claude" {
+		if authoringContext.Source == "codex" || authoringContext.Source == "claude" || authoringContext.Source == "devin" {
 			source = authoringContext.Source
 		}
 	}
-	if source != "tusker_cli" && source != "codex" && source != "claude" {
-		return tuskerError(errorInvalidArg, "work start source must be tusker_cli, codex, or claude")
+	if source != "tusker_cli" && source != "codex" && source != "claude" && source != "devin" {
+		return tuskerError(errorInvalidArg, "work start source must be tusker_cli, codex, claude, or devin")
 	}
 	if currentWorkspace {
 		if source == "tusker_cli" {
-			return tuskerError(errorInvalidTransition, "--current-workspace requires a trusted interactive Codex or Claude session")
+			return tuskerError(errorInvalidTransition, "--current-workspace requires a trusted interactive Codex, Claude, or Devin session")
 		}
 		if kind := agentSessionKind(); !strings.HasPrefix(kind, "interactive ") {
 			return tuskerError(errorInvalidTransition, "--current-workspace requires a trusted interactive agent session", withContext(map[string]any{"execution_role": kind}))
@@ -341,7 +375,7 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 		}
 	}
 	owner := args.String("owner")
-	service := newRunOwnershipService(ctx.Store)
+	service := newRunOwnershipService(ctx.Store).withProject(ctx.Project.ProjectID)
 	claimNotes := orchestrationOwnedPathNotes(ctx.NotesByID, ctx.Workflow.Data)
 	service.withOwnedPathContext(ctx.Project.VaultRoot, claimNotes[stringField(note.Data, "id")], claimNotes)
 	// Interactive work owns a user-directed session, not an unattended dispatch
@@ -417,9 +451,6 @@ func reviewImplementationBinding(store *RuntimeStore, run RunStatus, note Note, 
 	if stringField(note.Data, "status") != "review" {
 		return reviewImplementation{}, tuskerError(errorInvalidTransition, "review session requires task status review")
 	}
-	if run.Lane != runLaneExecute || LeaseState(run.LeaseState) != LeaseStateReleased || AttemptOutcome(run.AttemptOutcome) != AttemptOutcomeSucceeded {
-		return reviewImplementation{}, tuskerError(errorInvalidTransition, "review session requires a completed execute work session")
-	}
 	workRevision := intField(note.Data, "work_revision")
 	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
 	if workRevision == 0 || source == "" || run.WorkRevision != workRevision {
@@ -429,11 +460,11 @@ func reviewImplementationBinding(store *RuntimeStore, run RunStatus, note Note, 
 	if materialErr != nil {
 		return reviewImplementation{}, materialErr
 	}
-	var actor, trigger string
-	err := store.queryRowScan(`SELECT actor, trigger FROM run_authorizations WHERE project_id=? AND record_id=? AND lease_generation=?`, []any{run.ProjectID, run.RecordID, run.LeaseGeneration}, &actor, &trigger)
-	if err != nil || strings.TrimSpace(actor) == "" {
-		return reviewImplementation{}, firstNonNil(err, tuskerError(errorInvalidTransition, "review session requires durable implementation session provenance"))
+	authorization, authorizationErr := runAuthorizationForAttempt(store, run.ProjectID, run.RecordID, parent.AttemptID)
+	if authorizationErr != nil {
+		return reviewImplementation{}, authorizationErr
 	}
+	actor, trigger := authorization.Actor, authorization.Trigger
 	if strings.HasPrefix(strings.TrimSpace(trigger), "self_implementation;") {
 		implementation, reviewer := selfImplementationTriggerContext(trigger), TaskAuthoringContextFromEnvironment()
 		if !nativeConversationKnown(implementation) || !nativeConversationKnown(reviewer) {
@@ -448,6 +479,19 @@ func reviewImplementationBinding(store *RuntimeStore, run RunStatus, note Note, 
 		return reviewImplementation{}, err
 	}
 	return reviewImplementation{AttemptID: parent.AttemptID, ImplementationActor: actor, ReviewerActor: reviewerActorForNote(wf.Data.Reviewer.Actor, note), MaterialFingerprint: material, WorkspacePath: parent.WorkspacePath, Branch: firstNonEmpty(parent.EndState.Branch, parent.BranchName)}, nil
+}
+
+func runAuthorizationForAttempt(store *RuntimeStore, projectID, recordID, attemptID string) (RunAuthorization, error) {
+	authorizations, err := store.ListRunAuthorizations(projectID, recordID)
+	if err != nil {
+		return RunAuthorization{}, err
+	}
+	for _, authorization := range authorizations {
+		if authorization.AttemptID == attemptID && strings.TrimSpace(authorization.Actor) != "" {
+			return authorization, nil
+		}
+	}
+	return RunAuthorization{}, tuskerError(errorInvalidTransition, "review session requires durable implementation session provenance")
 }
 
 // reviewImplementationParent is the single durable binding used before both
@@ -589,7 +633,7 @@ func workSessionLifecycleCmd(args Args, action string) error {
 	if err := runsLifecycleCmd(args, action); err != nil {
 		return err
 	}
-	workSessionNotifyRun(args.String("id"))
+	workSessionNotifyRun(args.String("project"), args.String("id"))
 	return nil
 }
 
@@ -749,13 +793,13 @@ func workSessionStaleRevisionError(code, taskID string, expected, current int) e
 	return tuskerError(code, blocker.Reason, withContext(map[string]any{"readiness_blocker": blocker}))
 }
 
-func workSessionNotifyRun(id string) {
+func workSessionNotifyRun(projectID, id string) {
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return
 	}
 	defer store.Close()
-	run, err := store.FindRun(id)
+	run, err := findRunScopedOrAmbiguous(store, projectID, id)
 	if err != nil || run == nil {
 		return
 	}

@@ -69,10 +69,16 @@ func TestServeOperatorActorUsesOnlyExplicitConfiguration(t *testing.T) {
 	if got, err := server.serveOperatorActor(serveActionBody{}, "serve task run"); err != nil || got != "human:operator" {
 		t.Fatalf("configured serve operator resolution=%q err=%v", got, err)
 	}
-	for _, raw := range []string{"reviewer:operator", "agent:operator", "operator"} {
+	for _, raw := range []string{"operator"} {
 		t.Setenv("TUSKER_SERVE_OPERATOR", raw)
 		if got := configuredServeOperatorActor(); got != "" {
 			t.Fatalf("non-human serve actor %q was accepted as %q", raw, got)
+		}
+	}
+	for _, raw := range []string{"reviewer:operator", "agent:operator"} {
+		t.Setenv("TUSKER_SERVE_OPERATOR", raw)
+		if got := configuredServeOperatorActor(); got != raw {
+			t.Fatalf("qualified serve actor %q was normalized as %q", raw, got)
 		}
 	}
 }

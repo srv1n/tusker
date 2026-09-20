@@ -97,11 +97,13 @@ export function Toggle({
   checked,
   onChange,
   label,
+  ariaLabel,
   disabled = false,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label?: ReactNode;
+  ariaLabel?: string;
   disabled?: boolean;
 }) {
   return (
@@ -109,17 +111,18 @@ export function Toggle({
       <button
         type="button"
         role="switch"
+        aria-label={ariaLabel}
         aria-checked={checked}
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative h-[18px] w-[30px] flex-none rounded-full transition-colors",
+          "relative h-[18px] w-[30px] flex-none rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
           checked ? "bg-ink" : "bg-line",
         )}
       >
         <span
           className={cn(
-            "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-surface transition-transform",
+            "absolute left-0 top-[2px] h-[14px] w-[14px] rounded-full bg-surface transition-transform",
             checked ? "translate-x-[14px]" : "translate-x-[2px]",
           )}
         />

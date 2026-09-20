@@ -7,8 +7,6 @@
 | Item | Owner | Blocks / refs | Action |
 |---|---|---|---|
 | [[FLW-G-0001]] | human:sarav | [[FLW-T-0009]] | Answer one current human-owned gate through the supported native interaction surface. |
-| [[FLW-G-0002]] | human:sarav | [[FLW-T-0054]] | Authorize the bounded installed pilot with exact routes, disposable workspace, runtime owner, permitted changes and cumulative attempt/time/spending limits. |
 | [[FLW-T-0009]] | human:sarav | FLW-G-0001 | Accept, waive, or return rework for FLW-G-0001. |
-| [[FLW-T-0054]] | human:sarav | FLW-G-0002 | Accept, waive, or return rework for FLW-G-0002. |
 
 <!-- tusker:generated:end -->

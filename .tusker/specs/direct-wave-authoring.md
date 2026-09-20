@@ -200,6 +200,20 @@ silently attach old proof to a new contract. Unaffected work can continue.
 
 ## Start, pause and autonomous pickup
 
+September 15 approval UX correction (FLW-T-0055): the displayed human-action
+button click is the confirmation. Show the exact scope and applicable limits
+inline before it; do not follow it with a native confirmation modal, Touch ID,
+password challenge or modal error. Record the scoped decision through the
+existing authenticated gate-action API and show progress/result/error inline,
+restoring usable controls after failure. There is no approval signing key,
+challenge, receipt, or native approval bridge. Keep local-session
+authentication, origin/CSRF protection, project/material validation,
+idempotency and ordinary audit records;
+approval neither completes missing proof nor clears unfinished dependencies.
+Continue already-authorized work automatically, preserving deliberate pause
+and task-only scope. Any combined new Start scope must be shown before the
+same click, not inferred after it.
+
 September 13 clarification: creation is inert, but backlog/held is never a
 reason by itself to refuse an explicit Start. Separate authored work, computed
 eligibility and execution authorization. Do not require users to mark ready,

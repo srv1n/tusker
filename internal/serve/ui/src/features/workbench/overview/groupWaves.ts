@@ -21,6 +21,14 @@ export type StartabilityState = "ready" | "blocked" | "unknown";
 
 export interface Startability {
   state: StartabilityState;
+  /** Shared authoritative review interpretation; absent means use legacy reads. */
+  stage?: "ready" | "queued" | "executing" | "awaiting_review" | "reviewing" | "paused" | "blocked" | "failed" | "completed" | "cancelled" | "unknown";
+  /** A concurrently active member remains visible beside a failed/blocked wave. */
+  activeStage?: "executing" | "reviewing";
+  /** Authoritative human action takes precedence over inferred task-gate reads. */
+  humanAction?: string;
+  /** A non-scheduling review blocker shown alongside active work. */
+  blocker?: string;
   /** Per-wave only; page-level error dedupe needs a backend-issued issue ID. */
   reason?: string;
 }
@@ -254,7 +262,7 @@ function plannedLabel(
   if (wave.authorization.state === "disarmed")
     return {
       stateLabel: "Not started",
-      stateDetail: wave.authorization.action || undefined,
+      stateDetail: undefined,
     };
   if (startability?.state === "unknown")
     return {
@@ -280,9 +288,15 @@ function groupOneWave(
     wave.brief.humanAction.flatMap((item) => item.blockedTaskIds),
   );
   const progress = progressOf(memberTasks, runsByTask, attentionIds);
-  const running = hasFreshRun(memberTasks, runsByTask);
+  const stage = startability?.stage;
+  const activeStage = startability?.activeStage;
+  const running = hasFreshRun(memberTasks, runsByTask) || Boolean(activeStage);
+  const progressWithReview = activeStage && progress.moving === 0 ? { ...progress, moving: 1 } : progress;
 
-  if (isAuthoritativelyCompleted(wave) || isHistoryOnly(wave)) {
+  // When a review exists it is the state authority. In particular, do not let
+  // an older Completed summary override an unavailable, blocked, or active
+  // authoritative review.
+  if (stage === "completed" || (!stage && (isAuthoritativelyCompleted(wave) || isHistoryOnly(wave)))) {
     const history = isHistoryOnly(wave);
     const historyDetail = history ? "Ended without delivery." : authoredOutcome(wave);
     return {
@@ -300,6 +314,37 @@ function groupOneWave(
         detail: historyDetail,
       } : undefined),
     };
+  }
+
+  if (stage === "unknown") {
+    const detail = startability?.reason || "Required reads failed or are stale.";
+    return { wave, group: "unavailable", stateLabel: "Status unavailable", stateDetail: detail, runningAlso: false, progress, row: row({ kind: "unavailable", text: detail, detail }) };
+  }
+
+  if (stage === "cancelled") {
+    return { wave, group: "completed", stateLabel: "Cancelled", stateDetail: "Ended without delivery.", runningAlso: false, progress, row: row({ kind: "history", text: "Ended without delivery.", detail: "Ended without delivery." }) };
+  }
+
+  const reviewNeed = startability?.humanAction;
+  const reviewBlocker = startability?.blocker;
+  if (reviewNeed) {
+    const facts = [reviewNeed, reviewBlocker].filter((fact, index, all) => Boolean(fact) && all.indexOf(fact) === index).join(" ");
+    const detail = running ? `${facts} Work is also active.` : facts;
+    return { wave, group: "needs-you", stateLabel: "Needs you", stateDetail: detail, runningAlso: running, progress: progressWithReview, row: row({ kind: "human-action", text: detail, detail: reviewNeed }) };
+  }
+
+  if (stage === "paused" || stage === "queued" || stage === "awaiting_review" || stage === "reviewing" || stage === "blocked" || stage === "failed") {
+    const labels: Record<Exclude<typeof stage, "unknown" | "completed" | "ready" | "executing" | "cancelled">, string> = {
+      paused: "Paused", queued: "Queued", awaiting_review: "Awaiting review", reviewing: "Reviewing", blocked: "Blocked", failed: "Failed",
+    };
+    const detail = reviewBlocker ?? startability?.reason;
+    return { wave, group: "planned", stateLabel: labels[stage], stateDetail: detail, runningAlso: Boolean(activeStage), progress: progressWithReview, row: row(detail ? { kind: "blocker", text: detail, detail } : undefined) };
+  }
+
+  if (stage === "executing") {
+    const activity = running ? runningText(progress) : "Execution is active according to the wave review.";
+    const detail = reviewBlocker ? `${activity} ${reviewBlocker}` : activity;
+    return { wave, group: "running", stateLabel: "Executing", stateDetail: detail, runningAlso: false, progress, row: row({ kind: reviewBlocker ? "blocker" : "running", text: detail, detail }) };
   }
 
   if (isWaveStale(wave)) {
@@ -333,9 +378,7 @@ function groupOneWave(
   }
 
   if (running) {
-    const detail = isStartabilityUnknown(startability)
-      ? `${runningText(progress)} ${unavailableDetail(startability)}`
-      : runningText(progress);
+    const detail = runningText(progress);
     return {
       wave,
       group: "running",
@@ -454,7 +497,7 @@ export function groupWaves(input: GroupWavesInput): GroupWavesResult {
   };
 }
 
-/** Search matches title or supplied description; completed hides by default. */
+/** Search matches ID, title, or supplied description; completed hides by default. */
 export function filterGroupedWaves(
   groups: OverviewGroup[],
   descriptions: Record<string, string> | undefined,
@@ -470,6 +513,7 @@ export function filterGroupedWaves(
         if (needle.length === 0) return true;
         const description = descriptions?.[entry.wave.id] ?? "";
         return (
+          entry.wave.id.toLowerCase().includes(needle) ||
           entry.wave.title.toLowerCase().includes(needle) ||
           description.toLowerCase().includes(needle)
         );

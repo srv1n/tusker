@@ -82,6 +82,29 @@ func writeDirectTask(t *testing.T, vault, id, waveID string, extra map[string]an
 	return path
 }
 
+func writePendingDirectTask(t *testing.T, vault, id, waveID string, extra map[string]any) {
+	t.Helper()
+	path := writeDirectTask(t, vault, id, waveID, extra)
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = directDispatchableTaskBody(id)
+	rows := parseV7VerificationRows(body)
+	rows[0].Check, rows[0].Result, rows[0].Notes = "command: go test ./... -run '^TestProofExists$' -count=1", "pending", ""
+	body = replaceSection(body, "## Verification", renderV7VerificationTable(rows))
+	data["proof_status"] = "pending"
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeDirectWave(t *testing.T, vault, id string, members []string, extra map[string]any) {
 	t.Helper()
 	data := map[string]any{
@@ -224,6 +247,86 @@ func TestDirectWaveAuthorityWaveStartQueuesEligibleRoots(t *testing.T) {
 	}
 }
 
+func TestDirectStartAuthorizesPendingProofButCompletionStillRequiresIt(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	if err := writeText(filepath.Join(v7RepoRoot(vault), "go.mod"), "module fixture\n\ngo 1.22\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(v7RepoRoot(vault), "proof_test.go"), "package fixture\nimport \"testing\"\nfunc TestProofExists(t *testing.T) {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	writePendingDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writePendingDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"dependencies": []any{"APP-T-0001:hard"}})
+	writePendingDirectTask(t, vault, "APP-T-0003", "", nil)
+	writePendingDirectTask(t, vault, "APP-T-0004", "", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, nil)
+
+	standalone, err := directTaskBackgroundStart(vault, store, "APP-T-0003", "human:sarav")
+	if err != nil || standalone.Authorization != "authorized" {
+		t.Fatalf("pending-proof task start: result=%#v err=%v", standalone, err)
+	}
+	replay, err := directTaskBackgroundStart(vault, store, "APP-T-0003", "human:sarav")
+	if err != nil || !replay.Replayed {
+		t.Fatalf("duplicate task start: result=%#v err=%v", replay, err)
+	}
+	waveStart, err := directWaveStart(vault, store, "W-0001", "human:sarav")
+	if err != nil || waveStart.Authorization != "authorized" || len(waveStart.QueuedTaskIDs) != 1 || waveStart.QueuedTaskIDs[0] != "APP-T-0001" {
+		t.Fatalf("pending-proof wave start: result=%#v err=%v", waveStart, err)
+	}
+	if waveStart.Reason != "Authorized — waiting for prerequisites" {
+		t.Fatalf("wave start reason=%q", waveStart.Reason)
+	}
+	if directive, _ := store.RunDirective(project.ProjectID, "APP-T-0002"); directive != nil && directive.State == "queued" {
+		t.Fatal("dependency-blocked member was dispatched")
+	}
+
+	rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+		data["status"] = "done"
+		return data, body
+	})
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.State == "Completed" || review.Members[0].State == "completed" {
+		t.Fatalf("pending proof falsely completed wave: %#v", review)
+	}
+
+	task, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, report, failures, err := executeV7CommandVerificationRows(vault, task, nil, "reviewer:test", true)
+	if err != nil || len(failures) != 0 || report.Status != "satisfied" || v7VerificationReceiptRequirementMissing(vault, fresh) != "" {
+		t.Fatalf("normal proof executor: status=%q failures=%#v err=%v", report.Status, failures, err)
+	}
+	review, err = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil || review.Members[0].State != "completed" {
+		t.Fatalf("fresh proof was not accepted: review=%#v err=%v", review, err)
+	}
+
+	rework, err := resolveV7Note(vault, "APP-T-0004", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rework, report, failures, err = executeV7CommandVerificationRows(vault, rework, nil, "reviewer:test", true)
+	if err != nil || len(failures) != 0 || report.Status != "satisfied" {
+		t.Fatalf("rework baseline proof: status=%q failures=%#v err=%v", report.Status, failures, err)
+	}
+	rewriteTaskFile(t, vault, "APP-T-0004", func(data map[string]any, body string) (map[string]any, string) {
+		data["status"] = "rework"
+		return data, strings.Replace(body, "Do APP-T-0004.", "Redo APP-T-0004 materially.", 1)
+	})
+	rework, err = resolveV7Note(vault, "APP-T-0004", "task")
+	if err != nil || v7VerificationReceiptRequirementMissing(vault, rework) == "" {
+		t.Fatalf("material rework did not stale old proof: task=%#v err=%v", rework.Data, err)
+	}
+	reworkStart, err := directTaskBackgroundStart(vault, store, "APP-T-0004", "human:sarav")
+	if err != nil || reworkStart.Authorization != "authorized" {
+		t.Fatalf("stale-proof rework start: result=%#v err=%v", reworkStart, err)
+	}
+}
+
 func TestDirectWaveAuthorityRouteRemovedIsCaught(t *testing.T) {
 	vault, store, project := authorityFixture(t)
 	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
@@ -338,6 +441,71 @@ func TestDirectWaveAuthorityGateWaitingSemantics(t *testing.T) {
 		t.Fatal("gated root was queued")
 	}
 	_ = project
+}
+
+func TestHumanApprovalContinuationReusesAuthorizedWave(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeHumanGate(t, vault, "APP-G-0001", "APP-T-0001")
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+
+	start, err := directWaveStart(vault, store, "W-0001", "human:sarav")
+	if err != nil || start.Authorization != "authorized" || start.State != "Waiting" || len(start.QueuedTaskIDs) != 0 {
+		t.Fatalf("authorized gated wave=%#v err=%v", start, err)
+	}
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil || len(review.HumanActions) != 1 || review.HumanActions[0].Action.GateID != "APP-G-0001" {
+		t.Fatalf("human action projection=%#v err=%v", review.HumanActions, err)
+	}
+	if err := gateV7Transition(Args{"vault": vault, "id": "APP-G-0001", "by": "human:sarav", "evidence": "Approved in Tusker.", "quiet": "true"}, "satisfied"); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC())
+	if err != nil || len(queued) != 1 || queued[0] != "APP-T-0001" {
+		t.Fatalf("approval continuation queued=%#v err=%v", queued, err)
+	}
+	again, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC())
+	if err != nil || len(again) != 0 {
+		t.Fatalf("duplicate continuation queued=%#v err=%v", again, err)
+	}
+}
+
+func TestHumanApprovalContinuationPreservesPauseAndInertScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, wantAuthorization string
+		start, pause            bool
+	}{
+		{name: "inert", wantAuthorization: "disarmed"},
+		{name: "paused", start: true, pause: true, wantAuthorization: "paused"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vault, store, project := authorityFixture(t)
+			writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+			writeHumanGate(t, vault, "APP-G-0001", "APP-T-0001")
+			writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+			if tc.start {
+				if _, err := directWaveStart(vault, store, "W-0001", "human:sarav"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.pause {
+				if _, err := directWavePause(vault, store, "W-0001", "human:sarav"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := gateV7Transition(Args{"vault": vault, "id": "APP-G-0001", "by": "human:sarav", "evidence": "Approved in Tusker.", "quiet": "true"}, "satisfied"); err != nil {
+				t.Fatal(err)
+			}
+			queued, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC())
+			if err != nil || len(queued) != 0 {
+				t.Fatalf("queued=%#v err=%v", queued, err)
+			}
+			wave, _ := resolveV7Note(vault, "W-0001", "wave")
+			if got := stringField(wave.Data, "authorization"); got != tc.wantAuthorization {
+				t.Fatalf("authorization=%s want=%s", got, tc.wantAuthorization)
+			}
+		})
+	}
 }
 
 func TestDirectWaveAuthorityCrashBeforeQueueStaysWaiting(t *testing.T) {
@@ -714,12 +882,13 @@ func TestDirectWaveAuthorityOwnershipSemantics(t *testing.T) {
 	}
 	directive, _ := store.RunDirective(project.ProjectID, "APP-T-0001")
 	if directive == nil {
-		t.Fatal("root directive missing after start")
+		directives, _ := store.ListActiveRunDirectives(project.ProjectID, time.Now().UTC())
+		t.Fatalf("root directive missing after start: result=%#v directives=%#v", startResult, directives)
 	}
-	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-1", LeaseGeneration: 1, LeaseExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}); err != nil {
+	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-1", LeaseGeneration: 1, ActiveAttemptID: "attempt-1", LeaseExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveRunAuthorization(RunAuthorization{ProjectID: project.ProjectID, RecordID: "APP-T-0001", Source: "human_run_directive", Actor: "human:sarav", LeaseGeneration: 1, DirectiveWaveID: "W-0001", DirectiveAuthorizationFingerprint: startResult.MaterialFingerprint, DirectiveWaveAuthorizedAt: directive.WaveAuthorizedAt}); err != nil {
+	if err := store.SaveRunAuthorization(RunAuthorization{ProjectID: project.ProjectID, RecordID: "APP-T-0001", Source: "human_run_directive", Actor: "human:sarav", LeaseGeneration: 1, AttemptID: "attempt-1", DirectiveWaveID: "W-0001", DirectiveAuthorizationFingerprint: startResult.MaterialFingerprint, DirectiveWaveAuthorizedAt: directive.WaveAuthorizedAt}); err != nil {
 		t.Fatal(err)
 	}
 	replay, err := directWaveStart(vault, store, "W-0001", "human:sarav")

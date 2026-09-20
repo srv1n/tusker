@@ -11,7 +11,7 @@
 */
 
 import { useMemo } from "react";
-import type { RunSummary, TaskDetail } from "@/types/domain";
+import type { RunSummary, TaskDetail, WaveReviewMember } from "@/types/domain";
 import {
   DISPLAY_STATE_LABEL,
   NODE_KIND_LABEL,
@@ -30,6 +30,7 @@ export interface WaveFlowProps {
   tasks: TaskDetail[];
   runs: RunSummary[];
   dependencyFacts?: Record<string, DependencyFact>;
+  reviewMembers?: WaveReviewMember[];
   selectedTaskId?: string;
   viewport?: FlowViewport;
   onSelectTask: (id: string) => void;
@@ -55,6 +56,7 @@ function StateGlyph({ state }: { state: FlowDisplayState }) {
           <circle cx="7" cy="7" r="2.4" fill="var(--color-info)" />
         </svg>
       );
+    case "awaiting_review":
     case "reviewing":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
@@ -71,6 +73,7 @@ function StateGlyph({ state }: { state: FlowDisplayState }) {
         </svg>
       );
     case "blocked":
+    case "proof_blocked":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <rect x="2" y="2" width="10" height="10" rx="2.5" fill="var(--color-warn-soft)" stroke="var(--color-warn)" strokeWidth="1.5" />
@@ -78,6 +81,7 @@ function StateGlyph({ state }: { state: FlowDisplayState }) {
         </svg>
       );
     case "failed":
+    case "cancelled":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <circle cx="7" cy="7" r="6" fill="var(--color-fail-soft)" stroke="var(--color-fail)" strokeWidth="1.5" />
@@ -104,21 +108,24 @@ function edgePath(from: { x: number; y: number }, to: { x: number; y: number }):
 }
 
 export function WaveFlow(props: WaveFlowProps) {
-  const { memberIds, tasks, runs, dependencyFacts, selectedTaskId, onSelectTask } = props;
+  const { memberIds, tasks, runs, dependencyFacts, reviewMembers, selectedTaskId, onSelectTask } = props;
 
   const graph = useMemo(
-    () => buildFlowGraph({ memberIds, tasks, runs, dependencyFacts }),
-    [memberIds, tasks, runs, dependencyFacts],
+    () => buildFlowGraph({ memberIds, tasks, runs, dependencyFacts, reviewMembers }),
+    [memberIds, tasks, runs, dependencyFacts, reviewMembers],
   );
   const layout = useMemo(() => layoutTopDownFlowGraph(graph, memberIds), [graph, memberIds]);
   const nodes = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const edges = useMemo(() => essentialFlowEdges(graph), [graph]);
   const executing = graph.nodes.filter((node) => node.state === "executing");
   const reviewing = graph.nodes.filter((node) => node.state === "reviewing");
+  const awaitingReview = graph.nodes.filter((node) => node.state === "awaiting_review");
   const executionStatus = executing.length > 0
     ? `Executing now: ${executing.map((node) => node.title).join(", ")}`
     : reviewing.length > 0
       ? `Reviewing now: ${reviewing.map((node) => node.title).join(", ")}`
+      : awaitingReview.length > 0
+        ? `Awaiting review: ${awaitingReview.map((node) => node.title).join(", ")}`
       : "Nothing is executing now.";
 
   if (props.loading) {

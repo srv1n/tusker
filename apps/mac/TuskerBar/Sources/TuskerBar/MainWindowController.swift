@@ -23,7 +23,6 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         let origin = PanelController.configuredOrigin(config.baseURL) ?? ""
         content.addUserScript(WKUserScript(source: PanelController.folderPickerScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         content.addUserScript(WKUserScript(source: PanelController.imagePickerScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        content.addUserScript(WKUserScript(source: PanelController.humanReceiptScript(origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let webConfig = WKWebViewConfiguration()
         webConfig.userContentController = content
         webView = WKWebView(frame: frame, configuration: webConfig)
@@ -227,20 +226,6 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
             PanelController.configureImagePicker(picker)
             picker.beginSheetModal(for: window) { [weak self] response in
                 self?.webView.evaluateJavaScript(PanelController.imagePickerResponseScript(requestID: requestID, url: response == .OK ? picker.url : nil))
-            }
-        case "requestHumanReceipt":
-            guard let requestID = payload["requestId"] as? String else { return }
-            guard let projectID = payload["projectId"] as? String,
-                  let gateID = payload["gateId"] as? String,
-                  let action = payload["action"] as? String,
-                  let request = try? HumanReceiptRequest(projectID: projectID, gateID: gateID, action: action) else {
-                webView.evaluateJavaScript(PanelController.humanReceiptResponseScript(requestID: requestID, result: .error(HumanReceiptError.invalidRequest)))
-                return
-            }
-            Task { [weak self] in
-                guard let self else { return }
-                let result = await HumanDecisionReceiptController.shared.request(request, baseURL: self.config.baseURL, presenting: self.window)
-                _ = try? await self.webView.evaluateJavaScript(PanelController.humanReceiptResponseScript(requestID: requestID, result: result))
             }
         default:
             return

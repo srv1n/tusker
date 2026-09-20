@@ -100,10 +100,6 @@ func gateV7ListCmd(args Args) error {
 }
 
 func gateV7Transition(args Args, status string) error {
-	return gateV7TransitionWithHumanReceipt(args, status, nil)
-}
-
-func gateV7TransitionWithHumanReceipt(args Args, status string, receipt *verifiedHumanControlReceipt) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -143,17 +139,7 @@ func gateV7TransitionWithHumanReceipt(args Args, status string, receipt *verifie
 	prev := stringField(data, "status")
 	now := time.Now().UTC().Format(time.RFC3339)
 	gateKind := strings.ToLower(stringField(data, "gate_kind"))
-	if v7HumanControlRequired(data, status) {
-		if receipt == nil {
-			return tuskerError(humanControlReceiptRequiredCode, id+": human-owned gate requires a native signed human receipt")
-		}
-		if baseRev == "" || !v7StateRevMatches(data, body, baseRev) || receipt.MaterialRevision == "" || receipt.GateID != id || receipt.Action != v7HumanControlAction(status) || receipt.MaterialRevision != baseRev || receipt.ActionDigest != humanControlActionDigest(data, body, receipt.Action) {
-			return tuskerError(humanControlReceiptInvalidCode, id+": human receipt does not bind the current gate material and action")
-		}
-		actor = receipt.Actor
-		args["by"] = actor
-		args["evidence"] = humanControlReceiptEvidence(*receipt)
-	} else if (status == "satisfied" || status == "waived") && (gateKind == "auth" || gateKind == "release") {
+	if (status == "satisfied" || status == "waived") && (gateKind == "auth" || gateKind == "release") {
 		// High-risk gate authority is a human/reviewer act. Unlike generic
 		// gate metadata, it may not fall back to an agent or accept a human
 		// namespace from a dispatched/interactive agent session.
@@ -370,9 +356,12 @@ func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor) error {
 	}
 	note.Data = data
 	note.Body = body
+	if expected := strings.TrimSpace(args.String("task-rev")); expected != "" && expected != stringField(data, "state_rev") {
+		return tuskerError("CAS_CONFLICT", id+": task status snapshot changed before mutation")
+	}
 	if nextStatus == "ready" {
 		candidate := cloneNoteData(data)
-		candidate["status"], candidate["readiness"] = "ready", "ready"
+		candidate["status"], candidate["readiness"], candidate["next_owner"] = "ready", "ready", "agent"
 		if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, Note{Data: candidate, Body: body, RelativePath: note.RelativePath}, note.RelativePath); ok && tuskerTier(vaultPath) >= 2 {
 			return tuskerError(errorInvalidTransition, id+": "+finding.Message, withHint(finding.Hint))
 		}
@@ -410,6 +399,11 @@ func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor) error {
 		delete(data, "discard_reason")
 	} else {
 		data["status"] = nextStatus
+		if nextStatus == "ready" {
+			data["readiness"], data["next_owner"] = "ready", "agent"
+			delete(data, "next_source")
+			delete(data, "next_ref")
+		}
 		data["updated_at"] = now
 		data["updated_by"] = actor
 	}

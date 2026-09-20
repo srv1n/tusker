@@ -95,15 +95,10 @@ func waveMaterialGates(idx v7Index, taskID string) []any {
 		if !containsString(normalizeList(gate.Data["blocks"]), taskID) && !containsString(normalizeList(idx.Tasks[taskID].Data["gates"]), stringField(gate.Data, "id")) {
 			continue
 		}
-		row := map[string]any{"id": stringField(gate.Data, "id"), "status": stringField(gate.Data, "status"), "gate_kind": stringField(gate.Data, "gate_kind"), "owner": stringField(gate.Data, "owner"), "blocking": boolField(gate.Data, "blocking"), "blocks": sortedStrings(normalizeList(gate.Data["blocks"])), "covers": sortedStrings(normalizeList(gate.Data["covers"])), "action": stringField(gate.Data, "action"), "verification": stringField(gate.Data, "verification"), "why_agent_cannot": v7GateBoundaryText(gate), "suggestion": v7GateSuggestionText(gate)}
-		kind := strings.ToLower(stringField(gate.Data, "gate_kind"))
-		status := stringField(gate.Data, "status")
-		if (kind == "auth" || kind == "release") && (status == "satisfied" || status == "waived") {
-			current, incomplete := v7GateHardClosureFingerprint(gate.Data, idx)
-			row["dependency_material_fingerprint"] = stringField(gate.Data, "dependency_material_fingerprint")
-			row["current_dependency_material_fingerprint"] = current
-			row["dependency_material_incomplete"] = sortedStrings(incomplete)
-		}
+		// Gate disposition is lifecycle state, not new execution scope. Keeping
+		// it out lets a signed approval release already-authorized work without
+		// silently authorizing changed gate text, limits, or affected tasks.
+		row := map[string]any{"id": stringField(gate.Data, "id"), "gate_kind": stringField(gate.Data, "gate_kind"), "owner": stringField(gate.Data, "owner"), "blocking": boolField(gate.Data, "blocking"), "blocks": sortedStrings(normalizeList(gate.Data["blocks"])), "covers": sortedStrings(normalizeList(gate.Data["covers"])), "action": stringField(gate.Data, "action"), "verification": stringField(gate.Data, "verification"), "why_agent_cannot": v7GateBoundaryText(gate), "suggestion": v7GateSuggestionText(gate)}
 		out = append(out, row)
 	}
 	return out

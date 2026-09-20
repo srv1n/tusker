@@ -15,6 +15,9 @@ func agentSessionKind() string {
 	if strings.TrimSpace(os.Getenv("CLAUDECODE")) != "" || strings.TrimSpace(os.Getenv("CLAUDE_CODE_ENTRYPOINT")) != "" {
 		return "interactive Claude session"
 	}
+	if strings.TrimSpace(os.Getenv("CHISEL_SESSION_DB")) != "" {
+		return "interactive Devin session"
+	}
 	return ""
 }
 

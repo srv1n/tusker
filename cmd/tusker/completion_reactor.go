@@ -687,7 +687,7 @@ func completionCloseAuthorityProjectionSnapshot(vaultPath, integrationView strin
 	if err != nil {
 		return completionCloseAuthorityProjection{}, err
 	}
-	proof, gates, err := reviewObjectiveSnapshots(vaultPath, preflight.Task)
+	proof, gates, err := completionReviewObjectiveSnapshots(vaultPath, preflight.Task, result)
 	if err != nil {
 		return completionCloseAuthorityProjection{}, err
 	}
@@ -1469,7 +1469,7 @@ func completionReviewDrift(store *RuntimeStore, vaultPath string, note Note, res
 	if firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) != result.ImplementationSHA {
 		return "implementation source drift"
 	}
-	proof, gates, err := reviewObjectiveSnapshots(vaultPath, note)
+	proof, gates, err := completionReviewObjectiveSnapshots(vaultPath, note, result)
 	if err != nil {
 		return "objective snapshot unavailable: " + err.Error()
 	}
@@ -1480,6 +1480,18 @@ func completionReviewDrift(store *RuntimeStore, vaultPath string, note Note, res
 		return "gate fingerprint drift"
 	}
 	return completionReviewMaterialDrift(store, vaultPath, note, result)
+}
+
+func completionReviewObjectiveSnapshots(vaultPath string, note Note, result ReviewResult) (string, string, error) {
+	proof, gates, err := reviewObjectiveSnapshots(vaultPath, note)
+	if err != nil || proof == result.ProofFingerprint || result.MaterialFingerprint == "" {
+		return proof, gates, err
+	}
+	alternateProof, alternateGates, alternateErr := reviewObjectiveSnapshotsForMaterial(vaultPath, note, result.MaterialFingerprint)
+	if alternateErr == nil && alternateProof == result.ProofFingerprint && alternateGates == result.GateFingerprint {
+		return alternateProof, alternateGates, nil
+	}
+	return proof, gates, nil
 }
 
 func completionReviewMaterialDrift(store *RuntimeStore, vaultPath string, note Note, result ReviewResult) string {
@@ -2419,7 +2431,7 @@ func projectCompletionTaskToCanonical(vaultPath, repoRoot string, result ReviewR
 		stringField(currentData, "status") != "review" ||
 		intField(currentData, "work_revision") != result.WorkRevision ||
 		currentSource != result.ImplementationSHA {
-		return tuskerError("CAS_CONFLICT", "canonical completion projection refused task drift after integration CAS",
+		return tuskerError(completionRepairRequiredError, "canonical completion projection refused task drift after integration CAS",
 			withPath(taskPath), withContext(map[string]any{
 				"task": result.TaskID, "expected_state_rev": transaction.ReviewedTaskStateRev, "current_state_rev": currentState,
 				"expected_source": result.ImplementationSHA, "current_source": currentSource, "status": stringField(currentData, "status"),

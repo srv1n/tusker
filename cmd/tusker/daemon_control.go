@@ -57,7 +57,8 @@ func runDirectiveBypassableBlocker(blocker string) bool {
 	switch blocker {
 	case "project automation is disabled in its configuration",
 		"dispatch scope armed_waves requires task membership in a currently armed wave",
-		"wave is not durably armed":
+		"wave is not durably armed",
+		"wave is paused":
 		return true
 	}
 	return strings.Contains(blocker, "wave ") && strings.Contains(blocker, " authorization is disarmed")

@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-05T08:37:06Z"
-updated_at: "2026-09-14T05:57:59Z"
-state_rev: "sha256:85e1eeb9e310dfda3ace66023f26933f3d339fa2038b8bab4df99a0af1d275a3"
+updated_at: "2026-09-15T05:24:12Z"
+state_rev: "sha256:3d587a95b75de687bdfbaa989b5c59d9f2ccad7e9dea6481529054147e8ad2e7"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -41,7 +41,6 @@ TBD.
 | Gate | Owner | Blocks | Action |
 |---|---|---|---|
 | [[FLW-G-0001]] | human:sarav | [[FLW-T-0009]] | Answer one current human-owned gate through the supported native interaction surface. |
-| [[FLW-G-0002]] | human:sarav | [[FLW-T-0054]] | Authorize the bounded installed pilot with exact routes, disposable workspace, runtime owner, permitted changes and cumulative attempt/time/spending limits. |
 
 ## Active work
 
@@ -101,7 +100,8 @@ TBD.
 | [[FLW-T-0051]] | backlog | blocked_dependency | Wait for dependency FLW-T-0049 to reach done. |
 | [[FLW-T-0052]] | backlog | blocked_dependency | Wait for dependency FLW-T-0049 to reach done. |
 | [[FLW-T-0053]] | backlog | blocked_dependency | Wait for dependency FLW-T-0052 to reach done. |
-| [[FLW-T-0054]] | backlog | human:sarav | Accept, waive, or return rework for FLW-G-0002. |
+| [[FLW-T-0054]] | backlog | blocked_dependency | Wait for dependency FLW-T-0051 to reach done. |
+| [[FLW-T-0055]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 

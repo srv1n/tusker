@@ -52,31 +52,6 @@ enum RuntimeLaunchPlan {
         return (1 ... 65_535).contains(port)
     }
 
-    static func ownsHumanReceiptRuntime(
-        baseURL: URL,
-        configuredBaseURL: URL,
-        childPID: Int32,
-        childRunning: Bool,
-        livenessPID: Int,
-        serveEnabled: Bool,
-        serveAddr: String
-    ) -> Bool {
-        guard manages(baseURL), sameOrigin(baseURL, configuredBaseURL), childRunning,
-              childPID > 0, Int(childPID) == livenessPID, serveEnabled,
-              let expectedHost = baseURL.host?.lowercased(), let expectedPort = baseURL.port,
-              let bound = URL(string: "http://" + serveAddr),
-              bound.host?.lowercased() == expectedHost, bound.port == expectedPort else {
-            return false
-        }
-        return true
-    }
-
-    private static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
-        lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
-            && lhs.host?.lowercased() == rhs.host?.lowercased()
-            && lhs.port == rhs.port
-    }
-
     static func executableURL(in bundle: Bundle) -> URL? {
         bundle.url(forResource: "tusker", withExtension: nil)
     }
@@ -103,7 +78,7 @@ enum RuntimeLaunchPlan {
         // launches via `open` can inherit the invoking Codex/Claude shell's
         // identity, which would make the bundled runtime reject a legitimate
         // app-owned launch as a nested agent launch.
-        for key in ["TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
+        for key in ["TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
             environment.removeValue(forKey: key)
         }
         environment["TUSKER_SERVE_REQUIRED"] = "1"
@@ -162,20 +137,6 @@ final class RuntimeSupervisor {
 
     private init(config: AppConfig) {
         self.config = config
-    }
-
-    func ownsHumanReceiptRuntime(at baseURL: URL) -> Bool {
-        guard state == .running, let child = process, child.isRunning,
-              let liveness = receiptLiveness(for: child) else { return false }
-        return RuntimeLaunchPlan.ownsHumanReceiptRuntime(
-            baseURL: baseURL,
-            configuredBaseURL: config.baseURL,
-            childPID: child.processIdentifier,
-            childRunning: child.isRunning,
-            livenessPID: liveness.pid,
-            serveEnabled: liveness.serveEnabled,
-            serveAddr: liveness.serveAddr
-        )
     }
 
     var title: String {
@@ -303,16 +264,9 @@ final class RuntimeSupervisor {
         process.executableURL = executable
         process.arguments = ["daemon", "run"]
         var environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment)
-        // The daemon pins this public key at launch. The Secure Enclave private
-        // key remains in the app's Keychain and is never passed to the runtime.
-        environment["TUSKER_HUMAN_RECEIPT_PUBLIC_KEY"] = try HumanReceiptNativeKey.shared.publicKeyBase64()
-        guard let humanOperator = HumanReceiptNativeOperator.resolve(environment: environment) else {
-            throw RuntimeStartupError("TuskerBar could not determine the signed-in macOS operator.")
+        if environment["TUSKER_SERVE_OPERATOR"]?.isEmpty != false {
+            environment["TUSKER_SERVE_OPERATOR"] = "human:\(NSUserName())"
         }
-        // This is either a valid existing explicit human operator or the macOS
-        // account that owns the app's Secure Enclave signing key.
-        environment["TUSKER_SERVE_OPERATOR"] = humanOperator
-        environment["TUSKER_ACTOR"] = humanOperator
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         environment["HOME"] = home
         environment["PATH"] = RuntimeLaunchPlan.path(home: home, inherited: environment["PATH"])

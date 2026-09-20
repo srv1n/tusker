@@ -157,7 +157,7 @@ func demoCheck(args Args) (map[string]any, int, error) {
 	assertions = append(assertions, demoCheckInitialState(manifest, idx))
 	assertions = append(assertions, demoCheckOutputs(manifest, idx, repoRoot))
 	assertions = append(assertions, demoCheckRealAttempts(manifest, exec, repoRoot))
-	assertions = append(assertions, demoCheckReviewEvidence(manifest, idx))
+	assertions = append(assertions, demoCheckReviewEvidence(manifest, idx, vaultPath))
 	assertions = append(assertions, demoCheckFollowupGating(manifest, idx))
 	assertions = append(assertions, demoCheckNoActiveRuns(manifest, exec, repoRoot))
 	assertions = append(assertions, demoCheckOverlap(manifest, exec, repoRoot))
@@ -339,9 +339,22 @@ func demoCheckRealAttempts(manifest *demoManifest, exec *demoExec, repoRoot stri
 			return demoFailAs(name, "every real task has an effective profile and harness", key+" resolved empty", "")
 		}
 		if profile.Attempt == "" {
-			return demoFailAs(name, "every real task binds a runtime attempt", key+" has no attempt ID", "")
+			attempts := demoRuntimeAttempts(runtimeExec, repoRoot, manifest.RuntimeProjectID, manifest.Tasks[key].TaskID)
+			executeOK, reviewOK := false, false
+			for _, attempt := range attempts {
+				if attempt.Outcome != "succeeded" || attempt.Started < last.StartedAt {
+					continue
+				}
+				executeOK = executeOK || attempt.Lane == runLaneExecute
+				reviewOK = reviewOK || attempt.Lane == runLaneReview
+			}
+			if !executeOK || !reviewOK {
+				return demoFailAs(name, "every real task has successful worker and reviewer attempts in the recorded run window", key+" is missing a successful worker or reviewer attempt", "")
+			}
+			checked++
+			continue
 		}
-		if !demoAttemptKnown(runtimeExec, repoRoot, manifest.Tasks[key].TaskID, profile.Attempt) {
+		if !demoAttemptKnown(runtimeExec, repoRoot, manifest.RuntimeProjectID, manifest.Tasks[key].TaskID, profile.Attempt) {
 			return demoFailAs(name, "recorded attempts exist in runtime inspection", key+" attempt "+profile.Attempt+" not found", "")
 		}
 		checked++
@@ -349,8 +362,8 @@ func demoCheckRealAttempts(manifest *demoManifest, exec *demoExec, repoRoot stri
 	return demoPass(name, "real tasks bound to runtime attempts", fmt.Sprintf("%d tasks verified against runtime inspection", checked), "")
 }
 
-func demoAttemptKnown(exec *demoExec, repoRoot, taskID, attemptID string) bool {
-	for _, attempt := range demoRuntimeAttempts(exec, repoRoot, taskID) {
+func demoAttemptKnown(exec *demoExec, repoRoot, projectID, taskID, attemptID string) bool {
+	for _, attempt := range demoRuntimeAttempts(exec, repoRoot, projectID, taskID) {
 		if attempt.ID == attemptID {
 			return true
 		}
@@ -358,7 +371,7 @@ func demoAttemptKnown(exec *demoExec, repoRoot, taskID, attemptID string) bool {
 	return false
 }
 
-func demoCheckReviewEvidence(manifest *demoManifest, idx v7Index) demoAssertion {
+func demoCheckReviewEvidence(manifest *demoManifest, idx v7Index, vaultPath string) demoAssertion {
 	const name = "review-evidence-bound"
 	done := 0
 	for _, key := range demoSortedTaskKeys(manifest) {
@@ -375,13 +388,46 @@ func demoCheckReviewEvidence(manifest *demoManifest, idx v7Index) demoAssertion 
 			return demoFailAs(name, "proof satisfied for "+key, "proof_status="+proof, "")
 		}
 		if len(idx.Evidence[rec.TaskID]) == 0 {
-			return demoFailAs(name, "evidence bound for "+key, "no evidence records", "")
+			if missing := v7VerificationReceiptRequirementMissing(vaultPath, note); missing != "" {
+				if !demoClosedVerificationReceiptsBound(note) {
+					return demoFailAs(name, "current evidence or verification receipt bound for "+key, missing, "")
+				}
+			}
 		}
 	}
 	if done == 0 {
 		return demoSkip(name, "no completed tasks yet")
 	}
-	return demoPass(name, "proof satisfied with bound evidence", fmt.Sprintf("%d done tasks verified", done), "")
+	return demoPass(name, "proof satisfied with bound evidence or verification receipts", fmt.Sprintf("%d done tasks verified", done), "")
+}
+
+func demoClosedVerificationReceiptsBound(task Note) bool {
+	authority, ok := v7TaskCloseAuthorityFromAny(task.Data["close_authority"])
+	if !ok || validateV7TaskCloseAuthorityFact(authority, stringField(task.Data, "project"), stringField(task.Data, "id"), stringField(task.Data, "accepted_by"), task.Body) != nil {
+		return false
+	}
+	seen := false
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if _, command := v7VerificationCommand(row.Check); !command {
+			continue
+		}
+		seen = true
+		marker := v7VerificationReceiptSchema + " "
+		pos := strings.LastIndex(row.Notes, marker)
+		if pos < 0 {
+			return false
+		}
+		material := ""
+		for _, token := range strings.Fields(row.Notes[pos+len(marker):]) {
+			if key, value, found := strings.Cut(strings.TrimRight(token, ";"), "="); found && key == "material" {
+				material = value
+			}
+		}
+		if !v7VerificationReceiptCurrent(task, row, material, nil) {
+			return false
+		}
+	}
+	return seen
 }
 
 func demoCheckFollowupGating(manifest *demoManifest, idx v7Index) demoAssertion {

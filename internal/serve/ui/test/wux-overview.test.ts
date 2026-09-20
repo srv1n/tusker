@@ -243,6 +243,10 @@ describe("wave overview grouping", () => {
     expect(searched.flatMap((group) => group.waves).map((entry) => entry.wave.id)).toEqual([
       "W-READY",
     ]);
+    const byId = filterGroupedWaves(result.groups, undefined, "w-ready", false);
+    expect(byId.flatMap((group) => group.waves).map((entry) => entry.wave.id)).toEqual([
+      "W-READY",
+    ]);
     const hidden = filterGroupedWaves(result.groups, undefined, "", false);
     expect(hidden.some((group) => group.id === "completed")).toBe(false);
     expect(hidden.flatMap((group) => group.waves).length).toBe(7);
@@ -261,12 +265,12 @@ describe("wave overview grouping", () => {
 
 function renderOverview(overrides: {
   query?: string;
-  showCompleted?: boolean;
   waves?: WaveSummary[];
   tasks?: TaskCapsule[];
   loading?: boolean;
   error?: string;
   descriptions?: Record<string, string>;
+  category?: "all" | "needs-you" | "running" | "ready" | "planned" | "completed" | "unavailable";
 } = {}) {
   const input = mixedInput();
   return renderToStaticMarkup(
@@ -277,9 +281,9 @@ function renderOverview(overrides: {
       startability: START,
       descriptions: overrides.descriptions,
       query: overrides.query ?? "",
-      showCompleted: overrides.showCompleted ?? false,
+      category: overrides.category ?? "all",
       onQueryChange: () => {},
-      onShowCompletedChange: () => {},
+      onCategoryChange: () => {},
       onOpenWave: () => {},
       onOpenUnassigned: () => {},
       loading: overrides.loading,
@@ -294,7 +298,6 @@ describe("wave overview rendering", () => {
     for (const section of ["Needs you", "Running", "Ready to start", "Planned", "Status unavailable"]) {
       expect(html).toContain(section);
     }
-    // Completed history hides behind its filter by default.
     expect(html).not.toContain("Shipped");
     // Each visible wave title renders exactly once inside its full-card button.
     for (const title of ["Needs decision", "In flight", "Ready wave", "Stale read"]) {
@@ -317,22 +320,24 @@ describe("wave overview rendering", () => {
     expect(html).not.toContain("execution summary");
   });
 
-  test("overview search and completed filter control visibility", () => {
+  test("overview search and status filter controls render", () => {
     const searched = renderOverview({ query: "ready wave" });
     expect(searched).toContain("Ready wave");
     expect(searched).not.toContain("In flight");
     // Controlled filter state is reflected, so callbacks retain selection.
     expect(searched).toContain('value="ready wave"');
-    const shown = renderOverview({ showCompleted: true });
-    expect(shown).toContain("Shipped");
-    expect(shown).toContain("checked");
+    expect(searched).toContain('aria-label="Filter waves by status"');
+    expect(searched).toContain("All (1)");
+    const history = renderOverview({ category: "completed" });
+    expect(history).toContain("Shipped");
+    expect(history).not.toContain("In flight");
     const input = mixedInput();
     input.tasks.push(makeTask({ id: "T-LOOSE", title: "Loose task" }));
     expect(renderOverview({ tasks: input.tasks })).toContain("Unassigned tasks");
   });
 
   test("overview demonstrates empty, loading and error states", () => {
-    expect(renderOverview({ waves: [], tasks: [] })).toContain("No waves match.");
+    expect(renderOverview({ waves: [], tasks: [] })).toContain("No active waves match.");
     expect(renderOverview({ loading: true })).toContain("Loading wave overview");
     expect(renderOverview({ error: "Sample read failed." })).toContain(
       "Wave overview unavailable.",

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUserGlobalBehavioralConfigIsIgnoredWithProvenance(t *testing.T) {
@@ -97,6 +99,165 @@ func TestServeProjectAutomationDisableWithoutExplicitKeyIsIdempotent(t *testing.
 	if err != nil || report.Value != false || report.Source == configSourceLocal {
 		t.Fatalf("absent automation key became an unexpected local override: %#v err=%v", report, err)
 	}
+}
+
+func TestWalkthroughProjectAutomationUsesSelectedCheckoutRuntimeState(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("fixture project: %v %#v", err, projects)
+	}
+	primary := projects[0]
+	primary.RepositoryKey = "walkthrough-repository"
+	primary.Enabled = false
+	primary.Health = projectHealthDisabled
+	if err := server.store.UpsertProject(primary); err != nil {
+		t.Fatal(err)
+	}
+
+	childRoot := t.TempDir()
+	childVault := filepath.Join(childRoot, ".tusker")
+	if err := ensureDir(childVault); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(managedTuskerConfigPath(childVault), "schema: tusker.config/v1\nproject_id: child\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(childVault), defaultWorkflowMarkdown()); err != nil {
+		t.Fatal(err)
+	}
+	child := primary
+	child.ProjectID, child.ProjectKey, child.Name = "walkthrough-child", "child", "child"
+	child.RepoRoot, child.VaultRoot, child.WorkflowPath = childRoot, childVault, workflowPath(childVault)
+	if err := server.store.UpsertProject(child); err != nil {
+		t.Fatal(err)
+	}
+
+	var enabled serveActionResult
+	servePost(t, server, "/api/projects/"+child.ProjectID+"/automation", `{"enabled":true}`, &enabled)
+	if !enabled.OK || enabled.Refused || enabled.AutomationEnabled == nil || !*enabled.AutomationEnabled {
+		t.Fatalf("enable response did not return persisted child state: %#v", enabled)
+	}
+	storedPrimary, err := projectByID(server.store, primary.ProjectID)
+	if err != nil || storedPrimary.Enabled {
+		t.Fatalf("child enable changed primary state: %#v err=%v", storedPrimary, err)
+	}
+	storedChild, err := projectByID(server.store, child.ProjectID)
+	if err != nil || !storedChild.Enabled {
+		t.Fatalf("child enable was not persisted: %#v err=%v", storedChild, err)
+	}
+	assertWalkthroughAutomationSummary(t, server, primary.ProjectID, false)
+	assertWalkthroughAutomationSummary(t, server, child.ProjectID, true)
+
+	var disabled serveActionResult
+	servePost(t, server, "/api/projects/"+child.ProjectID+"/automation", `{"enabled":false}`, &disabled)
+	if !disabled.OK || disabled.Refused || disabled.AutomationEnabled == nil || *disabled.AutomationEnabled {
+		t.Fatalf("disable response did not return persisted child state: %#v", disabled)
+	}
+	assertWalkthroughAutomationSummary(t, server, child.ProjectID, false)
+
+	if err := os.RemoveAll(childVault); err != nil {
+		t.Fatal(err)
+	}
+	var refused serveActionResult
+	servePost(t, server, "/api/projects/"+child.ProjectID+"/automation", `{"enabled":true}`, &refused)
+	if refused.OK || !refused.Refused {
+		t.Fatalf("invalid child enable reported false success: %#v", refused)
+	}
+	assertWalkthroughAutomationSummary(t, server, child.ProjectID, false)
+}
+
+func TestWalkthroughProjectAutomationRollsBackConfigWhenRuntimeWriteRefuses(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("fixture project: %v %#v", err, projects)
+	}
+	project := projects[0]
+	before, existed, err := readConfigText(managedTuskerLocalConfigPath(project.VaultRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.ProjectID = "missing-project"
+	if err := setProjectAutomation(server.store, project, true); err == nil {
+		t.Fatal("expected missing runtime project refusal")
+	}
+	after, afterExists, err := readConfigText(managedTuskerLocalConfigPath(project.VaultRoot))
+	if err != nil || afterExists != existed || after != before {
+		t.Fatalf("runtime refusal leaked automation config: before=(%t,%q) after=(%t,%q) err=%v", existed, before, afterExists, after, err)
+	}
+}
+
+func TestWalkthroughProjectAutomationSerializesExecutionSettingsWrites(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("fixture project: %v %#v", err, projects)
+	}
+	vault := projects[0].VaultRoot
+	started := make(chan struct{}, 2)
+	done := make(chan error, 2)
+	projectLocalConfigWriteMu.Lock()
+	for _, setting := range []struct {
+		key   string
+		value any
+	}{
+		{"automation.enabled", true},
+		{"runtime.max_active_runs_per_project", 2},
+	} {
+		go func(key string, value any) {
+			started <- struct{}{}
+			_, err := setProjectLocalConfigWithReadback(vault, key, value)
+			done <- err
+		}(setting.key, setting.value)
+	}
+	<-started
+	<-started
+	select {
+	case err := <-done:
+		t.Fatalf("config write escaped its serialization lock: %v", err)
+	default:
+	}
+	projectLocalConfigWriteMu.Unlock()
+	for range 2 {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("serialized config write did not finish")
+		}
+	}
+	for _, want := range []struct {
+		key   string
+		value any
+	}{
+		{"automation.enabled", true},
+		{"runtime.max_active_runs_per_project", 2},
+	} {
+		report, err := configResolve(vault, want.key)
+		if err != nil || configValueChanged(report.Value, want.value) {
+			t.Fatalf("concurrent setting %s was not preserved: %#v err=%v", want.key, report, err)
+		}
+	}
+}
+
+func assertWalkthroughAutomationSummary(t *testing.T, server *serveServer, projectID string, want bool) {
+	t.Helper()
+	var summaries []serveProjectSummary
+	serveDecode(t, server, "/api/projects", &summaries)
+	for _, summary := range summaries {
+		if summary.ID == projectID && summary.AutomationEnabled == want {
+			return
+		}
+		for _, checkout := range summary.Checkouts {
+			if checkout.ID == projectID && checkout.AutomationEnabled == want {
+				return
+			}
+		}
+	}
+	t.Fatalf("project %s automation summary did not equal %t: %#v", projectID, want, summaries)
 }
 
 func TestServeConfigReturnsValueAndSource(t *testing.T) {

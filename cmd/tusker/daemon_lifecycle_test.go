@@ -1475,6 +1475,22 @@ func TestSingleCapCheckAllPaths(t *testing.T) {
 	}
 }
 
+func TestUnclaimedResumableRunRetainsContinuationCap(t *testing.T) {
+	run := RunStatus{
+		LeaseState:   string(LeaseStateUnclaimed),
+		AttemptCount: 3,
+		SessionRef:   "session-3",
+	}
+	assertEqual(t, attemptCreationContinuation, attemptCreationKindForDispatch(run), "resumable unclaimed run kind")
+	wf := defaultWorkflow()
+	wf.Retry.MaxAttempts = 3
+	wf.Runtime.MaxContinuationRetries = 3
+	daemon := &Daemon{}
+	if _, capped := daemon.enforceAttemptCreationCap(wf, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capped {
+		t.Fatal("third attempt with a resumable session must retain its fourth continuation")
+	}
+}
+
 func TestContinuationRetryCapParksNoProgress(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

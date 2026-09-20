@@ -100,7 +100,7 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
         : [scoped("attempts"), panelScoped("runs"), ["run"]];
     case "review":
       return id === "batch"
-        ? [panelScoped("needs"), scoped("tasks"), panelScoped("runs"), ["projects"], panelScoped("review", "batch")]
+        ? [panelScoped("needs"), scoped("tasks"), panelScoped("runs"), ["projects"], panelScoped("review", "batch"), project ? ["wave-review", project] : ["wave-review"]]
         : [];
     default:
       return [];

@@ -131,14 +131,27 @@ func (s *RuntimeStore) HasReviewResult(projectID, taskID string, workRevision in
 	return true, nil
 }
 
-// HasReviewResultForWork is deliberately work-revision scoped. A valid result
-// is a terminal reviewer output for this handoff; until the later deterministic
-// reactor consumes it, dispatching a fresh reviewer would create duplicate and
-// potentially conflicting judgments.
-func (s *RuntimeStore) HasReviewResultForWork(projectID, taskID string, workRevision int) (bool, error) {
-	var count int
-	err := s.queryRowScan(`SELECT COUNT(*) FROM review_results WHERE project_id=? AND task_id=? AND work_revision=?`, []any{projectID, taskID, workRevision}, &count)
-	return count > 0, err
+// HasReviewResultForWork only suppresses duplicate review for the exact task
+// snapshot. Verification recovery changes state_rev while preserving the work
+// revision, so an older judgment must remain historical rather than blocking a
+// fresh independent review.
+func (s *RuntimeStore) HasReviewResultForWork(projectID, taskID string, workRevision int, taskStateRev string) (bool, error) {
+	rows, err := s.query(`SELECT result_json FROM review_results WHERE project_id=? AND task_id=? AND work_revision=?`, projectID, taskID, workRevision)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return false, err
+		}
+		var result ReviewResult
+		if json.Unmarshal([]byte(raw), &result) == nil && result.TaskStateRev == taskStateRev {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func reviewSubmitCmd(args Args) error {
@@ -314,14 +327,22 @@ func reviewSubmitCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	projectID, registered, err := registeredProjectIDForVault(store, vault)
+	if err != nil {
+		return err
+	}
 	attempt, err := store.ReviewAttempt(attemptID)
 	if err != nil {
 		return err
 	}
-	if expected := atoiSafe(args.String("work-rev")); strings.TrimSpace(args.String("work-rev")) == "" || expected < 0 || expected != intField(note.Data, "work_revision") || attempt.RecordID != id || attempt.Lane != runLaneReview || attempt.WorkRevision != expected {
+	recordID := trackerRecordID(note)
+	if registered && attempt.ProjectID != projectID {
+		return tuskerError(errorInvalidTransition, "review attempt belongs to a different project")
+	}
+	if expected := atoiSafe(args.String("work-rev")); strings.TrimSpace(args.String("work-rev")) == "" || expected < 0 || expected != intField(note.Data, "work_revision") || attempt.RecordID != recordID || attempt.Lane != runLaneReview || attempt.WorkRevision != expected {
 		return tuskerError(errorInvalidTransition, "stale or unauthorized reviewer attempt")
 	}
-	run, err := activeReviewRunForAttempt(store, attempt.ProjectID, id, attempt)
+	run, err := activeReviewRunForAttempt(store, attempt.ProjectID, recordID, attempt)
 	if err != nil {
 		return err
 	}
@@ -500,21 +521,18 @@ func validateInteractiveReviewIndependence(store *RuntimeStore, run RunStatus, a
 		return "", nil
 	}
 	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
-	material, err := reviewAttemptMaterialFingerprint(store, run.ProjectID, run.RecordID, attemptID, run.WorkRevision, source)
+	parent, material, err := reviewAttemptImplementation(store, run.ProjectID, run.RecordID, attemptID, run.WorkRevision, source)
 	if err != nil {
 		return "", err
 	}
 	if !run.HandRun {
 		return material, nil
 	}
-	if run.LeaseGeneration <= 1 {
-		return "", tuskerError(errorInvalidTransition, "interactive review is missing implementation authorization provenance")
-	}
-	var implementationActor string
-	if err := store.queryRowScan(`SELECT actor FROM run_authorizations WHERE project_id=? AND record_id=? AND lease_generation=?`, []any{run.ProjectID, run.RecordID, run.LeaseGeneration - 1}, &implementationActor); err != nil {
+	authorization, err := runAuthorizationForAttempt(store, run.ProjectID, run.RecordID, parent.AttemptID)
+	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(implementationActor) == "" || implementationActor == reviewer {
+	if authorization.Actor == reviewer {
 		return "", tuskerError(errorInvalidTransition, "implementing session cannot masquerade as independent review")
 	}
 	return material, nil

@@ -1,4 +1,4 @@
-export { WaveOverview, type WaveOverviewProps } from "./WaveOverview";
+export { WaveOverview, type WaveOverviewFilter, type WaveOverviewProps } from "./WaveOverview";
 export {
   filterGroupedWaves,
   GROUP_TITLES,

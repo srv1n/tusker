@@ -162,6 +162,115 @@ func TestWorkSessionInteractiveStartWithAutomationDisabled(t *testing.T) {
 	}
 }
 
+func TestWorkSessionLifecycleIsolatesCollidingProjectTaskIDs(t *testing.T) {
+	tuskerVault, tuskerProject := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, tuskerVault)
+
+	rznVault := pickupV7TestVault(t)
+	if err := writeDefaultWorkflow(rznVault); err != nil {
+		t.Fatal(err)
+	}
+	mustRunPickupTest(t, Args{"vault": rznVault, "quiet": "true", "epic": "APP", "title": "RZN collision", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, rznVault, "APP-T-0001")
+	setAutomationV7TaskFields(t, rznVault, "APP-T-0001", map[string]any{"owned_paths": []string{"rzn-owned"}})
+	initializeOrchestrationGitRepo(t, filepath.Dir(rznVault))
+	rznProject := registerAutomationTestProject(t, rznVault)
+
+	if err := startWorkSessionTest(t, rznVault, "APP-T-0001", "agent:rzn"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rznBefore, err := store.FindRunScoped(rznProject.ProjectID, "APP-T-0001")
+	if err != nil || rznBefore == nil || rznBefore.LeaseOwner != "agent:rzn" {
+		t.Fatalf("RZN owner fixture: %#v err=%v", rznBefore, err)
+	}
+
+	captureStdout(t, func() {
+		if err := workSessionCmd(Args{"vault": tuskerVault, "id": "APP-T-0001", "by": "agent:tusker", "source": "codex"}, "start"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	tuskerRun, err := store.FindRunScoped(tuskerProject.ProjectID, "APP-T-0001")
+	if err != nil || tuskerRun == nil || tuskerRun.LeaseOwner != "agent:tusker" {
+		t.Fatalf("Tusker claim selected wrong project: %#v err=%v", tuskerRun, err)
+	}
+	status := captureStdout(t, func() {
+		if err := workSessionCmd(Args{"vault": tuskerVault, "id": "APP-T-0001"}, "status"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var packet workSessionPacket
+	if err := json.Unmarshal([]byte(status), &packet); err != nil || packet.Run == nil || packet.Run.ProjectID != tuskerProject.ProjectID {
+		t.Fatalf("Tusker status crossed project boundary: %#v err=%v", packet, err)
+	}
+	progress := captureStdout(t, func() {
+		if err := workRealLifecycleCmd(Args{"vault": tuskerVault, "id": "APP-T-0001"}, "progress"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var progressPacket realWorkProgress
+	if err := json.Unmarshal([]byte(progress), &progressPacket); err != nil || progressPacket.Run == nil || progressPacket.Run.ProjectID != tuskerProject.ProjectID {
+		t.Fatalf("Tusker progress crossed project boundary: %#v err=%v", progressPacket, err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionCmd(Args{"vault": tuskerVault, "id": "APP-T-0001", "by": "agent:tusker"}, "heartbeat"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	rznAfterHeartbeat, _ := store.FindRunScoped(rznProject.ProjectID, "APP-T-0001")
+	if rznAfterHeartbeat.LeaseOwner != rznBefore.LeaseOwner || rznAfterHeartbeat.LeaseGeneration != rznBefore.LeaseGeneration || rznAfterHeartbeat.LastHeartbeatAt != rznBefore.LastHeartbeatAt {
+		t.Fatalf("Tusker heartbeat mutated RZN: before=%#v after=%#v", rznBefore, rznAfterHeartbeat)
+	}
+	if err := requireAgentWorkSession(tuskerVault, "APP-T-0001", "agent:tusker", Args{}); err != nil {
+		t.Fatalf("Tusker closeout ownership read RZN session: %v", err)
+	}
+
+	captureStdout(t, func() {
+		if err := workSessionCmd(Args{"vault": tuskerVault, "id": "APP-T-0001", "by": "agent:tusker", "deliverable": "isolated implementation", "verification": "A1 pass", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	tuskerRun, _ = store.FindRunScoped(tuskerProject.ProjectID, "APP-T-0001")
+	attempts, err := store.ListAttemptsForRun(tuskerProject.ProjectID, tuskerRun.RecordID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("Tusker implementation attempts: %#v err=%v", attempts, err)
+	}
+	setAutomationV7TaskFields(t, tuskerVault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA})
+	reviewOutput := captureStdout(t, func() {
+		if err := workSessionCmd(Args{"vault": tuskerVault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}, "review"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := json.Unmarshal([]byte(reviewOutput), &packet); err != nil || packet.Run == nil || packet.Run.ProjectID != tuskerProject.ProjectID || packet.Run.Lane != runLaneReview {
+		t.Fatalf("Tusker review crossed project boundary: %#v err=%v", packet, err)
+	}
+	current, err := resolveV7Note(tuskerVault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reviewSubmitCmd(Args{"vault": tuskerVault, "id": "APP-T-0001", "attempt": packet.Run.ActiveAttemptID, "by": "reviewer:agent", "verdict": "changes_requested", "summary": "project-scoped review", "finding": "repair A1", "task-rev": stringField(current.Data, "state_rev"), "source-sha": stringField(current.Data, "source_sha"), "work-rev": strconv.Itoa(packet.Revision), "proof-fingerprint": packet.ProofFingerprint, "gate-fingerprint": packet.GateFingerprint, "material-fingerprint": packet.MaterialFingerprint}); err != nil {
+		t.Fatal(err)
+	}
+	if results, err := store.ListReviewResults(rznProject.ProjectID); err != nil || len(results) != 0 {
+		t.Fatalf("Tusker review mutated RZN history: %#v err=%v", results, err)
+	}
+	rznTask, err := resolveV7Note(rznVault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v7CloseReviewFindingPreflight(rznVault, rznTask, v7ClosePreflightRequest{}); err != nil {
+		t.Fatalf("RZN closeout read Tusker review findings: %v", err)
+	}
+	rznAfter, _ := store.FindRunScoped(rznProject.ProjectID, "APP-T-0001")
+	if rznAfter.LeaseOwner != rznBefore.LeaseOwner || rznAfter.LeaseGeneration != rznBefore.LeaseGeneration || rznAfter.LeaseState != rznBefore.LeaseState {
+		t.Fatalf("Tusker lifecycle mutated RZN session: before=%#v after=%#v", rznBefore, rznAfter)
+	}
+}
+
 func TestWorkSessionUnregisteredRepoSupportsAgentReviewPath(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual unregistered work", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
@@ -483,6 +592,66 @@ func TestWorkSessionHeartbeatAndSubmitCAS(t *testing.T) {
 	}
 }
 
+func TestWorkSessionCurrentWorkspaceSubmitBindsReviewCandidate(t *testing.T) {
+	vault, project := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"work_revision": 0})
+	t.Chdir(project.RepoRoot)
+	t.Setenv("CODEX_THREAD_ID", "implementation-conversation")
+	t.Setenv("TUSKER_ATTEMPT_ID", "")
+	path := filepath.Join(project.RepoRoot, "owned", "implementation.go")
+	material := []byte("package owned\n// actual uncommitted implementation\n")
+	if err := os.WriteFile(path, material, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head, _ := gitRevParse(project.RepoRoot, "HEAD")
+	index, err := gitFactOutput(project.RepoRoot, "diff", "--cached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionStartCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "agent:implementer", "current-workspace": "true"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "agent:implementer", "deliverable": "implementation", "verification": "A1 checked", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRunScoped(project.ProjectID, "APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("submitted run: %#v %v", run, err)
+	}
+	task, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.WorkRevision != 1 || intField(task.Data, "work_revision") != 1 || stringField(task.Data, "source_sha") != head {
+		t.Fatalf("submission lacks captured identity: run=%#v task=%#v", run, task.Data)
+	}
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if row.Result != "pending" {
+			t.Fatalf("submission fabricated verification: %#v", row)
+		}
+	}
+	t.Setenv("CODEX_THREAD_ID", "independent-review-conversation")
+	captureStdout(t, func() {
+		if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	currentHead, _ := gitRevParse(project.RepoRoot, "HEAD")
+	currentIndex, _ := gitFactOutput(project.RepoRoot, "diff", "--cached")
+	currentMaterial, _ := os.ReadFile(path)
+	if currentHead != head || currentIndex != index || string(currentMaterial) != string(material) {
+		t.Fatal("submission or review changed checkout, index, or implementation")
+	}
+}
+
 func TestWorkSessionInteractiveReviewReceiptBindsImplementer(t *testing.T) {
 	vault, _ := workSessionFixture(t, 1)
 	configureWorkSessionMaterialScope(t, vault)
@@ -507,7 +676,6 @@ func TestWorkSessionInteractiveReviewReceiptBindsImplementer(t *testing.T) {
 	if err != nil || len(attempts) != 1 || attempts[0].EndState.HeadSHA == "" {
 		t.Fatalf("completed implementation attempt: %#v err=%v", attempts, err)
 	}
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"source_sha": attempts[0].EndState.HeadSHA})
 	output := captureStdout(t, func() {
 		if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err != nil {
 			t.Fatal(err)
@@ -534,6 +702,65 @@ func TestWorkSessionInteractiveReviewReceiptBindsImplementer(t *testing.T) {
 	results, err := store.ListReviewResults(run.ProjectID)
 	if err != nil || len(results) != 1 || results[0].Result.MaterialFingerprint != packet.MaterialFingerprint {
 		t.Fatalf("durable review receipt material identity = %#v err=%v", results, err)
+	}
+}
+
+func TestWorkSessionReleasedReviewCanReclaimCompletedImplementation(t *testing.T) {
+	vault, _ := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:implementer"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "agent:implementer", "deliverable": "implementation", "verification": "A1 pass", "gate-verdicts": "A1=pass"}, "submit"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	initialRun, err := store.FindRun("APP-T-0001")
+	if err != nil || initialRun == nil {
+		t.Fatalf("completed implementation run: %#v err=%v", initialRun, err)
+	}
+	attempts, err := store.ListAttemptsForRun(initialRun.ProjectID, initialRun.RecordID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("completed implementation attempt: %#v err=%v", attempts, err)
+	}
+	first := mustParseJSONTest(t, captureStdout(t, func() {
+		if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	firstRun, _ := first["run"].(map[string]any)
+	if firstRun == nil {
+		t.Fatalf("first review packet missing run: %#v", first)
+	}
+	captureStdout(t, func() {
+		if err := workSessionLifecycleCmd(Args{"id": "APP-T-0001", "by": "reviewer:agent", "reason": "retry after proof receipt"}, "release"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	retryOutput := captureStdout(t, func() {
+		if err := workSessionReviewCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "reviewer:agent", "source": "codex"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var retry workSessionPacket
+	if err := json.Unmarshal([]byte(retryOutput), &retry); err != nil {
+		t.Fatal(err)
+	}
+	if retry.ImplementationAttempt != attempts[0].AttemptID {
+		t.Fatalf("retry lost completed implementation binding: got %q want %q packet=%#v", retry.ImplementationAttempt, attempts[0].AttemptID, retry)
+	}
+	current, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reviewSubmitCmd(Args{"vault": vault, "id": "APP-T-0001", "attempt": retry.Run.ActiveAttemptID, "by": "reviewer:agent", "verdict": "changes_requested", "summary": "retry retained implementation identity", "finding": "repair A1", "task-rev": stringField(current.Data, "state_rev"), "source-sha": stringField(current.Data, "source_sha"), "work-rev": strconv.Itoa(retry.Revision), "proof-fingerprint": retry.ProofFingerprint, "gate-fingerprint": retry.GateFingerprint, "material-fingerprint": retry.MaterialFingerprint}); err != nil {
+		t.Fatalf("retry review submission lost independent implementation binding: %v", err)
 	}
 }
 
@@ -825,6 +1052,17 @@ func TestWorkSessionAcceptsOnlyExactDaemonAttemptCapability(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDispatchedWorkerScopesProjectWithoutOpeningMachineStore(t *testing.T) {
+	t.Setenv("TUSKER_ATTEMPT_ID", "attempt-1")
+	t.Setenv("TUSKER_PROJECT_ID", "project-1")
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "missing", "state"))
+	args := Args{"project": "wrong-project"}
+	if err := scopeWorkSessionProject(args); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "project-1", args.String("project"), "worker project scope")
 }
 
 func TestWorkSessionLegacyEntryPointsDelegate(t *testing.T) {

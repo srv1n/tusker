@@ -147,10 +147,10 @@ function AcceptedArtifact({ artifact }: { artifact: WaveArtifactCard }) {
   );
 }
 
-export function WaveResults({ wave, tasks, onOpenFlow, onOpenTask }: {
+export function WaveResults({ wave, tasks, onOpenDependencies, onOpenTask }: {
   wave: WaveSummary;
   tasks: TaskDetail[];
-  onOpenFlow: () => void;
+  onOpenDependencies: () => void;
   onOpenTask: (id: string) => void;
 }) {
   const trust = resultTrustSummary(wave.brief);
@@ -158,7 +158,7 @@ export function WaveResults({ wave, tasks, onOpenFlow, onOpenTask }: {
   const counts = Object.entries(wave.brief.outcome.counts);
 
   return (
-    <main data-wux-ready="true" className="min-h-full bg-surface px-4 py-5 text-ink sm:px-6 lg:px-8 lg:py-8">
+    <section className="px-4 py-5 text-ink sm:px-6 lg:px-8 lg:py-8">
       <div className="mx-auto w-full max-w-[1120px]">
         <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-6">
           <div className="min-w-0 max-w-[760px]">
@@ -169,8 +169,8 @@ export function WaveResults({ wave, tasks, onOpenFlow, onOpenTask }: {
             <h1 className="font-serif text-[28px] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-[34px]">{wave.title}</h1>
             <p className="mt-3 max-w-[720px] text-[14px] leading-relaxed text-muted">{wave.brief.outcome.summary || "Outcome summary not supplied."}</p>
           </div>
-          <button type="button" onClick={onOpenFlow} className="inline-flex items-center gap-2 rounded-lg border border-line bg-raised px-3 py-2 text-[12px] font-medium text-ink-soft hover:border-ink hover:text-ink">
-            <ArrowLeft size={15} aria-hidden="true" /> Open flow
+          <button type="button" onClick={onOpenDependencies} className="inline-flex items-center gap-2 rounded-lg border border-line bg-raised px-3 py-2 text-[12px] font-medium text-ink-soft hover:border-ink hover:text-ink">
+            <ArrowLeft size={15} aria-hidden="true" /> Open dependencies
           </button>
         </header>
 
@@ -223,6 +223,6 @@ export function WaveResults({ wave, tasks, onOpenFlow, onOpenTask }: {
           <span>Evidence eligibility follows the canonical accepted record. Flow remains available from the action above.</span>
         </footer>
       </div>
-    </main>
+    </section>
   );
 }

@@ -34,6 +34,12 @@ func packetV7Cmd(args Args) error {
 	if !ok {
 		return tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
+	// The runtime overlay below is packet rendering context only: `project` and
+	// the contact fields participate in state_rev hashing, so dispatchability
+	// must be validated against the canonical task record. Validating the
+	// overlaid copy self-reports a stale revision for every registered project
+	// whose id differs from the authored project field.
+	dispatchTask := task
 	if store, missing, openErr := openRuntimeStoreReadOnly(DefaultStateRoot()); openErr == nil && !missing {
 		if projectID, registered, projectErr := registeredProjectIDForVault(store, vaultPath); projectErr == nil && registered {
 			task.Data = cloneMap(task.Data)
@@ -56,7 +62,7 @@ func packetV7Cmd(args Args) error {
 		}
 		_ = store.Close()
 	}
-	contracts := dependencyContractReviewForTask(idx, task)
+	contracts := dependencyContractReviewForTask(idx, dispatchTask)
 	audience := fallback(args.String("for"), "agent")
 	if audience == "integrator" {
 		if stringField(task.Data, "work_kind") != "integrator" {
@@ -66,7 +72,7 @@ func packetV7Cmd(args Args) error {
 		return emitV7PacketStatus(args, vaultPath, id, audience, content, contracts)
 	}
 	if audience == "agent" && !args.Bool("force") {
-		if reasons := v7TaskDispatchBlockers(vaultPath, task); len(reasons) > 0 {
+		if reasons := v7TaskDispatchBlockers(vaultPath, dispatchTask); len(reasons) > 0 {
 			return tuskerError(
 				errorInvalidTransition,
 				id+": task is not dispatchable",

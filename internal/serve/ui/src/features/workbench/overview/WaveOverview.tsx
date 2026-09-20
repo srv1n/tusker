@@ -15,15 +15,18 @@ export interface WaveOverviewProps {
   runs: RunSummary[];
   startability: Record<string, Startability>;
   descriptions?: Record<string, string>;
+  projectName?: string;
   query: string;
-  showCompleted: boolean;
+  category: WaveOverviewFilter;
   onQueryChange: (value: string) => void;
-  onShowCompletedChange: (value: boolean) => void;
+  onCategoryChange: (value: WaveOverviewFilter) => void;
   onOpenWave: (id: string) => void;
   onOpenUnassigned: () => void;
   loading?: boolean;
   error?: string;
 }
+
+export type WaveOverviewFilter = OverviewGroupId | "all";
 
 const GROUP_TONE: Record<OverviewGroupId, string> = {
   "needs-you": "wux-ov-tone-warn",
@@ -65,9 +68,9 @@ export function WaveOverview(props: WaveOverviewProps) {
         }).groups,
         props.descriptions,
         props.query,
-        props.showCompleted,
+        true,
       ),
-    [props.waves, props.tasks, props.runs, props.startability, props.descriptions, props.query, props.showCompleted],
+    [props.waves, props.tasks, props.runs, props.startability, props.descriptions, props.query],
   );
 
   const unassignedCount = useMemo(() => {
@@ -79,18 +82,13 @@ export function WaveOverview(props: WaveOverviewProps) {
     return props.tasks.filter((task) => !membered.has(task.id)).length;
   }, [props.waves, props.tasks]);
 
-  const completedCount = useMemo(
-    () =>
-      groupWaves({
-        waves: props.waves,
-        tasks: props.tasks,
-        runs: props.runs,
-        startability: props.startability,
-      }).groups.find((group) => group.id === "completed")?.waves.length ?? 0,
-    [props.waves, props.tasks, props.runs, props.startability],
-  );
-
-  const visibleCount = groups.reduce((n, group) => n + group.waves.length, 0);
+  const visibleGroups = groups.filter((group) => props.category === "all" ? group.id !== "completed" : group.id === props.category);
+  const visibleCount = visibleGroups.reduce((n, group) => n + group.waves.length, 0);
+  const filterGroups = groups.filter((group) => group.waves.length > 0 || group.id === props.category);
+  const resetFilters = () => {
+    props.onCategoryChange("all");
+    props.onQueryChange("");
+  };
 
   if (props.loading) {
     return (
@@ -115,6 +113,10 @@ export function WaveOverview(props: WaveOverviewProps) {
 
   return (
     <div className="wux-ov">
+      <header className="mb-5 border-b border-line pb-4">
+        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Project</p>
+        <h1 className="mt-1 font-serif text-[26px] font-semibold text-ink">{props.projectName || "Project workspace"}</h1>
+      </header>
       <div className="wux-ov-controls">
         <label className="wux-ov-search">
           <span className="wux-ov-search-label">Search waves</span>
@@ -122,17 +124,9 @@ export function WaveOverview(props: WaveOverviewProps) {
             type="search"
             value={props.query}
             onChange={(event) => props.onQueryChange(event.target.value)}
-            placeholder="Search title or description"
-            aria-label="Search waves by title or description"
+            placeholder="Search ID, title, or description"
+            aria-label="Search waves by ID, title, or description"
           />
-        </label>
-        <label className="wux-ov-check">
-          <input
-            type="checkbox"
-            checked={props.showCompleted}
-            onChange={(event) => props.onShowCompletedChange(event.target.checked)}
-          />
-          Show completed{completedCount > 0 ? ` (${completedCount})` : ""}
         </label>
       </div>
 
@@ -146,16 +140,21 @@ export function WaveOverview(props: WaveOverviewProps) {
 
       {visibleCount === 0 ? (
         <div className="wux-ov-empty">
-          <p className="wux-ov-empty-title">No waves match.</p>
+          <p className="wux-ov-empty-title">{props.category === "all" ? "No active waves match." : `No ${groups.find((group) => group.id === props.category)?.title.toLowerCase()} waves match.`}</p>
           <p className="wux-ov-empty-detail">
             {props.waves.length === 0
               ? "Authored waves will appear here before or after they are started."
-              : "Adjust the search or show completed waves."}
+              : "Adjust the search or reset the status filter."}
           </p>
+          {props.waves.length > 0 ? <button type="button" onClick={resetFilters} className="mt-3 rounded-md border border-line px-3 py-2 text-[12px] font-medium text-ink">Clear filters</button> : null}
         </div>
       ) : null}
 
-      {groups.map((group) =>
+      <nav aria-label="Filter waves by status" className="mb-5 flex flex-wrap gap-2">
+        <button type="button" aria-pressed={props.category === "all"} onClick={() => props.onCategoryChange("all")} className={cn("rounded-md border border-line px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50", props.category === "all" && "bg-ink text-surface")}>All ({groups.filter((group) => group.id !== "completed").reduce((count, group) => count + group.waves.length, 0)})</button>
+        {filterGroups.map((group) => <button key={group.id} type="button" aria-pressed={props.category === group.id} onClick={() => props.onCategoryChange(group.id)} className={cn("rounded-md border border-line px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50", props.category === group.id && "bg-ink text-surface")}>{group.title} ({group.waves.length})</button>)}
+      </nav>
+      {visibleGroups.map((group) =>
         group.waves.length === 0 ? null : (
           <section key={group.id} aria-label={group.title} className="wux-ov-group">
             <div className="wux-ov-group-head">
@@ -175,6 +174,7 @@ export function WaveOverview(props: WaveOverviewProps) {
                     >
                       <div className="wux-ov-main">
                         <span className="wux-ov-title">{entry.wave.title}</span>
+                        <span className="wux-ov-id">{entry.wave.id}</span>
                         {description ? (
                           <p className="wux-ov-desc">{description}</p>
                         ) : null}

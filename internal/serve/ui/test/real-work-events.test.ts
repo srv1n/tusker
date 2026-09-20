@@ -27,7 +27,7 @@ import {
 import { qk } from "../src/lib/queries";
 import {
   initialWaveView,
-  nextEnteredView,
+  settleEnteredWaveView,
   waveStartability,
 } from "../src/features/workbench/integration/integrationModel";
 import { StreamStatusNote } from "../src/features/workbench/integration/StreamStatus";
@@ -135,6 +135,12 @@ describe("real-work event invalidation", () => {
     expect(invalidations).toContainEqual({ queryKey: qk.tasks("demo"), exact: false });
     // Another project's caches stay untouched.
     expect(JSON.stringify(invalidations)).not.toContain('"other"');
+  });
+
+  test("review batches invalidate the shared authoritative wave-review projection", () => {
+    const { client, invalidations } = recorder();
+    invalidateStreamEvent(client, { kind: "review_changed", keys: ["review:batch"], project: "demo" });
+    expect(invalidations).toContainEqual({ queryKey: ["wave-review", "demo"], exact: false });
   });
 
   test("duplicate and out-of-order events converge without regressing state", () => {
@@ -276,29 +282,30 @@ describe("real-work stale-state honesty", () => {
 });
 
 describe("real-work wave entry and readiness", () => {
-  test("completed entry leads with results; open entry leads with flow", () => {
-    expect(initialWaveView(wave({ status: "closed" }))).toBe("results");
-    expect(initialWaveView(wave({ status: "landed", landedAt: "2026-09-07T00:00:00Z" }))).toBe("results");
+  test("every wave entry leads with dependencies", () => {
+    expect(initialWaveView(wave({ status: "closed" }))).toBe("flow");
+    expect(initialWaveView(wave({ status: "landed", landedAt: "2026-09-07T00:00:00Z" }))).toBe("flow");
     expect(initialWaveView(wave({ status: "open" }))).toBe("flow");
-    expect(initialWaveView(wave({ status: "closed" }), "flow")).toBe("flow");
+    expect(initialWaveView(wave({ status: "closed" }), "results")).toBe("results");
   });
 
-  test("entry view latches so a mid-visit landing never yanks flow", () => {
+  test("entry waits for review and a selected view survives a completion poll", () => {
     const open = wave({ status: "open" });
-    const entered = nextEnteredView(null, open, undefined);
+    expect(settleEnteredWaveView(null, open, true, undefined)).toBeNull();
+    const entered = settleEnteredWaveView(null, open, false, undefined);
     expect(entered).toBe("flow");
-    // The wave lands while the operator watches: the latch keeps Flow.
-    expect(nextEnteredView(entered, wave({ status: "landed", landedAt: "2026-09-07T00:00:00Z" }), undefined)).toBe("flow");
-    // An already-completed wave still leads with its result on entry.
-    expect(nextEnteredView(null, wave({ status: "closed" }), undefined)).toBe("results");
+    // The wave lands while the operator watches: the latch keeps Dependencies.
+    expect(settleEnteredWaveView(entered, wave({ status: "landed", landedAt: "2026-09-07T00:00:00Z" }), false, undefined)).toBe("flow");
+    // An already-completed wave still leads with its dependencies on entry.
+    expect(settleEnteredWaveView(null, wave({ status: "closed" }), false, undefined)).toBe("flow");
     // An explicit deep link still wins on entry.
-    expect(nextEnteredView(null, wave({ status: "closed" }), "flow")).toBe("flow");
+    expect(settleEnteredWaveView(null, wave({ status: "closed" }), false, "flow")).toBe("flow");
   });
 
   test("unavailable readiness never enables start", () => {
     expect(waveStartability([wave({ status: "open" })])["W-1"]).toEqual({
       state: "unknown",
-      reason: "Authoritative start readiness is not exposed by the current Serve API.",
+      reason: "Wave status could not be loaded. Try refreshing.",
     });
   });
 });
@@ -333,11 +340,11 @@ describe("real-work completion honesty", () => {
     expect(acceptedDelivery({ ...pendingDeliveryRun, delivery: undefined })).toBeNull();
     const accepted = acceptedDelivery(acceptedRun);
     expect(accepted?.summary).toContain("intent, stage, decision");
-    expect(actualStage(acceptedTask, acceptedRun).label).toBe("Checking the work");
+    expect(actualStage(acceptedTask, acceptedRun).label).toBe("Checking verification · waiting for independent review");
   });
 
   test("failure stays visible until a new truthful attempt", () => {
-    expect(actualStage(failedTask, null).label).toBe("Building");
+    expect(actualStage(failedTask, null).label).toBe("Implementation in progress");
     expect(identitySummary({ state: "unavailable" })).toBe("Unavailable");
   });
 });

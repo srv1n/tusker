@@ -71,3 +71,32 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 	}
 	return &v7VerificationWorkspace{Path: parent.WorkspacePath, Verify: verify, MaterialFingerprint: material}, nil
 }
+
+// Recovery verifies the submitted implementation, never the registered base
+// checkout. Unlike active review, recovery has no live review lease to bind;
+// the immutable execute attempt and its captured scope/source are the fence.
+func recoveryCommandVerificationWorkspace(store *RuntimeStore, vault string, note Note, run RunStatus) (*v7VerificationWorkspace, error) {
+	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
+	parent, material, err := reviewImplementationParent(store, vault, run.ProjectID, trackerRecordID(note), intField(note.Data, "work_revision"), source, note)
+	if err != nil {
+		return nil, err
+	}
+	verify := func() error {
+		current, err := resolveV7Note(vault, trackerRecordID(note), "task")
+		if err != nil {
+			return err
+		}
+		bound, currentMaterial, err := reviewImplementationParent(store, vault, run.ProjectID, trackerRecordID(current), intField(current.Data, "work_revision"), firstNonEmpty(stringField(current.Data, "source_sha"), stringField(current.Data, "source_commit")), current)
+		if err != nil {
+			return err
+		}
+		if bound.AttemptID != parent.AttemptID || bound.WorkspacePath != parent.WorkspacePath || currentMaterial != material {
+			return tuskerError(errorInvalidTransition, "verification recovery implementation binding changed")
+		}
+		return nil
+	}
+	if err := verify(); err != nil {
+		return nil, err
+	}
+	return &v7VerificationWorkspace{Path: parent.WorkspacePath, Verify: verify, MaterialFingerprint: material}, nil
+}

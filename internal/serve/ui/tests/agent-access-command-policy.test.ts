@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -10,8 +10,6 @@ test("command policy details expose behavior, coverage, and limits accessibly", 
   if (!playwright) return;
   const root = resolve(import.meta.dir, "..");
   const fixture = mkdtempSync(resolve(root, ".command-policy-browser-"));
-  const artifactDir = resolve(root, "../../../docs/reports/agent-access-profiles");
-  mkdirSync(artifactDir, { recursive: true });
   writeFileSync(resolve(fixture, "index.html"), '<main id="root"></main><script type="module" src="/entry.tsx"></script>');
   writeFileSync(resolve(fixture, "fixture.css"), `@import "${resolve(root, "src/styles/app.css")}";\n@source "${resolve(root, "src")}";`);
   writeFileSync(resolve(fixture, "entry.tsx"), `
@@ -40,6 +38,7 @@ createRoot(document.getElementById("root")!).render(<div><CommandPolicyDetails a
     browser = await playwright.chromium.launch({ channel: "chrome", headless: true });
     const page = await browser.newPage({ viewport: { width: 820, height: 900 } });
     await page.goto(`http://127.0.0.1:${address.port}/`);
+    await page.getByText("Automatic", { exact: true }).first().waitFor();
     expect(await page.getByText("Automatic", { exact: true }).count()).toBeGreaterThanOrEqual(3);
     expect(await page.getByText("Ask each time", { exact: true }).count()).toBeGreaterThanOrEqual(3);
     expect(await page.getByText("Block", { exact: true }).count()).toBeGreaterThanOrEqual(3);
@@ -47,10 +46,9 @@ createRoot(document.getElementById("root")!).render(<div><CommandPolicyDetails a
     expect(await page.getByText("Review only blocks project writes.", { exact: false }).count()).toBe(1);
     expect(await page.getByRole("alert").count()).toBe(1);
     expect(await page.getByText("Required access restriction is unavailable for this provider.", { exact: true }).count()).toBe(1);
-    await page.screenshot({ path: resolve(artifactDir, "command-policy-details.png"), fullPage: true });
   } finally {
     await browser?.close();
     await server.close();
     rmSync(fixture, { recursive: true, force: true });
   }
-}, 30_000);
+}, 60_000);

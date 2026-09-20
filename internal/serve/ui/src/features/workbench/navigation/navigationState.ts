@@ -75,6 +75,7 @@ export interface WorkspaceWavesState {
   contextOpen?: boolean;
   contextWidth?: number;
   overviewQuery?: string;
+  overviewFilter?: "all" | "needs-you" | "running" | "ready" | "planned" | "completed" | "unavailable";
   showCompleted?: boolean;
   overviewScrollTop?: number;
   byId?: Record<string, WorkspaceWaveViewState>;
@@ -109,6 +110,7 @@ export interface WorkspaceWavesStatePatch {
   contextOpen?: boolean;
   contextWidth?: number;
   overviewQuery?: string;
+  overviewFilter?: WorkspaceWavesState["overviewFilter"];
   showCompleted?: boolean;
   overviewScrollTop?: number;
   byId?: Record<string, Partial<WorkspaceWaveViewState> | null>;
@@ -582,12 +584,18 @@ function sanitizeDocsState(value: unknown): WorkspaceDocsState | undefined {
   return next;
 }
 
+function overviewFilter(value: unknown): WorkspaceWavesState["overviewFilter"] {
+  return value === "all" || value === "needs-you" || value === "running" || value === "ready" || value === "planned" || value === "completed" || value === "unavailable" ? value : undefined;
+}
+
 function sanitizeWavesState(value: unknown): WorkspaceWavesState | undefined {
   if (!isRecord(value)) return undefined;
-  const next: WorkspaceWavesState = copyUnknown(value, ["contextOpen", "contextWidth", "overviewQuery", "showCompleted", "overviewScrollTop", "byId"]);
+  const next: WorkspaceWavesState = copyUnknown(value, ["contextOpen", "contextWidth", "overviewQuery", "overviewFilter", "showCompleted", "overviewScrollTop", "byId"]);
   if (typeof value.contextOpen === "boolean") next.contextOpen = value.contextOpen;
   if (contextWidth(value.contextWidth)) next.contextWidth = value.contextWidth;
   if (typeof value.overviewQuery === "string") next.overviewQuery = value.overviewQuery;
+  const filter = overviewFilter(value.overviewFilter);
+  if (filter) next.overviewFilter = filter;
   if (typeof value.showCompleted === "boolean") next.showCompleted = value.showCompleted;
   if (finiteNonnegative(value.overviewScrollTop)) next.overviewScrollTop = value.overviewScrollTop;
   const byId = sanitizeWaveMap(value.byId);
@@ -689,10 +697,12 @@ function mergeDocsState(current: WorkspaceDocsState | undefined, patch: Workspac
 }
 
 function mergeWavesState(current: WorkspaceWavesState | undefined, patch: WorkspaceWavesStatePatch): WorkspaceWavesState {
-  const next: WorkspaceWavesState = { ...(current ?? {}), ...copyUnknown(patch, ["contextOpen", "contextWidth", "overviewQuery", "showCompleted", "overviewScrollTop", "byId"]) };
+  const next: WorkspaceWavesState = { ...(current ?? {}), ...copyUnknown(patch, ["contextOpen", "contextWidth", "overviewQuery", "overviewFilter", "showCompleted", "overviewScrollTop", "byId"]) };
   if (typeof patch.contextOpen === "boolean") next.contextOpen = patch.contextOpen;
   if (contextWidth(patch.contextWidth)) next.contextWidth = patch.contextWidth;
   if (typeof patch.overviewQuery === "string") next.overviewQuery = patch.overviewQuery;
+  const filter = overviewFilter(patch.overviewFilter);
+  if (filter) next.overviewFilter = filter;
   if (typeof patch.showCompleted === "boolean") next.showCompleted = patch.showCompleted;
   if (finiteNonnegative(patch.overviewScrollTop)) next.overviewScrollTop = patch.overviewScrollTop;
   const byId = mergeWaveMap(current?.byId, patch.byId);

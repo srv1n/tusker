@@ -21,7 +21,7 @@ func TestDemoStartWaveUsesSupportedServeAction(t *testing.T) {
 		if r.Method != http.MethodPost || r.Header.Get(serveCapabilityHeader) != "test-token" {
 			t.Fatalf("Wave Start request missing method or capability: %s %#v", r.Method, r.Header)
 		}
-		_, _ = w.Write([]byte(`{"schema":"tusker.direct-start/v1","subject":"W-0001","scope":"wave","state":"Running","authorization":"armed","queuedTaskIds":["APP-T-0001"],"replayed":false}`))
+		_, _ = w.Write([]byte(`{"schema":"tusker.direct-start/v1","subject":"W-0001","scope":"wave","state":"Running","authorization":"authorized","queuedTaskIds":["APP-T-0001"],"replayed":false}`))
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -30,7 +30,7 @@ func TestDemoStartWaveUsesSupportedServeAction(t *testing.T) {
 	t.Cleanup(func() { demoServeBaseURL = previous })
 
 	result, err := demoStartWave(context.Background(), "project-1", "W-0001")
-	if err != nil || result.Authorization != "armed" || len(result.QueuedTaskIDs) != 1 {
+	if err != nil || result.Authorization != "authorized" || len(result.QueuedTaskIDs) != 1 {
 		t.Fatalf("supported Wave Start action failed: result=%#v err=%v", result, err)
 	}
 }
@@ -73,6 +73,9 @@ func TestRealWorkFixtureShape(t *testing.T) {
 	for _, wave := range waves {
 		for _, task := range wave.Tasks {
 			ctx := demoTaskContext(wave, task)
+			if body := demoTaskBody(wave, task); strings.Contains(body, "command: command:") {
+				t.Fatalf("task %s duplicated the command proof marker", task.Key)
+			}
 			for _, want := range []string{
 				".tusker/specs/fixture-cafe/overview.md",
 				task.Artifact,
@@ -226,8 +229,16 @@ func TestRealWorkFixtureSeedE2E(t *testing.T) {
 		t.Fatalf("standalone route is not configured Luna: route=%v err=%v", route, err)
 	}
 	reviewRoute, err := exec.run(repo, "runner", "route", manifest.Tasks["s1"].TaskID, "--lane", "review", "--vault", vaultPath)
-	if err != nil || demoStringField(reviewRoute, "profile") != "review-independent" {
+	reviewDefinition, _ := reviewRoute["profile_definition"].(map[string]any)
+	reviewSandbox, _ := reviewDefinition["sandbox"].(map[string]any)
+	if err != nil || demoStringField(reviewRoute, "profile") != "review-independent" || demoStringField(reviewDefinition, "permission_preset") != "read-only" || demoStringField(reviewSandbox, "mode") != "read-only" {
 		t.Fatalf("standalone review route is not independent: route=%v err=%v", reviewRoute, err)
+	}
+	for _, key := range []string{"a1", "a4"} {
+		route, routeErr := exec.run(repo, "runner", "route", manifest.Tasks[key].TaskID, "--lane", "execute", "--vault", vaultPath)
+		if routeErr != nil || demoStringField(route, "profile") != "execute-fast" {
+			t.Fatalf("%s execute route escaped the demo profile: route=%v err=%v", key, route, routeErr)
+		}
 	}
 	// Reseed without reset is idempotent: no duplicates, same identities.
 	if code := demoRunInner(t, "demo seed", Args{"repo": repo, "scenario": demoScenario}); code != demoExitOK {

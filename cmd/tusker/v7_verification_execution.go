@@ -95,6 +95,17 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			return tuskerError("CAS_CONFLICT", taskID+": verification manifest task snapshot drifted before execution")
 		}
 		rows := parseV7VerificationRows(body)
+		if args.Bool("rerun-invalid") {
+			material, materialErr := v7VerificationCurrentScopedMaterial(vaultPath, current)
+			if workspace != nil {
+				material, materialErr = workspace.MaterialFingerprint, workspace.Verify()
+			}
+			for i := range rows {
+				if v7VerificationReceiptInvalidationForMaterial(current, rows[i], material, materialErr) != nil {
+					rows[i].Result = "pending"
+				}
+			}
+		}
 		manifest, pending := v7VerificationManifest(data, rows)
 		if len(pending) > v7VerificationCommandMaxRows {
 			return tuskerError(errorEvidenceGate, fmt.Sprintf("%s: verification manifest has %d pending command rows; maximum is %d", taskID, len(pending), v7VerificationCommandMaxRows))
@@ -202,7 +213,7 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 		for i, observed := range observations {
 			rows[i].Notes = appendV7VerificationExecutionNote(rows[i], observed, identity)
 		}
-		body = replaceSection(body, "## Verification", renderV7VerificationTable(rows))
+		body = updateV7VerificationLedger(body, rows)
 		idx, err := loadV7Index(vaultPath)
 		if err != nil {
 			return err
@@ -361,6 +372,91 @@ func appendV7VerificationExecutionNote(row v7VerificationRow, observation v7Veri
 		return receipt
 	}
 	return strings.TrimSpace(row.Notes) + "; " + receipt
+}
+
+func recordProviderVerificationReceipts(vaultPath string, run RunStatus, material string) (Note, error) {
+	task, err := resolveV7Note(vaultPath, run.ItemID, "task")
+	if err != nil {
+		return task, err
+	}
+	identity, _, err := v7VerificationReceiptIdentityFor(vaultPath, task, run.WorkspacePath, nil)
+	if err != nil || identity.MaterialFingerprint != material {
+		return task, err
+	}
+	rows := parseV7VerificationRows(task.Body)
+	events := readReviewPacketEvents(run.EventSinkPath)
+	changed := false
+	for i, row := range rows {
+		if !strings.EqualFold(strings.TrimSpace(row.Result), "pending") {
+			continue
+		}
+		wanted, ok := v7VerificationCommand(row.Check)
+		if !ok {
+			continue
+		}
+		for _, event := range events {
+			payload := reviewPacketEventPayload(event)
+			if reviewPacketEventKind(event) != "command_completed" || intValue(payload["exit_code"]) != 0 || stringValue(payload["material"]) != material || !providerCommandContainsExactCheck(stringValue(payload["command"]), wanted) {
+				continue
+			}
+			observation, execErr := runV7VerificationCommand(run.WorkspacePath, wanted, v7VerificationCommandTimeout)
+			rows[i].Result = "pass"
+			if execErr != nil {
+				rows[i].Result = "fail"
+			}
+			currentIdentity, _, identityErr := v7VerificationReceiptIdentityFor(vaultPath, task, run.WorkspacePath, nil)
+			if identityErr != nil || currentIdentity.MaterialFingerprint != identity.MaterialFingerprint {
+				return task, tuskerError(errorEvidenceGate, "provider-observed verification changed the scoped implementation material")
+			}
+			rows[i].Notes = appendV7VerificationExecutionNote(rows[i], observation, currentIdentity)
+			rows[i].Notes = appendV7ProofNote(rows[i].Notes, "provider_event="+firstNonEmpty(stringValue(payload["command_id"]), "anonymous")+" provider_output="+stringValue(payload["output_sha256"]))
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return task, nil
+	}
+	data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
+	if err != nil {
+		return task, err
+	}
+	body = updateV7VerificationLedger(body, rows)
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return task, err
+	}
+	current := task
+	current.Data, current.Body = data, body
+	data["proof_status"] = computeV7ProofReportForMaterial(vaultPath, current, idx, material, nil).Status
+	data["updated_at"], data["updated_by"] = time.Now().UTC().Format(time.RFC3339Nano), "daemon:provider-proof"
+	if _, err := saveV7DocumentCAS(task.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev")); err != nil {
+		return task, err
+	}
+	return resolveV7Note(vaultPath, run.ItemID, "task")
+}
+
+func providerCommandContainsExactCheck(raw, wanted string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == wanted {
+		return true
+	}
+	for _, prefix := range []string{"/bin/zsh -lc ", "/bin/bash -lc ", "/bin/sh -lc ", "zsh -lc ", "bash -lc ", "sh -lc "} {
+		if !strings.HasPrefix(raw, prefix) {
+			continue
+		}
+		body := strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+		if len(body) < 2 || body[0] != body[len(body)-1] || (body[0] != '\'' && body[0] != '"') {
+			return false
+		}
+		body = body[1 : len(body)-1]
+		for _, segment := range v7ShellCommandSegments(body) {
+			if strings.TrimSpace(segment) == wanted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func v7FilteredTestCommand(check string) bool {
@@ -665,6 +761,113 @@ func v7VerificationReceiptCurrent(task Note, row v7VerificationRow, currentMater
 	return true
 }
 
+type v7VerificationInvalidation struct {
+	Kind        string `json:"kind" yaml:"kind"`
+	Dimension   string `json:"dimension" yaml:"dimension"`
+	Previous    string `json:"previous,omitempty" yaml:"previous,omitempty"`
+	Current     string `json:"current,omitempty" yaml:"current,omitempty"`
+	NextActor   string `json:"nextActor" yaml:"nextActor"`
+	Recovery    string `json:"recovery" yaml:"recovery"`
+	Explanation string `json:"explanation" yaml:"explanation"`
+}
+
+func v7VerificationReceiptInvalidationForWorkspace(vaultPath string, task Note, workspace *v7VerificationWorkspace) *v7VerificationInvalidation {
+	material, err := v7VerificationMaterialForReport(vaultPath, task, workspace)
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if cause := v7VerificationReceiptInvalidationForMaterial(task, row, material, err); cause != nil {
+			return cause
+		}
+	}
+	return nil
+}
+
+func v7VerificationReceiptFields(row v7VerificationRow) map[string]string {
+	history := v7VerificationReceiptHistory(row)
+	if len(history) == 0 {
+		return nil
+	}
+	return history[len(history)-1]
+}
+
+func v7VerificationReceiptHistory(row v7VerificationRow) []map[string]string {
+	marker := v7VerificationReceiptSchema + " "
+	history := []map[string]string{}
+	for notes := row.Notes; ; {
+		pos := strings.Index(notes, marker)
+		if pos < 0 {
+			return history
+		}
+		notes = notes[pos+len(marker):]
+		end := strings.Index(notes, "; "+v7VerificationReceiptSchema+" ")
+		segment := notes
+		if end >= 0 {
+			segment = notes[:end]
+		}
+		fields := map[string]string{}
+		for _, token := range strings.Fields(segment) {
+			key, value, ok := strings.Cut(strings.TrimRight(token, ";"), "=")
+			if ok {
+				fields[key] = value
+			}
+		}
+		if len(fields) > 0 {
+			history = append(history, fields)
+		}
+		if end < 0 {
+			return history
+		}
+		notes = notes[end+2:]
+	}
+}
+
+func v7VerificationReceiptInvalidationForMaterial(task Note, row v7VerificationRow, currentMaterial string, materialErr error) *v7VerificationInvalidation {
+	if _, command := v7VerificationCommand(row.Check); !command {
+		return nil
+	}
+	base := v7VerificationInvalidation{NextActor: "command_executor", Recovery: "rerun_checks"}
+	if strings.EqualFold(strings.TrimSpace(row.Result), "fail") || strings.EqualFold(strings.TrimSpace(row.Result), "failed") {
+		base.Kind, base.Dimension, base.Explanation = "failed", "check_result", "the recorded verification command failed"
+		history := v7VerificationReceiptHistory(row)
+		if len(history) > 0 {
+			base.Current = history[len(history)-1]["material"]
+		}
+		if len(history) > 1 {
+			base.Previous = history[len(history)-2]["material"]
+			base.Explanation = "the latest verification command failed; the previous passing receipt remains recorded"
+		}
+		return &base
+	}
+	if !strings.EqualFold(strings.TrimSpace(row.Result), "pass") {
+		base.Kind, base.Dimension, base.Explanation = "missing", "receipt", "current command proof has not been recorded"
+		return &base
+	}
+	fields := v7VerificationReceiptFields(row)
+	if fields == nil {
+		base.Kind, base.Dimension, base.Explanation = "missing", "receipt", "the pass row has no authenticated verification receipt"
+		return &base
+	}
+	if materialErr != nil || strings.TrimSpace(currentMaterial) == "" {
+		base.Kind, base.Dimension, base.Previous, base.Explanation = "unavailable", "material", fields["material"], "current scoped material could not be read; this does not prove that work changed"
+		return &base
+	}
+	contract := directWaveTaskContractFingerprint(task.Data, task.Body)
+	checks := []struct{ dimension, previous, current string }{
+		{"contract", fields["contract"], contract},
+		{"work_revision", fields["work_revision"], strconv.Itoa(intField(task.Data, "work_revision"))},
+		{"source", fields["source"], fallback(firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")), "-")},
+		{"material", fields["material"], currentMaterial},
+		{"check", fields["row"], v7VerificationRowFingerprint(row)},
+	}
+	for _, check := range checks {
+		if check.previous != check.current {
+			base.Kind, base.Dimension, base.Previous, base.Current = "changed", check.dimension, check.previous, check.current
+			base.Explanation = "accepted verification no longer matches the current " + check.dimension
+			return &base
+		}
+	}
+	return nil
+}
+
 func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, error) {
 	hasCommand := false
 	for _, row := range parseV7VerificationRows(task.Body) {
@@ -675,6 +878,9 @@ func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, e
 	}
 	if !hasCommand {
 		return "", nil
+	}
+	if material, found, err := v7SubmittedVerificationMaterial(vaultPath, task); found || err != nil {
+		return material, err
 	}
 	repoRoot, err := canonicalV7VerificationWorkspaceRoot(v7RepoRoot(vaultPath))
 	if err != nil {
@@ -694,13 +900,47 @@ func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, e
 	return workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
 }
 
+func v7SubmittedVerificationMaterial(vaultPath string, task Note) (string, bool, error) {
+	store, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
+	if err != nil {
+		return "", false, nil
+	}
+	defer store.Close()
+	projectID, registered, err := registeredProjectIDForVault(store, vaultPath)
+	if err != nil || !registered {
+		return "", false, err
+	}
+	run, err := store.FindRunScoped(projectID, trackerRecordID(task))
+	if err != nil || run == nil || run.WorkRevision == 0 {
+		return "", false, err
+	}
+	workspace, err := recoveryCommandVerificationWorkspace(store, vaultPath, task, *run)
+	if err != nil {
+		return "", true, err
+	}
+	if err := workspace.Verify(); err != nil {
+		return "", true, err
+	}
+	return workspace.MaterialFingerprint, true, nil
+}
+
 func v7VerificationReceiptRequirementMissingForMaterial(task Note, currentMaterial string, materialErr error) string {
 	for _, row := range parseV7VerificationRows(task.Body) {
-		if !v7VerificationReceiptCurrent(task, row, currentMaterial, materialErr) {
-			return "command proof for " + fallback(strings.TrimSpace(row.CoverText), "unknown acceptance") + " is missing or stale for the current task contract/work/source"
+		if cause := v7VerificationReceiptInvalidationForMaterial(task, row, currentMaterial, materialErr); cause != nil {
+			return "command proof for " + fallback(strings.TrimSpace(row.CoverText), "unknown acceptance") + ": " + cause.Explanation
 		}
 	}
 	return ""
+}
+
+func v7VerificationReceiptInvalidation(vaultPath string, task Note) *v7VerificationInvalidation {
+	material, err := v7VerificationCurrentScopedMaterial(vaultPath, task)
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if cause := v7VerificationReceiptInvalidationForMaterial(task, row, material, err); cause != nil {
+			return cause
+		}
+	}
+	return nil
 }
 
 func v7VerificationReceiptRequirementMissing(vaultPath string, task Note) string {

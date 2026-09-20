@@ -129,7 +129,7 @@ func workSessionOpenHumanGateBlocker(task Note, idx v7Index) *ReadinessBlocker {
 		return &ReadinessBlocker{
 			ID: "interactive-human-gate:" + taskID + ":" + gateID, Kind: ReadinessBlockerHumanGateOpen, Authority: ReadinessAuthorityHuman,
 			Affects: []ReadinessDimensionKind{ReadinessDimensionInteractive}, TaskID: taskID, GateID: gateID,
-			Reason: "Human gate " + gateID + " is open.", Remedy: "Complete the required human action for gate " + gateID + ".",
+			Reason: "Human gate " + gateID + " is open.", Remedy: "Open task " + taskID + " in the Tusker Mac app and confirm gate " + gateID + "; `tusker gate satisfy` remains the terminal alternative.",
 		}
 	}
 	return nil

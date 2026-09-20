@@ -107,6 +107,9 @@ const waveDetailRoute = createRoute({
 const tasksRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "tasks",
+  validateSearch: (search: Record<string, unknown>): { scope?: "unassigned" } => ({
+    scope: search.scope === "unassigned" ? "unassigned" : undefined,
+  }),
   component: lazyRouteComponent(
     () => import("@/features/workbench/integration"),
     "WorkBoard",

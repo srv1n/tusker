@@ -155,8 +155,8 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 	if err := enforceV7ClosePolicy(vaultPath, task, idx, request.Actor); err != nil {
 		return v7ClosePreflightResult{}, err
 	}
-	if tuskerTier(vaultPath) >= 2 {
-		if err := enforceV7AcceptanceClose(vaultPath, task, idx, !request.SkipCommandVerification); err != nil {
+	if tuskerTier(vaultPath) >= 2 && !request.SkipCommandVerification {
+		if err := enforceV7AcceptanceClose(vaultPath, task, idx, true); err != nil {
 			return v7ClosePreflightResult{}, err
 		}
 	}

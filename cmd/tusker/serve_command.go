@@ -50,7 +50,7 @@ func serveCmd(args Args) error {
 	defer store.Close()
 	server := newServeServer(vaultPath, repoRoot, addr, store, dist)
 	if raw := firstNonEmpty(args.String("by"), args.String("actor")); strings.TrimSpace(raw) != "" {
-		actor, actorErr := v7HumanActor(Args{"by": raw}, "serve operator")
+		actor, actorErr := v7AgentDefaultActor(Args{"by": raw}, "serve operator")
 		if actorErr != nil {
 			return actorErr
 		}
@@ -106,30 +106,27 @@ func newServeServer(vaultPath, repoRoot, addr string, store *RuntimeStore, asset
 		panic(fmt.Sprintf("generate serve mutation capability: %v", err))
 	}
 	return &serveServer{
-		vaultPath:             vaultPath,
-		repoRoot:              repoRoot,
-		addr:                  addr,
-		store:                 store,
-		assets:                assets,
-		operatorActor:         configuredServeOperatorActor(),
-		stream:                newServeStreamBroker(),
-		now:                   func() time.Time { return time.Now().UTC() },
-		snapshots:             map[string]*serveSnapshotEntry{},
-		mutationToken:         base64.RawURLEncoding.EncodeToString(token),
-		humanControlPublicKey: configuredHumanControlPublicKey(),
-		requestAdmission:      make(chan struct{}, 128),
-		streamAdmission:       make(chan struct{}, 32),
+		vaultPath:        vaultPath,
+		repoRoot:         repoRoot,
+		addr:             addr,
+		store:            store,
+		assets:           assets,
+		operatorActor:    configuredServeOperatorActor(),
+		stream:           newServeStreamBroker(),
+		now:              func() time.Time { return time.Now().UTC() },
+		snapshots:        map[string]*serveSnapshotEntry{},
+		mutationToken:    base64.RawURLEncoding.EncodeToString(token),
+		requestAdmission: make(chan struct{}, 128),
+		streamAdmission:  make(chan struct{}, 32),
 	}
 }
 
 // configuredServeOperatorActor accepts only an explicitly configured,
-// qualified human identity. It never falls back to USER or LOGNAME; a Serve
-// process without this provenance refuses human mutations until the UI or
-// caller supplies an actor in its request body.
+// qualified identity. It never falls back to USER or LOGNAME.
 func configuredServeOperatorActor() string {
 	raw := firstNonEmpty(os.Getenv("TUSKER_SERVE_OPERATOR"), os.Getenv("TUSKER_ACTOR"))
 	actor, ok := normalizeV7ProposalActor(raw)
-	if !ok || !strings.HasPrefix(actor, "human:") {
+	if !ok {
 		return ""
 	}
 	return actor
@@ -1422,6 +1419,7 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			facts := inspectRegisteredCheckout(checkout, label, checkoutActive)
 			checkouts = append(checkouts, serveCheckoutSummary{
 				ID: facts.ID, Label: facts.Label, RepoRoot: facts.RepoRoot, VaultRoot: facts.VaultRoot,
+				AutomationEnabled: checkout.Enabled, AutomationSource: "Project runtime",
 				Branch: facts.Branch, Head: facts.Head, Git: facts.Git, Detached: facts.Detached,
 				Available: facts.Available, Activity: facts.Activity, ActiveRuns: facts.ActiveRuns,
 				Health: facts.Health, Error: facts.Error,
@@ -1438,8 +1436,8 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			Visible:                 visible,
 			Checkouts:               checkouts,
 			RegistryPreview:         registryPreview,
-			AutomationEnabled:       wf.AutomationEnabled,
-			AutomationSource:        configSourceBuiltIn,
+			AutomationEnabled:       project.Enabled,
+			AutomationSource:        "Project runtime",
 			DispatchScope:           wf.DispatchScope,
 			WorkspaceMode:           string(workspaceStrategyFromWorkflow(wf.Workspace.Strategy)),
 			MaxActiveRunsPerProject: wf.Runtime.MaxActiveRunsPerProject,
@@ -1681,10 +1679,14 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 	detail := serveRunDetail{serveRunSummary: summary, WorkspacePath: summary.WorkspacePath, Attempts: []serveAttempt{}, Authorization: auth, Identity: identity, Session: session, Resume: resumeCapability(&run, session), Delivery: delivery}
 	for i, attempt := range attempts {
 		detail.Attempts = append(detail.Attempts, serveAttempt{
+			ID:          attempt.AttemptID,
 			N:           i + 1,
-			Outcome:     serveRunOutcomeFromAttempt(attempt.Outcome, run.LeaseState),
+			Runner:      firstNonEmpty(attempt.Runner, run.Runner),
+			Lane:        serveLane(firstNonEmpty(attempt.Lane, run.Lane)),
+			Outcome:     s.serveAttemptOutcome(run, attempt),
 			DurationSec: serveDurationSec(attempt.StartedAt, firstNonEmpty(attempt.FinishedAt, run.UpdatedAt), s.now()),
 			StartedAt:   attempt.StartedAt,
+			FinishedAt:  attempt.FinishedAt,
 		})
 	}
 	detail.Events = serveRunEvents(run, attempts)
@@ -1749,6 +1751,67 @@ func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, t
 	result.LeaseState = run.LeaseState
 	result.Reason = "redrive requested — attempt window reset; the daemon will spawn a fresh attempt"
 	s.refreshProjectSnapshot(snap.projectID)
+	serveJSON(w, http.StatusOK, result)
+}
+
+func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, taskID string, body serveActionBody) {
+	actor, err := s.serveOperatorActor(body, "serve run recovery")
+	if err != nil {
+		serveJSON(w, http.StatusForbidden, serveRecoveryResult{Refused: true, TaskID: taskID, Action: body.string("action"), Reason: err.Error()})
+		return
+	}
+	snap, err := s.loadSnapshotForRequest(r)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, serveRecoveryResult{Refused: true, TaskID: taskID, Reason: err.Error()})
+		return
+	}
+	task, ok := snap.notesByID[strings.TrimSpace(taskID)]
+	if !ok {
+		serveJSON(w, http.StatusNotFound, serveRecoveryResult{Refused: true, TaskID: taskID, Reason: "task not found"})
+		return
+	}
+	action := body.string("action")
+	if action == "rerun_checks" {
+		run, ok := serveFindRun(snap.runs, taskID)
+		if !ok {
+			serveJSON(w, http.StatusNotFound, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: "run not found"})
+			return
+		}
+		result, recoveryErr := recoverVerificationChecks(snap.project.VaultRoot, s.store, run.ProjectID, taskID, actor, snap.workflow.Retry.MaxAttempts, s.now())
+		if recoveryErr != nil {
+			serveJSON(w, http.StatusConflict, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Lane: "verify", Reason: recoveryErr.Error()})
+			return
+		}
+		if result.Admitted {
+			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "verification_recovery", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
+			s.refreshProjectSnapshot(snap.projectID)
+		}
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	if action != "retry_review" {
+		serveJSON(w, http.StatusOK, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: "unsupported recovery action"})
+		return
+	}
+	run, ok := serveFindRun(snap.runs, taskID)
+	if !ok {
+		serveJSON(w, http.StatusNotFound, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: "run not found"})
+		return
+	}
+	wave, ok := snap.notesByID[stringField(task.Data, "wave")]
+	if !ok {
+		serveJSON(w, http.StatusOK, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: "task wave not found"})
+		return
+	}
+	result, recoveryErr := queueReviewRecovery(s.store, task, wave, run, actor, snap.workflow.Retry.MaxAttempts, s.now())
+	if recoveryErr != nil {
+		serveJSON(w, http.StatusConflict, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: recoveryErr.Error()})
+		return
+	}
+	if result.Admitted {
+		_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "review_recovery", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
+		s.refreshProjectSnapshot(snap.projectID)
+	}
 	serveJSON(w, http.StatusOK, result)
 }
 
@@ -2496,7 +2559,6 @@ Endpoints:
   POST /api/tasks/<task-id>/(route|status|discard|close|land)
   GET /api/gates[?task=<id>]
   POST /api/gates/<gate-id>/(satisfy|waive|obsolete)
-  POST /api/human-receipts/(challenge|submit)
   GET /api/evidence[?task=<id>]
   POST /api/evidence
   GET /api/decisions[?epic=<id>]

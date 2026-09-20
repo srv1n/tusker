@@ -852,6 +852,56 @@ func invalidateV7PassedVerificationRows(body string) (string, int) {
 	return replaceSection(body, "## Verification", renderV7VerificationTable(rows)), invalidated
 }
 
+// Execution updates ledger cells, not the authored table or its surrounding
+// whitespace: re-rendering the section can change the bound task contract.
+func updateV7VerificationLedger(body string, rows []v7VerificationRow) string {
+	pos := findHeading(body, "## Verification")
+	if pos == nil {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	rowIndex := 0
+	for i := pos.Index + 1; i < pos.NextIndex; i++ {
+		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
+			continue
+		}
+		cells := v7MarkdownTableCells(lines[i])
+		if len(cells) < 3 {
+			continue
+		}
+		header := strings.EqualFold(cells[0], "covers")
+		separator := strings.Trim(cells[0], "-: ") == ""
+		if header || separator {
+			if len(cells) > 3 {
+				continue
+			}
+			if header {
+				cells = append(cells, "Notes")
+			} else {
+				cells = append(cells, "---")
+			}
+		} else {
+			if rowIndex >= len(rows) {
+				break
+			}
+			if len(cells) == 3 {
+				cells = append(cells, "")
+			}
+			row := rows[rowIndex]
+			rowIndex++
+			if cells[2] == row.Result && cells[3] == row.Notes {
+				continue
+			}
+			cells[2], cells[3] = row.Result, row.Notes
+		}
+		for j := range cells {
+			cells[j] = escapeV7TableCell(cells[j])
+		}
+		lines[i] = "| " + strings.Join(cells, " | ") + " |"
+	}
+	return strings.Join(lines, "\n")
+}
+
 func renderV7VerificationTable(rows []v7VerificationRow) string {
 	hasBlocker := false
 	for _, row := range rows {

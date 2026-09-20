@@ -15,7 +15,7 @@
     models by guessing.
 */
 
-import type { RunSummary, TaskDetail, TaskStatus } from "@/types/domain";
+import type { RunSummary, TaskDetail, TaskStatus, WaveReviewMember } from "@/types/domain";
 
 /** Controlled pan/zoom transform. x/y are content-space offsets in CSS px. */
 export interface FlowViewport {
@@ -35,7 +35,10 @@ export interface DependencyFact {
 export type FlowDisplayState =
   | "completed"
   | "executing"
+  | "awaiting_review"
   | "reviewing"
+  | "proof_blocked"
+  | "cancelled"
   | "ready"
   | "backlog"
   | "queued"
@@ -154,6 +157,22 @@ export function displayStateFor(
   return "unknown";
 }
 
+/** The wave review is the status authority when it is available. */
+export function reviewDisplayStateFor(member: WaveReviewMember | undefined): FlowDisplayState | undefined {
+  if (!member) return undefined;
+  if (member.phase === "completed" || member.state === "completed") return "completed";
+  if (member.phase === "failed") return "failed";
+  if (member.phase === "executing" || member.state === "running") return "executing";
+  if (member.phase === "reviewing") return "reviewing";
+  if (member.phase === "awaiting_review") return "awaiting_review";
+  if (member.phase === "proof_blocked") return "proof_blocked";
+  if (member.state === "cancelled") return "cancelled";
+  if (member.state === "blocked") return "blocked";
+  if (member.state === "ready") return "ready";
+  if (member.state === "waiting") return "queued";
+  return undefined;
+}
+
 /** Model identity only from a live run; never inferred from roles or lanes. */
 export function modelFor(run: RunSummary | undefined): string | undefined {
   if (!isLiveRun(run)) return undefined;
@@ -166,6 +185,7 @@ export interface BuildFlowInput {
   tasks: TaskDetail[];
   runs?: RunSummary[];
   dependencyFacts?: Record<string, DependencyFact>;
+  reviewMembers?: WaveReviewMember[];
 }
 
 /**
@@ -178,6 +198,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
   const members = new Set(memberIds);
   const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
   const runsByTask = new Map((input.runs ?? []).map((run) => [run.taskId, run]));
+  const reviewsByTask = new Map((input.reviewMembers ?? []).map((member) => [member.taskId, member]));
   const facts = input.dependencyFacts ?? {};
 
   const nodes: FlowNode[] = [];
@@ -203,12 +224,15 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
   for (const id of memberIds) {
     const task = tasksById.get(id);
     const run = runsByTask.get(id);
+    const reviewState = reviewDisplayStateFor(reviewsByTask.get(id));
     if (!task) {
       nodes.push({
         id,
         kind: "task",
-        title: id,
-        state: "unknown",
+        title: reviewsByTask.get(id)?.title || id,
+        // The review is still authoritative while task details are loading.
+        // Do not replace a known phase with an old run or an unknown node.
+        state: reviewState ?? "unknown",
         depIds: [],
         missingDetail: true,
       });
@@ -219,7 +243,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
       id,
       kind: "task",
       title: task.title || id,
-      state: displayStateFor(task.status, run),
+      state: reviewState ?? displayStateFor(task.status, run),
       model: modelFor(run),
       tier: task.effectiveExecute?.work_level ?? task.authoredWorkLevel,
       depIds: task.deps.map((dep) => dep.id),
@@ -595,7 +619,10 @@ export function initialViewport(): FlowViewport {
 export const DISPLAY_STATE_LABEL: Record<FlowDisplayState, string> = {
   completed: "Completed",
   executing: "Executing",
+  awaiting_review: "Awaiting review",
   reviewing: "Reviewing",
+  proof_blocked: "Verification required",
+  cancelled: "Cancelled",
   ready: "Ready",
   backlog: "Backlog",
   queued: "Queued",

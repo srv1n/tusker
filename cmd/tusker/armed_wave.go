@@ -181,14 +181,23 @@ func armedWaveProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index,
 			continue
 		}
 		data := cloneNoteData(task.Data)
+		projectedDocument := false
 		if stringField(data, "readiness") == "blocked_by_dependency" {
 			for key, value := range v7ProjectedTaskState(vaultPath, task, idx) {
 				data[key] = value
 			}
+			projectedDocument = true
 		}
 		if stringField(data, "readiness") == "ready" && stringField(data, "status") == "backlog" {
 			data["status"] = "ready"
 			data["next_owner"] = "agent"
+			projectedDocument = true
+		}
+		// This is an in-memory view of the projected document. Keep its CAS
+		// identity consistent with those projected bytes so admission does not
+		// reject dependency-unlocked work before persisting the same projection.
+		if projectedDocument {
+			data["state_rev"] = v7StateRev(data, task.Body)
 		}
 		task.Data = data
 		idx.Tasks[id] = task
@@ -276,6 +285,11 @@ func armedWaveIntegrationTaskProjection(vaultPath string, task Note) (Note, bool
 	if effectiveV7Kind(projected.Data) != "task" || stringField(projected.Data, "id") != stringField(task.Data, "id") {
 		return Note{}, false, tuskerError(errorInvalidField, "armed-wave integration task identity mismatch: "+integrationBranch+":"+filepath.ToSlash(rel))
 	}
+	canonicalUpdated, canonicalErr := time.Parse(time.RFC3339Nano, stringField(task.Data, "updated_at"))
+	projectedUpdated, projectedErr := time.Parse(time.RFC3339Nano, stringField(projected.Data, "updated_at"))
+	if canonicalErr == nil && projectedErr == nil && canonicalUpdated.After(projectedUpdated) {
+		return task, true, nil
+	}
 	projected.AbsolutePath = task.AbsolutePath
 	return projected, true, nil
 }
@@ -355,6 +369,12 @@ func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map
 	// runDirectiveBypassableBlocker, so no directive can waive it.
 	if reason := directWaveTaskContractStaleReason(task); reason != "" {
 		return reason
+	}
+	if wave, idx, _ := armedWaveForTask(vaultPath, task); stringField(wave.Data, "id") != "" {
+		auth := waveAuthorizationProjection(vaultPath, idx, wave)
+		if stringField(auth, "state") == "paused" && !boolFromAny(auth["stale"]) {
+			return "wave is paused"
+		}
 	}
 	return automationDispatchScopeBlocker(vaultPath, task, wf, runs)
 }

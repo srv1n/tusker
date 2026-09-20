@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 
 	runnercore "tusker/internal/runner"
 	"tusker/internal/v7schema"
@@ -20,6 +21,8 @@ const (
 	configSourceProject    = "project config"
 	configSourceLocal      = "machine-local config"
 )
+
+var projectLocalConfigWriteMu sync.Mutex
 
 const (
 	managedTuskerConfigName      = "config.yaml"
@@ -1453,6 +1456,12 @@ func setNestedConfigValue(raw map[string]any, key string, value any) {
 }
 
 func setProjectLocalConfigWithReadback(vaultPath, key string, value any) (configResolveReport, error) {
+	projectLocalConfigWriteMu.Lock()
+	defer projectLocalConfigWriteMu.Unlock()
+	return setProjectLocalConfigWithReadbackUnlocked(vaultPath, key, value)
+}
+
+func setProjectLocalConfigWithReadbackUnlocked(vaultPath, key string, value any) (configResolveReport, error) {
 	repoRoot := v7RepoRoot(vaultPath)
 	before, err := configResolveForPaths(repoRoot, vaultPath, true, key)
 	if err != nil {

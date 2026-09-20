@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -334,6 +335,89 @@ func TestCodexExecIngestReplayKeepsCompletedTurns(t *testing.T) {
 	}
 	assertEqual(t, 2, strings.Count(eventText, `"kind":"turn_started"`), "turn_started event count after replay")
 	assertEqual(t, 2, strings.Count(eventText, `"kind":"turn_completed"`), "turn_completed event count after replay")
+}
+
+func TestCodexExecSuccessfulCommandBecomesCurrentReviewProof(t *testing.T) {
+	vault, project := workSessionFixture(t, 1)
+	configureWorkSessionMaterialScope(t, vault)
+	command := `test "$(cat owned/implementation.go)" = "package owned"`
+	seed, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, body, err := parseFrontmatterMustRead(seed.AbsolutePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = replaceSection(body, "## Verification", renderV7VerificationTable([]v7VerificationRow{{CoverText: "A1", Check: "command: " + command, Result: "pending"}}))
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
+	if _, err := saveV7DocumentCAS(seed.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+	task, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Dir(vault)
+	identity, _, err := v7VerificationReceiptIdentityFor(vault, task, workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := filepath.Join(t.TempDir(), "events.jsonl")
+	rawLog := filepath.Join(t.TempDir(), "raw.jsonl")
+	rawCommand := `/bin/zsh -lc 'test "$(cat owned/implementation.go)" = "package owned" && git diff --check'`
+	raw, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"id": "item_19", "type": "command_execution", "command": rawCommand, "aggregated_output": "", "exit_code": 0, "status": "completed"}})
+	if err := writeText(rawLog, string(raw)+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexExec), ActiveAttemptID: "attempt-provider", WorkspacePath: workspace, EventSinkPath: events, RawLogPath: rawLog}
+	if changed, err := (&Daemon{store: store}).ingestCodexExecRawLog(run); err != nil || !changed {
+		t.Fatalf("ingest observed provider command: changed=%t err=%v", changed, err)
+	}
+	fresh, err := recordProviderVerificationReceipts(vault, run, identity.MaterialFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := parseV7VerificationRows(fresh.Body)
+	if len(rows) != 1 || rows[0].Result != "pass" || !v7VerificationReceiptCurrent(fresh, rows[0], identity.MaterialFingerprint, nil) {
+		t.Fatalf("provider command did not become current proof: %#v", rows)
+	}
+	packet := renderReviewPacket(fresh, run, nil, nil, collectReviewPacketFacts(run))
+	for _, want := range []string{rawCommand, "result=pass", "exit_code=0"} {
+		if !strings.Contains(packet, want) {
+			t.Fatalf("review packet missing %q:\n%s", want, packet)
+		}
+	}
+	if missing := v7VerificationReceiptRequirementMissingForMaterial(fresh, identity.MaterialFingerprint, nil); missing != "" {
+		t.Fatalf("current provider proof still blocks reviewer admission: %s", missing)
+	}
+	wf := defaultWorkflow()
+	wf.Reviewer.Enabled, wf.Reviewer.MaxCycles = true, 1
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review"})
+	fresh, err = resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil || !reviewDispatchAllowed(vault, fresh, wf, RunStatus{}, 0) {
+		t.Fatalf("proof-satisfied task without legacy risk metadata was not review-admissible: err=%v", err)
+	}
+	if v7VerificationReceiptCurrent(fresh, rows[0], "sha256:stale", nil) {
+		t.Fatal("stale material receipt became pass")
+	}
+
+	if providerCommandContainsExactCheck(`/bin/zsh -lc 'printf nope'`, command) {
+		t.Fatal("mismatched command became acceptance proof")
+	}
+	failedRaw := map[string]any{"type": "item.completed", "item": map[string]any{"id": "failed", "type": "command_execution", "command": rawCommand, "exit_code": 1, "status": "failed"}}
+	_, _, failed, ok := codexExecCompletedCommand(failedRaw)
+	if !ok || failed.ExitCode != 1 || failed.Message == "pass" {
+		t.Fatalf("failed command became pass: %#v", failed)
+	}
+	if _, _, _, ok := codexExecCompletedCommand(map[string]any{"type": "item.completed", "item": map[string]any{"type": "agent_message", "text": "tests passed"}}); ok {
+		t.Fatal("worker prose became command proof")
+	}
 }
 
 func TestCodexExecIngestSurfacesEventLogAppendFailure(t *testing.T) {

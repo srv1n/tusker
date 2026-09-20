@@ -1387,7 +1387,7 @@ function ProfileEditor({
             onClick={onTest}
             disabled={running || !draft.model || !draft.effort}
           >
-            Run test
+            {running ? "Running test…" : "Run test"}
           </Button>
         </div>
         <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">

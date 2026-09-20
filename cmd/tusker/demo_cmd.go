@@ -134,7 +134,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	// run concurrently with two-task frontiers, so the demo project allows
 	// four live runs. This touches only the demo repo's local overlay, never
 	// unrelated global settings.
-	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  profiles:\n    execute-fast:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: workspace-write-offline\n      sandbox:\n        mode: workspace-write\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n    review-independent:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: workspace-write-offline\n      sandbox:\n        mode: workspace-write\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n  model_levels:\n    standard:\n      execute: [execute-fast]\n      review: [review-independent]\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
+	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  profiles:\n    execute-fast:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: workspace-write-offline\n      sandbox:\n        mode: workspace-write\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n    review-independent:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: read-only\n      sandbox:\n        mode: read-only\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n  model_levels:\n    light:\n      execute: [execute-fast]\n      review: [review-independent]\n    standard:\n      execute: [execute-fast]\n      review: [review-independent]\n    demanding:\n      execute: [execute-fast]\n      review: [review-independent]\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
 		return nil, err
 	}
 	createdPaths, err := demoSeedRealWorkFiles(repoRoot)
@@ -392,7 +392,7 @@ func demoTaskBody(wave demoWaveDef, task demoTaskDef) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n## Outcome\n\n%s\n\n## Requirement\n\n%s\n", task.Title, task.Outcome, wave.Requirement)
 	b.WriteString("\n## Context\n\n" + demoTaskContext(wave, task) + "\n")
-	b.WriteString("\n## Acceptance\n\n| ID | Outcome | Proof |\n| --- | --- | --- |\n| A1 | " + task.Acceptance + " | command: " + check + " |\n")
+	b.WriteString("\n## Acceptance\n\n| ID | Outcome | Proof |\n| --- | --- | --- |\n| A1 | " + task.Acceptance + " | " + check + " |\n")
 	b.WriteString("\n## Verification\n\n| Covers | Check | Result |\n| --- | --- | --- |\n| A1 | " + check + " | pending |\n")
 	b.WriteString("\n## Artifact\n\n- kind: diff_summary\n- path: " + task.Artifact + "\n- summary: " + task.Title + ".\n- acceptance_ids: A1\n")
 	return b.String()

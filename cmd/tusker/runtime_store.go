@@ -771,6 +771,22 @@ func OpenRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, error) {
 			return nil, fmt.Errorf("runtime database sidecar must be a regular, non-symlink file: %s", path)
 		}
 		st, ok := sidecar.Sys().(*syscall.Stat_t)
+		if ok && st.Nlink == 0 {
+			// SQLite unlinks a WAL/SHM sidecar during normal checkpoint cleanup.
+			// Validate any replacement at the path; an already-unlinked inode
+			// cannot be followed by the subsequent read-only open.
+			sidecar, statErr = os.Lstat(path)
+			if errors.Is(statErr, os.ErrNotExist) {
+				continue
+			}
+			if statErr != nil {
+				return nil, statErr
+			}
+			st, ok = sidecar.Sys().(*syscall.Stat_t)
+		}
+		if sidecar.Mode()&os.ModeSymlink != 0 || !sidecar.Mode().IsRegular() {
+			return nil, fmt.Errorf("runtime database sidecar must be a regular, non-symlink file: %s", path)
+		}
 		if !ok || st.Uid != uint32(os.Getuid()) || st.Nlink != 1 {
 			return nil, fmt.Errorf("runtime database sidecar is not owned by the current user with one link: %s", path)
 		}
@@ -1317,21 +1333,6 @@ func (s *RuntimeStore) Migrate() error {
 			consumed_at TEXT NOT NULL DEFAULT '',
 			UNIQUE(project_id, departure_id, generation)
 		);`,
-		`CREATE TABLE IF NOT EXISTS human_control_challenges (
-			challenge_id TEXT PRIMARY KEY,
-			project_id TEXT NOT NULL,
-			gate_id TEXT NOT NULL,
-			actor TEXT NOT NULL,
-			key_id TEXT NOT NULL,
-			material_revision TEXT NOT NULL,
-			action_digest TEXT NOT NULL,
-			action TEXT NOT NULL,
-			nonce TEXT NOT NULL,
-			issued_at TEXT NOT NULL,
-			expires_at TEXT NOT NULL,
-			consumed_at TEXT NOT NULL DEFAULT '',
-			revoked_at TEXT NOT NULL DEFAULT ''
-		);`,
 		`CREATE TABLE IF NOT EXISTS agent_access_approvals (
 			request_id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
@@ -1703,7 +1704,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		"run_identity_metadata", "attempts", "turns", "sessions", "supervisor_decisions",
 		"apply_inputs", "review_results", "gate_ledger", "batch_gate_runs", "completion_transactions",
 		"completion_authority_issuances", "resource_leases", "resource_lease_events", "daemon_settings",
-		"departure_runs", "landing_authority_issuances", "human_control_challenges", "agent_access_approvals", "external_loop_events", "agent_contacts", "agent_messages", "agent_wakeups", "architect_continuations",
+		"departure_runs", "landing_authority_issuances", "agent_access_approvals", "external_loop_events", "agent_contacts", "agent_messages", "agent_wakeups", "architect_continuations",
 	} {
 		var count int
 		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, []any{table}, &count); err != nil || count != 1 {
@@ -2442,7 +2443,12 @@ func (s *RuntimeStore) QueueRunDirective(directive RunDirective) (bool, error) {
 			SELECT 1 FROM runs WHERE project_id = ? AND record_id = ? AND lease_state IN ('claimed', 'running')
 		)
 		ON CONFLICT(project_id, record_id) DO UPDATE SET actor=excluded.actor, created_at=excluded.created_at, expires_at=excluded.expires_at, state=excluded.state, reason=excluded.reason, wave_id=excluded.wave_id, authorization_fingerprint=excluded.authorization_fingerprint, wave_authorized_at=excluded.wave_authorized_at
-		WHERE run_directives.state != 'queued'`,
+		WHERE run_directives.state != 'queued'
+		   OR EXISTS (
+			SELECT 1 FROM runs
+			WHERE runs.project_id = excluded.project_id AND runs.record_id = excluded.record_id
+			  AND julianday(run_directives.created_at) < julianday(runs.updated_at)
+		   )`,
 		directive.ProjectID, directive.RecordID, directive.Actor, directive.CreatedAt, directive.ExpiresAt, directive.State, directive.Reason, directive.WaveID, directive.AuthorizationFingerprint, directive.WaveAuthorizedAt,
 		directive.ProjectID, directive.RecordID)
 	if err != nil {

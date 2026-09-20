@@ -28,7 +28,7 @@ test("results missing evidence remains visible", () => {
 });
 
 test("results keeps the outcome reader actions and facts visible", () => {
-  for (const text of ["Delivered outcome", "Acceptance and review", "Independent review facts", "Open flow", "Canonical acceptance only"]) expect(source).toContain(text);
+  for (const text of ["Delivered outcome", "Acceptance and review", "Independent review facts", "Open dependencies", "Canonical acceptance only"]) expect(source).toContain(text);
   expect(source).toContain("onOpenTask");
   expect(source).toContain("wave.brief.outcome.summary");
   expect(source).toContain("task.evidence");

@@ -320,6 +320,11 @@ func TestDirectWaveAutonomousPausePreservesAuthorityAndContinuity(t *testing.T) 
 	if runDirectiveAuthorizationMatchesTaskAuthority(vault, task, run, auth) {
 		t.Fatal("strict admission matcher accepted a paused wave")
 	}
+	wf := defaultWorkflow()
+	wf.DispatchScope = defaultAutomationDispatchScope()
+	if got := armedWaveDispatchBlocker(vault, task, wf, map[string]RunStatus{"APP-T-0001": {RecordID: "APP-T-0001", Lane: runLaneReview, AttemptCount: 1}}); got != "wave is paused" {
+		t.Fatalf("paused wave admitted a new reviewer: %q", got)
+	}
 	if !runDirectiveAdmittedContinuityMatchesTaskAuthority(vault, task, run, auth) {
 		t.Fatal("admitted attempt lost continuity after pause")
 	}

@@ -30,10 +30,10 @@ func TestSentinelDetectsConfiguredInvariants(t *testing.T) {
 			wantText: "not dispatch-eligible",
 		},
 		{
-			name:  "attempt count past cap",
+			name:  "attempt count past effective continuation cap",
 			check: invariantCheckAttemptCountWithinCaps,
 			setup: func(t *testing.T, store *RuntimeStore, project RegisteredProject, vault string, now time.Time) {
-				mustUpsertRun(t, store, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptCount: 4, UpdatedAt: now.Format(time.RFC3339)})
+				mustUpsertRun(t, store, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptCount: 5, UpdatedAt: now.Format(time.RFC3339)})
 			},
 			wantText: "attempt count exceeds",
 		},
@@ -90,6 +90,21 @@ func TestSentinelDetectsConfiguredInvariants(t *testing.T) {
 				t.Fatalf("expected violation containing %q, got %#v", tc.wantText, status.Violations)
 			}
 		})
+	}
+}
+
+func TestSentinelAllowsInitialAttemptPlusConfiguredContinuations(t *testing.T) {
+	wf := defaultWorkflow()
+	wf.Retry.MaxAttempts = 3
+	wf.Runtime.MaxContinuationRetries = 3
+	run := RunStatus{LeaseState: string(LeaseStateRunning), AttemptCount: 4}
+	if violations := sentinelAttemptCountWithinCaps(runtimeSentinelProjectSnapshot{Workflow: wf}, []RunStatus{run}); len(violations) != 0 {
+		t.Fatalf("initial attempt plus three continuations must be within the effective cap: %#v", violations)
+	}
+	run.AttemptCount = 5
+	violations := sentinelAttemptCountWithinCaps(runtimeSentinelProjectSnapshot{Workflow: wf}, []RunStatus{run})
+	if len(violations) != 1 || intFromAny(violations[0].Fields["cap"]) != 4 {
+		t.Fatalf("fifth attempt must exceed effective cap 4: %#v", violations)
 	}
 }
 

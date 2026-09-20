@@ -8,7 +8,8 @@ import (
 
 // Temporary verification: every real-vault task record must verify under the
 // current contract canon and state_rev rules. Run with:
-//   go test ./cmd/tusker -run TestRealVaultContractDrift -count=1 -v
+//
+//	go test ./cmd/tusker -run TestRealVaultContractDrift -count=1 -v
 func TestRealVaultContractDrift(t *testing.T) {
 	vault := filepath.Join("..", "..", ".tusker")
 	matches, err := filepath.Glob(filepath.Join(vault, "work", "tasks", "*.md"))

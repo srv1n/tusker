@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 	// Do not let the host Codex/Claude session impersonate a human in fixture
 	// mutations. Tests that exercise agent-session policy set these variables
 	// explicitly with t.Setenv.
-	for _, key := range []string{"TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_HOST_ID", "TUSKER_HOST_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"} {
+	for _, key := range []string{"TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_HOST_ID", "TUSKER_HOST_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CHISEL_SESSION_DB"} {
 		if err := os.Setenv(key, ""); err != nil {
 			fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate agent session %s: %v\n", key, err)
 			_ = os.RemoveAll(stateRoot)

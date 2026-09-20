@@ -6,10 +6,10 @@ const api = readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8");
 const types = readFileSync(new URL("../src/types/domain.ts", import.meta.url), "utf8");
 
 test("runner conformance is a first-class settings action", () => {
-  expect(profiles).toContain('"Running test…" : "Run test"');
-  expect(profiles).toContain("does not save the draft");
+  expect(profiles).toContain('running ? "Running test…" : "Run test"');
+  expect(profiles).toContain("Save persists this profile only");
   expect(profiles).toContain("Check setup");
-  expect(profiles).toContain("a live test may consume model usage");
+  expect(profiles).toContain("explicit and may use provider usage");
   expect(profiles).toContain("api.runnerConformance");
   expect(api).toContain("/runner/conformance");
   expect(api).toContain("responseFailureMessage");

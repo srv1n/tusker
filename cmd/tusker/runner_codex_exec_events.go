@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -19,6 +21,45 @@ type codexExecTurnSnapshot struct {
 type codexExecCommandSnapshot struct {
 	id        string
 	startedAt time.Time
+}
+
+func codexExecCompletedCommand(value any) (id, command string, observation v7VerificationCommandObservation, ok bool) {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return "", "", observation, false
+	}
+	item := codexExecCommandItem(payload)
+	if item == nil {
+		return "", "", observation, false
+	}
+	state, id, at, completed := codexExecRawCommandEvent(value)
+	if !completed || state != "completed" {
+		return "", "", observation, false
+	}
+	command = strings.TrimSpace(firstNonEmpty(stringValue(item["command"]), stringValue(item["cmd"])))
+	if command == "" {
+		return "", "", observation, false
+	}
+	rawExitCode := firstNonEmpty(stringValue(item["exit_code"]), stringValue(item["exitCode"]), stringValue(payload["exit_code"]), stringValue(payload["exitCode"]))
+	if rawExitCode == "" {
+		return "", "", observation, false
+	}
+	exitCode := atoiSafe(rawExitCode)
+	status := normalizeCodexExecEventKind(firstNonEmpty(stringValue(item["status"]), stringValue(payload["status"])))
+	if status != "completed" && exitCode == 0 {
+		exitCode = 1
+	}
+	output := firstNonEmpty(stringValue(item["aggregated_output"]), stringValue(item["aggregatedOutput"]), stringValue(item["output"]))
+	digest := sha256.Sum256([]byte(output))
+	observation = v7VerificationCommandObservation{FinishedAt: at, ExitCode: exitCode, Digest: "sha256:" + hex.EncodeToString(digest[:])}
+	if observation.FinishedAt.IsZero() {
+		observation.FinishedAt = time.Now().UTC()
+	}
+	observation.Message = "pass"
+	if exitCode != 0 {
+		observation.Message = fmt.Sprintf("exit status %d", exitCode)
+	}
+	return id, command, observation, true
 }
 
 func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
@@ -59,6 +100,12 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 		}
 		return eventLog.Append(kind, run.ActiveAttemptID, RunnerCodexExec, payload)
 	}
+	existingCommands := map[string]bool{}
+	for _, event := range readReviewPacketEvents(run.EventSinkPath) {
+		if reviewPacketEventKind(event) == "command_completed" {
+			existingCommands[stringValue(reviewPacketEventPayload(event)["command_id"])] = true
+		}
+	}
 	changed := false
 	for lineIndex, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
@@ -88,6 +135,17 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 		sessionRef := firstNonEmpty(run.SessionRef, findSessionRef(value))
 		turnID := codexExecTurnID(value)
 		usage := extractUsageCounters(json.RawMessage(line))
+		if commandID, command, observation, completed := codexExecCompletedCommand(value); completed && !existingCommands[commandID] {
+			material := codexExecObservedMaterialFingerprint(d.store, run)
+			if err := appendEvent("command_completed", map[string]any{
+				"command_id": commandID, "command": command, "result": observation.Message,
+				"exit_code": observation.ExitCode, "output_sha256": observation.Digest,
+				"finished_at": observation.FinishedAt.Format(time.RFC3339Nano), "material": material,
+			}); err != nil {
+				return changed, fmt.Errorf("record codex-exec command event: %w", err)
+			}
+			existingCommands[commandID], changed = true, true
+		}
 		if turnID == "" {
 			turnID = usage.turnID
 		}
@@ -219,6 +277,22 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+func codexExecObservedMaterialFingerprint(store *RuntimeStore, run RunStatus) string {
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
+	if err != nil || len(projects) != 1 || projects[0].LoadError != nil {
+		return ""
+	}
+	task, err := resolveV7Note(projects[0].Project.VaultRoot, run.ItemID, "task")
+	if err != nil {
+		return ""
+	}
+	identity, _, err := v7VerificationReceiptIdentityFor(projects[0].Project.VaultRoot, task, run.WorkspacePath, nil)
+	if err != nil {
+		return ""
+	}
+	return identity.MaterialFingerprint
 }
 
 func normalizeCodexExecEventKind(kind string) string {

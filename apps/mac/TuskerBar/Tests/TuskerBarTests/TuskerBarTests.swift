@@ -188,36 +188,13 @@ safe=visible
         XCTAssertFalse(RuntimeLaunchPlan.manages(URL(string: "https://127.0.0.1:7421")!))
     }
 
-    func testHumanReceiptRequiresAppOwnedChildBoundToConfiguredOrigin() {
-        let configured = URL(string: "http://127.0.0.1:7421")!
-        XCTAssertTrue(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
-            baseURL: configured, configuredBaseURL: configured,
-            childPID: 42, childRunning: true, livenessPID: 42,
-            serveEnabled: true, serveAddr: "127.0.0.1:7421"
-        ))
-        XCTAssertFalse(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
-            baseURL: configured, configuredBaseURL: configured,
-            childPID: 42, childRunning: true, livenessPID: 43,
-            serveEnabled: true, serveAddr: "127.0.0.1:7421"
-        ))
-        XCTAssertFalse(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
-            baseURL: configured, configuredBaseURL: configured,
-            childPID: 42, childRunning: true, livenessPID: 42,
-            serveEnabled: true, serveAddr: "127.0.0.1:7422"
-        ))
-        XCTAssertFalse(RuntimeLaunchPlan.ownsHumanReceiptRuntime(
-            baseURL: configured, configuredBaseURL: URL(string: "http://127.0.0.1:7422")!,
-            childPID: 42, childRunning: true, livenessPID: 42,
-            serveEnabled: true, serveAddr: "127.0.0.1:7421"
-        ))
-    }
-
     func testBundledDaemonDoesNotInheritAgentSessionIdentity() {
         let environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: [
             "PATH": "/usr/bin",
             "TUSKER_ATTEMPT_ID": "attempt-1",
             "CODEX_SHELL": "1",
             "CODEX_THREAD_ID": "thread-1",
+            "CODEX_SESSION_ID": "session-1",
             "CLAUDECODE": "1",
             "CLAUDE_CODE_ENTRYPOINT": "cli",
         ])

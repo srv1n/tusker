@@ -127,6 +127,17 @@ func findRunScopedOrAmbiguous(store *RuntimeStore, projectID, identity string) (
 	return store.FindRun(identity)
 }
 
+func findRunForVault(store *RuntimeStore, vaultPath, identity string) (*RunStatus, error) {
+	projectID, registered, err := registeredProjectIDForVault(store, vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	if registered {
+		return store.FindRunScoped(projectID, identity)
+	}
+	return store.FindRun(identity)
+}
+
 // FindRunScoped resolves a run only within the named registered project. A
 // bare identity is intentionally not a durable key: record IDs and item IDs
 // are project-local and may legitimately collide across repositories.

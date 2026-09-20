@@ -19,7 +19,9 @@ If a human must supply intent, credentials, or a decision, use a named human
 gate — an execution condition, not a task. An architect may implement its own
 task through an explicit authorized work claim that records the actual
 conversation and scope, while retaining author provenance and independent
-review; an architect contact alone does not imply self-implementation.
+review; an architect contact alone does not imply self-implementation. Reuse an
+existing unchanged approval request and gate: an approved decision is durable
+authority for that bound material, not a reason to author another gate.
 Unresolved product decisions return to planning; interviewing is outside
 this skill.
 
