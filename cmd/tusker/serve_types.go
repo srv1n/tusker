@@ -435,6 +435,7 @@ type serveRunSummary struct {
 	WorkspaceMode        string                     `json:"workspaceMode"`
 	StartedAt            string                     `json:"startedAt"`
 	UpdatedAt            string                     `json:"updatedAt"`
+	Attention            *WorkerAttention           `json:"attention,omitempty"`
 }
 
 type serveAttempt struct {

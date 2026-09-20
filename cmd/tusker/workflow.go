@@ -48,6 +48,7 @@ type Workflow struct {
 	} `yaml:"agents"`
 	Runtime struct {
 		PollIntervalMS          int                   `yaml:"poll_interval_ms"`
+		VisibilityIntervalMS    int                   `yaml:"visibility_interval_ms,omitempty"`
 		LeaseTTLMS              int                   `yaml:"lease_ttl_ms"`
 		MaxActiveRunsPerProject int                   `yaml:"max_active_runs_per_project"`
 		MaxContinuationRetries  int                   `yaml:"max_continuation_retries"`
@@ -324,6 +325,7 @@ func defaultWorkflow() Workflow {
 	wf.Agents.MaxConcurrentAgents = 2
 	wf.Agents.MaxConcurrentAgentsByState = map[string]int{"rework": 1}
 	wf.Runtime.PollIntervalMS = int(defaultReconcileTick / time.Millisecond)
+	wf.Runtime.VisibilityIntervalMS = 600000
 	wf.Runtime.LeaseTTLMS = 900000
 	wf.Runtime.MaxActiveRunsPerProject = 1
 	wf.Runtime.MaxContinuationRetries = 3

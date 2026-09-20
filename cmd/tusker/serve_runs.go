@@ -43,6 +43,10 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 	if identity != nil {
 		workspacePath, workspaceMode = identity.WorkspacePath, identity.WorkspaceMode
 	}
+	attention, err := s.store.WorkerAttentionForRun(run)
+	if err != nil {
+		return serveRunSummary{}, err
+	}
 	return serveRunSummary{
 		TaskID:               taskID,
 		TaskTitle:            taskTitle,
@@ -74,6 +78,7 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 		WorkspaceMode:        workspaceMode,
 		StartedAt:            run.StartedAt,
 		UpdatedAt:            run.UpdatedAt,
+		Attention:            attention,
 	}, nil
 }
 

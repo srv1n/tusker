@@ -46,6 +46,7 @@ type runInspection struct {
 	Authorizations           []RunAuthorization          `json:"authorizations"`
 	Identity                 *RunIdentityMetadata        `json:"identity,omitempty"`
 	Resume                   runResumeCapability         `json:"resume"`
+	Attention                *WorkerAttention            `json:"attention,omitempty"`
 	Truncated                map[string]bool             `json:"truncated,omitempty"`
 }
 
@@ -280,6 +281,10 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 	if eventsTruncated {
 		truncated["external_loop_events"] = true
 	}
+	attention, err := store.WorkerAttentionForRun(*run)
+	if err != nil {
+		return runInspection{}, err
+	}
 	return runInspection{
 		OK:                       true,
 		Run:                      run,
@@ -307,6 +312,7 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 		Authorizations: authorizations,
 		Identity:       identity,
 		Resume:         resumeCapability(run, latestSession),
+		Attention:      attention,
 		Truncated:      truncated,
 	}, nil
 }
@@ -343,6 +349,11 @@ func runsInspectCmd(args Args) error {
 	fmt.Printf("lease=%s outcome=%s lane=%s rev=%d attempts=%d pid=%d\n", run.LeaseState, run.AttemptOutcome, firstNonEmpty(run.Lane, runLaneExecute), run.WorkRevision, run.AttemptCount, run.ProcessPID)
 	if inspection.FailureClass != "" {
 		fmt.Printf("failure_class=%s\n", inspection.FailureClass)
+	}
+	if inspection.Attention != nil {
+		fmt.Printf("attention required=%t last_milestone=%s last_activity=%s silence_since=%s action=%s\n",
+			inspection.Attention.AttentionRequired, inspection.Attention.LastMilestone, inspection.Attention.LastActivityAt,
+			inspection.Attention.SilenceSince, inspection.Attention.RecommendedAction)
 	}
 	fmt.Printf("tokens total=%d input=%d output=%d\n", inspection.TokenTotals.TotalTokens, inspection.TokenTotals.InputTokens, inspection.TokenTotals.OutputTokens)
 	fmt.Printf("turns=%d", len(turns))

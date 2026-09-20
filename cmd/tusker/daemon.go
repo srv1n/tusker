@@ -973,6 +973,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		return err
 	}
 	dispatchCandidates := make([]daemonDispatchCandidate, 0)
+	visibilityIntervals := map[string]time.Duration{}
 
 	for _, loaded := range projects {
 		select {
@@ -986,6 +987,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 
 		project := loaded.Project
 		wfFile := loaded.Workflow
+		visibilityIntervals[project.ProjectID] = time.Duration(wfFile.Data.Runtime.VisibilityIntervalMS) * time.Millisecond
 		notes := loaded.Notes
 		sortDispatchCandidates(notes)
 		noteStatusByRecord := map[string]string{}
@@ -1574,6 +1576,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
+	if err := d.evaluateWorkerAttention(finalRuns, visibilityIntervals, time.Now().UTC()); err != nil {
+		return err
+	}
 	if err := refreshRuntimeSentinelProjectNotes(sentinelProjects); err != nil {
 		return err
 	}
@@ -1643,6 +1648,29 @@ func countDispatchCapacityRuns(runs []RunStatus) int {
 		}
 	}
 	return count
+}
+
+func (d *Daemon) evaluateWorkerAttention(runs []RunStatus, intervals map[string]time.Duration, now time.Time) error {
+	if d == nil || d.store == nil {
+		return nil
+	}
+	for _, run := range runs {
+		interval := intervals[run.ProjectID]
+		if interval <= 0 {
+			continue
+		}
+		identity, err := d.store.WorkerIdentityForRun(run)
+		if err != nil {
+			return err
+		}
+		if identity == nil {
+			continue
+		}
+		if _, err := d.store.EvaluateWorkerAttention(*identity, now, interval); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *Daemon) reclaimExpiredDispatchCapacity(runs []RunStatus, now time.Time) (bool, error) {
@@ -2870,6 +2898,8 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			} else if renewed {
 				run.LeaseExpiresAt = nowTime.Add(defaultRunLeaseTTL).Format(time.RFC3339)
 				run.LeaseHost = runtimeLeaseHost()
+				run.LastHeartbeatAt = nowTime.Format(time.RFC3339)
+				run.UpdatedAt = nowTime.Format(time.RFC3339)
 				if strings.TrimSpace(run.LeaseOwner) == "" {
 					run.LeaseOwner = run.ActiveAttemptID
 				}

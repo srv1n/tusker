@@ -46,8 +46,8 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 			return tuskerError(errorConfigInvalid, "agents.max_concurrent_agents_by_state references unknown tracker state "+state, withPath(filePath))
 		}
 	}
-	if wf.Runtime.PollIntervalMS <= 0 || wf.Runtime.LeaseTTLMS <= 0 {
-		return tuskerError(errorConfigInvalid, "runtime.poll_interval_ms and runtime.lease_ttl_ms must be > 0", withPath(filePath))
+	if wf.Runtime.PollIntervalMS <= 0 || wf.Runtime.LeaseTTLMS <= 0 || wf.Runtime.VisibilityIntervalMS <= 0 {
+		return tuskerError(errorConfigInvalid, "runtime.poll_interval_ms, runtime.lease_ttl_ms, and runtime.visibility_interval_ms must be > 0", withPath(filePath))
 	}
 	if wf.Runtime.MaxActiveRunsPerProject <= 0 {
 		return tuskerError(errorConfigInvalid, "runtime.max_active_runs_per_project must be > 0", withPath(filePath))
