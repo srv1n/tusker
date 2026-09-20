@@ -62,13 +62,16 @@ cmp "$TUSKER_CLI" "$STAGED_BUNDLE/Contents/Resources/tusker"
 cp Info.plist "$STAGED_BUNDLE/Contents/Info.plist"
 
 IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | awk '/Developer ID Application:/{print $2; exit}')
-if [ -n "${IDENTITY:-}" ]; then
-  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$STAGED_BUNDLE/Contents/Resources/tusker"
-  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$STAGED_BUNDLE"
-else
-  codesign --force --sign - "$STAGED_BUNDLE/Contents/Resources/tusker"
-  codesign --force --sign - "$STAGED_BUNDLE"
-fi
+sign_local() {
+  target=$1
+  if [ -n "${IDENTITY:-}" ] && codesign --force --options runtime --timestamp --sign "$IDENTITY" "$target"; then
+    return
+  fi
+  [ -z "${IDENTITY:-}" ] || printf 'Developer ID signing unavailable; using ad-hoc signing for %s\n' "$target" >&2
+  codesign --force --sign - "$target"
+}
+sign_local "$STAGED_BUNDLE/Contents/Resources/tusker"
+sign_local "$STAGED_BUNDLE"
 
 codesign --verify --deep --strict "$STAGED_BUNDLE"
 sync

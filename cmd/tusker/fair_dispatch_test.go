@@ -95,6 +95,53 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		}
 	})
 
+	t.Run("expired_dead_claims_from_unloadable_project_release_global_capacity", func(t *testing.T) {
+		stateRoot := t.TempDir()
+		t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
+		store, err := OpenRuntimeStore(stateRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		fairDispatchPollProject(t, store, "project-healthy", "HLT", 1)
+		if err := store.UpsertProject(RegisteredProject{
+			ProjectID: "project-unloadable", ProjectKey: "project-unloadable", Name: "unloadable",
+			RepoRoot: filepath.Join(t.TempDir(), "missing"), VaultRoot: filepath.Join(t.TempDir(), ".tusker"),
+			Enabled: false, Health: projectHealthError,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		expires := time.Now().UTC().Add(-3 * defaultRunLeaseTTL).Format(time.RFC3339)
+		for _, id := range []string{"OLD-T-0001", "OLD-T-0002"} {
+			if err := store.UpsertRun(RunStatus{
+				ProjectID: "project-unloadable", RecordID: id, ItemID: id,
+				LeaseState: string(LeaseStateClaimed), LeaseOwner: "agent:stale", LeaseGeneration: 1,
+				LeaseExpiresAt: expires, ActiveAttemptID: "attempt-" + id, AttemptOutcome: string(AttemptOutcomeNone),
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		daemon := &Daemon{store: store, stateRoot: stateRoot, frontiers: map[string]*projectFrontierIndex{}, frontierHints: map[string][]daemonControlChange{}}
+		if err := daemon.PollOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"OLD-T-0001", "OLD-T-0002"} {
+			run := fairDispatchFindRun(t, store, "project-unloadable", id)
+			if runConsumesDispatchCapacity(run) || run.LeaseState != string(LeaseStateInterrupted) {
+				t.Fatalf("expired dead claim still consumes capacity: %#v", run)
+			}
+		}
+		runs, err := store.ListRuns()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if active := countDispatchCapacityRuns(runs); active != 0 {
+			t.Fatalf("expired dead claims still consume global capacity: %d active in %#v", active, runs)
+		}
+	})
+
 	t.Run("targeted_poll_loads_and_dispatches_only_the_requested_project", func(t *testing.T) {
 		stateRoot := t.TempDir()
 		t.Setenv("TUSKER_STATE_ROOT", stateRoot)
@@ -537,6 +584,77 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		blocked := fairDispatchFindRun(t, store, project.ProjectID, "APP-T-0002")
 		if !strings.Contains(blocked.LastError, "blocked_by_dependency") {
 			t.Fatalf("stale candidate lacks post-reactor dependency reason: %#v", blocked)
+		}
+	})
+
+	t.Run("post-reactor completion drops stale review candidate", func(t *testing.T) {
+		vault := automationTestVault(t)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewed task", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+		makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+			"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
+			"work_revision": 1, "source_sha": "reviewed-source",
+		})
+		stale, err := resolveV7Note(vault, "APP-T-0001", "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		project := registerAutomationTestProject(t, vault)
+		store, err := OpenRuntimeStore(DefaultStateRoot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		run := fairDispatchTestRun(project.ProjectID, "APP-T-0001")
+		run.Lane = runLaneReview
+		run.WorkRevision = 1
+		if err := store.UpsertRun(run); err != nil {
+			t.Fatal(err)
+		}
+		wfFile, err := loadWorkflow(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidate := daemonDispatchCandidate{
+			Project: project, Workflow: wfFile, Note: stale, Run: run,
+			Lane: runLaneReview, Status: "review", ProjectLimit: 4,
+		}
+
+		// The completion reactor closes the canonical task after this poll has
+		// already captured its review candidate.
+		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+			"status": "done", "readiness": "done", "proof_status": "satisfied",
+		})
+		daemon := &Daemon{store: store, stateRoot: store.stateRoot}
+		var order []string
+		daemon.fairDispatchRun = fairDispatchRecorder(&order)
+		if err := daemon.dispatchFairCandidates(context.Background(), []daemonDispatchCandidate{candidate}, 2); err != nil {
+			t.Fatal(err)
+		}
+		if len(order) != 0 {
+			t.Fatalf("stale completed review reached fair claim: %#v", order)
+		}
+		blocked := fairDispatchFindRun(t, store, project.ProjectID, "APP-T-0001")
+		if !strings.Contains(blocked.LastError, "post-reactor tracker status is done") {
+			t.Fatalf("stale review lacks canonical completion reason: %#v", blocked)
+		}
+
+		// Direct callers share the same final review fence and cannot bypass
+		// the fair scheduler's canonical refresh.
+		daemon.fairDispatchRun = nil
+		direct, persisted, err := daemon.dispatchRun(context.Background(), project, wfFile, stale, run, runLaneReview)
+		if err != nil || persisted || isDispatchingLeaseState(direct.LeaseState) {
+			t.Fatalf("direct stale review dispatched: run=%#v persisted=%t err=%v", direct, persisted, err)
+		}
+		if !strings.Contains(direct.LastError, "review dispatch blocked: tracker status is done") {
+			t.Fatalf("direct stale review lacks canonical completion reason: %#v", direct)
+		}
+		attempts, err := store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(attempts) != 0 {
+			t.Fatalf("stale completed review created attempts: %#v", attempts)
 		}
 	})
 

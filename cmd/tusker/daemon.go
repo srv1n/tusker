@@ -908,6 +908,14 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
+	if reclaimed, reclaimErr := d.reclaimExpiredDispatchCapacity(allRuns, time.Now().UTC()); reclaimErr != nil {
+		return reclaimErr
+	} else if reclaimed {
+		allRuns, err = d.store.ListRuns()
+		if err != nil {
+			return err
+		}
+	}
 	sentinelProjects := []runtimeSentinelProjectSnapshot{}
 	runsByProject := map[string]map[string]RunStatus{}
 	for _, run := range allRuns {
@@ -1637,6 +1645,21 @@ func countDispatchCapacityRuns(runs []RunStatus) int {
 	return count
 }
 
+func (d *Daemon) reclaimExpiredDispatchCapacity(runs []RunStatus, now time.Time) (bool, error) {
+	reclaimed := false
+	for _, run := range runs {
+		if !runConsumesDispatchCapacity(run) {
+			continue
+		}
+		changed, err := d.store.reclaimExpiredRunLeaseIfSnapshot(run, now, defaultRunLeaseTTL, "daemon poll reclaimed expired dead lease")
+		if err != nil {
+			return reclaimed, err
+		}
+		reclaimed = reclaimed || changed
+	}
+	return reclaimed, nil
+}
+
 func countDispatchCapacityProjectRuns(runs map[string]RunStatus) int {
 	count := 0
 	for _, run := range runs {
@@ -1981,6 +2004,41 @@ func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStat
 	workRevision := intField(note.Data, "work_revision")
 	_ = workRevision
 	return true
+}
+
+func (d *Daemon) reviewDispatchBlocker(project RegisteredProject, wf Workflow, note Note, run RunStatus) (string, error) {
+	status := stringField(note.Data, "status")
+	if !containsString(wf.Tracker.ReviewStates, status) {
+		return "tracker status is " + fallback(status, "(missing)"), nil
+	}
+	workRevision := intField(note.Data, "work_revision")
+	if run.WorkRevision != workRevision {
+		return fmt.Sprintf("work revision changed from %d to %d", run.WorkRevision, workRevision), nil
+	}
+	hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, run.RecordID, workRevision, stringField(note.Data, "state_rev"))
+	if err != nil {
+		return "", err
+	}
+	if hasResult {
+		return "current review result is already recorded", nil
+	}
+	attempts, err := d.store.ListAttemptsForRun(project.ProjectID, run.RecordID)
+	if err != nil {
+		return "", err
+	}
+	if !reviewDispatchAllowed(project.VaultRoot, note, wf, run, reviewerAttemptCount(attempts)) {
+		return "task is no longer review-dispatch-eligible", nil
+	}
+	return "", nil
+}
+
+func (d *Daemon) currentReviewDispatchNote(project RegisteredProject, wf Workflow, run RunStatus) (Note, string, error) {
+	note, err := resolveNote(project.VaultRoot, run.RecordID)
+	if err != nil {
+		return Note{}, "", err
+	}
+	reason, err := d.reviewDispatchBlocker(project, wf, note, run)
+	return note, reason, err
 }
 
 func reviewerAttemptCount(attempts []RunAttempt) int {
@@ -3932,6 +3990,18 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 		return run, false, tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": run.RecordID, "lane": lane}))
 	}
+	if lane == runLaneReview && strings.TrimSpace(note.AbsolutePath) != "" {
+		current, reason, currentErr := d.currentReviewDispatchNote(project, wfFile.Data, run)
+		if currentErr != nil {
+			return run, false, currentErr
+		}
+		if reason != "" {
+			run.LastError = "review dispatch blocked: " + reason
+			run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			return run, false, nil
+		}
+		note = current
+	}
 	directive, err := d.store.RunDirective(project.ProjectID, run.RecordID)
 	if err != nil {
 		return run, false, err
@@ -4341,6 +4411,21 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		}
 		attemptIntent.ProviderIdempotencyKey = providerReservationKey(project.ProjectID, run.RecordID, attemptID, run.WorkRevision, lane)
 		attemptIntent.ExternalThreadCap = caps.MaxExternalThreads
+	}
+	// Admission and runner preparation may take long enough for the completion
+	// reactor to close the task. Recheck at the lease boundary so a stale review
+	// can never create an attempt even if it became stale after initial planning.
+	if lane == runLaneReview && strings.TrimSpace(note.AbsolutePath) != "" {
+		current, reason, currentErr := d.currentReviewDispatchNote(project, wfFile.Data, run)
+		if currentErr != nil {
+			return run, false, currentErr
+		}
+		if reason != "" {
+			run.LastError = "review dispatch blocked: " + reason
+			run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			return run, false, nil
+		}
+		note = current
 	}
 	var claimResult runClaimResult
 	if directiveQueued {

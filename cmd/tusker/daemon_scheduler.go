@@ -358,18 +358,15 @@ func (d *Daemon) runFairDispatchCandidate(ctx context.Context, candidate daemonD
 	return updated, persisted, claimed, err
 }
 
-// refreshFairExecuteCandidate closes the gap between project-local candidate
+// refreshFairDispatchCandidate closes the gap between project-local candidate
 // collection and global fair selection. The completion reactor runs in that
-// gap and may relock a proof-green soft dependent. Scope admission alone is
-// insufficient in all_eligible mode, so execute and integrator candidates
-// reload canonical notes and rerun both dependency eligibility and the full
-// automation plan immediately before selection.
-func (d *Daemon) refreshFairExecuteCandidate(candidate daemonDispatchCandidate, run RunStatus, projectRuns map[string]RunStatus) (daemonDispatchCandidate, string, error) {
+// gap and may close a reviewed task or relock a dependent, so every lane
+// reloads canonical state immediately before selection.
+func (d *Daemon) refreshFairDispatchCandidate(candidate daemonDispatchCandidate, run RunStatus, projectRuns map[string]RunStatus) (daemonDispatchCandidate, string, error) {
 	// PollOnce always supplies both canonical paths. Empty paths identify
 	// scheduler-only synthetic candidates, which have no tracker source to
 	// refresh.
-	if (candidate.Lane != runLaneExecute && candidate.Lane != runLaneIntegrator) ||
-		strings.TrimSpace(candidate.Note.AbsolutePath) == "" ||
+	if strings.TrimSpace(candidate.Note.AbsolutePath) == "" ||
 		strings.TrimSpace(candidate.Workflow.Path) == "" {
 		return candidate, "", nil
 	}
@@ -382,6 +379,21 @@ func (d *Daemon) refreshFairExecuteCandidate(candidate daemonDispatchCandidate, 
 	if !ok {
 		return candidate, "post-reactor task projection is missing", nil
 	}
+	candidate.Run = run
+	candidate.Status = stringField(note.Data, "status")
+	if candidate.Lane == runLaneReview {
+		if reason, err := d.reviewDispatchBlocker(candidate.Project, candidate.Workflow.Data, note, run); err != nil {
+			return candidate, "", err
+		} else if reason != "" {
+			return candidate, "post-reactor " + reason, nil
+		}
+		return candidate, "", nil
+	}
+	if candidate.Lane != runLaneExecute && candidate.Lane != runLaneIntegrator {
+		return candidate, "post-reactor unsupported dispatch lane " + candidate.Lane, nil
+	}
+	candidate.Note = note
+	candidate.NotesByID = notesByID
 	dispatchNote := note
 	dispatchNotes := notes
 	dispatchNotesByID := notesByID
@@ -487,7 +499,7 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 			continue
 		}
 		projectRunsByRecord, projectRuns := fairDispatchProjectRuns(runs, candidate.Project.ProjectID)
-		candidate, refreshReason, refreshErr := d.refreshFairExecuteCandidate(candidate, run, projectRunsByRecord)
+		candidate, refreshReason, refreshErr := d.refreshFairDispatchCandidate(candidate, run, projectRunsByRecord)
 		if refreshErr != nil {
 			return refreshErr
 		}
