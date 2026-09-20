@@ -939,7 +939,7 @@ func (s *RuntimeStore) Migrate() error {
 		return err
 	}
 	if version >= runtimeSchemaVersion && s.runtimeSchemaComplete() {
-		return nil
+		return s.migrateWorkerCoordination()
 	}
 	statements := []string{
 		`PRAGMA journal_mode = WAL;`,
@@ -1690,6 +1690,9 @@ func (s *RuntimeStore) Migrate() error {
 	if err := s.migrateExecutionLifecycle(); err != nil {
 		return err
 	}
+	if err := s.migrateWorkerCoordination(); err != nil {
+		return err
+	}
 	_, err := s.exec(fmt.Sprintf(`PRAGMA user_version = %d`, runtimeSchemaVersion))
 	return err
 }
@@ -1705,6 +1708,7 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		"apply_inputs", "review_results", "gate_ledger", "batch_gate_runs", "completion_transactions",
 		"completion_authority_issuances", "resource_leases", "resource_lease_events", "daemon_settings",
 		"departure_runs", "landing_authority_issuances", "agent_access_approvals", "external_loop_events", "agent_contacts", "agent_messages", "agent_wakeups", "architect_continuations",
+		"worker_coordination_events", "worker_provider_activity", "worker_provider_cursors", "worker_deliveries", "worker_attention", "worker_provider_qualifications",
 	} {
 		var count int
 		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, []any{table}, &count); err != nil || count != 1 {
@@ -1729,6 +1733,8 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 		{"external_loop_events", "project_id"}, {"external_loop_events", "record_id"}, {"external_loop_events", "idempotency_key"},
 		{"architect_continuations", "applied_wave_id"}, {"architect_continuations", "last_error"},
 		{"agent_wakeups", "claim_id"}, {"agent_wakeups", "claimed_at"},
+		{"worker_coordination_events", "event_id"}, {"worker_provider_activity", "activity_id"}, {"worker_deliveries", "delivery_id"},
+		{"worker_provider_cursors", "cursor"}, {"worker_attention", "attention_required"}, {"worker_provider_qualifications", "capabilities_json"},
 	} {
 		rows, err := s.query(`PRAGMA table_info(` + required.table + `)`)
 		if err != nil {

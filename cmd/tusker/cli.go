@@ -93,7 +93,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "demo", "task":
+	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "demo", "task", "worker":
 		return true
 	default:
 		return false
@@ -258,6 +258,11 @@ func runInner(command string, args Args) (int, error) {
 		return 0, workRecoverCmd(args)
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		return 0, executionCmd(args, strings.TrimSpace(strings.TrimPrefix(command, "execution")))
+	case "worker":
+		printWorkerHelp()
+		return 0, nil
+	case "worker checkpoint", "worker status", "worker message", "worker reconcile", "worker qualify":
+		return 0, workerCmd(args, strings.TrimPrefix(command, "worker "))
 	case "claim":
 		return 0, claimCmd(args)
 	case "heartbeat":
@@ -685,6 +690,9 @@ func runInner(command string, args Args) (int, error) {
 	case "help claim":
 		printClaimHelp()
 		return 0, nil
+	case "help worker", "help worker checkpoint", "help worker status", "help worker message", "help worker reconcile", "help worker qualify":
+		printWorkerHelp()
+		return 0, nil
 	case "help evidence":
 		printEvidenceHelp()
 		return 0, nil
@@ -845,6 +853,7 @@ Commands:
   discard             abandon work safely while preserving its history
   next                show the next pickable task
   work                atomically own and retire one interactive work session
+  worker              record worker checkpoints, attention, and bounded deliveries
   claim               alias for work start
   evidence            add evidence records
   gate                list, satisfy, waive, or obsolete gates
@@ -953,6 +962,8 @@ func printCommandHelp(command string) bool {
 		printNextHelp()
 	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review", "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile", "work recover":
 		printWorkSessionHelp()
+	case "worker", "worker checkpoint", "worker status", "worker message", "worker reconcile", "worker qualify":
+		printWorkerHelp()
 	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
 		printExecutionHelp()
 	case "claim":
