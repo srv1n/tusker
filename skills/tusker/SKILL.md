@@ -13,8 +13,10 @@ Interactive sessions implement authorized work through interactive claims;
 never launch a daemon or nested worker. With `TUSKER_ATTEMPT_ID`, follow the
 existing claim. Task records do not expand the user's authorization.
 
-For status or a simple lookup, use `tusker show <ID> --capsule`, `tusker list`,
-or `tusker search <term>`. Stop reading when the evidence answers the request.
+Use four verbs: inspect with `show` or `status`, run with `tusker run <ID>`,
+observe with `runs`, and finish through proof and review. A run
+directive queues the exact task or wave; project Background work is the only
+daemon opt-in. Stop reading when the evidence answers the request.
 
 ## Route by stage
 

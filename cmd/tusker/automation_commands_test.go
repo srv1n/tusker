@@ -59,6 +59,39 @@ func TestAutomationExplainJSONReportsBlockers(t *testing.T) {
 	}
 }
 
+func TestAutomationUsesRuntimeToggleAndResolvedProfileAsSingleAuthorities(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	project.Enabled = true
+	project.Health = projectHealthHealthy
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.dispatch_scope", "all_eligible"); err != nil {
+		t.Fatal(err)
+	}
+	profile := directEmergencyRunnerProfileForTest()
+	profile["harness"] = string(RunnerDevin)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.test-devin", profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard.execute", []string{"test-devin"}); err != nil {
+		t.Fatal(err)
+	}
+	writePendingDirectTask(t, vault, "APP-T-0001", "", map[string]any{"status": "ready", "readiness": "ready"})
+
+	ctx, err := loadAutomationCommandContextWithStore(Args{"vault": vault}, DefaultStateRoot(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := ctx.NotesByID["APP-T-0001"]
+	explanation := ctx.explainTaskForRunnerMode(note, automationResolveRunner(note, ctx.Workflow.Data), nil, true, false)
+	if !explanation.Dispatchable {
+		t.Fatalf("runtime-enabled project with a resolved Devin profile should dispatch: %#v", explanation.Blockers)
+	}
+	assertEqual(t, string(RunnerDevin), explanation.Runner, "resolved harness")
+	assertEqual(t, "test-devin", explanation.RunnerProfile, "resolved profile")
+}
+
 func TestAutomationQueueJSONSplitsEligibleAndBlockedWithoutMutatingLifecycle(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
@@ -88,7 +121,7 @@ func TestAutomationQueueJSONSplitsEligibleAndBlockedWithoutMutatingLifecycle(t *
 	}
 	assertEqual(t, true, payload.OK, "json ok")
 	if len(payload.Queue.Eligible) != 1 || payload.Queue.Eligible[0].ID != "APP-T-0001" {
-		t.Fatalf("expected APP-T-0001 eligible, got %#v", payload.Queue.Eligible)
+		t.Fatalf("expected APP-T-0001 eligible, got eligible=%#v blocked=%#v", payload.Queue.Eligible, payload.Queue.Blocked)
 	}
 	if len(payload.Queue.Blocked) != 1 || payload.Queue.Blocked[0].ID != "APP-T-0002" {
 		t.Fatalf("expected APP-T-0002 blocked, got %#v", payload.Queue.Blocked)

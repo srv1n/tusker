@@ -1071,8 +1071,8 @@ func digestRunIsRedOrParked(run RunStatus) bool {
 	case LeaseStateRetryQueued, LeaseStateRunning, LeaseStateClaimed:
 		return false
 	}
-	outcome := AttemptOutcome(strings.TrimSpace(run.AttemptOutcome))
-	return outcome == AttemptOutcomeFailed || outcome == AttemptOutcomeBlocked || outcome == AttemptOutcomeBudgetExceeded
+	outcome := projectedAttemptOutcome(run.AttemptOutcome, run.LastError)
+	return outcome == AttemptOutcomeUnknown || outcome == AttemptOutcomeFailed || outcome == AttemptOutcomeBlocked || outcome == AttemptOutcomeBudgetExceeded
 }
 
 func oneLine(value string) string {

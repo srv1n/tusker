@@ -547,6 +547,14 @@ func v7TaskClosePolicy(vaultPath string, taskData map[string]any) (v7ClosePolicy
 }
 
 func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string) error {
+	return enforceV7ClosePolicyWithAcceptor(vaultPath, task, idx, actor, true)
+}
+
+// enforceV7ClosePolicyWithAcceptor enforces the risk-based close policy.
+// requireAcceptor=false is reserved for adopt_completed's objective close,
+// where the authored proof contract replaces the acceptor heuristic while
+// evidence and gate requirements remain fully enforced.
+func enforceV7ClosePolicyWithAcceptor(vaultPath string, task Note, idx v7Index, actor string, requireAcceptor bool) error {
 	id := stringField(task.Data, "id")
 	risk := strings.ToLower(fallback(stringField(task.Data, "risk"), "medium"))
 	policy, err := v7TaskClosePolicy(vaultPath, task.Data)
@@ -554,7 +562,7 @@ func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string
 		return err
 	}
 	requiredAcceptor := policy.RequiredAcceptor
-	if !v7CloseAcceptorAllowed(actor, requiredAcceptor) {
+	if requireAcceptor && !v7CloseAcceptorAllowed(actor, requiredAcceptor) {
 		return tuskerError(errorInvalidTransition, id+": close requires reviewer or human acceptor for "+risk+" risk", withContext(map[string]any{"risk": risk, "actor": actor, "required_acceptor": requiredAcceptor}))
 	}
 	requiredEvidence := mergeUniqueStrings(normalizeList(task.Data["evidence_required"]), policy.RequiredEvidence)

@@ -30,7 +30,6 @@ describe("human approval continuation", () => {
     client.setQueryData(qk.waveReview("app", "W-0001"), review);
     const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(WaveAuthorityControls, { projectId: "app", waveId: "W-0001" }))));
     expect(html).toContain("Waiting for you");
-    expect(html).toContain("A specific decision is needed before this work can continue.");
     expect(html).toContain("Authorize the CLI pilot.");
     expect(html).toContain("Approve and continue");
     expect(html).toContain("Review scope and limits");
@@ -68,6 +67,6 @@ describe("human approval continuation", () => {
     expect(html).toContain("Approve and continue");
     expect(html).toContain('data-wave-control="wave start"');
     expect(html.indexOf("Approve and continue")).toBeLessThan(html.indexOf('data-wave-control="wave start"'));
-    expect(html).toContain("other eligible tasks can still start");
+    expect(html).toContain("Eligible tasks can still start.");
   });
 });

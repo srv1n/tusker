@@ -12,6 +12,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestRunnerPolicyIgnoresTaskDurationLimit(t *testing.T) {
+	policy := withDefaultCodexPolicy(CodexPolicy{TurnTimeoutMS: 1})
+	assertEqual(t, 0, policy.TurnTimeoutMS, "task duration limit")
+}
+
 func TestCodexExecCommandWithPolicy(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -463,10 +468,9 @@ func TestCodexExecIngestValidatesTailBeforeDedupMatch(t *testing.T) {
 	}
 }
 
-func TestCodexExecInFlightSilenceUsesCommandCap(t *testing.T) {
+func TestCodexExecInFlightCommandHasNoWallClockLimit(t *testing.T) {
 	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	wf := defaultWorkflow()
-	wf.Codex.TurnTimeoutMS = int((10 * time.Minute) / time.Millisecond)
 	for _, tc := range []struct {
 		name string
 		raw  string
@@ -486,25 +490,10 @@ func TestCodexExecInFlightSilenceUsesCommandCap(t *testing.T) {
 				t.Fatal(err)
 			}
 			run := codexExecHeartbeatRunForTest(rawLogPath, started)
-			stalled, reason := runStallReason(run, wf, started.Add(daemonHeartbeatDeadThreshold+time.Second))
+			stalled, reason := runStallReason(run, wf, started.Add(24*time.Hour))
 			assertEqual(t, false, stalled, "in-flight silence stalled")
 			assertEqual(t, "", reason, "in-flight silence reason")
 		})
-	}
-}
-
-func TestCodexExecInFlightCommandCap(t *testing.T) {
-	started := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
-	rawLogPath := filepath.Join(t.TempDir(), "codex.raw.log")
-	if err := writeText(rawLogPath, `{"method":"item/started","timestamp":"`+started.Format(time.RFC3339)+`","params":{"item":{"id":"cmd-1","type":"commandExecution","command":"go test ./..."}}}`+"\n"); err != nil {
-		t.Fatal(err)
-	}
-	wf := defaultWorkflow()
-	wf.Codex.TurnTimeoutMS = int((3 * time.Minute) / time.Millisecond)
-	stalled, reason := runStallReason(codexExecHeartbeatRunForTest(rawLogPath, started), wf, started.Add(3*time.Minute+time.Second))
-	assertEqual(t, true, stalled, "in-flight cap stalled")
-	if !strings.Contains(reason, "runner in-flight command exceeded cap") || !strings.Contains(reason, "command started 2026-07-08T12:00:00Z") {
-		t.Fatalf("expected in-flight cap reason, got %q", reason)
 	}
 }
 

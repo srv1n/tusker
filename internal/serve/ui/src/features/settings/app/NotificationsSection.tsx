@@ -17,7 +17,6 @@ export function NotificationsSection() {
             label={`Notify on ${r.key}`}
             source={r.source}
             locked
-            description="Persistence is not available yet."
             control={
               <span className="font-mono text-[11.5px] text-muted">{r.on ? "Enabled" : "Disabled"} · coming soon</span>
             }
@@ -27,7 +26,6 @@ export function NotificationsSection() {
           label="Delivery method"
           source="global"
           locked
-          description="Persistence is not available yet."
           control={<span className="font-mono text-[11.5px] text-muted">Both · coming soon</span>}
         />
       </SettingsCard>

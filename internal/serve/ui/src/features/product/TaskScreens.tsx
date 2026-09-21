@@ -3,10 +3,12 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid, List, Play, ShieldCheck, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { harnessLabel } from "@/lib/harness";
+import { RECOVERY_ACTION_LABEL, RECOVERY_EXPLANATION, RECOVERY_STATE_LABEL } from "@/lib/recovery";
 import { QueryBoundary } from "@/components/ui/states";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { api } from "@/lib/api";
-import { useDiscardTask, useReviewBatch, useRun, useRuns, useTask, useTaskRoute, useTaskStart, useTasks } from "@/lib/queries";
+import { useDiscardTask, useRecovery, useReviewBatch, useRun, useRuns, useTask, useTaskRoute, useTaskStart, useTasks } from "@/lib/queries";
 import { Markdown } from "@/features/docs/Markdown";
 import { AgentAccessApprovalList, HumanActionCard } from "@/features/human-action/HumanActionCard";
 import { isBatchSelectable, projectLiveExecution } from "@/features/work/work-utils";
@@ -30,14 +32,14 @@ const TIERS = [["light", "Tier 1 · Light"], ["standard", "Tier 2 · Standard"],
 
 export function routeSummary(route?: TaskRoutePreview): string {
   if (!route?.profile) return `Blocked — ${route?.blockers.join("; ") || "configuration unavailable"}`;
-  return [route.profile, route.model, route.effort, route.harness].filter(Boolean).join(" · ");
+  return [route.profile, route.model, route.effort, harnessLabel(route.harness)].filter(Boolean).join(" · ");
 }
 function accessLabel(route?: TaskRoutePreview) {
   const access = route?.resolved_access?.requested && typeof route.resolved_access.requested !== "string" ? route.resolved_access.requested : route?.access;
   if (!access) return route?.resolved_access?.state ? `Access ${route.resolved_access.state.replaceAll("_", " ")}` : "Access unavailable";
   return `${access.mode === "review_only" ? "Review only" : "Work in projects"} · Internet ${access.network ? "on" : "off"}${route?.resolved_access?.state ? ` · ${route.resolved_access.state.replaceAll("_", " ")}` : ""}`;
 }
-function actualRouteLabel(run?: RunDetail | null) { return run?.runnerProfile && run.model && run.runnerHarness ? [run.runnerProfile, run.model, run.runnerEffort, run.runnerHarness].filter(Boolean).join(" · ") : "Unavailable"; }
+function actualRouteLabel(run?: RunDetail | null) { return run?.runnerProfile && run.model && run.runnerHarness ? [run.runnerProfile, run.model, run.runnerEffort, harnessLabel(run.runnerHarness)].filter(Boolean).join(" · ") : "Unavailable"; }
 
 export function RouteFact({ label, route }: { label: string; route?: TaskRoutePreview }) {
   return <div><span className="block font-mono text-[9px] uppercase tracking-[0.12em] text-faint">{label}</span><span className="mt-1 block text-ink">{routeSummary(route)}</span><span className="mt-0.5 block text-[11px] text-muted">{accessLabel(route)}</span>{route?.source && <span className="block text-[10px] text-faint">Source: {route.source}{route.reason ? ` · ${route.reason}` : ""}</span>}{route?.fallbacks?.length ? <span className="block text-[10px] text-faint">Fallbacks: {route.fallbacks.join(" · ")}</span> : null}</div>;
@@ -490,26 +492,28 @@ export function TaskDetail() {
   const task = useTask(taskId, projectId);
   const run = useRun(taskId, false, projectId);
   const taskStart = useTaskStart(taskId, projectId);
+  const recovery = useRecovery(taskId, projectId);
 
   return (
     <QueryBoundary q={task} loading={<div className="h-full bg-surface p-12"><ProductLoading rows={6} /></div>}>
       {(detail) => {
-        const label = statusCopy(detail);
+        const outcomeUnknown = run.data?.outcome === "outcome-unknown";
+        const label = outcomeUnknown ? RECOVERY_STATE_LABEL : statusCopy(detail);
         const blockers = detail.deps.filter((dependency) => dependency.status !== "done");
         const humanActions = detail.humanActions?.length ? detail.humanActions : detail.humanAction ? [detail.humanAction] : [];
         const currentStatus = detail.rawStatus ?? detail.status;
         const runBlocker = taskRunBlocker(detail);
-        const runnable = !runBlocker;
+        const runnable = !runBlocker && !outcomeUnknown;
         const directiveQueued = detail.runDirective?.state === "queued";
-        const busy = taskStart.isPending || directiveQueued;
+        const busy = taskStart.isPending || recovery.isPending || directiveQueued;
         return (
           <ProductPage
             title={detail.title}
             eyebrow={`${projectId} / Tasks / ${detail.id}`}
             intro={detail.intent || "Task contract and objective proof."}
-            actions={<div className="flex flex-wrap items-center justify-end gap-2"><ProductStatus tone={phaseTone(label)}>{label}</ProductStatus>{runnable && <ProductButton tone="primary" disabled={busy} onClick={() => taskStart.mutate()} aria-label={`Start task ${detail.id}`}><Play size={13} />{directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"}</ProductButton>}</div>}
+			actions={<div className="flex flex-wrap items-center justify-end gap-2"><ProductStatus tone={outcomeUnknown ? "warn" : phaseTone(label)}>{label}</ProductStatus>{outcomeUnknown ? <ProductButton tone="primary" disabled={busy} onClick={() => recovery.mutate("recover_unknown")} aria-label={`${RECOVERY_ACTION_LABEL} ${detail.id}`}><Play size={13} />{recovery.isPending ? "Verifying…" : RECOVERY_ACTION_LABEL}</ProductButton> : runnable && <ProductButton tone="primary" disabled={busy} onClick={() => taskStart.mutate()} aria-label={`Run task ${detail.id}`}><Play size={13} />{directiveQueued ? "Queued" : taskStart.isPending ? "Queuing…" : "Run task"}</ProductButton>}</div>}
           >
-            <div className="mb-6 rounded-lg border border-line bg-panel px-4 py-3" aria-live="polite"><p className="text-[12px] text-muted">Start authorizes this exact task for the configured runtime. If the task belongs to a paused wave, the wave remains paused. The project daemon and Serve operator identity still control whether it can run.</p>{runBlocker && <p role="status" className="mt-2 text-[12px] text-warn">{runBlocker}</p>}<ActionResultLine className="mt-2" pending={taskStart.isPending} error={taskStart.error} result={taskStart.data} />{detail.runDirective && <p className="mt-2 text-[11px] leading-4 text-muted">{detail.runDirective.state === "queued" && `Queued by ${detail.runDirective.actor} · expires ${detail.runDirective.expiresAt}`}{detail.runDirective.state === "lapsed" && (detail.runDirective.reason ?? "The queued run lapsed before dispatch.")}{detail.runDirective.state === "consumed" && `Claimed by ${detail.runDirective.actor}.`}</p>}</div>
+			<div className="mb-6 rounded-lg border border-line bg-panel px-4 py-3" aria-live="polite"><p className="text-[12px] text-muted">{outcomeUnknown ? RECOVERY_EXPLANATION : "Run queues this task. A paused wave stays paused."}</p>{!outcomeUnknown && runBlocker && <p role="status" className="mt-2 text-[12px] text-warn">{runBlocker}</p>}<ActionResultLine className="mt-2" pending={outcomeUnknown ? recovery.isPending : taskStart.isPending} error={outcomeUnknown ? recovery.error : taskStart.error} result={outcomeUnknown ? recovery.data : taskStart.data} />{detail.runDirective && <p className="mt-2 text-[11px] leading-4 text-muted">{detail.runDirective.state === "queued" && `Queued by ${detail.runDirective.actor} · expires ${detail.runDirective.expiresAt}`}{detail.runDirective.state === "lapsed" && (detail.runDirective.reason ?? "The queued run lapsed before dispatch.")}{detail.runDirective.state === "consumed" && `Claimed by ${detail.runDirective.actor}.`}</p>}</div>
             <TaskContractDisclosure body={detail.body} projectId={projectId} open />
             <TaskRouting detail={detail} run={run.data} projectId={projectId} />
             <AgentAccessApprovalList projectId={projectId} taskId={detail.id} approvals={detail.agentAccessApprovals} onRetry={() => taskStart.mutate()} />

@@ -79,6 +79,24 @@ func TestRunnerACPRejectsUnfencedOrUnfingerprintedLaunch(t *testing.T) {
 	}
 }
 
+func TestACPTerminalStatusPreservesOutcomeUncertainty(t *testing.T) {
+	outcome, exitCode, _ := acpTerminalStatus(acp.PromptResult{Outcome: acp.OutcomeDeliveryUnknown, Delivery: acp.DeliveryWriteComplete}, acp.ErrDeliveryUnknown)
+	if outcome != AttemptOutcomeUnknown || exitCode != 1 {
+		t.Fatalf("outcome=%s exit=%d", outcome, exitCode)
+	}
+	outcome, _, _ = acpTerminalStatus(acp.PromptResult{Outcome: acp.OutcomeProtocolFailed}, errors.New("boom"))
+	if outcome != AttemptOutcomeFailed {
+		t.Fatalf("explicit protocol failure=%s, want failed", outcome)
+	}
+}
+
+func TestRunnerExitPreservesOutcomeUnknownDespiteNonzeroExit(t *testing.T) {
+	classification := classifyRunnerProcessExit(RunStatus{Lane: runLaneExecute}, runnerProcessStatus{ExitCode: 1, Outcome: string(AttemptOutcomeUnknown), Reason: "delivery unknown"}, Note{Data: map[string]any{"status": "ready"}}, t.TempDir(), []string{"ready"})
+	if classification.outcome != AttemptOutcomeUnknown {
+		t.Fatalf("classification=%#v", classification)
+	}
+}
+
 func TestACPAuthorityAndCloudBoundariesRemainSeparate(t *testing.T) {
 	runner := &ACPRunner{}
 	if runner.Capabilities().ResumeSession {

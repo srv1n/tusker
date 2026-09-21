@@ -169,8 +169,8 @@ func serveTerminalFailure(run RunStatus, maxAttempts int) bool {
 	if LeaseState(run.LeaseState) == LeaseStateRetryQueued || isDispatchingLeaseState(run.LeaseState) {
 		return false
 	}
-	outcome := AttemptOutcome(strings.TrimSpace(run.AttemptOutcome))
-	if outcome != AttemptOutcomeFailed && outcome != AttemptOutcomeBudgetExceeded {
+	outcome := projectedAttemptOutcome(run.AttemptOutcome, run.LastError)
+	if outcome != AttemptOutcomeUnknown && outcome != AttemptOutcomeFailed && outcome != AttemptOutcomeBudgetExceeded {
 		return false
 	}
 	return run.AttemptCount >= maxAttempts || strings.TrimSpace(run.NextRetryAt) == ""

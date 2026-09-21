@@ -116,6 +116,9 @@ test("walkthrough inspector lets authoritative member phases beat stale task and
     waitingReason: "verification is required",
   };
   expect(actualStage(staleTask, staleRun, proofBlocked)).toEqual({ label: "Verification required", tone: "warn", live: false });
+
+  const unknown = { ...proofBlocked, phase: "outcome_unknown" as const };
+  expect(actualStage(staleTask, staleRun, unknown)).toEqual({ label: "Needs recovery", tone: "warn", live: false });
   expect(render(staleTask, staleRun, proofBlocked)).toContain("Verification required");
 
   const failed: WaveReviewMember = { ...proofBlocked, phase: "failed", waitingReason: "review rejected the attempt" };

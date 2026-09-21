@@ -324,8 +324,11 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 		}(),
 		Stderr: acpDiagnosticSink{log: log},
 		Timeouts: acp.Timeouts{
-			Prompt: acpDurationMS(policy.TurnTimeoutMS),
-			Stall:  acpDurationMS(policy.StallTimeoutMS),
+			// Agent turns may legitimately run for hours. The wrapper remains
+			// explicitly cancellable, but elapsed wall time or quiet reasoning
+			// must not kill otherwise live work.
+			Prompt: -1,
+			Stall:  -1,
 		},
 		PermissionHandler: func(permissionCtx context.Context, request acp.PermissionRequest) (acp.PermissionDecision, error) {
 			if handle == nil {
@@ -525,7 +528,7 @@ func acpTerminalStatus(result acp.PromptResult, err error) (AttemptOutcome, int,
 	case acp.OutcomeRefused:
 		return AttemptOutcomeBlocked, 1, firstNonEmpty(reason, "acp_v1 refused the prompt or a required permission")
 	case acp.OutcomeDeliveryUnknown:
-		return AttemptOutcomeFailed, 1, firstNonEmpty(reason, "acp_v1 delivery_unknown; no automatic retry or resume")
+		return AttemptOutcomeUnknown, 1, firstNonEmpty(reason, "acp_v1 delivery_unknown; inspect retained work before recovery")
 	case acp.OutcomeTimedOut:
 		return AttemptOutcomeFailed, 1, firstNonEmpty(reason, "acp_v1 prompt timed out")
 	case acp.OutcomePoisoned, acp.OutcomeProtocolFailed:

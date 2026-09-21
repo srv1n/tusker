@@ -45,6 +45,22 @@ func TestRenderAttemptPromptUsesWorkflowBodyTemplate(t *testing.T) {
 	}
 }
 
+func TestRenderAttemptPromptExplainsFreshRecoverySession(t *testing.T) {
+	project := RegisteredProject{ProjectID: "project-123", Name: "Memory"}
+	wfFile := WorkflowFile{Path: "/vault/WORKFLOW.md", Body: "Original task {{ note.id }}"}
+	note := Note{Data: map[string]any{"id": "MEM-T-0001"}}
+	previous := RunStatus{LastError: "redriven by human:test: " + outcomeUnknownRecoveryReasonPrefix + "attempt-lost"}
+	prompt, err := renderAttemptPrompt(project, wfFile, note, "/workspace", 2, "attempt-recovery", runLaneExecute, RunStatus{}, previous, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Original task MEM-T-0001", "fresh recovery session", "attempt-lost", "inspect the current task-owned material and Git diff", "repair or complete only what remains"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestRenderAttemptPromptRejectsUnknownPlaceholder(t *testing.T) {
 	_, err := renderAttemptPrompt(
 		RegisteredProject{Name: "Memory"},

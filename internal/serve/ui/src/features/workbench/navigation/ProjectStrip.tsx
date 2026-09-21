@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { Bell, BookOpen, ChevronDown, ChevronUp, Ellipsis, FolderPlus, LayoutGrid, ListOrdered, PanelLeftClose, PanelLeftOpen, Pin, RefreshCw, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -227,13 +227,13 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
 
   return (
     <aside ref={projectRailRef} className={cn("project-rail relative flex h-full flex-none flex-col border-r border-line-soft bg-raised transition-[width] duration-200", expanded ? "w-52" : "w-14")} aria-label="Project navigation">
-      <div className={cn("project-strip-track flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden py-2", expanded ? "items-stretch px-2" : "items-center px-1")} data-project-strip>
+      <div className={cn("project-strip-track flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden py-1.5", expanded ? "items-stretch gap-0.5 px-2" : "items-center gap-1 px-1")} data-project-strip>
           {orderedProjects.map((project) => {
             const selected = activeProjectId === project.id;
             const pinned = navigation?.pinnedProjectIds.includes(project.id) ?? false;
             const selectedIcon = projectIconChoice(navigation?.projectIconById[project.id]);
             return (
-              <div key={project.id} className={cn("project-strip-group flex shrink-0 flex-col", expanded ? "w-full" : selected ? "w-12" : "w-10", selected && "items-center rounded-xl bg-panel p-1 ring-1 ring-inset ring-line")}>
+              <div key={project.id} className={cn("project-strip-group flex shrink-0 flex-col", expanded ? "w-full" : "w-10 items-center")}>
                 <button
                   type="button"
                   data-project-chip={project.id}
@@ -241,45 +241,45 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
                   aria-label={selected ? `${project.name}, current project` : project.name}
                   title={project.name}
                   onClick={() => openProject(project)}
-                  className={cn("project-strip-chip relative inline-flex h-10 shrink-0 items-center rounded-lg text-[10px] font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-info", expanded ? "w-full justify-start gap-2 px-2 text-left" : "w-10 justify-center", selected ? "bg-raised text-ink shadow-sm" : "text-ink-soft hover:bg-hover")}
+                  className={cn("project-strip-chip relative inline-flex shrink-0 items-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-info", expanded ? "h-8 w-full justify-start gap-2 px-2 text-left" : "h-9 w-9 justify-center", selected ? "bg-active text-ink" : "text-ink-soft hover:bg-hover")}
               >
-                {selectedIcon ? <selectedIcon.Icon size={18} aria-hidden="true" className={cn("shrink-0", selectedIcon.className)} /> : <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-panel text-[10px] font-bold text-ink-soft">
+                {selectedIcon ? <selectedIcon.Icon size={expanded ? 15 : 18} aria-hidden="true" className={cn("shrink-0", selectedIcon.className)} /> : <span className={cn("relative flex shrink-0 items-center justify-center rounded-md bg-panel font-semibold text-ink-soft", expanded ? "h-5 w-5 text-[9px]" : "h-6 w-6 text-[10px]")}>
                   <span aria-hidden="true">{projectRailLabel(project, orderedProjects)}</span>
-                  <img src={`/api/projects/${encodeURIComponent(project.id)}/icon?v=${iconEpoch}`} alt="" aria-hidden="true" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full rounded-lg object-cover" onError={(event) => { event.currentTarget.hidden = true; }} />
+                  <img src={`/api/projects/${encodeURIComponent(project.id)}/icon?v=${iconEpoch}`} alt="" aria-hidden="true" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full rounded-md object-cover" onError={(event) => { event.currentTarget.hidden = true; }} />
                 </span>}
-                <span className={expanded ? "min-w-0 truncate text-[12px] font-medium" : "sr-only"}>{project.name}</span>
-                  {pinned && <Pin size={9} aria-hidden="true" className="absolute -right-1 -top-1 rounded-full bg-raised p-0.5 text-muted" />}
-                  {project.needsCount > 0 && <span className={cn("absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] leading-none", selected ? "bg-fail text-white" : "bg-fail-soft text-fail")} aria-label={`${project.needsCount} need${project.needsCount === 1 ? "" : "s"} you`}>{project.needsCount}</span>}
+                <span className={expanded ? "min-w-0 truncate text-[13px] font-medium" : "sr-only"}>{project.name}</span>
+                  {pinned && <Pin size={9} aria-hidden="true" className={expanded ? "shrink-0 text-faint" : "absolute -left-0.5 -top-0.5 rounded-full bg-raised p-0.5 text-muted"} />}
+                  {project.needsCount > 0 && <span className={cn("flex items-center justify-center rounded-full font-mono font-semibold leading-none", expanded ? "ml-auto h-4 min-w-4 px-1 text-[9px]" : "absolute -right-0.5 -top-0.5 h-3.5 min-w-3.5 px-0.5 text-[8px]", selected ? "bg-fail text-white" : "bg-fail-soft text-fail")} aria-label={`${project.needsCount} need${project.needsCount === 1 ? "" : "s"} you`}>{project.needsCount}</span>}
                 </button>
                 {selected && <ProjectSubtree expanded={expanded} projectId={activeRouteId ?? project.id} pathname={location.pathname} />}
               </div>
             );
           })}
-          {orderedProjects.length === 0 && <span className="px-1 text-center text-[10px] text-muted">No projects</span>}
+          {orderedProjects.length === 0 && <span className="px-1 py-2 text-center text-[11px] text-muted">No projects</span>}
       </div>
-      <div className={cn("project-rail-footer flex h-36 w-full flex-none flex-col justify-end gap-2 p-2", expanded ? "items-stretch" : "items-center")}>
-        <Link to="/settings" aria-label="App settings" title="App settings" className={cn("flex h-10 items-center rounded-lg text-muted hover:bg-hover hover:text-ink", expanded ? "w-full gap-2 px-2" : "w-10 justify-center")}><Settings size={18} aria-hidden="true" /><span className={expanded ? "text-[12px]" : "sr-only"}>Settings</span></Link>
+      <div className={cn("project-rail-footer flex w-full flex-none flex-col gap-0.5 p-2", expanded ? "items-stretch" : "items-center")}>
+        <Link to="/settings" aria-label="App settings" title="App settings" className={cn("flex items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink", expanded ? "h-8 w-full gap-2 px-2" : "h-9 w-9 justify-center")}><Settings size={16} aria-hidden="true" /><span className={expanded ? "text-[13px]" : "sr-only"}>Settings</span></Link>
         <div className="project-strip-menu relative">
-          <button type="button" aria-expanded={menuProjectId === "app"} aria-label="App actions" title="App actions" onClick={() => setMenuProjectId((open) => open === "app" ? null : "app")} className={cn("flex h-10 items-center rounded-lg text-muted hover:bg-hover hover:text-ink", expanded ? "w-full gap-2 px-2" : "w-10 justify-center")}><Ellipsis size={18} aria-hidden="true" /><span className={expanded ? "text-[12px]" : "sr-only"}>More</span></button>
-          {menuProjectId === "app" && <div className="project-app-popover absolute right-0 top-full z-30 mt-1 min-w-48 rounded-xl border border-line bg-raised p-1.5 shadow-lg">
-            <button type="button" onClick={() => { setAddingProject(true); setMenuProjectId(null); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink"><FolderPlus size={13} aria-hidden="true" />Add project</button>
-            <button type="button" onClick={() => void projectsQ.refetch()} disabled={projectsQ.isFetching} aria-busy={projectsQ.isFetching} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-40"><RefreshCw size={13} aria-hidden="true" className={projectsQ.isFetching ? "animate-spin" : undefined} />Refresh projects</button>
-            <button type="button" onClick={() => { setMenuProjectId(null); openTaskSearch(); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink"><Search size={13} aria-hidden="true" />Search tasks</button>
+          <button type="button" aria-expanded={menuProjectId === "app"} aria-label="App actions" title="App actions" onClick={() => setMenuProjectId((open) => open === "app" ? null : "app")} className={cn("flex items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink", expanded ? "h-8 w-full gap-2 px-2" : "h-9 w-9 justify-center")}><Ellipsis size={16} aria-hidden="true" /><span className={expanded ? "text-[13px]" : "sr-only"}>More</span></button>
+          {menuProjectId === "app" && <div className="project-app-popover absolute right-0 top-full z-30 mt-1 min-w-44 rounded-lg border border-line bg-raised p-1 shadow-lg">
+            <button type="button" onClick={() => { setAddingProject(true); setMenuProjectId(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink"><FolderPlus size={13} aria-hidden="true" />Add project</button>
+            <button type="button" onClick={() => void projectsQ.refetch()} disabled={projectsQ.isFetching} aria-busy={projectsQ.isFetching} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-40"><RefreshCw size={13} aria-hidden="true" className={projectsQ.isFetching ? "animate-spin" : undefined} />Refresh projects</button>
+            <button type="button" onClick={() => { setMenuProjectId(null); openTaskSearch(); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink"><Search size={13} aria-hidden="true" />Search tasks</button>
             {activeProject && activeRouteId && <>
               <div className="my-1 border-t border-line-soft" />
-              <div className="px-2.5 py-1"><ProjectContextControls compact={false} /></div>
-              <button type="button" onClick={() => togglePin(activeProject.id)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink"><Pin size={13} aria-hidden="true" />{navigation?.pinnedProjectIds.includes(activeProject.id) ? "Unpin project" : "Pin project"}</button>
+              <div className="px-2 py-1"><ProjectContextControls compact={false} /></div>
+              <button type="button" onClick={() => togglePin(activeProject.id)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink"><Pin size={13} aria-hidden="true" />{navigation?.pinnedProjectIds.includes(activeProject.id) ? "Unpin project" : "Pin project"}</button>
               {navigation?.pinnedProjectIds.includes(activeProject.id) && <>
-                <button type="button" onClick={() => movePin(activeProject.id, -1)} disabled={navigation.pinnedProjectIds.indexOf(activeProject.id) === 0} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-35"><ChevronUp size={13} aria-hidden="true" />Move pinned project up</button>
-                <button type="button" onClick={() => movePin(activeProject.id, 1)} disabled={navigation.pinnedProjectIds.indexOf(activeProject.id) === navigation.pinnedProjectIds.length - 1} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-35"><ChevronDown size={13} aria-hidden="true" />Move pinned project down</button>
+                <button type="button" onClick={() => movePin(activeProject.id, -1)} disabled={navigation.pinnedProjectIds.indexOf(activeProject.id) === 0} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-35"><ChevronUp size={13} aria-hidden="true" />Move pinned project up</button>
+                <button type="button" onClick={() => movePin(activeProject.id, 1)} disabled={navigation.pinnedProjectIds.indexOf(activeProject.id) === navigation.pinnedProjectIds.length - 1} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-35"><ChevronDown size={13} aria-hidden="true" />Move pinned project down</button>
               </>}
-              <button type="button" onClick={() => void activeRefresh.mutate()} disabled={activeRefresh.isPending} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-35"><RefreshCw size={13} aria-hidden="true" />Refresh project</button>
-              {activeRefresh.error && <p role="alert" className="px-2.5 py-1 text-[11px] text-fail">Refresh failed — check this project’s source.</p>}
+              <button type="button" onClick={() => void activeRefresh.mutate()} disabled={activeRefresh.isPending} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-35"><RefreshCw size={13} aria-hidden="true" />Refresh project</button>
+              {activeRefresh.error && <p role="alert" className="px-2 py-1 text-[11px] text-fail">Refresh failed — check this project’s source.</p>}
             </>}
           </div>}
         </div>
-        <button type="button" onClick={onToggle} aria-label={expanded ? "Minimize project navigation" : "Expand project navigation"} title={expanded ? "Minimize project navigation" : "Expand project navigation"} className={cn("flex h-10 items-center rounded-lg text-muted hover:bg-hover hover:text-ink", expanded ? "w-full gap-2 px-2" : "w-10 justify-center")}>
-          {expanded ? <PanelLeftClose size={18} aria-hidden="true" /> : <PanelLeftOpen size={18} aria-hidden="true" />}<span className={expanded ? "text-[12px]" : "sr-only"}>{expanded ? "Minimize" : "Expand"}</span>
+        <button type="button" onClick={onToggle} aria-label={expanded ? "Minimize project navigation" : "Expand project navigation"} title={expanded ? "Minimize project navigation" : "Expand project navigation"} className={cn("flex items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink", expanded ? "h-8 w-full gap-2 px-2" : "h-9 w-9 justify-center")}>
+          {expanded ? <PanelLeftClose size={16} aria-hidden="true" /> : <PanelLeftOpen size={16} aria-hidden="true" />}<span className={expanded ? "text-[13px]" : "sr-only"}>{expanded ? "Minimize" : "Expand"}</span>
         </button>
       </div>
       <NotificationControl needs={needs.data ?? []} error={needs.isError} open={menuProjectId === "notifications"} onOpenChange={(open) => setMenuProjectId(open ? "notifications" : null)} />
@@ -292,35 +292,40 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
 function ProjectSubtree({ expanded, projectId, pathname }: { expanded: boolean; projectId: string; pathname: string }) {
   const selected = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
   const linkClass = (active: boolean) => cn(
-    "flex h-10 items-center rounded-lg text-[12px] font-medium transition-colors",
-    expanded ? "w-full gap-2 px-2" : "w-10 justify-center",
-    active ? "bg-info-soft text-info" : "text-muted hover:bg-hover hover:text-ink",
+    "flex items-center rounded-md text-[13px] transition-colors",
+    expanded ? "h-7 w-full gap-2 pl-2 pr-1.5" : "h-9 w-9 justify-center",
+    active ? "bg-active font-medium text-ink" : "text-muted hover:bg-hover hover:text-ink",
+  );
+  const glyph = (icon: ReactNode) => (
+    <span aria-hidden="true" className={cn("flex shrink-0 items-center justify-center", expanded && "w-5")}>{icon}</span>
   );
   const route = (to: string) => to.replace("$projectId", projectId);
   const secondarySelected = ["/p/$projectId/trains", "/p/$projectId/diagnostics"].some((to) => selected(route(to)));
 
   return (
-    <nav aria-label={`${projectId} destinations`} className={cn("project-subtree mt-1 flex flex-col gap-1", expanded ? "ml-5 border-l border-line-soft pl-2" : "w-10")}>
+    <nav aria-label={`${projectId} destinations`} className={cn("project-subtree flex flex-col", expanded ? "mb-1.5 mt-0.5" : "mt-1 w-9")}>
+      <div className={cn("flex flex-col", expanded ? "ml-[17px] gap-px border-l border-line-soft pl-1" : "gap-1")}>
       {PROJECT_SECTION_NAV.map(({ label, to, icon: Icon }) => (
         <Link key={label} to={to} params={{ projectId }} aria-current={selected(route(to)) ? "page" : undefined} title={label} className={linkClass(selected(route(to)))}>
-          <Icon size={18} aria-hidden="true" />
+          {glyph(<Icon size={expanded ? 15 : 16} aria-hidden="true" />)}
           <span className={expanded ? undefined : "sr-only"}>{label}</span>
         </Link>
       ))}
       <Link to="/p/$projectId/settings" params={{ projectId }} aria-current={selected(route("/p/$projectId/settings")) ? "page" : undefined} title="Project settings" className={linkClass(selected(route("/p/$projectId/settings")))}>
-        <Settings size={18} aria-hidden="true" />
+        {glyph(<Settings size={expanded ? 15 : 16} aria-hidden="true" />)}
         <span className={expanded ? undefined : "sr-only"}>Settings</span>
       </Link>
       <details className={cn("project-subtree-more group", !expanded && "relative")}>
         <summary aria-label="More project destinations" title="More project destinations" className={cn(linkClass(secondarySelected), "cursor-pointer list-none") }>
-          <Ellipsis size={18} aria-hidden="true" />
+          {glyph(<Ellipsis size={expanded ? 15 : 16} aria-hidden="true" />)}
           <span className={expanded ? undefined : "sr-only"}>More</span>
         </summary>
-        <div className={cn("mt-1 space-y-1", expanded ? "" : "absolute bottom-0 left-full z-30 ml-2 hidden min-w-40 rounded-lg border border-line bg-raised p-1 shadow-lg group-hover:block group-focus-within:block group-open:block")}>
-          <Link to="/p/$projectId/trains" params={{ projectId }} className="block rounded-md px-2.5 py-2 text-[12px] text-ink-soft hover:bg-hover hover:text-ink">Trains</Link>
-          <Link to="/p/$projectId/diagnostics" params={{ projectId }} className="block rounded-md px-2.5 py-2 text-[12px] text-ink-soft hover:bg-hover hover:text-ink">Diagnostics</Link>
+        <div className={cn("mt-0.5 space-y-px", expanded ? "" : "absolute bottom-0 left-full z-30 ml-2 hidden min-w-36 rounded-lg border border-line bg-raised p-1 shadow-lg group-hover:block group-focus-within:block group-open:block")}>
+          <Link to="/p/$projectId/trains" params={{ projectId }} className="block rounded-md px-2 py-1.5 text-[12px] text-ink-soft hover:bg-hover hover:text-ink">Trains</Link>
+          <Link to="/p/$projectId/diagnostics" params={{ projectId }} className="block rounded-md px-2 py-1.5 text-[12px] text-ink-soft hover:bg-hover hover:text-ink">Diagnostics</Link>
         </div>
       </details>
+      </div>
     </nav>
   );
 }
@@ -340,10 +345,10 @@ function NotificationControl({ needs, error, open, onOpenChange }: { needs: Need
   const count = needs.length;
   return (
     <div className="project-notification-control fixed right-4 top-4 z-40 shrink-0">
-      <button type="button" onClick={() => onOpenChange(!open)} aria-expanded={open} aria-label={count > 0 ? `Notifications, ${count} items need you` : "Notifications"} title="Items needing you" className="relative flex h-10 w-10 items-center justify-center rounded-lg text-muted hover:bg-hover hover:text-ink">
-        <Bell size={18} aria-hidden="true" />
+      <button type="button" onClick={() => onOpenChange(!open)} aria-expanded={open} aria-label={count > 0 ? `Notifications, ${count} items need you` : "Notifications"} title="Items needing you" className="relative flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink">
+        <Bell size={16} aria-hidden="true" />
         <span className="sr-only">Needs</span>
-        {count > 0 && <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-fail px-1 font-mono text-[9px] font-semibold leading-none text-surface">{count}</span>}
+        {count > 0 && <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-fail px-1 font-mono text-[9px] font-semibold leading-none text-surface">{count}</span>}
       </button>
       {open && <div className="project-notification-popover absolute right-0 top-full z-30 mt-2 w-80 overflow-hidden rounded-lg bg-raised shadow-lg ring-1 ring-ink/10">
         <p className="border-b border-line px-3 py-2 text-[11px] font-semibold text-ink">Needs your action</p>

@@ -555,9 +555,9 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
       <div className="space-y-2.5 p-3">
         {runnable && (
           <div className="space-y-2 border-b border-line-soft pb-2.5">
-            <Button type="button" size="sm" variant="primary" className="w-full" disabled={busy || directiveQueued} onClick={() => taskStart.mutate()} aria-label={`Start task ${task.id}`}>
-              <Play size={12} />
-              {directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"}
+			<Button type="button" size="sm" variant="primary" className="w-full" disabled={busy || directiveQueued} onClick={() => taskStart.mutate()} aria-label={`Run task ${task.id}`}>
+			  <Play size={12} />
+			  {directiveQueued ? "Queued" : taskStart.isPending ? "Queuing…" : "Run task"}
             </Button>
             {task.runDirective && (
               <div className="text-[11px] leading-relaxed text-muted" role="status">

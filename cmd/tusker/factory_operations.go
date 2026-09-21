@@ -378,7 +378,7 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 		Project: factoryOperationsProject{
 			ID: projectID, Name: facts.Project.Name, Registered: registered, Enabled: projectEnabled,
 			Health: string(projectHealth), Tier: tuskerTier(facts.VaultPath),
-			AutomationEnabled: facts.Workflow.AutomationEnabled, AutomationProvenance: safePacketText(firstNonEmpty(facts.AutomationSource, configSourceBuiltIn), 120),
+			AutomationEnabled: projectEnabled, AutomationProvenance: "project runtime",
 			DispatchScope: facts.Workflow.DispatchScope, CompletionMode: facts.Workflow.CompletionReactor,
 			PromotionMode: factoryOperationsPromotionMode{
 				Configured: promotion.Configured, Mode: firstNonEmpty(promotion.Mode, scheduledPromotionDisabled),
@@ -526,10 +526,10 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 		case LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateRetryQueued:
 			item.Cause = safePacketText(firstNonEmpty(run.LastError, "The existing run is queued for a bounded retry."), 320)
 			item.SafeAction = "tusker runs inspect " + taskID + " --json"
-			if !facts.Project.Enabled || !facts.Workflow.AutomationEnabled {
+			if !facts.Project.Enabled {
 				item.State = "idle"
 				item.Cause = "The existing retry is durable, but background pickup is disabled."
-				item.AutomaticNextAction = "Tusker will leave the retry queued until project pickup and workflow automation are enabled."
+				item.AutomaticNextAction = "Tusker will leave the retry queued until Background work is enabled."
 				projection.NextFrontier = append(projection.NextFrontier, item)
 				continue
 			}
@@ -793,10 +793,6 @@ func factoryOperationsFrontierState(facts factoryOperationsFacts, task Note, hel
 	if !facts.Project.Enabled {
 		return "idle", "The project is not registered and enabled for background pickup.",
 			"No background claim will occur; interactive task work remains available.", "tusker projects list --json", false
-	}
-	if !facts.Workflow.AutomationEnabled {
-		return "idle", "Background automation is disabled for this project.",
-			"No background claim will occur; interactive task work remains available.", "tusker config resolve automation.enabled --json", false
 	}
 	if facts.Project.Health != "" && facts.Project.Health != projectHealthHealthy {
 		return "blocked", "Registered project health is " + string(facts.Project.Health) + ".",

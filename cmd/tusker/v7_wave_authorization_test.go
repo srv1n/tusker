@@ -314,7 +314,7 @@ func TestLiveExecuteTrackerStillReleasesTaskIneligibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !changed || updated.LeaseState != string(LeaseStateReleased) || !updated.Terminal || !strings.Contains(updated.LastError, "canonical status backlog") {
+	if !changed || updated.LeaseState != string(LeaseStateReleased) || updated.Terminal || !strings.Contains(updated.LastError, "daemon released run") {
 		t.Fatalf("genuine task ineligibility did not release live run: %#v changed=%t", updated, changed)
 	}
 }

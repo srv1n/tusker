@@ -7,6 +7,7 @@
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { ChevronDown, Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { harnessLabel } from "@/lib/harness";
 import { Chip } from "@/components/ui/primitives";
 import { sourceTone, type Harness, type SettingSource } from "./mock";
 
@@ -47,7 +48,7 @@ export function HarnessChip({ harness }: { harness: Harness | string }) {
         isCodex ? "bg-ink text-surface" : "bg-warn-soft text-warn",
       )}
     >
-      {harness}
+      {harnessLabel(harness)}
     </span>
   );
 }

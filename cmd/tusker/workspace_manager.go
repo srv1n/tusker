@@ -52,7 +52,8 @@ type WorkspacePrepareRequest struct {
 	// workspace root at once. Zero leaves the cap off. The number is measured,
 	// not guessed (see .tusker/specs/build-and-test-economics.md). Opening a new
 	// work copy past the cap is refused before any git worktree is created.
-	MaxLiveWorktrees int
+	MaxLiveWorktrees   int
+	startingDirtyPaths []string
 }
 
 type WorkspacePrepareResult struct {
@@ -62,16 +63,17 @@ type WorkspacePrepareResult struct {
 }
 
 type WorkspaceMetadata struct {
-	ProjectID    string `json:"project_id"`
-	RecordID     string `json:"record_id"`
-	ItemID       string `json:"item_id"`
-	BranchName   string `json:"branch_name"`
-	BranchBase   string `json:"branch_base,omitempty"`
-	RepoRoot     string `json:"repo_root"`
-	Strategy     string `json:"strategy"`
-	WorkRevision int    `json:"work_revision"`
-	CreatedAt    string `json:"created_at"`
-	PreparedAt   string `json:"prepared_at"`
+	ProjectID          string   `json:"project_id"`
+	RecordID           string   `json:"record_id"`
+	ItemID             string   `json:"item_id"`
+	BranchName         string   `json:"branch_name"`
+	BranchBase         string   `json:"branch_base,omitempty"`
+	RepoRoot           string   `json:"repo_root"`
+	Strategy           string   `json:"strategy"`
+	WorkRevision       int      `json:"work_revision"`
+	CreatedAt          string   `json:"created_at"`
+	PreparedAt         string   `json:"prepared_at"`
+	StartingDirtyPaths []string `json:"starting_dirty_paths,omitempty"`
 	// PID records the process that last prepared (owns) this live work copy. It
 	// is the liveness signal for orphan pruning: when this process is gone, no
 	// run is using the copy and it can be reclaimed. Zero for legacy copies.
@@ -101,9 +103,12 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 		if raw, readErr := readText(filepath.Join(workspacePath, ".tusker", "workspace.json")); readErr == nil {
 			var existing WorkspaceMetadata
 			continuing = json.Unmarshal([]byte(raw), &existing) == nil && existing.ProjectID == req.ProjectID && existing.RecordID == req.RecordID
+			if continuing {
+				req.startingDirtyPaths = append([]string(nil), existing.StartingDirtyPaths...)
+			}
 		}
 		if !continuing {
-			if err := assertInPlaceWorkspaceReady(req.RepoRoot); err != nil {
+			if req.startingDirtyPaths, err = inPlaceDirtyPaths(req.RepoRoot); err != nil {
 				return WorkspacePrepareResult{}, err
 			}
 		}
@@ -376,7 +381,7 @@ func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePr
 	metadata := WorkspaceMetadata{
 		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID,
 		BranchName: req.BranchName, BranchBase: req.BranchBase, RepoRoot: req.RepoRoot, Strategy: string(req.Strategy), WorkRevision: req.WorkRevision, CreatedAt: now, PreparedAt: now,
-		PID: os.Getpid(),
+		PID: os.Getpid(), StartingDirtyPaths: append([]string(nil), req.startingDirtyPaths...),
 	}
 	if !created && fileExists(metadataPath) {
 		text, err := readText(metadataPath)
@@ -415,21 +420,6 @@ func assertWorkspaceWithinRoot(workspacePath, root string) error {
 	}
 	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
 		return tuskerError(errorConfigInvalid, "workspace path escapes workspace root", withPath(workspacePath))
-	}
-	return nil
-}
-
-func assertInPlaceWorkspaceReady(repoRoot string) error {
-	repoRoot = strings.TrimSpace(repoRoot)
-	if repoRoot == "" || !fileExists(repoRoot) {
-		return tuskerError(errorConfigInvalid, "in_place workspace requires an existing repo root", withPath(repoRoot))
-	}
-	dirty, err := inPlaceDirtyPaths(repoRoot)
-	if err != nil {
-		return err
-	}
-	if len(dirty) > 0 {
-		return tuskerError(errorInvalidTransition, "in_place workspace requires a clean working tree outside .tusker; dirty paths: "+strings.Join(limitStrings(dirty, 5), ", "), withPath(repoRoot))
 	}
 	return nil
 }

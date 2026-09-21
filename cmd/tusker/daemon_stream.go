@@ -63,7 +63,9 @@ func (d *Daemon) emitLeaseTransitionStreamEvent(before, after RunStatus) {
 	}
 	meta := d.streamTaskMeta(firstNonEmpty(after.ProjectID, before.ProjectID), recordID)
 	kind, urgency := serveStreamKindLeaseTransition, "info"
-	if after.AttemptOutcome == string(AttemptOutcomeFailed) || after.AttemptOutcome == string(AttemptOutcomeBudgetExceeded) {
+	if projectedAttemptOutcome(after.AttemptOutcome, after.LastError) == AttemptOutcomeUnknown {
+		kind, urgency = "run_outcome_unknown", "attention"
+	} else if after.AttemptOutcome == string(AttemptOutcomeFailed) || after.AttemptOutcome == string(AttemptOutcomeBudgetExceeded) {
 		kind, urgency = "run_failed", "attention"
 	} else if after.AttemptOutcome == string(AttemptOutcomeSucceeded) {
 		kind = "run_completed"

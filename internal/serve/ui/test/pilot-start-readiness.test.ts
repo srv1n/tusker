@@ -21,9 +21,11 @@ test("work surfaces expose direct task start and wave controls", () => {
   const api = readFileSync("src/lib/api.ts", "utf8");
 
   expect(tasks).toContain("useTaskStart(taskId, projectId)");
-  expect(tasks).toContain('aria-label={`Start task ${detail.id}`}');
-  expect(tasks).toContain("ActionResultLine");
-  expect(tasks).toContain("Authorized — waiting for runtime");
+	expect(tasks).toContain('aria-label={`Run task ${detail.id}`}');
+	expect(tasks).toContain('aria-label={`${RECOVERY_ACTION_LABEL} ${detail.id}`}');
+	expect(tasks).toContain('run.data?.outcome === "outcome-unknown"');
+	expect(tasks).toContain("ActionResultLine");
+	expect(tasks).toContain('directiveQueued ? "Queued"');
   expect(delivery).toContain('<ProductSection title="Tickets"');
   expect(delivery).toContain('<ProductSection title="Dependency DAG">');
   expect(delivery).toContain("renderMermaid(source)");

@@ -8,11 +8,13 @@
   the rest are locked machine/derived values.
 */
 
+import { useEffect, useState } from "react";
 import type { ThemePref } from "@/lib/theme";
 import { FONT_FAMILY_OPTIONS, useFontScale, type FontFamily, type FontScale } from "@/lib/font-scale";
 import { useTheme } from "@/lib/theme";
-import { useDaemon } from "@/lib/queries";
-import { SegmentedControl } from "@/components/ui/controls";
+import { useDaemon, useDaemonAction } from "@/lib/queries";
+import { Button, SegmentedControl, TextInput } from "@/components/ui/controls";
+import { ActionResultLine } from "@/components/ui/action-feedback";
 import type { SegmentOption } from "@/components/ui/controls";
 import { SectionLabel } from "@/components/ui/page";
 import { Dot, Mono } from "@/components/ui/primitives";
@@ -36,8 +38,15 @@ export function GeneralSection() {
   const { pref, setPref } = useTheme();
   const { scale, setScale, family, setFamily } = useFontScale();
   const daemonQ = useDaemon();
+  const daemonAction = useDaemonAction();
   const livePort = daemonQ.data?.addr.split(":").pop();
   const connected = !!daemonQ.data?.connected;
+  const [globalLimit, setGlobalLimit] = useState("");
+  useEffect(() => {
+    if (daemonQ.data?.maxActiveRuns) setGlobalLimit(String(daemonQ.data.maxActiveRuns));
+  }, [daemonQ.data?.maxActiveRuns]);
+  const parsedGlobalLimit = Number(globalLimit);
+  const validGlobalLimit = Number.isInteger(parsedGlobalLimit) && parsedGlobalLimit > 0;
 
   return (
     <div className="animate-rise">
@@ -59,13 +68,11 @@ export function GeneralSection() {
         <SettingRow
           label="Font"
           source="local"
-          description="Uses the selected system font when it is installed; otherwise falls back safely."
           control={<SelectPill value={family} options={FONT_FAMILY_OPTIONS} onChange={(value) => setFamily(value as FontFamily)} ariaLabel="Interface font" />}
         />
         <SettingRow
           label="Text size"
           source="local"
-          description="Scales the interface and document editor together."
           control={<SegmentedControl<FontScale> size="sm" options={fontScaleOptions} value={scale} onChange={setScale} />}
         />
       </SettingsCard>
@@ -79,13 +86,12 @@ export function GeneralSection() {
             label={r.key}
             source={r.source}
             locked
-            description="Persistence is not available yet."
             control={<span className="font-mono text-[11.5px] text-muted">{r.value} · coming soon</span>}
           />
         ))}
       </SettingsCard>
 
-      {/* Daemon — read-only / machine-derived */}
+      {/* Daemon */}
       <SectionLabel className="mb-[10px]">Daemon</SectionLabel>
       <SettingsCard>
         <SettingRow
@@ -103,6 +109,19 @@ export function GeneralSection() {
             )
           }
         />
+        <SettingRow
+          label="Global concurrency"
+          description="Maximum tasks running across every project. Project and wave limits may be lower."
+          source="global"
+          control={
+            <div className="flex items-center gap-2">
+              <TextInput aria-label="Global concurrent tasks" inputMode="numeric" value={globalLimit} onChange={(event) => setGlobalLimit(event.target.value)} className="w-20 font-mono" />
+              <Button size="sm" disabled={!validGlobalLimit || daemonAction.isPending} onClick={() => daemonAction.mutate({ action: "limits", body: { maxActiveRuns: parsedGlobalLimit } })}>
+                {daemonAction.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          }
+        />
         {daemonRows.map((r) => (
           <SettingRow
             key={r.key}
@@ -113,6 +132,7 @@ export function GeneralSection() {
           />
         ))}
       </SettingsCard>
+      <ActionResultLine className="mt-2" pending={daemonAction.isPending} error={daemonAction.error} result={daemonAction.data} />
     </div>
   );
 }

@@ -195,10 +195,11 @@ func serveRunOutcome(run RunStatus, now time.Time) string {
 	if strings.TrimSpace(run.LeaseState) == runnerInfrastructureBlockedState || (run.Infrastructure != nil && run.Infrastructure.State == runnerInfrastructureBlockedState) {
 		return runnerInfrastructureBlockedState
 	}
+	projectedOutcome := projectedAttemptOutcome(run.AttemptOutcome, run.LastError)
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
 	case LeaseStateUnclaimed:
-		if run.AttemptCount > 0 || strings.TrimSpace(run.AttemptOutcome) != "" && AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) != AttemptOutcomeNone {
-			return serveRunOutcomeFromAttempt(run.AttemptOutcome, run.LeaseState)
+		if run.AttemptCount > 0 || projectedOutcome != "" && projectedOutcome != AttemptOutcomeNone {
+			return serveRunOutcomeFromAttempt(string(projectedOutcome), run.LeaseState)
 		}
 		return "idle"
 	case LeaseStateParkedNoProgress:
@@ -214,15 +215,15 @@ func serveRunOutcome(run RunStatus, now time.Time) string {
 		return "stale"
 	case LeaseStateReleased:
 		if run.Terminal {
-			switch AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) {
-			case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeEarlyExit, AttemptOutcomeDispatchDeclined, AttemptOutcomeTurnCapExhausted, AttemptOutcomeBudgetExceeded, AttemptOutcomeCancelled:
-				outcome := serveRunOutcomeFromAttempt(run.AttemptOutcome, run.LeaseState)
+			switch projectedOutcome {
+			case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeUnknown, AttemptOutcomeBlocked, AttemptOutcomeEarlyExit, AttemptOutcomeDispatchDeclined, AttemptOutcomeTurnCapExhausted, AttemptOutcomeBudgetExceeded, AttemptOutcomeCancelled:
+				outcome := serveRunOutcomeFromAttempt(string(projectedOutcome), run.LeaseState)
 				return outcome
 			}
 			return "terminal"
 		}
 	}
-	return serveRunOutcomeFromAttempt(run.AttemptOutcome, run.LeaseState)
+	return serveRunOutcomeFromAttempt(string(projectedOutcome), run.LeaseState)
 }
 
 func serveRunOutcomeFromAttempt(outcome, lease string) string {
@@ -232,6 +233,8 @@ func serveRunOutcomeFromAttempt(outcome, lease string) string {
 	switch AttemptOutcome(strings.TrimSpace(outcome)) {
 	case AttemptOutcomeSucceeded:
 		return "succeeded"
+	case AttemptOutcomeUnknown:
+		return "outcome-unknown"
 	case AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeAbandoned, AttemptOutcomeEarlyExit, AttemptOutcomeTurnCapExhausted, AttemptOutcomeBudgetExceeded:
 		return "failed"
 	case AttemptOutcomeDispatchDeclined:
@@ -270,7 +273,7 @@ func (s *serveServer) serveAttemptOutcome(run RunStatus, attempt RunAttempt) str
 			return current
 		}
 	}
-	return serveRunOutcomeFromAttempt(attempt.Outcome, run.LeaseState)
+	return serveRunOutcomeFromAttempt(string(projectedAttemptOutcome(attempt.Outcome, attempt.LastError)), run.LeaseState)
 }
 
 func serveRunHeartbeatFresh(run RunStatus, now time.Time) bool {
@@ -437,6 +440,93 @@ type serveRecoveryResult struct {
 	Reason   string `json:"reason"`
 }
 
+const outcomeUnknownRecoveryReasonPrefix = "recover outcome unknown from "
+
+func outcomeUnknownRecoveryParent(lastError string) string {
+	marker := strings.Index(lastError, outcomeUnknownRecoveryReasonPrefix)
+	if marker < 0 {
+		return ""
+	}
+	return strings.TrimSpace(lastError[marker+len(outcomeUnknownRecoveryReasonPrefix):])
+}
+
+func queueOutcomeUnknownRecovery(store *RuntimeStore, task Note, wave Note, run RunStatus, actor string, now time.Time) (serveRecoveryResult, error) {
+	result := serveRecoveryResult{Action: "recover_unknown", TaskID: stringField(task.Data, "id"), Lane: runLaneExecute}
+	current, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil {
+		return result, err
+	}
+	if current == nil {
+		result.Refused, result.Reason = true, "run not found"
+		return result, nil
+	}
+	run = *current
+	if !run.Terminal || projectedAttemptOutcome(run.AttemptOutcome, run.LastError) != AttemptOutcomeUnknown {
+		result.Refused, result.Reason = true, "recovery is only available when the prior outcome is unknown"
+		return result, nil
+	}
+	if runProcessGroupAlive(run) || isDispatchingLeaseState(run.LeaseState) {
+		result.Refused, result.Reason = true, "a live owner still holds this task; wait for it to finish or become stale"
+		return result, nil
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return result, err
+	}
+	var parent RunAttempt
+	for _, attempt := range attempts {
+		if projectedAttemptOutcome(attempt.Outcome, attempt.LastError) == AttemptOutcomeUnknown {
+			parent = attempt
+			break
+		}
+	}
+	if parent.AttemptID == "" {
+		result.Refused, result.Reason = true, "the uncertain parent attempt cannot be identified"
+		return result, nil
+	}
+	for _, attempt := range attempts {
+		if attempt.ParentAttemptID == parent.AttemptID && attempt.ChildType == "recovery" {
+			result.Refused, result.Reason = true, "one recovery attempt already exists; human review is required"
+			return result, nil
+		}
+	}
+	previousRun := run
+	previousBudget, err := store.GetSetting(budgetRedriveSettingKey(run.ProjectID, run.RecordID))
+	if err != nil {
+		return result, err
+	}
+	if _, err := redriveRuntimeRun(store, &run, actor, outcomeUnknownRecoveryReasonPrefix+parent.AttemptID, now); err != nil {
+		return result, err
+	}
+	queued, err := store.QueueRunDirective(RunDirective{
+		ProjectID: run.ProjectID, RecordID: run.RecordID, Actor: actor,
+		CreatedAt: now.UTC().Format(time.RFC3339Nano), ExpiresAt: now.UTC().Add(directRunDirectiveTTL).Format(time.RFC3339Nano),
+		WaveID: stringField(wave.Data, "id"), AuthorizationFingerprint: stringField(wave.Data, "authorization_fingerprint"), WaveAuthorizedAt: stringField(wave.Data, "authorized_at"),
+	})
+	if err != nil {
+		// Redrive and directive insertion are separate store operations. If the
+		// directive write fails, restore the exact pre-recovery snapshot only if
+		// no daemon/operator write won the race in the meantime.
+		if matches, matchErr := store.RunMatchesSnapshot(run); matchErr == nil && matches {
+			if rollbackErr := store.UpsertRun(previousRun); rollbackErr != nil {
+				return result, fmt.Errorf("recovery directive failed: %w; rollback failed: %v", err, rollbackErr)
+			}
+			if previousBudget == "" {
+				_, _ = store.exec(`DELETE FROM daemon_settings WHERE key = ?`, budgetRedriveSettingKey(run.ProjectID, run.RecordID))
+			} else {
+				_ = store.SetSetting(budgetRedriveSettingKey(run.ProjectID, run.RecordID), previousBudget)
+			}
+		}
+		return result, err
+	}
+	if !queued {
+		result.OK, result.Reason = true, "recovery is already queued"
+		return result, nil
+	}
+	result.OK, result.Admitted, result.Reason = true, true, "verification queued; the worker will inspect and preserve existing work before continuing"
+	return result, nil
+}
+
 // queueReviewRecovery reuses the one-shot directive consumed by the normal
 // daemon. It never resets AttemptCount: automatic recovery remains inside the
 // originally authorized retry window.
@@ -513,6 +603,9 @@ func reviewRecoveryOperationalBlocker(wave Note, run RunStatus, maxAttempts int)
 // (the observed bug) silently retire the run behind a stale badge. We surface
 // that refusal synchronously instead of requeuing into a silent retire.
 func serveRedriveRefusal(rawStatus string, run RunStatus) (bool, string) {
+	if projectedAttemptOutcome(run.AttemptOutcome, run.LastError) == AttemptOutcomeUnknown {
+		return true, "this work needs recovery — use Verify and continue so the next worker inspects and preserves existing work"
+	}
 	switch strings.ToLower(strings.TrimSpace(rawStatus)) {
 	case "review":
 		return true, "task is in review — no execution to redrive; use the review/land lane, not retry"

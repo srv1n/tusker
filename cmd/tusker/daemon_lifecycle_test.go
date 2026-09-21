@@ -1042,7 +1042,7 @@ func TestInterruptDeadRunWithoutLiveHandleReleases(t *testing.T) {
 	assertEqual(t, "interrupt requested by operator; live runner handle not found and process is not running", run.LastError, "interrupted dead run reason")
 }
 
-func TestWorkspaceStrategySharedDefaultUsesRepoRootAndExemptsTuskerBookkeeping(t *testing.T) {
+func TestCurrentCheckoutUsesRepoRootAndRecordsStartingDirtyPaths(t *testing.T) {
 	wf := defaultWorkflow()
 	assertEqual(t, string(WorkspaceStrategyShared), wf.Workspace.Strategy, "default workspace strategy")
 
@@ -1078,12 +1078,12 @@ func TestWorkspaceStrategySharedDefaultUsesRepoRootAndExemptsTuskerBookkeeping(t
 		t.Fatalf("same-task shared review must inspect the dirty implementation: %v", err)
 	}
 	assertEqual(t, "review/APP-T-0001/head", result.Metadata.BranchName, "shared review metadata")
-	_, err = manager.Prepare(WorkspacePrepareRequest{
+	result, err = manager.Prepare(WorkspacePrepareRequest{
 		ProjectID: "project-1", ProjectKey: "APP", RecordID: "APP-T-0002", ItemID: "APP-T-0002",
 		RepoRoot: repo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyShared,
 	})
-	if err == nil || !strings.Contains(err.Error(), "clean working tree outside .tusker") {
-		t.Fatalf("different shared task must wait for a clean checkout, got %v", err)
+	if err != nil || !containsString(result.Metadata.StartingDirtyPaths, "task-output.txt") {
+		t.Fatalf("current checkout did not retain the starting dirty paths: result=%#v err=%v", result, err)
 	}
 
 	dirtyRepo := t.TempDir()
@@ -1093,12 +1093,12 @@ func TestWorkspaceStrategySharedDefaultUsesRepoRootAndExemptsTuskerBookkeeping(t
 	if err := writeText(filepath.Join(dirtyRepo, "main.go"), "package main\n"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = manager.Prepare(WorkspacePrepareRequest{
+	result, err = manager.Prepare(WorkspacePrepareRequest{
 		ProjectID: "project-1", ProjectKey: "APP", RecordID: "APP-T-0002", ItemID: "APP-T-0002",
 		RepoRoot: dirtyRepo, StateRoot: filepath.Join(t.TempDir(), "state"), Strategy: WorkspaceStrategyShared,
 	})
-	if err == nil || !strings.Contains(err.Error(), "clean working tree outside .tusker") {
-		t.Fatalf("expected dirty shared refusal, got %v", err)
+	if err != nil || !containsString(result.Metadata.StartingDirtyPaths, "main.go") {
+		t.Fatalf("dirty current checkout was not admitted with its baseline: result=%#v err=%v", result, err)
 	}
 
 	assertEqual(t, WorkspaceStrategyShared, normalizeWorkspaceStrategy(WorkspaceStrategyInPlace), "legacy in_place migrates to shared")

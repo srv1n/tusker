@@ -28,10 +28,10 @@ func TestFactoryOperationsProjection(t *testing.T) {
 			{
 				name: "disabled idle",
 				mutate: func(f *factoryOperationsFacts) {
-					f.Workflow.AutomationEnabled = false
+					f.Project.Enabled = false
 					f.Workflow.DispatchScope = automationDispatchScopeProjection{Configured: "all_eligible", Effective: "all_eligible", Provenance: configSourceProject}
 				},
-				section: "next", wantState: "idle", wantAction: "tusker config resolve automation.enabled --json",
+				section: "next", wantState: "idle", wantAction: "tusker projects list --json",
 			},
 			{
 				name: "disarmed",
@@ -363,18 +363,17 @@ func TestFactoryOperationsProjection(t *testing.T) {
 		}
 	})
 
-	t.Run("registry enablement stays separate from workflow automation", func(t *testing.T) {
+	t.Run("runtime enablement is the single background work authority", func(t *testing.T) {
 		facts := factoryOperationsTestFacts()
 		facts.ProjectRegistered = false
 		facts.Project.Enabled = true
 		facts.Project.Health = projectHealthHealthy
-		facts.Workflow.AutomationEnabled = true
 		projection := composeFactoryOperations(facts)
 		if projection.Project.Registered || projection.Project.Enabled || projection.Project.Health != string(projectHealthDisabled) {
 			t.Fatalf("unregistered project projected false registry authority: %#v", projection.Project)
 		}
-		if !projection.Project.AutomationEnabled {
-			t.Fatal("workflow automation fact was incorrectly collapsed into registry enablement")
+		if projection.Project.AutomationEnabled {
+			t.Fatal("unregistered project incorrectly reported background work enabled")
 		}
 	})
 

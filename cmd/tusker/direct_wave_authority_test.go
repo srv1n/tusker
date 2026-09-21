@@ -37,7 +37,7 @@ func authorityFixture(t *testing.T) (vault string, store *RuntimeStore, project 
 }
 
 func directTaskBody(id, intent string) string {
-	return "# " + id + "\n\n## Intent\n\n" + intent + "\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | Works. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: go test ./x | pending | |\n"
+	return "# " + id + "\n\n## Intent\n\n" + intent + "\n\n## Acceptance\n\n| ID | Outcome | Proof |\n| --- | --- | --- |\n| A1 | The named behavior is observable in the changed files. | Verification A1 |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: go test ./x | pending | |\n"
 }
 
 // directDispatchableTaskBody carries observable acceptance with proof mapping
@@ -175,6 +175,69 @@ func waveAuthorizationState(t *testing.T, vault, waveID string) map[string]any {
 	return waveAuthorizationProjection(vault, idx, idx.Waves[waveID])
 }
 
+func TestDirectRunQueuesTask(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writePendingDirectTask(t, vault, "APP-T-0001", "", map[string]any{"readiness": "ready"})
+
+	if err := directRunCmd(Args{"vault": vault, "_pos0": "APP-T-0001", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	directive, err := store.RunDirective(project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directive == nil || directive.State != "queued" || !strings.HasPrefix(directive.Actor, "operator:") {
+		t.Fatalf("directive=%#v", directive)
+	}
+}
+
+func TestDirectRunReopensTerminalRuntimeRow(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writePendingDirectTask(t, vault, "APP-T-0001", "", map[string]any{"readiness": "ready"})
+	if err := directRunCmd(Args{"vault": vault, "_pos0": "APP-T-0001", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", Runner: string(RunnerCodexExec), Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeAbandoned), AttemptCount: 3, Terminal: true, LastError: "old failure"}
+	reopened, changed, err := reopenTerminalRunForDirective(vault, store, note, run, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || reopened.Terminal || reopened.LeaseState != string(LeaseStateUnclaimed) || reopened.AttemptOutcome != string(AttemptOutcomeNone) || reopened.AttemptCount != 0 || reopened.LastError != "" {
+		t.Fatalf("reopened=%#v changed=%t", reopened, changed)
+	}
+}
+
+func TestDirectWaveRetryRedrivesFailedMembers(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.exec(`UPDATE run_directives SET state='consumed' WHERE project_id=? AND record_id=?`, project.ProjectID, "APP-T-0001"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateParkedNoProgress), AttemptOutcome: string(AttemptOutcomeBlocked), AttemptCount: 3, Terminal: true, LastError: "old workspace refusal"}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := directWaveStart(vault, store, "W-0001", "human:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.FindRunScoped(project.ProjectID, "APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("run=%#v err=%v", run, err)
+	}
+	if !result.Replayed || !containsString(result.QueuedTaskIDs, "APP-T-0001") || run.Terminal || run.AttemptCount != 0 || run.LeaseState != string(LeaseStateRetryQueued) {
+		t.Fatalf("result=%#v run=%#v", result, run)
+	}
+}
+
 func TestDirectWaveAuthorityReviewUsesOnlyDurableMaterial(t *testing.T) {
 	vault, store, project := authorityFixture(t)
 	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
@@ -205,6 +268,236 @@ func TestDirectWaveAuthorityReviewUsesOnlyDurableMaterial(t *testing.T) {
 			t.Fatalf("review DTO leaks %s: %s", forbidden, raw)
 		}
 	}
+}
+
+func TestDirectWaveStartRefusesInvalidMemberContractBeforeArm(t *testing.T) {
+	vault, store, _ := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+	rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+		return data, strings.Replace(body, "command: go test ./x", "check later", 1)
+	})
+	_, err := directWaveStart(vault, store, "W-0001", "human:test")
+	if err == nil || !strings.Contains(err.Error(), "APP-T-0001: verification missing exact command or manual proof") {
+		t.Fatalf("err=%v", err)
+	}
+	if auth := waveAuthorizationState(t, vault, "W-0001"); stringField(auth, "state") == "armed" {
+		t.Fatalf("invalid member contract was armed: %#v", auth)
+	}
+}
+
+func TestDirectWaveReviewSurfacesPersistentDispatchBlocker(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, map[string]any{"authorization": "armed"})
+	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed), LastError: "dispatch blocked: acceptance missing proof mapping"}); err != nil {
+		t.Fatal(err)
+	}
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(review.Members) != 1 || review.Members[0].State != "blocked" || review.Members[0].Phase != "blocked" || !strings.Contains(review.Members[0].WaitingReason, "acceptance missing proof mapping") {
+		t.Fatalf("member=%#v", review.Members)
+	}
+	if len(review.Blockers) == 0 || review.Blockers[0].Code != "DISPATCH_BLOCKED" {
+		t.Fatalf("blockers=%#v", review.Blockers)
+	}
+}
+
+func TestDirectWaveReviewProjectsLegacyDeliveryUnknown(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, map[string]any{"authorization": "armed"})
+	if err := store.UpsertRun(RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeFailed), Terminal: true, LastError: `acp outcome delivery_unknown (write_complete): connection lost`}); err != nil {
+		t.Fatal(err)
+	}
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(review.Members) != 1 || review.Members[0].Phase != "outcome_unknown" {
+		t.Fatalf("member=%#v", review.Members)
+	}
+	if len(review.Blockers) == 0 || review.Blockers[0].Code != "OUTCOME_UNKNOWN" {
+		t.Fatalf("blockers=%#v", review.Blockers)
+	}
+}
+
+func TestDirectWaveReviewExternalDependencies(t *testing.T) {
+	newFixture := func(t *testing.T) (string, *RuntimeStore, RegisteredProject) {
+		vault, store, project := authorityFixture(t)
+		writeDirectTask(t, vault, "ALP-T-0001", "W-0002", map[string]any{"title": "Alpha report", "status": "done", "readiness": "done"})
+		writeDirectWave(t, vault, "W-0002", []string{"ALP-T-0001"}, map[string]any{"title": "Alpha wave"})
+		writeDirectTask(t, vault, "BET-T-0001", "W-0003", map[string]any{"title": "Beta report", "status": "backlog", "readiness": "held"})
+		writeDirectWave(t, vault, "W-0003", []string{"BET-T-0001"}, map[string]any{"title": "Beta wave"})
+		writeDirectTask(t, vault, "BAD-T-0001", "", map[string]any{"title": "Malformed producer", "status": "backlog", "readiness": ""})
+		writeDirectTask(t, vault, "ORF-T-0001", "W-0099", map[string]any{"title": "Orphaned producer", "status": "ready", "readiness": "ready"})
+		writeDirectTask(t, vault, "NTL-T-0001", "", map[string]any{"title": "", "status": "ready", "readiness": "ready"})
+		writeDirectTask(t, vault, "XPW-T-0001", "W-0004", map[string]any{"title": "Cross-project wave member", "status": "ready", "readiness": "ready"})
+		writeDirectWave(t, vault, "W-0004", []string{"XPW-T-0001"}, map[string]any{"title": "Foreign wave", "project": "other-project"})
+		writeDirectTask(t, vault, "COL-T-0001", "W-0002", map[string]any{"title": "Foreign task", "status": "done", "readiness": "done", "project": "other-project"})
+		writeDirectWave(t, vault, "W-0001", []string{"FOL-T-0001", "FOL-T-0002"}, map[string]any{"title": "Follow-up wave"})
+		return vault, store, project
+	}
+	consumerDeps := []any{"ALP-T-0001:hard", "BET-T-0001:hard", "EXT-T-0009:hard", "BAD-T-0001:hard", "ORF-T-0001:hard", "COL-T-0001:hard", "NTL-T-0001:hard", "XPW-T-0001:hard"}
+
+	findFact := func(review directWaveReview, id string) *directWaveExternalDependency {
+		for i := range review.ExternalDependencies {
+			if review.ExternalDependencies[i].TaskID == id {
+				return &review.ExternalDependencies[i]
+			}
+		}
+		return nil
+	}
+	findMember := func(review directWaveReview, id string) *directWaveReviewMember {
+		for i := range review.Members {
+			if review.Members[i].TaskID == id {
+				return &review.Members[i]
+			}
+		}
+		return nil
+	}
+
+	t.Run("mixed completed and unfinished upstreams with titles and waves", func(t *testing.T) {
+		vault, store, project := newFixture(t)
+		writeDirectTask(t, vault, "FOL-T-0001", "W-0001", map[string]any{"dependencies": consumerDeps})
+		writeDirectTask(t, vault, "FOL-T-0002", "W-0001", nil)
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alpha := findFact(review, "ALP-T-0001")
+		if alpha == nil || alpha.Classification != "external" || alpha.Title != "Alpha report" || alpha.Status != "done" || alpha.Readiness != "done" || alpha.WaveID != "W-0002" || alpha.WaveTitle != "Alpha wave" {
+			t.Fatalf("alpha fact=%#v", alpha)
+		}
+		beta := findFact(review, "BET-T-0001")
+		if beta == nil || beta.Classification != "external" || beta.Title != "Beta report" || beta.Status != "backlog" || beta.Readiness != "held" || beta.WaveID != "W-0003" || beta.WaveTitle != "Beta wave" {
+			t.Fatalf("beta fact=%#v", beta)
+		}
+	})
+
+	t.Run("waiting reason names the unfinished dependency not the completed one", func(t *testing.T) {
+		vault, store, project := newFixture(t)
+		writeDirectTask(t, vault, "FOL-T-0001", "W-0001", map[string]any{"dependencies": consumerDeps, "next_ref": "ALP-T-0001"})
+		writeDirectTask(t, vault, "FOL-T-0002", "W-0001", nil)
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		consumer := findMember(review, "FOL-T-0001")
+		if consumer == nil || consumer.State != "waiting" || consumer.WaitingReason != "waiting for dependency BET-T-0001" {
+			t.Fatalf("consumer member=%#v", consumer)
+		}
+		if strings.Contains(consumer.WaitingReason, "ALP-T-0001") {
+			t.Fatalf("completed dependency named as the wait: %q", consumer.WaitingReason)
+		}
+	})
+
+	t.Run("unique stable sorted order across duplicate member references", func(t *testing.T) {
+		vault, store, project := newFixture(t)
+		writeDirectTask(t, vault, "FOL-T-0001", "W-0001", map[string]any{"dependencies": consumerDeps})
+		writeDirectTask(t, vault, "FOL-T-0002", "W-0001", map[string]any{"dependencies": []any{"ALP-T-0001:hard", "COL-T-0001:hard"}})
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, fact := range review.ExternalDependencies {
+			ids = append(ids, fact.TaskID)
+		}
+		want := []string{"ALP-T-0001", "BAD-T-0001", "BET-T-0001", "COL-T-0001", "EXT-T-0009", "NTL-T-0001", "ORF-T-0001", "XPW-T-0001"}
+		if len(ids) != len(want) {
+			t.Fatalf("external dependency ids=%v", ids)
+		}
+		for i, id := range want {
+			if ids[i] != id {
+				t.Fatalf("external dependency ids=%v, want %v", ids, want)
+			}
+		}
+	})
+
+	t.Run("missing and cross-project collision leak nothing", func(t *testing.T) {
+		vault, store, project := newFixture(t)
+		writeDirectTask(t, vault, "FOL-T-0001", "W-0001", map[string]any{"dependencies": consumerDeps})
+		writeDirectTask(t, vault, "FOL-T-0002", "W-0001", nil)
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		missing := findFact(review, "EXT-T-0009")
+		if missing == nil || *missing != (directWaveExternalDependency{TaskID: "EXT-T-0009", Classification: "missing"}) {
+			t.Fatalf("missing fact=%#v", missing)
+		}
+		collision := findFact(review, "COL-T-0001")
+		if collision == nil || *collision != (directWaveExternalDependency{TaskID: "COL-T-0001", Classification: "missing"}) {
+			t.Fatalf("cross-project collision fact=%#v", collision)
+		}
+	})
+
+	t.Run("unavailable producers invent no display facts", func(t *testing.T) {
+		vault, store, project := newFixture(t)
+		writeDirectTask(t, vault, "FOL-T-0001", "W-0001", map[string]any{"dependencies": consumerDeps})
+		writeDirectTask(t, vault, "FOL-T-0002", "W-0001", nil)
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		malformed := findFact(review, "BAD-T-0001")
+		if malformed == nil || *malformed != (directWaveExternalDependency{TaskID: "BAD-T-0001", Classification: "unavailable"}) {
+			t.Fatalf("malformed fact=%#v", malformed)
+		}
+		orphaned := findFact(review, "ORF-T-0001")
+		if orphaned == nil || *orphaned != (directWaveExternalDependency{TaskID: "ORF-T-0001", Classification: "unavailable"}) {
+			t.Fatalf("orphaned fact=%#v", orphaned)
+		}
+		titleless := findFact(review, "NTL-T-0001")
+		if titleless == nil || *titleless != (directWaveExternalDependency{TaskID: "NTL-T-0001", Classification: "unavailable"}) {
+			t.Fatalf("titleless fact=%#v", titleless)
+		}
+		crossWave := findFact(review, "XPW-T-0001")
+		if crossWave == nil || *crossWave != (directWaveExternalDependency{TaskID: "XPW-T-0001", Classification: "unavailable"}) {
+			t.Fatalf("cross-project-wave fact=%#v", crossWave)
+		}
+	})
+
+	t.Run("facts stay bounded on the wire", func(t *testing.T) {
+		vault, store, project := newFixture(t)
+		writeDirectTask(t, vault, "FOL-T-0001", "W-0001", map[string]any{"dependencies": consumerDeps})
+		writeDirectTask(t, vault, "FOL-T-0002", "W-0001", nil)
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if review.ExternalDependencies == nil {
+			t.Fatal("externalDependencies is nil")
+		}
+		raw, err := json.Marshal(review.ExternalDependencies)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded []map[string]any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded) != len(review.ExternalDependencies) {
+			t.Fatalf("decoded facts: %s", raw)
+		}
+		allowed := map[string]bool{"taskId": true, "title": true, "status": true, "readiness": true, "waveId": true, "waveTitle": true, "classification": true}
+		for _, fact := range decoded {
+			for key := range fact {
+				if !allowed[key] {
+					t.Fatalf("external dependency fact carries unexpected key %q: %s", key, raw)
+				}
+				lower := strings.ToLower(key)
+				for _, forbidden := range []string{"contract", "fingerprint", "body", "hash", "receipt", "runtime", "proof", "acceptance"} {
+					if strings.Contains(lower, forbidden) {
+						t.Fatalf("external dependency fact leaks %q key: %s", key, raw)
+					}
+				}
+			}
+		}
+	})
 }
 
 func TestDirectWaveAuthorityWaveStartQueuesEligibleRoots(t *testing.T) {
@@ -273,7 +566,7 @@ func TestDirectStartAuthorizesPendingProofButCompletionStillRequiresIt(t *testin
 	if err != nil || waveStart.Authorization != "authorized" || len(waveStart.QueuedTaskIDs) != 1 || waveStart.QueuedTaskIDs[0] != "APP-T-0001" {
 		t.Fatalf("pending-proof wave start: result=%#v err=%v", waveStart, err)
 	}
-	if waveStart.Reason != "Authorized — waiting for prerequisites" {
+	if waveStart.Reason != "Queued" {
 		t.Fatalf("wave start reason=%q", waveStart.Reason)
 	}
 	if directive, _ := store.RunDirective(project.ProjectID, "APP-T-0002"); directive != nil && directive.State == "queued" {
@@ -1392,7 +1685,7 @@ func TestDirectWaveStaleDoneMemberDoesNotCompleteWave(t *testing.T) {
 	// An out-of-band authored-contract edit on a done member must dominate its
 	// lifecycle status: the wave cannot certify completion over stale bytes.
 	writeTaskFileOutOfBand(t, vault, "APP-T-0001", func(d map[string]any, b string) (map[string]any, string) {
-		return d, strings.Replace(b, "| A1 | Works. |", "| A1 | Works differently. |", 1)
+		return d, strings.Replace(b, "The named behavior is observable in the changed files.", "The named behavior changed out of band.", 1)
 	})
 	review, err = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
 	if err != nil {

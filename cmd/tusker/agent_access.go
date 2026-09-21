@@ -347,20 +347,10 @@ func resolveAccess(profile RunnerProfileDefinition, sharedPrivate []string, cont
 	}
 
 	reviewOnly := profile.Access.Mode == accessModeReview
-	preset := runnercore.PresetWorkspaceOffline
-	filesystem := "workspace-write"
-	if reviewOnly {
-		preset, filesystem = runnercore.PresetReadOnly, "read-only"
-	}
-	if !reviewOnly && profile.Access.Network {
-		preset = runnercore.PresetWorkspaceNetwork
-	}
-	approvals := profile.Access.DestructiveActions
-	if reviewOnly {
-		approvals = "deny"
-	}
+	effective := effectivePolicyForAgentAccess(profile.Access)
+	filesystem := effective.Filesystem
 	canonicalRefs := canonicalReferences(context.References)
-	effective := runnercore.EffectivePolicy{Preset: preset, Filesystem: filesystem, Network: profile.Access.Network && !reviewOnly, Approvals: approvals, Workspace: workspace, TemporaryDirectory: temp, ReviewOnly: reviewOnly}
+	effective.Workspace, effective.TemporaryDirectory = workspace, temp
 	controls := append([]runnercore.ControlSupport{}, context.Controls...)
 	issues := []runnercore.AccessIssue{}
 	state := "ready"
@@ -405,6 +395,24 @@ func resolveAccess(profile RunnerProfileDefinition, sharedPrivate []string, cont
 	effective.AccessFingerprint = fingerprint
 	commandPolicy := runnercore.NewCommandPolicy(reviewOnly, profile.Access.DestructiveActions)
 	return ResolvedAccess{Requested: requested, Effective: effective, Folders: folders, References: canonicalRefs, PrivateFolders: canonicalPrivate, Controls: controls, CommandPolicy: &commandPolicy, State: state, Issues: issues, Fingerprint: fingerprint}, nil
+}
+
+func effectivePolicyForAgentAccess(access *AgentAccessV1) runnercore.EffectivePolicy {
+	reviewOnly := access.Mode == accessModeReview
+	preset, filesystem := runnercore.PresetWorkspaceOffline, "workspace-write"
+	if reviewOnly {
+		preset, filesystem = runnercore.PresetReadOnly, "read-only"
+	} else if access.Network {
+		preset = runnercore.PresetWorkspaceNetwork
+	}
+	approvals := access.DestructiveActions
+	if reviewOnly {
+		approvals = "deny"
+	}
+	return runnercore.EffectivePolicy{
+		Preset: preset, Filesystem: filesystem, Network: access.Network && !reviewOnly,
+		Approvals: approvals, ReviewOnly: reviewOnly,
+	}
 }
 
 func legacyPresetFromProfile(profile RunnerProfileDefinition) string {

@@ -50,6 +50,7 @@ const (
 	AttemptOutcomeSucceeded        AttemptOutcome = "succeeded"
 	AttemptOutcomeBlocked          AttemptOutcome = "blocked"
 	AttemptOutcomeFailed           AttemptOutcome = "failed"
+	AttemptOutcomeUnknown          AttemptOutcome = "outcome_unknown"
 	AttemptOutcomeInterrupted      AttemptOutcome = "interrupted"
 	AttemptOutcomeCancelled        AttemptOutcome = "cancelled"
 	AttemptOutcomeAbandoned        AttemptOutcome = "abandoned"
@@ -60,6 +61,16 @@ const (
 	AttemptOutcomeWaitingForReview AttemptOutcome = "waiting_for_review"
 	AttemptOutcomeBudgetExceeded   AttemptOutcome = "budget_exceeded"
 )
+
+// projectedAttemptOutcome corrects legacy rows without rewriting retained
+// attempt evidence.
+func projectedAttemptOutcome(outcome, lastError string) AttemptOutcome {
+	text := strings.ToLower(lastError)
+	if strings.Contains(text, "delivery_unknown (write_complete)") || strings.Contains(text, "child exited without terminal status") {
+		return AttemptOutcomeUnknown
+	}
+	return AttemptOutcome(strings.TrimSpace(outcome))
+}
 
 type RunnerCapabilities struct {
 	StructuredEvents    bool
@@ -298,9 +309,9 @@ func withDefaultCodexPolicy(policy CodexPolicy) CodexPolicy {
 	if strings.TrimSpace(policy.TurnSandboxPolicy) == "" {
 		policy.TurnSandboxPolicy = defaults.TurnSandboxPolicy
 	}
-	if policy.TurnTimeoutMS <= 0 {
-		policy.TurnTimeoutMS = defaults.TurnTimeoutMS
-	}
+	// Task duration is unbounded. Liveness comes from process identity,
+	// heartbeats, and explicit cancellation—not elapsed wall time.
+	policy.TurnTimeoutMS = 0
 	if policy.ReadTimeoutMS <= 0 {
 		policy.ReadTimeoutMS = defaults.ReadTimeoutMS
 	}
@@ -413,7 +424,6 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		"TUSKER_CODEX_THREAD_SANDBOX="+req.CodexPolicy.ThreadSandbox,
 		"TUSKER_CODEX_TURN_SANDBOX_POLICY="+req.CodexPolicy.TurnSandboxPolicy,
 		"TUSKER_CODEX_TURN_NETWORK_ACCESS="+networkAccessEnvValue(req.CodexPolicy.TurnSandboxNetwork),
-		"TUSKER_CODEX_TURN_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.TurnTimeoutMS),
 		"TUSKER_CODEX_READ_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.ReadTimeoutMS),
 		"TUSKER_CODEX_STALL_TIMEOUT_MS="+fmt.Sprintf("%d", req.CodexPolicy.StallTimeoutMS),
 		"TUSKER_CODEX_MAX_TURNS="+fmt.Sprintf("%d", req.CodexPolicy.MaxTurns),

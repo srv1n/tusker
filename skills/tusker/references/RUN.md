@@ -1,8 +1,9 @@
 # Run and verification
 
-A run directive is deliberate human authority; task creation and inspection
-are inert. Follow the entrypoint's execution-mode boundary and the claimed
-packet. Read its complete acceptance, governing sections, dependencies, and
+A run directive queues the exact task or wave with deliberate human authority;
+task creation and inspection are inert. Background work is the project's only
+daemon opt-in, and the selected tier profile owns worker choice. Follow the
+claimed packet and read its acceptance, governing sections, dependencies, and
 owned paths before editing.
 
 Never hard-code a model or silently replace a failed transport. Inspect with:

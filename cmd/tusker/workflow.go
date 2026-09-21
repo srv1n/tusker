@@ -356,7 +356,7 @@ func defaultWorkflow() Workflow {
 	wf.Codex.ApprovalPolicy = "on-request"
 	wf.Codex.ThreadSandbox = "workspace-write"
 	wf.Codex.TurnSandboxPolicy = "workspace-write"
-	wf.Codex.TurnTimeoutMS = 600000
+	wf.Codex.TurnTimeoutMS = 0
 	wf.Codex.ReadTimeoutMS = 30000
 	wf.Codex.StallTimeoutMS = 120000
 	wf.Codex.MaxTurns = 1

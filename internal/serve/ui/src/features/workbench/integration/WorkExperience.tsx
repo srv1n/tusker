@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { qk, useProjects, useRun, useRuns, useTask, useTasks, useWaves, useWaveReview, waveReviewQuery } from "@/lib/queries";
 import { WaveAuthorityControls, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
 import { TaskBoard } from "../board";
-import { WaveFlow, type FlowViewport } from "../flow";
+import { WaveFlow, type DependencyFact, type FlowViewport } from "../flow";
 import { TaskInspector } from "../inspector/TaskInspector";
 import { WaveOverview, type WaveOverviewFilter } from "../overview";
 import { WaveResults } from "../results/WaveResults";
@@ -152,6 +152,21 @@ export function WorkWave() {
     setViewport({ x: 32, y: 32, scale: 1 });
   }, [projectId, waveId, requested]);
   const currentWave = wave ? waveSummaryWithReview(wave, review.data, review.error) : undefined;
+  const dependencyFacts = useMemo<Record<string, DependencyFact> | undefined>(() => {
+    if (review.error) return undefined;
+    const externals = review.data?.externalDependencies;
+    if (!externals) return undefined;
+    return Object.fromEntries(externals.map((fact) => [fact.taskId, {
+      kind: fact.classification,
+      title: fact.title,
+      status: fact.status,
+      readiness: fact.readiness,
+      waveId: fact.waveId,
+      waveTitle: fact.waveTitle,
+    } satisfies DependencyFact]));
+  }, [review.data, review.error]);
+  const waveAuthorization = review.error ? undefined : review.data?.authorization;
+  const waveStartEnabled = !review.error && (review.data?.controls ?? []).some((control) => control.action === "wave start" && control.enabled);
   useEffect(() => {
     if (currentWave) setEnteredView((current) => settleEnteredWaveView(current, currentWave, review.isPending, requested));
   }, [currentWave?.status, currentWave?.landedAt, requested, review.isPending]);
@@ -164,7 +179,7 @@ export function WorkWave() {
     <div className="mb-5"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{currentWave.id}</p><h2 className="mt-1 font-serif text-[26px] font-semibold">{currentWave.title}</h2>{(currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome) && <p className="mt-2 max-w-2xl text-[13px] text-muted">{currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome}</p>}</div>
     <div className="mb-5"><WaveAuthorityControls projectId={projectId} waveId={currentWave.id} /></div>
     <nav aria-label="Wave views" className="mb-5 flex gap-2 border-b border-line pb-3">{(["flow", "work", "results"] as const).map((tab) => <button key={tab} type="button" aria-pressed={view === tab} onClick={() => setChosenView(tab)} className={`rounded-md px-4 py-2 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${view === tab ? "bg-ink text-surface" : "border border-line"}`}>{tab === "work" ? "Tasks" : tab === "flow" ? "Dependencies" : "Results"}</button>)}</nav>
-    {view === "work" ? <WaveReviewDetail projectId={projectId} waveId={currentWave.id} showControls={false} showDependencies={false} /> : view === "results" ? canShowWaveResults(review.data, review.error) ? <WaveResults wave={currentWave} tasks={tasks} onOpenDependencies={() => setChosenView("flow")} onOpenTask={setSelected} /> : <section aria-label="Results unavailable" className="rounded-lg border border-line bg-raised px-4 py-5"><h3 className="text-[14px] font-semibold text-ink">Results are not available yet</h3><p className="mt-1 text-[13px] text-muted">{review.error ? "The acceptance record could not be loaded. Try refreshing." : review.isPending ? "Checking the acceptance record…" : "This wave has not been accepted. Tasks and dependencies remain available."}</p></section> : <WaveFlow memberIds={currentWave.memberIds} tasks={tasks} runs={runs.data ?? []} reviewMembers={review.error ? undefined : review.data?.members} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={review.isPending || details.some((query) => query.isPending)} error={review.error instanceof Error ? review.error.message : details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />}
+    {view === "work" ? <WaveReviewDetail projectId={projectId} waveId={currentWave.id} showControls={false} showDependencies={false} /> : view === "results" ? canShowWaveResults(review.data, review.error) ? <WaveResults wave={currentWave} tasks={tasks} onOpenDependencies={() => setChosenView("flow")} onOpenTask={setSelected} /> : <section aria-label="Results unavailable" className="rounded-lg border border-line bg-raised px-4 py-5"><h3 className="text-[14px] font-semibold text-ink">Results are not available yet</h3><p className="mt-1 text-[13px] text-muted">{review.error ? "The acceptance record could not be loaded. Try refreshing." : review.isPending ? "Checking the acceptance record…" : "This wave has not been accepted. Tasks and dependencies remain available."}</p></section> : <WaveFlow memberIds={currentWave.memberIds} tasks={tasks} runs={runs.data ?? []} reviewMembers={review.error ? undefined : review.data?.members} dependencyFacts={dependencyFacts} authorization={waveAuthorization} startEnabled={waveStartEnabled} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={review.isPending || details.some((query) => query.isPending)} error={review.error instanceof Error ? review.error.message : details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />}
     <InspectorHost selected={selected} reviewMember={review.error ? undefined : review.data?.members.find((member) => member.taskId === selected)} onClose={() => setSelected(null)} />
   </Shell>;
 }

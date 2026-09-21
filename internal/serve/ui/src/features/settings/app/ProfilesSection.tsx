@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleAlert, FolderPlus, Plus, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { harnessLabel } from "@/lib/harness";
 import { Button, Select, TextInput, Toggle } from "@/components/ui/controls";
 import { Card, Chip, Dot } from "@/components/ui/primitives";
 import { CommandPolicyDetails } from "./CommandPolicyDetails";
@@ -515,7 +516,7 @@ export function ProfilesSection({
           message: ready
             ? "Settings supported"
             : issue ||
-              `${harness?.display_name || draft.harness} is not ready for this route. Refresh discovery or choose a supported agent.`,
+              `${harness?.display_name || harnessLabel(draft.harness)} is not ready for this route. Refresh discovery or choose a supported agent.`,
         },
       }));
     } catch (cause) {
@@ -1127,7 +1128,7 @@ function ProfileEditor({
             className="w-full"
           >
             {harness ? null : (
-              <option value={draft.harness}>{draft.harness}</option>
+              <option value={draft.harness}>{harnessLabel(draft.harness)}</option>
             )}
             {harnesses.map((item) => (
               <option key={item.harness} value={item.harness}>

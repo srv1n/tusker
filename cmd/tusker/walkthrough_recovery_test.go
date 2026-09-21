@@ -251,6 +251,46 @@ func TestWalkthroughWaveRecovery(t *testing.T) {
 	}
 }
 
+func TestOutcomeUnknownRecoveryIsBoundedAndPreservesLineageIntent(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0099", "W-0099", nil)
+	writeDirectWave(t, vault, "W-0099", []string{"APP-T-0099"}, map[string]any{"authorization": "armed", "authorization_fingerprint": "material-1", "authorized_at": "2026-01-01T00:00:00Z"})
+	parent := RunAttempt{AttemptID: "attempt-unknown", ProjectID: project.ProjectID, RecordID: "APP-T-0099", ItemID: "APP-T-0099", Lane: runLaneExecute, Outcome: string(AttemptOutcomeFailed), LastError: `acp outcome delivery_unknown (write_complete): lost contact`, StartedAt: "2026-01-01T00:00:00Z", FinishedAt: "2026-01-01T00:01:00Z"}
+	if err := store.SaveAttempt(parent); err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0099", ItemID: "APP-T-0099", Lane: runLaneExecute, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeFailed), LastError: parent.LastError, LastHeartbeatAt: time.Now().UTC().Format(time.RFC3339Nano), Terminal: true, AttemptCount: 1}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := queueOutcomeUnknownRecovery(store, idx.Tasks["APP-T-0099"], Note{}, run, "human:test", time.Now().UTC())
+	if err != nil || !result.Admitted {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	stored, err := store.FindRunScoped(project.ProjectID, "APP-T-0099")
+	if err != nil || stored == nil || stored.LeaseState != string(LeaseStateRetryQueued) || !strings.Contains(stored.LastError, outcomeUnknownRecoveryReasonPrefix+parent.AttemptID) {
+		t.Fatalf("stored=%#v err=%v", stored, err)
+	}
+
+	// Once a recovery child exists for this parent, the same uncertainty may
+	// not create another child.
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "attempt-recovery", ProjectID: project.ProjectID, RecordID: "APP-T-0099", ItemID: "APP-T-0099", Lane: runLaneExecute, ParentAttemptID: parent.AttemptID, ChildType: "recovery", Outcome: string(AttemptOutcomeFailed), StartedAt: "2026-01-01T00:02:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	stored.LeaseState, stored.AttemptOutcome, stored.LastError, stored.Terminal = string(LeaseStateReleased), string(AttemptOutcomeUnknown), parent.LastError, true
+	if err := store.UpsertRun(*stored); err != nil {
+		t.Fatal(err)
+	}
+	result, err = queueOutcomeUnknownRecovery(store, idx.Tasks["APP-T-0099"], idx.Waves["W-0099"], *stored, "human:test", time.Now().UTC())
+	if err != nil || !result.Refused || !strings.Contains(result.Reason, "human review") {
+		t.Fatalf("repeat result=%#v err=%v", result, err)
+	}
+}
+
 // rerunChecksCommandTaskBody carries one deterministic command proof: the
 // sentinel file decides pass or fail so the test can flip verification
 // outcome without touching the task contract.

@@ -14,6 +14,7 @@ import {
   clampViewport,
   displayStateFor,
   essentialFlowEdges,
+  externalDependencyState,
   fitViewport,
   initialViewport,
   isLiveRun,
@@ -107,6 +108,62 @@ describe("WaveFlow graph model", () => {
     expect(ghost?.kind).toBe("unresolved");
     expect(unresolved.warnings.some((warning) => warning.kind === "unresolved")).toBe(true);
     expect(unresolved.warnings.some((warning) => warning.kind === "missing")).toBe(false);
+
+    // Canonical facts give the external node its real title, state, and wave
+    // context; a valid external fact produces no dependency warning.
+    const factual = buildFlowGraph({
+      memberIds: ["WUX-T-010"],
+      tasks: [
+        {
+          ...chain.tasks[0]!,
+          id: "WUX-T-010",
+          title: "Downstream of another wave",
+          status: "ready",
+          deps: [
+            { id: "EXT-DONE", title: "EXT-DONE", status: "done" },
+            { id: "EXT-OPEN", title: "EXT-OPEN", status: "ready" },
+            { id: "EXT-GONE", title: "EXT-GONE", status: "ready" },
+            { id: "EXT-SHUT", title: "EXT-SHUT", status: "ready" },
+          ],
+        } satisfies TaskDetail,
+      ],
+      dependencyFacts: {
+        "EXT-DONE": { kind: "external", title: "Assemble alpha report", status: "done", readiness: "done", waveId: "W-0002", waveTitle: "Alpha: assemble a small report" },
+        "EXT-OPEN": { kind: "external", title: "Assemble beta report", status: "backlog", readiness: "held", waveId: "W-0003", waveTitle: "Beta: assemble an independent report" },
+        "EXT-GONE": { kind: "missing" },
+        "EXT-SHUT": { kind: "unavailable" },
+      },
+    });
+    const done = factual.nodes.find((node) => node.id === "EXT-DONE");
+    const open = factual.nodes.find((node) => node.id === "EXT-OPEN");
+    const gone = factual.nodes.find((node) => node.id === "EXT-GONE");
+    const shut = factual.nodes.find((node) => node.id === "EXT-SHUT");
+    expect(done?.kind).toBe("external");
+    expect(done?.title).toBe("Assemble alpha report");
+    expect(done?.state).toBe("completed");
+    expect(done?.context).toBe("Alpha: assemble a small report");
+    expect(open?.state).toBe("backlog");
+    expect(open?.context).toBe("Beta: assemble an independent report");
+    // Missing/unavailable keep the durable ID as title and carry explicit
+    // neutral state labels instead of invented facts.
+    expect(gone?.kind).toBe("missing");
+    expect(gone?.title).toBe("EXT-GONE");
+    expect(gone?.state).toBe("unknown");
+    expect(gone?.stateLabel).toBe("Dependency missing");
+    expect(shut?.kind).toBe("unavailable");
+    expect(shut?.title).toBe("EXT-SHUT");
+    expect(shut?.stateLabel).toBe("Dependency status unavailable");
+    const unavailableWarning = factual.warnings.find((warning) => warning.kind === "unavailable");
+    expect(unavailableWarning?.text).toContain("Dependency status unavailable");
+    // Valid external facts never surface as warnings.
+    expect(factual.warnings.some((warning) => warning.taskIds.includes("EXT-DONE") || warning.taskIds.includes("EXT-OPEN"))).toBe(false);
+    // Canonical state mapping honors status first, then readiness.
+    expect(externalDependencyState({ kind: "external", status: "done" })).toBe("completed");
+    expect(externalDependencyState({ kind: "external", status: "review" })).toBe("reviewing");
+    expect(externalDependencyState({ kind: "external", status: "ready" })).toBe("ready");
+    expect(externalDependencyState({ kind: "external", status: "backlog" })).toBe("backlog");
+    expect(externalDependencyState({ kind: "external", readiness: "held" })).toBe("backlog");
+    expect(externalDependencyState({ kind: "external", status: "mystery", readiness: "mystery" })).toBe("unknown");
 
     // Cycles stay inspectable: nodes render, cyclic edges flag, warning lists.
     const cycle = cycleFixture();

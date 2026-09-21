@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -236,6 +238,137 @@ func TestDemoRepeatableE2E(t *testing.T) {
 	}
 	if code := demoRunInner(t, "demo check", Args{"repo": repo}); code != demoExitOK {
 		t.Fatalf("final check exit %d", code)
+	}
+}
+
+func TestDemoCrossWaveContracts(t *testing.T) {
+	bin := demoTestBinary(t)
+	demoTestEnv(t, bin)
+	repo := t.TempDir()
+
+	if code := demoRunInner(t, "demo seed", Args{"repo": repo, "scenario": demoScenario}); code != demoExitOK {
+		t.Fatalf("seed exit %d", code)
+	}
+	vault := filepath.Join(repo, ".tusker")
+	manifest := demoManifestForTest(t, repo)
+	c1 := manifest.Tasks["c1"].TaskID
+	if c1 == "" {
+		t.Fatal("seed did not map c1")
+	}
+	targets := []string{manifest.Tasks["a4"].TaskID, manifest.Tasks["b4"].TaskID}
+	if targets[0] == "" || targets[1] == "" {
+		t.Fatalf("seed did not map a4/b4: %#v", manifest.Tasks)
+	}
+	sort.Strings(targets)
+
+	assertC1Contracts := func() {
+		t.Helper()
+		task, err := resolveV7Note(vault, c1, "task")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var edges []string
+		for _, raw := range normalizeList(task.Data["dependencies"]) {
+			edge := parseV7DependencyEdge(raw)
+			edges = append(edges, edge.ID+":"+edge.Hardness)
+		}
+		sort.Strings(edges)
+		if len(edges) != 2 || edges[0] != targets[0]+":hard" || edges[1] != targets[1]+":hard" {
+			t.Fatalf("c1 dependency edges: %v, want %v:hard", edges, targets)
+		}
+		contracts, err := dependencyContractEntries(task)
+		if err != nil {
+			t.Fatalf("c1 dependency_contracts malformed: %s", err.Error())
+		}
+		if len(contracts) != 2 {
+			t.Fatalf("c1 dependency_contracts: %#v", contracts)
+		}
+		pinned := map[string]string{}
+		for _, entry := range contracts {
+			if entry.Kind != v7DependencyHardnessHard {
+				t.Fatalf("contract kind for %s: %q, want hard", entry.TaskID, entry.Kind)
+			}
+			pinned[strings.ToUpper(strings.TrimSpace(entry.TaskID))] = entry.TargetContractFingerprint
+		}
+		for _, target := range targets {
+			producer, err := resolveV7Note(vault, target, "task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pinned[target] == "" || pinned[target] != directWaveTaskContract(producer) {
+				t.Fatalf("contract fingerprint for %s: %q, want current contract %q", target, pinned[target], directWaveTaskContract(producer))
+			}
+		}
+	}
+	assertC1Contracts()
+
+	review, err := buildDirectWaveReview(vault, nil, "", manifest.Waves["follow-up"].WaveID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, blocker := range review.Blockers {
+		if blocker.Code == "DEPENDENCY_CONTRACT_INVALID" || blocker.Code == "CONTRACT_FINGERPRINT_STALE" {
+			t.Fatalf("fresh seed wave review reports %s: %s", blocker.Code, blocker.Reason)
+		}
+	}
+
+	if code := demoRunInner(t, "demo seed", Args{"repo": repo, "scenario": demoScenario}); code != demoExitOK {
+		t.Fatalf("reseed exit %d", code)
+	}
+	again := demoManifestForTest(t, repo)
+	for key, task := range manifest.Tasks {
+		if again.Tasks[key].TaskID != task.TaskID {
+			t.Fatalf("reseed changed mapping for %s", key)
+		}
+	}
+	assertC1Contracts()
+
+	c1Path := filepath.Join(vault, "work", "tasks", c1+".md")
+	before, err := os.ReadFile(c1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings := map[string]map[string]string{}
+	for key, task := range manifest.Tasks {
+		if mappings[task.Wave] == nil {
+			mappings[task.Wave] = map[string]string{}
+		}
+		mappings[task.Wave][key] = task.TaskID
+	}
+	missingTarget := map[string]map[string]string{}
+	for wave, mapping := range mappings {
+		missingTarget[wave] = map[string]string{}
+		for key, id := range mapping {
+			missingTarget[wave][key] = id
+		}
+	}
+	delete(missingTarget["beta"], "b4")
+	if err := demoApplyCrossScopeDeps(demoNewExec(), repo, vault, missingTarget, "agent:test"); err == nil {
+		t.Fatal("missing cross-scope target mapping was accepted")
+	}
+	delete(missingTarget["follow-up"], "c1")
+	if err := demoApplyCrossScopeDeps(demoNewExec(), repo, vault, missingTarget, "agent:test"); err == nil {
+		t.Fatal("missing consumer mapping was accepted")
+	}
+	task, err := resolveV7Note(vault, c1, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := stringField(task.Data, "state_rev")
+	if err := updateV7TaskCmd(Args{"vault": vault, "quiet": "true", "_pos0": c1, "if-revision": rev,
+		"dependencies": targets[0] + ":hard,TSK-T-9999:hard", "rebind-dependency-contracts": "true", "by": "agent:test"}); err == nil {
+		t.Fatal("missing dependency target was accepted")
+	}
+	if err := updateV7TaskCmd(Args{"vault": vault, "quiet": "true", "_pos0": c1, "if-revision": rev,
+		"dependencies": targets[0] + ":hard," + targets[0] + ":hard", "rebind-dependency-contracts": "true", "by": "agent:test"}); err == nil {
+		t.Fatal("ambiguous duplicate dependency was accepted")
+	}
+	after, err := os.ReadFile(c1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("refused dependency updates partially published")
 	}
 }
 

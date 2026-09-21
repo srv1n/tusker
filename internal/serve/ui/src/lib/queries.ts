@@ -378,7 +378,7 @@ export const useRecovery = (taskId: string, projectId?: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: ["recovery", projectId ?? "all", taskId],
-    mutationFn: (action: "retry_review" | "rerun_checks") => api.recover(taskId, action, projectId).then(requireAccepted),
+    mutationFn: (action: "retry_review" | "recover_unknown" | "rerun_checks" | "adopt_completed") => api.recover(taskId, action, projectId).then(requireAccepted),
     onSettled: () => invalidateRunActionQueries(qc, taskId, projectId),
   });
 };

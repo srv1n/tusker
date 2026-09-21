@@ -12,7 +12,7 @@ describe("task authoring and execution experience", () => {
   test("uses one route summary for effective and actual identity", () => {
     const worker = { work_level: "standard", profile: "worker", harness: "codex_exec", model: "gpt-worker", effort: "medium", source: "model levels", reason: "tier mapping", fallbacks: ["default"], blockers: [] };
     const reviewer = { ...worker, profile: "reviewer", model: "gpt-review", effort: "high", source: "review override", fallbacks: [], blockers: [] };
-    expect(routeSummary(worker)).toBe("worker · gpt-worker · medium · codex_exec");
+    expect(routeSummary(worker)).toBe("worker · gpt-worker · medium · Codex");
     expect(routeBlockers({ ...readyTask, effectiveExecute: worker, effectiveReview: reviewer })).toEqual([]);
 
     const html = renderToStaticMarkup(createElement(AgentCoordinationSummary, {
@@ -21,7 +21,8 @@ describe("task authoring and execution experience", () => {
     }));
     expect(html).toContain("codex:architect");
     expect(html).toContain("thread-1");
-    expect(html).toContain("actual-worker · gpt-actual · medium · codex_exec");
+    expect(html).toContain("actual-worker · gpt-actual · medium · Codex");
+    expect(html).not.toContain("codex_exec");
     expect(html).toContain("worktree · /repo/.work · branch feature");
     expect(html).toContain("task · ARCH-T-1 · bound · task continuation route");
     expect(html).toContain("tusker work start");

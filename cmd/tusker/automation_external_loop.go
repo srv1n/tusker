@@ -357,7 +357,7 @@ func externalLoopEffectNeedsReconciliation(run RunStatus, event *ExternalLoopEve
 		return false
 	}
 	switch AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) {
-	case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeCancelled, AttemptOutcomeWaitingForHuman:
+	case AttemptOutcomeSucceeded, AttemptOutcomeUnknown, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeCancelled, AttemptOutcomeWaitingForHuman:
 		return true
 	default:
 		return false

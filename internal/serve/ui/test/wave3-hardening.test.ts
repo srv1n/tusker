@@ -7,7 +7,18 @@ describe("Wave 3 production UI contracts", () => {
     const source = readFileSync("src/features/product/OperationsScreens.tsx", "utf8");
     expect(source).toContain("settings.mutate");
     expect(source).toContain("Number.isFinite");
+		expect(source).toContain('value="shared">Current checkout');
+		expect(source).toContain("including existing uncommitted changes");
+		expect(source).toContain('value="worktree">Git worktree');
     expect(source).not.toContain("onChange={(e) => settings.mutate");
+  });
+
+  test("global concurrency uses the live daemon limit and existing limits action", () => {
+    const source = readFileSync("src/features/settings/app/GeneralSection.tsx", "utf8");
+    const mock = readFileSync("src/features/settings/app/mock.ts", "utf8");
+    expect(source).toContain("daemonQ.data?.maxActiveRuns");
+    expect(source).toContain('action: "limits"');
+    expect(mock).not.toContain('{ key: "Global concurrency", value: "8"');
   });
 
   test("markdown uses the href sanitizer and strict external rel", () => {

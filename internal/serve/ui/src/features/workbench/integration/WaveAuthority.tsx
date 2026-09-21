@@ -1,19 +1,21 @@
 import { Pause, Play, RotateCcw } from "lucide-react";
 import { ActionResultLine } from "@/components/ui/action-feedback";
-import { useWaveControl, useWaveReview } from "@/lib/queries";
+import { useRecovery, useWaveControl, useWaveReview } from "@/lib/queries";
 import { cn } from "@/lib/cn";
+import { RECOVERY_ACTION_LABEL, RECOVERY_EXPLANATION, RECOVERY_STATE_LABEL } from "@/lib/recovery";
 import { ProductLoading, ProductSection, ProductStatus, ProductUnavailable } from "@/features/product/shared";
 import { HumanActionCard } from "@/features/human-action/HumanActionCard";
 import { usableWaveReview, waveReviewStage } from "./integrationModel";
 import type { DirectStartBlocker, WaveReview, WaveReviewMember } from "@/types/domain";
 
-const WAVE_CONTROL_LABEL: Record<string, string> = { "wave start": "Start wave", "wave pause": "Pause", "wave resume": "Resume" };
+const WAVE_CONTROL_LABEL: Record<string, string> = { "wave start": "Run wave", "wave pause": "Pause", "wave resume": "Resume" };
 const WAVE_CONTROL_PENDING: Record<string, string> = { "wave start": "Starting wave…", "wave pause": "Pausing…", "wave resume": "Resuming…" };
 const WAVE_CONTROL_ACTION: Record<string, "start" | "pause" | "resume"> = { "wave start": "start", "wave pause": "pause", "wave resume": "resume" };
 const WAVE_CONTROL_ICON: Record<string, typeof Play> = { "wave start": Play, "wave pause": Pause, "wave resume": RotateCcw };
+const WAVE_CONTROL_STYLE: Record<string, string> = { "wave start": "bg-pass text-surface hover:opacity-90", "wave pause": "border border-line bg-raised text-ink hover:border-ink/40 hover:bg-hover", "wave resume": "bg-ink text-surface hover:opacity-90" };
 
-type WaveStatus = { label: string; explanation: string; tone: "pass" | "info" | "warn" | "fail" | "neutral" };
-type IssueGroup = { key: string; title: string; explanation: string; next: string; blockers: DirectStartBlocker[] };
+type WaveStatus = { label: string; tone: "pass" | "info" | "warn" | "fail" | "neutral"; hint?: string };
+type IssueGroup = { key: string; title: string; explanation: string; next: string; affected?: boolean; blockers: DirectStartBlocker[] };
 
 const normalBlocker = (blocker: DirectStartBlocker) => blocker.code === "DEPENDENCY_WAITING" || blocker.code === "HUMAN_GATE_OPEN";
 const setupBlocker = (blocker: DirectStartBlocker) => blocker.code === "RUNTIME_UNAVAILABLE" || blocker.code.startsWith("ROUTE_");
@@ -28,8 +30,29 @@ function verificationIssue(blocker: DirectStartBlocker): Omit<IssueGroup, "block
   return { key: "verification-missing", title: "Verification has not been recorded", explanation: "Required verification is still missing.", next: "An agent needs to run and record the required check." };
 }
 
+/** One card per concrete failure: the named task or lane and its supplied recovery, never a generic wave fallback. */
+function specificIssue(blocker: DirectStartBlocker, member?: WaveReviewMember): Omit<IssueGroup, "blockers"> {
+  const subject = member?.title || blocker.taskId || "";
+  const suffix = subject ? ` — ${subject}` : "";
+  if (blocker.code === "OUTCOME_UNKNOWN") {
+    return { key: `unknown:${blocker.taskId ?? "wave"}`, title: `${RECOVERY_STATE_LABEL}${suffix}`, explanation: RECOVERY_EXPLANATION, next: RECOVERY_ACTION_LABEL, affected: false };
+  }
+  if (blocker.code === "RUNTIME_FAILED") {
+    const lane = member?.lane === "review" ? "Review" : "Implementation";
+    return { key: `failure:${blocker.code}:${blocker.taskId ?? "wave"}`, title: `${lane} failed${suffix}`, explanation: blocker.reason, next: blocker.action, affected: false };
+  }
+  if (blocker.code === "REVIEW_SNAPSHOT_STALE") {
+    return { key: `failure:${blocker.code}:${blocker.taskId ?? "wave"}`, title: `Review no longer applies${suffix}`, explanation: blocker.reason, next: blocker.action, affected: false };
+  }
+  if (blocker.code.startsWith("MATERIAL_") || blocker.code.startsWith("WAVE_")) {
+    return { key: `material:${blocker.code}:${blocker.taskId ?? "wave"}`, title: "The wave definition needs repair", explanation: blocker.reason, next: blocker.action, affected: false };
+  }
+  return { key: `blocker:${blocker.code}:${blocker.taskId ?? "wave"}`, title: subject ? `${subject} needs attention` : "This wave needs attention", explanation: blocker.reason, next: blocker.action, affected: false };
+}
+
 /** Groups diagnostics by the user-visible remedy; raw records stay disclosed. */
-export function summarizeIssues(blockers: DirectStartBlocker[]): IssueGroup[] {
+export function summarizeIssues(blockers: DirectStartBlocker[], members: WaveReviewMember[] = []): IssueGroup[] {
+  const memberById = new Map(members.map((member) => [member.taskId, member]));
   const groups = new Map<string, IssueGroup>();
   for (const blocker of blockers.filter((item) => !normalBlocker(item))) {
     let summary: Omit<IssueGroup, "blockers">;
@@ -37,7 +60,7 @@ export function summarizeIssues(blockers: DirectStartBlocker[]): IssueGroup[] {
     else if (blocker.code.startsWith("STRICT_PROOF_")) summary = verificationIssue(blocker);
     else if (blocker.code === "CONTRACT_FINGERPRINT_STALE" || blocker.code === "DEPENDENCY_CONTRACT_INVALID") summary = { key: "records", title: "Work records need reconciling", explanation: "Recorded work no longer matches the current task or prerequisite.", next: "An agent needs to reconcile the records and run any required checks." };
     else if (blocker.code === "ACTIVE_OWNER") summary = { key: "owner", title: "Another agent owns this work", explanation: "This task is assigned outside this wave’s current execution scope.", next: "Wait for that attempt to finish or release the task." };
-    else summary = { key: "wave-setup", title: "Wave setup needs attention", explanation: "The wave’s saved work definition is incomplete or inconsistent.", next: "An agent needs to repair the wave setup before work can start." };
+    else summary = specificIssue(blocker, memberById.get(blocker.taskId ?? ""));
     const existing = groups.get(summary.key);
     if (existing) existing.blockers.push(blocker);
     else groups.set(summary.key, { ...summary, blockers: [blocker] });
@@ -45,12 +68,36 @@ export function summarizeIssues(blockers: DirectStartBlocker[]): IssueGroup[] {
   return [...groups.values()];
 }
 
-function progressText(review: WaveReview): string {
-  const total = review.members.length;
-  const accepted = review.members.filter((member) => member.state === "completed").length;
-  const running = review.members.filter((member) => member.state === "running" || member.phase === "executing" || member.phase === "reviewing").length;
-  const waiting = Math.max(0, total - accepted - running);
-  return [`${accepted} of ${total} tasks accepted`, running ? `${running} running` : "", waiting ? `${waiting} waiting` : ""].filter(Boolean).join(" · ");
+type WaveCount = { label: string; tone: string };
+
+/** Glanceable member counts; color only supplements the text labels. */
+export function waveCounts(review: WaveReview): WaveCount[] {
+  const members = review.members;
+  const accepted = members.filter((member) => member.phase === "completed" || member.state === "completed").length;
+  const executing = members.filter((member) => member.phase === "executing" || member.state === "running").length;
+  const reviewing = members.filter((member) => member.phase === "reviewing" || member.phase === "awaiting_review").length;
+  const unknown = members.filter((member) => member.phase === "outcome_unknown").length;
+  const failed = members.filter((member) => member.phase !== "outcome_unknown" && (member.phase === "failed" || member.phase === "proof_blocked" || member.state === "blocked")).length;
+  const waiting = Math.max(0, members.length - accepted - executing - reviewing - unknown - failed);
+  const counts: WaveCount[] = [{ label: `${accepted}/${members.length} accepted`, tone: "text-pass" }];
+  if (executing) counts.push({ label: `${executing} executing`, tone: "text-info" });
+  if (reviewing) counts.push({ label: `${reviewing} in review`, tone: "text-accent" });
+  if (waiting) counts.push({ label: `${waiting} waiting`, tone: "text-muted" });
+  if (unknown) counts.push({ label: `${unknown} needs recovery`, tone: "text-warn" });
+  if (failed) counts.push({ label: `${failed} failed`, tone: "text-fail" });
+  return counts;
+}
+
+/** Effective project capacity, only when it is the thing constraining eligible work. */
+export function capacityConstraint(review: WaveReview): string | undefined {
+  for (const member of review.members) {
+    const match = member.phase === "capacity_wait" ? member.waitingReason?.match(/project capacity \d+\/(\d+)/) : undefined;
+    if (match) {
+      const limit = Number(match[1]);
+      return `${limit} task${limit === 1 ? "" : "s"} at a time`;
+    }
+  }
+  return undefined;
 }
 
 /** The review emits one task-start control for every independently eligible member. */
@@ -58,69 +105,115 @@ export function hasIndependentEligibleWork(review: WaveReview): boolean {
   return review.controls.some((control) => control.action === "task start" && control.enabled);
 }
 
+/** An armed wave with only terminal failures can be replayed through Start. */
+export function canRetryWave(review: WaveReview): boolean {
+  if (waveReviewStage(review) !== "failed" || review.authorization !== "authorized") return false;
+  if (review.members.some((member) => member.phase === "executing" || member.phase === "reviewing" || member.state === "running")) return false;
+  return !review.blockers.some((blocker) => !blocker.taskId || ["WAVE_TERMINAL", "ROUTE_INVALID", "DEPENDENCY_CONTRACT_INVALID", "CONTRACT_FINGERPRINT_STALE", "ACTIVE_OWNER", "OUTCOME_UNKNOWN"].includes(blocker.code));
+}
+
 /** One truthful primary state; blockers remain separate from normal scheduling. */
 export function summarizeWave(review: WaveReview): WaveStatus {
+	if (review.blockers.some((blocker) => blocker.code === "OUTCOME_UNKNOWN")) return { label: RECOVERY_STATE_LABEL, tone: "warn", hint: RECOVERY_EXPLANATION };
   switch (waveReviewStage(review)) {
-    case "completed": return { label: "Completed", explanation: "Required implementation, review and verification are recorded.", tone: "pass" };
-    case "cancelled": return { label: "Cancelled", explanation: "This wave ended without delivery.", tone: "neutral" };
-    case "paused": return { label: "Paused", explanation: "New work is stopped. Existing attempts may finish.", tone: "neutral" };
-    case "ready": return { label: "Ready to start", explanation: "Work is prepared; nothing is running yet.", tone: "pass" };
-    case "queued": return { label: "Queued", explanation: "Authorized work is waiting for the next eligible task or runtime pickup.", tone: "info" };
-    case "executing": return { label: "Executing", explanation: "Agents are actively progressing the work.", tone: "info" };
-    case "awaiting_review": return { label: "Awaiting review", explanation: "Implementation is finished. Independent review is next.", tone: "info" };
-    case "reviewing": return { label: "Reviewing", explanation: "An independent reviewer is assessing the work.", tone: "info" };
-    case "failed": return { label: "Failed", explanation: "A task attempt failed. See the affected task and diagnostic below.", tone: "fail" };
-    case "blocked": return review.humanActions?.length ? { label: "Waiting for you", explanation: hasIndependentEligibleWork(review) ? "A specific decision is needed, though other eligible tasks can still start." : "A specific decision is needed before this work can continue.", tone: "warn" } : review.blockers.some(setupBlocker) ? { label: "Waiting for setup", explanation: "Execution setup needs attention before agents can progress the work.", tone: "warn" } : { label: "Blocked", explanation: "Work needs attention. See the specific issue below.", tone: "fail" };
-    default: return { label: "Status unavailable", explanation: "The authoritative wave status is stale. Refresh before acting.", tone: "warn" };
+    case "completed": return { label: "Completed", tone: "pass" };
+    case "cancelled": return { label: "Cancelled", tone: "neutral", hint: "This wave ended without delivery." };
+    case "paused": return { label: "Paused", tone: "neutral" };
+    case "ready": return { label: "Ready", tone: "pass" };
+    case "queued": return { label: "Queued", tone: "info" };
+    case "executing": return { label: "Executing", tone: "info" };
+    case "awaiting_review": return { label: "Awaiting review", tone: "info" };
+    case "reviewing": return { label: "Reviewing", tone: "info" };
+    case "failed": return { label: "Failed", tone: "fail" };
+    case "blocked": return review.humanActions?.length ? { label: "Waiting for you", tone: "warn" } : review.blockers.some(setupBlocker) ? { label: "Waiting for setup", tone: "warn" } : { label: "Blocked", tone: "fail" };
+    default: return { label: "Status unavailable", tone: "warn", hint: "The authoritative wave status is stale. Refresh before acting." };
   }
 }
 
-function controlScope(action: string): string {
-  if (action === "wave start") return "This starts only the currently eligible tasks in this wave. Tasks waiting on predecessors start later.";
-  if (action === "wave pause") return "Pause stops new tasks from starting; active attempts can finish.";
-  return "This restores the wave’s saved authorization; it does not change its task scope.";
+/** One short line, only where the action’s behavior is not obvious. */
+function controlHint(action: string, review: WaveReview): string | undefined {
+	if (action === "wave pause") return "Running. Pause stops new tasks; active tasks may finish.";
+  if (action === "wave resume") return "Restores the saved authorization; it does not retry failed tasks.";
+  if (action === "wave start" && canRetryWave(review)) return "Previous attempts failed. Retry requeues eligible work.";
+  if (action === "wave start" && review.humanActions?.length) return "Eligible tasks can still start.";
+  return undefined;
 }
 
-function TechnicalDetails({ review, projectId }: { review: WaveReview; projectId: string }) {
-  return <details className="mt-4 text-[11px] text-faint"><summary className="cursor-pointer font-medium text-muted hover:text-ink">Technical details</summary><div className="mt-2 space-y-2 rounded-md border border-line bg-surface p-3"><p className="break-all font-mono">Material fingerprint: {review.materialFingerprint}</p>{review.blockers.length ? <ul className="space-y-2">{review.blockers.map((blocker, index) => <li key={`${blocker.code}-${blocker.taskId ?? ""}-${index}`}><span className="font-mono font-semibold">{blocker.code}</span>{" · "}{blocker.reason}{blocker.taskId ? <a className="ml-1 underline" href={`/p/${projectId}/tasks/${blocker.taskId}`}>Open task</a> : null}</li>)}</ul> : <p>No current diagnostic records.</p>}</div></details>;
-}
+/** Raw internals (fingerprints, codes) stay out of this surface entirely; Diagnostics and `tusker wave review --json` carry them. */
 
 export function WaveAuthorityControls({ projectId, waveId, compact }: { projectId: string; waveId: string; compact?: boolean }) {
   const review = useWaveReview(waveId, projectId);
   const control = useWaveControl(projectId, waveId);
   const data = usableWaveReview(review.data, review.error);
-  const enabled = (data?.controls ?? []).find((candidate) => candidate.enabled && candidate.action !== "task start" && WAVE_CONTROL_ACTION[candidate.action] && (candidate.action !== "wave start" || !data?.humanActions?.length || hasIndependentEligibleWork(data)));
-  const Icon = enabled ? WAVE_CONTROL_ICON[enabled.action] : Play;
+  const stage = data ? waveReviewStage(data) : null;
+  const retryable = data ? canRetryWave(data) : false;
+  const hasUnknownRecovery = Boolean(data?.blockers.some((blocker) => blocker.code === "OUTCOME_UNKNOWN"));
+  const enabled = hasUnknownRecovery ? undefined : retryable
+    ? { action: "wave start" as const, enabled: true, scope: waveId }
+    : (data?.controls ?? []).find((candidate) => candidate.enabled && candidate.action !== "task start" && WAVE_CONTROL_ACTION[candidate.action] && (candidate.action !== "wave start" || !data?.humanActions?.length || hasIndependentEligibleWork(data)));
   const status = data ? summarizeWave(data) : null;
-  const issues = data ? summarizeIssues(data.blockers) : [];
-  return <section className={cn("text-left", compact ? "max-w-[24rem]" : "w-full rounded-xl border border-line bg-raised p-4 sm:p-5")} data-wave-authority data-wave-state={data?.state ?? (review.error ? "unavailable" : "loading")}>
+  const issues = data ? summarizeIssues(data.blockers, data.members) : [];
+  const capacity = data ? capacityConstraint(data) : undefined;
+  const startRefused = !enabled && data && (stage === "blocked" || stage === "failed")
+    ? data.controls.find((candidate) => candidate.action === "wave start" && !candidate.enabled)
+    : undefined;
+  const startReason = startRefused ? (issues[0]?.title ?? startRefused.reason ?? "Work needs attention before this wave can start.") : undefined;
+  const hint = data && enabled ? controlHint(enabled.action, data) : status?.hint;
+  const Icon = enabled ? WAVE_CONTROL_ICON[enabled.action] : Play;
+  return <section className={cn("text-left", compact ? "max-w-[24rem]" : "w-full rounded-xl border border-line bg-raised p-4 sm:p-5")} data-wave-authority data-wave-state={data?.state ?? (review.error ? "unavailable" : "loading")} data-wave-recovery={retryable ? "retryable" : undefined}>
     {review.isLoading ? <p role="status" className="text-[12px] text-faint">Loading wave status…</p> : null}
     {review.error ? <p role="alert" className="text-[12px] leading-5 text-fail">Wave status is unavailable. {review.error instanceof Error ? review.error.message : "Try refreshing."}</p> : null}
-    {data && status ? <><div className="flex flex-wrap items-center gap-2"><ProductStatus tone={status.tone}>{status.label}</ProductStatus><span className="text-[12px] text-muted">{progressText(data)}</span></div><p className="mt-2 max-w-2xl text-[13px] leading-5 text-ink-soft">{status.explanation}</p>
+    {data && status ? <><div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      {stage !== "ready" ? <ProductStatus tone={status.tone}>{status.label}</ProductStatus> : null}
+      <span className="flex flex-wrap items-center gap-x-2 text-[12px] font-medium" data-wave-counts>{waveCounts(data).map((count) => <span key={count.label} className={count.tone}>{count.label}</span>)}</span>
+      {capacity ? <span className="text-[12px] text-muted" data-wave-capacity>{capacity} · <a className="underline decoration-line underline-offset-2 hover:text-ink" href={`/p/${projectId}/settings`}>Settings</a></span> : null}
+    </div>
       {data.humanActions?.length ? <section className="mt-4 space-y-3" aria-label="Your action">{data.humanActions.map(({ taskId, taskTitle, action }) => <HumanActionCard key={action.gateId} action={action} taskId={taskId} taskTitle={taskTitle} projectId={projectId} blockedTaskIds={action.blockedTaskIds} continueOnApproval={data.authorization === "authorized"} compact />)}</section> : null}
-      {enabled ? <div className="mt-4"><p className="mb-2 text-[12px] leading-5 text-muted">{controlScope(enabled.action)}</p><button type="button" data-wave-control={enabled.action} aria-label={`${WAVE_CONTROL_LABEL[enabled.action]} ${waveId}`} disabled={control.isPending} onClick={() => control.mutate(WAVE_CONTROL_ACTION[enabled.action])} className="inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-2 text-[12px] font-semibold text-surface disabled:opacity-50"><Icon size={13} aria-hidden="true" />{control.isPending ? WAVE_CONTROL_PENDING[enabled.action] : WAVE_CONTROL_LABEL[enabled.action]}</button></div> : null}
-      {issues.length ? <section className="mt-4 space-y-2" aria-label="What needs attention">{issues.map((issue) => <article key={issue.key} className="rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5 text-[12px] leading-5 text-warn"><p className="font-semibold text-ink">{issue.title}</p><p>{issue.explanation} {issue.blockers.length > 1 ? `${issue.blockers.length} tasks are affected.` : "One task is affected."}</p><p className="font-medium">Next: {issue.next}</p></article>)}</section> : null}
-      <div aria-live="polite" className="mt-3"><ActionResultLine pending={control.isPending} error={control.error} /></div><TechnicalDetails review={data} projectId={projectId} />
+      {hint ? <p className="mt-2 text-[12px] leading-5 text-muted">{hint}</p> : null}
+      {enabled ? <div className="mt-3 flex justify-end"><button type="button" data-wave-control={enabled.action} aria-label={`${retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action]} ${waveId}`} disabled={control.isPending} onClick={() => control.mutate(WAVE_CONTROL_ACTION[enabled.action])} className={cn("inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-[12px] font-semibold disabled:opacity-50", WAVE_CONTROL_STYLE[enabled.action])}><Icon size={13} aria-hidden="true" />{control.isPending ? (retryable ? "Retrying…" : WAVE_CONTROL_PENDING[enabled.action]) : (retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action])}</button></div> : null}
+	  {startRefused ? <div className="mt-3 flex justify-end"><span className="inline-flex items-center gap-2"><button type="button" disabled data-wave-control-refused="wave start" aria-label={`Run wave ${waveId}`} title={startReason} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-2 text-[12px] font-semibold text-muted"><Play size={13} aria-hidden="true" />Run wave</button><span className="text-[12px] text-muted">{startReason}</span></span></div> : null}
+      {issues.length ? <section className="mt-4 space-y-2" aria-label="What needs attention">{issues.map((issue) => <WaveIssue key={issue.key} issue={issue} projectId={projectId} />)}</section> : null}
+      <div aria-live="polite" className="mt-3"><ActionResultLine pending={control.isPending} error={control.error} /></div>
     </> : null}
   </section>;
 }
 
-function memberPhase(member: WaveReviewMember): string {
+function WaveIssue({ issue, projectId }: { issue: IssueGroup; projectId: string }) {
+  const taskId = issue.blockers.length === 1 ? issue.blockers[0].taskId : undefined;
+  const recovery = useRecovery(taskId ?? "", projectId);
+  const canRecover = Boolean(taskId && issue.blockers[0].code === "OUTCOME_UNKNOWN");
+  return <article className="rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5 text-[12px] leading-5 text-warn">
+    <p className="font-semibold text-ink">{issue.title}</p>
+    <p>{issue.explanation}{issue.affected === false ? "" : issue.blockers.length > 1 ? ` ${issue.blockers.length} tasks are affected.` : " One task is affected."}</p>
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      {canRecover ? <button type="button" className="rounded-md bg-ink px-3 py-1.5 font-semibold text-surface disabled:opacity-50" disabled={recovery.isPending} onClick={() => recovery.mutate("recover_unknown")}>{recovery.isPending ? "Verifying…" : RECOVERY_ACTION_LABEL}</button> : <span className="font-medium">Next: {issue.next}</span>}
+      {taskId ? <a className="underline underline-offset-2 hover:text-ink" href={`/p/${projectId}/tasks/${taskId}`}>Open task</a> : null}
+    </div>
+    <ActionResultLine className="mt-2" pending={recovery.isPending} error={recovery.error} result={recovery.data} />
+  </article>;
+}
+
+function memberPhase(member: WaveReviewMember, opts?: { authorized?: boolean; titleFor?: (taskId: string) => string | undefined }): string {
   if (member.completionReported && member.state !== "completed") return "Implementation reported complete; acceptance is not yet recorded.";
   if (member.phase === "completed" || member.state === "completed") return "Accepted";
   if (member.phase === "proof_blocked") return `Verification required${member.waitingReason ? `: ${member.waitingReason}` : ""}`;
-  if (member.phase === "failed" || member.state === "blocked") return `Failed${member.waitingReason ? `: ${member.waitingReason}` : ""}`;
+  if (member.phase === "outcome_unknown") return RECOVERY_STATE_LABEL;
+  if (member.phase === "failed") return `Failed${member.waitingReason ? `: ${member.waitingReason}` : ""}`;
+  if (member.phase === "blocked" || member.state === "blocked") return `Needs attention${member.waitingReason ? `: ${member.waitingReason}` : ""}`;
   if (member.phase === "executing" || member.state === "running") return "Executing";
   if (member.phase === "reviewing") return "Reviewing";
   if (member.phase === "awaiting_review" || member.waitingReason?.includes("independent review")) return "Awaiting review";
   if (member.phase === "paused") return `Paused${member.waitingReason ? `: ${member.waitingReason}` : ""}`;
-  if (member.phase === "capacity_wait") return member.waitingReason ? `Waiting: ${member.waitingReason}` : "Waiting for an execution slot";
+  if (member.phase === "capacity_wait") return "Ready — waiting for an execution slot";
   if (member.phase === "rework") return `Fixing review findings${member.waitingReason ? `: ${member.waitingReason}` : ""}`;
   if (member.phase === "queued") return "Queued";
   if (member.waitingReason?.toLowerCase().includes("rework")) return "Fixing review findings";
-  if (member.waitingReason?.startsWith("waiting for dependency ")) return `Waiting for ${member.waitingReason.replace("waiting for dependency ", "")} to complete; that task’s owner acts next.`;
+  if (member.waitingReason?.startsWith("waiting for dependency ")) {
+    const depId = member.waitingReason.replace("waiting for dependency ", "");
+    return `Waiting for ${opts?.titleFor?.(depId) ?? depId} to complete`;
+  }
   if (member.waitingReason?.includes("human gate")) return "Waiting for you";
-  return member.state === "ready" ? "Ready" : "Queued";
+  return member.state === "ready" ? (opts?.authorized ? "Ready — starting automatically" : "Ready") : "Queued";
 }
 
 export function WaveInstructions({ member }: { member: WaveReviewMember }) {
@@ -130,7 +223,9 @@ export function WaveInstructions({ member }: { member: WaveReviewMember }) {
 }
 
 export function WaveMemberList({ review, projectId }: { review: WaveReview; projectId?: string }) {
-  return <div className="divide-y divide-line" data-wave-members>{review.members.map((member) => <article key={member.taskId} className="py-3 first:pt-0 last:pb-0" data-wave-member={member.taskId}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[12.5px] font-semibold text-ink">{projectId ? <a href={`/p/${projectId}/tasks/${member.taskId}`} className="hover:underline">{member.title}</a> : member.title}</p><span className="text-[11.5px] text-muted">{memberPhase(member)}</span></div><WaveInstructions member={member} /></article>)}</div>;
+  const titles = new Map(review.members.map((member) => [member.taskId, member.title]));
+  const opts = { authorized: review.authorization === "authorized", titleFor: (taskId: string) => titles.get(taskId) };
+  return <div className="divide-y divide-line" data-wave-members>{review.members.map((member) => <article key={member.taskId} className="py-3 first:pt-0 last:pb-0" data-wave-member={member.taskId}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[12.5px] font-semibold text-ink">{projectId ? <a href={`/p/${projectId}/tasks/${member.taskId}`} className="hover:underline">{member.title}</a> : member.title}</p><span className="text-[11.5px] text-muted">{memberPhase(member, opts)}</span></div><WaveInstructions member={member} /></article>)}</div>;
 }
 
 export function WaveReviewDetail({ projectId, waveId, showControls = true, showDependencies = true }: { projectId: string; waveId: string; showControls?: boolean; showDependencies?: boolean }) {

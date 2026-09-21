@@ -16,6 +16,14 @@ type runnerExitClassification struct {
 
 func classifyRunnerProcessExit(run RunStatus, status runnerProcessStatus, note Note, vaultPath string, activeStates []string) runnerExitClassification {
 	trackerState := strings.TrimSpace(stringField(note.Data, "status"))
+	if AttemptOutcome(strings.TrimSpace(status.Outcome)) == AttemptOutcomeUnknown {
+		return runnerExitClassification{
+			outcome:      AttemptOutcomeUnknown,
+			exitCode:     status.ExitCode,
+			reason:       firstNonEmpty(strings.TrimSpace(status.Reason), "runner outcome is unknown"),
+			trackerState: trackerState,
+		}
+	}
 	if status.ExitCode != 0 {
 		return runnerExitClassification{
 			outcome:      AttemptOutcomeFailed,

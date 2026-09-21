@@ -477,7 +477,7 @@ func demoApplyCrossScopeDeps(exec *demoExec, repoRoot, vaultPath string, mapping
 		if err != nil {
 			return err
 		}
-		if _, err := exec.run(repoRoot, "task", "update", taskID, "--if-revision", stringField(taskData, "state_rev"), "--dependencies", strings.Join(edges, ","), "--by", actor, "--vault", vaultPath); err != nil {
+		if _, err := exec.run(repoRoot, "task", "update", taskID, "--if-revision", stringField(taskData, "state_rev"), "--dependencies", strings.Join(edges, ","), "--rebind-dependency-contracts", "--by", actor, "--vault", vaultPath); err != nil {
 			return err
 		}
 	}

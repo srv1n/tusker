@@ -73,10 +73,8 @@ export const defaultRows: SelectRow[] = [
 ];
 
 // ---- General → Daemon ------------------------------------------------------
-// Read-only / machine-derived here. `Port` is wired to the live daemon in the
-// section; the rest are // TODO(api): served by the daemon-config endpoint.
+// Remaining read-only placeholders; live daemon values belong in the section.
 export const daemonRows: ReadonlyRow[] = [
-  { key: "Global concurrency", value: "8", source: "global" },
   { key: "Vault root", value: "~/code", source: "local" },
   { key: "Event retention", value: "7 days", source: "default" },
 ];

@@ -1771,6 +1771,25 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	action := body.string("action")
+	if action == "recover_unknown" {
+		run, found := serveFindRun(snap.runs, taskID)
+		if !found {
+			serveJSON(w, http.StatusNotFound, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: "run not found"})
+			return
+		}
+		wave := snap.notesByID[stringField(task.Data, "wave")]
+		result, recoveryErr := queueOutcomeUnknownRecovery(s.store, task, wave, run, actor, s.now())
+		if recoveryErr != nil {
+			serveJSON(w, http.StatusConflict, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: recoveryErr.Error()})
+			return
+		}
+		if result.Admitted {
+			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "outcome_unknown_recovery", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
+			s.refreshProjectSnapshot(snap.projectID)
+		}
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
 	if action == "rerun_checks" {
 		run, ok := serveFindRun(snap.runs, taskID)
 		if !ok {
@@ -1784,6 +1803,22 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 		}
 		if result.Admitted {
 			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "verification_recovery", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
+			s.refreshProjectSnapshot(snap.projectID)
+		}
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	if action == "adopt_completed" {
+		// Adoption exists for work present in the registered checkout with no
+		// submitted run workspace, so it is deliberately not gated on a run.
+		// The snapshot's project ID stands in for run.ProjectID.
+		result, recoveryErr := adoptCompletedWork(snap.project.VaultRoot, s.store, snap.projectID, strings.TrimSpace(taskID), actor, snap.workflow.Retry.MaxAttempts, s.now())
+		if recoveryErr != nil {
+			serveJSON(w, http.StatusConflict, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: recoveryErr.Error()})
+			return
+		}
+		if result.Admitted {
+			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: snap.projectID, Cause: "adopt_completed", Changes: []daemonControlChange{{ID: strings.TrimSpace(taskID), Kind: "task"}}}, 250*time.Millisecond)
 			s.refreshProjectSnapshot(snap.projectID)
 		}
 		serveJSON(w, http.StatusOK, result)

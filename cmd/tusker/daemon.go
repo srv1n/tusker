@@ -1230,6 +1230,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				clearRunCloudRefs(&current)
 				clearActiveExecution(&current)
 			}
+			if reopened, changed, reopenErr := reopenTerminalRunForDirective(project.VaultRoot, d.store, note, current, now); reopenErr != nil {
+				return reopenErr
+			} else if changed {
+				current = reopened
+			}
 			// `notes` was read before run reconciliation. An execute runner can
 			// therefore project its task to review earlier in this poll while this
 			// loop is still looking at the old ready snapshot. Do not turn that
@@ -1943,6 +1948,20 @@ func shouldDispatchRun(run RunStatus, now time.Time) bool {
 	}
 }
 
+func reopenTerminalRunForDirective(vaultPath string, store *RuntimeStore, note Note, run RunStatus, now time.Time) (RunStatus, bool, error) {
+	if !run.Terminal {
+		return run, false, nil
+	}
+	directive, err := store.RunDirective(run.ProjectID, run.RecordID)
+	if err != nil || !runDirectiveMatchesTaskAuthority(vaultPath, note, directive, now) {
+		return run, false, err
+	}
+	run = prepareRunForLaneDispatch(run, runLaneExecute, run.Runner)
+	run.AttemptCount = 0
+	run.UpdatedAt = now.Format(time.RFC3339)
+	return run, true, nil
+}
+
 func daemonReviewImplementationAttempt(store *RuntimeStore, vault string, run RunStatus, note Note) (RunAttempt, error) {
 	if store == nil || run.ProjectID == "" || run.RecordID == "" || run.WorkRevision < 0 {
 		return RunAttempt{}, tuskerError(errorInvalidTransition, "review dispatch requires a current implementation identity")
@@ -2284,7 +2303,7 @@ func daemonShouldCloseNonDispatchableRun(wf Workflow, note Note) bool {
 }
 
 func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) (RunStatus, bool, error) {
-	if run.Lane == runLaneExecute && strings.TrimSpace(stringField(note.Data, "readiness")) == "blocked_by_dependency" {
+	if run.Lane == runLaneExecute {
 		projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
 		if err != nil {
 			return run, false, err
@@ -2859,7 +2878,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			return run, true, nil
 		}
 		reason := classification.reason
-		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, classification.exitCode, reason, finished)
+		updateRunAttemptFromRun(d.store, run, classification.outcome, classification.exitCode, reason, finished)
 		run = d.scheduleRetry(run, wfFile.Data, reason)
 		if strings.TrimSpace(run.SessionRef) != "" {
 			_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseState(run.LeaseState)), "", reason, sessionResumable)
@@ -4051,8 +4070,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 			return run, false, err
 		}
 	}
-	// Registry enablement controls whether this project is polled. The project
-	// configuration is the separate, authoritative opt-in for daemon spawning.
+	// The project runtime toggle is the single background-work authority.
 	if !project.Enabled {
 		run.LastError = "daemon auto-spawn disabled for project"
 		return run, false, nil
@@ -4068,13 +4086,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	} else if earlyDiskPressure.DispatchPaused {
 		run.LastError = diskPressureDispatchReason(earlyDiskPressure)
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		return run, false, nil
-	}
-	// An active run directive is deliberate human execution authority and
-	// bypasses the automation opt-in; automation.enabled gates autonomous
-	// dispatch only.
-	if !wfFile.Data.AutomationEnabled && !directiveActive {
-		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
 	}
 	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
@@ -4275,7 +4286,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		}}
 	} else if len(authoritativeArgv) > 0 {
 		health = runnerPreclaimHealthWithSearchPath(runner.Name(), command, authoritativeSearchPath)
-	} else if runner.Name() == RunnerCodexExec || runner.Name() == RunnerClaude || runner.Name() == RunnerMuse {
+	} else if runner.Name() == RunnerCodexExec || runner.Name() == RunnerClaude || runner.Name() == RunnerMuse || runner.Name() == RunnerACP || runner.Name() == RunnerDevin {
 		// The isolated workspace is materialized only after the atomic claim.
 		// Probe the identical executable/argv against the registered repository,
 		// which already exists, while keeping process spawn after workspace setup.
@@ -4290,6 +4301,12 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		authoritativeSearchPath = runnerCommandSearchPath()
 		authoritativeRawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
 		resolvedExecutable, executableFP, identityErr := completionExecutableIdentity(prepared.Executable, prepared.Version)
+		if runner.Name() == RunnerACP || runner.Name() == RunnerDevin {
+			resolvedExecutable, identityErr = filepath.EvalSymlinks(prepared.Executable)
+			if identityErr == nil {
+				executableFP, identityErr = acpExecutableFingerprint(resolvedExecutable)
+			}
+		}
 		if identityErr != nil {
 			return d.persistRunnerInfrastructureBlock(run, &RunnerInfrastructureBlock{
 				State: runnerInfrastructureBlockedState, Runner: string(runner.Name()), Command: command,
@@ -4309,6 +4326,12 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	preflight = health.Preflight
 	if len(authoritativeArgv) > 0 && codexACPPlan == nil {
 		resolvedExecutable, executableFP, identityErr := completionExecutableIdentity(preflight.ResolvedExecutable, preflight.ExecutableVersion)
+		if runner.Name() == RunnerACP || runner.Name() == RunnerDevin {
+			resolvedExecutable, identityErr = filepath.EvalSymlinks(preflight.ResolvedExecutable)
+			if identityErr == nil {
+				executableFP, identityErr = acpExecutableFingerprint(resolvedExecutable)
+			}
+		}
 		if identityErr != nil || resolvedExecutable != authoritativeArgv[0] || executableFP != authoritativeExecutableFP {
 			reason := "completion authority refuses codex executable path or identity drift"
 			if identityErr != nil {
@@ -4413,24 +4436,28 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	claimNotesByID, _ := daemonNoteMaps(claimNotes)
 	claimNotesByID = orchestrationOwnedPathNotes(claimNotesByID, wfFile.Data)
 	ownership.withOwnedPathContext(project.VaultRoot, claimNotesByID[stringField(note.Data, "id")], claimNotesByID)
-	ownership.projectConcurrencyLimit = wfFile.Data.Runtime.MaxActiveRunsPerProject
+	ownership.projectConcurrencyLimit = projectActiveRunLimit(wfFile.Data)
 	authorization := RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: project.Enabled}
 	if directiveActive {
-		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: wfFile.Data.AutomationEnabled,
+		authorization = RunAuthorization{Source: "human_run_directive", Actor: directive.Actor, Trigger: "serve_run", ProjectAutomationEnabled: project.Enabled,
 			DirectiveWaveID: directive.WaveID, DirectiveAuthorizationFingerprint: directive.AuthorizationFingerprint, DirectiveWaveAuthorizedAt: directive.WaveAuthorizedAt}
 	}
 	parentAttemptID := ""
+	childType := ""
 	if lane == runLaneReview {
 		parent, parentErr := daemonReviewImplementationAttempt(d.store, project.VaultRoot, run, note)
 		if parentErr != nil {
 			return run, false, parentErr
 		}
 		parentAttemptID = parent.AttemptID
+	} else if recoveryParent := outcomeUnknownRecoveryParent(previousRun.LastError); recoveryParent != "" {
+		parentAttemptID = recoveryParent
+		childType = "recovery"
 	}
 	attemptIntent := RunAttempt{
 		AttemptID: attemptID, ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
 		Runner: run.Runner, Lane: lane, WorkerPolicyFP: run.WorkerPolicyFP, WorkRevision: run.WorkRevision, WorkspacePath: selectedWorkspacePath,
-		BranchName: branchName, ParentAttemptID: parentAttemptID, StartedAt: startedAt,
+		BranchName: branchName, ParentAttemptID: parentAttemptID, ChildType: childType, StartedAt: startedAt,
 	}
 	if workflowRunUsesCodexCloud(wfFile.Data, run) || externalLoopRunnerRequiresCollect(wfFile.Data, run.Runner) {
 		caps := externalLoopCapsFromWorkflow(wfFile.Data)
@@ -5219,8 +5246,10 @@ func classifyRetryFailure(reason string) retryFailureClassification {
 	if strings.Contains(text, "runner process no longer matches recorded identity") {
 		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeCancelled}
 	}
+	if strings.Contains(text, "delivery_unknown") || strings.Contains(text, "delivery unknown") || strings.Contains(text, "prompt delivery is unknown") || strings.Contains(text, "child exited without terminal status") {
+		return retryFailureClassification{retryable: false, outcome: AttemptOutcomeUnknown}
+	}
 	nonRetryable := []string{
-		"delivery_unknown", "delivery unknown", "prompt delivery is unknown",
 		"auth", "authentication", "authorization", "unauthorized", "forbidden", "permission denied",
 		"api key", "token expired", "invalid token", "login required", "not logged in",
 		"sandbox", "approval denied", "approval rejected", "requires approval", "human approval",
@@ -6392,12 +6421,8 @@ func runStallReason(run RunStatus, wf Workflow, now time.Time) (bool, string) {
 		return false, ""
 	}
 	if RunnerName(run.Runner) == RunnerCodexExec {
-		if commandStartedAt, ok := codexExecInFlightCommandStartedAt(run, lastHeartbeatAt); ok {
-			commandTimeout := codexExecInFlightCommandTimeout(wf)
-			if !now.After(commandStartedAt.Add(commandTimeout)) {
-				return false, ""
-			}
-			return true, fmt.Sprintf("runner in-flight command exceeded cap %s: command started %s; no events since %s", commandTimeout, commandStartedAt.Format(time.RFC3339), lastHeartbeatAt.Format(time.RFC3339))
+		if _, commandInFlight := codexExecInFlightCommandStartedAt(run, lastHeartbeatAt); commandInFlight {
+			return false, ""
 		}
 	}
 	return true, fmt.Sprintf("runner heartbeat dead (idle): no events since %s", lastHeartbeatAt.Format(time.RFC3339))
@@ -6415,17 +6440,6 @@ func heartbeatDeadThresholdForRun(run RunStatus, wf Workflow) time.Duration {
 		return time.Duration(wf.Codex.StallTimeoutMS) * time.Millisecond
 	}
 	return daemonHeartbeatDeadThreshold
-}
-
-func codexExecInFlightCommandTimeout(wf Workflow) time.Duration {
-	if wf.Codex.TurnTimeoutMS > 0 {
-		return time.Duration(wf.Codex.TurnTimeoutMS) * time.Millisecond
-	}
-	defaults := defaultWorkflow()
-	if defaults.Codex.TurnTimeoutMS > 0 {
-		return time.Duration(defaults.Codex.TurnTimeoutMS) * time.Millisecond
-	}
-	return 10 * time.Minute
 }
 
 func parseRunTimestamp(value string) (time.Time, bool) {
@@ -6668,6 +6682,8 @@ func codexCloudConfigFromRunnerDefinition(definition RunnerDefinition, fallbackC
 
 func sessionStateForOutcome(outcome AttemptOutcome) string {
 	switch outcome {
+	case AttemptOutcomeUnknown:
+		return "closed"
 	case AttemptOutcomeSucceeded:
 		return "open"
 	case AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeCancelled:
@@ -6781,6 +6797,20 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 	}
 	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
 		rendered = strings.TrimSpace(rendered) + "\n\n" + runtimeContext
+	}
+	if parentAttemptID := outcomeUnknownRecoveryParent(previousRun.LastError); parentAttemptID != "" {
+		priorFailure := "final outcome was not recorded"
+		if store != nil {
+			if attempts, listErr := store.ListAttemptsForRun(project.ProjectID, trackerRecordID(note)); listErr == nil {
+				for _, attempt := range attempts {
+					if attempt.AttemptID == parentAttemptID {
+						priorFailure = firstNonEmpty(truncateRunes(oneLine(attempt.LastError), 500), priorFailure)
+						break
+					}
+				}
+			}
+		}
+		rendered = strings.TrimSpace(rendered) + "\n\n## Recovery context\n\nThis is a fresh recovery session for the original task above. Prior attempt: `" + parentAttemptID + "`. Last trustworthy failure: `" + priorFailure + "`. The prior worker may have left partial or complete work. Do not assume the workspace is untouched and do not start by reimplementing the task. First inspect the current task-owned material and Git diff, then verify and preserve correct existing work, repair or complete only what remains, and run the task's required checks. Never reset or overwrite unrelated changes."
 	}
 	if fingerprint := resumeContextFingerprint(project, wfFile, note, workspacePath, lane, run); fingerprint != "" {
 		rendered = strings.TrimSpace(rendered) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
@@ -8075,32 +8105,7 @@ func openRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, bool, error) {
 }
 
 func setProjectAutomation(store *RuntimeStore, project RegisteredProject, enabled bool) error {
-	projectLocalConfigWriteMu.Lock()
-	defer projectLocalConfigWriteMu.Unlock()
-	report, err := configResolveForPaths(project.RepoRoot, project.VaultRoot, true, "automation.enabled")
-	if err != nil {
-		return err
-	}
-	path := managedTuskerLocalConfigPath(project.VaultRoot)
-	previous, existed, err := readConfigText(path)
-	if err != nil {
-		return err
-	}
-	changed := boolFromAny(report.Value) != enabled
-	if boolFromAny(report.Value) != enabled {
-		if _, err := setProjectLocalConfigWithReadbackUnlocked(project.VaultRoot, "automation.enabled", enabled); err != nil {
-			return err
-		}
-	}
-	if err := store.SetProjectEnabled(project.ProjectID, enabled); err != nil {
-		if changed {
-			if restoreErr := restoreConfigText(path, previous, existed); restoreErr != nil {
-				return errors.Join(err, restoreErr)
-			}
-		}
-		return err
-	}
-	return nil
+	return store.SetProjectEnabled(project.ProjectID, enabled)
 }
 
 func setProjectEnabledCmd(args Args, enabled bool) error {
@@ -8165,7 +8170,7 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 	if enabled {
 		verb = "Enabled"
 	}
-	fmt.Printf("%s project %s (%s); registry.enabled=%t automation.enabled=%t\n", verb, updated.Name, updated.ProjectID, enabled, enabled)
+	fmt.Printf("%s background work for project %s (%s)\n", verb, updated.Name, updated.ProjectID)
 	if !enabled && activeRuns > 0 {
 		fmt.Printf("Warning: %d active run(s) still exist for this project. They will not be redispatched, but they are still in runtime state.\n", activeRuns)
 	}

@@ -170,7 +170,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo reset":
+	case "status", "run", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo reset":
 		return true
 	default:
 		return false
@@ -281,6 +281,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, updateV7TaskCmd(args)
 	case "task start":
 		return 0, taskStartCmd(args)
+	case "run":
+		return 0, directRunCmd(args)
 	case "task":
 		return 0, tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> --if-revision <state_rev> ...")
 	case "wave":
@@ -954,6 +956,8 @@ func printCommandHelp(command string) bool {
 		printNewHelp()
 	case "task start":
 		fmt.Println("Usage: tusker task start <TASK-ID> --mode interactive|background --by <actor> [--current-workspace] [--json]")
+	case "run":
+		fmt.Println("Usage: tusker run <TASK-ID|WAVE-ID> [--by human:<name>|operator:<name>] [--json]\n\nQueues the exact task or wave for background work.")
 	case "status":
 		printStatusHelp()
 	case "discard":
@@ -1379,6 +1383,7 @@ func printWorkSessionHelp() {
   tusker work retry <task-id> --by <agent> [--json]
   tusker work profile <task-id> [--lane execute|review] [--json]
   tusker work recover <task-id> --action rerun_checks --by human:<name>|operator:<name> --vault <path> [--json]
+  tusker work recover <task-id> --action adopt_completed --by <actor> --vault <path> [--json]
 
 Purpose:
   The canonical runtime ownership protocol for interactive tracked work.

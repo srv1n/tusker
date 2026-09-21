@@ -212,6 +212,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "sync-repo-contract"}, {Command: "task", Subcommands: []string{"start", "update"}},
 		{Command: "task update", Flags: []string{"--body-file", "--by", "--dependencies", "--generated-outputs", "--id", "--if-revision", "--json", "--owned-paths", "--rebind-contract", "--rebind-dependency-contracts", "--review-level", "--review-reason", "--spec-refs", "--title", "--work-level"}, Purpose: "CAS-mutate an existing task contract's mutable authoring fields or explicitly rebind its stored contract fingerprint; identity, history, and proof are preserved."},
 		{Command: "task start", Flags: []string{"--by", "--current-workspace", "--json", "--mode"}, Purpose: "Authorize and claim one task: interactive claims in the current workspace through work start; background persists a task-scoped run directive for the runtime. Inside a paused wave the directive stays task-scoped and the wave remains paused."},
+		{Command: "run", Flags: []string{"--by", "--json"}, Purpose: "Queue one task or wave for background work."},
 		{Command: "trace", Subcommands: []string{"list", "replay", "show"}}, {Command: "uninstall", Flags: []string{"--force-state", "--state", "--yes"}}, {Command: "update"}, {Command: "validate"},
 		{Command: "verify", Subcommands: []string{"add", "recipe", "remove"}},
 		{Command: "vault", Subcommands: []string{"mount", "move", "repair", "set", "status", "unmount"}}, {Command: "version", Flags: []string{"--json"}},

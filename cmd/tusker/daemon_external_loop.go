@@ -287,7 +287,7 @@ func daemonShouldAutoAdvanceExternalApplyRun(wf Workflow, note Note, run RunStat
 		return false
 	}
 	switch AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) {
-	case AttemptOutcomeSucceeded, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeCancelled, AttemptOutcomeWaitingForHuman:
+	case AttemptOutcomeSucceeded, AttemptOutcomeUnknown, AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeCancelled, AttemptOutcomeWaitingForHuman:
 		return true
 	default:
 		return false
@@ -297,6 +297,8 @@ func daemonShouldAutoAdvanceExternalApplyRun(wf Workflow, note Note, run RunStat
 func externalLoopApplyResultDecision(wf Workflow, note Note, run RunStatus) (string, string) {
 	_ = wf
 	switch AttemptOutcome(strings.TrimSpace(run.AttemptOutcome)) {
+	case AttemptOutcomeUnknown:
+		return externalLoopStageBlocked, externalLoopActionEscalateHuman
 	case AttemptOutcomeFailed, AttemptOutcomeBlocked, AttemptOutcomeCancelled:
 		return externalLoopStageApplyFailed, externalLoopActionContinueThreadOnFailure
 	case AttemptOutcomeWaitingForHuman:

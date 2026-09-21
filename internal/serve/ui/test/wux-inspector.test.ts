@@ -108,7 +108,7 @@ describe("inspector task routing", () => {
     const planned = { ...readyTask, status: "backlog" as const, rawStatus: "backlog", readiness: "held" as const, hasGate: false, humanAction: undefined, humanActions: [], effectiveExecute: { profile: "worker", model: "gpt-worker", effort: "medium", harness: "codex_exec", blockers: [] }, effectiveReview: { profile: "reviewer", model: "gpt-review", effort: "high", harness: "codex_exec", blockers: [] } };
     expect(taskRunBlocker(planned)).toBeUndefined();
     const html = render({ task: planned, run: null });
-    expect(html).toContain(`aria-label="Start task ${planned.id}"`);
+		expect(html).toContain(`aria-label="Run task ${planned.id}"`);
   });
 
   test("shows the default tier, predicted routes, and recorded current identity", () => {
@@ -123,7 +123,8 @@ describe("inspector task routing", () => {
     expect(html).toContain(">Worker<");
     expect(html).toContain("worker · gpt-worker · medium");
     expect(html).toContain("Current reviewer:");
-    expect(html).toContain("actual-reviewer · gpt-actual · codex_exec");
+    expect(html).toContain("actual-reviewer · gpt-actual · Codex");
+    expect(html).not.toContain("codex_exec");
   });
 });
 

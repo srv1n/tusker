@@ -25,7 +25,7 @@ const (
 	maxACPIdentifierBytes    = 512
 	maxACPAuthMethods        = 64
 	maxACPConfigOptions      = 64
-	maxACPConfigValues       = 256
+	maxACPConfigValues       = 1024
 	maxACPPermissionOptions  = 32
 	maxACPPermissionRawInput = 256 << 10
 )
@@ -57,7 +57,9 @@ type Limits struct {
 	MaxUpdateBytes int
 }
 
-// Timeouts are finite deadlines. Zero values are replaced by defaults.
+// Timeouts bound protocol setup and optional turn supervision. Zero values are
+// replaced by defaults; negative Prompt or Stall values explicitly disable
+// task-duration supervision while preserving setup and cancellation bounds.
 type Timeouts struct {
 	Initialize  time.Duration
 	Request     time.Duration
@@ -117,10 +119,10 @@ func (c Config) withDefaults() Config {
 	if c.Timeouts.Request <= 0 {
 		c.Timeouts.Request = 30 * time.Second
 	}
-	if c.Timeouts.Prompt <= 0 {
+	if c.Timeouts.Prompt == 0 {
 		c.Timeouts.Prompt = 10 * time.Minute
 	}
-	if c.Timeouts.Stall <= 0 {
+	if c.Timeouts.Stall == 0 {
 		c.Timeouts.Stall = 2 * time.Minute
 	}
 	if c.Timeouts.CancelDrain <= 0 {
@@ -1667,9 +1669,8 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			c.enqueueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
 			return
 		}
-		// Devin emits this informational extension while MCP availability changes.
-		// It carries no client action and must not poison otherwise valid ACP traffic.
-		if msg.Method == "_cognition.ai/mcp/serversChanged" || msg.Method == "_cognition.ai/output" {
+		// Devin emits these informational extensions without requiring client action.
+		if msg.Method == "_cognition.ai/mcp/serversChanged" || msg.Method == "_cognition.ai/output" || msg.Method == "_cognition.ai/thinking_complete" || msg.Method == "_cognition.ai/plugins/changed" {
 			return
 		}
 		// Unknown notifications have no response channel. Fail closed rather
@@ -1691,7 +1692,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 	c.inbound[id] = struct{}{}
 	c.mu.Unlock()
 	if msg.Method != "session/request_permission" {
-		if err := c.respond(id, nil, &rpcError{Code: -32601, Message: "method not found"}); err != nil {
+		if err := c.respond(id, msg.ID, nil, &rpcError{Code: -32601, Message: "method not found"}); err != nil {
 			c.poison(err)
 		}
 		return
@@ -1718,7 +1719,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		<-c.permissionSem
-		if err := c.respond(id, nil, &rpcError{Code: -32602, Message: "invalid permission request"}); err != nil {
+		if err := c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "invalid permission request"}); err != nil {
 			c.poison(err)
 		}
 		return
@@ -1730,13 +1731,13 @@ func (c *Client) handleRequest(msg rpcMessage) {
 	}
 	if len(p.ToolCall) == 0 || bytes.Equal(bytes.TrimSpace(p.ToolCall), []byte("null")) || json.Unmarshal(p.ToolCall, &toolCall) != nil {
 		<-c.permissionSem
-		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has malformed toolCall"})
+		_ = c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "permission request has malformed toolCall"})
 		c.poison(fmt.Errorf("%w: permission request has malformed toolCall", ErrProtocol))
 		return
 	}
 	if err := validateIdentifier("permission toolCallId", toolCall.ToolCallID); err != nil {
 		<-c.permissionSem
-		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has invalid toolCallId"})
+		_ = c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "permission request has invalid toolCallId"})
 		c.poison(fmt.Errorf("%w: %v", ErrProtocol, err))
 		return
 	}
@@ -1744,7 +1745,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 		var topLevel string
 		if json.Unmarshal(p.TopLevelToolCall, &topLevel) != nil || topLevel != toolCall.ToolCallID {
 			<-c.permissionSem
-			_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request toolCallId nesting mismatch"})
+			_ = c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "permission request toolCallId nesting mismatch"})
 			c.poison(fmt.Errorf("%w: permission request toolCallId nesting mismatch", ErrProtocol))
 			return
 		}
@@ -1759,13 +1760,13 @@ func (c *Client) handleRequest(msg rpcMessage) {
 	rawInput := bytes.TrimSpace(toolCall.RawInput)
 	if len(rawInput) != 0 && !bytes.Equal(rawInput, []byte("null")) && (len(toolCall.RawInput) > rawLimit || !json.Valid(toolCall.RawInput)) {
 		<-c.permissionSem
-		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has invalid rawInput"})
+		_ = c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "permission request has invalid rawInput"})
 		c.poison(fmt.Errorf("%w: permission request rawInput is malformed or exceeds %d bytes", ErrProtocol, rawLimit))
 		return
 	}
 	if err := validatePermissionOptions(p.Options); err != nil {
 		<-c.permissionSem
-		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request has invalid options"})
+		_ = c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "permission request has invalid options"})
 		c.poison(fmt.Errorf("%w: %v", ErrProtocol, err))
 		return
 	}
@@ -1778,7 +1779,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 	c.mu.Unlock()
 	if !active || currentSession == "" || p.SessionID != currentSession {
 		<-c.permissionSem
-		_ = c.respond(id, nil, &rpcError{Code: -32602, Message: "permission request is not bound to the active session and turn"})
+		_ = c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "permission request is not bound to the active session and turn"})
 		c.poison(fmt.Errorf("%w: permission request is not bound to the active session and turn", ErrProtocol))
 		return
 	}
@@ -1835,7 +1836,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 		if hook != nil {
 			hook()
 		}
-		if err := c.respondPermission(id, state, decision, req.Options); err != nil {
+		if err := c.respondPermission(id, msg.ID, state, decision, req.Options); err != nil {
 			c.poison(err)
 		}
 	}()
@@ -1927,11 +1928,11 @@ func (c *Client) cancelPendingPermissions() []<-chan struct{} {
 	return done
 }
 
-func (c *Client) respond(id string, result any, rpcErr *rpcError) error {
+func (c *Client) respond(id string, rawID json.RawMessage, result any, rpcErr *rpcError) error {
 	c.mu.Lock()
 	delete(c.inbound, id)
 	c.mu.Unlock()
-	msg := rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(id), Error: rpcErr}
+	msg := rpcMessage{JSONRPC: "2.0", ID: append(json.RawMessage(nil), rawID...), Error: rpcErr}
 	if rpcErr == nil {
 		b, err := json.Marshal(result)
 		if err != nil {
@@ -1946,7 +1947,7 @@ func (c *Client) respond(id string, result any, rpcErr *rpcError) error {
 // that reaches the per-request state before this method owns both the writer
 // and state lock changes the response to cancelled; once those locks are held,
 // the permission response is the operation that wins the wire race.
-func (c *Client) respondPermission(id string, state *permissionRequestState, decision PermissionDecision, options []PermissionOption) error {
+func (c *Client) respondPermission(id string, rawID json.RawMessage, state *permissionRequestState, decision PermissionDecision, options []PermissionOption) error {
 	c.mu.Lock()
 	delete(c.inbound, id)
 	c.mu.Unlock()
@@ -1970,7 +1971,7 @@ func (c *Client) respondPermission(id string, state *permissionRequestState, dec
 	if err != nil {
 		return err
 	}
-	msg := rpcMessage{JSONRPC: "2.0", ID: json.RawMessage(id), Result: resultBytes}
+	msg := rpcMessage{JSONRPC: "2.0", ID: append(json.RawMessage(nil), rawID...), Result: resultBytes}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return err

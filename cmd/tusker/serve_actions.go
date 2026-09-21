@@ -477,7 +477,7 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 	}
 	serveJSON(w, http.StatusOK, serveActionResult{
 		OK: true, ProjectID: projectID, AutomationEnabled: &project.Enabled, AutomationSource: "Project runtime",
-		Reason: "Daemon automation " + state + " for " + project.Name, Command: "tusker projects " + state,
+		Reason: "Background work " + state + " for " + project.Name, Command: "tusker projects " + state,
 	})
 }
 
@@ -526,33 +526,46 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 	}
 	project := loaded[0].Project
 	key := strings.TrimSpace(body.string("key"))
-	var rawValue any
+	type settingUpdate struct {
+		key   string
+		value any
+	}
+	var updates []settingUpdate
 	if key != "" {
-		var present bool
-		rawValue, present = body["value"]
+		rawValue, present := body["value"]
 		if !present {
 			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "setting value is required"})
 			return
 		}
-	} else if mode := body.string("workspaceMode"); mode != "" {
-		key, rawValue = "workspace.strategy", mode
-	} else if limit := body.string("maxActiveRunsPerProject"); limit != "" {
-		key, rawValue = "runtime.max_active_runs_per_project", limit
+		updates = append(updates, settingUpdate{key: key, value: rawValue})
 	} else {
+		mode := body.string("workspaceMode")
+		if mode != "" {
+			updates = append(updates, settingUpdate{key: "workspace.strategy", value: mode})
+		}
+		if limit := body.string("maxActiveRunsPerProject"); limit != "" {
+			updates = append(updates, settingUpdate{key: "runtime.max_active_runs_per_project", value: limit})
+		}
+	}
+	if len(updates) == 0 {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "no supported setting supplied"})
 		return
 	}
-	validator, ok := serveProjectSettingValidators[key]
-	if !ok {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "unsupported project setting: " + key})
-		return
+	for _, update := range updates {
+		validator, ok := serveProjectSettingValidators[update.key]
+		if !ok {
+			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "unsupported project setting: " + update.key})
+			return
+		}
+		value, validationErr := validator(update.value)
+		if validationErr != nil {
+			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: validationErr.Error()})
+			return
+		}
+		if _, err = setProjectLocalConfigWithReadback(project.VaultRoot, update.key, value); err != nil {
+			break
+		}
 	}
-	value, validationErr := validator(rawValue)
-	if validationErr != nil {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: validationErr.Error()})
-		return
-	}
-	_, err = setProjectLocalConfigWithReadback(project.VaultRoot, key, value)
 	result := serveCommandResult("tusker projects settings", "", err)
 	result.ProjectID = projectID
 	serveJSON(w, http.StatusOK, result)

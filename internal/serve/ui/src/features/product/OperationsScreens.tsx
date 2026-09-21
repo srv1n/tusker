@@ -121,16 +121,16 @@ export function SettingsBasic({
         />
       </SettingGroup>
       <SettingGroup label="Automation">
-        <SettingRow
-          name="Background work"
-          detail="Allows the resident daemon to pick up authorized work for this project. Registration alone never enables it."
+		<SettingRow
+		  name="Background work"
+		  detail="Run queued work automatically while Tusker is open."
           source={project.automationSource ?? "Project"}
           control={<Toggle checked={project.automationEnabled} disabled={automation.isPending || automationPending.current} onChange={setAutomation} ariaLabel={`Background work (${project.automationEnabled ? "On" : "Off"})`} label={project.automationEnabled ? "On" : "Off"} />}
         />
         <ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />
-        <SettingRow
-          name="Authorized scope"
-          detail="The current dispatch policy is served by the factory projection. It is not editable from Serve."
+		<SettingRow
+		  name="What runs"
+		  detail="Only tasks and waves you explicitly run."
           source={operations?.project.dispatchScope.provenance ?? "Loading"}
           control={<ReadValue value={operations ? `${operations.project.dispatchScope.configured ?? "unset"} → ${operations.project.dispatchScope.effective}` : "Loading…"} />}
         />
@@ -145,18 +145,18 @@ export function SettingsBasic({
       <SettingGroup label="Capacity & workspace">
         <SettingRow
           name="Workspace mode"
-          detail="How the project creates execution workspaces. This and project concurrency are the two execution settings currently writable in Serve."
+          detail={workspaceMode === "shared" ? "Work directly in the current checkout, including existing uncommitted changes. Parallel tasks must own different paths." : "Create an isolated Git worktree for each task so background work can run separately."}
           source={project.workspaceSource ?? "Project"}
           control={
             <Select aria-label="Workspace mode" value={workspaceMode} onChange={(event) => setWorkspaceMode(event.target.value)}>
-              <option value="shared">Shared workspace</option>
+              <option value="shared">Current checkout</option>
               <option value="worktree">Git worktree</option>
             </Select>
           }
         />
         <SettingRow
           name="Concurrent tasks"
-          detail="Maximum active runs for this project; the daemon still enforces the global cap."
+          detail="Maximum active runs for this project; overlapping owned paths still wait, and the daemon enforces the global cap."
           source={project.concurrencySource ?? "Project"}
           control={<TextInput aria-label="Project concurrent tasks" inputMode="numeric" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className="w-28 font-mono" />}
         />

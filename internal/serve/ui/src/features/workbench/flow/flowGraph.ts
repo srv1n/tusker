@@ -15,7 +15,7 @@
     models by guessing.
 */
 
-import type { RunSummary, TaskDetail, TaskStatus, WaveReviewMember } from "@/types/domain";
+import type { RunSummary, TaskDetail, TaskStatus, WaveReview, WaveReviewMember } from "@/types/domain";
 
 /** Controlled pan/zoom transform. x/y are content-space offsets in CSS px. */
 export interface FlowViewport {
@@ -28,6 +28,10 @@ export interface FlowViewport {
 export interface DependencyFact {
   kind: "external" | "missing" | "unavailable";
   title?: string;
+  status?: string;
+  readiness?: string;
+  waveId?: string;
+  waveTitle?: string;
 }
 
 /** Truthful per-node progress. "failed" needs a terminal failed run; a quiet
@@ -61,6 +65,8 @@ export interface FlowNode {
   depIds: string[];
   /** True when the id is a wave member whose detail was not supplied. */
   missingDetail?: boolean;
+  context?: string;
+  stateLabel?: string;
 }
 
 export interface FlowEdge {
@@ -180,6 +186,58 @@ export function modelFor(run: RunSummary | undefined): string | undefined {
   return model ? model : undefined;
 }
 
+export function externalDependencyState(fact: DependencyFact): FlowDisplayState {
+  switch (fact.status) {
+    case "done": return "completed";
+    case "review": return "reviewing";
+    case "blocked": return "blocked";
+    case "cancelled":
+    case "superseded": return "cancelled";
+    case "ready": return "ready";
+    case "backlog":
+    case "idea": return "backlog";
+  }
+  switch (fact.readiness) {
+    case "ready": return "ready";
+    case "held":
+    case "waiting": return "backlog";
+  }
+  return "unknown";
+}
+
+export interface CrossWaveWaitSummary { title: string; body: string; hint?: string }
+
+function externalWaveLabel(fact: DependencyFact): string {
+  const waveTitle = fact.waveTitle?.trim() ?? "";
+  const head = waveTitle.split(":")[0]?.trim() ?? "";
+  return head || waveTitle || fact.title?.trim() || "its dependency";
+}
+
+export function crossWaveWaitSummary(
+  facts: DependencyFact[],
+  authorization: WaveReview["authorization"],
+  startEnabled: boolean,
+): CrossWaveWaitSummary | undefined {
+  const external = facts.filter((fact) => fact.kind === "external");
+  if (external.length === 0) return undefined;
+  const blocker = external.find((fact) => fact.status !== "done");
+  if (!blocker) return undefined;
+  const label = externalWaveLabel(blocker);
+  let body = `“${blocker.title?.trim() || "The prerequisite"}” must finish before this wave can begin.`;
+  for (const fact of external) {
+    if (fact !== blocker && fact.status === "done") {
+      body += ` ${externalWaveLabel(fact)} is complete.`;
+    }
+  }
+  const summary: CrossWaveWaitSummary = { title: `Waiting for ${label}`, body };
+  if (authorization === "authorized") {
+    summary.hint = `Tusker will begin automatically when ${label} finishes.`;
+  } else if (startEnabled && authorization !== "paused" && authorization !== "stale") {
+    summary.hint = `Start now to have this wave begin automatically after ${label} finishes.`;
+  }
+  return summary;
+}
+
 export interface BuildFlowInput {
   memberIds: string[];
   tasks: TaskDetail[];
@@ -278,7 +336,8 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
           id: depId,
           kind: "external",
           title: fact.title?.trim() ? fact.title : depId,
-          state: "unknown",
+          state: externalDependencyState(fact),
+          context: fact.waveTitle?.trim() ? fact.waveTitle : undefined,
           depIds: [],
         });
         addEdge(depId, node.id);
@@ -289,6 +348,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
         kind: fact.kind,
         title: fact.title?.trim() ? fact.title : depId,
         state: "unknown",
+        stateLabel: fact.kind === "missing" ? "Dependency missing" : "Dependency status unavailable",
         depIds: [],
       });
       addEdge(depId, node.id);
@@ -345,7 +405,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
     const ids = byKind("unavailable").map((node) => node.id);
     warnings.push({
       kind: "unavailable",
-      text: `Unavailable ${ids.length === 1 ? "reference" : "references"}: ${ids.join(", ")}.`,
+      text: `Dependency status unavailable: ${ids.join(", ")}.`,
       taskIds: ids,
     });
   }

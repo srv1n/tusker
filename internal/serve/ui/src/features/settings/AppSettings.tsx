@@ -64,11 +64,7 @@ export function AppSettings() {
   return (
     <div className="tk-scroll h-full overflow-y-auto">
       <div className="mx-auto max-w-[820px] px-4 pb-20 pt-[30px] sm:px-11">
-        <h1 className="font-serif text-[30px] font-semibold tracking-[-0.02em] text-ink">Settings</h1>
-        <p className="mb-[18px] mt-1 text-[13.5px] text-muted">
-          Applies across all projects. Each value shows its source; projects can override under their
-          own Details.
-        </p>
+        <h1 className="mb-[18px] font-serif text-[30px] font-semibold tracking-[-0.02em] text-ink">Settings</h1>
 
         <SectionTabs value={tab} onChange={setTab} />
         {unavailable && tab === "agents" && (

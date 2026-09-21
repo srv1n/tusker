@@ -234,8 +234,12 @@ func TestACPHelperProcess(t *testing.T) {
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Error: map[string]any{"code": -32000, "message": "refused"}})
 			case "missing-result":
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID})
-			case "permission", "permission-reject-wire":
-				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
+			case "permission", "permission-reject-wire", "permission-string-id":
+				permissionID := json.RawMessage("91")
+				if mode == "permission-string-id" {
+					permissionID = mustTestJSON("cognition-request-91")
+				}
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: permissionID, Method: "session/request_permission", Params: mustTestJSON(map[string]any{
 					"sessionId": "session-1",
 					"toolCall":  map[string]any{"toolCallId": "tool-1", "kind": "execute", "rawInput": map[string]any{"command": "go test ./internal/acp"}},
 					"options":   testPermissionOptions(),
@@ -308,7 +312,7 @@ func TestACPHelperProcess(t *testing.T) {
 			}
 			// ignore-cancel deliberately never settles the prompt.
 		case "":
-			if string(msg.ID) == "91" && promptID != nil {
+			if (string(msg.ID) == "91" || string(msg.ID) == `"cognition-request-91"`) && promptID != nil {
 				var result struct {
 					Outcome struct {
 						Outcome  string `json:"outcome"`
@@ -388,6 +392,16 @@ func writeHelperNullResult(id json.RawMessage) {
 func mustTestJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+func TestTimeoutDefaultsPreserveExplicitlyDisabledTaskDeadlines(t *testing.T) {
+	cfg := (Config{Timeouts: Timeouts{Prompt: -1, Stall: -1}}).withDefaults()
+	if cfg.Timeouts.Prompt != -1 || cfg.Timeouts.Stall != -1 {
+		t.Fatalf("task deadlines = prompt %s stall %s, want both disabled", cfg.Timeouts.Prompt, cfg.Timeouts.Stall)
+	}
+	if cfg.Timeouts.Initialize <= 0 || cfg.Timeouts.Request <= 0 || cfg.Timeouts.CancelDrain <= 0 {
+		t.Fatalf("protocol deadlines must remain bounded: %#v", cfg.Timeouts)
+	}
 }
 
 func startTestClient(t *testing.T, mode string, mutate func(*Config)) *Client {
@@ -1064,6 +1078,14 @@ func TestACPStreamingUsesQueueAndPerPromptByteBounds(t *testing.T) {
 }
 
 func TestACPPermissionDefaultsRejectAndNeverSelectsAllowAlways(t *testing.T) {
+	t.Run("preserves string request id", func(t *testing.T) {
+		c := startTestClient(t, "permission-string-id", nil)
+		initializeAndSession(t, c)
+		result, err := c.Prompt(context.Background(), "permission")
+		if err != nil || result.Outcome != OutcomeRefused {
+			t.Fatalf("result=%#v err=%v", result, err)
+		}
+	})
 	t.Run("nil handler rejects", func(t *testing.T) {
 		c := startTestClient(t, "permission", nil)
 		initializeAndSession(t, c)

@@ -20,6 +20,8 @@
 */
 
 import type { Attempt, RunDetail, RunEvent, TaskDetail, VerificationRow, WaveReviewMember } from "@/types/domain";
+import { harnessLabel } from "@/lib/harness";
+import { RECOVERY_STATE_LABEL } from "@/lib/recovery";
 
 export type Transport = string;
 
@@ -53,6 +55,9 @@ export function stageFromWaveReviewMember(member: WaveReviewMember | undefined):
   }
   if (member.phase === "proof_blocked") {
     return { label: "Verification required", tone: "warn", live: false };
+  }
+  if (member.phase === "outcome_unknown") {
+    return { label: RECOVERY_STATE_LABEL, tone: "warn", live: false };
   }
   if (member.phase === "failed") {
     return { label: "Failed", tone: "fail", live: false };
@@ -136,9 +141,11 @@ export function actualStage(task: TaskDetail, run: RunDetail | null, reviewMembe
     }
     if (liveOutcome) return { label: "Review activity unavailable", tone: "warn", live: false };
   }
-  if (currentRun?.lane === "execute") {
-    if (liveRunning) return { label: "Building now", tone: "info", live: true };
-    if (runFailed(currentRun)) return { label: "Implementation failed — action needed", tone: "fail", live: false };
+	if (currentRun?.lane === "execute") {
+		if (liveRunning) return { label: "Building now", tone: "info", live: true };
+		if (runFailed(currentRun)) return currentRun.attemptCount === 0
+			? { label: "Couldn’t start — action needed", tone: "warn", live: false }
+			: { label: "Implementation failed — action needed", tone: "fail", live: false };
     if (liveOutcome === "stale" || (liveOutcome === "running" && currentRun.liveness !== "fresh")) {
       return { label: "Implementation activity unavailable", tone: "warn", live: false };
     }
@@ -169,6 +176,9 @@ export function actualStage(task: TaskDetail, run: RunDetail | null, reviewMembe
 
 /** Plain-language action shown beside the stage, without exposing raw states. */
 export function nextActionForStage(task: TaskDetail, run: RunDetail | null, stage = actualStage(task, run)): string {
+  if (stage.label === RECOVERY_STATE_LABEL) {
+    return "Verify and preserve existing work, then continue what remains.";
+  }
   if (stage.label === "Delivered" || stage.label === "Completed") {
     return acceptedDelivery(run)
       ? "No action needed. Review the accepted result below."
@@ -251,7 +261,7 @@ export function identityDisplay(
 
 export function identitySummary(display: IdentityDisplay): string {
   if (display.state === "unavailable") return UNAVAILABLE;
-  return `${display.provider} · ${display.model} · ${display.transport} · ${display.stage}`;
+  return `${display.provider} · ${display.model} · ${harnessLabel(display.transport)} · ${display.stage}`;
 }
 
 export function observedRunIdentity(run: RunDetail | null): InspectorExecutionIdentity | undefined {

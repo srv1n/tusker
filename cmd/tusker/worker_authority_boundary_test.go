@@ -46,11 +46,45 @@ func TestCompletionWorkerSafetyRejectsUnsafeProfiles(t *testing.T) {
 	networked := implementation
 	networked.Name = "networked"
 	networked.Definition.Sandbox.Network = boolPtr(true)
-	if err := completionWorkerSafety(state, workspace, networked); err == nil {
-		t.Fatal("network-enabled worker must not authorize completion through localhost control surfaces")
+	if err := completionWorkerSafety(state, workspace, networked); err != nil {
+		t.Fatalf("explicit project network access must be honored: %v", err)
 	}
 	if err := completionWorkerSafety(filepath.Join(workspace, "state"), workspace, ResolvedRunnerProfile{Name: "inside", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(false)}}}); err == nil {
 		t.Fatal("state root nested in a workspace must be rejected")
+	}
+}
+
+func TestCompletionWorkerUsesAuthoredAgentAccess(t *testing.T) {
+	state, workspace := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "workspace")
+	worker := ResolvedRunnerProfile{Name: "worker", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerCodexExec),
+		Access:  &AgentAccessV1{Schema: agentAccessSchemaV1, Mode: accessModeProjects, Network: true, DestructiveActions: "ask"},
+	}}
+	if err := completionWorkerSafetyForLane(state, workspace, runLaneExecute, defaultCodexExecCommand(), worker); err != nil {
+		t.Fatalf("work-in-projects profile was rejected: %v", err)
+	}
+	argv, err := completionAuthoritativeCodexExecArgv(defaultCodexExecCommand(), runLaneExecute, worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(argv, "\x00"); !strings.Contains(got, `sandbox_mode="workspace-write"`) || !strings.Contains(got, "sandbox_workspace_write.network_access=true") {
+		t.Fatalf("authored project access was not compiled into Codex argv: %#v", argv)
+	}
+
+	reviewer := worker
+	reviewer.Name = "reviewer"
+	reviewer.Definition.Access = &AgentAccessV1{Schema: agentAccessSchemaV1, Mode: accessModeReview, Network: false, DestructiveActions: "deny"}
+	if err := completionWorkerSafetyForLane(state, workspace, runLaneReview, defaultCodexExecCommand(), reviewer); err != nil {
+		t.Fatalf("review-only profile was rejected: %v", err)
+	}
+	if _, err := completionAuthoritativeCodexExecArgv(defaultCodexExecCommand(), runLaneReview, worker); err == nil {
+		t.Fatal("work-in-projects profile must not enter the review lane")
+	}
+
+	unresolved := worker
+	unresolved.Definition.Access = nil
+	if err := completionWorkerSafety(state, workspace, unresolved); err == nil {
+		t.Fatal("profile without authored or legacy enforceable access must fail closed")
 	}
 }
 

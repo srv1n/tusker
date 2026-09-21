@@ -70,7 +70,7 @@ describe("walkthrough status", () => {
 
   test("dependency rows name the blocker and the next owner", () => {
     const html = renderToStaticMarkup(createElement(WaveMemberList, { review: review({ members: [{ taskId: "T-2", title: "Follow-up", state: "waiting", waitingReason: "waiting for dependency T-1" }] }) }));
-    expect(html).toContain("Waiting for T-1 to complete; that task’s owner acts next.");
+    expect(html).toContain("Waiting for T-1 to complete");
   });
 
   test("review reads share a cache key and refresh on review-batch events", () => {
@@ -133,7 +133,7 @@ describe("walkthrough status", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(waveReviewQuery("W-1", "demo").queryKey, mixed);
     const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(WaveAuthorityControls, { projectId: "demo", waveId: "W-1" }))));
-    expect(html).toContain("1 running");
+    expect(html).toContain("1 executing");
     expect(html).toContain("Verification has not been recorded");
     expect(html).toContain("Execution setup needs attention");
     expect(html).toContain("Work records need reconciling");

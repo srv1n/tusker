@@ -266,4 +266,16 @@ func TestServeProjectSettingsPersistWorkspaceAndConcurrency(t *testing.T) {
 	}
 	assertEqual(t, string(WorkspaceStrategyWorktree), wf.Data.Workspace.Strategy, "workspace setting readback")
 	assertEqual(t, 3, wf.Data.Runtime.MaxActiveRunsPerProject, "concurrency setting readback")
+
+	var currentCheckout serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"workspaceMode":"shared","maxActiveRunsPerProject":8}`, &currentCheckout)
+	if !currentCheckout.OK {
+		t.Fatalf("current checkout setting failed: %#v", currentCheckout)
+	}
+	wf, err = loadWorkflow(project.VaultRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, string(WorkspaceStrategyShared), wf.Data.Workspace.Strategy, "current checkout setting readback")
+	assertEqual(t, 8, wf.Data.Runtime.MaxActiveRunsPerProject, "current checkout concurrency readback")
 }

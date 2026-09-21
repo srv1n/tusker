@@ -26,7 +26,7 @@ test("startable tasks expose direct task start with visible directive state", ()
   expect(task).toContain('const runnable = !runBlocker && currentStatus !== "in_progress" && currentStatus !== "blocked"');
   expect(task).toContain("taskStart.mutate()");
   expect(task).not.toContain("human:serve");
-  expect(task).toContain('directiveQueued ? "Authorized — waiting for runtime" : taskStart.isPending ? "Starting…" : "Start task"');
+  expect(task).toContain('directiveQueued ? "Queued" : taskStart.isPending ? "Queuing…" : "Run task"');
   for (const state of ["queued", "lapsed", "consumed"]) {
     expect(task).toContain(`task.runDirective.state === "${state}"`);
   }

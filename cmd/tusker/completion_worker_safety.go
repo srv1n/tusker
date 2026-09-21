@@ -17,15 +17,15 @@ const completionAuthoritativeRawLogMaxBytes int64 = 16 << 20
 // profile participating in that flow must have an enforceable filesystem
 // boundary.  A friendly name or a denylist is not a sandbox.
 func completionWorkerSafety(stateRoot, workspace string, profile ResolvedRunnerProfile) error {
-	mode := strings.TrimSpace(profile.Definition.Sandbox.Mode)
+	mode, _, err := completionEffectiveAccess(profile)
+	if err != nil {
+		return fmt.Errorf("completion authority refuses profile %q: %w", profile.Name, err)
+	}
 	if mode != "workspace-write" && mode != "read-only" {
 		return fmt.Errorf("completion authority refuses profile %q: enforceable sandbox must be workspace-write or read-only", profile.Name)
 	}
-	if strings.TrimSpace(profile.Definition.PermissionPreset) == "danger-full-access" || mode == "danger-full-access" {
+	if mode == "danger-full-access" {
 		return fmt.Errorf("completion authority refuses profile %q: danger-full-access is not admissible", profile.Name)
-	}
-	if profile.Definition.Sandbox.Network == nil || *profile.Definition.Sandbox.Network {
-		return fmt.Errorf("completion authority refuses profile %q: worker network must be explicitly disabled", profile.Name)
 	}
 	// codex_exec binds sandbox flags into its exact detached argv. codex_acp
 	// binds the same ceiling through an exact adapter receipt, verified session
@@ -45,7 +45,11 @@ func completionWorkerSafetyForLane(stateRoot, workspace, lane, command string, p
 	if err := completionWorkerSafety(stateRoot, workspace, profile); err != nil {
 		return err
 	}
-	if lane == runLaneReview && strings.TrimSpace(profile.Definition.Sandbox.Mode) != "read-only" {
+	mode, _, err := completionEffectiveAccess(profile)
+	if err != nil {
+		return err
+	}
+	if lane == runLaneReview && mode != "read-only" {
 		return fmt.Errorf("completion authority requires read-only review profile")
 	}
 	if strings.TrimSpace(profile.Definition.Command) != "" {
@@ -63,7 +67,10 @@ func completionAuthoritativeCodexExecArgv(command, lane string, profile Resolved
 	if command != defaultCodexExecCommand() {
 		return nil, fmt.Errorf("completion authority requires the exact built-in codex exec command")
 	}
-	mode := strings.TrimSpace(profile.Definition.Sandbox.Mode)
+	mode, network, err := completionEffectiveAccess(profile)
+	if err != nil {
+		return nil, err
+	}
 	if lane == runLaneReview && mode != "read-only" {
 		return nil, fmt.Errorf("completion authority requires read-only review profile")
 	}
@@ -72,9 +79,6 @@ func completionAuthoritativeCodexExecArgv(command, lane string, profile Resolved
 	}
 	if lane != runLaneExecute && lane != runLaneReview {
 		return nil, fmt.Errorf("completion authority refuses unknown worker lane %q", lane)
-	}
-	if profile.Definition.Sandbox.Network == nil || *profile.Definition.Sandbox.Network {
-		return nil, fmt.Errorf("completion authority requires explicit network=false")
 	}
 
 	// This is a policy template, not a shell fragment. At dispatch the daemon
@@ -91,7 +95,7 @@ func completionAuthoritativeCodexExecArgv(command, lane string, profile Resolved
 		"--skip-git-repo-check",
 		"-c", `approval_policy="never"`,
 		"-c", `sandbox_mode="` + mode + `"`,
-		"-c", `sandbox_workspace_write.network_access=false`,
+		"-c", fmt.Sprintf(`sandbox_workspace_write.network_access=%t`, network),
 	}
 	if model := strings.TrimSpace(profile.Definition.Model); model != "" {
 		argv = append(argv, "--model", model)
@@ -100,6 +104,34 @@ func completionAuthoritativeCodexExecArgv(command, lane string, profile Resolved
 		argv = append(argv, "-c", `model_reasoning_effort="`+effort+`"`)
 	}
 	return append(argv, "-"), nil
+}
+
+// completionEffectiveAccess projects the one authored access policy into the
+// two controls the detached completion runner mechanically enforces. New
+// Settings profiles use Access; legacy profiles keep their explicit sandbox.
+func completionEffectiveAccess(profile ResolvedRunnerProfile) (string, bool, error) {
+	definition := profile.Definition
+	if definition.Access == nil {
+		mode := strings.TrimSpace(definition.Sandbox.Mode)
+		if mode == "" || definition.Sandbox.Network == nil {
+			return "", false, fmt.Errorf("access policy is incomplete")
+		}
+		return mode, *definition.Sandbox.Network, nil
+	}
+	if strings.TrimSpace(definition.PermissionPreset) != "" {
+		return "", false, fmt.Errorf("access and permission_preset cannot both be set")
+	}
+	if err := validateAgentAccessDefinition("profile", definition.Access, "access"); err != nil {
+		return "", false, err
+	}
+	if len(definition.Access.Folders) > 0 || len(definition.Access.PrivateFolders) > 0 {
+		return "", false, fmt.Errorf("completion runner cannot enforce additional or private folders")
+	}
+	if definition.Access.Mode == accessModeReview && definition.Access.Network {
+		return "", false, fmt.Errorf("review-only access requires internet off")
+	}
+	effective := effectivePolicyForAgentAccess(definition.Access)
+	return effective.Filesystem, effective.Network, nil
 }
 
 func completionBindAuthoritativeCodexExec(command string, argv []string, workspace, repoRoot string) ([]string, string, string, error) {
@@ -235,21 +267,36 @@ func completionWorkerPolicyFingerprint(lane, command string, profile ResolvedRun
 	if err != nil {
 		return "", err
 	}
-	payload := strings.Join([]string{
-		"tusker.completion-worker-policy/v4",
+	mode, network, err := completionEffectiveAccess(profile)
+	if err != nil {
+		return "", err
+	}
+	schema := "tusker.completion-worker-policy/v4"
+	access := []string{
+		profile.Definition.PermissionPreset,
+		profile.Definition.Sandbox.Mode,
+		fmt.Sprintf("%t", profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network),
+	}
+	if profile.Definition.Access != nil {
+		schema = "tusker.completion-worker-policy/v5"
+		access = []string{mode, fmt.Sprintf("%t", network), profile.Definition.Access.Mode, profile.Definition.Access.DestructiveActions}
+	}
+	fields := []string{
+		schema,
 		lane,
 		profile.Name,
 		profile.Source,
 		profile.Definition.Harness,
 		profile.Definition.Model,
 		profile.Definition.Effort,
-		profile.Definition.PermissionPreset,
-		profile.Definition.Sandbox.Mode,
-		fmt.Sprintf("%t", profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network),
+	}
+	fields = append(fields, access...)
+	fields = append(fields,
 		fmt.Sprintf("raw_log_max_bytes=%d", completionAuthoritativeRawLogMaxBytes),
 		"raw_log_overflow=kill_process_group",
 		strings.Join(argv, "\x00"),
-	}, "\x00")
+	)
+	payload := strings.Join(fields, "\x00")
 	sum := sha256.Sum256([]byte(payload))
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
@@ -386,7 +433,11 @@ func (d *Daemon) validateCompletionWorkerAuthority(project RegisteredProject, wf
 	if err := completionWorkerSafety(d.stateRoot, workspaceForCompletionSafety(project, result.TaskID), review); err != nil {
 		return err
 	}
-	if strings.TrimSpace(review.Definition.Sandbox.Mode) != "read-only" {
+	reviewMode, _, accessErr := completionEffectiveAccess(review)
+	if accessErr != nil {
+		return accessErr
+	}
+	if reviewMode != "read-only" {
 		return fmt.Errorf("completion authority requires read-only review profile")
 	}
 	expectedPolicy, err := completionWorkflowPolicyFingerprint(wf, note)

@@ -11,13 +11,14 @@
 */
 
 import { useMemo } from "react";
-import type { RunSummary, TaskDetail, WaveReviewMember } from "@/types/domain";
+import type { RunSummary, TaskDetail, WaveReview, WaveReviewMember } from "@/types/domain";
 import {
   DISPLAY_STATE_LABEL,
   NODE_KIND_LABEL,
   NODE_WIDTH,
   TOP_DOWN_NODE_HEIGHT,
   buildFlowGraph,
+  crossWaveWaitSummary,
   essentialFlowEdges,
   layoutTopDownFlowGraph,
   type DependencyFact,
@@ -31,6 +32,8 @@ export interface WaveFlowProps {
   runs: RunSummary[];
   dependencyFacts?: Record<string, DependencyFact>;
   reviewMembers?: WaveReviewMember[];
+  authorization?: WaveReview["authorization"];
+  startEnabled?: boolean;
   selectedTaskId?: string;
   viewport?: FlowViewport;
   onSelectTask: (id: string) => void;
@@ -120,6 +123,11 @@ export function WaveFlow(props: WaveFlowProps) {
   const executing = graph.nodes.filter((node) => node.state === "executing");
   const reviewing = graph.nodes.filter((node) => node.state === "reviewing");
   const awaitingReview = graph.nodes.filter((node) => node.state === "awaiting_review");
+  const waitSummary = crossWaveWaitSummary(
+    Object.values(dependencyFacts ?? {}),
+    props.authorization ?? "inert",
+    props.startEnabled ?? false,
+  );
   const executionStatus = executing.length > 0
     ? `Executing now: ${executing.map((node) => node.title).join(", ")}`
     : reviewing.length > 0
@@ -163,6 +171,14 @@ export function WaveFlow(props: WaveFlowProps) {
         </div>
       </div>
 
+      {waitSummary && (
+        <section aria-label="Cross-wave dependency wait" className="border-b border-line bg-surface px-4 py-3">
+          <h4 className="text-[13px] font-semibold text-ink">{waitSummary.title}</h4>
+          <p className="mt-1 text-[12px] leading-5 text-muted">{waitSummary.body}</p>
+          {waitSummary.hint && <p className="mt-1 text-[12px] leading-5 text-muted">{waitSummary.hint}</p>}
+        </section>
+      )}
+
       {graph.warnings.length > 0 && (
         <details className="border-b border-line bg-surface px-4 py-2.5">
           <summary className="cursor-pointer text-[12.5px] font-medium text-warn">
@@ -205,16 +221,17 @@ export function WaveFlow(props: WaveFlowProps) {
                   type="button"
                   onClick={() => onSelectTask(node.id)}
                   aria-pressed={selected}
-                  aria-label={`${node.title} (${node.id}), ${NODE_KIND_LABEL[node.kind]}, ${DISPLAY_STATE_LABEL[node.state]}${node.model ? `, model ${node.model}` : ""}${selected ? ", selected" : ""}`}
+                  aria-label={`${node.title} (${node.id}), ${NODE_KIND_LABEL[node.kind]}, ${node.stateLabel ?? DISPLAY_STATE_LABEL[node.state]}${node.model ? `, model ${node.model}` : ""}${selected ? ", selected" : ""}`}
                   style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: TOP_DOWN_NODE_HEIGHT }}
                   className={`absolute z-10 min-w-0 rounded-lg border bg-panel p-3 text-left shadow-sm transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${selected || active ? "border-accent ring-1 ring-accent" : "border-line"} ${node.kind !== "task" ? "border-dashed" : ""}`}
                 >
                   <span className="flex items-center gap-1.5 text-[11.5px] text-muted">
                     <StateGlyph state={node.state} />
-                    <span className="font-medium">{DISPLAY_STATE_LABEL[node.state]}</span>
+                    <span className="font-medium">{node.stateLabel ?? DISPLAY_STATE_LABEL[node.state]}</span>
                     {node.kind !== "task" && <span className="ml-auto font-mono text-[9.5px] uppercase tracking-wide text-faint">{NODE_KIND_LABEL[node.kind]}</span>}
                   </span>
                   <span className="mt-2 line-clamp-2 text-[13.5px] font-semibold leading-snug text-ink">{node.title}</span>
+                  {node.context && <span className="mt-0.5 block truncate text-[11px] text-muted">{node.context}</span>}
                   <span className="mt-1.5 block truncate font-mono text-[10.5px] text-faint">{node.id}{node.tier ? ` · Tier ${{ light: 1, standard: 2, demanding: 3 }[node.tier] ?? node.tier}` : ""}{node.model ? ` · ${node.model}` : ""}</span>
                   {node.depIds.length > 0 && <span className="mt-2 block truncate border-t border-line pt-2 text-[10.5px] text-muted" title={node.depIds.join(", ")}>After {node.depIds.join(", ")}</span>}
                 </button>

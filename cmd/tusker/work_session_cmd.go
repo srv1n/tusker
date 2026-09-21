@@ -451,6 +451,9 @@ func reviewImplementationBinding(store *RuntimeStore, run RunStatus, note Note, 
 	if stringField(note.Data, "status") != "review" {
 		return reviewImplementation{}, tuskerError(errorInvalidTransition, "review session requires task status review")
 	}
+	if taskAdoptedExternalImplementation(note) {
+		return adoptedImplementationReviewBinding(store, run, note, vault)
+	}
 	workRevision := intField(note.Data, "work_revision")
 	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
 	if workRevision == 0 || source == "" || run.WorkRevision != workRevision {
@@ -479,6 +482,70 @@ func reviewImplementationBinding(store *RuntimeStore, run RunStatus, note Note, 
 		return reviewImplementation{}, err
 	}
 	return reviewImplementation{AttemptID: parent.AttemptID, ImplementationActor: actor, ReviewerActor: reviewerActorForNote(wf.Data.Reviewer.Actor, note), MaterialFingerprint: material, WorkspacePath: parent.WorkspacePath, Branch: firstNonEmpty(parent.EndState.Branch, parent.BranchName)}, nil
+}
+
+// adoptedImplementationReviewBinding binds review of adopt_completed work.
+// Unknown implementation provenance can never be presented as proven
+// independence: the reviewer must be a known identity — a native Codex/Claude
+// conversation or a dispatched TUSKER_ATTEMPT_ID — and the binding records
+// implementation provenance as the truthful external/unknown sentinel, which
+// can never equal a real reviewer actor so the existing masquerade check stays
+// intact.
+func adoptedImplementationReviewBinding(store *RuntimeStore, run RunStatus, note Note, vault string) (reviewImplementation, error) {
+	taskID := stringField(note.Data, "id")
+	attemptID := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID"))
+	if attemptID != "" {
+		leaseExpires, leaseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(run.LeaseExpiresAt))
+		if attemptID != run.ActiveAttemptID || run.Lane != runLaneReview || run.Terminal || leaseErr != nil || !leaseExpires.After(time.Now().UTC()) || (LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) {
+			return reviewImplementation{}, tuskerError(errorInvalidTransition, taskID+": TUSKER_ATTEMPT_ID is not the current active review lease")
+		}
+		current, err := store.FindRunScoped(run.ProjectID, trackerRecordID(note))
+		currentExpires := time.Time{}
+		if current != nil {
+			currentExpires, _ = time.Parse(time.RFC3339Nano, strings.TrimSpace(current.LeaseExpiresAt))
+		}
+		if err != nil || current == nil || current.ActiveAttemptID != attemptID || current.LeaseGeneration != run.LeaseGeneration || current.Lane != runLaneReview || current.Terminal || !currentExpires.After(time.Now().UTC()) || (LeaseState(current.LeaseState) != LeaseStateClaimed && LeaseState(current.LeaseState) != LeaseStateRunning) {
+			return reviewImplementation{}, tuskerError(errorInvalidTransition, taskID+": TUSKER_ATTEMPT_ID is stale or no longer owns the active review lease")
+		}
+		attempt, err := store.ReviewAttempt(attemptID)
+		if err != nil || attempt.ProjectID != run.ProjectID || attempt.RecordID != trackerRecordID(note) || attempt.Lane != runLaneReview {
+			return reviewImplementation{}, tuskerError(errorInvalidTransition, taskID+": TUSKER_ATTEMPT_ID is not a registered review attempt for this project and task")
+		}
+		authorization, err := runAuthorizationForAttempt(store, run.ProjectID, trackerRecordID(note), attemptID)
+		if err != nil || authorization.LeaseGeneration != run.LeaseGeneration {
+			return reviewImplementation{}, tuskerError(errorInvalidTransition, taskID+": TUSKER_ATTEMPT_ID lacks current durable review authorization")
+		}
+	} else if !nativeConversationKnown(TaskAuthoringContextFromEnvironment()) {
+		return reviewImplementation{}, tuskerError(
+			errorInvalidTransition,
+			taskID+": implementation provenance is external/unknown; independent review requires a known reviewer identity",
+			withHint("claim the review from a native Codex/Claude session or a dispatched attempt so independence is attestable"),
+		)
+	}
+	repoRoot, err := canonicalV7VerificationWorkspaceRoot(v7RepoRoot(vault))
+	if err != nil {
+		return reviewImplementation{}, err
+	}
+	material, err := v7CloseCurrentMaterial(vault, note)
+	if err != nil {
+		return reviewImplementation{}, err
+	}
+	if adopted := strings.TrimSpace(stringField(note.Data, "adopted_material_fingerprint")); adopted == "" || adopted != material {
+		return reviewImplementation{}, tuskerError(errorEvidenceGate, taskID+": adopted implementation material changed after verification")
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		return reviewImplementation{}, err
+	}
+	branch, _ := currentGitBranchIn(repoRoot)
+	return reviewImplementation{
+		AttemptID:           attemptID,
+		ImplementationActor: adoptCompletedImplementationSource,
+		ReviewerActor:       reviewerActorForNote(wf.Data.Reviewer.Actor, note),
+		MaterialFingerprint: material,
+		WorkspacePath:       repoRoot,
+		Branch:              branch,
+	}, nil
 }
 
 func runAuthorizationForAttempt(store *RuntimeStore, projectID, recordID, attemptID string) (RunAuthorization, error) {

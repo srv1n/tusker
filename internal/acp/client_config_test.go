@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -15,8 +16,23 @@ func TestParseConfigOptionsSkipsDynamicSelectWithoutValues(t *testing.T) {
 	}
 }
 
-func TestDevinMCPServersChangedNotificationIsInformational(t *testing.T) {
-	for _, method := range []string{"_cognition.ai/mcp/serversChanged", "_cognition.ai/output"} {
+func TestParseConfigOptionsAcceptsLargeProviderModelCatalog(t *testing.T) {
+	values := make([]map[string]string, 385)
+	for i := range values {
+		values[i] = map[string]string{"value": fmt.Sprintf("model-%d", i), "name": fmt.Sprintf("Model %d", i)}
+	}
+	raw, err := json.Marshal([]map[string]any{{"id": "model", "name": "Model", "type": "select", "currentValue": "model-0", "options": values}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := parseConfigOptions(raw)
+	if err != nil || len(options) != 1 || len(options[0].Options) != len(values) {
+		t.Fatalf("options=%d values=%d err=%v", len(options), len(values), err)
+	}
+}
+
+func TestDevinNotificationsAreInformational(t *testing.T) {
+	for _, method := range []string{"_cognition.ai/mcp/serversChanged", "_cognition.ai/output", "_cognition.ai/thinking_complete", "_cognition.ai/plugins/changed"} {
 		c := &Client{}
 		c.handleRequest(rpcMessage{JSONRPC: "2.0", Method: method, Params: json.RawMessage(`{}`)})
 		if c.protocolErr != nil {

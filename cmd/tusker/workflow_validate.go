@@ -91,8 +91,8 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	if !validCodexSandbox(wf.Codex.TurnSandboxPolicy) {
 		return tuskerError(errorConfigInvalid, "codex.turn_sandbox_policy must be one of read-only, workspace-write, danger-full-access", withPath(filePath))
 	}
-	if wf.Codex.TurnTimeoutMS <= 0 || wf.Codex.ReadTimeoutMS <= 0 || wf.Codex.StallTimeoutMS <= 0 || wf.Codex.MaxTurns <= 0 {
-		return tuskerError(errorConfigInvalid, "codex turn/read/stall timeouts and max_turns must be > 0", withPath(filePath))
+	if wf.Codex.ReadTimeoutMS <= 0 || wf.Codex.StallTimeoutMS <= 0 || wf.Codex.MaxTurns <= 0 {
+		return tuskerError(errorConfigInvalid, "codex read/stall timeouts and max_turns must be > 0", withPath(filePath))
 	}
 	if err := validateCodexCloudWorkflow(wf.CodexCloud, wf, filePath); err != nil {
 		return err

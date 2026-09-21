@@ -602,9 +602,6 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		} else if !ctx.Project.Enabled {
 			blockers = append(blockers, "project is disabled")
 		}
-		if !ctx.Workflow.Data.AutomationEnabled {
-			blockers = append(blockers, "project automation is disabled in its configuration")
-		}
 	}
 	if isV7TaskNote(note) {
 		blockers = append(blockers, v7TaskDispatchBlockers(ctx.Project.VaultRoot, note)...)
@@ -635,9 +632,6 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 				requiredApprovals = append(requiredApprovals, "runner explicit approvals")
 			}
 		}
-	}
-	if runner != "" && !containsString(ctx.Workflow.Data.Agents.Enabled, runner) {
-		blockers = append(blockers, "runner "+runner+" is not enabled in workflow")
 	}
 	applyInputs, applyInputErr := listCurrentExternalApplyInputs(ctx.Store, ctx.Project.ProjectID, recordID, run)
 	if applyInputErr != nil {

@@ -31,6 +31,11 @@ type v7ClosePreflightRequest struct {
 	// snapshot that already executed the exact command rows and rebound the
 	// task revision/fingerprint. Direct accept/close leave it false.
 	SkipCommandVerification bool
+	// ObjectiveAdoption is set only by adopt_completed: the authored proof
+	// contract is authoritative, so the risk-based acceptor requirement is
+	// skipped while required evidence, required gates, dependencies, and docs
+	// checks still apply unchanged.
+	ObjectiveAdoption bool
 }
 
 // saveV7CloseProjectionCAS repeats the task identity/revision integrity check
@@ -152,7 +157,7 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 			return v7ClosePreflightResult{}, tuskerError(errorEvidenceGate, v7ClosePreflightMessage(request.Action, id, "missing required evidence: "+strings.Join(missing, ", ")))
 		}
 	}
-	if err := enforceV7ClosePolicy(vaultPath, task, idx, request.Actor); err != nil {
+	if err := enforceV7ClosePolicyWithAcceptor(vaultPath, task, idx, request.Actor, !request.ObjectiveAdoption); err != nil {
 		return v7ClosePreflightResult{}, err
 	}
 	if tuskerTier(vaultPath) >= 2 && !request.SkipCommandVerification {

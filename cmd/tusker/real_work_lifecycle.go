@@ -67,7 +67,7 @@ func realWorkStage(run *RunStatus, taskStatus string) string {
 		}
 		return "in_progress"
 	case LeaseStateReleased:
-		switch AttemptOutcome(run.AttemptOutcome) {
+		switch projectedAttemptOutcome(run.AttemptOutcome, run.LastError) {
 		case AttemptOutcomeSucceeded:
 			if taskStatus == "done" {
 				return "completed"
@@ -76,6 +76,8 @@ func realWorkStage(run *RunStatus, taskStatus string) string {
 				return "submitted"
 			}
 			return "submitted"
+		case AttemptOutcomeUnknown:
+			return "outcome_unknown"
 		case AttemptOutcomeFailed:
 			return "failed"
 		case AttemptOutcomeInterrupted:

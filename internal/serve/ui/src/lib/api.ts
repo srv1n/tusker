@@ -355,7 +355,7 @@ export const api = {
   redrive: (taskId: string, projectId?: string): Promise<RedriveResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/runs/${taskId}/redrive`, projectId), { actor })),
 
-  recover: (taskId: string, action: "retry_review" | "rerun_checks", projectId?: string): Promise<RecoveryResult> =>
+  recover: (taskId: string, action: "retry_review" | "recover_unknown" | "rerun_checks" | "adopt_completed", projectId?: string): Promise<RecoveryResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/runs/${taskId}/recover`, projectId), { actor, action })),
 
   // POST /api/runs/:taskId/acknowledge — retires a settled failed run via the

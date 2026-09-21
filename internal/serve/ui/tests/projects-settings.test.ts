@@ -39,7 +39,7 @@ test("project settings own the explicit daemon automation choice", () => {
   expect(settings).toContain("project.automationEnabled");
   expect(settings).toContain("ariaLabel={`Background work");
   expect(settings).toContain("automationPending.current");
-  expect(settings).toContain("Registration alone never enables it.");
+  expect(settings).toContain("Run queued work automatically while Tusker is open.");
   expect(settings).toContain("<ActionResultLine pending={automation.isPending}");
   expect(settings).not.toContain("<ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />\n          <Button variant=\"primary\"");
   expect(controls).toContain('role="switch"');

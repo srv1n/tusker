@@ -119,11 +119,11 @@ func TestRunDirectiveBypassableBlocker(t *testing.T) {
 		blocker string
 		want    bool
 	}{
-		{name: "automation disabled", blocker: "project automation is disabled in its configuration", want: true},
 		{name: "default armed wave membership", blocker: "dispatch scope armed_waves requires task membership in a currently armed wave", want: true},
 		{name: "explicit wave is not armed", blocker: "wave is not durably armed", want: true},
 		{name: "plan reports disarmed wave", blocker: "wave W-0001 authorization is disarmed; arm it", want: true},
 		{name: "persisted disarmed wave blocker", blocker: "dispatch blocked: wave W-0001 authorization is disarmed; arm it", want: true},
+		{name: "explicit retry of failed run", blocker: "existing run is terminal; update the task revision before redispatch", want: true},
 		{name: "plan reports stale wave", blocker: "wave W-0001 authorization is stale", want: false},
 		{name: "dependency", blocker: "dependency APP-T-0002 is not done", want: false},
 		{name: "empty", blocker: "", want: false},

@@ -332,7 +332,7 @@ func (h *codexLiveHandle) threadFork(sessionRef, cwd string) (string, error) {
 }
 
 func (h *codexLiveHandle) turnStart(threadID, prompt string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), h.turnTimeout())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var resp struct {
 		Turn struct {
@@ -400,8 +400,8 @@ func logCodexDispatchPolicy(rawLogPath string, policy CodexPolicy) {
 	if strings.TrimSpace(rawLogPath) == "" {
 		return
 	}
-	_ = appendRawLogLine(rawLogPath, fmt.Sprintf("codex app-server dispatch policy: max_turns=%d turn_timeout_ms=%d read_timeout_ms=%d stall_timeout_ms=%d approval_policy=%s thread_sandbox=%s turn_sandbox_policy=%s",
-		policy.MaxTurns, policy.TurnTimeoutMS, policy.ReadTimeoutMS, policy.StallTimeoutMS, policy.ApprovalPolicy, policy.ThreadSandbox, policy.TurnSandboxPolicy))
+	_ = appendRawLogLine(rawLogPath, fmt.Sprintf("codex app-server dispatch policy: max_turns=%d read_timeout_ms=%d stall_timeout_ms=%d approval_policy=%s thread_sandbox=%s turn_sandbox_policy=%s",
+		policy.MaxTurns, policy.ReadTimeoutMS, policy.StallTimeoutMS, policy.ApprovalPolicy, policy.ThreadSandbox, policy.TurnSandboxPolicy))
 }
 
 func (h *codexLiveHandle) readTimeout() time.Duration {
@@ -409,13 +409,6 @@ func (h *codexLiveHandle) readTimeout() time.Duration {
 		return 30 * time.Second
 	}
 	return time.Duration(h.policy.ReadTimeoutMS) * time.Millisecond
-}
-
-func (h *codexLiveHandle) turnTimeout() time.Duration {
-	if h.policy.TurnTimeoutMS <= 0 {
-		return 30 * time.Second
-	}
-	return time.Duration(h.policy.TurnTimeoutMS) * time.Millisecond
 }
 
 func (h *codexLiveHandle) notify(method string, params any) error {

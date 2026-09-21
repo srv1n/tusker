@@ -309,18 +309,17 @@ func writeArmedWaveTestFields(t *testing.T, vault string, fields map[string]any)
 	}
 }
 
-func TestArmedWaveSharedWorkspaceRequiresSerialProjectCapacity(t *testing.T) {
+func TestCurrentCheckoutUsesConfiguredProjectCapacity(t *testing.T) {
 	vault, idx, _ := armedWaveTestFixture(t)
 	task := idx.Tasks["APP-T-0001"]
 	wf := defaultWorkflow()
 	wf.Workspace.Strategy = string(WorkspaceStrategyShared)
 	wf.Runtime.MaxActiveRunsPerProject = 2
-	if got := armedWaveDispatchBlocker(vault, task, wf, nil); !strings.Contains(got, "require runtime.max_active_runs_per_project = 1") {
-		t.Fatalf("concurrent shared workspace was not rejected: %q", got)
+	if got := projectActiveRunLimit(wf); got != 2 {
+		t.Fatalf("current checkout ignored configured capacity: %d", got)
 	}
-	wf.Runtime.MaxActiveRunsPerProject = 1
 	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "" {
-		t.Fatalf("serial shared workspace was rejected: %q", got)
+		t.Fatalf("current checkout was rejected despite owned-path scheduling: %q", got)
 	}
 }
 
