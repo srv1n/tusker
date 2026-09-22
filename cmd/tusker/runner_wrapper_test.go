@@ -361,6 +361,151 @@ func TestWrapperFenced(t *testing.T) {
 	waitForFileText(t, req.Start.RawLogPath, "lease generation advanced")
 }
 
+func TestExternalReviewContainment(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		mode     string
+		exitCode int
+		outcome  AttemptOutcome
+		reason   string
+	}{
+		{"root exit with inherited pipe publishes status before group teardown", "exit-descendant", 0, "", ""},
+		{"overflow publishes bounded failure before group teardown", "overflow-descendant", completionAuthoritativeRawLogOverflowExitCode, AttemptOutcomeFailed, "raw log exceeded"},
+		{"interruption publishes 130 before group teardown", "interrupt-descendant", 130, AttemptOutcomeInterrupted, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			statusPath := filepath.Join(dir, "status.json")
+			pidPath := filepath.Join(dir, "descendant.pid")
+			exe, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(exe, "-test.run=^TestExternalReviewContainmentHelper$")
+			cmd.Env = append(os.Environ(),
+				"TUSKER_CONTAINMENT_HELPER=1",
+				"TUSKER_CONTAINMENT_MODE="+tc.mode,
+				"TUSKER_CONTAINMENT_DIR="+dir,
+				"TUSKER_STATE_ROOT="+filepath.Join(dir, "state"),
+			)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			if tc.mode == "interrupt-descendant" {
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				helperPID := cmd.Process.Pid
+				waitForPIDFile(t, pidPath)
+				if err := syscall.Kill(helperPID, syscall.SIGTERM); err != nil {
+					_ = cmd.Process.Kill()
+					t.Fatalf("interrupt contained wrapper: %v", err)
+				}
+				_ = cmd.Wait()
+			} else {
+				if err := cmd.Run(); err == nil {
+					t.Fatal("contained wrapper helper survived its own terminal group reap")
+				}
+			}
+			waitForStatusFile(t, statusPath)
+			status, err := readRunnerProcessStatus(statusPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status.ExitCode != tc.exitCode {
+				t.Fatalf("terminal status = %#v, want exit code %d", status, tc.exitCode)
+			}
+			if tc.outcome != "" && AttemptOutcome(status.Outcome) != tc.outcome {
+				t.Fatalf("terminal status outcome = %#v, want %s", status, tc.outcome)
+			}
+			if tc.reason != "" && !strings.Contains(status.Reason, tc.reason) {
+				t.Fatalf("terminal status reason = %q, want substring %q", status.Reason, tc.reason)
+			}
+			pidRaw, err := readText(pidPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid := atoiSafe(strings.TrimSpace(pidRaw))
+			if pid <= 0 {
+				t.Fatalf("invalid contained descendant pid %q", pidRaw)
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for processExists(pid) && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if processExists(pid) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+				t.Fatalf("contained descendant %d survived terminal group reap", pid)
+			}
+		})
+	}
+
+	t.Run("reap refuses stale or foreign process groups", func(t *testing.T) {
+		if reapContainedProcessGroup(0, os.Getpid()) {
+			t.Fatal("empty containment pgid was signalled")
+		}
+		foreign := exec.Command("sleep", "30")
+		foreign.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := foreign.Start(); err != nil {
+			t.Fatal(err)
+		}
+		foreignPID := foreign.Process.Pid
+		defer func() {
+			if processExists(foreignPID) {
+				_ = syscall.Kill(-foreignPID, syscall.SIGKILL)
+			}
+			_ = foreign.Wait()
+		}()
+		if reapContainedProcessGroup(foreignPID, os.Getpid()) {
+			t.Fatal("a group not led by the caller was signalled")
+		}
+		if !processExists(foreignPID) {
+			t.Fatal("foreign process group was killed by a stale containment check")
+		}
+		if !reapContainedProcessGroup(foreignPID, foreignPID) {
+			t.Fatal("still-owned contained group was not reaped")
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for processExists(foreignPID) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if processExists(foreignPID) {
+			t.Fatalf("owned contained group leader %d survived its reap", foreignPID)
+		}
+	})
+}
+
+func TestExternalReviewContainmentHelper(t *testing.T) {
+	if os.Getenv("TUSKER_CONTAINMENT_HELPER") != "1" {
+		return
+	}
+	dir := os.Getenv("TUSKER_CONTAINMENT_DIR")
+	store, req := setupRunnerWrapperRuntime(t)
+	req.ContainmentPGID = os.Getpid()
+	req.Start.StatusPath = filepath.Join(dir, "status.json")
+	req.Start.RawLogPath = filepath.Join(dir, "raw.log")
+	req.Start.RawLogMaxBytes = 1024
+	pidPath := filepath.Join(dir, "descendant.pid")
+	var script string
+	switch os.Getenv("TUSKER_CONTAINMENT_MODE") {
+	case "exit-descendant":
+		script = fmt.Sprintf("sleep 60 & echo $! > %q", pidPath)
+	case "overflow-descendant":
+		bigfile := filepath.Join(dir, "overflow.txt")
+		if err := os.WriteFile(bigfile, []byte(strings.Repeat("x", 4096)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		script = fmt.Sprintf("sleep 60 & echo $! > %q; cat %q", pidPath, bigfile)
+	case "interrupt-descendant":
+		script = fmt.Sprintf("sleep 60 & echo $! > %q; sleep 60", pidPath)
+	default:
+		t.Fatal("unknown containment helper mode")
+	}
+	req.Start.Command = ""
+	req.Start.CommandArgv = []string{"/bin/sh", "-c", script}
+	_ = store
+	_ = runRunnerWrapper(context.Background(), req)
+	t.Fatal("contained wrapper returned without terminal group reap")
+}
+
 func TestDaemonStopDrain(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	store, err := OpenRuntimeStore(stateRoot)

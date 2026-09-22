@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -300,20 +301,29 @@ func acpChildExitedWithoutStatus(result *StartResult, statusPath string) bool {
 	return !processExists(result.PID)
 }
 
-// The wrapper is the ACP process-group owner. Once an ACP status is durable,
-// kill that group before the wrapper exits so a provider descendant that kept
+// The wrapper is the process-group owner. Once a terminal status is durable,
+// kill that group before the wrapper exits so a runner descendant that kept
 // stdout/stderr open cannot outlive its attempt. This intentionally includes
 // the wrapper itself; terminal status was recorded first and is the durable
-// supervisor handoff. Unit tests never enter this branch because only the real
+// supervisor handoff. Every contained runner takes this path, not only ACP:
+// the monitor must never signal the wrapper's own group before publication.
+// Unit tests never enter this branch through the wrapper because only the real
 // runner-wrapper command supplies a containment PGID equal to its own PID.
 func runnerWrapperReapACPContainmentAfterStatus(req runnerWrapperRequest) {
-	if !isACPRunner(RunnerName(strings.TrimSpace(req.Runner))) || req.ContainmentPGID <= 0 {
-		return
+	reapContainedProcessGroup(req.ContainmentPGID, os.Getpid())
+}
+
+// reapContainedProcessGroup kills the wrapper-owned group only while the
+// caller still leads it. A stale or foreign PGID — including a numerically
+// reused one — is refused, so teardown can never signal an unrelated group.
+func reapContainedProcessGroup(containmentPGID, selfPID int) bool {
+	if containmentPGID <= 0 || selfPID <= 0 || containmentPGID != selfPID || processGroupID(selfPID) != containmentPGID {
+		return false
 	}
-	if req.ContainmentPGID != os.Getpid() || processGroupID(os.Getpid()) != req.ContainmentPGID {
-		return
+	if err := syscall.Kill(-containmentPGID, syscall.SIGKILL); err != nil {
+		return errors.Is(err, syscall.ESRCH)
 	}
-	_ = syscall.Kill(-req.ContainmentPGID, syscall.SIGKILL)
+	return true
 }
 
 func runnerWrapperRecordDirectOutcome(req StartRequest) {
