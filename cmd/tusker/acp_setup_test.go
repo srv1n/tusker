@@ -96,6 +96,7 @@ func TestPrimaryACPProfileOverridesKeepsProjectPrimarySparse(t *testing.T) {
 }
 
 func TestSetupCodexACPPackagesAndMakesMachineLocalPrimary(t *testing.T) {
+	t.Setenv("TUSKER_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	previousProbe := acpSetupRuntimeProbe
 	acpSetupRuntimeProbe = func(ACPAdapterNPMPackageReceipt) error { return nil }
 	t.Cleanup(func() { acpSetupRuntimeProbe = previousProbe })
