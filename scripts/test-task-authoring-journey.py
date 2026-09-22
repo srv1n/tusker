@@ -1052,8 +1052,15 @@ def render_report(mode: str, result: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("offline", "browser", "live"), required=True)
+    parser.add_argument("--scope", choices=("factory", "authoring"), default="factory")
     parser.add_argument("--report", default=str(REPORT))
     args = parser.parse_args()
+
+    if args.scope == "authoring":
+        command = [sys.executable, str(ROOT / "scripts/test-task-authoring-focused.py"), "--mode", args.mode]
+        if args.report != str(REPORT):
+            command.extend(("--report", args.report))
+        return subprocess.call(command, cwd=ROOT)
 
     if args.mode == "offline":
         result = run_offline()

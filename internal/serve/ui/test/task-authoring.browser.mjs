@@ -35,9 +35,11 @@ if (!playwright) {
 const { chromium } = playwright;
 const baseUrl = (process.env.TUSKER_REALWORK_BASE_URL ?? "").replace(/\/$/, "");
 const projectId = process.env.TUSKER_REALWORK_PROJECT ?? "";
-const requestedTaskID = process.env.TUSKER_AUTHORING_TASK_ID ?? "";
-const requestedWaveID = process.env.TUSKER_AUTHORING_WAVE_ID ?? "";
+const requestedTaskID = process.env.TUSKER_AUTHORING_SCENARIO_TASK_ID ?? process.env.TUSKER_AUTHORING_TASK_ID ?? "";
+const requestedWaveID = process.env.TUSKER_AUTHORING_SCENARIO_WAVE_ID ?? process.env.TUSKER_AUTHORING_WAVE_ID ?? "";
 const outDir = resolve(process.env.TUSKER_REALWORK_OUT ?? "docs/reports/task-authoring/browser");
+
+const requiredBodyHeadings = ["## Intent", "## Implementation notes", "## Acceptance", "## Verification"];
 
 function readiness(message) {
   console.error(`READINESS ${message}`);
@@ -98,22 +100,45 @@ for (const task of tasks) {
     // The selected task below reports an actionable readiness failure.
   }
 }
+function scenarioBlockers(task) {
+  if (!task) return ["task detail is unavailable"];
+  const blockers = [];
+  if (!["light", "standard", "demanding"].includes(task.authoredWorkLevel)) blockers.push("missing authored work tier");
+  if (!task.body?.trim()) blockers.push("missing canonical task body");
+  if (!task.intent?.trim()) blockers.push("missing Intent");
+  if (!Array.isArray(task.acceptance) || task.acceptance.length === 0) blockers.push("missing Acceptance");
+  if (!Array.isArray(task.verification) || task.verification.length === 0) blockers.push("missing Verification");
+  for (const heading of requiredBodyHeadings) {
+    if (!task.body?.split("\n").some((line) => line.trim() === heading)) blockers.push(`missing ${heading}`);
+  }
+  if (!task.architect || !task.origin || !task.authoringProvenance) blockers.push("missing architect/origin/provenance");
+  const routeBlockers = [
+    ...(task.effectiveExecute?.blockers ?? []).map((reason) => `execute: ${reason}`),
+    ...(task.effectiveReview?.blockers ?? []).map((reason) => `review: ${reason}`),
+  ];
+  if (!task.effectiveExecute?.profile || !task.effectiveReview?.profile || routeBlockers.length > 0) {
+    blockers.push(`unresolved execute/review route${routeBlockers.length > 0 ? ` (${routeBlockers.join("; ")})` : ""}`);
+  }
+  return blockers;
+}
+
 const authored = details.filter((task) => ["light", "standard", "demanding"].includes(task.authoredWorkLevel));
 const selected = requestedTaskID
   ? details.find((task) => task.id === requestedTaskID)
-  : authored.find((task) => task.authoringProvenance && task.architect && task.origin && task.effectiveExecute?.profile && task.effectiveReview?.profile);
-if (!selected) readiness(`no authored task satisfied tier/route/provenance requirements${requestedTaskID ? ` for ${requestedTaskID}` : ""}`);
-if (!selected.intent?.trim() || !Array.isArray(selected.acceptance) || selected.acceptance.length === 0 || !Array.isArray(selected.verification) || selected.verification.length === 0 || !selected.body?.trim()) {
-  readiness(`task ${selected.id} does not expose canonical body, intent, acceptance and verification`);
+  : authored.find((task) => task.waveId && scenarioBlockers(task).length === 0);
+if (!selected && !requestedTaskID) {
+  const candidates = authored.length > 0
+    ? authored.map((task) => {
+      const blockers = [...scenarioBlockers(task), ...(task.waveId ? [] : ["missing wave membership"])]
+      return `${task.id}: ${blockers.join(", ")}`;
+    }).join(" | ")
+    : "no task exposes a supported authored work tier";
+  readiness(`no complete disposable authored scenario is available; ${candidates}. Seed/import a fresh scenario, then set TUSKER_AUTHORING_SCENARIO_TASK_ID and TUSKER_AUTHORING_SCENARIO_WAVE_ID`);
 }
-for (const heading of ["## Intent", "## Implementation notes", "## Acceptance", "## Verification"]) {
-  if (!selected.body.includes(heading)) readiness(`task ${selected.id} canonical body is missing ${heading}`);
-}
-if (!selected.architect || !selected.origin || !selected.authoringProvenance) {
-  readiness(`task ${selected.id} does not expose architect, origin and authoring provenance`);
-}
-if (!selected.effectiveExecute?.profile || selected.effectiveExecute.blockers?.length || !selected.effectiveReview?.profile || selected.effectiveReview.blockers?.length) {
-  readiness(`task ${selected.id} has an unresolved execute/review route`);
+const selectedBlockers = scenarioBlockers(selected);
+if (selectedBlockers.length > 0) {
+  const target = requestedTaskID ? `task ${requestedTaskID}` : "a disposable authored scenario";
+  readiness(`${target} is not ready for browser qualification: ${selectedBlockers.join(", ")}; select a fresh authored task from the disposable wave import (TUSKER_AUTHORING_SCENARIO_TASK_ID)${requestedTaskID ? " instead of a historical task" : ""}`);
 }
 record("B1", "task detail retains tier, routes and provenance", "PASS", `${selected.id} · Tier ${selected.authoredWorkLevel}`);
 
@@ -137,7 +162,7 @@ try {
 if (selectedReview?.schema !== "tusker.wave-review/v1") readiness(`wave ${selectedWave.id} review did not return tusker.wave-review/v1`);
 record("B5", "wave review API returns the canonical direct projection", "PASS", `${selectedWave.id} · ${selectedReview.state}/${selectedReview.authorization}`);
 
-const standalone = details.find((task) => !task.waveId && ["light", "standard", "demanding"].includes(task.authoredWorkLevel));
+const standalone = authored.find((task) => !task.waveId && scenarioBlockers(task).length === 0);
 if (!standalone) readiness("no standalone authored task is available for the no-synthetic-wave check");
 
 const humanTask = details.find((task) => (task.humanActions?.length ?? 0) > 0 || (task.humanAction && task.hasGate));

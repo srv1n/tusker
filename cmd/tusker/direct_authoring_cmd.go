@@ -37,17 +37,18 @@ type directWaveAuthoringDependency struct {
 }
 
 type directWaveAuthoringTask struct {
-	Key              string                          `yaml:"key" json:"key"`
-	Title            string                          `yaml:"title" json:"title"`
-	WorkLevel        string                          `yaml:"work_level" json:"work_level"`
-	ReviewLevel      string                          `yaml:"review_level,omitempty" json:"review_level,omitempty"`
-	ReviewReason     string                          `yaml:"review_reason,omitempty" json:"review_reason,omitempty"`
-	Body             string                          `yaml:"body" json:"body"`
-	Epic             string                          `yaml:"epic,omitempty" json:"epic,omitempty"`
-	SpecRefs         []string                        `yaml:"spec_refs,omitempty" json:"spec_refs,omitempty"`
-	Dependencies     []directWaveAuthoringDependency `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
-	OwnedPaths       []string                        `yaml:"owned_paths,omitempty" json:"owned_paths,omitempty"`
-	GeneratedOutputs []string                        `yaml:"generated_outputs,omitempty" json:"generated_outputs,omitempty"`
+	Key                 string                          `yaml:"key" json:"key"`
+	Title               string                          `yaml:"title" json:"title"`
+	WorkLevel           string                          `yaml:"work_level" json:"work_level"`
+	ReviewLevel         string                          `yaml:"review_level,omitempty" json:"review_level,omitempty"`
+	ReviewReason        string                          `yaml:"review_reason,omitempty" json:"review_reason,omitempty"`
+	Body                string                          `yaml:"body" json:"body"`
+	ImplementationNotes string                          `yaml:"implementation_notes,omitempty" json:"implementation_notes,omitempty"`
+	Epic                string                          `yaml:"epic,omitempty" json:"epic,omitempty"`
+	SpecRefs            []string                        `yaml:"spec_refs,omitempty" json:"spec_refs,omitempty"`
+	Dependencies        []directWaveAuthoringDependency `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
+	OwnedPaths          []string                        `yaml:"owned_paths,omitempty" json:"owned_paths,omitempty"`
+	GeneratedOutputs    []string                        `yaml:"generated_outputs,omitempty" json:"generated_outputs,omitempty"`
 }
 
 type directAuthoringIssue struct {
@@ -232,6 +233,18 @@ func v7AuthoringBodyFile(vaultPath, value string) (string, error) {
 
 func normalizeV7AuthoringBody(body string) string {
 	return strings.TrimRight(body, "\n") + "\n"
+}
+
+func directWaveAuthoringTaskBody(task directWaveAuthoringTask) string {
+	body := normalizeV7AuthoringBody(task.Body)
+	notes := strings.TrimSpace(task.ImplementationNotes)
+	if notes == "" {
+		return body
+	}
+	if strings.Contains(body, "\n## Implementation notes") || strings.HasPrefix(body, "## Implementation notes") {
+		return normalizeV7AuthoringBody(replaceSection(body, "## Implementation notes", notes))
+	}
+	return strings.TrimRight(body, "\n") + "\n\n## Implementation notes\n\n" + notes + "\n"
 }
 
 func rebindV7DependencyContracts(taskID string, task Note, idx v7Index) ([]any, error) {
@@ -829,6 +842,9 @@ func validateDirectWaveAuthoring(vaultPath string, req directWaveAuthoringReques
 				add("AUTHORING_REQUEST_INVALID", "human action "+key+": "+field+" is required")
 			}
 		}
+		if strings.TrimSpace(action.Owner) != "" && v7ProofOwnerClass(action.Owner) != "human" {
+			add("AUTHORING_REQUEST_INVALID", "human action "+key+": owner must be human:<name>")
+		}
 		for _, cover := range action.Covers {
 			id := normalizeV7AcceptanceID(cover)
 			if id == "" || !taskAcceptanceIDs[strings.TrimSpace(action.Task)][id] {
@@ -1100,7 +1116,7 @@ func waveV7DirectAuthoringCmd(vaultPath string, args Args) error {
 		if err := CaptureTaskAuthoringProvenanceFromEnvironment(data); err != nil {
 			return tuskerError(errorInvalidField, id+": "+err.Error())
 		}
-		body := normalizeV7AuthoringBody(task.Body)
+		body := directWaveAuthoringTaskBody(task)
 		data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
 		data["state_rev"] = v7StateRev(data, body)
 		content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])

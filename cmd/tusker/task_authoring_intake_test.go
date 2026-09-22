@@ -169,6 +169,35 @@ func TestTaskAuthoringIntakeRejectsIncompleteHumanGate(t *testing.T) {
 	}
 }
 
+func TestTaskAuthoringIntakeRejectsNonHumanActionOwner(t *testing.T) {
+	vault := v7DirectTestVault(t)
+	req := directIntakeRequest([]map[string]any{directIntakeTask("only", "standard")})
+	req["human_actions"] = []map[string]any{{
+		"key": "approve", "task": "only", "owner": "agent:builder", "action": "Approve", "verification": "v", "why_agent_cannot": "w",
+	}}
+	path := writeDirectIntakeRequest(t, vault, req)
+	if err := waveV7CreateCmd(Args{"vault": vault, "file": path, "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "owner must be human:<name>") {
+		t.Fatalf("authoring accepted non-human action owner: %v", err)
+	}
+}
+
+func TestTaskAuthoringIntakeProjectsImplementationNotes(t *testing.T) {
+	vault := v7DirectTestVault(t)
+	task := directIntakeTask("only", "standard")
+	task["implementation_notes"] = "Use the existing typed intake seam."
+	path := writeDirectIntakeRequest(t, vault, directIntakeRequest([]map[string]any{task}))
+	if err := waveV7CreateCmd(Args{"vault": vault, "file": path, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	_, body, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "TSK-T-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(sectionContent(body, "## Implementation notes")); got != "Use the existing typed intake seam." {
+		t.Fatalf("implementation notes=%q", got)
+	}
+}
+
 func TestTaskAuthoringIntakeRejectsModelProfilesAndUnreasonedReviewOverride(t *testing.T) {
 	tests := []struct {
 		name string

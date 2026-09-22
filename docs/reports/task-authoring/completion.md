@@ -78,6 +78,7 @@ TUSKER_AUTHORING_TASK_ID=<classified-wave-task-id> \
 TUSKER_AUTHORING_WAVE_ID=<wave-id> \
 TUSKER_REALWORK_OUT=/tmp/tusker-task-authoring-browser \
 python3 scripts/test-task-authoring-journey.py \
+  --scope authoring \
   --mode browser \
   --report /tmp/tusker-task-authoring-browser.md
 ```
@@ -107,6 +108,7 @@ TUSKER_LIVE_BUILD_ID=<installed-build-id> \
 TUSKER_LIVE_PROJECT_ID=<project-id> \
 TUSKER_LIVE_TASK_ID=<task-id> \
 python3 scripts/test-task-authoring-journey.py \
+  --scope authoring \
   --mode live \
   --report /tmp/tusker-task-authoring-live.md
 ```
