@@ -478,6 +478,10 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	// Provider diagnostics must never corrupt stdout protocol framing.
 	cmd.Stderr = cfg.Stderr
+	// WaitDelay bounds only post-exit pipe draining: a descendant that retains
+	// an inherited descriptor cannot stall Wait (and therefore Close) past the
+	// configured cleanup bound. Prompt and turn duration stay unsupervised here.
+	cmd.WaitDelay = cfg.Timeouts.CancelDrain
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
@@ -1943,19 +1947,19 @@ func (c *Client) respond(id string, rawID json.RawMessage, result any, rpcErr *r
 	return c.writeRaw(msg)
 }
 
-// respondPermission linearizes cancellation at the transport write. A cancel
-// that reaches the per-request state before this method owns both the writer
-// and state lock changes the response to cancelled; once those locks are held,
-// the permission response is the operation that wins the wire race.
+// respondPermission linearizes cancellation at the permission decision. A
+// cancel that reaches the per-request state before the decision commits
+// changes the response to cancelled; once the decision commits, the already
+// linearized response is the operation that wins the wire race. Cancellation
+// and teardown must never wait on transport writes, so no cancellation-visible
+// lock is held across the blocking stdin write: the decision commits under
+// state.mu alone, and the write then holds only the writer mutex.
 func (c *Client) respondPermission(id string, rawID json.RawMessage, state *permissionRequestState, decision PermissionDecision, options []PermissionOption) error {
 	c.mu.Lock()
 	delete(c.inbound, id)
 	c.mu.Unlock()
 
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	if state.cancelled {
 		decision = Cancelled
 	}
@@ -1967,6 +1971,9 @@ func (c *Client) respondPermission(id string, rawID json.RawMessage, state *perm
 	} else {
 		result = map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}
 	}
+	state.settled = true
+	state.mu.Unlock()
+
 	resultBytes, err := json.Marshal(result)
 	if err != nil {
 		return err
@@ -1979,9 +1986,9 @@ func (c *Client) respondPermission(id string, rawID json.RawMessage, state *perm
 	if len(b) > c.cfg.Limits.MaxFrameBytes {
 		return fmt.Errorf("acp frame exceeds %d bytes", c.cfg.Limits.MaxFrameBytes)
 	}
-	err = writeAll(c.stdin, append(b, '\n'))
-	state.settled = true
-	return err
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return writeAll(c.stdin, append(b, '\n'))
 }
 
 func (c *Client) writeRaw(msg rpcMessage) error {
