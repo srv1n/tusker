@@ -30,6 +30,10 @@ import {
 const statusOrder = ["in_progress", "review", "ready", "blocked", "backlog", "done"] as const;
 const TIERS = [["light", "Tier 1 · Light"], ["standard", "Tier 2 · Standard"], ["demanding", "Tier 3 · Demanding"]] as const;
 
+export function tierLabel(workLevel?: string): string {
+  return TIERS.find(([value]) => value === workLevel)?.[1] ?? workLevel ?? "Unclassified";
+}
+
 export function routeSummary(route?: TaskRoutePreview): string {
   if (!route?.profile) return `Blocked — ${route?.blockers.join("; ") || "configuration unavailable"}`;
   return [route.profile, route.model, route.effort, harnessLabel(route.harness)].filter(Boolean).join(" · ");
@@ -42,7 +46,7 @@ function accessLabel(route?: TaskRoutePreview) {
 function actualRouteLabel(run?: RunDetail | null) { return run?.runnerProfile && run.model && run.runnerHarness ? [run.runnerProfile, run.model, run.runnerEffort, harnessLabel(run.runnerHarness)].filter(Boolean).join(" · ") : "Unavailable"; }
 
 export function RouteFact({ label, route }: { label: string; route?: TaskRoutePreview }) {
-  return <div><span className="block font-mono text-[9px] uppercase tracking-[0.12em] text-faint">{label}</span><span className="mt-1 block text-ink">{routeSummary(route)}</span><span className="mt-0.5 block text-[11px] text-muted">{accessLabel(route)}</span>{route?.source && <span className="block text-[10px] text-faint">Source: {route.source}{route.reason ? ` · ${route.reason}` : ""}</span>}{route?.fallbacks?.length ? <span className="block text-[10px] text-faint">Fallbacks: {route.fallbacks.join(" · ")}</span> : null}</div>;
+  return <div><span className="block font-mono text-[9px] uppercase tracking-[0.12em] text-faint">{label}</span><span className="mt-1 block text-ink">{routeSummary(route)}</span><span className="mt-0.5 block text-[11px] text-muted">{accessLabel(route)}</span>{route?.source && <span className="block text-[10px] text-faint">Source: {route.source}{route.reason ? ` · ${route.reason}` : ""}</span>}{route?.fallbacks?.length ? <span className="block text-[10px] text-faint">Fallbacks: {route.fallbacks.join(" · ")}</span> : null}{route?.blockers?.length ? <span role="alert" className="mt-1 block text-[11px] text-warn">Blocked: {route.blockers.join("; ")}</span> : null}</div>;
 }
 
 export function routeBlockers(detail: Pick<TaskDetail, "effectiveExecute" | "effectiveReview">): string[] {
@@ -70,7 +74,8 @@ export function taskRunBlocker(detail: TaskDetail): string | undefined {
   if (detail.hasGate) return "Resolve the open gate first.";
   const dependencies = detail.deps.filter((dependency) => dependency.status !== "done");
   if (dependencies.length) return `Waiting for ${dependencies.map((dependency) => dependency.id).join(", ")}.`;
-  if (routeBlockers(detail).length) return "Choose a worker and reviewer model first.";
+  const blockers = routeBlockers(detail);
+  if (blockers.length) return `Choose a worker and reviewer model first: ${blockers.join("; ")}.`;
 }
 
 export function reviewOverrideNeedsReason({
@@ -108,6 +113,7 @@ export function TaskRouting({ detail, run, projectId }: { detail: TaskDetail; ru
   const profileOptions = Object.entries(profiles.data?.profiles ?? {}).filter(([name]) => !["disabled", "unavailable"].includes(profiles.data?.profile_states[name] ?? "")).map(([name, profile]) => ({ name, label: [profile.display_name || name, profile.harness, profile.model, profile.effort].filter(Boolean).join(" · ") }));
   const active = run?.outcome === "running";
   const tierLabel = TIERS.find(([value]) => value === workLevel)?.[1] ?? "Tier";
+  const blockers = routeBlockers(detail);
   const update = (patch: { workLevel?: string; executeProfile?: string | null; reviewProfile?: string | null }) => route.mutate({ revision: detail.stateRevision ?? "", ...patch });
   const selectClass = "w-full min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-ink";
   const defaultLabel = (lane: "worker" | "reviewer") => {
@@ -118,7 +124,8 @@ export function TaskRouting({ detail, run, projectId }: { detail: TaskDetail; ru
     <label className="grid gap-1.5 text-muted">Tier<select aria-label="Task work tier" value={workLevel} onChange={(event) => { const value = event.target.value; setWorkLevel(value); update({ workLevel: value }); }} disabled={route.isPending || !detail.stateRevision} className={selectClass}>{TIERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     <label className="grid gap-1.5 text-muted">Worker<select aria-label="Task worker profile" value={executeProfile} onChange={(event) => { const value = event.target.value; setExecuteProfile(value); update({ executeProfile: value || null }); }} disabled={route.isPending || !detail.stateRevision} className={selectClass}><option value="">{defaultLabel("worker")}</option>{executeProfile && !profileOptions.some((profile) => profile.name === executeProfile) && <option value={executeProfile}>{executeProfile} · unavailable</option>}{profileOptions.map((profile) => <option key={profile.name} value={profile.name}>{profile.label}</option>)}</select></label>
     <label className="grid gap-1.5 text-muted">Reviewer<select aria-label="Task reviewer profile" value={reviewProfile} onChange={(event) => { const value = event.target.value; setReviewProfile(value); update({ reviewProfile: value || null }); }} disabled={route.isPending || !detail.stateRevision} className={selectClass}><option value="">{defaultLabel("reviewer")}</option>{reviewProfile && !profileOptions.some((profile) => profile.name === reviewProfile) && <option value={reviewProfile}>{reviewProfile} · unavailable</option>}{profileOptions.map((profile) => <option key={profile.name} value={profile.name}>{profile.label}</option>)}</select></label>
-    {(!detail.effectiveExecute?.profile || !detail.effectiveReview?.profile) && <p role="alert" className="rounded-md bg-warn-soft px-3 py-2 text-warn">No model is configured for {tierLabel}. Choose one above or <a href="/settings" className="font-semibold underline">set the project defaults</a>.</p>}
+    {blockers.length > 0 && <div role="alert" className="rounded-md bg-warn-soft px-3 py-2 text-warn"><p><strong>Play is blocked for {tierLabel}.</strong></p><ul className="mt-1 list-disc pl-5">{blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul><a href={`/p/${encodeURIComponent(projectId)}/settings`} className="mt-2 inline-block font-semibold underline">Open project settings</a></div>}
+    <div className="grid gap-4 border-t border-line-soft pt-3 sm:grid-cols-2"><RouteFact label="Will execute" route={detail.effectiveExecute} /><RouteFact label="Will review" route={detail.effectiveReview} /></div>
     {active && <p className="border-t border-line-soft pt-3 text-ink"><strong>Current {run?.lane === "review" ? "reviewer" : "worker"}:</strong> {actualRouteLabel(run)}</p>}
     <ActionResultLine pending={route.isPending} error={route.error} result={route.data} />
   </div></ProductSection>;

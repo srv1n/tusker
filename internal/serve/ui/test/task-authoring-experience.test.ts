@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
-import { AgentCoordinationSummary, reviewOverrideNeedsReason, routeBlockers, routeSummary, TaskContractDisclosure } from "../src/features/product/TaskScreens";
+import { AgentCoordinationSummary, reviewOverrideNeedsReason, routeBlockers, routeSummary, RouteFact, TaskContractDisclosure } from "../src/features/product/TaskScreens";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
 import { readyRun, readyTask } from "../previews/wux/inspector/fixtures";
 
@@ -39,6 +39,15 @@ describe("task authoring and execution experience", () => {
     expect(blockers).toEqual(["Worker: profile disabled", "Reviewer: route preview unavailable"]);
   });
 
+  test("renders route provenance and exact blockers", () => {
+    const html = renderToStaticMarkup(createElement(RouteFact, {
+      label: "Will execute",
+      route: { profile: "worker", model: "gpt-worker", effort: "medium", harness: "codex_exec", source: "explicit override", reason: "task risk", blockers: ["profile disabled"] },
+    }));
+    expect(html).toContain("Source: explicit override · task risk");
+    expect(html).toContain("Blocked: profile disabled");
+  });
+
   test("requires reasons for new review-tier overrides but preserves legacy blanks", () => {
     const base = { workLevel: "standard", effectiveWorkLevel: "standard", reviewLevel: "light", initialWorkLevel: "standard", initialReviewLevel: "", reviewReason: "" };
     expect(reviewOverrideNeedsReason(base)).toBe(true);
@@ -56,6 +65,14 @@ describe("task authoring and execution experience", () => {
     expect(html).toContain("Owner: human:reviewer");
     expect(html).toContain("Owner: human:copy");
     expect(html).toContain("Confirm the wording.");
+  });
+
+  test("does not offer an LLM start for a human-owned task", () => {
+    const human = { ...readyTask, status: "ready" as const, rawStatus: "ready", hasGate: true, humanAction: readyTask.humanAction, humanActions: [readyTask.humanAction!] };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(TaskInspector, { task: human, run: null, selectedTaskId: human.id, loading: false, onClose: () => {}, onOpenTask: () => {} }))));
+    expect(html).not.toContain(`aria-label="Run task ${human.id}"`);
+    expect(html).toContain("Owner: Human owner");
   });
 
   test("renders the canonical task body in an explicit disclosure", () => {

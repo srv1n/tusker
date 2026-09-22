@@ -18,7 +18,7 @@ Before a start action is available, the product should make the following facts 
 
 The canonical authored task body is available as **Full task contract** on both task surfaces. It is open on full task detail and collapsed in the Inspector, so implementation notes, surrounding context and non-goals remain readable without replacing the structured acceptance and proof status views.
 
-The shared route formatter lives in [`TaskScreens.tsx`](../../../internal/serve/ui/src/features/product/TaskScreens.tsx). Wave and inspector views reuse it instead of maintaining a second model or tier mapping. `effectiveExecute` and `effectiveReview` are server-derived facts; profile eligibility in Settings is not a substitute for a selected route.
+The shared route formatter lives in [`TaskScreens.tsx`](../../../internal/serve/ui/src/features/product/TaskScreens.tsx). Task detail and Inspector render both server-derived route facts, including source/reason/fallbacks and exact lane blockers; blocked routes link directly to project Settings. Wave detail reuses the same formatter and tier labels instead of maintaining a second model or tier mapping. `effectiveExecute` and `effectiveReview` are server-derived facts; profile eligibility in Settings is not a substitute for a selected route.
 
 Work-tier input is `Unclassified` while no authored tier exists; the UI does not label that state as a default. A review tier that is explicitly different from the selected/effective worker tier reveals a reason field and cannot be newly saved blank. Existing historical overrides with no recorded reason remain saveable when their classification is untouched, so migration does not rewrite old task intent.
 

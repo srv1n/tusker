@@ -5,7 +5,7 @@ import { ArrowRight, FileCheck2, GitMerge, Network, Pause, ShieldAlert } from "l
 import { api } from "@/lib/api";
 import { renderMermaid } from "@/features/editor/mermaid";
 import { Markdown } from "@/features/docs/Markdown";
-import { RouteFact, routeSummary } from "./TaskScreens";
+import { RouteFact, routeSummary, tierLabel } from "./TaskScreens";
 import { WaveAuthorityControls, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
 import { useEpics, useFactoryOperations, useRuns, useTasks, useWaves } from "@/lib/queries";
 import type { EpicSummary, RunSummary, TaskCapsule, TaskRoutePreview, WaveSummary } from "@/types/domain";
@@ -244,7 +244,7 @@ export function WaveDetail({ waveId: requestedWaveId }: { waveId?: string } = {}
         <div className="space-y-3">
           {wave.memberIds.map((taskId) => {
             const member = wave.members.find((item) => item.id === taskId);
-            return <div key={taskId} className="rounded-lg border border-line bg-panel p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-mono text-[10.5px] text-faint">{taskId}</span><span className="text-[12.5px] font-semibold text-ink">{member?.title || taskId}</span>{member?.workLevel && <ProductStatus>{`Tier ${member.workLevel}`}</ProductStatus>}</div><div className="grid gap-4 sm:grid-cols-2"><RouteFact label="Will execute" route={member?.effectiveExecute} /><RouteFact label="Will review" route={member?.effectiveReview} /></div></div>;
+            return <div key={taskId} className="rounded-lg border border-line bg-panel p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-mono text-[10.5px] text-faint">{taskId}</span><span className="text-[12.5px] font-semibold text-ink">{member?.title || taskId}</span>{member?.workLevel && <ProductStatus>{tierLabel(member.workLevel)}</ProductStatus>}</div><div className="grid gap-4 sm:grid-cols-2"><RouteFact label="Will execute" route={member?.effectiveExecute} /><RouteFact label="Will review" route={member?.effectiveReview} /></div></div>;
           })}
         </div>
       </ProductSection>

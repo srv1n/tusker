@@ -227,7 +227,9 @@ function ReadyInspector({
     reviewMember.phase === "completed" ||
     reviewMember.state === "completed"
   ));
-  const showStart = !reviewMemberStopsStart && !stage.live && !["done", "review", "blocked"].includes(currentStatus);
+  // A named human action owns this work. Keep the human control visible, but
+  // never render a disabled LLM start affordance beside it.
+  const showStart = humanActions.length === 0 && !reviewMemberStopsStart && !stage.live && !["done", "review", "blocked"].includes(currentStatus);
 	const [messageBody, setMessageBody] = useState("");
 	const [messageStatus, setMessageStatus] = useState("");
 	const [contactIndex, setContactIndex] = useState(0);
