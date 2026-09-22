@@ -142,6 +142,105 @@ func TestDaemonMaterializesSandboxedWorkerSubmissionCommit(t *testing.T) {
 	}
 }
 
+func TestExternalReviewSharedSubmission(t *testing.T) {
+	vault, project := workSessionFixture(t, 2)
+	shared := project.RepoRoot
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		dir := filepath.Join(shared, "owned", id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "implementation.go"), []byte("package owned\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitDir(t, shared, "add", "owned")
+	runGitDir(t, shared, "commit", "-m", "seed shared checkout submissions")
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := startWorkSessionTest(t, vault, "APP-T-0002", "agent:b"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, notifyWake: make(chan string, 1)}
+	t.Cleanup(daemon.stopNotifyTimers)
+	statusDir := t.TempDir()
+	runs := map[string]RunStatus{}
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		run, err := store.FindRunScoped(project.ProjectID, id)
+		if err != nil || run == nil {
+			t.Fatalf("run %s unavailable: %#v err=%v", id, run, err)
+		}
+		run.WorkspacePath = shared
+		run.StatusPath = filepath.Join(statusDir, id+".status.json")
+		if ok, err := store.UpdateRunIfLease(*run, run.LeaseOwner, run.LeaseGeneration); err != nil || !ok {
+			t.Fatalf("bind %s to shared checkout: ok=%v err=%v", id, ok, err)
+		}
+		if err := store.SaveRunAuthorization(RunAuthorization{Source: "daemon_auto", Actor: "agent:tusker-daemon",
+			ProjectID: run.ProjectID, RecordID: run.RecordID, LeaseGeneration: run.LeaseGeneration, AttemptID: run.ActiveAttemptID}); err != nil {
+			t.Fatal(err)
+		}
+		runs[id] = *run
+	}
+	queue := func(run RunStatus) {
+		t.Helper()
+		req := daemonControlRequest{Command: "worker_lifecycle", ProjectID: run.ProjectID, Identity: run.ActiveAttemptID,
+			Worker: &daemonWorkerLifecycleRequest{Action: "submit", AttemptID: run.ActiveAttemptID, RecordID: run.RecordID,
+				Lane: run.Lane, Workspace: run.WorkspacePath, StatusPath: run.StatusPath,
+				LeaseGeneration: run.LeaseGeneration, WorkRevision: run.WorkRevision,
+				Deliverable: "implemented " + run.RecordID, Verification: "A1 checked", GateVerdicts: "A1=pass"}}
+		if err := queueWorkerLifecycle(store, req); err != nil {
+			t.Fatalf("queue %s: %v", run.RecordID, err)
+		}
+	}
+	requestPath := workerLifecycleRequestPath(shared)
+
+	// First reconciliation order: the other member's run reconciles while the
+	// queued submission belongs to APP-T-0002. It must neither apply nor drop it.
+	queue(runs["APP-T-0002"])
+	if _, consumed, err := daemon.consumeWorkerLifecycleRequest(runs["APP-T-0001"]); err != nil || consumed {
+		t.Fatalf("foreign submission consumed by APP-T-0001 reconciler: consumed=%v err=%v", consumed, err)
+	}
+	if !fileExists(requestPath) {
+		t.Fatal("APP-T-0002 submission was removed by the wrong reconciler")
+	}
+	updated, consumed, err := daemon.consumeWorkerLifecycleRequest(runs["APP-T-0002"])
+	if err != nil || !consumed || updated == nil {
+		t.Fatalf("matching owner did not consume its submission: consumed=%v updated=%#v err=%v", consumed, updated, err)
+	}
+	if fileExists(requestPath) {
+		t.Fatal("consumed submission was left in the shared checkout")
+	}
+	stored, err := store.FindRunScoped(project.ProjectID, "APP-T-0002")
+	if err != nil || stored == nil || stored.AttemptOutcome != string(AttemptOutcomeSucceeded) {
+		t.Fatalf("matched submission did not reach terminal state: %#v err=%v", stored, err)
+	}
+
+	// Reverse order: APP-T-0001 queues while the now-terminal APP-T-0002 run
+	// reconciles first. The stale foreign request still cannot be consumed.
+	queue(runs["APP-T-0001"])
+	if _, consumed, err := daemon.consumeWorkerLifecycleRequest(*stored); err != nil || consumed {
+		t.Fatalf("foreign submission consumed by APP-T-0002 reconciler: consumed=%v err=%v", consumed, err)
+	}
+	if !fileExists(requestPath) {
+		t.Fatal("APP-T-0001 submission was removed by the wrong reconciler")
+	}
+	if _, consumed, err := daemon.consumeWorkerLifecycleRequest(runs["APP-T-0001"]); err != nil || !consumed {
+		t.Fatalf("second submission lost after foreign reconciliation: consumed=%v err=%v", consumed, err)
+	}
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		stored, err := store.FindRunScoped(project.ProjectID, id)
+		if err != nil || stored == nil || stored.AttemptOutcome != string(AttemptOutcomeSucceeded) {
+			t.Fatalf("submission for %s did not survive reconciliation: %#v err=%v", id, stored, err)
+		}
+	}
+}
+
 func TestDispatchedWorkerStartRefusesWithoutRuntimeStore(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "must-not-exist")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)

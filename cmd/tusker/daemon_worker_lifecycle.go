@@ -51,6 +51,14 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, false, fmt.Errorf("decode worker lifecycle request: %w", err)
 	}
+	// The workspace slot holds a single request. Until requests are
+	// attempt-scoped, a shared checkout can expose another run's request to
+	// this reconciler: leave it untouched for the matching owner instead of
+	// applying or dropping it.
+	if req.Worker != nil && (req.ProjectID != run.ProjectID || req.Worker.RecordID != run.RecordID ||
+		req.Worker.AttemptID != run.ActiveAttemptID || req.Worker.LeaseGeneration != run.LeaseGeneration) {
+		return nil, false, nil
+	}
 	// A successful submitted worker still has to traverse the normal terminal
 	// status path below. That path captures its immutable end state, projects
 	// the work revision, and schedules independent review. Applying submit here
