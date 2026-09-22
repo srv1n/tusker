@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -28,6 +30,20 @@ func TestACPHelperProcess(t *testing.T) {
 		return
 	}
 	mode := os.Getenv("ACP_HELPER_MODE")
+	if strings.HasPrefix(mode, "stderr-keeper") {
+		// A descendant that retains the inherited stderr descriptor after this
+		// adapter dies. Post-exit pipe draining must stay bounded without it.
+		keeper := exec.Command("/bin/sleep", "10")
+		keeper.Stderr = os.Stderr
+		if err := keeper.Start(); err == nil {
+			go func() { _ = keeper.Wait() }()
+		}
+	}
+	if mode == "stderr-keeper-silence" {
+		_, _ = bufio.NewReader(os.Stdin).ReadByte()
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	}
 	if mode == "malformed" {
 		_, _ = os.Stdout.WriteString("{not-json\n")
 		os.Exit(0)
@@ -1478,4 +1494,152 @@ func TestACPPendingRequestOverflowPoisons(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("overflow did not settle incumbent request")
 	}
+}
+
+// blockingStdin lets a test deterministically hold a permission-response write
+// inside writeAll while still releasing it when the transport is torn down.
+type blockingStdin struct {
+	io.WriteCloser
+	armed    chan struct{}
+	entered  chan struct{}
+	release  chan struct{}
+	markOnce sync.Once
+	freeOnce sync.Once
+}
+
+func (b *blockingStdin) Write(p []byte) (int, error) {
+	select {
+	case <-b.armed:
+		b.markOnce.Do(func() { close(b.entered) })
+		<-b.release
+	default:
+	}
+	return b.WriteCloser.Write(p)
+}
+
+func (b *blockingStdin) Close() error {
+	b.freeOnce.Do(func() { close(b.release) })
+	return b.WriteCloser.Close()
+}
+
+func TestExternalReviewTeardown(t *testing.T) {
+	t.Run("blocked permission write cannot stall cancellation", func(t *testing.T) {
+		c := startTestClient(t, "permission", func(cfg *Config) {
+			cfg.Timeouts.CancelDrain = 75 * time.Millisecond
+			cfg.PermissionHandler = func(context.Context, PermissionRequest) (PermissionDecision, error) {
+				return AllowOnce, nil
+			}
+		})
+		gate := &blockingStdin{WriteCloser: c.stdin, armed: make(chan struct{}), entered: make(chan struct{}), release: make(chan struct{})}
+		c.stdin = gate
+		c.beforePermissionRespond = func() { close(gate.armed) }
+		initializeAndSession(t, c)
+		type answer struct {
+			result PromptResult
+			err    error
+		}
+		promptDone := make(chan answer, 1)
+		go func() {
+			result, err := c.Prompt(context.Background(), "permission")
+			promptDone <- answer{result, err}
+		}()
+		select {
+		case <-gate.entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("permission response never reached the blocked write")
+		}
+		cancelDone := make(chan error, 1)
+		go func() { cancelDone <- c.Cancel(context.Background()) }()
+		select {
+		case err := <-cancelDone:
+			var outcome *OutcomeError
+			if !errors.As(err, &outcome) || outcome.Outcome != OutcomePoisoned {
+				t.Fatalf("cancel err=%v, want poisoned cancellation past the blocked write", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("cancel could not reach teardown behind a blocked permission write")
+		}
+		select {
+		case got := <-promptDone:
+			if got.err == nil || got.result.Outcome == OutcomeCompleted {
+				t.Fatalf("prompt=%#v err=%v, want no post-cancel unauthorized selection", got.result, got.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("prompt did not settle after bounded cancellation")
+		}
+	})
+
+	t.Run("descendant retained stderr cannot hang interruption cleanup", func(t *testing.T) {
+		c := startTestClient(t, "stderr-keeper", func(cfg *Config) {
+			cfg.Timeouts.CancelDrain = 150 * time.Millisecond
+		})
+		initializeAndSession(t, c)
+		done := make(chan struct{})
+		go func() { _ = c.Close(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(4 * time.Second):
+			t.Fatal("Close blocked on a descendant-retained stderr descriptor")
+		}
+	})
+
+	t.Run("descendant retained stderr cannot hang startup failure cleanup", func(t *testing.T) {
+		c := startTestClient(t, "stderr-keeper-silence", func(cfg *Config) {
+			cfg.Timeouts.Initialize = 150 * time.Millisecond
+			cfg.Timeouts.CancelDrain = 150 * time.Millisecond
+		})
+		if _, err := c.Initialize(context.Background()); err == nil {
+			t.Fatal("initialize unexpectedly succeeded against a silent adapter")
+		}
+		done := make(chan struct{})
+		go func() { _ = c.Close(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(4 * time.Second):
+			t.Fatal("Close after startup failure blocked on a descendant-retained stderr descriptor")
+		}
+	})
+
+	t.Run("quiet prompt stays active without task deadlines and cancels in bounds", func(t *testing.T) {
+		c := startTestClient(t, "ignore-cancel", func(cfg *Config) {
+			cfg.Timeouts.Prompt = -1
+			cfg.Timeouts.Stall = -1
+			cfg.Timeouts.CancelDrain = 75 * time.Millisecond
+		})
+		initializeAndSession(t, c)
+		promptDone := make(chan error, 1)
+		go func() {
+			_, err := c.Prompt(context.Background(), "quiet")
+			promptDone <- err
+		}()
+		select {
+		case <-c.Updates():
+		case <-time.After(2 * time.Second):
+			t.Fatal("prompt never became active")
+		}
+		select {
+		case err := <-promptDone:
+			t.Fatalf("quiet prompt settled early: %v", err)
+		case <-time.After(400 * time.Millisecond):
+		}
+		cancelDone := make(chan error, 1)
+		go func() { cancelDone <- c.Cancel(context.Background()) }()
+		select {
+		case err := <-cancelDone:
+			var outcome *OutcomeError
+			if !errors.As(err, &outcome) || outcome.Outcome != OutcomePoisoned {
+				t.Fatalf("cancel err=%v, want poisoned cancellation of ignored cancel", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("cancel of a quiet prompt exceeded cleanup bounds")
+		}
+		select {
+		case err := <-promptDone:
+			if err == nil {
+				t.Fatal("quiet prompt succeeded after cancellation")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("quiet prompt did not terminate after cancellation")
+		}
+	})
 }
