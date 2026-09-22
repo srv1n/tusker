@@ -89,7 +89,7 @@ describe("wave authority controls", () => {
     const review = reviewFixture({
       state: "Waiting",
       authorization: "authorized",
-      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "failed", waitingReason: "worker exited 1" }],
+      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "failed", waitingReason: "worker exited 1", recovery: { action: "retry_task", enabled: true } }],
       blockers: [{ code: "RUNTIME_FAILED", taskId: "APP-T-0001", reason: "worker exited 1", action: "inspect the failed execute attempt" }],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     });
@@ -116,7 +116,34 @@ describe("wave authority controls", () => {
     expect(html).toContain("1 needs recovery");
     expect(html).toContain("Verify and continue");
     expect(html).toContain("Some work may already exist");
-    expect(html).not.toContain('data-wave-control="wave pause"');
+    expect(html).toContain('data-wave-control="wave pause"');
+    expect(html).not.toContain(">Retry wave<");
+  });
+
+  test("uncertain recovery honors a disabled capability", () => {
+    const html = renderControls(reviewFixture({
+      state: "Waiting",
+      authorization: "authorized",
+      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "outcome_unknown", recovery: { action: "recover_unknown", enabled: false, reason: "Another worker still owns this task" } }],
+      blockers: [{ code: "OUTCOME_UNKNOWN", taskId: "APP-T-0001", reason: "lost contact", action: "inspect" }],
+      controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
+    }));
+    expect(html).toContain('data-wave-control="wave pause"');
+    expect(html).toContain("Another worker still owns this task");
+    expect(html).toMatch(/disabled=""[^>]*>Verify and continue/);
+  });
+
+  test("review-only failure does not offer a no-op wave retry", () => {
+    const review = reviewFixture({
+      state: "Waiting",
+      authorization: "authorized",
+      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "failed", lane: "review", recovery: { action: "retry_review", enabled: true } }],
+      blockers: [{ code: "RUNTIME_FAILED", taskId: "APP-T-0001", reason: "review failed", action: "retry review" }],
+      controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
+    });
+    expect(canRetryWave(review)).toBe(false);
+    const html = renderControls(review);
+    expect(html).toContain('data-wave-control="wave pause"');
     expect(html).not.toContain(">Retry wave<");
   });
 

@@ -109,6 +109,7 @@ export function hasIndependentEligibleWork(review: WaveReview): boolean {
 export function canRetryWave(review: WaveReview): boolean {
   if (waveReviewStage(review) !== "failed" || review.authorization !== "authorized") return false;
   if (review.members.some((member) => member.phase === "executing" || member.phase === "reviewing" || member.state === "running")) return false;
+  if (!review.members.some((member) => member.recovery?.action === "retry_task" && member.recovery.enabled)) return false;
   return !review.blockers.some((blocker) => !blocker.taskId || ["WAVE_TERMINAL", "ROUTE_INVALID", "DEPENDENCY_CONTRACT_INVALID", "CONTRACT_FINGERPRINT_STALE", "ACTIVE_OWNER", "OUTCOME_UNKNOWN"].includes(blocker.code));
 }
 
@@ -148,9 +149,9 @@ export function WaveAuthorityControls({ projectId, waveId, compact }: { projectI
   const stage = data ? waveReviewStage(data) : null;
   const retryable = data ? canRetryWave(data) : false;
   const hasUnknownRecovery = Boolean(data?.blockers.some((blocker) => blocker.code === "OUTCOME_UNKNOWN"));
-  const enabled = hasUnknownRecovery ? undefined : retryable
+  const enabled = retryable
     ? { action: "wave start" as const, enabled: true, scope: waveId }
-    : (data?.controls ?? []).find((candidate) => candidate.enabled && candidate.action !== "task start" && WAVE_CONTROL_ACTION[candidate.action] && (candidate.action !== "wave start" || !data?.humanActions?.length || hasIndependentEligibleWork(data)));
+    : (data?.controls ?? []).find((candidate) => candidate.enabled && candidate.action !== "task start" && WAVE_CONTROL_ACTION[candidate.action] && (candidate.action !== "wave start" || (!hasUnknownRecovery && (!data?.humanActions?.length || hasIndependentEligibleWork(data)))));
   const status = data ? summarizeWave(data) : null;
   const issues = data ? summarizeIssues(data.blockers, data.members) : [];
   const capacity = data ? capacityConstraint(data) : undefined;
@@ -172,21 +173,21 @@ export function WaveAuthorityControls({ projectId, waveId, compact }: { projectI
       {hint ? <p className="mt-2 text-[12px] leading-5 text-muted">{hint}</p> : null}
       {enabled ? <div className="mt-3 flex justify-end"><button type="button" data-wave-control={enabled.action} aria-label={`${retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action]} ${waveId}`} disabled={control.isPending} onClick={() => control.mutate(WAVE_CONTROL_ACTION[enabled.action])} className={cn("inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-[12px] font-semibold disabled:opacity-50", WAVE_CONTROL_STYLE[enabled.action])}><Icon size={13} aria-hidden="true" />{control.isPending ? (retryable ? "Retrying…" : WAVE_CONTROL_PENDING[enabled.action]) : (retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action])}</button></div> : null}
 	  {startRefused ? <div className="mt-3 flex justify-end"><span className="inline-flex items-center gap-2"><button type="button" disabled data-wave-control-refused="wave start" aria-label={`Run wave ${waveId}`} title={startReason} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-2 text-[12px] font-semibold text-muted"><Play size={13} aria-hidden="true" />Run wave</button><span className="text-[12px] text-muted">{startReason}</span></span></div> : null}
-      {issues.length ? <section className="mt-4 space-y-2" aria-label="What needs attention">{issues.map((issue) => <WaveIssue key={issue.key} issue={issue} projectId={projectId} />)}</section> : null}
+      {issues.length ? <section className="mt-4 space-y-2" aria-label="What needs attention">{issues.map((issue) => <WaveIssue key={issue.key} issue={issue} projectId={projectId} member={data.members.find((member) => member.taskId === issue.blockers[0]?.taskId)} />)}</section> : null}
       <div aria-live="polite" className="mt-3"><ActionResultLine pending={control.isPending} error={control.error} /></div>
     </> : null}
   </section>;
 }
 
-function WaveIssue({ issue, projectId }: { issue: IssueGroup; projectId: string }) {
+function WaveIssue({ issue, projectId, member }: { issue: IssueGroup; projectId: string; member?: WaveReviewMember }) {
   const taskId = issue.blockers.length === 1 ? issue.blockers[0].taskId : undefined;
   const recovery = useRecovery(taskId ?? "", projectId);
-  const canRecover = Boolean(taskId && issue.blockers[0].code === "OUTCOME_UNKNOWN");
+  const canRecover = Boolean(taskId && issue.blockers[0].code === "OUTCOME_UNKNOWN" && member?.recovery?.action === "recover_unknown");
   return <article className="rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5 text-[12px] leading-5 text-warn">
     <p className="font-semibold text-ink">{issue.title}</p>
     <p>{issue.explanation}{issue.affected === false ? "" : issue.blockers.length > 1 ? ` ${issue.blockers.length} tasks are affected.` : " One task is affected."}</p>
     <div className="mt-1 flex flex-wrap items-center gap-2">
-      {canRecover ? <button type="button" className="rounded-md bg-ink px-3 py-1.5 font-semibold text-surface disabled:opacity-50" disabled={recovery.isPending} onClick={() => recovery.mutate("recover_unknown")}>{recovery.isPending ? "Verifying…" : RECOVERY_ACTION_LABEL}</button> : <span className="font-medium">Next: {issue.next}</span>}
+      {canRecover ? <><button type="button" className="rounded-md bg-ink px-3 py-1.5 font-semibold text-surface disabled:opacity-50" disabled={recovery.isPending || !member?.recovery?.enabled} title={member?.recovery?.reason} onClick={() => recovery.mutate("recover_unknown")}>{recovery.isPending ? "Verifying…" : RECOVERY_ACTION_LABEL}</button>{member?.recovery?.reason && !member.recovery.enabled ? <span>{member.recovery.reason}</span> : null}</> : <span className="font-medium">Next: {issue.next}</span>}
       {taskId ? <a className="underline underline-offset-2 hover:text-ink" href={`/p/${projectId}/tasks/${taskId}`}>Open task</a> : null}
     </div>
     <ActionResultLine className="mt-2" pending={recovery.isPending} error={recovery.error} result={recovery.data} />
