@@ -46,6 +46,9 @@ fields are never projected into packets.
 `tusker wave review <WAVE-ID> --json` projects state, authorization, the
 material fingerprint, member eligibility, dependency frontiers, blockers
 with repair actions, and the state-appropriate controls.
+Authors use `tusker wave review <WAVE-ID> --check --json` before handoff;
+`--check` keeps the review read-only but exits nonzero unless wave Start is
+enabled. It checks every member contract, including later DAG frontiers.
 
 `tusker wave start <WAVE-ID> --mode background --by
 human:<name>|operator:<name>` validates durable material, routes, gates, and

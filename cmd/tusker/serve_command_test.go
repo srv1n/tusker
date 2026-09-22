@@ -40,6 +40,21 @@ func TestRemainingEvidenceView(t *testing.T) {
 	}
 }
 
+func TestServeWaveListKeepsDetailOut(t *testing.T) {
+	snap := serveSnapshot{waves: []Note{{Data: map[string]any{
+		"id": "W-0001", "title": "Small wave", "summary": "Ship it",
+		"status": "open", "authorization": "armed", "members": []string{"APP-T-0001"},
+	}, Body: "Large detailed body"}}, notesByID: map[string]Note{}}
+	list := serveWaveList(snap)
+	if len(list) != 1 || list[0].ID != "W-0001" || list[0].MemberCount != 1 || list[0].Authorization != "armed" {
+		t.Fatalf("wave list=%#v", list)
+	}
+	raw, err := json.Marshal(list)
+	if err != nil || bytes.Contains(raw, []byte("Large detailed body")) || bytes.Contains(raw, []byte("brief")) {
+		t.Fatalf("list leaked detail: %s error=%v", raw, err)
+	}
+}
+
 func TestServeReadOnlyAndLocalhost(t *testing.T) {
 	addr, err := serveBindAddr(Args{})
 	if err != nil {

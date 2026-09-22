@@ -490,6 +490,25 @@ func queueOutcomeUnknownRecovery(store *RuntimeStore, task Note, wave Note, run 
 			return result, nil
 		}
 	}
+	// Older detached ACP attempts retained the bound session in their event
+	// ledger but did not copy it into the run row. Preserve that exact identity
+	// before redrive so the normal native-resume checks can use it.
+	if run.Runner == string(RunnerDevin) && parent.SessionRef == "" {
+		if ref := acpSessionRefFromAttemptEvents(parent.EventSinkPath, parent.AttemptID, parent.Runner); ref != "" {
+			parent.SessionRef = ref
+			if err := store.SaveAttempt(parent); err != nil {
+				return result, err
+			}
+			if err := store.SaveSession(RunnerSession{
+				ProjectID: run.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: ref,
+				WorkspacePath: parent.WorkspacePath, CurrentItemID: run.ItemID, WorkRevision: parent.WorkRevision,
+				LastAttemptID: parent.AttemptID, State: sessionStateForLeaseState(LeaseStateReleased),
+				Resumable: true, StartedAt: parent.StartedAt, LastSeenAt: now.UTC().Format(time.RFC3339),
+			}); err != nil {
+				return result, err
+			}
+		}
+	}
 	previousRun := run
 	previousBudget, err := store.GetSetting(budgetRedriveSettingKey(run.ProjectID, run.RecordID))
 	if err != nil {

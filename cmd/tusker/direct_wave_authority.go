@@ -252,6 +252,107 @@ func directWaveFrontiers(members []string, idx v7Index) ([][]string, []string) {
 	return layers, nil
 }
 
+// directWaveExternalCycleBlocker reports a dependency cycle that leaves the
+// wave through an external task and returns to a member. Pure in-wave cycles
+// already surface through frontier layering, so only cycles touching at
+// least one non-member are reported here.
+func directWaveExternalCycleBlocker(members []string, idx v7Index) string {
+	memberSet := makeSet(members...)
+	ordered := append([]string(nil), members...)
+	sort.Strings(ordered)
+	for _, root := range ordered {
+		color := map[string]int{}
+		var stack []string
+		var cycle []string
+		var visit func(id string) bool
+		visit = func(id string) bool {
+			switch color[id] {
+			case 2:
+				return false
+			case 1:
+				start := 0
+				for index, node := range stack {
+					if node == id {
+						start = index
+						break
+					}
+				}
+				cycle = append(append([]string(nil), stack[start:]...), id)
+				return true
+			}
+			color[id] = 1
+			stack = append(stack, id)
+			if task, ok := idx.Tasks[id]; ok {
+				edges := []string{}
+				for _, raw := range normalizeList(task.Data["dependencies"]) {
+					edge := parseV7DependencyEdge(raw)
+					if edge.ID == "" {
+						continue
+					}
+					edges = append(edges, edge.ID)
+				}
+				sort.Strings(edges)
+				for _, edge := range edges {
+					if _, exists := idx.Tasks[edge]; !exists {
+						continue
+					}
+					if visit(edge) {
+						return true
+					}
+				}
+			}
+			stack = stack[:len(stack)-1]
+			color[id] = 2
+			return false
+		}
+		if !visit(root) {
+			continue
+		}
+		external := false
+		for _, node := range cycle {
+			if _, inWave := memberSet[node]; !inWave {
+				external = true
+				break
+			}
+		}
+		if external {
+			return strings.Join(cycle, " -> ")
+		}
+	}
+	return ""
+}
+
+// directWaveFrontierOwnedPathConflict reports members that own colliding
+// paths on the same execution frontier. Sequential members may hand a path
+// down the DAG; simultaneous members cannot share it.
+func directWaveFrontierOwnedPathConflict(frontiers [][]string, idx v7Index) string {
+	for _, frontier := range frontiers {
+		for i := 0; i < len(frontier); i++ {
+			for j := i + 1; j < len(frontier); j++ {
+				left, right := frontier[i], frontier[j]
+				leftPaths := directWaveMemberOwnedPaths(idx, left)
+				rightPaths := directWaveMemberOwnedPaths(idx, right)
+				if directAuthoringPathsOverlap(leftPaths, rightPaths) {
+					first, second := left, right
+					if second < first {
+						first, second = second, first
+					}
+					return first + " and " + second + " own colliding paths on the same frontier"
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func directWaveMemberOwnedPaths(idx v7Index, id string) []string {
+	task, ok := idx.Tasks[id]
+	if !ok {
+		return nil
+	}
+	return normalizeOwnedPaths(append(append([]string{}, normalizeList(task.Data["owned_paths"])...), normalizeList(task.Data["generated_outputs"])...))
+}
+
 func directWaveMemberDependencyWait(task Note, idx v7Index) string {
 	if edge, blocked := v7BlockingDependencyForReadiness(task, idx); blocked {
 		return edge.ID
@@ -516,6 +617,21 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	frontiers, cycle := directWaveFrontiers(members, idx)
 	if cycle != nil {
 		review.Blockers = append(review.Blockers, directStartBlocker{Code: "MATERIAL_CYCLIC", Reason: "member dependency cycle: " + strings.Join(cycle, ", "), Action: "remove the cyclic dependency edge"})
+	}
+	// Wave-local layering cannot see cycles that leave the wave through an
+	// external dependency and return. Detect those on the existing full task
+	// graph: a member that transitively depends on itself through another
+	// task or wave can never advance, however valid each wave looks alone.
+	if externalCycle := directWaveExternalCycleBlocker(members, idx); externalCycle != "" {
+		review.Blockers = append(review.Blockers, directStartBlocker{Code: "MATERIAL_CYCLIC", Reason: "cross-wave dependency cycle: " + externalCycle, Action: "remove the cyclic dependency edge"})
+	}
+	// Simultaneous members on one frontier share the wave integration branch.
+	// Colliding owned paths there are a structural authoring defect, not a
+	// runtime wait: serialize the members with a dependency or split ownership.
+	if frontiers != nil {
+		if conflict := directWaveFrontierOwnedPathConflict(frontiers, idx); conflict != "" {
+			review.Blockers = append(review.Blockers, directStartBlocker{Code: "OWNED_PATH_FRONTIER_CONFLICT", Reason: conflict, Action: "serialize the conflicting members with a dependency or split path ownership"})
+		}
 	}
 	review.Frontiers = frontiers
 	routeUnavailable := wfErr != nil
@@ -786,6 +902,9 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 			}
 		}
 	}
+	if review.Authorization != "authorized" && review.Authorization != "paused" {
+		review.Blockers = append(review.Blockers, directWaveArmContractBlockers(vaultPath, idx, wave)...)
+	}
 	anyRunning, allDone := false, len(members) > 0
 	for _, member := range review.Members {
 		if member.State == "running" || member.State == "reviewing" {
@@ -809,11 +928,9 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	default:
 		review.State = "Planned"
 	}
-	globalBlocked := false
-	for _, blocker := range review.Blockers {
-		if blocker.TaskID == "" {
-			globalBlocked = true
-		}
+	startRefusal := directWaveStartRefusal(review)
+	if startRefusal == nil {
+		startRefusal = directWaveArmContractError(review.Blockers)
 	}
 	switch {
 	case review.State == "Cancelled":
@@ -826,15 +943,22 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		review.Controls = append(review.Controls, directStartControl{Action: "wave pause", Enabled: true, Scope: waveID, Reason: "admitted attempts may finish; no new wave-owned workers or reviewers will start"})
 	default:
 		startReason := ""
-		if globalBlocked {
-			startReason = "resolve global blockers before wave start"
+		if startRefusal != nil {
+			startReason = startRefusal.Error()
 		}
-		review.Controls = append(review.Controls, directStartControl{Action: "wave start", Enabled: !globalBlocked, Scope: waveID, Reason: startReason})
+		review.Controls = append(review.Controls, directStartControl{Action: "wave start", Enabled: startRefusal == nil, Scope: waveID, Reason: startReason})
 	}
 	for _, member := range review.Members {
 		control := directStartControl{Action: "task start", Enabled: !waveTerminal && (member.State == "ready" || member.State == "planned"), Scope: member.TaskID}
+		for _, blocker := range review.Blockers {
+			if blocker.Code == "MEMBER_CONTRACT_INVALID" && blocker.TaskID == member.TaskID {
+				control.Enabled = false
+				control.Reason = blocker.Reason
+				break
+			}
+		}
 		if !control.Enabled {
-			control.Reason = firstNonEmpty(member.WaitingReason, "task is not eligible")
+			control.Reason = firstNonEmpty(control.Reason, member.WaitingReason, "task is not eligible")
 			if waveTerminal {
 				control.Reason = "wave is " + waveStatus
 			}
@@ -1008,7 +1132,7 @@ func waveReviewCmd(args Args) error {
 	}
 	waveID := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if waveID == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker wave review <WAVE-ID> [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker wave review <WAVE-ID> [--check] [--json]")
 	}
 	store, runtimeErr := directWaveReviewRuntimeStore()
 	if store != nil {
@@ -1019,12 +1143,25 @@ func waveReviewCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	var checkErr error
+	if args.Bool("check") {
+		checkErr = tuskerError(errorInvalidTransition, "wave preflight did not produce an enabled Start control")
+		for _, control := range review.Controls {
+			if control.Action == "wave start" {
+				checkErr = nil
+				if !control.Enabled {
+					checkErr = tuskerError(errorInvalidTransition, "wave preflight blocked: "+control.Reason)
+				}
+				break
+			}
+		}
+	}
 	if args.Bool("json") {
 		emitJSON(review)
-		return nil
+		return checkErr
 	}
 	if args.Bool("quiet") {
-		return nil
+		return checkErr
 	}
 	fmt.Printf("%s %s — %s (authorization %s)\n", review.WaveID, review.Title, review.State, review.Authorization)
 	for _, member := range review.Members {
@@ -1037,7 +1174,7 @@ func waveReviewCmd(args Args) error {
 	for _, blocker := range review.Blockers {
 		fmt.Printf("  blocker %s %s: %s — %s\n", blocker.Code, blocker.TaskID, blocker.Reason, blocker.Action)
 	}
-	return nil
+	return checkErr
 }
 
 func directStartActor(args Args, operation string) (string, error) {
@@ -1123,24 +1260,47 @@ func directRunCmd(args Args) error {
 func directWaveStartRefusal(review directWaveReview) error {
 	for _, blocker := range review.Blockers {
 		if blocker.TaskID == "" {
-			return tuskerError(errorInvalidTransition, "wave start refused: "+blocker.Code+" "+blocker.Reason)
+			return tuskerError(errorInvalidTransition, "wave start refused: "+blocker.Code+" "+blocker.Reason+directWaveRefusalRepairSuffix(blocker))
 		}
 	}
 	for _, blocker := range review.Blockers {
 		switch blocker.Code {
-		case "WAVE_TERMINAL", "ROUTE_INVALID", "DEPENDENCY_CONTRACT_INVALID", "CONTRACT_FINGERPRINT_STALE", "ACTIVE_OWNER":
-			return tuskerError(errorInvalidTransition, "wave start refused: "+blocker.Code+" "+blocker.TaskID+" "+blocker.Reason)
+		case "WAVE_TERMINAL", "ROUTE_INVALID", "DEPENDENCY_CONTRACT_INVALID", "CONTRACT_FINGERPRINT_STALE", "ACTIVE_OWNER",
+			"MEMBER_CONTRACT_INVALID", "MATERIAL_INVALID", "OWNED_PATH_FRONTIER_CONFLICT":
+			return tuskerError(errorInvalidTransition, "wave start refused: "+blocker.Code+" "+blocker.TaskID+" "+blocker.Reason+directWaveRefusalRepairSuffix(blocker))
 		}
 	}
 	return nil
 }
 
-func directWaveArmContractBlockers(vault string, idx v7Index, wave Note) []string {
-	var blockers []string
+// directWaveRefusalRepairSuffix carries the recorded repair action in the
+// refusal so author preflight names the task, the defect, and the fix
+// together. Contract validity and runtime waiting stay separate codes.
+func directWaveRefusalRepairSuffix(blocker directStartBlocker) string {
+	if strings.TrimSpace(blocker.Action) == "" {
+		return ""
+	}
+	return " — repair: " + strings.TrimSpace(blocker.Action)
+}
+
+func directWaveArmContractError(blockers []directStartBlocker) error {
+	var contracts []string
+	for _, blocker := range blockers {
+		if blocker.Code == "MEMBER_CONTRACT_INVALID" {
+			contracts = append(contracts, blocker.TaskID+": "+blocker.Reason)
+		}
+	}
+	if len(contracts) == 0 {
+		return nil
+	}
+	return tuskerError(errorInvalidTransition, "wave start refused: member contracts are not dispatchable: "+strings.Join(contracts, "; "), withHint("repair the listed task contracts, run tusker validate, then start the wave again"))
+}
+
+func directWaveArmContractBlockers(vault string, idx v7Index, wave Note) []directStartBlocker {
+	var blockers []directStartBlocker
 	for _, id := range normalizeList(wave.Data["members"]) {
 		task, ok := idx.Tasks[id]
 		if !ok {
-			blockers = append(blockers, id+": task record is missing")
 			continue
 		}
 		// Arming promotes eligible frontier members later, so validate the
@@ -1149,7 +1309,7 @@ func directWaveArmContractBlockers(vault string, idx v7Index, wave Note) []strin
 			if strings.HasPrefix(reason, "readiness is ") {
 				continue
 			}
-			blockers = append(blockers, id+": "+reason)
+			blockers = append(blockers, directStartBlocker{Code: "MEMBER_CONTRACT_INVALID", TaskID: id, Reason: reason, Action: "repair the task contract for " + id})
 		}
 	}
 	return blockers
@@ -1197,8 +1357,8 @@ func directWaveStart(vault string, store *RuntimeStore, waveID, actor string) (d
 	if !ok {
 		return result, tuskerError(errorNotFound, "wave "+waveID+" does not resolve")
 	}
-	if blockers := directWaveArmContractBlockers(vault, idx, wave); len(blockers) > 0 {
-		return result, tuskerError(errorInvalidTransition, "wave start refused: member contracts are not dispatchable: "+strings.Join(blockers, "; "), withHint("repair the listed task contracts, run tusker validate, then start the wave again"))
+	if err := directWaveArmContractError(directWaveArmContractBlockers(vault, idx, wave)); err != nil {
+		return result, err
 	}
 	fingerprint := lockedReview.MaterialFingerprint
 	var eligible []string

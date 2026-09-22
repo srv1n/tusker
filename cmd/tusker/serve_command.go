@@ -376,6 +376,15 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
 			return
 		}
+		if path == "/api/run-artifacts/purge" {
+			report, err := purgeRunArtifacts(s.store, time.Now().UTC(), true)
+			if err != nil {
+				serveJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+				return
+			}
+			serveJSON(w, http.StatusOK, report)
+			return
+		}
 		if path == "/api/worker/lifecycle" {
 			s.handleWorkerLifecycle(w, r)
 			return
@@ -1865,6 +1874,10 @@ func (s *serveServer) handleWaves(w http.ResponseWriter, r *http.Request) {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	if r.URL.Query().Get("view") == "list" {
+		serveJSON(w, http.StatusOK, serveWaveList(snap))
+		return
+	}
 	serveJSON(w, http.StatusOK, serveWaves(snap))
 }
 
@@ -2020,6 +2033,28 @@ func serveEpics(snap serveSnapshot) []serveEpicSummary {
 	out := []serveEpicSummary{}
 	for _, item := range epics {
 		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func serveWaveList(snap serveSnapshot) []serveWaveListItem {
+	out := make([]serveWaveListItem, 0, len(snap.waves))
+	for _, wave := range snap.waves {
+		members := normalizeList(wave.Data["members"])
+		done := 0
+		for _, id := range members {
+			if task, ok := snap.notesByID[id]; ok && serveTaskStatus(snap, task) == "done" {
+				done++
+			}
+		}
+		out = append(out, serveWaveListItem{
+			ID: stringField(wave.Data, "id"), Title: stringField(wave.Data, "title"),
+			Summary: stringField(wave.Data, "summary"), Status: stringField(wave.Data, "status"),
+			Authorization: fallback(stringField(wave.Data, "authorization"), "disarmed"),
+			LandedAt:      nullIfBlank(stringField(wave.Data, "landed_at")),
+			MemberCount:   len(members), DoneCount: done,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

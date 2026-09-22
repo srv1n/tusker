@@ -581,6 +581,15 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 				notesByRecordID[trackerRecordID(candidate)] = candidate
 			}
 		}
+		if reservation, reservationOK := selfServiceReservationPromotion(ctx.Project.VaultRoot, ctx.Store, ctx.Project.ProjectID, note, time.Now().UTC()); reservationOK {
+			// The plan reads the same promotion the daemon applies: a member
+			// holding its own current-authorization reservation is released
+			// from canonical backlog authoring instead of blocked by it.
+			note = reservation
+			taskID := stringField(note.Data, "id")
+			notesByID[taskID] = reservation
+			notesByRecordID[trackerRecordID(reservation)] = reservation
+		}
 	}
 	selectedProfile, profileErr := resolveRunProfileForLane(note, ctx.Workflow.Data, lane, runner)
 	if profileErr == nil {

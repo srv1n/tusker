@@ -1,0 +1,78 @@
+{
+  "title": "External review: runtime outcomes and executable admission",
+  "outcome": "ACP preserves ordered session and terminal facts, long turns stay valid, Muse results remain truthful, and task/wave Start leads to valid dispatch.",
+  "tasks": [
+    {
+      "key": "acp-settlement",
+      "title": "Preserve ACP session binding and observed terminal responses",
+      "work_level": "demanding",
+      "body": "## Problem and outcome\nExternal findings: B4,B5.\nhandleResponse deletes pending session/new before NewSession commits c.session. awaitCall can choose EOF/deadline despite a matched response already queued. Keep a validated provisional session binding through handoff, or commit it before subsequent frames; reconcile a settled matched result/error before classifying closure as unknown. Preserve malformed-response and session-mismatch rejection. Rebase on the safety wave teardown changes; do not undo its lock discipline.\n\n## Verified seams and ownership\n- `internal/acp/client.go`\n- `internal/acp/client_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | session/new response immediately followed by session/update in the same write binds to the correct session without poisoning; malformed/mismatched IDs still fail. Cover the analogous restore handoff. |\n| A2 | When a valid matched terminal result or RPC error and EOF/deadline are simultaneously observable, the matched result/error wins deterministically. |\n| A3 | EOF after delivery without a matched response remains delivery_unknown; no success is invented from transport exit alone. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./internal/acp -run 'TestExternalReviewSettlement' -count=1 | pending | Add controlled ordering tests, including error responses, deadline race and no-response EOF. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "internal/acp/client.go",
+        "internal/acp/client_test.go"
+      ],
+      "dependencies": []
+    },
+    {
+      "key": "acp-permissions",
+      "title": "Support informational ACP extensions and long permission-heavy turns",
+      "work_level": "demanding",
+      "body": "## Problem and outcome\nExternal findings: B7,B8.\nhandleRequest ignores four named Devin extensions but poisons unknown informational extensions; permissionInvocations is a lifetime counter capped at 64. Ignore valid underscore-prefixed notifications without executing them after existing envelope/frame validation. Retain method-not-found for unsupported requests. Bound live permission handlers and pending responses, releasing handler capacity only when the actual handler exits, including after cancellation.\n\n## Verified seams and ownership\n- `internal/acp/client.go`\n- `internal/acp/client_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | Existing and previously unknown valid underscore-prefixed notifications do not poison startup or a prompt; unsupported requests still receive method-not-found and malformed/oversized frames retain rejection. |\n| A2 | More than 64 sequential permission requests in one prompt succeed with bounded simultaneous work. |\n| A3 | Non-returning handlers retain their capacity until they exit, even after caller cancellation; concurrent requests cannot grow handler count without bound or reuse capacity early. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./internal/acp -run 'TestExternalReviewPermissions' -count=1 | pending | Add sequential and stuck-handler checks using existing fake transport/handler fixtures. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "internal/acp/client.go",
+        "internal/acp/client_test.go"
+      ],
+      "dependencies": [
+        {
+          "task": "acp-settlement",
+          "kind": "hard"
+        }
+      ]
+    },
+    {
+      "key": "muse-outcomes",
+      "title": "Preserve Muse native terminal outcomes in bounded execution",
+      "work_level": "standard",
+      "body": "## Problem and outcome\nExternal findings: B6.\nThe production bounded monitor bypasses classifyMuseCLIOutput. Reuse that decoder and carry completed/failed/cancelled/missing-terminal evidence through final daemon exit classification, including review runs. Overflow and explicit cancellation take precedence. Rebase on wrapper containment changes; do not alter provider profiles or add a second decoder.\n\n## Verified seams and ownership\n- `cmd/tusker/runner_raw_log_limit.go`\n- `cmd/tusker/runner_raw_log_limit_test.go`\n- `cmd/tusker/runner_muse.go`\n- `cmd/tusker/runner_muse_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | Process exit zero plus native failed/cancelled/missing terminal is never classified succeeded; completed terminal with valid exit is correctly classified. |\n| A2 | Overflow and explicit cancellation keep their authoritative outcomes; nonzero exit cannot be converted to success by a completed native record. |\n| A3 | Execute and review lanes observe the same typed terminal classification through the production bounded path and final classifier. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./cmd/tusker -run 'TestExternalReviewMuse' -count=1 | pending | Add a bounded-monitor-to-final-classifier regression matrix, not only decoder unit tests. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "cmd/tusker/runner_raw_log_limit.go",
+        "cmd/tusker/runner_raw_log_limit_test.go",
+        "cmd/tusker/runner_muse.go",
+        "cmd/tusker/runner_muse_test.go"
+      ],
+      "dependencies": []
+    },
+    {
+      "key": "wave-arming",
+      "title": "Allow valid lifecycle members when arming a wave",
+      "work_level": "standard",
+      "body": "## Problem and outcome\nExternal findings: C2.\ndirectWaveArmContractBlockers accepts current status and skips readiness, but dispatch validation still rejects next_owner blocked_dependency/none/reviewer. Separate arming contract validation from individual dispatch lifecycle eligibility. Exclude lifecycle ownership checks only during arming; preserve routing, contract, dependencies, material and full frontier dispatch checks.\n\n## Verified seams and ownership\n- `cmd/tusker/direct_wave_authority.go`\n- `cmd/tusker/direct_wave_authority_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | A canonically projected A -> B dependency wave arms with B blocked_dependency, without dispatching B before A is accepted. |\n| A2 | A partial wave containing done and review members arms/retries eligible work without rerunning completed implementation or misrouting reviewer work. |\n| A3 | Malformed contracts, drift and invalid routes still refuse arming; full readiness/status/next_owner checks still apply when claiming a frontier member. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./cmd/tusker -run 'TestDirectWave' -count=1 | pending | Extend direct_wave_authority_test.go with canonical lifecycle projections; do not force next_owner=agent in fixtures. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "cmd/tusker/direct_wave_authority.go",
+        "cmd/tusker/direct_wave_authority_test.go"
+      ],
+      "dependencies": []
+    },
+    {
+      "key": "standalone-start",
+      "title": "Make an authorized standalone backlog Start reach dispatch",
+      "work_level": "demanding",
+      "body": "## Problem and outcome\nExternal findings: C3.\ndirectRunCmd/taskStart queue a directive, but daemon candidate filtering excludes standalone backlog before consulting it. Promote only valid directive-authorized backlog work before the active-state filter, persisting canonical state under existing CAS discipline before claiming. Reuse directive matching and control projection paths; preserve artifact-retention edits in daemon.go.\n\n## Verified seams and ownership\n- `cmd/tusker/daemon.go`\n- `cmd/tusker/direct_wave_authority.go`\n- `cmd/tusker/direct_wave_authority_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | Start a standalone backlog task, poll with the existing fake runner, and observe canonical promotion, exactly one attempt and directive consumption. |\n| A2 | Duplicate clicks, concurrent polling and restart cannot create duplicate attempts; expired/wrong-project/drifted directives cannot promote work. |\n| A3 | Dependency, live ownership, project/runner/resource capacity and pause authority checks remain effective; Queued is not reported as Running before claim. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./cmd/tusker -run 'TestExternalReviewStandaloneStart' -count=1 | pending | Extend beyond directive insertion with real daemon poll/fake runner and failed-CAS cases. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "cmd/tusker/daemon.go",
+        "cmd/tusker/direct_wave_authority.go",
+        "cmd/tusker/direct_wave_authority_test.go"
+      ],
+      "dependencies": [
+        {
+          "task": "wave-arming",
+          "kind": "hard"
+        }
+      ]
+    }
+  ],
+  "schema": "tusker.wave-authoring/v1",
+  "request_key": "external-review-20260922-wave-2-v1",
+  "concurrency": 1,
+  "shared_context": "Planning baseline: source inspected at cbc14957 on 2026-09-22; findings are source-supported, not newly reproduced. Reviews A/B/C are retained in docs/reports/external-review-2026-09-22/. Read the relevant numbered findings, then recheck current source before editing. User authorized task authoring only in the originating session: creation must stay inert. Implementation begins only after a separate explicit Start. No daemon launch, nested worker, live provider run, installation, retained-state reset, or broad E2E campaign is part of these contracts. No task-duration timeout; bound transport teardown only. Preserve unrelated dirty work, runtime DBs, attempts, logs, proof and authorization. Existing dirty daemon/settings/API changes concern artifact retention and must be preserved.\nThese are bounded defect corrections, not replacements for W-0029 recovery delivery or W-0030 walkthrough qualification. TSK-T-0008/0009/0011 remain the broader recovery contracts. Consume their current interfaces and recheck overlap before implementation; do not rewrite or close those tasks as a side effect. Existing W-0007/FLW-T-0018/0019 and W-0020/AAC-T-0003 are broader runtime/provider work, not proof that these regressions are fixed. Source fixes A2/A4/A6 already exist in cbc14957; retain them and verify them as regressions, not new features.\nRecommended execution order is safety wave, correctness wave, then recovery wave. This is an operator sequencing recommendation, not a cross-wave hard dependency. Each wave has concurrency 1 to avoid shared-file editing and the currently unsafe shared-checkout submission path. Work levels route through configured profiles; do not change automation or runner settings. Architect/origin: current Codex conversation, unbound provenance (no verified task messaging route). Return material conflicts to the operator with task/acceptance ID, evidence and recommendation. Tests below are future focused acceptance checks, all NOT RUN during authoring; add proposed regression names if absent and reject zero matching tests. Use existing tests/harnesses, no new test framework. Passing local checks is not installed/live-provider qualification."
+}

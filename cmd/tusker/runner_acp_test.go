@@ -123,6 +123,34 @@ func TestACPAuthorityAndCloudBoundariesRemainSeparate(t *testing.T) {
 	}
 }
 
+func TestDevinSessionBindingSurvivesDetachedWrapper(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	ref := acpStoredSessionRef("devin", "knowing-cupcake")
+	provenance := acpAttemptProvenance{AttemptID: "attempt-1", Runner: RunnerDevin, Adapter: "devin", SessionID: ref}
+	if err := appendACPEvent(NewEventLog(path), "acp_session_bound", provenance, map[string]any{"session_observation": "bound_to_current_attempt"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := acpSessionRefFromAttemptEvents(path, "attempt-1", string(RunnerDevin)); got != ref {
+		t.Fatalf("bound session=%q, want %q", got, ref)
+	}
+	if got := acpSessionRefFromAttemptEvents(path, "attempt-2", string(RunnerDevin)); got != "" {
+		t.Fatalf("cross-attempt session=%q", got)
+	}
+	if raw, err := acpRawSessionRef("devin", ref); err != nil || raw != "knowing-cupcake" {
+		t.Fatalf("decoded session=%q err=%v", raw, err)
+	}
+	if _, err := acpRawSessionRef("devin", acpStoredSessionRef("other", "knowing-cupcake")); err == nil {
+		t.Fatal("accepted a different adapter's session")
+	}
+	if !(&ACPRunner{runner: RunnerDevin}).Capabilities().ResumeSession || (&ACPRunner{}).Capabilities().ResumeSession {
+		t.Fatal("provider-specific resume capability leaked into generic ACP")
+	}
+	capability := resumeCapability(&RunStatus{Runner: string(RunnerDevin)}, &RunnerSession{SessionRef: ref, Resumable: true})
+	if !capability.Supported || capability.Command != "" {
+		t.Fatalf("Devin recovery capability must not advertise an unverified CLI command: %+v", capability)
+	}
+}
+
 func TestACPAuthorityPermissionObservationFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	provenance := acpAttemptProvenance{

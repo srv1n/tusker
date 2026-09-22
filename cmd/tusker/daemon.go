@@ -141,6 +141,16 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if _, err := purgeRunArtifacts(d.store, time.Now().UTC(), false); err != nil {
+		log.Printf("run artifact retention: %v", err)
+	}
+	var retentionTick *time.Ticker
+	var retentionC <-chan time.Time
+	if !once {
+		retentionTick = time.NewTicker(24 * time.Hour)
+		retentionC = retentionTick.C
+		defer retentionTick.Stop()
+	}
 	var control *daemonControlServer
 	var err error
 	if !once {
@@ -224,6 +234,10 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		select {
 		case <-runCtx.Done():
 			return nil
+		case now := <-retentionC:
+			if _, err := purgeRunArtifacts(d.store, now.UTC(), false); err != nil {
+				log.Printf("run artifact retention: %v", err)
+			}
 		case projectID := <-d.notifyWake:
 			if projectID == "*" {
 				if err := d.runPoll(runCtx, ""); err != nil {
@@ -1138,10 +1152,16 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				if err != nil {
 					return err
 				}
-				if !ok || !containsString(wfFile.Data.Tracker.ActiveStates, stringField(projected.Data, "status")) {
+				if ok && containsString(wfFile.Data.Tracker.ActiveStates, stringField(projected.Data, "status")) {
+					note = projected
+				} else if reservation, reservationOK := selfServiceReservationPromotion(project.VaultRoot, d.store, project.ProjectID, note, now); reservationOK && containsString(wfFile.Data.Tracker.ActiveStates, stringField(reservation.Data, "status")) {
+					// The member's own current-authorization reservation
+					// releases it from canonical backlog authoring. Anything
+					// without that backing stays waiting.
+					note = reservation
+				} else {
 					continue
 				}
-				note = projected
 			}
 			recordID := trackerRecordID(note)
 			if recordID == "" {
@@ -2513,6 +2533,12 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	}
 	if strings.TrimSpace(run.RawLogPath) != "" {
 		if sessionRef := extractSessionRef(run.RawLogPath); sessionRef != "" && sessionRef != run.SessionRef {
+			run.SessionRef = sessionRef
+			changed = true
+		}
+	}
+	if run.SessionRef == "" {
+		if sessionRef := acpSessionRefFromAttemptEvents(run.EventSinkPath, run.ActiveAttemptID, run.Runner); sessionRef != "" {
 			run.SessionRef = sessionRef
 			changed = true
 		}

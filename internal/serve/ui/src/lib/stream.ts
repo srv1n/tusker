@@ -73,8 +73,8 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
       return id && project ? [panelScoped("runs"), ["run", project, id]] : [panelScoped("runs"), ["run"]];
     case "tasks":
       return id && project
-        ? [["tasks", project], ["task", project, id], panelScoped("needs"), ["projects"]]
-        : [scoped("tasks"), ["task"], panelScoped("needs"), ["projects"]];
+        ? [["tasks", project], ["task", project, id], scoped("wave-list"), panelScoped("needs"), ["projects"]]
+        : [scoped("tasks"), ["task"], scoped("wave-list"), panelScoped("needs"), ["projects"]];
     case "epics":
       return [scoped("epics")];
     case "docs":
@@ -85,7 +85,7 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
         project ? ["docgraph", "doc", project] : ["docgraph", "doc"],
       ];
     case "waves":
-      return [scoped("waves"), scoped("tasks"), panelScoped("needs")];
+      return [scoped("waves"), scoped("wave-list"), project ? ["wave", project] : ["wave"], scoped("tasks"), panelScoped("needs")];
     case "gates":
       return [scoped("gates"), scoped("tasks"), panelScoped("needs")];
     case "evidence":

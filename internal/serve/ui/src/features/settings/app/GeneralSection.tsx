@@ -9,6 +9,8 @@
 */
 
 import { useEffect, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import type { ThemePref } from "@/lib/theme";
 import { FONT_FAMILY_OPTIONS, useFontScale, type FontFamily, type FontScale } from "@/lib/font-scale";
 import { useTheme } from "@/lib/theme";
@@ -39,6 +41,7 @@ export function GeneralSection() {
   const { scale, setScale, family, setFamily } = useFontScale();
   const daemonQ = useDaemon();
   const daemonAction = useDaemonAction();
+  const runPurge = useMutation({ mutationFn: api.purgeRunArtifacts });
   const livePort = daemonQ.data?.addr.split(":").pop();
   const connected = !!daemonQ.data?.connected;
   const [globalLimit, setGlobalLimit] = useState("");
@@ -133,6 +136,24 @@ export function GeneralSection() {
         ))}
       </SettingsCard>
       <ActionResultLine className="mt-2" pending={daemonAction.isPending} error={daemonAction.error} result={daemonAction.data} />
+
+      <SectionLabel className="mb-[10px] mt-[26px]">Run files</SectionLabel>
+      <SettingsCard>
+        <SettingRow
+          label="Run file retention"
+          description="Tusker removes logs, events, and prompts seven days after a run ends. Active and unfinished work is protected."
+          source="global"
+          control={<span className="text-[12px] text-muted">7 days</span>}
+        />
+        <SettingRow
+          label="Purge run files now"
+          description="Remove run files for completed work now. Task records stay in Tusker."
+          source="global"
+          control={<Button size="sm" disabled={runPurge.isPending} onClick={() => { if (window.confirm("Purge completed run files now?")) runPurge.mutate(); }}>{runPurge.isPending ? "Purging…" : "Purge"}</Button>}
+        />
+      </SettingsCard>
+      {runPurge.data && <p role="status" className="mt-2 text-[12px] text-muted">Removed {runPurge.data.files} files ({Math.round(runPurge.data.bytes / 1048576)} MB).</p>}
+      {runPurge.error && <p role="alert" className="mt-2 text-[12px] text-fail">{runPurge.error.message}</p>}
     </div>
   );
 }

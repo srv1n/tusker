@@ -44,6 +44,13 @@ The `daemon.db` SQLite file stores project registration, runs, attempts,
 sessions, leases, review results, execution records, and other runtime facts.
 This database is shared by registered projects on the machine.
 
+The machine `runs/` directory holds per-attempt prompts, raw runner output,
+normalized events, and terminal status files. The daemon removes these files
+seven days after the last attempt of a released, terminal run. The global Settings page
+can purge eligible run files immediately. Files for unfinished or parked runs remain
+available for retries, recovery, and pending decisions; task and attempt rows
+remain in `daemon.db` after file expiry.
+
 Project registration has separate `visible` and automation `enabled` choices.
 Visibility controls only the main project strip. `tusker init` registers and
 shows its project by default; `--no-register` opts out. Missing registrations

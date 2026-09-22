@@ -1,0 +1,82 @@
+{
+  "title": "External review: truthful recovery and settings changes",
+  "outcome": "Recovery retains durable parentage, exposes the same eligibility it admits, excludes new owners during adoption, refreshes authoritative UI state, and rejects invalid settings before mutation.",
+  "tasks": [
+    {
+      "key": "recovery-lineage",
+      "title": "Preserve recovery identity across capacity waits and restart",
+      "work_level": "demanding",
+      "body": "## Problem and outcome\nExternal findings: C5.\nBoth recovery attempt parentage and prompt construction derive from previousRun.LastError via outcomeUnknownRecoveryParent. Capacity waits replace LastError. Read recovery identity from existing durable redrive metadata or a minimal persisted recovery field, and use the same identity for claim and prompt. Keep it until recovery claim is committed; do not introduce a parallel recovery store. This supplies durable lineage to the downstream eligibility task.\n\n## Verified seams and ownership\n- `cmd/tusker/daemon.go`\n- `cmd/tusker/serve_runs.go`\n- `cmd/tusker/walkthrough_recovery_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | Each global/project/runner/resource capacity wait followed by actual dispatch retains the uncertain parent AttemptID, ChildType=recovery and inspect/preserve-existing-work prompt. |\n| A2 | Restart during the wait preserves the same identity; retries/duplicate directives cannot admit a second bounded recovery child. |\n| A3 | An ordinary retry cannot inherit stale recovery identity, and aborted/failed claim does not erase a still-pending recovery intent. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./cmd/tusker -run 'TestExternalReviewRecoveryLineage' -count=1 | pending | Exercise actual scheduling/claim/prompt paths and restart, not manual insertion of a child attempt. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "cmd/tusker/daemon.go",
+        "cmd/tusker/serve_runs.go",
+        "cmd/tusker/walkthrough_recovery_test.go"
+      ],
+      "dependencies": []
+    },
+    {
+      "key": "recovery-truth",
+      "title": "Align unknown-outcome projection with bounded recovery admission",
+      "work_level": "demanding",
+      "body": "## Problem and outcome\nExternal findings: A1,A5.\nUnknown outcomes are classified after generic review failure and task review status; capability projection lacks the parent/existing-child checks enforced by queueOutcomeUnknownRecovery. Normalize terminal uncertainty before generic review/failure branches while retaining legitimate completed-work and live-owner precedence. Share read-only eligibility between projection and admission, using durable lineage from predecessor. Keep final admission rechecks and block direct retry_review from bypassing unknown-outcome recovery. This is a defect follow-up to TSK-T-0008, not a replacement recovery implementation.\n\n## Verified seams and ownership\n- `cmd/tusker/direct_wave_authority.go`\n- `cmd/tusker/serve_runs.go`\n- `cmd/tusker/direct_wave_authority_test.go`\n- `cmd/tusker/walkthrough_recovery_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | Native and legacy delivery_unknown outcomes in execute/review lanes, including canonical status review and stale proof, have consistent phase/blocker/recovery action; no ordinary retry_review bypass is available. |\n| A2 | Missing parent, existing recovery child and live ownership yield disabled recovery with the same refusal reason as the endpoint; projection performs no mutation. |\n| A3 | Eligible uncertainty admits at most one correctly parented recovery; real completed work and live admitted ownership retain precedence, and ordinary review failure still permits review-only recovery. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./cmd/tusker -run 'TestExternalReviewRecoveryEligibility' -count=1 | pending | Add full phase+blocker+capability+endpoint comparisons, direct retry bypass and concurrent admission cases. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "cmd/tusker/direct_wave_authority.go",
+        "cmd/tusker/serve_runs.go",
+        "cmd/tusker/direct_wave_authority_test.go",
+        "cmd/tusker/walkthrough_recovery_test.go"
+      ],
+      "dependencies": [
+        {
+          "task": "recovery-lineage",
+          "kind": "hard"
+        }
+      ]
+    },
+    {
+      "key": "adoption-owner",
+      "title": "Fence adoption against ownership arriving during verification",
+      "work_level": "demanding",
+      "body": "## Problem and outcome\nExternal findings: C4.\nadopt_completed checks owners before verification, then commits under material/byte checks without rechecking runtime ownership. At final commit acquire the same owned-path claim exclusion used by run admission (runOwnershipService.lockOwnedPathClaims), reload task and overlapping run holders, and retain exclusion through canonical transition. Respect established lock ordering to avoid deadlock. Do not hold the ownership lock while running verification commands.\n\n## Verified seams and ownership\n- `cmd/tusker/work_recovery.go`\n- `cmd/tusker/run_ownership.go`\n- `cmd/tusker/adopt_completed_test.go`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | Using adoptCompletedBeforeCommitHook, introduce an overlapping owner after verification begins; adoption refuses without done/review publication or an adoption marker. |\n| A2 | Claimed-but-not-yet-spawned, same-task and live overlapping holders all block; disjoint work does not incorrectly block adoption. |\n| A3 | No-owner adoption still completes or queues required independent review; material/proof/gate/dependency fences remain intact and admission/adoption lock interleavings terminate. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: go test ./cmd/tusker -run 'TestExternalReviewAdoptionOwnership' -count=1 | pending | Extend existing pre-commit-hook fixtures; verify no marker/transition on refusal and both lock interleavings. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "cmd/tusker/work_recovery.go",
+        "cmd/tusker/run_ownership.go",
+        "cmd/tusker/adopt_completed_test.go"
+      ],
+      "dependencies": []
+    },
+    {
+      "key": "recovery-readback",
+      "title": "Refresh authoritative recovery state without stream events",
+      "work_level": "standard",
+      "body": "## Problem and outcome\nExternal findings: A7; preserve already-addressed A2,A4,A6.\nuseRecovery invalidates only run detail, runs and tasks lists. Reuse broader operator-state invalidation coverage and await required readback, including singular task detail, scoped wave review/waves, attempts, affected proof/evidence and needs views. The current WaveAuthority.tsx already preserves Pause/Resume, requires enabled retry_task for Retry wave and honors disabled recover_unknown. Preserve those fixes; extend tests only for missing cases. Consume backend capability corrections from predecessor. TSK-T-0009 owns broader recovery UI; this is its bounded stale-readback correction.\n\n## Verified seams and ownership\n- `internal/serve/ui/src/lib/queries.ts`\n- `internal/serve/ui/test/direct-wave-authority.test.ts`\n- `internal/serve/ui/tests/runs-detail.test.ts`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | With stream unavailable, settle recover_unknown, adopt_completed and rerun_checks; affected task/wave/attempt/proof/needs queries refresh without waiting for polling and stale actions disappear. |\n| A2 | Pending settlement lasts through required active-query readback; rejected/refused actions also refresh authoritative state and show refusal, never false success. |\n| A3 | Mixed unknown/executing retains Pause, paused unknown retains Resume, disabled recovery explains its reason and cannot invoke mutation, and review-only failure never offers Retry wave. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A2,A3 | command: bun test --cwd internal/serve/ui tests/runs-detail.test.ts test/direct-wave-authority.test.ts | pending | Use actual query cache and mutation settlement with mocked REST/no stream; rendered action assertions, not source-string presence alone. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "internal/serve/ui/src/lib/queries.ts",
+        "internal/serve/ui/test/direct-wave-authority.test.ts",
+        "internal/serve/ui/tests/runs-detail.test.ts"
+      ],
+      "dependencies": [
+        {
+          "task": "recovery-truth",
+          "kind": "hard"
+        }
+      ]
+    },
+    {
+      "key": "settings-validation",
+      "title": "Validate every execution setting before persisting any field",
+      "work_level": "standard",
+      "body": "## Problem and outcome\nExternal findings: A3.\nhandleProjectSettingsAction validates/writes workspace before validating concurrency, and saveExecution accepts fractional values or silently omits invalid ones. Validate and normalize all supplied fields before the first write. Require positive integer concurrency in the form with visible feedback; preserve any existing explicit blank/unset semantics. This guarantees validation refusals are mutation-free; it does not claim multi-write crash atomicity. Reuse config persistence, do not invent a settings transaction framework.\n\n## Verified seams and ownership\n- `cmd/tusker/serve_actions.go`\n- `cmd/tusker/serve_projects_test.go`\n- `internal/serve/ui/src/features/product/OperationsScreens.tsx`\n- `internal/serve/ui/tests/projects-settings.test.ts`\nTrace the named producer, consumer and every caller before editing. Own only this bounded correction and its focused checks; shared files are not blanket rewrite authority.\n\n## Acceptance\n| ID | Required observation |\n| --- | --- |\n| A1 | Valid workspace plus fractional, zero, negative or malformed concurrency is refused with both persisted settings unchanged; unknown keys also refuse before any write. |\n| A2 | A real input/submit interaction rejects invalid concurrency visibly without submission or silent omission; valid positive integers save both fields and refresh readback. |\n| A3 | Single-key updates and intended unset/default semantics remain compatible; persistence failures remain visible rather than reporting success. |\n\n## Verification\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1,A3 | command: go test ./cmd/tusker -run 'TestExternalReviewSettings' -count=1 | pending | Add request/refusal/config readback assertions using existing project settings fixtures. |\n| A2 | command: bun test --cwd internal/serve/ui tests/projects-settings.test.ts | pending | Add behavioral input/submit coverage; source-string assertions alone do not qualify. |\n\n## Decisions and boundaries\nKeep existing public actions, canonical transitions, project/record identity, ownership, proof and budget checks. Reuse the existing implementation and storage; no parallel scheduler/store/framework. Any deliberate compatibility change beyond the listed defect returns to the operator. The task body and shared context are the handoff; external review text supplies rationale, not permission to expand scope.\n",
+      "owned_paths": [
+        "cmd/tusker/serve_actions.go",
+        "cmd/tusker/serve_projects_test.go",
+        "internal/serve/ui/src/features/product/OperationsScreens.tsx",
+        "internal/serve/ui/tests/projects-settings.test.ts"
+      ],
+      "dependencies": []
+    }
+  ],
+  "schema": "tusker.wave-authoring/v1",
+  "request_key": "external-review-20260922-wave-3-v1",
+  "concurrency": 1,
+  "shared_context": "Planning baseline: source inspected at cbc14957 on 2026-09-22; findings are source-supported, not newly reproduced. Reviews A/B/C are retained in docs/reports/external-review-2026-09-22/. Read the relevant numbered findings, then recheck current source before editing. User authorized task authoring only in the originating session: creation must stay inert. Implementation begins only after a separate explicit Start. No daemon launch, nested worker, live provider run, installation, retained-state reset, or broad E2E campaign is part of these contracts. No task-duration timeout; bound transport teardown only. Preserve unrelated dirty work, runtime DBs, attempts, logs, proof and authorization. Existing dirty daemon/settings/API changes concern artifact retention and must be preserved.\nThese are bounded defect corrections, not replacements for W-0029 recovery delivery or W-0030 walkthrough qualification. TSK-T-0008/0009/0011 remain the broader recovery contracts. Consume their current interfaces and recheck overlap before implementation; do not rewrite or close those tasks as a side effect. Existing W-0007/FLW-T-0018/0019 and W-0020/AAC-T-0003 are broader runtime/provider work, not proof that these regressions are fixed. Source fixes A2/A4/A6 already exist in cbc14957; retain them and verify them as regressions, not new features.\nRecommended execution order is safety wave, correctness wave, then recovery wave. This is an operator sequencing recommendation, not a cross-wave hard dependency. Each wave has concurrency 1 to avoid shared-file editing and the currently unsafe shared-checkout submission path. Work levels route through configured profiles; do not change automation or runner settings. Architect/origin: current Codex conversation, unbound provenance (no verified task messaging route). Return material conflicts to the operator with task/acceptance ID, evidence and recommendation. Tests below are future focused acceptance checks, all NOT RUN during authoring; add proposed regression names if absent and reject zero matching tests. Use existing tests/harnesses, no new test framework. Passing local checks is not installed/live-provider qualification."
+}

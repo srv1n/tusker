@@ -334,6 +334,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, escalationV7AckCmd(args)
 	case "digest":
 		return 0, digestCmd(args)
+	case "doctor":
+		return executionDoctorCmd(args)
 	case "logbook":
 		return 0, logbookCmd(args)
 	case "trace":
@@ -974,6 +976,19 @@ func printCommandHelp(command string) bool {
 		printClaimHelp()
 	case "evidence":
 		printEvidenceHelp()
+	case "doctor":
+		fmt.Println(`Usage:
+  tusker doctor <TASK-ID|WAVE-ID> [--json] [--output <new-path>]
+
+Purpose:
+  Diagnose one task or wave across contracts, DAG, authorization, queued
+  reservations, capacity, proof, review, and daemon freshness. Read-only:
+  nothing is queued, claimed, spawned, or signaled. Human output leads with
+  the primary cause and the exact permitted next action; --json retains the
+  complete versioned diagnosis. --output writes the same bounded JSON to a
+  new file and refuses to overwrite an existing file. Exits 0 for
+  healthy/completed/normal waits, 1 for actionable faults or decisions, and
+  2 for unavailable or invalid diagnoses.`)
 	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave pause", "wave resume", "wave review", "wave start", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
 	case "handoff", "finish", "gate", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy":
@@ -1077,12 +1092,13 @@ Purpose:
   key conflicts. Nothing is claimed or dispatched.`)
 	case command == "wave review":
 		fmt.Println(`Usage:
-  tusker wave review <WAVE-ID> [--json]
+  tusker wave review <WAVE-ID> [--check] [--json]
 
 Purpose:
   Read the durable wave/task/gate projection: state, authorization, material
   fingerprint, member eligibility, dependency frontiers, blockers with repair
-  actions, and controls. Read-only; no plan, factory, or runtime mutation.`)
+  actions, and controls. --check exits nonzero unless Start is enabled while
+  still showing the review. Read-only; no plan, factory, or runtime mutation.`)
 	case command == "wave start":
 		fmt.Println(`Usage:
   tusker wave start <WAVE-ID> --mode background --by human:<name>|operator:<name> [--json]

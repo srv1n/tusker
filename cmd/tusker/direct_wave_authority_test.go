@@ -286,6 +286,53 @@ func TestDirectWaveStartRefusesInvalidMemberContractBeforeArm(t *testing.T) {
 	}
 }
 
+func TestDirectWaveReviewPreflightsAllMemberContracts(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"dependencies": []any{"APP-T-0001:hard"}})
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, nil)
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		rewriteTaskFile(t, vault, id, func(data map[string]any, body string) (map[string]any, string) {
+			return data, strings.Replace(body, "| ID | Outcome | Proof |", "| ID | Outcome | Check |", 1)
+		})
+	}
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := map[string]bool{}
+	for _, blocker := range review.Blockers {
+		if blocker.Code == "MEMBER_CONTRACT_INVALID" && blocker.Reason == "acceptance missing proof mapping" {
+			blocked[blocker.TaskID] = true
+		}
+	}
+	if !blocked["APP-T-0001"] || !blocked["APP-T-0002"] {
+		t.Fatalf("review omitted root or dependent contract blocker: %#v", review.Blockers)
+	}
+	for _, control := range review.Controls {
+		if (control.Action == "wave start" || control.Action == "task start") && control.Enabled {
+			t.Fatalf("invalid member has enabled start control: %#v", control)
+		}
+	}
+	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err == nil || !strings.Contains(err.Error(), "acceptance missing proof mapping") {
+		t.Fatalf("start disagrees with review: %v", err)
+	}
+	if auth := waveAuthorizationState(t, vault, "W-0001"); stringField(auth, "state") == "armed" {
+		t.Fatalf("invalid wave was authorized: %#v", auth)
+	}
+	if err := waveReviewCmd(Args{"vault": vault, "id": "W-0001", "check": "true", "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "acceptance missing proof mapping") {
+		t.Fatalf("author preflight did not fail clearly: %v", err)
+	}
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		rewriteTaskFile(t, vault, id, func(data map[string]any, body string) (map[string]any, string) {
+			return data, strings.Replace(body, "| ID | Outcome | Check |", "| ID | Outcome | Proof |", 1)
+		})
+	}
+	if err := waveReviewCmd(Args{"vault": vault, "id": "W-0001", "check": "true", "quiet": "true"}); err != nil {
+		t.Fatalf("repaired author preflight failed: %v", err)
+	}
+}
+
 func TestDirectWaveReviewSurfacesPersistentDispatchBlocker(t *testing.T) {
 	vault, store, project := authorityFixture(t)
 	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)

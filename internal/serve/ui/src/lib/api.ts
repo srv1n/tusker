@@ -46,6 +46,7 @@ import type {
   TaskCapsule,
   TaskDetail,
   WaveSummary,
+  WaveListItem,
   WaveReview,
   DirectStartResult,
   ExecutionGraph,
@@ -411,12 +412,21 @@ export const api = {
   daemonAction: (action: "start" | "stop" | "resume" | "limits", body: Record<string, unknown> = {}): Promise<ActionResult> =>
     post(`/daemon/${action}`, body),
 
+  purgeRunArtifacts: (): Promise<{ ok: boolean; files: number; bytes: number }> =>
+    post("/run-artifacts/purge"),
+
   // GET /api/epics?project=
   epics: (projectId?: string): Promise<EpicSummary[]> =>
     real(`/epics${projectId ? `?project=${projectId}` : ""}`),
 
   waves: (projectId?: string): Promise<WaveSummary[]> =>
     real(`/waves${projectId ? `?project=${projectId}` : ""}`),
+
+  waveList: (projectId: string): Promise<WaveListItem[]> =>
+    real(`/waves?project=${encodeURIComponent(projectId)}&view=list`),
+
+  wave: (projectId: string, waveId: string): Promise<WaveSummary> =>
+    real(`/waves/${encodeURIComponent(waveId)}?project=${encodeURIComponent(projectId)}`),
 
   gates: (taskId?: string, projectId?: string): Promise<GateDetail[]> =>
     real(withProject(`/gates${taskId ? `?task=${taskId}` : ""}`, projectId)),

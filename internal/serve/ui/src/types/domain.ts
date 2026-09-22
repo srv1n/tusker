@@ -734,6 +734,18 @@ export interface WaveSummary {
   brief: WaveBrief;
 }
 
+/** Recorded list facts; start readiness is checked by the wave review. */
+export interface WaveListItem {
+  id: string;
+  title: string;
+  summary?: string;
+  status: string;
+  authorization: string;
+  landedAt?: string | null;
+  memberCount: number;
+  doneCount: number;
+}
+
 export interface ReviewBatch {
   waves: ReviewBatchWave[];
   unwaved: TaskCapsule[];

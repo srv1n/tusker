@@ -238,7 +238,10 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 		return executeRunnerCommand(ctx, runner, execReq, RunnerCapabilities{StructuredEvents: true, ResumeSession: true, MachineFinalStatus: true, UsageMetrics: true})
 	case RunnerACP, RunnerDevin:
 		if req.Resume != nil {
-			return nil, tuskerError(errorInvalidTransition, string(runner)+" wrapper refuses a resume request before a provider adapter enables negotiated resume")
+			if runner != RunnerDevin {
+				return nil, tuskerError(errorInvalidTransition, "generic ACP wrapper cannot resume a provider session")
+			}
+			return startLiveACPForRunnerWithSession(ctx, req.Start, runner, req.Resume.SessionRef)
 		}
 		return startLiveACPForRunner(ctx, req.Start, runner)
 	case RunnerCodexACP:

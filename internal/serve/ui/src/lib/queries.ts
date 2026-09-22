@@ -29,6 +29,8 @@ export const qk = {
   run: (taskId: string, projectId?: string) => ["run", projectId ?? "all", taskId] as const,
   epics: (projectId?: string) => ["epics", projectId ?? "all"] as const,
   waves: (projectId?: string) => ["waves", projectId ?? "all"] as const,
+  waveList: (projectId: string) => ["wave-list", projectId] as const,
+  wave: (projectId: string, waveId: string) => ["wave", projectId, waveId] as const,
   gates: (taskId?: string, projectId?: string) => ["gates", projectId ?? "all", taskId ?? "all"] as const,
   agentAccessApprovals: (projectId?: string, taskId?: string) => ["agent-access-approvals", projectId ?? "all", taskId ?? "all"] as const,
   evidence: (taskId?: string, projectId?: string) => ["evidence", projectId ?? "all", taskId ?? "all"] as const,
@@ -245,6 +247,12 @@ export const useEpics = (projectId?: string) =>
 export const useWaves = (projectId?: string) =>
   useQuery({ queryKey: qk.waves(projectId), queryFn: () => api.waves(projectId), refetchInterval: liveRefetchInterval });
 
+export const useWaveList = (projectId: string) =>
+  useQuery({ queryKey: qk.waveList(projectId), queryFn: () => api.waveList(projectId), refetchInterval: liveRefetchInterval });
+
+export const useWave = (projectId: string, waveId: string) =>
+  useQuery({ queryKey: qk.wave(projectId, waveId), queryFn: () => api.wave(projectId, waveId), refetchInterval: liveRefetchInterval });
+
 export const useGates = (taskId?: string, projectId?: string) =>
   useQuery({ queryKey: qk.gates(taskId, projectId), queryFn: () => api.gates(taskId, projectId), refetchInterval: liveRefetchInterval });
 
@@ -333,6 +341,8 @@ export async function invalidateWaveControlQueries(
   await Promise.all([
     qc.invalidateQueries({ queryKey: qk.waveReview(projectId, waveId) }),
     qc.invalidateQueries({ queryKey: ["waves"] }),
+    qc.invalidateQueries({ queryKey: qk.waveList(projectId) }),
+    qc.invalidateQueries({ queryKey: qk.wave(projectId, waveId) }),
     qc.invalidateQueries({ queryKey: ["runs"] }),
     qc.invalidateQueries({ queryKey: ["run"] }),
     qc.invalidateQueries({ queryKey: ["tasks"] }),
@@ -437,6 +447,8 @@ function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?:
   void qc.invalidateQueries({ queryKey: ["review", "batch"] });
   void qc.invalidateQueries({ queryKey: ["runs"] });
   void qc.invalidateQueries({ queryKey: ["waves"] });
+  void qc.invalidateQueries({ queryKey: projectId ? qk.waveList(projectId) : ["wave-list"] });
+  void qc.invalidateQueries({ queryKey: projectId ? ["wave", projectId] : ["wave"] });
   void qc.invalidateQueries({ queryKey: ["gates"] });
   void qc.invalidateQueries({ queryKey: ["evidence"] });
   void qc.invalidateQueries({ queryKey: ["decisions"] });

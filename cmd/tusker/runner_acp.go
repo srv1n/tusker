@@ -33,11 +33,11 @@ func (r *ACPRunner) Name() RunnerName {
 }
 
 func (r *ACPRunner) Capabilities() RunnerCapabilities {
-	// Session/load and session/resume must remain false until a provider adapter
-	// both negotiates and implements the exact protocol operation. A generic
-	// local process cannot safely treat a persisted ACP session as resumable.
+	// Only Devin currently supports negotiated session/load; other ACP adapters
+	// cannot safely treat a persisted session as resumable.
 	return RunnerCapabilities{
 		StructuredEvents:   true,
+		ResumeSession:      r.Name() == RunnerDevin,
 		ExplicitApprovals:  true,
 		Heartbeats:         true,
 		MachineFinalStatus: true,
@@ -55,15 +55,34 @@ func (r *ACPRunner) Start(ctx context.Context, req StartRequest) (*StartResult, 
 	return startDetachedRunnerWrapper(ctx, r.Name(), req, nil, r.Capabilities())
 }
 
-// Resume is deliberately unavailable in the common transport lane. A later
-// provider adapter may enable it only after the negotiated session/load or
-// session/resume method is implemented and bound to the current Tusker lease.
+// Resume uses Devin's negotiated session/load after the daemon has matched the
+// saved session to this task, workspace, and revision. Generic ACP stays off.
 func (r *ACPRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
-	_ = ctx
 	if strings.TrimSpace(req.SessionRef) == "" {
 		return nil, tuskerError(errorMissingArg, "acp_v1 resume requires session_ref")
 	}
-	return nil, tuskerError(errorInvalidTransition, "acp_v1 session resume is unavailable until a provider adapter implements a negotiated resume method")
+	if r.Name() != RunnerDevin {
+		return nil, tuskerError(errorInvalidTransition, "acp_v1 session resume requires a provider adapter")
+	}
+	if _, err := acpRawSessionRef("devin", req.SessionRef); err != nil {
+		return nil, err
+	}
+	start := StartRequest{
+		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates,
+		WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, RepoRoot: req.RepoRoot,
+		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath,
+		RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath, Command: req.Command,
+		CommandArgv: req.CommandArgv, CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath,
+		RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness,
+		RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort, PrivateFolders: req.PrivateFolders,
+		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
+		ExternalLoop: req.ExternalLoop, Principal: req.Principal, Actor: req.Actor,
+	}
+	if err := validateACPLaunchRequestForRunner(RunnerDevin, start); err != nil {
+		return nil, err
+	}
+	return startDetachedRunnerWrapper(ctx, RunnerDevin, start, &req, r.Capabilities())
 }
 
 // Reconcile never infers local process state from an ACP session reference.
@@ -222,6 +241,10 @@ func validateCodexACPAgentIdentity(info acp.AgentInfo, expectedVersion string) e
 }
 
 func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerName) (*StartResult, error) {
+	return startLiveACPForRunnerWithSession(ctx, req, runner, "")
+}
+
+func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, runner RunnerName, sessionRef string) (*StartResult, error) {
 	if err := validateACPLaunchRequestForRunner(runner, req); err != nil {
 		return nil, err
 	}
@@ -409,7 +432,21 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 			return nil, err
 		}
 	}
-	session, err := client.NewSession(ctx)
+	var session acp.Session
+	if sessionRef != "" {
+		if runner != RunnerDevin || !init.AgentCapabilities.LoadSession {
+			handle.close()
+			return nil, tuskerError(errorInvalidTransition, "ACP adapter did not negotiate Devin session/load")
+		}
+		rawSession, decodeErr := acpRawSessionRef("devin", sessionRef)
+		if decodeErr != nil {
+			handle.close()
+			return nil, decodeErr
+		}
+		session, err = client.LoadSession(ctx, rawSession)
+	} else {
+		session, err = client.NewSession(ctx)
+	}
 	if err != nil {
 		handle.close()
 		return nil, err
@@ -846,6 +883,43 @@ func evaluateACPTransportPermission(ctx context.Context, eventLog *EventLog, pro
 
 func acpStoredSessionRef(adapter, raw string) string {
 	return "acp:v1:" + adapter + ":" + base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func acpRawSessionRef(adapter, stored string) (string, error) {
+	prefix := "acp:v1:" + adapter + ":"
+	if !strings.HasPrefix(stored, prefix) {
+		return "", tuskerError(errorInvalidTransition, "ACP session adapter does not match the selected runner")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(stored, prefix))
+	if err != nil || validateACPObservationID(string(raw), "session") != nil {
+		return "", tuskerError(errorInvalidTransition, "ACP stored session reference is invalid")
+	}
+	return string(raw), nil
+}
+
+// Session binding is already a durable attempt-local observation. Recover it
+// from that record when the detached wrapper cannot return its child result.
+func acpSessionRefFromAttemptEvents(path, attemptID, runner string) string {
+	if !isACPRunner(RunnerName(runner)) || strings.TrimSpace(attemptID) == "" {
+		return ""
+	}
+	for _, event := range readReviewPacketEvents(path) {
+		if stringField(event, "kind") != "acp_session_bound" || stringField(event, "attempt_id") != attemptID || stringField(event, "runner") != runner {
+			continue
+		}
+		payload, ok := event["payload"].(map[string]any)
+		if !ok || stringField(payload, "attempt_id") != attemptID {
+			continue
+		}
+		ref := stringField(payload, "session_id")
+		if stringField(payload, "adapter") != runner {
+			continue
+		}
+		if _, err := acpRawSessionRef(runner, ref); err == nil {
+			return ref
+		}
+	}
+	return ""
 }
 
 func validateACPObservationID(value, kind string) error {
