@@ -16,6 +16,7 @@ export interface WaveOverviewProps {
   startability: Record<string, Startability>;
   descriptions?: Record<string, string>;
   projectName?: string;
+  backgroundWorkEnabled?: boolean;
   query: string;
   category: WaveOverviewFilter;
   onQueryChange: (value: string) => void;
@@ -179,11 +180,18 @@ export function WaveOverview(props: WaveOverviewProps) {
                           <p className="wux-ov-desc">{description}</p>
                         ) : null}
                         <p className="wux-ov-progress">{progressText(entry)}</p>
+                        {entry.group !== "completed" && entry.wave.authorization.state === "armed" && props.backgroundWorkEnabled === false ? (
+                          <p className="wux-ov-detail">Background work is off. Turn it on in Settings to dispatch this wave.</p>
+                        ) : null}
+                        {entry.group !== "completed" && entry.wave.recovery?.blockingCause && !(props.backgroundWorkEnabled === false && entry.wave.recovery.causeCode === "project_disabled") ? (
+                          <p className="wux-ov-detail">{entry.wave.recovery.blockingCause}</p>
+                        ) : null}
                         {entry.stateDetail ? (
                           <p className="wux-ov-detail">{entry.stateDetail}</p>
                         ) : null}
                       </div>
                       <div className="wux-ov-side">
+                        {entry.group !== "completed" && (entry.wave.authorization.state === "armed" || entry.wave.authorization.state === "disarmed") ? <span className="wux-ov-state wux-ov-tone-neutral">{entry.wave.authorization.state === "armed" ? (entry.wave.recovery?.queued ? "Armed + Queued" : "Armed") : "Not armed"}</span> : null}
                         <span className={cn("wux-ov-state", GROUP_TONE[entry.group])}>
                           {entry.stateLabel}
                         </span>

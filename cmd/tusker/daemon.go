@@ -141,6 +141,16 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if _, err := purgeRunArtifacts(d.store, time.Now().UTC(), false); err != nil {
+		log.Printf("run artifact retention: %v", err)
+	}
+	var retentionTick *time.Ticker
+	var retentionC <-chan time.Time
+	if !once {
+		retentionTick = time.NewTicker(24 * time.Hour)
+		retentionC = retentionTick.C
+		defer retentionTick.Stop()
+	}
 	var control *daemonControlServer
 	var err error
 	if !once {
@@ -224,6 +234,10 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		select {
 		case <-runCtx.Done():
 			return nil
+		case now := <-retentionC:
+			if _, err := purgeRunArtifacts(d.store, now.UTC(), false); err != nil {
+				log.Printf("run artifact retention: %v", err)
+			}
 		case projectID := <-d.notifyWake:
 			if projectID == "*" {
 				if err := d.runPoll(runCtx, ""); err != nil {
@@ -323,6 +337,7 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		if scheduleErr := d.recordPollSchedule(projectID, time.Now().UTC()); scheduleErr != nil {
 			return scheduleErr
 		}
+		d.persistSelfServiceSchedules(projectID)
 	}
 	return err
 }
@@ -1033,6 +1048,25 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		}
 		skipReviewDispatch := map[string]struct{}{}
 		for recordID, current := range projectRuns {
+			if reconciled, suppressRetry, stopChanged, err := d.reconcilePersistedStopIntent(current); err != nil {
+				return err
+			} else if stopChanged {
+				if err := d.upsertRunWithStream(current, reconciled); err != nil {
+					return err
+				}
+				globalActiveRuns += dispatchCapacityRunDelta(current, reconciled)
+				projectActiveRuns += dispatchCapacityRunDelta(current, reconciled)
+				projectRuns[recordID] = reconciled
+				current = reconciled
+				if suppressRetry {
+					continue
+				}
+			} else if suppressRetry {
+				// Do not let retry normalization, tracker reconciliation, or
+				// auto-advance consume a run while its exact stop intent is still
+				// pending against a live owner.
+				continue
+			}
 			if note, ok := notesByRecordID[recordID]; ok {
 				normalized, changed, err := d.normalizeDeadRetryQueuedRun(ctx, project, wfFile, current, note)
 				if err != nil {
@@ -1138,10 +1172,16 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				if err != nil {
 					return err
 				}
-				if !ok || !containsString(wfFile.Data.Tracker.ActiveStates, stringField(projected.Data, "status")) {
+				if ok && containsString(wfFile.Data.Tracker.ActiveStates, stringField(projected.Data, "status")) {
+					note = projected
+				} else if reservation, reservationOK := selfServiceReservationPromotion(project.VaultRoot, d.store, project.ProjectID, note, now); reservationOK && containsString(wfFile.Data.Tracker.ActiveStates, stringField(reservation.Data, "status")) {
+					// The member's own current-authorization reservation
+					// releases it from canonical backlog authoring. Anything
+					// without that backing stays waiting.
+					note = reservation
+				} else {
 					continue
 				}
-				note = projected
 			}
 			recordID := trackerRecordID(note)
 			if recordID == "" {
@@ -1250,6 +1290,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			}
 			projectRuns[recordID] = current
 
+			if blocked, _, err := d.automaticRetryBlockedByStopIntent(current); err != nil {
+				return err
+			} else if blocked {
+				continue
+			}
 			if shouldDispatchRun(current, now) {
 				dispatchNote := note
 				dispatchNotes := notes
@@ -1276,6 +1321,17 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 						if projectedTask, exists := projectedIdx.Tasks[trackerRecordID(candidate)]; exists {
 							dispatchNotes[i] = projectedTask
 						}
+					}
+				}
+				if !containsString(wfFile.Data.Tracker.ActiveStates, stringField(dispatchNote.Data, "status")) {
+					if reservation, reservationOK := selfServiceReservationPromotion(project.VaultRoot, d.store, project.ProjectID, dispatchNote, now); reservationOK {
+						// The dispatch-time projection above renders canonical
+						// bytes; the member's own current-authorization
+						// reservation releases it from backlog authoring here so
+						// scope, readiness, and plan checks read one promoted note.
+						// Dependency maps keep canonical bytes: promotion never
+						// marks a dependency satisfied.
+						dispatchNote = reservation
 					}
 				}
 				// Process-level dispatch refusal (one-shot interactive commands and
@@ -1493,6 +1549,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if !shouldDispatchRun(current, now) {
 				continue
 			}
+			if blocked, _, err := d.automaticRetryBlockedByStopIntent(current); err != nil {
+				return err
+			} else if blocked {
+				continue
+			}
 			if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
 				return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
 			}
@@ -1679,16 +1740,45 @@ func (d *Daemon) evaluateWorkerAttention(runs []RunStatus, intervals map[string]
 }
 
 func (d *Daemon) reclaimExpiredDispatchCapacity(runs []RunStatus, now time.Time) (bool, error) {
+	// On a project-list failure every run takes the legacy unbounded
+	// reclaim below, which is exactly the previous behavior.
+	enabled := map[string]bool{}
+	if projects, err := d.store.ListProjects(); err == nil {
+		for _, project := range projects {
+			if project.Enabled {
+				enabled[project.ProjectID] = true
+			}
+		}
+	}
 	reclaimed := false
 	for _, run := range runs {
 		if !runConsumesDispatchCapacity(run) {
 			continue
 		}
-		changed, err := d.store.reclaimExpiredRunLeaseIfSnapshot(run, now, defaultRunLeaseTTL, "daemon poll reclaimed expired dead lease")
+		if blocked, _, err := d.automaticRetryBlockedByStopIntent(run); err != nil {
+			return reclaimed, err
+		} else if blocked {
+			// Let the exact-generation stop reconciliation below settle this
+			// owner. Lease reclaim must not turn an operator stop into an
+			// automatic retry before that fence is consumed.
+			continue
+		}
+		changed, repaired, escalated, err := autoRepairDeadReservation(d.store, enabled[run.ProjectID], run, now)
 		if err != nil {
 			return reclaimed, err
 		}
-		reclaimed = reclaimed || changed
+		if escalated {
+			log.Printf("self-service automatic safe repair escalated once: project=%s record=%s owner=%s generation=%d", run.ProjectID, run.RecordID, strings.TrimSpace(run.LeaseOwner), run.LeaseGeneration)
+		}
+		if changed {
+			reclaimed = true
+			if enabled[run.ProjectID] {
+				// Freed capacity wakes the affected project promptly instead
+				// of waiting for its next periodic tick.
+				d.noteProjectActivity(run.ProjectID, "capacity_reclaimed", now)
+			}
+		}
+		_ = repaired
 	}
 	return reclaimed, nil
 }
@@ -1924,6 +2014,89 @@ func dispatchCapacityCountExcludingRun(count int, run RunStatus) int {
 
 func dispatchCapacityLimitReached(active, limit int, run RunStatus) bool {
 	return limit > 0 && dispatchCapacityCountExcludingRun(active, run) >= limit
+}
+
+// pendingRunStopIntent returns the exact-generation stop intent for run. A
+// prior stop must never fence a newer attempt, even when the record id is the
+// same. Owner and attempt values are checked only when both sides still carry
+// them: reconciliation clears those fields after an owner exits, while the
+// lease generation remains the durable lineage fence.
+func (d *Daemon) pendingRunStopIntent(run RunStatus) (*runSessionControlIntent, error) {
+	if d == nil || d.store == nil || strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" {
+		return nil, nil
+	}
+	intent, err := loadRunSessionControlIntent(d.store, run.ProjectID, run.RecordID)
+	if err != nil || intent == nil {
+		return nil, err
+	}
+	if intent.Action != runSessionControlStop ||
+		(intent.State != runSessionControlPending && intent.State != runSessionControlUnknown) ||
+		intent.LeaseGeneration != run.LeaseGeneration {
+		return nil, nil
+	}
+	if strings.TrimSpace(intent.LeaseOwner) != "" && strings.TrimSpace(run.LeaseOwner) != "" && intent.LeaseOwner != run.LeaseOwner {
+		return nil, nil
+	}
+	if strings.TrimSpace(intent.AttemptID) != "" && strings.TrimSpace(run.ActiveAttemptID) != "" && intent.AttemptID != run.ActiveAttemptID {
+		return nil, nil
+	}
+	return intent, nil
+}
+
+// reconcilePersistedStopIntent consumes a pending/unknown stop after a
+// restart. It deliberately uses the process-group ownership check instead of
+// a heartbeat: a stale heartbeat cannot authorize a new retry, and a live
+// exact owner must remain untouched until its operator stop settles.
+//
+// suppressRetry is true for both outcomes. When the owner is live the caller
+// must leave the run alone. When it is gone this method records an interrupted
+// run; the intent is settled on the following read after that CAS is durable,
+// so a failed write cannot accidentally reopen a retry.
+func (d *Daemon) reconcilePersistedStopIntent(run RunStatus) (reconciled RunStatus, suppressRetry, changed bool, err error) {
+	reconciled = run
+	intent, err := d.pendingRunStopIntent(run)
+	if err != nil || intent == nil {
+		return reconciled, false, false, err
+	}
+	suppressRetry = true
+	if runProcessGroupAlive(run) {
+		return reconciled, true, false, nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if !run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateInterrupted {
+		reconciled.LeaseState = string(LeaseStateInterrupted)
+		reconciled.AttemptOutcome = string(AttemptOutcomeCancelled)
+		reconciled.NextRetryAt = ""
+		reconciled.LastError = firstNonEmpty(strings.TrimSpace(intent.Reason), "operator stop intent settled; automatic retry suppressed")
+		reconciled.UpdatedAt = now
+		reconciled.Terminal = false
+		updateRunAttemptFromRun(d.store, reconciled, AttemptOutcomeCancelled, 130, reconciled.LastError, now)
+		clearActiveExecution(&reconciled)
+		changed = true
+	}
+	if changed {
+		// The caller persists reconciled after this function returns. Keep the
+		// intent pending until that CAS succeeds; otherwise a transient write
+		// failure could settle the control while the old retryable row remained.
+		return reconciled, true, true, nil
+	}
+	intent.State = runSessionControlSettledState
+	intent.Reason = "daemon observed the exact owner/process settled; automatic retry suppressed"
+	intent.UpdatedAt = now
+	if err := saveRunSessionControlIntent(d.store, *intent); err != nil {
+		return run, false, false, err
+	}
+	return reconciled, true, changed, nil
+}
+
+func (d *Daemon) automaticRetryBlockedByStopIntent(run RunStatus) (bool, string, error) {
+	intent, err := d.pendingRunStopIntent(run)
+	if err != nil || intent == nil {
+		return false, "", err
+	}
+	reason := "operator stop remains " + firstNonEmpty(intent.State, runSessionControlUnknown)
+	return true, reason, nil
 }
 
 func shouldDispatchRun(run RunStatus, now time.Time) bool {
@@ -2172,6 +2345,9 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 	if d == nil || d.store == nil || run.RecordID == "" || run.Lane == runLaneReview || !isDispatchCapacityLeaseState(run.LeaseState) {
 		return run, false, nil
 	}
+	if activeInteractiveBacklogClaim(d.store, project.VaultRoot, note, run, time.Now().UTC()) {
+		return run, false, nil
+	}
 	if containsString(wfFile.Data.Tracker.ReviewStates, stringField(note.Data, "status")) {
 		return run, false, nil
 	}
@@ -2303,6 +2479,9 @@ func daemonShouldCloseNonDispatchableRun(wf Workflow, note Note) bool {
 }
 
 func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) (RunStatus, bool, error) {
+	if activeInteractiveBacklogClaim(d.store, project.VaultRoot, note, run, time.Now().UTC()) {
+		return run, false, nil
+	}
 	if run.Lane == runLaneExecute {
 		projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
 		if err != nil {
@@ -2505,6 +2684,16 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	changed := false
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
+	if reconciled, suppressRetry, stopChanged, err := d.reconcilePersistedStopIntent(run); err != nil {
+		return run, false, err
+	} else if suppressRetry {
+		// A pending or unknown operator stop is the durable authority after a
+		// daemon restart. A live owner remains untouched; once the owner has
+		// settled, reconcilePersistedStopIntent records the interrupted outcome
+		// and closes the intent. In either case, do not inspect provider state or
+		// schedule a continuation from this run.
+		return reconciled, stopChanged, nil
+	}
 	sessionResumable := runSessionResumable(wfFile.Data, run)
 	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
 		return run, false, err
@@ -2513,6 +2702,12 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	}
 	if strings.TrimSpace(run.RawLogPath) != "" {
 		if sessionRef := extractSessionRef(run.RawLogPath); sessionRef != "" && sessionRef != run.SessionRef {
+			run.SessionRef = sessionRef
+			changed = true
+		}
+	}
+	if run.SessionRef == "" {
+		if sessionRef := acpSessionRefFromAttemptEvents(run.EventSinkPath, run.ActiveAttemptID, run.Runner); sessionRef != "" {
 			run.SessionRef = sessionRef
 			changed = true
 		}
@@ -4450,7 +4645,9 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 			return run, false, parentErr
 		}
 		parentAttemptID = parent.AttemptID
-	} else if recoveryParent := outcomeUnknownRecoveryParent(previousRun.LastError); recoveryParent != "" {
+	} else if recoveryParent, recoveryErr := pendingOutcomeUnknownRecoveryParent(d.store, previousRun); recoveryErr != nil {
+		return run, false, recoveryErr
+	} else if recoveryParent != "" {
 		parentAttemptID = recoveryParent
 		childType = "recovery"
 	}
@@ -4997,6 +5194,13 @@ type resolvedResumeSession struct {
 
 func (d *Daemon) resolveResumeSession(project RegisteredProject, note Note, run RunStatus) (resolvedResumeSession, error) {
 	if run.Lane == runLaneReview {
+		return resolvedResumeSession{}, nil
+	}
+	// Explicit context recovery and start_fresh both clear SessionRef on the
+	// run. Do not let the historical LatestSession fallback silently turn either
+	// operator choice back into native continuation.
+	if strings.HasPrefix(strings.TrimSpace(run.LastError), outcomeUnknownContextRecoveryReasonPrefix) ||
+		strings.HasPrefix(strings.TrimSpace(run.LastError), runSessionControlFreshReasonPrefix) {
 		return resolvedResumeSession{}, nil
 	}
 	if strings.TrimSpace(run.SessionRef) != "" {
@@ -6798,7 +7002,11 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
 		rendered = strings.TrimSpace(rendered) + "\n\n" + runtimeContext
 	}
-	if parentAttemptID := outcomeUnknownRecoveryParent(previousRun.LastError); parentAttemptID != "" {
+	parentAttemptID, recoveryErr := pendingOutcomeUnknownRecoveryParent(store, previousRun)
+	if recoveryErr != nil {
+		return "", recoveryErr
+	}
+	if parentAttemptID != "" {
 		priorFailure := "final outcome was not recorded"
 		if store != nil {
 			if attempts, listErr := store.ListAttemptsForRun(project.ProjectID, trackerRecordID(note)); listErr == nil {
@@ -8105,7 +8313,118 @@ func openRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, bool, error) {
 }
 
 func setProjectAutomation(store *RuntimeStore, project RegisteredProject, enabled bool) error {
-	return store.SetProjectEnabled(project.ProjectID, enabled)
+	_, err := setProjectAutomationAudited(store, project, enabled, defaultActorName(), "cli")
+	return err
+}
+
+// setProjectAutomationAudited flips Background work with persisted
+// actor/source/before/after/time evidence. A failed write returns an error
+// and changes nothing: callers must not report success.
+func setProjectAutomationAudited(store *RuntimeStore, project RegisteredProject, enabled bool, actor, source string) (bool, error) {
+	if store == nil {
+		return false, tuskerError(errorInvalidArg, "project automation toggle requires a runtime store")
+	}
+	return store.SetProjectAutomationAudited(project.ProjectID, enabled, actor, source)
+}
+
+// ProjectAutomationScopeWave is one still-valid prior wave authorization an
+// enable would resume. Frontier members are the exact tasks that become
+// eligible; the wave keeps its project/checkout identity.
+type ProjectAutomationScopeWave struct {
+	WaveID    string   `json:"wave_id"`
+	Title     string   `json:"title,omitempty"`
+	Members   []string `json:"members"`
+	Frontier  []string `json:"frontier"`
+	Eligible  int      `json:"eligible_count"`
+	Total     int      `json:"total_count"`
+	ProjectID string   `json:"project_id"`
+}
+
+// ProjectAutomationScopeDirective is one still-valid task-scoped directive
+// an enable would resume.
+type ProjectAutomationScopeDirective struct {
+	RecordID string `json:"record_id"`
+	WaveID   string `json:"wave_id,omitempty"`
+	Actor    string `json:"actor,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// ProjectAutomationScopeExclusion names prior work an enable does NOT
+// resume, with the exact reason: stale, paused, disarmed/inert, or landed.
+type ProjectAutomationScopeExclusion struct {
+	WaveID string `json:"wave_id"`
+	Reason string `json:"reason"`
+}
+
+// ProjectAutomationScope is the exact resume scope an enable would pick up.
+// Computing it arms nothing: it is a read-only projection over wave
+// authority and active directives.
+type ProjectAutomationScope struct {
+	ProjectID  string                            `json:"project_id"`
+	Waves      []ProjectAutomationScopeWave      `json:"waves"`
+	Directives []ProjectAutomationScopeDirective `json:"directives"`
+	Excluded   []ProjectAutomationScopeExclusion `json:"excluded"`
+}
+
+// projectAutomationScope enumerates every still-valid prior authorization in
+// the project: armed waves with their eligible frontier, plus active
+// task-scoped directives. Stale, paused, disarmed, inert, and landed waves
+// are excluded with reasons. It never arms, enables, or mutates anything.
+func projectAutomationScope(store *RuntimeStore, project RegisteredProject, now time.Time) (ProjectAutomationScope, error) {
+	scope := ProjectAutomationScope{
+		ProjectID:  project.ProjectID,
+		Waves:      []ProjectAutomationScopeWave{},
+		Directives: []ProjectAutomationScopeDirective{},
+		Excluded:   []ProjectAutomationScopeExclusion{},
+	}
+	idx, err := loadV7Index(project.VaultRoot)
+	if err != nil {
+		return scope, err
+	}
+	runs := map[string]RunStatus{}
+	if store != nil {
+		if allRuns, err := store.ListRuns(); err == nil {
+			for _, run := range allRuns {
+				if run.ProjectID == project.ProjectID {
+					runs[firstNonEmpty(run.ItemID, run.RecordID)] = run
+				}
+			}
+		}
+		if directives, err := store.ListActiveRunDirectives(project.ProjectID, now); err == nil {
+			for _, directive := range directives {
+				scope.Directives = append(scope.Directives, ProjectAutomationScopeDirective{
+					RecordID: directive.RecordID, WaveID: directive.WaveID,
+					Actor: directive.Actor, Reason: directive.Reason,
+				})
+			}
+		} else {
+			return scope, err
+		}
+	}
+	for _, wave := range sortedV7Waves(idx) {
+		waveID := stringField(wave.Data, "id")
+		snapshot := buildArmedWaveSnapshot(project.VaultRoot, idx, wave, runs, now)
+		if snapshot.Authorization != "armed" {
+			scope.Excluded = append(scope.Excluded, ProjectAutomationScopeExclusion{
+				WaveID: waveID, Reason: "wave authorization is " + fallback(snapshot.Authorization, "disarmed"),
+			})
+			continue
+		}
+		members := normalizeList(wave.Data["members"])
+		eligible := append([]string(nil), snapshot.Frontier...)
+		for _, member := range snapshot.Members {
+			if member.State == armedWaveRunnable && !containsString(eligible, member.ID) {
+				eligible = append(eligible, member.ID)
+			}
+		}
+		sort.Strings(eligible)
+		scope.Waves = append(scope.Waves, ProjectAutomationScopeWave{
+			WaveID: waveID, Title: stringField(wave.Data, "title"),
+			Members: members, Frontier: append([]string{}, snapshot.Frontier...),
+			Eligible: len(eligible), Total: len(members), ProjectID: project.ProjectID,
+		})
+	}
+	return scope, nil
 }
 
 func setProjectEnabledCmd(args Args, enabled bool) error {
@@ -8129,6 +8448,11 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 		return err
 	}
 	project := loaded.Project
+	if args.Bool("dry-run") {
+		return emitProjectAutomationPreview(store, args, project)
+	}
+	// Validation stays before the write: a toggle that fails validation
+	// persists nothing and audits nothing.
 	if enabled {
 		if err := validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot); err != nil {
 			return err
@@ -8138,9 +8462,18 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 	if err != nil {
 		return err
 	}
-	if err := setProjectAutomation(store, project, enabled); err != nil {
+	actor := defaultActorName()
+	before, err := setProjectAutomationAudited(store, project, enabled, actor, "cli")
+	if err != nil {
 		return err
 	}
+	scope, scopeErr := projectAutomationScope(store, project, time.Now().UTC())
+	audit, auditErr := store.ListProjectAutomationAudit(project.ProjectID)
+	var auditEvent *ProjectAutomationAuditEvent
+	if auditErr == nil && len(audit) > 0 {
+		auditEvent = &audit[len(audit)-1]
+	}
+	notifyProjectEnableWake(project.ProjectID, enabled)
 	updated := project
 	updated.Enabled = enabled
 	if enabled {
@@ -8155,6 +8488,7 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 			warnings = append(warnings, warning)
 		}
 	}
+	scopeSummary := projectAutomationScopeSummary(scope, scopeErr)
 	if args.Bool("json") {
 		emitJSON(map[string]any{
 			"ok":                 true,
@@ -8163,6 +8497,8 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 			"automation_enabled": enabled,
 			"active_run_count":   activeRuns,
 			"warnings":           warnings,
+			"scope":              scopeSummary,
+			"audit":              auditEvent,
 		})
 		return nil
 	}
@@ -8171,12 +8507,128 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 		verb = "Enabled"
 	}
 	fmt.Printf("%s background work for project %s (%s)\n", verb, updated.Name, updated.ProjectID)
+	fmt.Printf("Previous state: %s; change by %s via cli.\n", enabledWord(before), actor)
+	fmt.Printf("Resume scope: %s\n", scopeSummaryLine(scope, scopeErr))
 	if !enabled && activeRuns > 0 {
 		fmt.Printf("Warning: %d active run(s) still exist for this project. They will not be redispatched, but they are still in runtime state.\n", activeRuns)
 	}
 	for _, warning := range warnings {
 		fmt.Println("Warning: " + warning)
 	}
+	return nil
+}
+
+// emitProjectAutomationPreview shows the exact resume scope an enable would
+// pick up, without arming, enabling, or mutating anything.
+func emitProjectAutomationPreview(store *RuntimeStore, args Args, project RegisteredProject) error {
+	scope, err := projectAutomationScope(store, project, time.Now().UTC())
+	if err != nil {
+		// Vault unreadable: the preview is unavailable, never an empty scope
+		// that could be mistaken for "nothing to resume".
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": false, "project_id": project.ProjectID, "error": err.Error()})
+			return nil
+		}
+		return err
+	}
+	if args.Bool("json") {
+		emitJSON(map[string]any{"ok": true, "dry_run": true, "project_id": project.ProjectID, "scope": scope})
+		return nil
+	}
+	fmt.Printf("Enable preview for project %s (%s): no changes made.\n", project.Name, project.ProjectID)
+	fmt.Printf("Resume scope: %s\n", scopeSummaryLine(scope, nil))
+	for _, excluded := range scope.Excluded {
+		fmt.Printf("  excluded %s: %s\n", excluded.WaveID, excluded.Reason)
+	}
+	fmt.Println("Enabling resumes this scope only; it arms no new work.")
+	return nil
+}
+
+func enabledWord(enabled bool) string {
+	if enabled {
+		return "enabled"
+	}
+	return "disabled"
+}
+
+// projectAutomationScopeSummary is the compact JSON form of a resume scope.
+func projectAutomationScopeSummary(scope ProjectAutomationScope, scopeErr error) map[string]any {
+	if scopeErr != nil {
+		return map[string]any{"project_id": scope.ProjectID, "unavailable": scopeErr.Error()}
+	}
+	waves := make([]any, 0, len(scope.Waves))
+	for _, wave := range scope.Waves {
+		waves = append(waves, map[string]any{
+			"wave_id": wave.WaveID, "eligible_count": wave.Eligible,
+			"total_count": wave.Total, "frontier": wave.Frontier,
+		})
+	}
+	return map[string]any{
+		"project_id": scope.ProjectID, "waves": waves,
+		"directive_count": len(scope.Directives), "excluded_count": len(scope.Excluded),
+	}
+}
+
+func scopeSummaryLine(scope ProjectAutomationScope, scopeErr error) string {
+	if scopeErr != nil {
+		return "scope unavailable: " + scopeErr.Error()
+	}
+	eligible := 0
+	for _, wave := range scope.Waves {
+		eligible += wave.Eligible
+	}
+	return fmt.Sprintf("%d armed wave(s), %d eligible task(s), %d task-scoped directive(s), %d excluded wave(s)",
+		len(scope.Waves), eligible, len(scope.Directives), len(scope.Excluded))
+}
+
+// projectsAutomationScopeCmd is the read-only resume-scope and audit
+// readback for Background work. It never enables, arms, or mutates anything.
+func projectsAutomationScopeCmd(args Args) error {
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	loaded, err := resolveLoadedRegisteredProject(store, args, registeredProjectLoadOptions{LoadDisabled: true})
+	if err != nil {
+		return err
+	}
+	project := loaded.Project
+	now := time.Now().UTC()
+	scope, scopeErr := projectAutomationScope(store, project, now)
+	audit, auditErr := store.ListProjectAutomationAudit(project.ProjectID)
+	if args.Bool("json") {
+		emitJSON(map[string]any{
+			"ok": true, "project_id": project.ProjectID, "enabled": project.Enabled,
+			"scope": scope, "scope_unavailable": errorString(scopeErr),
+			"audit_trail": audit, "audit_unavailable": errorString(auditErr),
+		})
+		return nil
+	}
+	if scopeErr != nil {
+		return scopeErr
+	}
+	fmt.Printf("Background work for project %s (%s) is %s.\n", project.Name, project.ProjectID, enabledWord(project.Enabled))
+	fmt.Printf("Resume scope: %s\n", scopeSummaryLine(scope, nil))
+	for _, wave := range scope.Waves {
+		fmt.Printf("  armed %s: %d/%d eligible (frontier: %s)\n", wave.WaveID, wave.Eligible, wave.Total, strings.Join(wave.Frontier, ", "))
+	}
+	for _, directive := range scope.Directives {
+		fmt.Printf("  directive %s (wave %s, by %s)\n", directive.RecordID, fallback(directive.WaveID, "-"), fallback(directive.Actor, "-"))
+	}
+	for _, excluded := range scope.Excluded {
+		fmt.Printf("  excluded %s: %s\n", excluded.WaveID, excluded.Reason)
+	}
+	if auditErr != nil {
+		fmt.Printf("Audit trail unavailable: %s\n", auditErr)
+		return nil
+	}
+	fmt.Printf("Toggle history (%d change(s)):\n", len(audit))
+	for _, event := range audit {
+		actor := fallback(event.Actor, "unattributed (historical)")
+		fmt.Printf("  %s: %s -> %s by %s via %s\n", event.CreatedAt, enabledWord(event.BeforeEnabled), enabledWord(event.AfterEnabled), actor, fallback(event.Source, "-"))
+	}
+	fmt.Println("Reading this scope enables and arms nothing.")
 	return nil
 }
 

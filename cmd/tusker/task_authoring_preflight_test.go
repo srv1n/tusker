@@ -134,3 +134,74 @@ func TestTaskAuthoringRouteGateExplicitUnclassifiedTierBlocksOverrides(t *testin
 		t.Fatalf("wave admission did not block both lanes: %#v", blockers)
 	}
 }
+
+func TestTaskAuthoringArmAcceptsValidDependencyBlockedMember(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, nil)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"dependencies": []any{"APP-T-0001:hard"}})
+	rewriteTaskFile(t, vault, "APP-T-0002", func(data map[string]any, body string) (map[string]any, string) {
+		data["status"] = "ready"
+		data["readiness"] = "blocked_by_dependency"
+		data["next_owner"] = "blocked_dependency"
+		data["next_source"] = "dependency"
+		data["next_ref"] = "APP-T-0001"
+		return data, body
+	})
+
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockers := directWaveArmContractBlockers(vault, idx, idx.Waves["W-0001"])
+	for _, blocker := range blockers {
+		if blocker.TaskID == "APP-T-0002" {
+			t.Fatalf("valid dependency-waiting member was treated as a contract defect: %#v", blocker)
+		}
+	}
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waveStartEnabled := false
+	for _, control := range review.Controls {
+		if control.Action == "wave start" {
+			waveStartEnabled = control.Enabled
+		}
+	}
+	if !waveStartEnabled {
+		t.Fatalf("wave review disagreed with arm admission: %#v", review.Controls)
+	}
+	result, err := directWaveStart(vault, store, "W-0001", "human:test")
+	if err != nil {
+		t.Fatalf("valid dependency-waiting member prevented wave start: %v", err)
+	}
+	if len(result.QueuedTaskIDs) != 1 || result.QueuedTaskIDs[0] != "APP-T-0001" {
+		t.Fatalf("wave start bypassed dependency admission: %#v", result.QueuedTaskIDs)
+	}
+}
+
+func TestTaskAuthoringArmRejectsUnknownReadiness(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+		data["readiness"] = "not_a_readiness_state"
+		return data, body
+	})
+
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockers := directWaveArmContractBlockers(vault, idx, idx.Waves["W-0001"])
+	if len(blockers) != 1 || blockers[0].TaskID != "APP-T-0001" || !strings.Contains(blockers[0].Reason, "readiness is not_a_readiness_state") {
+		t.Fatalf("unknown readiness was not a member contract blocker: %#v", blockers)
+	}
+	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err == nil || !strings.Contains(err.Error(), "MEMBER_CONTRACT_INVALID") {
+		t.Fatalf("wave start accepted malformed readiness: %v", err)
+	}
+	if got := queuedDirectives(t, store, project.ProjectID); len(got) != 0 {
+		t.Fatalf("malformed readiness published directives: %#v", got)
+	}
+}

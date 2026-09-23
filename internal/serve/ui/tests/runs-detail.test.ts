@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { EventTail } from "../src/features/runs/detail/EventTail";
 import {
   isInterruptibleRun,
   isLiveHeaderRun,
@@ -100,6 +103,7 @@ test("runs-detail polling stops on query error and otherwise follows readback st
   expect(runRefetchInterval(true, readbackComplete, false, 45_000)).toBe(45_000);
   expect(runRefetchInterval(false, waitingForReadback, false, false)).toBe(false);
   expect(runRefetchInterval(true, waitingForReadback, true, 45_000)).toBe(false);
+  expect(runRefetchInterval(false, completedRun, false, 45_000, true)).toBe(400);
 });
 
 test("run action invalidation waits for every canonical query refetch", async () => {
@@ -127,6 +131,37 @@ test("run action invalidation waits for every canonical query refetch", async ()
   releases.forEach((release) => release());
   await invalidation;
   expect(settled).toBe(true);
+});
+
+test("running message feed refreshes even with a connected event stream", () => {
+  const running = { ...completedRun, terminal: false, leaseState: "held" } satisfies RunDetail;
+  expect(runRefetchInterval(false, running, false, false)).toBe(2_000);
+  expect(runRefetchInterval(false, running, true, false)).toBe(false);
+});
+
+test("message feed shows readable escaped content instead of transport noise", () => {
+  const html = renderToStaticMarkup(createElement(EventTail, {
+    events: [
+      { ts: "2026-09-22T12:00:00Z", kind: "acp_session_update_observed", text: "transport noise" },
+      { ts: "2026-09-22T12:00:01Z", kind: "agent_message", text: "Running fixture tests\n<script>alert(1)</script>", activity: true },
+      { ts: "", kind: "tool_call", text: "cargo test\nin_progress", activity: true },
+    ],
+    liveness: "fresh",
+    sinceLastEventSec: 2,
+  }));
+  expect(html).toContain("Recent messages");
+  expect(html).toContain("Running fixture tests");
+  expect(html).toContain("cargo test");
+  expect(html).toContain("Time unavailable");
+  expect(html).toContain("&lt;script&gt;");
+  expect(html).not.toContain("<script>");
+  expect(html).not.toContain("transport noise");
+});
+
+test("legacy message capture does not pretend a fresh heartbeat is progress", () => {
+  const html = renderToStaticMarkup(createElement(EventTail, { events: [], liveness: "fresh", sinceLastEventSec: 1 }));
+  expect(html).toContain("No messages captured for this attempt");
+  expect(html).toContain("Older ACP runs");
 });
 
 test("runs-detail interrupt confirms, guards double fire, and polls canonical readback", () => {

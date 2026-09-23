@@ -47,7 +47,7 @@ func TestRunnerACPFencedWrapperFlowRecordsOnlyObservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"acp_protocol_negotiated", "acp_session_bound", "acp_session_update_observed", "acp_turn_terminal", "observation_only"} {
+	for _, want := range []string{"acp_protocol_negotiated", "acp_session_bound", "agent_message", "working", "acp_turn_terminal", "observation_only"} {
 		if !strings.Contains(events, want) {
 			t.Fatalf("missing ACP observation %q in events:\n%s", want, events)
 		}
@@ -120,6 +120,34 @@ func TestACPAuthorityAndCloudBoundariesRemainSeparate(t *testing.T) {
 	cloud := &CodexCloudRunner{Config: codexCloudTestConfig("manual", "none"), Executor: &fakeCodexCloudExecutor{}}
 	if cloud.Name() != RunnerCodexCloud || cloud.Name() == RunnerACP {
 		t.Fatalf("codex_cloud was aliased to ACP: cloud=%s acp=%s", cloud.Name(), runner.Name())
+	}
+}
+
+func TestDevinSessionBindingSurvivesDetachedWrapper(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	ref := acpStoredSessionRef("devin", "knowing-cupcake")
+	provenance := acpAttemptProvenance{AttemptID: "attempt-1", Runner: RunnerDevin, Adapter: "devin", SessionID: ref}
+	if err := appendACPEvent(NewEventLog(path), "acp_session_bound", provenance, map[string]any{"session_observation": "bound_to_current_attempt"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := acpSessionRefFromAttemptEvents(path, "attempt-1", string(RunnerDevin)); got != ref {
+		t.Fatalf("bound session=%q, want %q", got, ref)
+	}
+	if got := acpSessionRefFromAttemptEvents(path, "attempt-2", string(RunnerDevin)); got != "" {
+		t.Fatalf("cross-attempt session=%q", got)
+	}
+	if raw, err := acpRawSessionRef("devin", ref); err != nil || raw != "knowing-cupcake" {
+		t.Fatalf("decoded session=%q err=%v", raw, err)
+	}
+	if _, err := acpRawSessionRef("devin", acpStoredSessionRef("other", "knowing-cupcake")); err == nil {
+		t.Fatal("accepted a different adapter's session")
+	}
+	if !(&ACPRunner{runner: RunnerDevin}).Capabilities().ResumeSession || (&ACPRunner{}).Capabilities().ResumeSession {
+		t.Fatal("provider-specific resume capability leaked into generic ACP")
+	}
+	capability := resumeCapability(&RunStatus{Runner: string(RunnerDevin)}, &RunnerSession{SessionRef: ref, Resumable: true})
+	if !capability.Supported || capability.Command != "" {
+		t.Fatalf("Devin recovery capability must not advertise an unverified CLI command: %+v", capability)
 	}
 }
 

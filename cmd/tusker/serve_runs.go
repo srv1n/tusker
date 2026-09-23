@@ -1,11 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -355,36 +352,48 @@ func turnsByAttempt(turns []RunTurn) map[string]struct{} {
 }
 
 func serveRunEvents(run RunStatus, attempts []RunAttempt) []serveRunEvent {
-	eventPath := bestRunEventPath(run, attempts)
-	if eventPath == "" {
-		return []serveRunEvent{}
+	var latest RunAttempt
+	for _, attempt := range attempts {
+		if run.ActiveAttemptID != "" {
+			if attempt.AttemptID == run.ActiveAttemptID {
+				latest = attempt
+				break
+			}
+		} else if latest.AttemptID == "" || attempt.StartedAt > latest.StartedAt {
+			latest = attempt
+		}
 	}
-	file, err := os.Open(eventPath)
-	if err != nil {
-		return []serveRunEvent{}
-	}
-	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, 256*1024))
-	if err != nil {
-		return []serveRunEvent{}
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) > 50 {
-		lines = lines[len(lines)-50:]
-	}
+	attempts = []RunAttempt{latest}
 	out := []serveRunEvent{}
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var payload map[string]any
-		if json.Unmarshal([]byte(line), &payload) != nil {
-			continue
-		}
-		out = append(out, serveRunEventFromPayload(payload))
+	for _, payload := range runActivityTail(bestRunEventPath(run, attempts)) {
+		out = appendRunActivity(out, serveRunEventFromPayload(payload))
 	}
-	return out
+	for _, payload := range runActivityTail(bestRunLogPath(run, attempts)) {
+		for _, event := range cliRunActivity(payload) {
+			out = appendRunActivity(out, event)
+		}
+	}
+	// Keep diagnostics from displacing the recent messages with heartbeat noise.
+	activityCount, diagnosticCount := 0, 0
+	keep := make([]serveRunEvent, 0, 100)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Activity {
+			activityCount++
+			if activityCount > 50 {
+				continue
+			}
+		} else {
+			diagnosticCount++
+			if diagnosticCount > 50 {
+				continue
+			}
+		}
+		keep = append(keep, out[i])
+	}
+	for i, j := 0, len(keep)-1; i < j; i, j = i+1, j-1 {
+		keep[i], keep[j] = keep[j], keep[i]
+	}
+	return keep
 }
 
 // serveRunEventFromPayload flattens one JSONL event line into the shape the run
@@ -409,10 +418,12 @@ func serveRunEventFromPayload(payload map[string]any) serveRunEvent {
 		return ""
 	}
 	return serveRunEvent{
-		TS:    field("at", "ts", "timestamp", "time"),
-		Kind:  firstNonEmpty(field("kind", "event"), "event"),
-		Text:  field("text", "message", "summary", "detail"),
-		Level: field("level", "severity"),
+		TS:       field("at", "ts", "timestamp", "time"),
+		ID:       field("message_id"),
+		Kind:     firstNonEmpty(field("kind", "event"), "event"),
+		Text:     runActivityText(field("text", "message", "summary", "detail")),
+		Level:    field("level", "severity"),
+		Activity: nested != nil && nested["activity"] == true,
 	}
 }
 
@@ -441,13 +452,62 @@ type serveRecoveryResult struct {
 }
 
 const outcomeUnknownRecoveryReasonPrefix = "recover outcome unknown from "
+const outcomeUnknownContextRecoveryReasonPrefix = "recover context from "
 
 func outcomeUnknownRecoveryParent(lastError string) string {
-	marker := strings.Index(lastError, outcomeUnknownRecoveryReasonPrefix)
-	if marker < 0 {
-		return ""
+	for _, prefix := range []string{outcomeUnknownRecoveryReasonPrefix, outcomeUnknownContextRecoveryReasonPrefix} {
+		marker := strings.Index(lastError, prefix)
+		if marker >= 0 {
+			return strings.TrimSpace(lastError[marker+len(prefix):])
+		}
 	}
-	return strings.TrimSpace(lastError[marker+len(outcomeUnknownRecoveryReasonPrefix):])
+	return ""
+}
+
+// The directive is the durable queued intent; the redrive record covers older
+// recoveries whose directive lacks a reason. Both survive capacity waits.
+func pendingOutcomeUnknownRecoveryParent(store *RuntimeStore, run RunStatus) (string, error) {
+	parent := outcomeUnknownRecoveryParent(run.LastError)
+	if store == nil {
+		return parent, nil
+	}
+	directive, err := store.RunDirective(run.ProjectID, run.RecordID)
+	if err != nil {
+		return "", err
+	}
+	record, err := store.BudgetWindowStart(run.ProjectID, run.RecordID)
+	if err != nil {
+		return "", err
+	}
+	if directive != nil && (directive.State == "queued" || directive.State == "consumed") {
+		if durable := outcomeUnknownRecoveryParent(directive.Reason); durable != "" {
+			parent = durable
+		}
+	}
+	// A later ordinary redrive supersedes an unclaimed recovery directive.
+	if directive != nil && record.ResetAt != "" && outcomeUnknownRecoveryParent(record.Reason) == "" {
+		redriveAt, redriveErr := time.Parse(time.RFC3339Nano, record.ResetAt)
+		directiveAt, directiveErr := time.Parse(time.RFC3339Nano, directive.CreatedAt)
+		if redriveErr == nil && directiveErr == nil && redriveAt.After(directiveAt) {
+			return "", nil
+		}
+	}
+	if parent == "" {
+		parent = outcomeUnknownRecoveryParent(record.Reason)
+	}
+	if parent == "" {
+		return "", nil
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return "", err
+	}
+	for _, attempt := range attempts {
+		if attempt.ParentAttemptID == parent && attempt.ChildType == "recovery" {
+			return "", nil
+		}
+	}
+	return parent, nil
 }
 
 func queueOutcomeUnknownRecovery(store *RuntimeStore, task Note, wave Note, run RunStatus, actor string, now time.Time) (serveRecoveryResult, error) {
@@ -490,6 +550,25 @@ func queueOutcomeUnknownRecovery(store *RuntimeStore, task Note, wave Note, run 
 			return result, nil
 		}
 	}
+	// Older detached ACP attempts retained the bound session in their event
+	// ledger but did not copy it into the run row. Preserve that exact identity
+	// before redrive so the normal native-resume checks can use it.
+	if run.Runner == string(RunnerDevin) && parent.SessionRef == "" {
+		if ref := acpSessionRefFromAttemptEvents(parent.EventSinkPath, parent.AttemptID, parent.Runner); ref != "" {
+			parent.SessionRef = ref
+			if err := store.SaveAttempt(parent); err != nil {
+				return result, err
+			}
+			if err := store.SaveSession(RunnerSession{
+				ProjectID: run.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: ref,
+				WorkspacePath: parent.WorkspacePath, CurrentItemID: run.ItemID, WorkRevision: parent.WorkRevision,
+				LastAttemptID: parent.AttemptID, State: sessionStateForLeaseState(LeaseStateReleased),
+				Resumable: true, StartedAt: parent.StartedAt, LastSeenAt: now.UTC().Format(time.RFC3339),
+			}); err != nil {
+				return result, err
+			}
+		}
+	}
 	previousRun := run
 	previousBudget, err := store.GetSetting(budgetRedriveSettingKey(run.ProjectID, run.RecordID))
 	if err != nil {
@@ -500,6 +579,7 @@ func queueOutcomeUnknownRecovery(store *RuntimeStore, task Note, wave Note, run 
 	}
 	queued, err := store.QueueRunDirective(RunDirective{
 		ProjectID: run.ProjectID, RecordID: run.RecordID, Actor: actor,
+		Reason:    outcomeUnknownRecoveryReasonPrefix + parent.AttemptID,
 		CreatedAt: now.UTC().Format(time.RFC3339Nano), ExpiresAt: now.UTC().Add(directRunDirectiveTTL).Format(time.RFC3339Nano),
 		WaveID: stringField(wave.Data, "id"), AuthorizationFingerprint: stringField(wave.Data, "authorization_fingerprint"), WaveAuthorizedAt: stringField(wave.Data, "authorized_at"),
 	})
@@ -587,10 +667,12 @@ func reviewRecoveryOperationalBlocker(wave Note, run RunStatus, maxAttempts int)
 	// runDirectiveMatchesTaskAuthority and would sit until TTL expiry. Refuse
 	// up front with the real recovery action instead of admitting silently.
 	if vault := v7VaultPathForLandingAudit(wave); vault != "" {
-		if idx, err := loadV7Index(vault); err == nil {
-			if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
-				return "wave material changed since authorization; re-authorize with `tusker wave start` before retrying review"
-			}
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			return "cannot verify wave material before retrying review: " + err.Error()
+		}
+		if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
+			return "wave material changed since authorization; re-authorize with `tusker wave start` before retrying review"
 		}
 	}
 	return ""

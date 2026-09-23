@@ -137,6 +137,276 @@ func serveCommandResult(command, output string, err error) serveActionResult {
 	return serveActionResult{OK: true, Reason: reason, Command: command, Output: output}
 }
 
+// runSessionControlResult is deliberately explicit about unsupported and
+// unresolved outcomes. A successful HTTP request is not an acknowledged
+// provider action; callers must inspect State/Settled before enabling the next
+// control.
+type runSessionControlResult struct {
+	OK             bool                     `json:"ok"`
+	Refused        bool                     `json:"refused,omitempty"`
+	TaskID         string                   `json:"taskId"`
+	ProjectID      string                   `json:"projectId"`
+	Action         string                   `json:"action"`
+	State          string                   `json:"state"`
+	Supported      bool                     `json:"supported"`
+	Pending        bool                     `json:"pending,omitempty"`
+	Unknown        bool                     `json:"unknown,omitempty"`
+	Settled        bool                     `json:"settled"`
+	Reason         string                   `json:"reason"`
+	Alternative    string                   `json:"alternative,omitempty"`
+	LeaseState     string                   `json:"leaseState,omitempty"`
+	LeaseStateRaw  string                   `json:"leaseStateRaw,omitempty"`
+	ProcessRunning bool                     `json:"processRunning"`
+	SessionRef     string                   `json:"sessionRef,omitempty"`
+	Intent         *runSessionControlIntent `json:"intent,omitempty"`
+}
+
+func (s *serveServer) handleRunSessionControl(w http.ResponseWriter, r *http.Request, taskID string, body serveActionBody) {
+	action := strings.ToLower(strings.TrimSpace(body.string("action", "control")))
+	if action == "start-fresh" {
+		action = runSessionControlFresh
+	}
+	result := runSessionControlResult{TaskID: strings.TrimSpace(taskID), Action: action, State: "refused"}
+	if action != runSessionControlPause && action != runSessionControlStop && action != runSessionControlFresh {
+		result.Refused = true
+		result.Reason = "run control action must be pause, stop, or start_fresh"
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	actor, actorErr := s.serveOperatorActor(body, "serve run "+action)
+	if actorErr != nil {
+		result.Refused = true
+		result.Reason = actorErr.Error()
+		serveJSON(w, http.StatusForbidden, result)
+		return
+	}
+	projectID := strings.TrimSpace(body.string("projectId", "project_id", "project"))
+	if projectID == "" {
+		projectID = strings.TrimSpace(r.URL.Query().Get("project"))
+	}
+	if projectID == "" {
+		result.Refused = true
+		result.Reason = "project query parameter is required to control a run"
+		serveJSON(w, http.StatusBadRequest, result)
+		return
+	}
+	snap, err := s.loadFreshSnapshotForProject(projectID)
+	if err != nil {
+		result.Refused = true
+		result.Reason = "run not found in project"
+		serveJSON(w, http.StatusNotFound, result)
+		return
+	}
+	run, ok := serveFindRun(snap.runs, strings.TrimSpace(taskID))
+	if !ok {
+		result.Refused = true
+		result.Reason = "run not found in project"
+		serveJSON(w, http.StatusNotFound, result)
+		return
+	}
+	result.TaskID = firstNonEmpty(run.ItemID, taskID)
+	result.ProjectID = run.ProjectID
+	result.LeaseState = serveLeaseState(run.LeaseState)
+	result.LeaseStateRaw = run.LeaseState
+	result.ProcessRunning = runProcessGroupAlive(run)
+	if action == runSessionControlStop && run.Terminal {
+		result.Refused = true
+		result.Supported = true
+		result.Settled = true
+		result.State = runSessionControlSettledState
+		result.Reason = "run is already terminal; stop has no effect"
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+
+	if action == runSessionControlPause {
+		result.Refused = true
+		result.Supported = false
+		result.Alternative = runSessionControlStop
+		result.Reason = runSessionControlPauseReason(run)
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+
+	intent, intentErr := loadRunSessionControlIntent(s.store, run.ProjectID, run.RecordID)
+	if intentErr != nil {
+		result.Refused = true
+		result.Reason = "run control intent is unreadable: " + intentErr.Error()
+		serveJSON(w, http.StatusInternalServerError, result)
+		return
+	}
+	if action == runSessionControlStop {
+		s.handleRunStopControl(w, run, actor, intent, result)
+		return
+	}
+	s.handleRunFreshControl(w, run, actor, intent, result)
+}
+
+func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus, actor string, prior *runSessionControlIntent, result runSessionControlResult) {
+	now := time.Now().UTC()
+	if prior != nil && prior.Action == runSessionControlStop && prior.LeaseGeneration == run.LeaseGeneration {
+		if (prior.State == runSessionControlPending || prior.State == runSessionControlUnknown) && runSessionControlSettled(run) && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateInterrupted {
+			prior.State = runSessionControlSettledState
+			prior.Reason = "stop acknowledged by canonical owner/process readback"
+			prior.UpdatedAt = now.Format(time.RFC3339Nano)
+			_ = saveRunSessionControlIntent(s.store, *prior)
+		}
+		if prior.State == runSessionControlPending || prior.State == runSessionControlUnknown {
+			// A repeated request never sends another signal for the same owner.
+			// The daemon/reconciler may settle this durable intent after restart.
+			result.State, result.Pending, result.Unknown = prior.State, prior.State == runSessionControlPending, prior.State == runSessionControlUnknown
+			result.Supported = true
+			result.Reason = "stop remains " + prior.State + "; waiting for exact-owner settlement"
+			result.Intent = prior
+			serveJSON(w, http.StatusOK, result)
+			return
+		}
+		if prior.State == runSessionControlSettledState && runSessionControlSettled(run) {
+			result.OK, result.Supported, result.Settled, result.State = true, true, true, runSessionControlSettledState
+			result.Reason = "run is already stopped and settled"
+			result.Intent = prior
+			serveJSON(w, http.StatusOK, result)
+			return
+		}
+		if prior.State == runSessionControlSettledState {
+			result.Refused, result.Unknown, result.Supported = true, true, true
+			result.State, result.Reason, result.Intent = runSessionControlUnknown, "previous stop acknowledgement is settled but the run owner changed without a new generation", prior
+			serveJSON(w, http.StatusConflict, result)
+			return
+		}
+	}
+	intent := runSessionControlIntent{
+		Action: runSessionControlStop, State: runSessionControlPending,
+		ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
+		Actor: actor, Reason: "operator stop requested", LeaseGeneration: run.LeaseGeneration,
+		LeaseOwner: run.LeaseOwner, AttemptID: run.ActiveAttemptID, ProcessPID: run.ProcessPID,
+		ProcessPGID: run.ProcessPGID, ProcessStarted: run.ProcessStartedAt,
+		CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano),
+	}
+	if err := saveRunSessionControlIntent(s.store, intent); err != nil {
+		result.Refused = true
+		result.Reason = "could not persist stop intent: " + err.Error()
+		serveJSON(w, http.StatusInternalServerError, result)
+		return
+	}
+	stopped, _, err := interruptRuntimeRunScoped(DefaultStateRoot(), s.store, run.ProjectID, run.RecordID)
+	if err != nil {
+		intent.State = runSessionControlUnknown
+		intent.Reason = err.Error()
+		intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		_ = saveRunSessionControlIntent(s.store, intent)
+		result.Refused, result.Unknown, result.Supported = true, true, true
+		result.State, result.Reason, result.Intent = intent.State, "stop acknowledgement is unresolved: "+err.Error(), &intent
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	if stopped == nil {
+		intent.State, intent.Reason = runSessionControlUnknown, "stop returned without canonical run readback"
+	} else if LeaseState(strings.TrimSpace(stopped.LeaseState)) == LeaseStateInterrupted && !runProcessGroupAlive(*stopped) {
+		intent.State, intent.Reason = runSessionControlSettledState, "stop acknowledged and exact owner settled"
+		result.OK, result.Settled = true, true
+		result.LeaseState, result.LeaseStateRaw = serveLeaseState(stopped.LeaseState), stopped.LeaseState
+		result.ProcessRunning = false
+	} else {
+		intent.State, intent.Reason = runSessionControlPending, "stop accepted; waiting for exact-owner settlement"
+		result.Pending = true
+	}
+	intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	_ = saveRunSessionControlIntent(s.store, intent)
+	result.Supported, result.State, result.Intent = true, intent.State, &intent
+	if result.Reason == "" {
+		result.Reason = intent.Reason
+	}
+	serveJSON(w, http.StatusOK, result)
+}
+
+func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus, actor string, prior *runSessionControlIntent, result runSessionControlResult) {
+	if prior != nil && prior.Action == runSessionControlStop && prior.LeaseGeneration == run.LeaseGeneration && prior.State != runSessionControlSettledState {
+		result.Refused = true
+		result.Supported = true
+		result.State = prior.State
+		result.Pending, result.Unknown = prior.State == runSessionControlPending, prior.State == runSessionControlUnknown
+		result.Reason = "start_fresh waits for the prior stop intent to settle"
+		result.Intent = prior
+		serveJSON(w, http.StatusConflict, result)
+		return
+	}
+	if !runSessionControlSettled(run) {
+		result.Refused = true
+		result.Supported = true
+		result.Reason = "start_fresh requires a settled run; stop it and wait for canonical owner/process readback"
+		serveJSON(w, http.StatusConflict, result)
+		return
+	}
+	now := time.Now().UTC()
+	expected := run
+	fresh := runSessionControlFreshRun(expected, actor, now)
+	intent := runSessionControlIntent{
+		Action: runSessionControlFresh, State: runSessionControlPending,
+		ProjectID: fresh.ProjectID, RecordID: fresh.RecordID, ItemID: fresh.ItemID,
+		Actor: actor, Reason: "start_fresh transition requested", LeaseGeneration: fresh.LeaseGeneration,
+		CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano),
+	}
+	if err := saveRunSessionControlIntent(s.store, intent); err != nil {
+		result.Refused = true
+		result.Reason = "could not persist start_fresh intent: " + err.Error()
+		serveJSON(w, http.StatusInternalServerError, result)
+		return
+	}
+	updated, err := s.store.UpsertRunIfSnapshot(expected, fresh)
+	if err != nil {
+		intent.State, intent.Reason = runSessionControlUnknown, "start_fresh transition failed: "+err.Error()
+		intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		_ = saveRunSessionControlIntent(s.store, intent)
+		result.Refused = true
+		result.Unknown, result.State, result.Intent = true, intent.State, &intent
+		result.Reason = intent.Reason
+		serveJSON(w, http.StatusConflict, result)
+		return
+	}
+	if !updated {
+		intent.State, intent.Reason = runSessionControlUnknown, "run changed while start_fresh was being applied"
+		intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		_ = saveRunSessionControlIntent(s.store, intent)
+		result.Refused = true
+		result.Unknown, result.State, result.Intent = true, intent.State, &intent
+		result.Reason = intent.Reason + "; reload before retrying"
+		serveJSON(w, http.StatusConflict, result)
+		return
+	}
+	if strings.TrimSpace(expected.SessionRef) != "" {
+		_ = s.store.MarkSessionState(expected.ProjectID, expected.SessionRef, "closed", now.Format(time.RFC3339Nano), "start_fresh requested by "+actor, false)
+	}
+	intent.State = runSessionControlQueued
+	intent.Reason = "new native session queued after settlement"
+	intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if err := saveRunSessionControlIntent(s.store, intent); err != nil {
+		intent.State, intent.Reason = runSessionControlUnknown, "start_fresh queued but its intent could not be persisted: "+err.Error()
+		intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		_ = saveRunSessionControlIntent(s.store, intent)
+		result.Refused = true
+		result.Unknown, result.State, result.Intent = true, intent.State, &intent
+		result.Reason = intent.Reason
+		serveJSON(w, http.StatusInternalServerError, result)
+		return
+	}
+	_, _ = s.store.SaveSupervisorDecision(SupervisorDecision{
+		ProjectID: expected.ProjectID, RecordID: expected.RecordID, ItemID: expected.ItemID,
+		Runner: expected.Runner, WorkRevision: expected.WorkRevision, AttemptID: expected.ActiveAttemptID,
+		ParentAttemptID: expected.ActiveAttemptID, SessionRef: expected.SessionRef, ParentSessionRef: expected.SessionRef,
+		Kind: string(SupervisorDecisionNewBranch), Reason: "operator start_fresh by " + actor,
+		WorkspacePath: expected.WorkspacePath, LeaseState: fresh.LeaseState, ContextSignal: "operator_start_fresh",
+		CreatedAt: now.Format(time.RFC3339Nano),
+	})
+	_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: fresh.ProjectID, Cause: "run_start_fresh", Changes: []daemonControlChange{{ID: fresh.RecordID, Kind: "run"}}}, 250*time.Millisecond)
+	result.OK, result.Supported, result.Settled = true, true, true
+	result.State, result.Reason = "queued", "start_fresh queued a new native session after the prior owner settled"
+	result.LeaseState, result.LeaseStateRaw, result.ProcessRunning, result.SessionRef = serveLeaseState(fresh.LeaseState), fresh.LeaseState, false, ""
+	result.Intent = &intent
+	s.refreshProjectSnapshot(fresh.ProjectID)
+	serveJSON(w, http.StatusOK, result)
+}
+
 func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, path string) bool {
 	if r.Method != http.MethodPost {
 		return false
@@ -184,6 +454,13 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleRunRecovery(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "acknowledge":
 		s.handleRunAcknowledge(w, r, parts[2], body)
+	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "control":
+		s.handleRunSessionControl(w, r, parts[2], body)
+	case len(parts) == 4 && parts[1] == "runs" && (parts[3] == "pause" || parts[3] == "stop" || parts[3] == "start-fresh"):
+		// Keep action-specific URLs usable for small clients while the generic
+		// control endpoint remains the canonical wire contract.
+		body["action"] = strings.ReplaceAll(parts[3], "-", "_")
+		s.handleRunSessionControl(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "status":
 		s.handleTaskStatusAction(w, parts[2], body)
 	case len(parts) == 4 && parts[1] == "tasks" && parts[3] == "route":
@@ -440,8 +717,11 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 	if err == nil && enabled {
 		err = validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot)
 	}
+	toggleActor := ""
+	toggleBefore := false
 	if err == nil {
-		err = setProjectAutomation(s.store, *project, enabled)
+		toggleActor = firstNonEmpty(configuredServeOperatorActor(), "serve")
+		toggleBefore, err = setProjectAutomationAudited(s.store, *project, enabled, toggleActor, "api")
 	}
 	if err != nil {
 		result := serveCommandResult("tusker projects automation", "", err)
@@ -475,10 +755,49 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 		state = "enabled"
 		go s.warmSnapshot(projectID)
 	}
+	report := &projectAutomationReport{
+		Before: toggleBefore, After: enabled, Actor: toggleActor, Source: "api",
+		Scope: ProjectAutomationScope{ProjectID: projectID},
+	}
+	scope, scopeErr := projectAutomationScope(s.store, *project, time.Now().UTC())
+	if scopeErr != nil {
+		report.ScopeUnavailable = scopeErr.Error()
+	} else {
+		report.Scope = scope
+	}
+	if audit, auditErr := s.store.ListProjectAutomationAudit(projectID); auditErr == nil && len(audit) > 0 {
+		event := audit[len(audit)-1]
+		report.Audit = &event
+	}
 	serveJSON(w, http.StatusOK, serveActionResult{
 		OK: true, ProjectID: projectID, AutomationEnabled: &project.Enabled, AutomationSource: "Project runtime",
-		Reason: "Background work " + state + " for " + project.Name, Command: "tusker projects " + state,
+		Reason:  "Background work " + state + " for " + project.Name + " (was " + enabledWord(toggleBefore) + "; resume scope: " + scopeSummaryLine(report.Scope, scopeErr) + ")",
+		Command: "tusker projects " + state, Automation: report,
 	})
+}
+
+// handleProjectAutomationScope serves the read-only resume scope and audit
+// trail for Background work. It never enables, arms, or mutates anything.
+func (s *serveServer) handleProjectAutomationScope(w http.ResponseWriter, projectID string) {
+	project, err := s.projectForSnapshot(projectID)
+	if err != nil {
+		serveJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	report := &projectAutomationReport{Scope: ProjectAutomationScope{ProjectID: project.ProjectID}}
+	if scope, scopeErr := projectAutomationScope(s.store, project, time.Now().UTC()); scopeErr != nil {
+		report.ScopeUnavailable = scopeErr.Error()
+	} else {
+		report.Scope = scope
+	}
+	if audit, auditErr := s.store.ListProjectAutomationAudit(project.ProjectID); auditErr == nil {
+		report.AuditTrail = audit
+		if len(audit) > 0 {
+			event := audit[len(audit)-1]
+			report.Audit = &event
+		}
+	}
+	serveJSON(w, http.StatusOK, map[string]any{"ok": true, "projectId": project.ProjectID, "enabled": project.Enabled, "automation": report})
 }
 
 func (s *serveServer) handleProjectVisibilityAction(w http.ResponseWriter, projectID string, body serveActionBody) {
@@ -539,6 +858,12 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 		}
 		updates = append(updates, settingUpdate{key: key, value: rawValue})
 	} else {
+		for field := range body {
+			if field != "workspaceMode" && field != "maxActiveRunsPerProject" {
+				serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "unsupported project setting: " + field})
+				return
+			}
+		}
 		mode := body.string("workspaceMode")
 		if mode != "" {
 			updates = append(updates, settingUpdate{key: "workspace.strategy", value: mode})
@@ -551,6 +876,15 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "no supported setting supplied"})
 		return
 	}
+	// Validate and normalize every supplied setting before performing any
+	// write so a refusal leaves all persisted settings unchanged. This is
+	// validation-failure safety, not a claim of crash-atomic multi-setting
+	// persistence.
+	type validatedSetting struct {
+		key   string
+		value any
+	}
+	validated := make([]validatedSetting, 0, len(updates))
 	for _, update := range updates {
 		validator, ok := serveProjectSettingValidators[update.key]
 		if !ok {
@@ -562,7 +896,10 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: validationErr.Error()})
 			return
 		}
-		if _, err = setProjectLocalConfigWithReadback(project.VaultRoot, update.key, value); err != nil {
+		validated = append(validated, validatedSetting{key: update.key, value: value})
+	}
+	for _, update := range validated {
+		if _, err = setProjectLocalConfigWithReadback(project.VaultRoot, update.key, update.value); err != nil {
 			break
 		}
 	}
@@ -626,9 +963,17 @@ var serveProjectSettingValidators = map[string]func(any) (any, error){
 		return value, nil
 	},
 	"runtime.max_active_runs_per_project": func(raw any) (any, error) {
+		// JSON numbers decode as float64. Integer-valued numbers are
+		// accepted; fractional values are rejected before persistence.
+		if number, ok := raw.(float64); ok {
+			if number != float64(int(number)) || number < 1 {
+				return nil, fmt.Errorf("concurrency must be a positive integer")
+			}
+			return int(number), nil
+		}
 		value, err := strconv.Atoi(strings.TrimSpace(toString(raw)))
 		if err != nil || value < 1 {
-			return nil, fmt.Errorf("concurrency must be positive")
+			return nil, fmt.Errorf("concurrency must be a positive integer")
 		}
 		return value, nil
 	},
@@ -1485,6 +1830,10 @@ func (s *serveServer) serveAttemptDetailChecked(run RunStatus, attempt RunAttemp
 	if err != nil {
 		return serveAttemptDetail{}, err
 	}
+	// A historical attempt must never display the active attempt's messages.
+	activityRun := run
+	activityRun.ActiveAttemptID = attempt.AttemptID
+	activityRun.EventSinkPath, activityRun.RawLogPath = attempt.EventSinkPath, attempt.RawLogPath
 	return serveAttemptDetail{
 		ID:             attempt.AttemptID,
 		TaskID:         firstNonEmpty(attempt.ItemID, run.ItemID, attempt.RecordID),
@@ -1506,7 +1855,7 @@ func (s *serveServer) serveAttemptDetailChecked(run RunStatus, attempt RunAttemp
 		LogsSummary:    attempt.LogsSummary,
 		FinalSummary:   attempt.FinalSummary,
 		Turns:          turns,
-		Events:         serveRunEvents(run, []RunAttempt{attempt}),
+		Events:         serveRunEvents(activityRun, []RunAttempt{attempt}),
 	}, nil
 }
 

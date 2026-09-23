@@ -19,7 +19,7 @@ The task body is the implementation contract. Author it directly:
 tusker new task --title <title> --work-level <level> --body-file <path|->
 tusker task update <TASK-ID> --if-revision <state_rev> [--body-file ...] --by <actor> --json
 tusker wave create --file <request.yaml> --request-key <stable-key> --json
-tusker wave review <WAVE-ID> --json
+tusker wave review <WAVE-ID> --check --json
 tusker runner route <TASK-ID> --lane execute --json
 tusker runner route <TASK-ID> --lane review --json
 ```
@@ -47,8 +47,12 @@ admitted attempts finish; resume restores the unchanged authorization and
 refuses drifted material. An explicit task Start inside a paused wave stays
 task-scoped and leaves the wave paused.
 
-Inspect JSON blockers, not just exit status. Verify classification, ownership
-and contacts in generated packets/capsules. Held drafts may retain setup gaps;
+The author runs `wave review --check` before handoff: it checks the whole DAG
+and every member contract, and exits nonzero unless wave Start is enabled.
+Inspect its JSON blockers and generated packets for semantic proof quality,
+classification, ownership, and contacts. For a standalone task, use
+`tusker validate --path work/tasks/<ID>.md --json` and inspect warnings too;
+`ok:true` is not a dispatchability verdict. Held drafts may retain setup gaps;
 never describe them as execution-ready.
 
 ## Implement and close

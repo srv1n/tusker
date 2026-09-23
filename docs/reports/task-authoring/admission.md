@@ -39,6 +39,13 @@ fallback.
 | Serve wave Execute | An already armed wave could queue directives from a cached snapshot without a fresh route read. | Immediately before `QueueWaveRunDirectives`, reloads the read only route inspector and resolves both lanes for every eligible member. No directive is written on failure. |
 | Daemon dispatch | Performs its own execute/review resolution at claim/dispatch boundaries. | Remains the late safety check; the preview and queue checks do not replace it. |
 
+Dependency-waiting members with `readiness: blocked_by_dependency` and
+`next_owner: blocked_dependency` are valid contracts. Arm admits the wave but
+the frontier resolver queues only members whose dependencies are satisfied;
+the daemon still refuses a direct claim while the dependency is unfinished.
+Other lifecycle waits are likewise preserved, while an unknown readiness value
+remains a member contract blocker at the arm boundary.
+
 ## Failure matrix
 
 | Condition | Preview/preflight result | Repair |
@@ -49,6 +56,7 @@ fallback.
 | Disabled profile | Names the disabled profile and retains the resolver hint. | Enable the profile or select another configured profile. |
 | Ineligible profile | Names the profile and requested level. | Add the level to profile eligibility or choose an eligible profile. |
 | Explicit override | The lane override is selected first and `source` identifies task frontmatter. | Correct or remove the override if it is no longer intended. The legacy field cannot silently win. |
+| Unknown readiness | A malformed readiness value is reported as `MEMBER_CONTRACT_INVALID`; valid held, human, CI, review and dependency waits remain admissible. | Restore a value from the V7 readiness set, then rerun preflight. |
 | Malformed/missing `WORKFLOW.md` | Every member receives execute and review route blockers naming workflow resolution and the workflow repair action. | Repair `WORKFLOW.md`, then rerun preflight. |
 | Mapping removed between preview and start | Final Start/Execute route read refuses before arming or queuing. | Restore the mapping and regenerate/review the current plan. |
 

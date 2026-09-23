@@ -2,15 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { api } from "@/lib/api";
-import { qk, useProjects, useRun, useRuns, useTask, useTasks, useWaves, useWaveReview, waveReviewQuery } from "@/lib/queries";
+import { qk, useProjects, useRun, useRuns, useTask, useTasks, useWaves, useWave, useWaveList, useWaveReview } from "@/lib/queries";
 import { WaveAuthorityControls, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
 import { TaskBoard } from "../board";
 import { WaveFlow, type DependencyFact, type FlowViewport } from "../flow";
 import { TaskInspector } from "../inspector/TaskInspector";
-import { WaveOverview, type WaveOverviewFilter } from "../overview";
+import { WaveList } from "../overview/WaveList";
 import { WaveResults } from "../results/WaveResults";
 import { getWorkspaceViewState, NAVIGATION_CHANGED_EVENT, readNavigationState, updateWorkspaceViewState, writeNavigationState, type StorageLike } from "../navigation";
-import { canShowWaveResults, settleEnteredWaveView, usableWaveReview, waveStartability, waveSummaryWithReview, type WorkView } from "./integrationModel";
+import { canShowWaveResults, settleEnteredWaveView, waveSummaryWithReview, type WorkView } from "./integrationModel";
 import { projectContainsCheckout, type ProjectSummary, type WaveReviewMember } from "@/types/domain";
 
 type Params = { projectId?: string; waveId?: string };
@@ -27,12 +27,12 @@ function navigationStorage(): StorageLike | null {
   }
 }
 
-function savedOverview(projectId: string, projectIds: string[]): { query: string; category: WaveOverviewFilter } {
+function savedOverview(projectId: string, projectIds: string[]): { query: string } {
   const waves = getWorkspaceViewState(readNavigationState(navigationStorage(), projectIds), projectId).waves;
-  return { query: waves?.overviewQuery ?? "", category: waves?.overviewFilter ?? "all" };
+  return { query: waves?.overviewQuery ?? "" };
 }
 
-function persistOverview(projectId: string, projectIds: string[], patch: { overviewQuery?: string; overviewFilter?: WaveOverviewFilter }) {
+function persistOverview(projectId: string, projectIds: string[], patch: { overviewQuery?: string }) {
   if (!projectIds.includes(projectId)) return;
   const storage = navigationStorage();
   writeNavigationState(storage, updateWorkspaceViewState(readNavigationState(storage, projectIds), projectId, { waves: patch }));
@@ -55,46 +55,29 @@ function Shell({ children }: { children: React.ReactNode }) {
 export function WorkOverview() {
   const projectId = useProjectId();
   const navigate = useNavigate();
-  const waves = useWaves(projectId);
-  const tasks = useTasks(projectId);
-  const runs = useRuns(projectId);
+  const waves = useWaveList(projectId);
   const projects = useProjects();
   const projectIds = useMemo(
     () => [...new Set((projects.data ?? []).flatMap((project) => [project.id, ...(project.checkouts ?? []).map((checkout) => checkout.id)]))],
     [projects.data],
   );
-  const reviews = useQueries({ queries: (waves.data ?? []).map((wave) => waveReviewQuery(wave.id, projectId)) });
-  const reviewData = reviews.flatMap((query) => {
-    const data = usableWaveReview(query.data, query.error);
-    return data ? [data] : [];
-  });
-  const reviewErrors = Object.fromEntries((waves.data ?? []).map((wave, index) => [wave.id, reviews[index]?.error]));
-  const displayedWaves = (waves.data ?? []).map((wave, index) => waveSummaryWithReview(wave, reviews[index]?.data, reviews[index]?.error));
   const [query, setQuery] = useState(() => savedOverview(projectId, [projectId]).query);
-  const [category, setCategory] = useState<WaveOverviewFilter>(() => savedOverview(projectId, [projectId]).category);
   useEffect(() => {
     const saved = savedOverview(projectId, projectIds.length > 0 ? projectIds : [projectId]);
     setQuery(saved.query);
-    setCategory(saved.category);
   }, [projectId]);
   const updateQuery = (value: string) => {
     setQuery(value);
     persistOverview(projectId, projectIds, { overviewQuery: value });
   };
-  const updateCategory = (value: WaveOverviewFilter) => {
-    setCategory(value);
-    persistOverview(projectId, projectIds, { overviewFilter: value });
-  };
-  return <Shell><WaveOverview
-    waves={displayedWaves} tasks={tasks.data ?? []} runs={runs.data ?? []}
-    startability={waveStartability(displayedWaves, reviewData, reviewErrors)}
-    descriptions={Object.fromEntries((waves.data ?? []).map((wave) => [wave.id, wave.expectedOutcome ?? wave.brief.expectedOutcome ?? wave.brief.outcome.summary]))}
+  return <Shell><WaveList
+    waves={waves.data ?? []}
     projectName={projectContextName(projects.data, projectId)}
-    query={query} category={category} onQueryChange={updateQuery} onCategoryChange={updateCategory}
+    backgroundWorkEnabled={projects.data?.find((project) => projectContainsCheckout(project, projectId))?.automationEnabled}
+    query={query} onQueryChange={updateQuery}
     onOpenWave={(waveId) => navigate({ to: "/p/$projectId/waves/$waveId", params: { projectId, waveId } })}
-    onOpenUnassigned={() => navigate({ to: "/p/$projectId/tasks", params: { projectId }, search: { scope: "unassigned" } })}
-    loading={waves.isPending || tasks.isPending || runs.isPending || reviews.some((query) => query.isPending)}
-    error={[waves.error, tasks.error, runs.error].find(Boolean) instanceof Error ? String([waves.error, tasks.error, runs.error].find(Boolean)) : undefined}
+    loading={waves.isPending}
+    error={waves.error instanceof Error ? waves.error.message : undefined}
   /></Shell>;
 }
 
@@ -132,9 +115,9 @@ export function WorkWave() {
   const { waveId = "" } = useParams({ strict: false }) as Params;
   const projectId = useProjectId();
   const location = useRouterState({ select: (state) => state.location });
-  const waves = useWaves(projectId);
+  const waveQuery = useWave(projectId, waveId);
   const runs = useRuns(projectId);
-  const wave = waves.data?.find((item) => item.id === waveId);
+  const wave = waveQuery.data;
   const review = useWaveReview(waveId, projectId);
   // Member details use the canonical task key so stream events and run/wave
   // mutations invalidate them exactly like the inspector's useTask read.
@@ -174,7 +157,7 @@ export function WorkWave() {
   // entry destination; an explicit tab or deep link stays fixed through polls.
   const requestedView = requested === "work" || requested === "flow" || requested === "results" ? requested : null;
   const view = chosenView ?? enteredView ?? requestedView ?? "flow";
-  if (waves.isPending || !currentWave) return <Shell><p role={waves.error ? "alert" : "status"} className="text-[13px] text-muted">{waves.error ? "Wave unavailable." : "Loading wave…"}</p></Shell>;
+  if (waveQuery.isPending || !currentWave) return <Shell><p role={waveQuery.error ? "alert" : "status"} className="text-[13px] text-muted">{waveQuery.error ? "Wave unavailable." : "Loading wave…"}</p></Shell>;
   return <Shell>
     <div className="mb-5"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{currentWave.id}</p><h2 className="mt-1 font-serif text-[26px] font-semibold">{currentWave.title}</h2>{(currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome) && <p className="mt-2 max-w-2xl text-[13px] text-muted">{currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome}</p>}</div>
     <div className="mb-5"><WaveAuthorityControls projectId={projectId} waveId={currentWave.id} /></div>

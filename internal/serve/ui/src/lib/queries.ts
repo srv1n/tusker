@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, requireAccepted } from "@/lib/api";
 import { liveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
-import type { AgentAccessApprovalResponse, DirectStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProjectSummary, RunDetail, WaveReview } from "@/types/domain";
+import type { AgentAccessApprovalResponse, DirectStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProjectSummary, RunAction, RunActionResult, RunDetail, WaveReview } from "@/types/domain";
 import type {
   DocgraphDocDetail,
   DocgraphSavePayload,
@@ -29,6 +29,8 @@ export const qk = {
   run: (taskId: string, projectId?: string) => ["run", projectId ?? "all", taskId] as const,
   epics: (projectId?: string) => ["epics", projectId ?? "all"] as const,
   waves: (projectId?: string) => ["waves", projectId ?? "all"] as const,
+  waveList: (projectId: string) => ["wave-list", projectId] as const,
+  wave: (projectId: string, waveId: string) => ["wave", projectId, waveId] as const,
   gates: (taskId?: string, projectId?: string) => ["gates", projectId ?? "all", taskId ?? "all"] as const,
   agentAccessApprovals: (projectId?: string, taskId?: string) => ["agent-access-approvals", projectId ?? "all", taskId ?? "all"] as const,
   evidence: (taskId?: string, projectId?: string) => ["evidence", projectId ?? "all", taskId ?? "all"] as const,
@@ -42,6 +44,7 @@ export const qk = {
   docgraph: (projectId?: string) => ["docgraph", projectId ?? "all"] as const,
   docgraphDoc: (projectId: string, subject: string) => ["docgraph", "doc", projectId, subject] as const,
   waveReview: (projectId: string | undefined, waveId: string) => ["wave-review", projectId ?? "all", waveId] as const,
+  projectAutomationScope: (projectId: string) => ["project-automation-scope", projectId] as const,
   executions: (projectId: string, params: Record<string, string | undefined>) => ["executions", projectId, params] as const,
   executionInbox: (projectId: string) => ["executions", "inbox", projectId] as const,
   executionTimeline: (projectId: string, execution: string, params: Record<string, string | undefined>) => ["executions", "timeline", projectId, execution, params] as const,
@@ -108,6 +111,44 @@ export function applyProjectAutomationReadback(projects: ProjectSummary[] | unde
   }));
 }
 
+export const useProjectAutomationScope = (projectId: string, enabled = true) =>
+  useQuery({
+    queryKey: qk.projectAutomationScope(projectId),
+    queryFn: () => api.projectAutomationScope(projectId),
+    enabled: enabled && projectId.length > 0,
+    refetchInterval: liveRefetchInterval,
+  });
+
+/**
+ * After a Background-work toggle settles — success, refusal, or failure —
+ * refresh the task, wave, run, attempt, proof, and needs caches from
+ * authoritative readback before presenting settled state, even when the
+ * stream is disconnected. The toggle response itself carries the persisted
+ * scope and audit evidence; invalidation only schedules the re-read, so a
+ * failed toggle can never present false success.
+ */
+export async function invalidateAutomationToggleQueries(
+  qc: Pick<ReturnType<typeof useQueryClient>, "invalidateQueries">,
+  projectId: string,
+): Promise<void> {
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: qk.projects }),
+    qc.invalidateQueries({ queryKey: qk.daemon }),
+    qc.invalidateQueries({ queryKey: ["runs"] }),
+    qc.invalidateQueries({ queryKey: ["run"] }),
+    qc.invalidateQueries({ queryKey: ["tasks"] }),
+    qc.invalidateQueries({ queryKey: ["task"] }),
+    qc.invalidateQueries({ queryKey: ["waves"] }),
+    qc.invalidateQueries({ queryKey: ["wave"] }),
+    qc.invalidateQueries({ queryKey: ["wave-list"] }),
+    qc.invalidateQueries({ queryKey: ["wave-review"] }),
+    qc.invalidateQueries({ queryKey: qk.attempts(undefined, projectId) }),
+    qc.invalidateQueries({ queryKey: qk.evidence(undefined, projectId) }),
+    qc.invalidateQueries({ queryKey: ["needs"] }),
+    qc.invalidateQueries({ queryKey: qk.projectAutomationScope(projectId) }),
+  ]);
+}
+
 export const useProjectAutomation = (projectId: string) => {
   const qc = useQueryClient();
   return useMutation({
@@ -117,10 +158,7 @@ export const useProjectAutomation = (projectId: string) => {
       if (automationEnabled === undefined) return;
       qc.setQueryData<ProjectSummary[]>(qk.projects, (projects) => applyProjectAutomationReadback(projects, projectId, automationEnabled, result.automationSource));
     },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: qk.projects });
-      void qc.invalidateQueries({ queryKey: qk.daemon });
-    },
+    onSettled: () => void invalidateAutomationToggleQueries(qc, projectId),
   });
 };
 
@@ -220,13 +258,20 @@ export function runRefetchInterval(
   run: RunDetail | undefined,
   hasQueryError: boolean,
   fallbackInterval: number | false,
+  refreshUntilControl = false,
 ): number | false {
   if (hasQueryError) return false;
   if (refreshUntilInterrupted && !interruptedRunReadbackComplete(run)) return 400;
+  // A legacy server may not expose a controls projection. The action caller
+  // still needs canonical polling until its readback settles; a server that
+  // does expose a pending projection must keep polling after a page reload.
+  if (refreshUntilControl || run?.controls?.pending) return 400;
+  // Worker messages can arrive between daemon/SSE updates.
+  if (run?.leaseState === "held" && !run.terminal) return 2_000;
   return fallbackInterval;
 }
 
-export const useRun = (taskId: string, refreshUntilInterrupted = false, projectId?: string) =>
+export const useRun = (taskId: string, refreshUntilInterrupted = false, projectId?: string, refreshUntilControl = false) =>
   useQuery({
     queryKey: qk.run(taskId, projectId),
     queryFn: () => api.run(taskId, projectId),
@@ -236,14 +281,44 @@ export const useRun = (taskId: string, refreshUntilInterrupted = false, projectI
         query.state.data,
         query.state.error !== null,
         liveRefetchInterval(),
+        refreshUntilControl,
       ),
   });
+
+export const useAttempt = (attemptId: string | undefined, projectId?: string) =>
+  useQuery({
+    queryKey: ["attempt", projectId ?? "all", attemptId ?? "none"],
+    queryFn: () => api.attempt(attemptId!, projectId),
+    enabled: Boolean(attemptId),
+    refetchInterval: attemptId ? liveRefetchInterval : false,
+  });
+
+/** A control mutation never updates the run optimistically; readback owns the truth. */
+export const useRunAction = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation<RunActionResult, unknown, RunAction>({
+    mutationKey: ["run-action", projectId ?? "all", taskId],
+    mutationFn: (action) => api.runAction(taskId, action, projectId),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: qk.run(taskId, projectId) });
+      void qc.invalidateQueries({ queryKey: qk.runs(projectId) });
+      void qc.invalidateQueries({ queryKey: qk.attempts(taskId, projectId) });
+      void qc.invalidateQueries({ queryKey: qk.tasks(projectId) });
+    },
+  });
+};
 
 export const useEpics = (projectId?: string) =>
   useQuery({ queryKey: qk.epics(projectId), queryFn: () => api.epics(projectId), refetchInterval: liveRefetchInterval });
 
 export const useWaves = (projectId?: string) =>
   useQuery({ queryKey: qk.waves(projectId), queryFn: () => api.waves(projectId), refetchInterval: liveRefetchInterval });
+
+export const useWaveList = (projectId: string) =>
+  useQuery({ queryKey: qk.waveList(projectId), queryFn: () => api.waveList(projectId), refetchInterval: liveRefetchInterval });
+
+export const useWave = (projectId: string, waveId: string) =>
+  useQuery({ queryKey: qk.wave(projectId, waveId), queryFn: () => api.wave(projectId, waveId), refetchInterval: liveRefetchInterval });
 
 export const useGates = (taskId?: string, projectId?: string) =>
   useQuery({ queryKey: qk.gates(taskId, projectId), queryFn: () => api.gates(taskId, projectId), refetchInterval: liveRefetchInterval });
@@ -333,6 +408,8 @@ export async function invalidateWaveControlQueries(
   await Promise.all([
     qc.invalidateQueries({ queryKey: qk.waveReview(projectId, waveId) }),
     qc.invalidateQueries({ queryKey: ["waves"] }),
+    qc.invalidateQueries({ queryKey: qk.waveList(projectId) }),
+    qc.invalidateQueries({ queryKey: qk.wave(projectId, waveId) }),
     qc.invalidateQueries({ queryKey: ["runs"] }),
     qc.invalidateQueries({ queryKey: ["run"] }),
     qc.invalidateQueries({ queryKey: ["tasks"] }),
@@ -437,6 +514,8 @@ function invalidateOperatorState(qc: ReturnType<typeof useQueryClient>, taskId?:
   void qc.invalidateQueries({ queryKey: ["review", "batch"] });
   void qc.invalidateQueries({ queryKey: ["runs"] });
   void qc.invalidateQueries({ queryKey: ["waves"] });
+  void qc.invalidateQueries({ queryKey: projectId ? qk.waveList(projectId) : ["wave-list"] });
+  void qc.invalidateQueries({ queryKey: projectId ? ["wave", projectId] : ["wave"] });
   void qc.invalidateQueries({ queryKey: ["gates"] });
   void qc.invalidateQueries({ queryKey: ["evidence"] });
   void qc.invalidateQueries({ queryKey: ["decisions"] });

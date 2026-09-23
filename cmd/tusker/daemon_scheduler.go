@@ -498,6 +498,14 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 		if runConsumesDispatchCapacity(run) || !shouldDispatchRun(run, time.Now().UTC()) {
 			continue
 		}
+		if blocked, reason, err := d.automaticRetryBlockedByStopIntent(run); err != nil {
+			return err
+		} else if blocked {
+			if err := d.persistFairDispatchReason(runs, candidate, "dispatch blocked: "+reason); err != nil {
+				return err
+			}
+			continue
+		}
 		projectRunsByRecord, projectRuns := fairDispatchProjectRuns(runs, candidate.Project.ProjectID)
 		candidate, refreshReason, refreshErr := d.refreshFairDispatchCandidate(candidate, run, projectRunsByRecord)
 		if refreshErr != nil {

@@ -86,6 +86,59 @@ type WorkerProviderQualification struct {
 	Capabilities runnercore.CoordinationCapabilities `json:"capabilities"`
 }
 
+// RunSessionProcessObservation is the read-only process identity result used
+// when a run is reopened. A live PID is useful only when its recorded start
+// identity and process group still match; a PID that merely exists is not an
+// owner proof.
+type RunSessionProcessObservation struct {
+	State     string `json:"state"`
+	Verified  bool   `json:"verified"`
+	PID       int    `json:"pid"`
+	PGID      int    `json:"pgid"`
+	StartedAt string `json:"started_at"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// RunSessionCapability describes the provider action available after a
+// durable session has been reopened. An unsupported or missing capability is
+// explicit so callers never turn a missing native resume into a new launch.
+type RunSessionCapability struct {
+	Supported bool   `json:"supported"`
+	Command   string `json:"command,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// RunSessionReconciliation is a read-only projection of one persisted run.
+// It intentionally carries the canonical run row and current attempt/session
+// identities together with the last durable coordination evidence. Reopening
+// this projection never claims a lease, queues a directive, or starts a
+// worker.
+type RunSessionReconciliation struct {
+	Run                     RunStatus                    `json:"run"`
+	Attempt                 *RunAttempt                  `json:"attempt,omitempty"`
+	Session                 *RunnerSession               `json:"session,omitempty"`
+	Identity                *WorkerAttemptIdentity       `json:"identity,omitempty"`
+	Attention               *WorkerAttention             `json:"attention,omitempty"`
+	LastCompletedCheckpoint *WorkerCoordinationEvent     `json:"last_completed_checkpoint,omitempty"`
+	UnresolvedOperation     *WorkerCoordinationEvent     `json:"unresolved_operation,omitempty"`
+	Process                 RunSessionProcessObservation `json:"process"`
+	Capability              RunSessionCapability         `json:"capability"`
+	State                   string                       `json:"state"`
+	Terminal                bool                         `json:"terminal"`
+	TerminalOutcome         string                       `json:"terminal_outcome,omitempty"`
+	Reconnectable           bool                         `json:"reconnectable"`
+	StaleSnapshot           bool                         `json:"stale_snapshot,omitempty"`
+	RefusalReasons          []string                     `json:"refusal_reasons,omitempty"`
+	ObservedAt              string                       `json:"observed_at"`
+}
+
+const (
+	runSessionStateIdle     = "idle"
+	runSessionStateLive     = "live"
+	runSessionStateTerminal = "terminal"
+	runSessionStateUnknown  = "unknown"
+)
+
 func workerNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
 func validWorkerCoordinationKind(kind string) bool {
@@ -308,6 +361,332 @@ func (s *RuntimeStore) workerIdentityCurrent(identity WorkerAttemptIdentity) (bo
 		return false, err
 	}
 	return executionCount > 0, nil
+}
+
+// ReconcileRunSession reconstructs the canonical state of a persisted run
+// without performing reconciliation side effects. In particular, it does
+// not call the daemon's launch or lease paths and it does not evaluate/write
+// WorkerAttention. Callers that have already loaded a run should use this
+// method after reopening the store so a stale in-memory generation cannot
+// become authority.
+func (s *RuntimeStore) ReconcileRunSession(run RunStatus) (*RunSessionReconciliation, error) {
+	return s.ReconcileRunSessionWithProbe(run, processIdentityMatches)
+}
+
+// ReconcileRunSessionWithProbe is the same read-only projection with an
+// injectable process identity probe for deterministic component checks. The
+// production wrapper above always uses the PID plus start-identity guard.
+func (s *RuntimeStore) ReconcileRunSessionWithProbe(run RunStatus, probe func(RunStatus) bool) (*RunSessionReconciliation, error) {
+	if s == nil || s.db == nil {
+		return nil, tuskerError(errorNotFound, "runtime store is unavailable")
+	}
+	projectID, recordID := strings.TrimSpace(run.ProjectID), strings.TrimSpace(run.RecordID)
+	if projectID == "" || recordID == "" {
+		return nil, tuskerError(errorInvalidArg, "run session reconciliation requires project_id and record_id")
+	}
+	if probe == nil {
+		probe = processIdentityMatches
+	}
+
+	// Always reload the exact record ID. FindRunScoped also accepts item IDs,
+	// which are intentionally non-unique when a task has managed child runs.
+	rows, err := s.query(`SELECT `+runtimeRunColumns+` FROM runs WHERE project_id = ? AND record_id = ? LIMIT 1`, projectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	runs, err := scanRunRows(rows, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		return nil, tuskerError(errorNotFound, "run not found: "+recordID)
+	}
+	canonical := runs[0]
+	result := &RunSessionReconciliation{
+		Run:        canonical,
+		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Process: RunSessionProcessObservation{
+			PID:       canonical.ProcessPID,
+			PGID:      canonical.ProcessPGID,
+			StartedAt: canonical.ProcessStartedAt,
+		},
+	}
+	if run.LeaseGeneration > 0 && (run.LeaseGeneration != canonical.LeaseGeneration ||
+		run.ActiveAttemptID != canonical.ActiveAttemptID || run.WorkRevision != canonical.WorkRevision) {
+		result.StaleSnapshot = true
+		result.RefusalReasons = append(result.RefusalReasons, "input run snapshot is stale; canonical project, attempt, and generation were reloaded")
+	}
+
+	attempts, err := s.ListAttemptsForRun(canonical.ProjectID, canonical.RecordID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range attempts {
+		if strings.TrimSpace(canonical.ActiveAttemptID) != "" && attempts[i].AttemptID == canonical.ActiveAttemptID {
+			attempt := attempts[i]
+			result.Attempt = &attempt
+			break
+		}
+	}
+	if result.Attempt == nil && strings.TrimSpace(canonical.ActiveAttemptID) == "" && len(attempts) > 0 {
+		// A released/terminal row may have cleared the active pointer. Preserve
+		// the newest durable receipt for inspection, but never treat it as live.
+		attempt := attempts[0]
+		result.Attempt = &attempt
+	}
+	if canonical.ActiveAttemptID != "" && result.Attempt == nil {
+		result.RefusalReasons = append(result.RefusalReasons, "active attempt receipt is missing")
+	}
+
+	// The run's session reference is authoritative. Falling back to the
+	// attempt's reference is safe because it is the same immutable attempt; a
+	// historical latest session is used only when the run is already inactive.
+	sessionRef := strings.TrimSpace(canonical.SessionRef)
+	if sessionRef == "" && result.Attempt != nil {
+		sessionRef = strings.TrimSpace(result.Attempt.SessionRef)
+	}
+	if sessionRef != "" {
+		session, sessionErr := s.FindSessionByRef(canonical.ProjectID, sessionRef)
+		if sessionErr != nil {
+			return nil, sessionErr
+		}
+		if session != nil && sessionMatchesRun(canonical, result.Attempt, *session) {
+			result.Session = session
+		} else if session != nil {
+			result.RefusalReasons = append(result.RefusalReasons, "stored session identity does not match the current project, attempt, or work revision")
+		}
+	}
+	freshSessionRequested := strings.HasPrefix(strings.TrimSpace(canonical.LastError), outcomeUnknownContextRecoveryReasonPrefix) ||
+		strings.HasPrefix(strings.TrimSpace(canonical.LastError), runSessionControlFreshReasonPrefix)
+	if !freshSessionRequested {
+		directive, directiveErr := s.RunDirective(canonical.ProjectID, canonical.RecordID)
+		if directiveErr != nil {
+			return nil, directiveErr
+		}
+		freshSessionRequested = directive != nil && (strings.HasPrefix(strings.TrimSpace(directive.Reason), outcomeUnknownContextRecoveryReasonPrefix) ||
+			strings.HasPrefix(strings.TrimSpace(directive.Reason), runSessionControlFreshReasonPrefix))
+	}
+	if !freshSessionRequested {
+		decisions, decisionErr := s.ListRuntimeSupervisorDecisionsForRun(canonical.ProjectID, canonical.RecordID)
+		if decisionErr != nil {
+			return nil, decisionErr
+		}
+		for i := len(decisions) - 1; i >= 0; i-- {
+			if decisions[i].ContextSignal == "explicit_context_recovery" || decisions[i].ContextSignal == "operator_start_fresh" {
+				freshSessionRequested = true
+				break
+			}
+		}
+	}
+	if freshSessionRequested {
+		result.Session = nil
+	}
+	if result.Session == nil && !freshSessionRequested && !isDispatchingLeaseState(canonical.LeaseState) && canonical.ActiveAttemptID == "" {
+		latest, sessionErr := s.LatestSession(canonical.ProjectID, canonical.RecordID, canonical.Runner)
+		if sessionErr != nil {
+			return nil, sessionErr
+		}
+		if latest != nil && (latest.WorkRevision == 0 || latest.WorkRevision == canonical.WorkRevision) {
+			result.Session = latest
+		}
+	}
+
+	identity, err := s.WorkerIdentityForRun(canonical)
+	if err != nil {
+		return nil, err
+	}
+	result.Identity = identity
+	if identity != nil {
+		attention, found, attentionErr := s.loadWorkerAttention(identity.ProjectID, identity.AttemptID, identity.AttemptGeneration)
+		if attentionErr != nil {
+			return nil, attentionErr
+		}
+		if found && attention.Identity == *identity {
+			result.Attention = &attention
+		}
+	}
+
+	events, err := s.currentCoordinationEvents(canonical, identity)
+	if err != nil {
+		return nil, err
+	}
+	for i := range events {
+		if workerEventIsCompleted(events[i]) {
+			result.LastCompletedCheckpoint = &events[i]
+		}
+		if !workerEventIsCompleted(events[i]) {
+			result.UnresolvedOperation = &events[i]
+		}
+	}
+
+	result.Capability = runSessionCapability(&canonical, result.Session)
+	if !result.Capability.Supported && result.Capability.Reason != "" {
+		result.RefusalReasons = append(result.RefusalReasons, result.Capability.Reason)
+	}
+	result.reconcileProcess(probe)
+	return result, nil
+}
+
+func sessionMatchesRun(run RunStatus, attempt *RunAttempt, session RunnerSession) bool {
+	if session.ProjectID != run.ProjectID || session.RecordID != run.RecordID || session.SessionRef == "" {
+		return false
+	}
+	if run.ActiveAttemptID != "" && session.LastAttemptID != run.ActiveAttemptID {
+		return false
+	}
+	if attempt != nil && attempt.SessionRef != "" && session.SessionRef != attempt.SessionRef {
+		return false
+	}
+	if run.WorkRevision > 0 && session.WorkRevision > 0 && session.WorkRevision != run.WorkRevision {
+		return false
+	}
+	return true
+}
+
+func runSessionCapability(run *RunStatus, session *RunnerSession) RunSessionCapability {
+	capability := RunSessionCapability{}
+	if run == nil || session == nil || strings.TrimSpace(session.SessionRef) == "" {
+		capability.Reason = "native session reference is unavailable"
+		return capability
+	}
+	resume := resumeCapability(run, session)
+	capability.Supported, capability.Command, capability.Reason = resume.Supported, resume.Command, resume.Reason
+	return capability
+}
+
+func workerEventIsCompleted(event WorkerCoordinationEvent) bool {
+	if event.Kind == "completed" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(event.Status)) {
+	case "completed", "done", "succeeded", "terminal":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *RunSessionReconciliation) reconcileProcess(probe func(RunStatus) bool) {
+	if r == nil {
+		return
+	}
+	dispatching := isDispatchingLeaseState(r.Run.LeaseState)
+	hasProcessFacts := r.Process.PID > 0 || r.Process.PGID > 0 || strings.TrimSpace(r.Process.StartedAt) != ""
+	hasReceipt, outcome := runSessionTerminalReceipt(r.Run, r.Attempt)
+	r.TerminalOutcome = outcome
+	if !dispatching && r.Run.ActiveAttemptID == "" && !r.Run.Terminal {
+		r.State = runSessionStateIdle
+		return
+	}
+	if r.Run.Terminal && !hasReceipt {
+		r.Process.State = runSessionStateUnknown
+		r.Process.Reason = "terminal flag has no terminal attempt receipt"
+		r.RefusalReasons = append(r.RefusalReasons, r.Process.Reason)
+		r.State = runSessionStateUnknown
+		return
+	}
+	live := hasProcessFacts && probe(r.Run)
+	if live {
+		r.Process.State, r.Process.Verified = "live", true
+		if hasReceipt || r.Run.Terminal {
+			r.Process.Reason = "live owner contradicts the recorded terminal receipt"
+			r.RefusalReasons = append(r.RefusalReasons, r.Process.Reason)
+			r.State = runSessionStateUnknown
+			return
+		}
+		if strings.TrimSpace(r.Run.LeaseOwner) == "" || strings.TrimSpace(r.Run.ActiveAttemptID) == "" {
+			r.Process.Reason = "live process has no matching durable lease owner or attempt"
+			r.RefusalReasons = append(r.RefusalReasons, r.Process.Reason)
+			r.State = runSessionStateUnknown
+			return
+		}
+		r.State = runSessionStateLive
+		r.Reconnectable = r.Identity != nil && r.Session != nil
+		if !r.Reconnectable {
+			r.RefusalReasons = append(r.RefusalReasons, "live owner is missing a matching native attempt/session identity")
+		}
+		return
+	}
+	if hasReceipt {
+		r.Process.State = "exited"
+		r.Terminal = true
+		r.State = runSessionStateTerminal
+		return
+	}
+	if !hasProcessFacts {
+		r.Process.Reason = "recorded process identity is unavailable"
+	} else {
+		r.Process.Reason = "recorded process identity does not match; terminal receipt is missing"
+	}
+	r.RefusalReasons = append(r.RefusalReasons, r.Process.Reason)
+	r.Process.State = runSessionStateUnknown
+	r.State = runSessionStateUnknown
+}
+
+func runSessionTerminalReceipt(run RunStatus, attempt *RunAttempt) (bool, string) {
+	outcome := projectedAttemptOutcome(run.AttemptOutcome, run.LastError)
+	if attempt != nil {
+		attemptOutcome := projectedAttemptOutcome(attempt.Outcome, attempt.LastError)
+		if outcome == AttemptOutcomeNone && attemptOutcome != AttemptOutcomeNone {
+			outcome = attemptOutcome
+		}
+		if attempt.FinishedAt != "" && outcome == AttemptOutcomeNone {
+			outcome = AttemptOutcomeUnknown
+		}
+	}
+	if outcome == AttemptOutcomeNone && run.Terminal {
+		return false, ""
+	}
+	if outcome == AttemptOutcomeUnknown {
+		// An uncertainty receipt is durable evidence that the provider result
+		// cannot be classified. It must stay unknown until an operator resolves
+		// the external effect; it is never a terminal success/failure receipt.
+		return false, string(outcome)
+	}
+	return outcome != AttemptOutcomeNone, string(outcome)
+}
+
+func (s *RuntimeStore) currentCoordinationEvents(run RunStatus, identity *WorkerAttemptIdentity) ([]WorkerCoordinationEvent, error) {
+	taskID := firstNonEmpty(run.ItemID, run.RecordID)
+	if taskID == "" || run.ActiveAttemptID == "" || run.LeaseGeneration <= 0 || run.WorkRevision <= 0 {
+		return nil, nil
+	}
+	query := `SELECT event_id, project_id, task_id, work_revision, attempt_id, attempt_generation, provider, native_session_id,
+		kind, milestone, status, next_milestone, evidence_json, details_json, provider_event_id, occurred_at, stored_at, stale
+		FROM worker_coordination_events WHERE project_id = ? AND task_id = ? AND work_revision = ? AND attempt_id = ? AND attempt_generation = ? AND stale = 0`
+	args := []any{run.ProjectID, taskID, run.WorkRevision, run.ActiveAttemptID, run.LeaseGeneration}
+	if identity != nil {
+		query += ` AND provider = ? AND native_session_id = ?`
+		args = append(args, identity.Provider, identity.NativeSessionID)
+	}
+	query += ` ORDER BY stored_at, event_id`
+	rows, err := s.query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []WorkerCoordinationEvent
+	for rows.Next() {
+		var event WorkerCoordinationEvent
+		var evidenceJSON, detailsJSON string
+		var stale int
+		if err := rows.Scan(&event.EventID, &event.Identity.ProjectID, &event.Identity.TaskID, &event.Identity.WorkRevision,
+			&event.Identity.AttemptID, &event.Identity.AttemptGeneration, &event.Identity.Provider, &event.Identity.NativeSessionID,
+			&event.Kind, &event.Milestone, &event.Status, &event.NextMilestone, &evidenceJSON, &detailsJSON,
+			&event.ProviderEventID, &event.OccurredAt, &event.StoredAt, &stale); err != nil {
+			return nil, err
+		}
+		event.Stale = stale != 0
+		if evidenceJSON != "" {
+			_ = json.Unmarshal([]byte(evidenceJSON), &event.Evidence)
+		}
+		if detailsJSON != "" {
+			_ = json.Unmarshal([]byte(detailsJSON), &event.Details)
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 func (s *RuntimeStore) RecordWorkerCoordinationEvent(event WorkerCoordinationEvent) (WorkerCoordinationEvent, error) {

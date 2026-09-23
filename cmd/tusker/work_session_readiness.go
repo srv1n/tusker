@@ -2,7 +2,53 @@ package main
 
 import (
 	"strings"
+	"time"
 )
+
+// An explicit current-conversation claim is not a daemon dispatch. Keep its
+// canonical backlog state while its exact, live authorization owns the lease.
+func activeInteractiveBacklogClaim(store *RuntimeStore, vault string, task Note, run RunStatus, now time.Time) bool {
+	if store == nil || !run.HandRun || run.Terminal || run.Lane != runLaneExecute ||
+		!isDispatchingLeaseState(run.LeaseState) || runFreshness(&run, now) != "fresh" ||
+		stringField(task.Data, "status") != "backlog" {
+		return false
+	}
+	if task.Body == "" && stringField(task.Data, "id") != "" {
+		full, err := resolveV7Note(vault, stringField(task.Data, "id"), "task")
+		if err != nil {
+			return false
+		}
+		task = full
+	}
+	if stringField(task.Data, "status") != "backlog" || directWaveTaskContractStaleReason(task) != "" {
+		return false
+	}
+	auth, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	if err != nil || auth == nil || auth.ProjectID != run.ProjectID || auth.RecordID != run.RecordID ||
+		auth.LeaseGeneration != run.LeaseGeneration || auth.AttemptID != run.ActiveAttemptID ||
+		auth.Actor != run.LeaseOwner || !strings.HasPrefix(auth.Trigger, "self_implementation;") ||
+		(auth.Source != "codex" && auth.Source != "claude" && auth.Source != "devin") {
+		return false
+	}
+	contract := ""
+	for _, field := range strings.Split(auth.Trigger, ";")[1:] {
+		if value, ok := strings.CutPrefix(field, "contract="); ok {
+			contract = value
+		}
+	}
+	if contract == "" || contract != directWaveTaskContract(task) {
+		return false
+	}
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		return false
+	}
+	projected := task
+	projected.Data = cloneNoteData(task.Data)
+	projected.Data["status"] = "ready"
+	byID, byRecord := v7NoteMaps(idx)
+	return len(workSessionAdmissionBlockersForLane(projected, idx, byID, byRecord, runLaneExecute)) == 0
+}
 
 // workSessionAdmissionBlockers deliberately reads only the facts that make a
 // user-directed work session unsafe. Daemon dispatch, automation enablement,

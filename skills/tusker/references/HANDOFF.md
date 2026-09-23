@@ -48,12 +48,14 @@ this skill.
    content. `spec_refs` and `epic` are optional; every supplied ref must
    resolve. Normal authoring omits priority, size, risk, factory, and
    context metadata.
-4. **Inspect the fresh packet and route facts.** Re-read
+4. **Preflight before handoff.** Re-read each fresh packet with
    `tusker packet <ID> --for agent` and `tusker show <ID> --capsule` as a
-   cold reader; `tusker wave review <WAVE-ID> --json` shows member
-   eligibility, frontiers, and blockers. Creation stays inert — nothing
-   runs, and no readiness, arming, or scheduling step is required before
-   Start.
+   cold reader. For a wave, run `tusker wave review <WAVE-ID> --check --json`;
+   repair every member contract or DAG blocker and repeat until it exits zero
+   with wave Start enabled. For a standalone task, run
+   `tusker validate --path work/tasks/<ID>.md --json` and inspect warnings;
+   `ok:true` alone does not prove dispatchability. Creation stays inert —
+   preflight never arms or schedules work.
 5. **Start only on explicit authority.** `tusker task start <ID> --mode
    interactive --by <agent> --current-workspace --json` claims one task in
    this workspace; `--mode background` leaves a task-scoped run directive
@@ -79,9 +81,9 @@ providers stop rate-limiting the queue.
 
 ## Acceptance
 
-| ID | Outcome |
-| --- | --- |
-| A1 | The fourth retry waits at least 30s. |
+| ID | Outcome | Proof |
+| --- | --- | --- |
+| A1 | The fourth retry waits at least 30s. | Verification A1 |
 
 ## Verification
 
@@ -126,9 +128,9 @@ tasks:
       Owns `direct_wave_authority.go`; `daemon-wiring` consumes the helper;
       `run_directives` schema is shared and unchanged.
       ## Acceptance
-      | ID | Outcome |
-      | --- | --- |
-      | A1 | Helper queues only ready members up to concurrency. |
+      | ID | Outcome | Proof |
+      | --- | --- | --- |
+      | A1 | Helper queues only ready members up to concurrency. | Verification A1 |
       ## Verification
       | Covers | Check | Result | Notes |
       | --- | --- | --- | --- |

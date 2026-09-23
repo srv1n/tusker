@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import type { RunDetail as RunDetailData } from "@/types/domain";
@@ -6,8 +6,10 @@ import {
   interruptedRunReadbackComplete,
   useDaemon,
   useInterrupt,
+  useAttempt,
   useRedrive,
   useRun,
+  useRunAction,
   useTasks,
 } from "@/lib/queries";
 import { QueryBoundary, Skeleton, SkeletonRows } from "@/components/ui/states";
@@ -17,10 +19,12 @@ import { RunHeader } from "@/features/runs/detail/RunHeader";
 import { RunStats } from "@/features/runs/detail/RunStats";
 import { AttemptTimeline } from "@/features/runs/detail/AttemptTimeline";
 import { EventTail } from "@/features/runs/detail/EventTail";
-import { waitingForDaemonReason } from "@/features/runs/detail/helpers";
+import { SessionRecoveryControls } from "@/features/runs/detail/SessionRecoveryControls";
+import { isInterruptibleRun, waitingForDaemonReason } from "@/features/runs/detail/helpers";
 import { createRunActionLock } from "@/features/runs/detail/actionLock";
 import { useConfirm } from "@/components/ui/action-feedback";
 import { relativeTime } from "@/lib/time";
+import type { RunAction } from "@/types/domain";
 
 const route = getRouteApi("/p/$projectId/runs/$taskId");
 
@@ -37,10 +41,15 @@ export function RunDetail() {
 
 function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: string }) {
   const interrupt = useInterrupt(taskId, projectId);
-  const run = useRun(taskId, interrupt.data?.ok === true, projectId);
+  const [pendingAction, setPendingAction] = useState<RunAction | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const actionSequence = useRef(0);
+  const actionSettledSequence = useRef(0);
+  const run = useRun(taskId, interrupt.data?.ok === true, projectId, pendingAction !== null);
   const tasks = useTasks(projectId);
   const daemon = useDaemon();
   const redrive = useRedrive(taskId, projectId);
+  const runAction = useRunAction(taskId, projectId);
   const confirm = useConfirm();
   const [interruptConfirming, setInterruptConfirming] = useState(false);
   const runActionLock = useRef(createRunActionLock()).current;
@@ -48,7 +57,72 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
     interrupt.data?.ok === true && !interruptedRunReadbackComplete(run.data);
   const interruptBusy =
     interruptConfirming || interrupt.isPending || awaitingInterruptReadback;
-  const actionBusy = interruptBusy || redrive.isPending;
+  const actionBusy = interruptBusy || redrive.isPending || pendingAction !== null || runAction.isPending;
+
+  const settleAction = (action: RunAction, sequence: number) => {
+    void run.refetch().then((result) => {
+      if (actionSequence.current !== sequence) return;
+      if (result.data?.controls?.pending?.action === action || result.data?.actionReadback?.action === action && result.data.actionReadback.state === "pending") return;
+      if (action === "stop" && result.data && isInterruptibleRun(result.data)) return;
+      setPendingAction(null);
+    }).catch(() => {
+      if (actionSequence.current === sequence) setActionError("Action submitted, but canonical run readback is unavailable; keeping it pending.");
+    });
+  };
+
+  const onSessionAction = async (action: Exclude<RunAction, "reconnect">) => {
+    if (actionBusy) return;
+    if (action === "start_fresh" || action === "stop") {
+      const confirmed = await confirm({
+        title: action === "stop" ? `Stop ${taskId}` : `Start a fresh session for ${taskId}`,
+        body: action === "stop"
+          ? "Persists a durable stop intent and waits for canonical owner/process settlement before recovery is enabled."
+          : "This creates a different native session after the current owner settles. Existing history, authority, and budgets stay attached to the job.",
+        confirmLabel: action === "stop" ? "Stop run" : "Start fresh",
+        tone: "danger",
+      });
+      if (!confirmed || actionBusy) return;
+    }
+    const sequence = ++actionSequence.current;
+    setPendingAction(action);
+    setActionError(null);
+    runAction.mutate(action, {
+      onError: (error) => {
+        if (actionSequence.current === sequence) setActionError(error instanceof Error ? error.message : String(error));
+      },
+      onSettled: () => {
+        if (actionSequence.current === sequence) actionSettledSequence.current = sequence;
+        settleAction(action, sequence);
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (!pendingAction || run.isFetching || runAction.isPending) return;
+    if (pendingAction === "stop") {
+      if (run.data && !isInterruptibleRun(run.data)) setPendingAction(null);
+      return;
+    }
+    if (pendingAction === "reconnect" || actionSettledSequence.current !== actionSequence.current) return;
+    const readbackPending = run.data?.controls?.pending?.action === pendingAction ||
+      (run.data?.actionReadback?.action === pendingAction && run.data.actionReadback.state === "pending");
+    if (!readbackPending) {
+      actionSettledSequence.current = 0;
+      setPendingAction(null);
+    }
+  }, [pendingAction, run.data, run.dataUpdatedAt, run.isFetching]);
+
+  const onReconnect = () => {
+    if (actionBusy) return;
+    const sequence = ++actionSequence.current;
+    setPendingAction("reconnect");
+    setActionError(null);
+    void run.refetch().then(() => {
+      if (actionSequence.current === sequence) setPendingAction(null);
+    }).catch((error) => {
+      if (actionSequence.current === sequence) setActionError(error instanceof Error ? error.message : String(error));
+    });
+  };
 
   const onInterrupt = async () => {
     if (actionBusy || !runActionLock.tryAcquire("interrupt")) return;
@@ -99,51 +173,140 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
         </Link>
 
         <QueryBoundary q={run} loading={<RunDetailSkeleton />}>
-          {(data: RunDetailData) => {
-            const capsule = tasks.data?.find((t) => t.id === data.taskId);
-            const daemonWaitReason = waitingForDaemonReason(data, daemon.data);
-            return (
-              <div className="animate-rise">
-                <RunHeader
-                  run={data}
-                  capsule={capsule}
-                  onInterrupt={onInterrupt}
-                  onRetry={onRedrive}
-                  retry={{ pending: redrive.isPending, result: redrive.data ?? null, error: redrive.error }}
-                  interrupt={{
-                    confirming: interruptConfirming,
-                    pending: interrupt.isPending,
-                    awaitingReadback: awaitingInterruptReadback,
-                    result: interrupt.data ?? null,
-                    error: interrupt.error,
-                  }}
-                  waitingForDaemonReason={daemonWaitReason}
-                />
-
-                <RunStats run={data} waitingForDaemon={daemonWaitReason !== null} />
-
-                <OperatorFacts run={data} />
-                <Delivery run={data} />
-
-                <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[300px_1fr]">
-                  <div className="min-w-0">
-                    <SectionLabel className="mb-3">Attempts</SectionLabel>
-                    <AttemptTimeline attempts={data.attempts} />
-                    <WorkspacePath path={data.workspacePath} />
-                  </div>
-                  <EventTail
-                    events={data.events}
-                    liveness={data.liveness}
-                    sinceLastEventSec={data.sinceLastEventSec}
-                    waitingForDaemonReason={daemonWaitReason}
-                  />
-                </div>
-              </div>
-            );
-          }}
+          {(data: RunDetailData) => (
+            <RunDetailContent
+              data={data}
+              projectId={projectId}
+              capsule={tasks.data?.find((t) => t.id === data.taskId)}
+              daemon={daemon.data}
+              onInterrupt={onInterrupt}
+              onRetry={onRedrive}
+              retry={{ pending: redrive.isPending, result: redrive.data ?? null, error: redrive.error }}
+              interrupt={{
+                confirming: interruptConfirming,
+                pending: interrupt.isPending,
+                awaitingReadback: awaitingInterruptReadback,
+                result: interrupt.data ?? null,
+                error: interrupt.error,
+              }}
+              interruptBusy={interruptBusy}
+              pendingAction={pendingAction}
+              actionError={actionError}
+              onReconnect={onReconnect}
+              onAction={onSessionAction}
+            />
+          )}
         </QueryBoundary>
       </div>
     </div>
+  );
+}
+
+function RunDetailContent({
+  data,
+  projectId,
+  capsule,
+  daemon,
+  onInterrupt,
+  onRetry,
+  retry,
+  interrupt,
+  interruptBusy,
+  pendingAction,
+  actionError,
+  onReconnect,
+  onAction,
+}: {
+  data: RunDetailData;
+  projectId: string;
+  capsule?: Parameters<typeof RunHeader>[0]["capsule"];
+  daemon?: Parameters<typeof waitingForDaemonReason>[1];
+  onInterrupt: () => void;
+  onRetry: () => void;
+  retry: Parameters<typeof RunHeader>[0]["retry"];
+  interrupt: Parameters<typeof RunHeader>[0]["interrupt"];
+  interruptBusy: boolean;
+  pendingAction: RunAction | null;
+  actionError: string | null;
+  onReconnect: () => void;
+  onAction: (action: Exclude<RunAction, "reconnect">) => void;
+}) {
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string>();
+  const attempt = data.attempts.find((item) => (item.id ?? String(item.n)) === selectedAttemptId) ?? data.attempts.at(-1);
+  const attemptId = attempt ? (attempt.id ?? String(attempt.n)) : undefined;
+  const currentAttemptId = data.activeAttemptId ?? (data.attempts.at(-1) ? (data.attempts.at(-1)!.id ?? String(data.attempts.at(-1)!.n)) : undefined);
+  const historical = Boolean(attemptId && currentAttemptId && attemptId !== currentAttemptId);
+  const selectedAttemptQuery = useAttempt(historical ? attemptId : undefined, projectId);
+  const events = historical ? (selectedAttemptQuery.data?.events ?? []) : data.events;
+  const activity = historical ? undefined : data.activity ?? (hasDirectActivity(data) ? {
+    captureState: data.activityCaptureState,
+    captureReason: data.activityCaptureReason,
+    heartbeatAt: data.lastHeartbeatAt,
+    messageAt: data.lastMessageAt,
+    toolAt: data.lastToolProgressAt,
+    messageAgeSec: data.messageAgeSec,
+    toolAgeSec: data.toolProgressAgeSec,
+  } : undefined);
+  const daemonWaitReason = waitingForDaemonReason(data, daemon);
+
+  useEffect(() => {
+    if (selectedAttemptId && data.attempts.some((item) => (item.id ?? String(item.n)) === selectedAttemptId)) return;
+    setSelectedAttemptId(data.activeAttemptId ?? data.attempts.at(-1)?.id ?? (data.attempts.at(-1) ? String(data.attempts.at(-1)!.n) : undefined));
+  }, [data.activeAttemptId, data.attempts, selectedAttemptId]);
+
+  return (
+    <div className="animate-rise">
+      <RunHeader
+        run={data}
+        capsule={capsule}
+        onInterrupt={onInterrupt}
+        onRetry={onRetry}
+        retry={retry}
+        interrupt={interrupt}
+        waitingForDaemonReason={daemonWaitReason}
+      />
+
+      <SessionRecoveryControls
+        run={data}
+        pendingAction={pendingAction}
+        actionError={actionError}
+        busy={interruptBusy}
+        onReconnect={onReconnect}
+        onAction={onAction}
+      />
+
+      <RunStats run={data} waitingForDaemon={daemonWaitReason !== null} />
+
+      <OperatorFacts run={data} />
+      <Delivery run={data} />
+
+      <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[300px_1fr]">
+        <div className="min-w-0">
+          <SectionLabel className="mb-3">Attempts</SectionLabel>
+          <AttemptTimeline attempts={data.attempts} selectedAttemptId={attemptId} onSelect={(next) => setSelectedAttemptId(next.id ?? String(next.n))} />
+          <WorkspacePath path={data.workspacePath} />
+        </div>
+        <EventTail
+          events={events}
+          liveness={data.liveness}
+          sinceLastEventSec={data.sinceLastEventSec}
+          waitingForDaemonReason={daemonWaitReason}
+          activity={activity}
+          historicalAttempt={historical}
+        />
+      </div>
+    </div>
+  );
+}
+
+function hasDirectActivity(run: RunDetailData): boolean {
+  return Boolean(
+    run.activityCaptureState ||
+    run.activityCaptureReason ||
+    run.lastMessageAt ||
+    run.lastToolProgressAt ||
+    run.messageAgeSec !== undefined ||
+    run.toolProgressAgeSec !== undefined,
   );
 }
 

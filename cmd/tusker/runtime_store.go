@@ -26,6 +26,10 @@ type RuntimeStore struct {
 	// rebindProjectAfterUpdate is a test seam for proving that a failed
 	// persistence step rolls the complete registry mutation back.
 	rebindProjectAfterUpdate func(*sql.Tx) error
+	// projectAutomationAfterUpdate is the same seam for Background-work
+	// toggles: a failed audit write must roll the enable/disable back so a
+	// failed write can never report success.
+	projectAutomationAfterUpdate func(*sql.Tx) error
 	// providerObservationBeforePersist is a test seam proving provider child
 	// identity rolls back with the receipt/observation transaction.
 	providerObservationBeforePersist func(*sql.Tx) error
@@ -964,6 +968,15 @@ func (s *RuntimeStore) Migrate() error {
 			after_json TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS project_automation_audit (
+			event_id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			actor TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			before_enabled INTEGER NOT NULL,
+			after_enabled INTEGER NOT NULL,
+			created_at TEXT NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS runs (
 			project_id TEXT NOT NULL,
 			record_id TEXT NOT NULL,
@@ -1703,7 +1716,7 @@ func (s *RuntimeStore) Migrate() error {
 // migration path.
 func (s *RuntimeStore) runtimeSchemaComplete() bool {
 	for _, table := range []string{
-		"projects", "project_rebind_audit", "runs", "run_authorizations", "run_directives",
+		"projects", "project_rebind_audit", "project_automation_audit", "runs", "run_authorizations", "run_directives",
 		"run_identity_metadata", "attempts", "turns", "sessions", "supervisor_decisions",
 		"apply_inputs", "review_results", "gate_ledger", "batch_gate_runs", "completion_transactions",
 		"completion_authority_issuances", "resource_leases", "resource_lease_events", "daemon_settings",
@@ -2035,6 +2048,98 @@ func (s *RuntimeStore) RemoveProject(projectID string) error {
 func (s *RuntimeStore) UnregisterProject(projectID string) error {
 	_, err := s.exec(`DELETE FROM projects WHERE project_id = ?`, projectID)
 	return err
+}
+
+// ProjectAutomationAuditEvent is one persisted Background-work toggle with
+// its exact actor, source, before/after state, and time. Rows written before
+// this audit existed keep an empty actor: unaudited historical changes
+// remain unattributed rather than guessed.
+type ProjectAutomationAuditEvent struct {
+	EventID       string `json:"event_id"`
+	ProjectID     string `json:"project_id"`
+	Actor         string `json:"actor"`
+	Source        string `json:"source"`
+	BeforeEnabled bool   `json:"before_enabled"`
+	AfterEnabled  bool   `json:"after_enabled"`
+	CreatedAt     string `json:"created_at"`
+}
+
+// SetProjectAutomationAudited flips Background work and persists the exact
+// actor/source/before/after/time evidence in the same transaction. A failed
+// write rolls everything back and returns an error: it never reports
+// success. Idempotent retoggles (before == after) are still recorded so the
+// audit distinguishes "requested, already set" from "never requested".
+func (s *RuntimeStore) SetProjectAutomationAudited(projectID string, enabled bool, actor, source string) (beforeEnabled bool, err error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return false, tuskerError(errorInvalidArg, "project automation toggle requires project_id")
+	}
+	err = s.withBusyRetry(func() error {
+		tx, txErr := s.db.Begin()
+		if txErr != nil {
+			return txErr
+		}
+		defer tx.Rollback()
+		var enabledInt int
+		if txErr = tx.QueryRow(`SELECT enabled FROM projects WHERE project_id = ?`, projectID).Scan(&enabledInt); txErr != nil {
+			if errors.Is(txErr, sql.ErrNoRows) {
+				return tuskerError(errorNotFound, "project not found: "+projectID)
+			}
+			return txErr
+		}
+		beforeEnabled = enabledInt != 0
+		health := projectHealthDisabled
+		if enabled {
+			health = projectHealthHealthy
+		}
+		if _, txErr = tx.Exec(`UPDATE projects
+			SET enabled = ?, health = ?, last_error = CASE WHEN ? = 1 THEN last_error ELSE '' END
+			WHERE project_id = ?`,
+			boolToInt(enabled), string(health), boolToInt(enabled), projectID); txErr != nil {
+			return txErr
+		}
+		if _, txErr = tx.Exec(`INSERT INTO project_automation_audit(event_id, project_id, actor, source, before_enabled, after_enabled, created_at) VALUES(?,?,?,?,?,?,?)`,
+			"automation-"+strings.ToLower(newRecordID()), projectID,
+			strings.TrimSpace(actor), strings.TrimSpace(source),
+			boolToInt(beforeEnabled), boolToInt(enabled), time.Now().UTC().Format(time.RFC3339Nano)); txErr != nil {
+			return txErr
+		}
+		if s.projectAutomationAfterUpdate != nil {
+			if txErr = s.projectAutomationAfterUpdate(tx); txErr != nil {
+				return txErr
+			}
+		}
+		return tx.Commit()
+	})
+	if err != nil {
+		return false, err
+	}
+	return beforeEnabled, nil
+}
+
+// ListProjectAutomationAudit returns the toggle evidence for a project,
+// oldest first.
+func (s *RuntimeStore) ListProjectAutomationAudit(projectID string) ([]ProjectAutomationAuditEvent, error) {
+	rows, err := s.query(`SELECT event_id, project_id, actor, source, before_enabled, after_enabled, created_at FROM project_automation_audit WHERE project_id = ? ORDER BY created_at`, strings.TrimSpace(projectID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []ProjectAutomationAuditEvent
+	for rows.Next() {
+		var event ProjectAutomationAuditEvent
+		var before, after int
+		if err := rows.Scan(&event.EventID, &event.ProjectID, &event.Actor, &event.Source, &before, &after, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		event.BeforeEnabled = before != 0
+		event.AfterEnabled = after != 0
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 func (s *RuntimeStore) SetProjectEnabled(projectID string, enabled bool) error {
@@ -3610,6 +3715,7 @@ func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner 
 	attempt.ProjectID, attempt.RecordID = run.ProjectID, run.RecordID
 	attempt.ItemID = firstNonEmpty(attempt.ItemID, run.ItemID)
 	attempt.Runner, attempt.Lane = firstNonEmpty(attempt.Runner, run.Runner), firstNonEmpty(attempt.Lane, run.Lane, runLaneExecute)
+	attempt.WorkspacePath = identity.WorkspacePath
 	attempt.WorkRevision, attempt.Outcome, attempt.StartedAt = run.WorkRevision, firstNonEmpty(attempt.Outcome, string(AttemptOutcomeNone)), firstNonEmpty(attempt.StartedAt, createdAt)
 	identity.CreatedAt = firstNonEmpty(identity.CreatedAt, createdAt)
 	claimed := false
@@ -3623,13 +3729,13 @@ func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner 
 		claimResult, err := tx.Exec(`UPDATE runs
 			SET lease_state = 'claimed', lease_owner = ?, lease_generation = ?, lease_expires_at = ?, lease_host = ?,
 				last_heartbeat_at = ?, updated_at = ?, hand_run = 1, attempt_count = ?, active_attempt_id = ?,
-				runner = ?, lane = ?, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
+				runner = ?, lane = ?, workspace_path = ?, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, last_event_at = ?
 			WHERE project_id = ? AND record_id = ?
 				AND lease_state NOT IN ('claimed', 'running') AND lease_state = ? AND lease_owner = ?
 				AND lease_generation = ? AND work_revision = ?
 				AND (? <= 0 OR (SELECT COUNT(1) FROM runs active WHERE active.project_id = ? AND active.lease_state IN ('claimed','running')) < ?)`,
 			owner, generation, now.Add(ttl).Format(time.RFC3339Nano), runtimeLeaseHost(), createdAt, createdAt,
-			run.AttemptCount+1, attempt.AttemptID, attempt.Runner, attempt.Lane, attempt.StartedAt, createdAt,
+			run.AttemptCount+1, attempt.AttemptID, attempt.Runner, attempt.Lane, identity.WorkspacePath, attempt.StartedAt, createdAt,
 			run.ProjectID, run.RecordID, expectedLeaseState, precondition.ExpectedOwner, precondition.ExpectedLeaseGeneration, precondition.ExpectedWorkRevision,
 			precondition.ProjectConcurrencyLimit, run.ProjectID, precondition.ProjectConcurrencyLimit)
 		if err != nil {

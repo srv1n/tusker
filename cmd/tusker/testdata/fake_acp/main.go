@@ -334,6 +334,19 @@ func (s *server) prompt(req message) {
 	case "unknown-id":
 		writeUpdate(s.session, "unknown-id-before-terminal")
 		writeTerminal(req.ID)
+	case "activity":
+		writeUpdate(s.session, "Running fixture ")
+		writeUpdate(s.session, "tests.\npassword=")
+		writeUpdate(s.session, "private-value\n")
+		for _, update := range []map[string]any{
+			{"sessionUpdate": "tool_call", "toolCallId": "test-1", "title": "cargo test selected_native_fixture_", "status": "in_progress"},
+			{"sessionUpdate": "tool_call_update", "toolCallId": "test-1", "status": "completed", "content": []any{map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": "2 passed"}}}},
+			{"sessionUpdate": "agent_thought_chunk", "content": map[string]string{"type": "text", "text": "private reasoning"}},
+		} {
+			write(message{JSONRPC: "2.0", Method: "session/update", Params: map[string]any{"sessionId": s.session, "update": update}})
+		}
+		writeUpdate(s.session, "Tests finished.")
+		writeTerminal(req.ID)
 	case "duplicate-id":
 		writeTerminal(req.ID)
 		writeTerminal(req.ID)

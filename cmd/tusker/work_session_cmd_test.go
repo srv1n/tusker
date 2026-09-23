@@ -84,6 +84,75 @@ func workSessionErrorCode(err error) string {
 	return ""
 }
 
+func TestWorkSessionCurrentWorkspaceRepairsEmptyUnclaimedWorkspace(t *testing.T) {
+	vault, project := workSessionFixture(t, 1)
+	t.Chdir(project.RepoRoot)
+	t.Setenv("CODEX_THREAD_ID", "implementation-conversation")
+	t.Setenv("TUSKER_ATTEMPT_ID", "")
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRunPreservingLease(RunStatus{
+		ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	captureStdout(t, func() {
+		if err := workSessionStartCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "agent:implementer", "source": "codex", "current-workspace": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err = OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRunScoped(project.ProjectID, "APP-T-0001")
+	if err != nil || run == nil || run.WorkspacePath != project.RepoRoot || run.LeaseState != string(LeaseStateClaimed) {
+		t.Fatalf("current workspace claim did not repair stale path: run=%#v err=%v", run, err)
+	}
+	identity, err := store.RunIdentity(project.ProjectID, "APP-T-0001")
+	if err != nil || identity == nil || identity.WorkspacePath != project.RepoRoot {
+		t.Fatalf("claim did not bind exact workspace identity: identity=%#v err=%v", identity, err)
+	}
+}
+
+func TestWorkSessionPreservingLeaseKeepsWorkspace(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, test := range []struct {
+		name  string
+		lease string
+		path  string
+	}{
+		{name: "empty incoming path", lease: string(LeaseStateUnclaimed), path: ""},
+		{name: "active holder", lease: string(LeaseStateClaimed), path: "/another/workspace"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := RunStatus{ProjectID: "project", RecordID: test.name, ItemID: test.name,
+				Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+				LeaseState: test.lease, WorkspacePath: "/held/workspace"}
+			if err := store.UpsertRunPreservingLease(run); err != nil {
+				t.Fatal(err)
+			}
+			run.WorkspacePath = test.path
+			if err := store.UpsertRunPreservingLease(run); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+			if err != nil || stored == nil || stored.WorkspacePath != "/held/workspace" {
+				t.Fatalf("workspace changed under %s lease: run=%#v err=%v", test.lease, stored, err)
+			}
+		})
+	}
+}
+
 func TestWorkSessionInteractiveStartWithAutomationDisabled(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual work", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
@@ -321,13 +390,24 @@ func TestWorkSessionIdentityWriteFailureRollsBackClaim(t *testing.T) {
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	identity := RunIdentityMetadata{
 		ProjectID: run.ProjectID, RecordID: run.RecordID, RepoRoot: "/tmp/repo",
-		WorkspacePath: run.WorkspacePath, WorkspaceMode: string(WorkspaceStrategyCopy),
+		WorkspacePath: "/tmp/repo/new-workspace", WorkspaceMode: string(WorkspaceStrategyCopy),
 		Runner: run.Runner, Branch: "task/" + run.RecordID, Head: strings.Repeat("a", 40),
 	}
 	attempt := RunAttempt{
 		AttemptID: "work-rollback", ProjectID: run.ProjectID, RecordID: run.RecordID,
 		ItemID: run.ItemID, Runner: run.Runner, Lane: run.Lane, WorkRevision: run.WorkRevision,
-		WorkspacePath: run.WorkspacePath, BranchName: identity.Branch,
+		WorkspacePath: identity.WorkspacePath, BranchName: identity.Branch,
+	}
+	refused, err := store.claimRunLeaseWithWorkSessionAttempt(
+		run, "agent:codex", 1, defaultRunLeaseTTL, now,
+		RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed, ExpectedWorkRevision: run.WorkRevision + 1},
+		RunAuthorization{Source: "codex", Actor: "agent:codex", Trigger: "work_start"}, attempt, identity,
+	)
+	if err != nil || refused {
+		t.Fatalf("stale claim must be refused: claimed=%v err=%v", refused, err)
+	}
+	if stored, err := store.FindRun(run.RecordID); err != nil || stored == nil || stored.WorkspacePath != run.WorkspacePath {
+		t.Fatalf("refused claim changed historical workspace: run=%#v err=%v", stored, err)
 	}
 	claimed, err := store.claimRunLeaseWithWorkSessionAttempt(
 		run, "agent:codex", 1, defaultRunLeaseTTL, now,
@@ -345,7 +425,7 @@ func TestWorkSessionIdentityWriteFailureRollsBackClaim(t *testing.T) {
 	if findErr != nil {
 		t.Fatal(findErr)
 	}
-	if latest == nil || LeaseState(latest.LeaseState) != LeaseStateUnclaimed || latest.LeaseOwner != "" || latest.ActiveAttemptID != "" {
+	if latest == nil || LeaseState(latest.LeaseState) != LeaseStateUnclaimed || latest.LeaseOwner != "" || latest.ActiveAttemptID != "" || latest.WorkspacePath != run.WorkspacePath {
 		t.Fatalf("failed identity write left a claimed run: %#v", latest)
 	}
 	if auth, authErr := store.LatestRunAuthorization(run.ProjectID, run.RecordID); authErr != nil || auth != nil {

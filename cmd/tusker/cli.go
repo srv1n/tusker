@@ -334,6 +334,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, escalationV7AckCmd(args)
 	case "digest":
 		return 0, digestCmd(args)
+	case "doctor":
+		return executionDoctorCmd(args)
 	case "logbook":
 		return 0, logbookCmd(args)
 	case "trace":
@@ -624,6 +626,9 @@ func runInner(command string, args Args) (int, error) {
 		return 0, projectsRemoveCmd(args)
 	case "projects prune":
 		return 0, projectsPruneCmd(args)
+	case "projects automation-scope":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, projectsAutomationScopeCmd(args)
 	case "projects":
 		printProjectsHelp()
 		return 0, nil
@@ -779,7 +784,7 @@ func runInner(command string, args Args) (int, error) {
 	case "help config", "help config resolve":
 		printConfigHelp()
 		return 0, nil
-	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects rebind", "help projects remove", "help projects prune":
+	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects rebind", "help projects remove", "help projects prune", "help projects automation-scope":
 		printProjectsHelp()
 		return 0, nil
 	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release", "help runs retire", "help runs redrive", "help redrive":
@@ -974,6 +979,19 @@ func printCommandHelp(command string) bool {
 		printClaimHelp()
 	case "evidence":
 		printEvidenceHelp()
+	case "doctor":
+		fmt.Println(`Usage:
+  tusker doctor <TASK-ID|WAVE-ID> [--json] [--output <new-path>]
+
+Purpose:
+  Diagnose one task or wave across contracts, DAG, authorization, queued
+  reservations, capacity, proof, review, and daemon freshness. Read-only:
+  nothing is queued, claimed, spawned, or signaled. Human output leads with
+  the primary cause and the exact permitted next action; --json retains the
+  complete versioned diagnosis. --output writes the same bounded JSON to a
+  new file and refuses to overwrite an existing file. Exits 0 for
+  healthy/completed/normal waits, 1 for actionable faults or decisions, and
+  2 for unavailable or invalid diagnoses.`)
 	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave pause", "wave resume", "wave review", "wave start", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
 	case "handoff", "finish", "gate", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy":
@@ -1032,7 +1050,7 @@ func printCommandHelp(command string) bool {
 		printAutomationHelp()
 	case "factory", "factory operations":
 		printFactoryOperationsHelp()
-	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune":
+	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune", "projects automation-scope":
 		printProjectsHelp()
 	case "runs", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
@@ -1077,12 +1095,13 @@ Purpose:
   key conflicts. Nothing is claimed or dispatched.`)
 	case command == "wave review":
 		fmt.Println(`Usage:
-  tusker wave review <WAVE-ID> [--json]
+  tusker wave review <WAVE-ID> [--check] [--json]
 
 Purpose:
   Read the durable wave/task/gate projection: state, authorization, material
   fingerprint, member eligibility, dependency frontiers, blockers with repair
-  actions, and controls. Read-only; no plan, factory, or runtime mutation.`)
+  actions, and controls. --check exits nonzero unless Start is enabled while
+  still showing the review. Read-only; no plan, factory, or runtime mutation.`)
 	case command == "wave start":
 		fmt.Println(`Usage:
   tusker wave start <WAVE-ID> --mode background --by human:<name>|operator:<name> [--json]
@@ -1289,8 +1308,9 @@ func printProjectsHelp() {
   tusker projects add [--repo <path>] [--vault <path>] [--json]
   tusker projects list [--json]
   tusker projects limits [--id <project-id>|--repo <path>|--vault <path>] [--max-active-runs <n>] [--json]
-  tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--json]
+  tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--dry-run] [--json]
   tusker projects disable [--id <project-id>|--repo <path>|--vault <path>] [--json]
+  tusker projects automation-scope [--id <project-id>|--repo <path>|--vault <path>] [--json]
   tusker projects rebind --id <project-id> --repo <canonical-path> --vault <canonical-path> [--allow-dirty] [--dry-run] [--json]
   tusker projects remove <project-id> [--json]
   tusker projects prune [--apply] [--dry-run] [--json]
@@ -1307,6 +1327,9 @@ Behavior:
   - --allow-dirty is an explicit opt-in to rebind a Git worktree with uncommitted changes
   - prune previews registrations whose tracker roots no longer exist and their
     matching dangling Obsidian-vault symlinks; --apply performs the removal
+  - enable --dry-run and automation-scope preview the exact resume scope
+    (armed waves, eligible tasks, active directives, excluded waves) and the
+    toggle audit trail without arming, enabling, or mutating anything
   - on macOS, projects under Desktop, Documents, Downloads, or iCloud Drive
     receive a launchd access warning during add/enable
 

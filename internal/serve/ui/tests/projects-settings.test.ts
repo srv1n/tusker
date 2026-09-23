@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { parseExecutionConcurrency } from "@/features/product/OperationsScreens";
 
 const source = (path: string) => readFileSync(path, "utf8");
 
@@ -67,6 +68,186 @@ test("workspace mode and concurrency persist through project settings API", () =
   expect(settings).toContain('aria-label="Project concurrent tasks"');
   expect(api).toContain("post(`/projects/${projectId}/settings`, body)");
 });
+
+test("execution concurrency accepts only blank or positive integers", () => {
+  expect(parseExecutionConcurrency("")).toEqual({});
+  expect(parseExecutionConcurrency("   ")).toEqual({});
+  expect(parseExecutionConcurrency("3")).toEqual({ value: 3 });
+  expect(parseExecutionConcurrency("  4  ")).toEqual({ value: 4 });
+  for (const invalid of ["1.5", "0", "-2", "lots", "3.0", "0x10", "2e2"]) {
+    const checked = parseExecutionConcurrency(invalid);
+    expect(checked.value).toBeUndefined();
+    expect(checked.error).toContain("positive whole number");
+  }
+});
+
+test("execution settings form rejects invalid concurrency visibly without submission", async () => {
+  // A real input-and-submit interaction against the shipped SettingsBasic
+  // form. jsdom stands in for the browser because this sandbox denies the
+  // TCP bind a dev-server browser test would need; the input events, React
+  // state, validation message, and mutation payload are all exercised.
+  const { JSDOM } = await import(
+    "/Users/sarav/.bun/install/global/node_modules/jsdom/lib/api.js"
+  );
+  const dom = new JSDOM(
+    '<!doctype html><html><body><main id="root"></main></body></html>',
+    { url: "http://localhost/", pretendToBeVisual: true },
+  );
+  const win = dom.window as unknown as Record<string, any>;
+  const saved = new Map<string, unknown>();
+  for (const key of [
+    "window",
+    "document",
+    "navigator",
+    "HTMLElement",
+    "HTMLInputElement",
+    "HTMLSelectElement",
+    "HTMLButtonElement",
+    "Event",
+    "CustomEvent",
+    "Node",
+    "Element",
+    "DocumentFragment",
+    "MutationObserver",
+    "localStorage",
+  ]) {
+    saved.set(key, (globalThis as Record<string, unknown>)[key]);
+    (globalThis as Record<string, unknown>)[key] = win[key];
+  }
+  for (const key of [
+    "getComputedStyle",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+  ]) {
+    saved.set(key, (globalThis as Record<string, unknown>)[key]);
+    (globalThis as Record<string, unknown>)[key] =
+      typeof win[key] === "function" ? win[key].bind(win) : win[key];
+  }
+  saved.set("IS_REACT_ACT_ENVIRONMENT", (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT);
+  (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  const realFetch = (globalThis as Record<string, unknown>).fetch;
+  (globalThis as Record<string, unknown>).fetch = async () =>
+    new Response(null, { status: 404 });
+  try {
+    const React = await import("react");
+    const { act } = React;
+    const { createRoot } = await import("react-dom/client");
+    const { SettingsBasic } = await import(
+      "@/features/product/OperationsScreens"
+    );
+    const writes: Array<Record<string, unknown>> = [];
+    const settings = {
+      mutate: (body: Record<string, unknown>) => {
+        writes.push(body);
+      },
+      isPending: false,
+      error: null,
+      data: null,
+    };
+    const automation = {
+      mutate: () => {},
+      isPending: false,
+      error: null,
+      data: null,
+    };
+    const project = {
+      id: "proj-1",
+      logicalId: "proj-1",
+      health: "ok",
+      automationEnabled: false,
+      automationSource: "Project",
+      workspaceMode: "shared",
+      workspaceSource: "Project",
+      maxActiveRunsPerProject: 2,
+      concurrencySource: "Project",
+    };
+    let root: { unmount: () => void } | undefined;
+    await act(async () => {
+      root = createRoot(win.document.getElementById("root")!);
+      root.render(
+        React.createElement(SettingsBasic, {
+          project,
+          projectIds: ["proj-1"],
+          operations: undefined,
+          automation,
+          settings,
+          onOpenAdvanced: () => {},
+        }),
+      );
+    });
+    const doc = win.document;
+    const input = doc.querySelector(
+      'input[aria-label="Project concurrent tasks"]',
+    ) as HTMLInputElement;
+    expect(input.value).toBe("2");
+    const save = Array.from(doc.querySelectorAll("button")).find(
+      (button) => button.textContent === "Save execution settings",
+    ) as HTMLButtonElement;
+    const setInput = async (value: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(
+          win.HTMLInputElement.prototype,
+          "value",
+        )!.set!;
+        setter.call(input, value);
+        input.dispatchEvent(new win.Event("input", { bubbles: true }));
+      });
+    };
+    const clickSave = async () => {
+      await act(async () => {
+        save.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+      });
+    };
+    const alertText = () =>
+      doc.querySelector('[role="alert"]')?.textContent ?? "";
+
+    // Fractional input is rejected visibly and never submitted.
+    await setInput("1.5");
+    await clickSave();
+    expect(alertText()).toContain("positive whole number");
+    expect(writes).toEqual([]);
+
+    // Zero is rejected the same way, with still no submission.
+    await setInput("0");
+    await clickSave();
+    expect(alertText()).toContain("positive whole number");
+    expect(writes).toEqual([]);
+
+    // Blank keeps the explicit unset semantics: only the workspace mode is sent.
+    await setInput("");
+    await clickSave();
+    expect(writes).toEqual([{ workspaceMode: "shared" }]);
+
+    // A valid positive integer saves both fields together.
+    const mode = doc.querySelector(
+      'select[aria-label="Workspace mode"]',
+    ) as HTMLSelectElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        win.HTMLSelectElement.prototype,
+        "value",
+      )!.set!;
+      setter.call(mode, "worktree");
+      mode.dispatchEvent(new win.Event("change", { bubbles: true }));
+    });
+    await setInput("3");
+    await clickSave();
+    expect(writes).toEqual([
+      { workspaceMode: "shared" },
+      { workspaceMode: "worktree", maxActiveRunsPerProject: 3 },
+    ]);
+    expect(doc.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => {
+      root!.unmount();
+    });
+  } finally {
+    (globalThis as Record<string, unknown>).fetch = realFetch;
+    for (const [key, value] of saved) {
+      (globalThis as Record<string, unknown>)[key] = value;
+    }
+    dom.window.close();
+  }
+}, 60_000);
 
 test("advanced settings expose bounded registration repair without reset controls", () => {
   const settings = source("src/features/product/OperationsScreens.tsx");

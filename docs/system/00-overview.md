@@ -120,9 +120,11 @@ graph TD
   n_real_work_ui_acceptance["Verify the live task wave and Documents experience against the seeded project"]
   n_remaining_product_work["Remaining product work after the three real-work streams"]
   n_repeatable_work_testing["Repeatable work scenarios and CLI parity"]
+  n_run_session_continuity["run-session-continuity"]
   n_runner_boundary_decisions["Runner boundary decisions — 7 September 2026"]
   n_runner_execution_boundary["Use the operator's installed coding agents"]
   n_runners_and_acp["Runners and ACP"]
+  n_self_service_execution_recovery["self-service-execution-recovery"]
   n_serve_ui["Serve UI"]
   n_skills["Skills"]
   n_skills_and_documentation["External skills and clear everyday documentation"]
@@ -261,6 +263,8 @@ graph TD
   n_repeatable_work_testing -->|updates| n_cli
   n_repeatable_work_testing -->|updates| n_runners_and_acp
   n_repeatable_work_testing -->|updates| n_tasks_and_proof
+  n_run_session_continuity -->|part of| n_overview
+  n_run_session_continuity -->|updates| n_execution_observability
   n_runner_boundary_decisions -->|decides for| n_runner_execution_boundary
   n_runner_boundary_decisions -->|part of| n_runner_execution_boundary
   n_runner_boundary_decisions -->|source| n_runner_execution_boundary
@@ -269,6 +273,13 @@ graph TD
   n_runner_execution_boundary -->|updates| n_runners_and_acp
   n_runners_and_acp -->|link| n_runner_execution_boundary
   n_runners_and_acp -->|part of| n_overview
+  n_self_service_execution_recovery -->|part of| n_overview
+  n_self_service_execution_recovery -->|source| n_delivery_and_waves
+  n_self_service_execution_recovery -->|source| n_execution_observability_system
+  n_self_service_execution_recovery -->|source| n_storage_and_runtime
+  n_self_service_execution_recovery -->|updates| n_delivery_and_waves
+  n_self_service_execution_recovery -->|updates| n_execution_observability_system
+  n_self_service_execution_recovery -->|updates| n_storage_and_runtime
   n_serve_ui -->|part of| n_overview
   n_skills -->|part of| n_overview
   n_skills_and_documentation -->|part of| n_planning_handoff_and_agent_entry

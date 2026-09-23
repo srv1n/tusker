@@ -33,18 +33,9 @@ func (r *CodexRunner) Start(ctx context.Context, req StartRequest) (*StartResult
 }
 
 func (r *CodexRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
-	command := strings.TrimSpace(req.Command)
-	if command == "" {
-		command = "codex app-server"
-	}
-	startReq := StartRequest{
-		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath,
-		RepoRoot: req.RepoRoot, Command: command, CommandArgv: append([]string(nil), req.CommandArgv...), CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
-	}
-	return r.Start(ctx, startReq)
+	_ = ctx
+	_ = req
+	return nil, tuskerError(errorInvalidTransition, "codex runner does not support native session resume; request explicit context recovery")
 }
 
 func (r *CodexRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {
@@ -75,20 +66,9 @@ func (r *CodexAppServerRunner) Start(ctx context.Context, req StartRequest) (*St
 }
 
 func (r *CodexAppServerRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
-	if strings.TrimSpace(req.Command) == "" {
-		req.Command = "codex app-server"
-	}
-	if !shouldUseLiveCodex(req.Command) {
-		return nil, tuskerError(errorConfigInvalid, "codex_app_server runner requires an app-server command")
-	}
-	startReq := StartRequest{
-		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates, WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath,
-		RepoRoot: req.RepoRoot, Command: req.Command, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
-	}
-	return r.Start(ctx, startReq)
+	_ = ctx
+	_ = req
+	return nil, tuskerError(errorInvalidTransition, "codex_app_server runner does not support native session resume; request explicit context recovery")
 }
 
 type CodexExecRunner struct{}
@@ -125,7 +105,11 @@ func (r *CodexExecRunner) Resume(ctx context.Context, req ResumeRequest) (*Resum
 		return nil, tuskerError(errorConfigInvalid, "codex_exec runner requires a detached codex exec resume command, not app-server")
 	}
 	if len(req.CommandArgv) > 0 {
-		req.CommandArgv = codexExecResumeArgv(req.CommandArgv, req.SessionRef)
+		resumedArgv := codexExecResumeArgv(req.CommandArgv, req.SessionRef)
+		if len(resumedArgv) < 3 || resumedArgv[1] != "exec" || resumedArgv[2] != "resume" {
+			return nil, tuskerError(errorConfigInvalid, "codex_exec resume requires a direct codex exec command")
+		}
+		req.CommandArgv = resumedArgv
 	} else {
 		var err error
 		command, err = codexExecCommandWithPolicy(command, req.CodexPolicy)

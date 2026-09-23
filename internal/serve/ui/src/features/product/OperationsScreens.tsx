@@ -6,7 +6,7 @@ import { ActionResultLine } from "@/components/ui/action-feedback";
 import { Card, Chip, Dot, Mono } from "@/components/ui/primitives";
 import { PageHeader, PageScroll, SectionLabel } from "@/components/ui/page";
 import { QueryBoundary, SkeletonRows } from "@/components/ui/states";
-import { useDaemon, useFactoryOperations, useProjectAutomation, useProjectSettings, useProjects, useRuns, useWaves } from "@/lib/queries";
+import { useDaemon, useFactoryOperations, useProjectAutomation, useProjectAutomationScope, useProjectSettings, useProjects, useRuns, useWaves } from "@/lib/queries";
 import { cn } from "@/lib/cn";
 import { projectContainsCheckout, type DaemonStatus, type FactoryOperationsProjection, type ProjectSummary, type RunSummary, type WaveSummary } from "@/types/domain";
 import { api } from "@/lib/api";
@@ -88,12 +88,22 @@ export function SettingsBasic({
 }) {
   const [workspaceMode, setWorkspaceMode] = useState(project.workspaceMode ?? "shared");
   const [concurrency, setConcurrency] = useState(String(project.maxActiveRunsPerProject ?? ""));
+  const [concurrencyError, setConcurrencyError] = useState<string | null>(null);
   const automationPending = useRef(false);
+  const automationScope = useProjectAutomationScope(project.id);
   const saveExecution = () => {
-    const parsed = Number(concurrency);
+    // Blank keeps the existing explicit unset semantics: only the workspace
+    // mode is submitted. Anything else must be a positive integer, shown
+    // visibly, and never submitted or silently omitted.
+    const checked = parseExecutionConcurrency(concurrency);
+    if (checked.error) {
+      setConcurrencyError(checked.error);
+      return;
+    }
+    setConcurrencyError(null);
     settings.mutate({
       workspaceMode,
-      ...(Number.isFinite(parsed) && parsed > 0 ? { maxActiveRunsPerProject: parsed } : {}),
+      ...(checked.value !== undefined ? { maxActiveRunsPerProject: checked.value } : {}),
     });
   };
   const setAutomation = (enabled: boolean) => {
@@ -128,6 +138,7 @@ export function SettingsBasic({
           control={<Toggle checked={project.automationEnabled} disabled={automation.isPending || automationPending.current} onChange={setAutomation} ariaLabel={`Background work (${project.automationEnabled ? "On" : "Off"})`} label={project.automationEnabled ? "On" : "Off"} />}
         />
         <ActionResultLine pending={automation.isPending} error={automation.error} result={automation.data} />
+        <AutomationScopeRow scopeQuery={automationScope} />
 		<SettingRow
 		  name="What runs"
 		  detail="Only tasks and waves you explicitly run."
@@ -158,7 +169,27 @@ export function SettingsBasic({
           name="Concurrent tasks"
           detail="Maximum active runs for this project; overlapping owned paths still wait, and the daemon enforces the global cap."
           source={project.concurrencySource ?? "Project"}
-          control={<TextInput aria-label="Project concurrent tasks" inputMode="numeric" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className="w-28 font-mono" />}
+          control={
+            <div className="flex flex-col items-end gap-1">
+              <TextInput
+                aria-label="Project concurrent tasks"
+                inputMode="numeric"
+                value={concurrency}
+                aria-invalid={concurrencyError ? true : undefined}
+                aria-describedby={concurrencyError ? "execution-concurrency-error" : undefined}
+                onChange={(event) => {
+                  setConcurrency(event.target.value);
+                  if (concurrencyError) setConcurrencyError(null);
+                }}
+                className="w-28 font-mono"
+              />
+              {concurrencyError ? (
+                <p id="execution-concurrency-error" role="alert" className="text-[12px] leading-relaxed text-warn">
+                  {concurrencyError}
+                </p>
+              ) : null}
+            </div>
+          }
         />
         <div className="flex flex-wrap items-center justify-end gap-3 bg-panel px-4 py-3">
           <ActionResultLine pending={settings.isPending} error={settings.error} result={settings.data} />
@@ -177,6 +208,57 @@ export function beginAutomationToggle(pending: { current: boolean }) {
   if (pending.current) return false;
   pending.current = true;
   return true;
+}
+
+/**
+ * Read-only resume scope and toggle audit for Background work. This row
+ * never enables, arms, or mutates anything: it reads the automation-scope
+ * endpoint, which is a projection over still-valid prior authorizations.
+ */
+export function AutomationScopeRow({ scopeQuery }: { scopeQuery: ReturnType<typeof useProjectAutomationScope> }) {
+  if (scopeQuery.isPending) {
+    return <SettingRow name="Resume scope" detail="Waves and directives an enable would resume. Reading this arms nothing." source="Project runtime" control={<ReadValue value="Loading…" />} />;
+  }
+  if (scopeQuery.error || !scopeQuery.data?.automation) {
+    return <SettingRow name="Resume scope" detail="Waves and directives an enable would resume. Reading this arms nothing." source="Project runtime" control={<ReadValue value="Scope unavailable." />} />;
+  }
+  const report = scopeQuery.data.automation;
+  if (report.scopeUnavailable) {
+    return <SettingRow name="Resume scope" detail="Waves and directives an enable would resume. Reading this arms nothing." source="Project runtime" control={<ReadValue value={`Scope unavailable: ${report.scopeUnavailable}`} />} />;
+  }
+  const scope = report.scope;
+  const eligible = scope.waves.reduce((n, wave) => n + wave.eligible_count, 0);
+  const lines = [
+    `${scope.waves.length} armed wave(s), ${eligible} eligible task(s), ${scope.directives.length} task-scoped directive(s), ${scope.excluded.length} excluded wave(s)`,
+    ...scope.waves.map((wave) => `Armed ${wave.wave_id}: ${wave.eligible_count}/${wave.total_count} eligible${wave.frontier?.length ? ` (frontier: ${wave.frontier.join(", ")})` : ""}`),
+    ...scope.directives.map((directive) => `Directive ${directive.record_id}${directive.wave_id ? ` in ${directive.wave_id}` : ""}${directive.actor ? ` by ${directive.actor}` : ""}`),
+    ...scope.excluded.map((entry) => `Excluded ${entry.wave_id}: ${entry.reason}`),
+  ];
+  const audit = report.auditTrail ?? (report.audit ? [report.audit] : []);
+  for (const event of audit.slice(-3)) {
+    lines.push(`Change ${event.created_at}: ${event.before_enabled ? "on" : "off"} → ${event.after_enabled ? "on" : "off"} by ${event.actor || "unattributed (historical)"} via ${event.source || "-"}`);
+  }
+  return <SettingRow name="Resume scope" detail="Waves and directives an enable would resume. Enabling resumes this scope only; it arms no new work." source="Project runtime" control={<ReadValue value={lines.join("\n")} />} />;
+}
+
+/**
+ * Validates the execution concurrency form field before submission. Blank
+ * preserves the explicit unset semantics (only the workspace mode is sent).
+ * Anything else must be a positive integer; fractional, zero, negative, or
+ * malformed input is reported visibly and must never be submitted or
+ * silently omitted.
+ */
+export function parseExecutionConcurrency(input: string): { value?: number; error?: string } {
+  const trimmed = input.trim();
+  if (trimmed === "") return {};
+  if (!/^\d+$/.test(trimmed)) {
+    return { error: "Concurrency must be a positive whole number." };
+  }
+  const value = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    return { error: "Concurrency must be a positive whole number." };
+  }
+  return { value };
 }
 
 function localNavigationStorage(): StorageLike | null {

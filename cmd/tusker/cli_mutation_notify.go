@@ -150,7 +150,34 @@ func notifyDaemonForVaultPathWithChanges(vaultPath string, changes []daemonContr
 	_ = sendDaemonControlOneWay(stateRoot, daemonControlRequest{Command: "reconcile_project", ProjectID: projectID, Cause: "cli_mutation", Changes: changes}, 250*time.Millisecond)
 }
 
+// daemonControlOneWaySender is the seam notifyProjectEnableWake uses so
+// tests can capture the targeted wake without binding a control socket.
+var daemonControlOneWaySender = sendDaemonControlOneWay
+
+// notifyProjectEnableWake sends a targeted wake after a Background-work
+// toggle so affected authorized work reconciles without waiting for the
+// periodic fallback. Delivery is best effort: a dropped notification is
+// recovered by the existing periodic poll, exactly like vault mutations.
+func notifyProjectEnableWake(projectID string, enabled bool) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return
+	}
+	cause := "project_enable"
+	if !enabled {
+		cause = "project_disable"
+	}
+	_ = daemonControlOneWaySender(DefaultStateRoot(), daemonControlRequest{
+		Command: "reconcile_project", ProjectID: projectID, Cause: cause,
+		Changes: []daemonControlChange{{ID: projectID, Kind: "project"}},
+	}, 250*time.Millisecond)
+}
+
 func cliCommandMutatesProjectRegistry(command string, args Args) bool {
+	if args.Bool("dry-run") {
+		// Previews never wake reconciliation.
+		return false
+	}
 	if command == "projects rebind" && args.Bool("dry-run") {
 		return false
 	}

@@ -387,6 +387,13 @@ func armedWaveDispatchBlockerForArmedScope(vaultPath string, task Note, wf Workf
 	if !armed {
 		return "wave is not durably armed"
 	}
+	// Callers may pass an in-memory promoted view of the member (an
+	// own-reservation release from backlog authoring). Frontier membership is
+	// evaluated on that effective document so scope, plan, and claim agree;
+	// dependency and contract facts still come from the canonical graph.
+	if id := stringField(task.Data, "id"); id != "" {
+		idx.Tasks[id] = task
+	}
 	snapshot := buildArmedWaveSnapshot(vaultPath, idx, wave, runs, time.Now().UTC())
 	if stringField(task.Data, "status") == "review" {
 		active := 0
@@ -409,6 +416,12 @@ func armedWaveDispatchBlockerForArmedScope(vaultPath string, task Note, wf Workf
 		if member.ID == stringField(task.Data, "id") && member.State == armedWaveRunning {
 			return ""
 		}
+	}
+	// A member held out of the frontier by an unsatisfied prerequisite names
+	// it: every caller (plan, daemon, doctor) then blames the same owner
+	// instead of reporting an anonymous scope wait.
+	if edge, blocked := v7BlockingDependencyForReadiness(task, idx); blocked {
+		return "waiting for dependency " + edge.ID + " outside the armed wave's current frontier"
 	}
 	return "task is outside the armed wave's current frontier or concurrency ceiling"
 }

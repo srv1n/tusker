@@ -376,6 +376,15 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			serveJSON(w, http.StatusForbidden, serveActionResult{OK: false, Refused: true, Reason: reason})
 			return
 		}
+		if path == "/api/run-artifacts/purge" {
+			report, err := purgeRunArtifacts(s.store, time.Now().UTC(), true)
+			if err != nil {
+				serveJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+				return
+			}
+			serveJSON(w, http.StatusOK, report)
+			return
+		}
 		if path == "/api/worker/lifecycle" {
 			s.handleWorkerLifecycle(w, r)
 			return
@@ -425,6 +434,10 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/projects":
 		s.handleProjects(w, r)
 	case strings.HasPrefix(path, "/api/projects/"):
+		if parts := strings.Split(strings.Trim(path, "/"), "/"); len(parts) == 4 && parts[1] == "projects" && parts[3] == "automation-scope" {
+			s.handleProjectAutomationScope(w, parts[2])
+			return
+		}
 		if projectID, ok := serveProjectIconID(path); ok {
 			s.handleProjectIcon(w, r, projectID)
 			return
@@ -1771,6 +1784,35 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	action := body.string("action")
+	if action == "continue" || action == "recover_context" {
+		run, found := serveFindRun(snap.runs, taskID)
+		if !found {
+			serveJSON(w, http.StatusNotFound, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: "run not found"})
+			return
+		}
+		wave := snap.notesByID[stringField(task.Data, "wave")]
+		var result serveRecoveryResult
+		var recoveryErr error
+		if action == "continue" {
+			result, recoveryErr = queueNativeSessionContinuation(s.store, snap.project, task, wave, run, actor, s.now())
+		} else {
+			result, recoveryErr = queueOutcomeUnknownContextRecovery(s.store, task, wave, run, actor, s.now())
+		}
+		if recoveryErr != nil {
+			serveJSON(w, http.StatusConflict, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: recoveryErr.Error()})
+			return
+		}
+		if result.Admitted {
+			cause := "run_session_continue"
+			if action == "recover_context" {
+				cause = "run_context_recovery"
+			}
+			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: cause, Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
+			s.refreshProjectSnapshot(snap.projectID)
+		}
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
 	if action == "recover_unknown" {
 		run, found := serveFindRun(snap.runs, taskID)
 		if !found {
@@ -1865,7 +1907,11 @@ func (s *serveServer) handleWaves(w http.ResponseWriter, r *http.Request) {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	serveJSON(w, http.StatusOK, serveWaves(snap))
+	if r.URL.Query().Get("view") == "list" {
+		serveJSON(w, http.StatusOK, s.attachWaveListRecovery(serveWaveList(snap), snap))
+		return
+	}
+	serveJSON(w, http.StatusOK, s.attachWaveRecovery(serveWaves(snap), snap))
 }
 
 func (s *serveServer) handleWave(w http.ResponseWriter, r *http.Request, id string) {
@@ -1877,7 +1923,8 @@ func (s *serveServer) handleWave(w http.ResponseWriter, r *http.Request, id stri
 	id = strings.TrimSpace(id)
 	for _, wave := range snap.waves {
 		if stringField(wave.Data, "id") == id {
-			serveJSON(w, http.StatusOK, serveWaveSummaryFor(snap, wave))
+			summary := serveWaveSummaryFor(snap, wave)
+			serveJSON(w, http.StatusOK, s.attachWaveRecovery([]serveWaveSummary{summary}, snap)[0])
 			return
 		}
 	}
@@ -1895,7 +1942,7 @@ func (s *serveServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 		out = append(out, serveTaskCapsuleFor(snap, task))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	serveJSON(w, http.StatusOK, out)
+	serveJSON(w, http.StatusOK, s.attachTaskRecovery(out, snap))
 }
 
 func (s *serveServer) handleTask(w http.ResponseWriter, r *http.Request, id string) {
@@ -1957,6 +2004,15 @@ func (s *serveServer) taskDetailFor(snap serveSnapshot, task Note) serveTaskDeta
 	if directive, directiveErr := s.store.RunDirective(snap.projectID, trackerRecordID(task)); directiveErr == nil && directive != nil {
 		detail.RunDirective = &serveRunDirective{State: directive.State, Actor: directive.Actor, CreatedAt: directive.CreatedAt, ExpiresAt: directive.ExpiresAt, Reason: directive.Reason}
 	}
+	// Task reads and post-action refreshes share this contract, so settled
+	// state always carries the same recovery projection.
+	idx, runs, rctx := s.attachRecoveryInputs(snap)
+	waveAuth := map[string]string{}
+	for _, wave := range snap.waves {
+		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
+		waveAuth[stringField(wave.Data, "id")] = state
+	}
+	detail.Recovery = s.recoveryForTask(task, snap, idx, runs, waveAuth, rctx)
 	return detail
 }
 
@@ -2025,6 +2081,28 @@ func serveEpics(snap serveSnapshot) []serveEpicSummary {
 	return out
 }
 
+func serveWaveList(snap serveSnapshot) []serveWaveListItem {
+	out := make([]serveWaveListItem, 0, len(snap.waves))
+	for _, wave := range snap.waves {
+		members := normalizeList(wave.Data["members"])
+		done := 0
+		for _, id := range members {
+			if task, ok := snap.notesByID[id]; ok && serveTaskStatus(snap, task) == "done" {
+				done++
+			}
+		}
+		out = append(out, serveWaveListItem{
+			ID: stringField(wave.Data, "id"), Title: stringField(wave.Data, "title"),
+			Summary: stringField(wave.Data, "summary"), Status: stringField(wave.Data, "status"),
+			Authorization: fallback(stringField(wave.Data, "authorization"), "disarmed"),
+			LandedAt:      nullIfBlank(stringField(wave.Data, "landed_at")),
+			MemberCount:   len(members), DoneCount: done,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 func serveWaves(snap serveSnapshot) []serveWaveSummary {
 	out := []serveWaveSummary{}
 	for _, wave := range snap.waves {
@@ -2056,24 +2134,7 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		})
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
-	idx := v7Index{Tasks: map[string]Note{}, Gates: map[string]Note{}, Waves: map[string]Note{}, Evidence: map[string][]Note{}, Attempts: map[string][]Note{}}
-	for _, task := range snap.tasks {
-		idx.Tasks[stringField(task.Data, "id")] = task
-	}
-	for _, gate := range snap.gates {
-		idx.Gates[stringField(gate.Data, "id")] = gate
-	}
-	for _, evidence := range snap.evidence {
-		taskID := stringField(evidence.Data, "task")
-		idx.Evidence[taskID] = append(idx.Evidence[taskID], evidence)
-	}
-	for _, attempt := range snap.attemptNotes {
-		taskID := stringField(attempt.Data, "task")
-		idx.Attempts[taskID] = append(idx.Attempts[taskID], attempt)
-	}
-	for _, item := range snap.waves {
-		idx.Waves[stringField(item.Data, "id")] = item
-	}
+	idx := serveSnapshotIndex(snap)
 	if projected, err := armedWaveBriefProjectedIndex(snap.project.VaultRoot, idx, wave); err == nil {
 		idx = projected
 	}
@@ -2094,6 +2155,308 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		Authorization:   waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
 		Brief:           buildWaveBriefWithRuns(idx, wave, runs),
 	}
+}
+
+// serveRecoveryContext carries the per-request self-service facts so every
+// wave/task projection in one response shares one schedule read, one
+// escalation read, one daemon-freshness read, and one directive list.
+type serveRecoveryContext struct {
+	now          time.Time
+	schedule     SelfServiceReconcileSchedule
+	scheduleOK   bool
+	overdue      bool
+	overdueCause string
+	escalations  []SelfServiceRepairEscalation
+	lastPoll     string
+	daemonStale  bool
+	daemonAbsent bool
+	directives   map[string]RunDirective
+}
+
+func (s *serveServer) newServeRecoveryContext(projectID string, now time.Time) serveRecoveryContext {
+	rctx := serveRecoveryContext{now: now.UTC(), directives: map[string]RunDirective{}}
+	if schedule, ok := loadSelfServiceReconcileSchedule(s.store, projectID); ok {
+		rctx.schedule, rctx.scheduleOK = schedule, true
+		if overdue, _, _ := selfServiceScheduleOverdue(schedule, now); overdue {
+			rctx.overdue = true
+			rctx.overdueCause = "Scheduled reconciliation is overdue since " + schedule.NextDueAt + "."
+		}
+	}
+	if s.store != nil {
+		if all, err := s.store.ListSelfServiceRepairEscalations(); err == nil {
+			for _, escalation := range all {
+				if escalation.ProjectID == projectID {
+					rctx.escalations = append(rctx.escalations, escalation)
+				}
+			}
+		}
+		if lastPoll, err := s.store.GetSetting("daemon_last_poll_at"); err == nil {
+			rctx.lastPoll = strings.TrimSpace(lastPoll)
+			if rctx.lastPoll == "" {
+				rctx.daemonAbsent = true
+			} else if pollAt, err := serveParsePollTime(rctx.lastPoll); err == nil {
+				rctx.daemonStale = now.UTC().Sub(pollAt) > doctorDaemonStaleAfter
+			}
+		}
+		if directives, err := s.store.ListActiveRunDirectives(projectID, now); err == nil {
+			for _, directive := range directives {
+				rctx.directives[directive.RecordID] = directive
+			}
+		}
+	}
+	return rctx
+}
+
+func serveParsePollTime(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value)); err == nil {
+		return parsed, nil
+	}
+	return time.Parse(time.RFC3339, strings.TrimSpace(value))
+}
+
+func serveRecoveryCapabilitiesFor() serveRecoveryCapabilities {
+	return serveRecoveryCapabilities{
+		SafeRepair:       false,
+		SafeRepairReason: "bounded safe repair is daemon-applied under existing authority; the server exposes no manual repair mutation",
+	}
+}
+
+// serveSnapshotIndex rebuilds the operational note index shared by the wave
+// summary and the recovery projection so both read one consistent view.
+func serveSnapshotIndex(snap serveSnapshot) v7Index {
+	idx := v7Index{Tasks: map[string]Note{}, Gates: map[string]Note{}, Waves: map[string]Note{}, Evidence: map[string][]Note{}, Attempts: map[string][]Note{}}
+	for _, task := range snap.tasks {
+		idx.Tasks[stringField(task.Data, "id")] = task
+	}
+	for _, gate := range snap.gates {
+		idx.Gates[stringField(gate.Data, "id")] = gate
+	}
+	for _, evidence := range snap.evidence {
+		taskID := stringField(evidence.Data, "task")
+		idx.Evidence[taskID] = append(idx.Evidence[taskID], evidence)
+	}
+	for _, attempt := range snap.attemptNotes {
+		taskID := stringField(attempt.Data, "task")
+		idx.Attempts[taskID] = append(idx.Attempts[taskID], attempt)
+	}
+	for _, item := range snap.waves {
+		idx.Waves[stringField(item.Data, "id")] = item
+	}
+	return idx
+}
+
+func serveRunsByTask(runs []RunStatus) map[string]RunStatus {
+	out := map[string]RunStatus{}
+	for _, run := range runs {
+		out[firstNonEmpty(run.ItemID, run.RecordID)] = run
+	}
+	return out
+}
+
+// serveWaitingMembers splits wave members into capacity holders and waiters.
+// Done, review, cancelled, closed, and superseded members wait on nothing.
+func serveWaitingMembers(snap serveSnapshot, wave Note, runs map[string]RunStatus) (owners, waiting []string) {
+	for _, id := range normalizeList(wave.Data["members"]) {
+		if run, ok := runs[id]; ok && runConsumesDispatchCapacity(run) {
+			owners = append(owners, id)
+			continue
+		}
+		status := ""
+		if task, ok := snap.notesByID[id]; ok {
+			status = strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
+		}
+		switch status {
+		case "done", "closed", "review", "cancelled", "superseded":
+		default:
+			waiting = append(waiting, id)
+		}
+	}
+	sort.Strings(owners)
+	sort.Strings(waiting)
+	return owners, waiting
+}
+
+func serveWaveAuthorizationState(vaultRoot string, idx v7Index, wave Note) (state, action string) {
+	projection := waveAuthorizationProjection(vaultRoot, idx, wave)
+	return fallback(stringField(projection, "state"), "disarmed"), stringField(projection, "action")
+}
+
+// recoveryForWave renders the shared diagnosis for one wave. Precedence is
+// deliberate: project-off, authorization, daemon availability, capacity
+// owners, dependency waits, then the normal queued wait. Queued work is
+// reported as queued, never as running.
+func (s *serveServer) recoveryForWave(wave Note, snap serveSnapshot, idx v7Index, runs map[string]RunStatus, rctx serveRecoveryContext) *serveRecovery {
+	waveID := stringField(wave.Data, "id")
+	authState, authAction := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
+	recovery := &serveRecovery{
+		Authorization: authState,
+		Capabilities:  serveRecoveryCapabilitiesFor(),
+		Escalations:   rctx.escalations,
+	}
+	if rctx.scheduleOK {
+		schedule := rctx.schedule
+		recovery.Schedule = &schedule
+		recovery.Overdue = rctx.overdue
+	}
+	owners, waiting := serveWaitingMembers(snap, wave, runs)
+	for _, id := range normalizeList(wave.Data["members"]) {
+		if _, ok := rctx.directives[id]; ok {
+			recovery.Queued = true
+			break
+		}
+		if run, ok := runs[id]; ok && !run.Terminal && strings.TrimSpace(run.LeaseState) == string(LeaseStateUnclaimed) {
+			recovery.Queued = true
+			break
+		}
+	}
+	setCause := func(code, cause, actor, action string) {
+		recovery.CauseCode, recovery.BlockingCause, recovery.NextActor, recovery.NextAction = code, cause, actor, action
+	}
+	switch {
+	case !snap.project.Enabled:
+		setCause("project_disabled", "Background work is off for this project.", string(DiagnosticAuthorityOperator), "tusker projects enable "+snap.projectID)
+	case authState == "stale":
+		setCause("stale", "Wave authorization is stale.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker wave start "+waveID))
+	case authState == "paused":
+		setCause("paused", "Wave is paused.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker wave resume "+waveID))
+	case authState == "disarmed":
+		setCause("disarmed", "Wave authorization is disarmed.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker wave start "+waveID))
+	case len(waiting) > 0 && rctx.daemonAbsent:
+		setCause("doctor-daemon-absent", "Work waits on daemon reconciliation but no daemon poll was recorded.", string(DiagnosticAuthorityOperator), "start the resident daemon or enable Background work")
+	case len(waiting) > 0 && rctx.daemonStale:
+		setCause("doctor-daemon-stale", "Work waits on daemon reconciliation but the last recorded poll was "+rctx.lastPoll+".", string(DiagnosticAuthorityOperator), "restore daemon reconciliation so queued work advances")
+	case len(waiting) > 0 && len(owners) > 0:
+		setCause("doctor-project-capacity", fmt.Sprintf("%d active run(s) hold execution capacity: %s.", len(owners), strings.Join(owners, ", ")), string(DiagnosticAuthorityDaemon), "wait for running work or raise capacity in Settings")
+	default:
+		for _, id := range waiting {
+			if explanation, ok := snap.queue[id]; ok && len(explanation.Blockers) > 0 {
+				setCause("dependency_waiting", explanation.Blockers[0], string(DiagnosticAuthorityAgent), "")
+				break
+			}
+		}
+		if recovery.CauseCode == "" && len(waiting) > 0 {
+			nextCheck := ""
+			if rctx.scheduleOK && strings.TrimSpace(rctx.schedule.NextDueAt) != "" {
+				nextCheck = " Next check " + rctx.schedule.NextDueAt + "."
+			}
+			setCause("queued", "Queued."+nextCheck, string(DiagnosticAuthorityDaemon), "")
+		}
+	}
+	if recovery.CauseCode == "" && rctx.overdue && len(waiting) > 0 {
+		setCause("reconcile-overdue", rctx.overdueCause, string(DiagnosticAuthorityOperator), "trigger a daemon poll for this project")
+	}
+	return recovery
+}
+
+// recoveryForTask renders the shared diagnosis for one task, reusing the
+// wave cause, gate state, directive state, and run state with the same codes
+// the doctor reports.
+func (s *serveServer) recoveryForTask(task Note, snap serveSnapshot, idx v7Index, runs map[string]RunStatus, waveAuth map[string]string, rctx serveRecoveryContext) *serveRecovery {
+	taskID := stringField(task.Data, "id")
+	recovery := &serveRecovery{
+		Authorization: fallback(waveAuth[stringField(task.Data, "wave")], "disarmed"),
+		Capabilities:  serveRecoveryCapabilitiesFor(),
+		Escalations:   rctx.escalations,
+	}
+	if rctx.scheduleOK {
+		schedule := rctx.schedule
+		recovery.Schedule = &schedule
+		recovery.Overdue = rctx.overdue
+	}
+	setCause := func(code, cause, actor, action string) {
+		recovery.CauseCode, recovery.BlockingCause, recovery.NextActor, recovery.NextAction = code, cause, actor, action
+	}
+	run, hasRun := runs[taskID]
+	active := hasRun && runConsumesDispatchCapacity(run)
+	_, hasDirective := rctx.directives[taskID]
+	waiting := !active
+	if hasRun {
+		switch strings.ToLower(strings.TrimSpace(stringField(task.Data, "status"))) {
+		case "done", "closed", "cancelled", "superseded":
+			waiting = false
+		}
+	}
+	recovery.Queued = hasDirective || (waiting && hasRun && !run.Terminal && strings.TrimSpace(run.LeaseState) == string(LeaseStateUnclaimed))
+	switch {
+	case !snap.project.Enabled:
+		setCause("project_disabled", "Background work is off for this project.", string(DiagnosticAuthorityOperator), "tusker projects enable "+snap.projectID)
+	case !waiting:
+	case recovery.Authorization == "paused":
+		setCause("paused", "Wave is paused.", string(DiagnosticAuthorityOperator), "tusker wave resume "+stringField(task.Data, "wave"))
+	case recovery.Authorization == "stale" || recovery.Authorization == "disarmed":
+		setCause(recovery.Authorization, "Wave authorization is "+recovery.Authorization+".", string(DiagnosticAuthorityOperator), "tusker wave start "+stringField(task.Data, "wave"))
+	default:
+		if gates := serveOpenHumanGatesForTask(snap, taskID); len(gates) > 0 {
+			gate := gates[0]
+			setCause("HUMAN_GATE_OPEN", firstNonEmpty(gate.Reason, "Waiting on a human gate: "+gate.Title), string(DiagnosticAuthorityHuman), firstNonEmpty(gate.Action, ""))
+			break
+		}
+		if explanation, ok := snap.queue[taskID]; ok && len(explanation.Blockers) > 0 {
+			setCause("dependency_waiting", explanation.Blockers[0], string(DiagnosticAuthorityAgent), "")
+			break
+		}
+		if waiting && rctx.daemonAbsent {
+			setCause("doctor-daemon-absent", "Work waits on daemon reconciliation but no daemon poll was recorded.", string(DiagnosticAuthorityOperator), "start the resident daemon or enable Background work")
+			break
+		}
+		if waiting && rctx.daemonStale {
+			setCause("doctor-daemon-stale", "Work waits on daemon reconciliation but the last recorded poll was "+rctx.lastPoll+".", string(DiagnosticAuthorityOperator), "restore daemon reconciliation so queued work advances")
+			break
+		}
+		if waiting && hasDirective {
+			nextCheck := ""
+			if rctx.scheduleOK && strings.TrimSpace(rctx.schedule.NextDueAt) != "" {
+				nextCheck = " Next check " + rctx.schedule.NextDueAt + "."
+			}
+			setCause("queued", "Queued."+nextCheck, string(DiagnosticAuthorityDaemon), "")
+		}
+	}
+	if recovery.CauseCode == "" && rctx.overdue && waiting {
+		setCause("reconcile-overdue", rctx.overdueCause, string(DiagnosticAuthorityOperator), "trigger a daemon poll for this project")
+	}
+	return recovery
+}
+
+// attachRecoveryInputs builds the shared inputs for one response attachment
+// pass: the note index, the runs by task, and the recovery context.
+func (s *serveServer) attachRecoveryInputs(snap serveSnapshot) (v7Index, map[string]RunStatus, serveRecoveryContext) {
+	now := time.Now().UTC()
+	return serveSnapshotIndex(snap), serveRunsByTask(snap.runs), s.newServeRecoveryContext(snap.projectID, now)
+}
+
+func (s *serveServer) attachWaveRecovery(out []serveWaveSummary, snap serveSnapshot) []serveWaveSummary {
+	idx, runs, rctx := s.attachRecoveryInputs(snap)
+	for i := range out {
+		if wave, ok := snap.notesByID[out[i].ID]; ok {
+			out[i].Recovery = s.recoveryForWave(wave, snap, idx, runs, rctx)
+		}
+	}
+	return out
+}
+
+func (s *serveServer) attachWaveListRecovery(out []serveWaveListItem, snap serveSnapshot) []serveWaveListItem {
+	idx, runs, rctx := s.attachRecoveryInputs(snap)
+	for i := range out {
+		if wave, ok := snap.notesByID[out[i].ID]; ok {
+			out[i].Recovery = s.recoveryForWave(wave, snap, idx, runs, rctx)
+		}
+	}
+	return out
+}
+
+func (s *serveServer) attachTaskRecovery(out []serveTaskCapsule, snap serveSnapshot) []serveTaskCapsule {
+	idx, runs, rctx := s.attachRecoveryInputs(snap)
+	waveAuth := map[string]string{}
+	for _, wave := range snap.waves {
+		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
+		waveAuth[stringField(wave.Data, "id")] = state
+	}
+	for i := range out {
+		if task, ok := snap.notesByID[out[i].ID]; ok {
+			out[i].Recovery = s.recoveryForTask(task, snap, idx, runs, waveAuth, rctx)
+		}
+	}
+	return out
 }
 
 func serveWaveTaskGroup(snap serveSnapshot, task Note) string {

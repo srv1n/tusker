@@ -111,6 +111,18 @@ function groupOf(result: ReturnType<typeof groupWaves>, waveId: string) {
 }
 
 describe("wave overview grouping", () => {
+  test("wave cards distinguish authorization from background pickup", () => {
+    const armed = makeWave({ id: "W-ARMED", title: "Armed wave", authorization: { state: "armed", stale: false, action: "" } });
+    const disarmed = makeWave({ id: "W-DISARMED", title: "Inert wave", authorization: { state: "disarmed", stale: false, action: "" } });
+    const html = renderToStaticMarkup(createElement(WaveOverview, {
+      waves: [armed, disarmed], tasks: [], runs: [], startability: {}, backgroundWorkEnabled: false,
+      query: "", category: "all", onQueryChange: () => {}, onCategoryChange: () => {}, onOpenWave: () => {}, onOpenUnassigned: () => {},
+    }));
+    expect(html).toContain("Armed");
+    expect(html).toContain("Not armed");
+    expect(html).toContain("Background work is off. Turn it on in Settings to dispatch this wave.");
+  });
+
   test("overview partitions mixed states", () => {
     const result = groupWaves({ ...mixedInput(), startability: START });
     const seen = result.groups.flatMap((group) =>

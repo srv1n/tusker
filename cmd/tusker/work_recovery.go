@@ -9,6 +9,284 @@ import (
 	"time"
 )
 
+// queueOutcomeUnknownContextRecovery records an explicit context recovery for
+// an uncertain attempt. It keeps the original attempt/session rows for audit,
+// but clears the run's session reference before queuing so the next attempt
+// must create a different native session. The existing attempt budget is
+// deliberately retained; this action is a recovery decision, not a redrive
+// that silently opens a new budget window.
+func queueOutcomeUnknownContextRecovery(store *RuntimeStore, task Note, wave Note, run RunStatus, actor string, now time.Time) (serveRecoveryResult, error) {
+	result := serveRecoveryResult{Action: "recover_context", TaskID: stringField(task.Data, "id"), Lane: runLaneExecute}
+	if store == nil {
+		return result, tuskerError(errorInvalidArg, "context recovery requires a runtime store")
+	}
+	current, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil {
+		return result, err
+	}
+	if current == nil {
+		result.Refused, result.Reason = true, "run not found"
+		return result, nil
+	}
+	run = *current
+	if !run.Terminal || projectedAttemptOutcome(run.AttemptOutcome, run.LastError) != AttemptOutcomeUnknown {
+		result.Refused, result.Reason = true, "context recovery requires an unknown terminal outcome"
+		return result, nil
+	}
+	if runProcessGroupAlive(run) || isDispatchingLeaseState(run.LeaseState) {
+		result.Refused, result.Reason = true, "a live owner still holds this task; settle it before context recovery"
+		return result, nil
+	}
+	if strings.TrimSpace(stringField(wave.Data, "id")) == "" ||
+		!strings.EqualFold(strings.TrimSpace(stringField(wave.Data, "authorization")), "armed") ||
+		strings.TrimSpace(stringField(wave.Data, "authorization_fingerprint")) == "" ||
+		strings.TrimSpace(stringField(wave.Data, "authorized_at")) == "" {
+		result.Refused, result.Reason = true, "the existing wave execution window is not current"
+		return result, nil
+	}
+	if vault := v7VaultPathForLandingAudit(wave); vault != "" {
+		idx, loadErr := loadV7Index(vault)
+		if loadErr != nil {
+			result.Refused, result.Reason = true, "cannot verify wave material before context recovery: "+loadErr.Error()
+			return result, nil
+		}
+		if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
+			result.Refused, result.Reason = true, "wave material changed since authorization; re-authorize before context recovery"
+			return result, nil
+		}
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return result, err
+	}
+	var parent RunAttempt
+	for _, attempt := range attempts {
+		if projectedAttemptOutcome(attempt.Outcome, attempt.LastError) == AttemptOutcomeUnknown {
+			parent = attempt
+			break
+		}
+	}
+	if parent.AttemptID == "" {
+		result.Refused, result.Reason = true, "the uncertain parent attempt cannot be identified"
+		return result, nil
+	}
+	for _, attempt := range attempts {
+		if attempt.ParentAttemptID == parent.AttemptID && attempt.ChildType == "recovery" {
+			result.Refused, result.Reason = true, "one recovery attempt already exists; human review is required"
+			return result, nil
+		}
+	}
+
+	previous := run
+	oldSession := strings.TrimSpace(run.SessionRef)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	run.LeaseState = string(LeaseStateRetryQueued)
+	run.AttemptOutcome = string(AttemptOutcomeNone)
+	run.NextRetryAt = now.Format(time.RFC3339)
+	run.LastError = outcomeUnknownContextRecoveryReasonPrefix + parent.AttemptID
+	run.LastEventAt = now.Format(time.RFC3339)
+	run.UpdatedAt = now.Format(time.RFC3339)
+	run.Terminal = false
+	run.SessionRef = ""
+	clearActiveExecution(&run)
+	updated, err := store.UpsertRunIfSnapshot(previous, run)
+	if err != nil {
+		return result, err
+	}
+	if !updated {
+		result.Refused, result.Reason = true, "run changed while context recovery was being queued; reload and retry"
+		return result, nil
+	}
+
+	queued, err := store.QueueRunDirective(RunDirective{
+		ProjectID: run.ProjectID, RecordID: run.RecordID, Actor: actor,
+		Reason:    outcomeUnknownContextRecoveryReasonPrefix + parent.AttemptID,
+		CreatedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(directRunDirectiveTTL).Format(time.RFC3339Nano),
+		WaveID: stringField(wave.Data, "id"), AuthorizationFingerprint: stringField(wave.Data, "authorization_fingerprint"), WaveAuthorizedAt: stringField(wave.Data, "authorized_at"),
+	})
+	if err != nil {
+		if matches, matchErr := store.RunMatchesSnapshot(run); matchErr == nil && matches {
+			_, _ = store.UpsertRunIfSnapshot(run, previous)
+		}
+		return result, err
+	}
+	if !queued {
+		if directive, directiveErr := store.RunDirective(run.ProjectID, run.RecordID); directiveErr == nil && directive != nil && (directive.State == "queued" || directive.State == "consumed") {
+			result.OK, result.Reason = true, "context recovery is already queued"
+			return result, nil
+		}
+		result.Refused, result.Reason = true, "run changed before context recovery could be admitted; reload and retry"
+		return result, nil
+	}
+	if oldSession != "" {
+		_ = store.MarkSessionState(run.ProjectID, oldSession, sessionStateForLeaseState(LeaseStateReleased), now.Format(time.RFC3339), "explicit context recovery selected", false)
+	}
+	_, _ = store.SaveSupervisorDecision(SupervisorDecision{
+		ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner,
+		WorkRevision: run.WorkRevision, AttemptID: parent.AttemptID, ParentAttemptID: parent.AttemptID,
+		ParentSessionRef: oldSession, Kind: string(SupervisorDecisionForkThread),
+		Reason:        "explicit context recovery from uncertain attempt; completed effects stay unreplayed",
+		WorkspacePath: run.WorkspacePath, LeaseState: run.LeaseState, ContextSignal: "explicit_context_recovery",
+		CreatedAt: now.Format(time.RFC3339),
+	})
+	result.OK, result.Admitted, result.Reason = true, true, "explicit context recovery queued; the next attempt will use a fresh native session"
+	return result, nil
+}
+
+// queueNativeSessionContinuation queues one new attempt while retaining the
+// exact native session reference. The daemon remains the only process that
+// consumes the directive and calls Runner.Resume; this helper only admits the
+// operator decision after the same identity and prompt-context fences used by
+// dispatch have passed.
+func queueNativeSessionContinuation(store *RuntimeStore, project RegisteredProject, task Note, wave Note, run RunStatus, actor string, now time.Time) (serveRecoveryResult, error) {
+	result := serveRecoveryResult{Action: "continue", TaskID: stringField(task.Data, "id"), Lane: runLaneExecute}
+	if store == nil {
+		return result, tuskerError(errorInvalidArg, "native continuation requires a runtime store")
+	}
+	current, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil {
+		return result, err
+	}
+	if current == nil {
+		result.Refused, result.Reason = true, "run not found"
+		return result, nil
+	}
+	run = *current
+	if run.Lane == runLaneReview {
+		result.Refused, result.Reason = true, "native continuation is unavailable for review runs"
+		return result, nil
+	}
+	if runProcessGroupAlive(run) || isDispatchingLeaseState(run.LeaseState) {
+		result.Refused, result.Reason = true, "a live owner still holds this task; reconnect or stop it before continuing"
+		return result, nil
+	}
+	if projectedAttemptOutcome(run.AttemptOutcome, run.LastError) == AttemptOutcomeSucceeded {
+		result.Refused, result.Reason = true, "a completed attempt cannot be continued; recover only unresolved work"
+		return result, nil
+	}
+	if strings.TrimSpace(run.SessionRef) == "" {
+		result.Refused, result.Reason = true, "native continuation requires a saved session reference"
+		return result, nil
+	}
+	capability := nativeResumeRunnerCapabilities(RunnerName(strings.TrimSpace(run.Runner)))
+	if !capability.ResumeSession {
+		result.Refused, result.Reason = true, "runner does not support native session continuation; request explicit context recovery"
+		return result, nil
+	}
+	session, err := store.FindSessionByRef(run.ProjectID, run.SessionRef)
+	if err != nil {
+		return result, err
+	}
+	if reason := incompatibleResumeSessionReason(project, run, session); reason != "" {
+		result.Refused, result.Reason = true, reason
+		return result, nil
+	}
+	if strings.TrimSpace(session.CurrentItemID) != "" && strings.TrimSpace(run.ItemID) != "" && session.CurrentItemID != run.ItemID {
+		result.Refused, result.Reason = true, "stored session item_id does not match run item_id"
+		return result, nil
+	}
+	// Dispatch will validate the same fingerprint after it allocates the child
+	// attempt. Clear only the future active-attempt slot for this preflight so a
+	// session whose last attempt is still the current terminal attempt can be
+	// checked against its retained prompt rather than rejected as self-equal.
+	probe := run
+	probe.ActiveAttemptID = ""
+	if reason := (&Daemon{store: store}).resumeContextFingerprintMismatch(probe, session); reason != "" {
+		result.Refused, result.Reason = true, reason
+		return result, nil
+	}
+	if strings.TrimSpace(stringField(wave.Data, "id")) == "" ||
+		!strings.EqualFold(strings.TrimSpace(stringField(wave.Data, "authorization")), "armed") ||
+		strings.TrimSpace(stringField(wave.Data, "authorization_fingerprint")) == "" ||
+		strings.TrimSpace(stringField(wave.Data, "authorized_at")) == "" {
+		result.Refused, result.Reason = true, "the existing wave execution window is not current"
+		return result, nil
+	}
+	if vault := v7VaultPathForLandingAudit(wave); vault != "" {
+		idx, loadErr := loadV7Index(vault)
+		if loadErr != nil {
+			result.Refused, result.Reason = true, "cannot verify wave material before continuation: "+loadErr.Error()
+			return result, nil
+		}
+		if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
+			result.Refused, result.Reason = true, "wave material changed since authorization; re-authorize before continuation"
+			return result, nil
+		}
+	}
+	if directive, directiveErr := store.RunDirective(run.ProjectID, run.RecordID); directiveErr != nil {
+		return result, directiveErr
+	} else if directive != nil && directive.State == "queued" {
+		result.OK, result.Reason = true, "native continuation is already queued"
+		return result, nil
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	previous := run
+	run.LeaseState = string(LeaseStateRetryQueued)
+	run.AttemptOutcome = string(AttemptOutcomeNone)
+	run.NextRetryAt = now.Format(time.RFC3339)
+	run.LastError = "native continuation requested by " + firstNonEmpty(strings.TrimSpace(actor), defaultActorName()) + ": " + session.SessionRef
+	run.LastEventAt = now.Format(time.RFC3339)
+	run.UpdatedAt = now.Format(time.RFC3339)
+	run.Terminal = false
+	clearActiveExecution(&run)
+	updated, err := store.UpsertRunIfSnapshot(previous, run)
+	if err != nil {
+		return result, err
+	}
+	if !updated {
+		result.Refused, result.Reason = true, "run changed while native continuation was being queued; reload and retry"
+		return result, nil
+	}
+	queued, err := store.QueueRunDirective(RunDirective{
+		ProjectID: run.ProjectID, RecordID: run.RecordID, Actor: actor,
+		CreatedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(directRunDirectiveTTL).Format(time.RFC3339Nano),
+		WaveID: stringField(wave.Data, "id"), AuthorizationFingerprint: stringField(wave.Data, "authorization_fingerprint"), WaveAuthorizedAt: stringField(wave.Data, "authorized_at"),
+	})
+	if err != nil {
+		if matches, matchErr := store.RunMatchesSnapshot(run); matchErr == nil && matches {
+			_, _ = store.UpsertRunIfSnapshot(run, previous)
+		}
+		return result, err
+	}
+	if !queued {
+		if directive, directiveErr := store.RunDirective(run.ProjectID, run.RecordID); directiveErr == nil && directive != nil && (directive.State == "queued" || directive.State == "consumed") {
+			result.OK, result.Reason = true, "native continuation is already queued"
+			return result, nil
+		}
+		result.Refused, result.Reason = true, "run changed before native continuation could be admitted; reload and retry"
+		return result, nil
+	}
+	_, _ = store.SaveSupervisorDecision(SupervisorDecision{
+		ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner,
+		WorkRevision: run.WorkRevision, AttemptID: firstNonEmpty(run.ActiveAttemptID, session.LastAttemptID),
+		ParentAttemptID: session.LastAttemptID, SessionRef: session.SessionRef, ParentSessionRef: session.SessionRef,
+		Kind: string(SupervisorDecisionContinueThread), Reason: "operator requested native continuation of the compatible saved session",
+		WorkspacePath: run.WorkspacePath, LeaseState: run.LeaseState, ContextSignal: "native_session_continuation",
+		CreatedAt: now.Format(time.RFC3339),
+	})
+	result.OK, result.Admitted, result.Reason = true, true, "native continuation queued; the daemon will resume the saved session"
+	return result, nil
+}
+
+func nativeResumeRunnerCapabilities(name RunnerName) RunnerCapabilities {
+	switch name {
+	case RunnerCodexExec:
+		return (&CodexExecRunner{}).Capabilities()
+	case RunnerMuse:
+		return (&MuseRunner{}).Capabilities()
+	case RunnerDevin:
+		return (&ACPRunner{runner: RunnerDevin}).Capabilities()
+	default:
+		return RunnerCapabilities{}
+	}
+}
+
 // recoverVerificationChecks is the one recovery transition shared by Serve
 // and the CLI. It verifies the submitted execute workspace, then reopens and
 // queues only the independent review lane; attempts stay in the runtime log.
@@ -164,6 +442,57 @@ func (snap adoptCompletedSnapshot) verifyCurrent(vault, taskID string) error {
 		return tuskerError(errorEvidenceGate, taskID+": adopt_completed scoped material changed during verification")
 	}
 	return nil
+}
+
+// adoptCompletedOwnershipFence rechecks runtime ownership at final commit
+// under the owned-path claim exclusion shared with run admission. It reloads
+// the candidate task and the overlapping run holders, refuses on a live
+// same-task run or an overlapping live holder, and returns the exclusion held
+// so the caller retains it through the canonical transition. A refusal
+// releases the exclusion before returning. A disjoint holder never refuses.
+func adoptCompletedOwnershipFence(vault string, store *RuntimeStore, projectID, taskID string) (func(), string, error) {
+	noop := func() {}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		return noop, "", err
+	}
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		return noop, "", err
+	}
+	fresh, err := resolveV7Note(vault, taskID, "task")
+	if err != nil {
+		return noop, "", err
+	}
+	claimNotes := orchestrationOwnedPathNotes(idx.Tasks, wf.Data)
+	candidate := fresh
+	if overlaid, ok := claimNotes[taskID]; ok {
+		candidate = overlaid
+	}
+	service := newRunOwnershipService(store).withOwnedPathContext(vault, candidate, claimNotes)
+	unlock, err := service.lockOwnedPathClaims()
+	if err != nil {
+		return noop, "", err
+	}
+	if run, err := store.FindRunScoped(projectID, trackerRecordID(fresh)); err != nil {
+		unlock()
+		return noop, "", err
+	} else if run != nil && (isDispatchingLeaseState(run.LeaseState) || runProcessGroupAlive(*run)) {
+		reason := "a live run holds " + taskID + "; release or interrupt it before adopt_completed"
+		unlock()
+		return noop, reason, nil
+	}
+	runs, err := store.ListRuns()
+	if err != nil {
+		unlock()
+		return noop, "", err
+	}
+	if conflict, found := ownedPathConflict(candidate, claimNotes, runs, time.Now().UTC()); found {
+		reason := fmt.Sprintf("an active run holds %s for %s (lease age %s; liveness %s)", conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"])
+		unlock()
+		return noop, reason, nil
+	}
+	return unlock, "", nil
 }
 
 // adoptCompletedWork reconciles work already present in the registered
@@ -332,6 +661,21 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 		return result, err
 	}
 	defer func() { _ = materialLock.Close() }()
+	// Final ownership fence: ownership arriving during verification must
+	// refuse. Hold the same owned-path claim exclusion used by run
+	// admission and recheck fresh holders through the canonical transition
+	// below. Lock ordering is material-epoch before owned-path-claims,
+	// matching daemon admission, so the two interleavings terminate
+	// instead of deadlocking. The exclusion is only taken here, never
+	// across verification commands.
+	ownershipUnlock, ownershipRefusal, err := adoptCompletedOwnershipFence(vault, store, projectID, taskID)
+	if err != nil {
+		return result, err
+	}
+	defer ownershipUnlock()
+	if ownershipRefusal != "" {
+		return refuse(ownershipRefusal)
+	}
 	if err := snapshot.verifyCurrent(vault, taskID); err != nil {
 		return result, err
 	}

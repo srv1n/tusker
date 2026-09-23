@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -436,6 +437,161 @@ func TestAdoptCompletedWorkReviewProvenanceFence(t *testing.T) {
 			}
 		})
 	}
+}
+
+// adoptOwnershipHolder plants a holder task and its run row the way ownership
+// arriving during verification would appear: after the early admission checks
+// have passed, so only the final commit fence can refuse it.
+func adoptOwnershipHolder(t *testing.T, vault string, store *RuntimeStore, projectID, holderID string, holderPaths []string, mutate func(*RunStatus)) {
+	t.Helper()
+	writeDirectTask(t, vault, holderID, "", map[string]any{
+		"status": "ready", "readiness": "ready", "owned_paths": holderPaths,
+	})
+	now := time.Now().UTC()
+	run := RunStatus{
+		ProjectID: projectID, RecordID: holderID, ItemID: holderID,
+		LeaseState: string(LeaseStateClaimed), LeaseOwner: "owner:agent",
+		LeaseGeneration: 1,
+		LeaseExpiresAt:  now.Add(time.Hour).Format(time.RFC3339),
+		StartedAt:       now.Add(-time.Minute).Format(time.RFC3339),
+		UpdatedAt:       now.Format(time.RFC3339),
+	}
+	if mutate != nil {
+		mutate(&run)
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func adoptOwnershipArrivingDuringVerification(t *testing.T, vault string, store *RuntimeStore, projectID, holderID string, holderPaths []string, mutate func(*RunStatus)) {
+	t.Helper()
+	adoptCompletedBeforeCommitHook = func() {
+		adoptCompletedBeforeCommitHook = nil
+		adoptOwnershipHolder(t, vault, store, projectID, holderID, holderPaths, mutate)
+	}
+	t.Cleanup(func() { adoptCompletedBeforeCommitHook = nil })
+}
+
+func adoptRefusedClean(t *testing.T, vault, status string, result serveRecoveryResult, err error) {
+	t.Helper()
+	if err == nil && !result.Refused {
+		t.Fatalf("expected ownership refusal, got result=%+v err=%v", result, err)
+	}
+	if result.Admitted {
+		t.Fatalf("refused adoption was admitted: %+v", result)
+	}
+	data := adoptStatus(t, vault, "APP-T-0001")
+	if got := stringField(data, "status"); got == "done" || got == "review" {
+		t.Fatalf("refused adoption published %q", got)
+	}
+	if stringField(data, "implementation_source") != "" || stringField(data, "adopted_at") != "" {
+		t.Fatalf("refused adoption left a marker: %v", data)
+	}
+	if status != "" {
+		if got := stringField(data, "status"); got != status {
+			t.Fatalf("status = %q, want %q", got, status)
+		}
+	}
+}
+
+func TestExternalReviewAdoptionOwnership(t *testing.T) {
+	t.Run("overlapping owner arriving during verification refuses", func(t *testing.T) {
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		adoptOwnershipArrivingDuringVerification(t, vault, store, project.ProjectID, "APP-T-0002", []string{"submitted.txt"}, nil)
+		result, err := adoptCompletedWork(vault, store, project.ProjectID, "APP-T-0001", "human:sarav", 3, time.Now().UTC())
+		adoptRefusedClean(t, vault, "ready", result, err)
+		if err == nil && !strings.Contains(result.Reason, "APP-T-0002") {
+			t.Fatalf("refusal does not identify the holder: %q", result.Reason)
+		}
+	})
+	t.Run("claimed but not spawned overlapping holder blocks", func(t *testing.T) {
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		adoptOwnershipArrivingDuringVerification(t, vault, store, project.ProjectID, "APP-T-0002", []string{"submitted.txt"}, func(run *RunStatus) {
+			run.ProcessPID, run.ProcessPGID, run.ProcessStartedAt = 0, 0, ""
+		})
+		result, err := adoptCompletedWork(vault, store, project.ProjectID, "APP-T-0001", "human:sarav", 3, time.Now().UTC())
+		adoptRefusedClean(t, vault, "ready", result, err)
+	})
+	t.Run("same task claimed holder blocks", func(t *testing.T) {
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		adoptOwnershipArrivingDuringVerification(t, vault, store, project.ProjectID, "APP-T-0001", []string{"submitted.txt"}, nil)
+		result, err := adoptCompletedWork(vault, store, project.ProjectID, "APP-T-0001", "human:sarav", 3, time.Now().UTC())
+		adoptRefusedClean(t, vault, "ready", result, err)
+	})
+	t.Run("live overlapping holder with expired lease blocks", func(t *testing.T) {
+		if _, ok := processStartTime(os.Getpid()); !ok {
+			t.Skip("platform does not expose a verifiable process start time")
+		}
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		adoptOwnershipArrivingDuringVerification(t, vault, store, project.ProjectID, "APP-T-0002", []string{"submitted.txt"}, func(run *RunStatus) {
+			now := time.Now().UTC()
+			run.LeaseExpiresAt = now.Add(-time.Minute).Format(time.RFC3339)
+			run.ProcessPID = os.Getpid()
+			run.ProcessStartedAt = recordedProcessStartTime(os.Getpid(), "")
+		})
+		result, err := adoptCompletedWork(vault, store, project.ProjectID, "APP-T-0001", "human:sarav", 3, time.Now().UTC())
+		adoptRefusedClean(t, vault, "ready", result, err)
+		if err == nil && !strings.Contains(result.Reason, "lease_expired_process_alive") {
+			t.Fatalf("refusal omits the liveness verdict: %q", result.Reason)
+		}
+	})
+	t.Run("disjoint holder does not block", func(t *testing.T) {
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		adoptOwnershipArrivingDuringVerification(t, vault, store, project.ProjectID, "APP-T-0002", []string{"unrelated/other.txt"}, nil)
+		result := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav")
+		if !result.OK || result.Refused {
+			t.Fatalf("disjoint holder blocked adoption: %+v", result)
+		}
+		if stringField(adoptStatus(t, vault, "APP-T-0001"), "status") != "done" {
+			t.Fatalf("status = %q, want done", stringField(adoptStatus(t, vault, "APP-T-0001"), "status"))
+		}
+	})
+	t.Run("no owner adoption completes and review queues", func(t *testing.T) {
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		if result := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav"); !result.OK || !result.Admitted {
+			t.Fatalf("no-owner adoption failed: %+v", result)
+		}
+		reviewVault, reviewStore, reviewProject := adoptFixture(t, "APP-T-0001", map[string]any{
+			"proof_required": []any{"focused_test", "independent_review"},
+		})
+		review := adoptRun(t, reviewVault, reviewStore, reviewProject.ProjectID, "APP-T-0001", "human:sarav")
+		if !review.OK || review.Lane != runLaneReview {
+			t.Fatalf("no-owner review adoption failed: %+v", review)
+		}
+	})
+	t.Run("refusal releases the exclusion and fences stay intact", func(t *testing.T) {
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		adoptOwnershipArrivingDuringVerification(t, vault, store, project.ProjectID, "APP-T-0002", []string{"submitted.txt"}, nil)
+		first, err := adoptCompletedWork(vault, store, project.ProjectID, "APP-T-0001", "human:sarav", 3, time.Now().UTC())
+		adoptRefusedClean(t, vault, "ready", first, err)
+		// The hook self-clears and the holder releases, so the retry proves
+		// both lock interleavings terminate instead of deadlocking behind
+		// the refused attempt.
+		now := time.Now().UTC()
+		if err := store.UpsertRun(RunStatus{
+			ProjectID: project.ProjectID, RecordID: "APP-T-0002", ItemID: "APP-T-0002",
+			LeaseState: string(LeaseStateReleased), LeaseOwner: "owner:agent",
+			LeaseExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+			UpdatedAt:      now.Format(time.RFC3339),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if second := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav"); !second.OK || !second.Admitted {
+			t.Fatalf("retry after refusal failed: %+v", second)
+		}
+		failingVault, failingStore, failingProject := adoptFixture(t, "APP-T-0001", nil)
+		rewriteTaskFile(t, failingVault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+			rows := parseV7VerificationRows(body)
+			rows[0].Check, rows[0].Result, rows[0].Notes = "command: test -f does-not-exist.txt", "pending", ""
+			data["proof_status"] = "pending"
+			return data, replaceSection(body, "## Verification", renderV7VerificationTable(rows))
+		})
+		failing, failingErr := adoptCompletedWork(failingVault, failingStore, failingProject.ProjectID, "APP-T-0001", "human:sarav", 3, time.Now().UTC())
+		if failingErr == nil && (!failing.Refused || failing.OK) {
+			t.Fatalf("failing verification was adopted: %+v", failing)
+		}
+	})
 }
 
 func TestAdoptCompletedWorkClaimedLifecycleUnchanged(t *testing.T) {

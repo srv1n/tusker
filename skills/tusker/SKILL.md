@@ -30,6 +30,7 @@ condition applies; creating a handoff needs more context than checking status.
 | Read or update documentation/spec contracts | `references/SPECS.md` |
 | Run a task, resolve gates, watch runs | `references/RUN.md` |
 | Tracker diagnosis or stuck task state | `references/OPERATE.md` |
+| Queued work not progressing, Background-work scope, repair/escalation | `references/OPERATE.md` (Diagnosis and bounded self-recovery) |
 | Existing-repo onboarding | `references/REPO_ONBOARDING.md` |
 | Xcode generated build-state failure | `references/XCODE_BUILD_STATE.md` |
 

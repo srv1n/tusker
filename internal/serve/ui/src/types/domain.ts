@@ -34,6 +34,59 @@ export type GateKind =
 /** Run liveness derived from time-since-last-event (packet §4.2). */
 export type Liveness = "fresh" | "stale" | "dead";
 
+/** Actions exposed by a run's canonical recovery/control projection. */
+export type RunAction =
+  | "reconnect"
+  | "continue"
+  | "recover_context"
+  | "pause"
+  | "stop"
+  | "start_fresh";
+
+export interface RunActionCapability {
+  action: RunAction | string;
+  available: boolean;
+  reason?: string;
+  provider?: string;
+  target?: string;
+  acknowledged?: boolean;
+}
+
+export interface RunActionReadback {
+  action: RunAction | string;
+  state: "pending" | "accepted" | "refused" | "settled" | "unknown" | string;
+  requestId?: string;
+  generation?: number;
+  reason?: string;
+}
+
+/** Capture and freshness facts stay separate from lease liveness. */
+export interface RunActivityFreshness {
+  captureState?: "available" | "partial" | "missing" | "unavailable" | string;
+  captureReason?: string;
+  heartbeatAt?: string | null;
+  messageAt?: string | null;
+  toolAt?: string | null;
+  heartbeatAgeSec?: number | null;
+  messageAgeSec?: number | null;
+  toolAgeSec?: number | null;
+}
+
+export interface RunCheckpoint {
+  completedAction?: string;
+  unresolvedAction?: string;
+  operation?: string;
+  state?: string;
+  reason?: string;
+}
+
+export interface RunControlProjection {
+  capabilities?: RunActionCapability[];
+  pending?: RunActionReadback;
+  readback?: RunActionReadback;
+  checkpoint?: RunCheckpoint;
+}
+
 /**
  * The run outcomes we style with a known hue/label. The trailing `(string & {})`
  * makes this an OPEN enum: the API may add outcomes (e.g. a review-complete /
@@ -83,6 +136,20 @@ export interface RecoveryResult {
   reason: string;
 }
 
+export interface RunActionResult {
+  ok: boolean;
+  refused?: boolean;
+  state?: string;
+  pending?: boolean;
+  settled?: boolean;
+  unknown?: boolean;
+  supported?: boolean;
+  action: RunAction | string;
+  taskId: string;
+  reason: string;
+  readback?: RunActionReadback;
+}
+
 /** Result of POST /api/runs/:taskId/interrupt with canonical store readback. */
 export interface InterruptResult {
   ok: boolean;
@@ -119,6 +186,90 @@ export interface ActionResult {
   automationEnabled?: boolean;
   automationSource?: string;
   discard?: DiscardImpact;
+  automation?: ProjectAutomationReport;
+}
+
+/**
+ * Shared self-service recovery diagnosis rendered by wave list/detail and
+ * task surfaces. Cause codes reuse the CLI doctor finding codes so the UI
+ * and `tusker doctor` agree on the same cause, code, and scoped IDs. A
+ * queued directive is reported as queued, never as running.
+ */
+export interface RecoveryDiagnosis {
+  authorization: string;
+  queued: boolean;
+  blockingCause?: string;
+  causeCode?: string;
+  nextActor?: string;
+  nextAction?: string;
+  schedule?: {
+    project_id: string;
+    tier: string;
+    cadence_ms: number;
+    last_activity_at?: string;
+    last_activity_reason?: string;
+    last_poll_at?: string;
+    next_due_at?: string;
+    recorded_at: string;
+  };
+  overdue?: boolean;
+  escalations?: Array<{
+    fingerprint: string;
+    kind: string;
+    project_id: string;
+    record_id: string;
+    evidence: string;
+    recorded_at: string;
+  }>;
+  capabilities: {
+    safeRepair: boolean;
+    safeRepairReason?: string;
+  };
+}
+
+export interface AutomationScopeWave {
+  wave_id: string;
+  title?: string;
+  members: string[];
+  frontier: string[];
+  eligible_count: number;
+  total_count: number;
+  project_id: string;
+}
+
+export interface AutomationScopeDirective {
+  record_id: string;
+  wave_id?: string;
+  actor?: string;
+  reason?: string;
+}
+
+export interface AutomationScope {
+  project_id: string;
+  waves: AutomationScopeWave[];
+  directives: AutomationScopeDirective[];
+  excluded: Array<{ wave_id: string; reason: string }>;
+}
+
+export interface AutomationAuditEvent {
+  event_id: string;
+  project_id: string;
+  actor: string;
+  source: string;
+  before_enabled: boolean;
+  after_enabled: boolean;
+  created_at: string;
+}
+
+export interface ProjectAutomationReport {
+  beforeEnabled: boolean;
+  afterEnabled: boolean;
+  actor: string;
+  source: string;
+  scope: AutomationScope;
+  scopeUnavailable?: string;
+  audit?: AutomationAuditEvent;
+  auditTrail?: AutomationAuditEvent[];
 }
 
 export interface DirectStartBlocker { code: string; taskId?: string; gateId?: string; reason: string; action: string }
@@ -631,9 +782,20 @@ export interface RunSummary {
   terminal?: boolean;
   error?: string | null;
   lastHeartbeatAt?: string | null;
+  /** Direct aliases used by compact run readbacks. */
+  lastMessageAt?: string | null;
+  lastToolProgressAt?: string | null;
+  messageAgeSec?: number | null;
+  toolProgressAgeSec?: number | null;
+  activityCaptureState?: string;
+  activityCaptureReason?: string;
   nextWakeAt?: string | null;
   workspacePath?: string;
   workspaceMode?: string;
+  /** Optional canonical activity readback; absent means the server cannot report it. */
+  activity?: RunActivityFreshness;
+  /** Optional per-run control projection from the provider/runtime authority. */
+  controls?: RunControlProjection;
 }
 
 export interface Attempt {
@@ -650,6 +812,9 @@ export interface Attempt {
 
 export interface RunEvent {
   ts: string;
+  id?: string;
+  /** Readable worker message or tool activity, independent of lease liveness. */
+  activity?: boolean;
   /** Protocol event kind (filtered, not raw JSONL). */
   kind: string;
   text: string;
@@ -683,6 +848,10 @@ export interface RunDetail extends RunSummary {
     last_error?: string;
   };
   resume?: { supported: boolean; command?: string; reason?: string };
+  /** Distinct capability/readback aliases accepted while older servers roll forward. */
+  capabilities?: RunActionCapability[];
+  actionReadback?: RunActionReadback;
+  checkpoint?: RunCheckpoint;
   delivery?: {
     summary?: string;
     verification?: string;
@@ -732,6 +901,20 @@ export interface WaveSummary {
     at?: string | null;
   };
   brief: WaveBrief;
+  recovery?: RecoveryDiagnosis;
+}
+
+/** Recorded list facts; start readiness is checked by the wave review. */
+export interface WaveListItem {
+  id: string;
+  title: string;
+  summary?: string;
+  status: string;
+  authorization: string;
+  landedAt?: string | null;
+  memberCount: number;
+  doneCount: number;
+  recovery?: RecoveryDiagnosis;
 }
 
 export interface ReviewBatch {
@@ -847,6 +1030,7 @@ export interface TaskCapsule {
   liveRun?: boolean;
   latestAttemptOutcome?: RunOutcome;
   latestAttemptAt?: string | null;
+  recovery?: RecoveryDiagnosis;
 }
 
 export interface AcceptanceRow {

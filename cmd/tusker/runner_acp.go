@@ -33,11 +33,11 @@ func (r *ACPRunner) Name() RunnerName {
 }
 
 func (r *ACPRunner) Capabilities() RunnerCapabilities {
-	// Session/load and session/resume must remain false until a provider adapter
-	// both negotiates and implements the exact protocol operation. A generic
-	// local process cannot safely treat a persisted ACP session as resumable.
+	// Only Devin currently supports negotiated session/load; other ACP adapters
+	// cannot safely treat a persisted session as resumable.
 	return RunnerCapabilities{
 		StructuredEvents:   true,
+		ResumeSession:      r.Name() == RunnerDevin,
 		ExplicitApprovals:  true,
 		Heartbeats:         true,
 		MachineFinalStatus: true,
@@ -55,15 +55,34 @@ func (r *ACPRunner) Start(ctx context.Context, req StartRequest) (*StartResult, 
 	return startDetachedRunnerWrapper(ctx, r.Name(), req, nil, r.Capabilities())
 }
 
-// Resume is deliberately unavailable in the common transport lane. A later
-// provider adapter may enable it only after the negotiated session/load or
-// session/resume method is implemented and bound to the current Tusker lease.
+// Resume uses Devin's negotiated session/load after the daemon has matched the
+// saved session to this task, workspace, and revision. Generic ACP stays off.
 func (r *ACPRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
-	_ = ctx
 	if strings.TrimSpace(req.SessionRef) == "" {
 		return nil, tuskerError(errorMissingArg, "acp_v1 resume requires session_ref")
 	}
-	return nil, tuskerError(errorInvalidTransition, "acp_v1 session resume is unavailable until a provider adapter implements a negotiated resume method")
+	if r.Name() != RunnerDevin {
+		return nil, tuskerError(errorInvalidTransition, "acp_v1 session resume requires a provider adapter")
+	}
+	if _, err := acpRawSessionRef("devin", req.SessionRef); err != nil {
+		return nil, err
+	}
+	start := StartRequest{
+		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
+		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates,
+		WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, RepoRoot: req.RepoRoot,
+		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath,
+		RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath, Command: req.Command,
+		CommandArgv: req.CommandArgv, CommandExecutableFP: req.CommandExecutableFP, CommandSearchPath: req.CommandSearchPath,
+		RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness,
+		RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort, PrivateFolders: req.PrivateFolders,
+		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy,
+		ExternalLoop: req.ExternalLoop, Principal: req.Principal, Actor: req.Actor,
+	}
+	if err := validateACPLaunchRequestForRunner(RunnerDevin, start); err != nil {
+		return nil, err
+	}
+	return startDetachedRunnerWrapper(ctx, RunnerDevin, start, &req, r.Capabilities())
 }
 
 // Reconcile never infers local process state from an ACP session reference.
@@ -147,10 +166,11 @@ type acpLiveHandle struct {
 	req          StartRequest
 	runtimeStore *RuntimeStore
 
-	mu         sync.RWMutex
-	provenance acpAttemptProvenance
-	closeOnce  sync.Once
-	stopOnce   sync.Once
+	mu          sync.RWMutex
+	provenance  acpAttemptProvenance
+	closeOnce   sync.Once
+	stopOnce    sync.Once
+	updatesDone chan struct{}
 }
 
 func (h *acpLiveHandle) AttemptID() string  { return h.attemptID }
@@ -222,6 +242,10 @@ func validateCodexACPAgentIdentity(info acp.AgentInfo, expectedVersion string) e
 }
 
 func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerName) (*StartResult, error) {
+	return startLiveACPForRunnerWithSession(ctx, req, runner, "")
+}
+
+func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, runner RunnerName, sessionRef string) (*StartResult, error) {
 	if err := validateACPLaunchRequestForRunner(runner, req); err != nil {
 		return nil, err
 	}
@@ -409,7 +433,21 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 			return nil, err
 		}
 	}
-	session, err := client.NewSession(ctx)
+	var session acp.Session
+	if sessionRef != "" {
+		if runner != RunnerDevin || !init.AgentCapabilities.LoadSession {
+			handle.close()
+			return nil, tuskerError(errorInvalidTransition, "ACP adapter did not negotiate Devin session/load")
+		}
+		rawSession, decodeErr := acpRawSessionRef("devin", sessionRef)
+		if decodeErr != nil {
+			handle.close()
+			return nil, decodeErr
+		}
+		session, err = client.LoadSession(ctx, rawSession)
+	} else {
+		session, err = client.NewSession(ctx)
+	}
 	if err != nil {
 		handle.close()
 		return nil, err
@@ -461,6 +499,7 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 	}
 
 	liveRegistry.Register(handle)
+	handle.updatesDone = make(chan struct{})
 	go handle.observeUpdates()
 	go handle.runPrompt(prompt)
 	closeLog = false
@@ -478,18 +517,78 @@ func startLiveACPForRunner(ctx context.Context, req StartRequest, runner RunnerN
 }
 
 func (h *acpLiveHandle) observeUpdates() {
-	for update := range h.client.Updates() {
-		// session/update payloads are untrusted, potentially large provider
-		// observations. Do not store them or derive authority from them.
-		_ = appendACPEvent(h.eventLog, "acp_session_update_observed", h.currentProvenance(), map[string]any{
-			"method": update.Method,
+	defer close(h.updatesDone)
+	// Save bounded message snapshots, so streamed fragments become readable
+	// messages and credentials split over chunks are redacted together.
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var message string
+	var messageID uint64
+	dirty := false
+	flush := func() {
+		if !dirty {
+			return
+		}
+		_ = appendACPEvent(h.eventLog, "agent_message", h.currentProvenance(), map[string]any{
+			"text": runActivityText(message), "activity": true,
+			"message_id": fmt.Sprintf("acp:%d", messageID),
 		})
+		dirty = false
+	}
+	defer flush()
+	for {
+		select {
+		case <-ticker.C:
+			flush()
+		case update, ok := <-h.client.Updates():
+			if !ok {
+				return
+			}
+			activity := acpActivity(update.Params)
+			if activity.SessionUpdate == "agent_message_chunk" {
+				if message == "" {
+					messageID = update.Sequence
+				}
+				// ponytail: retain the first 16K runes of each message; full
+				// transcript paging belongs in a future transcript viewer.
+				message = truncateRunes(message+activityContentText(activity.Content), runActivityTextLimit+1)
+				dirty = true
+				continue
+			}
+			flush()
+			message = ""
+			fields := map[string]any{"method": update.Method}
+			kind := "acp_session_update_observed"
+			if activity.SessionUpdate == "tool_call" || activity.SessionUpdate == "tool_call_update" {
+				kind = "tool_call"
+				fields["activity"] = true
+				fields["text"] = runActivityText(strings.TrimSpace(strings.Join([]string{firstNonEmpty(activity.Title, activity.ToolCallID, "Tool"), activity.Status, activityContentText(activity.Content)}, "\n")))
+				toolID := boundedACPObservation(activity.ToolCallID)
+				fields["tool_call_id"] = toolID
+				// The event reader uses message_id as the stable display identity.
+				// Keep start and update records together even when the provider only
+				// sends the ID on the update; a sequence fallback still avoids
+				// collapsing unrelated malformed observations.
+				if toolID == "" {
+					toolID = fmt.Sprintf("sequence-%d", update.Sequence)
+				}
+				fields["message_id"] = "acp:tool:" + toolID
+				if activity.Status == "failed" {
+					fields["level"] = "error"
+				}
+			}
+			_ = appendACPEvent(h.eventLog, kind, h.currentProvenance(), fields)
+		}
 	}
 }
 
 func (h *acpLiveHandle) runPrompt(prompt string) {
 	result, err := h.client.Prompt(context.Background(), prompt)
 	outcome, exitCode, reason := acpTerminalStatus(result, err)
+	// Drain the final message before publishing terminal status. The detached
+	// wrapper can exit as soon as that status appears.
+	_ = h.client.Close()
+	<-h.updatesDone
 	h.updateProvenance(func(p *acpAttemptProvenance) {
 		if strings.TrimSpace(result.TurnID) != "" {
 			p.TurnID = boundedACPObservation(result.TurnID)
@@ -846,6 +945,43 @@ func evaluateACPTransportPermission(ctx context.Context, eventLog *EventLog, pro
 
 func acpStoredSessionRef(adapter, raw string) string {
 	return "acp:v1:" + adapter + ":" + base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func acpRawSessionRef(adapter, stored string) (string, error) {
+	prefix := "acp:v1:" + adapter + ":"
+	if !strings.HasPrefix(stored, prefix) {
+		return "", tuskerError(errorInvalidTransition, "ACP session adapter does not match the selected runner")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(stored, prefix))
+	if err != nil || validateACPObservationID(string(raw), "session") != nil {
+		return "", tuskerError(errorInvalidTransition, "ACP stored session reference is invalid")
+	}
+	return string(raw), nil
+}
+
+// Session binding is already a durable attempt-local observation. Recover it
+// from that record when the detached wrapper cannot return its child result.
+func acpSessionRefFromAttemptEvents(path, attemptID, runner string) string {
+	if !isACPRunner(RunnerName(runner)) || strings.TrimSpace(attemptID) == "" {
+		return ""
+	}
+	for _, event := range readReviewPacketEvents(path) {
+		if stringField(event, "kind") != "acp_session_bound" || stringField(event, "attempt_id") != attemptID || stringField(event, "runner") != runner {
+			continue
+		}
+		payload, ok := event["payload"].(map[string]any)
+		if !ok || stringField(payload, "attempt_id") != attemptID {
+			continue
+		}
+		ref := stringField(payload, "session_id")
+		if stringField(payload, "adapter") != runner {
+			continue
+		}
+		if _, err := acpRawSessionRef(runner, ref); err == nil {
+			return ref
+		}
+	}
+	return ""
 }
 
 func validateACPObservationID(value, kind string) error {

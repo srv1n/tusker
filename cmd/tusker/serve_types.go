@@ -143,26 +143,69 @@ type serveDaemonStatus struct {
 }
 
 type serveActionResult struct {
-	OK                bool                 `json:"ok"`
-	Refused           bool                 `json:"refused,omitempty"`
-	Reason            string               `json:"reason"`
-	Command           string               `json:"command,omitempty"`
-	Output            string               `json:"output,omitempty"`
-	Issue             *Issue               `json:"issue,omitempty"`
-	TaskID            string               `json:"taskId,omitempty"`
-	GateID            string               `json:"gateId,omitempty"`
-	EvidenceID        string               `json:"evidenceId,omitempty"`
-	FeedbackPath      string               `json:"feedbackPath,omitempty"`
-	ProjectID         string               `json:"projectId,omitempty"`
-	AutomationEnabled *bool                `json:"automationEnabled,omitempty"`
-	AutomationSource  string               `json:"automationSource,omitempty"`
-	CanonicalStatus   string               `json:"canonicalStatus,omitempty"`
-	Discard           *serveDiscardImpact  `json:"discard,omitempty"`
-	Task              *serveTaskDetail     `json:"task,omitempty"`
-	Gate              *serveGateDetail     `json:"gate,omitempty"`
-	Evidence          *serveEvidenceDoc    `json:"evidence,omitempty"`
-	Daemon            *serveDaemonStatus   `json:"daemon,omitempty"`
-	Rebind            *projectRebindReport `json:"rebind,omitempty"`
+	OK                bool                     `json:"ok"`
+	Refused           bool                     `json:"refused,omitempty"`
+	Reason            string                   `json:"reason"`
+	Command           string                   `json:"command,omitempty"`
+	Output            string                   `json:"output,omitempty"`
+	Issue             *Issue                   `json:"issue,omitempty"`
+	TaskID            string                   `json:"taskId,omitempty"`
+	GateID            string                   `json:"gateId,omitempty"`
+	EvidenceID        string                   `json:"evidenceId,omitempty"`
+	FeedbackPath      string                   `json:"feedbackPath,omitempty"`
+	ProjectID         string                   `json:"projectId,omitempty"`
+	AutomationEnabled *bool                    `json:"automationEnabled,omitempty"`
+	AutomationSource  string                   `json:"automationSource,omitempty"`
+	CanonicalStatus   string                   `json:"canonicalStatus,omitempty"`
+	Discard           *serveDiscardImpact      `json:"discard,omitempty"`
+	Task              *serveTaskDetail         `json:"task,omitempty"`
+	Gate              *serveGateDetail         `json:"gate,omitempty"`
+	Evidence          *serveEvidenceDoc        `json:"evidence,omitempty"`
+	Daemon            *serveDaemonStatus       `json:"daemon,omitempty"`
+	Rebind            *projectRebindReport     `json:"rebind,omitempty"`
+	Automation        *projectAutomationReport `json:"automation,omitempty"`
+}
+
+// serveRecoveryCapabilities declares which recovery mutations this server
+// supports. There is deliberately no manual safe-repair endpoint: bounded
+// repair is daemon-applied under existing authority, so the UI must render
+// repair states as read-only instead of firing a mutation.
+type serveRecoveryCapabilities struct {
+	SafeRepair       bool   `json:"safeRepair"`
+	SafeRepairReason string `json:"safeRepairReason,omitempty"`
+}
+
+// serveRecovery is the shared diagnosis and recovery projection rendered by
+// wave list/detail and task surfaces. Cause codes reuse the CLI doctor
+// finding codes (doctor-daemon-stale, doctor-global-capacity,
+// doctor-project-capacity, wave authorization states, queued) so UI and
+// doctor agree on the same cause, code, and scoped IDs. A queued directive
+// is reported as queued, never as running.
+type serveRecovery struct {
+	Authorization string                        `json:"authorization"`
+	Queued        bool                          `json:"queued"`
+	BlockingCause string                        `json:"blockingCause,omitempty"`
+	CauseCode     string                        `json:"causeCode,omitempty"`
+	NextActor     string                        `json:"nextActor,omitempty"`
+	NextAction    string                        `json:"nextAction,omitempty"`
+	Schedule      *SelfServiceReconcileSchedule `json:"schedule,omitempty"`
+	Overdue       bool                          `json:"overdue,omitempty"`
+	Escalations   []SelfServiceRepairEscalation `json:"escalations,omitempty"`
+	Capabilities  serveRecoveryCapabilities     `json:"capabilities"`
+}
+
+// projectAutomationReport carries the persisted toggle evidence and the
+// exact resume scope beside the toggle result, so CLI and UI show the same
+// cause, safe action, and authorization scope.
+type projectAutomationReport struct {
+	Before           bool                          `json:"beforeEnabled"`
+	After            bool                          `json:"afterEnabled"`
+	Actor            string                        `json:"actor"`
+	Source           string                        `json:"source"`
+	Scope            ProjectAutomationScope        `json:"scope"`
+	ScopeUnavailable string                        `json:"scopeUnavailable,omitempty"`
+	Audit            *ProjectAutomationAuditEvent  `json:"audit,omitempty"`
+	AuditTrail       []ProjectAutomationAuditEvent `json:"auditTrail,omitempty"`
 }
 
 type serveDiscardDependent struct {
@@ -200,6 +243,21 @@ type serveWaveSummary struct {
 	Counts          map[string]int         `json:"counts"`
 	Authorization   map[string]any         `json:"authorization"`
 	Brief           waveBrief              `json:"brief"`
+	Recovery        *serveRecovery         `json:"recovery,omitempty"`
+}
+
+// The overview only needs recorded list facts. Start readiness belongs to the
+// wave review endpoint and is checked when a wave is opened.
+type serveWaveListItem struct {
+	ID            string         `json:"id"`
+	Title         string         `json:"title"`
+	Summary       string         `json:"summary,omitempty"`
+	Status        string         `json:"status"`
+	Authorization string         `json:"authorization"`
+	LandedAt      any            `json:"landedAt"`
+	MemberCount   int            `json:"memberCount"`
+	DoneCount     int            `json:"doneCount"`
+	Recovery      *serveRecovery `json:"recovery,omitempty"`
 }
 
 type serveWaveTaskSummary struct {
@@ -255,6 +313,7 @@ type serveTaskCapsule struct {
 	NextAction      string            `json:"nextAction"`
 	WorkRevision    int               `json:"workRevision"`
 	ReadinessSource string            `json:"readinessSource"`
+	Recovery        *serveRecovery    `json:"recovery,omitempty"`
 }
 
 type serveAcceptanceRow struct {
@@ -450,10 +509,12 @@ type serveAttempt struct {
 }
 
 type serveRunEvent struct {
-	TS    string `json:"ts"`
-	Kind  string `json:"kind"`
-	Text  string `json:"text"`
-	Level string `json:"level,omitempty"`
+	TS       string `json:"ts"`
+	ID       string `json:"id,omitempty"`
+	Kind     string `json:"kind"`
+	Text     string `json:"text"`
+	Level    string `json:"level,omitempty"`
+	Activity bool   `json:"activity,omitempty"`
 }
 
 type serveRunDetail struct {

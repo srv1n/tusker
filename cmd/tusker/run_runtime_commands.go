@@ -75,12 +75,16 @@ func resumeCapability(run *RunStatus, session *RunnerSession) runResumeCapabilit
 	}
 	quoted := shellSingleQuote(session.SessionRef)
 	switch RunnerName(run.Runner) {
-	case RunnerCodex, RunnerCodexExec, RunnerCodexAppServer:
+	case RunnerCodexExec:
 		return runResumeCapability{Supported: true, Command: "codex exec resume " + quoted}
 	case RunnerMuse:
 		return runResumeCapability{Supported: true, Command: "muse exec --json --session-id " + quoted}
-	case RunnerClaude:
-		return runResumeCapability{Supported: true, Command: "claude --resume " + quoted}
+	case RunnerDevin:
+		_, err := acpRawSessionRef("devin", session.SessionRef)
+		if err != nil {
+			return runResumeCapability{Reason: err.Error()}
+		}
+		return runResumeCapability{Supported: true, Reason: "Tusker can load this Devin ACP session during recovery"}
 	default:
 		return runResumeCapability{Reason: "runner does not support native resume"}
 	}
@@ -665,6 +669,9 @@ func runsLogsCmd(args Args) error {
 	}
 	content, err := readText(logPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return tuskerError(errorNotFound, "run log expired or was purged: "+identity)
+		}
 		return err
 	}
 	tail := tailText(content, lines)
@@ -715,6 +722,9 @@ func runsEventsCmd(args Args) error {
 	}
 	content, err := readText(eventPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return tuskerError(errorNotFound, "run events expired or were purged: "+identity)
+		}
 		return err
 	}
 	tail := tailText(content, lines)

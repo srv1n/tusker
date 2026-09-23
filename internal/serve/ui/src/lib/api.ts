@@ -31,9 +31,12 @@ import type {
   InterruptResult,
   NeedItem,
   ProjectSummary,
+  ProjectAutomationReport,
   ProjectRegistrationResult,
   RedriveResult,
   RecoveryResult,
+  RunAction,
+  RunActionResult,
   RunDetail,
   RunSummary,
   ReviewBatch,
@@ -46,6 +49,7 @@ import type {
   TaskCapsule,
   TaskDetail,
   WaveSummary,
+  WaveListItem,
   WaveReview,
   DirectStartResult,
   ExecutionGraph,
@@ -144,7 +148,7 @@ async function real<T>(path: string): Promise<T> {
  * carried in the body (ok/refused/reason), NOT necessarily a non-2xx. Convert
  * it here so every caller observes refusal as a rejected mutation.
  */
-async function post<T extends { ok?: boolean; refused?: boolean; reason?: string; issue?: { code?: string } }>(path: string, body?: unknown): Promise<T> {
+async function post<T extends { ok?: boolean; refused?: boolean; reason?: string; issue?: { code?: string } }>(path: string, body?: unknown, accept = true): Promise<T> {
   const res = await capabilityFetch(`/api${path}`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
@@ -160,7 +164,7 @@ async function post<T extends { ok?: boolean; refused?: boolean; reason?: string
     throw new ApiError(res.status, responseFailureMessage(payload, `POST /api${path} → ${res.status}`));
   }
   if (payload === null) throw new ApiError(502, `POST /api${path} returned no JSON result`);
-  return requireAccepted(payload);
+  return accept ? requireAccepted(payload) : payload;
 }
 
 function responseFailureMessage(payload: unknown, fallback: string): string {
@@ -298,6 +302,11 @@ export const api = {
   setProjectAutomation: (projectId: string, enabled: boolean): Promise<ActionResult> =>
     post(`/projects/${projectId}/automation`, { enabled }),
 
+  // GET /api/projects/:id/automation-scope — read-only resume scope plus
+  // the toggle audit trail. Reading it enables and arms nothing.
+  projectAutomationScope: (projectId: string): Promise<{ ok: boolean; projectId: string; enabled: boolean; automation: ProjectAutomationReport }> =>
+    real(`/projects/${encodeURIComponent(projectId)}/automation-scope`),
+
   setProjectVisibility: (projectId: string, visible: boolean): Promise<ActionResult> =>
     post(`/projects/${encodeURIComponent(projectId)}/visibility`, { visible }),
 
@@ -373,6 +382,20 @@ export const api = {
   interrupt: (taskId: string, projectId?: string): Promise<InterruptResult> =>
     post(withProject(`/runs/${taskId}/interrupt`, projectId)),
 
+  /** Read one attempt's own activity; historical attempts never borrow the active tail. */
+  attempt: (attemptId: string, projectId?: string): Promise<AttemptDetail> =>
+    real(withProject(`/attempts/${encodeURIComponent(attemptId)}`, projectId)),
+
+  /** Control responses are acknowledgements; canonical run readback settles them. */
+  runAction: (taskId: string, action: RunAction, projectId?: string): Promise<RunActionResult> =>
+    serveOperatorActor().then((actor) => post<RunActionResult>(withProject(`/runs/${encodeURIComponent(taskId)}/${action === "pause" || action === "stop" || action === "start_fresh" ? "control" : "recover"}`, projectId), { actor, action }, false)).then((result) => {
+      // A durable stop can be accepted while its owner is still settling;
+      // that response is ok:false,pending:true, not a refusal. Refusals still
+      // reject so the caller renders the server's reason.
+      if (result.refused === true || (result.ok === false && result.pending !== true)) throw new ActionRefusalError(result);
+      return result;
+    }),
+
   taskStatus: (taskId: string, body: { status: string; reason?: string; actor?: string; force?: boolean }, projectId?: string): Promise<ActionResult> =>
     serveOperatorActor().then((actor) => post(withProject(`/tasks/${taskId}/status`, projectId), { ...body, actor })),
 
@@ -411,12 +434,21 @@ export const api = {
   daemonAction: (action: "start" | "stop" | "resume" | "limits", body: Record<string, unknown> = {}): Promise<ActionResult> =>
     post(`/daemon/${action}`, body),
 
+  purgeRunArtifacts: (): Promise<{ ok: boolean; files: number; bytes: number }> =>
+    post("/run-artifacts/purge"),
+
   // GET /api/epics?project=
   epics: (projectId?: string): Promise<EpicSummary[]> =>
     real(`/epics${projectId ? `?project=${projectId}` : ""}`),
 
   waves: (projectId?: string): Promise<WaveSummary[]> =>
     real(`/waves${projectId ? `?project=${projectId}` : ""}`),
+
+  waveList: (projectId: string): Promise<WaveListItem[]> =>
+    real(`/waves?project=${encodeURIComponent(projectId)}&view=list`),
+
+  wave: (projectId: string, waveId: string): Promise<WaveSummary> =>
+    real(`/waves/${encodeURIComponent(waveId)}?project=${encodeURIComponent(projectId)}`),
 
   gates: (taskId?: string, projectId?: string): Promise<GateDetail[]> =>
     real(withProject(`/gates${taskId ? `?task=${taskId}` : ""}`, projectId)),

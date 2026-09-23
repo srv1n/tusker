@@ -44,10 +44,31 @@ The `daemon.db` SQLite file stores project registration, runs, attempts,
 sessions, leases, review results, execution records, and other runtime facts.
 This database is shared by registered projects on the machine.
 
+The machine `runs/` directory holds per-attempt prompts, raw runner output,
+normalized events, and terminal status files. The daemon removes these files
+seven days after the last attempt of a released, terminal run. The global Settings page
+can purge eligible run files immediately. Files for unfinished or parked runs remain
+available for retries, recovery, and pending decisions; task and attempt rows
+remain in `daemon.db` after file expiry.
+
 Project registration has separate `visible` and automation `enabled` choices.
 Visibility controls only the main project strip. `tusker init` registers and
 shows its project by default; `--no-register` opts out. Missing registrations
 remain inspectable and cannot terminate reconciliation.
+
+Every Background-work toggle persists actor, source, before/after state, and
+time in `project_automation_audit` in the same transaction as the flip, so a
+failed write changes nothing and never reports success. Changes made before
+this audit existed keep an empty actor: unaudited history stays
+unattributed, never guessed. `tusker projects enable --dry-run` and
+`tusker projects automation-scope` preview the exact resume scope — armed
+waves with eligible frontiers, active task-scoped directives, and excluded
+waves with reasons — without arming or enabling anything; enabling resumes
+that scope only. Disabling blocks new claims while admitted runs finish, and
+re-enabling wakes the unchanged intent without losing directives or
+duplicating attempts. The bounded-repair attempt ledger, once-only
+escalations, and per-project reconcile schedules live in `daemon_settings`
+and survive restart.
 
 ## Reset boundary
 

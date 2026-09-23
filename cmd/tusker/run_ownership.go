@@ -374,8 +374,8 @@ func (s *runOwnershipService) claimWorkSessionWithAuthorizationWithParent(run Ru
 	}
 	now, generation := s.now(), current.LeaseGeneration+1
 	identity.ProjectID, identity.RecordID = current.ProjectID, current.RecordID
-	identity.WorkspacePath, identity.Runner = current.WorkspacePath, current.Runner
-	attempt := RunAttempt{AttemptID: "work-" + newRecordID(), ProjectID: current.ProjectID, RecordID: current.RecordID, ItemID: current.ItemID, Runner: current.Runner, Lane: current.Lane, WorkRevision: current.WorkRevision, WorkspacePath: current.WorkspacePath, BranchName: identity.Branch, ParentAttemptID: strings.TrimSpace(parentAttemptID), Outcome: string(AttemptOutcomeNone), StartedAt: now.Format(time.RFC3339Nano)}
+	identity.Runner = current.Runner
+	attempt := RunAttempt{AttemptID: "work-" + newRecordID(), ProjectID: current.ProjectID, RecordID: current.RecordID, ItemID: current.ItemID, Runner: current.Runner, Lane: current.Lane, WorkRevision: current.WorkRevision, WorkspacePath: identity.WorkspacePath, BranchName: identity.Branch, ParentAttemptID: strings.TrimSpace(parentAttemptID), Outcome: string(AttemptOutcomeNone), StartedAt: now.Format(time.RFC3339Nano)}
 	claimed, err := s.store.claimRunLeaseWithWorkSessionAttempt(*current, owner, generation, defaultRunLeaseTTL, now, RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseState(current.LeaseState), ExpectedOwner: current.LeaseOwner, ExpectedLeaseGeneration: current.LeaseGeneration, ExpectedWorkRevision: current.WorkRevision, ProjectConcurrencyLimit: s.projectConcurrencyLimit}, auth, attempt, identity)
 	if err != nil {
 		return runClaimResult{}, err

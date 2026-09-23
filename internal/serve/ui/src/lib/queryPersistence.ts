@@ -19,6 +19,7 @@ const STARTUP_QUERY_ROOTS = new Set([
   "review",
   "epics",
   "waves",
+  "wave-list",
   "gates",
   "tasks",
 ]);

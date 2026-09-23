@@ -46,6 +46,18 @@ fields are never projected into packets.
 `tusker wave review <WAVE-ID> --json` projects state, authorization, the
 material fingerprint, member eligibility, dependency frontiers, blockers
 with repair actions, and the state-appropriate controls.
+Authors use `tusker wave review <WAVE-ID> --check --json` before handoff;
+`--check` keeps the review read-only but exits nonzero unless wave Start is
+enabled. It checks every member contract, including later DAG frontiers,
+missing member references, cross-wave dependency cycles on the full task
+graph, colliding owned paths on the same frontier, invalid routes, stale
+contract and dependency pins, and live ownership. Contract defects fail the
+check; well-formed dependency waits, inert authorization, a disabled
+project, and unavailable runtime stay separate runtime dimensions with
+their own codes, and `tusker doctor` classifies those. Facts can change
+between preflight and Play, so Start and the final claim recheck routes,
+contracts, and ownership under the material lock and refuse drifted
+material rather than partially authorizing it.
 
 `tusker wave start <WAVE-ID> --mode background --by
 human:<name>|operator:<name>` validates durable material, routes, gates, and
@@ -66,6 +78,22 @@ silently reauthorized. An explicit `tusker task start` inside a paused wave
 converts that task's queued directive to task scope and leaves the wave
 paused. `tusker task start <TASK-ID> --mode interactive --by <agent>
 --current-workspace` claims one task in the current workspace.
+An interactive Start may leave the task in backlog: the fresh, exact
+interactive authorization, not background eligibility, owns that attempt.
+Reconciliation preserves it only while the actor, attempt, lease generation,
+and claim-time task contract still match and dependencies and gates remain
+satisfied. Claiming binds the validated workspace in the same transaction as
+the lease and attempt; a refused claim cannot replace its historical path.
+
+Background work is the project's only daemon opt-in.
+`tusker projects enable --dry-run` and `tusker projects automation-scope
+[--id <project-id>]` show the exact resume scope first: still-valid armed
+waves with eligible frontiers, active task-scoped directives, and the
+stale/paused/disarmed waves an enable does not resume, plus the toggle
+audit trail. Enabling resumes that scope only and arms nothing new;
+disabling blocks new claims while admitted attempts finish. Serve exposes
+the same scope at `GET /api/projects/<id>/automation-scope`, and the
+Background-work Settings row renders it read-only.
 
 ## Landing
 

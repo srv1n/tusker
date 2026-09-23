@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -283,6 +284,110 @@ func TestDirectWaveStartRefusesInvalidMemberContractBeforeArm(t *testing.T) {
 	}
 	if auth := waveAuthorizationState(t, vault, "W-0001"); stringField(auth, "state") == "armed" {
 		t.Fatalf("invalid member contract was armed: %#v", auth)
+	}
+}
+
+func TestDirectWaveArmAcceptsLifecycleOwners(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, readiness, owner string
+	}{
+		{"dependency", "ready", "blocked_by_dependency", "blocked_dependency"},
+		{"completed", "done", "ready", "none"},
+		{"review", "review", "waiting_on_review", "reviewer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vault, store, _ := authorityFixture(t)
+			writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, nil)
+			writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+			extra := map[string]any{"status": tc.status, "readiness": tc.readiness, "next_owner": tc.owner}
+			if tc.name == "dependency" {
+				extra["dependencies"] = []any{"APP-T-0001:hard"}
+			}
+			writeDirectTask(t, vault, "APP-T-0002", "W-0001", extra)
+			idx, err := loadV7Index(vault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, blocker := range directWaveArmContractBlockers(vault, idx, idx.Waves["W-0001"]) {
+				if blocker.TaskID == "APP-T-0002" {
+					t.Fatalf("lifecycle owner blocked arming: %#v", blocker)
+				}
+			}
+			if reasons := v7DispatchStateBlockers(idx.Tasks["APP-T-0002"], []string{tc.status}); !containsString(reasons, "next_owner is "+tc.owner) {
+				t.Fatalf("frontier dispatch lost owner check: %#v", reasons)
+			}
+			result, err := directWaveStart(vault, store, "W-0001", "human:test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.QueuedTaskIDs) != 1 || result.QueuedTaskIDs[0] != "APP-T-0001" {
+				t.Fatalf("wave start bypassed frontier eligibility: %#v", result.QueuedTaskIDs)
+			}
+		})
+	}
+}
+
+func TestDirectWaveArmRejectsMalformedOwner(t *testing.T) {
+	vault, store, _ := authorityFixture(t)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", map[string]any{"next_owner": "bogus"})
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockers := directWaveArmContractBlockers(vault, idx, idx.Waves["W-0001"])
+	if len(blockers) != 1 || blockers[0].Reason != "next_owner is bogus" {
+		t.Fatalf("malformed owner was not rejected: %#v", blockers)
+	}
+	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err == nil {
+		t.Fatal("wave start accepted malformed owner")
+	}
+}
+
+func TestDirectWaveReviewPreflightsAllMemberContracts(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"dependencies": []any{"APP-T-0001:hard"}})
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, nil)
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		rewriteTaskFile(t, vault, id, func(data map[string]any, body string) (map[string]any, string) {
+			return data, strings.Replace(body, "| ID | Outcome | Proof |", "| ID | Outcome | Check |", 1)
+		})
+	}
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := map[string]bool{}
+	for _, blocker := range review.Blockers {
+		if blocker.Code == "MEMBER_CONTRACT_INVALID" && blocker.Reason == "acceptance missing proof mapping" {
+			blocked[blocker.TaskID] = true
+		}
+	}
+	if !blocked["APP-T-0001"] || !blocked["APP-T-0002"] {
+		t.Fatalf("review omitted root or dependent contract blocker: %#v", review.Blockers)
+	}
+	for _, control := range review.Controls {
+		if (control.Action == "wave start" || control.Action == "task start") && control.Enabled {
+			t.Fatalf("invalid member has enabled start control: %#v", control)
+		}
+	}
+	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err == nil || !strings.Contains(err.Error(), "acceptance missing proof mapping") {
+		t.Fatalf("start disagrees with review: %v", err)
+	}
+	if auth := waveAuthorizationState(t, vault, "W-0001"); stringField(auth, "state") == "armed" {
+		t.Fatalf("invalid wave was authorized: %#v", auth)
+	}
+	if err := waveReviewCmd(Args{"vault": vault, "id": "W-0001", "check": "true", "quiet": "true"}); err == nil || !strings.Contains(err.Error(), "acceptance missing proof mapping") {
+		t.Fatalf("author preflight did not fail clearly: %v", err)
+	}
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		rewriteTaskFile(t, vault, id, func(data map[string]any, body string) (map[string]any, string) {
+			return data, strings.Replace(body, "| ID | Outcome | Check |", "| ID | Outcome | Proof |", 1)
+		})
+	}
+	if err := waveReviewCmd(Args{"vault": vault, "id": "W-0001", "check": "true", "quiet": "true"}); err != nil {
+		t.Fatalf("repaired author preflight failed: %v", err)
 	}
 }
 
@@ -943,8 +1048,117 @@ func TestDirectStartAuthorityInteractiveClaimsPlannedTask(t *testing.T) {
 	if stringField(data, "status") != "backlog" || stringField(data, "readiness") != "held" {
 		t.Fatal("interactive claim persisted a lifecycle edit")
 	}
+	// Interactive Start is allowed without a registered project. Register and
+	// enable this fixture only now so PollOnce reconciles the claim.
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", true); err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(repoRoot, vault)
+	project.ProjectID, project.Enabled, project.Health = projectID, true, projectHealthHealthy
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	task, err := resolveV7Note(vault, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := store.LatestRunAuthorization(projectID, "APP-T-0001")
+	if err != nil || auth == nil {
+		t.Fatalf("interactive authorization missing: %#v err=%v", auth, err)
+	}
+	if !activeInteractiveBacklogClaim(store, vault, task, *run, time.Now().UTC()) {
+		t.Fatalf("fresh explicit claim failed continuity: run=%#v auth=%#v task_contract=%q task_rev=%q", run, auth, directWaveTaskContract(task), stringField(task.Data, "state_rev"))
+	}
+	frontmatter, err := listOperationalNotesFrontmatter(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundFrontmatter := false
+	var staleHeader Note
+	for _, candidate := range frontmatter {
+		if stringField(candidate.Data, "id") != "APP-T-0001" {
+			continue
+		}
+		foundFrontmatter = true
+		staleHeader = candidate
+		if !activeInteractiveBacklogClaim(store, vault, candidate, *run, time.Now().UTC()) {
+			t.Fatal("frontmatter-only sentinel note lost a valid interactive claim")
+		}
+	}
+	if !foundFrontmatter {
+		t.Fatal("sentinel fixture did not load the task")
+	}
+	rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+		data["status"] = "done"
+		return data, body
+	})
+	if activeInteractiveBacklogClaim(store, vault, staleHeader, *run, time.Now().UTC()) {
+		t.Fatal("stale backlog header concealed a newly terminal task")
+	}
+	rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+		data["status"] = "backlog"
+		return data, body
+	})
+	daemon, err := NewDaemon(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Close()
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run, err = daemon.store.FindRunScoped(projectID, "APP-T-0001")
+	if err != nil || run == nil || run.Terminal || run.LeaseOwner != "agent:codex" || run.ActiveAttemptID == "" {
+		t.Fatalf("daemon retired an authorized interactive backlog claim: run=%#v err=%v", run, err)
+	}
+	if circuit, err := daemon.store.ReadInvariantCircuitStatus(); err != nil || circuit.Open || !containsString(circuit.Checks, invariantCheckHeldLeaseDispatchEligible) {
+		t.Fatalf("daemon did not evaluate valid interactive claim without opening the invariant circuit: %#v err=%v", circuit, err)
+	}
 	if err := taskStartCmd(Args{"vault": vault, "_pos0": "APP-T-0002", "mode": "interactive", "current-workspace": "true", "by": "agent:codex", "quiet": "true", "embedded": "true"}); err == nil {
 		t.Fatal("dependency-blocked task claimed interactively")
+	}
+	stale := task
+	stale.Body += "\nChanged contract.\n"
+	if activeInteractiveBacklogClaim(daemon.store, vault, stale, *run, time.Now().UTC()) {
+		t.Fatal("drifted task material retained interactive authority")
+	}
+	updated := task
+	updated.Data = cloneNoteData(task.Data)
+	updated.Body += "\nCanonically updated contract.\n"
+	updated.Data["contract_fingerprint"] = directWaveTaskContract(updated)
+	updated.Data["state_rev"] = v7StateRev(updated.Data, updated.Body)
+	if activeInteractiveBacklogClaim(daemon.store, vault, updated, *run, time.Now().UTC()) {
+		t.Fatal("new valid contract reused the old interactive claim")
+	}
+	expired := *run
+	expired.LeaseExpiresAt = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	if activeInteractiveBacklogClaim(daemon.store, vault, task, expired, time.Now().UTC()) {
+		t.Fatal("expired lease retained interactive authority")
+	}
+	if _, err := daemon.store.exec(`UPDATE run_authorizations SET source='devin', trigger=replace(trigger, 'source=codex', 'source=devin') WHERE project_id=? AND record_id=?`, projectID, "APP-T-0001"); err != nil {
+		t.Fatal(err)
+	}
+	if !activeInteractiveBacklogClaim(daemon.store, vault, task, *run, time.Now().UTC()) {
+		t.Fatal("trusted Devin interactive authority was rejected")
+	}
+	if _, err := daemon.store.exec(`UPDATE run_authorizations SET trigger=replace(trigger, ';contract=' || ?, '') WHERE project_id=? AND record_id=?`, directWaveTaskContract(task), projectID, "APP-T-0001"); err != nil {
+		t.Fatal(err)
+	}
+	if activeInteractiveBacklogClaim(daemon.store, vault, task, *run, time.Now().UTC()) {
+		t.Fatal("legacy authorization without a claim-time contract gained backlog continuity")
+	}
+	if _, err := daemon.store.exec(`UPDATE run_authorizations SET source='invalid' WHERE project_id=? AND record_id=?`, projectID, "APP-T-0001"); err != nil {
+		t.Fatal(err)
+	}
+	if activeInteractiveBacklogClaim(daemon.store, vault, task, *run, time.Now().UTC()) {
+		t.Fatal("revoked authorization retained interactive authority")
+	}
+	if err := daemon.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run, err = daemon.store.FindRunScoped(projectID, "APP-T-0001")
+	if err != nil || run == nil || !run.Terminal || run.LeaseOwner != "" {
+		t.Fatalf("unauthorized backlog claim was not retired: run=%#v err=%v", run, err)
 	}
 }
 

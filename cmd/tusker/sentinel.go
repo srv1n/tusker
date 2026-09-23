@@ -310,7 +310,7 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 			var violations []runtimeInvariantViolation
 			switch check {
 			case invariantCheckHeldLeaseDispatchEligible:
-				violations = sentinelHeldLeaseDispatchEligible(project, runsByProject[project.Project.ProjectID])
+				violations = sentinelHeldLeaseDispatchEligible(d.store, project, runsByProject[project.Project.ProjectID], snapshot.Now)
 			case invariantCheckAttemptCountWithinCaps:
 				violations = sentinelAttemptCountWithinCaps(project, runsByProject[project.Project.ProjectID])
 			case invariantCheckFreshHeartbeatPidLive:
@@ -356,7 +356,7 @@ func (d *Daemon) evaluateInvariantSentinel(snapshot runtimeSentinelSnapshot) (in
 	return status, nil
 }
 
-func sentinelHeldLeaseDispatchEligible(project runtimeSentinelProjectSnapshot, runs []RunStatus) []runtimeInvariantViolation {
+func sentinelHeldLeaseDispatchEligible(store *RuntimeStore, project runtimeSentinelProjectSnapshot, runs []RunStatus, now time.Time) []runtimeInvariantViolation {
 	var violations []runtimeInvariantViolation
 	for _, run := range runs {
 		if !isDispatchCapacityLeaseState(run.LeaseState) {
@@ -371,6 +371,9 @@ func sentinelHeldLeaseDispatchEligible(project runtimeSentinelProjectSnapshot, r
 		}
 		if stringField(note.Data, "id") == "" {
 			violations = append(violations, runViolation(run, invariantCheckHeldLeaseDispatchEligible, "held lease has no matching task", nil))
+			continue
+		}
+		if activeInteractiveBacklogClaim(store, project.Project.VaultRoot, note, run, now) {
 			continue
 		}
 		status := strings.TrimSpace(stringField(note.Data, "status"))

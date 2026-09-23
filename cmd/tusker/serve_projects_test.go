@@ -279,3 +279,105 @@ func TestServeProjectSettingsPersistWorkspaceAndConcurrency(t *testing.T) {
 	assertEqual(t, string(WorkspaceStrategyShared), wf.Data.Workspace.Strategy, "current checkout setting readback")
 	assertEqual(t, 8, wf.Data.Runtime.MaxActiveRunsPerProject, "current checkout concurrency readback")
 }
+
+func TestExternalReviewSettings(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) == 0 {
+		t.Fatalf("fixture project: %v %#v", err, projects)
+	}
+	project := projects[0]
+	readSettings := func() (string, int) {
+		t.Helper()
+		wf, err := loadWorkflow(project.VaultRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return wf.Data.Workspace.Strategy, wf.Data.Runtime.MaxActiveRunsPerProject
+	}
+	assertUnchanged := func(where string, strategy string, concurrency int) {
+		t.Helper()
+		if gotStrategy, gotConcurrency := readSettings(); gotStrategy != strategy || gotConcurrency != concurrency {
+			t.Fatalf("%s mutated persisted settings: strategy=%q concurrency=%d, want strategy=%q concurrency=%d",
+				where, gotStrategy, gotConcurrency, strategy, concurrency)
+		}
+	}
+
+	// Establish a baseline that differs from every refusal payload below, so
+	// any write-before-validate regression is observable on readback.
+	var baseline serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"workspaceMode":"worktree","maxActiveRunsPerProject":3}`, &baseline)
+	if !baseline.OK || baseline.Refused {
+		t.Fatalf("baseline settings failed: %#v", baseline)
+	}
+	baseStrategy, baseConcurrency := readSettings()
+	assertEqual(t, string(WorkspaceStrategyWorktree), baseStrategy, "baseline workspace readback")
+	assertEqual(t, 3, baseConcurrency, "baseline concurrency readback")
+
+	// A1: a valid workspace paired with invalid concurrency is refused with
+	// both persisted settings unchanged.
+	for _, refusal := range []struct {
+		name string
+		body string
+	}{
+		{"fractional concurrency", `{"workspaceMode":"shared","maxActiveRunsPerProject":1.5}`},
+		{"zero concurrency", `{"workspaceMode":"shared","maxActiveRunsPerProject":0}`},
+		{"negative concurrency", `{"workspaceMode":"shared","maxActiveRunsPerProject":-2}`},
+		{"malformed concurrency", `{"workspaceMode":"shared","maxActiveRunsPerProject":"lots"}`},
+		{"invalid workspace mode", `{"workspaceMode":"bogus","maxActiveRunsPerProject":2}`},
+	} {
+		var result serveActionResult
+		servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", refusal.body, &result)
+		if result.OK || !result.Refused {
+			t.Fatalf("%s was not refused: %#v", refusal.name, result)
+		}
+		assertUnchanged(refusal.name, baseStrategy, baseConcurrency)
+	}
+
+	// A1: unknown keys refuse before any write.
+	var unknown serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"key":"no.such.setting","value":"x"}`, &unknown)
+	if unknown.OK || !unknown.Refused {
+		t.Fatalf("unknown setting was not refused: %#v", unknown)
+	}
+	assertUnchanged("unknown setting", baseStrategy, baseConcurrency)
+	var mixedUnknown serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"workspaceMode":"shared","maxActiveRunsPerProject":2,"unexpected":"x"}`, &mixedUnknown)
+	if mixedUnknown.OK || !mixedUnknown.Refused {
+		t.Fatalf("mixed batch with unknown setting was not refused: %#v", mixedUnknown)
+	}
+	assertUnchanged("mixed batch with unknown setting", baseStrategy, baseConcurrency)
+
+	// A3: an empty update carries no supported setting and changes nothing.
+	var empty serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{}`, &empty)
+	if empty.OK || !empty.Refused {
+		t.Fatalf("empty settings update was not refused: %#v", empty)
+	}
+	assertUnchanged("empty update", baseStrategy, baseConcurrency)
+
+	// A3: single-key updates remain compatible.
+	var singleWorkspace serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"key":"workspace.strategy","value":"shared"}`, &singleWorkspace)
+	if !singleWorkspace.OK || singleWorkspace.Refused {
+		t.Fatalf("single workspace update failed: %#v", singleWorkspace)
+	}
+	var singleConcurrency serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"key":"runtime.max_active_runs_per_project","value":5}`, &singleConcurrency)
+	if !singleConcurrency.OK || singleConcurrency.Refused {
+		t.Fatalf("single concurrency update failed: %#v", singleConcurrency)
+	}
+	if gotStrategy, gotConcurrency := readSettings(); gotStrategy != string(WorkspaceStrategyShared) || gotConcurrency != 5 {
+		t.Fatalf("single-key readback mismatch: strategy=%q concurrency=%d", gotStrategy, gotConcurrency)
+	}
+
+	// A3: a fully valid batch persists both fields together.
+	var batch serveActionResult
+	servePost(t, server, "/api/projects/"+project.ProjectID+"/settings", `{"workspaceMode":"worktree","maxActiveRunsPerProject":2}`, &batch)
+	if !batch.OK || batch.Refused {
+		t.Fatalf("valid batch failed: %#v", batch)
+	}
+	if gotStrategy, gotConcurrency := readSettings(); gotStrategy != string(WorkspaceStrategyWorktree) || gotConcurrency != 2 {
+		t.Fatalf("batch readback mismatch: strategy=%q concurrency=%d", gotStrategy, gotConcurrency)
+	}
+}

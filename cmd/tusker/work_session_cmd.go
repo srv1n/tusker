@@ -391,7 +391,7 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	identity := runIdentityForClaim(run, ctx.Project.RepoRoot, run.WorkspacePath, string(workspaceStrategy), branchName)
 	trigger := "work_start"
 	if currentWorkspace {
-		trigger = SelfImplementationTrigger(authoringContext)
+		trigger = SelfImplementationTrigger(authoringContext) + ";contract=" + directWaveTaskContract(note)
 	}
 	if lane == runLaneReview {
 		trigger = "work_review"
