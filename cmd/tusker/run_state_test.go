@@ -23,6 +23,7 @@ func TestRunOperatorState(t *testing.T) {
 		{"fresh activity is working", "working", func(f *runOperatorFacts) { f.LastActivityAt = now.Add(-time.Second).Format(time.RFC3339Nano) }},
 		{"future activity is working", "working", func(f *runOperatorFacts) { f.LastActivityAt = now.Add(time.Second).Format(time.RFC3339Nano) }},
 		{"open question wins", "waiting_on_you", func(f *runOperatorFacts) { f.OpenQuestionID = "q1"; f.ToolInFlight = true }},
+		{"open question survives owner exit", "waiting_on_you", func(f *runOperatorFacts) { f.OpenQuestionID = "q1"; f.OwnerAlive = false }},
 		{"answered question falls through", "working", func(f *runOperatorFacts) {
 			f.OpenQuestionID = ""
 			f.LastActivityAt = now.Add(-time.Second).Format(time.RFC3339Nano)

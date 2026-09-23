@@ -63,10 +63,10 @@ func deriveRunOperatorState(f runOperatorFacts, now time.Time, quietAfter time.D
 		return state
 	}
 	activeLease := f.LeaseState == string(LeaseStateClaimed) || f.LeaseState == string(LeaseStateRunning)
+	if f.OpenQuestionID != "" || f.PermissionWait || f.Outcome == string(AttemptOutcomeWaitingForHuman) {
+		return set("waiting_on_you", firstNonEmpty(f.LastActivityAt, f.UpdatedAt), nil)
+	}
 	if activeLease && f.OwnerAlive {
-		if f.OpenQuestionID != "" || f.PermissionWait || f.Outcome == string(AttemptOutcomeWaitingForHuman) {
-			return set("waiting_on_you", firstNonEmpty(f.LastActivityAt, f.UpdatedAt), nil)
-		}
 		activityAt, valid := parseRunTimestamp(f.LastActivityAt)
 		if f.ToolInFlight || valid && now.Sub(activityAt) <= quietAfter {
 			return set("working", firstNonEmpty(f.LastActivityAt, f.StartedAt), nil)
