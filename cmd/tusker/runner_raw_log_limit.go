@@ -222,7 +222,11 @@ func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, w
 	// the workspace busy indefinitely.  The group was created by this launch,
 	// and the bounded delay is short enough that its numeric identity cannot be
 	// safely treated as reusable until this cleanup completes.
-	if errors.Is(waitErr, exec.ErrWaitDelay) && pgid > 0 {
+	// A wrapper-contained child shares the wrapper's own process group: killing
+	// it here would SIGKILL the wrapper before it can publish this terminal
+	// status.  Contained descendants are fenced by the wrapper's post-status
+	// containment reap instead, after the durable record exists.
+	if errors.Is(waitErr, exec.ErrWaitDelay) && pgid > 0 && !wrapperContained {
 		killRunnerProcessGroup(cmd, pgid)
 	}
 	closeErr := log.close()
@@ -231,7 +235,11 @@ func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, w
 	if cmd.ProcessState != nil {
 		exitCode = cmd.ProcessState.ExitCode()
 	}
-	if exitCode < 0 || (waitErr != nil && exitCode == 0) {
+	// ErrWaitDelay means the root exited while a descendant held an output
+	// pipe; ProcessState still carries the truthful root exit code, and the
+	// descendant is fenced by the group reap above or the wrapper's post-status
+	// containment cleanup.
+	if exitCode < 0 || (waitErr != nil && !errors.Is(waitErr, exec.ErrWaitDelay) && exitCode == 0) {
 		exitCode = 1
 	}
 	outcome := AttemptOutcomeNone

@@ -318,8 +318,17 @@ func TestCurrentCheckoutUsesConfiguredProjectCapacity(t *testing.T) {
 	if got := projectActiveRunLimit(wf); got != 2 {
 		t.Fatalf("current checkout ignored configured capacity: %d", got)
 	}
+	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "shared-checkout armed waves require runtime.max_active_runs_per_project = 1" {
+		t.Fatalf("parallel shared-checkout wave was admitted: %q", got)
+	}
+	wf.Runtime.MaxActiveRunsPerProject = 1
 	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "" {
-		t.Fatalf("current checkout was rejected despite owned-path scheduling: %q", got)
+		t.Fatalf("serial shared-checkout wave was rejected: %q", got)
+	}
+	wf.Workspace.Strategy = string(WorkspaceStrategyWorktree)
+	wf.Runtime.MaxActiveRunsPerProject = 2
+	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "" {
+		t.Fatalf("isolated checkout ignored configured capacity: %q", got)
 	}
 }
 

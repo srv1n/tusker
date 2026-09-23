@@ -260,6 +260,19 @@ type serveWaveListItem struct {
 	Recovery      *serveRecovery `json:"recovery,omitempty"`
 }
 
+// The overview only needs recorded list facts. Start readiness belongs to the
+// wave review endpoint and is checked when a wave is opened.
+type serveWaveListItem struct {
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	Summary       string `json:"summary,omitempty"`
+	Status        string `json:"status"`
+	Authorization string `json:"authorization"`
+	LandedAt      any    `json:"landedAt"`
+	MemberCount   int    `json:"memberCount"`
+	DoneCount     int    `json:"doneCount"`
+}
+
 type serveWaveTaskSummary struct {
 	ID               string             `json:"id"`
 	Title            string             `json:"title"`
