@@ -22,7 +22,7 @@ func TestRunActivityACPThroughServe(t *testing.T) {
 			messages = append(messages, event.Text)
 		}
 	}
-	want := []string{"Running fixture tests.\npassword=[REDACTED]\n", "test-1\ncompleted\n2 passed", "Tests finished."}
+	want := []string{"Running fixture tests.\npassword=[REDACTED]\n", "cargo test selected_native_fixture_\ncompleted\n2 passed", "Tests finished."}
 	if strings.Join(messages, "|") != strings.Join(want, "|") {
 		t.Fatalf("activity = %#v", messages)
 	}
@@ -43,6 +43,21 @@ func TestRunActivityACPThroughServe(t *testing.T) {
 		if strings.Contains(string(raw), forbidden) {
 			t.Fatalf("persisted %q", forbidden)
 		}
+	}
+}
+
+func TestACPThoughtChunksNotPersisted(t *testing.T) {
+	_, req := setupACPRunnerRuntime(t, "activity")
+	if _, err := runnerWrapperStartChild(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatusFile(t, req.Start.StatusPath)
+	raw, err := os.ReadFile(req.Start.EventSinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "private reasoning") || strings.Contains(string(raw), "agent_thought_chunk") {
+		t.Fatal("thought chunk persisted")
 	}
 }
 
@@ -85,7 +100,7 @@ func TestRunActivityClaudeToolCompletionUsesToolIdentity(t *testing.T) {
 	}})
 	events := appendRunActivity(nil, start[0])
 	events = appendRunActivity(events, finish[0])
-	if len(events) != 1 || events[0].ID != "cli:tool:toolu-1" || events[0].Kind != "tool_result" || events[0].Text != "2 passed" {
+	if len(events) != 1 || events[0].ID != "cli:tool:toolu-1" || events[0].Kind != "tool_call" || events[0].Text != "Bash\ncargo test\n2 passed" {
 		t.Fatalf("Claude tool lifecycle was not coalesced: %#v", events)
 	}
 }
@@ -127,6 +142,19 @@ func TestRunActivityCompletionMovesToLatestPosition(t *testing.T) {
 	}
 }
 
+func TestRunActivityToolMergeAcrossPersistedACPEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	data := `{"kind":"tool_call","payload":{"activity":true,"message_id":"acp:tool:1","text":"Run tests\ncargo test\nin_progress"}}` + "\n" +
+		`{"kind":"tool_call","payload":{"activity":true,"message_id":"acp:tool:1","text":"Run tests\ncompleted\n2 passed"}}` + "\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	events := serveRunEvents(RunStatus{EventSinkPath: path}, nil)
+	if len(events) != 1 || events[0].Text != "Run tests\ncargo test\ncompleted\n2 passed" {
+		t.Fatalf("persisted tool lifecycle lost command or result: %#v", events)
+	}
+}
+
 func TestRunActivityCLIUsesCurrentAttemptAndLatestOutput(t *testing.T) {
 	dir := t.TempDir()
 	old, current := filepath.Join(dir, "old.log"), filepath.Join(dir, "current.log")
@@ -145,5 +173,45 @@ func TestRunActivityCLIUsesCurrentAttemptAndLatestOutput(t *testing.T) {
 	}
 	if events := serveRunEvents(RunStatus{ActiveAttemptID: "missing"}, attempts); len(events) != 0 {
 		t.Fatalf("fell back to old attempt: %#v", events)
+	}
+}
+
+func TestRunActivityCLIErrors(t *testing.T) {
+	for _, record := range []map[string]any{
+		{"type": "turn.failed", "error": map[string]any{"message": "usage limit"}},
+		{"type": "error", "message": "auth expired"},
+		{"type": "item.completed", "item": map[string]any{"type": "error", "message": "sandbox denied"}},
+		{"type": "result", "is_error": true, "subtype": "error_max_turns"},
+		{"type": "user", "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "is_error": true, "tool_use_id": "x"}}}},
+	} {
+		events := cliRunActivity(record)
+		if len(events) != 1 || events[0].Level != "error" || events[0].Text == "" {
+			t.Fatalf("missing error activity for %#v: %#v", record, events)
+		}
+	}
+}
+
+func TestRunActivityTailOversizedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	data := `{"type":"result","result":"earlier"}` + "\n" + `{"type":"item.completed","item":{"type":"agent_message","text":"` + strings.Repeat("x", 3<<20) + `"}}` + "\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	records := runActivityTail(path)
+	if len(records) != 2 || records[0]["type"] != "result" || records[1]["kind"] != "truncated" {
+		t.Fatalf("oversized tail = %#v", records)
+	}
+}
+
+func TestRunActivityRedaction(t *testing.T) {
+	text := "AWS_SECRET_ACCESS_KEY=abc123 https://u:p@host/x -----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY----- eyJhbGci.eyJzdWI.sig tokenizer"
+	redacted := runActivityText(text)
+	for _, secret := range []string{"abc123", "u:p", "BEGIN RSA PRIVATE KEY", "eyJhbGci"} {
+		if strings.Contains(redacted, secret) {
+			t.Fatalf("leaked %q: %s", secret, redacted)
+		}
+	}
+	if !strings.Contains(redacted, "tokenizer") {
+		t.Fatal("ordinary text redacted")
 	}
 }

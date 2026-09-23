@@ -27,7 +27,7 @@ func TestRunSessionContinueUnsupportedAdaptersFailClosed(t *testing.T) {
 
 func TestRunSessionContinueCodexExecBindsExactSession(t *testing.T) {
 	argv := codexExecResumeArgv([]string{"codex", "exec", "--json", "--skip-git-repo-check", "-"}, "session-old")
-	want := []string{"codex", "exec", "resume", "--json", "--skip-git-repo-check", "session-old", "-"}
+	want := []string{"codex", "exec", "--json", "--skip-git-repo-check", "resume", "session-old", "-"}
 	if len(argv) != len(want) {
 		t.Fatalf("resume argv=%#v, want %#v", argv, want)
 	}
@@ -120,5 +120,24 @@ func TestRunSessionContinueContextRecoveryRefusesCompletedEffects(t *testing.T) 
 	}
 	if !result.Refused || !strings.Contains(result.Reason, "unknown terminal outcome") {
 		t.Fatalf("completed effect was replayable: %#v", result)
+	}
+}
+
+func TestRunSessionContinueCodexExecFlagsPrecedeResume(t *testing.T) {
+	args := codexExecResumeArgv([]string{"codex", "exec", "--json", "--sandbox", "workspace-write", "-c", `model="x"`, "--skip-git-repo-check", "-"}, "S")
+	want := []string{"codex", "exec", "--json", "--sandbox", "workspace-write", "-c", `model="x"`, "--skip-git-repo-check", "resume", "S", "-"}
+	if strings.Join(args, "|") != strings.Join(want, "|") {
+		t.Fatalf("argv=%q want=%q", args, want)
+	}
+	if got := codexExecResumeCommand("codex exec --json --skip-git-repo-check"); got != "codex exec --json --skip-git-repo-check resume {{session_ref}} -" {
+		t.Fatalf("resume template without start dash=%q", got)
+	}
+	command := codexExecResumeCommand(`codex exec --json --sandbox workspace-write -c 'model="x"' --skip-git-repo-check -`)
+	if !strings.Contains(command, `--skip-git-repo-check resume {{session_ref}} -`) {
+		t.Fatalf("command=%q", command)
+	}
+	bypass := codexExecResumeArgv([]string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-"}, "S")
+	if strings.Join(bypass, "|") != "codex|exec|--dangerously-bypass-approvals-and-sandbox|resume|S|-" {
+		t.Fatalf("bypass=%q", bypass)
 	}
 }

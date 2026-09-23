@@ -1362,8 +1362,12 @@ func validateV7Domain(note Note, ctx validationContext, where string, errors, wa
 	if !containsString(canonicalFiles, "INDEX.md") || !containsString(canonicalFiles, "CANON.md") {
 		*errors = append(*errors, issue(errorInvalidField, "V7 domain canonical_files must include INDEX.md and CANON.md", where, "", map[string]any{"field": "canonical_files"}))
 	}
+	// A migrated domain routes its canon through the portable index, so the
+	// legacy sibling CANON.md record is no longer mandatory for it.
 	if ctx.VaultPath != "" && id != "" && !fileExists(filepath.Join(ctx.VaultPath, "knowledge", "domains", filepath.FromSlash(id), "CANON.md")) {
-		*errors = append(*errors, issue(errorPathMismatch, "V7 domain requires sibling CANON.md", where, "", nil))
+		if !v7HasPortableDomain(v7RepoRoot(ctx.VaultPath), id) {
+			*errors = append(*errors, issue(errorPathMismatch, "V7 domain requires sibling CANON.md", where, "", nil))
+		}
 	}
 	validateV7DomainLayout(ctx.VaultPath, id, where, errors)
 }
@@ -1446,10 +1450,14 @@ func validateV7ProjectSkill(note Note, ctx validationContext, where string, erro
 		}
 	}
 	body := strings.ToLower(note.Body)
-	for _, required := range []string{"project knowledge skill", "tusker operator skill", "knowledge/domains", "index.md", "canon.md"} {
+	for _, required := range []string{"project knowledge skill", "tusker operator skill", "knowledge/domains", "index.md"} {
 		if !strings.Contains(body, required) {
 			*errors = append(*errors, issue(errorMissingSection, "V7 project skill is missing routing text for "+required, where, "", map[string]any{"required_text": required}))
 		}
+	}
+	// Portable routes name the canon route 00-index.md instead of canon.md.
+	if !strings.Contains(body, "canon.md") && !strings.Contains(body, "00-index.md") {
+		*errors = append(*errors, issue(errorMissingSection, "V7 project skill is missing routing text for canon.md", where, "", map[string]any{"required_text": "canon.md"}))
 	}
 	if !strings.Contains(body, "do not publish") || !strings.Contains(body, "task records") || !strings.Contains(body, "evidence") || !strings.Contains(body, "generated") {
 		*errors = append(*errors, issue("PROJECT_SKILL_BOUNDARY_MISSING", "V7 project skill must state the publication boundary for tasks, evidence, generated output, runtime state, and raw logs", where, "", nil))
@@ -1555,7 +1563,7 @@ func v7ProjectSkillForbiddenSourcePath(rel string) bool {
 }
 
 func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
-	if !hasV7ProjectSkill(vaultPath) && !hasV7KnowledgeDomains(vaultPath) {
+	if !hasV7ProjectSkill(vaultPath) && !hasV7KnowledgeDomains(vaultPath) && len(v7PortableDomainIDs(v7RepoRoot(vaultPath))) == 0 {
 		return nil, nil
 	}
 	var errors []Issue
@@ -1582,6 +1590,11 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 		for _, domain := range domains {
 			id := stringField(domain.Data, "id")
 			if id == "" {
+				continue
+			}
+			// A migrated domain satisfies its route with the portable index;
+			// legacy records still need both INDEX.md and CANON.md pointers.
+			if strings.Contains(body, v7PortableDomainIndexRel(id)) {
 				continue
 			}
 			for _, rel := range []string{

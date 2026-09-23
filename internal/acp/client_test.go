@@ -1024,6 +1024,23 @@ func TestACPUpdateOverflowPoisonsInsteadOfHidingTerminal(t *testing.T) {
 	}
 }
 
+func TestACPUpdateBurstCoalesced(t *testing.T) {
+	cfg := (Config{}).withDefaults()
+	c := &Client{cfg: cfg, session: &Session{ID: "session-1"}, pending: map[string]*pendingCall{}, updates: make(chan Update, cfg.Limits.MaxUpdates)}
+	push := func(update map[string]any) {
+		c.handleRequest(rpcMessage{Method: "session/update", Params: mustTestJSON(map[string]any{"sessionId": "session-1", "update": update})})
+	}
+	for i := 0; i < 10000; i++ {
+		push(map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "hidden"}})
+	}
+	for i := 0; i < 1000; i++ {
+		push(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "tool-1", "status": "in_progress"})
+	}
+	if c.protocolErr != nil || len(c.updates) != 1000 {
+		t.Fatalf("burst poisoned or lost tool updates: error=%v queued=%d", c.protocolErr, len(c.updates))
+	}
+}
+
 func TestACPStreamingUsesQueueAndPerPromptByteBounds(t *testing.T) {
 	t.Run("more than 256 drained updates succeed", func(t *testing.T) {
 		c := startTestClient(t, "many-updates", func(cfg *Config) {

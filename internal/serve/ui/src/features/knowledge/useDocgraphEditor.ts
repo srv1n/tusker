@@ -45,6 +45,10 @@ function sameList(a: string[], b: string[]): boolean {
 export interface KnowledgeDocEditor {
   status: string;
   setStatus: (v: string) => void;
+  conformance: string;
+  setConformance: (v: string) => void;
+  lastVerified: string;
+  setLastVerified: (v: string) => void;
   keywords: string[];
   addKeyword: (v: string) => void;
   removeKeyword: (v: string) => void;
@@ -78,10 +82,14 @@ export function useDocgraphEditor(
   refetch: () => void,
 ): KnowledgeDocEditor {
   const initStatus = headerString(doc.header, "status") || doc.status;
+  const initConformance = headerString(doc.header, "code_conformance") || doc.code_conformance || "unverified";
+  const initLastVerified = headerString(doc.header, "last_verified") || doc.last_verified || "";
   const initKeywords = headerArray(doc.header, "keywords");
   const initPartOf = headerString(doc.header, "part_of");
 
   const [status, setStatus] = useState(initStatus);
+  const [conformance, setConformance] = useState(initConformance);
+  const [lastVerified, setLastVerified] = useState(initLastVerified);
   const [keywords, setKeywords] = useState<string[]>(initKeywords);
   const [partOf, setPartOf] = useState(initPartOf);
   const [banner, setBanner] = useState<SaveBanner>({ type: "none" });
@@ -113,10 +121,14 @@ export function useDocgraphEditor(
   const baseline = useRef<string | null>(null);
   const [body, setBody] = useState<string>("");
   const statusRef = useRef(status);
+  const conformanceRef = useRef(conformance);
+  const lastVerifiedRef = useRef(lastVerified);
   const keywordsRef = useRef(keywords);
   const partOfRef = useRef(partOf);
   const bodyRef = useRef(body);
   statusRef.current = status;
+  conformanceRef.current = conformance;
+  lastVerifiedRef.current = lastVerified;
   keywordsRef.current = keywords;
   partOfRef.current = partOf;
   bodyRef.current = body;
@@ -126,6 +138,8 @@ export function useDocgraphEditor(
   // so a server-normalized header does not read as still-dirty.
   useEffect(() => {
     setStatus(initStatus);
+    setConformance(initConformance);
+    setLastVerified(initLastVerified);
     setKeywords(initKeywords);
     setPartOf(initPartOf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -150,18 +164,25 @@ export function useDocgraphEditor(
 
   const bodyDirty = baseline.current !== null && body !== baseline.current;
   const headerDirty =
-    status !== initStatus || partOf !== initPartOf || !sameList(keywords, initKeywords);
+    status !== initStatus ||
+    conformance !== initConformance ||
+    lastVerified.trim() !== initLastVerified.trim() ||
+    partOf !== initPartOf ||
+    !sameList(keywords, initKeywords);
   const dirty = bodyDirty || headerDirty;
 
   const mergedHeader = useMemo(() => {
     const next: Record<string, unknown> = { ...doc.header };
     next.status = status;
+    next.code_conformance = conformance;
+    if (lastVerified.trim() !== "") next.last_verified = lastVerified.trim();
+    else delete next.last_verified;
     if (keywords.length > 0) next.keywords = keywords;
     else delete next.keywords;
     if (partOf.trim() !== "") next.part_of = partOf.trim();
     else delete next.part_of;
     return next;
-  }, [doc.header, status, keywords, partOf]);
+  }, [doc.header, status, conformance, lastVerified, keywords, partOf]);
 
   const doSave = useCallback(
     (source: "auto" | "manual") => {
@@ -172,6 +193,8 @@ export function useDocgraphEditor(
         keywords: [...keywords],
         partOf,
         status,
+        conformance,
+        lastVerified,
       };
       const payload: DocgraphSavePayload = { base_rev: baseRev.current };
       if (bodyDirty) payload.body = body;
@@ -183,11 +206,23 @@ export function useDocgraphEditor(
           // that field while the request was in flight; otherwise keep their
           // newer draft dirty against the returned revision.
           const normalizedStatus = headerString(data.header, "status") || data.status;
+          const normalizedConformance =
+            headerString(data.header, "code_conformance") || data.code_conformance || "unverified";
+          const normalizedLastVerified =
+            headerString(data.header, "last_verified") || data.last_verified || "";
           const normalizedKeywords = headerArray(data.header, "keywords");
           const normalizedPartOf = headerString(data.header, "part_of");
           if (statusRef.current === draftAtSave.status) {
             statusRef.current = normalizedStatus;
             setStatus(normalizedStatus);
+          }
+          if (conformanceRef.current === draftAtSave.conformance) {
+            conformanceRef.current = normalizedConformance;
+            setConformance(normalizedConformance);
+          }
+          if (lastVerifiedRef.current === draftAtSave.lastVerified) {
+            lastVerifiedRef.current = normalizedLastVerified;
+            setLastVerified(normalizedLastVerified);
           }
           if (sameList(keywordsRef.current, draftAtSave.keywords)) {
             keywordsRef.current = normalizedKeywords;
@@ -229,7 +264,7 @@ export function useDocgraphEditor(
         },
       });
     },
-    [dirty, save, bodyDirty, headerDirty, body, keywords, partOf, status, mergedHeader],
+    [dirty, save, bodyDirty, headerDirty, body, keywords, partOf, status, conformance, lastVerified, mergedHeader],
   );
 
   // Autosave: once the editor has been idle ~1.5s while dirty, run the save path
@@ -279,6 +314,10 @@ export function useDocgraphEditor(
   return {
     status,
     setStatus,
+    conformance,
+    setConformance,
+    lastVerified,
+    setLastVerified,
     keywords,
     addKeyword: (v) => {
       const t = v.trim();

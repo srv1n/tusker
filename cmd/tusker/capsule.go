@@ -163,7 +163,9 @@ func capsuleTokenCount(capsule frontmatterCapsule) int {
 
 func capsuleRequiredForSpecPath(path string) bool {
 	normalized := filepath.ToSlash(path)
-	return strings.HasPrefix(normalized, ".tusker/specs/") && strings.HasSuffix(normalized, ".md")
+	// S46: governing capsules live in the portable tree as well as the
+	// managed legacy specs root.
+	return (strings.HasPrefix(normalized, ".tusker/specs/") || strings.HasPrefix(normalized, "docs/system/")) && strings.HasSuffix(normalized, ".md")
 }
 
 func capsuleBudgetFor(vaultPath string) int {

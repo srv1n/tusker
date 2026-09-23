@@ -76,7 +76,12 @@ func resumeCapability(run *RunStatus, session *RunnerSession) runResumeCapabilit
 	quoted := shellSingleQuote(session.SessionRef)
 	switch RunnerName(run.Runner) {
 	case RunnerCodexExec:
-		return runResumeCapability{Supported: true, Command: "codex exec resume " + quoted}
+		return runResumeCapability{Supported: true, Reason: "Tusker can resume this Codex session with the original exec flags"}
+	case RunnerClaude:
+		if (&ClaudeRunner{}).Capabilities().ResumeSession {
+			return runResumeCapability{Supported: true, Reason: "Tusker can resume this Claude session with the original settings"}
+		}
+		return runResumeCapability{Reason: "runner does not support native resume"}
 	case RunnerMuse:
 		return runResumeCapability{Supported: true, Command: "muse exec --json --session-id " + quoted}
 	case RunnerDevin:

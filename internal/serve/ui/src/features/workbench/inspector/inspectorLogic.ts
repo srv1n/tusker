@@ -19,9 +19,10 @@
      becomes an "accepted result".
 */
 
-import type { Attempt, RunDetail, RunEvent, TaskDetail, VerificationRow, WaveReviewMember } from "@/types/domain";
+import type { Attempt, ProofInvalidation, RunDetail, RunEvent, TaskDetail, VerificationRow, WaveReviewMember } from "@/types/domain";
 import { harnessLabel } from "@/lib/harness";
 import { RECOVERY_STATE_LABEL } from "@/lib/recovery";
+import { DISPLAY_STATE_LABEL, type FlowDisplayState } from "../flow/flowGraph";
 
 export type Transport = string;
 
@@ -37,7 +38,10 @@ export interface InspectorExecutionIdentity {
 export type StageTone = "neutral" | "info" | "pass" | "warn" | "fail";
 
 export interface ActualStage {
+  /** Detailed stage phrase; the chip shows DISPLAY_STATE_LABEL[state]. */
   label: string;
+  /** The unified Work status shared with graph, board, and wave list. */
+  state: FlowDisplayState;
   tone: StageTone;
   /** True when a live run fact refines the durable task status. */
   live: boolean;
@@ -51,37 +55,37 @@ export interface ActualStage {
 export function stageFromWaveReviewMember(member: WaveReviewMember | undefined): ActualStage | undefined {
   if (!member) return undefined;
   if (member.phase === "completed" || member.state === "completed") {
-    return { label: "Completed", tone: "pass", live: false };
+    return { label: "Completed", state: "completed", tone: "pass", live: false };
   }
   if (member.phase === "proof_blocked") {
-    return { label: "Verification required", tone: "warn", live: false };
+    return { label: "Verification required", state: "proof_blocked", tone: "warn", live: false };
   }
   if (member.phase === "outcome_unknown") {
-    return { label: RECOVERY_STATE_LABEL, tone: "warn", live: false };
+    return { label: RECOVERY_STATE_LABEL, state: "unknown", tone: "warn", live: false };
   }
   if (member.phase === "failed") {
-    return { label: "Failed", tone: "fail", live: false };
+    return { label: "Failed", state: "failed", tone: "fail", live: false };
   }
   if (member.phase === "reviewing") {
-    return { label: "Reviewing", tone: "info", live: true };
+    return { label: "Reviewing", state: "reviewing", tone: "info", live: true };
   }
   if (member.phase === "awaiting_review" || member.completionReported || member.waitingReason?.includes("independent review")) {
-    return { label: "Awaiting review", tone: "info", live: false };
+    return { label: "Awaiting review", state: "awaiting_review", tone: "info", live: false };
   }
   if (member.phase === "executing" || member.state === "running") {
-    return { label: "Executing", tone: "info", live: true };
+    return { label: "Executing", state: "executing", tone: "info", live: true };
   }
   if (member.state === "cancelled") {
-    return { label: "Cancelled", tone: "neutral", live: false };
+    return { label: "Cancelled", state: "cancelled", tone: "neutral", live: false };
   }
   if (member.state === "blocked") {
-    return { label: "Blocked", tone: "fail", live: false };
+    return { label: "Blocked", state: "blocked", tone: "fail", live: false };
   }
   if (member.state === "ready") {
-    return { label: "Ready", tone: "neutral", live: false };
+    return { label: "Ready", state: "ready", tone: "neutral", live: false };
   }
   if (member.state === "waiting") {
-    return { label: "Queued", tone: "neutral", live: false };
+    return { label: "Queued", state: "queued", tone: "neutral", live: false };
   }
   return undefined;
 }
@@ -122,35 +126,35 @@ export function actualStage(task: TaskDetail, run: RunDetail | null, reviewMembe
   const liveOutcome = currentRun?.outcome ?? null;
   const liveRunning = runActive(currentRun);
   if (liveOutcome === "parked-no-progress") {
-    return { label: "Stopped — no progress", tone: "warn", live: false };
+    return { label: "Stopped — no progress", state: "failed", tone: "warn", live: false };
   }
   if (task.status === "done") {
-    return { label: "Delivered", tone: "pass", live: false };
+    return { label: "Delivered", state: "completed", tone: "pass", live: false };
   }
   if (task.status === "blocked") {
-    return { label: "Blocked", tone: "fail", live: false };
+    return { label: "Blocked", state: "blocked", tone: "fail", live: false };
   }
 
   // The observed lane wins when the durable task projection is one update
   // behind. A successful worker run is never presented as an active reviewer.
   if (currentRun?.lane === "review") {
-    if (liveRunning) return { label: "Reviewing now", tone: "info", live: true };
-    if (runFailed(currentRun)) return { label: "Review failed — action needed", tone: "fail", live: false };
+    if (liveRunning) return { label: "Reviewing now", state: "reviewing", tone: "info", live: true };
+    if (runFailed(currentRun)) return { label: "Review failed — action needed", state: "failed", tone: "fail", live: false };
     if (liveOutcome === "succeeded" || liveOutcome === "terminal") {
-      return { label: "Review complete — delivery pending", tone: "info", live: false };
+      return { label: "Review complete — delivery pending", state: "awaiting_review", tone: "info", live: false };
     }
-    if (liveOutcome) return { label: "Review activity unavailable", tone: "warn", live: false };
+    if (liveOutcome) return { label: "Review activity unavailable", state: "reviewing", tone: "warn", live: false };
   }
 	if (currentRun?.lane === "execute") {
-		if (liveRunning) return { label: "Building now", tone: "info", live: true };
+		if (liveRunning) return { label: "Building now", state: "executing", tone: "info", live: true };
 		if (runFailed(currentRun)) return currentRun.attemptCount === 0
-			? { label: "Couldn’t start — action needed", tone: "warn", live: false }
-			: { label: "Implementation failed — action needed", tone: "fail", live: false };
+			? { label: "Couldn’t start — action needed", state: "failed", tone: "warn", live: false }
+			: { label: "Implementation failed — action needed", state: "failed", tone: "fail", live: false };
     if (liveOutcome === "stale" || (liveOutcome === "running" && currentRun.liveness !== "fresh")) {
-      return { label: "Implementation activity unavailable", tone: "warn", live: false };
+      return { label: "Implementation activity unavailable", state: "unknown", tone: "warn", live: false };
     }
     if (liveOutcome === "succeeded" || liveOutcome === "terminal") {
-      return { label: "Checking verification · waiting for independent review", tone: "info", live: false };
+      return { label: "Checking verification · waiting for independent review", state: "awaiting_review", tone: "info", live: false };
     }
   }
 
@@ -158,19 +162,20 @@ export function actualStage(task: TaskDetail, run: RunDetail | null, reviewMembe
     case "review":
       // Keep the wording familiar to existing users while saying exactly what
       // is happening: the worker has finished and an independent review is next.
-      return { label: "Checking verification · waiting for independent review", tone: "info", live: false };
+      return { label: "Checking verification · waiting for independent review", state: "awaiting_review", tone: "info", live: false };
     case "in_progress":
       return {
         label: "Implementation in progress",
+        state: "executing",
         tone: "info",
         live: false,
       };
     case "ready":
       return task.readiness === "ready"
-        ? { label: "Ready to start", tone: "neutral", live: false }
-        : { label: "Waiting for prerequisites", tone: "warn", live: false };
+        ? { label: "Ready to start", state: "ready", tone: "neutral", live: false }
+        : { label: "Waiting for prerequisites", state: "blocked", tone: "warn", live: false };
     default:
-      return { label: "Planned", tone: "neutral", live: false };
+      return { label: "Planned", state: "backlog", tone: "neutral", live: false };
   }
 }
 
@@ -206,6 +211,33 @@ export function nextActionForStage(task: TaskDetail, run: RunDetail | null, stag
   if (stage.live) return "Watch the current attempt; its latest event is shown below.";
   if (stage.label.includes("unavailable")) return "Open run details to see whether activity can be recovered.";
   return "Start this task when its prerequisites and routes are ready.";
+}
+
+const DEPENDENCY_WAIT_STATES = new Set<FlowDisplayState>(["queued", "blocked", "backlog", "ready"]);
+
+/**
+ * The one short phrase beside the drawer's status chip. Dependency ids appear
+ * here once; proof explanations belong in the Proof section, not above the fold.
+ */
+export function stagePhrase(task: TaskDetail, run: RunDetail | null, stage: ActualStage, reviewMember: WaveReviewMember | undefined, hasDecision: boolean): string {
+  if (reviewMember?.phase === "failed" && reviewMember.waitingReason) return reviewMember.waitingReason;
+  if (reviewMember?.phase === "proof_blocked") return stage.label;
+  if (hasDecision && !reviewMember?.recovery) return "Waiting on you";
+  const pending = task.deps.filter((dep) => dep.status !== "done").map((dep) => dep.id);
+  if (pending.length > 0 && DEPENDENCY_WAIT_STATES.has(stage.state)) return `Waiting for ${pending.join(", ")}`;
+  if (stage.label !== RECOVERY_STATE_LABEL && stage.label !== DISPLAY_STATE_LABEL[stage.state]) return stage.label;
+  return nextActionForStage(task, run, stage);
+}
+
+const PROOF_INVALIDATION_SUMMARY: Record<ProofInvalidation["kind"], string> = {
+  missing: "proof not recorded",
+  failed: "proof failed",
+  unavailable: "proof unavailable",
+  changed: "proof out of date",
+};
+
+export function proofInvalidationSummary(invalidation: ProofInvalidation | undefined): string | undefined {
+  return invalidation ? PROOF_INVALIDATION_SUMMARY[invalidation.kind] : undefined;
 }
 
 /**

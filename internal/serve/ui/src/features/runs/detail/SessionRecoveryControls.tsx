@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/controls";
 import { SectionLabel } from "@/components/ui/page";
 import { Mono } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { isInterruptibleRun } from "@/features/runs/detail/helpers";
 
 const ACTION_LABEL: Record<RunAction, string> = {
   reconnect: "Reconnect",
@@ -94,45 +93,5 @@ export function SessionRecoveryControls({
 function capabilityFor(action: RunAction, run: RunDetail): RunActionCapability {
   const source = run.controls?.capabilities ?? run.capabilities ?? [];
   const advertised = source.find((item) => item.action === action);
-  if (advertised) return advertised;
-
-  // Compatibility fallback for the pre-control API. Reconnect is observation;
-  // native continue follows the existing resume capability, while context and
-  // fresh actions use conservative settled-state gates until richer readback
-  // is available.
-  if (action === "reconnect") {
-    return { action, available: Boolean(run.activeAttemptId || !run.terminal), reason: "Read the current canonical attempt; reconnect launches nothing." };
-  }
-  if (action === "continue") {
-    return { action, available: run.resume?.supported === true, reason: run.resume?.reason ?? "Native continuation is unavailable for this session." };
-  }
-  if (action === "stop") {
-    const available = isInterruptibleRun(run);
-    return {
-      action,
-      available,
-      reason: available
-        ? "Persists a durable stop intent and waits for owner/process settlement."
-        : "Stop requires a matching owner or queued process in canonical readback.",
-    };
-  }
-  if (action === "pause") return { action, available: false, reason: "Pause is unavailable until the provider acknowledges a durable pause capability." };
-  if (action === "recover_context") {
-    const available = run.outcome === "outcome-unknown" && !isInterruptibleRun(run);
-    return {
-      action,
-      available,
-      reason: available
-        ? "Creates a fresh native session while preserving the uncertain attempt for audit."
-        : "Saved-context recovery requires an unknown settled outcome and current authorization.",
-    };
-  }
-  const available = !isInterruptibleRun(run);
-  return {
-    action,
-    available,
-    reason: available
-      ? "Creates a different native session after settlement; history and authority remain attached."
-      : "Start fresh requires a settled run and canonical owner/process readback.",
-  };
+  return advertised ?? { action, available: false, reason: "This server did not declare this action." };
 }

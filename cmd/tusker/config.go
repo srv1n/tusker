@@ -23,9 +23,17 @@ var (
 	hookQuerySecretPattern = regexp.MustCompile(`(?i)([?&](?:access_token|token|api[_-]?key|secret|password|capability)=)[^&#\s]+`)
 	hookBearerPattern      = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
 	hookKnownTokenPattern  = regexp.MustCompile(`(?i)\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{16,})\b`)
+	hookEnvSecretPattern   = regexp.MustCompile(`(?i)\b([A-Z][A-Z0-9_]*(?:SECRET[A-Z0-9_]*|TOKEN[A-Z0-9_]*|KEY[A-Z0-9_]*|PASSWORD[A-Z0-9_]*)\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)`)
+	hookUserInfoPattern    = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@`)
+	hookPrivateKeyPattern  = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
+	hookJWTPattern         = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`)
 )
 
 func redactHookOutput(text string) string {
+	text = hookPrivateKeyPattern.ReplaceAllString(text, `[REDACTED]`)
+	text = hookUserInfoPattern.ReplaceAllString(text, `$1[REDACTED]@`)
+	text = hookEnvSecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
+	text = hookJWTPattern.ReplaceAllString(text, `[REDACTED]`)
 	text = hookSecretPattern.ReplaceAllString(text, `$1$2$3$4[REDACTED]`)
 	text = hookQuerySecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
 	text = hookBearerPattern.ReplaceAllString(text, `Bearer [REDACTED]`)

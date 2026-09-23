@@ -161,6 +161,47 @@ type runSessionControlResult struct {
 	Intent         *runSessionControlIntent `json:"intent,omitempty"`
 }
 
+func (s *serveServer) runActionCapability(action string, project RegisteredProject, wave Note, run RunStatus, prior *runSessionControlIntent) serveRunActionCapability {
+	capability := serveRunActionCapability{Action: action, Available: true}
+	switch action {
+	case "continue":
+		_, err, reason := nativeContinuationPreflight(s.store, project, wave, run)
+		if err != nil {
+			reason = err.Error()
+		}
+		capability.Reason = reason
+		capability.Available = reason == "" || reason == "native continuation is already queued"
+	case "recover_context":
+		_, err, reason := contextRecoveryPreflight(s.store, wave, run)
+		if err != nil {
+			reason = err.Error()
+		}
+		capability.Reason, capability.Available = reason, reason == ""
+	case runSessionControlStop:
+		if run.Terminal {
+			capability.Reason = "run is already terminal; stop has no effect"
+		}
+	case runSessionControlFresh:
+		if prior != nil && prior.Action == runSessionControlStop && prior.LeaseGeneration == run.LeaseGeneration && prior.State != runSessionControlSettledState {
+			capability.Reason = "start_fresh waits for the prior stop intent to settle"
+		} else if !runSessionControlSettled(run) {
+			capability.Reason = "start_fresh requires a settled run; stop it and wait for canonical owner/process readback"
+		}
+	case "reconnect":
+		if !runProcessGroupAlive(run) {
+			capability.Reason = "no live owner is available to reconnect"
+		}
+	case runSessionControlPause:
+		capability.Reason = runSessionControlPauseReason(run)
+	default:
+		capability.Reason = "unknown run action"
+	}
+	if capability.Reason != "" && action != "continue" {
+		capability.Available = false
+	}
+	return capability
+}
+
 func (s *serveServer) handleRunSessionControl(w http.ResponseWriter, r *http.Request, taskID string, body serveActionBody) {
 	action := strings.ToLower(strings.TrimSpace(body.string("action", "control")))
 	if action == "start-fresh" {
@@ -209,12 +250,12 @@ func (s *serveServer) handleRunSessionControl(w http.ResponseWriter, r *http.Req
 	result.LeaseState = serveLeaseState(run.LeaseState)
 	result.LeaseStateRaw = run.LeaseState
 	result.ProcessRunning = runProcessGroupAlive(run)
-	if action == runSessionControlStop && run.Terminal {
+	if action == runSessionControlStop && !s.runActionCapability(action, snap.project, Note{}, run, nil).Available {
 		result.Refused = true
 		result.Supported = true
 		result.Settled = true
 		result.State = runSessionControlSettledState
-		result.Reason = "run is already terminal; stop has no effect"
+		result.Reason = s.runActionCapability(action, snap.project, Note{}, run, nil).Reason
 		serveJSON(w, http.StatusOK, result)
 		return
 	}
@@ -223,7 +264,7 @@ func (s *serveServer) handleRunSessionControl(w http.ResponseWriter, r *http.Req
 		result.Refused = true
 		result.Supported = false
 		result.Alternative = runSessionControlStop
-		result.Reason = runSessionControlPauseReason(run)
+		result.Reason = s.runActionCapability(action, snap.project, Note{}, run, nil).Reason
 		serveJSON(w, http.StatusOK, result)
 		return
 	}
@@ -283,10 +324,35 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 		ProcessPGID: run.ProcessPGID, ProcessStarted: run.ProcessStartedAt,
 		CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano),
 	}
-	if err := saveRunSessionControlIntent(s.store, intent); err != nil {
+	saved, err := saveRunSessionControlIntentIfPrior(s.store, intent, prior)
+	if err != nil {
 		result.Refused = true
 		result.Reason = "could not persist stop intent: " + err.Error()
 		serveJSON(w, http.StatusInternalServerError, result)
+		return
+	}
+	if !saved {
+		current, err := loadRunSessionControlIntent(s.store, run.ProjectID, run.RecordID)
+		if err != nil || current == nil {
+			result.Refused, result.Reason = true, "stop intent changed during request; reload the run"
+			serveJSON(w, http.StatusConflict, result)
+			return
+		}
+		if current.Action == runSessionControlStop && current.LeaseGeneration == run.LeaseGeneration &&
+			(current.State == runSessionControlPending || current.State == runSessionControlUnknown) {
+			result.Supported, result.Pending, result.Unknown = true, current.State == runSessionControlPending, current.State == runSessionControlUnknown
+			result.State, result.Reason, result.Intent = current.State, "stop remains "+current.State+"; waiting for exact-owner settlement", current
+			serveJSON(w, http.StatusOK, result)
+			return
+		}
+		if current.Action == runSessionControlStop && current.LeaseGeneration == run.LeaseGeneration && current.State == runSessionControlSettledState {
+			result.OK, result.Supported, result.Settled = true, true, true
+			result.State, result.Reason, result.Intent = current.State, "run is already stopped and settled", current
+			serveJSON(w, http.StatusOK, result)
+			return
+		}
+		result.Refused, result.Reason = true, "stop intent changed during request; reload the run"
+		serveJSON(w, http.StatusConflict, result)
 		return
 	}
 	stopped, _, err := interruptRuntimeRunScoped(DefaultStateRoot(), s.store, run.ProjectID, run.RecordID)
@@ -321,20 +387,21 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 }
 
 func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus, actor string, prior *runSessionControlIntent, result runSessionControlResult) {
-	if prior != nil && prior.Action == runSessionControlStop && prior.LeaseGeneration == run.LeaseGeneration && prior.State != runSessionControlSettledState {
+	capability := s.runActionCapability(runSessionControlFresh, RegisteredProject{}, Note{}, run, prior)
+	if !capability.Available && capability.Reason == "start_fresh waits for the prior stop intent to settle" {
 		result.Refused = true
 		result.Supported = true
 		result.State = prior.State
 		result.Pending, result.Unknown = prior.State == runSessionControlPending, prior.State == runSessionControlUnknown
-		result.Reason = "start_fresh waits for the prior stop intent to settle"
+		result.Reason = capability.Reason
 		result.Intent = prior
 		serveJSON(w, http.StatusConflict, result)
 		return
 	}
-	if !runSessionControlSettled(run) {
+	if !capability.Available {
 		result.Refused = true
 		result.Supported = true
-		result.Reason = "start_fresh requires a settled run; stop it and wait for canonical owner/process readback"
+		result.Reason = capability.Reason
 		serveJSON(w, http.StatusConflict, result)
 		return
 	}

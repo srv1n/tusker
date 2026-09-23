@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -53,12 +55,61 @@ type claudeLiveHandle struct {
 	doneOnce               sync.Once
 }
 
-func shouldUseLiveClaude(command string) bool {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return true
+func validateClaudeSessionFlags(command string, argv []string) error {
+	if len(argv) == 0 {
+		var err error
+		argv, err = shellLikeFields(command)
+		if err != nil {
+			return tuskerError(errorConfigInvalid, "cannot parse Claude command: "+err.Error())
+		}
 	}
-	return strings.Contains(command, "stream-json") || strings.Contains(command, "--input-format")
+	for _, arg := range argv {
+		if arg == "--bare" {
+			return tuskerError(errorConfigInvalid, "Claude runner command cannot use --bare")
+		}
+		if arg == "--session-id" || strings.HasPrefix(arg, "--session-id=") {
+			return tuskerError(errorConfigInvalid, "Claude profile must not supply --session-id; Tusker assigns it")
+		}
+	}
+	return nil
+}
+
+func validateClaudeResumeFlags(command string, argv []string) error {
+	if len(argv) == 0 {
+		var err error
+		argv, err = shellLikeFields(command)
+		if err != nil {
+			return tuskerError(errorConfigInvalid, "cannot parse Claude command: "+err.Error())
+		}
+	}
+	for _, arg := range argv {
+		if arg == "--bare" {
+			return tuskerError(errorConfigInvalid, "Claude runner command cannot use --bare")
+		}
+	}
+	return nil
+}
+
+func claudeSessionArgv(argv []string, id string, resume *ResumeRequest) []string {
+	out := make([]string, 0, len(argv)+2)
+	for i := 0; i < len(argv); i++ {
+		arg := argv[i]
+		if arg == "--session-id" || arg == "--resume" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--session-id=") || strings.HasPrefix(arg, "--resume=") {
+			continue
+		}
+		out = append(out, arg)
+	}
+	if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
+		return append(out, "--resume", resume.SessionRef)
+	}
+	if id != "" {
+		return append(out, "--session-id", id)
+	}
+	return out
 }
 
 func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeRequest) (*StartResult, error) {
@@ -82,14 +133,22 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		if permissionMode == "plan" {
 			command += " --tools Read,Glob,Grep"
 		}
-		if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
-			command += " --resume {{session_ref}}"
-			if strings.TrimSpace(resume.MessageRef) != "" {
-				command += " --resume-session-at {{message_ref}}"
+	}
+	if req.NativeSessionID != "" || resume != nil {
+		if len(req.CommandArgv) == 0 {
+			fields, err := shellLikeFields(command)
+			if err != nil {
+				return nil, tuskerError(errorConfigInvalid, "cannot parse Claude command: "+err.Error())
 			}
+			fields = claudeSessionArgv(fields, req.NativeSessionID, resume)
+			quoted := make([]string, len(fields))
+			for i, field := range fields {
+				quoted[i] = shellSingleQuote(field)
+			}
+			command = strings.Join(quoted, " ")
 		}
 	}
-	if strings.Contains(command, "bypassPermissions") && permissionMode != "bypassPermissions" {
+	if permissionMode != "bypassPermissions" && (strings.Contains(command, "bypassPermissions") || strings.Contains(strings.Join(req.CommandArgv, " "), "bypassPermissions")) {
 		return nil, tuskerError(errorConfigInvalid, "bounded Claude runner command cannot use bypassPermissions")
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
@@ -121,6 +180,9 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 			"{{note_path}}": req.NotePath, "{{vault_path}}": runnerWorkspaceVaultPath(workspaceCWD, req.VaultPath),
 			"{{session_ref}}": resumeSessionRef(resume), "{{message_ref}}": resumeMessageRef(resume),
 		})
+		if req.NativeSessionID != "" || resume != nil {
+			argv = claudeSessionArgv(argv, req.NativeSessionID, resume)
+		}
 		if !filepath.IsAbs(argv[0]) {
 			return nil, tuskerError(errorConfigInvalid, "prepared Claude executable must be an absolute path")
 		}
@@ -140,11 +202,13 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, WorkspacePath: workspaceCWD, RepoRoot: req.RepoRoot,
 		PromptPath: req.PromptPath, EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, StatusPath: req.StatusPath,
 		RunnerPathPrefix: req.RunnerPathPrefix,
-		NotePath:         req.NotePath, VaultPath: req.VaultPath, SessionRef: resumeSessionRef(resume), MessageRef: resumeMessageRef(resume),
+		NotePath:         req.NotePath, VaultPath: req.VaultPath, SessionRef: firstNonEmpty(req.NativeSessionID, resumeSessionRef(resume)), MessageRef: resumeMessageRef(resume),
 		RunnerProfile: req.RunnerProfile, RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
 		CodexPolicy: policy,
 	})
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if req.ContainmentPGID <= 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -159,6 +223,11 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
+	}
+	if req.ContainmentPGID > 0 && processGroupID(cmd.Process.Pid) != req.ContainmentPGID {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, tuskerError(errorInvalidTransition, "Claude child escaped wrapper containment")
 	}
 	runtimeStore, _ := OpenRuntimeStore(DefaultStateRoot())
 	handle := &claudeLiveHandle{
@@ -181,6 +250,8 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		stdout:          stdout,
 		stderr:          stderr,
 	}
+	// Keep stdin open in the wrapper: later soft Say delivery uses this stream-json channel.
+	handle.setRefs(firstNonEmpty(req.NativeSessionID, resumeSessionRef(resume)), "")
 	handle.nextID.Store(1)
 	liveRegistry.Register(handle)
 	handle.ioWG.Add(2)
@@ -208,14 +279,14 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	pid := cmd.Process.Pid
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	return &StartResult{
-		SessionRef:   firstNonEmpty(handle.SessionRef(), resumeSessionRef(resume)),
+		SessionRef:   firstNonEmpty(handle.SessionRef(), req.NativeSessionID, resumeSessionRef(resume)),
 		MessageRef:   firstNonEmpty(handle.MessageRef(), resumeMessageRef(resume)),
 		StartedAt:    processStartedAt,
 		PID:          pid,
 		PGID:         processGroupID(pid),
 		ProcessStart: processStartedAt,
 		StatusPath:   req.StatusPath,
-		Capabilities: RunnerCapabilities{StructuredEvents: true, ResumeSession: false, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true},
+		Capabilities: (&ClaudeRunner{}).Capabilities(),
 		Completed:    false,
 		Outcome:      AttemptOutcomeNone,
 	}, nil
@@ -278,7 +349,7 @@ func (h *claudeLiveHandle) MessageRef() string {
 func (h *claudeLiveHandle) setRefs(sessionRef, messageRef string) {
 	h.sessionMu.Lock()
 	defer h.sessionMu.Unlock()
-	if strings.TrimSpace(sessionRef) != "" {
+	if strings.TrimSpace(sessionRef) != "" && (h.sessionRef == "" || h.sessionRef == sessionRef) {
 		h.sessionRef = sessionRef
 	}
 	if strings.TrimSpace(messageRef) != "" {
@@ -302,7 +373,7 @@ func (h *claudeLiveHandle) Interrupt(ctx context.Context) error {
 		return nil
 	}
 	if h.cmd != nil && h.cmd.Process != nil {
-		return syscall.Kill(-h.cmd.Process.Pid, syscall.SIGINT)
+		return h.cmd.Process.Signal(syscall.SIGINT)
 	}
 	return nil
 }
@@ -359,15 +430,7 @@ func (h *claudeLiveHandle) writeJSON(payload any) error {
 func (h *claudeLiveHandle) readStdout() {
 	defer h.ioWG.Done()
 	defer h.stdout.Close()
-	scanner := bufio.NewScanner(h.stdout)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 4*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		_ = appendRawLogLine(h.rawLogPath, line)
-		h.handleStdoutLine(line)
-	}
-	if err := scanner.Err(); err != nil {
+	if err := h.readClaudeLines(h.stdout, "stdout", h.handleStdoutLine); err != nil {
 		h.failCriticalRunnerIO("stdout scan failed", err)
 	}
 }
@@ -375,14 +438,53 @@ func (h *claudeLiveHandle) readStdout() {
 func (h *claudeLiveHandle) readStderr() {
 	defer h.ioWG.Done()
 	defer h.stderr.Close()
-	scanner := bufio.NewScanner(h.stderr)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 4*1024*1024)
-	for scanner.Scan() {
-		_ = appendRawLogLine(h.rawLogPath, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
+	if err := h.readClaudeLines(h.stderr, "stderr", nil); err != nil {
 		h.failCriticalRunnerIO("stderr scan failed", err)
+	}
+}
+
+func (h *claudeLiveHandle) readClaudeLines(input io.Reader, source string, parse func(string)) error {
+	const maxLine = 4 * 1024 * 1024
+	const prefix = 64 * 1024
+	reader := bufio.NewReaderSize(input, 64*1024)
+	var line []byte
+	total := 0
+	for {
+		part, err := reader.ReadSlice('\n')
+		ended := len(part) > 0 && part[len(part)-1] == '\n'
+		if ended {
+			part = part[:len(part)-1]
+		}
+		total += len(part)
+		if total <= maxLine {
+			line = append(line, part...)
+		} else if len(line) < prefix {
+			line = append(line, part[:min(len(part), prefix-len(line))]...)
+		} else if len(line) > prefix {
+			line = line[:prefix]
+		}
+		if ended || errors.Is(err, io.EOF) {
+			if total > maxLine {
+				_ = appendRawLogLine(h.rawLogPath, string(line)+fmt.Sprintf(" [truncated %d bytes]", total-len(line)))
+				if h.eventLog != nil {
+					_ = h.eventLog.Append(source+"_line_oversized", h.attemptID, h.runner, map[string]any{"bytes": total, "truncated_bytes": total - len(line)})
+				}
+			} else if total > 0 {
+				text := string(bytes.TrimSuffix(line, []byte{'\r'}))
+				_ = appendRawLogLine(h.rawLogPath, text)
+				if parse != nil {
+					parse(text)
+				}
+			}
+			line = nil
+			total = 0
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			return err
+		}
 	}
 }
 
@@ -906,7 +1008,7 @@ func (h *claudeLiveHandle) failCriticalRunnerIO(message string, err error) {
 	h.criticalOnce.Do(func() {
 		_ = appendRawLogLine(h.rawLogPath, message+": "+err.Error())
 		if h.cmd != nil && h.cmd.Process != nil {
-			_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
+			_ = h.cmd.Process.Kill()
 		}
 		h.doneOnce.Do(func() {})
 		_ = writeRunnerStatusFile(h.statusPath, 1)

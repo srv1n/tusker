@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"tusker/internal/docgraph"
 
 	"gopkg.in/yaml.v3"
 )
@@ -70,10 +73,17 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 			allSpecRefs = append(allSpecRefs, normalizeList(task.Data["spec_refs"])...)
 		}
 	}
+	var materialCorpus docgraph.Corpus
+	materialCorpusLoaded := false
+	if len(allSpecRefs) > 0 {
+		if corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath)); err == nil {
+			materialCorpus, materialCorpusLoaded = corpus, true
+		}
+	}
 	for _, ref := range sortedStrings(allSpecRefs) {
-		path := v7SpecRefPath(vaultPath, ref)
-		if path == "" || !fileExists(path) {
-			issues = append(issues, "spec_ref does not resolve: "+ref)
+		path, issue := waveMaterialSpecFile(vaultPath, ref, materialCorpus, materialCorpusLoaded)
+		if issue != "" {
+			issues = append(issues, issue)
 			continue
 		}
 		raw, err := os.ReadFile(path)
@@ -87,6 +97,99 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 	raw, _ := yaml.Marshal(material)
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:]), uniqueStrings(issues)
+}
+
+// waveMaterialSpecFile resolves one material spec_ref to the file whose bytes
+// are hashed, using the same subject/path/section and legacy-forwarded
+// document convention as authoring (v7SpecRefExists) and packet readers.
+// Decision IDs keep their vault-relative route; every other ref resolves
+// through the shared docgraph resolver so a bare subject such as
+// portable-project-documentation hashes the same current source bytes the
+// authoring check accepted. Ambiguous duplicate subjects fail instead of
+// silently picking one route, and only spec/proposal/decision kinds are
+// admitted. The returned path is empty when the ref does not resolve; the
+// issue string then carries the MATERIAL_INVALID reason.
+func waveMaterialSpecFile(vaultPath, ref string, corpus docgraph.Corpus, corpusLoaded bool) (string, string) {
+	unresolvable := "spec_ref does not resolve: " + ref
+	if v7SpecRefPathEscapes(v7CleanSpecRef(ref)) {
+		return "", unresolvable
+	}
+	if id := v7SpecRefDecisionID(v7NormalizeSpecRef(ref)); id != "" {
+		path := filepath.Join(vaultPath, "work", "decisions", id+".md")
+		if !fileExists(path) {
+			return "", unresolvable
+		}
+		if anchor := v7SpecRefAnchor(ref); anchor != "" {
+			raw, err := os.ReadFile(path)
+			if err != nil || !v7SpecRefSectionExists(string(raw), anchor) {
+				return "", unresolvable
+			}
+		}
+		return path, ""
+	}
+	if !corpusLoaded {
+		return "", unresolvable
+	}
+	base := v7CleanSpecRef(ref)
+	anchor := v7SpecRefAnchor(ref)
+	if base == "" {
+		return "", unresolvable
+	}
+	if _, strictOK := docgraph.ResolveStrictReference(corpus, base); !strictOK {
+		if _, lenientOK := docgraph.ResolveReference(corpus, base); lenientOK {
+			return "", "spec_ref is ambiguous: " + ref
+		}
+		// Not a managed subject, path, or alias. Keep the historical
+		// plain-file route so repo-relative files outside the managed
+		// corpus (for example docs/specs/delivery.md) keep hashing their
+		// on-disk bytes instead of newly failing authorization.
+		return waveMaterialPlainFile(vaultPath, ref)
+	}
+	current, ok := docgraph.ResolveCurrentReference(corpus, base)
+	if !ok {
+		return "", unresolvable
+	}
+	switch current.Document.Kind {
+	case docgraph.KindSpec, docgraph.KindProposal, docgraph.KindDecision:
+	default:
+		return "", unresolvable
+	}
+	if anchor != "" && !v7SpecRefSectionExists(current.Document.Body, anchor) {
+		return "", unresolvable
+	}
+	return filepath.Join(v7RepoRoot(vaultPath), filepath.FromSlash(current.Document.Path)), ""
+}
+
+// waveMaterialPlainFile resolves a spec_ref that names no managed document
+// to a repo-relative file, preserving the pre-S46 material behavior for
+// tracker-adjacent files outside the documentation corpus. Path escapes,
+// absolute paths, decision IDs, and missing files stay unresolvable; a
+// section anchor must exist in the file when one is declared.
+func waveMaterialPlainFile(vaultPath, ref string) (string, string) {
+	unresolvable := "spec_ref does not resolve: " + ref
+	clean := v7CleanSpecRef(ref)
+	if clean == "" || v7SpecRefPathEscapes(clean) || filepath.IsAbs(clean) {
+		return "", unresolvable
+	}
+	if v7SpecRefDecisionID(clean) != "" {
+		return "", unresolvable
+	}
+	var path string
+	if strings.HasPrefix(clean, "work/") {
+		path = filepath.Join(vaultPath, filepath.FromSlash(clean))
+	} else {
+		path = filepath.Join(v7RepoRoot(vaultPath), filepath.FromSlash(clean))
+	}
+	if !fileExists(path) {
+		return "", unresolvable
+	}
+	if anchor := v7SpecRefAnchor(ref); anchor != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil || !v7SpecRefSectionExists(string(raw), anchor) {
+			return "", unresolvable
+		}
+	}
+	return path, ""
 }
 
 func waveMaterialGates(idx v7Index, taskID string) []any {

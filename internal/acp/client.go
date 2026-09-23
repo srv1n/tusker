@@ -108,7 +108,7 @@ func (c Config) withDefaults() Config {
 		c.Limits.MaxPendingRequests = 64
 	}
 	if c.Limits.MaxUpdates <= 0 {
-		c.Limits.MaxUpdates = 256
+		c.Limits.MaxUpdates = 2048
 	}
 	if c.Limits.MaxUpdateBytes <= 0 {
 		c.Limits.MaxUpdateBytes = 32 << 20
@@ -1668,6 +1668,15 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			}
 			if err := c.validateUpdateEnvelope(msg.Params, sequence); err != nil {
 				c.poison(fmt.Errorf("%w: %v", ErrProtocol, err))
+				return
+			}
+			var envelope struct {
+				Update struct {
+					SessionUpdate string `json:"sessionUpdate"`
+				} `json:"update"`
+			}
+			_ = json.Unmarshal(msg.Params, &envelope)
+			if envelope.Update.SessionUpdate == "agent_thought_chunk" {
 				return
 			}
 			c.enqueueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})

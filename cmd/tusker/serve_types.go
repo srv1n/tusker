@@ -257,20 +257,9 @@ type serveWaveListItem struct {
 	LandedAt      any            `json:"landedAt"`
 	MemberCount   int            `json:"memberCount"`
 	DoneCount     int            `json:"doneCount"`
+	LiveRun       bool           `json:"liveRun"`
+	ReviewWait    bool           `json:"reviewWait"`
 	Recovery      *serveRecovery `json:"recovery,omitempty"`
-}
-
-// The overview only needs recorded list facts. Start readiness belongs to the
-// wave review endpoint and is checked when a wave is opened.
-type serveWaveListItem struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	Summary       string `json:"summary,omitempty"`
-	Status        string `json:"status"`
-	Authorization string `json:"authorization"`
-	LandedAt      any    `json:"landedAt"`
-	MemberCount   int    `json:"memberCount"`
-	DoneCount     int    `json:"doneCount"`
 }
 
 type serveWaveTaskSummary struct {
@@ -477,37 +466,45 @@ type serveRunDirective struct {
 }
 
 type serveRunSummary struct {
-	TaskID               string                     `json:"taskId"`
-	TaskTitle            string                     `json:"taskTitle"`
-	ProjectID            string                     `json:"projectId"`
-	Runner               string                     `json:"runner"`
-	RunnerName           string                     `json:"runnerName"`
-	RunnerProfile        string                     `json:"runnerProfile"`
-	RunnerHarness        string                     `json:"runnerHarness"`
-	Model                any                        `json:"model"`
-	RunnerEffort         string                     `json:"runnerEffort"`
-	RunnerFallbackReason string                     `json:"runnerFallbackReason,omitempty"`
-	Lane                 string                     `json:"lane"`
-	LeaseState           string                     `json:"leaseState"`
-	LeaseStateRaw        string                     `json:"leaseStateRaw"`
-	HandRun              bool                       `json:"handRun"`
-	ProcessRunning       bool                       `json:"processRunning"`
-	Outcome              string                     `json:"outcome"`
-	ElapsedSec           int                        `json:"elapsedSec"`
-	SinceLastEventSec    int                        `json:"sinceLastEventSec"`
-	Liveness             string                     `json:"liveness"`
-	AttemptCount         int                        `json:"attemptCount"`
-	ActiveAttemptID      string                     `json:"activeAttemptId,omitempty"`
-	Terminal             any                        `json:"terminal"`
-	Error                any                        `json:"error"`
-	Infrastructure       *RunnerInfrastructureBlock `json:"infrastructure,omitempty"`
-	LastHeartbeatAt      any                        `json:"lastHeartbeatAt"`
-	NextWakeAt           any                        `json:"nextWakeAt"`
-	WorkspacePath        string                     `json:"workspacePath"`
-	WorkspaceMode        string                     `json:"workspaceMode"`
-	StartedAt            string                     `json:"startedAt"`
-	UpdatedAt            string                     `json:"updatedAt"`
-	Attention            *WorkerAttention           `json:"attention,omitempty"`
+	TaskID                string                     `json:"taskId"`
+	TaskTitle             string                     `json:"taskTitle"`
+	ProjectID             string                     `json:"projectId"`
+	Runner                string                     `json:"runner"`
+	RunnerName            string                     `json:"runnerName"`
+	RunnerProfile         string                     `json:"runnerProfile"`
+	RunnerHarness         string                     `json:"runnerHarness"`
+	Model                 any                        `json:"model"`
+	RunnerEffort          string                     `json:"runnerEffort"`
+	RunnerFallbackReason  string                     `json:"runnerFallbackReason,omitempty"`
+	Lane                  string                     `json:"lane"`
+	LeaseState            string                     `json:"leaseState"`
+	LeaseStateRaw         string                     `json:"leaseStateRaw"`
+	HandRun               bool                       `json:"handRun"`
+	ProcessRunning        bool                       `json:"processRunning"`
+	Outcome               string                     `json:"outcome"`
+	ElapsedSec            int                        `json:"elapsedSec"`
+	SinceLastEventSec     int                        `json:"sinceLastEventSec"`
+	Liveness              string                     `json:"liveness"`
+	AttemptCount          int                        `json:"attemptCount"`
+	ActiveAttemptID       string                     `json:"activeAttemptId,omitempty"`
+	Terminal              any                        `json:"terminal"`
+	Error                 any                        `json:"error"`
+	Infrastructure        *RunnerInfrastructureBlock `json:"infrastructure,omitempty"`
+	LastHeartbeatAt       any                        `json:"lastHeartbeatAt"`
+	LastMessageAt         any                        `json:"lastMessageAt"`
+	LastToolProgressAt    any                        `json:"lastToolProgressAt"`
+	MessageAgeSec         any                        `json:"messageAgeSec"`
+	ToolProgressAgeSec    any                        `json:"toolProgressAgeSec"`
+	HeartbeatAgeSec       any                        `json:"heartbeatAgeSec"`
+	ActivityCaptureState  string                     `json:"activityCaptureState"`
+	ActivityCaptureReason string                     `json:"activityCaptureReason,omitempty"`
+	Activity              serveRunActivityFreshness  `json:"activity"`
+	NextWakeAt            any                        `json:"nextWakeAt"`
+	WorkspacePath         string                     `json:"workspacePath"`
+	WorkspaceMode         string                     `json:"workspaceMode"`
+	StartedAt             string                     `json:"startedAt"`
+	UpdatedAt             string                     `json:"updatedAt"`
+	Attention             *WorkerAttention           `json:"attention,omitempty"`
 }
 
 type serveAttempt struct {
@@ -539,7 +536,30 @@ type serveRunDetail struct {
 	Identity      *RunIdentityMetadata `json:"identity,omitempty"`
 	Session       *RunnerSession       `json:"session,omitempty"`
 	Resume        runResumeCapability  `json:"resume"`
+	Controls      serveRunControls     `json:"controls"`
 	Delivery      serveRunDelivery     `json:"delivery"`
+}
+
+type serveRunActivityFreshness struct {
+	CaptureState    string `json:"captureState"`
+	CaptureReason   string `json:"captureReason,omitempty"`
+	HeartbeatAt     any    `json:"heartbeatAt"`
+	MessageAt       any    `json:"messageAt"`
+	ToolAt          any    `json:"toolAt"`
+	HeartbeatAgeSec any    `json:"heartbeatAgeSec"`
+	MessageAgeSec   any    `json:"messageAgeSec"`
+	ToolAgeSec      any    `json:"toolAgeSec"`
+}
+
+type serveRunActionCapability struct {
+	Action    string `json:"action"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type serveRunControls struct {
+	Capabilities []serveRunActionCapability `json:"capabilities"`
+	Pending      *runSessionControlIntent   `json:"pending,omitempty"`
 }
 
 type serveRunDelivery struct {

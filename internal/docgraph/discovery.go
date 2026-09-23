@@ -155,7 +155,13 @@ func Browse(repoRoot, relative string, limit int) (BrowseResult, error) {
 			})
 			continue
 		}
-		if entry.Name() == "INDEX.md" || !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+		// Only the known generated corpus index stays hidden. Authored
+		// indexes (00-index.md files and any authored nested INDEX.md)
+		// are visible corpus members.
+		if strings.EqualFold(entry.Name(), "INDEX.md") && child == legacyIndexRelPath {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
 			continue
 		}
 		content, err := root.ReadFile(filepath.FromSlash(child))

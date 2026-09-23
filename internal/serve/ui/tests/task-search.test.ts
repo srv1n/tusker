@@ -47,12 +47,10 @@ describe("task search", () => {
   });
 
   test("keeps sidebar focused on project navigation", () => {
-    const sidebar = source("src/components/Sidebar.tsx");
     const projectStrip = source("src/features/workbench/navigation/ProjectStrip.tsx");
-    expect(sidebar).not.toContain('>Today<');
-    expect(sidebar).not.toContain("Notifications");
-    expect(sidebar).not.toContain('>Search<');
-    expect(projectStrip).toContain("NotificationControl");
+    expect(projectStrip).not.toContain('>Today<');
+    expect(projectStrip).not.toContain("Notifications");
+    expect(projectStrip).not.toContain("NotificationControl");
   });
 
   test("supports keyboard open, movement, selection, and escape", () => {

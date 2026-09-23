@@ -54,8 +54,14 @@ func holderLiveness(run RunStatus, now time.Time) (string, bool) {
 	case "fresh":
 		return "fresh", true
 	case "stale":
-		if run.ProcessPID > 0 && processIdentityMatches(run) {
+		if run.HandRun && !run.Terminal {
+			return "quiet_interactive", true
+		}
+		switch classifyRunLiveness(run) {
+		case runLivenessAlive:
 			return "lease_expired_process_alive", true
+		case runLivenessOrphaned:
+			return "lease_expired_orphaned_group", true
 		}
 		return "dead", false
 	default:
@@ -178,7 +184,10 @@ func reclaimDeadOwnedPathHolders(store *RuntimeStore, vaultPath string, candidat
 		if run.ItemID == stringField(candidate.Data, "id") || runFreshness(&run, now) != "stale" {
 			continue
 		}
-		if run.ProcessPID > 0 && processIdentityMatches(run) {
+		if run.HandRun && !run.Terminal {
+			continue
+		}
+		if runProcessGroupAlive(run) {
 			continue
 		}
 		holder, ok := notes[run.ItemID]

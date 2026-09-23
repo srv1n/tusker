@@ -57,7 +57,9 @@
 :root {
   --tk-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --tk-display-font-family: var(--tk-font-family);
-  --tk-font-scale: 1;
+  --tk-font-scale: 1.125;
+  /* Desktop renders the dense fixed-pixel UI a step larger; narrow screens keep the base size. */
+  --tk-zoom: var(--tk-font-scale);
   /* Apple macOS text styles: Body 13/16, Title 3 15/20, Title 2 17/22,
      Title 1 22/26, Large Title 26/32. */
   --tk-prose-body-size: 13px;
@@ -174,7 +176,7 @@
   #root {
     /* Scale the complete rendered surface: Tailwind's fixed-pixel utilities,
        TipTap prose, and their controls all move together. */
-    zoom: var(--tk-font-scale);
+    zoom: var(--tk-zoom);
   }
   html {
     /* Phones in landscape inflate text without this. */
@@ -217,7 +219,7 @@
    based rather than parent-based, so counter the root zoom here and preserve a
    one-viewport app shell at every text size. */
 #root > .h-dvh {
-  height: calc(100dvh / var(--tk-font-scale));
+  height: calc(100dvh / var(--tk-zoom));
 }
 
 /* iOS Safari force-zooms the page when a focused field's font-size is under
@@ -781,4 +783,10 @@
   display: block;
   max-width: 100%;
   height: auto;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --tk-zoom: calc(var(--tk-font-scale) / 1.125);
+  }
 }

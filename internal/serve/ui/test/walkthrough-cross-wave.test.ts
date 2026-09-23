@@ -38,14 +38,14 @@ function member(deps: string[]): TaskDetail {
   };
 }
 
+// The wave page shows the wait summary in its callout beside the graph.
 function renderFlow(facts: Record<string, DependencyFact>, opts: { authorization?: "inert" | "authorized" | "paused" | "stale"; startEnabled?: boolean } = {}): string {
-  return renderToStaticMarkup(createElement(WaveFlow, {
+  const summary = crossWaveWaitSummary(Object.values(facts), opts.authorization ?? "inert", opts.startEnabled ?? false);
+  return [summary?.title, summary?.body, summary?.hint].filter(Boolean).join(" ") + renderToStaticMarkup(createElement(WaveFlow, {
     memberIds: ["FOL-T-0001"],
     tasks: [member(Object.keys(facts))],
     runs: [],
     dependencyFacts: facts,
-    authorization: opts.authorization,
-    startEnabled: opts.startEnabled,
     onSelectTask: () => {},
     onViewportChange: () => {},
   }));
@@ -89,8 +89,8 @@ describe("cross-wave WaveFlow surface", () => {
     expect(html).toContain("Assemble beta report");
     expect(html).toContain("Alpha: assemble a small report");
     expect(html).toContain("Beta: assemble an independent report");
-    expect(html).toContain("Completed");
-    expect(html).toContain("Backlog");
+    expect(html).toContain("Done");
+    expect(html).toContain("Planned");
     expect(html).toContain("ALP-T-0004");
     expect(html).toContain("BET-T-0004");
     expect(html).not.toContain("Unknown");

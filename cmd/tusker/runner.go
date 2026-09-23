@@ -102,6 +102,7 @@ type StartRequest struct {
 	StatusPath             string
 	Command                string
 	CommandArgv            []string
+	NativeSessionID        string
 	CommandExecutableFP    string
 	CommandSearchPath      string
 	RunnerPathPrefix       string

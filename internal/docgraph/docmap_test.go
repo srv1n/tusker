@@ -52,7 +52,7 @@ func TestMapRendersAllThreeArtifacts(t *testing.T) {
 		}
 	}
 
-	index, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(indexRelPath)))
+	index, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(GeneratedIndexRelPath)))
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestMapRendersAllThreeArtifacts(t *testing.T) {
 		}
 	}
 
-	graphBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(graphRelPath)))
+	graphBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(GeneratedGraphRelPath)))
 	if err != nil {
 		t.Fatalf("read graph: %v", err)
 	}
@@ -97,8 +97,24 @@ func TestMapRendersAllThreeArtifacts(t *testing.T) {
 		t.Fatalf("graph.json missing expected edge kinds: %#v", graph.Edges)
 	}
 
+	// The legacy docs/system mirror carries identical bytes until the
+	// adoption story removes it; readers must prefer the generated location.
+	for _, legacy := range []string{legacyIndexRelPath, legacyGraphRelPath} {
+		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(legacy)))
+		if err != nil {
+			t.Fatalf("read legacy mirror %s: %v", legacy, err)
+		}
+		want := index
+		if legacy == legacyGraphRelPath {
+			want = graphBytes
+		}
+		if string(got) != string(want) {
+			t.Fatalf("legacy mirror %s diverged from the generated location", legacy)
+		}
+	}
+
 	// Re-running must be a no-op (deterministic output).
-	before := map[string][]byte{overviewRelPath: overview, indexRelPath: index, graphRelPath: graphBytes}
+	before := map[string][]byte{overviewRelPath: overview, GeneratedIndexRelPath: index, GeneratedGraphRelPath: graphBytes}
 	if err := WriteDocsMap(root); err != nil {
 		t.Fatalf("second WriteDocsMap() error = %v", err)
 	}
@@ -189,12 +205,12 @@ func TestMapRefusesMalformedGraph(t *testing.T) {
 				t.Fatalf("expected defect %s, got %#v", tc.code, mapErr.Defects)
 			}
 
-			// Refusal must write nothing: no INDEX or graph.json created.
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(indexRelPath))); !os.IsNotExist(err) {
-				t.Fatalf("INDEX.md written despite refusal")
-			}
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(graphRelPath))); !os.IsNotExist(err) {
-				t.Fatalf("graph.json written despite refusal")
+			// Refusal must write nothing: no INDEX or graph.json created,
+			// at either the generated or the legacy location.
+			for _, rel := range []string{GeneratedIndexRelPath, GeneratedGraphRelPath, legacyIndexRelPath, legacyGraphRelPath} {
+				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+					t.Fatalf("%s written despite refusal", rel)
+				}
 			}
 		})
 	}
@@ -214,7 +230,10 @@ func TestWriteDocsMapRejectsSymlinkedRootAndArtifactsBeforeWriting(t *testing.T)
 	if err := os.WriteFile(external, []byte("outside"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	graphPath := filepath.Join(root, filepath.FromSlash(graphRelPath))
+	graphPath := filepath.Join(root, filepath.FromSlash(GeneratedGraphRelPath))
+	if err := os.MkdirAll(filepath.Dir(graphPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(external, graphPath); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +245,7 @@ func TestWriteDocsMapRejectsSymlinkedRootAndArtifactsBeforeWriting(t *testing.T)
 	if err := WriteDocsMap(root); err == nil || !strings.Contains(err.Error(), "symlinked") {
 		t.Fatalf("symlinked graph target accepted: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(indexRelPath))); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(GeneratedIndexRelPath))); !os.IsNotExist(err) {
 		t.Fatalf("map wrote INDEX before rejecting symlink target: %v", err)
 	}
 	if overviewAfter, err := os.ReadFile(overviewPath); err != nil || string(overviewAfter) != string(overviewBefore) {

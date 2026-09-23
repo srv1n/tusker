@@ -1437,7 +1437,10 @@ func printDomainHelp() {
   tusker domain canon <domain-id> [--full]
 
 Purpose:
-  Operate domain canon under .tusker/knowledge/domains/**.
+  Operate domain knowledge routed to docs/system/domains/<domain>/00-index.md.
+  Legacy .tusker/knowledge/domains/**/INDEX.md and CANON.md records remain as
+  compatibility pointers; reads, packets, and skill routes prefer the portable
+  index when present.
 
 Examples:
   tusker domain list
@@ -1568,8 +1571,8 @@ func printDocsHelp() {
   tusker docs read <subject-or-path> [--section <heading>] [--current] [--json]
   tusker docs backlinks <subject-or-path> [--limit <n>] [--json]
   tusker docs check [<subject-or-path>] [--json]
-  tusker docs new <subject> [--kind doc|spec]
-  tusker docs new <subject> [--kind doc|spec] --print [--json]
+  tusker docs new <subject> [--kind doc|proposal|decision|spec] [--domain <name>] [--index] [--decides-for <subject>]
+  tusker docs new <subject> [--kind doc|proposal|decision|spec] --print [--json]
   tusker docs map
   tusker docs status
   tusker docs verify <subject>
@@ -1587,7 +1590,17 @@ exact proposal fingerprint. Every approval, apply, and failure is written to
 Tombstone rewrites a source as a superseded signpost only when explicitly
 present in the approved table; no disposition deletes a file. Generated map
 artifacts are left untouched; run tusker docs map after review. --apply and
---yes are not accepted aliases.`)
+--yes are not accepted aliases.
+
+Placement: current chapters live in docs/system (per domain under
+docs/system/domains/<domain>), change specifications in docs/system/proposals,
+and product decisions in docs/system/decisions. --kind spec stays accepted as
+the spelling for proposal. Lifecycle and code conformance are independent:
+lifecycle (current/proposed/accepted/implemented/superseded, kind-specific)
+says where a document stands; code_conformance (unverified/matches/drift)
+says whether the code was checked against it, and matches needs a
+last_verified date, commit, and describes scope. Acceptance records intent,
+not implementation proof.`)
 }
 
 func printNewHelp() {

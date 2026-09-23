@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { BookOpen, FileText, GitBranch } from "lucide-react";
+import { BookOpen, FileText, ScrollText } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Chip } from "@/components/ui/primitives";
 import { tone, statusLabelOf, statusToneOf, type Tone } from "@/components/ui/tone";
@@ -16,14 +16,21 @@ interface KindMeta {
   cssVar: string;
 }
 
-/** One hue + glyph per corpus kind. Three visually distinct theme colors. */
+/**
+ * One hue + glyph per corpus kind. Portable kinds lead; `canonical`/`spec`
+ * are legacy spellings that share their portable family's presentation so
+ * old and new documents read as one tree.
+ */
 export const kindMeta: Record<DocgraphKind, KindMeta> = {
+  doc: { label: "Doc", group: "Docs", tone: "info", Icon: BookOpen, cssVar: "--k-info" },
   canonical: { label: "System doc", group: "System docs", tone: "info", Icon: BookOpen, cssVar: "--k-info" },
+  proposal: { label: "Proposal", group: "Proposals", tone: "accent", Icon: FileText, cssVar: "--k-accent" },
   spec: { label: "Spec", group: "Specs", tone: "accent", Icon: FileText, cssVar: "--k-accent" },
-  decision: { label: "Decision", group: "Decision logs", tone: "pass", Icon: GitBranch, cssVar: "--k-pass" },
+  decision: { label: "Decision", group: "Decisions", tone: "pass", Icon: ScrollText, cssVar: "--k-pass" },
 };
 
-export const KIND_ORDER: DocgraphKind[] = ["canonical", "spec", "decision"];
+/** Portable legend/group order. Legacy `canonical`/`spec` docs render under their family's entry. */
+export const KIND_ORDER: DocgraphKind[] = ["doc", "proposal", "decision"];
 
 /** Kind glyph in its tone — leads each list row. */
 export function KindGlyph({ kind, size = 15 }: { kind: DocgraphKind; size?: number }) {
@@ -54,6 +61,51 @@ export function DocStatusChip({ status }: { status: string }) {
       {statusLabelOf(status)}
     </Chip>
   );
+}
+
+const conformanceTone: Record<string, Tone> = {
+  unverified: "muted",
+  matches: "pass",
+  drift: "warn",
+  not_applicable: "muted",
+};
+
+const conformanceLabel: Record<string, string> = {
+  unverified: "Unverified",
+  matches: "Matches code",
+  drift: "Drift",
+  not_applicable: "N/A",
+};
+
+/**
+ * Independent verification chip. Lifecycle (accepted/implemented/…) records
+ * intent; this chip records whether anyone checked the code. Acceptance
+ * without verification reads as plain "Unverified", never as proof.
+ */
+export function ConformanceChip({ conformance }: { conformance: string }) {
+  const key = conformance === "" ? "unverified" : conformance;
+  return (
+    <Chip tone={conformanceTone[key] ?? "muted"} variant={key === "drift" ? "outline" : "soft"}>
+      {conformanceLabel[key] ?? key}
+    </Chip>
+  );
+}
+
+/**
+ * The reader's one-line truthful state: lifecycle intent kept separate from
+ * the verification claim. Proposed, accepted-but-unverified,
+ * implemented-with-evidence, drift, and superseded each read differently.
+ */
+export function truthfulState(lifecycle: string, conformance: string): string {
+  const life = lifecycle === "" ? "—" : lifecycle;
+  const conf = conformance === "" ? "unverified" : conformance;
+  if (life === "superseded") return "Superseded";
+  if (life === "proposed") return "Proposed";
+  if (life === "implemented") return conf === "matches" ? "Implemented · verified" : "Implemented · unverified evidence";
+  if (life === "accepted") return conf === "unverified" ? "Accepted · unverified" : `Accepted · ${conf}`;
+  if (conf === "drift") return `${life} · drift`;
+  if (conf === "matches") return `${life} · verified`;
+  return life;
 }
 
 const viaLabel: Record<BacklinkVia, string> = {

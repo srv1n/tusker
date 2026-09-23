@@ -18,10 +18,10 @@ func seedDocgraphCorpus(t *testing.T, repoRoot string) {
 		"title: \"System Overview\"\nsubject: overview\nkeywords: [overview]\nstatus: canonical\n",
 		"# System Overview\n\nRoot doc.\n")
 	writeDocgraphDoc(t, repoRoot, ".tusker/specs/alpha.md",
-		"title: \"Alpha Spec\"\nsubject: alpha\npart_of: overview\nsources: [docs/system/00-overview.md]\nkeywords: [alpha]\nstatus: active\n",
+		"title: \"Alpha Spec\"\nsubject: alpha\npart_of: overview\nsources: [docs/system/00-overview.md]\nkeywords: [alpha]\nstatus: proposed\n",
 		"# Alpha Spec\n\nSee [[beta]] and [[ghost]]. The [overview](../../docs/system/00-overview.md) is the root.\n")
 	writeDocgraphDoc(t, repoRoot, ".tusker/specs/beta.md",
-		"title: \"Beta Spec\"\nsubject: beta\npart_of: overview\nkeywords: [beta]\nstatus: active\n",
+		"title: \"Beta Spec\"\nsubject: beta\npart_of: overview\nkeywords: [beta]\nstatus: proposed\n",
 		"# Beta Spec\n\nRefers to [[alpha]].\n")
 	writeDocgraphDoc(t, repoRoot, ".tusker/specs/decisions/alpha-decision.md",
 		"title: \"Alpha Decision\"\nsubject: alpha-decision\npart_of: alpha\ndecides_for: alpha\nkeywords: [decision]\nstatus: accepted\n",
@@ -68,7 +68,7 @@ func TestDocsListEndpoint(t *testing.T) {
 		}
 	}
 	alpha := out.Docs[1]
-	if alpha.Title != "Alpha Spec" || alpha.PartOf != "overview" || alpha.Status != "active" {
+	if alpha.Title != "Alpha Spec" || alpha.PartOf != "overview" || alpha.Status != "proposed" {
 		t.Fatalf("alpha grouping fields unexpected: %#v", alpha)
 	}
 	if len(alpha.Keywords) != 1 || alpha.Keywords[0] != "alpha" {
@@ -582,5 +582,104 @@ func TestDocSaveRejectsBadRequests(t *testing.T) {
 	if code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=does-not-exist",
 		mustJSON(t, map[string]any{"base_rev": rev, "body": "# X\n\nx\n"})); code != http.StatusNotFound {
 		t.Fatalf("unknown subject status = %d, want 404: %s", code, raw)
+	}
+}
+
+func seedS46DocgraphCorpus(t *testing.T, repoRoot string) {
+	t.Helper()
+	writeDocgraphDoc(t, repoRoot, "docs/system/00-overview.md",
+		"kind: doc\ntitle: \"System Overview\"\nsubject: overview\nkeywords: [overview]\nstatus: current\n",
+		"# System Overview\n\nRoot doc.\n")
+	writeDocgraphDoc(t, repoRoot, "docs/system/domains/billing/00-index.md",
+		"kind: doc\ntitle: \"Billing\"\nsubject: billing-index\npart_of: overview\nkeywords: [billing]\nstatus: current\n",
+		"# Billing\n\nDomain index.\n")
+	writeDocgraphDoc(t, repoRoot, "docs/system/domains/billing/invoicing.md",
+		"kind: doc\ntitle: \"Invoicing\"\nsubject: invoicing\npart_of: billing-index\nkeywords: [billing]\nstatus: current\ndescribes: [pkg/billing]\ncode_conformance: drift\nlast_verified: '2026-09-01 @ abc1234'\n",
+		"# Invoicing\n\nPartially verified.\n")
+	writeDocgraphDoc(t, repoRoot, "docs/system/proposals/checkout.md",
+		"kind: proposal\ntitle: \"Checkout\"\nsubject: checkout\npart_of: overview\nkeywords: [checkout]\nstatus: accepted\nupdates: [docs/system/domains/billing/invoicing.md]\n",
+		"# Checkout\n\nAccepted intent, not yet implemented.\n")
+	writeDocgraphDoc(t, repoRoot, "docs/system/decisions/recorded.md",
+		"kind: decision\ntitle: \"Recorded\"\nsubject: recorded\npart_of: overview\ndecides_for: checkout\nkeywords: [checkout]\nstatus: accepted\n",
+		"# Recorded\n\nSettled.\n")
+	writeDocgraphDoc(t, repoRoot, ".tusker/specs/old-home.md",
+		"status: superseded\nsuperseded_by: checkout\n",
+		"# Moved\n")
+}
+
+// TestS46ServeDocgraph covers TSK-T-0059 A1: the list, detail, and save
+// shapes expose the portable kind, kind-specific lifecycle, and independent
+// code conformance, with CAS conflict protection and moved-link resolution.
+func TestS46ServeDocgraph(t *testing.T) {
+	server := newServeFixture(t)
+	seedS46DocgraphCorpus(t, server.repoRoot)
+
+	var list serveDocgraphList
+	serveDecode(t, server, "/api/docgraph?project=app", &list)
+	bySubject := map[string]serveDocgraphDoc{}
+	for _, doc := range list.Docs {
+		bySubject[doc.Subject] = doc
+	}
+	if list.Generated.Index != ".tusker/_generated/docs/INDEX.md" || list.Generated.Graph != ".tusker/_generated/docs/graph.json" {
+		t.Fatalf("list must expose the portable generated artifact location: %#v", list.Generated)
+	}
+	proposal, ok := bySubject["checkout"]
+	if !ok || proposal.Kind != "proposal" || proposal.KindSource != "explicit" || proposal.Status != "accepted" {
+		t.Fatalf("proposal list row = %#v", proposal)
+	}
+	if proposal.Lifecycle != "accepted" {
+		t.Fatalf("proposal lifecycle must mirror the kind-specific status: %#v", proposal)
+	}
+	if proposal.CodeConformance != "unverified" {
+		t.Fatalf("accepted-but-unverified proposal must not imply conformance: %#v", proposal)
+	}
+	chapter, ok := bySubject["invoicing"]
+	if !ok || chapter.Kind != "doc" || chapter.CodeConformance != "drift" || chapter.LastVerified != "2026-09-01 @ abc1234" {
+		t.Fatalf("drift chapter list row = %#v", chapter)
+	}
+	index, ok := bySubject["billing-index"]
+	if !ok || index.Path != "docs/system/domains/billing/00-index.md" {
+		t.Fatalf("domain index must be listed and browsable: %#v", index)
+	}
+
+	var detail serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=checkout", &detail)
+	if detail.Kind != "proposal" || detail.Status != "accepted" || detail.CodeConformance != "unverified" {
+		t.Fatalf("proposal detail conflates acceptance with conformance: %#v", detail)
+	}
+	if detail.Lifecycle != "accepted" || detail.ResolvedFrom != "" {
+		t.Fatalf("direct detail must carry lifecycle without a forward: %#v", detail)
+	}
+
+	var drift serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=invoicing", &drift)
+	if drift.CodeConformance != "drift" || drift.LastVerified != "2026-09-01 @ abc1234" || len(drift.Describes) != 1 || drift.Describes[0] != "pkg/billing" {
+		t.Fatalf("drift detail must carry verification scope/date: %#v", drift)
+	}
+	if detail.Successor != nil {
+		t.Fatalf("accepted proposal must not report a successor: %#v", detail.Successor)
+	}
+
+	var moved serveDocgraphDetail
+	serveDecode(t, server, "/api/docgraph/doc?project=app&subject=.tusker/specs/old-home.md", &moved)
+	if moved.Subject != "checkout" || moved.Path != "docs/system/proposals/checkout.md" {
+		t.Fatalf("moved link did not resolve to the current document: %#v", moved)
+	}
+	if moved.ResolvedFrom == "" {
+		t.Fatalf("forwarded detail must name the requested reference: %#v", moved)
+	}
+
+	rev := docRev(t, server, "invoicing")
+	badHeader := map[string]any{
+		"kind": "doc", "subject": "invoicing", "part_of": "billing-index",
+		"status": "proposed", "code_conformance": "matches",
+	}
+	if code, raw := servePut(t, server, "/api/docgraph/doc?project=app&subject=invoicing",
+		mustJSON(t, map[string]any{"base_rev": rev, "header": badHeader})); code != http.StatusUnprocessableEntity {
+		t.Fatalf("kind-invalid lifecycle + unscoped matches status = %d, want 422: %s", code, raw)
+	}
+	if code, _ := servePut(t, server, "/api/docgraph/doc?project=app&subject=invoicing",
+		mustJSON(t, map[string]any{"base_rev": "deadbeef", "body": "# X\n"})); code != http.StatusConflict {
+		t.Fatalf("stale base_rev status = %d, want 409", code)
 	}
 }

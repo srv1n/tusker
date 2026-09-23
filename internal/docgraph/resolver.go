@@ -67,6 +67,8 @@ type Resolver struct {
 	bySubject       map[string]Document
 	byPath          map[string]Document
 	byBase          map[string][]Document
+	subjectCounts   map[string]int
+	subjectDisplay  map[string]string
 	trackerPrefixes map[string]bool
 }
 
@@ -79,6 +81,8 @@ func NewResolver(corpus Corpus) *Resolver {
 		bySubject:       make(map[string]Document),
 		byPath:          make(map[string]Document),
 		byBase:          make(map[string][]Document),
+		subjectCounts:   make(map[string]int),
+		subjectDisplay:  make(map[string]string),
 		trackerPrefixes: make(map[string]bool),
 	}
 	docs := append([]Document(nil), corpus.Documents...)
@@ -102,6 +106,10 @@ func NewResolver(corpus Corpus) *Resolver {
 		}
 		subject := normalizeSubject(doc.Subject)
 		if subject != "" {
+			r.subjectCounts[subject]++
+			if _, seen := r.subjectDisplay[subject]; !seen {
+				r.subjectDisplay[subject] = strings.TrimSpace(doc.Subject)
+			}
 			if _, exists := r.bySubject[subject]; !exists {
 				r.bySubject[subject] = doc
 			}
@@ -138,15 +146,58 @@ func NewResolver(corpus Corpus) *Resolver {
 
 func documentKindRank(kind Kind) int {
 	switch kind {
-	case KindCanonical:
+	case KindCanonical, KindDoc:
 		return 0
-	case KindSpec:
+	case KindSpec, KindProposal:
 		return 1
 	case KindDecision:
 		return 2
 	default:
 		return 3
 	}
+}
+
+// DuplicateSubjects lists every subject claimed by more than one document,
+// ordered for deterministic inventory output. Forwarding stubs never own a
+// subject, so they cannot appear here. Callers that need a binding decision
+// (authorization, migration inventory) must treat these as ambiguous and
+// fail instead of silently picking one route.
+func DuplicateSubjects(corpus Corpus) []string {
+	counts := map[string]int{}
+	display := map[string]string{}
+	for _, doc := range corpus.Documents {
+		key := normalizeSubject(doc.Subject)
+		if key == "" {
+			continue
+		}
+		counts[key]++
+		if _, seen := display[key]; !seen {
+			display[key] = strings.TrimSpace(doc.Subject)
+		}
+	}
+	var out []string
+	for key, count := range counts {
+		if count > 1 {
+			out = append(out, display[key])
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// DuplicateSubjects reports the resolver's ambiguous subjects.
+func (r *Resolver) DuplicateSubjects() []string {
+	if r == nil {
+		return nil
+	}
+	var out []string
+	for key, count := range r.subjectCounts {
+		if count > 1 {
+			out = append(out, r.subjectDisplay[key])
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ResolveReference resolves a managed subject or path using the shared
@@ -232,8 +283,14 @@ func (r *Resolver) ResolveCurrentFrom(sourcePath, ref string) (Resolution, bool)
 	initial := current
 	seen := map[string]bool{}
 	for {
+		// Subject-less forwarding stubs carry no subject key, so fall
+		// back to the document path for cycle detection; otherwise a
+		// legacy placeholder at a moved path would never forward.
 		key := normalizeSubject(current.Document.Subject)
-		if key == "" || seen[key] || !strings.EqualFold(strings.TrimSpace(current.Document.Status), "superseded") {
+		if key == "" {
+			key = "path:" + normalizeDocumentPath(current.Document.Path)
+		}
+		if key == "path:" || seen[key] || !strings.EqualFold(strings.TrimSpace(current.Document.Status), "superseded") {
 			break
 		}
 		seen[key] = true
@@ -247,6 +304,61 @@ func (r *Resolver) ResolveCurrentFrom(sourcePath, ref string) (Resolution, bool)
 		current.ResolvedFrom = initial.Document.Subject
 	}
 	return current, true
+}
+
+// ResolveStrictReference resolves a managed subject or path and refuses
+// ambiguous duplicate subjects instead of silently picking one route.
+// Authorization and migration-inventory consumers must use this entry point;
+// interactive readers keep the lenient ResolveReference diagnostics.
+func ResolveStrictReference(corpus Corpus, ref string) (Resolution, bool) {
+	return NewResolver(corpus).ResolveStrict(ref)
+}
+
+// ResolveStrict resolves a subject or managed repository path without
+// following a tombstone, failing on ambiguous duplicate subjects.
+func (r *Resolver) ResolveStrict(ref string) (Resolution, bool) {
+	return r.ResolveStrictFrom("", ref)
+}
+
+// ResolveStrictFrom is ResolveStrict with source-relative Markdown path
+// support. Exact repository paths stay unique and resolve deterministically;
+// subject and alias routes fail when more than one document claims them.
+func (r *Resolver) ResolveStrictFrom(sourcePath, ref string) (Resolution, bool) {
+	if r == nil {
+		return Resolution{}, false
+	}
+	requested := strings.TrimSpace(ref)
+	clean := NormalizeReference(requested)
+	if clean == "" {
+		return Resolution{}, false
+	}
+	if sourcePath != "" {
+		candidate := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(sourcePath)), filepath.FromSlash(clean))))
+		if !referenceEscapes(candidate) {
+			if doc, ok := r.byPath[candidate]; ok {
+				return Resolution{Document: doc, Requested: requested, CanonicalRef: doc.Path}, true
+			}
+		}
+	}
+	if doc, ok := r.byPath[normalizeDocumentPath(clean)]; ok {
+		return Resolution{Document: doc, Requested: requested, CanonicalRef: doc.Path}, true
+	}
+	key := normalizeSubject(clean)
+	if r.subjectCounts[key] > 1 {
+		return Resolution{}, false
+	}
+	if doc, ok := r.bySubject[key]; ok {
+		return Resolution{Document: doc, Requested: requested, CanonicalRef: doc.Path}, true
+	}
+	if strings.Contains(clean, "/") {
+		return Resolution{}, false
+	}
+	base := strings.ToLower(filepath.Base(filepath.FromSlash(clean)))
+	if candidates := r.byBase[base]; len(candidates) == 1 {
+		doc := candidates[0]
+		return Resolution{Document: doc, Requested: requested, CanonicalRef: doc.Path}, true
+	}
+	return Resolution{}, false
 }
 
 // NormalizeReference strips supported Markdown/Obsidian decoration, anchors,

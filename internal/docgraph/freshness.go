@@ -80,7 +80,7 @@ func DocsCoverageGaps(repoRoot string) ([]string, error) {
 	}
 	claimed := make(map[string]bool)
 	for _, doc := range corpus.Documents {
-		if doc.Kind != KindCanonical {
+		if !doc.Kind.IsCanonicalFamily() {
 			continue
 		}
 		for _, path := range doc.Describes {

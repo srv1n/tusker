@@ -8,15 +8,32 @@ import (
 
 func TestV7SpecRefsFrontmatterAndValidation(t *testing.T) {
 	vault := v7TraceabilityTestVault(t)
-	writeTraceabilitySpec(t, vault, "docs/specs/linked.md", "# Linked spec\n")
+	writeTraceabilitySpec(t, vault, ".tusker/specs/linked.md", "---\nsubject: linked-spec\npart_of: overview\n---\n# Linked spec\n")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Trace decision", "decision": "Use linked canon."}, newV7Decision)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": "docs/specs/linked.md,APP-D-0001,docs/specs/missing.md"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": ".tusker/specs/linked.md,APP-D-0001"}, newV7Task)
 
-	taskData, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	// Task creation rejects unresolvable refs, so the dangling reference is
+	// injected the same way stale epic refs arrive: a direct frontmatter
+	// edit that validation must then flag.
+	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	taskData, taskBody, err := parseFrontmatterMustRead(taskPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, []string{"docs/specs/linked.md", "APP-D-0001", "docs/specs/missing.md"}, normalizeList(taskData["spec_refs"]), "task spec_refs")
+	taskData["spec_refs"] = []string{".tusker/specs/linked.md", "APP-D-0001", "docs/specs/missing.md"}
+	taskData["state_rev"] = v7StateRev(taskData, taskBody)
+	taskContent, err := serializeDocument(taskData, taskBody, v7FrontmatterOrder["task"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, taskContent); err != nil {
+		t.Fatal(err)
+	}
+	taskData, _, err = parseFrontmatterMustRead(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{".tusker/specs/linked.md", "APP-D-0001", "docs/specs/missing.md"}, normalizeList(taskData["spec_refs"]), "task spec_refs")
 
 	epicPath := filepath.Join(vault, "work", "epics", "APP.md")
 	epicData, epicBody, err := parseFrontmatterMustRead(epicPath)
@@ -48,7 +65,7 @@ func TestV7SpecRefsFrontmatterAndValidation(t *testing.T) {
 func TestV7WorkStreamsValidationWarnsOnUnknownWorkIDs(t *testing.T) {
 	vault := v7TraceabilityTestVault(t)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Known task"}, newV7Task)
-	writeTraceabilitySpec(t, vault, "docs/design/linked-work.md", strings.Join([]string{
+	writeTraceabilitySpec(t, vault, ".tusker/specs/linked-work.md", strings.Join([]string{
 		"# Linked work",
 		"",
 		"## Work streams",
@@ -76,9 +93,9 @@ func TestV7WorkStreamsValidationWarnsOnUnknownWorkIDs(t *testing.T) {
 
 func TestV7SpecRefsSurfaceInCapsulePacketAndAutomationPlan(t *testing.T) {
 	vault := v7TraceabilityTestVault(t)
-	writeTraceabilitySpec(t, vault, "docs/specs/linked.md", "# Linked spec\n")
+	writeTraceabilitySpec(t, vault, ".tusker/specs/linked.md", "---\nsubject: linked-spec\npart_of: overview\n---\n# Linked spec\n")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Trace decision", "decision": "Use linked canon."}, newV7Decision)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": "docs/specs/linked.md,APP-D-0001"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": ".tusker/specs/linked.md,APP-D-0001"}, newV7Task)
 
 	capsule := captureStdout(t, func() {
 		if err := showCmd(Args{"vault": vault, "_pos0": "APP-T-0001", "capsule": "true"}); err != nil {
@@ -86,7 +103,7 @@ func TestV7SpecRefsSurfaceInCapsulePacketAndAutomationPlan(t *testing.T) {
 		}
 	})
 	assertContainsIndexTest(t, capsule, "Read next spec refs")
-	assertContainsIndexTest(t, capsule, "docs/specs/linked.md")
+	assertContainsIndexTest(t, capsule, ".tusker/specs/linked.md")
 	assertContainsIndexTest(t, capsule, "APP-D-0001")
 
 	packet := captureStdout(t, func() {
@@ -96,7 +113,7 @@ func TestV7SpecRefsSurfaceInCapsulePacketAndAutomationPlan(t *testing.T) {
 	})
 	assertContainsIndexTest(t, packet, "## Governing specs / decisions")
 	assertContainsIndexTest(t, packet, "Read these governing specs/decisions before implementation")
-	assertContainsIndexTest(t, packet, "docs/specs/linked.md")
+	assertContainsIndexTest(t, packet, ".tusker/specs/linked.md")
 	assertContainsIndexTest(t, packet, "APP-D-0001")
 	assertContainsIndexTest(t, packet, ".tusker/work/decisions/APP-D-0001.md")
 
@@ -105,7 +122,7 @@ func TestV7SpecRefsSurfaceInCapsulePacketAndAutomationPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	reads := automationPlanRequiredReads(vault, Note{Data: taskData, Body: taskBody, RelativePath: "work/tasks/APP-T-0001.md"})
-	if !containsString(reads, "docs/specs/linked.md") || !containsString(reads, ".tusker/work/decisions/APP-D-0001.md") {
+	if !containsString(reads, ".tusker/specs/linked.md") || !containsString(reads, ".tusker/work/decisions/APP-D-0001.md") {
 		t.Fatalf("expected spec refs in automation reads, got %#v", reads)
 	}
 }

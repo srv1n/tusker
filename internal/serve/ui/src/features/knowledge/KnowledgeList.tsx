@@ -19,13 +19,13 @@ import { DocSection } from "./KnowledgeReader";
 
 const route = getRouteApi("/p/$projectId/knowledge");
 
-/** The corpus root: the overview, else a parentless canonical doc, else first. */
-function resolveRootSubject(docs: DocgraphDoc[] | undefined): string | undefined {
+/** The corpus root: the overview, else a parentless doc, else first. */
+export function resolveRootSubject(docs: DocgraphDoc[] | undefined): string | undefined {
   if (!docs || docs.length === 0) return undefined;
   const parentless = docs.filter((d) => !d.part_of);
   const root =
     parentless.find((d) => d.subject === "overview") ??
-    parentless.find((d) => d.kind === "canonical") ??
+    parentless.find((d) => d.kind === "doc" || d.kind === "canonical") ??
     parentless[0] ??
     docs[0];
   return root?.subject;
@@ -49,7 +49,7 @@ export function KnowledgeList() {
             <EmptyState
               icon={<Network size={22} strokeWidth={1.5} />}
               title="No documentation corpus yet"
-              hint="Canonical system docs, specs, and decision logs with doc-graph headers will appear here once the vault has them."
+              hint="Docs, proposals, and decisions under docs/system will appear here once the project has them. The portable tree stays readable without generated indexes."
             />
           )}
         </div>

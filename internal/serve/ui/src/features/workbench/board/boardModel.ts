@@ -1,13 +1,17 @@
 import type { RunSummary, TaskCapsule, TaskStatus } from "@/types/domain";
+import { DISPLAY_STATE_LABEL } from "../flow/flowGraph";
 
-export const boardGroups: Array<{ key: string; label: string; statuses: TaskStatus[] }> = [
-  { key: "active", label: "Active", statuses: ["in_progress"] },
-  { key: "review", label: "Reviewing", statuses: ["review"] },
-  { key: "ready", label: "Ready", statuses: ["ready"] },
-  { key: "blocked", label: "Blocked", statuses: ["blocked"] },
-  { key: "planned", label: "Planned", statuses: ["backlog"] },
-  { key: "done", label: "Completed", statuses: ["done"] },
+export const boardGroups: Array<{ key: string; label: string; statuses: TaskStatus[]; collapsed?: boolean }> = [
+  { key: "active", label: DISPLAY_STATE_LABEL.executing, statuses: ["in_progress"] },
+  { key: "review", label: DISPLAY_STATE_LABEL.reviewing, statuses: ["review"] },
+  { key: "ready", label: DISPLAY_STATE_LABEL.ready, statuses: ["ready"] },
+  { key: "blocked", label: DISPLAY_STATE_LABEL.blocked, statuses: ["blocked"] },
+  { key: "planned", label: DISPLAY_STATE_LABEL.backlog, statuses: ["backlog"], collapsed: true },
+  { key: "done", label: DISPLAY_STATE_LABEL.completed, statuses: ["done"], collapsed: true },
 ];
+
+/** An open gate names a human decision on this task. */
+export const needsYou = (task: TaskCapsule) => Boolean(task.hasGate || task.openGates?.length);
 
 export function isLiveTask(task: TaskCapsule, runs: RunSummary[]): boolean {
   return task.liveRun === true || runs.some(
@@ -45,13 +49,6 @@ export function availableTags(tagsByTaskId: Record<string, string[]> = {}): stri
 }
 
 export function statusLabel(task: TaskCapsule, runs: RunSummary[]): string {
-  if (isLiveTask(task, runs)) return "Building now";
-  switch (task.status) {
-    case "in_progress": return "Building";
-    case "review": return "Reviewing";
-    case "ready": return "Ready to start";
-    case "blocked": return "Blocked";
-    case "done": return "Completed";
-    default: return "Planned";
-  }
+  const key = boardGroupFor(task, runs);
+  return boardGroups.find((group) => group.key === key)?.label ?? DISPLAY_STATE_LABEL.backlog;
 }

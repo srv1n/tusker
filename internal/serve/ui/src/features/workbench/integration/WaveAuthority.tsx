@@ -142,7 +142,8 @@ function controlHint(action: string, review: WaveReview): string | undefined {
 
 /** Raw internals (fingerprints, codes) stay out of this surface entirely; Diagnostics and `tusker wave review --json` carry them. */
 
-export function WaveAuthorityControls({ projectId, waveId, compact }: { projectId: string; waveId: string; compact?: boolean }) {
+/** One reading of the wave review for every control surface. */
+function useWaveAuthority(projectId: string, waveId: string) {
   const review = useWaveReview(waveId, projectId);
   const control = useWaveControl(projectId, waveId);
   const data = usableWaveReview(review.data, review.error);
@@ -160,7 +161,22 @@ export function WaveAuthorityControls({ projectId, waveId, compact }: { projectI
     : undefined;
   const startReason = startRefused ? (issues[0]?.title ?? startRefused.reason ?? "Work needs attention before this wave can start.") : undefined;
   const hint = data && enabled ? controlHint(enabled.action, data) : status?.hint;
-  const Icon = enabled ? WAVE_CONTROL_ICON[enabled.action] : Play;
+  return { review, control, data, stage, retryable, enabled, status, issues, capacity, startRefused, startReason, hint };
+}
+
+function WaveControlButton({ wave, waveId }: { wave: ReturnType<typeof useWaveAuthority>; waveId: string }) {
+  const { enabled, retryable, control, startRefused, startReason } = wave;
+  if (enabled) {
+    const Icon = WAVE_CONTROL_ICON[enabled.action];
+    return <button type="button" data-wave-control={enabled.action} aria-label={`${retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action]} ${waveId}`} disabled={control.isPending} onClick={() => control.mutate(WAVE_CONTROL_ACTION[enabled.action])} className={cn("inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50", WAVE_CONTROL_STYLE[enabled.action])}><Icon size={13} aria-hidden="true" />{control.isPending ? (retryable ? "Retrying…" : WAVE_CONTROL_PENDING[enabled.action]) : (retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action])}</button>;
+  }
+  if (startRefused) return <button type="button" disabled data-wave-control-refused="wave start" aria-label={`Run wave ${waveId}`} title={startReason} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-1.5 text-[12px] font-semibold text-muted"><Play size={13} aria-hidden="true" />Run wave</button>;
+  return null;
+}
+
+export function WaveAuthorityControls({ projectId, waveId, compact }: { projectId: string; waveId: string; compact?: boolean }) {
+  const wave = useWaveAuthority(projectId, waveId);
+  const { review, control, data, stage, retryable, enabled, status, issues, capacity, startRefused, startReason, hint } = wave;
   return <section className={cn("text-left", compact ? "max-w-[24rem]" : "w-full rounded-xl border border-line bg-raised p-4 sm:p-5")} data-wave-authority data-wave-state={data?.state ?? (review.error ? "unavailable" : "loading")} data-wave-recovery={retryable ? "retryable" : undefined}>
     {review.isLoading ? <p role="status" className="text-[12px] text-faint">Loading wave status…</p> : null}
     {review.error ? <p role="alert" className="text-[12px] leading-5 text-fail">Wave status is unavailable. {review.error instanceof Error ? review.error.message : "Try refreshing."}</p> : null}
@@ -171,12 +187,60 @@ export function WaveAuthorityControls({ projectId, waveId, compact }: { projectI
     </div>
       {data.humanActions?.length ? <section className="mt-4 space-y-3" aria-label="Your action">{data.humanActions.map(({ taskId, taskTitle, action }) => <HumanActionCard key={action.gateId} action={action} taskId={taskId} taskTitle={taskTitle} projectId={projectId} blockedTaskIds={action.blockedTaskIds} continueOnApproval={data.authorization === "authorized"} compact />)}</section> : null}
       {hint ? <p className="mt-2 text-[12px] leading-5 text-muted">{hint}</p> : null}
-      {enabled ? <div className="mt-3 flex justify-end"><button type="button" data-wave-control={enabled.action} aria-label={`${retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action]} ${waveId}`} disabled={control.isPending} onClick={() => control.mutate(WAVE_CONTROL_ACTION[enabled.action])} className={cn("inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-[12px] font-semibold disabled:opacity-50", WAVE_CONTROL_STYLE[enabled.action])}><Icon size={13} aria-hidden="true" />{control.isPending ? (retryable ? "Retrying…" : WAVE_CONTROL_PENDING[enabled.action]) : (retryable ? "Retry wave" : WAVE_CONTROL_LABEL[enabled.action])}</button></div> : null}
-	  {startRefused ? <div className="mt-3 flex justify-end"><span className="inline-flex items-center gap-2"><button type="button" disabled data-wave-control-refused="wave start" aria-label={`Run wave ${waveId}`} title={startReason} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-2 text-[12px] font-semibold text-muted"><Play size={13} aria-hidden="true" />Run wave</button><span className="text-[12px] text-muted">{startReason}</span></span></div> : null}
+      {enabled || startRefused ? <div className="mt-3 flex justify-end"><span className="inline-flex items-center gap-2"><WaveControlButton wave={wave} waveId={waveId} />{startRefused ? <span className="text-[12px] text-muted">{startReason}</span> : null}</span></div> : null}
       {issues.length ? <section className="mt-4 space-y-2" aria-label="What needs attention">{issues.map((issue) => <WaveIssue key={issue.key} issue={issue} projectId={projectId} member={data.members.find((member) => member.taskId === issue.blockers[0]?.taskId)} />)}</section> : null}
       <div aria-live="polite" className="mt-3"><ActionResultLine pending={control.isPending} error={control.error} /></div>
     </> : null}
   </section>;
+}
+
+/** The wave's one primary action for a toolbar; a refusal reason lives in its tooltip. */
+export function WavePrimaryAction({ projectId, waveId }: { projectId: string; waveId: string }) {
+  const wave = useWaveAuthority(projectId, waveId);
+  return <span className="inline-flex items-center gap-2" data-wave-authority data-wave-state={wave.data?.state ?? (wave.review.error ? "unavailable" : "loading")}>
+    <span aria-live="polite"><ActionResultLine pending={wave.control.isPending} error={wave.control.error} /></span>
+    <WaveControlButton wave={wave} waveId={waveId} />
+  </span>;
+}
+
+/** Status chip, accepted count, and auto-run state on one row. */
+export function WaveMeta({ projectId, waveId }: { projectId: string; waveId: string }) {
+  const { data, status, stage } = useWaveAuthority(projectId, waveId);
+  if (!data || !status) return null;
+  const accepted = data.members.filter((member) => member.phase === "completed" || member.state === "completed").length;
+  const total = data.members.length;
+  return <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted" data-wave-counts>
+    {stage !== "ready" ? <ProductStatus tone={status.tone}>{status.label}</ProductStatus> : null}
+    <span>{accepted} of {total} accepted</span>
+    <span className="h-1 w-24 overflow-hidden rounded-full bg-panel" aria-hidden="true"><span className="block h-full bg-pass" style={{ width: `${total ? (accepted / total) * 100 : 0}%` }} /></span>
+    <span>{data.authorization === "authorized" ? "Auto-run on" : "Auto-run off"}</span>
+  </div>;
+}
+
+/** At most one line of what is holding the wave; the detail stays one click down. */
+export function WaveCallout({ projectId, waveId, waitSummary }: { projectId: string; waveId: string; waitSummary?: { title: string; body: string; hint?: string } }) {
+  const { review, data, issues, capacity, startRefused, startReason, hint } = useWaveAuthority(projectId, waveId);
+  if (review.error) return <p role="alert" className="border-b border-line px-5 py-2 text-[12.5px] text-fail">Wave status is unavailable. {review.error instanceof Error ? review.error.message : "Try refreshing."}</p>;
+  if (!data) return null;
+  const human = data.humanActions ?? [];
+  const facts = [
+    ...(human.length ? [`Waiting for you: ${human.map((item) => item.taskTitle || item.taskId).join(", ")}`] : []),
+    ...(waitSummary ? [waitSummary.title] : []),
+    ...issues.map((issue) => issue.title),
+    ...(startRefused && !issues.length && startReason ? [startReason] : []),
+    ...(capacity ? [`Limited to ${capacity}`] : []),
+  ];
+  if (!facts.length) return null;
+  return <details className="border-b border-line bg-panel/40 px-5 py-2 text-[12.5px] text-ink" data-wave-callout>
+    <summary className="cursor-pointer marker:text-faint">{facts.join(". ")}. <span className="text-muted underline underline-offset-2">Details</span></summary>
+    <div className="mt-3 max-w-3xl space-y-3 pb-2">
+      {waitSummary ? <p className="leading-5 text-muted">{waitSummary.body}{waitSummary.hint ? ` ${waitSummary.hint}` : ""}</p> : null}
+      {hint ? <p className="leading-5 text-muted">{hint}</p> : null}
+      {human.map(({ taskId, taskTitle, action }) => <HumanActionCard key={action.gateId} action={action} taskId={taskId} taskTitle={taskTitle} projectId={projectId} blockedTaskIds={action.blockedTaskIds} continueOnApproval={data.authorization === "authorized"} compact />)}
+      {issues.map((issue) => <WaveIssue key={issue.key} issue={issue} projectId={projectId} member={data.members.find((member) => member.taskId === issue.blockers[0]?.taskId)} />)}
+      {capacity ? <a className="block text-muted underline underline-offset-2 hover:text-ink" href={`/p/${projectId}/settings`}>Capacity settings</a> : null}
+    </div>
+  </details>;
 }
 
 function WaveIssue({ issue, projectId, member }: { issue: IssueGroup; projectId: string; member?: WaveReviewMember }) {

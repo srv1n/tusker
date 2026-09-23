@@ -39,8 +39,8 @@
 
 .wux-inspector-head {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  flex-direction: column;
+  gap: 4px;
   padding: 16px 16px 12px;
   border-bottom: 1px solid var(--k-line);
 }

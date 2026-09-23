@@ -160,6 +160,24 @@ Primary sources: [Codex lifecycle](https://learn.chatgpt.com/docs/app-server#lif
 
 These are documentation and source findings, not live installed-harness certification. V1 must support generic contacts and unsupported states while adding verified transports incrementally. External attachment is part of the model; broad multi-host forwarding and every provider's private UI protocol are not prerequisites. Never silently create a fresh conversation when the requested same-session continuation is unavailable.
 
+### Delivery routes — 23 September 2026 update
+
+Decided in [harness session decisions](decisions/2026-09-23-harness-sessions-grill.md);
+the per-harness route table lives in `run-session-continuity`.
+
+- Worker to architect/human: an injected Tusker MCP server (ask, post update,
+  check messages) bound to the worker's run identity writes to the existing
+  message store. MCP is available at launch on Claude Code, Codex exec, Muse
+  exec and ACP `session/new`.
+- Architect/human to worker: soft delivery between tool calls where verified
+  (Claude hook context or stdin; other harnesses after qualification), else
+  hard delivery by interrupt plus native resume with the message as prompt.
+- Tusker to an interactive architect session: a `UserPromptSubmit`/`Stop` hook
+  in that session lists pending messages for its contact address. Claude Code
+  channels and the session inbox socket are preview features and deferred.
+- Codex app-server is no longer the planned active-delivery route; it remains
+  an optional driver.
+
 ## Operator and agent experience
 
 Task details show architect, origin, relevant contacts, pending question, last answer and links to the associated execution conversations. A sibling contact and a scheduling dependency are visually distinct. The message timeline shows queued, held/unsupported, delivered, consumed, answered and applied facts only when their corresponding evidence exists. Expose unknown delivery explicitly.

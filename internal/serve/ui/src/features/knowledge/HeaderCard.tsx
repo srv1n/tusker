@@ -12,10 +12,9 @@ import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Mono } from "@/components/ui/primitives";
 import { Select, TextInput } from "@/components/ui/controls";
-import { DocStatusChip, KindBadge } from "./bits";
-import type { DocgraphKind } from "./types";
+import { ConformanceChip, DocStatusChip, KindBadge } from "./bits";
+import { CONFORMANCE_VALUES, LIFECYCLE_BY_KIND, type DocgraphKind } from "./types";
 
-const KNOWN_STATUSES = ["canonical", "active", "draft", "accepted", "superseded"];
 const CUSTOM_SENTINEL = "__custom__";
 
 export function HeaderCard({
@@ -24,6 +23,10 @@ export function HeaderCard({
   path,
   status,
   onStatusChange,
+  conformance,
+  onConformanceChange,
+  lastVerified,
+  onLastVerifiedChange,
   keywords,
   onAddKeyword,
   onRemoveKeyword,
@@ -36,6 +39,10 @@ export function HeaderCard({
   path: string;
   status: string;
   onStatusChange: (v: string) => void;
+  conformance: string;
+  onConformanceChange: (v: string) => void;
+  lastVerified: string;
+  onLastVerifiedChange: (v: string) => void;
   keywords: string[];
   onAddKeyword: (v: string) => void;
   onRemoveKeyword: (v: string) => void;
@@ -49,6 +56,7 @@ export function HeaderCard({
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <KindBadge kind={kind} />
         <DocStatusChip status={status} />
+        <ConformanceChip conformance={conformance} />
         <Mono className="min-w-0 truncate text-[11px] text-faint" title={subject}>{subject}</Mono>
       </div>
 
@@ -61,11 +69,25 @@ export function HeaderCard({
         <div className="grid gap-3 border-t border-line px-3 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div className="flex min-w-0 items-center gap-2">
             <span className="w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Status</span>
-            <StatusEditor value={status} onChange={onStatusChange} />
+            <StatusEditor kind={kind} value={status} onChange={onStatusChange} />
           </div>
           <div className="flex min-w-0 items-center gap-2">
             <span className="w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Part of</span>
             <PartOfEditor value={partOf} onChange={onPartOfChange} subjects={subjects.filter((s) => s !== subject)} />
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Verified</span>
+            <ConformanceEditor value={conformance} onChange={onConformanceChange} />
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Checked</span>
+            <TextInput
+              value={lastVerified}
+              onChange={(e) => onLastVerifiedChange(e.target.value)}
+              placeholder="YYYY-MM-DD @ commit"
+              aria-label="Last verified stamp"
+              className="h-7 min-w-0 flex-1 font-mono text-[11.5px]"
+            />
           </div>
           <div className="flex min-w-0 items-start gap-2 sm:col-span-2">
             <span className="mt-1 w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Keywords</span>
@@ -78,9 +100,15 @@ export function HeaderCard({
   );
 }
 
-/** Status select over the known values, with a free-text fallback. */
-function StatusEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const isKnown = KNOWN_STATUSES.includes(value);
+/**
+ * Lifecycle select over the kind-specific values (docs: current/superseded;
+ * proposals: proposed/accepted/implemented/superseded; decisions:
+ * proposed/accepted/superseded), with a free-text fallback. Acceptance
+ * records intent — it never implies the code was checked.
+ */
+function StatusEditor({ kind, value, onChange }: { kind: DocgraphKind; value: string; onChange: (v: string) => void }) {
+  const known = LIFECYCLE_BY_KIND[kind] ?? [];
+  const isKnown = known.includes(value);
   const [custom, setCustom] = useState(false);
 
   if (custom || (!isKnown && value !== "")) {
@@ -97,7 +125,7 @@ function StatusEditor({ value, onChange }: { value: string; onChange: (v: string
           type="button"
           onClick={() => {
             setCustom(false);
-            if (!KNOWN_STATUSES.includes(value)) onChange(KNOWN_STATUSES[0]);
+            if (!known.includes(value)) onChange(known[0] ?? "");
           }}
           className="rounded-md px-1.5 py-1 text-[11px] text-faint transition-colors hover:bg-hover hover:text-ink"
         >
@@ -121,13 +149,35 @@ function StatusEditor({ value, onChange }: { value: string; onChange: (v: string
         className="h-7 pr-7 text-[12px]"
       >
         {value === "" && <option value="">—</option>}
-        {KNOWN_STATUSES.map((s) => (
+        {known.map((s) => (
           <option key={s} value={s}>
             {s}
           </option>
         ))}
         <option value={CUSTOM_SENTINEL}>Custom…</option>
       </Select>
+    </div>
+  );
+}
+
+/** Conformance select over the independent verification states. */
+function ConformanceEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const normalized = value === "" ? "unverified" : value;
+  return (
+    <div className="relative inline-flex items-center">
+      <Select
+        value={CONFORMANCE_VALUES.includes(normalized as (typeof CONFORMANCE_VALUES)[number]) ? normalized : "unverified"}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Code conformance"
+        className="h-7 pr-7 font-mono text-[11.5px]"
+      >
+        {CONFORMANCE_VALUES.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </Select>
+      <ChevronDown size={12} className="pointer-events-none absolute right-2 text-faint" />
     </div>
   );
 }

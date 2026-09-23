@@ -37,7 +37,7 @@ describe("Wave 3 production UI contracts", () => {
   });
 
   test("modal surfaces include keyboard containment and focus restoration", () => {
-    for (const path of ["src/features/search/TaskSearch.tsx", "src/components/Sidebar.tsx", "src/components/ui/action-feedback.tsx"]) {
+    for (const path of ["src/features/search/TaskSearch.tsx", "src/components/ui/action-feedback.tsx"]) {
       const source = readFileSync(path, "utf8");
       expect(source).toContain("Tab");
       expect(source).toContain("openerRef");

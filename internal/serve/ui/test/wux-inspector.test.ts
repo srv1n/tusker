@@ -13,6 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
 import { taskRunBlocker } from "../src/features/product/TaskScreens";
@@ -44,11 +45,14 @@ function render(overrides: Partial<InspectorProps> = {}): string {
     onOpenTask: () => {},
     ...overrides,
   };
+  const root = createRootRoute();
+  const runRoute = createRoute({ getParentRoute: () => root, path: "/p/$projectId/runs/$taskId" });
+  const router = createRouter({ routeTree: root.addChildren([runRoute]), history: createMemoryHistory({ initialEntries: ["/"] }) });
   return renderToStaticMarkup(
     createElement(
       QueryClientProvider,
       { client },
-      createElement(ConfirmProvider, null, createElement(TaskInspector, props)),
+      createElement(ConfirmProvider, null, createElement(RouterContextProvider, { router }, createElement(TaskInspector, props))),
     ),
   );
 }
@@ -158,9 +162,30 @@ describe("inspector parked attempts", () => {
   test("does not present a stopped review as active checking", () => {
     const parked = { ...acceptedRun, outcome: "parked-no-progress" as const, liveness: "dead" as const };
     expect(actualStage({ ...acceptedTask, status: "review" }, parked)).toEqual({
-      label: "Stopped — no progress", tone: "warn", live: false,
+      label: "Stopped — no progress", state: "failed", tone: "warn", live: false,
     });
     const task = { ...acceptedTask, status: "review" as const };
     expect(render({ task, run: parked, selectedTaskId: task.id })).toContain("Latest attempt");
+  });
+});
+
+describe("inspector above the fold", () => {
+  test("run logs link stays visible before the collapsed Activity section", () => {
+    const html = render();
+    expect(html).toContain('data-testid="inspector-open-run"');
+    expect(html).toContain(`/p/${readyTask.projectId}/runs/${readyTask.id}`);
+    expect(html.indexOf('data-testid="inspector-open-run"')).toBeLessThan(html.indexOf('>Activity<'));
+  });
+  test("a dependency-waiting task shows the unified chip and names its prerequisites once", () => {
+    const waiting = { ...readyTask, humanAction: undefined, humanActions: [], agentAccessApprovals: [], deps: [{ id: "FLW-T-0008", title: "A", status: "backlog" as const }, { id: "FLW-T-0006", title: "B", status: "backlog" as const }] };
+    const html = render({ task: waiting, run: null, reviewMember: { taskId: waiting.id, title: waiting.title, state: "waiting", proofInvalidation: { kind: "missing", dimension: "command", nextActor: "command_executor", recovery: "rerun_checks", explanation: "current command proof has not been recorded" } } });
+    const fold = html.slice(0, html.indexOf('data-testid="inspector-intent"'));
+    expect(fold).toContain(">Waiting</span>");
+    expect(fold).toContain("Waiting for FLW-T-0008, FLW-T-0006");
+    expect(fold).not.toContain("Queued");
+    expect(fold).not.toContain("proof has not been recorded");
+    expect(fold).not.toContain("Run task");
+    expect(html.match(/FLW-T-0008/g)).toHaveLength(1);
+    expect(html).toContain("proof not recorded");
   });
 });

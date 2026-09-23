@@ -115,14 +115,14 @@ test("walkthrough inspector lets authoritative member phases beat stale task and
     phase: "proof_blocked",
     waitingReason: "verification is required",
   };
-  expect(actualStage(staleTask, staleRun, proofBlocked)).toEqual({ label: "Verification required", tone: "warn", live: false });
+  expect(actualStage(staleTask, staleRun, proofBlocked)).toEqual({ label: "Verification required", state: "proof_blocked", tone: "warn", live: false });
 
   const unknown = { ...proofBlocked, phase: "outcome_unknown" as const };
-  expect(actualStage(staleTask, staleRun, unknown)).toEqual({ label: "Needs recovery", tone: "warn", live: false });
+  expect(actualStage(staleTask, staleRun, unknown)).toEqual({ label: "Needs recovery", state: "unknown", tone: "warn", live: false });
   expect(render(staleTask, staleRun, proofBlocked)).toContain("Verification required");
 
   const failed: WaveReviewMember = { ...proofBlocked, phase: "failed", waitingReason: "review rejected the attempt" };
-  expect(actualStage(staleTask, staleRun, failed)).toEqual({ label: "Failed", tone: "fail", live: false });
+  expect(actualStage(staleTask, staleRun, failed)).toEqual({ label: "Failed", state: "failed", tone: "fail", live: false });
   expect(render(staleTask, staleRun, failed)).toContain("<span data-testid=\"inspector-stage\" class=\"inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap border-fail/30 bg-fail-soft text-fail\">Failed</span>");
 });
 

@@ -88,8 +88,10 @@ func skillDoctorIssues(root string, packageMode, strict bool) ([]Issue, []Issue)
 	if !fileExists(filepath.Join(root, "SKILL.md")) {
 		errs = append(errs, issue(errorMissingField, "V7 project skill package requires SKILL.md", "SKILL.md", "", nil))
 	}
-	if !fileExists(filepath.Join(root, "knowledge", "domains")) {
-		errs = append(errs, issue(errorMissingField, "V7 project skill package requires knowledge/domains/**", "knowledge/domains", "", nil))
+	// Portable domain indexes satisfy the knowledge route on their own: only
+	// repositories with neither legacy nor portable domains fail this check.
+	if !fileExists(filepath.Join(root, "knowledge", "domains")) && len(v7PortableDomainIDs(v7RepoRoot(root))) == 0 {
+		errs = append(errs, issue(errorMissingField, "V7 project skill package requires knowledge/domains/** or docs/system/domains/**", "knowledge/domains", "", nil))
 	}
 	if skillErrs, skillWarns := validateV7SkillKnowledge(root); len(skillErrs) > 0 || len(skillWarns) > 0 {
 		errs = append(errs, skillErrs...)
@@ -218,27 +220,36 @@ func skillDoctorForbiddenPaths(root string, packageMode bool) []Issue {
 
 func skillDoctorLocalAbsolutePaths(root string, packageMode bool) []Issue {
 	var errs []Issue
-	scanRoot := root
+	scanRoots := []string{root}
 	if !packageMode {
-		scanRoot = filepath.Join(root, "knowledge", "domains")
+		scanRoots = []string{filepath.Join(root, "knowledge", "domains")}
+		// Product knowledge may live in the portable tree; absolute paths
+		// leak through either route.
+		if portable := filepath.Join(v7RepoRoot(root), "docs", "system", "domains"); dirExists(portable) {
+			scanRoots = append(scanRoots, portable)
+		}
 	}
-	_ = filepath.WalkDir(scanRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil || entry.IsDir() {
-			return nil
-		}
-		text, err := readText(path)
-		if err != nil {
-			return nil
-		}
-		if strings.Contains(text, "/"+"Users/") || strings.Contains(text, "C:\\Users\\") {
-			rel := path
-			if next, err := filepath.Rel(root, path); err == nil {
-				rel = filepath.ToSlash(next)
+	for _, scanRoot := range scanRoots {
+		_ = filepath.WalkDir(scanRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry.IsDir() {
+				return nil
 			}
-			errs = append(errs, issue("SKILL_LOCAL_ABSOLUTE_PATH", "skill source contains a local absolute path", rel, "replace local paths with repo-relative paths or external links", nil))
-		}
-		return nil
-	})
+			text, err := readText(path)
+			if err != nil {
+				return nil
+			}
+			if strings.Contains(text, "/"+"Users/") || strings.Contains(text, "C:\\Users\\") {
+				rel := path
+				if next, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(next, "..") {
+					rel = filepath.ToSlash(next)
+				} else if next, err := filepath.Rel(v7RepoRoot(root), path); err == nil {
+					rel = filepath.ToSlash(next)
+				}
+				errs = append(errs, issue("SKILL_LOCAL_ABSOLUTE_PATH", "skill source contains a local absolute path", rel, "replace local paths with repo-relative paths or external links", nil))
+			}
+			return nil
+		})
+	}
 	if !packageMode {
 		skillPath := filepath.Join(root, "SKILL.md")
 		if text, err := readText(skillPath); err == nil && (strings.Contains(text, "/"+"Users/") || strings.Contains(text, "C:\\Users\\")) {
@@ -347,6 +358,12 @@ func v7SkillRoutesForIntent(vaultPath, intent string) ([]string, error) {
 		limit = 3
 	}
 	for _, route := range scoredDomains[:limit] {
+		// Portable indexes route before legacy records so intent routing
+		// returns the same chapters humans read.
+		if v7HasPortableDomain(v7RepoRoot(vaultPath), route.ID) {
+			routes = append(routes, v7PortableDomainIndexRel(route.ID))
+			continue
+		}
 		if !fileExists(filepath.Join(vaultPath, "knowledge", "domains", route.ID, "INDEX.md")) {
 			continue
 		}

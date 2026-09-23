@@ -81,13 +81,18 @@ func TestDocsNewUsesManagedRootAndIgnoresUnrelatedDebt(t *testing.T) {
 	if !strings.Contains(output, `"written":false`) || !strings.Contains(output, "part_of: project-guide") {
 		t.Fatalf("unexpected scaffold output: %s", output)
 	}
-	if _, err := os.Stat(filepath.Join(vault, "specs", "sample.md")); !os.IsNotExist(err) {
+	// S46: --kind spec is the compatibility spelling for proposal, and new
+	// proposals scaffold into the portable tree, not .tusker/specs.
+	if !strings.Contains(output, `"kind":"proposal"`) || !strings.Contains(output, "docs/system/proposals/sample.md") {
+		t.Fatalf("spec alias did not target the portable proposal path: %s", output)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, "docs/system/proposals/sample.md")); !os.IsNotExist(err) {
 		t.Fatalf("--print mutated the repository: %v", err)
 	}
 	if err := docsNewCmd(Args{"vault": vault, "_pos": "sample", "kind": "spec", "quiet": "true"}); err != nil {
 		t.Fatalf("write locally valid scaffold: %v", err)
 	}
-	path := filepath.Join(vault, "specs", "sample.md")
+	path := filepath.Join(repoRoot, "docs/system/proposals/sample.md")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +101,7 @@ func TestDocsNewUsesManagedRootAndIgnoresUnrelatedDebt(t *testing.T) {
 		t.Fatal(err)
 	}
 	captureStdout(t, func() {
-		if err := docsCheckCmd(Args{"vault": vault, "_pos": ".tusker/specs/sample.md", "json": "true"}); err == nil {
+		if err := docsCheckCmd(Args{"vault": vault, "_pos": "docs/system/proposals/sample.md", "json": "true"}); err == nil {
 			t.Fatal("proper validation gate accepted the newly introduced dangling link")
 		}
 	})

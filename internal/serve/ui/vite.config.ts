@@ -13,6 +13,11 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  // Pre-bundle the lazy docs editor so first visiting Docs does not make Vite
+  // re-optimize mid-session and break open tabs with a stale chunk hash.
+  optimizeDeps: {
+    include: ["@tiptap/react", "@tiptap/core", "@tiptap/starter-kit", "tiptap-markdown", "lowlight"],
+  },
   server: {
     port: 5173,
     // Keep UI development on the same real-data contract as the embedded app.

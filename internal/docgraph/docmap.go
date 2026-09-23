@@ -16,9 +16,24 @@ const (
 	docsMapEndMarker   = "<!-- tusker:docs-map:end -->"
 
 	overviewRelPath = "docs/system/00-overview.md"
-	indexRelPath    = "docs/system/INDEX.md"
-	graphRelPath    = "docs/system/graph.json"
+
+	// Portable generated locations (S46). The generated corpus index and
+	// graph live under .tusker with the other generated caches; authored
+	// domain indexes stay in docs/system. A plain overview remains useful
+	// with these outputs absent.
+	GeneratedDocsRoot     = ".tusker/_generated/docs"
+	GeneratedIndexRelPath = ".tusker/_generated/docs/INDEX.md"
+	GeneratedGraphRelPath = ".tusker/_generated/docs/graph.json"
+	legacyIndexRelPath    = "docs/system/INDEX.md"
+	legacyGraphRelPath    = "docs/system/graph.json"
 )
+
+// LegacyGeneratedRelPaths lists the pre-S46 generated locations. They are
+// still maintained as a deprecated mirror by WriteDocsMap until the adoption
+// story removes them; readers must prefer the Generated* paths above.
+func LegacyGeneratedRelPaths() []string {
+	return []string{legacyIndexRelPath, legacyGraphRelPath}
+}
 
 // MapDefect names one structural reason the doc graph cannot be turned into a
 // map. Generation refuses the whole corpus when any defect is present.
@@ -70,9 +85,15 @@ type mapArtifacts struct {
 	graph    []byte
 }
 
-// WriteDocsMap regenerates the three doc-map artifacts on disk from the current
+// WriteDocsMap regenerates the doc-map artifacts on disk from the current
 // front-matter corpus. It refuses malformed graphs and writes nothing in that
 // case. Output is deterministic (sorted by subject) so re-running is a no-op.
+//
+// The generated index and graph are written to their portable generated
+// location (.tusker/_generated/docs) and mirrored to the legacy docs/system
+// paths until the adoption story removes that mirror. Readers must prefer
+// the generated location; CheckDocsMapFresh reports a legacy-only tree as a
+// migration diagnostic.
 func WriteDocsMap(repoRoot string) error {
 	artifacts, err := buildDocsMap(repoRoot)
 	if err != nil {
@@ -83,18 +104,31 @@ func WriteDocsMap(repoRoot string) error {
 		return err
 	}
 	defer root.Close()
-	for _, relative := range []string{overviewRelPath, indexRelPath, graphRelPath} {
+	if err := root.MkdirAll(filepath.FromSlash(GeneratedDocsRoot), 0o755); err != nil {
+		return err
+	}
+	targets := []string{overviewRelPath, GeneratedIndexRelPath, GeneratedGraphRelPath, legacyIndexRelPath, legacyGraphRelPath}
+	for _, relative := range targets {
 		if err := validateDocsMapArtifact(root, relative); err != nil {
 			return err
 		}
 	}
-	if err := writeDocsMapArtifact(root, overviewRelPath, []byte(artifacts.overview)); err != nil {
-		return err
+	writes := []struct {
+		rel  string
+		data []byte
+	}{
+		{overviewRelPath, []byte(artifacts.overview)},
+		{GeneratedIndexRelPath, []byte(artifacts.index)},
+		{GeneratedGraphRelPath, artifacts.graph},
+		{legacyIndexRelPath, []byte(artifacts.index)},
+		{legacyGraphRelPath, artifacts.graph},
 	}
-	if err := writeDocsMapArtifact(root, indexRelPath, []byte(artifacts.index)); err != nil {
-		return err
+	for _, write := range writes {
+		if err := writeDocsMapArtifact(root, write.rel, write.data); err != nil {
+			return err
+		}
 	}
-	return writeDocsMapArtifact(root, graphRelPath, artifacts.graph)
+	return nil
 }
 
 func openDocsMapRoot(repoRoot string) (*os.Root, error) {
@@ -216,6 +250,11 @@ func rejectDocsMapSymlinkPath(root *os.Root, relative string) error {
 // CheckDocsMapFresh regenerates the artifacts in memory and diffs them against
 // the committed files. Stale or missing artifacts, and malformed graphs, are
 // returned as named issues pointing back at the map command.
+//
+// Freshness is judged at the portable generated location. When the generated
+// outputs exist only at the legacy docs/system paths, freshness reports a
+// DOCS_MAP_LEGACY_LOCATION migration diagnostic instead of stale/missing
+// errors so the move stays explicit and recoverable.
 func CheckDocsMapFresh(repoRoot string) ([]Issue, error) {
 	if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(overviewRelPath))); os.IsNotExist(err) {
 		return nil, nil
@@ -232,26 +271,45 @@ func CheckDocsMapFresh(repoRoot string) ([]Issue, error) {
 		return nil, err
 	}
 	var issues []Issue
+	committed, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(overviewRelPath)))
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(committed, []byte(artifacts.overview)) {
+		issues = append(issues, Issue{
+			Code:    "DOCS_MAP_STALE",
+			Path:    overviewRelPath,
+			Message: "generated doc map is stale; run `tusker docs map`",
+		})
+	}
 	checks := []struct {
-		rel  string
-		want []byte
+		rel       string
+		legacyRel string
+		want      []byte
 	}{
-		{overviewRelPath, []byte(artifacts.overview)},
-		{indexRelPath, []byte(artifacts.index)},
-		{graphRelPath, artifacts.graph},
+		{GeneratedIndexRelPath, legacyIndexRelPath, []byte(artifacts.index)},
+		{GeneratedGraphRelPath, legacyGraphRelPath, artifacts.graph},
 	}
 	for _, check := range checks {
 		committed, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(check.rel)))
 		if err != nil {
-			if os.IsNotExist(err) {
+			if !os.IsNotExist(err) {
+				return nil, err
+			}
+			if legacy, legacyErr := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(check.legacyRel))); legacyErr == nil && bytes.Equal(legacy, check.want) {
 				issues = append(issues, Issue{
-					Code:    "DOCS_MAP_STALE",
+					Code:    "DOCS_MAP_LEGACY_LOCATION",
 					Path:    check.rel,
-					Message: "generated doc map is missing; run `tusker docs map`",
+					Message: "generated doc map lives only at the legacy " + check.legacyRel + " path; run `tusker docs map` to move it to " + check.rel,
 				})
 				continue
 			}
-			return nil, err
+			issues = append(issues, Issue{
+				Code:    "DOCS_MAP_STALE",
+				Path:    check.rel,
+				Message: "generated doc map is missing; run `tusker docs map`",
+			})
+			continue
 		}
 		if !bytes.Equal(committed, check.want) {
 			issues = append(issues, Issue{

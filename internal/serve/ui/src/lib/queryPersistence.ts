@@ -14,8 +14,6 @@ const STARTUP_QUERY_ROOTS = new Set([
   "projects",
   "factory-operations",
   "needs",
-  "runs",
-  "run",
   "review",
   "epics",
   "waves",
@@ -101,6 +99,7 @@ export function restoreStartupQueryCache(
       removeStoredCache(storage);
       return false;
     }
+    persisted.clientState.queries = persisted.clientState.queries?.filter((query) => isStartupQueryKey(query.queryKey)) ?? [];
     hydrate(queryClient, persisted.clientState);
     // Hydration paints immediately. Mark those reads stale without starting
     // work yet; mounted screens will revalidate through their normal queries.

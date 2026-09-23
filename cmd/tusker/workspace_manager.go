@@ -53,6 +53,7 @@ type WorkspacePrepareRequest struct {
 	// not guessed (see .tusker/specs/build-and-test-economics.md). Opening a new
 	// work copy past the cap is refused before any git worktree is created.
 	MaxLiveWorktrees   int
+	AllowDirtyTracked  bool
 	startingDirtyPaths []string
 }
 
@@ -108,6 +109,15 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 			}
 		}
 		if !continuing {
+			if !req.AllowDirtyTracked {
+				tracked, dirtyErr := inPlaceTrackedDirtyPaths(req.RepoRoot)
+				if dirtyErr != nil {
+					return WorkspacePrepareResult{}, dirtyErr
+				}
+				if len(tracked) > 0 {
+					return WorkspacePrepareResult{}, fmt.Errorf("shared workspace has dirty tracked files: %s", strings.Join(tracked[:min(len(tracked), 3)], ", "))
+				}
+			}
 			if req.startingDirtyPaths, err = inPlaceDirtyPaths(req.RepoRoot); err != nil {
 				return WorkspacePrepareResult{}, err
 			}
@@ -435,6 +445,28 @@ func inPlaceDirtyPaths(repoRoot string) ([]string, error) {
 	var dirty []string
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		for _, path := range porcelainDirtyPaths(line) {
+			if !workspacePathIsTuskerBookkeeping(path) {
+				dirty = append(dirty, path)
+			}
+		}
+	}
+	return dirty, nil
+}
+
+func inPlaceTrackedDirtyPaths(repoRoot string) ([]string, error) {
+	if _, err := exec.LookPath("git"); err != nil || !fileExists(filepath.Join(repoRoot, ".git")) {
+		return nil, nil
+	}
+	out, err := exec.Command("git", "-C", repoRoot, "status", "--porcelain", "--untracked-files=no").Output()
+	if err != nil {
+		return nil, err
+	}
+	var dirty []string
+	for _, line := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

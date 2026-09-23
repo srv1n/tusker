@@ -41,10 +41,11 @@ func TestRemainingEvidenceView(t *testing.T) {
 }
 
 func TestServeWaveListKeepsDetailOut(t *testing.T) {
+	task := Note{Data: map[string]any{"kind": "task", "id": "APP-T-0001", "status": "ready"}}
 	snap := serveSnapshot{waves: []Note{{Data: map[string]any{
 		"id": "W-0001", "title": "Small wave", "summary": "Ship it",
 		"status": "open", "authorization": "armed", "members": []string{"APP-T-0001"},
-	}, Body: "Large detailed body"}}, notesByID: map[string]Note{}}
+	}, Body: "Large detailed body"}}, tasks: []Note{task}, notesByID: map[string]Note{"APP-T-0001": task}}
 	list := serveWaveList(snap)
 	if len(list) != 1 || list[0].ID != "W-0001" || list[0].MemberCount != 1 || list[0].Authorization != "armed" {
 		t.Fatalf("wave list=%#v", list)
@@ -755,8 +756,11 @@ func TestServeRunDetailUsesCanonicalCompletedRunRow(t *testing.T) {
 	assertEqual(t, 886, detail.Attempts[0].DurationSec, "attempt elapsed freezes at finish")
 	assertEqual(t, "tusker_cli", detail.Authorization.Source, "authorization source")
 	assertEqual(t, "/repo/app", detail.Identity.RepoRoot, "registered repository")
-	assertEqual(t, true, detail.Resume.Supported, "codex resume supported")
-	assertEqual(t, "codex exec resume 'session-1'", detail.Resume.Command, "copyable resume command")
+	assertEqual(t, false, detail.Resume.Supported, "app-server native resume unsupported")
+	assertEqual(t, "", detail.Resume.Command, "unsupported app-server command omitted")
+	if detail.Resume.Reason == "" {
+		t.Fatal("unsupported app-server resume needs an explanatory reason")
+	}
 	assertEqual(t, "pending", detail.Delivery.ProofStatus, "delivery proof status")
 	turns, err := server.store.ListTurnsForAttempt("attempt-done")
 	if err != nil {

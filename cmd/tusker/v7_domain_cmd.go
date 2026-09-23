@@ -107,6 +107,13 @@ func newV7Domain(args Args) error {
 	if err := writeText(canonPath, canonContent); err != nil {
 		return err
 	}
+	// S46: route the same domain into the portable tree. The portable
+	// 00-index is the human-readable authority; the legacy INDEX/CANON
+	// records above stay as compatibility pointers. Never overwrite an
+	// existing portable index.
+	if err := ensureV7PortableDomainIndex(vaultPath, id, title, summary); err != nil {
+		return err
+	}
 	if err := refreshV7ProjectSkill(vaultPath); err != nil {
 		return err
 	}
@@ -121,19 +128,10 @@ func domainV7ListCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	notes, err := listAllNotes(vaultPath)
+	domains, err := v7ListDomainNotes(vaultPath)
 	if err != nil {
 		return err
 	}
-	var domains []Note
-	for _, note := range notes {
-		if effectiveV7Kind(note.Data) == "domain" && stringField(note.Data, "schema") == "tusker.domain/v7" {
-			domains = append(domains, note)
-		}
-	}
-	sort.Slice(domains, func(i, j int) bool {
-		return stringField(domains[i].Data, "id") < stringField(domains[j].Data, "id")
-	})
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "domains": v7DomainPayload(domains)})
 		return nil
@@ -220,14 +218,213 @@ func domainV7CanonCmd(args Args) error {
 		}
 		return nil
 	}
-	fmt.Printf("%s  domain canon  %s\n\n%s\n", stringField(note.Data, "domain"), stringField(note.Data, "title"), sectionContent(note.Body, "## Current Truth"))
+	// Portable canon views carry the live index body, which names Purpose
+	// instead of Current Truth. Keep every capsule read bounded.
+	truth := sectionContent(note.Body, "## Current Truth")
+	if strings.TrimSpace(truth) == "" {
+		truth = v7PacketSnippet(note.Body, 8)
+	}
+	fmt.Printf("%s  domain canon  %s\n\n%s\n", stringField(note.Data, "domain"), stringField(note.Data, "title"), truth)
 	return nil
+}
+
+// v7PortableDomainIndexRel is the stable portable route for one domain's
+// human-readable index. Product domain knowledge lives under docs/system;
+// the legacy knowledge/domains records remain as compatibility pointers.
+func v7PortableDomainIndexRel(id string) string {
+	return filepath.ToSlash(filepath.Join("docs", "system", "domains", id, "00-index.md"))
+}
+
+func v7PortableDomainAbs(repoRoot, id string) string {
+	return filepath.Join(repoRoot, "docs", "system", "domains", id, "00-index.md")
+}
+
+// v7HasPortableDomain reports whether the portable domain index exists. It is
+// a pure existence check so readers stay fail-closed on parse errors instead
+// of silently falling back to a stale legacy copy.
+func v7HasPortableDomain(repoRoot, id string) bool {
+	return fileExists(v7PortableDomainAbs(repoRoot, id))
+}
+
+// v7PortableDomainIDs lists every domain with a portable index, ordered for
+// deterministic routing and skill tables.
+func v7PortableDomainIDs(repoRoot string) []string {
+	entries, err := os.ReadDir(filepath.Join(repoRoot, "docs", "system", "domains"))
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, entry := range entries {
+		if !entry.IsDir() || !v7HasPortableDomain(repoRoot, entry.Name()) {
+			continue
+		}
+		if err := validateKnowledgeNodePath(entry.Name()); err != "" || strings.Contains(entry.Name(), "/") {
+			continue
+		}
+		ids = append(ids, entry.Name())
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// v7PortableDomainNote reads the actual portable domain document and maps its
+// metadata onto the domain route shape agents already consume. The returned
+// note carries the live portable body: callers must never persist it back as
+// a legacy INDEX/CANON copy.
+func v7PortableDomainNote(repoRoot, id string) (Note, error) {
+	rel := v7PortableDomainIndexRel(id)
+	abs := v7PortableDomainAbs(repoRoot, id)
+	data, body, err := parseFrontmatterMustRead(abs)
+	if err != nil {
+		return Note{}, err
+	}
+	title := firstNonEmpty(strings.TrimSpace(stringField(data, "title")), strings.TrimSpace(stringField(data, "subject")))
+	if title == "" {
+		title = v7FirstMarkdownHeading(body)
+	}
+	title = fallback(title, v7DefaultDomainTitle(id))
+	summary := firstNonEmpty(strings.TrimSpace(stringField(data, "summary")), strings.TrimSpace(stringField(data, "read_when")))
+	summary = fallback(summary, "Durable source of truth for "+title+".")
+	capsule := map[string]any{"what": summary}
+	if useWhen := strings.TrimSpace(stringField(data, "read_when")); useWhen != "" {
+		capsule["use_when"] = []string{useWhen}
+	}
+	if skipWhen := strings.TrimSpace(stringField(data, "skip_when")); skipWhen != "" {
+		capsule["skip_when"] = []string{skipWhen}
+	}
+	return Note{
+		AbsolutePath: abs,
+		RelativePath: rel,
+		Data: map[string]any{
+			"schema":          "tusker.domain/v7",
+			"kind":            "domain",
+			"id":              id,
+			"project":         v7ProjectID(filepath.Join(repoRoot, defaultRepoVaultDir)),
+			"title":           title,
+			"status":          fallback(strings.TrimSpace(stringField(data, "status")), "current"),
+			"summary":         summary,
+			"capsule":         capsule,
+			"source_of_truth": []string{rel},
+			"canonical_files": []string{"00-index.md"},
+		},
+		Body: body,
+	}, nil
+}
+
+// v7ListDomainNotes merges managed domain records with portable domain
+// indexes so `domain list` routes agents to the same chapters humans read.
+// The portable index is the authority wherever it exists: a migrated domain
+// lists its portable route, not the legacy compatibility record.
+func v7ListDomainNotes(vaultPath string) ([]Note, error) {
+	notes, err := listAllNotes(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var domains []Note
+	for _, note := range notes {
+		if effectiveV7Kind(note.Data) == "domain" && stringField(note.Data, "schema") == "tusker.domain/v7" {
+			seen[stringField(note.Data, "id")] = true
+			domains = append(domains, note)
+		}
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	for _, id := range v7PortableDomainIDs(repoRoot) {
+		if seen[id] {
+			continue
+		}
+		note, err := v7PortableDomainNote(repoRoot, id)
+		if err != nil {
+			continue
+		}
+		domains = append(domains, note)
+	}
+	for i, note := range domains {
+		id := stringField(note.Data, "id")
+		if id == "" || !v7HasPortableDomain(repoRoot, id) {
+			continue
+		}
+		if portable, err := v7PortableDomainNote(repoRoot, id); err == nil {
+			domains[i] = portable
+		}
+	}
+	sort.Slice(domains, func(i, j int) bool {
+		return stringField(domains[i].Data, "id") < stringField(domains[j].Data, "id")
+	})
+	return domains, nil
+}
+
+// v7FirstMarkdownHeading returns the first "# Heading" line without its
+// markers, or "" when the body names no heading.
+
+func v7FirstMarkdownHeading(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			if heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#")); heading != "" {
+				return heading
+			}
+		}
+	}
+	return ""
+}
+
+// ensureV7PortableDomainIndex scaffolds the portable domain index for a new
+// domain without overwriting an existing one. Legacy-only repositories (no
+// portable overview) keep their current behavior untouched.
+func ensureV7PortableDomainIndex(vaultPath, id, title, summary string) error {
+	repoRoot := v7RepoRoot(vaultPath)
+	if !fileExists(filepath.Join(repoRoot, "docs", "system", "00-overview.md")) {
+		return nil
+	}
+	abs := v7PortableDomainAbs(repoRoot, id)
+	if fileExists(abs) {
+		return nil
+	}
+	if err := ensureDir(filepath.Dir(abs)); err != nil {
+		return err
+	}
+	return writeText(abs, v7PortableDomainIndexScaffold(id, title, summary))
+}
+
+// v7PortableDomainIndexScaffold renders a docgraph-valid domain index. Kind,
+// lifecycle and conformance start at their truthful defaults: kind doc,
+// status current, and code conformance not_applicable for a routing index.
+func v7PortableDomainIndexScaffold(id, title, summary string) string {
+	return fmt.Sprintf(`---
+kind: doc
+subject: %s
+keywords: [domain]
+part_of: overview
+status: current
+code_conformance: not_applicable
+read_when: "You need durable %s canon before implementing a task."
+skip_when: "You only need task proof, runtime events, or generated packets."
+---
+
+# %s
+
+## Purpose
+
+%s
+
+## Reading order
+
+- Start here, then open focused chapters in docs/system/domains/%s/ as they are added.
+
+## Chapters
+
+- _No focused chapters yet._
+`, id, id, title, summary, id)
 }
 
 func readV7DomainIndex(vaultPath, id string) (Note, error) {
 	id = strings.TrimSpace(id)
 	if err := validateKnowledgeNodePath(id); err != "" || strings.Contains(id, "/") {
 		return Note{}, tuskerError(errorInvalidArg, "invalid domain id: "+id)
+	}
+	if repoRoot := v7RepoRoot(vaultPath); v7HasPortableDomain(repoRoot, id) {
+		return v7PortableDomainNote(repoRoot, id)
 	}
 	path := filepath.Join(vaultPath, "knowledge", "domains", id, "INDEX.md")
 	if !fileExists(path) {
@@ -244,6 +441,20 @@ func readV7DomainCanon(vaultPath, id string) (Note, error) {
 	id = strings.TrimSpace(id)
 	if err := validateKnowledgeNodePath(id); err != "" || strings.Contains(id, "/") {
 		return Note{}, tuskerError(errorInvalidArg, "invalid domain id: "+id)
+	}
+	if repoRoot := v7RepoRoot(vaultPath); v7HasPortableDomain(repoRoot, id) {
+		// The portable index is the canon route. Synthesize the canon view
+		// from the actual portable document so readers never receive a
+		// copied legacy snapshot.
+		index, err := v7PortableDomainNote(repoRoot, id)
+		if err != nil {
+			return Note{}, err
+		}
+		index.Data["kind"] = "domain_canon"
+		index.Data["id"] = id + "/canon"
+		index.Data["domain"] = id
+		index.Data["title"] = fallback(stringField(index.Data, "title"), v7DefaultDomainTitle(id)) + " Canon"
+		return index, nil
 	}
 	path := filepath.Join(vaultPath, "knowledge", "domains", id, "CANON.md")
 	if !fileExists(path) {
@@ -661,18 +872,30 @@ func writeV7ProjectSkill(vaultPath, path string) error {
 func listV7ProjectSkillDomains(vaultPath string) ([]Note, error) {
 	root := filepath.Join(vaultPath, "knowledge", "domains")
 	entries, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+	seen := map[string]bool{}
 	var domains []Note
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
+		seen[entry.Name()] = true
 		note, err := readV7DomainIndex(vaultPath, entry.Name())
+		if err != nil {
+			continue
+		}
+		domains = append(domains, note)
+	}
+	// Portable-only domains have no legacy record. They still own durable
+	// canon, so they join the same route set through model compatibility.
+	repoRoot := v7RepoRoot(vaultPath)
+	for _, id := range v7PortableDomainIDs(repoRoot) {
+		if seen[id] {
+			continue
+		}
+		note, err := v7PortableDomainNote(repoRoot, id)
 		if err != nil {
 			continue
 		}
@@ -690,7 +913,16 @@ func renderV7ProjectSkillBody(domains []Note) string {
 	rows = append(rows, "|---|---|---|---|")
 	for _, domain := range domains {
 		id := stringField(domain.Data, "id")
-		rows = append(rows, fmt.Sprintf("| %s | %s | `knowledge/domains/%s/INDEX.md` | `knowledge/domains/%s/CANON.md` |", stringField(domain.Data, "title"), stringField(domain.Data, "summary"), id, id))
+		indexRef := fmt.Sprintf("knowledge/domains/%s/INDEX.md", id)
+		canonRef := fmt.Sprintf("knowledge/domains/%s/CANON.md", id)
+		if strings.HasPrefix(filepath.ToSlash(domain.RelativePath), "docs/system/domains/") {
+			// Portable route: the 00-index is both the reading entry and
+			// the canon route. Legacy knowledge/domains rows below remain
+			// as compatibility pointers only.
+			indexRef = domain.RelativePath
+			canonRef = domain.RelativePath
+		}
+		rows = append(rows, fmt.Sprintf("| %s | %s | `%s` | `%s` |", stringField(domain.Data, "title"), stringField(domain.Data, "summary"), indexRef, canonRef))
 	}
 	if len(rows) == 2 {
 		rows = append(rows, "| No domains yet. | Create a domain first. | Create a domain first. | Create a domain first. |")

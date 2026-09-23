@@ -266,10 +266,10 @@ describe("wave review detail", () => {
 describe("surface source contracts", () => {
   const src = (path: string) => readFileSync(`src/${path}`, "utf8");
 
-  test("work experience and wave detail use WaveAuthorityControls", () => {
+  test("work experience and wave detail use the shared wave authority", () => {
     const work = src("features/workbench/integration/WorkExperience.tsx");
     const delivery = src("features/product/DeliveryScreens.tsx");
-    expect(work).toContain("WaveAuthorityControls");
+    expect(work).toContain("WavePrimaryAction");
     expect(work).toContain("WaveReviewDetail");
     expect(work).toContain("showControls={false}");
     expect(work).not.toContain("useWaveExecute");

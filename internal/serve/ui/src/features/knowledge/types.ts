@@ -1,11 +1,36 @@
 /*
   Doc-graph API contract. The daemon serves the documentation
-  corpus — canonical system docs, specs, and decision logs — plus the edges that
+  corpus — portable system docs, proposals, and decisions — plus the edges that
   connect them. These types mirror the pinned /api/docgraph shape exactly.
+
+  Kinds are portable: new documents declare `doc | proposal | decision`.
+  `canonical` and `spec` remain as legacy compatibility spellings for
+  documents that predate explicit kinds. Lifecycle (`status`) is
+  kind-specific and never implies code conformance; `code_conformance` is
+  the independent verification claim with its `last_verified` stamp and
+  `describes` scope.
 */
 
-/** The three corpus kinds. Distinct from the vault's DocKind — do not conflate. */
-export type DocgraphKind = "canonical" | "spec" | "decision";
+/**
+ * The corpus kinds. `doc`/`proposal`/`decision` are the portable S46 kinds;
+ * `canonical`/`spec` are legacy compatibility spellings. Distinct from the
+ * vault's DocKind — do not conflate.
+ */
+export type DocgraphKind = "doc" | "proposal" | "decision" | "canonical" | "spec";
+
+/** Kind-specific lifecycle values by portable kind (legacy kinds included). */
+export const LIFECYCLE_BY_KIND: Record<DocgraphKind, string[]> = {
+  doc: ["current", "superseded"],
+  canonical: ["current", "superseded"],
+  proposal: ["proposed", "accepted", "implemented", "superseded"],
+  spec: ["proposed", "accepted", "implemented", "superseded"],
+  decision: ["proposed", "accepted", "superseded"],
+};
+
+/** Independent code-conformance states. Never inferred from lifecycle. */
+export type CodeConformance = "unverified" | "matches" | "drift" | "not_applicable";
+
+export const CONFORMANCE_VALUES: CodeConformance[] = ["unverified", "matches", "drift", "not_applicable"];
 
 /** How one document relates to another in the six-kind semantic graph. */
 export type EdgeKind = "part_of" | "updates" | "source" | "decides_for" | "superseded_by" | "link";
@@ -13,12 +38,26 @@ export type EdgeKind = "part_of" | "updates" | "source" | "decides_for" | "super
 /** How a backlink reaches this doc (wiki-reference or a typed relation). */
 export type BacklinkVia = "wiki" | "part_of" | "updates" | "source" | "decides_for" | "superseded_by" | "link";
 
+export interface DocgraphGenerated {
+  index: string;
+  graph: string;
+}
+
 export interface DocgraphDoc {
   subject: string;
   title: string;
   path: string;
   kind: DocgraphKind;
   status: string;
+  /** Kind-specific lifecycle mirror of status. */
+  lifecycle: string;
+  kind_source?: string;
+  /** Independent verification claim — never inferred from lifecycle. */
+  code_conformance: string;
+  /** `YYYY-MM-DD @ <commit>` stamp backing a `matches` claim. */
+  last_verified?: string;
+  /** Stated verification scope backing a `matches` claim. */
+  describes?: string[];
   keywords: string[];
   part_of?: string;
   updates?: string[];
@@ -32,6 +71,8 @@ export interface DocgraphNode {
   path: string;
   title: string;
   status: string;
+  lifecycle?: string;
+  code_conformance?: string;
 }
 
 export interface DocgraphEdge {
@@ -50,6 +91,7 @@ export interface DocgraphResponse {
   docs: DocgraphDoc[];
   graph: { nodes: DocgraphNode[]; edges: DocgraphEdge[]; graph_generated: boolean };
   issues: DocgraphIssue[];
+  generated: DocgraphGenerated;
 }
 
 /** A `[[ref]]` occurrence in a doc body, with its resolution against the corpus. */
@@ -73,7 +115,18 @@ export interface DocgraphDocDetail {
   title: string;
   path: string;
   kind: DocgraphKind;
+  kind_source?: string;
   status: string;
+  /** Kind-specific lifecycle mirror of status. */
+  lifecycle: string;
+  /** Independent verification claim — never inferred from lifecycle. */
+  code_conformance: string;
+  /** `YYYY-MM-DD @ <commit>` stamp backing a `matches` claim. */
+  last_verified?: string;
+  /** Stated verification scope backing a `matches` claim. */
+  describes?: string[];
+  /** The requested reference when an old deep link forwarded here. */
+  resolved_from?: string;
   /** Parsed front-matter. Rendered as a typed header card, never as raw YAML. */
   header: Record<string, unknown>;
   /** Markdown body with the front-matter already stripped. */

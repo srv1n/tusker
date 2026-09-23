@@ -3993,6 +3993,11 @@ func (s *RuntimeStore) ReclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now 
 }
 
 func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now time.Time, ttl time.Duration, reason string) (bool, error) {
+	// An interactive owner can be quiet for longer than a lease. Only its
+	// explicit work-session lifecycle or an attributed operator release ends it.
+	if expected.HandRun && !expected.Terminal {
+		return false, nil
+	}
 	if ttl <= 0 {
 		ttl = defaultRunLeaseTTL
 	}
@@ -4009,7 +4014,7 @@ func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now 
 	// a licence to orphan the holder. The manual form additionally rejects an
 	// absent identity above, so it cannot convert uncertainty into dispatch
 	// capacity.
-	if expected.ProcessPID > 0 && (processExists(expected.ProcessPID) || (expected.ProcessPGID > 0 && processGroupExists(expected.ProcessPGID))) {
+	if expected.ProcessPID > 0 && runProcessGroupAlive(expected) {
 		return false, nil
 	}
 	result, err := s.exec(`UPDATE runs
@@ -4024,6 +4029,7 @@ func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now 
 			lease_expires_at = '',
 			updated_at = ?
 		WHERE project_id = ? AND record_id = ?
+			AND (hand_run IS NULL OR hand_run = 0)
 			AND lease_state IN ('claimed', 'running')
 			AND lease_expires_at != ''
 			AND lease_expires_at < ?
@@ -5315,6 +5321,26 @@ func (s *RuntimeStore) SetSetting(key, value string) error {
 	_, err := s.exec(`INSERT INTO daemon_settings (key, value)
 		VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
+func (s *RuntimeStore) SetSettingIfValue(key, expected, value string) (bool, error) {
+	var result sql.Result
+	var err error
+	if expected == "" {
+		result, err = s.exec(`INSERT INTO daemon_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING`, key, value)
+	} else {
+		result, err = s.exec(`UPDATE daemon_settings SET value = ? WHERE key = ? AND value = ?`, value, key, expected)
+	}
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *RuntimeStore) DeleteSettingIfValue(key, expected string) error {
+	_, err := s.exec(`DELETE FROM daemon_settings WHERE key = ? AND value = ?`, key, expected)
 	return err
 }
 

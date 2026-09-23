@@ -66,7 +66,7 @@ for line in sys.stdin:
 	waitForStatusFile(t, filepath.Join(tempRoot, "codex.status.json"))
 }
 
-func TestFreshSessionPerAttemptClaudeStartsNewSession(t *testing.T) {
+func TestClaudeNativeResumeKeepsSession(t *testing.T) {
 	tempRoot := t.TempDir()
 	workspaceRoot := filepath.Join(tempRoot, "workspace")
 	if err := ensureDir(workspaceRoot); err != nil {
@@ -79,14 +79,14 @@ func TestFreshSessionPerAttemptClaudeStartsNewSession(t *testing.T) {
 	scriptPath := filepath.Join(tempRoot, "fake-claude.py")
 	script := `#!/usr/bin/env python3
 import json,os,sys
-assert "--resume" not in sys.argv, sys.argv
+assert sys.argv[-2:]==["--resume","claude-predecessor"], sys.argv
 for line in sys.stdin:
     msg=json.loads(line)
     if msg.get("type")=="control_request":
         continue
     if msg.get("type")=="user":
-        assert os.environ.get("TUSKER_SESSION_REF","")=="", os.environ.get("TUSKER_SESSION_REF")
-        print(json.dumps({"type":"assistant","session_id":"claude-fresh","uuid":"claude-msg-fresh","message":{"id":"claude-msg-fresh","role":"assistant","content":[{"type":"text","text":"fresh"}]}}), flush=True)
+        assert os.environ.get("TUSKER_SESSION_REF","")=="claude-predecessor", os.environ.get("TUSKER_SESSION_REF")
+        print(json.dumps({"type":"assistant","session_id":"claude-predecessor","uuid":"claude-msg-resumed","message":{"id":"claude-msg-resumed","role":"assistant","content":[{"type":"text","text":"resumed"}]}}), flush=True)
         break
 `
 	if err := writeText(scriptPath, script); err != nil {
@@ -96,7 +96,7 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 
-	result, err := (&ClaudeRunner{}).Resume(context.Background(), ResumeRequest{
+	result, err := startLiveClaude(context.Background(), StartRequest{
 		ProjectID:     "project-1",
 		RecordID:      "APP-T-0001",
 		ItemID:        "APP-T-0001",
@@ -109,13 +109,11 @@ for line in sys.stdin:
 		Command:       scriptPath + " --input-format stream-json",
 		VaultPath:     tempRoot,
 		CodexPolicy:   CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"},
-		SessionRef:    "claude-predecessor",
-		MessageRef:    "claude-message",
-	})
+	}, &ResumeRequest{SessionRef: "claude-predecessor", MessageRef: "claude-message"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "claude-fresh", result.SessionRef, "fresh claude session")
+	assertEqual(t, "claude-predecessor", result.SessionRef, "resumed claude session")
 	waitForStatusFile(t, filepath.Join(tempRoot, "claude.status.json"))
 }
 

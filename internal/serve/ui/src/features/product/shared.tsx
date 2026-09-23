@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cardClass } from "@/components/ui/primitives";
 import { AlertTriangle, ArrowRight, Check, CircleDashed } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -143,8 +144,10 @@ export function ProductRow({
   return (
     <div
       className={cn(
-        "grid min-h-[72px] grid-cols-1 gap-3 rounded-lg border-b border-line-soft px-3 py-3.5 transition-colors sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.55fr)_auto] sm:items-center sm:gap-6",
-        onClick && "cursor-pointer hover:bg-hover/70",
+        cardClass(Boolean(onClick)),
+        "relative mb-2 grid min-h-[72px] grid-cols-1 gap-3 px-4 py-3.5 last:mb-0 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.55fr)_auto] sm:items-center sm:gap-6",
+        // A row whose action is a link is clickable too; give it the same hover as an interactive card.
+        "transition-[border-color,box-shadow] [&:has(>div>a)]:hover:border-fainter [&:has(>div>a)]:hover:shadow-[0_4px_14px_color-mix(in_srgb,var(--k-ink)_7%,transparent)]",
       )}
       onClick={onClick}
     >
@@ -154,7 +157,9 @@ export function ProductRow({
         {detail && <div className="mt-1 text-[12px] leading-5 text-muted">{detail}</div>}
       </div>
       <div className="min-w-0">{status}</div>
-      <div className="flex items-center justify-end gap-2">{action ?? (onClick ? <ArrowRight size={15} /> : null)}</div>
+      {/* The first link in the action cell becomes the whole card: its text is hidden (still read by screen
+          readers) and its ::after covers the row. The link stays static so the row stays the containing block. */}
+      <div className="flex items-center justify-end gap-2 [&>a:first-child]:inline-block [&>a:first-child]:h-0 [&>a:first-child]:w-0 [&>a:first-child]:overflow-hidden [&>a:first-child]:outline-none [&>a:first-child]:after:absolute [&>a:first-child]:after:inset-0 [&>a:first-child]:after:rounded-xl [&>a:first-child]:after:content-[''] [&>a:first-child]:focus-visible:after:ring-2 [&>a:first-child]:focus-visible:after:ring-accent/40 [&>a:not(:first-child)]:relative [&>a:not(:first-child)]:z-10">{action ?? (onClick ? <ArrowRight size={15} /> : null)}</div>
     </div>
   );
 }

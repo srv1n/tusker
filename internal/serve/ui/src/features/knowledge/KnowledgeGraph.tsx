@@ -210,7 +210,7 @@ function GraphCanvas({ projectId, data }: { projectId: string; data: DocgraphRes
         <EmptyState
           icon={<Network size={22} strokeWidth={1.5} />}
           title="No document graph yet"
-          hint="Once the vault holds canonical docs, specs, or decision logs with doc-graph headers, their connections render here."
+          hint="Once the portable tree holds docs, proposals, or decisions with doc-graph headers, their connections render here."
         />
       </div>
     );

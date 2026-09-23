@@ -187,6 +187,14 @@ func v7RoutedFileCapsules(vaultPath string, task Note) string {
 		files = append(files, routedFile{Path: vaultDisplayPath(vaultPath, "SKILL.md"), Note: note})
 	}
 	for _, domain := range v7PacketDomains(vaultPath, task) {
+		// Portable indexes route before legacy records so capsules point at
+		// the same chapters humans read.
+		if v7HasPortableDomain(v7RepoRoot(vaultPath), domain) {
+			if note, err := readV7DomainIndex(vaultPath, domain); err == nil {
+				files = append(files, routedFile{Path: v7PortableDomainIndexRel(domain), Note: note})
+			}
+			continue
+		}
 		for _, rel := range []string{
 			filepath.ToSlash(filepath.Join("knowledge", "domains", domain, "INDEX.md")),
 			filepath.ToSlash(filepath.Join("knowledge", "domains", domain, "CANON.md")),

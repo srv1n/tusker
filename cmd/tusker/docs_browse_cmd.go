@@ -51,8 +51,17 @@ func docsBrowseCmd(args Args) error {
 		if entry.Title != "" && entry.Title != entry.Subject {
 			label += " — " + entry.Title
 		}
-		if entry.Status != "" {
-			label += " [" + entry.Status + "]"
+		// Lifecycle (status) and document kind are independent: the badge
+		// names both so a reader can tell where a document stands apart
+		// from whether its code was checked against it.
+		badge := entry.Status
+		if entry.DocumentKind != "" && entry.Status != "" {
+			badge = string(entry.DocumentKind) + "/" + entry.Status
+		} else if entry.DocumentKind != "" {
+			badge = string(entry.DocumentKind)
+		}
+		if badge != "" {
+			label += " [" + badge + "]"
 		}
 		fmt.Printf("  %s — %s\n", entry.Name, label)
 	}

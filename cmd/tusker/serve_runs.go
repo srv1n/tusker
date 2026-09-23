@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -44,39 +46,107 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 	if err != nil {
 		return serveRunSummary{}, err
 	}
+	attempts, _, err := s.store.ListAttemptsForRunPage(run.ProjectID, run.RecordID, 100)
+	if err != nil {
+		return serveRunSummary{}, err
+	}
+	activity := serveRunActivity(run, attempts, s.now())
 	return serveRunSummary{
-		TaskID:               taskID,
-		TaskTitle:            taskTitle,
-		ProjectID:            firstNonEmpty(run.ProjectID, snap.projectID),
-		Runner:               serveRunner(run.Runner),
-		RunnerName:           run.Runner,
-		RunnerProfile:        run.RunnerProfile,
-		RunnerHarness:        run.RunnerHarness,
-		Model:                run.RunnerModel,
-		RunnerEffort:         run.RunnerEffort,
-		RunnerFallbackReason: run.RunnerFallbackReason,
-		Lane:                 serveLane(run.Lane),
-		LeaseState:           serveLeaseState(run.LeaseState),
-		LeaseStateRaw:        run.LeaseState,
-		HandRun:              runHandRunOrigin(run, snap.project.VaultRoot),
-		ProcessRunning:       runProcessGroupAlive(run),
-		Outcome:              serveRunOutcome(run, s.now()),
-		ElapsedSec:           serveRunElapsedSec(run, s.now()),
-		SinceLastEventSec:    serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
-		Liveness:             serveRunLiveness(run, s.now()),
-		AttemptCount:         maxInt(run.AttemptCount, len(turnsByAttempt(turns))),
-		ActiveAttemptID:      run.ActiveAttemptID,
-		Terminal:             run.Terminal,
-		Error:                nullIfBlank(run.LastError),
-		Infrastructure:       run.Infrastructure,
-		LastHeartbeatAt:      nullIfBlank(run.LastHeartbeatAt),
-		NextWakeAt:           nullIfBlank(run.NextRetryAt),
-		WorkspacePath:        workspacePath,
-		WorkspaceMode:        workspaceMode,
-		StartedAt:            run.StartedAt,
-		UpdatedAt:            run.UpdatedAt,
-		Attention:            attention,
+		TaskID:                taskID,
+		TaskTitle:             taskTitle,
+		ProjectID:             firstNonEmpty(run.ProjectID, snap.projectID),
+		Runner:                serveRunner(run.Runner),
+		RunnerName:            run.Runner,
+		RunnerProfile:         run.RunnerProfile,
+		RunnerHarness:         run.RunnerHarness,
+		Model:                 run.RunnerModel,
+		RunnerEffort:          run.RunnerEffort,
+		RunnerFallbackReason:  run.RunnerFallbackReason,
+		Lane:                  serveLane(run.Lane),
+		LeaseState:            serveLeaseState(run.LeaseState),
+		LeaseStateRaw:         run.LeaseState,
+		HandRun:               runHandRunOrigin(run, snap.project.VaultRoot),
+		ProcessRunning:        runProcessGroupAlive(run),
+		Outcome:               serveRunOutcome(run, s.now()),
+		ElapsedSec:            serveRunElapsedSec(run, s.now()),
+		SinceLastEventSec:     serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
+		Liveness:              serveRunLiveness(run, s.now()),
+		AttemptCount:          maxInt(run.AttemptCount, len(turnsByAttempt(turns))),
+		ActiveAttemptID:       run.ActiveAttemptID,
+		Terminal:              run.Terminal,
+		Error:                 nullIfBlank(run.LastError),
+		Infrastructure:        run.Infrastructure,
+		LastHeartbeatAt:       nullIfBlank(run.LastHeartbeatAt),
+		LastMessageAt:         activity.MessageAt,
+		LastToolProgressAt:    activity.ToolAt,
+		MessageAgeSec:         activity.MessageAgeSec,
+		ToolProgressAgeSec:    activity.ToolAgeSec,
+		HeartbeatAgeSec:       activity.HeartbeatAgeSec,
+		ActivityCaptureState:  activity.CaptureState,
+		ActivityCaptureReason: activity.CaptureReason,
+		Activity:              activity,
+		NextWakeAt:            nullIfBlank(run.NextRetryAt),
+		WorkspacePath:         workspacePath,
+		WorkspaceMode:         workspaceMode,
+		StartedAt:             run.StartedAt,
+		UpdatedAt:             run.UpdatedAt,
+		Attention:             attention,
 	}, nil
+}
+
+func serveRunActivity(run RunStatus, attempts []RunAttempt, now time.Time) serveRunActivityFreshness {
+	activity := serveRunActivityFreshness{CaptureState: "missing"}
+	var latest RunAttempt
+	for _, attempt := range attempts {
+		if attempt.AttemptID == run.ActiveAttemptID && run.ActiveAttemptID != "" {
+			latest = attempt
+			break
+		}
+		if latest.AttemptID == "" || attempt.StartedAt > latest.StartedAt {
+			latest = attempt
+		}
+	}
+	paths := []string{bestRunEventPath(run, []RunAttempt{latest}), bestRunLogPath(run, []RunAttempt{latest})}
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			activity.CaptureState = "available"
+			break
+		} else if err != nil && !os.IsNotExist(err) {
+			activity.CaptureState, activity.CaptureReason = "unavailable", "recorded activity cannot be read"
+		}
+	}
+	for _, event := range serveRunEventsAll(run, attempts) {
+		if _, ok := parseRunTimestamp(event.TS); !ok {
+			continue
+		}
+		switch event.Kind {
+		case "heartbeat":
+			if event.TS > toString(activity.HeartbeatAt) {
+				activity.HeartbeatAt = event.TS
+			}
+		case "agent_message", "message":
+			if event.TS > toString(activity.MessageAt) {
+				activity.MessageAt = event.TS
+			}
+		case "tool_call", "tool_result", "tool_progress":
+			if event.TS > toString(activity.ToolAt) {
+				activity.ToolAt = event.TS
+			}
+		}
+	}
+	if activity.HeartbeatAt != nil {
+		activity.HeartbeatAgeSec = serveSinceSec(toString(activity.HeartbeatAt), now)
+	}
+	if activity.MessageAt != nil {
+		activity.MessageAgeSec = serveSinceSec(toString(activity.MessageAt), now)
+	}
+	if activity.ToolAt != nil {
+		activity.ToolAgeSec = serveSinceSec(toString(activity.ToolAt), now)
+	}
+	return activity
 }
 
 func serveFindRun(runs []RunStatus, id string) (RunStatus, bool) {
@@ -351,7 +421,7 @@ func turnsByAttempt(turns []RunTurn) map[string]struct{} {
 	return out
 }
 
-func serveRunEvents(run RunStatus, attempts []RunAttempt) []serveRunEvent {
+func serveRunEventsAll(run RunStatus, attempts []RunAttempt) []serveRunEvent {
 	var latest RunAttempt
 	for _, attempt := range attempts {
 		if run.ActiveAttemptID != "" {
@@ -368,11 +438,44 @@ func serveRunEvents(run RunStatus, attempts []RunAttempt) []serveRunEvent {
 	for _, payload := range runActivityTail(bestRunEventPath(run, attempts)) {
 		out = appendRunActivity(out, serveRunEventFromPayload(payload))
 	}
+	eventCount := len(out)
 	for _, payload := range runActivityTail(bestRunLogPath(run, attempts)) {
 		for _, event := range cliRunActivity(payload) {
 			out = appendRunActivity(out, event)
 		}
 	}
+	// Empty timestamps inherit their source's previous timestamp only while sorting.
+	type orderedEvent struct {
+		event serveRunEvent
+		key   string
+		index int
+	}
+	ordered := make([]orderedEvent, 0, len(out))
+	last := [2]string{}
+	for i, event := range out {
+		source := 0
+		if i >= eventCount {
+			source = 1
+		}
+		if event.TS != "" {
+			last[source] = event.TS
+		}
+		ordered = append(ordered, orderedEvent{event, last[source], i})
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].key != ordered[j].key {
+			return ordered[i].key < ordered[j].key
+		}
+		return ordered[i].index < ordered[j].index
+	})
+	for i := range ordered {
+		out[i] = ordered[i].event
+	}
+	return out
+}
+
+func serveRunEvents(run RunStatus, attempts []RunAttempt) []serveRunEvent {
+	out := serveRunEventsAll(run, attempts)
 	// Keep diagnostics from displacing the recent messages with heartbeat noise.
 	activityCount, diagnosticCount := 0, 0
 	keep := make([]serveRunEvent, 0, 100)

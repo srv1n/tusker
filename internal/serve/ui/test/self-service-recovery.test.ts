@@ -32,17 +32,17 @@ function listItem(id: string, authorization: string, rec?: RecoveryDiagnosis): W
 
 function renderList(waves: WaveListItem[], backgroundWorkEnabled?: boolean) {
   return renderToStaticMarkup(createElement(WaveList, {
-    waves, projectName: "demo", backgroundWorkEnabled, query: "", onQueryChange: () => {}, onOpenWave: () => {}, loading: false,
+    waves, backgroundWorkEnabled, query: "", onOpenWave: () => {}, loading: false,
   }));
 }
 
 describe("self-service recovery rendering", () => {
-  test("A1: armed+queued row shows the actual blocking cause", () => {
+  test("A1: an armed+queued row waits under Up next with no alarm chip", () => {
     const html = renderList([
       listItem("W-ARMED-QUEUED", "armed", recovery({ queued: true, blockingCause: "Queued. Next check 2026-09-22T00:01:00Z.", causeCode: "queued", nextActor: "daemon" })),
     ]);
-    expect(html).toContain("Armed + Queued");
-    expect(html).toContain("Queued. Next check");
+    expect(html).toContain("Up next · 1");
+    expect(html).not.toContain("Blocked");
     expect(html).not.toContain("Running");
   });
 
@@ -87,7 +87,7 @@ describe("self-service recovery rendering", () => {
 
   test("A2: refused higher-impact actions keep explicit labels", () => {
     const html = renderList([listItem("W-PAUSED", "paused", recovery({ authorization: "paused", blockingCause: "Wave is paused.", causeCode: "paused", nextActor: "operator", nextAction: "tusker wave resume W-PAUSED" }))], true);
-    expect(html).toContain("Paused on record");
+    expect(html).toContain(">Paused<");
     expect(html).toContain("Wave is paused.");
   });
 

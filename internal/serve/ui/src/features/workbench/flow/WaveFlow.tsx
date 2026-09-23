@@ -1,28 +1,29 @@
 /*
-  WUX-T-0005 — readable interactive wave graph.
+  WUX-T-0005 — the wave dependency graph, a full-bleed pan/zoom canvas.
 
-  WaveFlow renders real prerequisite relationships (from TaskDetail.deps)
-  as directed, readable nodes and edges. Graph transform is a controlled
-  viewport: selecting a task or receiving a live state update never resets
-  it. State is icon + label (color is supplementary); model names appear
-  only from supplied live-run facts. Outside-wave references without
-  caller-confirmed facts render as "Unresolved dependency", never as
-  missing or valid external work.
+  Real prerequisite edges (TaskDetail.deps). The transform is a controlled
+  viewport: selection and live updates never reset it. State is glyph +
+  label; outside-wave references sit in a light "Earlier waves" lane.
+  Unconfirmed outside references stay "Unresolved dependency".
 */
 
-import { useMemo } from "react";
-import type { RunSummary, TaskDetail, WaveReview, WaveReviewMember } from "@/types/domain";
+import { useEffect, useMemo, useRef } from "react";
+import type { RunSummary, TaskDetail, WaveReviewMember } from "@/types/domain";
 import {
   DISPLAY_STATE_LABEL,
   NODE_KIND_LABEL,
   NODE_WIDTH,
   TOP_DOWN_NODE_HEIGHT,
   buildFlowGraph,
-  crossWaveWaitSummary,
   essentialFlowEdges,
+  fitViewport,
+  initialViewport,
   layoutTopDownFlowGraph,
+  panViewport,
+  zoomViewport,
   type DependencyFact,
   type FlowDisplayState,
+  type FlowNode,
   type FlowViewport,
 } from "./flowGraph";
 
@@ -32,8 +33,8 @@ export interface WaveFlowProps {
   runs: RunSummary[];
   dependencyFacts?: Record<string, DependencyFact>;
   reviewMembers?: WaveReviewMember[];
-  authorization?: WaveReview["authorization"];
-  startEnabled?: boolean;
+  /** Tasks with an open wave-level human action. */
+  needsYouIds?: string[];
   selectedTaskId?: string;
   viewport?: FlowViewport;
   onSelectTask: (id: string) => void;
@@ -101,87 +102,80 @@ function StateGlyph({ state }: { state: FlowDisplayState }) {
   }
 }
 
-function edgePath(from: { x: number; y: number }, to: { x: number; y: number }): string {
-  const x1 = from.x + NODE_WIDTH / 2;
-  const y1 = from.y + TOP_DOWN_NODE_HEIGHT;
-  const x2 = to.x + NODE_WIDTH / 2;
-  const y2 = to.y;
-  const bend = Math.max(28, (y2 - y1) / 2);
+type Point = { x: number; y: number };
+
+const PILL_WIDTH = 196;
+const PILL_HEIGHT = 36;
+const PILL_GAP = 12;
+const LANE_HEIGHT = 20 + PILL_HEIGHT + 48;
+
+function edgePath(x1: number, y1: number, x2: number, y2: number): string {
+  const bend = Math.max(24, (y2 - y1) / 2);
   return `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2 - 3}`;
 }
 
+const stateLabel = (node: FlowNode) => node.stateLabel ?? DISPLAY_STATE_LABEL[node.state];
+
 export function WaveFlow(props: WaveFlowProps) {
-  const { memberIds, tasks, runs, dependencyFacts, reviewMembers, selectedTaskId, onSelectTask } = props;
+  const { memberIds, tasks, runs, dependencyFacts, reviewMembers, selectedTaskId, onSelectTask, onViewportChange } = props;
+  const viewport = props.viewport ?? initialViewport();
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ start: Point; origin: FlowViewport } | null>(null);
+  // Native wheel listener: React's is passive, and ctrl+wheel must not zoom the page.
+  const latest = useRef({ viewport, onViewportChange });
+  latest.current = { viewport, onViewportChange };
 
   const graph = useMemo(
     () => buildFlowGraph({ memberIds, tasks, runs, dependencyFacts, reviewMembers }),
     [memberIds, tasks, runs, dependencyFacts, reviewMembers],
   );
-  const layout = useMemo(() => layoutTopDownFlowGraph(graph, memberIds), [graph, memberIds]);
-  const nodes = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const members = useMemo(() => graph.nodes.filter((node) => node.kind === "task"), [graph.nodes]);
+  const earlier = useMemo(() => graph.nodes.filter((node) => node.kind !== "task"), [graph.nodes]);
+  const layout = useMemo(() => layoutTopDownFlowGraph({ ...graph, nodes: members }, memberIds), [graph, members, memberIds]);
   const edges = useMemo(() => essentialFlowEdges(graph), [graph]);
-  const executing = graph.nodes.filter((node) => node.state === "executing");
-  const reviewing = graph.nodes.filter((node) => node.state === "reviewing");
-  const awaitingReview = graph.nodes.filter((node) => node.state === "awaiting_review");
-  const waitSummary = crossWaveWaitSummary(
-    Object.values(dependencyFacts ?? {}),
-    props.authorization ?? "inert",
-    props.startEnabled ?? false,
-  );
-  const executionStatus = executing.length > 0
-    ? `Executing now: ${executing.map((node) => node.title).join(", ")}`
-    : reviewing.length > 0
-      ? `Reviewing now: ${reviewing.map((node) => node.title).join(", ")}`
-      : awaitingReview.length > 0
-        ? `Awaiting review: ${awaitingReview.map((node) => node.title).join(", ")}`
-      : "Nothing is executing now.";
+  const laneTop = earlier.length > 0 ? LANE_HEIGHT : 0;
+  const width = Math.max(layout.width, earlier.length * (PILL_WIDTH + PILL_GAP) - PILL_GAP);
+  const height = laneTop + layout.height;
+  const memberAt = (id: string): Point | undefined => {
+    const position = layout.positions[id];
+    return position && { x: position.x, y: position.y + laneTop };
+  };
+  const pillAt = (index: number): Point => ({ x: index * (PILL_WIDTH + PILL_GAP), y: 20 });
 
-  if (props.loading) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-6" role="status" aria-label="Loading wave graph">
-        <p className="text-[13px] text-muted">Loading task dependencies…</p>
-      </div>
-    );
-  }
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const { viewport: current, onViewportChange: change } = latest.current;
+      if (event.ctrlKey || event.metaKey) {
+        const box = canvas.getBoundingClientRect();
+        change(zoomViewport(current, Math.exp(-event.deltaY / 300), { x: event.clientX - box.left, y: event.clientY - box.top }));
+      } else change(panViewport(current, -event.deltaX, -event.deltaY));
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [props.loading, props.error, memberIds.length]);
 
-  if (props.error) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-6" role="alert">
-        <p className="text-[14px] font-medium text-ink">Dependency graph unavailable</p>
-        <p className="mt-1 text-[13px] text-muted">{props.error}</p>
-      </div>
-    );
-  }
+  if (props.loading) return <p role="status" aria-label="Loading wave graph" className="p-6 text-[13px] text-muted">Loading task dependencies…</p>;
+  if (props.error) return <p role="alert" className="p-6 text-[13px] text-fail">Dependency graph unavailable. {props.error}</p>;
+  if (memberIds.length === 0) return <p className="p-6 text-[13px] text-muted">No tasks in this wave.</p>;
 
-  if (memberIds.length === 0) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-6">
-        <p className="text-[14px] font-medium text-ink">No tasks in this wave</p>
-        <p className="mt-1 text-[13px] text-muted">There are no wave members to arrange yet.</p>
-      </div>
-    );
-  }
+  const fit = () => {
+    const canvas = canvasRef.current;
+    if (canvas) onViewportChange(fitViewport({ width, height }, { width: canvas.clientWidth, height: canvas.clientHeight }, 32));
+  };
+  const zoom = (factor: number) => {
+    const canvas = canvasRef.current;
+    onViewportChange(zoomViewport(viewport, factor, canvas ? { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 } : undefined));
+  };
+  const zoomButton = "h-7 min-w-7 px-2 text-[12px] text-muted hover:bg-hover hover:text-ink";
 
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-panel" aria-label="Wave dependency graph">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
-        <div>
-          <h3 className="text-[14px] font-semibold text-ink">Execution plan</h3>
-          <p className="mt-0.5 text-[12px] text-muted" aria-live="polite">{executionStatus}</p>
-        </div>
-      </div>
-
-      {waitSummary && (
-        <section aria-label="Cross-wave dependency wait" className="border-b border-line bg-surface px-4 py-3">
-          <h4 className="text-[13px] font-semibold text-ink">{waitSummary.title}</h4>
-          <p className="mt-1 text-[12px] leading-5 text-muted">{waitSummary.body}</p>
-          {waitSummary.hint && <p className="mt-1 text-[12px] leading-5 text-muted">{waitSummary.hint}</p>}
-        </section>
-      )}
-
+    <div className="relative flex min-h-0 flex-1 flex-col bg-surface" aria-label="Wave dependency graph">
       {graph.warnings.length > 0 && (
-        <details className="border-b border-line bg-surface px-4 py-2.5">
-          <summary className="cursor-pointer text-[12.5px] font-medium text-warn">
+        <details className="absolute left-3 top-3 z-20 max-w-md rounded-md border border-line bg-raised px-3 py-1.5 shadow-sm">
+          <summary className="cursor-pointer text-[12px] font-medium text-warn">
             {graph.warnings.length} dependency {graph.warnings.length === 1 ? "issue" : "issues"}
           </summary>
           <ul className="mt-2 space-y-1.5 pl-4" aria-label="Graph warnings">
@@ -189,10 +183,25 @@ export function WaveFlow(props: WaveFlowProps) {
           </ul>
         </details>
       )}
-
-      <div className="overflow-x-auto bg-surface p-5" role="region" aria-label={`Dependency graph with ${graph.nodes.length} tasks. Scroll normally; arrows point from prerequisites to dependent tasks.`}>
-        <div className="relative mx-auto" style={{ width: layout.width, height: layout.height }}>
-          <svg width={layout.width} height={layout.height} className="absolute inset-0" aria-hidden="true">
+      <div
+        ref={canvasRef}
+        className="relative min-h-0 flex-1 cursor-grab touch-none overflow-hidden active:cursor-grabbing"
+        role="region"
+        aria-label={`Dependency graph with ${members.length} tasks. Drag or scroll to pan; ctrl+scroll to zoom. Arrows point from prerequisites to dependent tasks.`}
+        onPointerDown={(event) => {
+          if ((event.target as HTMLElement).closest("button, details")) return;
+          drag.current = { start: { x: event.clientX, y: event.clientY }, origin: viewport };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const from = drag.current;
+          if (from) onViewportChange(panViewport(from.origin, event.clientX - from.start.x, event.clientY - from.start.y));
+        }}
+        onPointerUp={() => { drag.current = null; }}
+        onPointerCancel={() => { drag.current = null; }}
+      >
+        <div className="absolute left-0 top-0 origin-top-left" style={{ width, height, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})` }}>
+          <svg width={width} height={height} className="absolute inset-0 overflow-visible" aria-hidden="true">
             <defs>
               <marker id="wave-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
                 <path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="var(--color-muted)" strokeWidth="1.4" />
@@ -202,43 +211,73 @@ export function WaveFlow(props: WaveFlowProps) {
               </marker>
             </defs>
             {edges.map((edge) => {
-              const from = layout.positions[edge.from];
-              const to = layout.positions[edge.to];
-              if (!from || !to) return null;
-              return <path key={`${edge.from}→${edge.to}`} d={edgePath(from, to)} fill="none" stroke={edge.cyclic ? "var(--color-warn)" : "var(--color-muted)"} strokeWidth={edge.cyclic ? 2 : 1.5} strokeDasharray={edge.cyclic ? "6 4" : undefined} markerEnd={edge.cyclic ? "url(#wave-arrow-cycle)" : "url(#wave-arrow)"} opacity="0.75" />;
+              const to = memberAt(edge.to);
+              const fromMember = memberAt(edge.from);
+              const pill = earlier.findIndex((node) => node.id === edge.from);
+              if (!to || (!fromMember && pill < 0)) return null;
+              const from = fromMember
+                ? { x: fromMember.x + NODE_WIDTH / 2, y: fromMember.y + TOP_DOWN_NODE_HEIGHT }
+                : { x: pillAt(pill).x + PILL_WIDTH / 2, y: pillAt(pill).y + PILL_HEIGHT };
+              const d = edgePath(from.x, from.y, to.x + NODE_WIDTH / 2, to.y);
+              if (!fromMember) return <path key={`${edge.from}→${edge.to}`} d={d} fill="none" stroke="var(--color-faint)" strokeWidth={1} strokeDasharray="3 4" opacity="0.6" />;
+              return <path key={`${edge.from}→${edge.to}`} d={d} fill="none" stroke={edge.cyclic ? "var(--color-warn)" : "var(--color-muted)"} strokeWidth={edge.cyclic ? 2 : 1.5} strokeDasharray={edge.cyclic ? "6 4" : undefined} markerEnd={edge.cyclic ? "url(#wave-arrow-cycle)" : "url(#wave-arrow)"} opacity="0.75" />;
             })}
           </svg>
-          {layout.layers.flatMap((layer) =>
-            layer.map((id) => {
-                const node = nodes.get(id);
-                if (!node) return null;
-                const selected = selectedTaskId === node.id;
-                const active = node.state === "executing" || node.state === "reviewing";
-                const position = layout.positions[id];
-                return (
-                <button
-                  key={node.id}
-                  type="button"
-                  onClick={() => onSelectTask(node.id)}
-                  aria-pressed={selected}
-                  aria-label={`${node.title} (${node.id}), ${NODE_KIND_LABEL[node.kind]}, ${node.stateLabel ?? DISPLAY_STATE_LABEL[node.state]}${node.model ? `, model ${node.model}` : ""}${selected ? ", selected" : ""}`}
-                  style={{ left: position.x, top: position.y, width: NODE_WIDTH, height: TOP_DOWN_NODE_HEIGHT }}
-                  className={`absolute z-10 min-w-0 rounded-lg border bg-panel p-3 text-left shadow-sm transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${selected || active ? "border-accent ring-1 ring-accent" : "border-line"} ${node.kind !== "task" ? "border-dashed" : ""}`}
-                >
-                  <span className="flex items-center gap-1.5 text-[11.5px] text-muted">
-                    <StateGlyph state={node.state} />
-                    <span className="font-medium">{node.stateLabel ?? DISPLAY_STATE_LABEL[node.state]}</span>
-                    {node.kind !== "task" && <span className="ml-auto font-mono text-[9.5px] uppercase tracking-wide text-faint">{NODE_KIND_LABEL[node.kind]}</span>}
-                  </span>
-                  <span className="mt-2 line-clamp-2 text-[13.5px] font-semibold leading-snug text-ink">{node.title}</span>
-                  {node.context && <span className="mt-0.5 block truncate text-[11px] text-muted">{node.context}</span>}
-                  <span className="mt-1.5 block truncate font-mono text-[10.5px] text-faint">{node.id}{node.tier ? ` · Tier ${{ light: 1, standard: 2, demanding: 3 }[node.tier] ?? node.tier}` : ""}{node.model ? ` · ${node.model}` : ""}</span>
-                  {node.depIds.length > 0 && <span className="mt-2 block truncate border-t border-line pt-2 text-[10.5px] text-muted" title={node.depIds.join(", ")}>After {node.depIds.join(", ")}</span>}
-                </button>
-                );
-              }),
-          )}
+          {earlier.length > 0 && <p className="absolute left-0 top-0 text-[11px] font-medium text-faint">Earlier waves</p>}
+          {earlier.map((node, index) => {
+            const at = pillAt(index);
+            const label = stateLabel(node);
+            return (
+              <button
+                key={node.id}
+                type="button"
+                onClick={() => onSelectTask(node.id)}
+                aria-pressed={selectedTaskId === node.id}
+                aria-label={`${node.title} (${node.id}), ${NODE_KIND_LABEL[node.kind]}, ${label}`}
+                title={[node.id, node.context, label].filter(Boolean).join(" · ")}
+                style={{ left: at.x, top: at.y, width: PILL_WIDTH, height: PILL_HEIGHT }}
+                className={`absolute z-10 flex items-center gap-1.5 rounded-full border border-dashed bg-surface px-3 text-left text-[12px] text-muted hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${selectedTaskId === node.id ? "border-accent" : "border-line"}`}
+              >
+                <StateGlyph state={node.state} />
+                <span className="truncate">{node.title}</span>
+              </button>
+            );
+          })}
+          {members.map((node) => {
+            const at = memberAt(node.id);
+            if (!at) return null;
+            const selected = selectedTaskId === node.id;
+            const needsYou = node.needsYou || props.needsYouIds?.includes(node.id);
+            const label = stateLabel(node);
+            return (
+              <button
+                key={node.id}
+                type="button"
+                onClick={() => onSelectTask(node.id)}
+                aria-pressed={selected}
+                aria-label={`${node.title} (${node.id}), ${NODE_KIND_LABEL[node.kind]}, ${label}${needsYou ? ", needs you" : ""}${node.model ? `, model ${node.model}` : ""}${selected ? ", selected" : ""}`}
+                style={{ left: at.x, top: at.y, width: NODE_WIDTH, height: TOP_DOWN_NODE_HEIGHT }}
+                className={`absolute z-10 flex min-w-0 flex-col rounded-lg border bg-raised px-3 py-2.5 text-left shadow-sm transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${selected ? "border-accent ring-2 ring-accent/40" : needsYou ? "border-warn ring-1 ring-warn/40" : "border-line"}`}
+              >
+                <span className="flex h-4 flex-none items-center justify-between gap-2 font-mono text-[10.5px] leading-4 text-faint">
+                  <span className="truncate">{node.id}</span>
+                  {needsYou && <span className="flex-none rounded-full bg-warn-soft px-1.5 font-sans text-[10.5px] font-medium text-warn">Needs you</span>}
+                </span>
+                <span title={node.title} className="mt-1 line-clamp-2 flex-none break-words text-[13.5px] font-semibold leading-[18px] text-ink">{node.title}</span>
+                <span className="mt-auto flex h-[18px] flex-none items-center gap-1.5 text-[11.5px] leading-[18px] text-muted">
+                  <StateGlyph state={node.state} />
+                  <span className="font-medium">{label}</span>
+                  {node.model && <span className="truncate text-faint">· {node.model}</span>}
+                </span>
+              </button>
+            );
+          })}
         </div>
+      </div>
+      <div className="absolute bottom-3 right-3 z-20 flex overflow-hidden rounded-md border border-line bg-raised shadow-sm" aria-label="Graph zoom">
+        <button type="button" className={zoomButton} onClick={() => zoom(1 / 1.2)} aria-label="Zoom out">−</button>
+        <button type="button" className={`${zoomButton} border-x border-line`} onClick={fit}>Fit</button>
+        <button type="button" className={zoomButton} onClick={() => zoom(1.2)} aria-label="Zoom in">+</button>
       </div>
     </div>
   );

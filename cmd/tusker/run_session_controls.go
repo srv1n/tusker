@@ -35,6 +35,7 @@ const (
 	runSessionControlPause             = "pause"
 	runSessionControlStop              = "stop"
 	runSessionControlFresh             = "start_fresh"
+	runSessionControlContextRecovery   = "recover_context"
 	runSessionControlPending           = "pending"
 	runSessionControlQueued            = "queued"
 	runSessionControlSettledState      = "settled"
@@ -81,6 +82,29 @@ func saveRunSessionControlIntent(store *RuntimeStore, intent runSessionControlIn
 		return err
 	}
 	return store.SetSetting(runSessionControlSettingKey(intent.ProjectID, intent.RecordID), string(raw))
+}
+
+func saveRunSessionControlIntentIfPrior(store *RuntimeStore, intent runSessionControlIntent, prior *runSessionControlIntent) (bool, error) {
+	if store == nil {
+		return false, fmt.Errorf("runtime store is required")
+	}
+	intent.Schema = runSessionControlSchema
+	if intent.ProjectID == "" || intent.RecordID == "" || intent.Action == "" || intent.State == "" {
+		return false, fmt.Errorf("run control intent identity is incomplete")
+	}
+	raw, err := json.Marshal(intent)
+	if err != nil {
+		return false, err
+	}
+	expected := ""
+	if prior != nil {
+		previous, err := json.Marshal(prior)
+		if err != nil {
+			return false, err
+		}
+		expected = string(previous)
+	}
+	return store.SetSettingIfValue(runSessionControlSettingKey(intent.ProjectID, intent.RecordID), expected, string(raw))
 }
 
 func runSessionControlPauseReason(run RunStatus) string {

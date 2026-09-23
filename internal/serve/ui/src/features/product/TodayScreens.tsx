@@ -46,7 +46,7 @@ function deliveredWaves(waves: WaveSummary[]) {
 }
 
 function taskHref(projectId: string, taskId: string) {
-  return `/p/${encodeURIComponent(projectId)}/docs?path=${encodeURIComponent(taskId)}`;
+  return `/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
 }
 
 function projectHref(projectId: string) {

@@ -93,7 +93,9 @@ func initDocumentationOverview() string {
 title: "System overview"
 subject: overview
 keywords: [system, documentation, architecture]
-status: canonical
+kind: doc
+status: current
+code_conformance: unverified
 created: %s
 last_verified:
 read_when: "You need the top-level map of how this repository works."

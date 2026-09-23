@@ -1648,7 +1648,7 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID string) {
-	snap, err := s.loadSnapshotForRequest(r)
+	snap, err := s.loadFreshSnapshotForProject(strings.TrimSpace(r.URL.Query().Get("project")))
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -1690,6 +1690,21 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 		delivery.ProofStatus = firstNonEmpty(stringField(task.Data, "proof_status"), "pending")
 	}
 	detail := serveRunDetail{serveRunSummary: summary, WorkspacePath: summary.WorkspacePath, Attempts: []serveAttempt{}, Authorization: auth, Identity: identity, Session: session, Resume: resumeCapability(&run, session), Delivery: delivery}
+	intent, intentErr := loadRunSessionControlIntent(s.store, run.ProjectID, run.RecordID)
+	if intentErr != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": intentErr.Error()})
+		return
+	}
+	if intent != nil && (intent.State == runSessionControlPending || intent.State == runSessionControlUnknown || intent.State == runSessionControlQueued) {
+		detail.Controls.Pending = intent
+	}
+	wave := Note{}
+	if task, found := snap.notesByID[taskID]; found {
+		wave = snap.notesByID[stringField(task.Data, "wave")]
+	}
+	for _, action := range []string{"reconnect", "continue", "recover_context", "pause", "stop", "start_fresh"} {
+		detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.runActionCapability(action, snap.project, wave, run, intent))
+	}
 	for i, attempt := range attempts {
 		detail.Attempts = append(detail.Attempts, serveAttempt{
 			ID:          attempt.AttemptID,
@@ -1902,12 +1917,17 @@ func (s *serveServer) handleEpics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serveServer) handleWaves(w http.ResponseWriter, r *http.Request) {
+	view := r.URL.Query().Get("view")
+	if view != "" && view != "list" {
+		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown view"})
+		return
+	}
 	snap, err := s.loadSnapshotForRequest(r)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	if r.URL.Query().Get("view") == "list" {
+	if view == "list" {
 		serveJSON(w, http.StatusOK, s.attachWaveListRecovery(serveWaveList(snap), snap))
 		return
 	}
@@ -2083,20 +2103,37 @@ func serveEpics(snap serveSnapshot) []serveEpicSummary {
 
 func serveWaveList(snap serveSnapshot) []serveWaveListItem {
 	out := make([]serveWaveListItem, 0, len(snap.waves))
+	idx := serveSnapshotIndex(snap)
+	runs := serveRunsByTask(snap.runs)
 	for _, wave := range snap.waves {
 		members := normalizeList(wave.Data["members"])
-		done := 0
+		count, done, review := 0, 0, 0
+		live := false
 		for _, id := range members {
-			if task, ok := snap.notesByID[id]; ok && serveTaskStatus(snap, task) == "done" {
-				done++
+			if task, ok := snap.notesByID[id]; ok && serveNoteKind(task) == "task" {
+				count++
+				status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
+				if status != "done" && status != "closed" && status != "review" && status != "cancelled" && status != "superseded" {
+					status = serveTaskStatus(snap, task)
+				}
+				if status == "done" || status == "closed" {
+					done++
+				}
+				if status == "review" || status == "done" || status == "closed" {
+					review++
+				}
+				if run, ok := runs[id]; ok && status != "done" && status != "review" && status != "cancelled" && status != "closed" && status != "superseded" && runConsumesDispatchCapacity(run) {
+					live = true
+				}
 			}
 		}
+		auth, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
 		out = append(out, serveWaveListItem{
 			ID: stringField(wave.Data, "id"), Title: stringField(wave.Data, "title"),
 			Summary: stringField(wave.Data, "summary"), Status: stringField(wave.Data, "status"),
-			Authorization: fallback(stringField(wave.Data, "authorization"), "disarmed"),
+			Authorization: auth,
 			LandedAt:      nullIfBlank(stringField(wave.Data, "landed_at")),
-			MemberCount:   len(members), DoneCount: done,
+			MemberCount:   count, DoneCount: done, LiveRun: live, ReviewWait: count > 0 && review == count && done < count,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -2171,6 +2208,16 @@ type serveRecoveryContext struct {
 	daemonStale  bool
 	daemonAbsent bool
 	directives   map[string]RunDirective
+}
+
+func serveEscalationsForRecord(escalations []SelfServiceRepairEscalation, recordID string) []SelfServiceRepairEscalation {
+	var matched []SelfServiceRepairEscalation
+	for _, escalation := range escalations {
+		if escalation.RecordID == recordID {
+			matched = append(matched, escalation)
+		}
+	}
+	return matched
 }
 
 func (s *serveServer) newServeRecoveryContext(projectID string, now time.Time) serveRecoveryContext {
@@ -2257,14 +2304,15 @@ func serveRunsByTask(runs []RunStatus) map[string]RunStatus {
 // Done, review, cancelled, closed, and superseded members wait on nothing.
 func serveWaitingMembers(snap serveSnapshot, wave Note, runs map[string]RunStatus) (owners, waiting []string) {
 	for _, id := range normalizeList(wave.Data["members"]) {
+		task, ok := snap.notesByID[id]
+		if !ok || serveNoteKind(task) != "task" {
+			continue
+		}
 		if run, ok := runs[id]; ok && runConsumesDispatchCapacity(run) {
 			owners = append(owners, id)
 			continue
 		}
-		status := ""
-		if task, ok := snap.notesByID[id]; ok {
-			status = strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
-		}
+		status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
 		switch status {
 		case "done", "closed", "review", "cancelled", "superseded":
 		default:
@@ -2291,7 +2339,11 @@ func (s *serveServer) recoveryForWave(wave Note, snap serveSnapshot, idx v7Index
 	recovery := &serveRecovery{
 		Authorization: authState,
 		Capabilities:  serveRecoveryCapabilitiesFor(),
-		Escalations:   rctx.escalations,
+	}
+	for _, id := range normalizeList(wave.Data["members"]) {
+		if task, ok := idx.Tasks[id]; ok {
+			recovery.Escalations = append(recovery.Escalations, serveEscalationsForRecord(rctx.escalations, trackerRecordID(task))...)
+		}
 	}
 	if rctx.scheduleOK {
 		schedule := rctx.schedule
@@ -2300,7 +2352,12 @@ func (s *serveServer) recoveryForWave(wave Note, snap serveSnapshot, idx v7Index
 	}
 	owners, waiting := serveWaitingMembers(snap, wave, runs)
 	for _, id := range normalizeList(wave.Data["members"]) {
-		if _, ok := rctx.directives[id]; ok {
+		task, ok := idx.Tasks[id]
+		if !ok {
+			continue
+		}
+		recordID := trackerRecordID(task)
+		if _, ok := rctx.directives[recordID]; ok {
 			recovery.Queued = true
 			break
 		}
@@ -2356,7 +2413,7 @@ func (s *serveServer) recoveryForTask(task Note, snap serveSnapshot, idx v7Index
 	recovery := &serveRecovery{
 		Authorization: fallback(waveAuth[stringField(task.Data, "wave")], "disarmed"),
 		Capabilities:  serveRecoveryCapabilitiesFor(),
-		Escalations:   rctx.escalations,
+		Escalations:   serveEscalationsForRecord(rctx.escalations, trackerRecordID(task)),
 	}
 	if rctx.scheduleOK {
 		schedule := rctx.schedule
@@ -2368,7 +2425,7 @@ func (s *serveServer) recoveryForTask(task Note, snap serveSnapshot, idx v7Index
 	}
 	run, hasRun := runs[taskID]
 	active := hasRun && runConsumesDispatchCapacity(run)
-	_, hasDirective := rctx.directives[taskID]
+	_, hasDirective := rctx.directives[trackerRecordID(task)]
 	waiting := !active
 	if hasRun {
 		switch strings.ToLower(strings.TrimSpace(stringField(task.Data, "status"))) {
@@ -2421,7 +2478,23 @@ func (s *serveServer) recoveryForTask(task Note, snap serveSnapshot, idx v7Index
 // pass: the note index, the runs by task, and the recovery context.
 func (s *serveServer) attachRecoveryInputs(snap serveSnapshot) (v7Index, map[string]RunStatus, serveRecoveryContext) {
 	now := time.Now().UTC()
-	return serveSnapshotIndex(snap), serveRunsByTask(snap.runs), s.newServeRecoveryContext(snap.projectID, now)
+	idx := serveSnapshotIndex(snap)
+	rctx := s.newServeRecoveryContext(snap.projectID, now)
+	for id, directive := range rctx.directives {
+		if directive.WaveID == "" {
+			continue
+		}
+		wave, ok := idx.Waves[directive.WaveID]
+		if !ok {
+			delete(rctx.directives, id)
+			continue
+		}
+		auth := waveAuthorizationProjection(snap.project.VaultRoot, idx, wave)
+		if directive.AuthorizationFingerprint != stringField(auth, "authorizedFingerprint") || directive.WaveAuthorizedAt != stringField(auth, "at") {
+			delete(rctx.directives, id)
+		}
+	}
+	return idx, serveRunsByTask(snap.runs), rctx
 }
 
 func (s *serveServer) attachWaveRecovery(out []serveWaveSummary, snap serveSnapshot) []serveWaveSummary {

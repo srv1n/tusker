@@ -310,9 +310,9 @@ func (d *Daemon) adaptiveWatchdogCadence() time.Duration {
 const (
 	selfServiceRepairKindDeadReservation = "dead_reservation"
 
-	selfServiceRepairAttemptKeyPrefix     = "self_service_repair_attempt:"
-	selfServiceRepairEscalationKeyPrefix  = "self_service_repair_escalated:"
-	selfServiceRepairScheduleKeyPrefix    = "self_service_reconcile_schedule:"
+	selfServiceRepairAttemptKeyPrefix    = "self_service_repair_attempt:"
+	selfServiceRepairEscalationKeyPrefix = "self_service_repair_escalated:"
+	selfServiceRepairScheduleKeyPrefix   = "self_service_reconcile_schedule:"
 )
 
 // SelfServiceRepairEscalation is one persisted once-only escalation for a
@@ -373,7 +373,7 @@ func deadReservationRevision(run RunStatus) string {
 	if owner == "" || run.LeaseGeneration <= 0 || expires == "" {
 		return ""
 	}
-	if run.ProcessPID > 0 && (processExists(run.ProcessPID) || (run.ProcessPGID > 0 && processGroupExists(run.ProcessPGID))) {
+	if run.ProcessPID > 0 && runProcessGroupAlive(run) {
 		return ""
 	}
 	return strings.Join([]string{strings.TrimSpace(run.RecordID), owner, strconv.Itoa(run.LeaseGeneration), expires}, "\x00")
@@ -478,7 +478,7 @@ func (s *RuntimeStore) ListSelfServiceRepairEscalations() ([]SelfServiceRepairEs
 // call consumed the one automatic repair for the fingerprint), and escalated
 // (this call recorded the once-only escalation).
 func autoRepairDeadReservation(store *RuntimeStore, projectEnabled bool, run RunStatus, now time.Time) (changed, repaired, escalated bool, err error) {
-	if store == nil {
+	if store == nil || (run.HandRun && !run.Terminal) {
 		return false, false, false, nil
 	}
 	now = now.UTC()

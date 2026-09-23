@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { WaveFlow } from "../src/features/workbench/flow/WaveFlow";
-import type { DependencyFact } from "../src/features/workbench/flow/flowGraph";
+import { crossWaveWaitSummary, type DependencyFact } from "../src/features/workbench/flow/flowGraph";
 import type { TaskDetail, WaveReview } from "../src/types/domain";
 
 const ALPHA_ID = "ALP-T-0004";
@@ -89,14 +89,14 @@ function renderReview(wire: WaveReview): string {
     } satisfies DependencyFact]),
   );
   const startEnabled = wire.controls.some((control) => control.action === "wave start" && control.enabled);
-  return renderToStaticMarkup(createElement(WaveFlow, {
+  // The wave page shows the wait summary in its callout beside the graph.
+  const summary = crossWaveWaitSummary(Object.values(dependencyFacts), wire.authorization, startEnabled);
+  return [summary?.title, summary?.body, summary?.hint].filter(Boolean).join(" ") + renderToStaticMarkup(createElement(WaveFlow, {
     memberIds: MEMBERS,
     tasks: [taskDetail(C1, [ALPHA_ID, BETA_ID]), taskDetail("FOL-T-0002", [C1]), taskDetail("FOL-T-0003", [C1]), taskDetail("FOL-T-0004", ["FOL-T-0002", "FOL-T-0003"])],
     runs: [],
     reviewMembers: wire.members,
     dependencyFacts,
-    authorization: wire.authorization,
-    startEnabled,
     onSelectTask: () => {},
     onViewportChange: () => {},
   }));
@@ -110,8 +110,8 @@ describe("cross-wave integrated snapshots", () => {
     expect(html).toContain("Start now to have this wave begin automatically after Beta finishes.");
     expect(html).toContain("Assemble alpha report");
     expect(html).toContain("Assemble beta report");
-    expect(html).toContain("Completed");
-    expect(html).toContain("Backlog");
+    expect(html).toContain("Done");
+    expect(html).toContain("Planned");
     expect(html).toContain(ALPHA_ID);
     expect(html).toContain(BETA_ID);
     expect(html).not.toContain("Unknown");
@@ -141,7 +141,7 @@ describe("cross-wave integrated snapshots", () => {
     }));
     expect(html).not.toContain("Waiting for");
     expect(html).not.toContain("must finish before this wave can begin");
-    const completed = html.match(/Completed/g) ?? [];
+    const completed = html.match(/Done/g) ?? [];
     expect(completed.length).toBeGreaterThanOrEqual(2);
     expect(html).not.toContain("Unresolved dependency");
   });
@@ -165,8 +165,8 @@ describe("cross-wave integrated snapshots", () => {
       ],
       controls: [],
     }));
-    expect(html).toContain(`aria-label="Open combined report (${C1}), Task, Queued"`);
-    const queued = html.match(/aria-label="[^"]*, Queued/g) ?? [];
+    expect(html).toContain(`aria-label="Open combined report (${C1}), Task, Waiting"`);
+    const queued = html.match(/aria-label="[^"]*, Waiting/g) ?? [];
     expect(queued.length).toBe(1);
     expect(html).not.toContain("Start now");
     expect(html).not.toContain("Start");

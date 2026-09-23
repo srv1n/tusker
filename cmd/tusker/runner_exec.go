@@ -180,7 +180,11 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 	}
 	if boundedRawLog {
 		startedPayload["raw_log_max_bytes"] = req.RawLogMaxBytes
-		startedPayload["raw_log_overflow"] = "kill_process_group"
+		if req.Lane == runLaneExecute {
+			startedPayload["raw_log_overflow"] = "rotate"
+		} else {
+			startedPayload["raw_log_overflow"] = "kill_process_group"
+		}
 	}
 	if err := eventLog.Append("attempt_started", req.AttemptID, runner, startedPayload); err != nil {
 		return nil, fmt.Errorf("record %s attempt_started event: %w", runner, err)
@@ -227,6 +231,12 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		authoritativeLog, err = openBoundedRawLog(req.RawLogPath, req.RawLogMaxBytes, req.ResumeMode)
 		if err != nil {
 			return nil, fmt.Errorf("open completion-authoritative raw log: %w", err)
+		}
+		if req.Lane == runLaneExecute {
+			authoritativeLog.rotate = true
+			authoritativeLog.onRotate = func(dropped int64) error {
+				return eventLog.Append("raw_log_rotated", req.AttemptID, runner, map[string]any{"bytes_dropped": dropped})
+			}
 		}
 		cmd.Stdout = authoritativeLog
 		cmd.Stderr = authoritativeLog
@@ -449,6 +459,9 @@ func publishRunnerTerminalStatus(eventLog runnerEventLog, runner RunnerName, req
 }
 
 func extractSessionRef(rawLogPath string) string {
+	if ref := extractFirstRef(rawLogPath+".head", extractSessionRefFromJSON); ref != "" {
+		return ref
+	}
 	return extractFirstRef(rawLogPath, extractSessionRefFromJSON)
 }
 

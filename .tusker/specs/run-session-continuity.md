@@ -46,6 +46,59 @@ This is a target contract, not a claim of installed behavior.
   ownership/process settlement. Start fresh explicitly creates a new session
   after settlement, preserving history, authority and budgets.
 
+## Harness routes and operations
+
+Decided 2026-09-23 ([decision record](decisions/2026-09-23-harness-sessions-grill.md)).
+Every harness runs headless; users pick a profile, never a transport.
+
+| Harness | Route | Native thread identity | Resume |
+| --- | --- | --- | --- |
+| Claude Code | `claude -p` stream-json in and out, detached | Tusker assigns `--session-id <uuid>` | `claude -p --resume <id>` with the same MCP/settings flags |
+| Codex | `codex exec --json`, detached | `thread.started.thread_id` | `codex exec <exec-flags> resume <id> -` (exec flags before `resume`) |
+| Muse | `muse exec --json`, detached | Tusker assigns `--session-id <uuid>` | `muse exec --session-id <id>` |
+| Devin | `devin acp`, detached | `session/new` result | `session/load` |
+
+The long-running agent always runs under a detached wrapper that owns its
+stdio and writes events to disk, so closing or restarting Tusker never ends
+or blinds a run. The native identity is persisted before the first prompt
+completes.
+
+Six operations, identical across harnesses:
+
+| Operation | Contract |
+| --- | --- |
+| Start | Launch detached; persist native identity early. |
+| Watch | Normalize provider output into public messages, tool calls with command and result, plan/progress, typed errors. |
+| Ask | Worker calls the injected Tusker MCP tool; the question lands in the mailbox. |
+| Say (soft) | Pending messages reach a running worker between tool calls where the harness supports it (hook context or Claude stdin). |
+| Say (hard) | Interrupt, settle, then resume the same native thread with the message as the prompt. |
+| Continue | Resume the same native thread after failure/loss with a typed failure summary. Start fresh stays explicit. |
+
+Unsupported operations are declared per driver and shown with the fallback
+("delivered when the current turn ends"), never silently dropped.
+
+## Run states shown to operators
+
+One state model for every harness, derived from canonical run, lease and
+event facts:
+
+| State | Derived from | Allowed actions (server-declared) |
+| --- | --- | --- |
+| Working | live owner, events flowing | Say, Interrupt, Stop |
+| Waiting on you | open question or permission request | Answer, Stop |
+| Quiet | live owner, no events for the configured window, no tool running | Say, Interrupt, Stop |
+| Blocked | typed reason: usage limit, auth expired, permission denied, sandbox denied, missing access | Continue after fix, Stop |
+| Failed | terminal failure with typed reason and last events | Continue, Start fresh |
+| Lost | owner gone without terminal status | Continue, Start fresh |
+| Stopped | operator Stop or interrupt settled | Continue, Start fresh |
+
+Queued (not yet started) and Finished (succeeded or waiting for review) are
+shown without a problem reason.
+
+Failure and blocked reasons are typed codes produced by drivers, not substring
+matches on free-text errors. The server computes allowed actions with the
+same preflight the action endpoint uses; the UI never guesses.
+
 ## Reopening and uncertainty
 
 Read canonical attempt, lease, process start identity and provider receipts.

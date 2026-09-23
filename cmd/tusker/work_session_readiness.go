@@ -9,7 +9,7 @@ import (
 // canonical backlog state while its exact, live authorization owns the lease.
 func activeInteractiveBacklogClaim(store *RuntimeStore, vault string, task Note, run RunStatus, now time.Time) bool {
 	if store == nil || !run.HandRun || run.Terminal || run.Lane != runLaneExecute ||
-		!isDispatchingLeaseState(run.LeaseState) || runFreshness(&run, now) != "fresh" ||
+		!isDispatchingLeaseState(run.LeaseState) ||
 		stringField(task.Data, "status") != "backlog" {
 		return false
 	}
@@ -196,9 +196,14 @@ func workSessionDependencyBlocker(id, taskID, dependencyID, reason, remedy strin
 }
 
 func workSessionOwnerBlocker(taskID, owner, reason string) ReadinessBlocker {
+	remedy := "Wait for the current owner to release the work session or reclaim it after the holder is safely dead."
+	if strings.HasPrefix(reason, "The expired holder") {
+		reason = "Quiet — held by interactive session " + owner + "."
+		remedy = "Ask the owner to finish or release the session, or run `tusker runs release " + taskID + " --break-glass --by human:<name> --reason <reason>`."
+	}
 	return ReadinessBlocker{
 		ID: "interactive-owner:" + taskID, Kind: ReadinessBlockerInteractiveOwner, Authority: ReadinessAuthorityInteractive,
 		Affects: []ReadinessDimensionKind{ReadinessDimensionInteractive}, TaskID: taskID, Owner: owner,
-		Reason: strings.TrimSpace(reason), Remedy: "Wait for the current owner to release the work session or reclaim it after the holder is safely dead.",
+		Reason: strings.TrimSpace(reason), Remedy: remedy,
 	}
 }

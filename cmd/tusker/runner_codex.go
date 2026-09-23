@@ -106,7 +106,7 @@ func (r *CodexExecRunner) Resume(ctx context.Context, req ResumeRequest) (*Resum
 	}
 	if len(req.CommandArgv) > 0 {
 		resumedArgv := codexExecResumeArgv(req.CommandArgv, req.SessionRef)
-		if len(resumedArgv) < 3 || resumedArgv[1] != "exec" || resumedArgv[2] != "resume" {
+		if len(resumedArgv) < 4 || resumedArgv[1] != "exec" || resumedArgv[len(resumedArgv)-3] != "resume" {
 			return nil, tuskerError(errorConfigInvalid, "codex_exec resume requires a direct codex exec command")
 		}
 		req.CommandArgv = resumedArgv
@@ -136,8 +136,9 @@ func codexExecResumeArgv(argv []string, sessionRef string) []string {
 	if len(args) > 0 && args[len(args)-1] == "-" {
 		args = args[:len(args)-1]
 	}
-	out := []string{argv[0], "exec", "resume"}
+	out := []string{argv[0], "exec"}
 	out = append(out, args...)
+	out = append(out, "resume")
 	out = append(out, sessionRef, "-")
 	return out
 }
@@ -222,16 +223,12 @@ func codexExecResumeCommand(command string) string {
 			return command
 		}
 		args := append([]string{}, fields[2:]...)
-		promptArg := ""
 		if len(args) > 0 && args[len(args)-1] == "-" {
-			promptArg = "-"
 			args = args[:len(args)-1]
 		}
-		out := append([]string{"codex", "exec", "resume"}, args...)
-		out = append(out, "{{session_ref}}")
-		if promptArg != "" {
-			out = append(out, promptArg)
-		}
+		out := append([]string{"codex", "exec"}, args...)
+		out = append(out, "resume")
+		out = append(out, "{{session_ref}}", "-")
 		return strings.Join(out, " ")
 	}
 	return command

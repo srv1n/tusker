@@ -329,6 +329,7 @@ describe("real-work completion honesty", () => {
     expect(actualStage(exitedTask, exitedRun).label).not.toBe("Delivered");
     expect(actualStage({ ...exitedTask, status: "done" }, exitedRun)).toEqual({
       label: "Delivered",
+      state: "completed",
       tone: "pass",
       live: false,
     });

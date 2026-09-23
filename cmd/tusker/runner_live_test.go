@@ -279,43 +279,35 @@ func TestCodexLiveEventLogFailureStopsRunner(t *testing.T) {
 	}
 }
 
-func TestCodexLiveScannerFailureStopsAndReapsRunner(t *testing.T) {
+func TestCodexLiveOversizedLineSkipped(t *testing.T) {
 	tempRoot := t.TempDir()
-	cmd := exec.Command("sh", "-c", "sleep 30")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
 	stdout, writer := io.Pipe()
+	eventPath := filepath.Join(tempRoot, "events.jsonl")
+	rawPath := filepath.Join(tempRoot, "raw.log")
 	handle := &codexLiveHandle{
-		attemptID: "attempt-codex-scan-failure", rawLogPath: filepath.Join(tempRoot, "raw.log"),
-		statusPath: filepath.Join(tempRoot, "status.json"), runner: RunnerCodex, cmd: cmd, stdout: stdout,
+		attemptID: "attempt-codex-oversized", rawLogPath: rawPath,
+		eventSinkPath: eventPath, eventLog: NewEventLog(eventPath),
+		runner: RunnerCodex, stdout: stdout,
 	}
 	handle.ioWG.Add(1)
 	go handle.readStdout()
-	go handle.waitForExit()
-	writeDone := make(chan struct{})
-	go func() {
-		_, _ = writer.Write(bytes.Repeat([]byte{'x'}, 4*1024*1024+1))
-		_ = writer.Close()
-		close(writeDone)
-	}()
-
-	waitForStatusFile(t, handle.statusPath)
-	status, err := readRunnerProcessStatus(handle.statusPath)
-	if err != nil {
+	if _, err := writer.Write(bytes.Repeat([]byte{'x'}, 6*1024*1024)); err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, 1, status.ExitCode, "codex scanner failure exit code")
-	waitForProcessGone(t, cmd.Process.Pid, "codex scanner failure")
-	select {
-	case <-writeDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("oversized codex stdout writer remained blocked")
+	if _, err := writer.Write([]byte("\n" + `{"type":"thread.started","thread_id":"session-after-large-line"}` + "\n")); err != nil {
+		t.Fatal(err)
 	}
-	raw, err := readText(handle.rawLogPath)
-	if err != nil || !strings.Contains(raw, "stdout scan failed") {
-		t.Fatalf("codex scanner failure was not surfaced: %q err=%v", raw, err)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	handle.ioWG.Wait()
+	events, err := readText(eventPath)
+	if err != nil || !strings.Contains(events, "stdout_line_oversized") || !strings.Contains(events, "6291457") {
+		t.Fatalf("oversized diagnostic: %q %v", events, err)
+	}
+	raw, err := readText(rawPath)
+	if err != nil || !strings.Contains(raw, "session-after-large-line") {
+		t.Fatalf("normal following line missing: %q %v", raw, err)
 	}
 }
 
@@ -883,8 +875,8 @@ for line in sys.stdin:
 func TestClaudeLiveRunnerCapabilityMatrixMatchesCodexAppServer(t *testing.T) {
 	codex := (&CodexAppServerRunner{}).Capabilities()
 	claude := (&ClaudeRunner{}).Capabilities()
-	if codex.StructuredEvents != claude.StructuredEvents ||
-		codex.ResumeSession != claude.ResumeSession ||
+	if !claude.ResumeSession ||
+		codex.StructuredEvents != claude.StructuredEvents ||
 		codex.ExplicitApprovals != claude.ExplicitApprovals ||
 		codex.Heartbeats != claude.Heartbeats ||
 		codex.MachineFinalStatus != claude.MachineFinalStatus ||
@@ -913,13 +905,7 @@ if "--version" in sys.argv:
 if sys.argv[1:3] == ["auth", "status"]:
     print('{"loggedIn":true}')
     raise SystemExit(0)
-def promote_note_to_review():
-    path = pathlib.Path(os.environ["TUSKER_NOTE_PATH"])
-    text = path.read_text()
-    text = text.replace('status: "ready"', 'status: "review"')
-    text = text.replace('readiness: "ready"', 'readiness: "ready"')
-    text = text.replace('next_owner: "agent"', 'next_owner: "reviewer:agent"')
-    path.write_text(text)
+session_id = sys.argv[sys.argv.index("--session-id") + 1]
 def prompt_arg(prompt, name):
     match = re.search(r"--" + re.escape(name) + r"\s+(\S+)", prompt)
     assert match, (name, prompt)
@@ -975,14 +961,13 @@ for line in sys.stdin:
             subprocess.run(["git","rm","--cached","--ignore-unmatch",".tusker/workspace.json"],cwd=workspace,check=True,stdout=subprocess.DEVNULL)
             subprocess.run(["git","add","-A"],cwd=workspace,check=True)
             subprocess.run(["git","commit","-m","fixture end state"],cwd=workspace,check=True,stdout=subprocess.DEVNULL)
-            promote_note_to_review()
         elif lane=="review":
             assert 'status: "review"' in pathlib.Path(os.environ["TUSKER_NOTE_PATH"]).read_text()
             emit_review_proposal(msg)
         else:
             raise AssertionError(lane)
-        print(json.dumps({"type":"assistant","session_id":"claude-fixture-session","message":{"id":"msg-"+lane,"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":4,"output_tokens":2}}}), flush=True)
-        print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":"claude-fixture-session","usage":{"input_tokens":4,"output_tokens":2}}), flush=True)
+        print(json.dumps({"type":"assistant","session_id":session_id,"message":{"id":"msg-"+lane,"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":4,"output_tokens":2}}}), flush=True)
+        print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":session_id,"usage":{"input_tokens":4,"output_tokens":2}}), flush=True)
         break
 `
 	if err := writeText(scriptPath, script); err != nil {
@@ -1001,12 +986,19 @@ for line in sys.stdin:
 	wf.Workspace.Strategy = string(WorkspaceStrategyCopy)
 	wf.Claude.Command = scriptPath + " --input-format stream-json"
 	wf.Runners[string(RunnerClaude)] = RunnerDefinition{Kind: string(RunnerClaude), Command: wf.Claude.Command}
+	wf.RunnerProfiles = map[string]RunnerProfileDefinition{
+		string(RunnerClaude): {Harness: string(RunnerClaude), Command: wf.Claude.Command, PermissionPreset: "danger-full-access"},
+	}
+	wf.ModelLevels = map[string]ModelLevelDefinition{
+		"standard": {Execute: []string{string(RunnerClaude)}, Review: []string{string(RunnerClaude)}},
+	}
 	wf.Codex.ApprovalPolicy = "never"
 	wf.Codex.ThreadSandbox = "danger-full-access"
 	wf.Codex.TurnSandboxPolicy = "danger-full-access"
 	wf.Codex.ReadTimeoutMS = 5000
 	wf.Codex.TurnTimeoutMS = 5000
 	wfFile := WorkflowFile{Path: workflowPath(vault), Data: wf}
+	t.Setenv("TUSKER_WRAPPER_EXE", demoTestBinary(t))
 
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -1031,6 +1023,10 @@ for line in sys.stdin:
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitForStatusFile(t, executeRun.StatusPath)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"status": "review", "readiness": "ready", "next_owner": "reviewer:agent",
+	})
 	executeRun = finishDaemonRunForTest(t, daemon, project, wfFile, executeRun)
 	if executeRun.LeaseState != string(LeaseStateReleased) {
 		raw, _ := readText(executeRun.RawLogPath)
@@ -1129,13 +1125,12 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 
-	result, err := (&ClaudeRunner{}).Resume(context.Background(), ResumeRequest{
+	result, err := startLiveClaude(context.Background(), StartRequest{
 		ProjectID:     "project-1",
 		RecordID:      "record-1",
 		ItemID:        "ITEM-1",
 		AttemptID:     "attempt-resume",
 		WorkRevision:  0,
-		SessionRef:    "claude-session-before-restart",
 		WorkspacePath: workspaceRoot,
 		PromptPath:    promptPath,
 		EventSinkPath: eventSinkPath,
@@ -1144,7 +1139,7 @@ for line in sys.stdin:
 		Command:       scriptPath + " --input-format stream-json --resume {{session_ref}}",
 		VaultPath:     tempRoot,
 		CodexPolicy:   CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"},
-	})
+	}, &ResumeRequest{SessionRef: "claude-session-before-restart"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1383,7 +1378,7 @@ func TestClaudeLiveWaitDrainsFinalResultBeforeProcessExit(t *testing.T) {
 	waitForProcessGone(t, cmd.Process.Pid, "claude drain")
 }
 
-func TestClaudeLiveScannerFailureStopsAndReapsRunner(t *testing.T) {
+func TestClaudeLiveReaderFailureStopsAndReapsRunner(t *testing.T) {
 	tempRoot := t.TempDir()
 	cmd := exec.Command("sh", "-c", "sleep 30")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -1398,28 +1393,23 @@ func TestClaudeLiveScannerFailureStopsAndReapsRunner(t *testing.T) {
 	handle.ioWG.Add(1)
 	go handle.readStdout()
 	go handle.waitForExit()
-	writeDone := make(chan struct{})
-	go func() {
-		_, _ = writer.Write(bytes.Repeat([]byte{'x'}, 4*1024*1024+1))
-		_ = writer.Close()
-		close(writeDone)
-	}()
+	if _, err := writer.Write([]byte("partial line")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.CloseWithError(errors.New("synthetic stdout failure")); err != nil {
+		t.Fatal(err)
+	}
 
 	waitForStatusFile(t, handle.statusPath)
 	status, err := readRunnerProcessStatus(handle.statusPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, 1, status.ExitCode, "claude scanner failure exit code")
-	waitForProcessGone(t, cmd.Process.Pid, "claude scanner failure")
-	select {
-	case <-writeDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("oversized Claude stdout writer remained blocked")
-	}
+	assertEqual(t, 1, status.ExitCode, "claude reader failure exit code")
+	waitForProcessGone(t, cmd.Process.Pid, "claude reader failure")
 	raw, err := readText(handle.rawLogPath)
-	if err != nil || !strings.Contains(raw, "stdout scan failed") {
-		t.Fatalf("Claude scanner failure was not surfaced: %q err=%v", raw, err)
+	if err != nil || !strings.Contains(raw, "stdout scan failed: synthetic stdout failure") {
+		t.Fatalf("Claude reader failure was not surfaced: %q err=%v", raw, err)
 	}
 }
 

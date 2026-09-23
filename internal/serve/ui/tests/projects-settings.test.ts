@@ -6,16 +6,16 @@ const source = (path: string) => readFileSync(path, "utf8");
 
 test("project registration is available in the sidebar and defaults automation off", () => {
   const sidebar = source("src/components/Sidebar.tsx");
+  const strip = source("src/features/workbench/navigation/ProjectStrip.tsx");
   const api = source("src/lib/api.ts");
 
-  expect(sidebar).toContain('aria-label={addingProject ? "Close add project form" : "Add project"}');
+  expect(strip).toContain("Add project");
   expect(sidebar).toContain("data-add-project-form");
   expect(sidebar).toContain("Registers only. Daemon automation stays off.");
   expect(sidebar).toContain("register.mutateAsync");
-  expect(sidebar).toContain("useProjectRefresh");
-  expect(sidebar).toContain("aria-label={`Refresh ${project.name}`}");
-  expect(sidebar).toContain("refresh.mutate()");
-  expect(sidebar).toContain("Refresh failed — check this project’s source.");
+  expect(strip).toContain("useProjectRefresh");
+  expect(strip).toContain("refresh.mutate()");
+  expect(strip).toContain("Refresh failed — check this project’s source.");
   expect(api).toContain('post("/projects", body)');
 });
 

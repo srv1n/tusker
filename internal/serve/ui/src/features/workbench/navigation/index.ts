@@ -1,6 +1,4 @@
 export { ProjectStrip } from "./ProjectStrip";
-export { ProjectNavigation } from "./ProjectNavigation";
-export type { ProjectNavigationProps, WaveLink, WaveReadState } from "./ProjectNavigation";
 export {
   MAX_WAVE_SHORTCUTS,
   NAVIGATION_CHANGED_EVENT,

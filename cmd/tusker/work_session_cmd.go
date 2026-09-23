@@ -357,6 +357,9 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 				return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), workspaceErr.Error()))
 			}
 			workspaceStrategy = WorkspaceStrategyInPlace
+			if _, prepareErr := NewWorkspaceManager().Prepare(WorkspacePrepareRequest{ProjectID: ctx.Project.ProjectID, ProjectKey: ctx.Project.ProjectKey, RecordID: run.RecordID, ItemID: run.ItemID, BranchName: branchName, RepoRoot: ctx.Project.RepoRoot, StateRoot: ctx.StateRoot, Strategy: workspaceStrategy, WorkRevision: run.WorkRevision, AllowDirtyTracked: true}); prepareErr != nil {
+				return runClaimResult{}, nil, workSessionStartBlocker(workSessionUnsafeWorkspaceBlocker(stringField(note.Data, "id"), prepareErr.Error()))
+			}
 		} else {
 			branchBase := ""
 			var workspaceErr error
@@ -412,9 +415,8 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 
 // currentConversationWorkspace validates the explicit self-implementation
 // mode against the process cwd and the registered project repository. It
-// deliberately skips WorkspaceManager.Prepare: that manager's shared mode
-// rejects dirty trees, while a current conversation is explicitly claiming
-// the already-open tree. The ordinary isolated-workspace path is unchanged.
+// The caller opts into snapshotting the already-open tree only after this
+// validation succeeds.
 func currentConversationWorkspace(repoRoot string) (string, string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {

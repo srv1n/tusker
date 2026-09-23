@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-07T04:07:03Z"
-updated_at: "2026-09-14T05:51:42Z"
-state_rev: "sha256:97d7cb6d06359f800fdb38d52b76d39fad6e62602c57fea13af3338a9d36916f"
+updated_at: "2026-09-23T14:46:35Z"
+state_rev: "sha256:f4cb5ef0dc19f1f269139d989161c828f9169108290ac11d5fd25bb4a8f5758b"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -77,6 +77,10 @@ TBD.
 | [[WUX-T-0029]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[WUX-T-0030]] | backlog | blocked_dependency | Wait for dependency WUX-T-0029 to reach done. |
 | [[WUX-T-0031]] | backlog | blocked_dependency | Wait for dependency WUX-T-0030 to reach done. |
+| [[WUX-T-0032]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[WUX-T-0033]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[WUX-T-0034]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[WUX-T-0035]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 

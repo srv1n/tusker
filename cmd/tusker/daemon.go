@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -488,7 +489,7 @@ func (d *Daemon) ReleaseRunScoped(ctx context.Context, projectID, identity strin
 	return finishRuntimeRun(d.store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, "released dead run by operator", false)
 }
 
-func interruptRunProcess(store *RuntimeStore, run *RunStatus, liveHandleVerified bool) error {
+func interruptRunProcess(store *RuntimeStore, run *RunStatus, _ bool) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found")
 	}
@@ -496,13 +497,13 @@ func interruptRunProcess(store *RuntimeStore, run *RunStatus, liveHandleVerified
 		return interruptACPWrapperProcess(store, run)
 	}
 	pgid := processSignalGroup(*run)
-	if !liveHandleVerified && !processIdentityMatches(*run) && pgid > 0 && processGroupExists(pgid) {
+	if classifyRunLiveness(*run) == runLivenessOrphaned && !runStopSignalAuthorized(store, *run) {
 		return tuskerError(errorInvalidTransition,
 			fmt.Sprintf("refusing to signal process group %d because recorded leader PID %d no longer matches; ownership cannot be verified", pgid, run.ProcessPID),
 			withHint("inspect and stop the process group manually, then retry after no Tusker-owned process remains"),
 			withContext(map[string]any{"pid": run.ProcessPID, "pgid": pgid, "manual_cleanup_required": true}))
 	}
-	if pgid > 0 && processGroupExists(pgid) {
+	if runProcessGroupAlive(*run) {
 		if err := syscall.Kill(-pgid, syscall.SIGINT); err != nil && !strings.Contains(err.Error(), "no such process") {
 			return err
 		}
@@ -529,8 +530,14 @@ const acpWrapperInterruptStatusMargin = 500 * time.Millisecond
 // handoff, so only verified wrapper identity receives the first signal.
 func interruptACPWrapperProcess(store *RuntimeStore, run *RunStatus) error {
 	pgid := processSignalGroup(*run)
+	if classifyRunLiveness(*run) == runLivenessOrphaned && runStopSignalAuthorized(store, *run) {
+		if err := escalateRunnerProcessGroup(pgid); err != nil {
+			return err
+		}
+		return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "orphaned ACP group stopped by operator intent", true)
+	}
 	if !processIdentityMatches(*run) {
-		if pgid > 0 && processGroupExists(pgid) {
+		if classifyRunLiveness(*run) == runLivenessOrphaned && !runStopSignalAuthorized(store, *run) {
 			return tuskerError(errorInvalidTransition,
 				fmt.Sprintf("refusing to signal ACP wrapper process group %d because recorded wrapper PID %d no longer matches; ownership cannot be verified", pgid, run.ProcessPID),
 				withHint("inspect and stop the process group manually, then retry after no Tusker-owned process remains"),
@@ -542,6 +549,17 @@ func interruptACPWrapperProcess(store *RuntimeStore, run *RunStatus) error {
 		return err
 	}
 	return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true)
+}
+
+func runStopSignalAuthorized(store *RuntimeStore, run RunStatus) bool {
+	if store == nil || run.ProcessPGID <= 0 || strings.TrimSpace(run.ProcessStartedAt) == "" || processExists(run.ProcessPGID) {
+		return false
+	}
+	intent, err := loadRunSessionControlIntent(store, run.ProjectID, run.RecordID)
+	return err == nil && intent != nil && intent.Action == runSessionControlStop &&
+		(intent.State == runSessionControlPending || intent.State == runSessionControlUnknown) &&
+		intent.LeaseGeneration == run.LeaseGeneration && intent.ProcessPGID == run.ProcessPGID &&
+		intent.ProcessStarted == run.ProcessStartedAt && intent.AttemptID == run.ActiveAttemptID
 }
 
 func interruptVerifiedACPWrapper(run RunStatus) error {
@@ -622,10 +640,71 @@ func processGroupExists(pgid int) bool {
 }
 
 func runProcessGroupAlive(run RunStatus) bool {
+	state := classifyRunLiveness(run)
+	return state == runLivenessAlive || state == runLivenessOrphaned
+}
+
+type runLiveness string
+
+const (
+	runLivenessAlive    runLiveness = "alive"
+	runLivenessOrphaned runLiveness = "orphaned"
+	runLivenessGone     runLiveness = "gone"
+	runLivenessForeign  runLiveness = "foreign"
+)
+
+func classifyRunLiveness(run RunStatus) runLiveness {
 	if processIdentityMatches(run) {
-		return true
+		return runLivenessAlive
 	}
-	return run.ProcessPGID > 0 && processGroupExists(run.ProcessPGID)
+	pgid := run.ProcessPGID
+	if pgid <= 0 || !processGroupExists(pgid) {
+		return runLivenessGone
+	}
+	// POSIX cannot reuse the leader PID while its old process group survives.
+	// A different process at PGID therefore owns a different group.
+	if processExists(pgid) {
+		if pgid == run.ProcessPID {
+			if actual, ok := processStartTime(pgid); ok && actual != strings.TrimSpace(run.ProcessStartedAt) {
+				return runLivenessForeign
+			}
+		}
+		return runLivenessOrphaned
+	}
+	if started, err := time.Parse(time.RFC3339Nano, run.ProcessStartedAt); err == nil {
+		if boot, ok := hostBootTime(); ok && boot.After(started) {
+			return runLivenessGone
+		}
+	}
+	return runLivenessOrphaned
+}
+
+func hostBootTime() (time.Time, bool) {
+	switch runtime.GOOS {
+	case "darwin":
+		out, err := exec.Command("sysctl", "-n", "kern.boottime").Output()
+		if err != nil {
+			return time.Time{}, false
+		}
+		match := regexp.MustCompile(`sec\s*=\s*(\d+)`).FindStringSubmatch(string(out))
+		if len(match) == 2 {
+			seconds, err := strconv.ParseInt(match[1], 10, 64)
+			return time.Unix(seconds, 0).UTC(), err == nil
+		}
+	case "linux":
+		out, err := os.ReadFile("/proc/stat")
+		if err != nil {
+			return time.Time{}, false
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == "btime" {
+				seconds, err := strconv.ParseInt(fields[1], 10, 64)
+				return time.Unix(seconds, 0).UTC(), err == nil
+			}
+		}
+	}
+	return time.Time{}, false
 }
 
 // killSpawnedRunProcess terminates the process group of a run whose child was
@@ -2059,6 +2138,15 @@ func (d *Daemon) reconcilePersistedStopIntent(run RunStatus) (reconciled RunStat
 		return reconciled, false, false, err
 	}
 	suppressRetry = true
+	if classifyRunLiveness(run) == runLivenessOrphaned {
+		if !runStopSignalAuthorized(d.store, run) {
+			return reconciled, true, false, nil
+		}
+		if err := interruptRunProcess(d.store, &run, false); err != nil {
+			return reconciled, true, false, err
+		}
+		return reconciled, true, false, nil
+	}
 	if runProcessGroupAlive(run) {
 		return reconciled, true, false, nil
 	}
@@ -2345,6 +2433,9 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 	if d == nil || d.store == nil || run.RecordID == "" || run.Lane == runLaneReview || !isDispatchCapacityLeaseState(run.LeaseState) {
 		return run, false, nil
 	}
+	if run.HandRun && !run.Terminal && isDispatchingLeaseState(run.LeaseState) {
+		return run, false, nil
+	}
 	if activeInteractiveBacklogClaim(d.store, project.VaultRoot, note, run, time.Now().UTC()) {
 		return run, false, nil
 	}
@@ -2503,6 +2594,9 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 			trackerState = strings.TrimSpace(stringField(projected.Data, "status"))
 		}
 	}
+	if run.HandRun && !run.Terminal && isDispatchingLeaseState(run.LeaseState) && !trackerStateTerminal(wfFile.Data, trackerState) {
+		return run, false, nil
+	}
 	if isDispatchCapacityLeaseState(run.LeaseState) {
 		if _, err := d.ingestCodexExecRawLog(run); err != nil {
 			return run, false, err
@@ -2614,7 +2708,7 @@ func (d *Daemon) activeReviewHandoffCanReconcile(wf Workflow, run RunStatus, tra
 }
 
 func (d *Daemon) releaseIneligibleRun(ctx context.Context, project RegisteredProject, run RunStatus, reason string) (RunStatus, bool, error) {
-	if !isDispatchCapacityLeaseState(run.LeaseState) {
+	if !isDispatchCapacityLeaseState(run.LeaseState) || (run.HandRun && !run.Terminal && isDispatchingLeaseState(run.LeaseState)) {
 		return run, false, nil
 	}
 	parentAttemptID := run.ActiveAttemptID
@@ -3141,6 +3235,15 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	}
 
 	if run.ProcessPID > 0 {
+		if classifyRunLiveness(run) == runLivenessOrphaned {
+			reason := fmt.Sprintf("lost wrapper with live children in process group %d; operator Stop or containment is required", run.ProcessPGID)
+			if run.LastError != reason {
+				run.LastError = reason
+				run.UpdatedAt = now
+				return run, true, nil
+			}
+			return run, false, nil
+		}
 		if statusPath := runnerStatusPathForRun(run); statusPath != "" && waitForRunnerStatusFile(statusPath) {
 			run.StatusPath = statusPath
 			return d.reconcileRun(ctx, project, wfFile, run)
@@ -3430,7 +3533,7 @@ func (d *Daemon) normalizeDeadRetryQueuedRun(ctx context.Context, project Regist
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
 		return run, false, nil
 	}
-	if run.ProcessPID <= 0 || d.processIdentityMatchesForPoll(run) {
+	if run.ProcessPID <= 0 || runProcessGroupAlive(run) {
 		return run, false, nil
 	}
 	reason := fmt.Sprintf("retry_queued run pid %d is dead", run.ProcessPID)
@@ -5199,9 +5302,15 @@ func (d *Daemon) resolveResumeSession(project RegisteredProject, note Note, run 
 	// Explicit context recovery and start_fresh both clear SessionRef on the
 	// run. Do not let the historical LatestSession fallback silently turn either
 	// operator choice back into native continuation.
-	if strings.HasPrefix(strings.TrimSpace(run.LastError), outcomeUnknownContextRecoveryReasonPrefix) ||
-		strings.HasPrefix(strings.TrimSpace(run.LastError), runSessionControlFreshReasonPrefix) {
-		return resolvedResumeSession{}, nil
+	if strings.TrimSpace(run.SessionRef) == "" {
+		intent, err := loadRunSessionControlIntent(d.store, run.ProjectID, run.RecordID)
+		if err != nil {
+			return resolvedResumeSession{}, err
+		}
+		if intent != nil && (intent.Action == runSessionControlFresh || intent.Action == runSessionControlContextRecovery) &&
+			(intent.State == runSessionControlPending || intent.State == runSessionControlQueued || intent.State == runSessionControlUnknown) {
+			return resolvedResumeSession{}, nil
+		}
 	}
 	if strings.TrimSpace(run.SessionRef) != "" {
 		session, err := d.store.FindSessionByRef(project.ProjectID, run.SessionRef)

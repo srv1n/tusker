@@ -13,10 +13,10 @@ func TestV7ProposalChangeSpecRefsUsesAllowlistAndEmitsEvent(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureDir(filepath.Join(repo, "docs", "specs")); err != nil {
+	if err := ensureDir(filepath.Join(repo, ".tusker", "specs")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "docs", "specs", "example.md"), "# Governing spec\n"); err != nil {
+	if err := writeText(filepath.Join(repo, ".tusker", "specs", "example.md"), "---\nsubject: example-spec\npart_of: overview\n---\n# Governing spec\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "v7": "true"}); err != nil {
@@ -32,7 +32,7 @@ func TestV7ProposalChangeSpecRefsUsesAllowlistAndEmitsEvent(t *testing.T) {
 
 	if err := proposalV7NewCmd(Args{
 		"vault": vault, "quiet": "true", "action": "change", "target": "APP-T-0001",
-		"set": "spec_refs=docs/specs/example.md", "by": "agent:codex",
+		"set": "spec_refs=.tusker/specs/example.md", "by": "agent:codex",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestV7ProposalChangeSpecRefsUsesAllowlistAndEmitsEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := normalizeList(task.Data["spec_refs"]); len(got) != 1 || got[0] != "docs/specs/example.md" {
+	if got := normalizeList(task.Data["spec_refs"]); len(got) != 1 || got[0] != ".tusker/specs/example.md" {
 		t.Fatalf("expected spec_refs mutation, got %#v", task.Data["spec_refs"])
 	}
 	store := v7MarkdownStore{VaultPath: vault}

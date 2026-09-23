@@ -20,13 +20,15 @@ import { RunStats } from "@/features/runs/detail/RunStats";
 import { AttemptTimeline } from "@/features/runs/detail/AttemptTimeline";
 import { EventTail } from "@/features/runs/detail/EventTail";
 import { SessionRecoveryControls } from "@/features/runs/detail/SessionRecoveryControls";
-import { isInterruptibleRun, waitingForDaemonReason } from "@/features/runs/detail/helpers";
+import { waitingForDaemonReason } from "@/features/runs/detail/helpers";
 import { createRunActionLock } from "@/features/runs/detail/actionLock";
 import { useConfirm } from "@/components/ui/action-feedback";
 import { relativeTime } from "@/lib/time";
+import { ApiError } from "@/lib/api";
 import type { RunAction } from "@/types/domain";
 
 const route = getRouteApi("/p/$projectId/runs/$taskId");
+const ACTION_READBACK_TIMEOUT_MS = 60_000;
 
 /**
  * Run Detail (packet §4.3) — one run. Header carries the task capsule + run
@@ -59,11 +61,25 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
     interruptConfirming || interrupt.isPending || awaitingInterruptReadback;
   const actionBusy = interruptBusy || redrive.isPending || pendingAction !== null || runAction.isPending;
 
+  useEffect(() => {
+    if (!pendingAction) return;
+    const sequence = actionSequence.current;
+    const timeout = window.setTimeout(() => {
+      if (actionSequence.current !== sequence) return;
+      setPendingAction(null);
+      setActionError("Result unknown — refresh the run before trying another action.");
+    }, ACTION_READBACK_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [pendingAction]);
+
   const settleAction = (action: RunAction, sequence: number) => {
     void run.refetch().then((result) => {
       if (actionSequence.current !== sequence) return;
-      if (result.data?.controls?.pending?.action === action || result.data?.actionReadback?.action === action && result.data.actionReadback.state === "pending") return;
-      if (action === "stop" && result.data && isInterruptibleRun(result.data)) return;
+      if (result.isError || !result.data) {
+        setActionError("Result unknown — refresh the run before trying another action.");
+        return;
+      }
+      if (result.data.controls?.pending?.action === action || result.data.actionReadback?.action === action && result.data.actionReadback.state === "pending") return;
       setPendingAction(null);
     }).catch(() => {
       if (actionSequence.current === sequence) setActionError("Action submitted, but canonical run readback is unavailable; keeping it pending.");
@@ -88,10 +104,17 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
     setActionError(null);
     runAction.mutate(action, {
       onError: (error) => {
-        if (actionSequence.current === sequence) setActionError(error instanceof Error ? error.message : String(error));
+        if (actionSequence.current !== sequence) return;
+        setActionError(error instanceof Error ? error.message : String(error));
+        if (error instanceof ApiError) setPendingAction(null);
       },
-      onSettled: () => {
+      onSuccess: (result) => {
         if (actionSequence.current === sequence) actionSettledSequence.current = sequence;
+        if (result.refused || (!result.ok && !result.pending)) {
+          setPendingAction(null);
+          setActionError(result.reason || "The server refused this action.");
+          return;
+        }
         settleAction(action, sequence);
       },
     });
@@ -99,14 +122,10 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
 
   useEffect(() => {
     if (!pendingAction || run.isFetching || runAction.isPending) return;
-    if (pendingAction === "stop") {
-      if (run.data && !isInterruptibleRun(run.data)) setPendingAction(null);
-      return;
-    }
     if (pendingAction === "reconnect" || actionSettledSequence.current !== actionSequence.current) return;
     const readbackPending = run.data?.controls?.pending?.action === pendingAction ||
       (run.data?.actionReadback?.action === pendingAction && run.data.actionReadback.state === "pending");
-    if (!readbackPending) {
+    if (run.data && !readbackPending) {
       actionSettledSequence.current = 0;
       setPendingAction(null);
     }
@@ -117,8 +136,10 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
     const sequence = ++actionSequence.current;
     setPendingAction("reconnect");
     setActionError(null);
-    void run.refetch().then(() => {
-      if (actionSequence.current === sequence) setPendingAction(null);
+    void run.refetch().then((result) => {
+      if (actionSequence.current !== sequence) return;
+      if (result.isError || !result.data) setActionError("Result unknown — refresh the run before trying another action.");
+      else setPendingAction(null);
     }).catch((error) => {
       if (actionSequence.current === sequence) setActionError(error instanceof Error ? error.message : String(error));
     });
@@ -317,7 +338,7 @@ function OperatorFacts({ run }: { run: RunDetailData }) {
       <SectionLabel className="mb-3">Ownership &amp; resume</SectionLabel>
       <dl className="grid gap-3 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
         <div><dt className="text-faint">authorized by</dt><dd className="font-mono text-ink">{run.authorization ? `${run.authorization.source} · ${run.authorization.actor} · ${relativeTime(run.authorization.created_at)}` : "authorization unavailable"}</dd></div>
-        <div><dt className="text-faint">repository</dt><dd className="break-all font-mono text-ink">{run.identity?.repo_root ?? "registered repository unavailable"}</dd></div>
+        <div><dt className="text-faint">repository</dt><dd className="break-all font-mono text-ink">{run.identity?.registered_repo_path ?? run.identity?.repo_root ?? "registered repository unavailable"}</dd></div>
         <div><dt className="text-faint">workspace mode</dt><dd className="font-mono text-ink">{run.identity?.workspace_mode ?? run.workspaceMode ?? "unknown"}</dd></div>
         <div><dt className="text-faint">session</dt><dd className="break-all font-mono text-ink">{run.session?.session_ref ?? "session unavailable"}</dd></div>
       </dl>

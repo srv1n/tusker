@@ -543,3 +543,101 @@ func assertRawLogSize(t *testing.T, path string, want int64) {
 }
 
 var _ io.Reader = (*countingInfiniteReader)(nil)
+
+func TestBoundedRawLogExecuteLaneRotatesWithoutKill(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "execute.raw.log")
+	writer, err := openBoundedRawLog(path, 64, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.rotate = true
+	var rotations int
+	writer.onRotate = func(int64) error { rotations++; return nil }
+	writer.bindTerminator(func() { t.Error("execute log terminated worker") })
+	payload := []byte(`{"type":"thread.started","thread_id":"session-1"}` + "\n" + strings.Repeat("x", 200))
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.close(); err != nil {
+		t.Fatal(err)
+	}
+	if rotations < 3 {
+		t.Fatalf("rotations=%d", rotations)
+	}
+	if got := extractSessionRef(path); got != "session-1" {
+		t.Fatalf("session ref=%q", got)
+	}
+	for _, suffix := range []string{"", ".head", ".prev"} {
+		info, err := os.Stat(path + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() > 64 {
+			t.Fatalf("%s size=%d", suffix, info.Size())
+		}
+	}
+	resumed, err := openBoundedRawLog(path, 64, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed.rotate = true
+	if _, err := resumed.Write([]byte(strings.Repeat("y", 100))); err != nil {
+		t.Fatal(err)
+	}
+	if err := resumed.close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := extractSessionRef(path); got != "session-1" {
+		t.Fatalf("resumed session ref=%q", got)
+	}
+}
+
+func TestBoundedRawLogReviewLaneStillTerminates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review.raw.log")
+	writer, err := openBoundedRawLog(path, 64, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	writer.bindTerminator(func() { close(done) })
+	if _, err := writer.Write([]byte(strings.Repeat("r", 65))); !errors.Is(err, errAuthoritativeRawLogOverflow) {
+		t.Fatalf("overflow err=%v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("termination not sent")
+	}
+	if !writer.overflowed() {
+		t.Fatal("review overflow not recorded")
+	}
+	_ = writer.close()
+}
+
+func TestBoundedRawLogExecuteLaneAttemptSucceedsAfterRotation(t *testing.T) {
+	req := runnerExecEventRequestForTest(t)
+	req.Lane = runLaneExecute
+	req.RawLogMaxBytes = 4096
+	payload := filepath.Join(t.TempDir(), "payload")
+	contents := []byte(`{"type":"thread.started","session_id":"session-large"}` + "\n" + strings.Repeat("x", 12*1024))
+	if err := os.WriteFile(payload, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req.Command = ""
+	req.CommandArgv = []string{"/bin/cat", payload}
+	if _, err := executeRunnerCommand(context.Background(), RunnerCodexExec, req, RunnerCapabilities{}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatusFile(t, req.StatusPath)
+	status, err := readRunnerProcessStatus(req.StatusPath)
+	if err != nil || status.ExitCode != 0 {
+		t.Fatalf("rotated execute status=%#v err=%v", status, err)
+	}
+	if got := extractSessionRef(req.RawLogPath); got != "session-large" {
+		t.Fatalf("session ref=%q", got)
+	}
+	events, err := readText(req.EventSinkPath)
+	if err != nil || !strings.Contains(events, `"kind":"raw_log_rotated"`) {
+		t.Fatalf("rotation event missing: %q err=%v", events, err)
+	}
+}

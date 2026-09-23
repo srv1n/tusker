@@ -39,14 +39,25 @@ export function RootLayout() {
     try { localStorage.setItem(RAIL_LAYOUT_STORAGE_KEY, JSON.stringify(rails)); } catch { /* preference is best effort */ }
   }, [rails]);
 
+  useEffect(() => {
+    const toggleOnShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
+        event.preventDefault();
+        setRails((value) => ({ projectExpanded: !value.projectExpanded }));
+      }
+    };
+    window.addEventListener("keydown", toggleOnShortcut);
+    return () => window.removeEventListener("keydown", toggleOnShortcut);
+  }, []);
+
   return (
     <div className="tusker-shell flex h-dvh w-full overflow-hidden bg-surface text-ink">
       {!embedded && <ProjectStrip expanded={rails.projectExpanded} onToggle={() => setRails((value) => ({ projectExpanded: !value.projectExpanded }))} />}
       <TaskSearch />
 
       <main className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${embedded ? "" : "bg-raised"}`}>
-        <CrashLoopCircuitBannerFromDaemon embedded={embedded} />
-        {!embedded && <InvariantCircuitBanner />}
+        {/* The rail status row carries circuit state; the embedded panel has no rail, so it keeps the banner. */}
+        {embedded && <CrashLoopCircuitBannerFromDaemon />}
         {!embedded && <EscalationBanner />}
         <div className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
@@ -69,25 +80,9 @@ export function ProjectLayout() {
 	return <div className="h-full min-h-0"><Outlet /></div>;
 }
 
-function CrashLoopCircuitBannerFromDaemon({ embedded }: { embedded: boolean }) {
+function CrashLoopCircuitBannerFromDaemon() {
   const daemon = useDaemon();
-  return <CrashLoopCircuitBanner circuit={daemon.data?.crashLoop} embedded={embedded} />;
-}
-
-function InvariantCircuitBanner() {
-  const daemon = useDaemon();
-  const circuit = daemon.data?.invariantCircuit;
-  if (circuit?.open !== true) {
-    return null;
-  }
-  const detail = circuit.violations?.[0]?.detail ?? circuit.summary ?? circuit.reason ?? "invariant_violation";
-  return (
-    <div className="flex flex-none items-center gap-2 border-b border-fail/30 bg-fail-soft px-4 py-2 text-[13px] font-medium text-fail">
-      <AlertTriangle size={15} aria-hidden="true" />
-      <span className="font-semibold">Invariant circuit open</span>
-      <span className="min-w-0 truncate text-fail/90">{detail}</span>
-    </div>
-  );
+  return <CrashLoopCircuitBanner circuit={daemon.data?.crashLoop} embedded />;
 }
 
 function EscalationBanner() {

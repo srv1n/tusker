@@ -3207,7 +3207,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 	}
 	if audience == "reviewer" {
 		fmt.Fprintf(&b, "# %s reviewer packet\n\n", id)
-		writeV7PacketWarnings(&b, vaultPath, task)
+		writeV7PacketWarnings(&b, vaultPath, task, idx)
 		fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 		fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
 		fmt.Fprintf(&b, "## Domain context\n\n%s\n\n", v7DomainContext(vaultPath, task))
@@ -3229,7 +3229,7 @@ func v7Packet(vaultPath string, task Note, idx v7Index, audience string) string 
 		return b.String()
 	}
 	fmt.Fprintf(&b, "# %s agent packet\n\n", id)
-	writeV7PacketWarnings(&b, vaultPath, task)
+	writeV7PacketWarnings(&b, vaultPath, task, idx)
 	fmt.Fprintf(&b, "## Project skill routing\n\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 	fmt.Fprintf(&b, "## Governing specs / decisions\n\n%s\n\n", v7SpecRefsPacketSection(vaultPath, task))
 	writeV7PacketWaveContext(&b, task, idx)
@@ -3405,7 +3405,7 @@ func v7ExplainerPacket(vaultPath string, task Note, idx v7Index) string {
 	fmt.Fprintf(&b, "- Task: %s\n", stringField(task.Data, "title"))
 	fmt.Fprintf(&b, "- Risk: %s\n", fallback(stringField(task.Data, "risk"), "medium"))
 	fmt.Fprintf(&b, "- Proof: %s/%s\n\n", report.Mode, report.Status)
-	writeV7PacketWarnings(&b, vaultPath, task)
+	writeV7PacketWarnings(&b, vaultPath, task, idx)
 	fmt.Fprintf(&b, "## Background\n\n")
 	fmt.Fprintf(&b, "Project route:\n%s\n\n", v7ProjectSkillRouting(vaultPath, task))
 	fmt.Fprintf(&b, "Routed file capsules:\n%s\n\n", v7RoutedFileCapsules(vaultPath, task))
@@ -3490,15 +3490,15 @@ func v7ExplainerQuiz(task Note, report v7ProofReport) string {
 	return strings.Join(lines, "\n")
 }
 
-func writeV7PacketWarnings(b *strings.Builder, vaultPath string, task Note) {
-	warnings := v7PacketWarnings(vaultPath, task)
+func writeV7PacketWarnings(b *strings.Builder, vaultPath string, task Note, idx v7Index) {
+	warnings := v7PacketWarnings(vaultPath, task, idx)
 	if len(warnings) == 0 {
 		return
 	}
 	fmt.Fprintf(b, "## Packet warnings\n\n%s\n\n", v7BulletList(warnings))
 }
 
-func v7PacketWarnings(vaultPath string, task Note) []string {
+func v7PacketWarnings(vaultPath string, task Note, idx v7Index) []string {
 	var warnings []string
 	skillPath := vaultDisplayPath(vaultPath, "SKILL.md")
 	if !fileExists(filepath.Join(vaultPath, "SKILL.md")) {
@@ -3511,6 +3511,9 @@ func v7PacketWarnings(vaultPath string, task Note) []string {
 	for _, warning := range v7PacketDomainRouteWarnings(vaultPath, task) {
 		warnings = append(warnings, warning)
 	}
+	for _, warning := range v7PacketSpecRefWarnings(vaultPath, task, idx) {
+		warnings = append(warnings, warning)
+	}
 	for _, item := range v7PacketStubAcceptanceItems(task.Body) {
 		warnings = append(warnings, "Acceptance looks vague or placeholder: "+item)
 	}
@@ -3519,7 +3522,13 @@ func v7PacketWarnings(vaultPath string, task Note) []string {
 
 func v7PacketDomainRouteWarnings(vaultPath string, task Note) []string {
 	var warnings []string
+	repoRoot := v7RepoRoot(vaultPath)
 	for _, domain := range normalizeList(task.Data["domains"]) {
+		// The portable index is the canon route: a migrated domain warns
+		// only when neither the portable nor the legacy route exists.
+		if v7HasPortableDomain(repoRoot, domain) {
+			continue
+		}
 		var missing []string
 		indexPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "INDEX.md")
 		canonPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "CANON.md")
@@ -3531,6 +3540,32 @@ func v7PacketDomainRouteWarnings(vaultPath string, task Note) []string {
 		}
 		if len(missing) > 0 {
 			warnings = append(warnings, "`"+domain+"` domain route missing: "+strings.Join(missing, ", "))
+		}
+	}
+	return warnings
+}
+
+// v7PacketSpecRefWarnings surfaces unresolvable governing references inside
+// the packet itself so a missing target, ambiguous subject, wrong kind, or
+// missing section fails usefully at dispatch time instead of silently
+// routing the agent at a dead link.
+func v7PacketSpecRefWarnings(vaultPath string, task Note, idx v7Index) []string {
+	refs := normalizeList(task.Data["spec_refs"])
+	if len(refs) == 0 {
+		return nil
+	}
+	decisionIDs := map[string]Note{}
+	for id, decision := range idx.Decisions {
+		decisionIDs[id] = decision
+	}
+	var warnings []string
+	for _, ref := range refs {
+		normalized := v7NormalizeSpecRef(ref)
+		if normalized == "" {
+			continue
+		}
+		if reason := v7SpecRefFailureReason(vaultPath, normalized, decisionIDs); reason != "" {
+			warnings = append(warnings, "Governing ref `"+normalized+"` does not resolve ("+reason+"); "+v7GoverningSpecHint()+".")
 		}
 	}
 	return warnings
@@ -3591,6 +3626,18 @@ func v7ProjectSkillRouting(vaultPath string, task Note) string {
 		return strings.Join(lines, "\n")
 	}
 	for _, domain := range domains {
+		// The portable index is the authority when present: agents read the
+		// same chapter humans read instead of a legacy compatibility copy.
+		if v7HasPortableDomain(v7RepoRoot(vaultPath), domain) {
+			rel := v7PortableDomainIndexRel(domain)
+			lines = append(lines, fmt.Sprintf("- `%s`: read `%s` (portable domain index).", domain, rel))
+			if index, indexErr := readV7DomainIndex(vaultPath, domain); indexErr == nil {
+				if capsule := capsuleOneLine(index); capsule != "" {
+					lines = append(lines, fmt.Sprintf("- `%s` INDEX capsule: %s", domain, capsule))
+				}
+			}
+			continue
+		}
 		indexPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "INDEX.md")
 		canonPath := filepath.Join(vaultPath, "knowledge", "domains", domain, "CANON.md")
 		if fileExists(indexPath) && fileExists(canonPath) {
@@ -3639,6 +3686,12 @@ func v7DomainContext(vaultPath string, task Note) string {
 	}
 	var sections []string
 	for _, domain := range domains {
+		// Portable domains render the actual portable document: bounded
+		// purpose and reading-order sections, never a copied canon snapshot.
+		if v7HasPortableDomain(v7RepoRoot(vaultPath), domain) {
+			sections = append(sections, v7PortableDomainContext(vaultPath, domain))
+			continue
+		}
 		index, indexErr := readV7DomainIndex(vaultPath, domain)
 		canon, canonErr := readV7DomainCanon(vaultPath, domain)
 		if indexErr != nil || canonErr != nil {
@@ -3670,6 +3723,37 @@ func v7DomainContext(vaultPath string, task Note) string {
 		sections = append(sections, section)
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+// v7PortableDomainContext renders one migrated domain from its live portable
+// index. Every section stays bounded so the packet cannot balloon with
+// chapter prose.
+func v7PortableDomainContext(vaultPath, domain string) string {
+	rel := v7PortableDomainIndexRel(domain)
+	index, err := readV7DomainIndex(vaultPath, domain)
+	if err != nil {
+		return fmt.Sprintf("### %s\n\n- Portable domain route `%s` is unreadable: %s.", domain, rel, err.Error())
+	}
+	var capsuleLines []string
+	if capsule := capsuleOneLine(index); capsule != "" {
+		capsuleLines = append(capsuleLines, "- INDEX: "+capsule)
+	}
+	capsules := ""
+	if len(capsuleLines) > 0 {
+		capsules = "\n\nCapsule:\n" + strings.Join(capsuleLines, "\n")
+	}
+	section := fmt.Sprintf("### %s · %s\n\nSummary: %s%s\n\nPortable route: `%s`\n\nPurpose:\n%s",
+		domain,
+		stringField(index.Data, "title"),
+		stringField(index.Data, "summary"),
+		capsules,
+		rel,
+		v7PacketSnippet(sectionContent(index.Body, "## Purpose"), 8),
+	)
+	if order := strings.TrimSpace(v7PacketSnippet(sectionContent(index.Body, "## Reading order"), 8)); order != "" && order != "- None available." {
+		section += "\n\nReading order:\n" + order
+	}
+	return section
 }
 
 func v7ClosePolicySummary(vaultPath string, task Note) string {

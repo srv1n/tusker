@@ -97,6 +97,12 @@ export function Kbd({ children }: { children: ReactNode }) {
   );
 }
 
+/** The one card surface. Use on a div via Card, or directly on a clickable button or link. */
+export const cardClass = (interactive = false) => cn(
+  "rounded-xl border border-line bg-raised shadow-[inset_0_1px_0_color-mix(in_srgb,var(--k-ink)_3%,transparent)]",
+  interactive && "cursor-pointer text-left transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-px hover:border-fainter hover:shadow-[0_4px_14px_color-mix(in_srgb,var(--k-ink)_7%,transparent)] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
+);
+
 /** Surface card with a hairline border. */
 export function Card({
   className,
@@ -108,9 +114,8 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-xl border bg-raised shadow-[inset_0_1px_0_color-mix(in_srgb,var(--k-ink)_3%,transparent)]",
-        t === "neutral" ? "border-line" : cn("border-current/20", tone[t].text),
-        interactive && "cursor-pointer transition-[transform,border-color,background-color] duration-150 hover:-translate-y-px hover:border-accent/45 hover:bg-hover/50 active:translate-y-0",
+        cardClass(interactive),
+        t !== "neutral" && cn("border-current/20", tone[t].text),
         className,
       )}
       {...rest}

@@ -16,24 +16,30 @@ import (
 )
 
 type serveDocgraphDoc struct {
-	Subject      string   `json:"subject"`
-	Title        string   `json:"title"`
-	Path         string   `json:"path"`
-	Kind         string   `json:"kind"`
-	Status       string   `json:"status"`
-	Keywords     []string `json:"keywords"`
-	PartOf       string   `json:"part_of"`
-	Updates      []string `json:"updates"`
-	DecidesFor   string   `json:"decides_for"`
-	SupersededBy string   `json:"superseded_by"`
+	Subject         string   `json:"subject"`
+	Title           string   `json:"title"`
+	Path            string   `json:"path"`
+	Kind            string   `json:"kind"`
+	KindSource      string   `json:"kind_source"`
+	Status          string   `json:"status"`
+	Lifecycle       string   `json:"lifecycle"`
+	CodeConformance string   `json:"code_conformance"`
+	LastVerified    string   `json:"last_verified"`
+	Describes       []string `json:"describes"`
+	Keywords        []string `json:"keywords"`
+	PartOf          string   `json:"part_of"`
+	Updates         []string `json:"updates"`
+	DecidesFor      string   `json:"decides_for"`
+	SupersededBy    string   `json:"superseded_by"`
 }
 
 type serveDocgraphNode struct {
-	Subject string `json:"subject"`
-	Kind    string `json:"kind"`
-	Path    string `json:"path"`
-	Title   string `json:"title"`
-	Status  string `json:"status"`
+	Subject         string `json:"subject"`
+	Kind            string `json:"kind"`
+	Path            string `json:"path"`
+	Title           string `json:"title"`
+	Status          string `json:"status"`
+	CodeConformance string `json:"code_conformance"`
 }
 
 type serveDocgraphEdge struct {
@@ -54,10 +60,16 @@ type serveDocgraphIssue struct {
 	Message string `json:"message"`
 }
 
+type serveDocgraphGenerated struct {
+	Index string `json:"index"`
+	Graph string `json:"graph"`
+}
+
 type serveDocgraphList struct {
-	Docs   []serveDocgraphDoc   `json:"docs"`
-	Graph  serveDocgraphGraph   `json:"graph"`
-	Issues []serveDocgraphIssue `json:"issues"`
+	Docs      []serveDocgraphDoc     `json:"docs"`
+	Graph     serveDocgraphGraph     `json:"graph"`
+	Issues    []serveDocgraphIssue   `json:"issues"`
+	Generated serveDocgraphGenerated `json:"generated"`
 }
 
 type serveDocgraphLink struct {
@@ -83,17 +95,23 @@ type serveDocgraphSuccessor struct {
 }
 
 type serveDocgraphDetail struct {
-	Subject   string                  `json:"subject"`
-	Title     string                  `json:"title"`
-	Path      string                  `json:"path"`
-	Kind      string                  `json:"kind"`
-	Status    string                  `json:"status"`
-	Rev       string                  `json:"rev"`
-	Header    map[string]any          `json:"header"`
-	Body      string                  `json:"body"`
-	Links     []serveDocgraphLink     `json:"links"`
-	Backlinks []serveDocgraphBacklink `json:"backlinks"`
-	Successor *serveDocgraphSuccessor `json:"successor"`
+	Subject         string                  `json:"subject"`
+	Title           string                  `json:"title"`
+	Path            string                  `json:"path"`
+	Kind            string                  `json:"kind"`
+	KindSource      string                  `json:"kind_source"`
+	Status          string                  `json:"status"`
+	Lifecycle       string                  `json:"lifecycle"`
+	CodeConformance string                  `json:"code_conformance"`
+	LastVerified    string                  `json:"last_verified"`
+	Describes       []string                `json:"describes"`
+	ResolvedFrom    string                  `json:"resolved_from,omitempty"`
+	Rev             string                  `json:"rev"`
+	Header          map[string]any          `json:"header"`
+	Body            string                  `json:"body"`
+	Links           []serveDocgraphLink     `json:"links"`
+	Backlinks       []serveDocgraphBacklink `json:"backlinks"`
+	Successor       *serveDocgraphSuccessor `json:"successor"`
 }
 
 // serveDocgraphSaveRequest is the PUT /api/docgraph/doc body. Body and Header
@@ -115,9 +133,9 @@ type serveDocgraphSaveResponse struct {
 
 func serveDocgraphKindRank(kind docgraph.Kind) int {
 	switch kind {
-	case docgraph.KindCanonical:
+	case docgraph.KindCanonical, docgraph.KindDoc:
 		return 0
-	case docgraph.KindSpec:
+	case docgraph.KindSpec, docgraph.KindProposal:
 		return 1
 	case docgraph.KindDecision:
 		return 2
@@ -149,11 +167,17 @@ func (s *serveServer) handleDocgraph(w http.ResponseWriter, r *http.Request) {
 		serveJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 		return
 	}
-	corpus, issues, err := docgraph.LoadRepository(project.RepoRoot)
+	corpus, scanIssues, err := docgraph.LoadRepository(project.RepoRoot)
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	// The explorer surfaces corpus-wide defects too (dangling links,
+	// duplicate subjects, broken tombstones), not just per-file header
+	// problems: scan issues carry the parse/file-level findings while
+	// ValidateCorpus adds the cross-document ones. Exact duplicates collapse
+	// so a header defect is never reported twice.
+	issues := serveDocgraphMergeIssues(scanIssues, docgraph.ValidateCorpus(corpus))
 	docs := make([]docgraph.Document, len(corpus.Documents))
 	copy(docs, corpus.Documents)
 	sort.SliceStable(docs, func(i, j int) bool {
@@ -167,6 +191,10 @@ func (s *serveServer) handleDocgraph(w http.ResponseWriter, r *http.Request) {
 		Docs:   make([]serveDocgraphDoc, 0, len(docs)),
 		Graph:  serveDocgraphGraph{Nodes: []serveDocgraphNode{}, GraphGenerated: true, Edges: []serveDocgraphEdge{}},
 		Issues: make([]serveDocgraphIssue, 0, len(issues)),
+		Generated: serveDocgraphGenerated{
+			Index: docgraph.GeneratedIndexRelPath,
+			Graph: docgraph.GeneratedGraphRelPath,
+		},
 	}
 	for _, issue := range issues {
 		out.Issues = append(out.Issues, serveDocgraphIssue{Code: issue.Code, Path: issue.Path, Message: issue.Message})
@@ -174,26 +202,32 @@ func (s *serveServer) handleDocgraph(w http.ResponseWriter, r *http.Request) {
 	for _, doc := range docs {
 		title := serveDocgraphTitle(doc)
 		out.Docs = append(out.Docs, serveDocgraphDoc{
-			Subject:      doc.Subject,
-			Title:        title,
-			Path:         doc.Path,
-			Kind:         string(doc.Kind),
-			Status:       doc.Status,
-			Keywords:     serveDocgraphStrings(doc.Keywords),
-			PartOf:       doc.PartOf,
-			Updates:      serveDocgraphStrings(doc.Updates),
-			DecidesFor:   doc.DecidesFor,
-			SupersededBy: doc.SupersededBy,
+			Subject:         doc.Subject,
+			Title:           title,
+			Path:            doc.Path,
+			Kind:            string(doc.Kind),
+			KindSource:      doc.KindSource,
+			Status:          doc.Status,
+			Lifecycle:       doc.Status,
+			CodeConformance: serveDocgraphConformance(doc),
+			LastVerified:    doc.LastVerified,
+			Describes:       serveDocgraphStrings(doc.Describes),
+			Keywords:        serveDocgraphStrings(doc.Keywords),
+			PartOf:          doc.PartOf,
+			Updates:         serveDocgraphStrings(doc.Updates),
+			DecidesFor:      doc.DecidesFor,
+			SupersededBy:    doc.SupersededBy,
 		})
 		if doc.Subject == "" {
 			continue
 		}
 		out.Graph.Nodes = append(out.Graph.Nodes, serveDocgraphNode{
-			Subject: doc.Subject,
-			Kind:    string(doc.Kind),
-			Path:    doc.Path,
-			Title:   title,
-			Status:  doc.Status,
+			Subject:         doc.Subject,
+			Kind:            string(doc.Kind),
+			Path:            doc.Path,
+			Title:           title,
+			Status:          doc.Status,
+			CodeConformance: serveDocgraphConformance(doc),
 		})
 	}
 	semanticLinks, _ := docgraph.SemanticLinks(corpus)
@@ -237,9 +271,37 @@ func (s *serveServer) handleDocgraphDoc(w http.ResponseWriter, r *http.Request) 
 	serveJSON(w, http.StatusOK, detail)
 }
 
+// serveDocgraphMergeIssues unions scan and corpus issues, collapsing exact
+// duplicates so a defect reported by both passes appears once.
+func serveDocgraphMergeIssues(scan, corpus []docgraph.Issue) []docgraph.Issue {
+	merged := make([]docgraph.Issue, 0, len(scan)+len(corpus))
+	seen := map[string]struct{}{}
+	for _, issue := range append(append([]docgraph.Issue{}, scan...), corpus...) {
+		key := issue.Code + "\x00" + issue.Path + "\x00" + issue.Message
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, issue)
+	}
+	return merged
+}
+
+// serveDocgraphConformance reports the document's independent code
+// conformance for API consumers: empty legacy values read as unverified so
+// the UI can show acceptance separately from verification.
+func serveDocgraphConformance(doc docgraph.Document) string {
+	if strings.TrimSpace(doc.CodeConformance) == "" {
+		return "unverified"
+	}
+	return doc.CodeConformance
+}
+
 // serveDocgraphBuildDetail assembles the read-detail shape (links, backlinks,
 // successor, and the on-disk rev) for one subject in an already-loaded corpus.
-// Shared by GET and the PUT save response so both stay identical.
+// Shared by GET and the PUT save response so both stay identical. A reference
+// that names a moved path or a superseded placeholder follows the shared
+// resolver to the one current document; unknown or ambiguous references miss.
 func serveDocgraphBuildDetail(repoRoot string, corpus docgraph.Corpus, subject string) (serveDocgraphDetail, bool) {
 	var target *docgraph.Document
 	for i := range corpus.Documents {
@@ -248,21 +310,43 @@ func serveDocgraphBuildDetail(repoRoot string, corpus docgraph.Corpus, subject s
 			target = doc
 		}
 	}
+	resolvedFrom := ""
+	if target == nil {
+		if resolved, ok := docgraph.ResolveCurrentReference(corpus, subject); ok {
+			for i := range corpus.Documents {
+				if corpus.Documents[i].Path == resolved.Document.Path {
+					target = &corpus.Documents[i]
+					break
+				}
+			}
+			if target != nil && resolved.ResolvedFrom != "" {
+				resolvedFrom = resolved.ResolvedFrom
+			} else if target != nil {
+				resolvedFrom = strings.TrimSpace(subject)
+			}
+		}
+	}
 	if target == nil {
 		return serveDocgraphDetail{}, false
 	}
 	resolver := docgraph.NewResolver(corpus)
 	detail := serveDocgraphDetail{
-		Subject:   target.Subject,
-		Title:     serveDocgraphTitle(*target),
-		Path:      target.Path,
-		Kind:      string(target.Kind),
-		Status:    target.Status,
-		Rev:       serveDocgraphFileRev(repoRoot, target.Path),
-		Header:    target.Raw,
-		Body:      target.Body,
-		Links:     serveDocgraphLinks(*target, resolver),
-		Backlinks: serveDocgraphBacklinks(subject, corpus, resolver),
+		Subject:         target.Subject,
+		Title:           serveDocgraphTitle(*target),
+		Path:            target.Path,
+		Kind:            string(target.Kind),
+		KindSource:      target.KindSource,
+		Status:          target.Status,
+		Lifecycle:       target.Status,
+		CodeConformance: serveDocgraphConformance(*target),
+		LastVerified:    target.LastVerified,
+		Describes:       serveDocgraphStrings(target.Describes),
+		ResolvedFrom:    resolvedFrom,
+		Rev:             serveDocgraphFileRev(repoRoot, target.Path),
+		Header:          target.Raw,
+		Body:            target.Body,
+		Links:           serveDocgraphLinks(*target, resolver),
+		Backlinks:       serveDocgraphBacklinks(target.Subject, corpus, resolver),
 	}
 	if successor := strings.TrimSpace(target.SupersededBy); successor != "" && strings.EqualFold(strings.TrimSpace(target.Status), "superseded") {
 		if resolved, ok := resolver.ResolveFrom(target.Path, successor); ok {

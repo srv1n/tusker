@@ -51,12 +51,16 @@ func TestClaudeSessionIdentityIgnoresNestedSubagentAndMessageIDs(t *testing.T) {
 	assertEqual(t, "", extractSessionRefFromJSON(`{"type":"assistant","message":{"id":"uuid-only"}}`), "message id ignored")
 }
 
-func TestResumeCommandEscapesSessionAndReportsUnsupported(t *testing.T) {
+func TestResumeCapabilityOmitsUnknownCommandsAndReportsUnsupported(t *testing.T) {
 	session := &RunnerSession{SessionRef: "session with ' quote", Resumable: true}
 	codex := resumeCapability(&RunStatus{Runner: string(RunnerCodexExec)}, session)
-	assertEqual(t, "codex exec resume 'session with '\"'\"' quote'", codex.Command, "escaped codex resume")
+	if !codex.Supported || codex.Command != "" || codex.Reason == "" {
+		t.Fatalf("Codex resume must omit a command when exec flags are unknown: %#v", codex)
+	}
 	claude := resumeCapability(&RunStatus{Runner: string(RunnerClaude)}, session)
-	assertEqual(t, "claude --resume 'session with '\"'\"' quote'", claude.Command, "escaped claude resume")
+	if !claude.Supported || claude.Command != "" || claude.Reason == "" {
+		t.Fatalf("Claude resume must omit a command when settings are unknown: %#v", claude)
+	}
 	unsupported := resumeCapability(&RunStatus{Runner: string(RunnerCodexCloud)}, session)
 	if unsupported.Supported || unsupported.Reason == "" {
 		t.Fatalf("unsupported resume: %#v", unsupported)

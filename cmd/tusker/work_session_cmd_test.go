@@ -500,10 +500,72 @@ func TestWorkSessionStartRefusalMatrix(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(vault), "tracked.txt"), []byte("dirty\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := gitFactOutput(filepath.Dir(vault), "add", "tracked.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := gitFactOutput(filepath.Dir(vault), "commit", "-m", "seed tracked file"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(filepath.Dir(vault), "tracked.txt"), []byte("changed\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); workSessionErrorCode(err) != "WORK_SESSION_UNSAFE_WORKSPACE" {
 			t.Fatalf("workspace refusal = %v", err)
 		}
+		store, err := OpenRuntimeStore(DefaultStateRoot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		if run, err := store.FindRun("APP-T-0001"); err != nil || run != nil {
+			t.Fatalf("refused start created a run: run=%#v err=%v", run, err)
+		}
 	})
+	t.Run("untracked_workspace", func(t *testing.T) {
+		vault, _ := workSessionFixture(t, 1)
+		if err := os.WriteFile(filepath.Join(filepath.Dir(vault), "untracked.txt"), []byte("new\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:a"); err != nil {
+			t.Fatalf("untracked file blocked start: %v", err)
+		}
+	})
+}
+
+func TestWorkSessionCurrentWorkspaceSnapshotsDirty(t *testing.T) {
+	vault, project := workSessionFixture(t, 1)
+	repo := project.RepoRoot
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitFactOutput(repo, "add", "tracked.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitFactOutput(repo, "commit", "-m", "seed tracked file"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	t.Setenv("CODEX_THREAD_ID", "implementation-conversation")
+	t.Setenv("TUSKER_ATTEMPT_ID", "")
+	captureStdout(t, func() {
+		if err := workSessionStartCmd(Args{"vault": vault, "id": "APP-T-0001", "by": "agent:a", "source": "codex", "current-workspace": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	raw, err := os.ReadFile(filepath.Join(repo, ".tusker", "workspace.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata WorkspaceMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(metadata.StartingDirtyPaths, "tracked.txt") {
+		t.Fatalf("starting dirty paths = %v", metadata.StartingDirtyPaths)
+	}
 }
 
 func TestWorkSessionDeadExpiredHolderReclaims(t *testing.T) {
@@ -520,14 +582,20 @@ func TestWorkSessionDeadExpiredHolderReclaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.Close()
-	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:new"); err != nil {
-		t.Fatal(err)
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:new"); workSessionErrorCode(err) != "WORK_SESSION_HEALTHY_OWNER" {
+		t.Fatalf("expired interactive holder must remain claimed: %v", err)
+	} else if issue := errorToIssue(err); issue.Context == nil {
+		t.Fatalf("holder refusal omitted blocker: %v", err)
+	} else if context, ok := issue.Context.(map[string]any); !ok {
+		t.Fatalf("holder refusal context = %#v", issue.Context)
+	} else if blocker, ok := context["readiness_blocker"].(ReadinessBlocker); !ok || !strings.Contains(blocker.Remedy, "--break-glass") {
+		t.Fatalf("holder refusal omitted break-glass remedy: %#v", context["readiness_blocker"])
 	}
 	store, _ = OpenRuntimeStore(DefaultStateRoot())
 	defer store.Close()
 	run, _ := store.FindRun("APP-T-0001")
-	if run == nil || run.LeaseOwner != "agent:new" || run.LeaseGeneration != 2 {
-		t.Fatalf("reclaimed run = %#v", run)
+	if run == nil || run.LeaseOwner != "agent:old" || run.LeaseGeneration != 1 {
+		t.Fatalf("expired interactive holder was replaced: %#v", run)
 	}
 }
 

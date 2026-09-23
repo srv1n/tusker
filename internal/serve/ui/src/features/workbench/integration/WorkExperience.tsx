@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import { MoreHorizontal } from "lucide-react";
+import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
 import { qk, useProjects, useRun, useRuns, useTask, useTasks, useWaves, useWave, useWaveList, useWaveReview } from "@/lib/queries";
-import { WaveAuthorityControls, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
+import { WaveCallout, WaveMeta, WavePrimaryAction, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
 import { TaskBoard } from "../board";
 import { WaveFlow, type DependencyFact, type FlowViewport } from "../flow";
+import { crossWaveWaitSummary } from "../flow/flowGraph";
 import { TaskInspector } from "../inspector/TaskInspector";
 import { WaveList } from "../overview/WaveList";
 import { WaveResults } from "../results/WaveResults";
@@ -44,12 +47,32 @@ export function projectContextName(projects: ProjectSummary[] | undefined, proje
   return projects?.find((project) => projectContainsCheckout(project, projectId))?.name ?? projectId;
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return <main data-wux-ready="true" className="h-full overflow-y-auto bg-surface px-4 py-6 text-ink sm:px-7 lg:px-10">
-    <div className="mx-auto w-full max-w-[1180px]">
-      {children}
-    </div>
+/** Every Work screen: one 52px toolbar row, then the screen body. */
+function Shell({ left, right, children }: { left: React.ReactNode; right?: React.ReactNode; children: React.ReactNode }) {
+  return <main data-wux-ready="true" className="flex h-full min-h-0 flex-col overflow-hidden bg-surface text-ink">
+    <header className="flex h-[52px] flex-none items-center gap-3 border-b border-line px-4 sm:px-5">
+      {left}
+      {right ? <div className="ml-auto flex min-w-0 items-center gap-2">{right}</div> : null}
+    </header>
+    {children}
   </main>;
+}
+
+function Reading({ children }: { children: React.ReactNode }) {
+  return <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-6">{children}</div></div>;
+}
+
+const segment = (active: boolean) => cn("rounded px-2.5 py-1 text-[12px] font-medium", active ? "bg-raised text-ink shadow-2xs" : "text-muted hover:text-ink");
+
+/** Waves and Board are two views of one place. */
+function WorkTitle({ projectId, current }: { projectId: string; current: "waves" | "board" }) {
+  return <>
+    <h1 className="text-[15px] font-semibold">Work</h1>
+    <nav aria-label="Work views" className="flex rounded-md border border-line bg-panel p-0.5">
+      <Link to="/p/$projectId/waves" params={{ projectId }} aria-current={current === "waves" ? "page" : undefined} className={segment(current === "waves")}>Waves</Link>
+      <Link to="/p/$projectId/tasks" params={{ projectId }} aria-current={current === "board" ? "page" : undefined} className={segment(current === "board")}>Board</Link>
+    </nav>
+  </>;
 }
 
 export function WorkOverview() {
@@ -70,15 +93,17 @@ export function WorkOverview() {
     setQuery(value);
     persistOverview(projectId, projectIds, { overviewQuery: value });
   };
-  return <Shell><WaveList
+  return <Shell
+    left={<WorkTitle projectId={projectId} current="waves" />}
+    right={<input type="search" value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="Filter waves" aria-label="Filter waves by ID, title, or description" className="h-8 w-48 min-w-0 rounded-md border border-line bg-raised px-2.5 text-[12.5px] text-ink placeholder:text-faint" />}
+  ><Reading><WaveList
     waves={waves.data ?? []}
-    projectName={projectContextName(projects.data, projectId)}
     backgroundWorkEnabled={projects.data?.find((project) => projectContainsCheckout(project, projectId))?.automationEnabled}
-    query={query} onQueryChange={updateQuery}
+    query={query}
     onOpenWave={(waveId) => navigate({ to: "/p/$projectId/waves/$waveId", params: { projectId, waveId } })}
     loading={waves.isPending}
     error={waves.error instanceof Error ? waves.error.message : undefined}
-  /></Shell>;
+  /></Reading></Shell>;
 }
 
 function InspectorHost({ selected, onClose, reviewMember }: { selected: string | null; onClose: () => void; reviewMember?: WaveReviewMember }) {
@@ -106,9 +131,13 @@ export function WorkBoard() {
     const membered = new Set((waves.data ?? []).flatMap((wave) => [...wave.memberIds, ...wave.members.map((member) => member.id)]));
     return (tasks.data ?? []).filter((task) => !membered.has(task.id)).map((task) => task.id);
   }, [tasks.data, waves.data]);
-  if (unassigned && waves.isPending) return <Shell><p role="status" className="text-[13px] text-muted">Loading wave membership…</p></Shell>;
-  if (unassigned && waves.error) return <Shell><p role="alert" className="text-[13px] text-fail">Unassigned tasks are unavailable until wave membership can be loaded.</p></Shell>;
-  return <Shell><TaskBoard tasks={tasks.data ?? []} runs={runs.data ?? []} mode={mode} onModeChange={setMode} onSelectTask={setSelected} taskIds={unassigned ? unassignedIds : undefined} selectedTags={[]} onSelectedTagsChange={() => {}} tagsAvailable={false} /><InspectorHost selected={selected} onClose={() => setSelected(null)} /></Shell>;
+  const modeToggle = <div className="flex rounded-md border border-line bg-panel p-0.5" aria-label="Task view">{(["board", "list"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={segment(mode === value)}>{value === "board" ? "Board" : "List"}</button>)}</div>;
+  const body = unassigned && waves.isPending
+    ? <p role="status" className="p-5 text-[13px] text-muted">Loading wave membership…</p>
+    : unassigned && waves.error
+      ? <p role="alert" className="p-5 text-[13px] text-fail">Unassigned tasks are unavailable until wave membership can be loaded.</p>
+      : <TaskBoard tasks={tasks.data ?? []} runs={runs.data ?? []} mode={mode} onModeChange={setMode} onSelectTask={setSelected} taskIds={unassigned ? unassignedIds : undefined} selectedTags={[]} onSelectedTagsChange={() => {}} tagsAvailable={false} />;
+  return <Shell left={<WorkTitle projectId={projectId} current="board" />} right={modeToggle}>{body}<InspectorHost selected={selected} onClose={() => setSelected(null)} /></Shell>;
 }
 
 export function WorkWave() {
@@ -157,12 +186,32 @@ export function WorkWave() {
   // entry destination; an explicit tab or deep link stays fixed through polls.
   const requestedView = requested === "work" || requested === "flow" || requested === "results" ? requested : null;
   const view = chosenView ?? enteredView ?? requestedView ?? "flow";
-  if (waveQuery.isPending || !currentWave) return <Shell><p role={waveQuery.error ? "alert" : "status"} className="text-[13px] text-muted">{waveQuery.error ? "Wave unavailable." : "Loading wave…"}</p></Shell>;
-  return <Shell>
-    <div className="mb-5"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{currentWave.id}</p><h2 className="mt-1 font-serif text-[26px] font-semibold">{currentWave.title}</h2>{(currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome) && <p className="mt-2 max-w-2xl text-[13px] text-muted">{currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome}</p>}</div>
-    <div className="mb-5"><WaveAuthorityControls projectId={projectId} waveId={currentWave.id} /></div>
-    <nav aria-label="Wave views" className="mb-5 flex gap-2 border-b border-line pb-3">{(["flow", "work", "results"] as const).map((tab) => <button key={tab} type="button" aria-pressed={view === tab} onClick={() => setChosenView(tab)} className={`rounded-md px-4 py-2 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${view === tab ? "bg-ink text-surface" : "border border-line"}`}>{tab === "work" ? "Tasks" : tab === "flow" ? "Dependencies" : "Results"}</button>)}</nav>
-    {view === "work" ? <WaveReviewDetail projectId={projectId} waveId={currentWave.id} showControls={false} showDependencies={false} /> : view === "results" ? canShowWaveResults(review.data, review.error) ? <WaveResults wave={currentWave} tasks={tasks} onOpenDependencies={() => setChosenView("flow")} onOpenTask={setSelected} /> : <section aria-label="Results unavailable" className="rounded-lg border border-line bg-raised px-4 py-5"><h3 className="text-[14px] font-semibold text-ink">Results are not available yet</h3><p className="mt-1 text-[13px] text-muted">{review.error ? "The acceptance record could not be loaded. Try refreshing." : review.isPending ? "Checking the acceptance record…" : "This wave has not been accepted. Tasks and dependencies remain available."}</p></section> : <WaveFlow memberIds={currentWave.memberIds} tasks={tasks} runs={runs.data ?? []} reviewMembers={review.error ? undefined : review.data?.members} dependencyFacts={dependencyFacts} authorization={waveAuthorization} startEnabled={waveStartEnabled} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={review.isPending || details.some((query) => query.isPending)} error={review.error instanceof Error ? review.error.message : details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />}
+  const crumb = <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px]"><Link to="/p/$projectId/waves" params={{ projectId }} className="text-muted hover:text-ink">Work</Link><span className="text-faint">/</span><span className="truncate font-mono text-[12px] text-ink">{waveId}</span></nav>;
+  if (waveQuery.isPending || !currentWave) return <Shell left={crumb}><p role={waveQuery.error ? "alert" : "status"} className="p-5 text-[13px] text-muted">{waveQuery.error ? "Wave unavailable." : "Loading wave…"}</p></Shell>;
+  const goal = currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome;
+  const waitSummary = crossWaveWaitSummary(Object.values(dependencyFacts ?? {}), waveAuthorization ?? "inert", waveStartEnabled);
+  const views = [["flow", "Graph"], ["work", "Tasks"], ["results", "Results"]] as const;
+  return <Shell left={crumb} right={<>
+    <WavePrimaryAction projectId={projectId} waveId={currentWave.id} />
+    <details className="relative">
+      <summary aria-label="More wave actions" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md text-muted hover:bg-hover hover:text-ink"><MoreHorizontal size={16} aria-hidden="true" /></summary>
+      <div className="absolute right-0 top-9 z-30 w-44 rounded-md border border-line bg-raised py-1 text-[12.5px] shadow-md">
+        <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-hover" onClick={() => void navigator.clipboard?.writeText(currentWave.id)}>Copy wave ID</button>
+        <Link to="/p/$projectId/settings" params={{ projectId }} className="block px-3 py-1.5 hover:bg-hover">Project settings</Link>
+      </div>
+    </details>
+  </>}>
+    <div className="flex flex-none flex-wrap items-end justify-between gap-3 px-5 pb-3 pt-4">
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-[22px] font-semibold leading-tight">{currentWave.title}</h2>
+        {goal ? <p className="mt-1 truncate text-[13px] text-muted" title={goal}>{goal}</p> : null}
+        <WaveMeta projectId={projectId} waveId={currentWave.id} />
+      </div>
+      <nav aria-label="Wave views" className="flex rounded-md border border-line bg-panel p-0.5">{views.map(([tab, label]) => <button key={tab} type="button" aria-pressed={view === tab} onClick={() => setChosenView(tab)} className={segment(view === tab)}>{label}</button>)}</nav>
+    </div>
+    <WaveCallout projectId={projectId} waveId={currentWave.id} waitSummary={waitSummary} />
+    {view === "flow" ? <WaveFlow memberIds={currentWave.memberIds} tasks={tasks} runs={runs.data ?? []} reviewMembers={review.error ? undefined : review.data?.members} needsYouIds={review.error ? undefined : review.data?.humanActions?.map((item) => item.taskId)} dependencyFacts={dependencyFacts} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={review.isPending || details.some((query) => query.isPending)} error={review.error instanceof Error ? review.error.message : details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />
+      : <Reading>{view === "work" ? <WaveReviewDetail projectId={projectId} waveId={currentWave.id} showControls={false} showDependencies={false} /> : canShowWaveResults(review.data, review.error) ? <WaveResults wave={currentWave} tasks={tasks} onOpenDependencies={() => setChosenView("flow")} onOpenTask={setSelected} /> : <p role="status" className="text-[13px] text-muted">{review.error ? "Results unavailable: the acceptance record could not be loaded." : review.isPending ? "Checking the acceptance record…" : "Results appear once this wave is accepted."}</p>}</Reading>}
     <InspectorHost selected={selected} reviewMember={review.error ? undefined : review.data?.members.find((member) => member.taskId === selected)} onClose={() => setSelected(null)} />
   </Shell>;
 }

@@ -94,11 +94,103 @@ func v7CanonicalSpecRef(vaultPath, ref string) string {
 	if err != nil {
 		return ""
 	}
-	resolved, ok := docgraph.ResolveReference(corpus, ref)
-	if !ok || (resolved.Document.Kind != docgraph.KindSpec && resolved.Document.Kind != docgraph.KindDecision) {
+	// Follow supersession so a migrated (legacy) path reports the actual
+	// portable document instead of a stale forwarding stub. "spec" stays
+	// accepted as the compatibility spelling for proposal, so portable
+	// proposals resolve as governing references alongside legacy specs and
+	// decisions.
+	resolved, ok := docgraph.ResolveCurrentReference(corpus, ref)
+	if !ok || (resolved.Document.Kind != docgraph.KindSpec && resolved.Document.Kind != docgraph.KindProposal && resolved.Document.Kind != docgraph.KindDecision) {
 		return ""
 	}
 	return resolved.CanonicalRef
+}
+
+// v7GoverningSpecHint is the shared repair hint for unresolvable governing
+// references: portable proposals/decisions/domains, managed legacy specs,
+// and tracker lifecycle decisions.
+func v7GoverningSpecHint() string {
+	return "use a subject or path under docs/system (proposals, decisions, domains) or .tusker/specs (decisions included), or a V7 decision id"
+}
+
+// v7SpecRefFailureReason explains why a governing reference does not resolve.
+// It returns "" when the ref names a governing spec/proposal/decision (or a
+// tracker lifecycle decision) with its section present. Legacy managed paths
+// resolve through model compatibility; superseded stubs resolve to their
+// current document. Ambiguous subjects fail instead of silently picking one
+// route, and tracker decision IDs stay distinct from product decision files.
+func v7SpecRefFailureReason(vaultPath, ref string, decisionIDs map[string]Note) string {
+	normalized := v7NormalizeSpecRef(ref)
+	if normalized == "" {
+		return "reference is empty"
+	}
+	clean, anchor := v7CleanSpecRef(normalized), v7SpecRefAnchor(normalized)
+	if id := v7SpecRefDecisionID(clean); id != "" {
+		note, ok := decisionIDs[id]
+		if !ok {
+			return "unknown task/decision id " + id
+		}
+		if !v7SpecRefSectionExists(note.Body, anchor) {
+			return "missing section #" + anchor + " in " + id
+		}
+		return ""
+	}
+	if clean == "" || v7SpecRefPathEscapes(clean) {
+		return "path escapes the repository: " + normalized
+	}
+	corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath))
+	if err != nil {
+		return "could not load the documentation corpus: " + err.Error()
+	}
+	if _, strictOK := docgraph.ResolveStrictReference(corpus, clean); strictOK {
+		current, ok := docgraph.ResolveCurrentReference(corpus, clean)
+		if !ok {
+			return "reference does not resolve: " + normalized
+		}
+		switch current.Document.Kind {
+		case docgraph.KindSpec, docgraph.KindProposal, docgraph.KindDecision:
+		default:
+			return fmt.Sprintf("wrong kind: %s resolves to %s document %s, not a governing spec, proposal, or decision", normalized, current.Document.Kind, current.CanonicalRef)
+		}
+		if anchor != "" && !v7SpecRefSectionExists(current.Document.Body, anchor) {
+			return "missing section #" + anchor + " in " + current.CanonicalRef
+		}
+		return ""
+	}
+	if _, lenientOK := docgraph.ResolveReference(corpus, clean); lenientOK {
+		return "ambiguous subject " + normalized + v7SpecRefAmbiguitySuffix(corpus, clean)
+	}
+	return "missing target: no managed document matches " + normalized
+}
+
+// v7SpecRefAmbiguitySuffix names the competing routes for an ambiguous
+// subject so the caller can disambiguate with an exact path. Output stays
+// bounded no matter how many documents claim the subject.
+func v7SpecRefAmbiguitySuffix(corpus docgraph.Corpus, clean string) string {
+	key := strings.ToLower(strings.TrimSpace(clean))
+	var paths []string
+	for _, doc := range corpus.Documents {
+		if strings.ToLower(strings.TrimSpace(doc.Subject)) == key {
+			paths = append(paths, doc.Path)
+		}
+	}
+	if len(paths) == 0 {
+		base := strings.ToLower(filepath.Base(filepath.FromSlash(clean)))
+		for _, doc := range corpus.Documents {
+			if strings.ToLower(filepath.Base(filepath.FromSlash(doc.Path))) == base {
+				paths = append(paths, doc.Path)
+			}
+		}
+	}
+	sort.Strings(paths)
+	const maxAmbiguousPaths = 5
+	if len(paths) > maxAmbiguousPaths {
+		return fmt.Sprintf(" (also declared in %s, and %d more)", strings.Join(paths[:maxAmbiguousPaths], ", "), len(paths)-maxAmbiguousPaths)
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	return " (also declared in " + strings.Join(paths, ", ") + ")"
 }
 
 func v7SpecRefRequiredReads(vaultPath string, note Note) []string {
@@ -227,29 +319,15 @@ func validateV7SpecRefs(vaultPath string, note Note, decisionIDs map[string]Note
 		if clean == "" {
 			continue
 		}
-		if v7SpecRefExists(vaultPath, clean, decisionIDs) {
-			continue
+		if reason := v7SpecRefFailureReason(vaultPath, clean, decisionIDs); reason != "" {
+			warnings = append(warnings, issue("SPEC_REF_DANGLING", fmt.Sprintf("%s spec_refs reference does not resolve: %s (%s)", effectiveV7Kind(note.Data), clean, reason), note.RelativePath, v7GoverningSpecHint(), map[string]any{"ref": clean}))
 		}
-		warnings = append(warnings, issue("SPEC_REF_DANGLING", fmt.Sprintf("%s spec_refs reference does not resolve: %s", effectiveV7Kind(note.Data), clean), note.RelativePath, "use a subject or path under .tusker/specs (decisions included), or a V7 decision id", map[string]any{"ref": clean}))
 	}
 	return warnings
 }
 
 func v7SpecRefExists(vaultPath, ref string, decisionIDs map[string]Note) bool {
-	clean, anchor := v7CleanSpecRef(ref), v7SpecRefAnchor(ref)
-	if id := v7SpecRefDecisionID(clean); id != "" {
-		note, ok := decisionIDs[id]
-		return ok && v7SpecRefSectionExists(note.Body, anchor)
-	}
-	if v7SpecRefPathEscapes(clean) {
-		return false
-	}
-	corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath))
-	if err != nil {
-		return false
-	}
-	resolved, ok := docgraph.ResolveReference(corpus, clean)
-	return ok && (resolved.Document.Kind == docgraph.KindSpec || resolved.Document.Kind == docgraph.KindDecision) && v7SpecRefSectionExists(resolved.Document.Body, anchor)
+	return v7SpecRefFailureReason(vaultPath, ref, decisionIDs) == ""
 }
 
 func v7SpecRefSectionExists(body, anchor string) bool {

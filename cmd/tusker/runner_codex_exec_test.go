@@ -196,7 +196,7 @@ func TestCodexExecAttemptRecordsJSONLTurnsAndSession(t *testing.T) {
 	}
 }
 
-func TestCodexExecContinuationRedispatchResumesRecordedSession(t *testing.T) {
+func TestCodexExecResumeFakeCLIRejectsLateFlags(t *testing.T) {
 	tempRoot := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
 	installFakeCodexExec(t, tempRoot)
@@ -210,7 +210,7 @@ func TestCodexExecContinuationRedispatchResumesRecordedSession(t *testing.T) {
 	}
 	statusPath := filepath.Join(tempRoot, "resume.status.json")
 	resumeCommand := codexExecResumeCommand(defaultCodexExecCommand())
-	if !strings.Contains(resumeCommand, "codex exec resume --json --skip-git-repo-check {{session_ref}} -") {
+	if !strings.Contains(resumeCommand, "codex exec --json --skip-git-repo-check resume {{session_ref}} -") {
 		t.Fatalf("unexpected resume command: %s", resumeCommand)
 	}
 	_, err := runnerWrapperStartChild(context.Background(), runnerWrapperRequest{
@@ -231,7 +231,7 @@ func TestCodexExecContinuationRedispatchResumesRecordedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(argsLog, "exec resume --json --skip-git-repo-check session-existing -") {
+	if !strings.Contains(argsLog, "exec --json --skip-git-repo-check resume session-existing -") {
 		t.Fatalf("expected codex exec resume invocation, got:\n%s", argsLog)
 	}
 
@@ -684,11 +684,12 @@ import json, os, sys
 with open("` + filepath.ToSlash(argsLog) + `", "a", encoding="utf-8") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
 session = "session-start"
-if len(sys.argv) > 3 and sys.argv[1] == "exec" and sys.argv[2] == "resume":
-    for arg in sys.argv[3:]:
-        if arg and not arg.startswith("-"):
-            session = arg
-            break
+if "resume" in sys.argv:
+    index = sys.argv.index("resume")
+    if any(arg.startswith("-") and arg != "-" for arg in sys.argv[index + 1:]):
+        print("unexpected argument after resume", file=sys.stderr)
+        sys.exit(2)
+    session = sys.argv[index + 1]
 sys.stdin.read()
 for line in [
     {"type":"thread.started","session_id":session},

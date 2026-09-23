@@ -30,6 +30,11 @@ var errAuthoritativeRawLogOverflow = errors.New("completion-authoritative raw lo
 type boundedRawLogWriter struct {
 	mu              sync.Mutex
 	file            *os.File
+	path            string
+	rotate          bool
+	allowExisting   bool
+	rotated         bool
+	onRotate        func(int64) error
 	max             int64
 	written         int64
 	overflow        bool
@@ -86,7 +91,7 @@ func openBoundedRawLog(path string, max int64, allowExisting bool) (*boundedRawL
 	if openedInfo.Size() > max {
 		return fail(fmt.Errorf("bounded raw log already exceeds %d bytes", max))
 	}
-	return &boundedRawLogWriter{file: file, max: max, written: openedInfo.Size()}, nil
+	return &boundedRawLogWriter{file: file, path: path, max: max, written: openedInfo.Size(), allowExisting: allowExisting}, nil
 }
 
 func validateExclusiveRawLog(info os.FileInfo) error {
@@ -108,6 +113,11 @@ func (w *boundedRawLogWriter) Write(p []byte) (int, error) {
 		return 0, os.ErrInvalid
 	}
 	w.mu.Lock()
+	if w.rotate {
+		n, err := w.writeRotating(p)
+		w.mu.Unlock()
+		return n, err
+	}
 	if w.overflow {
 		w.mu.Unlock()
 		return 0, errAuthoritativeRawLogOverflow
@@ -153,6 +163,87 @@ func (w *boundedRawLogWriter) Write(p []byte) (int, error) {
 		return n, errAuthoritativeRawLogOverflow
 	}
 	return n, nil
+}
+
+// writeRotating keeps the first segment for native session recovery, the
+// current segment, and at most one previous segment. It is called under mu.
+func (w *boundedRawLogWriter) writeRotating(p []byte) (int, error) {
+	written := 0
+	for len(p) > 0 {
+		if w.written == w.max {
+			if err := w.rotateSegment(); err != nil {
+				return written, err
+			}
+		}
+		size := int64(len(p))
+		if size > w.max-w.written {
+			size = w.max - w.written
+		}
+		n, err := w.file.Write(p[:int(size)])
+		w.written += int64(n)
+		written += n
+		p = p[n:]
+		if err != nil {
+			return written, err
+		}
+		if int64(n) != size {
+			return written, io.ErrShortWrite
+		}
+	}
+	return written, nil
+}
+
+func (w *boundedRawLogWriter) rotateSegment() error {
+	parentFD, base, err := openPrivatePathParent(w.path, false)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parentFD)
+	var head unix.Stat_t
+	headErr := unix.Fstatat(parentFD, base+".head", &head, unix.AT_SYMLINK_NOFOLLOW)
+	if headErr != nil && !errors.Is(headErr, unix.ENOENT) {
+		return headErr
+	}
+	headExists := headErr == nil
+	if headExists && !w.allowExisting && !w.rotated {
+		return fmt.Errorf("fresh raw log has an existing head segment")
+	}
+	if headExists && (head.Mode&unix.S_IFMT != unix.S_IFREG || head.Mode&0o777 != 0o600 || head.Nlink != 1) {
+		return fmt.Errorf("raw log head segment is not exclusive owner-only regular file")
+	}
+	destination := base + ".head"
+	var dropped int64
+	if headExists {
+		destination = base + ".prev"
+		var previous unix.Stat_t
+		if err := unix.Fstatat(parentFD, destination, &previous, unix.AT_SYMLINK_NOFOLLOW); err == nil {
+			if previous.Mode&unix.S_IFMT != unix.S_IFREG || previous.Mode&0o777 != 0o600 || previous.Nlink != 1 {
+				return fmt.Errorf("raw log previous segment is not exclusive owner-only regular file")
+			}
+			dropped = previous.Size
+		} else if !errors.Is(err, unix.ENOENT) {
+			return err
+		}
+	}
+	if err := w.file.Close(); err != nil {
+		return err
+	}
+	if err := unix.Renameat(parentFD, base, parentFD, destination); err != nil {
+		return err
+	}
+	next, err := openBoundedRawLog(w.path, w.max, false)
+	if err != nil {
+		return err
+	}
+	w.file = next.file
+	w.written = 0
+	w.rotated = true
+	if w.onRotate != nil {
+		if err := w.onRotate(dropped); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // bindTerminator is called only after attempt_spawned has durably published

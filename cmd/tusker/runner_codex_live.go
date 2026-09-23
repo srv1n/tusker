@@ -458,16 +458,41 @@ func (h *codexLiveHandle) readStdout() {
 	defer h.ioWG.Done()
 	defer h.closeRuntimeStore()
 	defer h.stdout.Close()
-	scanner := bufio.NewScanner(h.stdout)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 4*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		_ = appendRawLogLine(h.rawLogPath, line)
-		h.handleStdoutLine(line)
-	}
-	if err := scanner.Err(); err != nil {
-		h.failCriticalRunnerIO("stdout scan failed", err)
+	reader := bufio.NewReaderSize(h.stdout, 64*1024)
+	const maxLine = 4 * 1024 * 1024
+	for {
+		var line []byte
+		oversized := false
+		length := 0
+		for {
+			fragment, err := reader.ReadSlice('\n')
+			length += len(fragment)
+			if !oversized && len(line)+len(fragment) <= maxLine {
+				line = append(line, fragment...)
+			} else {
+				oversized = true
+			}
+			if err == bufio.ErrBufferFull {
+				continue
+			}
+			if err != nil && err != io.EOF {
+				h.failCriticalRunnerIO("stdout read failed", err)
+				return
+			}
+			if oversized {
+				if !h.appendCriticalEvent("stdout_line_oversized", map[string]any{"byte_length": length}) {
+					return
+				}
+			} else if len(line) > 0 {
+				text := strings.TrimSuffix(string(line), "\n")
+				_ = appendRawLogLine(h.rawLogPath, text)
+				h.handleStdoutLine(text)
+			}
+			if err == io.EOF {
+				return
+			}
+			break
+		}
 	}
 }
 

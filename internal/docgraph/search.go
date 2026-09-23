@@ -317,9 +317,9 @@ func firstHeading(body string) string {
 
 func kindRank(kind Kind) int {
 	switch kind {
-	case KindCanonical:
+	case KindCanonical, KindDoc:
 		return 0
-	case KindSpec:
+	case KindSpec, KindProposal:
 		return 1
 	case KindDecision:
 		return 2

@@ -52,11 +52,17 @@ func TestResolveResumeSessionHonorsFreshSessionDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	for _, marker := range []string{outcomeUnknownContextRecoveryReasonPrefix + "attempt-old", runSessionControlFreshReasonPrefix + "human:test"} {
+	for _, action := range []string{runSessionControlContextRecovery, runSessionControlFresh} {
 		if err := store.SaveSession(RunnerSession{
 			ProjectID: "project-1", RecordID: "APP-T-0001", Runner: string(RunnerCodexExec),
 			SessionRef: "session-old", WorkspacePath: t.TempDir(), WorkRevision: 1,
 			LastAttemptID: "attempt-old", State: "released", Resumable: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveRunSessionControlIntent(store, runSessionControlIntent{
+			Action: action, State: runSessionControlQueued,
+			ProjectID: "project-1", RecordID: "APP-T-0001",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -65,13 +71,13 @@ func TestResolveResumeSessionHonorsFreshSessionDecisions(t *testing.T) {
 			Note{Data: map[string]any{"status": "ready"}},
 			RunStatus{ProjectID: "project-1", RecordID: "APP-T-0001", Runner: string(RunnerCodexExec),
 				LeaseState: string(LeaseStateRetryQueued), AttemptCount: 1, WorkRevision: 1,
-				LastError: marker},
+				LastError: "later diagnostic replaced the action reason"},
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if resolved.SessionRef != "" {
-			t.Fatalf("%q silently reused historical session: %#v", marker, resolved)
+			t.Fatalf("%q silently reused historical session: %#v", action, resolved)
 		}
 	}
 }

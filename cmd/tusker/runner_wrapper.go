@@ -78,6 +78,7 @@ func startDetachedRunnerWrapper(ctx context.Context, runner RunnerName, req Star
 	}
 	go func() { _ = cmd.Wait() }()
 	return &StartResult{
+		SessionRef:   firstNonEmpty(req.NativeSessionID, resumeSessionRef(resume)),
 		StartedAt:    processStartedAt,
 		PID:          pid,
 		PGID:         pgid,
@@ -193,6 +194,8 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 	// worker that later races a reclaimed attempt in the same workspace.
 	req.Start.ContainmentPGID = req.ContainmentPGID
 	switch runner {
+	case RunnerClaude:
+		return startLiveClaude(ctx, req.Start, req.Resume)
 	case RunnerCodexAppServer:
 		if req.Resume != nil {
 			return startLiveCodex(ctx, req.Start, req.Resume)

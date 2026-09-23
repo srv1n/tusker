@@ -383,7 +383,7 @@ func applyV7ChangeProposal(vaultPath, target, targetKind string, fields map[stri
 	}
 	refsValue, ok := fields["spec_refs"]
 	if !ok {
-		return tuskerError(errorInvalidField, proposalID+": change proposal only supports spec_refs", withHint("use --set spec_refs=<repo-relative-spec>"))
+		return tuskerError(errorInvalidField, proposalID+": change proposal only supports spec_refs", withHint("use --set spec_refs=<subject-or-path> with a subject or path under docs/system (proposals, decisions, domains) or .tusker/specs (decisions included), or a V7 decision id"))
 	}
 	refs := normalizeList(refsValue)
 	if len(refs) == 0 {
@@ -405,7 +405,7 @@ func applyV7ChangeProposal(vaultPath, target, targetKind string, fields map[stri
 	for _, ref := range refs {
 		clean := v7CleanSpecRef(ref)
 		if clean == "" || !v7SpecRefExists(vaultPath, clean, decisionIDs) {
-			return tuskerError(errorInvalidField, proposalID+": spec_refs reference does not resolve: "+ref, withHint("use an existing repo-relative docs/specs or docs/design path"), withContext(map[string]any{"ref": ref}))
+			return tuskerError(errorInvalidField, proposalID+": spec_refs reference does not resolve: "+ref+" ("+v7SpecRefFailureReason(vaultPath, clean, decisionIDs)+")", withHint(v7GoverningSpecHint()), withContext(map[string]any{"ref": ref}))
 		}
 	}
 

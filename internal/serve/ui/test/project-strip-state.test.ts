@@ -41,12 +41,12 @@ test("project strip state migrates old records without losing routes or opaque v
   expect(state.expandedProjectIds).toEqual(["alpha"]);
 });
 
-test("pins and mount ordering are deterministic while visits only affect the next mount", () => {
+test("pins order the rail and visits never reorder it", () => {
   let state = emptyNavigationState();
   state = recordProjectVisit(state, projects, "beta", "/p/beta/waves");
   state = recordProjectVisit(state, projects, "gamma", "/p/gamma/knowledge");
   const mounted = orderProjects(projects.map((id) => ({ id })), state).map((project) => project.id);
-  expect(mounted).toEqual(["gamma", "beta", "alpha", "delta"]);
+  expect(mounted).toEqual(projects);
 
   const sameProjectRoute = recordProjectVisit(state, projects, "gamma", "/p/gamma/tasks");
   expect(sameProjectRoute.recentProjectIds).toEqual(["gamma", "beta"]);

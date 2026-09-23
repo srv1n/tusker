@@ -12,8 +12,9 @@ test("one persisted font setting drives the full app and TipTap surface", () => 
   expect(css).toContain("--tk-prose-h2-size: 22px");
   expect(css).toContain("--tk-prose-h3-size: 17px");
   expect(css).toContain("font-size: var(--tk-prose-body-size)");
-  expect(css).toContain("zoom: var(--tk-font-scale)");
-  expect(css).toContain("height: calc(100dvh / var(--tk-font-scale))");
+  expect(css).toContain("--tk-zoom: var(--tk-font-scale)");
+  expect(css).toContain("zoom: var(--tk-zoom)");
+  expect(css).toContain("height: calc(100dvh / var(--tk-zoom))");
   expect(scale).toContain('const STORAGE_KEY = "tusker-font-scale"');
   expect(scale).toContain('const FONT_FAMILY_STORAGE_KEY = "tusker-font-family"');
   expect(scale).toContain('"Iowan Old Style"');

@@ -20,29 +20,83 @@ import (
 type Kind string
 
 const (
+	// KindDoc, KindProposal and KindDecision are the portable S46 document
+	// kinds. Authors declare them with explicit `kind` front matter; the
+	// kind-specific lifecycle and conformance rules in this package apply to
+	// these values.
+	KindDoc      Kind = "doc"
+	KindProposal Kind = "proposal"
+	KindDecision Kind = "decision"
+
+	// KindCanonical and KindSpec are legacy compatibility spellings retained
+	// for documents that predate explicit kinds. New documents must use the
+	// portable kinds above; legacy values keep their historical path-inferred
+	// meaning and surface a migration diagnostic via MigrationDiagnostics.
 	KindCanonical Kind = "canonical"
 	KindSpec      Kind = "spec"
-	KindDecision  Kind = "decision"
+)
+
+// KindSource describes how a Document's Kind was determined. Explicit kinds
+// win over the file path; inferred kinds are the legacy compatibility
+// fallback and must surface a migration diagnostic.
+const (
+	KindSourceExplicit = "explicit"
+	KindSourceLegacy   = "legacy"
 )
 
 // Document is the normalized in-memory representation shared by all managed
 // documentation kinds. Raw is retained so later graph/map work can consume
 // fields without having to re-parse the file.
+//
+// Kind is the normalized kind: an explicit `kind` front-matter value wins
+// over the file path (KindSourceExplicit). Without one, the historical
+// path-inferred kind applies (KindSourceLegacy) and MigrationDiagnostics
+// reports the document for an explicit-kind disposition.
+//
+// Status keeps the authored lifecycle value, which is kind-specific: docs
+// use current|superseded, proposals use proposed|accepted|implemented|
+// superseded, and decisions use proposed|accepted|superseded. CodeConformance
+// is independent of lifecycle: unverified|matches|drift|not_applicable, with
+// an empty value meaning unknown legacy conformance (treated as unverified).
 type Document struct {
-	Path         string
-	Kind         Kind
-	Subject      string
-	Keywords     []string
-	PartOf       string
-	Describes    []string
-	Updates      []string
-	Sources      []string
-	DecidesFor   string
-	Status       string
-	SupersededBy string
-	LastVerified string
-	Raw          map[string]any
-	Body         string
+	Path            string
+	Kind            Kind
+	KindSource      string
+	Subject         string
+	Keywords        []string
+	PartOf          string
+	Describes       []string
+	Updates         []string
+	Sources         []string
+	DecidesFor      string
+	Status          string
+	SupersededBy    string
+	CodeConformance string
+	LastVerified    string
+	Raw             map[string]any
+	Body            string
+}
+
+// IsCanonicalFamily reports whether the kind belongs to the current-knowledge
+// family (legacy canonical or explicit doc), as opposed to proposal/decision
+// records.
+func (k Kind) IsCanonicalFamily() bool {
+	return k == KindCanonical || k == KindDoc
+}
+
+// IsForwardingStub reports whether the document is a legacy forwarding stub:
+// a subject-less placeholder left at a moved document's old path that carries
+// only a successor link (superseded_by) and minimum identity metadata. Stubs
+// never own a subject, so they cannot create duplicate-subject ownership;
+// resolution follows them to the current document.
+func IsForwardingStub(doc Document) bool {
+	if strings.TrimSpace(doc.Subject) != "" {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(doc.Status), "superseded") {
+		return false
+	}
+	return strings.TrimSpace(doc.SupersededBy) != ""
 }
 
 // Corpus is the shared parsed documentation model used by validation and the
@@ -83,7 +137,7 @@ var (
 // and is preserved on the returned model for diagnostics.
 func ParseDocHeaders(path string, content []byte) (Document, error) {
 	rel := filepath.ToSlash(filepath.Clean(path))
-	kind, ok := kindForPath(rel)
+	inferred, ok := kindForPath(rel)
 	if !ok {
 		return Document{}, &ParseError{Code: "DOC_PATH_UNMANAGED", Message: "document is outside the managed docs, specs, and decision-log roots"}
 	}
@@ -95,27 +149,61 @@ func ParseDocHeaders(path string, content []byte) (Document, error) {
 	if err := validateFrontmatterTypes(frontmatter); err != nil {
 		return Document{}, err
 	}
+	// An explicit kind always beats the file path. The legacy `spec`
+	// spelling normalizes to proposal; unknown values keep the inferred
+	// kind on the model so the corpus still loads, and validation reports
+	// DOC_KIND_INVALID.
+	kind, source := inferred, KindSourceLegacy
+	if raw, declared := frontmatter["kind"]; declared && strings.TrimSpace(scalar(raw)) != "" {
+		if explicit, ok := normalizeKind(scalar(raw)); ok {
+			kind, source = explicit, KindSourceExplicit
+		} else {
+			source = KindSourceExplicit
+		}
+	}
 	doc := Document{
-		Path:         rel,
-		Kind:         kind,
-		Subject:      scalar(frontmatter["subject"]),
-		Keywords:     list(frontmatter["keywords"]),
-		PartOf:       scalar(frontmatter["part_of"]),
-		Describes:    list(frontmatter["describes"]),
-		Updates:      list(frontmatter["updates"]),
-		Sources:      list(frontmatter["sources"]),
-		DecidesFor:   scalar(frontmatter["decides_for"]),
-		Status:       scalar(frontmatter["status"]),
-		SupersededBy: scalar(frontmatter["superseded_by"]),
-		LastVerified: dateScalar(frontmatter["last_verified"]),
-		Raw:          frontmatter,
-		Body:         body,
+		Path:            rel,
+		Kind:            kind,
+		KindSource:      source,
+		Subject:         scalar(frontmatter["subject"]),
+		Keywords:        list(frontmatter["keywords"]),
+		PartOf:          scalar(frontmatter["part_of"]),
+		Describes:       list(frontmatter["describes"]),
+		Updates:         list(frontmatter["updates"]),
+		Sources:         list(frontmatter["sources"]),
+		DecidesFor:      scalar(frontmatter["decides_for"]),
+		Status:          scalar(frontmatter["status"]),
+		SupersededBy:    scalar(frontmatter["superseded_by"]),
+		CodeConformance: strings.ToLower(strings.TrimSpace(scalar(frontmatter["code_conformance"]))),
+		LastVerified:    dateScalar(frontmatter["last_verified"]),
+		Raw:             frontmatter,
+		Body:            body,
 	}
 	return doc, nil
 }
 
+// normalizeKind maps an explicit `kind` front-matter value to its normalized
+// kind. `spec` stays accepted as the compatibility spelling for proposal and
+// `canonical` keeps its historical meaning; anything else is rejected.
+func normalizeKind(value string) (Kind, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "doc":
+		return KindDoc, true
+	case "proposal":
+		return KindProposal, true
+	case "decision":
+		return KindDecision, true
+	case "spec":
+		return KindProposal, true
+	case "canonical":
+		return KindCanonical, true
+	default:
+		return "", false
+	}
+}
+
 func validateFrontmatterTypes(frontmatter map[string]any) error {
-	for _, key := range []string{"title", "subject", "part_of", "decides_for", "status", "superseded_by", "read_when", "skip_when"} {
+	for _, key := range []string{"title", "subject", "part_of", "decides_for", "status", "superseded_by", "read_when", "skip_when", "kind", "code_conformance"} {
 		value, ok := frontmatter[key]
 		if !ok || value == nil {
 			continue
@@ -131,7 +219,7 @@ func validateFrontmatterTypes(frontmatter map[string]any) error {
 			return &ParseError{Code: "DOC_HEADER_TYPE_INVALID", Message: `front matter field "last_verified" must be a date or string`}
 		}
 	}
-	for _, key := range []string{"keywords", "describes", "updates", "sources"} {
+	for _, key := range []string{"keywords", "describes", "updates", "sources", "aliases"} {
 		value, ok := frontmatter[key]
 		if !ok || value == nil {
 			continue
@@ -382,8 +470,19 @@ func scanRepository(repoRoot string) ([]Document, []Issue, error) {
 			if entry.IsDir() {
 				return nil
 			}
-			if entry.Name() == "INDEX.md" {
+			// Symlinked entries stay out of the corpus: Browse and the map
+			// writers already refuse symlinked managed paths, and the scan
+			// must not follow a link out of the worktree to read bytes.
+			if entry.Type()&fs.ModeSymlink != 0 {
 				return nil
+			}
+			// Only the known generated corpus index is excluded. Authored
+			// indexes (00-index.md files and any authored nested INDEX.md)
+			// remain visible corpus members.
+			if strings.EqualFold(entry.Name(), "INDEX.md") {
+				if rel, relErr := filepath.Rel(root, path); relErr == nil && filepath.ToSlash(rel) == legacyIndexRelPath {
+					return nil
+				}
 			}
 			if strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
 				paths = append(paths, path)
@@ -432,20 +531,137 @@ func scanRepository(repoRoot string) ([]Document, []Issue, error) {
 
 func validateHeader(doc Document) []Issue {
 	var issues []Issue
-	if strings.TrimSpace(doc.Subject) == "" {
+	stub := IsForwardingStub(doc)
+	if !stub && strings.TrimSpace(doc.Subject) == "" {
 		issues = append(issues, Issue{Code: "DOC_REQUIRED_FIELD_MISSING", Path: doc.Path, Message: `missing required header field "subject"`})
 	}
-	if !isRoot(doc) && strings.TrimSpace(doc.PartOf) == "" {
+	if !stub && !isRoot(doc) && strings.TrimSpace(doc.PartOf) == "" {
 		issues = append(issues, Issue{Code: "DOC_REQUIRED_FIELD_MISSING", Path: doc.Path, Message: `missing required header field "part_of"`})
 	}
 	if doc.Kind == KindDecision && strings.TrimSpace(doc.DecidesFor) == "" {
 		issues = append(issues, Issue{Code: "DOC_REQUIRED_FIELD_MISSING", Path: doc.Path, Message: `missing required header field "decides_for"`})
 	}
+	if _, declared := doc.Raw["kind"]; declared && strings.TrimSpace(scalar(doc.Raw["kind"])) != "" {
+		if _, ok := normalizeKind(scalar(doc.Raw["kind"])); !ok {
+			issues = append(issues, Issue{Code: "DOC_KIND_INVALID", Path: doc.Path, Message: fmt.Sprintf("unknown document kind %q; declare one of doc, proposal, or decision", strings.TrimSpace(scalar(doc.Raw["kind"])))})
+		}
+	}
+	if !ValidLifecycle(doc.Kind, doc.KindSource, doc.Status) {
+		issues = append(issues, Issue{Code: "DOC_LIFECYCLE_INVALID", Path: doc.Path, Message: fmt.Sprintf("lifecycle %q is not valid for %s document kind %q; use %s", doc.Status, doc.KindSource, doc.Kind, strings.Join(LifecycleValues(doc.Kind), "|"))})
+	}
+	if code, message := checkConformance(doc); code != "" {
+		issues = append(issues, Issue{Code: code, Path: doc.Path, Message: message})
+	}
+	return issues
+}
+
+// LifecycleValues returns the valid lifecycle values for a document kind.
+// Docs use current|superseded, proposals use proposed|accepted|implemented|
+// superseded, and decisions use proposed|accepted|superseded. Proposal
+// acceptance records intent, not implementation proof: implemented requires
+// recorded completion evidence and updated current documentation.
+func LifecycleValues(kind Kind) []string {
+	switch kind {
+	case KindProposal, KindSpec:
+		return []string{"proposed", "accepted", "implemented", "superseded"}
+	case KindDecision:
+		return []string{"proposed", "accepted", "superseded"}
+	default:
+		return []string{"current", "superseded"}
+	}
+}
+
+// ValidLifecycle reports whether a lifecycle value is acceptable for a kind.
+// Explicit portable kinds (doc, proposal, decision) enforce their exact
+// value set, so a legacy `canonical` status is never silently translated
+// into an approved or implemented state. Legacy compatibility spellings and
+// path-inferred kinds additionally accept the historical `canonical` value;
+// an empty value stays valid here and is dispositioned by
+// MigrationDiagnostics instead.
+func ValidLifecycle(kind Kind, source, status string) bool {
+	value := strings.ToLower(strings.TrimSpace(status))
+	if value == "" {
+		return true
+	}
+	for _, allowed := range LifecycleValues(kind) {
+		if value == allowed {
+			return true
+		}
+	}
+	if source == KindSourceLegacy || kind == KindCanonical || kind == KindSpec {
+		return value == "canonical"
+	}
+	return false
+}
+
+// ValidCodeConformance reports whether a code_conformance value names a known
+// state. Conformance is independent of lifecycle: unknown legacy conformance
+// is simply unset and treated as unverified.
+func ValidCodeConformance(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "unverified", "matches", "drift", "not_applicable":
+		return true
+	default:
+		return false
+	}
+}
+
+// checkConformance validates the independent code-conformance claim. matches
+// requires both the last_verified date/commit stamp and a stated verification
+// scope (describes); anything less cannot claim the code matches.
+func checkConformance(doc Document) (string, string) {
+	if !ValidCodeConformance(doc.CodeConformance) {
+		return "DOC_CONFORMANCE_INVALID", fmt.Sprintf("unknown code_conformance %q; declare one of unverified, matches, drift, or not_applicable", doc.CodeConformance)
+	}
+	if doc.CodeConformance != "matches" {
+		return "", ""
+	}
+	if stamp, ok := verifiedStamp(doc.LastVerified); !ok || strings.TrimSpace(stamp.Commit) == "" {
+		return "DOC_CONFORMANCE_INVALID", `code_conformance "matches" requires a last_verified "YYYY-MM-DD @ <commit>" stamp`
+	}
+	if len(doc.Describes) == 0 {
+		return "DOC_CONFORMANCE_INVALID", `code_conformance "matches" requires a stated verification scope in describes`
+	}
+	return "", ""
+}
+
+// MigrationDiagnostics surfaces the legacy compatibility surface that
+// validation deliberately accepts: path-inferred kinds, historical canonical
+// statuses, and missing lifecycle values. Each diagnostic needs an explicit
+// inventory disposition (declare an explicit kind and lifecycle, or record
+// the legacy mapping) during migration; none of them imply code conformance.
+func MigrationDiagnostics(corpus Corpus) []Issue {
+	var issues []Issue
+	for _, doc := range corpus.Documents {
+		if doc.KindSource == KindSourceLegacy {
+			issues = append(issues, Issue{
+				Code:    "DOC_KIND_LEGACY",
+				Path:    doc.Path,
+				Message: fmt.Sprintf("document kind %q was inferred from the file path; declare an explicit kind: doc, proposal, or decision", doc.Kind),
+			})
+		}
+		status := strings.ToLower(strings.TrimSpace(doc.Status))
+		switch {
+		case status == "canonical":
+			issues = append(issues, Issue{
+				Code:    "DOC_LIFECYCLE_LEGACY",
+				Path:    doc.Path,
+				Message: "legacy lifecycle status \"canonical\" carries no portable meaning; record current, proposed, accepted, implemented, or superseded for the document kind",
+			})
+		case status == "":
+			issues = append(issues, Issue{
+				Code:    "DOC_LIFECYCLE_LEGACY",
+				Path:    doc.Path,
+				Message: "document declares no lifecycle status; record current, proposed, accepted, implemented, or superseded for the document kind",
+			})
+		}
+	}
+	sortIssues(issues)
 	return issues
 }
 
 func isRoot(doc Document) bool {
-	return doc.Kind == KindCanonical && (doc.Subject == "overview" || doc.Path == "docs/system/00-overview.md")
+	return doc.Kind.IsCanonicalFamily() && (doc.Subject == "overview" || doc.Path == "docs/system/00-overview.md")
 }
 
 func kindForPath(path string) (Kind, bool) {

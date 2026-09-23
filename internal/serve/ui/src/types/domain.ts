@@ -833,7 +833,8 @@ export interface RunDetail extends RunSummary {
     created_at: string;
   };
   identity?: {
-    repo_root: string;
+    registered_repo_path?: string;
+    repo_root?: string;
     workspace_path: string;
     workspace_mode: string;
     runner: string;
@@ -914,19 +915,9 @@ export interface WaveListItem {
   landedAt?: string | null;
   memberCount: number;
   doneCount: number;
+  liveRun?: boolean;
+  reviewWait?: boolean;
   recovery?: RecoveryDiagnosis;
-}
-
-/** Recorded list facts; start readiness is checked by the wave review. */
-export interface WaveListItem {
-  id: string;
-  title: string;
-  summary?: string;
-  status: string;
-  authorization: string;
-  landedAt?: string | null;
-  memberCount: number;
-  doneCount: number;
 }
 
 export interface ReviewBatch {

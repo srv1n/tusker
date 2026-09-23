@@ -333,23 +333,42 @@ func docsMapCmd(args Args) error {
 	return nil
 }
 
+var docsDomainPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// docsPortableKind normalizes the --kind flag to its portable document kind.
+// "spec" stays accepted as the compatibility spelling for proposal.
+func docsPortableKind(raw string) (docgraph.Kind, bool) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", "doc":
+		return docgraph.KindDoc, true
+	case "proposal", "spec":
+		return docgraph.KindProposal, true
+	case "decision":
+		return docgraph.KindDecision, true
+	default:
+		return "", false
+	}
+}
+
 func docsNewCmd(args Args) error {
 	subject := positionalPhrase(args)
 	if subject == "" {
 		return tuskerError(errorMissingArg, "docs new needs a subject, for example: tusker docs new worktree-lifecycle")
 	}
-	kind := strings.TrimSpace(strings.ToLower(args.String("kind")))
-	if kind == "" {
-		kind = "doc"
+	kind, ok := docsPortableKind(args.String("kind"))
+	if !ok {
+		return tuskerError(errorInvalidArg, `docs new --kind must be "doc", "proposal", "decision" or "spec", got: `+strings.TrimSpace(args.String("kind")))
 	}
-	var targetDir string
-	switch kind {
-	case "doc":
-		targetDir = "docs/system"
-	case "spec":
-		targetDir = ".tusker/specs"
-	default:
-		return tuskerError(errorInvalidArg, `docs new --kind must be "doc" or "spec", got: `+kind)
+	domain := strings.TrimSpace(args.String("domain"))
+	if domain != "" && !docsDomainPattern.MatchString(domain) {
+		return tuskerError(errorInvalidArg, `docs new --domain must be a lowercase slug like "billing", got: `+domain)
+	}
+	wantIndex := args.Bool("index")
+	if wantIndex && (kind != docgraph.KindDoc || domain == "") {
+		return tuskerError(errorInvalidArg, "docs new --index scaffolds a domain reading index: use it with --kind doc (or no --kind) and --domain <name>")
+	}
+	if domain != "" && kind != docgraph.KindDoc {
+		return tuskerError(errorInvalidArg, "docs new --domain applies to docs only; proposals live in docs/system/proposals and decisions in docs/system/decisions")
 	}
 
 	vaultPath, err := resolveVaultPath(args, false)
@@ -367,30 +386,71 @@ func docsNewCmd(args Args) error {
 		}
 	}
 
-	relative := filepath.ToSlash(filepath.Join(targetDir, docsSubjectSlug(subject)+".md"))
+	var relative, parent, decidesFor string
+	switch {
+	case kind == docgraph.KindDoc && wantIndex:
+		relative = filepath.ToSlash(filepath.Join("docs/system/domains", domain, "00-index.md"))
+		parent, err = docsScaffoldParent(corpus)
+		if err != nil {
+			return err
+		}
+	case kind == docgraph.KindDoc && domain != "":
+		indexSubject, indexErr := docsDomainIndexSubject(corpus, domain)
+		if indexErr != nil {
+			return indexErr
+		}
+		relative = filepath.ToSlash(filepath.Join("docs/system/domains", domain, docsSubjectSlug(subject)+".md"))
+		parent = indexSubject
+	case kind == docgraph.KindDoc:
+		relative = filepath.ToSlash(filepath.Join("docs/system", docsSubjectSlug(subject)+".md"))
+		parent, err = docsScaffoldParent(corpus)
+		if err != nil {
+			return err
+		}
+	case kind == docgraph.KindProposal:
+		relative = filepath.ToSlash(filepath.Join("docs/system/proposals", docsSubjectSlug(subject)+".md"))
+		parent, err = docsScaffoldParent(corpus)
+		if err != nil {
+			return err
+		}
+	default: // docgraph.KindDecision
+		relative = filepath.ToSlash(filepath.Join("docs/system/decisions", docsSubjectSlug(subject)+".md"))
+		parent, err = docsScaffoldParent(corpus)
+		if err != nil {
+			return err
+		}
+		decidesFor = strings.TrimSpace(args.String("decides-for"))
+		if decidesFor == "" {
+			decidesFor = parent
+		}
+	}
 	absolute := filepath.Join(repoRoot, filepath.FromSlash(relative))
 	if fileExists(absolute) {
+		if wantIndex {
+			return tuskerError(errorAlreadyExists, "domain index already exists at "+relative+"; update it in place instead of recreating it")
+		}
 		return tuskerError(errorAlreadyExists, "a file already exists at "+relative+"; pick a different subject or update that file")
 	}
-	parent, parentErr := docsScaffoldParent(corpus)
-	if parentErr != nil {
-		return parentErr
-	}
-	scaffold := docsScaffoldWithParent(subject, kind, parent)
+	scaffold := docsScaffoldPortable(subject, kind, parent, decidesFor)
 	candidate, parseErr := docgraph.ParseDocHeaders(relative, []byte(scaffold))
 	if parseErr != nil {
 		return tuskerError(errorInvalidField, "generated document scaffold is invalid: "+parseErr.Error(), withPath(relative))
 	}
-	validated := []docgraph.Document{
-		{Path: "docs/system/00-overview.md", Kind: docgraph.KindCanonical, Subject: parent},
-		candidate,
+	// Validate the candidate inside the real corpus so parent, decides_for
+	// and index chains resolve, but only fail on issues attached to the new
+	// file: unrelated corpus debt must not block creation.
+	var candidateIssues []docgraph.Issue
+	for _, issue := range docgraph.ValidateCorpus(docgraph.Corpus{Documents: append(append([]docgraph.Document{}, corpus.Documents...), candidate)}) {
+		if issue.Path == relative {
+			candidateIssues = append(candidateIssues, issue)
+		}
 	}
-	if issues := docgraph.ValidateCorpus(docgraph.Corpus{Documents: validated}); len(issues) > 0 {
-		return tuskerError(errorInvalidField, "generated document scaffold failed documentation validation", withPath(relative), withContext(issues))
+	if len(candidateIssues) > 0 {
+		return tuskerError(errorInvalidField, "generated document scaffold failed documentation validation", withPath(relative), withContext(candidateIssues))
 	}
 	if args.Bool("print") {
 		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": true, "path": relative, "subject": subject, "kind": kind, "content": scaffold, "written": false})
+			emitJSON(map[string]any{"ok": true, "path": relative, "subject": subject, "kind": string(kind), "content": scaffold, "written": false})
 		} else {
 			fmt.Print(scaffold)
 		}
@@ -400,7 +460,7 @@ func docsNewCmd(args Args) error {
 		return err
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "path": relative, "subject": subject, "kind": kind})
+		emitJSON(map[string]any{"ok": true, "path": relative, "subject": subject, "kind": string(kind)})
 		return nil
 	}
 	fmt.Printf("Created %s\n", relative)
@@ -423,29 +483,72 @@ func docsSubjectSlug(subject string) string {
 }
 
 func docsScaffold(subject, kind string) string {
-	return docsScaffoldWithParent(subject, kind, "overview")
+	normalized, ok := docsPortableKind(kind)
+	if !ok {
+		normalized = docgraph.KindDoc
+	}
+	return docsScaffoldPortable(subject, normalized, "overview", "")
 }
 
 func docsScaffoldWithParent(subject, kind, parent string) string {
+	normalized, ok := docsPortableKind(kind)
+	if !ok {
+		normalized = docgraph.KindDoc
+	}
+	return docsScaffoldPortable(subject, normalized, parent, "")
+}
+
+// docsScaffoldPortable renders a creation scaffold with an explicit portable
+// kind and kind-specific lifecycle. Creation never claims code conformance:
+// new documents start unverified and new proposals start proposed.
+func docsScaffoldPortable(subject string, kind docgraph.Kind, parent, decidesFor string) string {
 	created := time.Now().Local().Format("2006-01-02")
 	var builder strings.Builder
 	builder.WriteString("---\n")
+	fmt.Fprintf(&builder, "kind: %s                # doc, proposal, or decision\n", string(kind))
 	fmt.Fprintf(&builder, "subject: %s            # unique key; the one right name for this document\n", subject)
 	builder.WriteString("keywords: []            # search aliases a reader might type instead of the subject\n")
 	fmt.Fprintf(&builder, "part_of: %s       # subject of the parent document this sits under\n", parent)
 	builder.WriteString("describes: []           # coarse repository paths this document explains\n")
-	builder.WriteString("status: canonical       # canonical, or superseded (then set superseded_by)\n")
+	switch kind {
+	case docgraph.KindProposal:
+		builder.WriteString("status: proposed        # proposed, accepted, implemented, or superseded (acceptance records intent, not proof)\n")
+	case docgraph.KindDecision:
+		builder.WriteString("status: proposed        # proposed, accepted, or superseded\n")
+		fmt.Fprintf(&builder, "decides_for: %s  # proposal or spec subject this decision settles\n", decidesFor)
+	default:
+		builder.WriteString("status: current         # current, or superseded (then set superseded_by)\n")
+	}
+	builder.WriteString("code_conformance: unverified # unverified, matches, drift, or not_applicable; matches needs last_verified scope and stamp\n")
 	fmt.Fprintf(&builder, "created: %s      # date this document was first written\n", created)
 	builder.WriteString("last_verified:          # date @ commit this document was last checked against code\n")
 	builder.WriteString("read_when: \"\"           # one line: when a reader should open this\n")
 	builder.WriteString("skip_when: \"\"           # one line: when a reader should look elsewhere\n")
-	if kind == "spec" {
+	if kind == docgraph.KindProposal {
+		builder.WriteString("updates: []             # current documents this change will update when implemented\n")
 		builder.WriteString("sources: []             # links or records supporting this contract\n")
 		builder.WriteString("decisions_locked: false # set true only when its updates are ready to land\n")
 	}
 	builder.WriteString("---\n\n")
 	fmt.Fprintf(&builder, "# %s\n", subject)
 	return builder.String()
+}
+
+// docsDomainIndexSubject returns the reading parent for a domain chapter: the
+// subject of docs/system/domains/<domain>/00-index.md. A missing index names
+// the exact scaffold command instead of silently parenting under overview.
+func docsDomainIndexSubject(corpus docgraph.Corpus, domain string) (string, error) {
+	want := filepath.ToSlash(filepath.Join("docs/system/domains", domain, "00-index.md"))
+	for _, doc := range corpus.Documents {
+		if filepath.ToSlash(filepath.Clean(doc.Path)) != want {
+			continue
+		}
+		if subject := strings.TrimSpace(doc.Subject); subject != "" {
+			return subject, nil
+		}
+		break
+	}
+	return "", tuskerError(errorInvalidField, fmt.Sprintf("docs new cannot select a parent: %s is missing or declares no subject; create it with: tusker docs new <subject> --domain %s --index", want, domain))
 }
 
 func docsScaffoldParent(corpus docgraph.Corpus) (string, error) {

@@ -13,15 +13,13 @@ describe("work experience integration", () => {
   test("integration explicit deep link wins restore", () => expect(restoredPath("/p/a/waves", "/p/a/tasks/T-1")).toBe("/p/a/tasks/T-1"));
   test("integration entry opens dependencies", () => { expect(initialWaveView(wave("closed"))).toBe("flow"); expect(initialWaveView(wave("closed"), "results")).toBe("results"); });
   test("integration unavailable data never enables start", () => expect(waveStartability([wave("open")])["W-1"]).toEqual({ state: "unknown", reason: "Wave status could not be loaded. Try refreshing." }));
-  test("routed wave exposes the supported Start action and execution status", () => {
+  test("routed wave exposes the supported Start action and one status callout", () => {
     const source = readFileSync(new URL("../src/features/workbench/integration/WorkExperience.tsx", import.meta.url), "utf8");
-    expect(source).toContain("WaveAuthorityControls");
+    expect(source).toContain("WavePrimaryAction");
+    expect(source).toContain("WaveCallout");
     expect(source).not.toContain("useWaveExecute");
     expect(source).not.toContain("Wave Play");
     expect(source).not.toContain("execute.mutate");
 
-    const flow = readFileSync(new URL("../src/features/workbench/flow/WaveFlow.tsx", import.meta.url), "utf8");
-    expect(flow).toContain("Executing now:");
-    expect(flow).toContain("Nothing is executing now.");
   });
 });

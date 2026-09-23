@@ -60,7 +60,7 @@ func TestRunSessionReconcileLiveOwnerReopensWithoutLaunching(t *testing.T) {
 	if reconciled.Attention == nil || !reconciled.Attention.AttentionRequired {
 		t.Fatalf("persisted worker attention was not retained: %#v", reconciled.Attention)
 	}
-	if !reconciled.Capability.Supported || reconciled.Capability.Command == "" {
+	if !reconciled.Capability.Supported || reconciled.Capability.Command != "" || reconciled.Capability.Reason == "" {
 		t.Fatalf("native resume capability was not reconstructed: %#v", reconciled.Capability)
 	}
 	attempts, err := reopened.ListAttemptsForRun(run.ProjectID, run.RecordID)

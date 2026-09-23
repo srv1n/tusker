@@ -24,7 +24,8 @@ export type FontFamily =
 
 const STORAGE_KEY = "tusker-font-scale";
 const FONT_FAMILY_STORAGE_KEY = "tusker-font-family";
-const VALUES: Record<FontScale, number> = { small: 0.9, default: 1, large: 1.12 };
+// Utilities are dense fixed-pixel sizes (mostly 11–13px); default renders them near 13–15px.
+const VALUES: Record<FontScale, number> = { small: 1, default: 1.125, large: 1.25 };
 const FAMILIES: Record<FontFamily, string> = {
   System: ' -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif',
   "Iowan Old Style": '"Iowan Old Style", Georgia, serif',

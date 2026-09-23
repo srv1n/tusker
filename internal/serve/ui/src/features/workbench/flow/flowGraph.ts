@@ -67,6 +67,8 @@ export interface FlowNode {
   missingDetail?: boolean;
   context?: string;
   stateLabel?: string;
+  /** A named human decision (gate or review) is waiting on this task. */
+  needsYou?: boolean;
 }
 
 export interface FlowEdge {
@@ -293,6 +295,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
         state: reviewState ?? "unknown",
         depIds: [],
         missingDetail: true,
+        needsYou: Boolean(reviewsByTask.get(id)?.waitingReason?.includes("human gate")),
       });
       nodeIds.add(id);
       continue;
@@ -305,6 +308,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
       model: modelFor(run),
       tier: task.effectiveExecute?.work_level ?? task.authoredWorkLevel,
       depIds: task.deps.map((dep) => dep.id),
+      needsYou: Boolean(task.humanActions?.length || task.humanAction || reviewsByTask.get(id)?.waitingReason?.includes("human gate")),
     });
     nodeIds.add(id);
   }
@@ -497,9 +501,10 @@ export interface FlowLayout {
   layers: string[][];
 }
 
-export const TOP_DOWN_NODE_HEIGHT = 128;
+// ID row (16) + gap (4) + 2-line title (2×18) + gap (6) + state row (18) + py-2.5 (20) + border (2) = 102, plus slack.
+export const TOP_DOWN_NODE_HEIGHT = 108;
 export const TOP_DOWN_GAP_X = 20;
-export const TOP_DOWN_GAP_Y = 88;
+export const TOP_DOWN_GAP_Y = 56;
 export const TOP_DOWN_STAGE_GUTTER = 0;
 
 /** Transpose the dependency ranks into a top-to-bottom DAG for native scrolling. */
@@ -675,18 +680,21 @@ export function initialViewport(): FlowViewport {
   return { ...DEFAULT_VIEWPORT };
 }
 
-/** Human label for each display state; color is always supplementary. */
+/**
+ * The one Work status vocabulary: Planned, Waiting, Ready, Running, Review,
+ * Done, Failed. Graph, board, and wave list all read labels from here.
+ */
 export const DISPLAY_STATE_LABEL: Record<FlowDisplayState, string> = {
-  completed: "Completed",
-  executing: "Executing",
-  awaiting_review: "Awaiting review",
-  reviewing: "Reviewing",
-  proof_blocked: "Verification required",
+  completed: "Done",
+  executing: "Running",
+  awaiting_review: "Review",
+  reviewing: "Review",
+  proof_blocked: "Review",
   cancelled: "Cancelled",
   ready: "Ready",
-  backlog: "Backlog",
-  queued: "Queued",
-  blocked: "Blocked",
+  backlog: "Planned",
+  queued: "Waiting",
+  blocked: "Waiting",
   failed: "Failed",
   unknown: "Unknown",
 };

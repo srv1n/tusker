@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -525,15 +526,27 @@ func (h *acpLiveHandle) observeUpdates() {
 	var message string
 	var messageID uint64
 	dirty := false
+	type pendingEvent struct {
+		kind                           string
+		fields                         map[string]any
+		title, command, status, output string
+	}
+	pending := map[string]pendingEvent{}
+	var pendingOrder []string
 	flush := func() {
-		if !dirty {
-			return
+		if dirty {
+			_ = appendACPEvent(h.eventLog, "agent_message", h.currentProvenance(), map[string]any{
+				"text": runActivityText(message), "activity": true,
+				"message_id": fmt.Sprintf("acp:%d", messageID),
+			})
+			dirty = false
 		}
-		_ = appendACPEvent(h.eventLog, "agent_message", h.currentProvenance(), map[string]any{
-			"text": runActivityText(message), "activity": true,
-			"message_id": fmt.Sprintf("acp:%d", messageID),
-		})
-		dirty = false
+		for _, id := range pendingOrder {
+			event := pending[id]
+			_ = appendACPEvent(h.eventLog, event.kind, h.currentProvenance(), event.fields)
+			delete(pending, id)
+		}
+		pendingOrder = pendingOrder[:0]
 	}
 	defer flush()
 	for {
@@ -546,6 +559,9 @@ func (h *acpLiveHandle) observeUpdates() {
 			}
 			activity := acpActivity(update.Params)
 			if activity.SessionUpdate == "agent_message_chunk" {
+				if len(pending) > 0 {
+					flush()
+				}
 				if message == "" {
 					messageID = update.Sequence
 				}
@@ -555,14 +571,25 @@ func (h *acpLiveHandle) observeUpdates() {
 				dirty = true
 				continue
 			}
-			flush()
-			message = ""
+			if activity.SessionUpdate == "agent_thought_chunk" {
+				continue
+			}
+			if dirty {
+				flush()
+				message = ""
+			}
 			fields := map[string]any{"method": update.Method}
 			kind := "acp_session_update_observed"
+			key := activity.SessionUpdate
+			var toolTitle, toolCommand, toolStatus, toolOutput string
 			if activity.SessionUpdate == "tool_call" || activity.SessionUpdate == "tool_call_update" {
 				kind = "tool_call"
 				fields["activity"] = true
-				fields["text"] = runActivityText(strings.TrimSpace(strings.Join([]string{firstNonEmpty(activity.Title, activity.ToolCallID, "Tool"), activity.Status, activityContentText(activity.Content)}, "\n")))
+				var input struct {
+					Command string `json:"command"`
+				}
+				_ = json.Unmarshal(activity.RawInput, &input)
+				toolTitle, toolCommand, toolStatus, toolOutput = activity.Title, input.Command, activity.Status, activityContentText(activity.Content)
 				toolID := boundedACPObservation(activity.ToolCallID)
 				fields["tool_call_id"] = toolID
 				// The event reader uses message_id as the stable display identity.
@@ -573,11 +600,49 @@ func (h *acpLiveHandle) observeUpdates() {
 					toolID = fmt.Sprintf("sequence-%d", update.Sequence)
 				}
 				fields["message_id"] = "acp:tool:" + toolID
+				key = "tool:" + toolID
 				if activity.Status == "failed" {
 					fields["level"] = "error"
 				}
+			} else if activity.SessionUpdate == "plan" {
+				kind = "plan"
+				fields["activity"] = true
+				fields["message_id"] = "acp:plan"
+				var entries []struct {
+					Content string `json:"content"`
+					Status  string `json:"status"`
+				}
+				_ = json.Unmarshal(activity.Plan, &entries)
+				var checklist []string
+				for _, entry := range entries {
+					mark := "[ ]"
+					if entry.Status == "completed" {
+						mark = "[x]"
+					}
+					checklist = append(checklist, mark+" "+entry.Content)
+				}
+				fields["text"] = runActivityText(strings.Join(checklist, "\n"))
+			} else if activity.SessionUpdate == "usage_update" {
+				kind = "usage"
 			}
-			_ = appendACPEvent(h.eventLog, kind, h.currentProvenance(), fields)
+			if kind == "tool_call" {
+				if prior, ok := pending[key]; ok {
+					toolTitle = firstNonEmpty(prior.title, toolTitle)
+					toolCommand = firstNonEmpty(prior.command, toolCommand)
+					toolOutput = strings.TrimSpace(prior.output + "\n" + toolOutput)
+				}
+				parts := []string{firstNonEmpty(toolTitle, activity.ToolCallID, "Tool")}
+				for _, part := range []string{toolCommand, toolStatus, toolOutput} {
+					if part != "" {
+						parts = append(parts, part)
+					}
+				}
+				fields["text"] = runActivityText(strings.Join(parts, "\n"))
+			}
+			if _, exists := pending[key]; !exists {
+				pendingOrder = append(pendingOrder, key)
+			}
+			pending[key] = pendingEvent{kind: kind, fields: fields, title: toolTitle, command: toolCommand, status: toolStatus, output: truncateRunes(toolOutput, runActivityTextLimit)}
 		}
 	}
 }

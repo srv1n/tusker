@@ -260,15 +260,14 @@ export function writeNavigationState(
 }
 
 /**
- * Order only for a fresh shell mount. The rendered strip owns its order for
- * the lifetime of that mount so a click cannot reshuffle the targets below it.
+ * Stable rail order: pins first, then the explicit saved order, then source
+ * order. Visits never reorder the rail (recentProjectIds is not consulted).
  */
 export function orderProjects<T extends { id: string }>(
   projects: T[],
   state: NavigationState,
 ): T[] {
   const pinRank = new Map(state.pinnedProjectIds.map((id, index) => [id, index]));
-  const recentRank = new Map(state.recentProjectIds.map((id, index) => [id, index]));
   const savedRank = new Map(state.orderedProjectIds.map((id, index) => [id, index]));
   const sourceRank = new Map(projects.map((project, index) => [project.id, index]));
   return [...projects].sort((a, b) => {
@@ -278,13 +277,6 @@ export function orderProjects<T extends { id: string }>(
       if (pa === undefined) return 1;
       if (pb === undefined) return -1;
       return pa - pb;
-    }
-    const ra = recentRank.get(a.id);
-    const rb = recentRank.get(b.id);
-    if (ra !== undefined || rb !== undefined) {
-      if (ra === undefined) return 1;
-      if (rb === undefined) return -1;
-      return ra - rb;
     }
     const sa = savedRank.get(a.id);
     const sb = savedRank.get(b.id);

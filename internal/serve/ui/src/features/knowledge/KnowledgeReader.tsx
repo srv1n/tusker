@@ -13,7 +13,7 @@ import type {
   DocgraphKind,
   DocLinkRef,
 } from "./types";
-import { KindGlyph, ViaChip } from "./bits";
+import { ConformanceChip, KindGlyph, ViaChip, truthfulState } from "./bits";
 import { KnowledgeShell, SectionToolbar, ViewSwitch } from "./KnowledgeShell";
 import { HeaderCard } from "./HeaderCard";
 import { DocBodyEditor } from "./DocBodyEditor";
@@ -136,8 +136,16 @@ function DocBody({
               <span className="flex-none text-[12px] font-semibold text-warn">Open →</span>
             </Link>
           )}
+          {doc.resolved_from && (
+            <p className="mb-6 rounded-xl border border-line bg-panel/50 px-4 py-2.5 text-[12.5px] text-muted">
+              Moved here from <Mono className="text-ink-soft">{doc.resolved_from}</Mono> — old links land on this
+              document.
+            </p>
+          )}
 
           <SaveBanners ed={ed} />
+
+          <TruthfulStatus doc={doc} />
 
           <HeaderCard
             kind={doc.kind}
@@ -145,6 +153,10 @@ function DocBody({
             path={doc.path}
             status={ed.status}
             onStatusChange={ed.setStatus}
+            conformance={ed.conformance}
+            onConformanceChange={ed.setConformance}
+            lastVerified={ed.lastVerified}
+            onLastVerifiedChange={ed.setLastVerified}
             keywords={ed.keywords}
             onAddKeyword={ed.addKeyword}
             onRemoveKeyword={ed.removeKeyword}
@@ -173,6 +185,39 @@ function DocBody({
         </article>
       </div>
     </main>
+  );
+}
+
+/**
+ * Lifecycle intent beside the independent verification claim: acceptance is
+ * not proof, and verification names its scope, date, and commit. Each
+ * truthful state (proposed, accepted-but-unverified,
+ * implemented-with-evidence, drift, superseded) reads differently.
+ */
+function TruthfulStatus({ doc }: { doc: DocgraphDocDetail }) {
+  const lifecycle = doc.lifecycle || doc.status;
+  const conformance = doc.code_conformance || "unverified";
+  const scopes = (doc.describes ?? []).filter((s) => s.trim() !== "");
+  return (
+    <p aria-label="Document status" className="mb-4 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">
+      <span className="font-medium text-ink-soft">{truthfulState(lifecycle, conformance)}</span>
+      <ConformanceChip conformance={conformance} />
+      {(doc.last_verified || scopes.length > 0) && (
+        <span className="min-w-0">
+          {scopes.length > 0 && (
+            <span>
+              scope <Mono className="text-ink-soft">{scopes.join(", ")}</Mono>
+            </span>
+          )}
+          {scopes.length > 0 && doc.last_verified && <span> · </span>}
+          {doc.last_verified && (
+            <span>
+              checked <Mono className="text-ink-soft">{doc.last_verified}</Mono>
+            </span>
+          )}
+        </span>
+      )}
+    </p>
   );
 }
 
