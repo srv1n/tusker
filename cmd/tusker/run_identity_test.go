@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -29,7 +28,8 @@ func TestSessionMetadataWorkspaceIdentityResume(t *testing.T) {
 	assertEqual(t, identity.RepoRoot, inspection.Identity.RepoRoot, "registered repo")
 	assertEqual(t, identity.WorkspacePath, inspection.Identity.WorkspacePath, "physical workspace")
 	assertEqual(t, identity.WorkspaceMode, inspection.Identity.WorkspaceMode, "workspace mode")
-	if !inspection.Resume.Supported || !strings.Contains(inspection.Resume.Command, "session-1") {
+	// c5a5da52 keeps resume supported but omits a command until original exec flags are known.
+	if !inspection.Resume.Supported || inspection.Resume.Command != "" || inspection.Resume.Reason == "" {
 		t.Fatalf("resume: %#v", inspection.Resume)
 	}
 	if len(inspection.Authorizations) != 2 || inspection.Authorizations[0].LeaseGeneration != 1 || inspection.Authorizations[1].LeaseGeneration != 2 {

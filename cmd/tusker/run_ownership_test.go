@@ -169,6 +169,8 @@ func TestConcurrentRunClaimExactlyOneOwner(t *testing.T) {
 }
 
 func TestRunClaimStartHeartbeatSubmitFailInterruptReclaim(t *testing.T) {
+	// W-0044 keeps interactive hand claims alive through quiet leases; this fixture exercises dispatched reclaim.
+	t.Setenv("TUSKER_ATTEMPT_ID", "test-dispatched-attempt")
 	store, run := ownershipStoreFixture(t, "APP-T-0002")
 	service := newRunOwnershipService(store)
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
@@ -231,6 +233,7 @@ func TestRunClaimStartHeartbeatSubmitFailInterruptReclaim(t *testing.T) {
 }
 
 func TestFinalizeRunLeaseRejectsStaleOwnerWithoutWritingAttempt(t *testing.T) {
+	t.Setenv("TUSKER_ATTEMPT_ID", "test-dispatched-attempt")
 	store, run := ownershipStoreFixture(t, "APP-T-TERMINAL-RACE")
 	service := newRunOwnershipService(store)
 	oldClaim, err := service.claim(run, "agent:old")
@@ -291,6 +294,7 @@ func TestFinalizeRunLeaseRejectsStaleOwnerWithoutWritingAttempt(t *testing.T) {
 }
 
 func TestHeartbeatLeaseExpiryStaleReclaimPreservesAttempt(t *testing.T) {
+	t.Setenv("TUSKER_ATTEMPT_ID", "test-dispatched-attempt")
 	store, run := ownershipStoreFixture(t, "APP-T-0005")
 	service := newRunOwnershipService(store)
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)

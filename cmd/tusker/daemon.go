@@ -497,6 +497,9 @@ func interruptRunProcess(store *RuntimeStore, run *RunStatus, verifiedHandle boo
 		return interruptACPWrapperProcess(store, run, verifiedHandle)
 	}
 	pgid := processSignalGroup(*run)
+	if state := classifyRunLiveness(*run); run.ProcessPGID > 0 && (state == runLivenessForeign || state == runLivenessUnknown) {
+		return tuskerError(errorInvalidTransition, "refusing to settle interrupt because recorded process-group ownership cannot be verified")
+	}
 	if classifyRunLiveness(*run) == runLivenessOrphaned && !verifiedHandle && !runStopSignalAuthorized(store, *run) {
 		return tuskerError(errorInvalidTransition,
 			fmt.Sprintf("refusing to signal process group %d because recorded leader PID %d no longer matches; ownership cannot be verified", pgid, run.ProcessPID),

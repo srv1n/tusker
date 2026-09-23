@@ -470,6 +470,7 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 	if !approval.Refused || approval.Issue == nil || approval.Issue.Code != "GATE_MATERIAL_STALE" {
 		t.Fatalf("stale approval changed the gate: %#v", approval)
 	}
+	approval = serveActionResult{} // Decode the successful response without stale refusal fields from the prior response.
 	servePost(t, server, "/api/gates/APP-G-0010/satisfy", fmt.Sprintf(`{"projectId":"app","taskId":"APP-T-0010","materialRevision":%q,"evidence":"Panel behavior confirmed."}`, task.HumanAction.MaterialRevision), &approval)
 	if !approval.OK || approval.Refused {
 		t.Fatalf("authenticated Serve approval failed: %#v", approval)
@@ -480,6 +481,7 @@ func TestServeHumanActionContractAndReviewProjection(t *testing.T) {
 		t.Fatalf("duplicate stale click was accepted: %#v", duplicate)
 	}
 	server.invalidateProjectSnapshot("app")
+	task = serveTaskDetail{} // Clear the previous optional HumanAction before decoding fresh readback.
 	serveDecode(t, server, "/api/tasks/APP-T-0010", &task)
 	if task.HumanAction != nil {
 		t.Fatalf("human action must disappear after trusted completion, got %#v", task.HumanAction)
