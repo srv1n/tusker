@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/controls";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { ProofChip } from "@/components/ui/chips";
 import { useAgentAccessApprovalAction, useAgentAccessApprovals, useGateAction, useTaskStatusAction } from "@/lib/queries";
+import { api } from "@/lib/api";
 import type { AgentAccessApproval, HumanAction } from "@/types/domain";
 
 /**
@@ -31,6 +32,8 @@ export function HumanActionCard({
   continueOnApproval?: boolean;
   compact?: boolean;
 }) {
+  if (action.kind === "question") return <QuestionActionCard action={action} taskId={taskId} projectId={projectId} compact={compact} />;
+  if (action.kind === "permission") return <section className={compact ? "border-t border-line pt-4" : "mb-7 rounded-xl border border-line bg-raised p-4 sm:p-5"} data-human-action-card data-need-card><h2 className="text-[17px] font-semibold text-ink">{action.title}</h2><AgentAccessApprovalList projectId={projectId} taskId={taskId} approvals={approvals?.filter((approval) => approval.requestId === action.requestId)} onRetry={onRetry} compact={compact} /></section>;
   const gateAction = useGateAction();
   const statusAction = useTaskStatusAction(taskId, projectId);
   const confirm = useConfirm();
@@ -254,6 +257,43 @@ export function HumanActionCard({
       </div>
     </section>
   );
+}
+
+function QuestionActionCard({ action, taskId, projectId, compact }: { action: HumanAction; taskId: string; projectId?: string; compact: boolean }) {
+  const [body, setBody] = useState("");
+  const [pending, setPending] = useState(false);
+  const [status, setStatus] = useState("");
+  const [answered, setAnswered] = useState(false);
+  const [key, setKey] = useState(() => crypto.randomUUID());
+  if (!action.messageId || answered) return null;
+  const reply = async () => {
+    if (!projectId || !body.trim() || pending) return;
+    const message = body.trim();
+    setPending(true);
+    try {
+      const latest = await api.task(taskId, projectId);
+      if (!latest.humanActions?.some((item) => item.messageId === action.messageId)) {
+        setStatus("Already answered. Refresh the task.");
+        return;
+      }
+      const sender = action.taskId || taskId;
+      const result = await api.agentMessage({ projectId, recipientKind: "task", recipientId: sender, originTaskId: taskId, body: message, kind: "answer", replyTo: action.messageId, idempotencyKey: key });
+      if (!result.ok || result.refused) { setStatus(result.reason || "Could not save answer."); return; }
+      const readback = await api.task(taskId, projectId);
+      if (!readback.humanActions?.some((item) => item.messageId === action.messageId)) setAnswered(true);
+      else setStatus("Answer saved; awaiting refreshed task state.");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Could not save answer."); }
+    finally { setPending(false); }
+  };
+  return <section className={compact ? "border-t border-line pt-4" : "mb-7 rounded-xl border border-line bg-raised p-4 sm:p-5"} data-human-action-card data-need-card>
+    <h2 className="text-[17px] font-semibold text-ink">{action.title}</h2>
+    <p className="mt-1 text-[11px] text-muted">Asked {action.askedAt || "recently"} · to {action.recipientLabel || "operator"}{action.yieldSender ? " · worker waiting" : ""}</p>
+    <p className="mt-3 whitespace-pre-wrap text-[13px] text-ink-soft">{action.body || action.action}</p>
+    <label className="mt-3 block text-[12px] font-medium text-ink-soft" htmlFor={`question-reply-${action.messageId}`}>Reply</label>
+    <textarea id={`question-reply-${action.messageId}`} value={body} onChange={(event) => { setBody(event.target.value); setKey(crypto.randomUUID()); }} maxLength={32768} className="mt-1 min-h-[72px] w-full rounded-lg border border-line bg-panel px-3 py-2 text-[13px] text-ink" />
+    <Button type="button" variant="primary" disabled={pending || !body.trim()} onClick={() => void reply()}>{pending ? "Sending…" : "Reply"}</Button>
+    {status ? <p role="status" className="mt-2 text-[12px] text-muted">{status}</p> : null}
+  </section>;
 }
 
 function approvalIsLive(approval: AgentAccessApproval): boolean {

@@ -702,7 +702,7 @@ export interface FactoryOperationsDecision {
 
 export interface NeedBase {
   id: string;
-  kind: GateKind;
+  kind: GateKind | "question" | "permission";
   projectId: string;
   projectName: string;
   taskId: string;
@@ -743,9 +743,20 @@ export interface FailedNeed extends NeedBase {
   lastError: string;
   attempts: number;
 }
+export interface QuestionNeed extends NeedBase {
+  kind: "question";
+  messageId: string;
+  body: string;
+  recipientLabel: string;
+  yieldSender: boolean;
+}
+export interface PermissionNeed extends NeedBase {
+  kind: "permission";
+  requestId: string;
+}
 
 export type NeedItem =
-  ClarifyNeed | ProvisionNeed | ApproveSpecNeed | ReviewNeed | FailedNeed;
+  ClarifyNeed | ProvisionNeed | ApproveSpecNeed | ReviewNeed | FailedNeed | QuestionNeed | PermissionNeed;
 
 // ----------------------------------------------------------------------------
 // Runs
@@ -1064,6 +1075,13 @@ export interface HumanAction {
   blockedTaskIds?: string[];
   covers: string[];
   acceptance: AcceptanceRow[];
+  messageId?: string;
+  body?: string;
+  askedAt?: string;
+  recipientLabel?: string;
+  taskId?: string;
+  yieldSender?: boolean;
+  requestId?: string;
 }
 
 export type AgentAccessApprovalState =

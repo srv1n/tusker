@@ -340,9 +340,22 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 		argv = launchArgv
 		physical = argv[0]
 	}
+	var mcpServers []any
+	if runner == RunnerDevin {
+		projection, projectionErr := projectWorkerMCP(req.ProjectID, req.RecordID, req.ItemID, req.AttemptID, req.LeaseGeneration, req.WorkRevision, req.EventSinkPath, req.StatusPath, 50, false)
+		if projectionErr != nil {
+			return nil, projectionErr
+		}
+		env := make([]map[string]string, 0, len(projection.env))
+		for key, value := range projection.env {
+			env = append(env, map[string]string{"name": key, "value": value})
+		}
+		mcpServers = []any{map[string]any{"name": "tusker", "command": projection.command, "args": projection.args, "env": env}}
+	}
 	client, err := acp.Start(ctx, acp.Config{
-		Argv: argv,
-		CWD:  workspace,
+		Argv:       argv,
+		CWD:        workspace,
+		MCPServers: mcpServers,
 		Env: func() []string {
 			if codexPlan != nil {
 				return environment
@@ -411,6 +424,15 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 	if err != nil {
 		handle.close()
 		return nil, err
+	}
+	if runner == RunnerDevin {
+		// ACP initialize does not advertise a normalized MCP stdio capability.
+		// Keep the projection visible in the protocol request and state the
+		// capability uncertainty explicitly in the event stream.
+		if err := appendACPEvent(eventLog, "acp_mcp_capability_unverified", handle.currentProvenance(), map[string]any{"server": "tusker", "route": "stdio"}); err != nil {
+			handle.close()
+			return nil, err
+		}
 	}
 	if err := appendACPEvent(eventLog, "acp_protocol_negotiated", handle.currentProvenance(), map[string]any{
 		"agent_name":     boundedACPObservation(init.AgentInfo.Name),

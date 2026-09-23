@@ -173,6 +173,14 @@ route. Distinguish architect (design decisions), origin (request/result
 destination), and peers (shared interfaces or ownership); record whether the
 route was inspected or actually exercised.
 
+For an interactive architect, register the live Claude Code or Codex session
+and install the `UserPromptSubmit`/`Stop` inbox hook described in
+`docs/system/orchestration.md`. Questions and wave reports then arrive as
+injected context with message IDs. Reply using `tusker message reply --project
+<project-id> --reply-to <message-id> --sender execution:<your-execution-id>
+--key <unique-key> --body-file -`. Never auto-apply a continuation proposal;
+`ApplyArchitectContinuation` remains an operator action.
+
 Tell the worker when to ask: conflicting requirements, missing upstream
 contracts, ownership conflicts, or a change to a locked decision. A question
 carries task and acceptance IDs, observed facts, the exact decision needed,

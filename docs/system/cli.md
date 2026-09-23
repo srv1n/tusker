@@ -66,6 +66,29 @@ for the configured runtime; it does not itself launch a runner.
 `execution bind`, `execution rename`, and `execution cancel` for one execution.
 These commands do not grant a task claim.
 
+Register an interactive architect after obtaining the session's native ID.
+For Claude Code, its hook input's `session_id` is the documented ID; a
+temporary local `SessionStart` hook can print it, or the session's shell can
+read `CLAUDE_CODE_SESSION_ID` where available. For Codex, the documented
+hook input also contains `session_id`; reading it with a temporary local hook
+is the lowest effort published method, but this path is **unverified in the
+installed Codex**. The connection ID is the operator's stable host label.
+
+```bash
+tusker execution register --project <project-id> --wave <wave-id> --contact-role architect --harness claude-code --source direct_claude --provider anthropic --conversation-id <session-id> --connection-id <host-label> --if-generation 0 --by operator:<name> --json
+```
+
+Use `--task <task-id>` in place of `--wave` for a task contact. For Codex,
+use `--harness codex --source direct_codex --provider openai`. To replace a
+registration, pass its current generation via `--if-generation` and the new
+session ID. The returned execution ID is the architect's sender address.
+Install the operator owned inbox hooks in [Orchestration](orchestration.md).
+After receiving a message with its ID, answer from that session:
+
+```bash
+tusker message reply --project <project-id> --reply-to <message-id> --sender execution:<returned-execution-id> --key <unique-key> --body-file -
+```
+
 ## Repeatable demo
 
 `tusker demo` seeds and drives a disposable deterministic project (one

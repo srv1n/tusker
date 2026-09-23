@@ -236,8 +236,8 @@ export class DocSaveError extends ApiError {
 // ----------------------------------------------------------------------------
 
 export const api = {
-	agentMessage: (body: { projectId: string; recipientKind: string; recipientId: string; originTaskId: string; body: string; kind?: string; replyTo?: string; replyRequired?: boolean; yieldSender?: boolean }) =>
-		serveOperatorActor().then((sender) => post<{ ok: boolean }>("/messages", { ...body, sender, idempotencyKey: crypto.randomUUID() })),
+	agentMessage: (body: { projectId: string; recipientKind: string; recipientId: string; originTaskId: string; body: string; kind?: string; replyTo?: string; replyRequired?: boolean; yieldSender?: boolean; idempotencyKey?: string }) =>
+		serveOperatorActor().then((sender) => post<{ ok: boolean; refused?: boolean; reason?: string }>("/messages", { ...body, sender, idempotencyKey: body.idempotencyKey ?? crypto.randomUUID() })),
   capabilities: (): Promise<ServeCapabilities> => real("/capabilities"),
   runnerConformance: (harness: string, preset: string, live = false, exercise = "", projectId?: string, draft?: RunnerConformanceDraft, setup = false): Promise<RunnerConformanceReport> => {
     const path = withProject(`/runner/conformance?harness=${encodeURIComponent(harness)}&preset=${encodeURIComponent(preset)}&exercise=${encodeURIComponent(exercise)}`, projectId);

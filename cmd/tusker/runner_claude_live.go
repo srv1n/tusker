@@ -118,6 +118,9 @@ func claudeSessionArgv(argv []string, id string, resume *ResumeRequest) []string
 }
 
 func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeRequest) (*StartResult, error) {
+	if len(req.CommandArgv) == 0 {
+		return nil, tuskerError(errorConfigInvalid, "Claude worker MCP requires a prepared direct argv launch")
+	}
 	if extensionPolicyRequestsNativeBridge(req.CodexPolicy.Extensions) {
 		if err := NewEventLog(req.EventSinkPath).Append("extension_bridge_unsupported", req.AttemptID, RunnerClaude, map[string]any{
 			"reason": "claude-code native extension bridge is not implemented",
@@ -191,6 +194,11 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		if req.NativeSessionID != "" || resume != nil {
 			argv = claudeSessionArgv(argv, req.NativeSessionID, resume)
 		}
+		projection, err := projectWorkerMCP(req.ProjectID, req.RecordID, req.ItemID, req.AttemptID, req.LeaseGeneration, req.WorkRevision, req.EventSinkPath, req.StatusPath, 900, true)
+		if err != nil {
+			return nil, err
+		}
+		argv = appendClaudeMCP(argv, projection)
 		argv = append(argv, "--replay-user-messages")
 		if !filepath.IsAbs(argv[0]) {
 			return nil, tuskerError(errorConfigInvalid, "prepared Claude executable must be an absolute path")

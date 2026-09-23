@@ -88,6 +88,8 @@ type Config struct {
 	// Env replaces the process environment when non-nil. An empty, non-nil
 	// environment is therefore a useful allowlist.
 	Env []string
+	// MCPServers are projected into session/new and session/load/resume.
+	MCPServers []any
 	// Stderr is a caller-owned bounded/redacting diagnostic sink. ACP stdout
 	// remains protocol-only and is never mixed with diagnostics.
 	Stderr            io.Writer
@@ -727,7 +729,11 @@ func (c *Client) NewSession(ctx context.Context) (Session, error) {
 	c.mu.Unlock()
 	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.Request)
 	defer cancel()
-	raw, phase, err := c.call(ctx, "session/new", map[string]any{"cwd": c.cfg.CWD, "mcpServers": []any{}}, false)
+	servers := c.cfg.MCPServers
+	if servers == nil {
+		servers = []any{}
+	}
+	raw, phase, err := c.call(ctx, "session/new", map[string]any{"cwd": c.cfg.CWD, "mcpServers": servers}, false)
 	if err != nil {
 		return Session{}, err
 	}
@@ -796,7 +802,11 @@ func (c *Client) restoreSession(ctx context.Context, method, sessionID string, u
 
 	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.Request)
 	defer cancel()
-	params := map[string]any{"sessionId": sessionID, "cwd": c.cfg.CWD, "mcpServers": []any{}}
+	servers := c.cfg.MCPServers
+	if servers == nil {
+		servers = []any{}
+	}
+	params := map[string]any{"sessionId": sessionID, "cwd": c.cfg.CWD, "mcpServers": servers}
 	call, msg, err := c.prepareCall(method, params, false)
 	if err != nil {
 		return Session{}, err

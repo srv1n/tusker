@@ -247,7 +247,8 @@ function ReadyInspector({
 	const [messageStatus, setMessageStatus] = useState("");
 	const [contactIndex, setContactIndex] = useState(0);
 	const [yieldSender, setYieldSender] = useState(false);
-	const [replyTo, setReplyTo] = useState<string | undefined>();
+	const [replyTo, setReplyTo] = useState<string | undefined>(() => task.humanActions?.find((action) => action.kind === "question")?.messageId);
+	useEffect(() => { setReplyTo(task.humanActions?.find((action) => action.kind === "question")?.messageId); }, [task.id]);
 	const replyMessage = task.messages?.find((message) => message.id === replyTo);
 	const contact = task.contacts?.[contactIndex] || task.contacts?.[0];
 	const senderParts = replyMessage?.sender.split(/:(.*)/s) || [];
@@ -258,7 +259,12 @@ function ReadyInspector({
 		if (!recipient || !projectId || !messageBody.trim()) return;
 		setMessageStatus("Sending…");
 		try {
-			await api.agentMessage({ projectId, recipientKind: recipient.address.kind, recipientId: recipient.address.id, originTaskId: task.id, body: messageBody.trim(), kind: replyTo ? "answer" : "question", replyTo, replyRequired: !replyTo, yieldSender: !replyTo && yieldSender });
+			if (replyTo) {
+				const latest = await api.task(task.id, projectId);
+				if (!latest.humanActions?.some((action) => action.messageId === replyTo)) { setMessageStatus("Already answered. Refresh the task."); return; }
+			}
+			const result = await api.agentMessage({ projectId, recipientKind: recipient.address.kind, recipientId: recipient.address.id, originTaskId: task.id, body: messageBody.trim(), kind: replyTo ? "answer" : "question", replyTo, replyRequired: !replyTo, yieldSender: !replyTo && yieldSender });
+			if (!result.ok || result.refused) { setMessageStatus(result.reason || "Could not save message."); return; }
 			setMessageBody("");
 			setReplyTo(undefined);
 			setYieldSender(false);

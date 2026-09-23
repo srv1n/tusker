@@ -213,7 +213,7 @@ func compileMuseArgs(d HarnessDefinition, input RunInput, base []string, policy 
 func hasForbiddenPolicyArg(args []string) bool {
 	for _, arg := range args {
 		lower := strings.ToLower(strings.TrimSpace(arg))
-		for _, prefix := range []string{"--sandbox", "--sandbox-network", "-s=", "--dangerously", "--approve-for-me", "--permission-mode", "--permission-prompts", "--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--settings", "--tools", "--add-dir", "-c", "--config", "--yolo", "--workspace", "--approval-mode"} {
+		for _, prefix := range []string{"--sandbox", "--sandbox-network", "-s=", "--dangerously", "--approve-for-me", "--permission-mode", "--permission-prompts", "--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--settings", "--mcp-config", "--tools", "--add-dir", "-c", "--config", "--yolo", "--workspace", "--approval-mode"} {
 			if lower == prefix || strings.HasPrefix(lower, prefix+"=") {
 				return true
 			}

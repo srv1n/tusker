@@ -80,6 +80,9 @@ func (r *CodexExecRunner) Capabilities() RunnerCapabilities {
 }
 
 func (r *CodexExecRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
+	if len(req.CommandArgv) == 0 {
+		return nil, tuskerError(errorConfigInvalid, "Codex worker MCP requires a prepared direct argv launch")
+	}
 	if strings.TrimSpace(req.Command) == "" {
 		req.Command = defaultCodexExecCommand()
 	}
@@ -92,11 +95,20 @@ func (r *CodexExecRunner) Start(ctx context.Context, req StartRequest) (*StartRe
 			return nil, err
 		}
 		req.Command = command
+	} else {
+		projection, err := projectWorkerMCP(req.ProjectID, req.RecordID, req.ItemID, req.AttemptID, req.LeaseGeneration, req.WorkRevision, req.EventSinkPath, req.StatusPath, 900, false)
+		if err != nil {
+			return nil, err
+		}
+		req.CommandArgv = appendCodexMCP(req.CommandArgv, projection)
 	}
 	return startDetachedRunnerWrapper(ctx, r.Name(), req, nil, r.Capabilities())
 }
 
 func (r *CodexExecRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
+	if len(req.CommandArgv) == 0 {
+		return nil, tuskerError(errorConfigInvalid, "Codex worker MCP resume requires a prepared direct argv launch")
+	}
 	if strings.TrimSpace(req.SessionRef) == "" {
 		return nil, tuskerError(errorMissingArg, "codex_exec resume requires session_ref")
 	}
@@ -109,7 +121,11 @@ func (r *CodexExecRunner) Resume(ctx context.Context, req ResumeRequest) (*Resum
 		if len(resumedArgv) < 4 || resumedArgv[1] != "exec" || resumedArgv[len(resumedArgv)-3] != "resume" {
 			return nil, tuskerError(errorConfigInvalid, "codex_exec resume requires a direct codex exec command")
 		}
-		req.CommandArgv = resumedArgv
+		projection, err := projectWorkerMCP(req.ProjectID, req.RecordID, req.ItemID, req.AttemptID, req.LeaseGeneration, req.WorkRevision, req.EventSinkPath, req.StatusPath, 900, false)
+		if err != nil {
+			return nil, err
+		}
+		req.CommandArgv = appendCodexMCP(resumedArgv, projection)
 	} else {
 		var err error
 		command, err = codexExecCommandWithPolicy(command, req.CodexPolicy)

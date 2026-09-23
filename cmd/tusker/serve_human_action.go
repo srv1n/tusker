@@ -3,7 +3,99 @@ package main
 import (
 	"sort"
 	"strings"
+	"time"
 )
+
+func (s *serveServer) serveOpenQuestions(snap serveSnapshot) (map[string][]AgentMessage, error) {
+	result := map[string][]AgentMessage{}
+	messages, err := s.store.ListAgentMessages(snap.projectID, "", "")
+	if err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		if message.Kind != "question" || !message.ReplyRequired || message.AnsweredAt != "" {
+			continue
+		}
+		if message.ExpiresAt != "" {
+			expires, err := time.Parse(time.RFC3339Nano, message.ExpiresAt)
+			if err == nil && !s.now().Before(expires) {
+				continue
+			}
+		}
+		if !strings.HasPrefix(message.Sender, "task:") {
+			continue
+		}
+		taskID := strings.TrimPrefix(message.Sender, "task:")
+		if _, exists := snap.notesByID[taskID]; !exists {
+			continue
+		}
+		operator := message.Recipient == (AgentAddress{Kind: "operator", ID: "operator"})
+		if !operator {
+			contacts, err := s.store.AgentContacts(snap.projectID, taskID)
+			if err != nil {
+				return nil, err
+			}
+			matched := false
+			for _, contact := range contacts {
+				if contact.Address != message.Recipient {
+					continue
+				}
+				matched = true
+				binding, err := s.store.ResolveAgentContactBinding(snap.projectID, taskID, contact.Role, contact.Name)
+				if err == nil && binding.State == AgentContactBindingBound {
+					operator = false
+					break
+				}
+				operator = true
+			}
+			if !matched {
+				for _, role := range []string{"architect", "origin"} {
+					binding, err := s.store.ResolveAgentContactBinding(snap.projectID, taskID, role, "")
+					if err == nil && binding.Contact.Address == message.Recipient {
+						matched = true
+						operator = binding.State != AgentContactBindingBound
+						break
+					}
+				}
+			}
+			if !matched {
+				operator = true
+			}
+		}
+		if operator {
+			result[taskID] = append(result[taskID], message)
+		}
+	}
+	return result, nil
+}
+
+func (s *serveServer) servePermissionWaits(snap serveSnapshot) (map[string][]AgentAccessApproval, error) {
+	result := map[string][]AgentAccessApproval{}
+	approvals, err := s.store.ListAgentAccessApprovals(snap.projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, approval := range approvals {
+		if approval.State != "pending" || approval.NativeOptionKind != "allow_once" || approval.NativeOptionID == "" {
+			continue
+		}
+		if _, ok := snap.notesByID[approval.TaskID]; !ok {
+			continue
+		}
+		expires, err := time.Parse(time.RFC3339Nano, approval.ExpiresAt)
+		if err != nil || !s.now().Before(expires) {
+			continue
+		}
+		if approval.LiveUntil != "" {
+			until, err := time.Parse(time.RFC3339Nano, approval.LiveUntil)
+			if err != nil || !s.now().Before(until) {
+				continue
+			}
+		}
+		result[approval.TaskID] = append(result[approval.TaskID], approval)
+	}
+	return result, nil
+}
 
 // serveHumanActionForTask returns the first open human-owned gate in stable
 // gate-id order. A task can have several gates, but the operator needs one
@@ -17,32 +109,41 @@ func serveHumanActionForTask(snap serveSnapshot, task Note) *serveHumanAction {
 }
 
 func serveHumanActionsForTask(snap serveSnapshot, task Note) []serveHumanAction {
-	if strings.EqualFold(stringField(task.Data, "status"), "rework") {
-		return []serveHumanAction{}
-	}
-
 	gates := make([]Note, 0)
 	taskID := stringField(task.Data, "id")
-	for _, gate := range snap.gates {
-		if strings.EqualFold(stringField(gate.Data, "status"), "open") &&
-			serveHumanOwner(stringField(gate.Data, "owner")) &&
-			serveGateBlocksTask(gate, taskID) {
-			gates = append(gates, gate)
+	if !strings.EqualFold(stringField(task.Data, "status"), "rework") {
+		for _, gate := range snap.gates {
+			if strings.EqualFold(stringField(gate.Data, "status"), "open") &&
+				serveHumanOwner(stringField(gate.Data, "owner")) &&
+				serveGateBlocksTask(gate, taskID) {
+				gates = append(gates, gate)
+			}
 		}
 	}
 	sort.Slice(gates, func(i, j int) bool {
 		return stringField(gates[i].Data, "id") < stringField(gates[j].Data, "id")
 	})
-	if len(gates) == 0 {
-		return []serveHumanAction{}
-	}
 	actions := make([]serveHumanAction, 0, len(gates))
 	for _, gate := range gates {
 		if action := serveHumanActionForGate(task, gate); action != nil {
 			actions = append(actions, *action)
 		}
 	}
+	for _, message := range snap.openQuestions[taskID] {
+		actions = append(actions, serveQuestionHumanAction(message, taskID))
+	}
+	for _, approval := range snap.permissionWaits[taskID] {
+		actions = append(actions, serveHumanAction{Kind: "permission", RawKind: "permission", Title: "Permission requested by " + taskID,
+			Action: approval.Reason, TaskID: taskID, RequestID: approval.RequestID, GateID: "permission-" + approval.RequestID, BlockedTaskIDs: []string{taskID}, Covers: []string{}, Acceptance: []serveAcceptanceRow{}})
+	}
 	return actions
+}
+
+func serveQuestionHumanAction(message AgentMessage, taskID string) serveHumanAction {
+	return serveHumanAction{Kind: "question", RawKind: "question", Title: "Question from " + taskID,
+		Action: message.Body, Body: message.Body, MessageID: message.ID, GateID: "question-" + message.ID, AskedAt: message.CreatedAt,
+		RecipientLabel: message.Recipient.Kind + ":" + message.Recipient.ID, TaskID: taskID,
+		YieldSender: message.YieldSender, BlockedTaskIDs: []string{taskID}, Covers: []string{}, Acceptance: []serveAcceptanceRow{}}
 }
 
 func serveHumanActionForGate(task Note, gate Note) *serveHumanAction {

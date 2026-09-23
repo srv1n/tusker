@@ -41,6 +41,11 @@ func (s *serveServer) handleAgentMessageSend(w http.ResponseWriter, body serveAc
 	kind := firstNonEmpty(body.string("kind"), "notice")
 	if replyTo != "" {
 		kind = "answer"
+		parent, err := s.store.AgentMessage(project, replyTo)
+		if err != nil || parent.AnsweredAt != "" {
+			serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "Question is already answered or unavailable; refresh the task."})
+			return
+		}
 	}
 	m := AgentMessage{IdempotencyKey: body.string("idempotencyKey", "key"), ProjectID: project, Sender: sender, Recipient: AgentAddress{Kind: firstNonEmpty(body.string("recipientKind"), "task"), ID: body.string("recipientId", "recipient")}, OriginTaskID: body.string("originTaskId", "taskId"), OriginWaveID: body.string("originWaveId", "waveId"), Kind: kind, Body: body.string("body"), ReplyTo: replyTo, ReplyRequired: body.bool("replyRequired"), YieldSender: body.bool("yieldSender")}
 	var stored AgentMessage
@@ -55,6 +60,7 @@ func (s *serveServer) handleAgentMessageSend(w http.ResponseWriter, body serveAc
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: err.Error()})
 		return
 	}
+	s.invalidateProjectSnapshot(project)
 	serveJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": duplicate, "message": stored})
 }
 

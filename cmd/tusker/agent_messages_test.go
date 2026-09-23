@@ -2,6 +2,39 @@ package main
 
 import "testing"
 
+func TestAgentMessageOperatorRecipient(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", root)
+	store, err := OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	question, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "task:T1", IdempotencyKey: "operator-q", Recipient: AgentAddress{Kind: "operator", ID: "operator"}, Kind: "question", Body: "Need a decision", ReplyRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if question.Recipient != (AgentAddress{Kind: "operator", ID: "operator"}) {
+		t.Fatal(question.Recipient)
+	}
+	if _, err := parseAgentAddress("operator:operator"); err == nil {
+		t.Fatal("contact parser accepted operator")
+	}
+	if err := agentMessageCmd("message ask", Args{"project": "app", "sender": "task:T1", "recipient-kind": "operator", "recipient": "operator:operator", "key": "operator-cli", "body": "CLI question"}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := store.ListAgentMessages("app", "operator", "operator")
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("CLI operator messages=%v err=%v", listed, err)
+	}
+	if _, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "operator:operator", IdempotencyKey: "operator-a", Recipient: AgentAddress{Kind: "task", ID: "T1"}, Kind: "answer", Body: "Proceed", ReplyTo: question.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "operator:operator", IdempotencyKey: "operator-a2", Recipient: AgentAddress{Kind: "task", ID: "T1"}, Kind: "answer", Body: "Conflicting", ReplyTo: question.ID}); err == nil {
+		t.Fatal("second answer accepted")
+	}
+}
+
 func TestAgentMessagesDurableCorrelatedDeduplicated(t *testing.T) {
 	root := t.TempDir()
 	store, err := OpenRuntimeStore(root)

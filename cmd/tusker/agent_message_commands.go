@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -68,6 +69,30 @@ func agentMessageCmd(command string, args Args) error {
 	if command == "message reply" {
 		kind = "answer"
 		recipient = firstNonEmpty(recipient, args.String("to"))
+		if recipient == "" {
+			parent, err := store.AgentMessage(project, args.String("reply-to"))
+			if err != nil {
+				return err
+			}
+			recipient = parent.Sender
+		}
+	}
+	body := args.String("body")
+	if bodyFile := strings.TrimSpace(args.String("body-file")); bodyFile != "" {
+		if body != "" {
+			return tuskerError(errorInvalidArg, "message accepts either --body or --body-file")
+		}
+		var data []byte
+		var err error
+		if bodyFile == "-" {
+			data, err = io.ReadAll(io.LimitReader(os.Stdin, agentMessageBodyLimit+1))
+		} else {
+			data, err = os.ReadFile(bodyFile)
+		}
+		if err != nil {
+			return err
+		}
+		body = string(data)
 	}
 	recipientGeneration := 0
 	if recipient == "" && args.String("contact") != "" {
@@ -114,7 +139,7 @@ func agentMessageCmd(command string, args Args) error {
 	} else {
 		return tuskerError(errorInvalidArg, "message recipient is invalid: "+parseErr.Error())
 	}
-	m := AgentMessage{IdempotencyKey: args.String("key"), ProjectID: project, Sender: sender, Recipient: AgentAddress{Kind: recipientKind, ID: recipient}, OriginTaskID: firstNonEmpty(args.String("task"), strings.TrimSpace(os.Getenv("TUSKER_ITEM_ID"))), OriginWaveID: args.String("wave"), WorkRevision: workRevision, RouteGeneration: routeGeneration, RecipientGeneration: recipientGeneration, Kind: kind, Body: args.String("body"), ReplyTo: args.String("reply-to"), ReplyRequired: command == "message ask" || args.Bool("reply-required"), YieldSender: args.Bool("yield")}
+	m := AgentMessage{IdempotencyKey: args.String("key"), ProjectID: project, Sender: sender, Recipient: AgentAddress{Kind: recipientKind, ID: recipient}, OriginTaskID: firstNonEmpty(args.String("task"), strings.TrimSpace(os.Getenv("TUSKER_ITEM_ID"))), OriginWaveID: args.String("wave"), WorkRevision: workRevision, RouteGeneration: routeGeneration, RecipientGeneration: recipientGeneration, Kind: kind, Body: body, ReplyTo: args.String("reply-to"), ReplyRequired: command == "message ask" || args.Bool("reply-required"), YieldSender: args.Bool("yield")}
 	stored, duplicate, err := store.PutAgentMessage(m)
 	if err != nil {
 		return tuskerError(errorInvalidArg, fmt.Sprintf("message rejected: %v", err))

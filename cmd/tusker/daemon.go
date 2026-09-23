@@ -2890,6 +2890,23 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		if statusFailureReason != "" {
 			classification.reason = statusFailureReason
 		}
+		if status.ExitCode == 0 && run.Lane == runLaneExecute && classification.outcome == AttemptOutcomeEarlyExit {
+			waiting, waitErr := d.openYieldQuestion(run)
+			if waitErr != nil {
+				return run, changed, waitErr
+			}
+			if waiting {
+				reason := "waiting for answer to agent question"
+				run.LeaseState = string(LeaseStateReleased)
+				run.AttemptOutcome = string(AttemptOutcomeWaitingForHuman)
+				run.NextRetryAt = ""
+				run.LastError = reason
+				run.Terminal = false
+				updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForHuman, 0, reason, finished)
+				clearActiveExecution(&run)
+				return run, true, nil
+			}
+		}
 		if canonicalStatusRetiresRuntimeRows(wfFile.Data, classification.trackerState) {
 			outcome := classification.outcome
 			if status.ExitCode != 0 && run.ReasonCode == "" {

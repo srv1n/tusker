@@ -62,6 +62,8 @@ type serveSnapshot struct {
 	notesByID         map[string]Note
 	runs              []RunStatus
 	queue             map[string]automationTaskExplanation
+	openQuestions     map[string][]AgentMessage
+	permissionWaits   map[string][]AgentAccessApproval
 	openP0Escalation  bool
 }
 
@@ -370,6 +372,13 @@ type serveHumanAction struct {
 	BlockedTaskIDs      []string             `json:"blockedTaskIds"`
 	Covers              []string             `json:"covers"`
 	Acceptance          []serveAcceptanceRow `json:"acceptance"`
+	MessageID           string               `json:"messageId,omitempty"`
+	Body                string               `json:"body,omitempty"`
+	AskedAt             string               `json:"askedAt,omitempty"`
+	RecipientLabel      string               `json:"recipientLabel,omitempty"`
+	TaskID              string               `json:"taskId,omitempty"`
+	YieldSender         bool                 `json:"yieldSender,omitempty"`
+	RequestID           string               `json:"requestId,omitempty"`
 }
 
 type serveGateDetail struct {

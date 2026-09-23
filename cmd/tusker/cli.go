@@ -93,7 +93,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "demo", "task", "worker":
+	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "mcp", "demo", "task", "worker":
 		return true
 	default:
 		return false
@@ -198,6 +198,10 @@ func runInner(command string, args Args) (int, error) {
 		return 0, capabilitiesCmd(args)
 	case "message send", "message ask", "message reply", "message list", "message show", "message consume", "message apply":
 		return 0, agentMessageCmd(command, args)
+	case "message inbox":
+		return 0, agentMessageInboxCmd(args)
+	case "mcp serve":
+		return 0, mcpServeCmd(args)
 	case "acp":
 		if err := validateACPAdapterCommandArgs(args); err != nil {
 			return 0, tuskerError(errorInvalidArg, err.Error())
@@ -953,6 +957,8 @@ func printCommandHelp(command string) bool {
 		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
 	case "capabilities":
 		printCapabilitiesHelp()
+	case "mcp", "mcp serve":
+		fmt.Println("Usage: tusker mcp serve [--max-wait <seconds>]\n\nServe worker ask, update, and inbox tools over stdio MCP.")
 	case "init":
 		printInitHelp()
 	case "reset", "relaunch":

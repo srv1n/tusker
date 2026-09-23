@@ -81,7 +81,7 @@ func TestExternalArchitectRoutingRegistersIdentityAndTruthfulCapabilities(t *tes
 		t.Fatalf("registered endpoint reported missing/unbound: %#v", binding)
 	}
 	capabilities := binding.Capabilities
-	if capabilities.State != "unsupported" || capabilities.MessageWhileRunning || capabilities.ContinueWhileIdle || capabilities.RetrieveResponse || capabilities.AttachmentValid || capabilities.Reason == "" {
+	if capabilities.State != "inbox" || capabilities.MessageWhileRunning || capabilities.ContinueWhileIdle || !capabilities.RetrieveResponse || capabilities.AttachmentValid || capabilities.Reason == "" {
 		t.Fatalf("no-attempt endpoint capabilities=%#v", capabilities)
 	}
 }
@@ -102,7 +102,7 @@ func TestExternalArchitectRoutingWaveInheritanceAndTaskOverride(t *testing.T) {
 	if inherited.Contact.Address.ID != waveRecord.ExecutionID || inherited.InheritedFrom != "W-0001" || inherited.Contact.TaskID != "W-0001" {
 		t.Fatalf("wave contact was not inherited: %#v", inherited)
 	}
-	if inherited.Capabilities.State != "unsupported" {
+	if inherited.Capabilities.State != "inbox" {
 		t.Fatalf("inherited external endpoint capabilities=%#v", inherited.Capabilities)
 	}
 	override := externalRoutingInput(projectID, "TSK-T-0002", "task")
@@ -303,7 +303,11 @@ func TestExternalArchitectRoutingConnectorSelectionStaysTruthful(t *testing.T) {
 		if binding.Harness != tc.harness || binding.Provider != tc.provider {
 			t.Fatalf("%s structured identity=%#v", tc.harness, binding)
 		}
-		if binding.Capabilities.State != "unsupported" || !strings.Contains(binding.Capabilities.Reason, tc.harness) {
+		want := "inbox"
+		if tc.harness == "devin" {
+			want = "unsupported"
+		}
+		if binding.Capabilities.State != want {
 			t.Fatalf("%s capabilities=%#v", tc.harness, binding.Capabilities)
 		}
 		_ = i
@@ -374,7 +378,7 @@ func TestExternalArchitectRoutingLiveCodexFixtureCapabilities(t *testing.T) {
 	}
 }
 
-func TestExternalArchitectRoutingMessageIdempotencyAndUnsupportedRoute(t *testing.T) {
+func TestExternalArchitectRoutingMessageIdempotencyAndPendingInbox(t *testing.T) {
 	_, store, projectID, _ := externalRoutingFixture(t)
 	_, record, err := store.RegisterExternalAgentContact(externalRoutingInput(projectID, "TSK-T-0001", "task"))
 	if err != nil {
@@ -398,21 +402,21 @@ func TestExternalArchitectRoutingMessageIdempotencyAndUnsupportedRoute(t *testin
 		t.Fatal(err)
 	}
 	var state, transport string
-	if err := store.queryRowScan(`SELECT state FROM agent_wakeups WHERE project_id=?`, []any{projectID}, &state); err != nil || state != "unsupported" {
+	if err := store.queryRowScan(`SELECT state FROM agent_wakeups WHERE project_id=?`, []any{projectID}, &state); err != nil || state != "held" {
 		t.Fatalf("no-attempt external wakeup state=%q err=%v", state, err)
 	}
-	if err := store.queryRowScan(`SELECT transport_state FROM agent_messages WHERE id=?`, []any{stored.ID}, &transport); err != nil || transport != "unsupported" {
+	if err := store.queryRowScan(`SELECT transport_state FROM agent_messages WHERE id=?`, []any{stored.ID}, &transport); err != nil || transport != "pending" {
 		t.Fatalf("external message transport=%q err=%v", transport, err)
 	}
 	if err := d.processAgentWakeups(projectID); err != nil {
 		t.Fatal(err)
 	}
 	var againState, againTransport string
-	if err := store.queryRowScan(`SELECT state FROM agent_wakeups WHERE project_id=?`, []any{projectID}, &againState); err != nil || againState != "unsupported" {
-		t.Fatalf("terminal unsupported wakeup was reprocessed: state=%q err=%v", againState, err)
+	if err := store.queryRowScan(`SELECT state FROM agent_wakeups WHERE project_id=?`, []any{projectID}, &againState); err != nil || againState != "held" {
+		t.Fatalf("held inbox wakeup changed: state=%q err=%v", againState, err)
 	}
-	if err := store.queryRowScan(`SELECT transport_state FROM agent_messages WHERE id=?`, []any{stored.ID}, &againTransport); err != nil || againTransport != "unsupported" {
-		t.Fatalf("terminal unsupported message transport changed: %q err=%v", againTransport, err)
+	if err := store.queryRowScan(`SELECT transport_state FROM agent_messages WHERE id=?`, []any{stored.ID}, &againTransport); err != nil || againTransport != "pending" {
+		t.Fatalf("pending inbox message transport changed: %q err=%v", againTransport, err)
 	}
 	answer := AgentMessage{IdempotencyKey: "a-1", ProjectID: projectID, Sender: "execution:" + record.ExecutionID, Recipient: AgentAddress{Kind: "task", ID: "TSK-T-0001"}, Kind: "answer", Body: "Ship it.", ReplyTo: stored.ID}
 	if _, _, err := store.PutAgentMessageAsOperator(answer); err != nil {
@@ -492,7 +496,7 @@ func TestExternalArchitectRoutingAdmittedNonCodexWithoutHandleIsTerminalUnsuppor
 	}
 }
 
-func TestExternalArchitectRoutingRecipientGenerationFenceMarksStale(t *testing.T) {
+func TestExternalArchitectRoutingReplacementMovesPendingMessage(t *testing.T) {
 	_, store, projectID, _ := externalRoutingFixture(t)
 	_, record, err := store.RegisterExternalAgentContact(externalRoutingInput(projectID, "TSK-T-0001", "task"))
 	if err != nil {
@@ -517,11 +521,12 @@ func TestExternalArchitectRoutingRecipientGenerationFenceMarksStale(t *testing.T
 	if err := d.processAgentWakeups(projectID); err != nil {
 		t.Fatal(err)
 	}
-	var state, transport string
-	if err := store.queryRowScan(`SELECT state FROM agent_wakeups WHERE project_id=?`, []any{projectID}, &state); err != nil || state != "stale" {
+	var state, transport, recipientID string
+	var generation int
+	if err := store.queryRowScan(`SELECT state FROM agent_wakeups WHERE project_id=?`, []any{projectID}, &state); err != nil || state != "held" {
 		t.Fatalf("replaced-generation wakeup state=%q err=%v", state, err)
 	}
-	if err := store.queryRowScan(`SELECT transport_state FROM agent_messages WHERE id=?`, []any{stored.ID}, &transport); err != nil || transport != "stale" {
+	if err := store.queryRowScan(`SELECT transport_state,recipient_id,recipient_generation FROM agent_messages WHERE id=?`, []any{stored.ID}, &transport, &recipientID, &generation); err != nil || transport != "pending" || recipientID != secondRecord.ExecutionID || generation != 2 {
 		t.Fatalf("replaced-generation message transport=%q err=%v", transport, err)
 	}
 }

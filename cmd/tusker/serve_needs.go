@@ -13,6 +13,27 @@ func serveNeeds(snap serveSnapshot, now time.Time) []serveNeedItem {
 	for _, task := range snap.tasks {
 		cap := serveTaskCapsuleFor(snap, task)
 		blocking := serveBlockingCount(snap, cap.ID)
+		for _, message := range snap.openQuestions[cap.ID] {
+			need := serveNeedBaseMap(snap, task, cap, "question", blocking)
+			need["id"] = "need-question-" + message.ID
+			need["since"] = message.CreatedAt
+			need["messageId"] = message.ID
+			need["body"] = message.Body
+			need["recipientLabel"] = message.Recipient.Kind + ":" + message.Recipient.ID
+			need["yieldSender"] = message.YieldSender
+			action := serveQuestionHumanAction(message, cap.ID)
+			need["humanAction"] = action
+			needs = append(needs, need)
+		}
+		for _, approval := range snap.permissionWaits[cap.ID] {
+			need := serveNeedBaseMap(snap, task, cap, "permission", blocking)
+			need["id"] = "need-permission-" + approval.RequestID
+			need["since"] = approval.CreatedAt
+			need["requestId"] = approval.RequestID
+			need["humanAction"] = serveHumanAction{Kind: "permission", RawKind: "permission", Title: "Permission requested by " + cap.ID,
+				Action: approval.Reason, TaskID: cap.ID, RequestID: approval.RequestID, GateID: "permission-" + approval.RequestID, BlockedTaskIDs: []string{cap.ID}, Covers: []string{}, Acceptance: []serveAcceptanceRow{}}
+			needs = append(needs, need)
+		}
 		for _, gate := range serveUnsatisfiedGatesForTask(snap, cap.ID) {
 			if !serveHumanOwner(gate.Owner) {
 				continue

@@ -1155,6 +1155,14 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 		return serveSnapshot{}, err
 	}
 	docsDuration := time.Since(docsStarted)
+	snap.openQuestions, err = s.serveOpenQuestions(snap)
+	if err != nil {
+		return serveSnapshot{}, err
+	}
+	snap.permissionWaits, err = s.servePermissionWaits(snap)
+	if err != nil {
+		return serveSnapshot{}, err
+	}
 	snap.needs = serveNeeds(snap, s.now())
 	log.Printf(
 		"serve snapshot build: project=%s total=%s contents=%s runs=%s queue=%s docs=%s notes=%d tasks=%d runs_count=%d queue_count=%d needs=%d",

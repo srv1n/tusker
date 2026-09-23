@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -42,6 +43,19 @@ func (s *RuntimeStore) SetAgentWakeupState(id, state string) error {
 	}
 	_, err := s.exec(`UPDATE agent_wakeups SET state=? WHERE id=?`, state, id)
 	return err
+}
+
+func (d *Daemon) openYieldQuestion(run RunStatus) (bool, error) {
+	messages, err := d.store.ListAgentMessagesForTask(run.ProjectID, run.ItemID)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range messages {
+		if m.Kind == "question" && m.Sender == "task:"+run.ItemID && m.YieldSender && m.AnsweredAt == "" && m.WorkRevision == run.WorkRevision && (m.RouteGeneration == 0 || m.RouteGeneration == run.LeaseGeneration) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (d *Daemon) processAgentWakeups(project string) error {
@@ -97,8 +111,12 @@ func (d *Daemon) processAgentWakeups(project string) error {
 				}
 			}
 			if record.AttemptID == "" {
+				if record.Source == "direct_claude" || record.Source == "direct_codex" {
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+					continue
+				}
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "unsupported")
-				_, _ = d.store.exec(`UPDATE agent_messages SET transport_state='unsupported' WHERE project_id=? AND id=?`, w.ProjectID, message.ID)
+				_, _ = d.store.exec(`UPDATE agent_messages SET transport_state='unsupported' WHERE project_id=? AND id=? AND transport_state NOT IN ('delivered','consumed') AND consumed_at=''`, w.ProjectID, message.ID)
 				continue
 			}
 			provider, providerErr := d.store.ExecutionProvider(record.ExecutionID)
@@ -132,6 +150,73 @@ func (d *Daemon) processAgentWakeups(project string) error {
 		if w.RecipientKind != "task" {
 			_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "unsupported")
 			continue
+		}
+		if message.Kind == "answer" {
+			parent, err := d.store.AgentMessage(w.ProjectID, message.ReplyTo)
+			if err != nil || !parent.YieldSender || parent.Sender != "task:"+w.RecipientID {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
+				continue
+			}
+			if message.ConsumedAt != "" {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "delivered")
+				continue
+			}
+			var firstAnswer string
+			if err := d.store.queryRowScan(`SELECT id FROM agent_messages WHERE project_id=? AND reply_to=? AND kind='answer' ORDER BY created_at,id LIMIT 1`, []any{w.ProjectID, parent.ID}, &firstAnswer); err != nil {
+				return err
+			}
+			if firstAnswer != message.ID {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
+				continue
+			}
+			run, err := d.store.FindRunScoped(w.ProjectID, w.RecipientID)
+			if err != nil {
+				return err
+			}
+			if run == nil || run.LeaseState == string(LeaseStateInterrupted) {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
+			}
+			if (parent.WorkRevision > 0 && run.WorkRevision != parent.WorkRevision) || (parent.RouteGeneration > 0 && run.LeaseGeneration != parent.RouteGeneration) {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
+				continue
+			}
+			if blocked, _, err := d.automaticRetryBlockedByStopIntent(*run); err != nil {
+				return err
+			} else if blocked {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
+			}
+			if retryHasLiveAttempt(*run, time.Now().UTC()) == retryLiveAttempt {
+				if message.TransportState == "delivered" {
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "delivered")
+					continue
+				}
+				if soft, _ := workerSoftDelivery(run.RunnerHarness); soft {
+					created, _ := time.Parse(time.RFC3339Nano, message.CreatedAt)
+					if time.Since(created) < 120*time.Second {
+						_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+						continue
+					}
+				}
+				project, task, wave, err := runSayContext(d.store, *run)
+				if err != nil {
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+					continue
+				}
+				result, sayErr := runSayHard(d.store, d.stateRoot, project, task, wave, *run, "agent-message", message.Body, "message:"+message.ID, time.Now().UTC())
+				if sayErr != nil {
+					state := "held"
+					if result.Delivery.State == "uncertain" || result.Delivery.State == "delivering" {
+						state = "uncertain"
+					}
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, state)
+					continue
+				}
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "delivered")
+				_, _ = d.store.exec(`UPDATE agent_messages SET transport_state='delivered' WHERE project_id=? AND id=?`, w.ProjectID, message.ID)
+				continue
+			}
 		}
 		// Task addresses deliberately survive owner turnover. The normal retry
 		// scheduler resolves the current session/profile (including Muse) later.
@@ -221,24 +306,39 @@ func (d *Daemon) processArchitectWaveReports(projectFilter string) error {
 					pending = append(pending, message.ID)
 				}
 			}
-			snapshot := buildArmedWaveSnapshot(project.VaultRoot, idx, wave, runs, time.Now().UTC())
+			now := time.Now().UTC()
+			snapshot := buildArmedWaveSnapshot(project.VaultRoot, idx, wave, runs, now)
+			stalled, blockers := architectWaveStalled(snapshot, idx, runs, now)
 			outcome := ""
 			switch {
 			case allDone:
 				outcome = "completed"
-			case snapshot.Authorization == "armed" && len(snapshot.Frontier) == 0 && len(pending) > 0:
+			case stalled:
 				outcome = "stalled"
 			}
 			if outcome == "" {
 				continue
 			}
-			architect, ok := waveArchitectAddress(idx, members)
+			if outcome == "stalled" {
+				sort.Strings(pending)
+			}
+			architect, ok, conflict, err := d.waveArchitectAddress(project.ProjectID, snapshot.WaveID, idx, members)
+			if err != nil {
+				return err
+			}
+			if conflict {
+				log.Printf("architect wave report: conflicting architects project=%s wave=%s", project.ProjectID, snapshot.WaveID)
+			}
 			if !ok {
 				continue
 			}
-			report := ArchitectReport{ObjectiveID: firstNonEmpty(stringField(wave.Data, "epic"), stringField(wave.Data, "id")), Outcome: outcome, PendingQuestions: pending}
+			report := ArchitectReport{ObjectiveID: firstNonEmpty(stringField(wave.Data, "epic"), stringField(wave.Data, "id")), Outcome: outcome, PendingQuestions: pending, Blockers: blockers}
 			for _, member := range snapshot.Members {
-				report.Evidence = append(report.Evidence, member.ID+":"+member.State)
+				evidence := member.ID + ":" + member.State
+				if outcome == "stalled" {
+					evidence += ":" + member.Reason
+				}
+				report.Evidence = append(report.Evidence, evidence)
 			}
 			body, _ := json.Marshal(report)
 			digest := sha256.Sum256(body)
@@ -254,6 +354,113 @@ func (d *Daemon) processArchitectWaveReports(projectFilter string) error {
 		}
 	}
 	return nil
+}
+
+// ponytail: make this a wave-level workflow setting if operators need to tune
+// report latency; codex.stall_timeout_ms is a runner timeout, not wave quiet time.
+const architectWaveStallWindow = 10 * time.Minute
+
+func architectWaveStalled(snapshot armedWaveSnapshot, idx v7Index, runs map[string]RunStatus, now time.Time) (bool, []string) {
+	if snapshot.Authorization != "armed" {
+		return false, nil
+	}
+	parked := false
+	blockers := []string{}
+	for _, member := range snapshot.Members {
+		run := runs[member.ID]
+		if retry, err := time.Parse(time.RFC3339Nano, run.NextRetryAt); err == nil && retry.After(now) {
+			return false, nil
+		}
+		if updated, err := time.Parse(time.RFC3339Nano, run.UpdatedAt); err == nil && updated.After(now.Add(-architectWaveStallWindow)) {
+			return false, nil
+		}
+		switch member.State {
+		case armedWaveRunning, armedWaveRunnable, armedWaveReview:
+			return false, nil
+		case armedWaveMachineParked, armedWaveHumanBlocked:
+			parked = true
+			blockers = append(blockers, member.ID+":"+member.State+":"+member.Reason)
+		case armedWaveDependencyWaiting:
+			if state, reason, blocked := architectHardDependencyBlocker(member.ID, idx, runs, now, map[string]bool{}); blocked {
+				parked = true
+				blockers = append(blockers, member.ID+":"+state+":"+reason)
+			} else {
+				blockers = append(blockers, member.ID+":"+member.State+":"+member.Reason)
+			}
+		}
+	}
+	return parked, blockers
+}
+
+func architectHardDependencyBlocker(id string, idx v7Index, runs map[string]RunStatus, now time.Time, seen map[string]bool) (string, string, bool) {
+	if seen[id] {
+		return "", "", false
+	}
+	seen[id] = true
+	task, ok := idx.Tasks[id]
+	if !ok {
+		return armedWaveMachineParked, "hard dependency " + id + " is missing", true
+	}
+	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		if edge.Hardness != v7DependencyHardnessHard {
+			continue
+		}
+		dep, exists := idx.Tasks[edge.ID]
+		if exists && v7DependencySatisfiedForReadiness(edge, dep, true) {
+			continue
+		}
+		if !exists {
+			return armedWaveMachineParked, "hard dependency " + edge.ID + " is missing", true
+		}
+		run := runs[edge.ID]
+		if retry, err := time.Parse(time.RFC3339Nano, run.NextRetryAt); err == nil && retry.After(now) {
+			continue
+		}
+		if armedWaveTaskHumanBlocked(idx, dep) {
+			return armedWaveHumanBlocked, "hard dependency closure of " + edge.ID, true
+		}
+		if armedWaveRunMachineParked(run) {
+			return armedWaveMachineParked, "hard dependency closure of " + edge.ID + ": " + firstNonEmpty(run.LastError, "attempt policy exhausted"), true
+		}
+		if state, reason, blocked := architectHardDependencyBlocker(edge.ID, idx, runs, now, seen); blocked {
+			return state, "hard dependency closure of " + edge.ID + ": " + reason, true
+		}
+	}
+	return "", "", false
+}
+
+func (d *Daemon) waveArchitectAddress(projectID, waveID string, idx v7Index, members []string) (AgentAddress, bool, bool, error) {
+	authored, ok := waveArchitectAddress(idx, members)
+	if ok {
+		return authored, true, false, nil
+	}
+	// An authored conflict is terminal. It cannot be hidden by a runtime contact.
+	var seen AgentAddress
+	for _, id := range members {
+		for _, contact := range authoredAgentContacts(idx.Tasks[id]) {
+			if contact.Role != "architect" {
+				continue
+			}
+			if seen.ID != "" && seen != contact.Address {
+				return AgentAddress{}, false, true, nil
+			}
+			seen = contact.Address
+		}
+	}
+	contacts, err := d.store.AgentContacts(projectID, waveID)
+	if err != nil {
+		return AgentAddress{}, false, false, err
+	}
+	for _, contact := range contacts {
+		if contact.Role != "architect" {
+			continue
+		}
+		if seen.ID != "" && seen != contact.Address {
+			return AgentAddress{}, false, true, nil
+		}
+		seen = contact.Address
+	}
+	return seen, seen.ID != "", false, nil
 }
 
 func waveArchitectAddress(idx v7Index, members []string) (AgentAddress, bool) {

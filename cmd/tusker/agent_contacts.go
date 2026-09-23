@@ -171,6 +171,15 @@ func (s *RuntimeStore) RegisterExternalAgentContact(input ExternalContactRegistr
 		if changed != 1 {
 			return tuskerError(errorInvalidTransition, "contact generation changed; reload before replacing")
 		}
+		if input.ExpectedGeneration > 0 && (input.Harness == "claude-code" || input.Harness == "codex") {
+			// Messages the old session has not seen follow the replacement contact.
+			if _, err := tx.Exec(`UPDATE agent_messages SET recipient_id=?,recipient_generation=? WHERE project_id=? AND recipient_kind='execution' AND recipient_id=? AND transport_state='pending' AND consumed_at=''`, record.ExecutionID, contact.Generation, contact.ProjectID, predecessor); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE agent_wakeups SET recipient_id=? WHERE project_id=? AND recipient_kind='execution' AND recipient_id=? AND state IN ('queued','held')`, record.ExecutionID, contact.ProjectID, predecessor); err != nil {
+				return err
+			}
+		}
 		return tx.Commit()
 	})
 	if err != nil {
@@ -352,6 +361,12 @@ func (s *RuntimeStore) ResolveAgentContactBinding(projectID, taskID, role, name 
 	}
 	if strings.TrimSpace(view.AttemptID) == "" {
 		if registeredExternal {
+			if binding.Harness == "claude-code" || binding.Harness == "codex" {
+				binding.State = "inbox"
+				binding.Reason = "delivered when that session's Tusker inbox hook runs (next prompt or turn end); not a live push"
+				binding.Capabilities = AgentConnectorCapabilities{State: "inbox", Reason: binding.Reason, RetrieveResponse: true}
+				return binding, nil
+			}
 			binding.State = "unsupported"
 			binding.Reason = externalConnectorUnsupportedReason(binding.Harness)
 			binding.Capabilities = AgentConnectorCapabilities{State: "unsupported", Reason: binding.Reason}

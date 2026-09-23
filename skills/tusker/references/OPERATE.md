@@ -17,6 +17,18 @@ in `docs/system/execution-observability.md` and its listed source files.
 
 The smallest command that names the task, lifecycle state, open gate, or missing proof wins.
 
+An interactive architect registered as a Claude Code or Codex contact receives
+worker questions and wave reports as injected context from its `UserPromptSubmit`
+or `Stop` inbox hook. Read each message ID and answer a question with:
+
+```bash
+tusker message reply --project <project-id> --reply-to <message-id> --sender execution:<your-execution-id> --key <unique-key> --body-file -
+```
+
+The sender must be the execution ID returned by contact registration. The
+inbox is checked at the next prompt or turn end, not pushed live. Treat wave
+reports as information; `ApplyArchitectContinuation` stays operator-invoked.
+
 ## Diagnosis and bounded self-recovery
 
 When authorized work stalls, diagnose before acting:

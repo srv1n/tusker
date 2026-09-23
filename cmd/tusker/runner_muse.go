@@ -21,6 +21,11 @@ func (r *MuseRunner) Capabilities() RunnerCapabilities {
 }
 
 func (r *MuseRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
+	// Muse 1.3.0 `muse exec --help` exposes no per-invocation MCP overlay.
+	// Record the supported CLI ask route instead of mutating user/workspace settings.
+	if err := NewEventLog(req.EventSinkPath).Append("worker_ask_route", req.AttemptID, RunnerMuse, map[string]any{"route": "cli"}); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.Command) == "" {
 		req.Command = defaultMuseCLICommand()
 	}
@@ -41,6 +46,9 @@ func (r *MuseRunner) Start(ctx context.Context, req StartRequest) (*StartResult,
 }
 
 func (r *MuseRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
+	if err := NewEventLog(req.EventSinkPath).Append("worker_ask_route", req.AttemptID, RunnerMuse, map[string]any{"route": "cli"}); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.SessionRef) == "" {
 		return nil, tuskerError(errorMissingArg, "muse resume requires session_ref")
 	}

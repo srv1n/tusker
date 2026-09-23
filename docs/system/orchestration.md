@@ -55,6 +55,53 @@ another daemon or nested command-line agent. A process with
 `TUSKER_ATTEMPT_ID` is a dispatched worker and must stay inside its claimed
 task.
 
+### Interactive architect inbox
+
+An operator can register an existing Claude Code or Codex conversation as a
+wave or task architect contact. The registered binding reports `inbox`:
+questions and wave reports are retrieved by a hook at that session's next
+prompt or turn end. It cannot push a message into an active turn. Devin
+external contacts remain unsupported. Registration alone does not install a
+hook; the operator adds the following to their own Claude Code settings
+(`~/.claude/settings.json` or project `.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}]
+  }
+}
+```
+
+Both hooks pass their `session_id` on stdin. Tusker injects pending messages
+with distinct IDs; a `Stop` hook blocks once when it has new messages, then
+returns no output on the next stop. With no matching registration, it injects
+nothing. Keep the hook's project ID aligned with the registration. If the
+session is replaced, install or retain the hook in the replacement session;
+only its ID receives subsequent inbox output.
+
+**Codex hook integration is unverified in the installed Codex; qualify it
+before relying on it.** The published Codex hook schema also carries
+`session_id` and supports `UserPromptSubmit` and `Stop`. The proposed operator
+owned `hooks.json` entry is:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}]
+  }
+}
+```
+
+Tusker never writes either settings file. The hook output is context for the
+architect, not authority to mutate the wave. A continuation proposal still
+requires an operator to invoke `ApplyArchitectContinuation`.
+
+Hook schemas: [Claude Code](https://code.claude.com/docs/en/hooks) and
+[Codex](https://learn.chatgpt.com/docs/hooks).
+
 ## Code sources
 
 - `cmd/tusker/daemon.go`

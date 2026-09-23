@@ -46,7 +46,7 @@ func (m AgentMessage) validate() error {
 	if m.ProjectID == "" || m.Sender == "" || m.IdempotencyKey == "" || m.Recipient.ID == "" || m.Body == "" {
 		return errors.New("project, sender, idempotency key, recipient and body are required")
 	}
-	if m.Recipient.Kind != "task" && m.Recipient.Kind != "execution" {
+	if m.Recipient.Kind != "task" && m.Recipient.Kind != "execution" && (m.Recipient.Kind != "operator" || m.Recipient.ID != "operator") {
 		return fmt.Errorf("recipient kind %q is unsupported", m.Recipient.Kind)
 	}
 	if len(m.Body) > agentMessageBodyLimit {
@@ -175,7 +175,11 @@ func (s *RuntimeStore) putAgentAnswer(m AgentMessage) (AgentMessage, bool, error
 		}
 		m = existing
 	}
-	if result, err = tx.Exec(`UPDATE agent_messages SET answered_at=? WHERE project_id=? AND id=?`, m.CreatedAt, m.ProjectID, m.ReplyTo); err != nil {
+	query := `UPDATE agent_messages SET answered_at=? WHERE project_id=? AND id=? AND answered_at=''`
+	if duplicate {
+		query = `UPDATE agent_messages SET answered_at=CASE WHEN answered_at='' THEN ? ELSE answered_at END WHERE project_id=? AND id=?`
+	}
+	if result, err = tx.Exec(query, m.CreatedAt, m.ProjectID, m.ReplyTo); err != nil {
 		return AgentMessage{}, false, err
 	}
 	if updated, _ := result.RowsAffected(); updated != 1 {
@@ -189,6 +193,9 @@ func (s *RuntimeStore) putAgentAnswer(m AgentMessage) (AgentMessage, bool, error
 
 func normalizeAgentAddress(value, fallbackKind string) (AgentAddress, error) {
 	value = strings.TrimSpace(value)
+	if value == "operator:operator" || (value == "operator" && fallbackKind == "operator") {
+		return AgentAddress{Kind: "operator", ID: "operator"}, nil
+	}
 	if strings.Contains(value, ":") {
 		return parseAgentAddress(value)
 	}
@@ -207,11 +214,21 @@ func sameAgentMessageRequest(a, b AgentMessage) bool {
 }
 
 func (s *RuntimeStore) queueAgentMessageWakeup(m AgentMessage) error {
-	if m.Kind == "notice" {
+	if m.Kind == "notice" || m.Recipient.Kind == "operator" {
 		return nil
 	}
 	_, _, err := s.QueueAgentWakeup(m.ProjectID, m.Recipient, m.Kind, "message:"+m.ID, []string{m.ID})
 	return err
+}
+
+// ConsumeAgentMessage claims an unread message for exactly one caller.
+func (s *RuntimeStore) ConsumeAgentMessage(projectID, id string) (bool, error) {
+	result, err := s.exec(`UPDATE agent_messages SET state='consumed', consumed_at=? WHERE project_id=? AND id=? AND consumed_at=''`, time.Now().UTC().Format(time.RFC3339Nano), projectID, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 func (s *RuntimeStore) AgentMessage(projectID, id string) (AgentMessage, error) {
