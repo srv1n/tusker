@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // MuseRunner invokes the installed Muse binary directly and is only
@@ -15,7 +17,7 @@ func (r *MuseRunner) Name() RunnerName { return RunnerMuse }
 func (r *MuseRunner) Capabilities() RunnerCapabilities {
 	// Muse exec has structured output and session IDs, but its headless CLI
 	// does not expose a Tusker approval callback we can safely keep open.
-	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true}
+	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true, HardSay: true, PreassignSessionID: true, ResumeAfterDeath: true}
 }
 
 func (r *MuseRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
@@ -28,6 +30,12 @@ func (r *MuseRunner) Start(ctx context.Context, req StartRequest) (*StartResult,
 			return nil, err
 		}
 		req.CommandArgv = argv
+	}
+	if session := museCLIArgvSession(req.CommandArgv); session != "" {
+		req.NativeSessionID = session
+	} else {
+		req.NativeSessionID = uuid.NewString()
+		req.CommandArgv = append(req.CommandArgv, "--session-id", req.NativeSessionID)
 	}
 	return startDetachedRunnerWrapper(ctx, r.Name(), req, nil, r.Capabilities())
 }
@@ -150,9 +158,43 @@ func museCLIResumeArgv(argv []string, session string) []string {
 	return out
 }
 
+func museCLIArgvSession(argv []string) string {
+	for i, arg := range argv {
+		if arg == "--session-id" && i+1 < len(argv) {
+			return strings.TrimSpace(argv[i+1])
+		}
+		if strings.HasPrefix(arg, "--session-id=") {
+			return strings.TrimSpace(strings.TrimPrefix(arg, "--session-id="))
+		}
+	}
+	return ""
+}
+
+func museFailureReasonCode(outcome AttemptOutcome, reason string) RunFailureReasonCode {
+	switch outcome {
+	case AttemptOutcomeCancelled:
+		return RunFailureCancelled
+	case AttemptOutcomeUnknown:
+		return RunFailureOutcomeUnknown
+	case AttemptOutcomeFailed:
+		lower := strings.ToLower(reason)
+		switch {
+		case strings.Contains(lower, "usage"), strings.Contains(lower, "limit"):
+			return RunFailureUsageLimit
+		case strings.Contains(lower, "auth"), strings.Contains(lower, "login"):
+			return RunFailureAuthExpired
+		case strings.Contains(lower, "permission"), strings.Contains(lower, "approval"):
+			return RunFailurePermissionDenied
+		default:
+			return RunFailureProviderError
+		}
+	}
+	return ""
+}
+
 // classifyMuseCLIOutput consumes only the direct Muse exec record envelope.
 // Unknown records are ignored so protocol additions do not turn a successful
-// run into a false failure; a missing terminal record remains a failure.
+// run into a false failure; a missing terminal record remains unknown.
 func classifyMuseCLIOutput(output string) (AttemptOutcome, string, string) {
 	seenTerminal := false
 	session := ""
@@ -167,6 +209,8 @@ func classifyMuseCLIOutput(output string) (AttemptOutcome, string, string) {
 		}
 		session = firstNonEmpty(session, museSessionID(value))
 		payload, _ := value.(map[string]any)
+		body, _ := payload["payload"].(map[string]any)
+		reason := firstNonEmpty(stringValue(payload["reason"]), stringValue(body["reason"]))
 		kind := strings.ToLower(strings.TrimSpace(stringValue(payload["payload_type"])))
 		if kind == "" {
 			kind = strings.ToLower(strings.TrimSpace(stringValue(payload["record_type"])))
@@ -175,13 +219,13 @@ func classifyMuseCLIOutput(output string) (AttemptOutcome, string, string) {
 		case "run.terminal.completed", "terminal.completed":
 			seenTerminal = true
 		case "run.terminal.failed", "terminal.failed", "run.terminal.error", "terminal.error":
-			return AttemptOutcomeFailed, firstNonEmpty(stringValue(payload["reason"]), "Muse reported a failed terminal result"), session
+			return AttemptOutcomeFailed, firstNonEmpty(reason, "Muse reported a failed terminal result"), session
 		case "run.terminal.cancelled", "terminal.cancelled":
-			return AttemptOutcomeCancelled, firstNonEmpty(stringValue(payload["reason"]), "Muse run cancelled"), session
+			return AttemptOutcomeCancelled, firstNonEmpty(reason, "Muse run cancelled"), session
 		}
 	}
 	if !seenTerminal {
-		return AttemptOutcomeFailed, "Muse terminal result missing", session
+		return AttemptOutcomeUnknown, "Muse terminal result missing", session
 	}
 	return AttemptOutcomeSucceeded, "", session
 }

@@ -40,6 +40,9 @@ type claudeLiveHandle struct {
 	ioWG   sync.WaitGroup
 
 	writeMu                sync.Mutex
+	echoMu                 sync.Mutex
+	echoWait               chan string
+	echoBody               string
 	nextID                 atomic.Int64
 	sessionMu              sync.RWMutex
 	sessionRef             string
@@ -50,9 +53,11 @@ type claudeLiveHandle struct {
 	runtimeStore           *RuntimeStore
 	interrupted            atomic.Bool
 	providerResultObserved atomic.Bool
+	permissionDenied       atomic.Bool
 	turnCompleted          atomic.Bool
 	criticalOnce           sync.Once
 	doneOnce               sync.Once
+	terminalCode           RunFailureReasonCode
 }
 
 func validateClaudeSessionFlags(command string, argv []string) error {
@@ -129,7 +134,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	}
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		command = "claude -p --output-format stream-json --input-format stream-json --permission-mode " + permissionMode + " --permission-prompts none"
+		command = "claude -p --output-format stream-json --input-format stream-json --replay-user-messages --permission-mode " + permissionMode + " --permission-prompts none"
 		if permissionMode == "plan" {
 			command += " --tools Read,Glob,Grep"
 		}
@@ -147,6 +152,9 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 			}
 			command = strings.Join(quoted, " ")
 		}
+	}
+	if len(req.CommandArgv) == 0 && !strings.Contains(command, "--replay-user-messages") {
+		command += " --replay-user-messages"
 	}
 	if permissionMode != "bypassPermissions" && (strings.Contains(command, "bypassPermissions") || strings.Contains(strings.Join(req.CommandArgv, " "), "bypassPermissions")) {
 		return nil, tuskerError(errorConfigInvalid, "bounded Claude runner command cannot use bypassPermissions")
@@ -183,6 +191,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		if req.NativeSessionID != "" || resume != nil {
 			argv = claudeSessionArgv(argv, req.NativeSessionID, resume)
 		}
+		argv = append(argv, "--replay-user-messages")
 		if !filepath.IsAbs(argv[0]) {
 			return nil, tuskerError(errorConfigInvalid, "prepared Claude executable must be an absolute path")
 		}
@@ -396,6 +405,29 @@ func (h *claudeLiveHandle) sendUserMessage(prompt string) error {
 	})
 }
 
+func (h *claudeLiveHandle) sendUserMessageAwaitEcho(body string, timeout time.Duration) (string, error) {
+	// The control server handles one connection at a time; this is the sole
+	// pending echo and its content must match the message just written.
+	wait := make(chan string, 1)
+	h.echoMu.Lock()
+	h.echoBody, h.echoWait = body, wait
+	h.echoMu.Unlock()
+	defer func() {
+		h.echoMu.Lock()
+		h.echoBody, h.echoWait = "", nil
+		h.echoMu.Unlock()
+	}()
+	if err := h.sendUserMessage(body); err != nil {
+		return "", err
+	}
+	select {
+	case uuid := <-wait:
+		return uuid, nil
+	case <-time.After(timeout):
+		return "", fmt.Errorf("Claude echo timeout")
+	}
+}
+
 func (h *claudeLiveHandle) controlRequest(subtype string, request any) error {
 	return h.writeJSON(map[string]any{
 		"type":       "control_request",
@@ -494,6 +526,23 @@ func (h *claudeLiveHandle) handleStdoutLine(line string) {
 	if json.Unmarshal([]byte(line), &payload) != nil {
 		return
 	}
+	if stringValue(payload["type"]) == "user" {
+		if message, ok := payload["message"].(map[string]any); ok && stringValue(message["content"]) != "" {
+			h.echoMu.Lock()
+			if h.echoWait != nil && stringValue(message["content"]) == h.echoBody {
+				if uuid := strings.TrimSpace(stringValue(payload["uuid"])); uuid != "" {
+					select {
+					case h.echoWait <- uuid:
+					default:
+					}
+				}
+			}
+			h.echoMu.Unlock()
+		}
+	}
+	if stringValue(payload["type"]) == "system" && stringValue(payload["subtype"]) == "permission_denied" {
+		h.permissionDenied.Store(true)
+	}
 	// Claude stream JSON carries both top-level session metadata and native
 	// subagent hook facts. Persist those through the same untrusted envelope as
 	// replay, never by mutating run ownership or substituting a child id for the
@@ -506,6 +555,10 @@ func (h *claudeLiveHandle) handleStdoutLine(line string) {
 	case "result":
 		isError, _ := payload["is_error"].(bool)
 		subtype := strings.TrimSpace(stringValue(payload["subtype"]))
+		h.terminalCode = claudeFailureCode(payload)
+		if h.terminalCode == "" && h.permissionDenied.Load() && (isError || strings.Contains(subtype, "error")) {
+			h.terminalCode = RunFailurePermissionDenied
+		}
 		status := "completed"
 		reason := ""
 		switch {
@@ -524,6 +577,36 @@ func (h *claudeLiveHandle) handleStdoutLine(line string) {
 			h.finalize(0)
 		}
 	}
+}
+
+func claudeFailureCode(payload map[string]any) RunFailureReasonCode {
+	if strings.TrimSpace(stringValue(payload["type"])) != "result" {
+		return ""
+	}
+	if denials, ok := payload["permission_denials"].([]any); ok && len(denials) > 0 {
+		return RunFailurePermissionDenied
+	}
+	subtype := strings.TrimSpace(stringValue(payload["subtype"]))
+	switch subtype {
+	case "error_max_turns":
+		return RunFailureMaxTurns
+	case "error_max_budget_usd":
+		return RunFailureMaxBudget
+	case "error_during_execution":
+		message := strings.ToLower(firstNonEmpty(stringValue(payload["error"]), stringValue(payload["result"])))
+		switch {
+		case strings.Contains(message, "usage limit"), strings.Contains(message, "rate limit"), strings.Contains(message, "quota exceeded"):
+			return RunFailureUsageLimit
+		case strings.Contains(message, "authentication"), strings.Contains(message, "unauthorized"), strings.Contains(message, "login required"):
+			return RunFailureAuthExpired
+		default:
+			return RunFailureProviderError
+		}
+	}
+	if isError, _ := payload["is_error"].(bool); isError {
+		return RunFailureProviderError
+	}
+	return ""
 }
 
 func (h *claudeLiveHandle) observeExecutionPayload(payload map[string]any) {
@@ -968,7 +1051,7 @@ func (h *claudeLiveHandle) finalize(exitCode int) {
 			reason = "runner exited with code " + strconv.Itoa(exitCode)
 		}
 		h.recordTurnCompleted(h.ensureTurnID(nil), status, reason, now)
-		_ = writeRunnerStatusFile(h.statusPath, exitCode)
+		_, _ = writeRunnerStatusFileIfAbsentWithOutcome(h.statusPath, exitCode, AttemptOutcomeNone, reason, 0, h.terminalCode)
 		liveRegistry.Unregister(h.attemptID)
 	})
 }

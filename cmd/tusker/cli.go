@@ -658,6 +658,12 @@ func runInner(command string, args Args) (int, error) {
 	case "runs interrupt":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsInterruptCmd(args)
+	case "runs say":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsSayCmd(args)
+	case "runs continue":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsContinueCmd(args)
 	case "runs release":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsReleaseCmd(args)
@@ -1052,7 +1058,7 @@ Purpose:
 		printFactoryOperationsHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune", "projects automation-scope":
 		printProjectsHelp()
-	case "runs", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs release", "runs retire", "runs redrive", "redrive":
+	case "runs", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
 	case "serve":
 		printServeHelp()
@@ -1368,6 +1374,8 @@ func printRunsHelp() {
   tusker runs logs <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs interrupt <task-id-or-record-id> [--json]
+  tusker runs say <task-id> (--message <text> | --message-file <path|->) --by <actor> [--key <idempotency-key>] [--json]
+  tusker runs continue <task-id> [--message <text> | --message-file <path|->] --by <actor> [--json]
   tusker runs release <task-id-or-record-id> [--json]
   tusker runs retire <task-id-or-record-id> --reason <text> [--by <actor>] [--force] [--json]
   tusker redrive <task-id-or-record-id> --reason <text> [--by <actor>] [--json]
@@ -1577,6 +1585,7 @@ func printDocsHelp() {
   tusker docs status
   tusker docs verify <subject>
   tusker docs adopt [--dry-run] [--json]
+  tusker docs adopt --migration [--dry-run] [--json]
   tusker docs adopt --table <file> --approve --by human:<name> [--json]
   tusker docs adopt --table <file> --approve --by user-session:<id> [--approval-token user-session:<id>@<fingerprint>] [--json]
 
@@ -1588,9 +1597,18 @@ user-session:<id> approval path; --approval-token binds that user receipt to the
 exact proposal fingerprint. Every approval, apply, and failure is written to
 .tusker/events as an auditable event. Promote and merge preserve their sources.
 Tombstone rewrites a source as a superseded signpost only when explicitly
-present in the approved table; no disposition deletes a file. Generated map
-artifacts are left untouched; run tusker docs map after review. --apply and
---yes are not accepted aliases.
+present in the approved table; no disposition deletes a file. --migration
+extends the preview to legacy .tusker/specs, decisions, and knowledge domains
+with explicit destinations, kinds, and lifecycle dispositions, plus each
+source's relative links/assets and active task references. Legacy vault
+sources with stub_source become subject-less forwarding stubs once their
+content has a canonical owner; every mutated path's original bytes are kept
+in the .tusker/_generated/docs recovery journal, so an interrupted apply
+resumes and a repeated apply is idempotent. Dirty owned inputs, overlapping
+active work, duplicate subjects, target collisions, path escapes, and symlink
+escapes are refused with the exact conflicting paths before any damaging
+write. Generated map artifacts are left untouched; run tusker docs map after
+review. --apply and --yes are not accepted aliases.
 
 Placement: current chapters live in docs/system (per domain under
 docs/system/domains/<domain>), change specifications in docs/system/proposals,

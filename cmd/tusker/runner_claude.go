@@ -12,7 +12,7 @@ type ClaudeRunner struct{}
 func (r *ClaudeRunner) Name() RunnerName { return RunnerClaude }
 
 func (r *ClaudeRunner) Capabilities() RunnerCapabilities {
-	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true}
+	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, ExplicitApprovals: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true, SoftSay: true, HardSay: true, PreassignSessionID: true, ResumeAfterDeath: true}
 }
 
 func (r *ClaudeRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {

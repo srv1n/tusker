@@ -76,7 +76,7 @@ type CodexExecRunner struct{}
 func (r *CodexExecRunner) Name() RunnerName { return RunnerCodexExec }
 
 func (r *CodexExecRunner) Capabilities() RunnerCapabilities {
-	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true}
+	return RunnerCapabilities{StructuredEvents: true, ResumeSession: true, HardSay: true, ResumeAfterDeath: true, Heartbeats: true, MachineFinalStatus: true, UsageMetrics: true}
 }
 
 func (r *CodexExecRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {

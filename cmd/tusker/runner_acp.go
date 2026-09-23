@@ -39,6 +39,8 @@ func (r *ACPRunner) Capabilities() RunnerCapabilities {
 	return RunnerCapabilities{
 		StructuredEvents:   true,
 		ResumeSession:      r.Name() == RunnerDevin,
+		HardSay:            r.Name() == RunnerDevin,
+		ResumeAfterDeath:   r.Name() == RunnerDevin,
 		ExplicitApprovals:  true,
 		Heartbeats:         true,
 		MachineFinalStatus: true,
@@ -93,9 +95,9 @@ func (r *ACPRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResul
 func (r *ACPRunner) Reconcile(ctx context.Context, req ReconcileRequest) (*ReconcileResult, error) {
 	_ = ctx
 	if strings.TrimSpace(req.SessionRef) == "" {
-		return &ReconcileResult{LeaseState: LeaseStateReleased, Outcome: AttemptOutcomeAbandoned, Reason: "ACP local attempt has no bound session reference"}, nil
+		return &ReconcileResult{LeaseState: LeaseStateReleased, Outcome: AttemptOutcomeAbandoned, Reason: "ACP local attempt has no bound session reference", ReasonCode: RunFailureProcessLost}, nil
 	}
-	return &ReconcileResult{LeaseState: LeaseStateReleased, Outcome: AttemptOutcomeAbandoned, Reason: "ACP local transport cannot reconcile a lost fenced process; no automatic resume"}, nil
+	return &ReconcileResult{LeaseState: LeaseStateReleased, Outcome: AttemptOutcomeAbandoned, Reason: "ACP local transport cannot reconcile a lost fenced process; no automatic resume", ReasonCode: RunFailureProcessLost}, nil
 }
 
 func (r *ACPRunner) Interrupt(ctx context.Context, req InterruptRequest) error {
@@ -670,7 +672,7 @@ func (h *acpLiveHandle) runPrompt(prompt string) {
 	}
 	// This writes an attempt-local process observation only. The wrapper and
 	// daemon retain ownership of task, evidence, review, gate, and wave state.
-	_, _ = writeRunnerStatusFileIfAbsentWithOutcome(h.req.StatusPath, exitCode, outcome, reason, 0)
+	_, _ = writeRunnerStatusFileIfAbsentWithOutcome(h.req.StatusPath, exitCode, outcome, reason, 0, acpTerminalReasonCode(result, err))
 	h.close()
 	liveRegistry.Unregister(h.attemptID)
 }
@@ -679,6 +681,9 @@ func acpTerminalStatus(result acp.PromptResult, err error) (AttemptOutcome, int,
 	reason := ""
 	if err != nil {
 		reason = "acp_v1 transport error: " + boundedACPObservation(err.Error())
+	}
+	if code, ok := acp.RPCErrorCode(err); ok && code == -32000 {
+		return AttemptOutcomeBlocked, 1, reason
 	}
 	switch result.Outcome {
 	case acp.OutcomeCompleted:
@@ -699,6 +704,31 @@ func acpTerminalStatus(result acp.PromptResult, err error) (AttemptOutcome, int,
 		return AttemptOutcomeFailed, 1, firstNonEmpty(reason, "acp_v1 transport failed")
 	default:
 		return AttemptOutcomeFailed, 1, firstNonEmpty(reason, "acp_v1 terminated without a trustworthy result")
+	}
+}
+
+func acpTerminalReasonCode(result acp.PromptResult, err error) RunFailureReasonCode {
+	if code, ok := acp.RPCErrorCode(err); ok {
+		if code == -32000 {
+			return RunFailureAuthExpired
+		}
+		return RunFailureProviderError
+	}
+	switch result.Outcome {
+	case acp.OutcomeCompleted:
+		return ""
+	case acp.OutcomeBudgetExceeded:
+		return RunFailureMaxBudget
+	case acp.OutcomeTurnCapExhausted:
+		return RunFailureMaxTurns
+	case acp.OutcomeRefused:
+		return RunFailurePermissionDenied
+	case acp.OutcomeCancelled:
+		return RunFailureCancelled
+	case acp.OutcomeDeliveryUnknown:
+		return RunFailureOutcomeUnknown
+	default:
+		return RunFailureProviderError
 	}
 }
 

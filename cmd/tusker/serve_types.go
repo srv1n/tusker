@@ -466,6 +466,9 @@ type serveRunDirective struct {
 }
 
 type serveRunSummary struct {
+	OperatorState         runOperatorState           `json:"operatorState"`
+	SayRoute              serveRunSayRoute           `json:"sayRoute"`
+	LastSayDelivery       *serveRunSayDelivery       `json:"lastSayDelivery,omitempty"`
 	TaskID                string                     `json:"taskId"`
 	TaskTitle             string                     `json:"taskTitle"`
 	ProjectID             string                     `json:"projectId"`

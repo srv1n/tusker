@@ -752,6 +752,15 @@ export type NeedItem =
 // ----------------------------------------------------------------------------
 
 export interface RunSummary {
+  operatorState?: {
+    state: "queued" | "working" | "waiting_on_you" | "quiet" | "blocked" | "failed" | "lost" | "stopped" | "finished";
+    since?: string;
+    reason?: { code: string; class: string; guidance: string; retryable: boolean; source: string } | null;
+    evidence?: { owner_alive?: boolean; last_activity_at?: string; last_heartbeat_at?: string; tool_in_flight?: boolean; open_question_id?: string };
+    quiet_after_sec?: number;
+  };
+  sayRoute?: { mode: "soft" | "hard" | "none"; available: boolean; note: string; reason?: string };
+  lastSayDelivery?: { id: string; body: string; state: string; storedAt: string };
   /** Runs are keyed by the task they execute. */
   taskId: string;
   taskTitle: string;

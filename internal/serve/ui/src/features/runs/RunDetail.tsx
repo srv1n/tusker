@@ -16,6 +16,7 @@ import { QueryBoundary, Skeleton, SkeletonRows } from "@/components/ui/states";
 import { SectionLabel } from "@/components/ui/page";
 import { Mono } from "@/components/ui/primitives";
 import { RunHeader } from "@/features/runs/detail/RunHeader";
+import { RunSayBox } from "@/features/runs/detail/RunSayBox";
 import { RunStats } from "@/features/runs/detail/RunStats";
 import { AttemptTimeline } from "@/features/runs/detail/AttemptTimeline";
 import { EventTail } from "@/features/runs/detail/EventTail";
@@ -215,6 +216,7 @@ function TaskRunDetail({ projectId, taskId }: { projectId: string; taskId: strin
               actionError={actionError}
               onReconnect={onReconnect}
               onAction={onSessionAction}
+              onReadback={() => run.refetch()}
             />
           )}
         </QueryBoundary>
@@ -237,6 +239,7 @@ function RunDetailContent({
   actionError,
   onReconnect,
   onAction,
+  onReadback,
 }: {
   data: RunDetailData;
   projectId: string;
@@ -251,6 +254,7 @@ function RunDetailContent({
   actionError: string | null;
   onReconnect: () => void;
   onAction: (action: Exclude<RunAction, "reconnect">) => void;
+  onReadback: () => Promise<unknown>;
 }) {
   const [selectedAttemptId, setSelectedAttemptId] = useState<string>();
   const attempt = data.attempts.find((item) => (item.id ?? String(item.n)) === selectedAttemptId) ?? data.attempts.at(-1);
@@ -295,6 +299,8 @@ function RunDetailContent({
         onReconnect={onReconnect}
         onAction={onAction}
       />
+
+      <RunSayBox run={data} onReadback={onReadback} />
 
       <RunStats run={data} waitingForDaemon={daemonWaitReason !== null} />
 

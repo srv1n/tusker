@@ -358,6 +358,12 @@ export const api = {
   // GET /api/runs/:taskId
   run: (taskId: string, projectId?: string): Promise<RunDetail> => real(withProject(`/runs/${taskId}`, projectId)),
 
+  sayRun: (taskId: string, message: string, idempotencyKey: string, projectId: string): Promise<{ ok: boolean; refused?: boolean; reason?: string }> =>
+    serveOperatorActor().then((actor) => post(withProject(`/runs/${encodeURIComponent(taskId)}/say`, projectId), { actor, message, idempotencyKey }, false)),
+
+  continueRun: (taskId: string, message: string, projectId: string): Promise<{ ok: boolean; refused?: boolean; reason?: string }> =>
+    serveOperatorActor().then((actor) => post(withProject(`/runs/${encodeURIComponent(taskId)}/continue`, projectId), { actor, message }, false)),
+
   // POST /api/runs/:taskId/redrive — maps the Retry control to `tusker redrive`.
   // The result (requeue or refusal reason) is always returned so the UI can
   // surface it; the daemon must never retire a run behind a stale badge.

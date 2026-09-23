@@ -11,11 +11,18 @@ type runnerExitClassification struct {
 	outcome      AttemptOutcome
 	exitCode     int
 	reason       string
+	reasonCode   string
 	trackerState string
 }
 
 func classifyRunnerProcessExit(run RunStatus, status runnerProcessStatus, note Note, vaultPath string, activeStates []string) runnerExitClassification {
 	trackerState := strings.TrimSpace(stringField(note.Data, "status"))
+	if status.ReasonCode != "" {
+		if spec, ok := runFailureReason(RunFailureReasonCode(status.ReasonCode)); ok {
+			return runnerExitClassification{outcome: spec.Outcome, exitCode: status.ExitCode, reason: firstNonEmpty(strings.TrimSpace(status.Reason), spec.Guidance), reasonCode: status.ReasonCode, trackerState: trackerState}
+		}
+		return runnerExitClassification{outcome: AttemptOutcomeUnknown, exitCode: status.ExitCode, reason: "invalid runner reason code: " + status.ReasonCode, trackerState: trackerState}
+	}
 	if AttemptOutcome(strings.TrimSpace(status.Outcome)) == AttemptOutcomeUnknown {
 		return runnerExitClassification{
 			outcome:      AttemptOutcomeUnknown,

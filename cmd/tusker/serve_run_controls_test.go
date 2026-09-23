@@ -18,7 +18,7 @@ func TestServeRunControlsParity(t *testing.T) {
 		action string
 		reason string
 	}{
-		{"continue", "native continuation requires a saved session reference"},
+		{"continue", "Continue is available for Blocked, Failed, or Lost runs"},
 		{"recover_context", "context recovery requires an unknown terminal outcome"},
 		{"pause", runSessionControlPauseReason(run)},
 		{"reconnect", "no live owner is available to reconnect"},
@@ -30,10 +30,10 @@ func TestServeRunControlsParity(t *testing.T) {
 	}
 	var detail serveRunDetail
 	serveDecode(t, server, "/api/runs/APP-T-0001?project=app", &detail)
-	if len(detail.Controls.Capabilities) != 6 {
+	if len(detail.Controls.Capabilities) != 8 {
 		t.Fatalf("capabilities = %#v", detail.Controls.Capabilities)
 	}
-	for _, want := range []string{"reconnect", "continue", "recover_context", "pause", "stop", "start_fresh"} {
+	for _, want := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "start_fresh"} {
 		found := false
 		for _, got := range detail.Controls.Capabilities {
 			if got.Action == want {

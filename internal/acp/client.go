@@ -298,6 +298,16 @@ type rpcError struct {
 
 func (e *rpcError) Error() string { return fmt.Sprintf("acp rpc error %d: %s", e.Code, e.Message) }
 
+// RPCErrorCode returns the protocol error code without requiring callers to
+// parse provider text or depend on the wire error type.
+func RPCErrorCode(err error) (int, bool) {
+	var rpc *rpcError
+	if !errors.As(err, &rpc) {
+		return 0, false
+	}
+	return rpc.Code, true
+}
+
 type rpcMessage struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`

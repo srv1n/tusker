@@ -163,8 +163,25 @@ type runSessionControlResult struct {
 
 func (s *serveServer) runActionCapability(action string, project RegisteredProject, wave Note, run RunStatus, prior *runSessionControlIntent) serveRunActionCapability {
 	capability := serveRunActionCapability{Action: action, Available: true}
+	state, stateErr := runOperatorStateForRun(s.store, run, s.now())
+	if stateErr != nil {
+		return serveRunActionCapability{Action: action, Reason: stateErr.Error()}
+	}
 	switch action {
+	case "say":
+		route := serveSayRoute(run, state)
+		capability.Available, capability.Reason = route.Available, route.Reason
+		return capability
+	case "answer":
+		capability.Available = state.State == "waiting_on_you"
+		if !capability.Available {
+			capability.Reason = "Answer is available while the run is Waiting on you"
+		}
+		return capability
 	case "continue":
+		if state.State != "blocked" && state.State != "failed" && state.State != "lost" {
+			return serveRunActionCapability{Action: action, Reason: "Continue is available for Blocked, Failed, or Lost runs"}
+		}
 		_, err, reason := nativeContinuationPreflight(s.store, project, wave, run)
 		if err != nil {
 			reason = err.Error()
@@ -517,6 +534,10 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleSetupDoctorAction(w, body, parts[2] == "repair")
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
 		s.handleRunRedrive(w, r, parts[2], body)
+	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "say":
+		s.handleRunSay(w, r, parts[2], body)
+	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "continue":
+		s.handleRunContinue(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "recover":
 		s.handleRunRecovery(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "acknowledge":

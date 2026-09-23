@@ -51,7 +51,18 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 		return serveRunSummary{}, err
 	}
 	activity := serveRunActivity(run, attempts, s.now())
+	operatorState, err := runOperatorStateForRun(s.store, run, s.now())
+	if err != nil {
+		return serveRunSummary{}, err
+	}
+	lastSay, err := s.lastRunSayDelivery(run)
+	if err != nil {
+		return serveRunSummary{}, err
+	}
 	return serveRunSummary{
+		OperatorState:         operatorState,
+		SayRoute:              serveSayRoute(run, operatorState),
+		LastSayDelivery:       lastSay,
 		TaskID:                taskID,
 		TaskTitle:             taskTitle,
 		ProjectID:             firstNonEmpty(run.ProjectID, snap.projectID),
@@ -353,6 +364,9 @@ func serveRunHiddenByDefault(run RunStatus) bool {
 }
 
 func serveRunLiveness(run RunStatus, now time.Time) string {
+	if runProcessGroupAlive(run) {
+		return "fresh"
+	}
 	age := serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), now)
 	switch {
 	case age < 60:
@@ -360,7 +374,7 @@ func serveRunLiveness(run RunStatus, now time.Time) string {
 	case age < 120:
 		return "stale"
 	default:
-		return "dead"
+		return "stale"
 	}
 }
 

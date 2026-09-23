@@ -1702,7 +1702,7 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 	if task, found := snap.notesByID[taskID]; found {
 		wave = snap.notesByID[stringField(task.Data, "wave")]
 	}
-	for _, action := range []string{"reconnect", "continue", "recover_context", "pause", "stop", "start_fresh"} {
+	for _, action := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "start_fresh"} {
 		detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.runActionCapability(action, snap.project, wave, run, intent))
 	}
 	for i, attempt := range attempts {
@@ -1809,7 +1809,9 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 		var result serveRecoveryResult
 		var recoveryErr error
 		if action == "continue" {
-			result, recoveryErr = queueNativeSessionContinuation(s.store, snap.project, task, wave, run, actor, s.now())
+			var continued runSayResult
+			continued, recoveryErr = continueRuntimeRun(s.store, snap.project, task, wave, run, actor, "", s.now())
+			result = continued.Continuation
 		} else {
 			result, recoveryErr = queueOutcomeUnknownContextRecovery(s.store, task, wave, run, actor, s.now())
 		}

@@ -2270,6 +2270,7 @@ func prepareRunForLaneDispatch(run RunStatus, lane, runner string) RunStatus {
 	run.AttemptOutcome = string(AttemptOutcomeNone)
 	run.NextRetryAt = ""
 	run.LastError = ""
+	run.ReasonCode = ""
 	run.SessionRef = ""
 	run.Terminal = false
 	clearRunCloudRefs(&run)
@@ -2882,6 +2883,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			return run, changed, err
 		}
 		classification := classifyRunnerProcessExit(run, status, note, project.VaultRoot, wfFile.Data.Tracker.ActiveStates)
+		run.ReasonCode = classification.reasonCode
 		if workerSubmitted && status.ExitCode == 0 && classification.outcome == AttemptOutcomeEarlyExit {
 			classification = runnerExitClassification{outcome: AttemptOutcomeSucceeded, trackerState: classification.trackerState}
 		}
@@ -2890,7 +2892,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		}
 		if canonicalStatusRetiresRuntimeRows(wfFile.Data, classification.trackerState) {
 			outcome := classification.outcome
-			if status.ExitCode != 0 {
+			if status.ExitCode != 0 && run.ReasonCode == "" {
 				outcome = AttemptOutcomeFailed
 			}
 			run.AttemptOutcome = string(outcome)
@@ -3309,12 +3311,13 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	run.LeaseState = string(result.LeaseState)
 	run.AttemptOutcome = string(result.Outcome)
 	run.LastError = result.Reason
+	run.ReasonCode = string(result.ReasonCode)
 	run.UpdatedAt = now
 	applyReconcileResultCloud(&run, result)
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
 	if strings.TrimSpace(run.SessionRef) != "" {
-		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(result.LeaseState), "", result.Reason, result.Outcome != AttemptOutcomeAbandoned && sessionResumable)
+		_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(result.LeaseState), "", result.Reason, (result.Outcome != AttemptOutcomeAbandoned || result.ReasonCode == RunFailureProcessLost) && sessionResumable)
 	}
 	if result.LeaseState == LeaseStateClaimed || result.LeaseState == LeaseStateRunning {
 		run.AttemptOutcome = string(AttemptOutcomeNone)
@@ -4992,12 +4995,17 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		latest, err := d.latestDispatchRun(run)
 		return latest, true, err
 	}
+	var continuationDeliveries []WorkerDelivery
 	if strings.TrimSpace(resumeSession.SessionRef) != "" {
+		continuationDeliveries, err = pendingRunContinuationDeliveries(d.store, run, resumeSession.ParentAttemptID, resumeSession.SessionRef)
+		if err != nil {
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+		}
 		// A verified native continuation already has the immutable workflow and
 		// task packet in its provider history. Send only the current, durable
 		// identity and outcome delta. The helper falls back to the full prompt if
 		// any identity needed to safely bind that delta is missing.
-		resumedPrompt, promptErr := renderAttemptPromptForResume(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store, resumeSession)
+		resumedPrompt, promptErr := renderAttemptPromptForResume(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store, resumeSession, continuationDeliveries...)
 		if promptErr != nil {
 			attempt.Outcome = string(AttemptOutcomeFailed)
 			attempt.LastError = promptErr.Error()
@@ -5026,6 +5034,9 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		} else if !ok {
 			latest, latestErr := d.latestDispatchRun(run)
 			return latest, true, latestErr
+		}
+		if err := acceptRunContinuationDeliveries(d.store, continuationDeliveries, attemptID); err != nil {
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 		}
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
@@ -5146,6 +5157,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	run.AttemptOutcome = string(AttemptOutcomeNone)
 	run.NextRetryAt = ""
 	run.LastError = ""
+	run.ReasonCode = ""
 	if d.postSpawnBeforePersist != nil {
 		d.postSpawnBeforePersist(run)
 	}
@@ -5481,7 +5493,7 @@ func (s *RuntimeStore) FindSessionByRef(projectID, sessionRef string) (*RunnerSe
 }
 
 func (d *Daemon) scheduleRetry(run RunStatus, wf Workflow, reason string) RunStatus {
-	classification := classifyRetryFailure(reason)
+	classification := classifyRetryFailure(reason, RunFailureReasonCode(run.ReasonCode))
 	parentAttemptID := run.ActiveAttemptID
 	parentSessionRef := run.SessionRef
 	run.AttemptOutcome = string(classification.outcome)
@@ -5494,7 +5506,7 @@ func (d *Daemon) scheduleRetry(run RunStatus, wf Workflow, reason string) RunSta
 		run.Terminal = true
 		decisionKind := string(SupervisorDecisionStopForAudit)
 		contextSignal := ""
-		if failureReasonIndicatesContextPressure(reason) {
+		if run.ReasonCode == string(RunFailureContextWindow) || (run.ReasonCode == "" && failureReasonIndicatesContextPressure(reason)) {
 			decisionKind = string(SupervisorDecisionForkThread)
 			contextSignal = "context_pressure"
 		}
@@ -5546,9 +5558,24 @@ func (d *Daemon) scheduleRetry(run RunStatus, wf Workflow, reason string) RunSta
 type retryFailureClassification struct {
 	retryable bool
 	outcome   AttemptOutcome
+	code      RunFailureReasonCode
+	source    string
 }
 
-func classifyRetryFailure(reason string) retryFailureClassification {
+func classifyRetryFailure(reason string, codes ...RunFailureReasonCode) retryFailureClassification {
+	if len(codes) > 0 && codes[0] != "" {
+		if spec, ok := runFailureReason(codes[0]); ok {
+			return retryFailureClassification{retryable: spec.Retryable, outcome: spec.Outcome, code: codes[0], source: "driver"}
+		}
+		return retryFailureClassification{retryable: false, outcome: AttemptOutcomeUnknown, code: RunFailureUnknown, source: "invalid_code"}
+	}
+	legacy := classifyRetryFailureLegacy(reason)
+	legacy.code = RunFailureUnknown
+	legacy.source = "legacy_text"
+	return legacy
+}
+
+func classifyRetryFailureLegacy(reason string) retryFailureClassification {
 	text := strings.ToLower(strings.TrimSpace(reason))
 	if text == "" {
 		return retryFailureClassification{retryable: true, outcome: AttemptOutcomeFailed}
@@ -5788,6 +5815,7 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 		RawLogPath:         run.RawLogPath,
 		StatusPath:         run.StatusPath,
 		LastError:          lastError,
+		ReasonCode:         run.ReasonCode,
 		StartedAt:          run.StartedAt,
 		FinishedAt:         finishedAt,
 	}
@@ -7331,27 +7359,41 @@ func (d *Daemon) resumeContextFingerprintMismatch(run RunStatus, session *Runner
 // is present. Native provider history supplies the unchanged workflow and
 // packet; this message carries only the current attempt's authoritative
 // identity, outcome, and continuation rules.
-func renderAttemptPromptForResume(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, previousRun RunStatus, store *RuntimeStore, resumeSession resolvedResumeSession) (string, error) {
+func renderAttemptPromptForResume(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath string, attemptNumber int, attemptID, lane string, run RunStatus, previousRun RunStatus, store *RuntimeStore, resumeSession resolvedResumeSession, deliveries ...WorkerDelivery) (string, error) {
 	if strings.TrimSpace(resumeSession.SessionRef) == "" {
 		return renderAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, store)
 	}
 	fingerprint := resumeContextFingerprint(project, wfFile, note, workspacePath, lane, run)
-	if fingerprint == "" {
-		// A compact continuation is never emitted without a persisted identity
-		// marker that the resolver can compare with the prior attempt.
-		return renderAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, store)
+	resumed, err := "", error(nil)
+	if fingerprint != "" {
+		resumed, err = renderResumedAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, resumeSession)
 	}
-	resumed, err := renderResumedAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, resumeSession)
-	if err != nil {
-		// Missing identity is a safety reason to resend the complete contract.
-		// Do not turn an incomplete delta into a provider call with guessed
-		// authority; the full renderer remains the only fallback.
-		return renderAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, store)
+	if fingerprint == "" || err != nil {
+		// Missing identity requires the full contract, with operator deliveries
+		// still attached to this attempt.
+		resumed, err = renderAttemptPrompt(project, wfFile, note, workspacePath, attemptNumber, attemptID, lane, run, previousRun, store)
+		if err != nil {
+			return "", err
+		}
 	}
 	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
 		resumed = strings.TrimSpace(resumed) + "\n\n" + runtimeContext
 	}
-	resumed = strings.TrimSpace(resumed) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+	if len(deliveries) == 0 {
+		deliveries, err = pendingRunContinuationDeliveries(store, run, resumeSession.ParentAttemptID, resumeSession.SessionRef)
+		if err != nil {
+			return "", err
+		}
+	}
+	for _, delivery := range deliveries {
+		resumed = strings.TrimSpace(resumed) + "\n\n### Operator message\n\n" + delivery.Body
+	}
+	if summary := strings.TrimSpace(previousRun.LastError); strings.Contains(summary, "\nPrevious failure:\n") {
+		resumed = strings.TrimSpace(resumed) + "\n\n### Previous failure\n\n" + strings.SplitN(summary, "\nPrevious failure:\n", 2)[1]
+	}
+	if fingerprint != "" {
+		resumed = strings.TrimSpace(resumed) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+	}
 	return strings.TrimSpace(resumed) + "\n", nil
 }
 

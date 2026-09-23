@@ -55,6 +55,7 @@ type runnerProcessStatus struct {
 	CompletedAt string `json:"completed_at"`
 	Outcome     string `json:"outcome,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+	ReasonCode  string `json:"reason_code,omitempty"`
 	TurnsUsed   int    `json:"turns_used,omitempty"`
 }
 
@@ -339,6 +340,11 @@ func readRunnerProcessStatus(statusPath string) (runnerProcessStatus, error) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &status); err != nil {
 		return runnerProcessStatus{}, err
 	}
+	if status.ReasonCode != "" {
+		if _, ok := runFailureReason(RunFailureReasonCode(status.ReasonCode)); !ok {
+			return runnerProcessStatus{}, fmt.Errorf("unknown runner reason code %q", status.ReasonCode)
+		}
+	}
 	return status, nil
 }
 
@@ -357,6 +363,7 @@ func monitorRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, rawLog *
 	}
 	outcome := AttemptOutcomeNone
 	reason := ""
+	var reasonCode RunFailureReasonCode
 	if ctx.Err() != nil {
 		exitCode = 130
 		outcome = AttemptOutcomeInterrupted
@@ -373,11 +380,15 @@ func monitorRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, rawLog *
 			outcome = AttemptOutcomeFailed
 			reason = "Muse terminal result missing"
 		}
+		reasonCode = museFailureReasonCode(outcome, reason)
 	} else if exitCode != 0 {
 		outcome = AttemptOutcomeFailed
 		reason = fmt.Sprintf("runner exited with code %d", exitCode)
+		if runner == RunnerCodexExec {
+			reasonCode, _ = codexExecFailureFromLog(req.RawLogPath)
+		}
 	}
-	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0)
+	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0, reasonCode)
 }
 
 func openPrivateRunnerAppendFile(path string) (*os.File, error) {
@@ -440,8 +451,8 @@ func validateExistingRunnerStatus(path string) error {
 	return nil
 }
 
-func publishRunnerTerminalStatus(eventLog runnerEventLog, runner RunnerName, req runnerExecRequest, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int) {
-	if _, err := writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, exitCode, outcome, reason, turnsUsed); err != nil {
+func publishRunnerTerminalStatus(eventLog runnerEventLog, runner RunnerName, req runnerExecRequest, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int, codes ...RunFailureReasonCode) {
+	if _, err := writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, exitCode, outcome, reason, turnsUsed, codes...); err != nil {
 		message := "publish trusted runner terminal status: " + err.Error()
 		payload := map[string]any{
 			"project_id": req.ProjectID, "record_id": req.RecordID, "item_id": req.ItemID,

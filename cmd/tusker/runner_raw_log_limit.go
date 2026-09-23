@@ -351,13 +351,17 @@ func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, w
 		outcome = AttemptOutcomeFailed
 		reason = fmt.Sprintf("runner exited with code %d", exitCode)
 	}
-	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0)
+	var reasonCode RunFailureReasonCode
+	if runner == RunnerCodexExec && exitCode != 0 && !log.overflowed() && ctx.Err() == nil && closeErr == nil {
+		reasonCode, _ = codexExecFailureFromLog(req.RawLogPath)
+	}
+	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0, reasonCode)
 	// The monitor is not allowed to signal the group after Wait; a reused PGID
 	// could belong to an unrelated process. The trusted launcher owns any
 	// pre-Wait cancellation fence.
 }
 
-func writeRunnerStatusFileIfAbsentWithOutcome(path string, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int) (bool, error) {
+func writeRunnerStatusFileIfAbsentWithOutcome(path string, exitCode int, outcome AttemptOutcome, reason string, turnsUsed int, codes ...RunFailureReasonCode) (bool, error) {
 	payload := runnerProcessStatus{
 		ExitCode:    exitCode,
 		CompletedAt: time.Now().UTC().Format(time.RFC3339),
@@ -367,6 +371,12 @@ func writeRunnerStatusFileIfAbsentWithOutcome(path string, exitCode int, outcome
 	}
 	if reason = strings.TrimSpace(reason); reason != "" {
 		payload.Reason = reason
+	}
+	if len(codes) > 0 && codes[0] != "" {
+		if _, ok := runFailureReason(codes[0]); !ok {
+			return false, fmt.Errorf("unknown run failure reason code %q", codes[0])
+		}
+		payload.ReasonCode = string(codes[0])
 	}
 	if turnsUsed > 0 {
 		payload.TurnsUsed = turnsUsed

@@ -248,7 +248,12 @@ func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject,
 // consumes the directive and calls Runner.Resume; this helper only admits the
 // operator decision after the same identity and prompt-context fences used by
 // dispatch have passed.
-func queueNativeSessionContinuation(store *RuntimeStore, project RegisteredProject, task Note, wave Note, run RunStatus, actor string, now time.Time) (serveRecoveryResult, error) {
+type nativeContinuationOptions struct {
+	DeliveryIDs    []string
+	FailureSummary string
+}
+
+func queueNativeSessionContinuation(store *RuntimeStore, project RegisteredProject, task Note, wave Note, run RunStatus, actor string, now time.Time, options ...nativeContinuationOptions) (serveRecoveryResult, error) {
 	result := serveRecoveryResult{Action: "continue", TaskID: stringField(task.Data, "id"), Lane: runLaneExecute}
 	if store == nil {
 		return result, tuskerError(errorInvalidArg, "native continuation requires a runtime store")
@@ -284,6 +289,9 @@ func queueNativeSessionContinuation(store *RuntimeStore, project RegisteredProje
 	run.AttemptOutcome = string(AttemptOutcomeNone)
 	run.NextRetryAt = now.Format(time.RFC3339)
 	run.LastError = "native continuation requested by " + firstNonEmpty(strings.TrimSpace(actor), defaultActorName()) + ": " + session.SessionRef
+	if len(options) != 0 && options[0].FailureSummary != "" {
+		run.LastError += "\nPrevious failure:\n" + options[0].FailureSummary
+	}
 	run.LastEventAt = now.Format(time.RFC3339)
 	run.UpdatedAt = now.Format(time.RFC3339)
 	run.Terminal = false
@@ -328,18 +336,11 @@ func queueNativeSessionContinuation(store *RuntimeStore, project RegisteredProje
 }
 
 func nativeResumeRunnerCapabilities(name RunnerName) RunnerCapabilities {
-	switch name {
-	case RunnerCodexExec:
-		return (&CodexExecRunner{}).Capabilities()
-	case RunnerClaude:
-		return (&ClaudeRunner{}).Capabilities()
-	case RunnerMuse:
-		return (&MuseRunner{}).Capabilities()
-	case RunnerDevin:
-		return (&ACPRunner{runner: RunnerDevin}).Capabilities()
-	default:
+	runner, _, err := runnerForName(string(name), Workflow{})
+	if err != nil {
 		return RunnerCapabilities{}
 	}
+	return runner.Capabilities()
 }
 
 // recoverVerificationChecks is the one recovery transition shared by Serve

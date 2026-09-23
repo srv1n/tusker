@@ -183,7 +183,7 @@ func (s *server) initialize(req message) {
 			"protocolVersion": version,
 			"agentInfo":       map[string]string{"name": agentName, "version": agentVersion},
 			"agentCapabilities": map[string]any{
-				"loadSession":   false,
+				"loadSession":   os.Getenv("FAKE_ACP_LOAD_SESSION") == "1",
 				"resumeSession": false,
 			},
 		},
@@ -211,6 +211,15 @@ func (s *server) newSession(req message) {
 		return
 	}
 	result := map[string]any{"sessionId": s.session}
+	if req.Method == "session/load" {
+		loaded, _ := params["sessionId"].(string)
+		if loaded == "" {
+			write(message{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32602, "message": "missing sessionId"}})
+			return
+		}
+		s.session = loaded
+		result["sessionId"] = loaded
+	}
 	if s.configureCodexSession() {
 		result["configOptions"] = s.codexConfigOptions()
 	}
@@ -271,6 +280,13 @@ func (s *server) codexConfigOptions() []map[string]any {
 }
 
 func (s *server) prompt(req message) {
+	if code := os.Getenv("FAKE_ACP_PROMPT_ERROR"); code != "" {
+		n, err := strconv.Atoi(code)
+		if err == nil {
+			write(message{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": n, "message": "fixture prompt error"}})
+			return
+		}
+	}
 	switch s.mode {
 	case "eof-after-prompt":
 		// Exit immediately after accepting the prompt.  This is the precise
@@ -378,7 +394,11 @@ func writeUpdate(session, text string) {
 }
 
 func writeTerminal(id json.RawMessage) {
-	write(message{JSONRPC: "2.0", ID: id, Result: map[string]string{"stopReason": "end_turn"}})
+	stop := os.Getenv("FAKE_ACP_STOP_REASON")
+	if stop == "" {
+		stop = "end_turn"
+	}
+	write(message{JSONRPC: "2.0", ID: id, Result: map[string]string{"stopReason": stop}})
 }
 
 func write(v message) {

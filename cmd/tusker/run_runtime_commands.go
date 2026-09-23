@@ -41,6 +41,9 @@ type runInspection struct {
 	LatestEvent              map[string]any              `json:"latest_event,omitempty"`
 	TokenTotals              runtimeTokenTotals          `json:"token_totals"`
 	FailureClass             string                      `json:"failure_class,omitempty"`
+	OperatorState            runOperatorState            `json:"operator_state"`
+	ReasonCode               string                      `json:"reason_code,omitempty"`
+	ReasonSource             string                      `json:"reason_source,omitempty"`
 	Paths                    runtimeArtifactPaths        `json:"paths"`
 	Authorization            *RunAuthorization           `json:"authorization,omitempty"`
 	Authorizations           []RunAuthorization          `json:"authorizations"`
@@ -210,7 +213,7 @@ func (s *RuntimeStore) ListAttemptsForRunPage(projectID, recordID string, limit 
 }
 
 func (s *RuntimeStore) listAttemptsForRun(projectID, recordID string, limit int) ([]RunAttempt, error) {
-	query := `SELECT attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, started_at, finished_at
+	query := `SELECT attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, session_ref, parent_attempt_id, child_type, branch_name, merge_rule, fanout_group, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, end_state_json, process_pid, outcome, exit_code, turns_used, prompt_path, event_sink_path, raw_log_path, status_path, last_error, reason_code, started_at, finished_at
 		FROM attempts
 		WHERE project_id = ? AND record_id = ?
 		ORDER BY started_at DESC, attempt_id DESC`
@@ -227,7 +230,7 @@ func (s *RuntimeStore) listAttemptsForRun(projectID, recordID string, limit int)
 	var out []RunAttempt
 	for rows.Next() {
 		var attempt RunAttempt
-		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.Lane, &attempt.WorkerPolicyFP, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ParentAttemptID, &attempt.ChildType, &attempt.BranchName, &attempt.MergeRule, &attempt.FanoutGroup, &attempt.CloudTaskID, &attempt.CloudStatus, &attempt.CloudEnvironmentID, &attempt.CloudAttemptNumber, &attempt.PullRequestURL, &attempt.ApplyRef, &attempt.LogsSummary, &attempt.FinalSummary, &attempt.EndStateJSON, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.TurnsUsed, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
+		if err := rows.Scan(&attempt.AttemptID, &attempt.ProjectID, &attempt.RecordID, &attempt.ItemID, &attempt.Runner, &attempt.Lane, &attempt.WorkerPolicyFP, &attempt.WorkRevision, &attempt.WorkspacePath, &attempt.SessionRef, &attempt.ParentAttemptID, &attempt.ChildType, &attempt.BranchName, &attempt.MergeRule, &attempt.FanoutGroup, &attempt.CloudTaskID, &attempt.CloudStatus, &attempt.CloudEnvironmentID, &attempt.CloudAttemptNumber, &attempt.PullRequestURL, &attempt.ApplyRef, &attempt.LogsSummary, &attempt.FinalSummary, &attempt.EndStateJSON, &attempt.ProcessPID, &attempt.Outcome, &attempt.ExitCode, &attempt.TurnsUsed, &attempt.PromptPath, &attempt.EventSinkPath, &attempt.RawLogPath, &attempt.StatusPath, &attempt.LastError, &attempt.ReasonCode, &attempt.StartedAt, &attempt.FinishedAt); err != nil {
 			return nil, err
 		}
 		if attempt.EndStateJSON != "" {
@@ -243,6 +246,10 @@ func (s *RuntimeStore) listAttemptsForRun(projectID, recordID string, limit int)
 }
 
 func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, error) {
+	return buildRunInspectionWithQuietAfter(store, run, time.Now().UTC(), defaultRunQuietAfter)
+}
+
+func buildRunInspectionWithQuietAfter(store *RuntimeStore, run *RunStatus, now time.Time, quietAfter time.Duration) (runInspection, error) {
 	if run == nil {
 		return runInspection{}, tuskerError(errorNotFound, "run not found")
 	}
@@ -294,6 +301,10 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 	if err != nil {
 		return runInspection{}, err
 	}
+	operatorState, err := runOperatorStateForRunWithQuietAfter(store, *run, now, quietAfter)
+	if err != nil {
+		return runInspection{}, err
+	}
 	return runInspection{
 		OK:                       true,
 		Run:                      run,
@@ -310,6 +321,9 @@ func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, err
 		LatestEvent:              latestJSONLEvent(eventPath),
 		TokenTotals:              tokenTotalsForTurns(turns),
 		FailureClass:             runtimeFailureClass(*run, attempts, turns),
+		OperatorState:            operatorState,
+		ReasonCode:               inspectedReasonCode(*run, attempts),
+		ReasonSource:             inspectedReasonSource(*run, attempts),
 		Paths: runtimeArtifactPaths{
 			Workspace: run.WorkspacePath,
 			Prompt:    run.PromptPath,
@@ -331,6 +345,13 @@ func runsInspectCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	quietAfter := defaultRunQuietAfter
+	if raw := strings.TrimSpace(args.String("quiet-after")); raw != "" {
+		quietAfter, err = time.ParseDuration(raw)
+		if err != nil || quietAfter <= 0 {
+			return tuskerError(errorInvalidArg, "--quiet-after requires a positive duration")
+		}
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -343,7 +364,7 @@ func runsInspectCmd(args Args) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found: "+identity)
 	}
-	inspection, err := buildRunInspection(store, run)
+	inspection, err := buildRunInspectionWithQuietAfter(store, run, time.Now().UTC(), quietAfter)
 	if err != nil {
 		return err
 	}
@@ -356,6 +377,7 @@ func runsInspectCmd(args Args) error {
 	}
 	fmt.Printf("%s (%s)\n", firstNonEmpty(run.ItemID, run.RecordID), run.Runner)
 	fmt.Printf("lease=%s outcome=%s lane=%s rev=%d attempts=%d pid=%d\n", run.LeaseState, run.AttemptOutcome, firstNonEmpty(run.Lane, runLaneExecute), run.WorkRevision, run.AttemptCount, run.ProcessPID)
+	fmt.Println(runOperatorStateLine(inspection.OperatorState, time.Now().UTC()))
 	if inspection.FailureClass != "" {
 		fmt.Printf("failure_class=%s\n", inspection.FailureClass)
 	}
@@ -569,6 +591,20 @@ func latestJSONLEvent(path string) map[string]any {
 }
 
 func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) string {
+	code := run.ReasonCode
+	if code == "" {
+		for _, attempt := range attempts {
+			if attempt.ReasonCode != "" {
+				code = attempt.ReasonCode
+				break
+			}
+		}
+	}
+	if code != "" {
+		if spec, ok := runFailureReason(RunFailureReasonCode(code)); ok {
+			return spec.Class
+		}
+	}
 	reason := strings.TrimSpace(run.LastError)
 	for _, attempt := range attempts {
 		if reason != "" {
@@ -633,6 +669,36 @@ func runtimeFailureClass(run RunStatus, attempts []RunAttempt, turns []RunTurn) 
 	default:
 		return "unknown"
 	}
+}
+
+func inspectedReasonCode(run RunStatus, attempts []RunAttempt) string {
+	if run.ReasonCode != "" {
+		return run.ReasonCode
+	}
+	for _, attempt := range attempts {
+		if attempt.ReasonCode != "" {
+			return attempt.ReasonCode
+		}
+	}
+	if run.LastError != "" {
+		return string(RunFailureUnknown)
+	}
+	return ""
+}
+
+func inspectedReasonSource(run RunStatus, attempts []RunAttempt) string {
+	if run.ReasonCode != "" {
+		return "driver"
+	}
+	for _, attempt := range attempts {
+		if attempt.ReasonCode != "" {
+			return "driver"
+		}
+	}
+	if run.LastError != "" {
+		return "legacy_text"
+	}
+	return ""
 }
 
 func runsLogsCmd(args Args) error {
@@ -761,6 +827,15 @@ func runsInterruptCmd(args Args) error {
 		return err
 	}
 	if args.Bool("json") {
+		store, storeErr := OpenRuntimeStore(DefaultStateRoot())
+		if storeErr != nil {
+			return storeErr
+		}
+		defer store.Close()
+		state, stateErr := runOperatorStateForRun(store, *run, time.Now().UTC())
+		if stateErr != nil {
+			return stateErr
+		}
 		emitJSON(map[string]any{
 			"ok":              true,
 			"interrupted":     true,
@@ -769,6 +844,7 @@ func runsInterruptCmd(args Args) error {
 			"lease_state":     run.LeaseState,
 			"process_running": runProcessGroupAlive(*run),
 			"via_daemon":      viaDaemon,
+			"operator_state":  state,
 		})
 		return nil
 	}

@@ -42,13 +42,12 @@ const completedRun = {
   events: [],
 } satisfies RunDetail;
 
-test("runs-detail header derives live state from terminal lease/outcome", () => {
+test("runs-detail header renders operator state instead of treating silence as death", () => {
   const source = readFileSync("src/features/runs/detail/RunHeader.tsx", "utf8");
 
   expect(isLiveHeaderRun(completedRun)).toBe(false);
-  expect(source).toContain("const live = isLiveHeaderRun(run)");
-  expect(source).toContain("{live && (");
-  expect(source.indexOf("<LivenessIndicator")).toBeGreaterThan(source.indexOf("{live && ("));
+  expect(source).toContain("run.operatorState.state");
+  expect(source).not.toContain("<LivenessIndicator");
 });
 
 test("runs-detail stats freeze released elapsed without presenting usage totals", () => {

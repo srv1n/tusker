@@ -75,6 +75,10 @@ func projectedAttemptOutcome(outcome, lastError string) AttemptOutcome {
 type RunnerCapabilities struct {
 	StructuredEvents    bool
 	ResumeSession       bool
+	SoftSay             bool
+	HardSay             bool
+	PreassignSessionID  bool
+	ResumeAfterDeath    bool
 	ExplicitApprovals   bool
 	Heartbeats          bool
 	MachineFinalStatus  bool
@@ -250,6 +254,7 @@ type ReconcileResult struct {
 	LeaseState LeaseState
 	Outcome    AttemptOutcome
 	Reason     string
+	ReasonCode RunFailureReasonCode
 
 	CloudTaskID        string
 	CloudStatus        string

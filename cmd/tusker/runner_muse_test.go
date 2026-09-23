@@ -1,11 +1,96 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	runnercore "tusker/internal/runner"
 )
+
+func TestMuseDriverParityPreassignSession(t *testing.T) {
+	dir := t.TempDir()
+	req, err := runnerWrapperRequestForTest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := filepath.Join(dir, "fake-wrapper")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TUSKER_WRAPPER_EXE", stub)
+	req.Start.Command = "muse exec --json"
+	req.Start.CommandArgv = []string{"muse", "exec", "--json"}
+	for _, explicit := range []string{"", "fixture-session"} {
+		argv := append([]string(nil), req.Start.CommandArgv...)
+		if explicit != "" {
+			argv = append(argv, "--session-id", explicit)
+		}
+		req.Start.CommandArgv = argv
+		result, err := (&MuseRunner{}).Start(context.Background(), req.Start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.SessionRef == "" || (explicit != "" && result.SessionRef != explicit) {
+			t.Fatalf("session = %q", result.SessionRef)
+		}
+		stored, err := readRunnerWrapperRequest(req.Start.StatusPath + ".wrapper-request.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Start.NativeSessionID != result.SessionRef || museCLIArgvSession(stored.Start.CommandArgv) != result.SessionRef {
+			t.Fatalf("request lost session: %#v", stored.Start)
+		}
+	}
+}
+
+func TestMuseDriverParityTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		outcome AttemptOutcome
+		code    RunFailureReasonCode
+	}{
+		{`{"payload_type":"run.terminal.completed"}`, AttemptOutcomeSucceeded, ""},
+		{`{"payload_type":"run.terminal.cancelled"}`, AttemptOutcomeCancelled, RunFailureCancelled},
+		{`{"payload_type":"run.terminal.failed","reason":"rate limit exceeded"}`, AttemptOutcomeFailed, RunFailureUsageLimit},
+		{`{"payload_type":"run.terminal.failed","reason":"login required"}`, AttemptOutcomeFailed, RunFailureAuthExpired},
+		{`{"payload_type":"run.terminal.failed","reason":"approval denied"}`, AttemptOutcomeFailed, RunFailurePermissionDenied},
+		{`{"payload_type":"run.terminal.failed","reason":"provider broke"}`, AttemptOutcomeFailed, RunFailureProviderError},
+		{`{"payload_type":"unrecognized"}`, AttemptOutcomeUnknown, RunFailureOutcomeUnknown},
+	} {
+		outcome, reason, _ := classifyMuseCLIOutput(tc.raw)
+		if outcome != tc.outcome || museFailureReasonCode(outcome, reason) != tc.code {
+			t.Fatalf("%s: %s %s", tc.raw, outcome, reason)
+		}
+	}
+}
+
+func TestMuseDriverParityInterrupt(t *testing.T) {
+	// Exercise the shared cancellation transition after a Muse child exits;
+	// process-group signalling itself is covered by the shared runner tests.
+	store, req := setupRunnerWrapperRuntime(t)
+	run, err := store.FindRun(req.Start.RecordID)
+	if err != nil || run == nil {
+		t.Fatalf("run = %#v, %v", run, err)
+	}
+	run.Runner = string(RunnerMuse)
+	run.SessionRef = "fixture-session"
+	if err := store.UpsertRun(*run); err != nil {
+		t.Fatal(err)
+	}
+	if err := interruptRunProcess(store, run, false); err != nil {
+		t.Fatal(err)
+	}
+	if run.LeaseState != string(LeaseStateInterrupted) || run.AttemptOutcome != string(AttemptOutcomeCancelled) || run.SessionRef != "fixture-session" {
+		t.Fatalf("interrupt = %#v", run)
+	}
+	argv := museCLIResumeArgv([]string{"muse", "exec", "--json"}, run.SessionRef)
+	if museCLIArgvSession(argv) != run.SessionRef {
+		t.Fatalf("resume argv = %#v", argv)
+	}
+}
 
 func TestAgentAccessMuse(t *testing.T) {
 	argv, err := museCLIArgv(defaultMuseCLICommand(), CodexPolicy{ApprovalPolicy: "on-request", TurnSandboxPolicy: "workspace-write", TurnSandboxNetwork: boolPtr(true)}, "/tmp/project", "muse-model", "high")

@@ -166,6 +166,18 @@ func cliRunActivity(record map[string]any) []serveRunEvent {
 		return serveRunEvent{TS: at, ID: id, Kind: kind, Text: runActivityText(text), Activity: true}
 	}
 	kind := stringValue(record["type"])
+	if payloadType := firstNonEmpty(stringValue(record["payload_type"]), stringValue(record["record_type"])); payloadType != "" {
+		if text := musePayloadText(record); text != "" {
+			return []serveRunEvent{event("", "agent_message", text)}
+		}
+		if strings.HasPrefix(payloadType, "run.terminal.") || strings.HasPrefix(payloadType, "terminal.") {
+			payload, _ := record["payload"].(map[string]any)
+			if reason := stringValue(payload["reason"]); reason != "" {
+				return []serveRunEvent{event("", "agent_message", reason)}
+			}
+		}
+		return nil
+	}
 	switch kind {
 	case "item.started", "item.updated", "item.completed":
 		item, _ := record["item"].(map[string]any)

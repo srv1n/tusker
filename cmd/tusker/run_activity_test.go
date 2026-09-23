@@ -91,6 +91,32 @@ func TestRunActivityCLIMessagesAndTools(t *testing.T) {
 	}
 }
 
+func TestCLIRunActivityMuse(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, want string
+		count           int
+	}{
+		{"message", `{"payload_type":"assistant.message","payload":{"text":"Checking tests"}}`, "Checking tests", 1},
+		{"output", `{"payload_type":"runtime.output","payload":{"output":"token=private"}}`, "token=[REDACTED]", 1},
+		{"terminal", `{"payload_type":"run.terminal.failed","payload":{"reason":"rate limit exceeded"}}`, "rate limit exceeded", 1},
+		{"unknown", `{"payload_type":"runtime.unknown","payload":{"opaque":"private"}}`, "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var record map[string]any
+			if err := json.Unmarshal([]byte(tc.raw), &record); err != nil {
+				t.Fatal(err)
+			}
+			events := cliRunActivity(record)
+			if len(events) != tc.count {
+				t.Fatalf("events = %#v", events)
+			}
+			if tc.count > 0 && (events[0].Kind != "agent_message" || events[0].Text != tc.want) {
+				t.Fatalf("event = %#v", events[0])
+			}
+		})
+	}
+}
+
 func TestRunActivityClaudeToolCompletionUsesToolIdentity(t *testing.T) {
 	start := cliRunActivity(map[string]any{"type": "assistant", "message": map[string]any{
 		"content": []any{map[string]any{"type": "tool_use", "id": "toolu-1", "name": "Bash", "input": map[string]any{"command": "cargo test"}}},

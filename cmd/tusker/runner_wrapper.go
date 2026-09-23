@@ -184,6 +184,16 @@ func runRunnerWrapperWithChildStarter(
 		runnerWrapperReapACPContainmentAfterStatus(req)
 		return err
 	}
+	if RunnerName(req.Runner) == RunnerClaude {
+		if handle, ok := liveRegistry.Find(req.Start.AttemptID).(*claudeLiveHandle); ok {
+			stopControl, controlErr := serveClaudeWrapperControl(childCtx, req.Start, handle)
+			if controlErr != nil {
+				_ = appendRawLogLine(runnerWrapperDiagnosticPath(req.Start), "Claude control channel unavailable: "+controlErr.Error())
+			} else {
+				defer stopControl()
+			}
+		}
+	}
 	return runnerWrapperWait(ctx, cancelChild, req, result, stopHeartbeat)
 }
 

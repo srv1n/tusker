@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,6 +149,86 @@ func TestDevinSessionBindingSurvivesDetachedWrapper(t *testing.T) {
 	capability := resumeCapability(&RunStatus{Runner: string(RunnerDevin)}, &RunnerSession{SessionRef: ref, Resumable: true})
 	if !capability.Supported || capability.Command != "" {
 		t.Fatalf("Devin recovery capability must not advertise an unverified CLI command: %+v", capability)
+	}
+}
+
+func TestDevinDriverParityCapabilitiesAndLostSession(t *testing.T) {
+	devin := &ACPRunner{runner: RunnerDevin}
+	caps := devin.Capabilities()
+	if !caps.HardSay || !caps.ResumeSession || !caps.ResumeAfterDeath || caps.SoftSay || caps.PreassignSessionID {
+		t.Fatalf("Devin capabilities=%+v", caps)
+	}
+	generic := (&ACPRunner{}).Capabilities()
+	if generic.HardSay || generic.ResumeAfterDeath || generic.SoftSay || generic.PreassignSessionID {
+		t.Fatalf("generic ACP capabilities=%+v", generic)
+	}
+	ref := acpStoredSessionRef("devin", "session-before-loss")
+	reconciled, err := devin.Reconcile(context.Background(), ReconcileRequest{SessionRef: ref})
+	if err != nil || reconciled.Outcome != AttemptOutcomeAbandoned || reconciled.ReasonCode != RunFailureProcessLost {
+		t.Fatalf("lost Devin reconcile=%+v err=%v", reconciled, err)
+	}
+}
+
+func TestDevinDriverParityFakeLoadAndReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name, stop, rpc string
+		wantOutcome     AttemptOutcome
+		wantCode        RunFailureReasonCode
+	}{
+		{"success", "end_turn", "", AttemptOutcomeNone, ""},
+		{"budget", "max_tokens", "", AttemptOutcomeBudgetExceeded, RunFailureMaxBudget},
+		{"turns", "max_turn_requests", "", AttemptOutcomeTurnCapExhausted, RunFailureMaxTurns},
+		{"refusal", "refusal", "", AttemptOutcomeBlocked, RunFailurePermissionDenied},
+		{"cancelled", "cancelled", "", AttemptOutcomeCancelled, RunFailureCancelled},
+		{"auth", "", "-32000", AttemptOutcomeBlocked, RunFailureAuthExpired},
+		{"other rpc", "", "-32001", AttemptOutcomeFailed, RunFailureProviderError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := acp.Start(context.Background(), acp.Config{
+				Argv: []string{fakeACPBinary(t)}, CWD: t.TempDir(), Stderr: io.Discard,
+				Env: []string{"FAKE_ACP_LOAD_SESSION=1", "FAKE_ACP_STOP_REASON=" + tc.stop, "FAKE_ACP_PROMPT_ERROR=" + tc.rpc},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			init, err := client.Initialize(context.Background())
+			if err != nil || !init.AgentCapabilities.LoadSession {
+				t.Fatalf("initialize=%+v err=%v", init, err)
+			}
+			session, err := client.LoadSession(context.Background(), "session-before-loss")
+			if err != nil || session.ID != "session-before-loss" {
+				t.Fatalf("loaded=%+v err=%v", session, err)
+			}
+			result, promptErr := client.Prompt(context.Background(), "continue")
+			outcome, _, _ := acpTerminalStatus(result, promptErr)
+			if outcome != tc.wantOutcome || acpTerminalReasonCode(result, promptErr) != tc.wantCode {
+				t.Fatalf("terminal=%+v err=%v outcome=%s code=%s", result, promptErr, outcome, acpTerminalReasonCode(result, promptErr))
+			}
+		})
+	}
+}
+
+func TestDevinDriverParityTransportReasonsPersist(t *testing.T) {
+	for _, tc := range []struct {
+		outcome acp.Outcome
+		want    RunFailureReasonCode
+	}{
+		{acp.OutcomeDeliveryUnknown, RunFailureOutcomeUnknown},
+		{acp.OutcomeTimedOut, RunFailureProviderError},
+		{acp.OutcomeProtocolFailed, RunFailureProviderError},
+		{acp.OutcomePoisoned, RunFailureProviderError},
+	} {
+		result := acp.PromptResult{Outcome: tc.outcome}
+		outcome, exitCode, reason := acpTerminalStatus(result, errors.New("transport failed"))
+		path := filepath.Join(t.TempDir(), "status.json")
+		if _, err := writeRunnerStatusFileIfAbsentWithOutcome(path, exitCode, outcome, reason, 0, acpTerminalReasonCode(result, errors.New("transport failed"))); err != nil {
+			t.Fatal(err)
+		}
+		status, err := readRunnerProcessStatus(path)
+		if err != nil || status.ReasonCode != string(tc.want) {
+			t.Fatalf("%s status=%+v err=%v", tc.outcome, status, err)
+		}
 	}
 }
 

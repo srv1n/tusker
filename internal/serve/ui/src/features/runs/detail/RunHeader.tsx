@@ -7,10 +7,8 @@ import { Mono } from "@/components/ui/primitives";
 import { Button } from "@/components/ui/controls";
 import { OutcomeChip, RunnerBadge } from "@/components/ui/chips";
 import { CapsuleChips } from "@/components/ui/capsule";
-import { LivenessIndicator } from "@/components/ui/liveness";
 import {
   isInterruptibleRun,
-  isLiveHeaderRun,
   redriveDisabledReason,
 } from "@/features/runs/detail/helpers";
 
@@ -55,7 +53,6 @@ export function RunHeader({
   interrupt: InterruptState;
   waitingForDaemonReason?: string | null;
 }) {
-  const live = isLiveHeaderRun(run);
   const active = isInterruptibleRun(run);
   const interruptBusy = interrupt.confirming || interrupt.pending || interrupt.awaitingReadback;
   const actionBusy = interruptBusy || retry.pending;
@@ -89,18 +86,17 @@ export function RunHeader({
               Waiting for daemon
             </Mono>
           )}
-          {live && (
-            <>
-              <LivenessIndicator liveness={run.liveness} sinceSec={run.sinceLastEventSec} />
-              <span className="text-fainter">·</span>
-            </>
-          )}
+          {run.operatorState && <span className={cn("inline-flex items-center gap-1 rounded border border-line px-2 py-0.5 font-mono font-semibold", run.operatorState.state === "failed" || run.operatorState.state === "lost" ? "text-fail" : run.operatorState.state === "blocked" || run.operatorState.state === "waiting_on_you" ? "text-warn" : "text-ink-soft")} title={run.operatorState.reason?.guidance}>
+            <span aria-hidden="true">{run.operatorState.state === "working" ? "●" : run.operatorState.state === "quiet" ? "◌" : "◇"}</span>
+            {({ queued: "Queued", working: "Working", waiting_on_you: "Waiting on you", quiet: "Quiet", blocked: "Blocked", failed: "Failed", lost: "Lost", stopped: "Stopped", finished: "Finished" } as const)[run.operatorState.state]}
+          </span>}
           {!waitingForDaemonReason && (
             <Mono className={cn(run.leaseState === "expired" ? "text-fail" : "text-muted")}>
               lease {run.leaseState}
             </Mono>
           )}
         </div>
+        {run.operatorState?.reason && ["blocked", "failed", "lost"].includes(run.operatorState.state) && <p className="mt-2 text-[11px] text-warn">{run.operatorState.reason.guidance} <span className="font-mono text-faint">{run.operatorState.reason.code}</span></p>}
       </div>
 
       <div className="flex flex-none flex-col items-stretch gap-2 sm:items-end">
