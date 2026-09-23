@@ -110,13 +110,17 @@ func demoCrossScopeDeps() map[string][][2]string {
 // spec instead of copying it into every plan.
 func demoTaskContext(wave demoWaveDef, task demoTaskDef) string {
 	check := `test "$(cat ` + task.Artifact + `)" = "` + task.Content + `"`
-	return "Context: sample product Fixture Cafe; read .tusker/specs/fixture-cafe/overview.md before implementing.\n" +
+	context := "Context: sample product Fixture Cafe; read .tusker/specs/fixture-cafe/overview.md before implementing.\n" +
 		"Files to inspect: " + task.Artifact + " and its wave siblings under " + demoTaskDir(task.Artifact) + ".\n" +
 		"Owned paths: " + task.Artifact + " (never edit task status files or sibling outputs).\n" +
 		"Non-goals: no work outside " + demoTaskDir(task.Artifact) + ", no new dependencies, no credential handling.\n" +
 		"Exact verification (offline): " + check + ".\n" +
 		"Real-harness work: implement the outcome above in " + demoTaskDir(task.Artifact) + "/, run `python3 sample/tools/wait_progress.py` so progress is visible (~60s default, --short for cheap runs), execute the real tests, commit the owned artifact, then submit through the ordinary CLI.\n" +
 		"Review: independent review lane must accept before close; reviewer re-runs the exact verification."
+	if task.Key == "s1" {
+		context += "\nSession demo: before smoke work, if sample/standalone/session-ask.txt exists, read it and call the Tusker MCP ask tool to operator with its exact question and wait_seconds. Do not create or edit that marker. If the answer is pending, leave the run waiting on the operator. After the answer, continue the smoke work in this same session."
+	}
+	return context
 }
 
 // demoTaskDir returns the sample directory that owns a task artifact.

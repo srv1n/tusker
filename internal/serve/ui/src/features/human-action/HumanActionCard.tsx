@@ -33,7 +33,15 @@ export function HumanActionCard({
   compact?: boolean;
 }) {
   if (action.kind === "question") return <QuestionActionCard action={action} taskId={taskId} projectId={projectId} compact={compact} />;
-  if (action.kind === "permission") return <section className={compact ? "border-t border-line pt-4" : "mb-7 rounded-xl border border-line bg-raised p-4 sm:p-5"} data-human-action-card data-need-card><h2 className="text-[17px] font-semibold text-ink">{action.title}</h2><AgentAccessApprovalList projectId={projectId} taskId={taskId} approvals={approvals?.filter((approval) => approval.requestId === action.requestId)} onRetry={onRetry} compact={compact} /></section>;
+  if (action.kind === "permission") return <PermissionActionCard action={action} taskId={taskId} projectId={projectId} approvals={approvals} onRetry={onRetry} compact={compact} />;
+  return <GateActionCard action={action} taskId={taskId} taskTitle={taskTitle} projectId={projectId} blockedTaskIds={blockedTaskIds} approvals={approvals} onRetry={onRetry} continueOnApproval={continueOnApproval} compact={compact} />;
+}
+
+function PermissionActionCard({ action, taskId, projectId, approvals, onRetry, compact }: { action: HumanAction; taskId: string; projectId?: string; approvals?: AgentAccessApproval[]; onRetry?: () => void; compact: boolean }) {
+  return <section className={compact ? "border-t border-line pt-4" : "mb-7 rounded-xl border border-line bg-raised p-4 sm:p-5"} data-human-action-card data-need-card><h2 className="text-[17px] font-semibold text-ink">{action.title}</h2><AgentAccessApprovalList projectId={projectId} taskId={taskId} approvals={approvals?.filter((approval) => approval.requestId === action.requestId)} onRetry={onRetry} compact={compact} /></section>;
+}
+
+function GateActionCard({ action, taskId, taskTitle, projectId, blockedTaskIds, approvals, onRetry, continueOnApproval, compact }: { action: HumanAction; taskId: string; taskTitle: string; projectId?: string; blockedTaskIds?: string[]; approvals?: AgentAccessApproval[]; onRetry?: () => void; continueOnApproval: boolean; compact: boolean }) {
   const gateAction = useGateAction();
   const statusAction = useTaskStatusAction(taskId, projectId);
   const confirm = useConfirm();

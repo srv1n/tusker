@@ -2,8 +2,31 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestServeRunsListBoundedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	var lines strings.Builder
+	for i := 0; i < 50_000; i++ {
+		lines.WriteString(`{"kind":"message","payload":{"text":"old"}}` + "\n")
+	}
+	lines.WriteString(`{"kind":"message","payload":{"text":"latest"}}` + "\n")
+	if err := os.WriteFile(path, []byte(lines.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tails := loadRunStateTails(RunStatus{EventSinkPath: path}, nil)
+	if len(tails.events) != 200 || len(tails.log) != 0 {
+		t.Fatalf("tail sizes: event=%d log=%d", len(tails.events), len(tails.log))
+	}
+	events := serveRunEventsFromTails(tails)
+	if len(events) != 200 || events[len(events)-1].Text != "latest" {
+		t.Fatalf("latest event missing from bounded tail: %+v", events[len(events)-1])
+	}
+}
 
 // The runtime EventLog writes the timestamp under "at" (RFC3339) and nests the
 // human fields under "payload". Reading only "ts"/"timestamp" left TS empty,

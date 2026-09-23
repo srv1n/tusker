@@ -370,6 +370,9 @@ func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map
 	if reason := directWaveTaskContractStaleReason(task); reason != "" {
 		return reason
 	}
+	if stringField(task.Data, "wave") != "" && workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared && projectActiveRunLimit(wf) > 1 {
+		return "shared-checkout armed waves require runtime.max_active_runs_per_project = 1"
+	}
 	if wave, idx, _ := armedWaveForTask(vaultPath, task); stringField(wave.Data, "id") != "" {
 		auth := waveAuthorizationProjection(vaultPath, idx, wave)
 		if stringField(auth, "state") == "paused" && !boolFromAny(auth["stale"]) {

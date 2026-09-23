@@ -55,6 +55,8 @@ test("stream keys map to live query invalidations", () => {
   expect(streamKeyToQueryKeys("tasks:AGX-T-0005", "tusker")).toEqual([
     ["tasks", "tusker"],
     ["task", "tusker", "AGX-T-0005"],
+    // c5a5da52 invalidates wave lists when a member task changes.
+    ["wave-list", "tusker"],
     qk.needs("tusker"),
     ["projects"],
   ]);
@@ -76,6 +78,7 @@ test("stream keys map to live query invalidations", () => {
   expect(invalidations).toEqual([
     { queryKey: ["tasks", "tusker"], exact: false },
     { queryKey: ["task", "tusker", "AGX-T-0005"], exact: false },
+    { queryKey: ["wave-list", "tusker"], exact: false },
     { queryKey: qk.needs("tusker"), exact: false },
     { queryKey: ["projects"], exact: false },
     { queryKey: qk.runs("tusker"), exact: false },

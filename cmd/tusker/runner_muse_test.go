@@ -46,6 +46,39 @@ func TestMuseDriverParityPreassignSession(t *testing.T) {
 	}
 }
 
+func TestMuseBoundedTypedReasons(t *testing.T) {
+	for _, tc := range []struct {
+		message string
+		want    RunFailureReasonCode
+	}{
+		{"rate limit exceeded", RunFailureUsageLimit},
+		{"context limit reached", RunFailureProviderError},
+		{"max turns reached", RunFailureProviderError},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			req := runnerExecEventRequestForTest(t)
+			req.RawLogMaxBytes = 4096
+			payload := filepath.Join(t.TempDir(), "muse-output")
+			if err := os.WriteFile(payload, []byte(`{"type":"run.terminal.failed","error":"`+tc.message+`"}`+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			req.Command = ""
+			req.CommandArgv = []string{"/bin/sh", "-c", "cat \"$1\"; exit 1", "sh", payload}
+			if _, err := executeRunnerCommand(context.Background(), RunnerMuse, req, RunnerCapabilities{}); err != nil {
+				t.Fatal(err)
+			}
+			waitForStatusFile(t, req.StatusPath)
+			status, err := readRunnerProcessStatus(req.StatusPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status.ReasonCode != string(tc.want) || status.Outcome != string(AttemptOutcomeFailed) {
+				t.Fatalf("status=%+v", status)
+			}
+		})
+	}
+}
+
 func TestMuseDriverParityTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		raw     string

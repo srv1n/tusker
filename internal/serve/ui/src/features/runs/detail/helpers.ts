@@ -4,7 +4,7 @@
   today, it is marked `// TODO(api)` at the call site.
 */
 
-import type { Attempt, DaemonStatus, RunDetail, RunEvent, TaskStatus } from "@/types/domain";
+import type { Attempt, DaemonStatus, RunDetail, RunEvent } from "@/types/domain";
 import { duration } from "@/lib/time";
 
 /** A derived stat cell for the run summary grid (design §07 — four headline numbers). */
@@ -24,20 +24,6 @@ export function runStats(run: RunDetail, waitingForDaemon = false): RunStat[] {
 
 export function isLiveHeaderRun(run: Pick<RunDetail, "leaseState" | "outcome">): boolean {
   return run.leaseState === "held" && (run.outcome === "running" || run.outcome === "stale");
-}
-
-export function isInterruptibleRun(
-  run: Pick<RunDetail, "leaseState" | "leaseStateRaw" | "outcome" | "processRunning">,
-): boolean {
-  const raw = run.leaseStateRaw;
-  return (
-    run.processRunning === true ||
-    raw === "claimed" ||
-    raw === "running" ||
-    raw === "retry_queued" ||
-    isLiveHeaderRun(run) ||
-    run.outcome === "retry-queued"
-  );
 }
 
 export function waitingForDaemonReason(
@@ -83,35 +69,4 @@ export function clockTime(iso: string): string {
   if (!iso || Number.isNaN(d.getTime())) return "--:--:--";
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-}
-
-/**
- * When redrive (Retry) is meaningless for the task's canonical status, return
- * the operator-facing reason to show inline and disable the control; otherwise
- * null (redrive is allowed). A review/done task has no execution to redrive —
- * clicking Retry there previously requeued into a silent daemon retire behind a
- * stale "Ready" badge. Point the operator at the real lane.
- */
-export function redriveDisabledReason(
-  status: TaskStatus | undefined,
-  run?: Pick<RunDetail, "leaseState" | "leaseStateRaw" | "outcome" | "processRunning">,
-  daemonDownReason?: string | null,
-): string | null {
-  switch (status) {
-    case "review":
-      return "Task is in review — resolve it in the review/land lane; there is no run to redrive.";
-    case "done":
-      return "Task is done — nothing to redrive.";
-    default:
-      break;
-  }
-  if (run?.outcome === "retry-queued" || run?.leaseStateRaw === "retry_queued") {
-    return daemonDownReason
-      ? `Redrive is already queued. ${daemonDownReason}`
-      : "Redrive is already queued. Wait for the daemon to claim it, or interrupt the queued run first.";
-  }
-  if (run && isInterruptibleRun(run)) {
-    return "Interrupt the current run and wait for canonical lease/process readback before redriving.";
-  }
-  return null;
 }

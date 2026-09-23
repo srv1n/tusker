@@ -342,7 +342,8 @@ func readRunnerProcessStatus(statusPath string) (runnerProcessStatus, error) {
 	}
 	if status.ReasonCode != "" {
 		if _, ok := runFailureReason(RunFailureReasonCode(status.ReasonCode)); !ok {
-			return runnerProcessStatus{}, fmt.Errorf("unknown runner reason code %q", status.ReasonCode)
+			status.Reason = strings.TrimSpace(status.Reason + "; unknown runner reason code " + fmt.Sprintf("%q", status.ReasonCode))
+			status.ReasonCode = string(RunFailureUnknown)
 		}
 	}
 	return status, nil
@@ -368,27 +369,48 @@ func monitorRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, rawLog *
 		exitCode = 130
 		outcome = AttemptOutcomeInterrupted
 		reason = "runner cancelled: " + ctx.Err().Error()
-	} else if runner == RunnerMuse && exitCode == 0 {
-		if output, readErr := readText(req.RawLogPath); readErr == nil {
-			var session string
-			outcome, reason, session = classifyMuseCLIOutput(output)
-			if session != "" {
-				_ = eventLog.Append("muse_session_started", req.AttemptID, runner, map[string]any{"session_ref": session})
-			}
-		}
-		if outcome == AttemptOutcomeNone {
-			outcome = AttemptOutcomeFailed
-			reason = "Muse terminal result missing"
-		}
-		reasonCode = museFailureReasonCode(outcome, reason)
 	} else if exitCode != 0 {
 		outcome = AttemptOutcomeFailed
 		reason = fmt.Sprintf("runner exited with code %d", exitCode)
-		if runner == RunnerCodexExec {
-			reasonCode, _ = codexExecFailureFromLog(req.RawLogPath)
+	}
+	if ctx.Err() == nil {
+		outcome, reason, reasonCode = classifyRunnerLog(runner, req.RawLogPath, exitCode, outcome, reason)
+		if runner == RunnerMuse {
+			if output, err := readText(req.RawLogPath); err == nil {
+				_, _, session := classifyMuseCLIOutput(output)
+				if session != "" {
+					_ = eventLog.Append("muse_session_started", req.AttemptID, runner, map[string]any{"session_ref": session})
+				}
+			}
 		}
 	}
 	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0, reasonCode)
+}
+
+func classifyRunnerLog(runner RunnerName, path string, exitCode int, outcome AttemptOutcome, reason string) (AttemptOutcome, string, RunFailureReasonCode) {
+	switch runner {
+	case RunnerCodexExec:
+		if exitCode != 0 {
+			code, _ := codexExecFailureFromLog(path)
+			return outcome, reason, code
+		}
+	case RunnerMuse:
+		output, err := readText(path)
+		if err != nil {
+			return outcome, reason, RunFailureProviderError
+		}
+		museOutcome, museReason, _ := classifyMuseCLIOutput(output)
+		if museOutcome != AttemptOutcomeUnknown {
+			outcome, reason = museOutcome, museReason
+		} else if exitCode == 0 {
+			outcome, reason = museOutcome, museReason
+		}
+		if exitCode != 0 && outcome == AttemptOutcomeSucceeded {
+			outcome, reason = AttemptOutcomeFailed, fmt.Sprintf("runner exited with code %d", exitCode)
+		}
+		return outcome, reason, museFailureReasonCode(outcome, reason)
+	}
+	return outcome, reason, ""
 }
 
 func openPrivateRunnerAppendFile(path string) (*os.File, error) {
@@ -477,7 +499,12 @@ func extractSessionRef(rawLogPath string) string {
 }
 
 func extractMessageRef(rawLogPath string) string {
-	return extractFirstRef(rawLogPath, extractMessageRefFromJSON)
+	for _, path := range []string{rawLogPath, rawLogPath + ".prev", rawLogPath + ".head"} {
+		if ref := extractFirstRef(path, extractMessageRefFromJSON); ref != "" {
+			return ref
+		}
+	}
+	return ""
 }
 
 func extractFirstRef(rawLogPath string, extractor func(string) string) string {

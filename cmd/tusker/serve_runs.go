@@ -25,6 +25,10 @@ func (s *serveServer) runSummary(snap serveSnapshot, run RunStatus) serveRunSumm
 }
 
 func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serveRunSummary, error) {
+	return s.runSummaryCheckedWithScope(snap, run, false)
+}
+
+func (s *serveServer) runSummaryCheckedWithScope(snap serveSnapshot, run RunStatus, listPage bool) (serveRunSummary, error) {
 	taskID := firstNonEmpty(run.ItemID, run.RecordID)
 	taskTitle := taskID
 	if task, ok := snap.notesByID[taskID]; ok {
@@ -50,8 +54,22 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 	if err != nil {
 		return serveRunSummary{}, err
 	}
-	activity := serveRunActivity(run, attempts, s.now())
-	operatorState, err := runOperatorStateForRun(s.store, run, s.now())
+	var tails runStateTails
+	if listPage {
+		tails = loadRunStateTails(run, attempts)
+	}
+	var activity serveRunActivityFreshness
+	if listPage {
+		activity = serveRunActivityFromTails(run, attempts, s.now(), tails)
+	} else {
+		activity = serveRunActivity(run, attempts, s.now())
+	}
+	var operatorState runOperatorState
+	if listPage {
+		operatorState, err = runOperatorStateFromAttempts(s.store, run, attempts, s.now(), defaultRunQuietAfter, true, tails)
+	} else {
+		operatorState, err = runOperatorStateForRun(s.store, run, s.now())
+	}
 	if err != nil {
 		return serveRunSummary{}, err
 	}
@@ -106,6 +124,10 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 }
 
 func serveRunActivity(run RunStatus, attempts []RunAttempt, now time.Time) serveRunActivityFreshness {
+	return serveRunActivityFromTails(run, attempts, now, loadRunStateTails(run, attempts))
+}
+
+func serveRunActivityFromTails(run RunStatus, attempts []RunAttempt, now time.Time, tails runStateTails) serveRunActivityFreshness {
 	activity := serveRunActivityFreshness{CaptureState: "missing"}
 	var latest RunAttempt
 	for _, attempt := range attempts {
@@ -129,7 +151,7 @@ func serveRunActivity(run RunStatus, attempts []RunAttempt, now time.Time) serve
 			activity.CaptureState, activity.CaptureReason = "unavailable", "recorded activity cannot be read"
 		}
 	}
-	for _, event := range serveRunEventsAll(run, attempts) {
+	for _, event := range serveRunEventsFromTails(tails) {
 		if _, ok := parseRunTimestamp(event.TS); !ok {
 			continue
 		}
@@ -229,12 +251,20 @@ func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request,
 		serveJSON(w, http.StatusBadRequest, serveInterruptResult{Refused: true, Reason: "project query parameter is required to interrupt a run", TaskID: taskID})
 		return
 	}
-	if snap, err := s.loadSnapshotForProject(projectID); err != nil {
+	if snap, err := s.loadFreshSnapshotForProject(projectID); err != nil {
 		serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
 		return
-	} else if _, ok := serveFindRun(snap.runs, taskID); !ok {
-		serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
-		return
+	} else {
+		run, ok := serveFindRun(snap.runs, taskID)
+		if !ok {
+			serveJSON(w, http.StatusNotFound, serveInterruptResult{Refused: true, Reason: "run not found in project", TaskID: taskID})
+			return
+		}
+		capability := s.runActionCapability("interrupt", snap.project, Note{}, run, nil)
+		if !capability.Available {
+			serveJSON(w, http.StatusConflict, serveInterruptResult{Refused: true, Reason: capability.Reason, TaskID: taskID})
+			return
+		}
 	}
 	run, _, err := interruptRuntimeRunScoped(DefaultStateRoot(), s.store, projectID, taskID)
 	if err != nil {
@@ -436,24 +466,16 @@ func turnsByAttempt(turns []RunTurn) map[string]struct{} {
 }
 
 func serveRunEventsAll(run RunStatus, attempts []RunAttempt) []serveRunEvent {
-	var latest RunAttempt
-	for _, attempt := range attempts {
-		if run.ActiveAttemptID != "" {
-			if attempt.AttemptID == run.ActiveAttemptID {
-				latest = attempt
-				break
-			}
-		} else if latest.AttemptID == "" || attempt.StartedAt > latest.StartedAt {
-			latest = attempt
-		}
-	}
-	attempts = []RunAttempt{latest}
+	return serveRunEventsFromTails(loadRunStateTails(run, attempts))
+}
+
+func serveRunEventsFromTails(tails runStateTails) []serveRunEvent {
 	out := []serveRunEvent{}
-	for _, payload := range runActivityTail(bestRunEventPath(run, attempts)) {
+	for _, payload := range tails.events {
 		out = appendRunActivity(out, serveRunEventFromPayload(payload))
 	}
 	eventCount := len(out)
-	for _, payload := range runActivityTail(bestRunLogPath(run, attempts)) {
+	for _, payload := range tails.log {
 		for _, event := range cliRunActivity(payload) {
 			out = appendRunActivity(out, event)
 		}

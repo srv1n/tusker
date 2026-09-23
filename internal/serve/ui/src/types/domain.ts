@@ -87,6 +87,14 @@ export interface RunControlProjection {
   checkpoint?: RunCheckpoint;
 }
 
+export interface RunSayResponse {
+  ok: boolean;
+  refused?: boolean;
+  reason?: string;
+  duplicate?: boolean;
+  delivery?: { id: string; body: string; state: string; storedAt: string };
+}
+
 /**
  * The run outcomes we style with a known hue/label. The trailing `(string & {})`
  * makes this an OPEN enum: the API may add outcomes (e.g. a review-complete /

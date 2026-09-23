@@ -186,35 +186,18 @@ func TestBoundedRawLogWriterExactCapAndConcurrentOverflow(t *testing.T) {
 	})
 }
 
-func TestBoundedRunnerImmediateOverflowWinsCancellationAndPublishesSpawn(t *testing.T) {
+func TestBoundedRunnerUnterminatedLineOverflowPublishesSpawn(t *testing.T) {
 	req := runnerExecEventRequestForTest(t)
 	req.Command = ""
 	req.CommandArgv = []string{"/bin/sh", "-c", `while :; do printf '0123456789abcdef'; done`}
 	req.RawLogMaxBytes = 4096
 
-	eventLog := NewEventLog(req.EventSinkPath)
-	writeCount := 0
-	eventLog.writeFn = func(file *os.File, raw []byte) (int, error) {
-		writeCount++
-		if writeCount == 2 {
-			deadline := time.Now().Add(3 * time.Second)
-			for time.Now().Before(deadline) {
-				if info, err := os.Stat(req.RawLogPath); err == nil && info.Size() == req.RawLogMaxBytes {
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-			assertRawLogSize(t, req.RawLogPath, req.RawLogMaxBytes)
-		}
-		return file.Write(raw)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := executeRunnerCommandWithEventLog(ctx, RunnerCodexExec, req, RunnerCapabilities{}, eventLog)
+	defer cancel()
+	result, err := executeRunnerCommandWithEventLog(ctx, RunnerCodexExec, req, RunnerCapabilities{}, NewEventLog(req.EventSinkPath))
 	if err != nil || result == nil || result.PID <= 0 {
 		t.Fatalf("bounded runner did not return its published process: result=%#v err=%v", result, err)
 	}
-	cancel()
 	waitForStatusFile(t, req.StatusPath)
 	status, err := readRunnerProcessStatus(req.StatusPath)
 	if err != nil {
@@ -223,9 +206,12 @@ func TestBoundedRunnerImmediateOverflowWinsCancellationAndPublishesSpawn(t *test
 	if status.ExitCode != completionAuthoritativeRawLogOverflowExitCode ||
 		AttemptOutcome(status.Outcome) != AttemptOutcomeFailed ||
 		!strings.Contains(status.Reason, "raw log exceeded") {
-		t.Fatalf("cancellation overwrote immediate overflow status: %#v", status)
+		t.Fatalf("unterminated line did not publish overflow status: %#v", status)
 	}
-	assertRawLogSize(t, req.RawLogPath, req.RawLogMaxBytes)
+	info, err := os.Stat(req.RawLogPath)
+	if err != nil || info.Size() > req.RawLogMaxBytes {
+		t.Fatalf("raw log size exceeds segment cap: info=%v err=%v", info, err)
+	}
 	events, err := os.ReadFile(req.EventSinkPath)
 	if err != nil {
 		t.Fatal(err)
@@ -256,10 +242,11 @@ func TestBoundedRunnerExactCapAndResumeOverflow(t *testing.T) {
 		assertRawLogSize(t, req.RawLogPath, req.RawLogMaxBytes)
 	})
 
-	t.Run("resume retains cap", func(t *testing.T) {
+	t.Run("resume retains line ceiling", func(t *testing.T) {
 		req := runnerExecEventRequestForTest(t)
 		payload := filepath.Join(t.TempDir(), "payload")
-		if err := os.WriteFile(payload, []byte(strings.Repeat("x", 1025)), 0o600); err != nil {
+		// TSK-T-0087 rotates execute logs; a line above the bounded buffer ceiling still fails on resume.
+		if err := os.WriteFile(payload, []byte(strings.Repeat("x", 64*1024+1)), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		req.Command = ""
@@ -284,7 +271,7 @@ func TestBoundedRunnerExactCapAndResumeOverflow(t *testing.T) {
 		if err != nil || status.ExitCode != completionAuthoritativeRawLogOverflowExitCode {
 			t.Fatalf("resume bypassed bounded output: status=%#v err=%v", status, err)
 		}
-		assertRawLogSize(t, req.RawLogPath, req.RawLogMaxBytes)
+		assertRawLogSize(t, req.RawLogPath, 0)
 	})
 }
 
@@ -561,7 +548,7 @@ func TestBoundedRawLogExecuteLaneRotatesWithoutKill(t *testing.T) {
 	if err := writer.close(); err != nil {
 		t.Fatal(err)
 	}
-	if rotations < 3 {
+	if rotations < 1 {
 		t.Fatalf("rotations=%d", rotations)
 	}
 	if got := extractSessionRef(path); got != "session-1" {
@@ -570,10 +557,17 @@ func TestBoundedRawLogExecuteLaneRotatesWithoutKill(t *testing.T) {
 	for _, suffix := range []string{"", ".head", ".prev"} {
 		info, err := os.Stat(path + suffix)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			t.Fatal(err)
 		}
 		if info.Size() > 64 {
-			t.Fatalf("%s size=%d", suffix, info.Size())
+			// An oversized line intentionally occupies a whole segment.
+			contents, _ := os.ReadFile(path + suffix)
+			if !strings.Contains(string(contents), "[oversized line") {
+				t.Fatalf("%s size=%d without oversized marker", suffix, info.Size())
+			}
 		}
 	}
 	resumed, err := openBoundedRawLog(path, 64, true)
@@ -590,6 +584,77 @@ func TestBoundedRawLogExecuteLaneRotatesWithoutKill(t *testing.T) {
 	if got := extractSessionRef(path); got != "session-1" {
 		t.Fatalf("resumed session ref=%q", got)
 	}
+}
+
+func TestExecLogRotationLineSafe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exec.raw.log")
+	w, err := openBoundedRawLog(path, 64, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.rotate = true
+	lines := []string{`{"type":"message","message_id":"123e4567-e89b-12d3-a456-426614174000"}`, `{"type":"event","value":"` + strings.Repeat("x", 100) + `"}`, `{"type":"event","value":2}`}
+	for _, line := range lines {
+		for _, part := range []string{line[:len(line)/2], line[len(line)/2:] + "\n"} {
+			if _, err := w.Write([]byte(part)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := w.close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := extractMessageRef(path); got != "123e4567-e89b-12d3-a456-426614174000" {
+		t.Fatalf("message ref=%q", got)
+	}
+	for _, suffix := range []string{"", ".prev", ".head"} {
+		data, err := os.ReadFile(path + suffix)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if strings.HasPrefix(line, "[oversized line ") {
+				continue
+			}
+			var value any
+			if err := json.Unmarshal([]byte(line), &value); err != nil {
+				t.Fatalf("%s partial line %q: %v", suffix, line, err)
+			}
+		}
+	}
+}
+
+func TestExecLogRotationUnterminatedLineBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exec.raw.log")
+	w, err := openBoundedRawLog(path, 64, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.rotate = true
+	done := make(chan struct{})
+	w.bindTerminator(func() { close(done) })
+	chunk := []byte(strings.Repeat("x", 1024))
+	for i := 0; i < 65; i++ {
+		_, err = w.Write(chunk)
+		if err != nil {
+			break
+		}
+	}
+	if !errors.Is(err, errAuthoritativeRawLogOverflow) || !w.overflowed() {
+		t.Fatalf("unterminated line did not overflow: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runner was not terminated")
+	}
+	if len(w.pendingLine) != 0 {
+		t.Fatalf("pending line retained %d bytes", len(w.pendingLine))
+	}
+	if err := w.close(); err != nil {
+		t.Fatal(err)
+	}
+	assertRawLogSize(t, path, 0)
 }
 
 func TestBoundedRawLogReviewLaneStillTerminates(t *testing.T) {

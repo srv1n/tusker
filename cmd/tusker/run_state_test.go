@@ -23,7 +23,7 @@ func TestRunOperatorState(t *testing.T) {
 		{"fresh activity is working", "working", func(f *runOperatorFacts) { f.LastActivityAt = now.Add(-time.Second).Format(time.RFC3339Nano) }},
 		{"future activity is working", "working", func(f *runOperatorFacts) { f.LastActivityAt = now.Add(time.Second).Format(time.RFC3339Nano) }},
 		{"open question wins", "waiting_on_you", func(f *runOperatorFacts) { f.OpenQuestionID = "q1"; f.ToolInFlight = true }},
-		{"open question survives owner exit", "waiting_on_you", func(f *runOperatorFacts) { f.OpenQuestionID = "q1"; f.OwnerAlive = false }},
+		{"stale question does not pin lost owner", "lost", func(f *runOperatorFacts) { f.OpenQuestionID = "q1"; f.OwnerAlive = false }},
 		{"answered question falls through", "working", func(f *runOperatorFacts) {
 			f.OpenQuestionID = ""
 			f.LastActivityAt = now.Add(-time.Second).Format(time.RFC3339Nano)
@@ -82,6 +82,45 @@ func TestRunOperatorState(t *testing.T) {
 	boundary.LastActivityAt = now.Add(-3 * time.Minute).Format(time.RFC3339Nano)
 	if got := deriveRunOperatorState(boundary, now, 4*time.Minute); got.State != "working" || got.QuietAfterSec != 240 {
 		t.Fatalf("quiet override: %+v", got)
+	}
+}
+
+func TestRunOperatorStatePrecedence(t *testing.T) {
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name  string
+		facts runOperatorFacts
+		want  string
+	}{
+		{"finished stale question", runOperatorFacts{Terminal: true, Outcome: string(AttemptOutcomeSucceeded), OpenQuestionID: "old"}, "finished"},
+		{"yield parked", runOperatorFacts{Terminal: true, Outcome: string(AttemptOutcomeWaitingForHuman)}, "waiting_on_you"},
+		{"queued lost reason", runOperatorFacts{LeaseState: string(LeaseStateRetryQueued), Reason: &runOperatorReason{Class: "lost"}}, "queued"},
+		{"queued unknown outcome", runOperatorFacts{LeaseState: string(LeaseStateRetryQueued), Outcome: string(AttemptOutcomeUnknown)}, "queued"},
+		{"resolved owner permission", runOperatorFacts{LeaseState: string(LeaseStateRunning), OwnerAlive: true, PermissionWait: true}, "waiting_on_you"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := deriveRunOperatorState(tc.facts, now, defaultRunQuietAfter).State; got != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunOperatorStateTypedToolStatus(t *testing.T) {
+	store, run := ownershipStoreFixture(t, "APP-T-TYPED")
+	_ = store
+	run.EventSinkPath = filepath.Join(t.TempDir(), "events.jsonl")
+	for _, status := range []struct {
+		value string
+		want  bool
+	}{{"in_progress", true}, {"completed", false}} {
+		line := `{"kind":"tool_call","payload":{"tool_call_id":"tool-1","status":"` + status.value + `","text":"still running"}}` + "\n"
+		if err := os.WriteFile(run.EventSinkPath, []byte(line), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if got := runToolInFlight(run, nil); got != status.want {
+			t.Fatalf("status %s: in flight=%v", status.value, got)
+		}
 	}
 }
 

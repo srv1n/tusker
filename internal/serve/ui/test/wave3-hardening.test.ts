@@ -6,7 +6,8 @@ describe("Wave 3 production UI contracts", () => {
   test("execution settings validate a draft and save explicitly", () => {
     const source = readFileSync("src/features/product/OperationsScreens.tsx", "utf8");
     expect(source).toContain("settings.mutate");
-    expect(source).toContain("Number.isFinite");
+		// c5a5da52 uses the stricter safe-integer check in parseExecutionConcurrency.
+		expect(source).toContain("Number.isSafeInteger");
 		expect(source).toContain('value="shared">Current checkout');
 		expect(source).toContain("including existing uncommitted changes");
 		expect(source).toContain('value="worktree">Git worktree');

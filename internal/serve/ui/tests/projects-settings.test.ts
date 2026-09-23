@@ -132,6 +132,7 @@ test("execution settings form rejects invalid concurrency visibly without submis
     const React = await import("react");
     const { act } = React;
     const { createRoot } = await import("react-dom/client");
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
     const { SettingsBasic } = await import(
       "@/features/product/OperationsScreens"
     );
@@ -164,7 +165,8 @@ test("execution settings form rejects invalid concurrency visibly without submis
     let root: { unmount: () => void } | undefined;
     await act(async () => {
       root = createRoot(win.document.getElementById("root")!);
-      root.render(
+      // c5a5da52 added the automation scope query to SettingsBasic.
+      root.render(React.createElement(QueryClientProvider, { client: new QueryClient() },
         React.createElement(SettingsBasic, {
           project,
           projectIds: ["proj-1"],
@@ -173,7 +175,7 @@ test("execution settings form rejects invalid concurrency visibly without submis
           settings,
           onOpenAdvanced: () => {},
         }),
-      );
+      ));
     });
     const doc = win.document;
     const input = doc.querySelector(

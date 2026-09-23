@@ -56,6 +56,36 @@ func TestMCPServeProtocol(t *testing.T) {
 	}
 }
 
+func TestMCPServeFraming(t *testing.T) {
+	store := mcpTestStore(t)
+	input := strings.NewReader(strings.Repeat("x", 2<<20) + "\n" + `{"jsonrpc":"2.0","id":null,"method":"ping"}` + "\n" + `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
+	var output bytes.Buffer
+	if err := serveMCP(input, &output, store, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"code":-32700`, `"code":-32600`, `"id":1`, `"result":{}`} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing %s: %s", want, output.String())
+		}
+	}
+}
+
+func TestMCPServeCurrentRevisionMessages(t *testing.T) {
+	store := mcpTestStore(t)
+	for _, tc := range []struct {
+		key      string
+		revision int
+	}{{"old", 2}, {"current", 3}} {
+		if _, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "task:peer", IdempotencyKey: tc.key, Recipient: AgentAddress{Kind: "task", ID: "T1"}, WorkRevision: tc.revision, Kind: "notice", Body: tc.key}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := callMCPTool(context.Background(), store, mcpCall("check_messages", map[string]any{}), 0, func(time.Duration) {})
+	if err != nil || !strings.Contains(got, "current") || strings.Contains(got, "old") {
+		t.Fatalf("messages=%q err=%v", got, err)
+	}
+}
+
 func TestMCPServeAskIdentityAndRetry(t *testing.T) {
 	store := mcpTestStore(t)
 	if _, err := store.PutAgentContact(AgentContact{ProjectID: "app", TaskID: "T1", Role: "architect", Address: AgentAddress{Kind: "task", ID: "architect"}}, 0); err != nil {
@@ -131,7 +161,7 @@ func TestMCPServeAnswerAndConcurrentInbox(t *testing.T) {
 	if err != nil || answer.ConsumedAt == "" {
 		t.Fatalf("answer=%v err=%v", answer, err)
 	}
-	_, _, err = store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "task:peer", IdempotencyKey: "notice", Recipient: AgentAddress{Kind: "task", ID: "T1"}, Kind: "notice", Body: "Hello"})
+	_, _, err = store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "task:peer", IdempotencyKey: "notice", Recipient: AgentAddress{Kind: "task", ID: "T1"}, WorkRevision: 3, Kind: "notice", Body: "Hello"})
 	if err != nil {
 		t.Fatal(err)
 	}

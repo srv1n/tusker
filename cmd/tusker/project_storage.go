@@ -19,7 +19,7 @@ func validateProjectStorageBoundary(repoRoot, vaultRoot string) error {
 	if err != nil {
 		return err
 	}
-	if !pathWithinLexical(repoAbs, vaultAbs) || !pathWithinResolved(repoAbs, vaultAbs) {
+	if !pathWithinLexical(canonicalProjectPath(repoAbs), canonicalProjectPath(vaultAbs)) || !pathWithinResolved(repoAbs, vaultAbs) {
 		return tuskerError(errorConfigInvalid,
 			"project vault must live inside the registered repository",
 			withPath(vaultRoot),

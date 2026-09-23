@@ -65,11 +65,15 @@ external contacts remain unsupported. Registration alone does not install a
 hook; the operator adds the following to their own Claude Code settings
 (`~/.claude/settings.json` or project `.claude/settings.json`):
 
+Replace `/absolute/path/to/tusker` with the installed executable path. If the
+daemon uses a custom `TUSKER_STATE_ROOT`, prefix each hook command with
+`TUSKER_STATE_ROOT=/absolute/path/to/state` to read the same store.
+
 ```json
 {
   "hooks": {
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}]
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/absolute/path/to/tusker message inbox --project <project-id> --format hook"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "/absolute/path/to/tusker message inbox --project <project-id> --format hook"}]}]
   }
 }
 ```
@@ -79,7 +83,8 @@ with distinct IDs; a `Stop` hook blocks once when it has new messages, then
 returns no output on the next stop. With no matching registration, it injects
 nothing. Keep the hook's project ID aligned with the registration. If the
 session is replaced, install or retain the hook in the replacement session;
-only its ID receives subsequent inbox output.
+only its ID receives subsequent inbox output. A new Claude session ID, including
+one created by `/clear`, needs `tusker execution register` again.
 
 **Codex hook integration is unverified in the installed Codex; qualify it
 before relying on it.** The published Codex hook schema also carries
@@ -89,8 +94,8 @@ owned `hooks.json` entry is:
 ```json
 {
   "hooks": {
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "tusker message inbox --project <project-id> --format hook"}]}]
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/absolute/path/to/tusker message inbox --project <project-id> --format hook"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "/absolute/path/to/tusker message inbox --project <project-id> --format hook"}]}]
   }
 }
 ```
@@ -99,8 +104,7 @@ Tusker never writes either settings file. The hook output is context for the
 architect, not authority to mutate the wave. A continuation proposal still
 requires an operator to invoke `ApplyArchitectContinuation`.
 
-Hook schemas: [Claude Code](https://code.claude.com/docs/en/hooks) and
-[Codex](https://learn.chatgpt.com/docs/hooks).
+Hook schema: [Claude Code](https://code.claude.com/docs/en/hooks).
 
 ## Code sources
 

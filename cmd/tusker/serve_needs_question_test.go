@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestServeNeedsWorkerQuestions(t *testing.T) {
@@ -55,5 +56,46 @@ func TestServeNeedsWorkerQuestions(t *testing.T) {
 	_, stale := serveMutationRaw(t, server, http.MethodPost, "/api/messages", strings.Replace(answer, "operator-answer", "second-answer", 1))
 	if !strings.Contains(stale, `"refused":true`) {
 		t.Fatalf("stale answer accepted: %s", stale)
+	}
+}
+
+func TestServeNeedsExcludesInboxArchitect(t *testing.T) {
+	_, store, project, _ := externalRoutingFixture(t)
+	input := externalRoutingInput(project, "TSK-T-0001", "task")
+	contact, _, err := store.RegisterExternalAgentContact(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = store.PutAgentMessage(AgentMessage{ProjectID: project, Sender: "task:TSK-T-0001", Recipient: contact.Address, IdempotencyKey: "inbox-question", Kind: "question", Body: "Choose?", ReplyRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &serveServer{store: store, now: time.Now}
+	snap := serveSnapshot{projectID: project, notesByID: map[string]Note{"TSK-T-0001": {}}}
+	questions, err := server.serveOpenQuestions(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(questions["TSK-T-0001"]) != 0 {
+		t.Fatalf("inbox question in operator needs: %v", questions)
+	}
+	unbound, err := store.PutAgentContact(AgentContact{ProjectID: project, TaskID: "TSK-T-0001", Role: "architect", Address: AgentAddress{Kind: "task", ID: "missing-architect"}}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unboundQuestion, _, err := store.PutAgentMessage(AgentMessage{ProjectID: project, Sender: "task:TSK-T-0001", Recipient: unbound.Address, IdempotencyKey: "unbound-question", Kind: "question", Body: "Choose again?", ReplyRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	questions, err = server.serveOpenQuestions(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, question := range questions["TSK-T-0001"] {
+		found = found || question.ID == unboundQuestion.ID
+	}
+	if !found {
+		t.Fatalf("unbound architect should need operator: %v", questions)
 	}
 }

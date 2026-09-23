@@ -85,3 +85,24 @@ func TestAgentMessagesRejectForgedReplyAndOversize(t *testing.T) {
 		t.Fatal("forged reply accepted")
 	}
 }
+
+func TestAgentAnswerInheritsQuestionRoute(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	question, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "task:T1", IdempotencyKey: "q", Recipient: AgentAddress{Kind: "operator", ID: "operator"}, OriginTaskID: "T1", WorkRevision: 4, RouteGeneration: 7, Kind: "question", Body: "Choose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := AgentMessage{ProjectID: "app", Sender: "operator:operator", IdempotencyKey: "a", Recipient: AgentAddress{Kind: "task", ID: "T1"}, Kind: "answer", Body: "A", ReplyTo: question.ID}
+	got, dup, err := store.PutAgentMessage(answer)
+	if err != nil || dup || got.WorkRevision != 4 || got.RouteGeneration != 7 || got.OriginTaskID != "T1" {
+		t.Fatalf("answer=%#v duplicate=%v err=%v", got, dup, err)
+	}
+	again, dup, err := store.PutAgentMessage(answer)
+	if err != nil || !dup || again.ID != got.ID {
+		t.Fatalf("duplicate answer=%#v duplicate=%v err=%v", again, dup, err)
+	}
+}

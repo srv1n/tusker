@@ -105,15 +105,38 @@ func serveMCP(input io.Reader, output io.Writer, store *RuntimeStore, maxWait ti
 		}
 		write(body)
 	}
-	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	for scanner.Scan() {
-		var request mcpRequest
-		if !json.Valid(scanner.Bytes()) {
+	reader := bufio.NewReaderSize(input, 1<<20)
+	for {
+		line, readErr := reader.ReadSlice('\n')
+		if errors.Is(readErr, bufio.ErrBufferFull) {
+			for errors.Is(readErr, bufio.ErrBufferFull) {
+				_, readErr = reader.ReadSlice('\n')
+			}
+			response(nil, nil, map[string]any{"code": -32700, "message": "malformed JSON-RPC request"})
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				return readErr
+			}
+			continue
+		}
+		if readErr == io.EOF && len(line) == 0 {
+			break
+		}
+		if readErr != nil && readErr != io.EOF {
+			return readErr
+		}
+		if len(line) > 1<<20 {
 			response(nil, nil, map[string]any{"code": -32700, "message": "malformed JSON-RPC request"})
 			continue
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil || request.JSONRPC != "2.0" || request.Method == "" {
+		var request mcpRequest
+		if !json.Valid(line) {
+			response(nil, nil, map[string]any{"code": -32700, "message": "malformed JSON-RPC request"})
+			continue
+		}
+		if err := json.Unmarshal(line, &request); err != nil || request.JSONRPC != "2.0" || request.Method == "" {
 			response(request.ID, nil, map[string]any{"code": -32600, "message": "invalid JSON-RPC request"})
 			continue
 		}
@@ -133,6 +156,10 @@ func serveMCP(input io.Reader, output io.Writer, store *RuntimeStore, maxWait ti
 			continue
 		}
 		if len(request.ID) == 0 {
+			continue
+		}
+		if string(request.ID) == "null" {
+			response(request.ID, nil, map[string]any{"code": -32600, "message": "invalid JSON-RPC request"})
 			continue
 		}
 		switch request.Method {
@@ -179,9 +206,6 @@ func serveMCP(input io.Reader, output io.Writer, store *RuntimeStore, maxWait ti
 		default:
 			response(request.ID, nil, map[string]any{"code": -32601, "message": "method not found"})
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
 	}
 	pendingMu.Lock()
 	for _, cancel := range pending {
@@ -293,7 +317,7 @@ func callMCPTool(ctx context.Context, store *RuntimeStore, call mcpToolCall, max
 		}
 		out := make([]map[string]string, 0)
 		for _, m := range messages {
-			if m.ConsumedAt != "" || (m.Kind != "answer" && m.Kind != "instruction" && m.Kind != "notice" && m.Kind != "question") {
+			if m.ConsumedAt != "" || m.TransportState == "delivered" || m.WorkRevision != id.WorkRevision || (m.Kind != "answer" && m.Kind != "instruction" && m.Kind != "notice" && m.Kind != "question") {
 				continue
 			}
 			claimed, err := store.ConsumeAgentMessage(id.ProjectID, m.ID)
@@ -323,13 +347,24 @@ func waitMCPAnswer(ctx context.Context, store *RuntimeStore, projectID, itemID, 
 	progressTick := time.NewTicker(15 * time.Second)
 	defer progressTick.Stop()
 	for {
+		if wait > 0 {
+			if err := store.markAgentQuestionAwaiting(projectID, questionID, time.Now().UTC().Add(5*time.Second)); err != nil {
+				return "", err
+			}
+		}
 		messages, err := store.ListAgentMessages(projectID, "task", itemID)
 		if err != nil {
 			return "", errors.New("answer is unavailable")
 		}
 		for _, m := range messages {
 			if m.Kind == "answer" && m.ReplyTo == questionID {
-				_, _ = store.ConsumeAgentMessage(projectID, m.ID)
+				claimed, err := store.ConsumeAgentMessage(projectID, m.ID)
+				if err != nil {
+					return "", errors.New("answer could not be consumed")
+				}
+				if !claimed {
+					continue
+				}
 				return fmt.Sprintf("question %s answered by %s: %s", questionID, m.ID, m.Body), nil
 			}
 		}
@@ -347,4 +382,9 @@ func waitMCPAnswer(ctx context.Context, store *RuntimeStore, projectID, itemID, 
 		}
 	}
 	return fmt.Sprintf("question %s is recorded and pending. If you cannot continue without it, say so and end your turn; the answer will arrive by soft delivery, hard say, or continue.", questionID), nil
+}
+
+func (s *RuntimeStore) markAgentQuestionAwaiting(project, question string, until time.Time) error {
+	_, err := s.exec(`UPDATE agent_messages SET awaiting_until=? WHERE project_id=? AND id=? AND kind='question'`, until.Format(time.RFC3339Nano), project, question)
+	return err
 }

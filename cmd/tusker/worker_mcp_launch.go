@@ -32,6 +32,14 @@ func projectWorkerMCP(project, record, item, attempt string, leaseGeneration, wo
 		"TUSKER_ATTEMPT_ID": attempt, "TUSKER_EVENT_SINK": eventSink,
 		"TUSKER_LEASE_GENERATION": fmt.Sprint(leaseGeneration), "TUSKER_WORK_REVISION": fmt.Sprint(workRevision),
 	}}
+	stateRoot := strings.TrimSpace(os.Getenv("TUSKER_STATE_ROOT"))
+	defaultRoot := filepath.Join(userHomeDir(), "Library", "Application Support", "tusker")
+	if userHomeDir() == "" {
+		defaultRoot = filepath.Join(os.TempDir(), "tusker")
+	}
+	if stateRoot != "" && stateRoot != defaultRoot {
+		p.env["TUSKER_STATE_ROOT"] = stateRoot
+	}
 	if !claude {
 		return p, nil
 	}
@@ -50,6 +58,9 @@ func projectWorkerMCP(project, record, item, attempt string, leaseGeneration, wo
 	p.claudeSettings = filepath.Join(dir, "settings.json")
 	config := map[string]any{"mcpServers": map[string]any{"tusker": map[string]any{"command": p.command, "args": p.args, "env": p.env}}}
 	hookCommand := strings.Join([]string{shellSingleQuote(exe), "message", "inbox", "--project", shellSingleQuote(project), "--run", shellSingleQuote(attempt), "--format", "hook"}, " ")
+	if stateRoot != "" && stateRoot != defaultRoot {
+		hookCommand = "TUSKER_STATE_ROOT=" + shellSingleQuote(stateRoot) + " " + hookCommand
+	}
 	settings := map[string]any{
 		"permissions": map[string]any{"allow": []string{"mcp__tusker"}},
 		"hooks":       map[string]any{"PostToolUse": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookCommand}}}}},

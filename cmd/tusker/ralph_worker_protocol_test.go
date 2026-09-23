@@ -79,7 +79,10 @@ func TestClaudeNativeResumeKeepsSession(t *testing.T) {
 	scriptPath := filepath.Join(tempRoot, "fake-claude.py")
 	script := `#!/usr/bin/env python3
 import json,os,sys
-assert sys.argv[-2:]==["--resume","claude-predecessor"], sys.argv
+if "--version" in sys.argv:
+    print("fake Claude 1.0")
+    sys.exit(0)
+assert sys.argv[sys.argv.index("--resume")+1]=="claude-predecessor", sys.argv
 for line in sys.stdin:
     msg=json.loads(line)
     if msg.get("type")=="control_request":
@@ -96,7 +99,7 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 
-	result, err := startLiveClaude(context.Background(), StartRequest{
+	req := StartRequest{
 		ProjectID:     "project-1",
 		RecordID:      "APP-T-0001",
 		ItemID:        "APP-T-0001",
@@ -106,10 +109,11 @@ for line in sys.stdin:
 		EventSinkPath: filepath.Join(tempRoot, "events.jsonl"),
 		RawLogPath:    filepath.Join(tempRoot, "claude.raw.log"),
 		StatusPath:    filepath.Join(tempRoot, "claude.status.json"),
-		Command:       scriptPath + " --input-format stream-json",
 		VaultPath:     tempRoot,
 		CodexPolicy:   CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "read-only", TurnSandboxPolicy: "read-only"},
-	}, &ResumeRequest{SessionRef: "claude-predecessor", MessageRef: "claude-message"})
+	}
+	prepareClaudeTestArgv(t, &req, scriptPath, "--input-format", "stream-json")
+	result, err := startLiveClaude(context.Background(), req, &ResumeRequest{SessionRef: "claude-predecessor", MessageRef: "claude-message"})
 	if err != nil {
 		t.Fatal(err)
 	}

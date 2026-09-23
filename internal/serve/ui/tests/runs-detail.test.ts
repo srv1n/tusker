@@ -4,7 +4,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { EventTail } from "../src/features/runs/detail/EventTail";
 import {
-  isInterruptibleRun,
   isLiveHeaderRun,
   runStats,
 } from "../src/features/runs/detail/helpers";
@@ -68,7 +67,7 @@ test("runs-detail header still marks a held running run as live", () => {
   } satisfies RunDetail;
 
   expect(isLiveHeaderRun(runningRun)).toBe(true);
-  expect(isInterruptibleRun(runningRun)).toBe(true);
+  // 834e84a4 predated W-0044 server capabilities; interrupt eligibility now comes from the server.
   expect(interruptedRunReadbackComplete(runningRun)).toBe(false);
 });
 
@@ -84,7 +83,6 @@ test("runs-detail waits for canonical interrupted lease and stopped process", ()
   expect(interruptedRunReadbackComplete({ ...interrupted, processRunning: true })).toBe(false);
   expect(interruptedRunReadbackComplete({ ...interrupted, leaseStateRaw: "running" })).toBe(false);
   expect(interruptedRunReadbackComplete(interrupted)).toBe(true);
-  expect(isInterruptibleRun(interrupted)).toBe(false);
 });
 
 test("runs-detail polling stops on query error and otherwise follows readback state", () => {
@@ -174,7 +172,9 @@ test("runs-detail interrupt confirms, guards double fire, and polls canonical re
   expect(detail).toContain("<TaskRunDetail key={taskId}");
   expect(detail).toContain('!runActionLock.tryAcquire("redrive")');
   expect(detail).toContain("redrive.mutate(undefined, {");
-  expect(header).toContain("disabled={!active || actionBusy}");
+  // 834e84a4 used local run state; W-0044 makes interrupt presence server declared.
+  expect(header).toContain('interruptCapability?.available &&');
+  expect(header).toContain('disabled={actionBusy}');
   expect(header).toContain("interrupt.result.reason");
   expect(header).toContain("interrupt.error");
   expect(queries).toContain('mutationKey: ["interrupt", taskId]');

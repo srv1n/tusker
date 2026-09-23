@@ -170,7 +170,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "run", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo reset":
+	case "status", "run", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo session", "demo reset":
 		return true
 	default:
 		return false
@@ -326,6 +326,8 @@ func runInner(command string, args Args) (int, error) {
 		return demoStatusCmd(args)
 	case "demo run":
 		return demoRunCmd(args)
+	case "demo session":
+		return demoSessionCmd(args)
 	case "demo wait":
 		return demoWaitCmd(args)
 	case "demo check":
@@ -1018,7 +1020,7 @@ Purpose:
 		printVerifyHelp()
 	case "close":
 		printCloseHelp()
-	case "demo", "demo seed", "demo status", "demo run", "demo wait", "demo check", "demo reset":
+	case "demo", "demo seed", "demo status", "demo run", "demo session", "demo wait", "demo check", "demo reset":
 		printDemoHelp()
 	case "list":
 		printListHelp()

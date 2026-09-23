@@ -18,7 +18,7 @@ func TestServeRunControlsParity(t *testing.T) {
 		action string
 		reason string
 	}{
-		{"continue", "Continue is available for Blocked, Failed, or Lost runs"},
+		{"continue", "native continuation requires a saved session reference"},
 		{"recover_context", "context recovery requires an unknown terminal outcome"},
 		{"pause", runSessionControlPauseReason(run)},
 		{"reconnect", "no live owner is available to reconnect"},
@@ -30,10 +30,10 @@ func TestServeRunControlsParity(t *testing.T) {
 	}
 	var detail serveRunDetail
 	serveDecode(t, server, "/api/runs/APP-T-0001?project=app", &detail)
-	if len(detail.Controls.Capabilities) != 8 {
+	if len(detail.Controls.Capabilities) != 10 {
 		t.Fatalf("capabilities = %#v", detail.Controls.Capabilities)
 	}
-	for _, want := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "start_fresh"} {
+	for _, want := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "interrupt", "start_fresh", "redrive"} {
 		found := false
 		for _, got := range detail.Controls.Capabilities {
 			if got.Action == want {
@@ -62,6 +62,28 @@ func TestServeRunControlsParity(t *testing.T) {
 	serveDecode(t, server, "/api/runs/APP-T-0001?project=app", &detail)
 	if detail.Controls.Pending != nil {
 		t.Fatalf("settled intent still pending: %#v", detail.Controls.Pending)
+	}
+}
+
+func TestRunLivenessForeignVsOrphaned(t *testing.T) {
+	dir := t.TempDir()
+	ps := filepath.Join(dir, "ps")
+	if err := os.WriteFile(ps, []byte("#!/bin/sh\nprintf 'S 4242 Tue Sep 23 10:00:00 2026\\n'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	started := time.Date(2026, 9, 23, 10, 0, 0, 0, time.Local).UTC().Format(time.RFC3339)
+	if got := orphanedGroupHasStartIdentity(4242, started); got != runLivenessOrphaned {
+		t.Fatalf("matching child start = %s", got)
+	}
+	if got := orphanedGroupHasStartIdentity(4242, "2026-09-23T11:00:00Z"); got != runLivenessUnknown {
+		t.Fatalf("foreign child start = %s", got)
+	}
+	if err := os.WriteFile(ps, []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := orphanedGroupHasStartIdentity(4242, started); got != runLivenessUnknown {
+		t.Fatalf("failed probe = %s", got)
 	}
 }
 

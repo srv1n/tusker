@@ -1228,7 +1228,7 @@ func (s *RuntimeStore) Migrate() error {
 			reply_required INTEGER NOT NULL DEFAULT 0, yield_sender INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL DEFAULT 'queued', transport_state TEXT NOT NULL DEFAULT 'pending',
 			consumed_at TEXT NOT NULL DEFAULT '', answered_at TEXT NOT NULL DEFAULT '',
-			applied_at TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			applied_at TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL DEFAULT '', awaiting_until TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
 			UNIQUE(project_id, sender, idempotency_key)
 		);`,
 		`CREATE INDEX IF NOT EXISTS agent_messages_recipient ON agent_messages(project_id, recipient_kind, recipient_id, state, created_at);`,
@@ -1639,6 +1639,9 @@ func (s *RuntimeStore) Migrate() error {
 		if err := s.ensureColumn("agent_wakeups", column.name, column.stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn("agent_messages", "awaiting_until", `ALTER TABLE agent_messages ADD COLUMN awaiting_until TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
 	}
 	if err := s.ensureColumn("agent_messages", "recipient_generation", `ALTER TABLE agent_messages ADD COLUMN recipient_generation INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err

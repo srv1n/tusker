@@ -179,8 +179,8 @@ func (s *serveServer) runActionCapability(action string, project RegisteredProje
 		}
 		return capability
 	case "continue":
-		if state.State != "blocked" && state.State != "failed" && state.State != "lost" {
-			return serveRunActionCapability{Action: action, Reason: "Continue is available for Blocked, Failed, or Lost runs"}
+		if state.State != "blocked" && state.State != "failed" && state.State != "lost" && state.State != "stopped" {
+			return serveRunActionCapability{Action: action, Reason: "Continue is available for Blocked, Failed, Lost, or Stopped runs"}
 		}
 		_, err, reason := nativeContinuationPreflight(s.store, project, wave, run)
 		if err != nil {
@@ -197,6 +197,10 @@ func (s *serveServer) runActionCapability(action string, project RegisteredProje
 	case runSessionControlStop:
 		if run.Terminal {
 			capability.Reason = "run is already terminal; stop has no effect"
+		}
+	case "interrupt":
+		if state.State != "working" && state.State != "quiet" || !runProcessGroupAlive(run) {
+			capability.Reason = "Interrupt is available for Working or Quiet runs with a live owner"
 		}
 	case runSessionControlFresh:
 		if prior != nil && prior.Action == runSessionControlStop && prior.LeaseGeneration == run.LeaseGeneration && prior.State != runSessionControlSettledState {
@@ -215,6 +219,16 @@ func (s *serveServer) runActionCapability(action string, project RegisteredProje
 	}
 	if capability.Reason != "" && action != "continue" {
 		capability.Available = false
+	}
+	return capability
+}
+
+func (s *serveServer) redriveCapability(task Note, run RunStatus) serveRunActionCapability {
+	capability := serveRunActionCapability{Action: "redrive", Available: true}
+	if err := refuseInvalidRunEndState(s.store, &run); err != nil {
+		capability.Available, capability.Reason = false, err.Error()
+	} else if refused, reason := serveRedriveRefusal(stringField(task.Data, "status"), run); refused {
+		capability.Available, capability.Reason = false, reason
 	}
 	return capability
 }
@@ -304,10 +318,11 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 	now := time.Now().UTC()
 	if prior != nil && prior.Action == runSessionControlStop && prior.LeaseGeneration == run.LeaseGeneration {
 		if (prior.State == runSessionControlPending || prior.State == runSessionControlUnknown) && runSessionControlSettled(run) && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateInterrupted {
-			prior.State = runSessionControlSettledState
-			prior.Reason = "stop acknowledged by canonical owner/process readback"
-			prior.UpdatedAt = now.Format(time.RFC3339Nano)
-			_ = saveRunSessionControlIntent(s.store, *prior)
+			settled := *prior
+			settled.State, settled.Reason, settled.UpdatedAt = runSessionControlSettledState, "stop acknowledged by canonical owner/process readback", now.Format(time.RFC3339Nano)
+			if saved, err := saveRunSessionControlIntentIfPrior(s.store, settled, prior); err == nil && saved {
+				*prior = settled
+			}
 		}
 		if prior.State == runSessionControlPending || prior.State == runSessionControlUnknown {
 			// A repeated request never sends another signal for the same owner.
@@ -334,7 +349,7 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 		}
 	}
 	intent := runSessionControlIntent{
-		Action: runSessionControlStop, State: runSessionControlPending,
+		Schema: runSessionControlSchema, Action: runSessionControlStop, State: runSessionControlPending,
 		ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
 		Actor: actor, Reason: "operator stop requested", LeaseGeneration: run.LeaseGeneration,
 		LeaseOwner: run.LeaseOwner, AttemptID: run.ActiveAttemptID, ProcessPID: run.ProcessPID,
@@ -373,11 +388,16 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 		return
 	}
 	stopped, _, err := interruptRuntimeRunScoped(DefaultStateRoot(), s.store, run.ProjectID, run.RecordID)
+	pendingIntent := intent
 	if err != nil {
 		intent.State = runSessionControlUnknown
 		intent.Reason = err.Error()
 		intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		_ = saveRunSessionControlIntent(s.store, intent)
+		if saved, saveErr := saveRunSessionControlIntentIfPrior(s.store, intent, &pendingIntent); saveErr != nil || !saved {
+			result.Refused, result.Reason = true, "stop intent changed during interrupt; reload the run"
+			serveJSON(w, http.StatusConflict, result)
+			return
+		}
 		result.Refused, result.Unknown, result.Supported = true, true, true
 		result.State, result.Reason, result.Intent = intent.State, "stop acknowledgement is unresolved: "+err.Error(), &intent
 		serveJSON(w, http.StatusOK, result)
@@ -395,7 +415,11 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 		result.Pending = true
 	}
 	intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	_ = saveRunSessionControlIntent(s.store, intent)
+	if saved, saveErr := saveRunSessionControlIntentIfPrior(s.store, intent, &pendingIntent); saveErr != nil || !saved {
+		result.Refused, result.Reason = true, "stop intent changed during interrupt; reload the run"
+		serveJSON(w, http.StatusConflict, result)
+		return
+	}
 	result.Supported, result.State, result.Intent = true, intent.State, &intent
 	if result.Reason == "" {
 		result.Reason = intent.Reason
@@ -817,10 +841,11 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 		serveJSON(w, http.StatusOK, result)
 		return
 	}
-	projects, err := s.store.ListProjects()
+	projects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, ProjectID: projectID})
 	persisted := false
 	if err == nil {
-		for _, candidate := range projects {
+		for _, loaded := range projects {
+			candidate := loaded.Project
 			if candidate.ProjectID == projectID {
 				project = &candidate
 				persisted = true
@@ -894,10 +919,10 @@ func (s *serveServer) handleProjectVisibilityAction(w http.ResponseWriter, proje
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "project visibility action requires visible"})
 		return
 	}
-	projects, err := s.store.ListProjects()
+	projects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true})
 	if err == nil {
 		matched := false
-		for _, group := range groupRegisteredProjects(projects) {
+		for _, group := range groupRegisteredProjects(loadedRegisteredProjects(projects)) {
 			if group.ID != projectID && !registeredProjectGroupContains(group, projectID) {
 				continue
 			}
@@ -1142,11 +1167,12 @@ func (s *serveServer) handleTaskRouteAction(w http.ResponseWriter, taskID string
 		serveJSON(w, http.StatusNotFound, serveCommandResult("tusker task route", "", err))
 		return
 	}
-	wfFile, err := loadWorkflow(project.VaultRoot)
+	loaded, err := loadProjectContents(s.store, project, false)
 	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker task route", "", err))
 		return
 	}
+	wfFile := loaded.Workflow
 	data := cloneMap(note.Data)
 	setLevel := func(key, field string) error {
 		raw, present := body[key]

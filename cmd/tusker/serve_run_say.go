@@ -112,11 +112,16 @@ func (s *serveServer) handleRunMessage(w http.ResponseWriter, r *http.Request, t
 		return
 	}
 	run = *latestBefore
+	project, task, wave, err := runSayContext(s.store, run)
+	if err != nil {
+		serveJSON(w, http.StatusConflict, serveRunSayResponse{Refused: true, Reason: err.Error()})
+		return
+	}
 	action := "continue"
 	if say {
 		action = "say"
 	}
-	capability := s.runActionCapability(action, snap.project, Note{}, run, nil)
+	capability := s.runActionCapability(action, project, wave, run, nil)
 	priorDelivery := false
 	if say {
 		prior, priorErr := runSayPriorDelivery(s.store, run, actor, body.string("message"), body.string("idempotencyKey"))
@@ -141,11 +146,6 @@ func (s *serveServer) handleRunMessage(w http.ResponseWriter, r *http.Request, t
 	}
 	if len(message) > workerDeliveryBodyLimit {
 		serveJSON(w, http.StatusBadRequest, serveRunSayResponse{Refused: true, Reason: "message exceeds 32KiB"})
-		return
-	}
-	project, task, wave, err := runSayContext(s.store, run)
-	if err != nil {
-		serveJSON(w, http.StatusConflict, serveRunSayResponse{Refused: true, Reason: err.Error()})
 		return
 	}
 	var result runSayResult

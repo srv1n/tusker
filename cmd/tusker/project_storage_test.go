@@ -43,6 +43,21 @@ func TestValidateProjectStorageBoundaryRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestValidateProjectStorageBoundaryAcceptsRepoPathAlias(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".tusker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(repo, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProjectStorageBoundary(repo, filepath.Join(alias, ".tusker")); err != nil {
+		t.Fatalf("repo-local vault through a path alias should pass: %v", err)
+	}
+}
+
 func TestValidateProjectStorageBoundaryRejectsSymlinkEscapeWithMissingVault(t *testing.T) {
 	repo := t.TempDir()
 	outside := t.TempDir()

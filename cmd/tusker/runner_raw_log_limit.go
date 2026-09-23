@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,7 @@ type boundedRawLogWriter struct {
 	rotate          bool
 	allowExisting   bool
 	rotated         bool
+	pendingLine     []byte
 	onRotate        func(int64) error
 	max             int64
 	written         int64
@@ -114,8 +116,24 @@ func (w *boundedRawLogWriter) Write(p []byte) (int, error) {
 	}
 	w.mu.Lock()
 	if w.rotate {
+		if w.overflow {
+			w.mu.Unlock()
+			return 0, errAuthoritativeRawLogOverflow
+		}
 		n, err := w.writeRotating(p)
+		var terminate func()
+		if errors.Is(err, errAuthoritativeRawLogOverflow) {
+			w.overflow = true
+			w.pendingLine = nil
+			if w.terminate != nil && !w.terminationSent {
+				w.terminationSent = true
+				terminate = w.terminate
+			}
+		}
 		w.mu.Unlock()
+		if terminate != nil {
+			go terminate()
+		}
 		return n, err
 	}
 	if w.overflow {
@@ -168,29 +186,57 @@ func (w *boundedRawLogWriter) Write(p []byte) (int, error) {
 // writeRotating keeps the first segment for native session recovery, the
 // current segment, and at most one previous segment. It is called under mu.
 func (w *boundedRawLogWriter) writeRotating(p []byte) (int, error) {
-	written := 0
+	// A provider that never ends a line cannot hold unlimited daemon memory.
+	// Complete oversized lines below this ceiling still occupy one segment.
+	lineLimit := w.max * 4
+	if lineLimit < 64*1024 {
+		lineLimit = 64 * 1024
+	}
+	consumed := 0
 	for len(p) > 0 {
-		if w.written == w.max {
-			if err := w.rotateSegment(); err != nil {
-				return written, err
+		end := bytes.IndexByte(p, '\n')
+		if end < 0 {
+			end = len(p) - 1
+		}
+		part := p[:end+1]
+		if int64(len(w.pendingLine))+int64(len(part)) > lineLimit {
+			return consumed, errAuthoritativeRawLogOverflow
+		}
+		w.pendingLine = append(w.pendingLine, part...)
+		consumed += len(part)
+		p = p[len(part):]
+		if part[len(part)-1] == '\n' {
+			if err := w.writeRotatingLine(w.pendingLine); err != nil {
+				return consumed, err
 			}
-		}
-		size := int64(len(p))
-		if size > w.max-w.written {
-			size = w.max - w.written
-		}
-		n, err := w.file.Write(p[:int(size)])
-		w.written += int64(n)
-		written += n
-		p = p[n:]
-		if err != nil {
-			return written, err
-		}
-		if int64(n) != size {
-			return written, io.ErrShortWrite
+			w.pendingLine = w.pendingLine[:0]
 		}
 	}
-	return written, nil
+	return consumed, nil
+}
+
+func (w *boundedRawLogWriter) writeRotatingLine(line []byte) error {
+	if w.written > 0 && w.written+int64(len(line)) > w.max {
+		if err := w.rotateSegment(); err != nil {
+			return err
+		}
+	}
+	if int64(len(line)) > w.max {
+		marker := fmt.Sprintf("[oversized line %d bytes]\n", len(line))
+		if _, err := io.WriteString(w.file, marker); err != nil {
+			return err
+		}
+		w.written += int64(len(marker))
+	}
+	n, err := w.file.Write(line)
+	w.written += int64(n)
+	if err != nil {
+		return err
+	}
+	if n != len(line) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func (w *boundedRawLogWriter) rotateSegment() error {
@@ -280,6 +326,20 @@ func (w *boundedRawLogWriter) close() error {
 	if w == nil || w.file == nil {
 		return nil
 	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.rotate && len(w.pendingLine) > 0 {
+		if err := w.writeRotatingLine(w.pendingLine); err != nil {
+			_ = w.file.Close()
+			return err
+		}
+		w.pendingLine = nil
+	}
+	if w.rotate && w.written > w.max {
+		if err := w.rotateSegment(); err != nil {
+			return err
+		}
+	}
 	return w.file.Close()
 }
 
@@ -352,8 +412,8 @@ func monitorBoundedRunnerCommand(ctx context.Context, cmd *exec.Cmd, pgid int, w
 		reason = fmt.Sprintf("runner exited with code %d", exitCode)
 	}
 	var reasonCode RunFailureReasonCode
-	if runner == RunnerCodexExec && exitCode != 0 && !log.overflowed() && ctx.Err() == nil && closeErr == nil {
-		reasonCode, _ = codexExecFailureFromLog(req.RawLogPath)
+	if !log.overflowed() && ctx.Err() == nil && closeErr == nil {
+		outcome, reason, reasonCode = classifyRunnerLog(runner, req.RawLogPath, exitCode, outcome, reason)
 	}
 	publishRunnerTerminalStatus(eventLog, runner, req, exitCode, outcome, reason, 0, reasonCode)
 	// The monitor is not allowed to signal the group after Wait; a reused PGID

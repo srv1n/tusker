@@ -67,6 +67,26 @@ func TestWorkerMCPLaunchProjection(t *testing.T) {
 	}
 }
 
+func TestWorkerMCPStateRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "custom state")
+	t.Setenv("TUSKER_STATE_ROOT", root)
+	status := filepath.Join(t.TempDir(), "status.json")
+	p, err := projectWorkerMCP("app", "record", "item", "attempt", 1, 1, filepath.Join(t.TempDir(), "events"), status, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.env["TUSKER_STATE_ROOT"] != root {
+		t.Fatalf("env=%v", p.env)
+	}
+	settings, err := os.ReadFile(p.claudeSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), "TUSKER_STATE_ROOT=") || !strings.Contains(string(settings), "custom state") {
+		t.Fatal(string(settings))
+	}
+}
+
 func TestWorkerMCPLaunchCodexResumeOrdering(t *testing.T) {
 	p := workerMCPProjection{command: "/tmp/tusker", args: []string{"mcp", "serve", "--max-wait", "900"}, env: map[string]string{"TUSKER_ATTEMPT_ID": "a quoted \" value", "TUSKER_PROJECT_ID": "p"}}
 	start := appendCodexMCP([]string{"/tmp/codex", "exec", "--json", "-"}, p)

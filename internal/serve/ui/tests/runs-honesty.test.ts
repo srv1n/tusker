@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   clockTime,
-  redriveDisabledReason,
   runStats,
   waitingForDaemonReason,
 } from "../src/features/runs/detail/helpers";
@@ -39,26 +38,13 @@ test("outcome rendering is generic — a new API outcome still displays", () => 
   expect(outcomeToneOf("succeeded")).toBe("pass");
 });
 
-test("redrive is disabled with an explanation for review/done, allowed otherwise", () => {
-  const review = redriveDisabledReason("review");
-  expect(review).not.toBeNull();
-  expect(review).toContain("review");
-
-  const done = redriveDisabledReason("done");
-  expect(done).not.toBeNull();
-
-  expect(redriveDisabledReason("ready")).toBeNull();
-  expect(redriveDisabledReason("in_progress")).toBeNull();
-  expect(redriveDisabledReason(undefined)).toBeNull();
-});
-
-test("Retry maps to redrive, disables from canonical status, and surfaces the result", () => {
+test("Retry maps to server-declared redrive and surfaces the result", () => {
   const src = readFileSync("src/features/runs/detail/RunHeader.tsx", "utf8");
   // Labeled as redrive, not an ambiguous "Retry".
   expect(src).toContain("Redrive");
   expect(src).toContain("tusker redrive");
-  // Disabled decision is driven by canonical task status (capsule), not the run row.
-  expect(src).toContain("redriveDisabledReason(capsule?.status, run, waitingForDaemonReason)");
+  // 834e84a4 introduced client eligibility; W-0044 moves this decision to server capabilities.
+  expect(src).toContain('item.action === "redrive"');
   expect(src).toContain("disabled={redriveDisabled}");
   // The redrive result reason is rendered, never swallowed.
   expect(src).toContain("retry.result.reason");
@@ -76,7 +62,7 @@ test("the interrupt action posts to the guarded run interrupt endpoint", () => {
   expect(src).toContain("Promise<InterruptResult>");
 });
 
-test("retry queued plus daemon down pauses timing and disables duplicate redrive", () => {
+test("retry queued plus daemon down pauses timing and explains the wait", () => {
   const queued = {
     taskId: "APP-T-0001",
     taskTitle: "Queued run",
@@ -103,7 +89,7 @@ test("retry queued plus daemon down pauses timing and disables duplicate redrive
 
   expect(reason).toContain("Start the daemon");
   expect(runStats(queued, reason !== null)[0]).toEqual({ label: "Elapsed", value: "Paused" });
-  expect(redriveDisabledReason("ready", queued, reason)).toContain("already queued");
+  // Server redrive capability carries the queued refusal; the client only displays it.
 
   const header = readFileSync("src/features/runs/detail/RunHeader.tsx", "utf8");
   const tail = readFileSync("src/features/runs/detail/EventTail.tsx", "utf8");

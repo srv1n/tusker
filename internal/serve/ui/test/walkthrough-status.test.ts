@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { readFileSync } from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
@@ -21,6 +22,14 @@ const review = (overrides: Partial<WaveReview> = {}): WaveReview => ({
 });
 
 const humanAction: HumanAction = { kind: "decision", rawKind: "decision", title: "Approval", action: "Approve this.", whyAgentCannot: "Human authority is required.", completionCondition: "Approval is recorded.", gateId: "G-1", materialRevision: "rev", blockedTaskIds: ["T-1"], covers: [], acceptance: [] };
+
+// 834e84a4 added a run-detail Link to the inspector; server renders need router context.
+function renderWithRouter(element: ReturnType<typeof createElement>) {
+  const root = createRootRoute();
+  const runRoute = createRoute({ getParentRoute: () => root, path: "/p/$projectId/runs/$taskId" });
+  const router = createRouter({ routeTree: root.addChildren([runRoute]), history: createMemoryHistory({ initialEntries: ["/"] }) });
+  return renderToStaticMarkup(createElement(RouterContextProvider, { router }, element));
+}
 
 describe("walkthrough status", () => {
   test("uses the authoritative review for ready, execution, review, failure and completion", () => {
@@ -112,7 +121,7 @@ describe("walkthrough status", () => {
       client.setQueryData(waveReviewQuery("W-1", "demo").queryKey, observation);
       const header = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(WaveAuthorityControls, { projectId: "demo", waveId: "W-1" }))));
       expect(header).toContain(expected.header);
-      const drawer = renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, createElement(ConfirmProvider, null, createElement(TaskInspector, { task: staleTask, run: staleRun, selectedTaskId: "T-1", loading: false, reviewMember: observation.members[0], onClose: () => {}, onOpenTask: () => {} }))));
+      const drawer = renderWithRouter(createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, createElement(ConfirmProvider, null, createElement(TaskInspector, { task: staleTask, run: staleRun, selectedTaskId: "T-1", loading: false, reviewMember: observation.members[0], onClose: () => {}, onOpenTask: () => {} }))));
       expect(drawer).toContain(expected.drawer);
       expect(drawer).not.toContain("Building now");
     }

@@ -399,11 +399,12 @@ func runSayPriorDelivery(store *RuntimeStore, run RunStatus, actor, body, key st
 }
 
 func runSayContext(store *RuntimeStore, run RunStatus) (RegisteredProject, Note, Note, error) {
-	projects, err := store.ListProjects()
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, ProjectID: run.ProjectID})
 	if err != nil {
 		return RegisteredProject{}, Note{}, Note{}, err
 	}
-	for _, project := range projects {
+	for _, loaded := range projects {
+		project := loaded.Project
 		if project.ProjectID != run.ProjectID {
 			continue
 		}

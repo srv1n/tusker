@@ -2,11 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { AgentCoordinationSummary, reviewOverrideNeedsReason, routeBlockers, routeSummary, RouteFact, TaskContractDisclosure } from "../src/features/product/TaskScreens";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
 import { readyRun, readyTask } from "../previews/wux/inspector/fixtures";
+
+// 834e84a4 added a run-detail Link to the inspector; server renders need router context.
+function renderWithRouter(element: ReturnType<typeof createElement>) {
+  const root = createRootRoute();
+  const runRoute = createRoute({ getParentRoute: () => root, path: "/p/$projectId/runs/$taskId" });
+  const router = createRouter({ routeTree: root.addChildren([runRoute]), history: createMemoryHistory({ initialEntries: ["/"] }) });
+  return renderToStaticMarkup(createElement(RouterContextProvider, { router }, element));
+}
 
 describe("task authoring and execution experience", () => {
   test("uses one route summary for effective and actual identity", () => {
@@ -61,7 +70,7 @@ describe("task authoring and execution experience", () => {
     const second = { ...first, gateId: "WUX-G-0102", title: "Confirm the copy", action: "Confirm the wording." };
     const task = { ...readyTask, humanAction: first, humanActions: [first, second], gates: [{ id: first.gateId, kind: "review" as const, owner: "human:reviewer" }, { id: second.gateId, kind: "review" as const, owner: "human:copy" }] };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(TaskInspector, { task, run: readyRun, selectedTaskId: task.id, loading: false, onClose: () => {}, onOpenTask: () => {} }))));
+    const html = renderWithRouter(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(TaskInspector, { task, run: readyRun, selectedTaskId: task.id, loading: false, onClose: () => {}, onOpenTask: () => {} }))));
     expect(html).toContain("Owner: human:reviewer");
     expect(html).toContain("Owner: human:copy");
     expect(html).toContain("Confirm the wording.");

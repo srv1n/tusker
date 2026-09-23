@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { RunDetail } from "@/types/domain";
+import type { RunDetail, RunSayResponse } from "@/types/domain";
 import { ActionRefusalError, api } from "@/lib/api";
 
 export function RunSayBox({ run, onReadback }: { run: RunDetail; onReadback: () => Promise<unknown> }) {
@@ -8,7 +8,7 @@ export function RunSayBox({ run, onReadback }: { run: RunDetail; onReadback: () 
   const busyRef = useRef(false);
   const [feedback, setFeedback] = useState("");
   const key = useRef<string | undefined>(undefined);
-  const canSay = Boolean(run.sayRoute?.available && run.controls?.capabilities?.find((action) => action.action === "say")?.available);
+  const canSay = Boolean(run.controls?.capabilities?.find((action) => action.action === "say")?.available);
   const canContinue = Boolean(run.controls?.capabilities?.find((action) => action.action === "continue")?.available);
   const mode = canSay ? "say" : canContinue ? "continue" : null;
   const send = async () => {
@@ -18,15 +18,18 @@ export function RunSayBox({ run, onReadback }: { run: RunDetail; onReadback: () 
     setFeedback("Sending…");
     if (!key.current) key.current = crypto.randomUUID();
     try {
-      const result = mode === "say"
+      const result: RunSayResponse = mode === "say"
         ? await api.sayRun(run.taskId, message, key.current, run.projectId)
         : await api.continueRun(run.taskId, message, run.projectId);
       if (result.refused || !result.ok) {
         setFeedback(result.reason || "The server refused this message.");
       } else {
-        setFeedback("Accepted. Waiting for run readback…");
-        try { await onReadback(); setFeedback("Accepted."); }
-        catch { setFeedback("Accepted, but run readback is unavailable. Refresh to see its current state."); }
+        const receipt = result.duplicate
+          ? `Already sent. Delivery: ${result.delivery?.state || "stored"}.`
+          : "Accepted.";
+        setFeedback(`${receipt} Waiting for run readback…`);
+        try { await onReadback(); setFeedback(receipt); }
+        catch { setFeedback(`${receipt} Run readback is unavailable. Refresh to see its current state.`); }
         setMessage("");
         key.current = undefined;
       }

@@ -705,11 +705,12 @@ func modelProfileReferencesForScope(vault, scope string) (map[string][]string, b
 		return refs, false
 	}
 	defer store.Close()
-	projects, err := store.ListProjects()
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true})
 	if err != nil {
 		return refs, false
 	}
-	for _, project := range projects {
+	for _, loaded := range projects {
+		project := loaded.Project
 		if sameCanonicalProjectPath(project.VaultRoot, vault) {
 			continue
 		}

@@ -119,3 +119,16 @@ func TestArchitectWaveSupervisionReportsHardDependencyClosure(t *testing.T) {
 		t.Fatal("soft dependency should not count as parked hard closure")
 	}
 }
+
+func TestArchitectWaveStalledOnYieldQuestion(t *testing.T) {
+	now := time.Now().UTC()
+	snapshot := armedWaveSnapshot{Authorization: "armed", Members: []armedWaveMember{{ID: "task", State: armedWaveRunnable}}}
+	runs := map[string]RunStatus{"task": {LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeWaitingForHuman), UpdatedAt: now.Format(time.RFC3339Nano)}}
+	stalled, blockers := architectWaveStalled(snapshot, v7Index{}, runs, now, map[string]string{"task": "msg-question"})
+	if !stalled || len(blockers) != 1 || !strings.Contains(blockers[0], "msg-question") {
+		t.Fatalf("yield question not reported: %v %#v", stalled, blockers)
+	}
+	if stalled, _ := architectWaveStalled(snapshot, v7Index{}, runs, now); stalled {
+		t.Fatal("missing question reported as stalled")
+	}
+}

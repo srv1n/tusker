@@ -31,7 +31,7 @@ usage() {
 	printf 'usage: %s --repo <dir> [--candidate <bin>] [--mode offline|real|mixed] [--full-delays]\n' "$0" >&2
 	printf '       [--require-harness NAME] [--profile NAME] [--codex-profile NAME] [--muse-profile NAME]\n' >&2
 	printf '       [--stage full|standalone|wave|seed-only] [--timeout 15m] [--proof-dir DIR]\n' >&2
-	printf '       [--variant fail-once|reject-once|cancel]\n' >&2
+	printf '       [--variant fail-once|reject-once|cancel|session:<scenario>|session:all]\n' >&2
 	exit 64
 }
 
@@ -58,7 +58,7 @@ done
 
 [ -n "$REPO" ] || usage
 case "$MODE" in offline|real|mixed) ;; *) printf 'bad --mode: %s\n' "$MODE" >&2; usage ;; esac
-case "$VARIANT" in ""|fail-once|reject-once|cancel) ;; *) printf 'bad --variant: %s\n' "$VARIANT" >&2; usage ;; esac
+case "$VARIANT" in ""|fail-once|reject-once|cancel|session:restart|session:kill-worker|session:say-hard|session:say-soft|session:ask-wait|session:ask-nowait|session:stop-continue|session:start-fresh|session:permission-deny|session:all) ;; *) printf 'bad --variant: %s\n' "$VARIANT" >&2; usage ;; esac
 case "$STAGE" in full|standalone|wave|seed-only) ;; *) printf 'bad --stage: %s\n' "$STAGE" >&2; usage ;; esac
 if [ "$MODE" = "real" ] && [ -z "$REQUIRE_HARNESS$PROFILE" ]; then
 	printf 'real mode needs --require-harness and/or --profile (no silent substitution)\n' >&2
@@ -68,10 +68,13 @@ if [ "$MODE" = "mixed" ] && { [ -z "$CODEX_PROFILE" ] || [ -z "$MUSE_PROFILE" ];
 	printf 'mixed mode needs --codex-profile and --muse-profile\n' >&2
 	exit 64
 fi
-if [ -n "$VARIANT" ] && [ "$MODE" != "offline" ]; then
-	printf 'variants run on the offline lane only\n' >&2
-	exit 64
-fi
+case "$VARIANT:$MODE" in
+	session:*:real) [ -n "$REQUIRE_HARNESS" ] || { printf 'session variants need one --require-harness\n' >&2; exit 64; } ;;
+	session:*:*) printf 'session variants require --mode real\n' >&2; exit 64 ;;
+	:*) ;;
+	*:offline) ;;
+	*) printf 'failure variants require --mode offline\n' >&2; exit 64 ;;
+esac
 if ! command -v "$CANDIDATE" >/dev/null 2>&1; then
 	printf 'candidate not found: %s (pass --candidate <tusker-bin>)\n' "$CANDIDATE" >&2
 	exit 64
@@ -502,13 +505,55 @@ PYEOF
 	log "PASS: cancel released ownership, no late success, reset clean"
 }
 
+variant_session() {
+	case "$VARIANT" in
+		session:all)
+			printf 'session:all needs a reset and a new standalone run between scenarios; run each scenario separately:\n' >&2
+			for session_name in restart kill-worker say-hard say-soft ask-wait ask-nowait stop-continue start-fresh permission-deny; do
+				printf '  tusker demo reset --repo %s --yes && %s --repo %s --mode real --require-harness %s --variant session:%s\n' "$REPO" "$0" "$REPO" "$REQUIRE_HARNESS" "$session_name" >&2
+			done
+			exit 3 ;;
+		*) session_names=${VARIANT#session:} ;;
+	esac
+	journey_seed
+	for session_name in $session_names; do
+		STEP=$((STEP + 1))
+		set -- demo session --repo "$REPO" --harness "$REQUIRE_HARNESS" --scenario "$session_name" --require-harness "$REQUIRE_HARNESS" --json
+		if [ -n "$PROFILE" ]; then set -- "$@" --profile "$PROFILE"; fi
+		set +e
+		"$CANDIDATE" "$@" >"$PROOF_DIR/session-$session_name.json" 2>"$PROOF_DIR/session-$session_name.stderr"
+		code=$?
+		set -e
+		python3 - "$PROOF_DIR/session-$session_name.json" <<'PYEOF' || fail "session $session_name proof invalid"
+import json, sys
+doc = json.load(open(sys.argv[1]))
+assert doc['status'] in ('unsupported', 'unavailable', 'manual-required', 'refused', 'passed', 'failed')
+assert doc['proof_label'] in ('fixture', 'live-provider')
+print('%s: %s — %s' % (doc['scenario'], doc['status'], doc.get('reason', '')))
+PYEOF
+		[ "$code" -eq 0 ] || fail "session $session_name exited $code"
+		python3 - "$PROOF_DIR/session-$session_name.json" <<'PYEOF' || fail "session $session_name did not pass"
+import json, sys
+doc = json.load(open(sys.argv[1]))
+assert doc['status'] == 'passed', '%s: %s' % (doc['status'], doc.get('reason', ''))
+proof = json.load(open(doc['proof']))
+assert proof['proof_label'] == 'live-provider', 'session variant requires live-provider proof'
+assert proof['scenario'] == doc['scenario'] and proof['harness'] == doc['harness']
+assert proof['checks'] and all(check['passed'] for check in proof['checks']), 'missing or failed scenario checks'
+print('PASS: %s/%s (%d observed checks)' % (proof['harness'], proof['scenario'], len(proof['checks'])))
+PYEOF
+	done
+	log "session proof recorded; follow docs/system/session-testing.md for the operator checklist"
+}
+
 if [ -n "$VARIANT" ]; then
 	case "$VARIANT" in
 		fail-once) variant_fail_once ;;
 		reject-once) variant_reject_once ;;
 		cancel) variant_cancel ;;
+		session:*) variant_session ;;
 	esac
-	log "PASS: variant $VARIANT complete; proof in $PROOF_DIR"
+	case "$VARIANT" in session:*) log "PASS: live session variant $VARIANT; proof in $PROOF_DIR" ;; *) log "PASS: variant $VARIANT complete; proof in $PROOF_DIR" ;; esac
 	exit 0
 fi
 

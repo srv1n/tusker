@@ -1640,7 +1640,7 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	end := minInt(offset+limit, len(filtered))
 	for _, run := range filtered[offset:end] {
-		summary, summaryErr := s.runSummaryChecked(snap, run)
+		summary, summaryErr := s.runSummaryCheckedWithScope(snap, run, true)
 		if summaryErr != nil {
 			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": summaryErr.Error()})
 			return
@@ -1710,9 +1710,10 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 	if task, found := snap.notesByID[taskID]; found {
 		wave = snap.notesByID[stringField(task.Data, "wave")]
 	}
-	for _, action := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "start_fresh"} {
+	for _, action := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "interrupt", "start_fresh"} {
 		detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.runActionCapability(action, snap.project, wave, run, intent))
 	}
+	detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.redriveCapability(snap.notesByID[taskID], run))
 	for i, attempt := range attempts {
 		detail.Attempts = append(detail.Attempts, serveAttempt{
 			ID:          attempt.AttemptID,
@@ -1764,15 +1765,9 @@ func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, t
 		CanonicalStatus: strings.ToLower(strings.TrimSpace(rawStatus)),
 		LeaseState:      run.LeaseState,
 	}
-	if endStateErr := refuseInvalidRunEndState(s.store, &run); endStateErr != nil {
+	if capability := s.redriveCapability(snap.notesByID[taskID], run); !capability.Available {
 		result.Refused = true
-		result.Reason = endStateErr.Error()
-		serveJSON(w, http.StatusConflict, result)
-		return
-	}
-	if refused, reason := serveRedriveRefusal(rawStatus, run); refused {
-		result.Refused = true
-		result.Reason = reason
+		result.Reason = capability.Reason
 		serveJSON(w, http.StatusOK, result)
 		return
 	}
@@ -1814,6 +1809,11 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		wave := snap.notesByID[stringField(task.Data, "wave")]
+		capability := s.runActionCapability(action, snap.project, wave, run, nil)
+		if !capability.Available {
+			serveJSON(w, http.StatusConflict, serveRecoveryResult{Refused: true, TaskID: taskID, Action: action, Reason: capability.Reason})
+			return
+		}
 		var result serveRecoveryResult
 		var recoveryErr error
 		if action == "continue" {

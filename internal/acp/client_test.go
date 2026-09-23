@@ -1015,13 +1015,21 @@ func TestACPEOFAfterPromptIsDeliveryUnknown(t *testing.T) {
 	}
 }
 
-func TestACPUpdateOverflowPoisonsInsteadOfHidingTerminal(t *testing.T) {
+func TestUpdateBurstBeyondQueue(t *testing.T) {
 	c := startTestClient(t, "flood", func(cfg *Config) { cfg.Limits.MaxUpdates = 2 })
 	initializeAndSession(t, c)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for range c.Updates() {
+		}
+	}()
 	result, err := c.Prompt(context.Background(), "flood")
-	if err == nil || (result.Outcome != OutcomeDeliveryUnknown && result.Outcome != OutcomePoisoned) {
-		t.Fatalf("result=%#v err=%v, want explicit poisoned/unknown outcome", result, err)
+	if err != nil || result.Outcome != OutcomeCompleted {
+		t.Fatalf("result=%#v err=%v, want completed burst", result, err)
 	}
+	_ = c.Close()
+	<-drained
 }
 
 func TestACPUpdateBurstCoalesced(t *testing.T) {
@@ -1036,8 +1044,37 @@ func TestACPUpdateBurstCoalesced(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		push(map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "tool-1", "status": "in_progress"})
 	}
+	c.flushPendingUpdate()
 	if c.protocolErr != nil || len(c.updates) != 1000 {
 		t.Fatalf("burst poisoned or lost tool updates: error=%v queued=%d", c.protocolErr, len(c.updates))
+	}
+}
+
+func TestACPToolUpdateBurstKeepsLatestStatus(t *testing.T) {
+	cfg := (Config{}).withDefaults()
+	cfg.Limits.MaxUpdates = 2
+	c := &Client{cfg: cfg, session: &Session{ID: "session-1"}, pending: map[string]*pendingCall{}, updates: make(chan Update, 2)}
+	for i := 0; i < 10000; i++ {
+		status := "in_progress"
+		if i == 9999 {
+			status = "completed"
+		}
+		c.handleRequest(rpcMessage{Method: "session/update", Params: mustTestJSON(map[string]any{
+			"sessionId": "session-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "tool-1", "status": status},
+		})})
+	}
+	c.flushPendingUpdate()
+	if c.protocolErr != nil || len(c.updates) != 2 {
+		t.Fatalf("burst error=%v queued=%d", c.protocolErr, len(c.updates))
+	}
+	<-c.updates
+	var final struct {
+		Update struct {
+			Status string `json:"status"`
+		} `json:"update"`
+	}
+	if err := json.Unmarshal((<-c.updates).Params, &final); err != nil || final.Update.Status != "completed" {
+		t.Fatalf("final tool update=%+v err=%v", final, err)
 	}
 }
 

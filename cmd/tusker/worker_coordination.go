@@ -457,15 +457,11 @@ func (s *RuntimeStore) ReconcileRunSessionWithProbe(run RunStatus, probe func(Ru
 			result.RefusalReasons = append(result.RefusalReasons, "stored session identity does not match the current project, attempt, or work revision")
 		}
 	}
-	freshSessionRequested := strings.HasPrefix(strings.TrimSpace(canonical.LastError), outcomeUnknownContextRecoveryReasonPrefix) ||
-		strings.HasPrefix(strings.TrimSpace(canonical.LastError), runSessionControlFreshReasonPrefix)
-	if !freshSessionRequested {
-		directive, directiveErr := s.RunDirective(canonical.ProjectID, canonical.RecordID)
-		if directiveErr != nil {
-			return nil, directiveErr
-		}
-		freshSessionRequested = directive != nil && (strings.HasPrefix(strings.TrimSpace(directive.Reason), outcomeUnknownContextRecoveryReasonPrefix) ||
-			strings.HasPrefix(strings.TrimSpace(directive.Reason), runSessionControlFreshReasonPrefix))
+	freshSessionRequested := false
+	if intent, intentErr := loadRunSessionControlIntent(s, canonical.ProjectID, canonical.RecordID); intentErr != nil {
+		return nil, intentErr
+	} else if intent != nil && (intent.Action == runSessionControlFresh || intent.Action == runSessionControlContextRecovery) && intent.State == runSessionControlQueued {
+		freshSessionRequested = true
 	}
 	if !freshSessionRequested {
 		decisions, decisionErr := s.ListRuntimeSupervisorDecisionsForRun(canonical.ProjectID, canonical.RecordID)

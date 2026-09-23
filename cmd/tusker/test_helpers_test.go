@@ -60,6 +60,7 @@ func makeV7TaskDispatchableForTest(t *testing.T, vault, taskID string) {
 	body = replaceSection(body, "## Intent", "Exercise the focused test task.")
 	body = replaceSection(body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Complete the focused test task. | Inline verification |")
 	body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused test proof. |")
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["task"])
 	if err != nil {

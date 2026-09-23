@@ -111,10 +111,15 @@ func runAgentMessageInbox(args Args, in io.Reader, out io.Writer) error {
 	}
 	selected := make([]AgentMessage, 0, len(pending))
 	size := 0
+	omitted := 0
 	for _, message := range pending {
+		if len(message.Body) > messageInboxLimit/2 {
+			message.Body = message.Body[:messageInboxLimit/2] + "\n[truncated; full text: tusker message show --project " + fmt.Sprintf("%q %s", project, message.ID) + "]"
+		}
 		line := renderInboxMessage(project, message)
 		if size+len(line)+100 > messageInboxLimit {
-			break
+			omitted++
+			continue
 		}
 		if format == "hook" || args.Bool("mark-delivered") {
 			claimed, err := store.markInboxDelivered(project, message.ID)
@@ -135,13 +140,13 @@ func runAgentMessageInbox(args Args, in io.Reader, out io.Writer) error {
 		return nil
 	}
 	if format == "json" {
-		return json.NewEncoder(out).Encode(map[string]any{"messages": selected, "omitted": len(pending) - len(selected)})
+		return json.NewEncoder(out).Encode(map[string]any{"messages": selected, "omitted": omitted})
 	}
 	var text strings.Builder
 	for _, message := range selected {
 		text.WriteString(renderInboxMessage(project, message))
 	}
-	if omitted := len(pending) - len(selected); omitted > 0 {
+	if omitted > 0 {
 		fmt.Fprintf(&text, "%d more messages omitted; they remain pending.\n", omitted)
 	}
 	if format == "text" {

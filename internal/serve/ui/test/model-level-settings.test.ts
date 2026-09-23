@@ -25,7 +25,9 @@ test("task routing is three immediate choices with compact missing-model copy", 
   expect(tasks).toContain('aria-label="Task reviewer profile"');
   expect(tasks).toContain("detail.authoredWorkLevel");
   expect(tasks).toContain("actualRouteLabel");
-  expect(tasks).toContain("No model is configured for");
+  // c5a5da52 uses the compact selector fallback and route blockers for missing models.
+  expect(tasks).toContain("Choose a model");
+  expect(tasks).toContain("routeBlockers(detail)");
   expect(tasks).toContain("update({ executeProfile: value || null })");
   expect(tasks).not.toContain("Advanced overrides");
 });

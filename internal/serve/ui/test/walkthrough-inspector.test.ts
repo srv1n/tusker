@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
@@ -15,9 +16,17 @@ import {
 } from "../src/features/workbench/inspector/inspectorLogic";
 import { acceptedRun, acceptedTask, failedRun, failedTask, readyRun, readyTask, unavailableTask } from "../previews/wux/inspector/fixtures";
 
+// 834e84a4 added a run-detail Link to the inspector; server renders need router context.
+function renderWithRouter(element: ReturnType<typeof createElement>) {
+  const root = createRootRoute();
+  const runRoute = createRoute({ getParentRoute: () => root, path: "/p/$projectId/runs/$taskId" });
+  const router = createRouter({ routeTree: root.addChildren([runRoute]), history: createMemoryHistory({ initialEntries: ["/"] }) });
+  return renderToStaticMarkup(createElement(RouterContextProvider, { router }, element));
+}
+
 function render(task: TaskDetail = readyTask, run: RunDetail | null = readyRun, reviewMember?: WaveReviewMember) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return renderToStaticMarkup(
+  return renderWithRouter(
     createElement(
       QueryClientProvider,
       { client },

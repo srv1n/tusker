@@ -7,10 +7,6 @@ import { Mono } from "@/components/ui/primitives";
 import { Button } from "@/components/ui/controls";
 import { OutcomeChip, RunnerBadge } from "@/components/ui/chips";
 import { CapsuleChips } from "@/components/ui/capsule";
-import {
-  isInterruptibleRun,
-  redriveDisabledReason,
-} from "@/features/runs/detail/helpers";
 
 /** State of the in-flight / last redrive, surfaced inline under the actions. */
 export interface RetryState {
@@ -31,10 +27,8 @@ export interface InterruptState {
  * Run-detail header (design §07): task id + serif title, the task capsule chips
  * (the canonical status badge), a runner/model/lane/state meta
  * line with liveness, and the run actions. Interrupt is destructive (danger)
- * and only enabled while the run is active. Retry maps to `tusker redrive` and
- * says so ("Redrive"): it is disabled with an inline explanation when the
- * canonical task status makes redrive meaningless (review/done), and its result
- * — a requeue or a refusal reason — is surfaced, never swallowed.
+ * and appears only when the server declares it available. Redrive also follows
+ * the server capability; the result or refusal reason is surfaced inline.
  */
 export function RunHeader({
   run,
@@ -53,12 +47,13 @@ export function RunHeader({
   interrupt: InterruptState;
   waitingForDaemonReason?: string | null;
 }) {
-  const active = isInterruptibleRun(run);
+  const capabilities = run.controls?.capabilities ?? run.capabilities ?? [];
+  const interruptCapability = capabilities.find((item) => item.action === "interrupt");
+  const redriveCapability = capabilities.find((item) => item.action === "redrive");
   const interruptBusy = interrupt.confirming || interrupt.pending || interrupt.awaitingReadback;
   const actionBusy = interruptBusy || retry.pending;
-  // Canonical task status drives whether redrive is allowed — never the run row.
-  const disabledReason = redriveDisabledReason(capsule?.status, run, waitingForDaemonReason);
-  const redriveDisabled = disabledReason !== null || actionBusy;
+  const disabledReason = redriveCapability?.available ? null : redriveCapability?.reason || "Redrive is unavailable for this run.";
+  const redriveDisabled = !redriveCapability?.available || actionBusy;
   return (
     <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
@@ -110,10 +105,10 @@ export function RunHeader({
             <FileText size={13} strokeWidth={2} />
             View ticket
           </Link>
-          <Button variant="danger" onClick={onInterrupt} disabled={!active || actionBusy}>
+          {interruptCapability?.available && <Button variant="danger" onClick={onInterrupt} disabled={actionBusy}>
             {interrupt.pending || interrupt.awaitingReadback ? "Interrupting…" : "Interrupt"}
-          </Button>
-          <Button
+          </Button>}
+          {redriveCapability?.available && <Button
             variant="primary"
             onClick={onRetry}
             disabled={redriveDisabled}
@@ -123,7 +118,7 @@ export function RunHeader({
             }
           >
             {retry.pending ? "Redriving…" : "Redrive"}
-          </Button>
+          </Button>}
         </div>
         <InterruptFeedback interrupt={interrupt} />
         <RedriveFeedback disabledReason={disabledReason} retry={retry} />

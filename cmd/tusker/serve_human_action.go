@@ -12,6 +12,8 @@ func (s *serveServer) serveOpenQuestions(snap serveSnapshot) (map[string][]Agent
 	if err != nil {
 		return nil, err
 	}
+	contactsByTask := map[string][]AgentContact{}
+	bindings := map[string]AgentContactBinding{}
 	for _, message := range messages {
 		if message.Kind != "question" || !message.ReplyRequired || message.AnsweredAt != "" {
 			continue
@@ -31,9 +33,13 @@ func (s *serveServer) serveOpenQuestions(snap serveSnapshot) (map[string][]Agent
 		}
 		operator := message.Recipient == (AgentAddress{Kind: "operator", ID: "operator"})
 		if !operator {
-			contacts, err := s.store.AgentContacts(snap.projectID, taskID)
-			if err != nil {
-				return nil, err
+			contacts, loaded := contactsByTask[taskID]
+			if !loaded {
+				contacts, err = s.store.AgentContacts(snap.projectID, taskID)
+				if err != nil {
+					return nil, err
+				}
+				contactsByTask[taskID] = contacts
 			}
 			matched := false
 			for _, contact := range contacts {
@@ -41,8 +47,16 @@ func (s *serveServer) serveOpenQuestions(snap serveSnapshot) (map[string][]Agent
 					continue
 				}
 				matched = true
-				binding, err := s.store.ResolveAgentContactBinding(snap.projectID, taskID, contact.Role, contact.Name)
-				if err == nil && binding.State == AgentContactBindingBound {
+				key := taskID + "\x00" + contact.Role + "\x00" + contact.Name
+				binding, loaded := bindings[key]
+				if !loaded {
+					binding, err = s.store.ResolveAgentContactBinding(snap.projectID, taskID, contact.Role, contact.Name)
+					if err != nil {
+						return nil, err
+					}
+					bindings[key] = binding
+				}
+				if binding.State == AgentContactBindingBound || binding.State == "inbox" {
 					operator = false
 					break
 				}
@@ -50,10 +64,17 @@ func (s *serveServer) serveOpenQuestions(snap serveSnapshot) (map[string][]Agent
 			}
 			if !matched {
 				for _, role := range []string{"architect", "origin"} {
-					binding, err := s.store.ResolveAgentContactBinding(snap.projectID, taskID, role, "")
+					key := taskID + "\x00" + role + "\x00"
+					binding, loaded := bindings[key]
+					if !loaded {
+						binding, err = s.store.ResolveAgentContactBinding(snap.projectID, taskID, role, "")
+						if err == nil {
+							bindings[key] = binding
+						}
+					}
 					if err == nil && binding.Contact.Address == message.Recipient {
 						matched = true
-						operator = binding.State != AgentContactBindingBound
+						operator = binding.State != AgentContactBindingBound && binding.State != "inbox"
 						break
 					}
 				}

@@ -47,6 +47,27 @@ type runOperatorFacts struct {
 	UpdatedAt       string
 }
 
+type runStateTails struct {
+	events []map[string]any
+	log    []map[string]any
+}
+
+func loadRunStateTails(run RunStatus, attempts []RunAttempt) runStateTails {
+	var latest RunAttempt
+	for _, attempt := range attempts {
+		if run.ActiveAttemptID != "" {
+			if attempt.AttemptID == run.ActiveAttemptID {
+				latest = attempt
+				break
+			}
+		} else if latest.AttemptID == "" || attempt.StartedAt > latest.StartedAt {
+			latest = attempt
+		}
+	}
+	attempts = []RunAttempt{latest}
+	return runStateTails{runActivityTail(bestRunEventPath(run, attempts)), runActivityTail(bestRunLogPath(run, attempts))}
+}
+
 // deriveRunOperatorState has no store, process or provider reads. Callers
 // supply observed facts; a wrapper heartbeat is evidence, never activity.
 func deriveRunOperatorState(f runOperatorFacts, now time.Time, quietAfter time.Duration) runOperatorState {
@@ -63,7 +84,7 @@ func deriveRunOperatorState(f runOperatorFacts, now time.Time, quietAfter time.D
 		return state
 	}
 	activeLease := f.LeaseState == string(LeaseStateClaimed) || f.LeaseState == string(LeaseStateRunning)
-	if f.OpenQuestionID != "" || f.PermissionWait || f.Outcome == string(AttemptOutcomeWaitingForHuman) {
+	if f.OwnerAlive && (f.OpenQuestionID != "" || f.PermissionWait) || f.Outcome == string(AttemptOutcomeWaitingForHuman) {
 		return set("waiting_on_you", firstNonEmpty(f.LastActivityAt, f.UpdatedAt), nil)
 	}
 	if activeLease && f.OwnerAlive {
@@ -73,11 +94,11 @@ func deriveRunOperatorState(f runOperatorFacts, now time.Time, quietAfter time.D
 		}
 		return set("quiet", firstNonEmpty(f.LastActivityAt, f.StartedAt), nil)
 	}
-	if f.Outcome == string(AttemptOutcomeUnknown) || f.Reason != nil && f.Reason.Class == "lost" || activeLease && !f.Terminal {
-		return set("lost", f.UpdatedAt, f.Reason)
-	}
 	if !f.Terminal && (f.LeaseState == string(LeaseStateRetryQueued) || f.LeaseState == string(LeaseStateUnclaimed)) {
 		return set("queued", f.UpdatedAt, nil)
+	}
+	if f.Outcome == string(AttemptOutcomeUnknown) || f.Reason != nil && f.Reason.Class == "lost" || activeLease && !f.Terminal {
+		return set("lost", f.UpdatedAt, f.Reason)
 	}
 	if f.Outcome == string(AttemptOutcomeSucceeded) || f.Outcome == string(AttemptOutcomeWaitingForReview) {
 		return set("finished", f.UpdatedAt, nil)
@@ -118,6 +139,16 @@ func runOperatorStateForRunWithQuietAfter(store *RuntimeStore, run RunStatus, no
 	if err != nil {
 		return runOperatorState{}, err
 	}
+	return runOperatorStateFromAttempts(store, run, attempts, now, quietAfter, false)
+}
+
+func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts []RunAttempt, now time.Time, quietAfter time.Duration, bounded bool, shared ...runStateTails) (runOperatorState, error) {
+	var tails runStateTails
+	if len(shared) > 0 {
+		tails = shared[0]
+	} else {
+		tails = loadRunStateTails(run, attempts)
+	}
 	messages, err := store.ListAgentMessagesForTask(run.ProjectID, run.ItemID)
 	if err != nil {
 		return runOperatorState{}, err
@@ -129,8 +160,12 @@ func runOperatorStateForRunWithQuietAfter(store *RuntimeStore, run RunStatus, no
 	}
 	for _, message := range messages {
 		if message.Kind == "question" && message.AnsweredAt == "" && message.OriginTaskID == run.ItemID {
-			facts.OpenQuestionID = message.ID
-			break
+			for _, attempt := range attempts {
+				if attempt.AttemptID == run.ActiveAttemptID && message.CreatedAt >= attempt.StartedAt {
+					facts.OpenQuestionID = message.ID
+					break
+				}
+			}
 		}
 	}
 	if code := inspectedReasonCode(run, attempts); code != "" && inspectedReasonSource(run, attempts) == "driver" {
@@ -141,10 +176,21 @@ func runOperatorStateForRunWithQuietAfter(store *RuntimeStore, run RunStatus, no
 		spec, _ := runFailureReason(RunFailureUnknown)
 		facts.Reason = &runOperatorReason{string(RunFailureUnknown), spec.Class, spec.Guidance, spec.Retryable, "legacy_text"}
 	}
-	for _, event := range serveRunEventsAll(run, attempts) {
-		if event.Kind == "permission_wait" || event.Kind == "permission_request" {
-			facts.PermissionWait = true
+	permissionWaits := map[string]bool{}
+	for _, row := range tails.events {
+		payload, _ := row["payload"].(map[string]any)
+		id := firstNonEmpty(stringValue(payload["request_id"]), stringValue(payload["requestId"]))
+		if id != "" {
+			switch stringValue(row["kind"]) {
+			case "permission_wait":
+				permissionWaits[id] = true
+			case "permission_resolved":
+				delete(permissionWaits, id)
+			}
 		}
+	}
+	facts.PermissionWait = len(permissionWaits) > 0
+	for _, event := range serveRunEventsFromTails(tails) {
 		if !event.Activity && event.Kind != "agent_message" && event.Kind != "message" && event.Kind != "tool_call" && event.Kind != "tool_result" && event.Kind != "tool_progress" && event.Kind != "plan" {
 			continue
 		}
@@ -154,18 +200,24 @@ func runOperatorStateForRunWithQuietAfter(store *RuntimeStore, run RunStatus, no
 			}
 		}
 	}
-	if _, inFlight := codexExecInFlightCommandStartedAt(run, now); inFlight {
-		facts.ToolInFlight = true
+	if !bounded {
+		if _, inFlight := codexExecInFlightCommandStartedAt(run, now); inFlight {
+			facts.ToolInFlight = true
+		}
 	}
 	if !facts.ToolInFlight {
-		facts.ToolInFlight = runToolInFlight(run, attempts)
+		facts.ToolInFlight = runToolInFlightFromTails(tails)
 	}
 	return deriveRunOperatorState(facts, now, quietAfter), nil
 }
 
 func runToolInFlight(run RunStatus, attempts []RunAttempt) bool {
+	return runToolInFlightFromTails(loadRunStateTails(run, attempts))
+}
+
+func runToolInFlightFromTails(tails runStateTails) bool {
 	active := map[string]bool{}
-	for _, row := range runActivityTail(bestRunLogPath(run, attempts)) {
+	for _, row := range tails.log {
 		switch stringValue(row["type"]) {
 		case "item.started", "item.completed":
 			item, _ := row["item"].(map[string]any)
@@ -194,7 +246,7 @@ func runToolInFlight(run RunStatus, attempts []RunAttempt) bool {
 			}
 		}
 	}
-	for _, row := range runActivityTail(bestRunEventPath(run, attempts)) {
+	for _, row := range tails.events {
 		if stringValue(row["kind"]) != "tool_call" {
 			continue
 		}
@@ -203,8 +255,12 @@ func runToolInFlight(run RunStatus, attempts []RunAttempt) bool {
 		if id == "" {
 			continue
 		}
-		text := strings.ToLower(stringValue(payload["text"]))
-		active[id] = !strings.Contains(text, "completed") && !strings.Contains(text, "failed") && !strings.Contains(text, "cancelled")
+		switch stringValue(payload["status"]) {
+		case "pending", "in_progress":
+			active[id] = true
+		case "completed", "failed", "cancelled":
+			active[id] = false
+		}
 	}
 	for _, inFlight := range active {
 		if inFlight {

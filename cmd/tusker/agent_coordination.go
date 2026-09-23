@@ -19,7 +19,7 @@ type AgentWakeup struct {
 }
 
 func (s *RuntimeStore) ListQueuedAgentWakeups(project string) ([]AgentWakeup, error) {
-	rows, err := s.query(`SELECT id,project_id,recipient_kind,recipient_id,reason,message_ids_json,state,model_turns,idempotency_key,created_at,claim_id,claimed_at FROM agent_wakeups WHERE (state IN ('queued','held') OR (state='delivering' AND claimed_at<?)) AND (?='' OR project_id=?) ORDER BY created_at,id`, time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), project, project)
+	rows, err := s.query(`SELECT id,project_id,recipient_kind,recipient_id,reason,message_ids_json,state,model_turns,idempotency_key,created_at,claim_id,claimed_at FROM agent_wakeups WHERE (state='queued' OR (state='held' AND (claimed_at='' OR claimed_at<=?)) OR (state='delivering' AND claimed_at<?)) AND (?='' OR project_id=?) ORDER BY created_at,id`, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), project, project)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +97,10 @@ func (d *Daemon) processAgentWakeups(project string) error {
 			}
 		}
 		if w.RecipientKind == "execution" {
+			if message.TransportState == "delivered" || message.ConsumedAt != "" {
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "delivered")
+				continue
+			}
 			record, recordErr := d.store.Execution(w.RecipientID)
 			if recordErr != nil || record == nil || record.ProjectID != w.ProjectID {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
@@ -153,11 +157,11 @@ func (d *Daemon) processAgentWakeups(project string) error {
 		}
 		if message.Kind == "answer" {
 			parent, err := d.store.AgentMessage(w.ProjectID, message.ReplyTo)
-			if err != nil || !parent.YieldSender || parent.Sender != "task:"+w.RecipientID {
+			if err != nil || parent.Sender != "task:"+w.RecipientID {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
 				continue
 			}
-			if message.ConsumedAt != "" {
+			if message.ConsumedAt != "" || message.TransportState == "delivered" {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "delivered")
 				continue
 			}
@@ -188,8 +192,24 @@ func (d *Daemon) processAgentWakeups(project string) error {
 				continue
 			}
 			if retryHasLiveAttempt(*run, time.Now().UTC()) == retryLiveAttempt {
+				if strings.HasPrefix(message.TransportState, "prompt:") {
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+					continue
+				}
 				if message.TransportState == "delivered" {
 					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "delivered")
+					continue
+				}
+				// A non-yield answer can be read by the worker or its hook, but must
+				// never interrupt the live turn.
+				if !parent.YieldSender {
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+					continue
+				}
+				if waiting, err := d.store.agentQuestionAwaiting(w.ProjectID, parent.ID, time.Now().UTC()); err != nil {
+					return err
+				} else if waiting {
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
 					continue
 				}
 				if soft, _ := workerSoftDelivery(run.RunnerHarness); soft {
@@ -218,6 +238,10 @@ func (d *Daemon) processAgentWakeups(project string) error {
 				continue
 			}
 		}
+		if message.Kind == "answer" && !parentYieldQuestion(d.store, w.ProjectID, message.ReplyTo) {
+			_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+			continue
+		}
 		// Task addresses deliberately survive owner turnover. The normal retry
 		// scheduler resolves the current session/profile (including Muse) later.
 		if changed, err := d.store.QueueAgentContinuation(w.ProjectID, w.RecipientID); err != nil {
@@ -234,7 +258,7 @@ func (d *Daemon) processAgentWakeups(project string) error {
 func (s *RuntimeStore) ClaimAgentWakeup(id string) string {
 	claimID := "wake-claim-" + strings.ToLower(newRecordID())
 	now := time.Now().UTC()
-	result, err := s.exec(`UPDATE agent_wakeups SET state='delivering',claim_id=?,claimed_at=? WHERE id=? AND (state IN ('queued','held') OR (state='delivering' AND claimed_at<?))`, claimID, now.Format(time.RFC3339Nano), id, now.Add(-time.Minute).Format(time.RFC3339Nano))
+	result, err := s.exec(`UPDATE agent_wakeups SET state='delivering',claim_id=?,claimed_at=? WHERE id=? AND (state='queued' OR (state='held' AND (claimed_at='' OR claimed_at<=?)) OR (state='delivering' AND claimed_at<?))`, claimID, now.Format(time.RFC3339Nano), id, now.Format(time.RFC3339Nano), now.Add(-time.Minute).Format(time.RFC3339Nano))
 	if err != nil {
 		return ""
 	}
@@ -248,6 +272,27 @@ func (s *RuntimeStore) ClaimAgentWakeup(id string) string {
 func (s *RuntimeStore) SetAgentWakeupClaimState(id, claimID, state string) error {
 	if state != "delivered" && state != "scheduled" && state != "held" && state != "unsupported" && state != "stale" && state != "uncertain" {
 		return errors.New("invalid wakeup state")
+	}
+	if state == "held" {
+		var attempts int
+		if err := s.queryRowScan(`SELECT model_turns FROM agent_wakeups WHERE id=? AND claim_id=?`, []any{id, claimID}, &attempts); err != nil {
+			return err
+		}
+		minutes := 15
+		if attempts == 0 {
+			minutes = 1
+		} else if attempts == 1 {
+			minutes = 5
+		}
+		result, err := s.exec(`UPDATE agent_wakeups SET state='held',model_turns=model_turns+1,claim_id='',claimed_at=? WHERE id=? AND claim_id=?`, time.Now().UTC().Add(time.Duration(minutes)*time.Minute).Format(time.RFC3339Nano), id, claimID)
+		if err != nil {
+			return err
+		}
+		n, _ := result.RowsAffected()
+		if n != 1 {
+			return errors.New("agent wakeup claim lost")
+		}
+		return nil
 	}
 	result, err := s.exec(`UPDATE agent_wakeups SET state=?,claim_id='',claimed_at='' WHERE id=? AND claim_id=?`, state, id, claimID)
 	if err != nil {
@@ -263,7 +308,7 @@ func (s *RuntimeStore) SetAgentWakeupClaimState(id, claimID, state string) error
 // processArchitectWaveReports converts material wave state changes into one
 // durable architect message. The architect decides; this code only reports.
 func (d *Daemon) processArchitectWaveReports(projectFilter string) error {
-	projects, err := d.store.ListProjects()
+	projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{MetadataOnly: true})
 	if err != nil {
 		return err
 	}
@@ -271,7 +316,8 @@ func (d *Daemon) processArchitectWaveReports(projectFilter string) error {
 	if err != nil {
 		return err
 	}
-	for _, project := range projects {
+	for _, loaded := range projects {
+		project := loaded.Project
 		if !project.Enabled || (projectFilter != "" && project.ProjectID != projectFilter) {
 			continue
 		}
@@ -308,7 +354,13 @@ func (d *Daemon) processArchitectWaveReports(projectFilter string) error {
 			}
 			now := time.Now().UTC()
 			snapshot := buildArmedWaveSnapshot(project.VaultRoot, idx, wave, runs, now)
-			stalled, blockers := architectWaveStalled(snapshot, idx, runs, now)
+			yieldQuestions := map[string]string{}
+			for _, message := range messages {
+				if memberSet[message.OriginTaskID] && message.Kind == "question" && message.YieldSender && message.AnsweredAt == "" {
+					yieldQuestions[message.OriginTaskID] = message.ID
+				}
+			}
+			stalled, blockers := architectWaveStalled(snapshot, idx, runs, now, yieldQuestions)
 			outcome := ""
 			switch {
 			case allDone:
@@ -360,7 +412,7 @@ func (d *Daemon) processArchitectWaveReports(projectFilter string) error {
 // report latency; codex.stall_timeout_ms is a runner timeout, not wave quiet time.
 const architectWaveStallWindow = 10 * time.Minute
 
-func architectWaveStalled(snapshot armedWaveSnapshot, idx v7Index, runs map[string]RunStatus, now time.Time) (bool, []string) {
+func architectWaveStalled(snapshot armedWaveSnapshot, idx v7Index, runs map[string]RunStatus, now time.Time, questions ...map[string]string) (bool, []string) {
 	if snapshot.Authorization != "armed" {
 		return false, nil
 	}
@@ -368,6 +420,15 @@ func architectWaveStalled(snapshot armedWaveSnapshot, idx v7Index, runs map[stri
 	blockers := []string{}
 	for _, member := range snapshot.Members {
 		run := runs[member.ID]
+		question := ""
+		if len(questions) > 0 {
+			question = questions[0][member.ID]
+		}
+		if question != "" && run.AttemptOutcome == string(AttemptOutcomeWaitingForHuman) && run.LeaseState == string(LeaseStateReleased) {
+			parked = true
+			blockers = append(blockers, member.ID+":waiting for answer to "+question)
+			continue
+		}
 		if retry, err := time.Parse(time.RFC3339Nano, run.NextRetryAt); err == nil && retry.After(now) {
 			return false, nil
 		}
@@ -666,4 +727,58 @@ func (s *RuntimeStore) RecordArchitectContinuation(project, trigger string, repo
 		return "", false, errors.New("continuation trigger was reused with different report content")
 	}
 	return existingID, true, nil
+}
+
+func parentYieldQuestion(s *RuntimeStore, project, id string) bool {
+	parent, err := s.AgentMessage(project, id)
+	return err == nil && parent.YieldSender
+}
+
+// A short-lived marker outlives an interrupted MCP connection by 30 seconds.
+func (s *RuntimeStore) agentQuestionAwaiting(project, question string, now time.Time) (bool, error) {
+	var until string
+	err := s.queryRowScan(`SELECT awaiting_until FROM agent_messages WHERE project_id=? AND id=?`, []any{project, question}, &until)
+	if err != nil {
+		return false, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, until)
+	return err == nil && now.Before(parsed.Add(30*time.Second)), nil
+}
+
+// Claim pending answers for a specific prompt artifact. A failed launch resets
+// the claim; a crash leaves the marker available to the next attempt.
+func (s *RuntimeStore) claimTaskAnswerPrompt(project, task string, revision int, attempt string) (string, []string, error) {
+	messages, err := s.ListAgentMessages(project, "task", task)
+	if err != nil {
+		return "", nil, err
+	}
+	var body strings.Builder
+	ids := []string{}
+	for _, m := range messages {
+		if m.Kind != "answer" || m.WorkRevision != revision || m.ConsumedAt != "" || m.TransportState == "delivered" {
+			continue
+		}
+		result, err := s.exec(`UPDATE agent_messages SET transport_state=? WHERE project_id=? AND id=? AND consumed_at='' AND transport_state<>'delivered'`, "prompt:"+attempt, project, m.ID)
+		if err != nil {
+			s.finishTaskAnswerPrompt(project, attempt, ids, false)
+			return "", nil, err
+		}
+		n, _ := result.RowsAffected()
+		if n != 1 {
+			continue
+		}
+		ids = append(ids, m.ID)
+		fmt.Fprintf(&body, "\n\n### Answer %s to %s\n\n%s", m.ID, m.ReplyTo, m.Body)
+	}
+	return body.String(), ids, nil
+}
+
+func (s *RuntimeStore) finishTaskAnswerPrompt(project, attempt string, ids []string, delivered bool) {
+	state := "pending"
+	if delivered {
+		state = "delivered"
+	}
+	for _, id := range ids {
+		_, _ = s.exec(`UPDATE agent_messages SET transport_state=? WHERE project_id=? AND id=? AND transport_state=?`, state, project, id, "prompt:"+attempt)
+	}
 }

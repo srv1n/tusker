@@ -93,8 +93,8 @@ func (s *serveServer) handleProjectIcon(w http.ResponseWriter, r *http.Request, 
 // key the uploaded icon is stored under, so every checkout shares one icon.
 func (s *serveServer) projectIconGroupKey(projectID string) string {
 	if s.store != nil {
-		if projects, err := s.store.ListProjects(); err == nil {
-			for _, group := range groupRegisteredProjects(projects) {
+		if projects, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true}); err == nil {
+			for _, group := range groupRegisteredProjects(loadedRegisteredProjects(projects)) {
 				if group.ID == projectID || registeredProjectGroupContains(group, projectID) {
 					return group.ID
 				}

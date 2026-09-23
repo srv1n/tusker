@@ -187,7 +187,7 @@ func museFailureReasonCode(outcome AttemptOutcome, reason string) RunFailureReas
 	case AttemptOutcomeFailed:
 		lower := strings.ToLower(reason)
 		switch {
-		case strings.Contains(lower, "usage"), strings.Contains(lower, "limit"):
+		case strings.Contains(lower, "rate limit"), strings.Contains(lower, "usage limit"), strings.Contains(lower, "quota"), strings.Contains(lower, "usage_limit"):
 			return RunFailureUsageLimit
 		case strings.Contains(lower, "auth"), strings.Contains(lower, "login"):
 			return RunFailureAuthExpired
@@ -218,10 +218,13 @@ func classifyMuseCLIOutput(output string) (AttemptOutcome, string, string) {
 		session = firstNonEmpty(session, museSessionID(value))
 		payload, _ := value.(map[string]any)
 		body, _ := payload["payload"].(map[string]any)
-		reason := firstNonEmpty(stringValue(payload["reason"]), stringValue(body["reason"]))
+		reason := firstNonEmpty(stringValue(payload["reason"]), stringValue(body["reason"]), stringValue(payload["error"]), stringValue(body["error"]), stringValue(payload["reason_code"]), stringValue(body["reason_code"]))
 		kind := strings.ToLower(strings.TrimSpace(stringValue(payload["payload_type"])))
 		if kind == "" {
 			kind = strings.ToLower(strings.TrimSpace(stringValue(payload["record_type"])))
+		}
+		if kind == "" {
+			kind = strings.ToLower(strings.TrimSpace(stringValue(payload["type"])))
 		}
 		switch kind {
 		case "run.terminal.completed", "terminal.completed":

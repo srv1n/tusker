@@ -358,6 +358,30 @@ func TestRunnerACPOverflowTerminatorCannotBlockProducer(t *testing.T) {
 	close(release)
 }
 
+func TestACPLogRotation(t *testing.T) {
+	dir := t.TempDir()
+	req := StartRequest{RawLogPath: filepath.Join(dir, "acp.log"), RawLogMaxBytes: 32, EventSinkPath: filepath.Join(dir, "events.jsonl"), AttemptID: "attempt-1"}
+	log, err := openACPLogSink(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		if _, err := log.Write([]byte("diagnostic line\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if log.overflowed() {
+		t.Fatal("rotated ACP log reported overflow")
+	}
+	data, err := os.ReadFile(req.EventSinkPath)
+	if err != nil || !strings.Contains(string(data), "raw_log_rotated") {
+		t.Fatalf("missing rotation event: %v %s", err, data)
+	}
+}
+
 func TestRunnerACPRejectsShebangBeforeLaunch(t *testing.T) {
 	_, req := setupACPRunnerRuntime(t, "happy")
 	scriptDir := t.TempDir()

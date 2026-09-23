@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -347,8 +348,13 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 			return nil, projectionErr
 		}
 		env := make([]map[string]string, 0, len(projection.env))
-		for key, value := range projection.env {
-			env = append(env, map[string]string{"name": key, "value": value})
+		keys := make([]string, 0, len(projection.env))
+		for key := range projection.env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			env = append(env, map[string]string{"name": key, "value": projection.env[key]})
 		}
 		mcpServers = []any{map[string]any{"name": "tusker", "command": projection.command, "args": projection.args, "env": env}}
 	}
@@ -363,6 +369,9 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 			return acpRunnerEnvironment(req, workspace, policy)
 		}(),
 		Stderr: acpDiagnosticSink{log: log},
+		Backpressure: func() {
+			_ = appendACPEvent(eventLog, "acp_backpressure", acpAttemptProvenance{Runner: runner, AttemptID: req.AttemptID}, map[string]any{"queue_limit": 2048})
+		},
 		Timeouts: acp.Timeouts{
 			// Agent turns may legitimately run for hours. The wrapper remains
 			// explicitly cancellable, but elapsed wall time or quiet reasoning
@@ -374,6 +383,10 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 			if handle == nil {
 				return acp.Reject, nil
 			}
+			provenance := handle.currentProvenance()
+			fields := map[string]any{"request_id": request.RequestID, "tool_name": request.ToolKind, "tool_call_id": request.ToolCallID}
+			_ = appendACPEvent(eventLog, "permission_wait", provenance, fields)
+			defer appendACPEvent(eventLog, "permission_resolved", provenance, fields)
 			if codexPlan != nil {
 				return evaluateCodexACPTransportPermission(permissionCtx, eventLog, handle.currentProvenance(), request, workspace, codexPlan.Mode, policy)
 			}
@@ -1137,6 +1150,10 @@ func openACPLogSink(req StartRequest) (*acpLogSink, error) {
 	writer, err := openBoundedRawLog(req.RawLogPath, req.RawLogMaxBytes, false)
 	if err != nil {
 		return nil, fmt.Errorf("open bounded ACP diagnostic log: %w", err)
+	}
+	writer.rotate = true
+	writer.onRotate = func(dropped int64) error {
+		return NewEventLog(req.EventSinkPath).Append("raw_log_rotated", req.AttemptID, RunnerACP, map[string]any{"bytes_dropped": dropped})
 	}
 	return &acpLogSink{writer: writer}, nil
 }

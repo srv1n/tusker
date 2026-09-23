@@ -1090,6 +1090,16 @@ for line in sys.stdin:
 	}
 }
 
+func startPreparedClaudeLiveTest(t *testing.T, req StartRequest, resume *ResumeRequest) (*StartResult, error) {
+	t.Helper()
+	argv, err := shellLikeFields(req.Command)
+	if err != nil || len(argv) == 0 {
+		t.Fatalf("parse fake Claude command: %v", err)
+	}
+	prepareClaudeTestArgv(t, &req, argv[0], argv[1:]...)
+	return startLiveClaude(context.Background(), req, resume)
+}
+
 func TestClaudeResumeLiveRunnerUsesSessionRefAfterRestart(t *testing.T) {
 	tempRoot := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(tempRoot, "state"))
@@ -1107,6 +1117,9 @@ func TestClaudeResumeLiveRunnerUsesSessionRefAfterRestart(t *testing.T) {
 	}
 	script := `#!/usr/bin/env python3
 import json,os,sys
+if "--version" in sys.argv:
+    print("fake Claude 1.0")
+    sys.exit(0)
 assert "--resume claude-session-before-restart" in " ".join(sys.argv), sys.argv
 for line in sys.stdin:
     msg=json.loads(line)
@@ -1125,7 +1138,7 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 
-	result, err := startLiveClaude(context.Background(), StartRequest{
+	result, err := startPreparedClaudeLiveTest(t, StartRequest{
 		ProjectID:     "project-1",
 		RecordID:      "record-1",
 		ItemID:        "ITEM-1",
@@ -1180,6 +1193,9 @@ func TestClaudeUsageLiveRunnerRecordsTokensAndReviewPacket(t *testing.T) {
 	}
 	script := `#!/usr/bin/env python3
 import json,sys
+if "--version" in sys.argv:
+    print("fake Claude 1.0")
+    sys.exit(0)
 for line in sys.stdin:
     msg=json.loads(line)
     if msg.get("type")=="control_request":
@@ -1196,7 +1212,7 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 
-	result, err := startLiveClaude(context.Background(), StartRequest{
+	result, err := startPreparedClaudeLiveTest(t, StartRequest{
 		ProjectID:     "project-1",
 		RecordID:      "record-1",
 		ItemID:        "ITEM-1",
@@ -1269,6 +1285,9 @@ func TestClaudeInterruptLiveRunnerSupportsInterrupt(t *testing.T) {
 	}
 	script := `#!/usr/bin/env python3
 import json,os,sys,time,threading
+if "--version" in sys.argv:
+    print("fake Claude 1.0")
+    sys.exit(0)
 assert os.path.realpath(os.getcwd())==os.path.realpath(os.environ["TUSKER_WORKSPACE"]), (os.getcwd(), os.environ["TUSKER_WORKSPACE"])
 assert os.environ["TUSKER_REPO_ROOT"].endswith("/repo"), os.environ.get("TUSKER_REPO_ROOT")
 running=True
@@ -1299,7 +1318,7 @@ while running:
 		t.Fatal(err)
 	}
 
-	result, err := startLiveClaude(context.Background(), StartRequest{
+	result, err := startPreparedClaudeLiveTest(t, StartRequest{
 		ProjectID:     "project-1",
 		RecordID:      "record-1",
 		ItemID:        "ITEM-1",

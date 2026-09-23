@@ -42,6 +42,42 @@ func TestMessageInboxHookDelivery(t *testing.T) {
 	}
 }
 
+func TestMessageInboxOversized(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", root)
+	store, err := OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var ids []string
+	for i, body := range []string{strings.Repeat("x", 30<<10), "second", "third"} {
+		m, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", IdempotencyKey: string(rune('a' + i)), Sender: "task:a", Recipient: AgentAddress{Kind: "task", ID: "b"}, Kind: "notice", Body: body})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, m.ID)
+	}
+	var out bytes.Buffer
+	if err := runAgentMessageInbox(Args{"project": "app", "for": "task:b", "format": "hook"}, strings.NewReader(`{"hook_event_name":"PostToolUse"}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if !strings.Contains(out.String(), id) {
+			t.Fatalf("missing %s: %s", id, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "full text: tusker message show --project") {
+		t.Fatal(out.String())
+	}
+	for _, id := range ids {
+		m, err := store.AgentMessage("app", id)
+		if err != nil || m.TransportState != "delivered" {
+			t.Fatalf("%s: %v %v", id, m, err)
+		}
+	}
+}
+
 func TestMessageInboxReplyBodyFile(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", root)

@@ -96,6 +96,8 @@ type Config struct {
 	Limits            Limits
 	Timeouts          Timeouts
 	PermissionHandler PermissionHandler
+	// Backpressure is called once when a full update queue stalls stdout.
+	Backpressure func()
 	// ValidateProcess is an optional containment check invoked synchronously
 	// after exec starts. A rejection kills and reaps the child before Start
 	// returns, so no unverified ACP process can become live.
@@ -280,6 +282,7 @@ type PermissionOption struct {
 }
 
 type PermissionRequest struct {
+	RequestID  string
 	SessionID  string
 	ToolCallID string
 	ToolKind   string
@@ -434,6 +437,7 @@ type Client struct {
 	protocolErr             error
 	closed                  bool
 	readerDone              chan struct{}
+	shutdown                chan struct{}
 	processDone             chan struct{}
 	updates                 chan Update
 	finishOnce              sync.Once
@@ -446,6 +450,8 @@ type Client struct {
 	updateBytes             int
 	lastActivity            time.Time
 	updateSequence          uint64
+	backpressureActive      bool    // reader goroutine only
+	pendingUpdate           *Update // reader goroutine only
 	configSequence          uint64
 	beforePermissionRespond func()
 	beforeConfigCommit      func()
@@ -511,7 +517,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	c := &Client{
 		cfg: cfg, cmd: cmd, stdin: stdin, stdout: stdout,
 		pending: make(map[string]*pendingCall), inbound: make(map[string]struct{}),
-		readerDone: make(chan struct{}), processDone: make(chan struct{}), updates: make(chan Update, cfg.Limits.MaxUpdates),
+		readerDone: make(chan struct{}), shutdown: make(chan struct{}), processDone: make(chan struct{}), updates: make(chan Update, cfg.Limits.MaxUpdates),
 		permissionSem:    make(chan struct{}, cfg.Limits.MaxPendingRequests),
 		permissionCancel: make(map[string]context.CancelFunc), permissionDone: make(map[string]chan struct{}), permissionState: make(map[string]*permissionRequestState),
 		lastActivity: time.Now(),
@@ -1364,6 +1370,7 @@ func (c *Client) Close() error {
 
 func (c *Client) teardownTransport() {
 	c.teardownOnce.Do(func() {
+		close(c.shutdown)
 		_ = c.stdin.Close()
 		if c.cmd != nil && c.cmd.Process != nil {
 			_ = c.cmd.Process.Kill()
@@ -1566,6 +1573,7 @@ func mustJSON(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
 func (c *Client) readLoop() {
 	defer close(c.readerDone)
 	defer c.finishOnce.Do(func() { close(c.updates) })
+	defer c.flushPendingUpdate()
 	r := bufio.NewReaderSize(c.stdout, 64<<10)
 	for {
 		frame, err := readFrame(r, c.cfg.Limits.MaxFrameBytes)
@@ -1589,10 +1597,14 @@ func (c *Client) readLoop() {
 			return
 		}
 		if len(msg.ID) != 0 && msg.Method == "" {
+			c.flushPendingUpdate()
 			c.handleResponse(msg)
 			continue
 		}
 		if msg.Method != "" {
+			if msg.Method != "session/update" {
+				c.flushPendingUpdate()
+			}
 			c.handleRequest(msg)
 			continue
 		}
@@ -1699,7 +1711,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			if envelope.Update.SessionUpdate == "agent_thought_chunk" {
 				return
 			}
-			c.enqueueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
+			c.queueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
 			return
 		}
 		// Devin emits these informational extensions without requiring client action.
@@ -1817,7 +1829,7 @@ func (c *Client) handleRequest(msg rpcMessage) {
 		return
 	}
 	req := PermissionRequest{
-		SessionID: p.SessionID, ToolCallID: toolCall.ToolCallID, ToolKind: toolCall.Kind,
+		RequestID: id, SessionID: p.SessionID, ToolCallID: toolCall.ToolCallID, ToolKind: toolCall.Kind,
 		RawInput: append(json.RawMessage(nil), toolCall.RawInput...), Options: p.Options,
 		Raw: append(json.RawMessage(nil), msg.Params...),
 	}
@@ -2050,15 +2062,101 @@ func writeAll(w io.Writer, b []byte) error {
 	return nil
 }
 
+// queueUpdate leaves one tail observation outside the full channel so bursts
+// can merge before the reader has to backpressure the adapter.
+func (c *Client) queueUpdate(update Update) {
+	if c.pendingUpdate != nil {
+		if merged, ok := mergeACPUpdates(*c.pendingUpdate, update); ok {
+			*c.pendingUpdate = merged
+			return
+		}
+		c.flushPendingUpdate()
+	}
+	if len(c.updates) >= cap(c.updates)-1 {
+		c.pendingUpdate = &update
+		return
+	}
+	c.enqueueUpdate(update)
+}
+
+func (c *Client) flushPendingUpdate() {
+	if c.pendingUpdate != nil {
+		c.enqueueUpdate(*c.pendingUpdate)
+		c.pendingUpdate = nil
+	}
+}
+
+func mergeACPUpdates(first, next Update) (Update, bool) {
+	var a, b struct {
+		SessionID string         `json:"sessionId"`
+		Update    map[string]any `json:"update"`
+	}
+	if json.Unmarshal(first.Params, &a) != nil || json.Unmarshal(next.Params, &b) != nil || a.SessionID != b.SessionID {
+		return Update{}, false
+	}
+	kind, _ := a.Update["sessionUpdate"].(string)
+	if kind != b.Update["sessionUpdate"] {
+		return Update{}, false
+	}
+	switch kind {
+	case "agent_message_chunk":
+		left, lok := a.Update["content"].(map[string]any)
+		right, rok := b.Update["content"].(map[string]any)
+		if !lok || !rok || left["type"] != "text" || right["type"] != "text" {
+			return Update{}, false
+		}
+		old, ok1 := left["text"].(string)
+		newText, ok2 := right["text"].(string)
+		if !ok1 || !ok2 || len(old)+len(newText) > 16<<10 {
+			return Update{}, false
+		}
+		left["text"] = old + newText
+	case "tool_call_update":
+		if a.Update["toolCallId"] == nil || a.Update["toolCallId"] != b.Update["toolCallId"] {
+			return Update{}, false
+		}
+		for key, value := range b.Update {
+			if key == "content" {
+				old, oldOK := a.Update[key].([]any)
+				incoming, newOK := value.([]any)
+				if oldOK && newOK {
+					value = append(old, incoming...)
+				}
+			}
+			a.Update[key] = value
+		}
+	default:
+		return Update{}, false
+	}
+	params, err := json.Marshal(a)
+	if err != nil || len(params) > 16<<10 {
+		return Update{}, false
+	}
+	first.Params = params
+	return first, true
+}
+
 func (c *Client) enqueueUpdate(update Update) {
+	if len(c.updates) < cap(c.updates)/2 {
+		c.backpressureActive = false
+	}
 	select {
 	case c.updates <- update:
-		c.mu.Lock()
-		c.lastActivity = time.Now()
-		c.mu.Unlock()
 	default:
-		c.poison(fmt.Errorf("%w: session update queue limit %d exceeded", ErrProtocol, c.cfg.Limits.MaxUpdates))
+		// A full observation queue is flow control, not a protocol failure.
+		// Stop reading stdout until the consumer catches up.
+		if !c.backpressureActive && c.cfg.Backpressure != nil {
+			c.cfg.Backpressure()
+		}
+		c.backpressureActive = true
+		select {
+		case c.updates <- update:
+		case <-c.shutdown:
+		}
 	}
+	c.mu.Lock()
+	c.lastActivity = time.Now()
+	c.mu.Unlock()
 }
 
 func rpcID(raw json.RawMessage) (string, bool) {

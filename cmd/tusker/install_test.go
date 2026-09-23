@@ -680,7 +680,8 @@ func TestInitHonorsExplicitNewVaultInsideExistingRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	explicitVault := filepath.Join(root, "explicit", "tracker")
+	// c5a5da52 requires an explicitly registered vault to remain repo-local.
+	explicitVault := filepath.Join(repo, "explicit", "tracker")
 	if err := initCmd(Args{"vault": explicitVault, "yes": "true", "vault-only": "true", "no-mount": "true"}); err != nil {
 		t.Fatal(err)
 	}

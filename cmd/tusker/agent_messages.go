@@ -159,6 +159,9 @@ func (s *RuntimeStore) putAgentAnswer(m AgentMessage) (AgentMessage, bool, error
 		return AgentMessage{}, false, err
 	}
 	defer tx.Rollback()
+	if err := tx.QueryRow(`SELECT origin_task_id,work_revision,route_generation FROM agent_messages WHERE project_id=? AND id=?`, m.ProjectID, m.ReplyTo).Scan(&m.OriginTaskID, &m.WorkRevision, &m.RouteGeneration); err != nil {
+		return AgentMessage{}, false, err
+	}
 	result, err := tx.Exec(`INSERT OR IGNORE INTO agent_messages(id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.ID, m.IdempotencyKey, m.ProjectID, m.Sender, m.Recipient.Kind, m.Recipient.ID, m.OriginTaskID, m.OriginWaveID, m.WorkRevision, m.RouteGeneration, m.RecipientGeneration, m.Kind, m.Body, m.ReplyTo, m.ReplyRequired, m.YieldSender, m.State, m.TransportState, m.ConsumedAt, m.AnsweredAt, m.AppliedAt, m.ExpiresAt, m.CreatedAt)
 	if err != nil {
 		return AgentMessage{}, false, err

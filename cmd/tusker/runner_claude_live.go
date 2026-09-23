@@ -10,6 +10,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,7 +120,7 @@ func claudeSessionArgv(argv []string, id string, resume *ResumeRequest) []string
 
 func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeRequest) (*StartResult, error) {
 	if len(req.CommandArgv) == 0 {
-		return nil, tuskerError(errorConfigInvalid, "Claude worker MCP requires a prepared direct argv launch")
+		return nil, tuskerError(errorConfigInvalid, "dispatch must supply a prepared argv; command-string launches are no longer supported")
 	}
 	if extensionPolicyRequestsNativeBridge(req.CodexPolicy.Extensions) {
 		if err := NewEventLog(req.EventSinkPath).Append("extension_bridge_unsupported", req.AttemptID, RunnerClaude, map[string]any{
@@ -135,31 +136,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err != nil {
 		return nil, err
 	}
-	command := strings.TrimSpace(req.Command)
-	if command == "" {
-		command = "claude -p --output-format stream-json --input-format stream-json --replay-user-messages --permission-mode " + permissionMode + " --permission-prompts none"
-		if permissionMode == "plan" {
-			command += " --tools Read,Glob,Grep"
-		}
-	}
-	if req.NativeSessionID != "" || resume != nil {
-		if len(req.CommandArgv) == 0 {
-			fields, err := shellLikeFields(command)
-			if err != nil {
-				return nil, tuskerError(errorConfigInvalid, "cannot parse Claude command: "+err.Error())
-			}
-			fields = claudeSessionArgv(fields, req.NativeSessionID, resume)
-			quoted := make([]string, len(fields))
-			for i, field := range fields {
-				quoted[i] = shellSingleQuote(field)
-			}
-			command = strings.Join(quoted, " ")
-		}
-	}
-	if len(req.CommandArgv) == 0 && !strings.Contains(command, "--replay-user-messages") {
-		command += " --replay-user-messages"
-	}
-	if permissionMode != "bypassPermissions" && (strings.Contains(command, "bypassPermissions") || strings.Contains(strings.Join(req.CommandArgv, " "), "bypassPermissions")) {
+	if permissionMode != "bypassPermissions" && strings.Contains(strings.Join(req.CommandArgv, " "), "bypassPermissions") {
 		return nil, tuskerError(errorConfigInvalid, "bounded Claude runner command cannot use bypassPermissions")
 	}
 	if err := ensureDir(filepath.Dir(req.RawLogPath)); err != nil {
@@ -172,44 +149,30 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err != nil {
 		return nil, err
 	}
-	command = replaceTemplateTokens(command, map[string]string{
-		"{{workspace_path}}": workspaceCWD,
-		"{{prompt_path}}":    req.PromptPath,
-		"{{raw_log_path}}":   req.RawLogPath,
-		"{{status_path}}":    req.StatusPath,
-		"{{note_path}}":      req.NotePath,
-		"{{vault_path}}":     runnerWorkspaceVaultPath(workspaceCWD, req.VaultPath),
-		"{{session_ref}}":    resumeSessionRef(resume),
-		"{{message_ref}}":    resumeMessageRef(resume),
+	argv := replaceTemplateArgv(req.CommandArgv, map[string]string{
+		"{{workspace_path}}": workspaceCWD, "{{prompt_path}}": req.PromptPath,
+		"{{raw_log_path}}": req.RawLogPath, "{{status_path}}": req.StatusPath,
+		"{{note_path}}": req.NotePath, "{{vault_path}}": runnerWorkspaceVaultPath(workspaceCWD, req.VaultPath),
+		"{{session_ref}}": resumeSessionRef(resume), "{{message_ref}}": resumeMessageRef(resume),
 	})
-	command = runnerCommandWithPathPrefix(command, req.RunnerPathPrefix)
-	var cmd *exec.Cmd
-	if len(req.CommandArgv) > 0 {
-		argv := replaceTemplateArgv(req.CommandArgv, map[string]string{
-			"{{workspace_path}}": workspaceCWD, "{{prompt_path}}": req.PromptPath,
-			"{{raw_log_path}}": req.RawLogPath, "{{status_path}}": req.StatusPath,
-			"{{note_path}}": req.NotePath, "{{vault_path}}": runnerWorkspaceVaultPath(workspaceCWD, req.VaultPath),
-			"{{session_ref}}": resumeSessionRef(resume), "{{message_ref}}": resumeMessageRef(resume),
-		})
-		if req.NativeSessionID != "" || resume != nil {
-			argv = claudeSessionArgv(argv, req.NativeSessionID, resume)
-		}
-		projection, err := projectWorkerMCP(req.ProjectID, req.RecordID, req.ItemID, req.AttemptID, req.LeaseGeneration, req.WorkRevision, req.EventSinkPath, req.StatusPath, 900, true)
-		if err != nil {
-			return nil, err
-		}
-		argv = appendClaudeMCP(argv, projection)
-		argv = append(argv, "--replay-user-messages")
-		if !filepath.IsAbs(argv[0]) {
-			return nil, tuskerError(errorConfigInvalid, "prepared Claude executable must be an absolute path")
-		}
-		if err := completionVerifyExecutableIdentity(argv[0], req.CommandExecutableFP, req.CommandSearchPath); err != nil {
-			return nil, err
-		}
-		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
-	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-lc", command)
+	if req.NativeSessionID != "" || resume != nil {
+		argv = claudeSessionArgv(argv, req.NativeSessionID, resume)
 	}
+	projection, err := projectWorkerMCP(req.ProjectID, req.RecordID, req.ItemID, req.AttemptID, req.LeaseGeneration, req.WorkRevision, req.EventSinkPath, req.StatusPath, 900, true)
+	if err != nil {
+		return nil, err
+	}
+	argv = appendClaudeMCP(argv, projection)
+	if !slices.Contains(argv, "--replay-user-messages") {
+		argv = append(argv, "--replay-user-messages")
+	}
+	if !filepath.IsAbs(argv[0]) {
+		return nil, tuskerError(errorConfigInvalid, "prepared Claude executable must be an absolute path")
+	}
+	if err := completionVerifyExecutableIdentity(argv[0], req.CommandExecutableFP, req.CommandSearchPath); err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = workspaceCWD
 	if err := assertRunnerCommandDir(RunnerClaude, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
@@ -563,6 +526,19 @@ func (h *claudeLiveHandle) handleStdoutLine(line string) {
 	case "result":
 		isError, _ := payload["is_error"].(bool)
 		subtype := strings.TrimSpace(stringValue(payload["subtype"]))
+		if denials, ok := payload["permission_denials"].([]any); ok && len(denials) > 0 && subtype == "success" && !isError {
+			tools := make([]string, 0, len(denials))
+			for _, denial := range denials {
+				if entry, ok := denial.(map[string]any); ok {
+					if name := strings.TrimSpace(stringValue(entry["tool_name"])); name != "" {
+						tools = append(tools, name)
+					}
+				}
+			}
+			if h.eventLog != nil {
+				_ = h.eventLog.Append("claude_permission_denials", h.attemptID, h.runner, map[string]any{"count": len(denials), "tool_names": tools})
+			}
+		}
 		h.terminalCode = claudeFailureCode(payload)
 		if h.terminalCode == "" && h.permissionDenied.Load() && (isError || strings.Contains(subtype, "error")) {
 			h.terminalCode = RunFailurePermissionDenied
@@ -591,7 +567,8 @@ func claudeFailureCode(payload map[string]any) RunFailureReasonCode {
 	if strings.TrimSpace(stringValue(payload["type"])) != "result" {
 		return ""
 	}
-	if denials, ok := payload["permission_denials"].([]any); ok && len(denials) > 0 {
+	denials, _ := payload["permission_denials"].([]any)
+	if isError, _ := payload["is_error"].(bool); len(denials) > 0 && (strings.TrimSpace(stringValue(payload["subtype"])) != "success" || isError) {
 		return RunFailurePermissionDenied
 	}
 	subtype := strings.TrimSpace(stringValue(payload["subtype"]))

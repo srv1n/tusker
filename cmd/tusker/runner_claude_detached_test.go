@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,13 +20,32 @@ import (
 func claudeFakeScript(t *testing.T, dir, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, "fake-claude.py")
-	if err := writeText(path, "#!/usr/bin/env python3\n"+body); err != nil {
+	if err := writeText(path, "#!/usr/bin/env python3\nimport sys\nif '--version' in sys.argv:\n    print('fake Claude 1.0')\n    sys.exit(0)\n"+body); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func prepareClaudeTestArgv(t *testing.T, req *StartRequest, script string, flags ...string) {
+	t.Helper()
+	searchPath, err := completionAuthoritativeRunnerSearchPath(req.WorkspacePath, req.RepoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := runnerExecutableHealthCheck(script, searchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, fingerprint, err := completionExecutableIdentity(script, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.CommandArgv = append([]string{physical}, flags...)
+	req.CommandExecutableFP = fingerprint
+	req.CommandSearchPath = searchPath
 }
 
 func claudeTestPolicy() CodexPolicy {
@@ -100,7 +120,7 @@ for line in sys.stdin:
         print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":session}),flush=True)
         break
 `)
-	req.Start.Command = script + " --input-format stream-json --mcp-config fake-mcp.json --settings fake-settings.json"
+	prepareClaudeTestArgv(t, &req.Start, script, "--input-format", "stream-json")
 	req.Start.CodexPolicy = claudeTestPolicy()
 	t.Setenv("TUSKER_WRAPPER_EXE", demoTestBinary(t))
 	argvPath := filepath.Join(dir, "argv.json")
@@ -146,7 +166,7 @@ for line in sys.stdin:
 	if err := json.Unmarshal(argvRaw, &argv); err != nil {
 		t.Fatal(err)
 	}
-	if got := argv[len(argv)-1]; got != result.SessionRef {
+	if got := claudeArgValue(argv, "--session-id"); got != result.SessionRef {
 		t.Fatalf("child session id %q != returned %q", got, result.SessionRef)
 	}
 	if run, err := store.FindRun(req.Start.RecordID); err != nil || run == nil {
@@ -189,7 +209,7 @@ for line in sys.stdin:
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Start.Command = script + " --input-format stream-json --mcp-config mcp.json --settings settings.json --permission-mode plan"
+	prepareClaudeTestArgv(t, &req.Start, script, "--input-format", "stream-json", "--permission-mode", "plan", "--replay-user-messages")
 	req.Start.CodexPolicy = claudeTestPolicy()
 	req.Start.NativeSessionID = id
 	started, err := startLiveClaude(context.Background(), req.Start, nil)
@@ -227,17 +247,54 @@ for line in sys.stdin:
 	if err := json.Unmarshal([]byte(lines[1]), &observedResume); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(observedStart[len(observedStart)-2:], []string{"--session-id", id}) ||
-		!reflect.DeepEqual(observedResume[len(observedResume)-2:], []string{"--resume", id}) {
+	if claudeArgValue(observedStart, "--session-id") != id || claudeArgValue(observedResume, "--resume") != id {
 		t.Fatalf("fake Claude session flags: start=%v resume=%v", observedStart, observedResume)
 	}
-	for _, flag := range []string{"--mcp-config", "mcp.json", "--settings", "settings.json", "--permission-mode", "plan"} {
-		if !strings.Contains(strings.Join(observedStart, " "), flag) || !strings.Contains(strings.Join(observedResume, " "), flag) {
-			t.Fatalf("flag %q was not carried across resume: start=%v resume=%v", flag, observedStart, observedResume)
+	if countArg(observedStart, "--replay-user-messages") != 1 || countArg(observedResume, "--replay-user-messages") != 1 {
+		t.Fatalf("replay flag duplicated: start=%v resume=%v", observedStart, observedResume)
+	}
+	for _, flag := range []string{"--mcp-config", "--settings", "--permission-mode"} {
+		if claudeArgValue(observedStart, flag) == "" || claudeArgValue(observedStart, flag) != claudeArgValue(observedResume, flag) {
+			t.Fatalf("flag %q differs across resume: start=%v resume=%v", flag, observedStart, observedResume)
 		}
 	}
 	if strings.Contains(strings.Join(observedResume, " "), "--session-id") || strings.Contains(strings.Join(observedResume, " "), "--bare") {
 		t.Fatalf("resume retained forbidden flags: %v", observedResume)
+	}
+}
+
+func claudeArgValue(argv []string, flag string) string {
+	for i, arg := range argv {
+		if arg == flag && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	return ""
+}
+
+func countArg(argv []string, flag string) int {
+	count := 0
+	for _, arg := range argv {
+		if arg == flag {
+			count++
+		}
+	}
+	return count
+}
+
+func TestClaudeLaunchArgvStartResumeParity(t *testing.T) {
+	id := uuid.NewString()
+	base := []string{"/fake/claude", "-p", "--replay-user-messages"}
+	projection := workerMCPProjection{claudeConfig: "/tmp/mcp.json", claudeSettings: "/tmp/settings.json"}
+	start := appendClaudeMCP(claudeSessionArgv(base, id, nil), projection)
+	resume := appendClaudeMCP(claudeSessionArgv(base, "", &ResumeRequest{SessionRef: id}), projection)
+	for _, flag := range []string{"--mcp-config", "--settings"} {
+		if claudeArgValue(start, flag) == "" || claudeArgValue(start, flag) != claudeArgValue(resume, flag) {
+			t.Fatalf("%s differs: start=%v resume=%v", flag, start, resume)
+		}
+	}
+	if claudeArgValue(start, "--session-id") != id || claudeArgValue(resume, "--resume") != id || claudeArgValue(resume, "--session-id") != "" || slices.Contains(resume, "--bare") {
+		t.Fatalf("session flags: start=%v resume=%v", start, resume)
 	}
 }
 
@@ -255,7 +312,7 @@ for line in sys.stdin:
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Start.Command = script + " --input-format stream-json"
+	prepareClaudeTestArgv(t, &req.Start, script, "--input-format", "stream-json")
 	req.Start.CodexPolicy = claudeTestPolicy()
 	result, err := startLiveClaude(context.Background(), req.Start, nil)
 	if err != nil {
@@ -275,5 +332,65 @@ for line in sys.stdin:
 	events, err := readText(req.Start.EventSinkPath)
 	if err != nil || !strings.Contains(events, "stdout_line_oversized") {
 		t.Fatalf("missing oversized-line diagnostic: %v, %s", err, events)
+	}
+}
+
+func TestClaudeSuccessWithPermissionDenials(t *testing.T) {
+	for _, test := range []struct {
+		name, subtype string
+		exit          int
+		want          RunFailureReasonCode
+	}{
+		{"success", "success", 0, ""},
+		{"failure", "error_during_execution", 1, RunFailurePermissionDenied},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("TUSKER_STATE_ROOT", filepath.Join(dir, "state"))
+			script := claudeFakeScript(t, dir, `import json,sys
+for line in sys.stdin:
+    if json.loads(line).get("type")=="user":
+        print(json.dumps({"type":"result","subtype":"`+test.subtype+`","is_error":`+map[bool]string{true: "True", false: "False"}[test.exit != 0]+`,"permission_denials":[{"tool_name":"Bash","tool_input":{"secret":"hidden"}}]}),flush=True)
+        sys.exit(`+string(rune('0'+test.exit))+`)
+`)
+			req, err := runnerWrapperRequestForTest(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepareClaudeTestArgv(t, &req.Start, script, "--input-format", "stream-json")
+			req.Start.CodexPolicy = claudeTestPolicy()
+			if _, err := startLiveClaude(context.Background(), req.Start, nil); err != nil {
+				t.Fatal(err)
+			}
+			status := waitForClaudePublishedStatus(t, req.Start.StatusPath)
+			if status.ExitCode != test.exit || status.ReasonCode != string(test.want) {
+				t.Fatalf("Claude status = %#v, want exit %d reason %q", status, test.exit, test.want)
+			}
+			if test.exit == 0 {
+				classification := classifyRunnerProcessExit(RunStatus{Lane: runLaneReview}, status, Note{}, dir, nil)
+				if classification.outcome != AttemptOutcomeSucceeded {
+					t.Fatalf("successful Claude result classified %s", classification.outcome)
+				}
+				events, err := readText(req.Start.EventSinkPath)
+				if err != nil || !strings.Contains(events, "claude_permission_denials") || !strings.Contains(events, "Bash") || strings.Contains(events, "hidden") {
+					t.Fatalf("Claude denial diagnostic = %q, %v", events, err)
+				}
+			}
+		})
+	}
+}
+
+func TestClaudeRejectsCommandStringBeforeCreatingLogs(t *testing.T) {
+	dir := t.TempDir()
+	req, err := runnerWrapperRequestForTest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Start.Command = "claude -p"
+	if _, err := startLiveClaude(context.Background(), req.Start, nil); err == nil || !strings.Contains(err.Error(), "dispatch must supply a prepared argv") {
+		t.Fatalf("missing prepared argv error = %v", err)
+	}
+	if fileExists(req.Start.RawLogPath) {
+		t.Fatal("raw log created before prepared argv validation")
 	}
 }

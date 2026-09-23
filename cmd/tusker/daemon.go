@@ -489,15 +489,15 @@ func (d *Daemon) ReleaseRunScoped(ctx context.Context, projectID, identity strin
 	return finishRuntimeRun(d.store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, "released dead run by operator", false)
 }
 
-func interruptRunProcess(store *RuntimeStore, run *RunStatus, _ bool) error {
+func interruptRunProcess(store *RuntimeStore, run *RunStatus, verifiedHandle bool) error {
 	if run == nil {
 		return tuskerError(errorNotFound, "run not found")
 	}
 	if isACPRunner(RunnerName(run.Runner)) {
-		return interruptACPWrapperProcess(store, run)
+		return interruptACPWrapperProcess(store, run, verifiedHandle)
 	}
 	pgid := processSignalGroup(*run)
-	if classifyRunLiveness(*run) == runLivenessOrphaned && !runStopSignalAuthorized(store, *run) {
+	if classifyRunLiveness(*run) == runLivenessOrphaned && !verifiedHandle && !runStopSignalAuthorized(store, *run) {
 		return tuskerError(errorInvalidTransition,
 			fmt.Sprintf("refusing to signal process group %d because recorded leader PID %d no longer matches; ownership cannot be verified", pgid, run.ProcessPID),
 			withHint("inspect and stop the process group manually, then retry after no Tusker-owned process remains"),
@@ -528,16 +528,16 @@ const acpWrapperInterruptStatusMargin = 500 * time.Millisecond
 // before touching its containment group. A group SIGINT would also interrupt
 // the adapter before it can complete its bounded protocol cancel and status
 // handoff, so only verified wrapper identity receives the first signal.
-func interruptACPWrapperProcess(store *RuntimeStore, run *RunStatus) error {
+func interruptACPWrapperProcess(store *RuntimeStore, run *RunStatus, verifiedHandle bool) error {
 	pgid := processSignalGroup(*run)
-	if classifyRunLiveness(*run) == runLivenessOrphaned && runStopSignalAuthorized(store, *run) {
+	if classifyRunLiveness(*run) == runLivenessOrphaned && (verifiedHandle || runStopSignalAuthorized(store, *run)) {
 		if err := escalateRunnerProcessGroup(pgid); err != nil {
 			return err
 		}
-		return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "orphaned ACP group stopped by operator intent", true)
+		return finishRuntimeRunIfSnapshot(store, run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "orphaned ACP group stopped by verified operator interrupt", true)
 	}
 	if !processIdentityMatches(*run) {
-		if classifyRunLiveness(*run) == runLivenessOrphaned && !runStopSignalAuthorized(store, *run) {
+		if classifyRunLiveness(*run) == runLivenessOrphaned && !verifiedHandle && !runStopSignalAuthorized(store, *run) {
 			return tuskerError(errorInvalidTransition,
 				fmt.Sprintf("refusing to signal ACP wrapper process group %d because recorded wrapper PID %d no longer matches; ownership cannot be verified", pgid, run.ProcessPID),
 				withHint("inspect and stop the process group manually, then retry after no Tusker-owned process remains"),
@@ -651,6 +651,7 @@ const (
 	runLivenessOrphaned runLiveness = "orphaned"
 	runLivenessGone     runLiveness = "gone"
 	runLivenessForeign  runLiveness = "foreign"
+	runLivenessUnknown  runLiveness = "unknown"
 )
 
 func classifyRunLiveness(run RunStatus) runLiveness {
@@ -665,18 +666,46 @@ func classifyRunLiveness(run RunStatus) runLiveness {
 	// A different process at PGID therefore owns a different group.
 	if processExists(pgid) {
 		if pgid == run.ProcessPID {
-			if actual, ok := processStartTime(pgid); ok && actual != strings.TrimSpace(run.ProcessStartedAt) {
+			if actual, ok := processStartTime(pgid); !ok {
+				return runLivenessUnknown
+			} else if actual != strings.TrimSpace(run.ProcessStartedAt) {
 				return runLivenessForeign
 			}
 		}
-		return runLivenessOrphaned
+		return runLivenessUnknown
 	}
 	if started, err := time.Parse(time.RFC3339Nano, run.ProcessStartedAt); err == nil {
-		if boot, ok := hostBootTime(); ok && boot.After(started) {
+		if boot, ok := hostBootTime(); !ok {
+			return runLivenessUnknown
+		} else if boot.After(started) {
 			return runLivenessGone
 		}
 	}
-	return runLivenessOrphaned
+	return orphanedGroupHasStartIdentity(pgid, strings.TrimSpace(run.ProcessStartedAt))
+}
+
+func orphanedGroupHasStartIdentity(pgid int, expected string) runLiveness {
+	if expected == "" {
+		return runLivenessUnknown
+	}
+	out, err := exec.Command("ps", "-axo", "stat=,pgid=,lstart=").Output()
+	if err != nil {
+		return runLivenessUnknown
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 7 || strings.Contains(fields[0], "Z") || fields[1] != strconv.Itoa(pgid) {
+			continue
+		}
+		started, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", strings.Join(fields[2:], " "), time.Local)
+		if err != nil {
+			return runLivenessUnknown
+		}
+		if started.UTC().Format(time.RFC3339) == expected {
+			return runLivenessOrphaned
+		}
+	}
+	return runLivenessUnknown
 }
 
 func hostBootTime() (time.Time, bool) {
@@ -1822,8 +1851,9 @@ func (d *Daemon) reclaimExpiredDispatchCapacity(runs []RunStatus, now time.Time)
 	// On a project-list failure every run takes the legacy unbounded
 	// reclaim below, which is exactly the previous behavior.
 	enabled := map[string]bool{}
-	if projects, err := d.store.ListProjects(); err == nil {
-		for _, project := range projects {
+	if projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{MetadataOnly: true}); err == nil {
+		for _, loaded := range projects {
+			project := loaded.Project
 			if project.Enabled {
 				enabled[project.ProjectID] = true
 			}
@@ -2897,12 +2927,24 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			}
 			if waiting {
 				reason := "waiting for answer to agent question"
+				parentAttemptID := run.ActiveAttemptID
+				parentSessionRef := run.SessionRef
 				run.LeaseState = string(LeaseStateReleased)
 				run.AttemptOutcome = string(AttemptOutcomeWaitingForHuman)
 				run.NextRetryAt = ""
 				run.LastError = reason
 				run.Terminal = false
 				updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForHuman, 0, reason, finished)
+				if strings.TrimSpace(run.SessionRef) != "" {
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
+				}
+				d.emitSupervisorDecision(SupervisorDecision{
+					ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
+					Runner: run.Runner, WorkRevision: run.WorkRevision, AttemptID: parentAttemptID,
+					SessionRef: parentSessionRef, Kind: string(SupervisorDecisionStopForHuman),
+					Reason: reason, ParentAttemptID: parentAttemptID, ParentSessionRef: parentSessionRef,
+					WorkspacePath: run.WorkspacePath,
+				})
 				clearActiveExecution(&run)
 				return run, true, nil
 			}
@@ -5038,6 +5080,25 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 		}
 	}
+	answerText, answerIDs, err := d.store.claimTaskAnswerPrompt(project.ProjectID, run.ItemID, run.WorkRevision, attemptID)
+	if err != nil {
+		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+	}
+	if answerText != "" {
+		currentPrompt, readErr := readText(promptPath)
+		if readErr != nil {
+			d.store.finishTaskAnswerPrompt(project.ProjectID, attemptID, answerIDs, false)
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, readErr)
+		}
+		updatedPrompt := strings.TrimSpace(currentPrompt) + answerText + "\n"
+		if at := strings.Index(currentPrompt, "\n\n"+resumePromptContextHeader); at >= 0 {
+			updatedPrompt = currentPrompt[:at] + answerText + currentPrompt[at:]
+		}
+		if writeErr := writeText(promptPath, updatedPrompt); writeErr != nil {
+			d.store.finishTaskAnswerPrompt(project.ProjectID, attemptID, answerIDs, false)
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, writeErr)
+		}
+	}
 	if strings.TrimSpace(resumeSession.SessionRef) != "" {
 		// Resume identity is resolved from the durable session registry and may
 		// be more complete than the queued run snapshot (which can retain the
@@ -5051,9 +5112,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		} else if !ok {
 			latest, latestErr := d.latestDispatchRun(run)
 			return latest, true, latestErr
-		}
-		if err := acceptRunContinuationDeliveries(d.store, continuationDeliveries, attemptID); err != nil {
-			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 		}
 		d.emitSupervisorDecision(SupervisorDecision{
 			ProjectID:        project.ProjectID,
@@ -5105,6 +5163,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		start, err = runner.Start(ctx, startReq)
 	}
 	if err != nil {
+		d.store.finishTaskAnswerPrompt(project.ProjectID, attemptID, answerIDs, false)
 		if workflowRunUsesCodexCloud(wfFile.Data, run) && start != nil && strings.TrimSpace(start.CloudTaskID) != "" {
 			// Codex Cloud may have accepted the remote operation before its
 			// event-ledger append failed. Adopt the returned provider identity
@@ -5180,6 +5239,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	}
 	updated, persisted, err = d.updateDispatchRunIfLease(run, attemptID, leaseGeneration)
 	if err != nil || !persisted {
+		d.store.finishTaskAnswerPrompt(project.ProjectID, attemptID, answerIDs, false)
 		if err == nil && !persisted {
 			// The lease was revoked by a concurrent operator stop/interrupt
 			// between claim and this write. That interrupt ran while the stored
@@ -5191,6 +5251,12 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		return updated, true, err
 	}
 	run = updated
+	d.store.finishTaskAnswerPrompt(project.ProjectID, attemptID, answerIDs, true)
+	if strings.TrimSpace(resumeSession.SessionRef) != "" {
+		if err := acceptRunContinuationDeliveries(d.store, continuationDeliveries, attemptID); err != nil {
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+		}
+	}
 	reconciled, changed, err := d.reconcileRun(ctx, project, wfFile, run)
 	if err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toggle } from "../src/components/ui/controls";
 import { beginAutomationToggle, SettingsBasic } from "../src/features/product/OperationsScreens";
 import { applyProjectAutomationReadback } from "../src/lib/queries";
@@ -44,12 +45,13 @@ test("settings block stale rapid toggles and keep automation feedback separate",
   expect(on).toContain("bg-ink");
   expect(on).toContain("translate-x-[14px]");
 
-  const settings = renderToStaticMarkup(createElement(SettingsBasic, {
+  // c5a5da52 added the automation scope query to SettingsBasic.
+  const settings = renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(SettingsBasic, {
     project: projects[0], projectIds: ["primary"], operations: undefined,
     automation: { isPending: false, error: null, data: { ok: true, reason: "Background work enabled" }, mutate: () => {} } as never,
     settings: { isPending: false, error: null, data: { ok: true, reason: "Execution settings saved" }, mutate: () => {} } as never,
     onOpenAdvanced: () => {},
-  }));
+  })));
   const automation = settings.indexOf("Background work enabled");
   const execution = settings.indexOf("Capacity &amp; workspace");
   expect(automation).toBeGreaterThan(settings.indexOf("Automation"));

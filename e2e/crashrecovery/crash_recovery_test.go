@@ -1039,11 +1039,17 @@ func (h *harness) createRunnableTask(title string) {
 
 func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 	h.t.Helper()
+	// 834e84a4 requires authored body input for agent tasks.
+	bodyPath := filepath.Join(h.tempRoot, "task-body.md")
+	h.writeFile(bodyPath, "## Intent\nExercise crash recovery with the fake runner.\n\n## Acceptance\nThe fake runner reaches the scenario-specific terminal behavior.\n\n## Verification\nThe crash-recovery scenario checks the daemon-captured artifact.\n")
 	args := []string{
 		"new", "task",
 		"--vault", h.vaultDir,
 		"--epic", "APP",
 		"--title", title,
+		"--body-file", bodyPath,
+		// 834e84a4 made work-level required for new v7 tasks.
+		"--work-level", "standard",
 		"--risk", "low",
 		"--priority", "p2",
 		"--status", "ready",

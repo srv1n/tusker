@@ -22,6 +22,7 @@ func printDemoHelp() {
   tusker demo status --repo <dedicated-demo-path> [--json]
   tusker demo run --repo <dedicated-demo-path> --waves alpha,beta [--fast] [--fail-once B3] [--reject-once C2] [--require-harness NAME] [--json]
   tusker demo run --repo <dedicated-demo-path> --waves standalone --mode real --require-harness NAME [--profile NAME] [--timeout 15m] [--json]
+  tusker demo session --repo <dedicated-demo-path> --harness claude-code|codex_exec|muse|devin --scenario restart|kill-worker|say-hard|say-soft|ask-wait|ask-nowait|stop-continue|start-fresh|permission-deny [--profile NAME] [--json]
   tusker demo wait --repo <dedicated-demo-path> --until terminal --timeout 120s [--json]
   tusker demo check --repo <dedicated-demo-path> [--json]
   tusker demo reset --repo <dedicated-demo-path> [--dry-run] [--yes] [--json]

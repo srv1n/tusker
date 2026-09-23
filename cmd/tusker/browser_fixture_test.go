@@ -13,7 +13,7 @@ import (
 func TestDisposableRunSessionBrowserFixture(t *testing.T) {
 	root := os.Getenv("TUSKER_BROWSER_FIXTURE_ROOT")
 	if root == "" {
-		t.Fatal("TUSKER_BROWSER_FIXTURE_ROOT is required")
+		t.Skip("TUSKER_BROWSER_FIXTURE_ROOT is unset; browser fixture requested only by the browser test")
 	}
 	vault := filepath.Join(root, ".tusker")
 	stateRoot := filepath.Join(root, "state")
