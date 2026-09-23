@@ -100,6 +100,35 @@ func TestRuntimeSchemaMarkerCannotMaskMissingAuthorizationAttempt(t *testing.T) 
 	}
 }
 
+func TestRuntimeSchemaMarkerMigratesRunFailureColumns(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, stmt := range []string{
+		"ALTER TABLE runs DROP COLUMN reason_code",
+		"ALTER TABLE runs DROP COLUMN infrastructure_json",
+		"ALTER TABLE attempts DROP COLUMN reason_code",
+	} {
+		if _, err := store.exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if store.runtimeSchemaComplete() {
+		t.Fatal("schema marker accepted missing run failure columns")
+	}
+	if err := store.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range [][2]string{{"runs", "reason_code"}, {"runs", "infrastructure_json"}, {"attempts", "reason_code"}} {
+		var found int
+		if err := store.queryRowScan(`SELECT COUNT(*) FROM pragma_table_info('`+item[0]+`') WHERE name = ?`, []any{item[1]}, &found); err != nil || found != 1 {
+			t.Fatalf("migration did not restore %s.%s: found=%d err=%v", item[0], item[1], found, err)
+		}
+	}
+}
+
 func TestTightenRuntimeStateFilesRejectsSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink permissions are not portable on Windows")

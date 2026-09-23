@@ -1743,11 +1743,11 @@ func (s *RuntimeStore) runtimeSchemaComplete() bool {
 	}
 	for _, required := range []struct{ table, column string }{
 		{"projects", "project_id"}, {"projects", "repo_root"}, {"projects", "vault_root"}, {"projects", "visible"}, {"projects", "repository_key"},
-		{"runs", "project_id"}, {"runs", "record_id"}, {"runs", "item_id"}, {"runs", "lease_generation"}, {"runs", "terminal"},
+		{"runs", "project_id"}, {"runs", "record_id"}, {"runs", "item_id"}, {"runs", "lease_generation"}, {"runs", "terminal"}, {"runs", "reason_code"}, {"runs", "infrastructure_json"},
 		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"}, {"run_authorizations", "attempt_id"},
 		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"}, {"run_directives", "wave_id"}, {"run_directives", "authorization_fingerprint"}, {"run_directives", "wave_authorized_at"},
 		{"run_identity_metadata", "project_id"}, {"run_identity_metadata", "record_id"},
-		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"}, {"attempts", "provider_idempotency_key"},
+		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"}, {"attempts", "provider_idempotency_key"}, {"attempts", "reason_code"},
 		{"turns", "attempt_id"}, {"turns", "project_id"}, {"turns", "record_id"},
 		{"sessions", "project_id"}, {"sessions", "record_id"}, {"sessions", "session_ref"},
 		{"supervisor_decisions", "project_id"}, {"supervisor_decisions", "record_id"}, {"supervisor_decisions", "decision_id"},
