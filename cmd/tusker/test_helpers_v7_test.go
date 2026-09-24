@@ -41,6 +41,13 @@ func runV7TestMutation(args Args, fn func(Args) error) error {
 	if _, err = upsertV7Verifications(vault, taskID, rows, actor, args); err != nil {
 		return err
 	}
+	// Adding rows to the authored verification table is a contract amendment:
+	// upsertV7Verifications legitimately invalidates older pass rows back to
+	// pending. Drop the ones the fresh fixture rows supersede before stamping
+	// new receipts, or the seeded task is left permanently unproven.
+	if err := removeSupersededV7TestPendingRows(vault, taskID, rows); err != nil {
+		return err
+	}
 	note, err := resolveV7Note(vault, taskID, "task")
 	if err != nil {
 		return err
@@ -134,6 +141,7 @@ func removeSupersededV7TestPendingRows(vault, taskID string, receipts []v7Verifi
 		return nil
 	}
 	body = replaceSection(body, "## Verification", renderV7VerificationTable(kept))
+	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
 	_, err = saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev"))
 	return err
 }

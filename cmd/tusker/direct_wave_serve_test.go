@@ -117,7 +117,7 @@ func TestDirectWaveServeTaskStartQueuesPlannedBacklog(t *testing.T) {
 func TestDirectWaveServeTaskStartRefusalsCreateNoDirective(t *testing.T) {
 	vault, store, project, server := directWaveServeFixture(t, []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006"}, nil)
 	writeDirectTask(t, vault, "APP-T-0001", "W-0001", map[string]any{"status": "review", "readiness": "ready"})
-	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"status": "ready", "readiness": "ready", "work_level": "demanding"})
+	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"status": "ready", "readiness": "ready", "complexity": "nonsense"})
 	writeDirectTask(t, vault, "APP-T-0003", "W-0001", map[string]any{"status": "backlog", "readiness": "held"})
 	writeDirectTask(t, vault, "APP-T-0004", "W-0001", map[string]any{"status": "ready", "readiness": "blocked_dependency", "dependencies": []any{"APP-T-0003:hard"}})
 	writeDirectTask(t, vault, "APP-T-0005", "W-0001", map[string]any{"status": "ready", "readiness": "ready"})

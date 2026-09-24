@@ -670,11 +670,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		sourceZ := commitLandBranch(t, repo, "source/APP-T-0002-z", "integration/W-0001", map[string]string{"z-reviewed.txt": "z\n"})
 		sourceA := commitLandBranch(t, repo, "source/APP-T-0001-a", "integration/W-0001", map[string]string{"a-reviewed.txt": "a\n"})
 		for id, source := range map[string]string{"APP-T-0001": sourceA, "APP-T-0002": sourceZ} {
-			recordCompletionTestProof(t, vault, id)
 			setAutomationV7TaskFields(t, vault, id, map[string]any{
 				"status": "review", "readiness": "waiting_on_review",
 				"source_sha": source, "work_revision": 1,
 			})
+			recordCompletionTestProof(t, vault, id)
 		}
 		armScheduledPromotionWaveForTest(t, vault, "W-0001")
 		project := newRegisteredProject(repo, vault)
@@ -781,9 +781,6 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 
 	t.Run("proof-green soft dependency unblocks execution but not close", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 2, "true")
-		for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
-			recordCompletionTestProof(t, vault, id)
-		}
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review", "work_revision": 1,
 		})
@@ -793,6 +790,9 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			"status": "review", "readiness": "waiting_on_review", "work_revision": 1,
 			"source_sha": source, "dependencies": []string{"APP-T-0001:soft"},
 		})
+		for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+			recordCompletionTestProof(t, vault, id)
+		}
 		armScheduledPromotionWaveForTest(t, vault, "W-0001")
 
 		idx, err := loadV7Index(vault)
@@ -887,11 +887,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			t.Fatalf("dependent was not isolated in wave B: task=%#v err=%v", dependent.Data, err)
 		}
 		source := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"predecessor.txt": "reviewed\n"})
-		recordCompletionTestProof(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review",
 			"source_sha": source, "work_revision": 1, "owned_paths": []string{"predecessor.txt"},
 		})
+		recordCompletionTestProof(t, vault, "APP-T-0001")
 		armScheduledPromotionWaveForTest(t, vault, "W-0001")
 		armScheduledPromotionWaveForTest(t, vault, "W-0002")
 
@@ -964,11 +964,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 		clearWaveBackpointer(t, vault, "APP-T-0001")
 		setSingletonPromotionMode(t, vault, scheduledPromotionStage)
 		source := commitLandBranch(t, repo, "source/APP-T-0001", "integration/W-0001", map[string]string{"standalone.txt": "reviewed\n"})
-		recordCompletionTestProof(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review",
 			"source_sha": source, "work_revision": 1, "owned_paths": []string{"standalone.txt"},
 		})
+		recordCompletionTestProof(t, vault, "APP-T-0001")
 		before, err := resolveV7Note(vault, "APP-T-0001", "task")
 		if err != nil {
 			t.Fatal(err)
@@ -1634,10 +1634,10 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 
 	t.Run("completion candidate cannot rewind another done task", func(t *testing.T) {
 		repo, vault := newLandTestRepo(t, 2, "true")
-		recordCompletionTestProof(t, vault, "APP-T-0002")
 		setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{
 			"status": "review", "readiness": "waiting_on_review", "work_revision": 1,
 		})
+		recordCompletionTestProof(t, vault, "APP-T-0002")
 		if err := closeV7Cmd(Args{
 			"vault": vault, "quiet": "true", "local": "true",
 			"id": "APP-T-0002", "by": "reviewer:agent",
@@ -1665,11 +1665,11 @@ func TestDeterministicReviewCompletion(t *testing.T) {
 			".tusker/work/tasks/APP-T-0002.md": staleRaw,
 			"reviewed.txt":                     "exact\n",
 		})
-		recordCompletionTestProof(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review",
 			"source_sha": source, "work_revision": 1,
 		})
+		recordCompletionTestProof(t, vault, "APP-T-0001")
 		armScheduledPromotionWaveForTest(t, vault, "W-0001")
 
 		project := newRegisteredProject(repo, vault)
@@ -2428,6 +2428,7 @@ func TestCompletionStagingRegeneratesDerivedProjectionConflict(t *testing.T) {
 	setAutomationV7TaskFields(t, vault, result.TaskID, map[string]any{
 		"status": "review", "readiness": "waiting_on_review", "source_sha": source, "work_revision": 1,
 	})
+	recordCompletionTestProof(t, vault, result.TaskID)
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	refreshed := completionResultForReviewedTask(t, vault, project, result.TaskID, "review-derived-conflict", "derived conflict regenerated")
 	if _, err := daemon.store.SaveReviewResult(refreshed); err != nil {
@@ -2469,7 +2470,9 @@ func TestCompletionStagingRetainsUnrelatedIntegrationTaskControls(t *testing.T) 
 	})
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status": "review", "readiness": "waiting_on_review", "source_sha": source, "work_revision": 1,
+		"owned_paths": []string{"reviewed.txt"},
 	})
+	recordCompletionTestProof(t, vault, "APP-T-0001")
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	result := completionResultForReviewedTask(t, vault, project, "APP-T-0001", "review-stale-sibling", "sibling control retained")
 	if _, err := daemon.store.SaveReviewResult(result); err != nil {

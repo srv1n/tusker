@@ -279,7 +279,8 @@ func TestDirectWaveStartRefusesInvalidMemberContractBeforeArm(t *testing.T) {
 		return data, strings.Replace(body, "command: go test ./x", "check later", 1)
 	})
 	_, err := directWaveStart(vault, store, "W-0001", "human:test")
-	if err == nil || !strings.Contains(err.Error(), "APP-T-0001: verification missing exact command or manual proof") {
+	if err == nil || !strings.Contains(err.Error(), "wave start refused: MEMBER_CONTRACT_INVALID APP-T-0001") ||
+		!strings.Contains(err.Error(), "verification missing exact command or manual proof") {
 		t.Fatalf("err=%v", err)
 	}
 	if auth := waveAuthorizationState(t, vault, "W-0001"); stringField(auth, "state") == "armed" {
