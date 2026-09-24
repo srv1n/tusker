@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,7 +28,30 @@ type docsAdoptProposal struct {
 	Target            string `json:"target,omitempty"`
 	Reason            string `json:"reason"`
 	SourceFingerprint string `json:"source_fingerprint,omitempty"`
-	Applied           bool   `json:"applied"`
+	// Kind/Lifecycle/Conformance/Evidence select the portable identity of a
+	// migrated document explicitly. Empty values take the per-kind S46
+	// defaults (doc/current, proposal/proposed, decision/proposed, unverified)
+	// at apply time; implemented/matches/drift require Evidence.
+	Kind        string `json:"kind,omitempty"`
+	Lifecycle   string `json:"lifecycle,omitempty"`
+	Conformance string `json:"conformance,omitempty"`
+	Evidence    string `json:"evidence,omitempty"`
+	// Links inventories the relative Markdown links/assets found in the
+	// source body. Links pointing at co-migrated sources are repaired on
+	// apply; every other link is preserved byte-identical for review.
+	Links []string `json:"links,omitempty"`
+	// StubSource marks a legacy vault source (.tusker/specs, knowledge
+	// domains) that becomes a subject-less forwarding stub once its content
+	// has a canonical owner, so the old path forwards without duplicating
+	// the current subject. The original bytes are kept in the recovery
+	// journal. Outside-tree sources always keep their originals.
+	StubSource bool `json:"stub_source,omitempty"`
+	// ActiveRefs inventories the active task files whose spec_refs name this
+	// source path. It is workspace state, not reviewed material, so it stays
+	// out of the approval fingerprint; preflight re-derives it live and
+	// refuses overlapping active work before any damaging write.
+	ActiveRefs []string `json:"active_refs,omitempty"`
+	Applied    bool     `json:"applied"`
 }
 
 const docsAdoptTableSchema = "tusker.docs-adopt/v1"
@@ -47,6 +72,13 @@ type docsAdoptPrepared struct {
 	target           []byte
 	targetExists     bool
 	successorSubject string
+	// alreadyApplied marks a row whose post-apply state is already on disk
+	// (forwarding stub present, merge marker present). Apply skips it so a
+	// resumed or repeated apply is idempotent.
+	alreadyApplied bool
+	migKind        docgraph.Kind
+	migLifecycle   string
+	migConformance string
 }
 
 var docsAdoptApplyMu sync.Mutex
@@ -170,12 +202,18 @@ func docsAdoptTableFingerprint(proposals []docsAdoptProposal) string {
 	// Applied is runtime output, not reviewed material. Keep it out of the
 	// digest so a successful apply can report the same table identity.
 	type fingerprintRow struct {
-		Path              string `json:"path"`
-		Subject           string `json:"subject"`
-		Disposition       string `json:"disposition"`
-		Target            string `json:"target,omitempty"`
-		Reason            string `json:"reason"`
-		SourceFingerprint string `json:"source_fingerprint,omitempty"`
+		Path              string   `json:"path"`
+		Subject           string   `json:"subject"`
+		Disposition       string   `json:"disposition"`
+		Target            string   `json:"target,omitempty"`
+		Reason            string   `json:"reason"`
+		SourceFingerprint string   `json:"source_fingerprint,omitempty"`
+		Kind              string   `json:"kind,omitempty"`
+		Lifecycle         string   `json:"lifecycle,omitempty"`
+		Conformance       string   `json:"conformance,omitempty"`
+		Evidence          string   `json:"evidence,omitempty"`
+		Links             []string `json:"links,omitempty"`
+		StubSource        bool     `json:"stub_source,omitempty"`
 	}
 	rows := make([]fingerprintRow, 0, len(proposals))
 	for _, proposal := range proposals {
@@ -183,6 +221,9 @@ func docsAdoptTableFingerprint(proposals []docsAdoptProposal) string {
 			Path: proposal.Path, Subject: proposal.Subject,
 			Disposition: proposal.Disposition, Target: proposal.Target,
 			Reason: proposal.Reason, SourceFingerprint: proposal.SourceFingerprint,
+			Kind: proposal.Kind, Lifecycle: proposal.Lifecycle,
+			Conformance: proposal.Conformance, Evidence: proposal.Evidence,
+			Links: proposal.Links, StubSource: proposal.StubSource,
 		})
 	}
 	raw, _ := json.Marshal(rows)
@@ -255,7 +296,16 @@ func prepareDocsAdoptProposal(repoRoot string, proposal docsAdoptProposal, requi
 	if disposition == "leave" {
 		return docsAdoptPrepared{proposal: proposal}, nil
 	}
-	if docsAdoptLeave(relative, strings.ToLower(filepath.Base(relative))) || docsAdoptSkipDir(filepath.ToSlash(filepath.Dir(relative))) {
+	migKind, migLifecycle, migConformance, err := docsAdoptRowIdentity(proposal)
+	if err != nil {
+		return docsAdoptPrepared{}, err
+	}
+	// Legacy vault sources (.tusker/specs, knowledge domains) are adopted
+	// only through explicit reviewed migration rows, so the protected-tree
+	// guard below does not apply to them. Every other guard (fingerprints,
+	// collisions, symlinks, dirty inputs, active references) still holds.
+	if !docsAdoptIsLegacyVaultSource(proposal.Path) &&
+		(docsAdoptLeave(relative, strings.ToLower(filepath.Base(relative))) || docsAdoptSkipDir(filepath.ToSlash(filepath.Dir(relative)))) {
 		return docsAdoptPrepared{}, fmt.Errorf("documentation adoption protected source must remain leave: %s", proposal.Path)
 	}
 	canonicalRepoRoot, err := docsAdoptCanonicalRoot(repoRoot, "repository")
@@ -271,6 +321,19 @@ func prepareDocsAdoptProposal(repoRoot string, proposal docsAdoptProposal, requi
 	source, err := docgraph.ReadDocumentFile(repoRoot, proposal.Path)
 	if err != nil {
 		return docsAdoptPrepared{}, err
+	}
+	// A resumed or repeated apply meets the forwarding stub left by the
+	// first apply instead of the reviewed bytes. The stub carries the exact
+	// successor, so recognizing it here keeps the repeat idempotent instead
+	// of reporting source drift.
+	if stubbed, stubErr := docsAdoptSourceIsExpectedStub(repoRoot, proposal, source); stubErr != nil {
+		return docsAdoptPrepared{}, stubErr
+	} else if stubbed {
+		return docsAdoptPrepared{proposal: proposal, source: source, alreadyApplied: true,
+			migKind: migKind, migLifecycle: migLifecycle, migConformance: migConformance}, nil
+	}
+	if migKind == docgraph.KindDecision && docsAdoptDecidesFor(source) == "" {
+		return docsAdoptPrepared{}, fmt.Errorf("documentation adoption row %s migrates a decision without decides_for: record the settled subject or leave the row for manual review", proposal.Path)
 	}
 	if strings.TrimSpace(proposal.Subject) == "" {
 		return docsAdoptPrepared{}, fmt.Errorf("documentation adoption requires a subject for %s", proposal.Path)
@@ -293,7 +356,8 @@ func prepareDocsAdoptProposal(repoRoot string, proposal docsAdoptProposal, requi
 	} else if symlinkPath != "" {
 		return docsAdoptPrepared{}, fmt.Errorf("documentation adoption refuses symlink target or parent: %s", proposal.Target)
 	}
-	prepared := docsAdoptPrepared{proposal: proposal, source: source}
+	prepared := docsAdoptPrepared{proposal: proposal, source: source,
+		migKind: migKind, migLifecycle: migLifecycle, migConformance: migConformance}
 	cleanTarget := filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Target)))
 	if !strings.HasPrefix(cleanTarget, "docs/system/") {
 		return docsAdoptPrepared{}, fmt.Errorf("documentation adoption successor must be under docs/system: %s", proposal.Target)
@@ -354,12 +418,18 @@ func applyPreparedDocsAdoptTable(repoRoot string, prepared []docsAdoptPrepared) 
 		if strings.EqualFold(strings.TrimSpace(item.proposal.Disposition), "leave") {
 			continue
 		}
+		if item.alreadyApplied {
+			continue
+		}
 		if err := verifyPreparedDocsAdoptCAS(repoRoot, item); err != nil {
 			return err
 		}
 	}
 	for _, item := range prepared {
 		if strings.EqualFold(strings.TrimSpace(item.proposal.Disposition), "leave") {
+			continue
+		}
+		if item.alreadyApplied {
 			continue
 		}
 		if err := applyPreparedDocsAdoptProposal(repoRoot, item); err != nil {
@@ -452,18 +522,30 @@ func restoreDocsAdoptBatch(repoRoot string, rollback []docsAdoptRollbackEntry) e
 }
 
 func applyPreparedDocsAdoptProposal(repoRoot string, prepared docsAdoptPrepared) error {
+	return applyPreparedDocsAdoptProposalMoves(repoRoot, prepared, nil)
+}
+
+func applyPreparedDocsAdoptProposalMoves(repoRoot string, prepared docsAdoptPrepared, moves map[string]string) error {
 	proposal := prepared.proposal
 	disposition := strings.ToLower(strings.TrimSpace(proposal.Disposition))
 	switch disposition {
 	case "promote":
 		if !prepared.targetExists {
-			created := time.Now().Local().Format("2006-01-02")
-			content := fmt.Sprintf("---\nsubject: %s\nkeywords: []\npart_of: overview\ndescribes: []\nstatus: canonical\ncreated: %s\nlast_verified:\nread_when: %s\nskip_when: \"\"\nsources: [%s]\n---\n\n%s", strconv.Quote(proposal.Subject), created, strconv.Quote("You need the current truth for "+proposal.Subject+"."), strconv.Quote(proposal.Path), docsAdoptBody(prepared.source))
-			return docsAdoptWriteText(repoRoot, proposal.Target, content)
+			content := docsAdoptPromotedDoc(proposal, prepared.source, prepared.migKind, prepared.migLifecycle, prepared.migConformance, moves)
+			if err := docsAdoptWriteText(repoRoot, proposal.Target, content); err != nil {
+				return err
+			}
+			return docsAdoptMaybeStubLegacySource(repoRoot, proposal, prepared)
 		}
-		return mergeDocsAdoptSource(repoRoot, proposal.Target, proposal.Path, prepared.source)
+		if err := mergeDocsAdoptSource(repoRoot, proposal.Target, proposal.Path, prepared.source); err != nil {
+			return err
+		}
+		return docsAdoptMaybeStubLegacySource(repoRoot, proposal, prepared)
 	case "merge":
-		return mergeDocsAdoptSource(repoRoot, proposal.Target, proposal.Path, prepared.source)
+		if err := mergeDocsAdoptSource(repoRoot, proposal.Target, proposal.Path, prepared.source); err != nil {
+			return err
+		}
+		return docsAdoptMaybeStubLegacySource(repoRoot, proposal, prepared)
 	case "tombstone":
 		content := docsAdoptTombstone(prepared.source, proposal, prepared.successorSubject)
 		return docsAdoptWriteText(repoRoot, proposal.Path, content)
@@ -473,34 +555,47 @@ func applyPreparedDocsAdoptProposal(repoRoot string, prepared docsAdoptPrepared)
 }
 
 func docsAdoptTombstone(source []byte, proposal docsAdoptProposal, successorSubject string) string {
-	partOf, decidesFor := "", ""
+	return docsAdoptForwardingStub(source, proposal.Path, proposal.Target, successorSubject)
+}
+
+// docsAdoptForwardingStub renders the model-conformant legacy placeholder:
+// a subject-less superseded stub that owns no subject (so it cannot create
+// duplicate-subject ownership), carries only its successor link and minimum
+// identity metadata, and forwards through one standard relative Markdown
+// link. The output is deterministic so rewriting an identical stub is a
+// no-op and a repeated apply stays idempotent.
+func docsAdoptForwardingStub(source []byte, sourceRel, targetRel, successorSubject string) string {
+	decidesFor := ""
 	if data, _, err := parseFrontmatter(string(source)); err == nil && data != nil {
-		partOf = strings.TrimSpace(fmt.Sprint(data["part_of"]))
 		decidesFor = strings.TrimSpace(fmt.Sprint(data["decides_for"]))
-		if partOf == "<nil>" {
-			partOf = ""
-		}
 		if decidesFor == "<nil>" {
 			decidesFor = ""
 		}
 	}
 	var b strings.Builder
-	b.WriteString("---\nsubject: ")
-	b.WriteString(strconv.Quote(proposal.Subject))
-	b.WriteString("\nstatus: superseded\nsuperseded_by: ")
+	b.WriteString("---\nstatus: superseded\nsuperseded_by: ")
 	b.WriteString(strconv.Quote(successorSubject))
-	if partOf != "" {
-		b.WriteString("\npart_of: ")
-		b.WriteString(strconv.Quote(partOf))
-	}
 	if decidesFor != "" {
 		b.WriteString("\ndecides_for: ")
 		b.WriteString(strconv.Quote(decidesFor))
 	}
-	b.WriteString("\n---\n\nThis document is superseded; read [[")
+	b.WriteString("\n---\n\nThis document has moved to [")
 	b.WriteString(successorSubject)
-	b.WriteString("]].\n")
+	b.WriteString("](")
+	b.WriteString(docsAdoptRelativeLink(sourceRel, targetRel))
+	b.WriteString(").\n")
 	return b.String()
+}
+
+// docsAdoptRelativeLink expresses targetRel as a relative Markdown link from
+// the directory containing sourceRel. Both are repo-relative slash paths.
+func docsAdoptRelativeLink(sourceRel, targetRel string) string {
+	sourceDir := filepath.FromSlash(filepath.ToSlash(filepath.Dir(filepath.FromSlash(sourceRel))))
+	target := filepath.FromSlash(filepath.ToSlash(filepath.Clean(filepath.FromSlash(targetRel))))
+	if rel, err := filepath.Rel(sourceDir, target); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(target)
 }
 
 // docsAdoptCmd is deliberately a batch operation: inventory and propose by
@@ -541,13 +636,25 @@ func docsAdoptCmd(args Args) error {
 		if err != nil {
 			return err
 		}
-		proposals, inventoryErr := inventoryDocsAdopt(repoRoot, corpus)
+		var proposals []docsAdoptProposal
+		var inventoryErr error
+		// --migration extends the reviewed table beyond stray Markdown to
+		// the legacy vault roots (specs, decisions, knowledge domains) with
+		// explicit destinations, kinds and lifecycle dispositions, plus the
+		// relative links/assets and active task references each move needs
+		// reviewed. The default inventory is unchanged.
+		if args.Bool("migration") {
+			proposals, inventoryErr = inventoryDocsMigration(repoRoot, corpus)
+		} else {
+			proposals, inventoryErr = inventoryDocsAdopt(repoRoot, corpus)
+		}
 		if inventoryErr != nil {
 			return inventoryErr
 		}
 		table = docsAdoptTable{Schema: docsAdoptTableSchema, Proposals: proposals}
 		table.Fingerprint = docsAdoptTableFingerprint(table.Proposals)
 	}
+	migrationMode := args.Bool("migration")
 	proposals := table.Proposals
 	// --dry-run is an explicit read-only fence, even if an operator accidentally
 	// combines it with --approve.
@@ -571,6 +678,12 @@ func docsAdoptCmd(args Args) error {
 		if table.Fingerprint != docsAdoptTableFingerprint(proposals) {
 			return tuskerError(errorInvalidTransition, "docs adopt approval table fingerprint does not match reviewed rows; regenerate the fingerprint after editing the table")
 		}
+		// Dirty owned inputs and overlapping active work are refused before
+		// the approval audit and before any damaging write, with the exact
+		// conflicting paths in the error.
+		if err := preflightDocsAdoptGuards(repoRoot, proposals); err != nil {
+			return err
+		}
 		prepared, preflightErr := preflightDocsAdoptTable(repoRoot, proposals)
 		if preflightErr != nil {
 			return preflightErr
@@ -578,7 +691,10 @@ func docsAdoptCmd(args Args) error {
 		if err := emitDocsAdoptAudit(vaultPath, "docs_adopt_approved", actor, approvalMethod, table.Fingerprint, tablePath, proposals, args.String("approval-token"), false, "reviewed table passed preflight"); err != nil {
 			return fmt.Errorf("documentation adoption approval audit failed: %w", err)
 		}
-		if err := applyPreparedDocsAdoptTable(repoRoot, prepared); err != nil {
+		// The recovery journal preserves every mutated path's original bytes
+		// through completion: an interrupted apply resumes safely and a
+		// repeated identical apply is idempotent.
+		if err := applyPreparedDocsAdoptTableJournaled(repoRoot, table.Fingerprint, prepared); err != nil {
 			if auditErr := emitDocsAdoptAudit(vaultPath, "docs_adopt_failed", actor, approvalMethod, table.Fingerprint, tablePath, proposals, args.String("approval-token"), false, err.Error()); auditErr != nil {
 				return fmt.Errorf("%w (failure audit failed: %v)", err, auditErr)
 			}
@@ -593,6 +709,10 @@ func docsAdoptCmd(args Args) error {
 		applied = true
 	}
 	if args.Bool("json") {
+		scope := "markdown outside docs/system and .tusker/specs; generated/runtime trees omitted"
+		if migrationMode || tablePath != "" && docsAdoptTableIsMigration(table) {
+			scope = "migration: legacy .tusker/specs, decisions and knowledge domains plus markdown outside docs/system; generated/runtime trees omitted"
+		}
 		emitJSON(map[string]any{
 			"schema":      table.Schema,
 			"fingerprint": table.Fingerprint,
@@ -600,9 +720,10 @@ func docsAdoptCmd(args Args) error {
 			"ok":          true,
 			"approved":    approved,
 			"applied":     applied,
+			"migration":   migrationMode,
 			"map":         "not regenerated; run `tusker docs map` after review",
 			"proposals":   proposals,
-			"scope":       "markdown outside docs/system and .tusker/specs; generated/runtime trees omitted",
+			"scope":       scope,
 		})
 		return nil
 	}
@@ -965,4 +1086,1063 @@ func mergeDocsAdoptSource(repoRoot, targetPath, sourcePath string, source []byte
 	}
 	addition := "\n\n## Adopted legacy material\n\n" + marker + "\n\n" + docsAdoptBody(source) + "\n"
 	return docsAdoptWriteText(repoRoot, targetPath, string(content)+addition)
+}
+
+// docsAdoptNormalizeKind maps a reviewed kind spelling to its portable kind.
+// An empty value takes the caller default (doc); spec stays accepted as the
+// compatibility spelling for proposal. Canonical is a lifecycle spelling,
+// not a kind, and is rejected with a repair hint.
+func docsAdoptNormalizeKind(raw string) (docgraph.Kind, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return "", true
+	case "doc":
+		return docgraph.KindDoc, true
+	case "proposal", "spec":
+		return docgraph.KindProposal, true
+	case "decision":
+		return docgraph.KindDecision, true
+	default:
+		return "", false
+	}
+}
+
+// docsAdoptRowIdentity resolves the explicit portable identity of a reviewed
+// migration row. Empty kind/lifecycle/conformance take the S46 defaults;
+// lifecycle and conformance values are validated against the kind, and any
+// mapping that claims implementation proof or code conformance requires
+// recorded evidence. A legacy canonical source never translates into
+// implemented/matches on its own: those need an explicit reviewed row with
+// evidence, and matches additionally needs a post-migration docs verify
+// stamp that migration cannot mint.
+func docsAdoptRowIdentity(proposal docsAdoptProposal) (docgraph.Kind, string, string, error) {
+	kind, ok := docsAdoptNormalizeKind(proposal.Kind)
+	if !ok {
+		return "", "", "", fmt.Errorf("documentation adoption row %s declares unknown kind %q: declare doc, proposal, or decision", proposal.Path, proposal.Kind)
+	}
+	if kind == "" {
+		kind = docgraph.KindDoc
+	}
+	lifecycle := strings.ToLower(strings.TrimSpace(proposal.Lifecycle))
+	if lifecycle == "" {
+		switch kind {
+		case docgraph.KindProposal, docgraph.KindDecision:
+			lifecycle = "proposed"
+		default:
+			lifecycle = "current"
+		}
+	}
+	if !docgraph.ValidLifecycle(kind, docgraph.KindSourceExplicit, lifecycle) {
+		return "", "", "", fmt.Errorf("documentation adoption row %s declares lifecycle %q, which is not valid for %s documents: use %s", proposal.Path, proposal.Lifecycle, kind, strings.Join(docgraph.LifecycleValues(kind), "|"))
+	}
+	conformance := strings.ToLower(strings.TrimSpace(proposal.Conformance))
+	if conformance == "" {
+		conformance = "unverified"
+	}
+	if !docgraph.ValidCodeConformance(conformance) {
+		return "", "", "", fmt.Errorf("documentation adoption row %s declares unknown code_conformance %q: declare unverified, matches, drift, or not_applicable", proposal.Path, proposal.Conformance)
+	}
+	evidence := strings.TrimSpace(proposal.Evidence)
+	switch {
+	case lifecycle == "implemented" && evidence == "":
+		return "", "", "", fmt.Errorf("documentation adoption row %s claims implemented without recorded completion evidence: record evidence or select proposed|accepted", proposal.Path)
+	case conformance == "matches":
+		return "", "", "", fmt.Errorf("documentation adoption row %s claims code_conformance matches during migration: migrate as unverified, then verify with docs verify to mint the checked stamp", proposal.Path)
+	case conformance == "drift" && evidence == "":
+		return "", "", "", fmt.Errorf("documentation adoption row %s claims drift without naming the unmatched scope as evidence", proposal.Path)
+	}
+	return kind, lifecycle, conformance, nil
+}
+
+// docsAdoptIsLegacyVaultSource reports whether a source lives under a legacy
+// vault root whose content moves to docs/system. Only these sources become
+// forwarding stubs after apply; outside-tree sources always keep originals.
+func docsAdoptIsLegacyVaultSource(relative string) bool {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative)))
+	for _, root := range []string{".tusker/specs/", ".tusker/decisions/", ".tusker/knowledge/"} {
+		if strings.HasPrefix(clean, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// docsAdoptSuccessorSubject returns the canonical subject a row forwards to:
+// the reviewed subject for promote/merge (both require target subject
+// agreement) and the existing target subject for tombstone.
+func docsAdoptSuccessorSubject(repoRoot string, proposal docsAdoptProposal) (string, error) {
+	if strings.ToLower(strings.TrimSpace(proposal.Disposition)) != "tombstone" {
+		return strings.TrimSpace(proposal.Subject), nil
+	}
+	target, err := docgraph.ReadDocumentFile(repoRoot, proposal.Target)
+	if err != nil {
+		return "", err
+	}
+	doc, err := docgraph.ParseDocHeaders(proposal.Target, target)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(doc.Subject), nil
+}
+
+// docsAdoptSourceIsExpectedStub recognizes the post-apply state of a
+// tombstone row or a stub-source promote/merge row: the source already holds
+// the exact deterministic forwarding stub for this row's successor. Returns
+// false (and no error) when the row still needs work or when the successor
+// cannot be determined yet, so the normal reviewed checks run instead.
+func docsAdoptSourceIsExpectedStub(repoRoot string, proposal docsAdoptProposal, source []byte) (bool, error) {
+	disposition := strings.ToLower(strings.TrimSpace(proposal.Disposition))
+	if disposition != "tombstone" && !proposal.StubSource {
+		return false, nil
+	}
+	successor, err := docsAdoptSuccessorSubject(repoRoot, proposal)
+	if err != nil || successor == "" {
+		return false, nil
+	}
+	expected := docsAdoptForwardingStub(source, proposal.Path, proposal.Target, successor)
+	return string(source) == expected, nil
+}
+
+// docsAdoptMaybeStubLegacySource replaces a migrated legacy vault source with
+// its forwarding stub once the canonical target owns the content, so the old
+// path forwards without duplicating the current subject. The stub is
+// deterministic; when it is already in place this is a no-op. Outside-tree
+// sources and rows without stub_source keep their originals untouched.
+func docsAdoptMaybeStubLegacySource(repoRoot string, proposal docsAdoptProposal, prepared docsAdoptPrepared) error {
+	if !proposal.StubSource || !docsAdoptIsLegacyVaultSource(proposal.Path) {
+		return nil
+	}
+	successor, err := docsAdoptSuccessorSubject(repoRoot, proposal)
+	if err != nil {
+		return err
+	}
+	expected := docsAdoptForwardingStub(prepared.source, proposal.Path, proposal.Target, successor)
+	current, err := docgraph.ReadDocumentFile(repoRoot, proposal.Path)
+	if err != nil {
+		return err
+	}
+	if string(current) == expected {
+		return nil
+	}
+	return docsAdoptWriteText(repoRoot, proposal.Path, expected)
+}
+
+// docsAdoptPromotedDoc renders a created portable document with its explicit
+// kind, kind-specific lifecycle and independent conformance. Migrated legacy
+// material starts unverified and unapproved: proposals start proposed and
+// docs start current regardless of the legacy status spelling. Creation
+// preserves the source body (with co-migrated links repaired), parent,
+// decision target and keywords, and records the legacy path in sources.
+func docsAdoptPromotedDoc(proposal docsAdoptProposal, source []byte, kind docgraph.Kind, lifecycle, conformance string, moves map[string]string) string {
+	partOf, decidesFor, keywords := "", "", []string{}
+	if data, _, err := parseFrontmatter(string(source)); err == nil && data != nil {
+		partOf = strings.TrimSpace(fmt.Sprint(data["part_of"]))
+		decidesFor = strings.TrimSpace(fmt.Sprint(data["decides_for"]))
+		if partOf == "<nil>" {
+			partOf = ""
+		}
+		if decidesFor == "<nil>" {
+			decidesFor = ""
+		}
+		if list, ok := data["keywords"]; ok && list != nil {
+			for _, item := range docsAdoptFrontmatterList(list) {
+				if item != "" {
+					keywords = append(keywords, item)
+				}
+			}
+		}
+	}
+	if partOf == "" {
+		partOf = "overview"
+	}
+	body := docsAdoptBody(source)
+	if len(moves) > 0 {
+		body = docsAdoptRepairBodyLinks(body, proposal.Path, proposal.Target, moves)
+	}
+	created := time.Now().Local().Format("2006-01-02")
+	var b strings.Builder
+	b.WriteString("---\nkind: ")
+	b.WriteString(string(kind))
+	b.WriteString("\nsubject: ")
+	b.WriteString(strconv.Quote(strings.TrimSpace(proposal.Subject)))
+	b.WriteString("\nkeywords: [")
+	for i, keyword := range keywords {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(strconv.Quote(keyword))
+	}
+	b.WriteString("]\npart_of: ")
+	b.WriteString(strconv.Quote(partOf))
+	b.WriteString("\ndescribes: []\nstatus: ")
+	b.WriteString(lifecycle)
+	if kind == docgraph.KindDecision {
+		b.WriteString("\ndecides_for: ")
+		b.WriteString(strconv.Quote(decidesFor))
+	}
+	b.WriteString("\ncode_conformance: ")
+	b.WriteString(conformance)
+	b.WriteString("\ncreated: ")
+	b.WriteString(created)
+	b.WriteString("\nlast_verified:\nread_when: \"\"\nskip_when: \"\"\n")
+	if kind == docgraph.KindProposal {
+		b.WriteString("updates: []\ndecisions_locked: false\n")
+	}
+	b.WriteString("sources: [")
+	b.WriteString(strconv.Quote(filepath.ToSlash(proposal.Path)))
+	b.WriteString("]\n---\n\n")
+	b.WriteString(body)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func docsAdoptFrontmatterList(value any) []string {
+	switch list := value.(type) {
+	case []any:
+		var out []string
+		for _, item := range list {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" && text != "<nil>" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case []string:
+		return list
+	case string:
+		if strings.TrimSpace(list) == "" {
+			return nil
+		}
+		return []string{strings.TrimSpace(list)}
+	default:
+		return nil
+	}
+}
+
+func docsAdoptDecidesFor(source []byte) string {
+	if data, _, err := parseFrontmatter(string(source)); err == nil && data != nil {
+		if decidesFor := strings.TrimSpace(fmt.Sprint(data["decides_for"])); decidesFor != "" && decidesFor != "<nil>" {
+			return decidesFor
+		}
+	}
+	return ""
+}
+
+var docsAdoptInlineLinkPattern = regexp.MustCompile(`!?\[[^\]]*\]\(([^)\s]+)[^)]*\)`)
+
+// docsAdoptRelativeRefs inventories the relative Markdown links and assets in
+// a source body: inline link/image destinations without a scheme or anchor.
+// Absolute URLs, mailto links and pure anchors are not portable-tree moves
+// and are excluded; everything reported stays byte-identical unless its
+// target is itself migrated by the same reviewed table.
+func docsAdoptRelativeRefs(body string) []string {
+	seen := map[string]bool{}
+	var refs []string
+	for _, match := range docsAdoptInlineLinkPattern.FindAllStringSubmatch(body, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		dest := strings.TrimSpace(match[1])
+		if dest == "" || strings.HasPrefix(dest, "#") || strings.Contains(dest, "://") || strings.HasPrefix(dest, "mailto:") {
+			continue
+		}
+		if anchor := strings.IndexByte(dest, '#'); anchor >= 0 {
+			dest = strings.TrimSpace(dest[:anchor])
+		}
+		if dest == "" || seen[dest] {
+			continue
+		}
+		seen[dest] = true
+		refs = append(refs, dest)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+// docsAdoptRepairBodyLinks rewrites relative links in a promoted body whose
+// targets move under the same reviewed table, so standard Markdown links
+// stay valid from the document's new location. Links to unmigrated paths are
+// preserved byte-identical for the reviewer.
+func docsAdoptRepairBodyLinks(body, sourceRel, targetRel string, moves map[string]string) string {
+	if len(moves) == 0 {
+		return body
+	}
+	cleanMoves := map[string]string{}
+	for old, successor := range moves {
+		oldClean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(old)))
+		newClean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(successor)))
+		if oldClean != "" && newClean != "" {
+			cleanMoves[oldClean] = newClean
+		}
+	}
+	sourceDir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(sourceRel)))
+	targetDir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(targetRel)))
+	resolve := func(base, dest string) string {
+		if strings.HasPrefix(dest, "/") {
+			return filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimPrefix(dest, "/"))))
+		}
+		return filepath.ToSlash(filepath.Clean(filepath.FromSlash(base) + "/" + dest))
+	}
+	return docsAdoptInlineLinkPattern.ReplaceAllStringFunc(body, func(link string) string {
+		open := strings.IndexByte(link, '(')
+		close := strings.LastIndexByte(link, ')')
+		if open < 0 || close < 0 || close <= open+1 {
+			return link
+		}
+		inner := strings.TrimSpace(link[open+1 : close])
+		dest := inner
+		suffix := ""
+		if fields := strings.Fields(inner); len(fields) > 1 {
+			dest = fields[0]
+			suffix = strings.TrimPrefix(inner, dest)
+		}
+		if dest == "" || strings.HasPrefix(dest, "#") || strings.Contains(dest, "://") || strings.HasPrefix(dest, "mailto:") {
+			return link
+		}
+		anchor := ""
+		if hash := strings.IndexByte(dest, '#'); hash >= 0 {
+			anchor, dest = dest[hash:], strings.TrimSpace(dest[:hash])
+		}
+		if dest == "" {
+			return link
+		}
+		successor, moved := cleanMoves[resolve(sourceDir, dest)]
+		if !moved {
+			return link
+		}
+		rel, err := filepath.Rel(filepath.FromSlash(targetDir), filepath.FromSlash(successor))
+		if err != nil {
+			return link
+		}
+		return link[:open+1] + filepath.ToSlash(rel) + anchor + suffix + ")"
+	})
+}
+
+// docsAdoptTableIsMigration reports whether a reviewed table carries explicit
+// migration selections (kinds, lifecycles, stubbed legacy sources).
+func docsAdoptTableIsMigration(table docsAdoptTable) bool {
+	for _, proposal := range table.Proposals {
+		if strings.EqualFold(strings.TrimSpace(proposal.Disposition), "leave") {
+			continue
+		}
+		if strings.TrimSpace(proposal.Kind) != "" || strings.TrimSpace(proposal.Lifecycle) != "" ||
+			strings.TrimSpace(proposal.Conformance) != "" || proposal.StubSource ||
+			docsAdoptIsLegacyVaultSource(proposal.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+// inventoryDocsMigration extends the reviewed adoption table to the S46
+// migration: legacy vault roots (specs, decisions, knowledge domains) are
+// inventoried with explicit destinations, kinds and lifecycle dispositions,
+// and every row carries the relative links/assets found in its source plus
+// the active task references that still name the old path. Rows that need a
+// human decision (ambiguous lifecycle, duplicate subjects, target
+// collisions, missing decision targets, overlapping active work surfaced
+// here for review) stay leave with a reason. A preview never writes.
+func inventoryDocsMigration(repoRoot string, corpus docgraph.Corpus) ([]docsAdoptProposal, error) {
+	generic, err := inventoryDocsAdopt(repoRoot, corpus)
+	if err != nil {
+		return nil, err
+	}
+	for i := range generic {
+		if strings.EqualFold(strings.TrimSpace(generic[i].Disposition), "leave") {
+			continue
+		}
+		if raw, readErr := docgraph.ReadDocumentFile(repoRoot, generic[i].Path); readErr == nil {
+			generic[i].Links = docsAdoptRelativeRefs(docsAdoptFrontmatterBody(string(raw)))
+		}
+	}
+	known := map[string][]docgraph.Document{}
+	for _, doc := range corpus.Documents {
+		if subject := strings.ToLower(strings.TrimSpace(doc.Subject)); subject != "" {
+			known[subject] = append(known[subject], doc)
+		}
+	}
+	occupiedSubjects := map[string]string{}
+	occupiedTargets := map[string]string{}
+	for subject, docs := range known {
+		// Legacy vault sources are claimed by this inventory run, not by
+		// the corpus scan that still sees them at their old paths.
+		for _, doc := range docs {
+			if !docsAdoptIsLegacyVaultSource(doc.Path) {
+				occupiedSubjects[subject] = doc.Path
+				break
+			}
+		}
+	}
+	for _, proposal := range generic {
+		if strings.EqualFold(strings.TrimSpace(proposal.Disposition), "leave") {
+			continue
+		}
+		if subject := strings.ToLower(strings.TrimSpace(proposal.Subject)); subject != "" {
+			occupiedSubjects[subject] = proposal.Path
+		}
+		if target := filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Target))); proposal.Target != "" {
+			occupiedTargets[target] = proposal.Path
+		}
+	}
+	legacy, err := inventoryDocsMigrationLegacy(repoRoot, known, occupiedSubjects, occupiedTargets)
+	if err != nil {
+		return nil, err
+	}
+	return append(generic, legacy...), nil
+}
+
+func docsAdoptFrontmatterBody(content string) string {
+	if _, body, err := parseFrontmatter(content); err == nil {
+		return body
+	}
+	return content
+}
+
+type docsMigrationLegacyRoot struct {
+	dir     string
+	kind    docgraph.Kind
+	destDir string
+	topOnly bool
+}
+
+func inventoryDocsMigrationLegacy(repoRoot string, known map[string][]docgraph.Document, occupiedSubjects, occupiedTargets map[string]string) ([]docsAdoptProposal, error) {
+	roots := []docsMigrationLegacyRoot{
+		{dir: ".tusker/specs/decisions", kind: docgraph.KindDecision, destDir: "docs/system/decisions", topOnly: true},
+		{dir: ".tusker/specs", kind: docgraph.KindProposal, destDir: "docs/system/proposals", topOnly: true},
+		{dir: ".tusker/knowledge/domains", kind: docgraph.KindDoc, destDir: "docs/system/domains", topOnly: false},
+	}
+	var candidates []string
+	for _, root := range roots {
+		abs := filepath.Join(repoRoot, filepath.FromSlash(root.dir))
+		info, err := os.Lstat(abs)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			continue
+		}
+		walkErr := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if entry.IsDir() {
+				if rel != filepath.ToSlash(root.dir) && root.topOnly {
+					return fs.SkipDir
+				}
+				// The decisions subtree is inventoried by its own root.
+				if root.dir == ".tusker/specs" && rel == ".tusker/specs/decisions" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+				return nil
+			}
+			candidates = append(candidates, rel)
+			return nil
+		})
+		if walkErr != nil {
+			return nil, walkErr
+		}
+	}
+	sort.Strings(candidates)
+	proposals := make([]docsAdoptProposal, 0, len(candidates))
+	subjectPaths := map[string][]string{}
+	for _, rel := range candidates {
+		subject := migrationLegacySubject(repoRoot, rel)
+		if normalized := strings.ToLower(strings.TrimSpace(subject)); normalized != "" {
+			subjectPaths[normalized] = append(subjectPaths[normalized], rel)
+		}
+	}
+	for _, rel := range candidates {
+		proposals = append(proposals, inventoryDocsMigrationRow(repoRoot, known, occupiedSubjects, occupiedTargets, subjectPaths, rel))
+		proposal := &proposals[len(proposals)-1]
+		if !strings.EqualFold(strings.TrimSpace(proposal.Disposition), "leave") {
+			if subject := strings.ToLower(strings.TrimSpace(proposal.Subject)); subject != "" {
+				occupiedSubjects[subject] = proposal.Path
+			}
+			if proposal.Target != "" {
+				occupiedTargets[filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Target)))] = proposal.Path
+			}
+		}
+	}
+	return proposals, nil
+}
+
+func migrationLegacySubject(repoRoot, rel string) string {
+	info, err := os.Lstat(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		return ""
+	}
+	raw, err := docgraph.ReadDocumentFile(repoRoot, rel)
+	if err != nil {
+		return ""
+	}
+	return docsAdoptSubject(rel, raw)
+}
+
+func inventoryDocsMigrationRow(repoRoot string, known map[string][]docgraph.Document, occupiedSubjects, occupiedTargets map[string]string, subjectPaths map[string][]string, rel string) docsAdoptProposal {
+	proposal := docsAdoptProposal{Path: rel, StubSource: true}
+	info, err := os.Lstat(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		proposal.Disposition, proposal.Reason = "leave", "legacy source is a symlink or unreadable; manual review required"
+		return proposal
+	}
+	raw, err := docgraph.ReadDocumentFile(repoRoot, rel)
+	if err != nil {
+		proposal.Disposition, proposal.Reason = "leave", "legacy source cannot be read; manual review required"
+		return proposal
+	}
+	kind, destDir := migrationLegacyKindTarget(rel)
+	subject := docsAdoptSubject(rel, raw)
+	proposal.Subject = subject
+	proposal.SourceFingerprint = docsAdoptBytesFingerprint(raw)
+	body := docsAdoptFrontmatterBody(string(raw))
+	proposal.Links = docsAdoptRelativeRefs(body)
+	proposal.ActiveRefs = docsAdoptActiveRefsForSource(repoRoot, rel)
+	switch kind {
+	case docgraph.KindProposal, docgraph.KindDecision:
+		proposal.Kind = string(kind)
+		proposal.Lifecycle = "proposed"
+		proposal.Conformance = "unverified"
+	default:
+		proposal.Kind = string(docgraph.KindDoc)
+		proposal.Lifecycle = "current"
+		proposal.Conformance = "unverified"
+	}
+	if docsAdoptUntitledSubject(subject) {
+		proposal.Disposition, proposal.Reason = "leave", "untitled or missing subject; manual review required"
+		return proposal
+	}
+	if kind == docgraph.KindDecision && docsAdoptDecidesFor(raw) == "" {
+		proposal.Disposition, proposal.Reason = "leave", "decision migration requires decides_for; manual review required"
+		return proposal
+	}
+	normalizedSubject := strings.ToLower(strings.TrimSpace(subject))
+	if paths := subjectPaths[normalizedSubject]; len(paths) > 1 {
+		proposal.Disposition, proposal.Reason = "leave", "multiple legacy files share this subject; manual merge required"
+		return proposal
+	}
+	if owner, taken := occupiedSubjects[normalizedSubject]; taken && owner != rel {
+		others := make([]docgraph.Document, 0, len(known[normalizedSubject]))
+		for _, doc := range known[normalizedSubject] {
+			if filepath.ToSlash(doc.Path) != rel {
+				others = append(others, doc)
+			}
+		}
+		if len(others) == 1 && filepath.ToSlash(others[0].Path) == owner {
+			if symlinkPath, symlinkErr := docsAdoptSymlinkPath(repoRoot, owner); symlinkErr == nil && symlinkPath == "" {
+				proposal.Target = owner
+				proposal.Disposition, proposal.Reason = "merge", "subject already has a canonical owner"
+				return proposal
+			}
+		}
+		proposal.Disposition, proposal.Reason = "leave", "canonical subject is ambiguous or already selected by "+owner+"; manual merge required"
+		return proposal
+	}
+	proposal.Target = migrationLegacyTarget(rel, kind, destDir, subject)
+	if previous, taken := occupiedTargets[filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Target)))]; taken {
+		proposal.Disposition, proposal.Reason = "leave", "multiple legacy files map to the same canonical target as "+previous+"; manual merge required"
+		return proposal
+	}
+	if symlinkPath, symlinkErr := docsAdoptSymlinkPath(repoRoot, proposal.Target); symlinkErr != nil {
+		proposal.Disposition, proposal.Reason = "leave", "canonical target path crosses a symlink; manual review required"
+		return proposal
+	} else if symlinkPath != "" {
+		proposal.Disposition, proposal.Reason = "leave", "canonical target path crosses a symlink; manual review required"
+		return proposal
+	}
+	targetPath := filepath.Join(repoRoot, filepath.FromSlash(proposal.Target))
+	if targetInfo, statErr := os.Lstat(targetPath); statErr == nil {
+		if targetInfo.Mode()&os.ModeSymlink != 0 {
+			proposal.Disposition, proposal.Reason = "leave", "canonical target is a symlink; manual review required"
+			return proposal
+		}
+		targetRaw, readErr := docgraph.ReadDocumentFile(repoRoot, proposal.Target)
+		if readErr != nil {
+			proposal.Disposition, proposal.Reason = "leave", "canonical target cannot be read; manual review required"
+			return proposal
+		}
+		targetDoc, parseErr := docgraph.ParseDocHeaders(proposal.Target, targetRaw)
+		if parseErr != nil || !strings.EqualFold(strings.TrimSpace(targetDoc.Subject), strings.TrimSpace(subject)) {
+			proposal.Disposition, proposal.Reason = "leave", "canonical target path collision; manual review required"
+			return proposal
+		}
+		proposal.Disposition, proposal.Reason = "merge", "canonical target path already exists"
+		return proposal
+	} else if !os.IsNotExist(statErr) {
+		proposal.Disposition, proposal.Reason = "leave", "canonical target cannot be inspected; manual review required"
+		return proposal
+	}
+	legacyStatus := migrationLegacyStatus(raw)
+	if legacyStatus != "" {
+		proposal.Reason = "legacy " + legacyStatus + " migration carries no prior approval; selected " + proposal.Lifecycle
+	} else {
+		proposal.Reason = "legacy migration; selected " + proposal.Lifecycle
+	}
+	proposal.Disposition = "promote"
+	return proposal
+}
+
+func migrationLegacyKindTarget(rel string) (docgraph.Kind, string) {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+	switch {
+	case clean == ".tusker/specs/decisions" || strings.HasPrefix(clean, ".tusker/specs/decisions/"):
+		return docgraph.KindDecision, "docs/system/decisions"
+	case clean == ".tusker/specs" || strings.HasPrefix(clean, ".tusker/specs/"):
+		return docgraph.KindProposal, "docs/system/proposals"
+	default:
+		return docgraph.KindDoc, "docs/system/domains"
+	}
+}
+
+func migrationLegacyTarget(rel string, kind docgraph.Kind, destDir, subject string) string {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+	if kind == docgraph.KindDoc && strings.HasPrefix(clean, ".tusker/knowledge/domains/") {
+		sub := strings.TrimPrefix(clean, ".tusker/knowledge/domains/")
+		if strings.EqualFold(filepath.Base(sub), "INDEX.md") {
+			sub = filepath.ToSlash(filepath.Join(filepath.Dir(sub), "00-index.md"))
+		}
+		return filepath.ToSlash(filepath.Join("docs/system/domains", sub))
+	}
+	return filepath.ToSlash(filepath.Join(destDir, docsSubjectSlug(subject)+".md"))
+}
+
+func migrationLegacyStatus(raw []byte) string {
+	if data, _, err := parseFrontmatter(string(raw)); err == nil && data != nil {
+		if status := strings.TrimSpace(fmt.Sprint(data["status"])); status != "" && status != "<nil>" {
+			return status
+		}
+	}
+	return ""
+}
+
+// preflightDocsAdoptGuards refuses the reviewed table before the approval
+// audit and before any damaging write when an owned input is dirty in git or
+// when an active task still binds the old path through spec_refs. Every
+// refusal names the exact conflicting paths. Task reference changes keep
+// their proof authority: migration never rewrites task files, so overlapping
+// active work must rebind through the normal revision-aware task commands
+// first; historical references keep resolving through forwarding stubs.
+func preflightDocsAdoptGuards(repoRoot string, proposals []docsAdoptProposal) error {
+	seen := map[string]bool{}
+	var relatives []string
+	for _, proposal := range proposals {
+		if strings.EqualFold(strings.TrimSpace(proposal.Disposition), "leave") {
+			continue
+		}
+		for _, relative := range []string{proposal.Path, proposal.Target} {
+			clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative)))
+			if clean == "" || seen[clean] {
+				continue
+			}
+			seen[clean] = true
+			relatives = append(relatives, clean)
+		}
+	}
+	if err := docsAdoptRefuseDirtyInputs(repoRoot, relatives); err != nil {
+		return err
+	}
+	if err := docsAdoptRefuseDuplicateSubjects(repoRoot, proposals); err != nil {
+		return err
+	}
+	for _, proposal := range proposals {
+		if strings.EqualFold(strings.TrimSpace(proposal.Disposition), "leave") {
+			continue
+		}
+		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Path)))
+		if refs := docsAdoptActiveRefsForSource(repoRoot, clean); len(refs) > 0 {
+			return fmt.Errorf("documentation adoption refuses overlapping active work: %s is referenced by active tasks %s; rebind those tasks through the normal revision-aware task commands first", proposal.Path, strings.Join(refs, ", "))
+		}
+	}
+	return nil
+}
+
+// docsAdoptRefuseDirtyInputs refuses owned migration paths with uncommitted
+// tracked changes. Untracked files are not dirty; a missing git binary, a
+// non-git directory, or any git failure skips the check (best effort) so
+// disposable fixtures and fresh projects still migrate.
+func docsAdoptRefuseDirtyInputs(repoRoot string, relatives []string) error {
+	if len(relatives) == 0 {
+		return nil
+	}
+	if info, err := os.Lstat(filepath.Join(repoRoot, ".git")); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil
+	}
+	// A deleted tracked file is still a valid pathspec (it is in the
+	// index); a never-tracked missing path (a promote target that does not
+	// exist yet) can make git report a pathspec error, so fall back to the
+	// existing paths instead of skipping the check.
+	args := append([]string{"-C", repoRoot, "status", "--porcelain=v1", "--"}, relatives...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		var existing []string
+		for _, relative := range relatives {
+			if _, statErr := os.Lstat(filepath.Join(repoRoot, filepath.FromSlash(relative))); statErr == nil {
+				existing = append(existing, relative)
+			}
+		}
+		if len(existing) == 0 {
+			return nil
+		}
+		retry := append([]string{"-C", repoRoot, "status", "--porcelain=v1", "--"}, existing...)
+		if out, err = exec.Command("git", retry...).Output(); err != nil {
+			return nil
+		}
+	}
+	owned := map[string]bool{}
+	for _, relative := range relatives {
+		owned[filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative)))] = true
+	}
+	dirty := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		status, rest := strings.TrimSpace(line[:2]), strings.TrimSpace(line[3:])
+		if status == "" || status == "??" {
+			continue
+		}
+		for _, path := range strings.Split(rest, " -> ") {
+			path = strings.Trim(strings.TrimSpace(path), `"`)
+			if owned[filepath.ToSlash(filepath.Clean(path))] {
+				dirty[filepath.ToSlash(filepath.Clean(path))] = true
+			}
+		}
+	}
+	if len(dirty) == 0 {
+		return nil
+	}
+	var paths []string
+	for path := range dirty {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return fmt.Errorf("documentation adoption refuses dirty owned inputs with uncommitted changes: %s; commit, stash, or restore them first", strings.Join(paths, ", "))
+}
+
+// docsAdoptActiveRefsForSource inventories the active task files whose
+// spec_refs name a legacy source path. Only path references overlap with a
+// move: subject references keep resolving to the same subject at its new
+// home. Inactive (done/closed/superseded/cancelled) tasks keep their
+// recorded bytes untouched and resolve through forwarding stubs.
+func docsAdoptActiveRefsForSource(repoRoot, sourceRel string) []string {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(sourceRel)))
+	tasksDir := filepath.Join(repoRoot, ".tusker", "work", "tasks")
+	var refs []string
+	_ = filepath.WalkDir(tasksDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		data, _, err := parseFrontmatter(string(raw))
+		if err != nil || data == nil {
+			return nil
+		}
+		matched := false
+		for _, ref := range docsAdoptFrontmatterList(data["spec_refs"]) {
+			target := ref
+			if anchor := strings.IndexByte(target, '#'); anchor >= 0 {
+				target = target[:anchor]
+			}
+			target = strings.TrimSpace(target)
+			target = strings.TrimPrefix(target, "./")
+			if filepath.ToSlash(filepath.Clean(filepath.FromSlash(target))) == clean {
+				matched = true
+				break
+			}
+		}
+		if !matched || !docsAdoptTaskIsActive(data) {
+			return nil
+		}
+		rel, err := filepath.Rel(repoRoot, path)
+		if err != nil {
+			return nil
+		}
+		refs = append(refs, filepath.ToSlash(rel))
+		return nil
+	})
+	sort.Strings(refs)
+	return refs
+}
+
+// docsAdoptRefuseDuplicateSubjects refuses reviewed rows that would leave
+// two current documents owning one subject. Tombstone rows always end
+// subject-less, merge rows join their existing owner, and a row never
+// conflicts with its own legacy source still visible at the old path; every
+// other clash names the exact subject and paths before any damaging write.
+func docsAdoptRefuseDuplicateSubjects(repoRoot string, proposals []docsAdoptProposal) error {
+	var actionable []docsAdoptProposal
+	for _, proposal := range proposals {
+		disposition := strings.ToLower(strings.TrimSpace(proposal.Disposition))
+		if disposition == "leave" || disposition == "tombstone" {
+			continue
+		}
+		actionable = append(actionable, proposal)
+	}
+	if len(actionable) == 0 {
+		return nil
+	}
+	type subjectClaim struct{ path, target string }
+	seen := map[string]subjectClaim{}
+	for _, proposal := range actionable {
+		subject := strings.ToLower(strings.TrimSpace(proposal.Subject))
+		if subject == "" {
+			continue
+		}
+		target := filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Target)))
+		if previous, ok := seen[subject]; ok && previous.target != target {
+			return fmt.Errorf("documentation adoption refuses duplicate subject %q claimed by %s and %s; merge the rows or leave one for manual review", proposal.Subject, previous.path, proposal.Path)
+		}
+		seen[subject] = subjectClaim{path: proposal.Path, target: target}
+	}
+	corpus, _, err := docgraph.LoadRepository(repoRoot)
+	if err != nil {
+		return err
+	}
+	for _, proposal := range actionable {
+		subject := strings.TrimSpace(proposal.Subject)
+		if subject == "" {
+			continue
+		}
+		target := filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Target)))
+		for _, doc := range corpus.Documents {
+			if docgraph.IsForwardingStub(doc) {
+				continue
+			}
+			if !strings.EqualFold(strings.TrimSpace(doc.Subject), subject) {
+				continue
+			}
+			if filepath.ToSlash(doc.Path) == target || filepath.ToSlash(doc.Path) == filepath.ToSlash(filepath.Clean(filepath.FromSlash(proposal.Path))) {
+				continue
+			}
+			return fmt.Errorf("documentation adoption refuses duplicate subject %q: %s would shadow current owner %s; merge into that target or leave the row for manual review", subject, proposal.Path, doc.Path)
+		}
+	}
+	return nil
+}
+
+func docsAdoptTaskIsActive(data map[string]any) bool {
+	status := strings.ToLower(strings.TrimSpace(fmt.Sprint(data["status"])))
+	switch status {
+	case "done", "completed", "complete", "closed", "superseded", "cancelled", "dropped", "archived":
+		return false
+	default:
+		return true
+	}
+}
+
+const docsAdoptJournalSchema = "tusker.docs-adopt-journal/v1"
+
+type docsAdoptJournalRow struct {
+	Path           string `json:"path"`
+	Target         string `json:"target,omitempty"`
+	Disposition    string `json:"disposition"`
+	Done           bool   `json:"done"`
+	PreSourceFP    string `json:"pre_source_fp,omitempty"`
+	PreTargetFP    string `json:"pre_target_fp,omitempty"`
+	PostSourceFP   string `json:"post_source_fp,omitempty"`
+	PostTargetFP   string `json:"post_target_fp,omitempty"`
+	TargetExisted  bool   `json:"target_existed"`
+	OriginalSource []byte `json:"original_source_b64,omitempty"`
+	OriginalTarget []byte `json:"original_target_b64,omitempty"`
+}
+
+type docsAdoptJournal struct {
+	Schema      string                `json:"schema"`
+	Fingerprint string                `json:"fingerprint"`
+	Complete    bool                  `json:"complete"`
+	Rows        []docsAdoptJournalRow `json:"rows"`
+}
+
+// docsAdoptJournalPath locates the recovery journal for one reviewed table.
+// Generated state lives under .tusker/_generated/docs; the journal preserves
+// every mutated path's original bytes through completion.
+func docsAdoptJournalPath(repoRoot, fingerprint string) string {
+	digest := strings.TrimPrefix(fingerprint, "sha256:")
+	if len(digest) > 16 {
+		digest = digest[:16]
+	}
+	if strings.TrimSpace(digest) == "" {
+		digest = "untabled"
+	}
+	return filepath.Join(repoRoot, ".tusker", "_generated", "docs", "adopt-"+digest+".json")
+}
+
+func docsAdoptFileState(repoRoot, relative string) (fingerprint string, existed bool, content []byte) {
+	raw, err := docgraph.ReadDocumentFile(repoRoot, relative)
+	if err != nil {
+		return "", false, nil
+	}
+	return docsAdoptBytesFingerprint(raw), true, raw
+}
+
+func loadDocsAdoptJournal(path string) (*docsAdoptJournal, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var journal docsAdoptJournal
+	if err := json.Unmarshal(raw, &journal); err != nil {
+		return nil, fmt.Errorf("read documentation adoption recovery journal %s: %w", path, err)
+	}
+	if journal.Schema != docsAdoptJournalSchema {
+		return nil, fmt.Errorf("documentation adoption recovery journal schema %q is unsupported", journal.Schema)
+	}
+	return &journal, nil
+}
+
+func saveDocsAdoptJournal(path string, journal *docsAdoptJournal) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(journal, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0o644)
+}
+
+func docsAdoptFailAfter() (int, bool) {
+	raw := strings.TrimSpace(os.Getenv("TUSKER_DOCS_ADOPT_FAIL_AFTER"))
+	if raw == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// applyPreparedDocsAdoptTableJournaled applies a reviewed table through the
+// recovery journal. An interrupted apply resumes the pending rows; a
+// repeated identical apply is a no-op. Rows already in their post-apply
+// state (forwarding stub present, merge marker present) are skipped, and a
+// row whose files changed outside the migration during recovery is refused
+// with its exact path instead of being silently reblessed.
+func applyPreparedDocsAdoptTableJournaled(repoRoot, fingerprint string, prepared []docsAdoptPrepared) error {
+	docsAdoptApplyMu.Lock()
+	defer docsAdoptApplyMu.Unlock()
+	var actionable []docsAdoptPrepared
+	for _, item := range prepared {
+		if strings.EqualFold(strings.TrimSpace(item.proposal.Disposition), "leave") {
+			continue
+		}
+		actionable = append(actionable, item)
+	}
+	journalPath := docsAdoptJournalPath(repoRoot, fingerprint)
+	journal, err := loadDocsAdoptJournal(journalPath)
+	if err != nil {
+		return err
+	}
+	if journal != nil && journal.Fingerprint == fingerprint && journal.Complete {
+		return nil
+	}
+	if journal == nil || journal.Fingerprint != fingerprint {
+		journal = &docsAdoptJournal{Schema: docsAdoptJournalSchema, Fingerprint: fingerprint}
+		for _, item := range actionable {
+			row := docsAdoptJournalRow{Path: item.proposal.Path, Target: item.proposal.Target, Disposition: item.proposal.Disposition}
+			preSourceFP, _, sourceRaw := docsAdoptFileState(repoRoot, item.proposal.Path)
+			preTargetFP, targetExisted, targetRaw := docsAdoptFileState(repoRoot, item.proposal.Target)
+			row.PreSourceFP, row.PreTargetFP = preSourceFP, preTargetFP
+			row.TargetExisted = targetExisted
+			if item.alreadyApplied {
+				row.Done = true
+				row.PostSourceFP, row.PostTargetFP = preSourceFP, preTargetFP
+			} else {
+				row.OriginalSource = sourceRaw
+				if targetExisted {
+					row.OriginalTarget = targetRaw
+				}
+			}
+			journal.Rows = append(journal.Rows, row)
+		}
+		if err := saveDocsAdoptJournal(journalPath, journal); err != nil {
+			return err
+		}
+	}
+	byPath := map[string]int{}
+	for i := range journal.Rows {
+		byPath[journal.Rows[i].Path] = i
+	}
+	rollback, err := snapshotDocsAdoptBatch(repoRoot, prepared)
+	if err != nil {
+		return err
+	}
+	for _, item := range actionable {
+		if item.alreadyApplied {
+			continue
+		}
+		if err := verifyPreparedDocsAdoptCAS(repoRoot, item); err != nil {
+			return err
+		}
+	}
+	moves := map[string]string{}
+	for _, item := range actionable {
+		switch strings.ToLower(strings.TrimSpace(item.proposal.Disposition)) {
+		case "promote", "merge":
+			moves[item.proposal.Path] = item.proposal.Target
+		}
+	}
+	failAfter, failArmed := docsAdoptFailAfter()
+	applied := 0
+	for _, item := range actionable {
+		rowIdx, ok := byPath[item.proposal.Path]
+		if !ok {
+			return fmt.Errorf("documentation adoption recovery journal is missing row %s", item.proposal.Path)
+		}
+		row := &journal.Rows[rowIdx]
+		if row.Done {
+			currentSourceFP, _, _ := docsAdoptFileState(repoRoot, row.Path)
+			currentTargetFP, _, _ := docsAdoptFileState(repoRoot, row.Target)
+			if currentSourceFP == row.PostSourceFP && currentTargetFP == row.PostTargetFP {
+				continue
+			}
+			if currentSourceFP == row.PreSourceFP && currentTargetFP == row.PreTargetFP {
+				row.Done = false
+			} else {
+				return fmt.Errorf("documentation adoption cannot resume: %s changed during recovery; restore it or regenerate the reviewed table", row.Path)
+			}
+		}
+		if item.alreadyApplied {
+			row.Done = true
+			if err := saveDocsAdoptJournal(journalPath, journal); err != nil {
+				return err
+			}
+			continue
+		}
+		if failArmed && applied >= failAfter {
+			return fmt.Errorf("injected docs adopt failure after %d applied rows (TUSKER_DOCS_ADOPT_FAIL_AFTER=%d)", applied, failAfter)
+		}
+		if err := applyPreparedDocsAdoptProposalMoves(repoRoot, item, moves); err != nil {
+			if rollbackErr := restoreDocsAdoptBatch(repoRoot, rollback); rollbackErr != nil {
+				return fmt.Errorf("%w (documentation adoption rollback failed: %v)", err, rollbackErr)
+			}
+			return err
+		}
+		postSourceFP, _, _ := docsAdoptFileState(repoRoot, row.Path)
+		postTargetFP, _, _ := docsAdoptFileState(repoRoot, row.Target)
+		row.PostSourceFP, row.PostTargetFP = postSourceFP, postTargetFP
+		row.Done = true
+		if err := saveDocsAdoptJournal(journalPath, journal); err != nil {
+			return err
+		}
+		applied++
+	}
+	journal.Complete = true
+	return saveDocsAdoptJournal(journalPath, journal)
 }

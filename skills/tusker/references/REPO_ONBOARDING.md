@@ -6,7 +6,9 @@ unresolved facts. Old plans are not evidence of current behavior.
 
 ## Storage Boundary
 
-`.tusker/` holds tracker state and canon; product source stays outside it.
+`.tusker/` holds tracker state and thin documentation pointers only;
+product knowledge lives under `docs/system/` and product source stays
+outside `.tusker/`.
 Never reset an existing tracker without explicit authorization and a verified
 export. `tusker purge --repo . --only-tusker-state` only previews deletion
 until `--yes`; inspect every proposed path.
@@ -54,12 +56,24 @@ configured runner; do not assume a default or substitute a transport.
 
 ## Canon and delivery
 
-Governing contracts belong in `.tusker/specs/`, not `docs/specs/`:
+One placement rule decides where a document lives. Current behavior goes in
+`docs/system/` (per domain under `docs/system/domains/<domain>/`), change
+specifications in `docs/system/proposals/`, and product decisions in
+`docs/system/decisions/`:
 
 ```sh
-tusker docs new auth --kind spec --vault ./.tusker
+tusker docs new auth --kind proposal --vault ./.tusker
+tusker docs new auth-scope --kind decision --decides-for auth --vault ./.tusker
 tusker docs find auth --vault ./.tusker
 ```
+
+Cold-reader answers: document current behavior in `docs/system/` (new domain
+chapter via `tusker docs new <subject> --kind doc --domain <name>`); propose
+a change in `docs/system/proposals/`; record a settled product decision in
+`docs/system/decisions/`; migrate old knowledge with
+`tusker docs adopt --migration` (preview first, apply only an approved table).
+`.tusker/` holds tracker state and thin pointers only. Product decisions move
+to documentation; work and lifecycle decisions stay with the tracker.
 
 Record source-backed facts in `docs/system/`;
 track work as tasks. Author tasks directly or batch them with a wave

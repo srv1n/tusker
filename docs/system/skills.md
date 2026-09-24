@@ -46,11 +46,14 @@ lead with the outcome, name the actor, retain exact commands, identifiers,
 permission boundaries, and uncertainty, then state the expected result and
 failure path. No skill changes permissions or configured work/review levels.
 
-Documentation follows the same current-only route: `docs/system/` owns product
-behavior, `.tusker/specs/` owns governing contracts, and
-`.tusker/specs/decisions/` owns durable decisions. `docs/system/INDEX.md` and
-`docs/system/graph.json` are generated views; update their source documents and
-run `tusker docs map` rather than editing those files.
+Documentation follows the same current-only placement rule: current chapters
+in `docs/system/` (per domain under `docs/system/domains/<domain>/`), change
+specifications in `docs/system/proposals/`, and product decisions in
+`docs/system/decisions/`. `.tusker/` holds tracker state and thin pointers
+only; legacy `.tusker/specs/` paths still resolve during transition.
+`docs/system/INDEX.md` and `docs/system/graph.json` are generated views;
+update their source documents and run `tusker docs map` rather than editing
+those files.
 
 ## Install and refresh
 
@@ -75,8 +78,10 @@ Run `tusker skill doctor --strict --json` after a skill change. Run
 
 The source package is authoritative. `tusker skill sync --repo . --source
 <canonical-tusker-checkout>` refreshes managed repository copies only when the
-operator asks. `tusker init` preserves existing user-managed external skills;
-it does not refresh active or global installations.
+operator asks; user-modified installed copies are preserved, never overwritten
+by a refresh. `tusker init` preserves existing user-managed external skills;
+it does not refresh active or global installations. `tusker init` and skill
+refresh never migrate documents implicitly.
 
 ## Code sources
 

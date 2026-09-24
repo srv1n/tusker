@@ -67,6 +67,17 @@ external effect. Never hand-edit the runtime database; for a suspected
 product defect, attach `tusker doctor <ID> --json --output <new-path>` (it
 refuses to overwrite) and report the file.
 
+## Documentation defects
+
+Product knowledge lives under `docs/system/`; `.tusker/` holds tracker state
+and thin pointers only. For a stale or misplaced document, route by subject
+first (`tusker docs find`), fix the owning document, and check the repair:
+
+```bash
+tusker docs check [<subject-or-path>] --json
+tusker docs map --vault ./.tusker
+```
+
 ## Recovery boundary
 
 Correct clearly-requested state through ordinary lifecycle commands. Setup repair, daemon, dispatch, service, and fleet operations are their own explicitly-requested tasks, never a side effect of task management. Tracker failure stays separate from implementation results, and Tusker repair becomes a task only when the user asks.

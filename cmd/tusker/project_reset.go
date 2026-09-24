@@ -35,13 +35,17 @@ func resetCmd(args Args) error {
 		if args.Bool("json") {
 			emitJSON(map[string]any{
 				"ok": true, "repo": repoRoot, "dry_run": true,
-				"preserved": []string{filepath.Join(repoRoot, defaultRepoVaultDir, "specs")},
-				"actions":   actions,
+				"preserved": []string{
+					filepath.Join(repoRoot, defaultRepoVaultDir, "specs"),
+					filepath.Join(repoRoot, "docs", "system"),
+				},
+				"actions": actions,
 			})
 			return nil
 		}
 		fmt.Printf("Tusker reset dry-run for %s (%d actions). Re-run with --yes to apply.\n", repoRoot, len(actions))
 		fmt.Printf("- preserve: %s/specs\n", filepath.Join(repoRoot, defaultRepoVaultDir))
+		fmt.Printf("- preserve: %s\n", filepath.Join(repoRoot, "docs", "system"))
 		for _, action := range actions {
 			fmt.Printf("- %s: %s (%s)\n", action.Kind, action.Path, action.Reason)
 		}
@@ -87,8 +91,10 @@ func printResetHelp() {
 
 Purpose:
   Delete known repo-local Tusker state and initialize a clean V7 vault.
-  Documentation specs in .tusker/specs/** are preserved; source files and
-  docs outside Tusker state are untouched.
+  Portable product knowledge in docs/system/** is never Tusker state and
+  always survives; legacy documentation specs in .tusker/specs/** are
+  preserved across the reset. Source files and docs outside Tusker state
+  are untouched.
 
 Behavior:
   - --dry-run previews the deletion plan without changing anything

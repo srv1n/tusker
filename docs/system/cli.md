@@ -194,14 +194,21 @@ routine routing so unused profiles do not consume context.
 
 ## Documentation and skills
 
-- `tusker docs find <query>` searches the managed corpus: system pages in
-  `docs/system/`, specs in `.tusker/specs/`, and decisions in
-  `.tusker/specs/decisions/`.
+- `tusker docs find <query>` searches the managed corpus: current chapters
+  in `docs/system/`, change specifications in `docs/system/proposals/`, and
+  product decisions in `docs/system/decisions/` (legacy `.tusker/specs/`
+  paths still resolve during transition).
 - Search returns a bounded shortlist with `read_when` and `skip_when` guidance.
   JSON also reports `total_matches` and `truncated`; open the returned subject
   or stable path to read the full document.
-- `tusker docs new --kind doc` creates a system page. `tusker docs new --kind
-  spec` creates a governing spec under `.tusker/specs/`.
+- `tusker docs new <subject> --kind doc|proposal|decision` creates a document
+  in the portable tree: a `doc` without `--domain` defaults to the system
+  root, `--domain <name>` targets `docs/system/domains/<name>/`, proposals go
+  to `docs/system/proposals/`, and decisions to `docs/system/decisions/`.
+  `--kind spec` stays accepted as the spelling for proposal.
+- `.tusker/` holds tracker state and thin pointers only; product decisions
+  move to documentation while work and lifecycle decisions stay with the
+  tracker.
 - `tusker docs browse [<managed-directory>] [--limit <n>] [--json]` returns one
   bounded directory level. It defaults to `docs/system`, accepts `--limit` up
   to 200, and includes folder summaries plus file discovery metadata.

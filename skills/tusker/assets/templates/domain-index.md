@@ -34,6 +34,12 @@ Skip this when another domain is narrower.
 
 - [[CANON]]
 
+Product knowledge for this domain does not live here. Document current
+behavior in `docs/system/` (this domain's chapters under
+`docs/system/domains/{{domain}}/` with this index's reading order), propose
+change in `docs/system/proposals/`, and record settled product decisions in
+`docs/system/decisions/` with stable subject identity.
+
 ## Main knowledge nodes
 
 - `CANON.md` — current model, invariants, defaults, deprecated behavior.

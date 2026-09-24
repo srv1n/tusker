@@ -1,8 +1,34 @@
 # Knowledge
 
-One visible corpus serves humans and agents: `docs/system/` describes current
-behavior, `.tusker/specs/` proposed change, and `.tusker/specs/decisions/`
-recorded rationale. Do not create an agent-only memory corpus.
+One placement rule covers all product knowledge: it lives under `docs/system/`
+and stays readable with ordinary Markdown links after Tusker is removed.
+Current chapters live in `docs/system/` (per domain under
+`docs/system/domains/<domain>/`), change specifications in
+`docs/system/proposals/`, and product decisions in `docs/system/decisions/`.
+`.tusker/` holds tracker state and thin pointers only: tasks, waves, work
+decisions, evidence, events, runtime state, generated outputs, and forwarding
+stubs for moved paths. It holds no duplicate product prose. Do not create an
+agent-only memory corpus.
+
+```
+docs/system/00-overview.md            entry point, links to domains/proposals/decisions
+docs/system/domains/<domain>/00-index.md   domain purpose, reading order, chapter links
+docs/system/proposals/<subject>.md    one change specification and its lifecycle
+docs/system/decisions/<subject>.md    one durable product decision and rationale
+.tusker/                              tracker state and thin routing pointers
+```
+
+A document's `subject` is its stable identity across moves; its path is the
+file link. Prefer normal relative Markdown links. Front-matter edges
+(`updates`, `decides_for`, `sources`, aliases, supersession) enrich the same
+documents but are never required to read them. A domain `00-index.md` names
+the domain reading order. Lifecycle is kind-specific (docs:
+`current|superseded`; proposals: `proposed|accepted|implemented|superseded`;
+decisions: `proposed|accepted|superseded`) and says where a document stands;
+`code_conformance` (`unverified|matches|drift|not_applicable`) says whether
+the code was checked against it. Acceptance records intent, not
+implementation proof. Product decisions live in `docs/system/decisions/`;
+work and lifecycle decisions stay with the tracker.
 
 For a known document or packet reference, read its governing section directly.
 Otherwise use `tusker docs find <query>` and the matching `read_when` section.

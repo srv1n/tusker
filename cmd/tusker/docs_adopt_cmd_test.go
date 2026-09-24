@@ -530,24 +530,36 @@ func TestDocsAdoptMixedTablePreflightAndApply(t *testing.T) {
 	if !strings.Contains(merged, "adopted-source:docs/old-cli.md") || !strings.Contains(merged, "Old CLI body.") {
 		t.Fatalf("merge did not preserve legacy material: %s", merged)
 	}
+	// S46 forwarding stubs own no subject and forward through one standard
+	// relative Markdown link, so neither stub duplicates a current subject.
 	tombstone := string(readSource("docs/old-copy.md"))
-	if !strings.Contains(tombstone, "status: superseded") || !strings.Contains(tombstone, "superseded_by: \"new\"") || !strings.Contains(tombstone, "[[new]]") {
+	if !strings.Contains(tombstone, "status: superseded") || !strings.Contains(tombstone, "superseded_by: \"new\"") || !strings.Contains(tombstone, "[new](system/new.md)") {
 		t.Fatalf("tombstone is not a validated signpost: %s", tombstone)
+	}
+	if strings.Contains(tombstone, "[[new]]") || strings.Contains(tombstone, "subject:") {
+		t.Fatalf("tombstone kept a wiki-link or a duplicate subject: %s", tombstone)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "docs/old-copy.md")); err != nil {
 		t.Fatalf("tombstone deleted source: %v", err)
 	}
 	managedTombstone := string(readSource("docs/system/old-managed.md"))
-	if !strings.Contains(managedTombstone, "status: superseded") || !strings.Contains(managedTombstone, "superseded_by: \"new-managed\"") {
+	if !strings.Contains(managedTombstone, "status: superseded") || !strings.Contains(managedTombstone, "superseded_by: \"new-managed\"") || !strings.Contains(managedTombstone, "[new-managed](new-managed.md)") {
 		t.Fatalf("managed tombstone is not a signpost: %s", managedTombstone)
 	}
 	corpus, _, err := docgraph.LoadRepository(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	find := docgraph.Find(corpus, "old-managed")
-	if len(find.Matches) != 1 || find.Matches[0].Subject != "new-managed" || find.Matches[0].ResolvedFrom != "old-managed" {
-		t.Fatalf("tombstone search did not resolve uniquely: %#v", find)
+	if got := docgraph.DuplicateSubjects(corpus); len(got) != 0 {
+		t.Fatalf("tombstones duplicated current subjects: %#v", got)
+	}
+	find := docgraph.Find(corpus, "new-managed")
+	if len(find.Matches) != 1 || find.Matches[0].Subject != "new-managed" {
+		t.Fatalf("tombstone successor did not resolve uniquely: %#v", find)
+	}
+	current, ok := docgraph.ResolveCurrentReference(corpus, "docs/system/old-managed.md")
+	if !ok || current.CanonicalRef != "docs/system/new-managed.md" {
+		t.Fatalf("managed old path did not forward to the portable document: %#v ok=%v", current, ok)
 	}
 	if got := string(readSource("README.md")); got != "# Keep me\n" {
 		t.Fatalf("leave changed user guidance: %q", got)

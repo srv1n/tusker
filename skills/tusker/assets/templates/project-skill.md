@@ -46,11 +46,15 @@ inspected implementation, observed behavior, and unresolved facts.
 ## Forbidden Source Truth
 
 Project canon stays under `knowledge/domains/`; raw external input belongs in
-the owning domain's `sources/`. Root `docs/` can hold current system guides.
+the owning domain's `sources/`. Product knowledge does not live in project
+canon: current behavior goes in `docs/system/`, change specifications in
+`docs/system/proposals/`, and product decisions in `docs/system/decisions/`.
 Task records, proof logs, attempts, events, generated packets, runtime state,
 and machine-local absolute paths are not project-skill source truth. Keep
 `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`,
-`_system/**`, `dashboards/**`, and `.tusker-*` out of published canon.
+`_system/**`, `dashboards/**`, and `.tusker-*` out of published canon. Work
+and lifecycle decisions stay with the tracker; product decisions move to
+`docs/system/decisions/` with stable subject identity.
 
 ## Validation
 

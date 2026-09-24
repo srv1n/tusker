@@ -26,7 +26,7 @@ Read this for the current {{title}} model.
 
 ## Do not read this when
 
-Do not use this as task proof. Task proof lives in tasks, gates, evidence, attempts, and review packets.
+Do not use this as task proof. Task proof lives in tasks, gates, evidence, attempts, and review packets. Do not use this for product knowledge either: current behavior lives in `docs/system/`, change specifications in `docs/system/proposals/`, and product decisions in `docs/system/decisions/`.
 
 ## Current model
 

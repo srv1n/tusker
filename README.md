@@ -61,6 +61,13 @@ name product generations. Do not use them as product labels.
 Start with [the system overview](docs/system/00-overview.md). Each system page
 names the source files that support its statements.
 
+One placement rule covers all product knowledge: current chapters in
+`docs/system/` (per domain under `docs/system/domains/<domain>/`), change
+specifications in `docs/system/proposals/`, and product decisions in
+`docs/system/decisions/`. `.tusker/` holds tracker state and thin pointers
+only. Prefer ordinary relative Markdown links; a subject is the stable
+identity across moves.
+
 Use short sentences. Use active voice. Use one term for one idea. Keep paths,
 states, and commands exact. Run `tusker docs map` after a system page changes.
 

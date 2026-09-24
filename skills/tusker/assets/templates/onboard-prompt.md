@@ -17,6 +17,11 @@ checks.
 5. Mark an unknown fact as unknown. Do not invent it.
 6. Keep machine runtime state separate from repository state.
 7. Do not enable automation or start a daemon.
+8. Apply the one placement rule: current behavior in `docs/system/` (per
+   domain under `docs/system/domains/<domain>/`), change specifications in
+   `docs/system/proposals/`, product decisions in `docs/system/decisions/`;
+   `.tusker/` holds tracker state and thin pointers only. Product decisions
+   move to documentation; work and lifecycle decisions stay with the tracker.
 
 ## Output
 

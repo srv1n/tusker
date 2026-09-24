@@ -46,6 +46,14 @@ updated_at: "{{date}}"
 
 ## Manual intervention points
 
+## Placement
+
+Product knowledge lives under `docs/system/`: current chapters in
+`docs/system/` (per domain under `docs/system/domains/<domain>/`), change
+specifications in `docs/system/proposals/`, product decisions in
+`docs/system/decisions/`. `.tusker/` holds tracker state and thin pointers
+only.
+
 ## Source of truth
 
 -

@@ -54,7 +54,7 @@ dispatch work. Project registration does not enable automation.
 
 ## Read next
 
-- Governing specs and decisions: `.tusker/specs/` (find a subject with `tusker docs find`)
+- Change specifications and product decisions: `docs/system/proposals/` and `docs/system/decisions/` (find a subject with `tusker docs find`; legacy `.tusker/specs/` paths still resolve)
 - [Workflow audit and remaining repairs](../reports/spec-to-proof-audit.md)
 - [Tasks and proof](tasks-and-proof.md)
 - [Proof and closeout](proof-and-closeout.md)
@@ -70,10 +70,16 @@ Each page must name its code sources. Use short sentences. Use active voice.
 Use one term for one idea. Do not copy plans, old task history, or runtime logs
 into this document set.
 
-System behavior pages live in `docs/system/`. Governing specs and decisions
-live in `.tusker/specs/` and `.tusker/specs/decisions/`. Use `tusker docs find`
+One placement rule covers all product knowledge. Current chapters live in
+`docs/system/` (per domain under `docs/system/domains/<domain>/`), change
+specifications in `docs/system/proposals/`, and product decisions in
+`docs/system/decisions/`. `docs/system/00-overview.md` is the entry point; a
+domain `00-index.md` names its reading order. `.tusker/` holds tracker state
+and thin pointers only. Legacy `.tusker/specs/` paths still resolve during
+transition; all new knowledge writes use `docs/system/`. Use `tusker docs find`
 to route by subject before reading a full document; superseded subjects point
-to their current replacement.
+to their current replacement. A subject is the stable identity across moves;
+prefer ordinary relative Markdown links.
 
 Run `tusker docs map --vault ./.tusker` after a system page changes.
 
@@ -91,6 +97,7 @@ Run `tusker docs map --vault ./.tusker` after a system page changes.
 graph TD
   n_2026_09_10_agent_coordination_grill["Agent coordination decisions — 10 September 2026"]
   n_2026_09_11_agent_access_grill["Agent access decisions — 11 September 2026"]
+  n_2026_09_23_harness_sessions_grill["Harness session decisions — 23 September 2026"]
   n_agent_access["Agent access: simple profiles, honest permissions"]
   n_agent_coordination["Agent contacts, clarification and autonomous wave continuation"]
   n_cli["CLI reference"]
@@ -111,6 +118,7 @@ graph TD
   n_overview["System overview"]
   n_planning_handoff_and_agent_entry["Planning capture, task handoff and progressive agent guidance"]
   n_platform_support["Platform support"]
+  n_portable_project_documentation["S46: Portable project documentation"]
   n_project_registration_and_visibility["Project registration and visibility"]
   n_project_registration_and_visibility_decisions["Project registration and visibility decisions"]
   n_proof_and_closeout["Proof and closeout"]
@@ -132,6 +140,7 @@ graph TD
   n_storage_and_runtime["Storage and runtime"]
   n_tasks_and_proof["Tasks and proof"]
   n_tusker_trust_and_efficiency["Trustworthy Tusker with efficient agent workflows"]
+  n_ui_reset["ui-reset"]
   n_work_area_build_packets["Parallel build packets for the Tusker work experience"]
   n_work_area_redesign["Tusker work experience — implementation specification"]
   n_work_experience_map["Find the everyday Tusker work experience"]
@@ -142,6 +151,8 @@ graph TD
   n_2026_09_11_agent_access_grill -->|decides for| n_agent_access
   n_2026_09_11_agent_access_grill -->|link| n_agent_access
   n_2026_09_11_agent_access_grill -->|part of| n_agent_access
+  n_2026_09_23_harness_sessions_grill -->|decides for| n_run_session_continuity
+  n_2026_09_23_harness_sessions_grill -->|part of| n_run_session_continuity
   n_agent_access -->|link| n_model_level_configuration
   n_agent_access -->|link| n_runner_execution_boundary
   n_agent_access -->|part of| n_runners_and_acp
@@ -151,6 +162,7 @@ graph TD
   n_agent_access -->|updates| n_cli
   n_agent_access -->|updates| n_runners_and_acp
   n_agent_access -->|updates| n_serve_ui
+  n_agent_coordination -->|link| n_2026_09_23_harness_sessions_grill
   n_agent_coordination -->|part of| n_execution_observability
   n_agent_coordination -->|source| n_2026_09_10_agent_coordination_grill
   n_agent_coordination -->|source| n_completion_and_integrated_acceptance
@@ -163,6 +175,7 @@ graph TD
   n_agent_coordination -->|updates| n_orchestration
   n_agent_coordination -->|updates| n_runners_and_acp
   n_agent_coordination -->|updates| n_serve_ui
+  n_cli -->|link| n_orchestration
   n_cli -->|part of| n_overview
   n_completion_and_integrated_acceptance -->|part of| n_planning_handoff_and_agent_entry
   n_completion_and_integrated_acceptance -->|source| n_planning_handoff_and_agent_entry
@@ -229,6 +242,11 @@ graph TD
   n_planning_handoff_and_agent_entry -->|source| n_spec_to_proof
   n_planning_handoff_and_agent_entry -->|source| n_work_knowledge_and_retention
   n_platform_support -->|part of| n_overview
+  n_portable_project_documentation -->|part of| n_overview
+  n_portable_project_documentation -->|updates| n_cli
+  n_portable_project_documentation -->|updates| n_knowledge_and_feedback
+  n_portable_project_documentation -->|updates| n_overview
+  n_portable_project_documentation -->|updates| n_skills
   n_project_registration_and_visibility -->|part of| n_overview
   n_project_registration_and_visibility -->|source| n_work_area_redesign
   n_project_registration_and_visibility_decisions -->|decides for| n_project_registration_and_visibility
@@ -263,6 +281,7 @@ graph TD
   n_repeatable_work_testing -->|updates| n_cli
   n_repeatable_work_testing -->|updates| n_runners_and_acp
   n_repeatable_work_testing -->|updates| n_tasks_and_proof
+  n_run_session_continuity -->|link| n_2026_09_23_harness_sessions_grill
   n_run_session_continuity -->|part of| n_overview
   n_run_session_continuity -->|updates| n_execution_observability
   n_runner_boundary_decisions -->|decides for| n_runner_execution_boundary
@@ -299,6 +318,8 @@ graph TD
   n_tasks_and_proof -->|part of| n_overview
   n_tusker_trust_and_efficiency -->|link| n_spec_to_proof
   n_tusker_trust_and_efficiency -->|part of| n_overview
+  n_ui_reset -->|part of| n_work_area_redesign
+  n_ui_reset -->|source| n_full_height_workspace
   n_work_area_build_packets -->|link| n_work_area_redesign
   n_work_area_build_packets -->|part of| n_work_area_redesign
   n_work_area_build_packets -->|source| n_work_area_redesign

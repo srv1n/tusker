@@ -325,6 +325,14 @@ func TestS46TaskReferences(t *testing.T) {
 	if got := v7SpecRefReadPath(vault, "docs/system/proposals/checkout-flow.md#Lifecycle"); got != "docs/system/proposals/checkout-flow.md#Lifecycle" {
 		t.Fatalf("anchored read path = %q", got)
 	}
+	// A migrated legacy path returns the actual portable document, never a
+	// stale stub or a copied snapshot.
+	if !v7SpecRefExists(vault, ".tusker/specs/old-flow.md", decisionIDs) {
+		t.Fatalf("migrated stub did not resolve: %s", v7SpecRefFailureReason(vault, ".tusker/specs/old-flow.md", decisionIDs))
+	}
+	if got := v7SpecRefReadPath(vault, ".tusker/specs/old-flow.md"); got != "docs/system/proposals/checkout-flow.md" {
+		t.Fatalf("migrated stub read path = %q", got)
+	}
 
 	// Product decision files and tracker lifecycle decisions stay distinct.
 	if v7SpecRefReadPath(vault, "record-choice") == v7SpecRefReadPath(vault, "APP-D-0001") {

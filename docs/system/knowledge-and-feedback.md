@@ -23,12 +23,20 @@ Do not put task progress, proof logs, attempts, or generated output in canon.
 `tusker docs find <query>` before you add a page. Update the existing subject
 when it already owns the answer.
 
-The managed document corpus has one route. Behavior pages live in
-`docs/system/`; governing specs live in `.tusker/specs/`; and durable
-decisions live in `.tusker/specs/decisions/`. A subject is the document's
-stable identity, while its path is the stable file link. Preserve source
-material outside these roots until a reviewed migration gives it one current
-owner; an intake copy is not a governing spec.
+The managed document corpus has one placement rule. Current chapters live
+in `docs/system/` (per domain under `docs/system/domains/<domain>/`), change
+specifications in `docs/system/proposals/`, and product decisions in
+`docs/system/decisions/`. `.tusker/` holds tracker state and thin pointers
+only. Legacy `.tusker/specs/` paths still resolve during transition; all new
+knowledge writes use `docs/system/`. A subject is the document's stable
+identity across moves, while its path is the stable file link. New documents
+declare `kind: doc | proposal | decision` (`--kind spec` stays accepted as
+the spelling for proposal). Lifecycle is kind-specific and separate from
+`code_conformance`: acceptance records intent, not implementation proof.
+Product decisions move to documentation; work and lifecycle decisions stay
+with the tracker. Preserve source material outside these roots until a
+reviewed migration gives it one current owner; an intake copy is not a
+governing spec.
 
 Search includes `read_when` metadata. Results expose both `read_when` and
 `skip_when` so readers can choose the right page without opening every body.
