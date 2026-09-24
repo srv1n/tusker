@@ -793,10 +793,10 @@ func runsLifecycleCmd(args Args, action string) error {
 		return err
 	}
 	defer store.Close()
-	return runsLifecycleWithStore(store, args, action, true)
+	return runsLifecycleWithStore(store, args, action, true, false)
 }
 
-func runsLifecycleWithStore(store *RuntimeStore, args Args, action string, output bool) error {
+func runsLifecycleWithStore(store *RuntimeStore, args Args, action string, output bool, daemonLifecycle bool) error {
 	id, err := requireArg(args, "id")
 	if err != nil {
 		return err
@@ -869,7 +869,15 @@ func runsLifecycleWithStore(store *RuntimeStore, args Args, action string, outpu
 			return tuskerError(errorNotFound, "registered project for submitted run was not found: "+run.ProjectID)
 		}
 		statusArgs["vault"] = loaded[0].Project.VaultRoot
-		if err := statusCmd(statusArgs); err != nil {
+		if daemonLifecycle {
+			// The daemon actor exemption is an in-process signal, not an Args
+			// value: only the daemon's worker lifecycle apply path reaches this
+			// call, so it may carry daemonLifecycle provenance into the
+			// work-session check. CLI status invocations never do.
+			if err := statusV7CmdWithInternalActor(statusArgs, nil, true); err != nil {
+				return err
+			}
+		} else if err := statusCmd(statusArgs); err != nil {
 			return err
 		}
 		if args.Bool("interactive-work-session") && run.Lane == runLaneExecute {

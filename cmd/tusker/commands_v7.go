@@ -1612,6 +1612,15 @@ func finishV7Cmd(args Args) error {
 // control path; a human may also state --break-glass explicitly for an
 // attributable emergency override.
 func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
+	return requireAgentWorkSessionWithDaemonOrigin(vaultPath, taskID, actor, args, false)
+}
+
+// requireAgentWorkSessionWithDaemonOrigin is requireAgentWorkSession plus the
+// daemonLifecycle in-process signal. daemonLifecycle is a typed provenance
+// parameter, never parsed from Args: only the daemon's applyWorkerLifecycle
+// seam sets it, so a CLI caller passing --by agent:tusker-daemon still faces
+// the normal authorization-actor comparison instead of the daemon exemption.
+func requireAgentWorkSessionWithDaemonOrigin(vaultPath, taskID, actor string, args Args, daemonLifecycle bool) error {
 	actor = strings.TrimSpace(actor)
 	if args.Bool("break-glass") {
 		canonical, ok := normalizeV7ProposalActor(actor)
@@ -1650,7 +1659,7 @@ func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
 	}
 	if args.Bool("normalized-work-submit") && run != nil && LeaseState(run.LeaseState) == LeaseStateReleased && run.AttemptOutcome == string(AttemptOutcomeSucceeded) && run.LeaseGeneration == intArg(args, "lease-generation") {
 		auth, authErr := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
-		if authErr == nil && auth != nil && auth.LeaseGeneration == run.LeaseGeneration && (auth.Actor == actor || actor == daemonLifecycleActor) {
+		if authErr == nil && auth != nil && auth.LeaseGeneration == run.LeaseGeneration && (auth.Actor == actor || (daemonLifecycle && actor == daemonLifecycleActor)) {
 			return nil
 		}
 	}

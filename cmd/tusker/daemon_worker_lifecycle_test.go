@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -238,6 +239,71 @@ func TestExternalReviewSharedSubmission(t *testing.T) {
 		if err != nil || stored == nil || stored.AttemptOutcome != string(AttemptOutcomeSucceeded) {
 			t.Fatalf("submission for %s did not survive reconciliation: %#v err=%v", id, stored, err)
 		}
+	}
+}
+
+// The daemon lifecycle actor exemption is provenance, not a claim: the
+// in-process applyWorkerLifecycle path submits for the bound worker, while a
+// CLI-style call carrying the same actor string and lease generation through
+// parsed Args faces the normal authorization-actor check and is refused.
+func TestDaemonLifecycleActorExemptionRequiresInProcessDaemon(t *testing.T) {
+	vault, project := workSessionFixture(t, 1)
+	owned := filepath.Join(project.RepoRoot, "owned", "APP-T-0001")
+	if err := os.MkdirAll(owned, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(owned, "implementation.go"), []byte("package owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, project.RepoRoot, "add", "owned/APP-T-0001")
+	runGitDir(t, project.RepoRoot, "commit", "-m", "seed owned implementation")
+	if err := startWorkSessionTest(t, vault, "APP-T-0001", "agent:worker"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRunScoped(project.ProjectID, "APP-T-0001")
+	if err != nil || run == nil {
+		t.Fatalf("run unavailable: %#v err=%v", run, err)
+	}
+	run.WorkspacePath = project.RepoRoot
+	run.StatusPath = filepath.Join(t.TempDir(), "APP-T-0001.status.json")
+	if ok, err := store.UpdateRunIfLease(*run, run.LeaseOwner, run.LeaseGeneration); err != nil || !ok {
+		t.Fatalf("bind run to workspace: ok=%v err=%v", ok, err)
+	}
+	// The dispatch authorization records the dispatcher's identity, which
+	// differs from the lifecycle actor: only the in-process daemon seam may
+	// submit under agent:tusker-daemon here.
+	if err := store.SaveRunAuthorization(RunAuthorization{Source: "daemon_auto", Actor: "daemon",
+		ProjectID: run.ProjectID, RecordID: run.RecordID, LeaseGeneration: run.LeaseGeneration,
+		AttemptID: run.ActiveAttemptID}); err != nil {
+		t.Fatal(err)
+	}
+	req := daemonControlRequest{Command: "worker_lifecycle", ProjectID: run.ProjectID, Identity: run.ActiveAttemptID,
+		Worker: &daemonWorkerLifecycleRequest{Action: "submit", AttemptID: run.ActiveAttemptID, RecordID: run.RecordID,
+			Lane: run.Lane, Workspace: run.WorkspacePath, StatusPath: run.StatusPath,
+			LeaseGeneration: run.LeaseGeneration, WorkRevision: run.WorkRevision,
+			Deliverable: "implemented", Verification: "A1 checked", GateVerdicts: "A1=pass"}}
+	if err := applyWorkerLifecycle(store, req); err != nil {
+		t.Fatalf("in-process daemon lifecycle submit refused: %v", err)
+	}
+	stored, err := store.FindRunScoped(project.ProjectID, "APP-T-0001")
+	if err != nil || stored == nil || stored.AttemptOutcome != string(AttemptOutcomeSucceeded) {
+		t.Fatalf("daemon lifecycle submit did not reach terminal state: %#v err=%v", stored, err)
+	}
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
+	if err != nil || stringField(data, "status") != "review" {
+		t.Fatalf("daemon lifecycle submit did not move task to review: status=%q err=%v", stringField(data, "status"), err)
+	}
+
+	spoof := Args{"vault": vault, "id": "APP-T-0001", "status": "review", "by": daemonLifecycleActor,
+		"normalized-work-submit": "true", "lease-generation": strconv.Itoa(run.LeaseGeneration),
+		"local": "true", "quiet": "true"}
+	if err := statusCmd(spoof); workSessionErrorCode(err) != "WORK_SESSION_REQUIRED" {
+		t.Fatalf("CLI-style daemon lifecycle actor claim = %v, want WORK_SESSION_REQUIRED", err)
 	}
 }
 

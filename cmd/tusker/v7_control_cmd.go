@@ -298,10 +298,10 @@ func v7GateAuthorityReceiptCurrent(gate Note, idx v7Index) bool {
 }
 
 func statusV7Cmd(args Args) error {
-	return statusV7CmdWithInternalActor(args, nil)
+	return statusV7CmdWithInternalActor(args, nil, false)
 }
 
-func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor) error {
+func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor, daemonLifecycle bool) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -387,7 +387,7 @@ func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor) error {
 	baseRev := stringField(data, "state_rev")
 	prev := stringField(data, "status")
 	if nextStatus == "review" {
-		if err := requireAgentWorkSession(vaultPath, id, actor, args); err != nil {
+		if err := requireAgentWorkSessionWithDaemonOrigin(vaultPath, id, actor, args, daemonLifecycle); err != nil {
 			return err
 		}
 	}

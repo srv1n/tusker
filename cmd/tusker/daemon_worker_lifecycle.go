@@ -17,6 +17,9 @@ const workerLifecycleRequestFile = ".tusker-worker-lifecycle.json"
 // authorization that admitted the dispatch records the dispatcher's identity
 // (daemon_auto or the directive actor), so work-session checks must recognize
 // this actor explicitly rather than comparing it to the authorization actor.
+// That recognition is gated on an in-process signal set by applyWorkerLifecycle
+// alone; the actor string on its own proves nothing, so a CLI caller passing
+// --by agent:tusker-daemon still faces the normal authorization-actor check.
 const daemonLifecycleActor = "agent:tusker-daemon"
 
 func (d *Daemon) applyWorkerLifecycle(req daemonControlRequest) error {
@@ -161,7 +164,7 @@ func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
 	args := Args{"id": run.RecordID, "project": run.ProjectID, "owner": run.LeaseOwner, "revision": fmt.Sprintf("%d", run.WorkRevision),
 		"deliverable": w.Deliverable, "verification": w.Verification, "gate-verdicts": w.GateVerdicts, "reason": w.Reason,
 		"actor": daemonLifecycleActor, "quiet": "true"}
-	return runsLifecycleWithStore(store, args, w.Action, false)
+	return runsLifecycleWithStore(store, args, w.Action, false, true)
 }
 
 func validateWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) (*RunStatus, error) {

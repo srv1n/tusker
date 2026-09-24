@@ -2320,7 +2320,7 @@ func kickV7LandingTaskToRework(vaultPath, taskID, summary, actor string) error {
 	}
 	var statusErr error
 	if internal, internalErr := newV7InternalActor(actor); internalErr == nil {
-		statusErr = statusV7CmdWithInternalActor(statusArgs, &internal)
+		statusErr = statusV7CmdWithInternalActor(statusArgs, &internal, false)
 	} else {
 		statusErr = statusV7Cmd(statusArgs)
 	}

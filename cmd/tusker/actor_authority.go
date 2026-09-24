@@ -29,7 +29,7 @@ func statusV7CmdAsInternalActor(args Args, raw string) error {
 	if err != nil {
 		return err
 	}
-	return statusV7CmdWithInternalActor(args, &actor)
+	return statusV7CmdWithInternalActor(args, &actor, false)
 }
 
 // resolveV7Actor is the single attribution boundary for durable mutations.
