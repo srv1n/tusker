@@ -332,6 +332,12 @@ func TestDaemonExternalCloseUsesExactAcceptanceCovers(t *testing.T) {
 	if err := writeText(path, content); err != nil {
 		t.Fatal(err)
 	}
+	if err := v7TestVerificationMutation(Args{
+		"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:gate",
+		"rows": "A10|command: go test ./cmd/tusker -run TestV7 -count=1|pass|Focused test proof.",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	project := registerAutomationTestProject(t, vault)
 	wfFile, err := loadWorkflow(vault)
 	if err != nil {
@@ -375,6 +381,12 @@ func TestDaemonExternalClosePreservesCombinedVerificationCover(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
+	}
+	if err := v7TestVerificationMutation(Args{
+		"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:gate",
+		"rows": "A1, A2|command: go test ./cmd/tusker -run TestV7 -count=1|pass|Focused test proof.",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	project := registerAutomationTestProject(t, vault)

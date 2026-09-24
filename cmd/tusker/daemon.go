@@ -2632,7 +2632,7 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 			trackerState = strings.TrimSpace(stringField(projected.Data, "status"))
 		}
 	}
-	if run.HandRun && !run.Terminal && isDispatchingLeaseState(run.LeaseState) && !trackerStateTerminal(wfFile.Data, trackerState) {
+	if run.HandRun && !run.Terminal && isDispatchingLeaseState(run.LeaseState) && !trackerStateTerminal(wfFile.Data, trackerState) && trackerState != "backlog" {
 		return run, false, nil
 	}
 	if isDispatchCapacityLeaseState(run.LeaseState) {

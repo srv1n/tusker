@@ -21,7 +21,10 @@ func TestObjectiveClosePolicy(t *testing.T) {
 			t.Fatalf("create %s: %v", risk, err)
 		}
 		id := "APP-T-000" + string(rune('1'+i))
-		if _, err := upsertV7Verification(vault, id, v7VerificationRow{CoverText: "A1", Check: "command: go test ./cmd/tusker -run TestObjectiveClosePolicy -count=1", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
+		if err := v7TestVerificationMutation(Args{
+			"vault": vault, "quiet": "true", "id": id, "by": "reviewer:gate",
+			"rows": "A1|command: go test ./cmd/tusker -run TestObjectiveClosePolicy -count=1|pass|Existing gate receipt.",
+		}); err != nil {
 			t.Fatalf("verify %s: %v", risk, err)
 		}
 		if err := statusV7Cmd(Args{"vault": vault, "quiet": "true", "id": id, "status": "review", "by": "agent:worker"}); err != nil {
@@ -163,7 +166,7 @@ func TestObjectiveClosePolicyContract(t *testing.T) {
 		regexp.MustCompile(`(?i)usually human acceptance`),
 		regexp.MustCompile(`(?i)human_required_risks\s*:`),
 	}
-	paths := []string{"../../skill", "../../docs", "../../internal/serve/ui", "../../.tusker/WORKFLOW.md", "../../.tusker/knowledge/domains/project/CANON.md", "../../tusker.yaml"}
+	paths := []string{"../../skill", "../../docs", "../../internal/serve/ui", "../../.tusker/WORKFLOW.md", "../../.tusker/knowledge/domains/project/CANON.md", "../../.tusker/config.yaml"}
 	for _, root := range paths {
 		info, err := os.Stat(root)
 		if err != nil {
@@ -232,9 +235,17 @@ func TestClosePolicyMigration(t *testing.T) {
 	if err := writeText(workflowPath(vault), fm+"\n"+body); err != nil {
 		t.Fatal(err)
 	}
-	legacyConfigPath := managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir))
+	legacyConfigPath := filepath.Join(root, "tusker.yaml")
 	legacyConfig := "close_policy:\n  high:\n    required_acceptor: human\n  critical:\n    required_acceptor: human\n    required_gates: [release, security]\n"
 	if err := writeText(legacyConfigPath, legacyConfig); err != nil {
+		t.Fatal(err)
+	}
+	managedConfigPath := managedTuskerConfigPath(vault)
+	managedSeed, err := readText(managedConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(managedConfigPath, strings.TrimRight(managedSeed, "\n")+"\n"+legacyConfig); err != nil {
 		t.Fatal(err)
 	}
 	gatePath := filepath.Join(vault, "work", "gates", "APP-G-0001.md")

@@ -40,7 +40,6 @@ func TestPilotWaveFrontierDispatchesOnlyQualifiedWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTrustProofEvidence(t, vault, trustProofEvidence(t, vault, idx.Tasks["APP-T-0001"], "automated_test", []string{"A1"}, "pilot-diff.txt"))
-	recordCompletionTestProof(t, vault, "APP-T-0001")
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-09-06T00:00:00Z")
 	setWaveTaskState(t, vault, "APP-T-0002", "ready", "ready", "")
 
@@ -69,6 +68,11 @@ func TestPilotWaveFrontierDispatchesOnlyQualifiedWork(t *testing.T) {
 
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Next manual wave", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0007")
+	repo := v7RepoRoot(vault)
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	runGitDir(t, repo, "commit", "--allow-empty", "-m", "seed")
+	runGitDir(t, repo, "branch", "-M", "main")
 	if err := waveV7CreateCmd(Args{"vault": vault, "quiet": "true", "_pos0": "Next", "_pos1": "APP-T-0007"}); err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +124,7 @@ func pilotArmedWaveFixture(t *testing.T) (string, v7Index, Note) {
 	newTask := func(id string, deps ...string) {
 		extra := map[string]any{
 			"status": "ready", "readiness": "ready", "next_owner": "agent", "work_revision": 1,
+			"owned_paths": []string{strings.ToLower(id) + "-reviewed.txt"},
 		}
 		if len(deps) > 0 {
 			extra["dependencies"] = deps
