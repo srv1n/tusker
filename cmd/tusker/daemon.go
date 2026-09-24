@@ -2477,9 +2477,6 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 	if activeInteractiveBacklogClaim(d.store, project.VaultRoot, note, run, time.Now().UTC()) {
 		return run, false, nil
 	}
-	if containsString(wfFile.Data.Tracker.ReviewStates, stringField(note.Data, "status")) {
-		return run, false, nil
-	}
 	if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
 		return run, false, err
 	} else if ok {
@@ -2504,6 +2501,9 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 			_ = waitForRunnerStatusFile(runnerStatusPathForRun(run))
 		}
 		if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
+			return run, false, nil
+		}
+		if d.activeReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
 			return run, false, nil
 		}
 	}
@@ -4453,6 +4453,13 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	} else if earlyDiskPressure.DispatchPaused {
 		run.LastError = diskPressureDispatchReason(earlyDiskPressure)
 		run.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		return run, false, nil
+	}
+	// An active run directive is deliberate human execution authority and
+	// bypasses the automation opt-in; automation.enabled gates autonomous
+	// dispatch only.
+	if !wfFile.Data.AutomationEnabled && !directiveActive {
+		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
 	}
 	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {

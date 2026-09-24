@@ -143,7 +143,7 @@ exit 127
 	assertEqual(t, "", run.ActiveAttemptID, "preflight active attempt")
 	assertEqual(t, 0, run.ProcessPID, "preflight process pid")
 	if !strings.Contains(run.LastError, runnerInfrastructureBlockedState) ||
-		!strings.Contains(run.LastError, "failed health check") ||
+		!strings.Contains(run.LastError, "runtime_missing") ||
 		!strings.Contains(run.LastError, "arm64 vendor binary missing") {
 		t.Fatalf("expected clear preflight blocker, got %#v", run)
 	}

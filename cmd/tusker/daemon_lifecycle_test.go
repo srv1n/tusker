@@ -121,6 +121,8 @@ func TestDaemonPollDispatchesReleasedReviewHandoffInsideArmedWave(t *testing.T) 
 		"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer",
 		"proof_status": "satisfied", "work_revision": 1, "dependencies": []string{"APP-T-0001:hard"},
 	})
+	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0001")
+	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0002")
 	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
 	armWaveForTest(t, vault)
 	project := registerAutomationTestProject(t, vault)

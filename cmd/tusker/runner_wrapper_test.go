@@ -480,6 +480,7 @@ func TestExternalReviewContainmentHelper(t *testing.T) {
 	dir := os.Getenv("TUSKER_CONTAINMENT_DIR")
 	store, req := setupRunnerWrapperRuntime(t)
 	req.ContainmentPGID = os.Getpid()
+	req.Start.Lane = runLaneReview
 	req.Start.StatusPath = filepath.Join(dir, "status.json")
 	req.Start.RawLogPath = filepath.Join(dir, "raw.log")
 	req.Start.RawLogMaxBytes = 1024
