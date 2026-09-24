@@ -141,7 +141,6 @@ func capabilityCommandNamed(commands []capabilityCommand, name string) (capabili
 }
 
 func TestCapabilityCompatibilityFailsClosed(t *testing.T) {
-	t.Parallel()
 	previousContract := loadEmbeddedSkillCompatibility
 	previousPayload := loadEmbeddedSkillPayloadFingerprint
 	t.Cleanup(func() {
