@@ -351,7 +351,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "hold-APP-T-0001"))
 	daemon := h.startDaemon("delivery-daemon")
 	h.waitForAutomationStatus(crashRunWait)
-	review := mapAtPath(t, parseJSON(t, h.cliOK(h.repoDir, "wave", "review", "W-0001", "--vault", h.vaultDir, "--json")), "review")
+	review := parseJSON(t, h.cliOK(h.repoDir, "wave", "review", "W-0001", "--vault", h.vaultDir, "--json"))
 	if len(sliceAt(review, "blockers")) != 0 {
 		t.Fatalf("wave review reported blockers: %s", prettyJSON(review))
 	}
@@ -406,10 +406,10 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	briefPayload := parseJSON(t, h.cliOK(h.repoDir, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json"))
 	brief := mapAtPath(t, briefPayload, "brief")
 	outcome := mapAtPath(t, brief, "outcome")
-	if fully, _ := outcome["fullyDrained"].(bool); fully {
-		t.Fatalf("continuous staging unexpectedly reported final scheduled promotion complete: %s", prettyJSON(brief))
+	if fully, _ := outcome["fullyDrained"].(bool); !fully {
+		t.Fatalf("fully landed wave was not reported drained: %s", prettyJSON(brief))
 	}
-	if runString(brief, "schema") != "tusker.wave-brief/v1" || len(sliceAt(brief, "landed")) != 7 || len(sliceAt(brief, "documentation")) != 7 || len(sliceAt(brief, "humanAction")) != 0 {
+	if runString(brief, "schema") != "tusker.wave-brief/v1" || len(sliceAt(brief, "landed")) != 7 || len(sliceAt(brief, "humanAction")) != 0 {
 		t.Fatalf("artifact-first brief is incomplete: %s", prettyJSON(brief))
 	}
 	// This fixture arms continuous staging only. Its completed artifacts must be
@@ -421,6 +421,12 @@ func TestSpecToWaveDelivery(t *testing.T) {
 		if got := string(h.gitOK("show", path)); !strings.Contains(got, "# "+id+" delivery") {
 			t.Fatalf("%s documentation is absent from the integration snapshot: %q", id, got)
 		}
+	}
+	promotion := exec.Command("git", "show", "main:docs/delivery/app-t-0001.md")
+	promotion.Dir = h.repoDir
+	promotion.Env = h.env()
+	if out, err := promotion.CombinedOutput(); err == nil {
+		t.Fatalf("continuous staging promoted main without a scheduled departure: %s", out)
 	}
 	wave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	auth := mapAtPath(t, mapAtPath(t, wave, "wave"), "authorization")
@@ -502,9 +508,11 @@ func newSmallDeliveryWave(t *testing.T, credentialGate bool) *harness {
 
 func (h *harness) setDeliveryFixtureVerificationContracts(taskIDs ...string) {
 	h.t.Helper()
+	var rebound []string
 	for _, taskID := range taskIDs {
 		path := filepath.Join(h.vaultDir, "work", "tasks", taskID+".md")
-		body := h.readFile(path)
+		original := h.readFile(path)
+		body := original
 		artifact := "artifacts/delivery/" + strings.ToLower(taskID) + ".json"
 		if taskID == "APP-T-0001" {
 			artifact = strings.TrimSuffix(artifact, ".json") + ".svg"
@@ -527,9 +535,16 @@ func (h *harness) setDeliveryFixtureVerificationContracts(taskIDs ...string) {
 				body = body[:start+1] + newContract + body[strings.Index(body[start+1:], "\n---")+start+1:]
 			}
 		}
+		if body == original {
+			continue
+		}
 		h.writeFile(path, body)
+		rebound = append(rebound, taskID)
 	}
 	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
+	for _, taskID := range rebound {
+		h.rebindTaskContract(taskID)
+	}
 }
 
 func yamlScalar(document, key string) string {
@@ -561,7 +576,7 @@ func specToWaveAuthoringRequest() string {
 	b.WriteString("schema: tusker.wave-authoring/v1\ntitle: Disposable delivery\noutcome: Deliver the disposable mixed DAG through its committed artifacts and focused proof.\nconcurrency: 3\nspec_refs: [.tusker/specs/delivery.md]\ntasks:\n")
 	for index, item := range tasks {
 		id := fmt.Sprintf("APP-T-%04d", index+1)
-		body := fmt.Sprintf("# %s\n\n## Intent\n\n%s is objectively delivered and documented.\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | %s has a committed artifact and focused proof. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: fixture delivery assertion | pending | |\n", item.title, item.title, item.title)
+		body := fmt.Sprintf("# %s\n\n## Intent\n\n%s is objectively delivered and documented.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n| --- | --- | --- |\n| A1 | %s has a committed artifact and focused proof. | Committed delivery artifact plus focused command proof. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: fixture delivery assertion | pending | |\n", item.title, item.title, item.title)
 		fmt.Fprintf(&b, "  - key: %s\n    title: %s\n    work_level: standard\n    epic: APP\n    owned_paths: [%s, docs/delivery/%s.md]\n    body: |\n", item.key, item.title, item.path, strings.ToLower(id))
 		for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
 			fmt.Fprintf(&b, "      %s\n", line)
@@ -1082,6 +1097,21 @@ func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 	body = body[:end] + "\nowned_paths: [" + ownedPath + "]\nartifact_contract:\n  kind: trace\n  path: " + ownedPath + "\n  summary: Process-boundary crash and convergence timeline.\n  acceptance_ids: [A1]\n" + body[end:]
 	h.writeFile(taskPath, body)
 	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
+	h.rebindTaskContract(expectedID)
+}
+
+// rebindTaskContract rebinds a task's stored contract_fingerprint after the
+// fixture rewrote authored contract bytes out of band. The drift guard refuses
+// dispatch until an explicit `tusker task update --rebind-contract` re-pins the
+// contract; reconcile only repairs state_rev.
+func (h *harness) rebindTaskContract(taskID string) {
+	h.t.Helper()
+	taskPath := filepath.Join(h.vaultDir, "work", "tasks", taskID+".md")
+	rev := yamlScalar(h.readFile(taskPath), "state_rev")
+	if rev == "" {
+		h.t.Fatalf("task %s has no state_rev to rebind against", taskID)
+	}
+	h.cliOK(h.repoDir, "task", "update", taskID, "--if-revision", rev, "--rebind-contract", "--by", "human:e2e", "--vault", h.vaultDir, "--local", "--json")
 }
 
 func (h *harness) gitOK(args ...string) []byte {
@@ -1235,7 +1265,7 @@ func (h *harness) env() []string {
 			key = entry[:index]
 		}
 		switch key {
-		case "TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT":
+		case "TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CHISEL_SESSION_DB":
 			continue
 		case "PATH":
 			env = append(env, "PATH="+pathValue)

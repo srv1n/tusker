@@ -12,6 +12,13 @@ import (
 
 const workerLifecycleRequestFile = ".tusker-worker-lifecycle.json"
 
+// daemonLifecycleActor is the actor the daemon stamps on lifecycle mutations it
+// applies on behalf of a bound worker (normalized submit/fail/release). The run
+// authorization that admitted the dispatch records the dispatcher's identity
+// (daemon_auto or the directive actor), so work-session checks must recognize
+// this actor explicitly rather than comparing it to the authorization actor.
+const daemonLifecycleActor = "agent:tusker-daemon"
+
 func (d *Daemon) applyWorkerLifecycle(req daemonControlRequest) error {
 	if d == nil {
 		return fmt.Errorf("worker lifecycle request is incomplete")
@@ -153,7 +160,7 @@ func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
 	w := req.Worker
 	args := Args{"id": run.RecordID, "project": run.ProjectID, "owner": run.LeaseOwner, "revision": fmt.Sprintf("%d", run.WorkRevision),
 		"deliverable": w.Deliverable, "verification": w.Verification, "gate-verdicts": w.GateVerdicts, "reason": w.Reason,
-		"actor": "agent:tusker-daemon", "quiet": "true"}
+		"actor": daemonLifecycleActor, "quiet": "true"}
 	return runsLifecycleWithStore(store, args, w.Action, false)
 }
 
