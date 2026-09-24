@@ -159,6 +159,11 @@ func TestFeedbackReviewCommandWritesDailyPacket(t *testing.T) {
 
 func TestFeedbackPromoteCommandDefaultsDryRunAndWritesOneTask(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "tusker")
+	// A canonical vault anchors its material lock on SKILL.md; the fixture must
+	// provide one before promotion can commit a task.
+	if err := writeText(filepath.Join(vault, "SKILL.md"), "# Project Skill\n"); err != nil {
+		t.Fatal(err)
+	}
 	reviewPath := filepath.Join(vault, "feedback", "reviews", "2026-05-31.md")
 	if err := writeText(reviewPath, "# Tusker Daily Review - 2026-05-31\n"); err != nil {
 		t.Fatal(err)
@@ -200,6 +205,9 @@ func TestFeedbackPromoteCommandSelectsFindingPreservesSourceRefsAndDoesNotDispat
 	root := t.TempDir()
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(root, "state"))
 	vault := filepath.Join(root, "tusker")
+	if err := writeText(filepath.Join(vault, "SKILL.md"), "# Project Skill\n"); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeText(filepath.Join(vault, "feedback", "agents", "2026-05-21-codex-promote-finding.md"), strings.Join([]string{
 		"# Agent Feedback",
 		"",

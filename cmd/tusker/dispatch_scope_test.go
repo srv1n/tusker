@@ -85,7 +85,7 @@ func TestAutomationDispatchScopeFreshConfigAndDoctorWarningAreSideEffectFree(t *
 			t.Fatalf("fresh config missing %q:\n%s", want, config)
 		}
 	}
-	if fileExists(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir))) {
+	if fileExists(filepath.Join(root, "tusker.yaml")) {
 		t.Fatal("fresh bootstrap wrote a root-level tusker.yaml")
 	}
 	if err := writeText(configPath, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {

@@ -32,7 +32,7 @@ automation:
   profiles:
     docs-fast:
       harness: codex_exec
-      model: gpt-5.x
+      model: mystery-model
       effort: low
       sandbox:
         mode: workspace-write
@@ -50,7 +50,7 @@ automation:
 	}
 	profile := wf.Data.RunnerProfiles["docs-fast"]
 	assertEqual(t, string(RunnerCodexExec), profile.Harness, "profile harness")
-	assertEqual(t, "gpt-5.x", profile.Model, "profile model")
+	assertEqual(t, "mystery-model", profile.Model, "profile model")
 	if profile.Sandbox.Network == nil || !*profile.Sandbox.Network {
 		t.Fatalf("expected profile network access true, got %#v", profile.Sandbox.Network)
 	}
@@ -62,7 +62,7 @@ automation:
 	}{
 		{"harness", "harness: opencode\n      model: gpt-5.x\n      effort: low", "harness"},
 		{"retired app server", "harness: codex_app_server\n      model: gpt-5.x\n      effort: low", "retired"},
-		{"model", "harness: codex_exec\n      model: mystery-model\n      effort: low", "model"},
+		{"model", "harness: codex_exec\n      model: \"has spaces\"\n      effort: low", "model"},
 		{"effort", "harness: codex_exec\n      model: gpt-5.x\n      effort: turbo", "effort"},
 		{"unenforced guarded preset", "harness: codex_exec\n      model: gpt-5.x\n      effort: high\n      permission_preset: guarded-yolo", "permission_preset"},
 	}
@@ -252,7 +252,7 @@ automation:
 	if !fileExists(filepath.Join(vault, "config.local.yaml")) {
 		t.Fatal("expected project setter to write managed config.local.yaml")
 	}
-	if fileExists(managedTuskerLocalConfigPath(filepath.Join(root, defaultRepoVaultDir))) {
+	if fileExists(filepath.Join(root, "tusker.local.yaml")) {
 		t.Fatal("project setter must not create a root local config")
 	}
 	if err := projectsLimitsCmd(Args{"vault": vault, "max-active-runs": "4", "json": "true"}); err == nil {
@@ -322,8 +322,7 @@ func TestConfigResolverPreservesExplicitZeroFalseAndEmptyCollections(t *testing.
 
 func TestManagedConfigAugmentsLegacyClosePolicyWithoutMaskingIt(t *testing.T) {
 	vault := automationTestVault(t)
-	root := filepath.Dir(vault)
-	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `close_policy:
+	if err := writeText(managedTuskerConfigPath(vault), `close_policy:
   high:
     required_acceptor: reviewer_agent
     required_evidence: [automated_test]
@@ -334,7 +333,7 @@ mutation_mode: protected
 `); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(vault, "config.yaml"), `automation:
+	if err := writeText(managedTuskerLocalConfigPath(vault), `automation:
   enabled: false
 branches:
   state_branch: state

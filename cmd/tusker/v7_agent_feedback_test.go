@@ -45,7 +45,7 @@ func TestV7NewTaskRejectsLegacyTaskIDBeforeWriting(t *testing.T) {
 func TestV7GeneratedTaskIDSkipsConfiguredLegacyRootCollision(t *testing.T) {
 	repo := t.TempDir()
 	vault := filepath.Join(repo, "tusker")
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "legacy_task_roots:\n  - legacy/tasks\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "legacy_task_roots:\n  - legacy/tasks\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -308,13 +308,13 @@ func TestV7PacketWarnsOnMissingRoutesAndStubAcceptance(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(vault, "SKILL.md")); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing packet routes", "risk": "low", "priority": "p2", "domains": "missing", "v7": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(vault, "SKILL.md")); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
