@@ -50,6 +50,25 @@ func activeInteractiveBacklogClaim(store *RuntimeStore, vault string, task Note,
 	return len(workSessionAdmissionBlockersForLane(projected, idx, byID, byRecord, runLaneExecute)) == 0
 }
 
+// selfImplementationClaimAuthorization reports whether the run's current claim
+// is backed by a self_implementation run authorization — i.e. the run is an
+// interactive backlog claim whose authority can lapse or be revoked. Claims
+// without such an authorization (manual hand claims) carry no interactive
+// authority to lose and are never retired by canonical backlog.
+func selfImplementationClaimAuthorization(store *RuntimeStore, run RunStatus) bool {
+	if store == nil {
+		return false
+	}
+	auth, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
+	if err != nil || auth == nil {
+		return false
+	}
+	return auth.LeaseGeneration == run.LeaseGeneration &&
+		auth.AttemptID == run.ActiveAttemptID &&
+		auth.Actor == run.LeaseOwner &&
+		strings.HasPrefix(strings.TrimSpace(auth.Trigger), "self_implementation;")
+}
+
 // workSessionAdmissionBlockers deliberately reads only the facts that make a
 // user-directed work session unsafe. Daemon dispatch, automation enablement,
 // wave authorization, runner health, and critical-risk dispatch policy are

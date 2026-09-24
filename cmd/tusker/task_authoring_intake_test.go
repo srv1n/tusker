@@ -143,7 +143,7 @@ func TestTaskAuthoringEntryPointsRequireExplicitWorkLevel(t *testing.T) {
 	if err := newAuthoredV7Task(base); err == nil || !strings.Contains(err.Error(), "--work-level is required") {
 		t.Fatalf("direct authoring error=%v", err)
 	}
-	if _, err := applyV7CreateTaskProposal(vault, "APP", "epic", map[string]any{"title": "Proposed task"}, "agent:architect"); err == nil || !strings.Contains(err.Error(), "--work-level is required") {
+	if _, err := applyV7CreateTaskProposal(vault, "APP", "epic", map[string]any{"title": "Proposed task", "body": "# Proposed task\n\n## Intent\n\nBody.\n"}, "agent:architect"); err == nil || !strings.Contains(err.Error(), "--work-level is required") {
 		t.Fatalf("proposal authoring error=%v", err)
 	}
 	base["work-level"] = "standard"

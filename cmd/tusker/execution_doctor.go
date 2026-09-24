@@ -41,6 +41,18 @@ func doctorExitForClassification(classification DiagnosticClassification) int {
 	}
 }
 
+// doctorObservationTime anchors a diagnosis to the subject's recorded state
+// time so repeated reads of unchanged state emit identical reports. When the
+// subject carries no readable timestamp the read time is used.
+func doctorObservationTime(subject Note, now time.Time) string {
+	for _, key := range []string{"updated_at", "updated", "created_at", "created"} {
+		if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(stringField(subject.Data, key))); err == nil {
+			return parsed.UTC().Format(time.RFC3339)
+		}
+	}
+	return now.UTC().Format(time.RFC3339)
+}
+
 // diagnoseTaskForDoctor assembles the shared diagnostic facts for one task
 // across contracts, DAG, authorization, reservations, capacity, proof, and
 // review state. It is read-only: stores open read-only and nothing is
@@ -63,7 +75,7 @@ func diagnoseTaskForDoctorWithRuntime(vault string, store *RuntimeStore, runtime
 		scope.Wave = waveID
 	}
 	revision := firstNonEmpty(stringField(task.Data, "state_rev"), "unavailable")
-	observed := now.UTC().Format(time.RFC3339)
+	observed := doctorObservationTime(task, now)
 	var findings []DiagnosticFinding
 
 	dispatchBlockers := v7TaskDispatchBlockers(vault, task)
@@ -166,7 +178,7 @@ func diagnoseWaveForDoctorWithRuntime(vault string, store *RuntimeStore, runtime
 		return Diagnosis{}, tuskerError(errorNotFound, "doctor wave is missing: "+waveID)
 	}
 	scope := DiagnosticScope{Project: projectID, Wave: waveID}
-	observed := now.UTC().Format(time.RFC3339)
+	observed := doctorObservationTime(wave, now)
 	revision := firstNonEmpty(stringField(wave.Data, "authorization_fingerprint"), stringField(wave.Data, "state_rev"))
 	if revision == "" {
 		revision = "unavailable"

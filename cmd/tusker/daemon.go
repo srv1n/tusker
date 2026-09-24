@@ -2632,8 +2632,14 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 			trackerState = strings.TrimSpace(stringField(projected.Data, "status"))
 		}
 	}
-	if run.HandRun && !run.Terminal && isDispatchingLeaseState(run.LeaseState) && !trackerStateTerminal(wfFile.Data, trackerState) && trackerState != "backlog" {
-		return run, false, nil
+	if run.HandRun && !run.Terminal && isDispatchingLeaseState(run.LeaseState) && !trackerStateTerminal(wfFile.Data, trackerState) {
+		// Canonical backlog may retire the runtime row only when this hand run
+		// is an interactive self_implementation claim whose authority lapsed.
+		// A plain hand claim is never reconciled away; explicit release is the
+		// only escape.
+		if trackerState != "backlog" || !selfImplementationClaimAuthorization(d.store, run) {
+			return run, false, nil
+		}
 	}
 	if isDispatchCapacityLeaseState(run.LeaseState) {
 		if _, err := d.ingestCodexExecRawLog(run); err != nil {
