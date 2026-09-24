@@ -29,7 +29,7 @@ import "./ProjectStrip.css";
 const PROJECT_SECTIONS = [
   { label: "Inbox", to: "/p/$projectId" as const, icon: Inbox, match: (rest: string) => rest === "" },
   { label: "Work", to: "/p/$projectId/waves" as const, icon: Layers, match: (rest: string) => /^\/(waves|tasks|runs)(\/|$)/.test(rest) },
-  { label: "Docs", to: "/p/$projectId/docs" as const, icon: BookOpen, match: (rest: string) => /^\/(docs|knowledge)(\/|$)/.test(rest) },
+  { label: "Docs", to: "/p/$projectId/knowledge" as const, icon: BookOpen, match: (rest: string) => /^\/(docs|knowledge)(\/|$)/.test(rest) },
 ] as const;
 
 const TONE_DOT = { fail: "bg-fail", warn: "bg-warn", pass: "bg-pass", muted: "bg-faint" } as const;
