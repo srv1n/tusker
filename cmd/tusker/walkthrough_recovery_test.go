@@ -310,20 +310,21 @@ func TestWalkthroughRerunChecksFailedCommand(t *testing.T) {
 	}, rerunChecksCommandTaskBody("APP-T-0001"))
 	writeDirectTaskBody(t, vault, "APP-T-0002", "W-0001", map[string]any{
 		"status": "review", "readiness": "waiting_on_review", "work_revision": 1,
-		"source_sha": "deadbeef", "owned_paths": []any{"proofed.txt"},
+		"source_sha": "deadbeef", "owned_paths": []any{"proofed-review.txt"},
 	}, rerunChecksCommandTaskBody("APP-T-0002"))
 	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, nil)
 	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err != nil {
 		t.Fatal(err)
 	}
+	ownedPath := map[string]string{"APP-T-0001": "proofed.txt", "APP-T-0002": "proofed-review.txt"}
 	workspaces := map[string]string{}
 	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
 		workspace := t.TempDir()
 		runGitDir(t, workspace, "init")
-		if err := writeText(filepath.Join(workspace, "proofed.txt"), "implemented\n"); err != nil {
+		if err := writeText(filepath.Join(workspace, ownedPath[id]), "implemented\n"); err != nil {
 			t.Fatal(err)
 		}
-		material, err := workspaceTreeStateHashForPaths(workspace, []string{"proofed.txt"})
+		material, err := workspaceTreeStateHashForPaths(workspace, []string{ownedPath[id]})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,7 +332,7 @@ func TestWalkthroughRerunChecksFailedCommand(t *testing.T) {
 			AttemptID: "execute-" + id, ProjectID: project.ProjectID, RecordID: id, ItemID: id,
 			Runner: "codex", Lane: runLaneExecute, WorkRevision: 1, WorkspacePath: workspace,
 			Outcome:  string(AttemptOutcomeSucceeded),
-			EndState: RunEndState{Schema: "tusker.run-end-state/v2", HeadSHA: "deadbeef", WorktreePath: workspace, MaterialFingerprint: material, MaterialScope: []string{"proofed.txt"}},
+			EndState: RunEndState{Schema: "tusker.run-end-state/v2", HeadSHA: "deadbeef", WorktreePath: workspace, MaterialFingerprint: material, MaterialScope: []string{ownedPath[id]}},
 		}); err != nil {
 			t.Fatal(err)
 		}

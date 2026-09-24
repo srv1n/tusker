@@ -11,8 +11,8 @@
       "prompt": "Turn this request into the smallest useful tracked task.",
       "route": "Create, update, or close tracked work",
       "guide": "references/TRACK.md",
-      "loaded_words": 694,
-      "max_loaded_words": 725,
+      "loaded_words": 845,
+      "max_loaded_words": 913,
       "required": [
         "One bounded outcome is one task",
         "tusker verify add"
@@ -23,8 +23,8 @@
       "prompt": "Answer this repository question from its durable canon.",
       "route": "Answer from or write repo knowledge",
       "guide": "references/KNOWLEDGE.md",
-      "loaded_words": 667,
-      "max_loaded_words": 675,
+      "loaded_words": 855,
+      "max_loaded_words": 924,
       "required": [
         "tusker docs find",
         "not in canon"
@@ -35,8 +35,8 @@
       "prompt": "Read or update a documentation or spec contract without loading unrelated tracker guidance.",
       "route": "Read or update documentation/spec contracts",
       "guide": "references/SPECS.md",
-      "loaded_words": 670,
-      "max_loaded_words": 700,
+      "loaded_words": 786,
+      "max_loaded_words": 849,
       "required": [
         "tusker docs find",
         "tusker docs adopt"
@@ -47,10 +47,10 @@
       "prompt": "Run this ready task once and watch it finish.",
       "route": "Run a task, resolve gates, watch runs",
       "guide": "references/RUN.md",
-      "loaded_words": 734,
-      "max_loaded_words": 775,
+      "loaded_words": 1010,
+      "max_loaded_words": 1091,
       "required": [
-        "run directive is deliberate human authority",
+        "deliberate human authority",
         "tusker runs inspect"
       ]
     },
@@ -59,8 +59,8 @@
       "prompt": "Diagnose why this task is stuck without changing tracker state.",
       "route": "Tracker diagnosis or stuck task state",
       "guide": "references/OPERATE.md",
-      "loaded_words": 460,
-      "max_loaded_words": 524,
+      "loaded_words": 997,
+      "max_loaded_words": 1077,
       "required": [
         "Diagnose tracker state read-only",
         "tusker closeout status"
@@ -71,8 +71,8 @@
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 697,
-      "max_loaded_words": 749,
+      "loaded_words": 812,
+      "max_loaded_words": 877,
       "required": [
         "Existing Repository Onboarding",
         "Storage Boundary"
@@ -83,7 +83,7 @@
       "prompt": "Xcode failed because generated build state looks corrupted.",
       "route": "Xcode generated build-state failure",
       "guide": "references/XCODE_BUILD_STATE.md",
-      "loaded_words": 506,
+      "loaded_words": 515,
       "max_loaded_words": 574,
       "required": [
         "tusker xcode doctor",

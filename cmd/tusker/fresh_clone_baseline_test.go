@@ -43,7 +43,7 @@ func TestFreshCloneBaselineCLIRunsHelpAndV7Init(t *testing.T) {
 
 	temp := t.TempDir()
 	vault := filepath.Join(temp, "tusker")
-	init := exec.Command("go", "run", "./cmd/tusker", "init", "--vault", vault, "--yes", "--vault-only", "--no-mount")
+	init := exec.Command("go", "run", "./cmd/tusker", "init", "--vault", vault, "--yes", "--vault-only", "--no-mount", "--no-register")
 	init.Dir = repoRoot
 	output, err = init.CombinedOutput()
 	if err != nil {

@@ -633,7 +633,11 @@ func TestSelfServiceJourneysA3(t *testing.T) {
 		live := crashed
 		live.RecordID, live.ItemID = "APP-T-0002", "APP-T-0002"
 		live.ProcessPID = os.Getpid()
-		live.ProcessStartedAt = time.Now().UTC().Format(time.RFC3339)
+		liveStartedAt, liveStartedOK := processStartTime(live.ProcessPID)
+		if !liveStartedOK {
+			t.Fatal("cannot probe this process's start time for the live-holder fixture")
+		}
+		live.ProcessStartedAt = liveStartedAt
 		if deadReservationRevision(live) != "" {
 			t.Fatal("a live holder classified as a dead reservation")
 		}

@@ -89,7 +89,7 @@ class JourneyTest(unittest.TestCase):
 	}
 
 	vault := filepath.Join(repo, ".tusker")
-	trustJourneyCLI(t, vault, "init", "--vault", vault, "--yes", "--vault-only", "--no-mount")
+	trustJourneyCLI(t, vault, "init", "--vault", vault, "--yes", "--vault-only", "--no-mount", "--no-register")
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.validation.commands", []string{"true"}); err != nil {
 		t.Fatal(err)
 	}

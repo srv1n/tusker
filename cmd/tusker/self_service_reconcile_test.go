@@ -280,7 +280,11 @@ func TestSelfServiceReconcile(t *testing.T) {
 		live := dead
 		live.RecordID, live.ItemID = "QUI-T-0002", "QUI-T-0002"
 		live.ProcessPID = os.Getpid()
-		live.ProcessStartedAt = now.Format(time.RFC3339)
+		liveStartedAt, liveStartedOK := processStartTime(live.ProcessPID)
+		if !liveStartedOK {
+			t.Fatal("cannot probe this process's start time for the live-holder fixture")
+		}
+		live.ProcessStartedAt = liveStartedAt
 		if deadReservationRevision(live) != "" {
 			t.Fatal("a live holder must not classify as a dead reservation")
 		}
