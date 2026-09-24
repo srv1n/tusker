@@ -173,10 +173,10 @@ func TestV7TargetedReconcileRefusesTerminalRewind(t *testing.T) {
 	runGitDir(t, repo, "init", "-b", "main")
 	runGitDir(t, repo, "config", "user.email", "test@example.com")
 	runGitDir(t, repo, "config", "user.name", "Test User")
-	if err := os.WriteFile(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), []byte("schema: tusker.config/v1\nproject_id: app\n"), 0o644); err != nil {
+	vault := filepath.Join(repo, ".tusker")
+	if err := writeText(managedTuskerConfigPath(vault), "schema: tusker.config/v1\nproject_id: app\n"); err != nil {
 		t.Fatal(err)
 	}
-	vault := filepath.Join(repo, ".tusker")
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}

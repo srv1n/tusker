@@ -837,7 +837,11 @@ func v7VerificationReceiptInvalidationForMaterial(task Note, row v7VerificationR
 		}
 		return &base
 	}
-	if !strings.EqualFold(strings.TrimSpace(row.Result), "pass") {
+	result := strings.ToLower(strings.TrimSpace(row.Result))
+	if result == "blocked" || result == "skipped" {
+		return nil
+	}
+	if result != "pass" {
 		base.Kind, base.Dimension, base.Explanation = "missing", "receipt", "current command proof has not been recorded"
 		return &base
 	}

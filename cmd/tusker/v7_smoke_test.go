@@ -480,6 +480,10 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	if err := writeText(filepath.Join(repo, "cmd", "tusker", "router_test.go"), "package tusker\n\nimport \"testing\"\n\nfunc TestV7(t *testing.T) {}\n"); err != nil {
 		t.Fatal(err)
 	}
+	taskBodyPath := filepath.Join(repo, "task-body.md")
+	if err := writeText(taskBodyPath, "## Intent\n\nAuthored router fixture task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Router fixture outcome. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused router proof. |\n"); err != nil {
+		t.Fatal(err)
+	}
 	runCLI := func(argv ...string) string {
 		t.Helper()
 		full := append([]string{"tusker"}, argv...)
@@ -498,10 +502,10 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	}
 
 	runCLI("new", "epic", "APP", "--title", "First-class harness provider setup")
-	runCLI("new", "task", "--epic", "APP", "--title", "Add direct OpenAI provider smoke harness", "--work-level", "standard", "--kind", "feature", "--risk", "low", "--priority", "p2")
-	runCLI("new", "task", "--epic", "APP", "--title", "Human next action", "--work-level", "light", "--next-owner", "human:sarav")
-	runCLI("new", "task", "--epic", "APP", "--title", "Reviewer next action", "--work-level", "light", "--next-owner", "reviewer")
-	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--work-level", "light", "--next-owner", "agent")
+	runCLI("new", "task", "--epic", "APP", "--title", "Add direct OpenAI provider smoke harness", "--work-level", "standard", "--kind", "feature", "--risk", "low", "--priority", "p2", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--epic", "APP", "--title", "Human next action", "--work-level", "light", "--next-owner", "human:sarav", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--epic", "APP", "--title", "Reviewer next action", "--work-level", "light", "--next-owner", "reviewer", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--work-level", "light", "--next-owner", "agent", "--body-file", taskBodyPath)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0004")
 	runCLI("new", "gate", "--blocks", "APP-T-0001", "--kind", "auth", "--owner", "human:sarav", "--action", "Complete OAuth.", "--verification", "Provider endpoint returns ready.", "--why-agent-cannot", "Human credentials or account access are required.")
@@ -635,7 +639,7 @@ func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 
 func TestV7ProfileInitCreatesSkillShapedKnowledgeVault(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
-	if err := initCmd(Args{"vault": vault, "yes": "true", "vault-only": "true", "no-mount": "true", "profile": "v7"}); err != nil {
+	if err := initCmd(Args{"vault": vault, "yes": "true", "vault-only": "true", "no-mount": "true", "no-register": "true", "profile": "v7"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1131,10 +1135,7 @@ func TestV7ValidationKnowledgeDeltaRiskGate(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureDir(filepath.Join(repo, "docs", "specs")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(filepath.Join(repo, "docs", "specs", "knowledge-delta.md"), "# Knowledge delta\n"); err != nil {
+	if err := writeText(filepath.Join(repo, ".tusker", "specs", "knowledge-delta.md"), "---\nsubject: knowledge-delta\npart_of: overview\n---\n# Knowledge delta\n"); err != nil {
 		t.Fatal(err)
 	}
 	data := map[string]any{
@@ -1148,7 +1149,7 @@ func TestV7ValidationKnowledgeDeltaRiskGate(t *testing.T) {
 		"readiness":             "ready",
 		"priority":              "p2",
 		"risk":                  "medium",
-		"spec_refs":             []string{"docs/specs/knowledge-delta.md"},
+		"spec_refs":             []string{".tusker/specs/knowledge-delta.md"},
 		"proof_mode":            "inline",
 		"proof_status":          "pending",
 		"proof_required":        []string{"focused_test"},
@@ -1181,13 +1182,10 @@ func TestV7ValidationKnowledgeDeltaLineBudgetWarnsAndFails(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureDir(filepath.Join(repo, "docs", "specs")); err != nil {
+	if err := writeText(filepath.Join(repo, ".tusker", "specs", "knowledge-delta.md"), "---\nsubject: knowledge-delta\npart_of: overview\n---\n# Knowledge delta\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(repo, "docs", "specs", "knowledge-delta.md"), "# Knowledge delta\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  knowledge_delta_warn_lines: 2\n  knowledge_delta_fail_lines: 4\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  knowledge_delta_warn_lines: 2\n  knowledge_delta_fail_lines: 4\n"); err != nil {
 		t.Fatal(err)
 	}
 	data := map[string]any{
@@ -1201,7 +1199,7 @@ func TestV7ValidationKnowledgeDeltaLineBudgetWarnsAndFails(t *testing.T) {
 		"readiness":             "ready",
 		"priority":              "p2",
 		"risk":                  "medium",
-		"spec_refs":             []string{"docs/specs/knowledge-delta.md"},
+		"spec_refs":             []string{".tusker/specs/knowledge-delta.md"},
 		"proof_mode":            "inline",
 		"proof_status":          "pending",
 		"proof_required":        []string{"focused_test"},
@@ -1256,7 +1254,7 @@ func TestV7ValidationReadsConfiguredTaskBodyLineLimits(t *testing.T) {
 	data["state_rev"] = v7StateRev(data, body)
 	note := Note{Data: data, Body: body, RelativePath: "work/tasks/APP-T-0001.md"}
 
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 10\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 10\n"); err != nil {
 		t.Fatal(err)
 	}
 	errs, _ := validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
@@ -1264,7 +1262,7 @@ func TestV7ValidationReadsConfiguredTaskBodyLineLimits(t *testing.T) {
 		t.Fatalf("expected configured fail limit to reject task body, got %#v", errs)
 	}
 
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 100\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  task_body_warn_lines: 5\n  task_body_fail_lines: 100\n"); err != nil {
 		t.Fatal(err)
 	}
 	errs, warns := validateV7Note(note, validationContext{VaultPath: vault, RelativePath: note.RelativePath}, note.RelativePath)
@@ -1282,7 +1280,7 @@ func TestV7ValidationReadsConfiguredFrontmatterWarnLines(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "validation:\n  frontmatter_warn_lines: 5\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  frontmatter_warn_lines: 5\n"); err != nil {
 		t.Fatal(err)
 	}
 	data := map[string]any{
@@ -1961,7 +1959,7 @@ func TestV7ValidationReadsConfiguredStrictSwitches(t *testing.T) {
 		t.Fatalf("expected default acceptance proof warning, got %#v", warns)
 	}
 
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), strings.Join([]string{
+	if err := writeText(managedTuskerConfigPath(vault), strings.Join([]string{
 		"validation:",
 		"  require_acceptance_proof: false",
 		"  forbid_work_log_section: false",
@@ -2381,7 +2379,11 @@ func TestV7SpecObjectCreationCLIForms(t *testing.T) {
 	if code, err := run(command, args); err != nil || code != 0 {
 		t.Fatalf("new epic spec form failed: code=%d err=%v", code, err)
 	}
-	command, args = parseCLI([]string{"tusker", "new", "task", "--vault", vault, "--quiet", "--epic", "APP", "--title", "Spec task", "--work-level", "standard"})
+	bodyPath := filepath.Join(filepath.Dir(vault), "task-body.md")
+	if err := writeText(bodyPath, "## Intent\n\nAuthored spec-form task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Spec-form task outcome. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused spec-form proof. |\n"); err != nil {
+		t.Fatal(err)
+	}
+	command, args = parseCLI([]string{"tusker", "new", "task", "--vault", vault, "--quiet", "--epic", "APP", "--title", "Spec task", "--work-level", "standard", "--body-file", bodyPath})
 	assertEqual(t, "new task", command, "new task command parse")
 	if code, err := run(command, args); err != nil || code != 0 {
 		t.Fatalf("new task spec form failed: code=%d err=%v", code, err)
@@ -2587,24 +2589,28 @@ func TestV7SkillKnowledgeEndToEnd(t *testing.T) {
 	runCLI("init", "--profile", "v7", "--vault", vault, "--yes", "--vault-only", "--no-mount")
 	runCLI("domain", "new", "providers", "--v7", "--vault", vault, "--title", "Providers", "--summary", "Provider integrations.")
 	runCLI("new", "epic", "APP", "--vault", vault, "--title", "App V7")
-	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "Route provider work", "--domains", "providers", "--risk", "low", "--priority", "p2")
+	taskBodyPath := filepath.Join(repo, "task-body.md")
+	if err := writeText(taskBodyPath, "## Intent\n\nAuthored provider-routing task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Provider routing outcome. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused provider proof. |\n"); err != nil {
+		t.Fatal(err)
+	}
+	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "Route provider work", "--domains", "providers", "--risk", "low", "--priority", "p2", "--work-level", "standard", "--body-file", taskBodyPath)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	agentPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "agent")
 	reviewerPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "reviewer")
 	out := filepath.Join(repo, "dist", "project-skill")
 	runCLI("publish", "skill", "--vault", vault, "--v7", "--out", out)
+	runCLI("docs", "map", "--vault", vault)
 	runCLI("validate", "--vault", vault)
 
-	assertContainsIndexTest(t, agentPacket, "knowledge/domains/providers/INDEX.md")
-	assertContainsIndexTest(t, reviewerPacket, "knowledge/domains/providers/CANON.md")
+	assertContainsIndexTest(t, agentPacket, "docs/system/domains/providers/00-index.md")
+	assertContainsIndexTest(t, reviewerPacket, "docs/system/domains/providers/00-index.md")
 	assertExists(t, filepath.Join(out, "SKILL.md"))
 	assertExists(t, filepath.Join(out, "knowledge", "domains", "providers", "CANON.md"))
 	_, exportedBody, err := parseFrontmatterMustRead(filepath.Join(out, "SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertContainsIndexTest(t, exportedBody, "knowledge/domains/providers/INDEX.md")
-	assertContainsIndexTest(t, exportedBody, "knowledge/domains/providers/CANON.md")
+	assertContainsIndexTest(t, exportedBody, "docs/system/domains/providers/00-index.md")
 	for _, forbidden := range []string{"work", "evidence", "attempts", "events", "_generated", "Attachments"} {
 		if _, err := os.Stat(filepath.Join(out, forbidden)); !os.IsNotExist(err) {
 			t.Fatalf("end-to-end export included forbidden path %s: %v", forbidden, err)
@@ -3142,7 +3148,11 @@ func TestV7ProposalApplyCreatesTaskAndDecision(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "work-level": "standard", "review-level": "light", "review-reason": "bounded review", "risk": "low", "priority": "p1", "evidence-required": "automated_test"}, proposalV7Cmd)
+	bodyPath := filepath.Join(filepath.Dir(vault), "proposed-task-body.md")
+	if err := writeText(bodyPath, "## Intent\n\nApply the reviewer-approved proposal task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Proposal applies the authored task contract. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7ProposalApply -count=1 | pending | Focused proposal proof. |\n"); err != nil {
+		t.Fatal(err)
+	}
+	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "work-level": "standard", "review-level": "light", "review-reason": "bounded review", "risk": "low", "priority": "p1", "evidence-required": "automated_test", "body-file": bodyPath}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "apply", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	assertExists(t, filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
@@ -3711,7 +3721,7 @@ branches:
 func TestV7ConfigReadsNestedBranchesStateAndRuntime(t *testing.T) {
 	root := t.TempDir()
 	vault := filepath.Join(root, "vault")
-	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `schema: tusker.config/v1
+	if err := writeText(managedTuskerConfigPath(vault), `schema: tusker.config/v1
 branches:
   default_branch: release
   state_branch: team/state
@@ -3734,7 +3744,7 @@ runtime:
 	assertEqual(t, "team/state", v7StateBranch(vault), "state branch")
 	assertEqual(t, 7*time.Minute, v7LeaseTTL(vault), "lease ttl")
 
-	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), `schema: tusker.config/v1
+	if err := writeText(managedTuskerConfigPath(vault), `schema: tusker.config/v1
 branches:
   default_branch: release
   control:
@@ -3937,7 +3947,7 @@ func TestV7StagedBranchPolicyRejectsProtectedStateMutation(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -4013,7 +4023,7 @@ func TestV7BranchPolicyRejectsTaskAndGateDeletion(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -4215,7 +4225,7 @@ func TestV7ControlMutationAllowsExplicitSingleUserLocalMode(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -4239,7 +4249,7 @@ func TestV7ControlMutationAllowsExplicitSingleUserLocalMode(t *testing.T) {
 		t.Fatalf("expected protected mutation error, got %v", err)
 	}
 
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), strings.Join([]string{
+	if err := writeText(managedTuskerConfigPath(vault), strings.Join([]string{
 		"branches:",
 		"  control:",
 		"    - main",
@@ -4321,7 +4331,7 @@ func TestV7BranchPolicyRejectsDetachedAndNonGitState(t *testing.T) {
 	runGit(t, "init", "-b", "main")
 	runGit(t, "config", "user.email", "test@example.com")
 	runGit(t, "config", "user.name", "Tusker Test")
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "branches:\n  control:\n    - main\n"); err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "branches:\n  control:\n    - main\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
