@@ -1650,7 +1650,7 @@ func requireAgentWorkSession(vaultPath, taskID, actor string, args Args) error {
 	}
 	if args.Bool("normalized-work-submit") && run != nil && LeaseState(run.LeaseState) == LeaseStateReleased && run.AttemptOutcome == string(AttemptOutcomeSucceeded) && run.LeaseGeneration == intArg(args, "lease-generation") {
 		auth, authErr := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
-		if authErr == nil && auth != nil && auth.LeaseGeneration == run.LeaseGeneration && auth.Actor == actor {
+		if authErr == nil && auth != nil && auth.LeaseGeneration == run.LeaseGeneration && (auth.Actor == actor || actor == daemonLifecycleActor) {
 			return nil
 		}
 	}
