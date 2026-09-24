@@ -643,6 +643,9 @@ func validateCmd(args Args) (int, error) {
 		if len(paths) > 1 {
 			label := firstNonEmpty(idCollisionLabels[id], id)
 			hint := "rename one file or change one id; ids must be unique"
+			if v7MixedLayoutTaskIDCollision(paths) {
+				hint = fmt.Sprintf("mixed V5/V7 task collision: keep exactly one %s; move or rename the legacy tusker/epics/** task, or rename .tusker/work/tasks/%s.md and update links before rerunning `tusker validate`", label, label)
+			}
 			errs = append(errs, issue(errorIDCollision, fmt.Sprintf(`id "%s" declared in %d files: %s`, label, len(paths), strings.Join(paths, ", ")), paths[0], hint, map[string]any{"id": label, "paths": paths}))
 		}
 	}
@@ -722,6 +725,21 @@ func validateCmd(args Args) (int, error) {
 		fmt.Printf("Validation passed for %d notes and %d events.\n", len(notes), eventCount)
 	}
 	return 0, nil
+}
+
+func v7MixedLayoutTaskIDCollision(paths []string) bool {
+	hasV7Task := false
+	hasLegacyTask := false
+	for _, path := range paths {
+		normalized := filepath.ToSlash(path)
+		if strings.Contains(normalized, "work/tasks/") {
+			hasV7Task = true
+		}
+		if strings.Contains(normalized, "epics/") && !strings.Contains(normalized, "work/epics/") {
+			hasLegacyTask = true
+		}
+	}
+	return hasV7Task && hasLegacyTask
 }
 
 func filterValidationIssuesByPath(issues []Issue, scope string) []Issue {

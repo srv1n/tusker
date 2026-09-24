@@ -267,15 +267,19 @@ func feedbackVaultForRepoPath(path string) (string, string, error) {
 		return "", "", err
 	}
 	base := filepath.Base(abs)
-	if isVaultDir(abs) || base == defaultRepoVaultDir && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
+	if isVaultDir(abs) || (base == defaultRepoVaultDir || base == "tusker") && (dirExists(abs) || dirExists(filepath.Join(abs, "feedback"))) {
 		return abs, filepath.Dir(abs), nil
 	}
 	if discovered, _ := discoverVault(abs); discovered != "" {
 		return discovered, filepath.Dir(discovered), nil
 	}
-	candidate := filepath.Join(abs, defaultRepoVaultDir)
-	if dirExists(filepath.Join(candidate, "feedback")) {
-		return candidate, abs, nil
+	// Existing visible `tusker/` vaults remain valid feedback targets even when
+	// they carry only feedback notes and no canonical vault markers yet.
+	for _, name := range []string{defaultRepoVaultDir, "tusker"} {
+		candidate := filepath.Join(abs, name)
+		if dirExists(filepath.Join(candidate, "feedback")) {
+			return candidate, abs, nil
+		}
 	}
 	return filepath.Join(abs, defaultRepoVaultDir), abs, nil
 }

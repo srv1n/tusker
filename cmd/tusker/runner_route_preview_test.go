@@ -63,7 +63,7 @@ func TestRunnerRoutePreview(t *testing.T) {
 			if preview.ProfileDefinition.Subagents.Allowed == nil || !*preview.ProfileDefinition.Subagents.Allowed || preview.ProfileDefinition.Subagents.MaxConcurrent != 2 {
 				t.Fatalf("profile definition subagent policy missing or wrong: %#v", preview.ProfileDefinition.Subagents)
 			}
-			if !preview.ReadOnly || len(preview.Precedence) != 5 || len(preview.Blockers) != 0 {
+			if !preview.ReadOnly || len(preview.Precedence) != 7 || len(preview.Blockers) != 0 {
 				t.Fatalf("bad preview: %#v", preview)
 			}
 		})
@@ -73,11 +73,11 @@ func TestRunnerRoutePreview(t *testing.T) {
 	missing.RunnerLaneProfiles = nil
 	delete(missing.RunnerProfiles, "execute-frontier")
 	blocked := routePreviewForNote(Note{Data: map[string]any{"id": id, "complexity": "frontier"}}, missing, runLaneExecute)
-	if len(blocked.Blockers) != 1 || len(blocked.Precedence) != 5 || !strings.Contains(blocked.Blockers[0], "execute-frontier") {
+	if len(blocked.Blockers) != 1 || len(blocked.Precedence) != 7 || !strings.Contains(blocked.Blockers[0], "execute-frontier") {
 		t.Fatalf("missing role was silently substituted: %#v", blocked)
 	}
 	invalid := routePreviewForNote(Note{Data: map[string]any{"id": id, "complexity": "turbo"}}, wf, runLaneExecute)
-	if len(invalid.Blockers) != 1 || len(invalid.Precedence) != 5 || !strings.Contains(invalid.Blockers[0], "invalid task complexity") {
+	if len(invalid.Blockers) != 1 || len(invalid.Precedence) != 7 || !strings.Contains(invalid.Blockers[0], "invalid task complexity") {
 		t.Fatalf("invalid complexity was accepted: %#v", invalid)
 	}
 

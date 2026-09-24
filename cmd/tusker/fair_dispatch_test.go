@@ -663,6 +663,8 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		review := idx.Tasks["APP-T-0002"]
 		review.Data = cloneMap(review.Data)
 		review.Data["status"] = "review"
+		review.Data["contract_fingerprint"] = directWaveTaskContractFingerprint(review.Data, review.Body)
+		review.Data["state_rev"] = v7StateRev(review.Data, review.Body)
 		wf := defaultWorkflow()
 		wf.DispatchScope = defaultAutomationDispatchScope()
 		wf.Workspace.Strategy = string(WorkspaceStrategyWorktree)
@@ -692,6 +694,11 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 		dynamicReview := notesByID["APP-T-0002"]
 		dynamicReview.Data["status"] = "review"
 		notesByID["APP-T-0002"] = dynamicReview
+		for id, note := range notesByID {
+			note.Data["contract_fingerprint"] = directWaveTaskContractFingerprint(note.Data, note.Body)
+			note.Data["state_rev"] = v7StateRev(note.Data, note.Body)
+			notesByID[id] = note
+		}
 		wf.Agents.MaxConcurrentAgents = 0
 		wfFile := WorkflowFile{Data: wf}
 		candidates := make([]daemonDispatchCandidate, 0, 3)

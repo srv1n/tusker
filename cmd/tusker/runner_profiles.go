@@ -288,10 +288,10 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 	applyRemovedProfiles(effectiveRaw)
 	// A project may explicitly clear the inherited profile map while relying
 	// on machine-local reconciliation to repopulate it.  In that transitional
-	// state an inherited default_profile would be a dangling reference and
-	// should not make the config unreadable before the reconciler can repair it.
-	// Preserve an explicitly configured default_profile so validation still
-	// rejects a genuine user typo.
+	// state inherited profile references would be dangling and should not make
+	// the config unreadable before the reconciler can repair it.  Preserve
+	// values the same layer sets explicitly so validation still rejects a
+	// genuine user typo.
 	for i := len(layers) - 1; i >= 1; i-- {
 		layer := layers[i]
 		if !layer.Present {
@@ -303,9 +303,11 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 			continue
 		}
 		if profileMap := mapAny(profiles); profileMap != nil && len(profileMap) == 0 {
-			if _, explicitDefault := automation["default_profile"]; !explicitDefault {
-				if effectiveAutomation := mapAny(effectiveRaw["automation"]); effectiveAutomation != nil {
-					delete(effectiveAutomation, "default_profile")
+			if effectiveAutomation := mapAny(effectiveRaw["automation"]); effectiveAutomation != nil {
+				for _, key := range []string{"default_profile", "model_levels", "lane_profiles", "routing"} {
+					if _, explicit := automation[key]; !explicit {
+						delete(effectiveAutomation, key)
+					}
 				}
 			}
 		}

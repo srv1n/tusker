@@ -88,12 +88,10 @@ func assertRegistryAutomationState(t *testing.T, project RegisteredProject, enab
 	if len(projects) != 1 || projects[0].Enabled != enabled {
 		t.Fatalf("registry enabled=%t: %#v", enabled, projects)
 	}
-	report, err := configResolveForPaths(project.RepoRoot, project.VaultRoot, true, "automation.enabled")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if boolFromAny(report.Value) != enabled || report.Source != configSourceLocal {
-		t.Fatalf("automation.enabled=%t report=%#v", enabled, report)
+	// The registry flag is the dispatch authority: enabling or disabling a
+	// project is a runtime-state change and must not write project config.
+	if fileExists(managedTuskerLocalConfigPath(project.VaultRoot)) {
+		t.Fatalf("projects enable/disable wrote a local config file; registry owns automation.enabled")
 	}
 }
 

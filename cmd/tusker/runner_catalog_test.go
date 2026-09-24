@@ -529,8 +529,14 @@ func TestSemanticEffortForNearestSupportedLevel(t *testing.T) {
 
 func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	original := runnerCatalogCommand
-	defer func() { runnerCatalogCommand = original }()
+	originalAppServer := runnerCatalogAppServerModels
+	originalCodexExecutable := runnerCatalogCodexExecutable
+	defer func() {
+		runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogCodexExecutable = original, originalAppServer, originalCodexExecutable
+	}()
 	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
+	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) { return nil, errCatalogFixture{} }
+	runnerCatalogCodexExecutable = func() string { return "" }
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
@@ -567,10 +573,17 @@ func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 func TestProfileReconcileWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	original := runnerCatalogCommand
 	originalRoot := runnerCatalogStateRoot
-	defer func() { runnerCatalogCommand, runnerCatalogStateRoot = original, originalRoot }()
+	originalAppServer := runnerCatalogAppServerModels
+	originalCodexExecutable := runnerCatalogCodexExecutable
+	defer func() {
+		runnerCatalogCommand, runnerCatalogStateRoot, runnerCatalogAppServerModels, runnerCatalogCodexExecutable = original, originalRoot, originalAppServer, originalCodexExecutable
+	}()
 	root := t.TempDir()
+	t.Setenv("TUSKER_CONFIG", filepath.Join(root, "config.yaml"))
 	runnerCatalogStateRoot = func() string { return root }
 	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
+	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) { return nil, errCatalogFixture{} }
+	runnerCatalogCodexExecutable = func() string { return "" }
 	vault := automationTestVault(t)
 	path := managedTuskerConfigPath(vault)
 	if err := writeText(path, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: false\n  profiles: {}\n"); err != nil {
