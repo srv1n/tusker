@@ -153,7 +153,7 @@ func armedWaveProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index,
 	for id, task := range idx.Tasks {
 		effectiveTasks[id] = task
 	}
-	if v7GitRepo(v7RepoRoot(vaultPath)) {
+	if repoRoot := v7RepoRoot(vaultPath); v7GitRepo(repoRoot) && gitBranchExists(repoRoot, v7WaveIntegrationBranch(wave)) {
 		for _, id := range members {
 			if !landed[id] {
 				continue

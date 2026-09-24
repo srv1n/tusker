@@ -9,7 +9,7 @@ import (
 // canonical backlog state while its exact, live authorization owns the lease.
 func activeInteractiveBacklogClaim(store *RuntimeStore, vault string, task Note, run RunStatus, now time.Time) bool {
 	if store == nil || !run.HandRun || run.Terminal || run.Lane != runLaneExecute ||
-		!isDispatchingLeaseState(run.LeaseState) ||
+		!isDispatchingLeaseState(run.LeaseState) || runFreshness(&run, now) != "fresh" ||
 		stringField(task.Data, "status") != "backlog" {
 		return false
 	}

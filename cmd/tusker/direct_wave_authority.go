@@ -1145,12 +1145,12 @@ func waveReviewCmd(args Args) error {
 	}
 	var checkErr error
 	if args.Bool("check") {
-		checkErr = tuskerError(errorInvalidTransition, "wave preflight did not produce an enabled Start control")
+		checkErr = tuskerError(errorInvalidTransition, "wave review did not produce an enabled Start control")
 		for _, control := range review.Controls {
 			if control.Action == "wave start" {
 				checkErr = nil
 				if !control.Enabled {
-					checkErr = tuskerError(errorInvalidTransition, "wave preflight blocked: "+control.Reason)
+					checkErr = tuskerError(errorInvalidTransition, "wave review blocked: "+control.Reason)
 				}
 				break
 			}
