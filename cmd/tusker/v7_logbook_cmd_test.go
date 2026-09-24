@@ -149,7 +149,7 @@ func TestLogbookComposesFromRecords(t *testing.T) {
 		t.Fatalf("expected repair task BGR-T-0001, got %+v", logbook.Meaning.Repairs)
 	}
 	// A task currently in review must land in the human section.
-	setStatus(t, vault, "BGR-T-0001", "ready")
+	makeV7TaskDispatchableForTest(t, vault, "BGR-T-0001")
 	setStatus(t, vault, "BGR-T-0001", "review")
 	logbook, err = buildTuskerLogbook(vault, d, time.Now().UTC())
 	if err != nil {

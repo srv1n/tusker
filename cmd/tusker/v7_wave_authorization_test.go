@@ -293,7 +293,7 @@ func TestWavePauseAndStalePreserveLiveDaemonRuns(t *testing.T) {
 
 func TestLiveExecuteTrackerStillReleasesTaskIneligibility(t *testing.T) {
 	vault, store, project := authorityFixture(t)
-	writeDirectTask(t, vault, "APP-T-0001", "W-0001", map[string]any{"status": "ready", "readiness": "ready"})
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", map[string]any{"status": "ready", "readiness": "held"})
 	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
 	armWaveForTest(t, vault)
 	wfFile := WorkflowFile{Path: workflowPath(vault), Data: defaultWorkflow()}
@@ -306,8 +306,6 @@ func TestLiveExecuteTrackerStillReleasesTaskIneligibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	note.Data = cloneMap(note.Data)
-	note.Data["status"] = "backlog"
 	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
 	live := RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: wfFile.Data.Agents.Default, Lane: runLaneExecute, LeaseState: string(LeaseStateClaimed), LeaseOwner: "attempt-live", LeaseGeneration: 7, ActiveAttemptID: "attempt-live", AttemptCount: 1}
 	updated, changed, err := daemon.reconcileRunWithTracker(context.Background(), project, wfFile, live, note, lookup.ByID, lookup.ByRecordID)
@@ -442,7 +440,7 @@ func TestInteractiveExecutionContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(string(raw)), " ")
-	for _, want := range []string{"Interactive sessions implement work through interactive claims", "never launch a daemon or nested worker", "TUSKER_ATTEMPT_ID"} {
+	for _, want := range []string{"Interactive sessions implement authorized work through interactive claims", "never launch a daemon or nested worker", "TUSKER_ATTEMPT_ID"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("interactive contract missing %q", want)
 		}

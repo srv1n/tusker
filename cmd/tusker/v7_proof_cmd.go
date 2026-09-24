@@ -1059,7 +1059,7 @@ func computeV7ProofReportForMaterial(vaultPath string, task Note, idx v7Index, c
 	}
 	for _, row := range parseV7VerificationRows(task.Body) {
 		row = evaluateV7ReplayVerificationRow(vaultPath, row)
-		if !v7VerificationReceiptCurrent(task, row, currentMaterial, materialErr) {
+		if v7VerificationResultCovers(row.Result) && !v7VerificationReceiptCurrent(task, row, currentMaterial, materialErr) {
 			row.Result = "fail"
 			row.Notes = appendV7ProofNote(row.Notes, "verification receipt is missing or stale for the current task contract/work/source/material")
 		}

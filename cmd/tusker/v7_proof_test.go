@@ -28,7 +28,9 @@ func TestV7InlineProofClosesWithoutEvidenceFile(t *testing.T) {
 	}
 	assertEqual(t, "review", stringField(data, "status"), "finish moved task to review")
 	assertEqual(t, "satisfied", stringField(data, "proof_status"), "proof status")
-	if !strings.Contains(body, "| A1 | go test ./cmd/tusker -run TestProof -count=1 | pass | Focused proof passed. |") {
+	rows := parseV7VerificationRows(body)
+	if len(rows) != 1 || rows[0].CoverText != "A1" || rows[0].Check != "go test ./cmd/tusker -run TestProof -count=1" ||
+		rows[0].Result != "pass" || !strings.Contains(rows[0].Notes, "Focused proof passed.") {
 		t.Fatalf("verification row missing:\n%s", body)
 	}
 	if dirExists(filepath.Join(vault, "evidence", "APP-T-0001")) {
@@ -668,14 +670,10 @@ func TestV7AuditProofIsSatisfiableWithTypedReviewEvidence(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Audited proof", "risk": "critical", "priority": "p1", "v7": "true"}, newV7Task)
-	for _, row := range []v7VerificationRow{
-		{CoverText: "A1", Check: "command: go test ./cmd/tusker -run TestV7AuditProofIsSatisfiableWithTypedReviewEvidence -count=1", Result: "pass", Notes: "Existing focused gate receipt."},
-		{CoverText: "A1", Check: "command: go test ./cmd/tusker -count=1", Result: "pass", Notes: "Existing broad gate receipt."},
-	} {
-		if _, err := upsertV7Verification(vault, "APP-T-0001", row, "reviewer:gate"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "by": "reviewer:gate", "rows": strings.Join([]string{
+		"A1|command: go test ./cmd/tusker -run TestV7AuditProofIsSatisfiableWithTypedReviewEvidence -count=1|pass|Existing focused gate receipt.",
+		"A1|command: go test ./cmd/tusker -count=1|pass|Existing broad gate receipt.",
+	}, "\n")}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "human_review", "status": "accepted", "accepted-by": "reviewer:independent", "covers": "A1", "external-url": "https://example.test/review.txt", "summary": "Independent review completed."}, evidenceV7AddCmd)
 
 	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))

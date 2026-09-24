@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -96,7 +97,7 @@ func proposalV7NewCmd(args Args) error {
 	if !v7ProposalIDPattern.MatchString(id) {
 		return tuskerError(errorInvalidArg, "invalid V7 proposal id: "+id)
 	}
-	fields, err := v7ProposalFields(args, action)
+	fields, err := v7ProposalFields(vaultPath, args, action)
 	if err != nil {
 		return err
 	}
@@ -518,6 +519,25 @@ func applyV7CreateTaskProposal(vaultPath, target, targetKind string, fields map[
 	if evidence := firstNonEmpty(toString(fields["evidence_required"]), toString(fields["evidence-required"])); evidence != "" {
 		args["evidence-required"] = evidence
 	}
+	if bodyFile := firstNonEmpty(toString(fields["body_file"]), toString(fields["body-file"])); strings.TrimSpace(bodyFile) != "" {
+		args["body-file"] = bodyFile
+	} else if body := toString(fields["body"]); strings.TrimSpace(body) != "" {
+		tmp, err := os.CreateTemp("", "tusker-proposal-task-*.md")
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(tmp.Name())
+		if _, err := tmp.WriteString(body); err != nil {
+			_ = tmp.Close()
+			return "", err
+		}
+		if err := tmp.Close(); err != nil {
+			return "", err
+		}
+		args["body-file"] = tmp.Name()
+	} else {
+		return "", tuskerError(errorMissingField, "create_task proposal requires proposed_fields.body with the authored task body", withHint("create the proposal with --body-file <path> so the reviewed body is recorded in proposed_fields"))
+	}
 	if err := newAuthoredV7Task(args); err != nil {
 		return "", err
 	}
@@ -569,7 +589,7 @@ func v7ProposalFieldMap(value any) map[string]any {
 	}
 }
 
-func v7ProposalFields(args Args, action string) (map[string]any, error) {
+func v7ProposalFields(vaultPath string, args Args, action string) (map[string]any, error) {
 	fields := parseV7ProposalSet(args.String("set"))
 	switch action {
 	case "close":
@@ -594,6 +614,13 @@ func v7ProposalFields(args Args, action string) (map[string]any, error) {
 			if value := args.String(key); value != "" {
 				fields[key] = value
 			}
+		}
+		if bodyFile := strings.TrimSpace(args.String("body-file")); bodyFile != "" {
+			body, err := v7AuthoringBodyFile(vaultPath, bodyFile)
+			if err != nil {
+				return nil, err
+			}
+			fields["body"] = body
 		}
 	case "create_gate":
 		for _, key := range []string{"id", "title", "kind", "owner", "action", "verification", "blocks"} {
