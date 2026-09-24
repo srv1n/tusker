@@ -642,9 +642,13 @@ func processGroupExists(pgid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+// runProcessGroupAlive is the conservative "may still be running" guard used
+// before retiring, reclaiming or settling a run. Unknown ownership counts as
+// possibly alive; only gone or foreign (provably not ours) is safe to treat as
+// stopped. Callers that must distinguish unknown use classifyRunLiveness.
 func runProcessGroupAlive(run RunStatus) bool {
 	state := classifyRunLiveness(run)
-	return state == runLivenessAlive || state == runLivenessOrphaned
+	return state == runLivenessAlive || state == runLivenessOrphaned || state == runLivenessUnknown
 }
 
 type runLiveness string
