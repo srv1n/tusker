@@ -107,7 +107,7 @@ func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 	root := filepath.Join("..", "..", "skills", "tusker")
 	normalizedText := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
-		"observable acceptance IDs", "One bounded outcome is one task",
+		"--covers A1", "One bounded outcome is one task",
 		"Never manufacture proof",
 		"tusker show <TASK-ID> --capsule", "tusker proof status <TASK-ID>",
 	} {

@@ -115,7 +115,7 @@ func testFactoryExecutionTimeline(t *testing.T) {
 		result, err := ownership.claimExistingWithAuthorization(run, attemptID, RunAuthorization{
 			Source: "daemon_auto", Actor: "daemon:fixture", Trigger: "fair_poll",
 			ProjectAutomationEnabled: true,
-		}, RunAttempt{})
+		}, RunAttempt{AttemptID: attemptID})
 		if err != nil {
 			return run, false, false, err
 		}
@@ -218,7 +218,7 @@ func testFactoryExecutionTimeline(t *testing.T) {
 	loser, err := ownership.claimExistingWithAuthorization(manual, "daemon:late", RunAuthorization{
 		Source: "daemon_auto", Actor: "daemon:late", Trigger: "poll",
 		ProjectAutomationEnabled: true,
-	}, RunAttempt{})
+	}, RunAttempt{AttemptID: "daemon:late"})
 	if err != nil || loser.Claimed {
 		t.Fatalf("daemon duplicated interactive ownership: result=%#v err=%v", loser, err)
 	}
@@ -336,7 +336,7 @@ func testFactoryOptInAdmission(t *testing.T) {
 			result, err := service.claimExistingWithAuthorization(run, attemptID, RunAuthorization{
 				Source: "daemon_auto", Actor: "daemon:fixture", Trigger: "armed_poll",
 				ProjectAutomationEnabled: true,
-			}, RunAttempt{})
+			}, RunAttempt{AttemptID: attemptID})
 			if err != nil || !result.Claimed || result.Run == nil {
 				return run, result.Run != nil, false, err
 			}
@@ -404,7 +404,7 @@ func testFactoryFailureMatrix(t *testing.T) {
 		defer daemon.Close()
 		result.Verdict = "changes_requested"
 		result.Summary = "objective changes"
-		result.Findings = []string{"repair the exact regression"}
+		result.Findings = []string{completionTestFinding(result.MaterialFingerprint, "F-001", "repair the exact regression")}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)
@@ -619,7 +619,7 @@ func testFactoryFailureMatrix(t *testing.T) {
 			result, err := service.claimExistingWithAuthorization(run, attemptID, RunAuthorization{
 				Source: "daemon_auto", Actor: "daemon:fixture", Trigger: "resource_poll",
 				ProjectAutomationEnabled: true,
-			}, RunAttempt{})
+			}, RunAttempt{AttemptID: attemptID})
 			if err != nil || !result.Claimed || result.Run == nil {
 				return run, result.Run != nil, false, err
 			}
@@ -648,14 +648,14 @@ func testFactoryCrashReplay(t *testing.T) {
 		first, err := service.claimExistingWithAuthorization(run, "attempt-first", RunAuthorization{
 			Source: "daemon_auto", Actor: "daemon:first", Trigger: "claim_crash",
 			ProjectAutomationEnabled: true,
-		}, RunAttempt{})
+		}, RunAttempt{AttemptID: "attempt-first"})
 		if err != nil || !first.Claimed {
 			t.Fatalf("first claim failed: result=%#v err=%v", first, err)
 		}
 		replay, err := service.claimExistingWithAuthorization(run, "attempt-replay", RunAuthorization{
 			Source: "daemon_auto", Actor: "daemon:replay", Trigger: "claim_restart",
 			ProjectAutomationEnabled: true,
-		}, RunAttempt{})
+		}, RunAttempt{AttemptID: "attempt-replay"})
 		if err != nil || replay.Claimed || replay.OwnerRun == nil ||
 			replay.OwnerRun.LeaseOwner != "attempt-first" {
 			t.Fatalf("claim replay did not retain first owner: result=%#v err=%v", replay, err)
@@ -676,7 +676,7 @@ func testFactoryCrashReplay(t *testing.T) {
 		vault, project, daemon, result := completionReactorFixture(t, false)
 		result.Verdict = "changes_requested"
 		result.Summary = "crash handback"
-		result.Findings = []string{"one durable crash finding"}
+		result.Findings = []string{completionTestFinding(result.MaterialFingerprint, "F-001", "one durable crash finding")}
 		result.ResultRevision = reviewResultFingerprint(result)
 		if _, err := daemon.store.SaveReviewResult(result); err != nil {
 			t.Fatal(err)

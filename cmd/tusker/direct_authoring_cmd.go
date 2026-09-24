@@ -1170,6 +1170,15 @@ func waveV7DirectAuthoringCmd(vaultPath string, args Args) error {
 		},
 		"created_at": now, "created_by": actor, "updated_at": now, "updated_by": actor,
 	}
+	if base, err := waveAuthoringIntegrationBaseSHA(vaultPath); err != nil {
+		return err
+	} else if base != "" {
+		// This is a snapshot of the configured default ref. Wave Start defers
+		// creating the integration ref to the serialized landing path; until
+		// then task worktrees and authorization material branch from the exact
+		// frozen commit, not whatever the default happens to be later.
+		waveData["integration_base_sha"] = base
+	}
 	if len(req.SpecRefs) > 0 {
 		waveData["spec_refs"] = req.SpecRefs
 	}
@@ -1224,6 +1233,23 @@ func waveV7DirectAuthoringCmd(vaultPath string, args Args) error {
 	report := buildDirectAuthoringReport(vaultPath, waveID, req, taskMapping, gateMapping, frontiers, fingerprint)
 	emitDirectAuthoringReport(report, args)
 	return nil
+}
+
+// waveAuthoringIntegrationBaseSHA freezes the configured default-branch tip at
+// authoring time so task worktrees and wave authorization material bind an
+// exact commit while the integration ref stays deliberately uncreated. A vault
+// that is not inside a Git repository has no base to freeze.
+func waveAuthoringIntegrationBaseSHA(vaultPath string) (string, error) {
+	repoRoot := v7RepoRoot(vaultPath)
+	if !v7GitRepo(repoRoot) {
+		return "", nil
+	}
+	base := v7DefaultBranch(vaultPath)
+	sha, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+base)
+	if err != nil {
+		return "", tuskerError(errorInvalidTransition, "wave create could not read configured default integration base "+base+"; commit the default branch before authoring")
+	}
+	return sha, nil
 }
 
 func copyStringStringMap(src map[string]string) map[string]string {

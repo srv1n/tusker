@@ -16,7 +16,7 @@ func TestTrustAdapterContract(t *testing.T) {
 		if caps.ResumeSession || caps.UsageMetrics || caps.ArtifactEnumeration {
 			t.Fatalf("ACP advertised unavailable behavior: %#v", caps)
 		}
-		if _, err := runner.Resume(context.Background(), ResumeRequest{SessionRef: "acp:v1:fake:session"}); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		if _, err := runner.Resume(context.Background(), ResumeRequest{SessionRef: "acp:v1:fake:session"}); err == nil || !strings.Contains(err.Error(), "provider adapter") {
 			t.Fatalf("ACP unsupported resume was not explicit: %v", err)
 		}
 		reconciled, err := runner.Reconcile(context.Background(), ReconcileRequest{SessionRef: "acp:v1:fake:session"})

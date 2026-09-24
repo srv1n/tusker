@@ -87,7 +87,7 @@ func TestTrustFreshAgent(t *testing.T) {
 	trustJourneyCLI(t, vault, "wave", "create", "--file", fixturePath, "--by", "agent:fixture")
 	trustJourneyCLI(t, vault, "projects", "add", "--repo", repo, "--vault", vault)
 
-	const taskID = "APP-T-0001"
+	const taskID = "TSK-T-0001"
 	refusal := trustJourneyCLIRefusal(t, vault, "work", "start", taskID, "--by", "agent:fresh-muse", "--source", "codex")
 	if workSessionErrorCode(refusal) != "WORK_SESSION_NOT_READY" {
 		t.Fatalf("held authored fixture returned the wrong start refusal: %v", refusal)

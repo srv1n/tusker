@@ -158,8 +158,8 @@ automation:
 		t.Fatalf("reconcile preserved dead routing text instead of effective policy: %#v", userRoute)
 	}
 
-	spec := filepath.Join(repo, "docs", "specs", "factory-bootstrap-dogfood.md")
-	if err := writeText(spec, "# Factory bootstrap disposable dogfood\n\n## Requirements\n\n- R1 through R7 are proven by the held, automation-off fixture.\n"); err != nil {
+	spec := filepath.Join(repo, "docs", "system", "proposals", "factory-bootstrap-dogfood.md")
+	if err := writeText(spec, "---\nkind: proposal\nsubject: factory-bootstrap-dogfood\npart_of: overview\nstatus: proposed\n---\n# Factory bootstrap disposable dogfood\n\n## Requirements\n\n- R1 through R7 are proven by the held, automation-off fixture.\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "DOG", "title": "Factory bootstrap disposable dogfood"}); err != nil {
@@ -190,7 +190,7 @@ automation:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.Authorization != "inert" || len(review.Members) != 7 {
+	if review.Authorization != "inert" || len(review.Members) != 6 {
 		t.Fatalf("authored wave gained authority or lost members: %#v", review)
 	}
 	for _, check := range []struct{ id, level, lane, profile, model string }{
@@ -204,7 +204,11 @@ automation:
 			t.Fatal(err)
 		}
 		preview := routePreviewForNote(Note{Data: note}, wf, check.lane)
-		if preview.Profile != check.profile || preview.Model != check.model || !strings.Contains(preview.Source, "model_levels") || len(preview.Blockers) != 0 {
+		modelLevelsSelected := false
+		for _, row := range preview.Precedence {
+			modelLevelsSelected = modelLevelsSelected || row.Source == "automation.model_levels" && row.Selected
+		}
+		if preview.Profile != check.profile || preview.Model != check.model || !modelLevelsSelected || len(preview.Blockers) != 0 {
 			t.Fatalf("route %s: %#v", check.id, preview)
 		}
 	}
@@ -261,13 +265,13 @@ func writeDogfoodAuthoringRequest(t *testing.T, vault string) string {
 		"schema": "tusker.wave-authoring/v1", "request_key": "dogfood",
 		"title":       "Factory bootstrap disposable dogfood",
 		"outcome":     "Prove a held automation-off bootstrap journey without daemon, model, release, spend, or ref authority.",
-		"spec_refs":   []string{"docs/specs/factory-bootstrap-dogfood.md"},
+		"spec_refs":   []string{"docs/system/proposals/factory-bootstrap-dogfood.md"},
 		"concurrency": 1,
 		"tasks": []map[string]any{
 			newTask("hello", "Inspect catalog", "A visible lower-tier catalog is observed without execution.", "light", "cmd/tusker/runner_catalog.go"),
 			newTask("goodbye", "Generate profiles", "Seven semantic profiles select lower-tier execution defaults.", "standard", "cmd/tusker/runner_profiles.go"),
 			newTask("router", "Route semantic work", "Work levels route through profiles without a provider model in the task contract.", "demanding", "cmd/tusker/runner_route_preview.go", "hello", "goodbye"),
-			newTask("docs", "Document direct authoring", "The source-keyed authoring contract renders durable product flow.", "standard", "docs/specs/factory-bootstrap-dogfood.md", "router"),
+			newTask("docs", "Document direct authoring", "The source-keyed authoring contract renders durable product flow.", "standard", "docs/system/proposals/factory-bootstrap-dogfood.md", "router"),
 			newTask("e2e", "Preview route", "Read-only review routing selects an independent profile.", "standard", "cmd/tusker/runner_route_preview_test.go", "router"),
 			newTask("integration-gate", "Audit held authoring", "The final held audit proves no daemon, run, release, spend, or ref movement.", "demanding", "cmd/tusker/factory_bootstrap_dogfood_test.go", "docs", "e2e"),
 		},

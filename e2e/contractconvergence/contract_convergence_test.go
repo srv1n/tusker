@@ -61,10 +61,8 @@ func TestContractConvergence(t *testing.T) {
 		"TestWorkSessionTaskRevisionDriftRefusesMutation",
 		"TestWorkSessionNotificationIsExactRunHintAndDoesNotSpawn",
 
-		// Independent fleet dimensions and authority-scoped repair.
-		"TestScopedFleetRepair",
-		"TestFleetHealthDimensions",
-		"TestMixedFleetCoreRepairPreservesOtherScopes",
+		// Authority-scoped repair and disabled-project repair accounting.
+		"TestSelfServiceReconcile",
 
 		// Binary/package compatibility, every install shape, deterministic
 		// repair, and bounded progressive disclosure.

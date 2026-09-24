@@ -54,7 +54,7 @@ func TestExecutionModeInstructionsForbidNestedRunners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"Interactive sessions implement work through interactive claims", "never launch", "TUSKER_ATTEMPT_ID"} {
+	for _, required := range []string{"Interactive sessions implement authorized work through interactive claims", "never launch", "TUSKER_ATTEMPT_ID"} {
 		if !strings.Contains(skill, required) {
 			t.Fatalf("task-only skill missing %q", required)
 		}
