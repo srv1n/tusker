@@ -436,7 +436,7 @@ for line in sys.stdin:
         print(json.dumps({"jsonrpc":"2.0","method":"item/commandExecution/requestApproval","id":"approve-command","params":{"threadId":"thread-review","turnId":"turn-review","itemId":"item-1","command":"touch reviewed.txt","cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
     elif msg.get("id")=="approve-command":
         assert msg["result"]["decision"]=="reject", msg
-        assert "read-only sandbox" in msg["result"]["reason"], msg
+        assert "review-only" in msg["result"]["reason"], msg
         print(json.dumps({"jsonrpc":"2.0","method":"item/fileChange/requestApproval","id":"approve-file","params":{"threadId":"thread-review","turnId":"turn-review","itemId":"item-2","changes":[{"path":"reviewed.txt"}],"cwd":os.environ["TUSKER_WORKSPACE"]}}), flush=True)
     elif msg.get("id")=="approve-file":
         assert msg["result"]["decision"]=="reject", msg
