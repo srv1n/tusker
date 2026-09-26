@@ -68,6 +68,49 @@ func TestWorkerIdentityForResumedNativeSession(t *testing.T) {
 	if err != nil || identity == nil || identity.NativeSessionID != parent.NativeSessionID || identity.AttemptID != run.ActiveAttemptID {
 		t.Fatalf("resumed identity=%#v err=%v", identity, err)
 	}
+	event, err := store.RecordWorkerCoordinationEvent(WorkerCoordinationEvent{Identity: *identity, Kind: "progress", Milestone: "resumed"})
+	if err != nil || event.Stale {
+		t.Fatalf("resumed event=%#v err=%v", event, err)
+	}
+	delivery, _, err := store.PutWorkerDelivery(WorkerDelivery{Identity: *identity, Kind: "question", Body: "continue?", IdempotencyKey: "resumed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := store.ClaimWorkerDelivery(delivery.DeliveryID); err != nil || !claimed {
+		t.Fatalf("resumed delivery claim=%v err=%v", claimed, err)
+	}
+	if err := store.MarkWorkerDeliveryReply(delivery.DeliveryID, event.EventID, "2026-08-01T00:00:00Z"); err != nil {
+		t.Fatalf("resumed delivery reply: %v", err)
+	}
+	if err := store.ApplyWorkerDeliveryDecision(delivery.DeliveryID, time.Now()); err != nil {
+		t.Fatalf("resumed delivery apply: %v", err)
+	}
+	for name, mutate := range map[string]func(*WorkerAttemptIdentity){
+		"predecessor attempt": func(i *WorkerAttemptIdentity) {
+			i.AttemptID = parent.AttemptID
+			i.AttemptGeneration = parent.AttemptGeneration
+		},
+		"wrong project":    func(i *WorkerAttemptIdentity) { i.ProjectID = "other" },
+		"wrong task":       func(i *WorkerAttemptIdentity) { i.TaskID = "OTHER" },
+		"wrong provider":   func(i *WorkerAttemptIdentity) { i.Provider = "muse" },
+		"wrong session":    func(i *WorkerAttemptIdentity) { i.NativeSessionID = "unrelated" },
+		"wrong generation": func(i *WorkerAttemptIdentity) { i.AttemptGeneration++ },
+		"wrong revision":   func(i *WorkerAttemptIdentity) { i.WorkRevision++ },
+	} {
+		invalid := *identity
+		mutate(&invalid)
+		stale, err := store.RecordWorkerCoordinationEvent(WorkerCoordinationEvent{Identity: invalid, Kind: "progress"})
+		if err != nil || !stale.Stale {
+			t.Fatalf("%s event=%#v err=%v", name, stale, err)
+		}
+	}
+	if _, err := store.exec(`UPDATE runs SET lease_state = ? WHERE project_id = ? AND record_id = ?`, string(LeaseStateUnclaimed), run.ProjectID, run.RecordID); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.RecordWorkerCoordinationEvent(WorkerCoordinationEvent{Identity: *identity, Kind: "progress"})
+	if err != nil || !stale.Stale {
+		t.Fatalf("released lease event=%#v err=%v", stale, err)
+	}
 }
 
 func TestWorkerCoordinationIdentityFence(t *testing.T) {

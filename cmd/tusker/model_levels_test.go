@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,8 +18,8 @@ func TestModelLevelsRoutingAndConfiguration(t *testing.T) {
 	if err != nil || report.Schema != modelLevelsSchema || len(report.Levels) != 3 {
 		t.Fatalf("initial model levels: %#v err=%v", report, err)
 	}
-	if report.ProfileStates["review-frontier"] != "unavailable" {
-		t.Fatalf("future Claude profile must remain visibly unavailable: %#v", report.ProfileStates)
+	if report.ProfileStates["review-frontier"] != "configured_unverified" {
+		t.Fatalf("untested Claude profile state: %#v", report.ProfileStates)
 	}
 	standard := report.Levels[1]
 	if len(standard.Execute.Profiles) == 0 || standard.Execute.Source != configSourceBuiltIn {
@@ -57,6 +59,36 @@ func TestModelLevelsRoutingAndConfiguration(t *testing.T) {
 	reset, _ := modelLevelsRead(vault)
 	if reset.Levels[1].Execute.Source != configSourceUserGlobal || strings.Join(reset.Levels[1].Execute.Profiles, ",") != "global-standard,default" {
 		t.Fatalf("reset did not inherit global: %#v", reset.Levels[1])
+	}
+}
+
+func TestClaudeProfileTestState(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
+	profile := RunnerProfileDefinition{Harness: string(RunnerClaude), Model: "claude-test", Effort: "high", PermissionPreset: "read-only"}
+	if got := profileTestState("claude-profile", profile, "revision"); got != "configured_unverified" {
+		t.Fatalf("untested Claude profile state = %q", got)
+	}
+	receipt, err := json.Marshal(map[string]any{
+		"profile_id": "claude-profile", "profile_revision": "revision", "model": profile.Model,
+		"effort": profile.Effort, "preset": profile.PermissionPreset, "live": true,
+		"ready": true, "valid_until": time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(DefaultStateRoot(), "runner-conformance")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claude-profile-read-only.json"), receipt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := profileTestState("claude-profile", profile, "revision"); got != "tested" {
+		t.Fatalf("tested Claude profile state = %q", got)
+	}
+	profile.Disabled = true
+	if got := profileTestState("claude-profile", profile, "revision"); got != "disabled" {
+		t.Fatalf("disabled Claude profile state = %q", got)
 	}
 }
 

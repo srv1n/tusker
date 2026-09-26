@@ -617,6 +617,14 @@ func TestDaemonClaimManagedWorkerIdentityForHarnesses(t *testing.T) {
 				identity.AttemptID != claimed.ActiveAttemptID || identity.AttemptGeneration != claimed.LeaseGeneration || identity.WorkRevision != 2 {
 				t.Fatalf("ledger identity=%#v err=%v", identity, err)
 			}
+			event, err := store.RecordWorkerCoordinationEvent(WorkerCoordinationEvent{Identity: *identity, Kind: "progress", Milestone: "attached"})
+			if err != nil || event.Stale {
+				t.Fatalf("daemon-attached event=%#v err=%v", event, err)
+			}
+			activity, _, err := store.RecordWorkerProviderActivity(WorkerProviderActivity{Identity: *identity, Source: string(harness)})
+			if err != nil || activity.Stale {
+				t.Fatalf("daemon-attached activity=%#v err=%v", activity, err)
+			}
 		})
 	}
 }

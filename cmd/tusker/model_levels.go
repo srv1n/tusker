@@ -217,9 +217,6 @@ func profileTestState(name string, profile RunnerProfileDefinition, revision str
 	if profile.Disabled {
 		return "disabled"
 	}
-	if RunnerName(profile.Harness) == RunnerClaude {
-		return "unavailable"
-	}
 	var report struct {
 		ProfileID       string     `json:"profile_id"`
 		ProfileRevision string     `json:"profile_revision"`

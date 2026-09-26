@@ -341,26 +341,18 @@ func (s *RuntimeStore) migrateWorkerCoordination() error {
 }
 
 func (s *RuntimeStore) workerIdentityCurrent(identity WorkerAttemptIdentity) (bool, error) {
-	var activeAttempt, leaseState string
-	var generation, revision, terminal int
-	err := s.queryRowScan(`SELECT active_attempt_id, lease_generation, work_revision, lease_state, terminal FROM runs WHERE project_id = ? AND (item_id = ? OR record_id = ?)`,
-		[]any{identity.ProjectID, identity.TaskID, identity.TaskID}, &activeAttempt, &generation, &revision, &leaseState, &terminal)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
+	run, err := s.LookupRunForAttempt(identity.ProjectID, identity.AttemptID, identity.AttemptGeneration)
 	if err != nil {
 		return false, err
 	}
-	if activeAttempt != identity.AttemptID || generation != identity.AttemptGeneration || revision != identity.WorkRevision || terminal != 0 ||
-		(leaseState != string(LeaseStateClaimed) && leaseState != string(LeaseStateRunning)) {
+	if run == nil || run.Terminal || run.WorkRevision != identity.WorkRevision || firstNonEmpty(run.ItemID, run.RecordID) != identity.TaskID {
 		return false, nil
 	}
-	var executionCount int
-	if err := s.queryRowScan(`SELECT COUNT(*) FROM execution_records WHERE attempt_id = ? AND provider = ? AND provider_session_id = ? AND lease_generation = ?`,
-		[]any{identity.AttemptID, identity.Provider, identity.NativeSessionID, identity.AttemptGeneration}, &executionCount); err != nil {
+	current, err := s.WorkerIdentityForRun(*run)
+	if err != nil {
 		return false, err
 	}
-	return executionCount > 0, nil
+	return current != nil && *current == identity, nil
 }
 
 // ReconcileRunSession reconstructs the canonical state of a persisted run

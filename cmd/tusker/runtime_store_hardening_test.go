@@ -243,3 +243,68 @@ func TestRuntimeSchemaCompleteTakesFastPathAndDetectsMissingLateSchema(t *testin
 		t.Fatal("store that never ran the legacy backfill reported complete")
 	}
 }
+
+func TestRuntimeStoreReopenBackfillsPopulatedLegacyAttemptsOnce(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range []RunAttempt{
+		{AttemptID: "legacy-parent", ProjectID: "p", RecordID: "TASK-1", ItemID: "TASK-1", Runner: "codex", SessionRef: "native-session", StartedAt: "2026-07-29T00:00:00Z"},
+		{AttemptID: "legacy-child", ProjectID: "p", RecordID: "TASK-1", ItemID: "TASK-1", Runner: "codex", ParentAttemptID: "legacy-parent", ChildType: "worker", StartedAt: "2026-07-29T00:01:00Z"},
+	} {
+		if err := store.SaveAttempt(attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, stmt := range []string{
+		"DELETE FROM execution_ledger_migrations WHERE component = 'legacy_backfill'",
+		"ALTER TABLE runs DROP COLUMN infrastructure_json",
+		"DROP TRIGGER execution_cancel_no_delete",
+	} {
+		if _, err := store.exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for reopen := 1; reopen <= 2; reopen++ {
+		store, err = OpenRuntimeStore(root)
+		if err != nil {
+			t.Fatalf("reopen %d: %v", reopen, err)
+		}
+		if !store.runtimeSchemaComplete() {
+			t.Fatalf("reopen %d left schema incomplete", reopen)
+		}
+		for _, id := range []string{"legacy-parent", "legacy-child"} {
+			var count int
+			if err := store.queryRowScan(`SELECT COUNT(*) FROM attempts WHERE attempt_id = ? AND project_id = 'p' AND item_id = 'TASK-1'`, []any{id}, &count); err != nil || count != 1 {
+				t.Fatalf("reopen %d retained attempt %s: count=%d err=%v", reopen, id, count, err)
+			}
+		}
+		parent, err := store.Execution(legacyExecutionID("legacy-parent"))
+		if err != nil || parent == nil || parent.NodeKind != ExecutionNodeRoot || parent.SessionRef != "native-session" || parent.CreatedAt != "2026-07-29T00:00:00Z" {
+			t.Fatalf("reopen %d parent execution=%#v err=%v", reopen, parent, err)
+		}
+		child, err := store.Execution(legacyExecutionID("legacy-child"))
+		if err != nil || child == nil || child.NodeKind != ExecutionNodeManagedAttempt || child.ParentExecutionID != parent.ExecutionID || child.RootExecutionID != parent.ExecutionID || child.CreatedAt != "2026-07-29T00:01:00Z" {
+			t.Fatalf("reopen %d child execution=%#v err=%v", reopen, child, err)
+		}
+		var records, edges int
+		if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_records WHERE project_id = 'p' AND attempt_id IN ('legacy-parent', 'legacy-child')`, nil, &records); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_edges WHERE parent_execution_id = ? AND child_execution_id = ?`, []any{parent.ExecutionID, child.ExecutionID}, &edges); err != nil {
+			t.Fatal(err)
+		}
+		if records != 2 || edges != 1 {
+			t.Fatalf("reopen %d duplicated lineage: records=%d edges=%d", reopen, records, edges)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -69,6 +69,10 @@ func TestRunnerACPFencedWrapperFlowRecordsOnlyObservations(t *testing.T) {
 
 func TestRunnerACPRejectsUnfencedOrUnfingerprintedLaunch(t *testing.T) {
 	_, req := setupACPRunnerRuntime(t, "happy")
+	req.Start.ContainmentPGID = 0
+	if result, err := startLiveACPForRunner(context.Background(), req.Start, RunnerACP); err == nil || result != nil || !strings.Contains(err.Error(), "detached runner wrapper") {
+		t.Fatalf("unfenced ACP launch was accepted: result=%#v err=%v", result, err)
+	}
 
 	req.Start.CommandExecutableFP = ""
 	if result, err := (&ACPRunner{}).Start(context.Background(), req.Start); err == nil || result != nil || !strings.Contains(err.Error(), "fingerprint") {
@@ -375,6 +379,28 @@ func TestACPLogRotation(t *testing.T) {
 	data, err := os.ReadFile(req.EventSinkPath)
 	if err != nil || !strings.Contains(string(data), "raw_log_rotated") {
 		t.Fatalf("missing rotation event: %v %s", err, data)
+	}
+}
+
+func TestRunnerACPRejectsShebangBeforeLaunch(t *testing.T) {
+	_, req := setupACPRunnerRuntime(t, "happy")
+	scriptDir := t.TempDir()
+	script := filepath.Join(scriptDir, "adapter.sh")
+	sideEffect := filepath.Join(scriptDir, "executed")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+sideEffect+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := acpExecutableFingerprint(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Start.CommandArgv = []string{script}
+	req.Start.CommandExecutableFP = fingerprint
+	if _, _, _, err := resolveACPRunnerLaunchForRunner(RunnerACP, req.Start); err == nil || !strings.Contains(err.Error(), "shebang") {
+		t.Fatalf("shebang adapter was accepted: %v", err)
+	}
+	if fileExists(sideEffect) {
+		t.Fatal("shebang adapter executed before generic ACP rejection")
 	}
 }
 
