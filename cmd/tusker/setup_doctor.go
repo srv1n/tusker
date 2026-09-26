@@ -112,6 +112,18 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 	report := setupDoctorReport{Schema: setupDoctorSchema, RepoRoot: repo, DryRun: !apply, OK: true, Findings: []setupFinding{}}
 	add := func(f setupFinding) { report.Findings = append(report.Findings, f) }
 
+	// Config load tolerates references to profiles the global config lacks
+	// (a fresh clone must still load); surface them here before a wave start
+	// refuses the route.
+	if vault := filepath.Join(repo, ".tusker"); fileExists(workflowPath(vault)) {
+		if resolved, err := resolveTuskerConfig(vault); err == nil {
+			for _, warning := range resolved.Warnings {
+				add(setupFinding{Code: "config_profile_reference", Status: "warning", Path: userGlobalTuskerConfigPath(), Message: warning,
+					Action: "define the profile in the global config or change the project's model_levels mapping"})
+			}
+		}
+	}
+
 	if input.Store != nil {
 		loaded, err := loadRegisteredProjects(input.Store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
 		if err != nil {

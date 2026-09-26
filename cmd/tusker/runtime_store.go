@@ -390,29 +390,32 @@ type RunAttempt struct {
 	CloudTaskID            string
 	ProviderIdempotencyKey string
 	ExternalThreadCap      int `json:"-"`
-	CloudStatus            string
-	CloudEnvironmentID     string
-	CloudAttemptNumber     int
-	PullRequestURL         string
-	ApplyRef               string
-	LogsSummary            string
-	FinalSummary           string
-	EndStateJSON           string      `json:"-"`
-	EndState               RunEndState `json:"end_state,omitempty"`
-	EndStateInvalid        bool        `json:"end_state_invalid,omitempty"`
-	EndStateError          string      `json:"end_state_error,omitempty"`
-	Outcome                string
-	ExitCode               int
-	TurnsUsed              int
-	PromptPath             string
-	EventSinkPath          string
-	RawLogPath             string
-	StatusPath             string
-	ProcessPID             int
-	LastError              string
-	ReasonCode             string `json:"reason_code,omitempty"`
-	StartedAt              string
-	FinishedAt             string
+	// ExecutionWaveID parents a daemon claim's execution record under its wave
+	// root; it is claim input only and is not persisted on the attempt row.
+	ExecutionWaveID    string `json:"-"`
+	CloudStatus        string
+	CloudEnvironmentID string
+	CloudAttemptNumber int
+	PullRequestURL     string
+	ApplyRef           string
+	LogsSummary        string
+	FinalSummary       string
+	EndStateJSON       string      `json:"-"`
+	EndState           RunEndState `json:"end_state,omitempty"`
+	EndStateInvalid    bool        `json:"end_state_invalid,omitempty"`
+	EndStateError      string      `json:"end_state_error,omitempty"`
+	Outcome            string
+	ExitCode           int
+	TurnsUsed          int
+	PromptPath         string
+	EventSinkPath      string
+	RawLogPath         string
+	StatusPath         string
+	ProcessPID         int
+	LastError          string
+	ReasonCode         string `json:"reason_code,omitempty"`
+	StartedAt          string
+	FinishedAt         string
 }
 
 // ReviewResult is the sole durable reviewer lifecycle output. It is keyed by
@@ -3560,6 +3563,9 @@ func (s *RuntimeStore) claimRunLeaseWithDaemonAttempt(run RunStatus, owner strin
 		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, provider_idempotency_key, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.ProviderIdempotencyKey, attempt.Outcome, attempt.StartedAt); err != nil {
 			return err
 		}
+		if err := insertManagedAttemptExecutionTx(tx, attempt, generation); err != nil {
+			return err
+		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
@@ -3709,6 +3715,9 @@ func (s *RuntimeStore) claimRunLeaseWithDirectiveAttempt(run RunStatus, owner st
 		}
 		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, provider_idempotency_key, outcome, started_at)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.ProviderIdempotencyKey, attempt.Outcome, attempt.StartedAt); err != nil {
+			return err
+		}
+		if err := insertManagedAttemptExecutionTx(tx, attempt, generation); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {

@@ -4748,6 +4748,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		note = current
 	}
 	var claimResult runClaimResult
+	attemptIntent.ExecutionWaveID = strings.TrimSpace(stringField(note.Data, "wave"))
 	if directiveQueued {
 		claimResult, err = ownership.claimExistingWithDirective(claimRun, attemptID, authorization, attemptIntent)
 	} else {
@@ -4769,9 +4770,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	}
 	leaseGeneration = claimResult.Run.LeaseGeneration
 	if err := d.store.SaveRunIdentity(runIdentityForClaim(*claimResult.Run, project.RepoRoot, selectedWorkspacePath, string(workspaceStrategy), branchName)); err != nil {
-		return run, true, err
-	}
-	if err := d.ensureManagedRunExecution(*claimResult.Run, note); err != nil {
 		return run, true, err
 	}
 	run.LeaseState = string(LeaseStateClaimed)
@@ -5202,54 +5200,6 @@ func (d *Daemon) updateDispatchRunIfLease(run RunStatus, owner string, generatio
 		return latest, false, err
 	}
 	return run, true, nil
-}
-
-func (d *Daemon) ensureManagedRunExecution(run RunStatus, note Note) error {
-	var existing string
-	err := d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ?`,
-		[]any{run.ProjectID, run.ActiveAttemptID}, &existing)
-	if err == nil {
-		return nil
-	}
-	if err != sql.ErrNoRows {
-		return err
-	}
-	waveID := strings.TrimSpace(stringField(note.Data, "wave"))
-	parentID := ""
-	if waveID != "" {
-		err = d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND wave_id = ? AND node_kind = 'root' ORDER BY wave_authorization_generation DESC LIMIT 1`,
-			[]any{run.ProjectID, waveID}, &parentID)
-		if err != nil && err != sql.ErrNoRows {
-			return err
-		}
-	}
-	if parentID == "" {
-		// Reuse the task's existing root so repeated claims stay one tree.
-		err = d.store.queryRowScan(`SELECT parent_execution_id FROM execution_records WHERE project_id = ? AND task_id = ? AND node_kind = 'managed_attempt' ORDER BY rowid DESC LIMIT 1`,
-			[]any{run.ProjectID, firstNonEmpty(run.ItemID, run.RecordID)}, &parentID)
-		if err != nil && err != sql.ErrNoRows {
-			return err
-		}
-	}
-	if parentID == "" {
-		root, err := d.store.CreateDirectExecution(DirectExecutionInput{ProjectID: run.ProjectID, DisplayName: run.RecordID, Source: "daemon", Creator: "daemon"})
-		if err != nil {
-			return err
-		}
-		parentID = root.ExecutionID
-	}
-	_, err = d.store.CreateManagedExecution(ManagedExecutionInput{ProjectID: run.ProjectID, ParentExecutionID: parentID,
-		TaskID: firstNonEmpty(run.ItemID, run.RecordID), WaveID: waveID, AttemptID: run.ActiveAttemptID,
-		LeaseGeneration: run.LeaseGeneration, Provider: run.Runner, Source: "daemon", Creator: "daemon"})
-	if err != nil {
-		// The one-time legacy backfill in another process can record this
-		// attempt between the lookup above and the insert; adopt that record.
-		if lookupErr := d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ?`,
-			[]any{run.ProjectID, run.ActiveAttemptID}, &existing); lookupErr == nil {
-			return nil
-		}
-	}
-	return err
 }
 
 func (d *Daemon) attachManagedRunSession(run RunStatus) error {

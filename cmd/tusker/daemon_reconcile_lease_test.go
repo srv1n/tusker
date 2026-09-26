@@ -601,12 +601,6 @@ func TestDaemonClaimManagedWorkerIdentityForHarnesses(t *testing.T) {
 				t.Fatalf("claim=%#v err=%v", claim, err)
 			}
 			daemon := &Daemon{store: store}
-			if err := daemon.ensureManagedRunExecution(*claim.Run, Note{}); err != nil {
-				t.Fatal(err)
-			}
-			if err := daemon.ensureManagedRunExecution(*claim.Run, Note{}); err != nil {
-				t.Fatalf("claim replay: %v", err)
-			}
 			claimed := *claim.Run
 			claimed.SessionRef = "fake-native-session"
 			if err := daemon.attachManagedRunSession(claimed); err != nil {
@@ -629,7 +623,7 @@ func TestDaemonClaimManagedWorkerIdentityForHarnesses(t *testing.T) {
 	}
 }
 
-func TestEnsureManagedRunExecutionAdoptsConcurrentAttemptRecord(t *testing.T) {
+func TestDaemonClaimRollsBackWhenExecutionRecordFails(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -639,25 +633,39 @@ func TestEnsureManagedRunExecutionAdoptsConcurrentAttemptRecord(t *testing.T) {
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := newRunOwnershipService(store).claimExistingWithAuthorization(run, "attempt-race", RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true},
-		RunAttempt{AttemptID: "attempt-race", Runner: run.Runner, Lane: runLaneExecute, WorkRevision: 1})
-	if err != nil || !claim.Claimed || claim.Run == nil {
-		t.Fatalf("claim=%#v err=%v", claim, err)
+	ownership := newRunOwnershipService(store)
+	claim := func(attemptID string) (runClaimResult, error) {
+		return ownership.claimExistingWithAuthorization(run, attemptID, RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true},
+			RunAttempt{AttemptID: attemptID, Runner: run.Runner, Lane: runLaneExecute, WorkRevision: 1})
 	}
-	// Simulate another process's one-time backfill committing a record for the
-	// attempt after the daemon's existence check (alongside its root insert)
-	// but before its managed-attempt insert.
-	if _, err := store.db.Exec(`CREATE TRIGGER backfill_race AFTER INSERT ON execution_records WHEN NEW.source = 'daemon' AND NEW.node_kind = 'root' BEGIN
-		INSERT INTO execution_records(execution_id, root_execution_id, project_id, node_kind, attempt_id, source, created_at) VALUES('exec_legacy_race', 'exec_legacy_race', NEW.project_id, 'root', 'attempt-race', 'legacy_attempt', NEW.created_at);
-	END`); err != nil {
+	if _, err := store.db.Exec(`CREATE TRIGGER fail_execution BEFORE INSERT ON execution_records BEGIN SELECT RAISE(ABORT, 'forced execution failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Daemon{store: store}).ensureManagedRunExecution(*claim.Run, Note{}); err != nil {
-		t.Fatalf("daemon must adopt the concurrently recorded attempt: %v", err)
+	if result, err := claim("attempt-fail"); err == nil || result.Claimed {
+		t.Fatalf("claim must fail with its execution record: result=%#v err=%v", result, err)
 	}
-	var count int
-	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_records WHERE attempt_id = ?`, []any{"attempt-race"}, &count); err != nil || count != 1 {
-		t.Fatalf("attempt execution records = %d err=%v", count, err)
+	current, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || current == nil || current.LeaseState != string(LeaseStateUnclaimed) || current.ActiveAttemptID != "" || current.LeaseGeneration != 0 {
+		t.Fatalf("failed claim left lease state: %#v err=%v", current, err)
+	}
+	for _, table := range []string{"attempts", "run_authorizations", "execution_records"} {
+		var count int
+		if err := store.queryRowScan(`SELECT COUNT(*) FROM `+table, nil, &count); err != nil || count != 0 {
+			t.Fatalf("%s rows after rolled-back claim = %d err=%v", table, count, err)
+		}
+	}
+	if _, err := store.db.Exec(`DROP TRIGGER fail_execution`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := claim("attempt-ok")
+	if err != nil || !result.Claimed || result.Run == nil {
+		t.Fatalf("claim=%#v err=%v", result, err)
+	}
+	var kind, parent string
+	var generation int
+	if err := store.queryRowScan(`SELECT node_kind, parent_execution_id, lease_generation FROM execution_records WHERE attempt_id = ?`, []any{"attempt-ok"}, &kind, &parent, &generation); err != nil ||
+		kind != string(ExecutionNodeManagedAttempt) || parent == "" || generation != result.Run.LeaseGeneration {
+		t.Fatalf("claimed execution kind=%q parent=%q generation=%d err=%v", kind, parent, generation, err)
 	}
 }
 

@@ -153,6 +153,17 @@ func TestProjectLayerCannotDefineProfilesButSelectsGlobalOnes(t *testing.T) {
 	if len(resolved.Warnings) != 1 || !strings.Contains(resolved.Warnings[0], "unknown profile missing-worker") {
 		t.Fatalf("unknown project reference must warn naming the profile: %v", resolved.Warnings)
 	}
+	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: filepath.Dir(vault)}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surfaced := false
+	for _, finding := range report.Findings {
+		surfaced = surfaced || (finding.Code == "config_profile_reference" && strings.Contains(finding.Message, "missing-worker"))
+	}
+	if !surfaced {
+		t.Fatalf("setup doctor must surface the unknown profile reference: %#v", report.Findings)
+	}
 	wf, err := loadWorkflow(vault)
 	if err != nil {
 		t.Fatalf("workflow must load with an unknown profile reference: %v", err)

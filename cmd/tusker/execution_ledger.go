@@ -892,6 +892,48 @@ func insertWorkSessionExecutionTx(tx *sql.Tx, attempt RunAttempt) error {
 	return insertExecutionWithEdgeTx(tx, record, edge)
 }
 
+// insertManagedAttemptExecutionTx records a daemon-claimed attempt inside its
+// claim transaction, so the lease and its execution record commit or roll
+// back together. The parent is the attempt's wave root when one exists, else
+// the task's existing root (repeated claims stay one tree), else a new root.
+func insertManagedAttemptExecutionTx(tx *sql.Tx, attempt RunAttempt, generation int) error {
+	taskID := firstNonEmpty(attempt.ItemID, attempt.RecordID)
+	waveID := strings.TrimSpace(attempt.ExecutionWaveID)
+	var parentID, rootID string
+	scan := func(query string, args ...any) error {
+		err := tx.QueryRow(query, args...).Scan(&parentID)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	if waveID != "" {
+		if err := scan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND wave_id = ? AND node_kind = 'root' ORDER BY wave_authorization_generation DESC LIMIT 1`, attempt.ProjectID, waveID); err != nil {
+			return err
+		}
+	}
+	if parentID == "" {
+		if err := scan(`SELECT parent_execution_id FROM execution_records WHERE project_id = ? AND task_id = ? AND node_kind = 'managed_attempt' ORDER BY rowid DESC LIMIT 1`, attempt.ProjectID, taskID); err != nil {
+			return err
+		}
+	}
+	now := executionNow()
+	if parentID == "" {
+		root := ExecutionRecord{ExecutionID: newExecutionID(), ProjectID: attempt.ProjectID, NodeKind: ExecutionNodeRoot, DisplayName: attempt.RecordID, Source: "daemon", Creator: "daemon", CreatedAt: now}
+		root.RootExecutionID = root.ExecutionID
+		root.SearchLabel = normalizeExecutionLabel(root.DisplayName, root.ExecutionID)
+		if err := insertExecutionWithEdgeTx(tx, root, ExecutionEdge{}); err != nil {
+			return err
+		}
+		parentID, rootID = root.ExecutionID, root.ExecutionID
+	} else if err := tx.QueryRow(`SELECT root_execution_id FROM execution_records WHERE execution_id = ? AND project_id = ?`, parentID, attempt.ProjectID).Scan(&rootID); err != nil {
+		return err
+	}
+	record := ExecutionRecord{ExecutionID: newExecutionID(), RootExecutionID: rootID, ParentExecutionID: parentID, ProjectID: attempt.ProjectID, NodeKind: ExecutionNodeManagedAttempt, TaskID: taskID, WaveID: waveID, AttemptID: attempt.AttemptID, Source: "daemon", Provider: attempt.Runner, Creator: "daemon", LeaseGeneration: generation, CreatedAt: now}
+	record.SearchLabel = normalizeExecutionLabel(record.DisplayName, record.TaskID, record.AgentType, record.ExecutionID)
+	return insertExecutionWithEdgeTx(tx, record, ExecutionEdge{ParentExecutionID: parentID, ChildExecutionID: record.ExecutionID, Kind: ExecutionManagedChildOf, CreatedAt: now})
+}
+
 func legacyExecutionID(attemptID string) string {
 	sum := sha256.Sum256([]byte(attemptID))
 	return fmt.Sprintf("exec_legacy_%x", sum[:12])
