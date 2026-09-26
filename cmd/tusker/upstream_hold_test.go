@@ -38,22 +38,6 @@ func upstreamHoldTaskNote(t *testing.T, vault, id string) Note {
 	return note
 }
 
-// A1: a dependent of a piece whose shared build-and-test is red is held, not dispatched.
-func TestRedGateHoldsDependents(t *testing.T) {
-	vault := setupUpstreamHoldVault(t)
-
-	dependent := mustTaskData(t, vault, "APP-T-0002")
-	assertEqual(t, "held", stringField(dependent, "readiness"), "dependent held for upstream failure")
-
-	note := upstreamHoldTaskNote(t, vault, "APP-T-0002")
-	if isV7DispatchableAgentTask(vault, note) {
-		t.Fatalf("expected held dependent to be non-dispatchable")
-	}
-	if _, ok := pickV7Next(vault, "", "agent"); ok {
-		t.Fatalf("expected no dispatchable task while dependent is held")
-	}
-}
-
 // A2: the hold names the upstream piece that failed.
 func TestHeldDependentNamesUpstream(t *testing.T) {
 	vault := setupUpstreamHoldVault(t)
@@ -74,26 +58,6 @@ func TestHeldDependentNamesUpstream(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected dispatch blocker naming upstream failure, got %#v", blockers)
-	}
-}
-
-// A3: when the upstream piece goes green, the held work becomes pickable again.
-func TestGreenUpstreamReleasesDependent(t *testing.T) {
-	vault := setupUpstreamHoldVault(t)
-	assertEqual(t, "held", stringField(mustTaskData(t, vault, "APP-T-0002"), "readiness"), "dependent starts held")
-
-	// Upstream build-and-test goes green: clear the red marker.
-	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
-		"build_failed": false,
-	})
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
-
-	dependent := mustTaskData(t, vault, "APP-T-0002")
-	assertEqual(t, "ready", stringField(dependent, "readiness"), "dependent released after upstream green")
-
-	note := upstreamHoldTaskNote(t, vault, "APP-T-0002")
-	if !isV7DispatchableAgentTask(vault, note) {
-		t.Fatalf("expected released dependent to be dispatchable, blockers: %#v", v7TaskDispatchBlockers(vault, note))
 	}
 }
 
@@ -161,4 +125,40 @@ func TestReviewPrecedesUpstreamHold(t *testing.T) {
 
 	dependent := mustTaskData(t, vault, "APP-T-0002")
 	assertEqual(t, "waiting_on_review", stringField(dependent, "readiness"), "task in review stays in review, not held")
+}
+
+// A3: when the upstream piece goes green, the held work becomes pickable again.
+func TestGreenUpstreamReleasesDependent(t *testing.T) {
+	vault := setupUpstreamHoldVault(t)
+	assertEqual(t, "held", stringField(mustTaskData(t, vault, "APP-T-0002"), "readiness"), "dependent starts held")
+
+	// Upstream build-and-test goes green: clear the red marker.
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
+		"build_failed": false,
+	})
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
+
+	dependent := mustTaskData(t, vault, "APP-T-0002")
+	assertEqual(t, "ready", stringField(dependent, "readiness"), "dependent released after upstream green")
+
+	note := upstreamHoldTaskNote(t, vault, "APP-T-0002")
+	if !isV7DispatchableAgentTaskWithContext(vault, note, resolveV7DispatchContext(vault)) {
+		t.Fatalf("expected released dependent to be dispatchable, blockers: %#v", v7TaskDispatchBlockers(vault, note))
+	}
+}
+
+// A1: a dependent of a piece whose shared build-and-test is red is held, not dispatched.
+func TestRedGateHoldsDependents(t *testing.T) {
+	vault := setupUpstreamHoldVault(t)
+
+	dependent := mustTaskData(t, vault, "APP-T-0002")
+	assertEqual(t, "held", stringField(dependent, "readiness"), "dependent held for upstream failure")
+
+	note := upstreamHoldTaskNote(t, vault, "APP-T-0002")
+	if isV7DispatchableAgentTaskWithContext(vault, note, resolveV7DispatchContext(vault)) {
+		t.Fatalf("expected held dependent to be non-dispatchable")
+	}
+	if _, ok := pickV7Next(vault, "", "agent"); ok {
+		t.Fatalf("expected no dispatchable task while dependent is held")
+	}
 }

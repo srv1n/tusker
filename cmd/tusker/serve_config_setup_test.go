@@ -14,14 +14,11 @@ import (
 
 func TestUserGlobalBehavioralConfigIsIgnoredWithProvenance(t *testing.T) {
 	vault := automationTestVault(t)
-	global := filepath.Join(t.TempDir(), "xdg")
-	t.Setenv("XDG_CONFIG_HOME", global)
-	if err := ensureDir(filepath.Join(global, "tusker")); err != nil {
+	global := filepath.Join(t.TempDir(), "global-config.yaml")
+	if err := writeText(global, "automation:\n  enabled: true\n  workspace:\n    strategy: clone\ntier: 1\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(filepath.Join(global, "tusker", "config.yaml"), "automation:\n  enabled: true\n  workspace:\n    strategy: clone\ntier: 1\n"); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("TUSKER_CONFIG", global)
 
 	for _, key := range []string{"automation.enabled", "tier", "workspace.strategy"} {
 		report, err := configResolve(vault, key)
@@ -165,27 +162,6 @@ func TestWalkthroughProjectAutomationUsesSelectedCheckoutRuntimeState(t *testing
 		t.Fatalf("invalid child enable reported false success: %#v", refused)
 	}
 	assertWalkthroughAutomationSummary(t, server, child.ProjectID, false)
-}
-
-func TestWalkthroughProjectAutomationRollsBackConfigWhenRuntimeWriteRefuses(t *testing.T) {
-	server := newServeEmptyNeedsFixture(t)
-	projects, err := server.store.ListProjects()
-	if err != nil || len(projects) != 1 {
-		t.Fatalf("fixture project: %v %#v", err, projects)
-	}
-	project := projects[0]
-	before, existed, err := readConfigText(managedTuskerLocalConfigPath(project.VaultRoot))
-	if err != nil {
-		t.Fatal(err)
-	}
-	project.ProjectID = "missing-project"
-	if err := setProjectAutomation(server.store, project, true); err == nil {
-		t.Fatal("expected missing runtime project refusal")
-	}
-	after, afterExists, err := readConfigText(managedTuskerLocalConfigPath(project.VaultRoot))
-	if err != nil || afterExists != existed || after != before {
-		t.Fatalf("runtime refusal leaked automation config: before=(%t,%q) after=(%t,%q) err=%v", existed, before, afterExists, after, err)
-	}
 }
 
 func TestWalkthroughProjectAutomationSerializesExecutionSettingsWrites(t *testing.T) {
@@ -351,4 +327,25 @@ func serveTestCapability(t *testing.T, server *serveServer) string {
 		t.Fatalf("capability response=%s err=%v", recorder.Body.String(), err)
 	}
 	return payload.Capability
+}
+
+func TestWalkthroughProjectAutomationRollsBackConfigWhenRuntimeWriteRefuses(t *testing.T) {
+	server := newServeEmptyNeedsFixture(t)
+	projects, err := server.store.ListProjects()
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("fixture project: %v %#v", err, projects)
+	}
+	project := projects[0]
+	before, existed, err := readConfigText(managedTuskerLocalConfigPath(project.VaultRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.ProjectID = "missing-project"
+	if _, err := setProjectAutomationAudited(server.store, project, true, defaultActorName(), "cli"); err == nil {
+		t.Fatal("expected missing runtime project refusal")
+	}
+	after, afterExists, err := readConfigText(managedTuskerLocalConfigPath(project.VaultRoot))
+	if err != nil || afterExists != existed || after != before {
+		t.Fatalf("runtime refusal leaked automation config: before=(%t,%q) after=(%t,%q) err=%v", existed, before, afterExists, after, err)
+	}
 }

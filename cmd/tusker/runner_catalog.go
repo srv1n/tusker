@@ -16,9 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	"tusker/internal/acp"
 	runnercore "tusker/internal/runner"
+
+	"gopkg.in/yaml.v3"
 )
 
 // RunnerCatalog is deliberately a machine-local observation, never project policy.
@@ -335,8 +336,31 @@ func classifyMuseServerDiscoveryError(ctx context.Context, err error, stderr str
 	}
 }
 
+var claudeReasoningEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+// discoverClaudeCatalog declares Claude Code's model aliases. The CLI has no
+// model-list endpoint, so the aliases are declared, and availability comes
+// from the installed binary and its own login.
 func discoverClaudeCatalog() RunnerCatalogHarness {
-	return futureCatalogHarness("claude-code", "Claude Code")
+	harness := catalogHarness(string(RunnerClaude), "Claude Code", "supported", "Install Claude Code and sign in with `claude auth login`, then use Check setup or Run test.")
+	harness.Source, harness.Confidence = "declared", "lower"
+	harness.DiscoverySource = "declared aliases + claude auth status"
+	harness.AccessControls = nativeAccessControls(runnercore.HarnessDefinition{Provider: "claude", Dialect: "claude"}, nil)
+	for _, alias := range []string{"fable", "opus", "sonnet"} {
+		harness.Models = append(harness.Models, RunnerCatalogModel{Model: alias, Efforts: append([]string(nil), claudeReasoningEfforts...), DefaultEffort: "high", Visibility: "declared"})
+	}
+	out, err := runnerCatalogCommand("claude", "--version")
+	if err != nil {
+		harness.State, harness.DiscoveryState, harness.ErrorKind, harness.Error = "unsupported", "unsupported", "unsupported", "Claude Code executable was not found"
+		return harness
+	}
+	harness.Version, harness.ExecutableDetected = strings.TrimSpace(string(out)), true
+	if _, err := runnerCatalogCommand("claude", "auth", "status", "--json"); err != nil {
+		harness.Authentication, harness.ErrorKind, harness.Error = "unauthenticated", "authentication", "Claude Code is not signed in; run `claude auth login`"
+		return harness
+	}
+	harness.Available, harness.Authentication, harness.DiscoveryState = true, "authenticated", "available"
+	return harness
 }
 
 func discoverDevinCatalog() RunnerCatalogHarness {
@@ -492,19 +516,6 @@ func futureCatalogHarness(id, displayName string) RunnerCatalogHarness {
 	h := catalogHarness(id, displayName, "future", "No implemented adapter is available. Do not create a runnable profile.")
 	h.ManualEntry, h.Options, h.State, h.Error = false, nil, "unsupported", "future integration; no adapter or conformance route"
 	return h
-}
-
-func cachedRunnerReady(harness, preset string) (bool, string) {
-	var cached struct {
-		Ready      bool       `json:"ready"`
-		ValidUntil *time.Time `json:"valid_until"`
-		Version    string     `json:"version"`
-	}
-	raw, err := os.ReadFile(filepath.Join(DefaultStateRoot(), "runner-conformance", harness+"-"+preset+".json"))
-	if err != nil || json.Unmarshal(raw, &cached) != nil || !cached.Ready || cached.ValidUntil == nil || !cached.ValidUntil.After(runnerCatalogNow()) {
-		return false, ""
-	}
-	return true, cached.Version
 }
 
 func discoverCodexCatalog(bundled bool) RunnerCatalogHarness {
@@ -984,28 +995,34 @@ func runnerProfilesBootstrapCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	resolved, err := resolveTuskerConfig(vault)
+	// Runner profiles are a machine-wide library: generated profiles are added
+	// to the user-global config only. Projects select them by name.
+	path := userGlobalTuskerConfigPath()
+	lock, err := acquireModelSettingsLock(vault, "global")
 	if err != nil {
 		return err
 	}
-	// Bootstrap is a fresh managed write. Seed it with the effective managed
-	// policy so profile generation preserves existing project settings.
-	path := managedTuskerConfigPath(vault)
-	raw := cloneConfigRaw(resolved.Raw)
-	profiles := semanticBootstrapProfiles(discoverRunnerCatalog(args.Bool("bundled")))
+	defer lock.Close()
+	raw, _, err := readTuskerConfigRawLayer(path)
+	if err != nil {
+		return err
+	}
+	if raw == nil {
+		raw = map[string]any{}
+	}
 	automation := mapAny(raw["automation"])
 	if automation == nil {
 		automation = map[string]any{}
 		raw["automation"] = automation
 	}
 	existing := mapAny(automation["profiles"])
-	profilesExplicitlyEmpty := false
-	if rawProfiles, present := automation["profiles"]; present {
-		profilesExplicitlyEmpty = mapAny(rawProfiles) != nil && len(mapAny(rawProfiles)) == 0
-	}
 	if existing == nil {
 		existing = map[string]any{}
 		automation["profiles"] = existing
+	}
+	profiles := map[string]any{}
+	if !globalProfilesCoverAllTiers(existing) {
+		profiles = semanticBootstrapProfiles(discoverRunnerCatalog(args.Bool("bundled")))
 	}
 	added := []string{}
 	for name, profile := range profiles {
@@ -1015,34 +1032,21 @@ func runnerProfilesBootstrapCmd(args Args) error {
 		}
 	}
 	sort.Strings(added)
-	if _, present := automation["enabled"]; !present {
-		automation["enabled"] = false
+	// Validate the complete post-write stack (including this project's
+	// selections) before replacing the global file atomically.
+	if _, err := resolveTuskerConfigForPathsWithOverrides(v7RepoRoot(vault), vault, true, map[string]map[string]any{path: raw}); err != nil {
+		return err
 	}
-	// Do not create a dangling policy reference on a machine with no usable
-	// harness.  Existing policy remains entirely user-owned.
-	if _, present := automation["default_profile"]; !present && hasBootstrapProfile(profiles, "execute-standard") {
-		automation["default_profile"] = "execute-standard"
-	}
-	// An explicit empty profile map is a deliberate project override that
-	// clears the built-in profiles.  Do not leave the inherited built-in
-	// default_profile pointing at a profile that no longer exists when the
-	// machine catalog cannot provide replacements.
-	if profilesExplicitlyEmpty && len(profiles) == 0 {
-		delete(automation, "default_profile")
-	}
-	automationEnabled := boolAny(automation["enabled"])
 	report := map[string]any{
 		"write":               args.Bool("write"),
 		"path":                path,
 		"added_profiles":      added,
 		"preserved_profiles":  sortedBootstrapMapKeys(existing, added),
 		"semantic_profiles":   profiles,
-		"default_profile":     stringAny(automation["default_profile"]),
-		"automation_enabled":  automationEnabled,
-		"selection_policy":    "live or explicitly bundled Codex prefers Luna for fast work, Terra for standard/complex/review/repair, and Sol for planning/frontier; an available Claude-only machine prefers Sonnet, Opus, and Fable by the corresponding role; every role uses a visible capable model and nearest supported effort",
-		"configuration_scope": "project policy; the observed harness catalog remains machine-local",
+		"selection_policy":    "live or explicitly bundled Codex prefers Luna for fast work and Sol for other roles; Terra and gpt-5.6 models are excluded; an available Claude-only machine prefers Sonnet, Opus, and Fable by role; every role uses a visible capable model and nearest supported effort",
+		"configuration_scope": "user-global profile library; projects select profiles through automation.model_levels",
 	}
-	if args.Bool("write") {
+	if args.Bool("write") && len(added) > 0 {
 		out, err := yaml.Marshal(raw)
 		if err != nil {
 			return err
@@ -1054,9 +1058,34 @@ func runnerProfilesBootstrapCmd(args Args) error {
 	if args.Bool("json") {
 		emitJSON(report)
 	} else {
-		fmt.Printf("profiles %s: %s\n", map[bool]string{true: "written", false: "previewed"}[args.Bool("write")], strings.Join(added, ", "))
+		if len(added) == 0 {
+			fmt.Printf("no new profiles for %s\n", path)
+		} else {
+			fmt.Printf("profiles %s in %s: %s\n", map[bool]string{true: "written", false: "previewed"}[args.Bool("write")], path, strings.Join(added, ", "))
+		}
 	}
 	return nil
+}
+
+// globalProfilesCoverAllTiers reports whether enabled global profiles already
+// declare eligibility for every model level; bootstrap then proposes nothing.
+func globalProfilesCoverAllTiers(profiles map[string]any) bool {
+	covered := map[string]bool{}
+	for _, value := range profiles {
+		profile := mapAny(value)
+		if disabled, _ := profile["disabled"].(bool); disabled {
+			continue
+		}
+		// Read-only/review-only profiles cannot execute, so they do not count
+		// as execution coverage for a tier.
+		if profile["permission_preset"] == "read-only" || mapAny(profile["sandbox"])["mode"] == "read-only" || mapAny(profile["access"])["mode"] == "review_only" {
+			continue
+		}
+		for _, tier := range normalizeList(profile["eligible_tiers"]) {
+			covered[strings.ToLower(strings.TrimSpace(tier))] = true
+		}
+	}
+	return covered["light"] && covered["standard"] && covered["demanding"]
 }
 
 func mapAny(value any) map[string]any { out, _ := value.(map[string]any); return out }
@@ -1076,6 +1105,7 @@ func sortedBootstrapMapKeys(values map[string]any, exclude []string) []string {
 }
 
 func semanticBootstrapProfiles(catalog RunnerCatalog) map[string]any {
+	tiers := map[string][]string{"planner": {"demanding"}, "execute-fast": {"light"}, "execute-standard": {"standard"}, "execute-complex": {"demanding"}, "execute-frontier": {"demanding"}, "review-independent": {"light", "standard", "demanding"}, "repair-complex": {"demanding"}}
 	efforts := map[string]string{"planner": "high", "execute-fast": "low", "execute-standard": "medium", "execute-complex": "high", "execute-frontier": "xhigh", "review-independent": "high", "repair-complex": "high"}
 	harness, models, ok := bootstrapCatalogHarness(catalog)
 	if !ok {
@@ -1098,14 +1128,9 @@ func semanticBootstrapProfiles(catalog RunnerCatalog) map[string]any {
 			mode = "read-only"
 			preset = "read-only"
 		}
-		out[name] = map[string]any{"harness": harness, "model": model.Model, "effort": resolvedEffort, "permission_preset": preset, "sandbox": map[string]any{"mode": mode, "network": network}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}}
+		out[name] = map[string]any{"harness": harness, "model": model.Model, "effort": resolvedEffort, "permission_preset": preset, "sandbox": map[string]any{"mode": mode, "network": network}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}, "eligible_tiers": tiers[name]}
 	}
 	return out
-}
-
-func hasBootstrapProfile(profiles map[string]any, name string) bool {
-	_, ok := profiles[name]
-	return ok
 }
 
 // bootstrapCatalogHarness trusts Codex inventory only when the installed CLI
@@ -1168,14 +1193,17 @@ func semanticModelFor(harness, role string, models []RunnerCatalogModel) (Runner
 		switch role {
 		case "execute-fast":
 			preferences = []string{"luna", "mini", "spark", ""}
-		case "planner", "execute-frontier":
-			preferences = []string{"sol", ""}
 		default:
-			preferences = []string{"terra", ""}
+			preferences = []string{"sol", ""}
 		}
 	}
 	for _, preference := range preferences {
 		for _, model := range models {
+			// These models are excluded from generated profiles for every role.
+			name := strings.ToLower(model.Model)
+			if strings.Contains(name, "terra") || strings.Contains(name, "gpt-5.6") {
+				continue
+			}
 			if preference == "" || strings.Contains(strings.ToLower(model.Model), preference) {
 				return model, true
 			}
@@ -1242,8 +1270,9 @@ func printRunnerHelp() {
 Catalog observes installed harnesses without authentication or model launch. --bundled
 selects an explicit bundled/offline Codex catalog source; --refresh bypasses a fresh
 version/transport/context-keyed cache. Neither is a runtime fallback.
-Profiles previews an additive semantic profile bootstrap; --write updates the project
-config without enabling automation. Codex profiles use codex_exec by default. ACP
-profiles name the exact operator-installed endpoint; Tusker does not install one.
+Profiles previews an additive semantic profile bootstrap; --write adds them to the
+global config (~/.config/tusker/config.yaml or $TUSKER_CONFIG), preserving existing
+profiles. Projects never define profiles; they select global profiles by name through
+automation.model_levels. Generated Codex profiles use codex_exec.
 Conformance never launches a model unless --live is explicitly supplied.`)
 }

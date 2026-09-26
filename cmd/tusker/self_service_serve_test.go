@@ -155,8 +155,8 @@ func TestSelfServiceServeDiagnosis(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		server.handleProjectAutomationScope(recorder, project.ProjectID)
 		var body struct {
-			OK         bool                    `json:"ok"`
-			Enabled    bool                    `json:"enabled"`
+			OK         bool                     `json:"ok"`
+			Enabled    bool                     `json:"enabled"`
 			Automation *projectAutomationReport `json:"automation"`
 		}
 		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {

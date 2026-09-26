@@ -2392,21 +2392,6 @@ func parseV7VerificationRowArg(line string) (v7VerificationRow, error) {
 	}, nil
 }
 
-func proofV7MissingForFinish(vaultPath, taskID string) ([]string, []string, error) {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	task, ok := idx.Tasks[taskID]
-	if !ok {
-		return nil, nil, tuskerError(errorNotFound, "V7 task not found: "+taskID)
-	}
-	report := computeV7ProofReport(vaultPath, task, idx)
-	missing := append([]string{}, report.Missing...)
-	missing = append(missing, report.ModeMissing...)
-	return missing, report.OpenGates, nil
-}
-
 func evidenceV7PromoteCmd(args Args) error {
 	taskID := firstNonEmpty(args.String("id"), args.String("_pos1"))
 	if taskID == "" {

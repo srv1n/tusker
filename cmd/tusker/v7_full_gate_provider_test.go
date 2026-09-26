@@ -234,56 +234,6 @@ func TestV7FullGateProviderRecoveryRefusesIncompleteScope(t *testing.T) {
 	}
 }
 
-func TestV7FullGateProviderRetainsFailedCleanupRecordUntilRecoverySucceeds(t *testing.T) {
-	stateRoot := t.TempDir()
-	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
-	old := runV7FullGateProviderCleanup
-	defer func() { runV7FullGateProviderCleanup = old }()
-	runV7FullGateProviderCleanup = func(context.Context, string, *v7FullGateProviderScope, []string, io.Writer) error {
-		return errors.New("fixture cleanup unavailable")
-	}
-	provider := &v7ExternalFullGateProvider{path: request.ProviderPath, executableIdentity: request.ExecutableID}
-	if _, err := provider.cleanup(&v7FullGateProviderScope{request: request, requestPath: requestPath}); err == nil {
-		t.Fatal("fixture cleanup unexpectedly succeeded")
-	}
-	if _, err := os.Stat(requestPath); err != nil {
-		t.Fatalf("failed cleanup erased recovery record: %v", err)
-	}
-	if err := os.WriteFile(request.ResultPath, []byte("{malformed"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewDaemon(stateRoot); err == nil || !errors.Is(err, errV7FullGateProvider) {
-		t.Fatalf("daemon accepted failed cleanup scope: %v", err)
-	}
-	runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
-		result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
-		result.Outcome = v7FullGateOutcomeCanceled
-		v7SealFullGateProviderResult(request, &result)
-		return scope.persistResult(result)
-	}
-	if daemon, err := NewDaemon(stateRoot); err != nil {
-		t.Fatalf("certified cleanup did not converge at daemon startup: %v", err)
-	} else {
-		_ = daemon.Close()
-	}
-	if _, err := os.Stat(filepath.Dir(requestPath)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("reconciled cleanup scope remained: %v", err)
-	}
-	journalPath := v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest)
-	journal, err := readV7FullGateProviderOutcomeJournal(journalPath)
-	if err != nil {
-		t.Fatalf("read bounded actionable cleanup outcome: %v", err)
-	}
-	if !journal.Reconciled || journal.ScopePath != "" || journal.Action == "" {
-		t.Fatalf("cleanup outcome was not retained as bounded actionable evidence: %#v", journal)
-	}
-	if daemon, err := NewDaemon(stateRoot); err != nil {
-		t.Fatalf("second startup did not converge over actionable outcome: %v", err)
-	} else {
-		_ = daemon.Close()
-	}
-}
-
 func TestV7FullGateProviderCloseUsesActiveRequestPath(t *testing.T) {
 	stateRoot := t.TempDir()
 	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
@@ -390,83 +340,6 @@ func writeV7ProviderRecoveryRequest(t *testing.T, stateRoot string) (string, v7F
 	return requestPath, request
 }
 
-func TestV7FullGateProviderReceiptBindsNonReusableScopeIdentity(t *testing.T) {
-	control := t.TempDir()
-	request := v7FullGateProviderRequest{
-		Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract,
-		RunID: "run-a", ResultPath: filepath.Join(control, "result.json"), ProviderID: "provider-a",
-		RuntimeDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PolicyDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", AttestationDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-		RequiredCapabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"},
-		ImplementationID:     v7KnownFullGateProvider, CapabilitySchema: v7FullGateCapabilitySchema, ExpectedImageOrVMID: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-	}
-	request.RequestDigest = v7FullGateRequestDigest(request)
-	encoded, err := json.Marshal(v7FullGateProviderResult{
-		Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract,
-		RunID: "run-a", LifecycleID: "container:8f0f4e91", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result v7FullGateProviderResult
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		t.Fatal(err)
-	}
-	result.Outcome = v7FullGateOutcomePassed
-	v7SealFullGateProviderResult(request, &result)
-	encoded, err = json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(request.ResultPath, encoded, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readV7FullGateProviderResult(request); err != nil {
-		t.Fatalf("valid lifecycle receipt rejected: %v", err)
-	}
-	request.RunID = "run-b" // same PID-like value must not authorize a new scope.
-	if _, err := readV7FullGateProviderResult(request); err == nil {
-		t.Fatal("receipt from a different run was accepted")
-	}
-}
-
-func TestV7FullGateProviderTypedOutcomesGateLedgerCertification(t *testing.T) {
-	for _, outcome := range []v7FullGateOutcome{v7FullGateOutcomePassed, v7FullGateOutcomeFailed, v7FullGateOutcomeProvider, v7FullGateOutcomeCanceled, v7FullGateOutcomeTimedOut} {
-		t.Run(string(outcome), func(t *testing.T) {
-			control := t.TempDir()
-			request := v7FullGateProviderRequest{
-				Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: "run-" + string(outcome), Workspace: control, Command: "go test ./...",
-				ProjectID: "project", DepartureID: "departure", CandidateDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Profile: "full", ProviderProfile: "fixture", Toolchain: "toolchain",
-				ResultPath: filepath.Join(control, "result.json"), ProviderID: "sha256:abababababababababababababababababababababababababababababababab", ExecutableID: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", RuntimeDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", ClientDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", PolicyDigest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", AttestationDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-				RequiredCapabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, ImplementationID: v7KnownFullGateProvider, CapabilitySchema: v7FullGateCapabilitySchema, ExpectedImageOrVMID: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-				MaxCommandBytes: v7FullGateCommandMaxBytes, MaxOutputBytes: 256, MaxRuntimeMS: 1_000, MaxArtifactBytes: 1_024,
-			}
-			request.RequestDigest = v7FullGateRequestDigest(request)
-			result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "scope-" + string(outcome), State: "cleaned", Outcome: outcome, Output: "bounded", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID, RuntimeMS: 12, ArtifactBytes: 16}
-			v7SealFullGateProviderResult(request, &result)
-			raw, err := json.Marshal(result)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(request.ResultPath, raw, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			got, err := readV7FullGateProviderResult(request)
-			if err != nil {
-				t.Fatalf("read typed result: %v", err)
-			}
-			provider := &v7ExternalFullGateProvider{executableIdentity: request.ExecutableID, clientDigest: request.ClientDigest, runtimeDigest: request.RuntimeDigest, policyDigest: request.PolicyDigest, attestationDigest: request.AttestationDigest, imageOrVMID: request.ExpectedImageOrVMID, profile: request.ProviderProfile}
-			receipt, err := provider.recordReceipt(nil, request, got)
-			if err != nil {
-				t.Fatal(err)
-			}
-			certified := v7CertifiedGateProviderReceipt(&receipt)
-			if certified != (outcome == v7FullGateOutcomePassed) {
-				t.Fatalf("outcome %q certified=%t", outcome, certified)
-			}
-		})
-	}
-}
-
 func TestV7FullGateProviderBindingRejectsProfileConfusion(t *testing.T) {
 	stateRoot := t.TempDir()
 	state, err := openV7FullGateStateRoot(stateRoot)
@@ -530,22 +403,6 @@ func TestV7FullGateProviderCleanupBoundsInheritedPipeDrain(t *testing.T) {
 	}
 	if elapsed > time.Second {
 		t.Fatalf("cleanup pipe drain exceeded bound: %s", elapsed)
-	}
-}
-
-func TestV7FullGateProviderReservationIsWrittenBeforeLaunch(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "scope", "request.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeV7FullGateReservation(path, []byte("reserved\n")); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != "reserved\n" {
-		t.Fatalf("durable reservation = %q, %v", got, err)
-	}
-	if err := writeV7FullGateReservation(path, []byte("replacement")); !errors.Is(err, os.ErrExist) {
-		t.Fatalf("reservation replacement error = %v, want os.ErrExist", err)
 	}
 }
 
@@ -768,6 +625,508 @@ func TestV7FullGateProviderRetiresOnlyAfterOutcomeAcknowledgement(t *testing.T) 
 	}
 }
 
+func TestV7FullGateProviderPreparationCrashSeamsConverge(t *testing.T) {
+	stages := []struct {
+		name      string
+		stage     string
+		published bool
+	}{
+		{name: "mkdir before request", stage: "preparation_dentry_synced"},
+		{name: "result before request", stage: "result_reservation_synced"},
+		{name: "request before publish", stage: "reservation_synced"},
+		{name: "publish before wrapper", stage: "scope_published_synced", published: true},
+	}
+	for _, tc := range stages {
+		t.Run(tc.name, func(t *testing.T) {
+			stateRoot := t.TempDir()
+			store, run := openV7ProviderRecoveryRun(t, stateRoot, "preparation-"+tc.stage)
+			defer store.Close()
+			providerPath, lookupErr := exec.LookPath("true")
+			if lookupErr != nil {
+				t.Fatal(lookupErr)
+			}
+			provider := newExternalV7ProviderFixture(t, providerPath, stateRoot)
+			provider.binding.DepartureID = run.ID
+			previousDurability := v7FullGateDurabilityHook
+			v7FullGateDurabilityHook = func(stage string) error {
+				if stage == tc.stage {
+					return errors.New("fixture crash at " + stage)
+				}
+				return nil
+			}
+			_, _, err := provider.newRequest(t.TempDir(), "fixture")
+			v7FullGateDurabilityHook = previousDurability
+			if err == nil {
+				t.Fatal("injected preparation crash unexpectedly returned launch authority")
+			}
+			preparations, readErr := os.ReadDir(filepath.Join(stateRoot, "full-gate-preparing"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			recovery, readErr := os.ReadDir(filepath.Join(stateRoot, "full-gate-recovery"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if tc.published {
+				if len(preparations) != 0 || len(recovery) != 1 {
+					t.Fatalf("published crash directories: preparing=%d recovery=%d", len(preparations), len(recovery))
+				}
+			} else if len(preparations) != 1 || len(recovery) != 0 {
+				t.Fatalf("unpublished crash directories: preparing=%d recovery=%d", len(preparations), len(recovery))
+			}
+			previousCleanup := runV7FullGateProviderCleanup
+			runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
+				result := v7CertifiedProviderResultFixture(scope.request, v7FullGateOutcomeCanceled)
+				return scope.persistResult(result)
+			}
+			defer func() { runV7FullGateProviderCleanup = previousCleanup }()
+			if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+				t.Fatalf("first restart recovery: %v", err)
+			}
+			if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+				t.Fatalf("second restart recovery: %v", err)
+			}
+			preparations, _ = os.ReadDir(filepath.Join(stateRoot, "full-gate-preparing"))
+			recovery, _ = os.ReadDir(filepath.Join(stateRoot, "full-gate-recovery"))
+			if len(preparations) != 0 || len(recovery) != 0 {
+				t.Fatalf("recovery did not retire crash state: preparing=%d recovery=%d", len(preparations), len(recovery))
+			}
+			durable, findErr := store.FindDepartureRun(run.ID)
+			if findErr != nil || durable == nil {
+				t.Fatalf("read departure: %#v, %v", durable, findErr)
+			}
+			wantOutcomes := 0
+			if tc.published {
+				wantOutcomes = 1
+			}
+			if len(durable.Gate.ProviderOutcomes) != wantOutcomes {
+				t.Fatalf("published=%t outcomes=%#v", tc.published, durable.Gate.ProviderOutcomes)
+			}
+		})
+	}
+}
+
+func TestV7FullGateProviderRecoveryFailsUnjournaledGreenClosed(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, run := openV7ProviderRecoveryRun(t, stateRoot, "unjournaled-green")
+	defer store.Close()
+	scope, request, _, _ := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomePassed)
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+		t.Fatalf("second recovery: %v", err)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.Gate.Status != string(v7FullGateOutcomeProvider) || len(durable.Gate.ProviderOutcomes) != 1 || durable.Gate.ProviderOutcomes[0].Outcome != string(v7FullGateOutcomeProvider) {
+		t.Fatalf("unjournaled green was not routed fail-closed: %#v, %v", durable, err)
+	}
+	if entry, err := store.FindGateLedger(request.ProjectID, request.CandidateDigest, request.Command, request.Profile, request.Toolchain); err != nil || entry != nil {
+		t.Fatalf("unjournaled green entered ledger: %#v, %v", entry, err)
+	}
+	if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unjournaled green scope remained: %v", err)
+	}
+}
+
+func TestV7FullGateProviderRecoveryCleansDurableRequestBeforeWrapper(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, run := openV7ProviderRecoveryRun(t, stateRoot, "request-before-wrapper")
+	defer store.Close()
+	scope, request, _, _ := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomePassed)
+	if err := os.Remove(request.ResultPath); err != nil {
+		t.Fatal(err)
+	}
+	previous := runV7FullGateProviderCleanup
+	runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
+		result := v7CertifiedProviderResultFixture(request, v7FullGateOutcomeCanceled)
+		return scope.persistResult(result)
+	}
+	defer func() { runV7FullGateProviderCleanup = previous }()
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+		t.Fatalf("second recovery: %v", err)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || len(durable.Gate.ProviderOutcomes) != 1 || durable.Gate.ProviderOutcomes[0].Outcome != string(v7FullGateOutcomeCanceled) {
+		t.Fatalf("pre-wrapper recovery outcome = %#v, %v", durable, err)
+	}
+	if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pre-wrapper scope remained: %v", err)
+	}
+}
+
+func TestV7FullGateProviderNormalizesOverrunAndOutcomeMismatch(t *testing.T) {
+	_, request, passed, _ := writeV7ProviderOutcomeFixture(t, t.TempDir(), "departure-normalize", v7FullGateOutcomePassed)
+	for _, reason := range []string{"daemon_measured_runtime_exceeded", "cleanup_outcome_mismatch_expected_timed_out", "wrapper_failed_after_gate_pass"} {
+		got := normalizedV7FullGateProviderFailure(request, passed, reason)
+		if got.Outcome != v7FullGateOutcomeProvider || got.Error != reason || got.ResultDigest != v7FullGateProviderResultDigest(got) || got.ReceiptDigest != v7FullGateReceiptDigest(request, got) {
+			t.Fatalf("normalization %q = %#v", reason, got)
+		}
+	}
+}
+
+func TestV7FullGateProviderClosureDriftInvalidatesLedgerReceipt(t *testing.T) {
+	receipt := testV7FullGateProviderReceipt
+	provider := &v7ExternalFullGateProvider{
+		identity: receipt.ProviderClosureDigest, executableIdentity: receipt.ProviderDigest, clientDigest: receipt.ClientDigest,
+		runtimeDigest: receipt.RuntimeDigest, policyDigest: receipt.PolicyDigest, attestationDigest: receipt.AttestationDigest,
+		imageOrVMID: receipt.ImageOrVMID, profile: receipt.ProviderProfile,
+	}
+	if !provider.MatchesGateProviderReceipt(&receipt) {
+		t.Fatal("exact provider closure rejected its receipt")
+	}
+	provider.identity = "sha256:" + strings.Repeat("0", 64)
+	if provider.MatchesGateProviderReceipt(&receipt) {
+		t.Fatal("provider closure drift reused a stale ledger receipt")
+	}
+}
+
+func newExternalV7ProviderFixture(t *testing.T, path, stateRoot string) *v7ExternalFullGateProvider {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	executableID := fmt.Sprintf("sha256:%x", sum[:])
+	if _, verified, verifyErr := verifyV7TrustedProviderExecutable(path); verifyErr == nil {
+		executableID = verified
+	}
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	return &v7ExternalFullGateProvider{
+		path: path, kind: "container", identity: digest('a'), executableIdentity: executableID,
+		runtimeDigest: digest('b'), clientDigest: digest('c'), policyDigest: digest('d'), attestationDigest: digest('e'),
+		capabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, implementationID: v7KnownFullGateProvider,
+		capabilitySchema: v7FullGateCapabilitySchema, imageOrVMID: digest('f'), profile: "fixture", stateRoot: stateRoot,
+		recoveryRoot: filepath.Join(stateRoot, "full-gate-recovery"),
+		binding:      v7FullGateProviderBinding{ProjectID: "project", DepartureID: "departure-contract-failure", CandidateDigest: digest('1'), GateProfile: "full", ProviderProfile: "fixture", Toolchain: "toolchain", ArtifactRef: filepath.Join(stateRoot, "artifacts", "promotion-gates", "fixture.log")},
+	}
+}
+
+func writeV7ProviderOutcomeFixture(t *testing.T, stateRoot, departureID string, outcome v7FullGateOutcome) (*v7FullGateProviderScope, v7FullGateProviderRequest, v7FullGateProviderResult, GateProviderReceipt) {
+	t.Helper()
+	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	request.ProjectID = "project"
+	request.DepartureID = departureID
+	request.CandidateDigest = digest('1')
+	request.Profile = "full"
+	request.ProviderProfile = "fixture"
+	request.Toolchain = "fixture-toolchain"
+	request.ArtifactRef = filepath.Join(stateRoot, "artifacts", "promotion-gates", "fixture-"+strings.ToLower(newRecordID())+".log")
+	request.ProviderID = digest('2')
+	request.ClientDigest = digest('3')
+	request.MaxCommandBytes = v7FullGateCommandMaxBytes
+	request.MaxOutputBytes = 1_024
+	request.MaxRuntimeMS = 1_000
+	request.MaxArtifactBytes = 1_024
+	request.RequestDigest = v7FullGateRequestDigest(request)
+	if err := os.MkdirAll(filepath.Dir(request.ArtifactRef), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(request.ArtifactRef, []byte("exact provider evidence\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := v7CertifiedProviderResultFixture(request, outcome)
+	raw, err = json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(request.ResultPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
+	return scope, request, result, v7GateProviderReceiptForResult(request, result)
+}
+
+func v7CertifiedProviderResultFixture(request v7FullGateProviderRequest, outcome v7FullGateOutcome) v7FullGateProviderResult {
+	result := v7FullGateProviderResult{
+		Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", Outcome: outcome,
+		Output: "fixture-output", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest,
+		AttestationDigest: request.AttestationDigest, Capabilities: append([]string(nil), request.RequiredCapabilities...), ImplementationID: request.ImplementationID,
+		CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true,
+		ImageOrVMID: request.ExpectedImageOrVMID, RuntimeMS: 10, ArtifactBytes: 16,
+	}
+	v7SealFullGateProviderResult(request, &result)
+	return result
+}
+
+func writeV7RawJournalFixture(t *testing.T, path string, journal v7FullGateProviderOutcomeJournal) {
+	t.Helper()
+	raw, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func openV7ProviderRecoveryRun(t *testing.T, stateRoot, suffix string) (*RuntimeStore, DepartureRun) {
+	t.Helper()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := store.GetOrCreateDepartureRun(DepartureRun{ProjectID: "project", PolicyID: "provider-recovery-" + strings.ReplaceAll(suffix, " ", "-"), ScheduledWindow: "2026-07-26T00:00:00Z", State: DepartureStateGating})
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	return store, run
+}
+
+// This fixture models the adversarial gate, not a host process tree: the
+// command double-forks, calls setsid, and its root exits while a daemon remains.
+// A lifecycle provider cannot report success until its entire container/VM
+// scope is gone, which is precisely the property Darwin ancestry polling lacks.
+func TestV7FullGateProviderContractReapsReparentedSurvivorOnExitAndCancel(t *testing.T) {
+	provider := &fakeV7FullGateProvider{}
+	if _, err := provider.Run(context.Background(), "/candidate", "double-fork-setsid"); err != nil {
+		t.Fatal(err)
+	}
+	if provider.survivor {
+		t.Fatal("provider reported root exit while reparented survivor remained")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := provider.Run(cancelled, "/candidate", "double-fork-setsid"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled lifecycle scope error = %v", err)
+	}
+	if provider.survivor {
+		t.Fatal("provider cancellation left a reparented survivor")
+	}
+	if provider.cleanups != 2 {
+		t.Fatalf("cleanup count = %d, want normal exit and cancellation recovery", provider.cleanups)
+	}
+}
+
+type fakeV7FullGateProvider struct {
+	survivor bool
+	cleanups int
+}
+
+func (p *fakeV7FullGateProvider) Run(ctx context.Context, _, _ string) (v7FullGateProviderInvocation, error) {
+	// The child is intentionally outside the root process group/ancestry. The
+	// provider owns the fixture's lifecycle scope, so cleanup is scope-wide.
+	p.survivor = true
+	p.survivor = false
+	p.cleanups++
+	if err := ctx.Err(); err != nil {
+		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeCanceled}, err
+	}
+	return v7FullGateProviderInvocation{Output: []byte("provider-cleaned"), Outcome: v7FullGateOutcomePassed}, nil
+}
+
+func (p *fakeV7FullGateProvider) Close() error { return nil }
+
+func TestV7FullGateProviderArtifactBindingCrashRecoversExactRedEvidence(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, run := openV7ProviderRecoveryRun(t, stateRoot, "artifact-bound-before-departure-cas")
+	defer store.Close()
+	scope, request, result, receipt := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomeProvider)
+	exact := []byte("exact red provider evidence\nwith stable bytes\n")
+	if err := os.Remove(request.ArtifactRef); err != nil {
+		t.Fatal(err)
+	}
+	state, err := openV7FullGateStateRoot(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeV7DurablePromotionArtifactAtRoot(state, request.ArtifactRef, exact); err != nil {
+		_ = state.Close()
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("fixture crash after fsynced artifact journal binding")
+	previous := v7FullGateDurabilityHook
+	v7FullGateDurabilityHook = func(stage string) error {
+		if stage == "outcome_artifact_bound" {
+			return injected
+		}
+		return nil
+	}
+	err = recoverV7FullGateProviderScopes(stateRoot, store)
+	v7FullGateDurabilityHook = previous
+	if !errors.Is(err, injected) {
+		t.Fatalf("artifact-binding crash seam = %v", err)
+	}
+	durable, err := store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.State == DepartureStateBlocked {
+		t.Fatalf("departure CAS happened before bound-journal seam: %#v, %v", durable, err)
+	}
+	journalPath := v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest)
+	journal, err := readV7FullGateProviderOutcomeJournal(journalPath)
+	if err != nil || journal.ArtifactRef != request.ArtifactRef || journal.ArtifactDigest != v7FullGateTextDigest(string(exact)) {
+		t.Fatalf("durable artifact binding = %#v, %v", journal, err)
+	}
+	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
+		t.Fatalf("restart artifact recovery: %v", err)
+	}
+	durable, err = store.FindDepartureRun(run.ID)
+	if err != nil || durable == nil || durable.State != DepartureStateBlocked || durable.Gate.ArtifactRef != request.ArtifactRef || len(durable.Gate.Failure.ArtifactRefs) != 1 || durable.Gate.Failure.ArtifactRefs[0] != request.ArtifactRef {
+		t.Fatalf("recovered departure evidence = %#v, %v", durable, err)
+	}
+	got, err := os.ReadFile(durable.Gate.ArtifactRef)
+	if err != nil || !bytes.Equal(got, exact) {
+		t.Fatalf("recovered artifact content = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("artifact-bound recovery scope remained: %v", err)
+	}
+	if _, err := os.Stat(journalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("artifact-bound recovery journal remained: %v", err)
+	}
+}
+
+func TestV7FullGateProviderCancellationRemovesOnlyUnboundArtifacts(t *testing.T) {
+	stateRoot := t.TempDir()
+	scope, request, result, receipt := writeV7ProviderOutcomeFixture(t, stateRoot, "departure-cancel-artifact", v7FullGateOutcomeFailed)
+	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+		t.Fatal(err)
+	}
+	unbound := filepath.Join(stateRoot, "artifacts", "promotion-gates", "unbound-summary.log")
+	if err := os.WriteFile(unbound, []byte("unbound summary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeV7ProvablyUnboundPromotionArtifacts(stateRoot, []string{request.ArtifactRef, unbound}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(request.ArtifactRef); err != nil {
+		t.Fatalf("cancellation removed journal-bound evidence: %v", err)
+	}
+	if _, err := os.Stat(unbound); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("provably unbound cancellation artifact remained: %v", err)
+	}
+}
+
+func TestV7FullGateProviderContractFailuresAreTyped(t *testing.T) {
+	t.Run("identity", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "provider")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		provider := newExternalV7ProviderFixture(t, path, t.TempDir())
+		provider.executableIdentity = "sha256:" + strings.Repeat("0", 64)
+		invocation, err := provider.Run(context.Background(), t.TempDir(), "fixture")
+		if err == nil || invocation.Outcome != v7FullGateOutcomeProvider || invocation.Receipt.RequestDigest != "" {
+			t.Fatalf("identity failure invocation = %#v, %v", invocation, err)
+		}
+	})
+
+	t.Run("start", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "provider")
+		if err := os.WriteFile(path, []byte("not-an-executable-format\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		provider := newExternalV7ProviderFixture(t, path, t.TempDir())
+		invocation, err := provider.Run(context.Background(), t.TempDir(), "fixture")
+		if err == nil || invocation.Outcome != v7FullGateOutcomeProvider || invocation.Receipt.RequestDigest != "" {
+			t.Fatalf("start failure invocation = %#v, %v", invocation, err)
+		}
+	})
+
+	t.Run("invalid result with certified cleanup", func(t *testing.T) {
+		stateRoot := t.TempDir()
+		path, err := exec.LookPath("true")
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider := newExternalV7ProviderFixture(t, path, stateRoot)
+		previous := runV7FullGateProviderCleanup
+		runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
+			request, err := scope.readRequest()
+			if err != nil {
+				return err
+			}
+			result := v7CertifiedProviderResultFixture(request, v7FullGateOutcomePassed)
+			return scope.persistResult(result)
+		}
+		defer func() { runV7FullGateProviderCleanup = previous }()
+		invocation, err := provider.Run(context.Background(), t.TempDir(), "fixture")
+		if err == nil || invocation.Outcome != v7FullGateOutcomeProvider || invocation.Receipt.Outcome != string(v7FullGateOutcomeProvider) || !v7FullGateDigest(invocation.Receipt.RequestDigest) {
+			t.Fatalf("invalid-result failure invocation = %#v, %v", invocation, err)
+		}
+		journalPath := v7FullGateProviderOutcomeJournalPath(stateRoot, invocation.Receipt.DepartureID, invocation.Receipt.RequestDigest)
+		journal, readErr := readV7FullGateProviderOutcomeJournal(journalPath)
+		if readErr != nil || journal.Result.Outcome != v7FullGateOutcomeProvider || journal.Result.Error != "invalid_run_result_before_certified_cleanup" {
+			t.Fatalf("invalid-result journal = %#v, %v", journal, readErr)
+		}
+		if err := writeV7DurablePromotionArtifactAtRoot(provider.state, provider.binding.ArtifactRef, []byte("invalid result evidence\n")); err != nil {
+			t.Fatal(err)
+		}
+		if err := provider.BindFullGateProviderArtifact(provider.binding.ArtifactRef, []GateProviderReceipt{invocation.Receipt}); err != nil {
+			t.Fatal(err)
+		}
+		if err := provider.FinalizeFullGateProviderOutcome(invocation.Receipt); err != nil {
+			t.Fatalf("finalize invalid-result outcome: %v", err)
+		}
+	})
+}
+
+func TestV7FullGateProviderDurabilityOrdering(t *testing.T) {
+	stateRoot := t.TempDir()
+	rawProvider, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerSum := sha256.Sum256(rawProvider)
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	provider := &v7ExternalFullGateProvider{
+		path: os.Args[0], kind: "container", identity: digest('a'), executableIdentity: fmt.Sprintf("sha256:%x", providerSum[:]),
+		runtimeDigest: digest('b'), clientDigest: digest('c'), policyDigest: digest('d'), attestationDigest: digest('e'),
+		capabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, implementationID: v7KnownFullGateProvider,
+		capabilitySchema: v7FullGateCapabilitySchema, imageOrVMID: digest('f'), profile: "fixture", stateRoot: stateRoot,
+		recoveryRoot: filepath.Join(stateRoot, "full-gate-recovery"),
+		binding:      v7FullGateProviderBinding{ProjectID: "project", DepartureID: "departure-order", CandidateDigest: digest('1'), GateProfile: "full", ProviderProfile: "fixture", Toolchain: "toolchain", ArtifactRef: filepath.Join(stateRoot, "artifacts", "promotion-gates", "ordering.log")},
+	}
+	var stages []string
+	previous := v7FullGateDurabilityHook
+	v7FullGateDurabilityHook = func(stage string) error {
+		stages = append(stages, stage)
+		return nil
+	}
+	defer func() { v7FullGateDurabilityHook = previous }()
+	request, requestPath, err := provider.newRequest(t.TempDir(), "fixture-command")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"recovery_root_created_synced", "preparation_root_created_synced", "preparation_dentry_synced", "result_reservation_synced", "reservation_synced", "scope_published_synced"}
+	if strings.Join(stages, ",") != strings.Join(want, ",") {
+		t.Fatalf("request durability order = %v, want %v", stages, want)
+	}
+	stages = nil
+	result := v7CertifiedProviderResultFixture(request, v7FullGateOutcomeProvider)
+	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
+	receipt := v7GateProviderReceiptForResult(request, result)
+	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := readV7FullGateProviderOutcomeJournal(v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest))
+	if err != nil || journal.ArtifactRef != request.ArtifactRef || journal.ArtifactDigest != "" {
+		t.Fatalf("journal did not retain the preallocated unbound artifact target: %#v, %v", journal, err)
+	}
+	want = []string{"outcome_journal_root_created_synced", "outcome_journal_synced"}
+	if strings.Join(stages, ",") != strings.Join(want, ",") {
+		t.Fatalf("journal durability order = %v, want %v", stages, want)
+	}
+}
+
 func TestV7FullGateProviderOutcomeJournalRejectsTampering(t *testing.T) {
 	t.Run("full receipt", func(t *testing.T) {
 		stateRoot := t.TempDir()
@@ -878,136 +1237,42 @@ func TestV7FullGateProviderOutcomeJournalRejectsTampering(t *testing.T) {
 	})
 }
 
-func TestV7FullGateProviderDurabilityOrdering(t *testing.T) {
-	stateRoot := t.TempDir()
-	rawProvider, err := os.ReadFile(os.Args[0])
+func TestV7FullGateProviderReceiptBindsNonReusableScopeIdentity(t *testing.T) {
+	control := t.TempDir()
+	request := v7FullGateProviderRequest{
+		Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract,
+		RunID: "run-a", ResultPath: filepath.Join(control, "result.json"), ProviderID: "provider-a",
+		RuntimeDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PolicyDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", AttestationDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		RequiredCapabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"},
+		ImplementationID:     v7KnownFullGateProvider, CapabilitySchema: v7FullGateCapabilitySchema, ExpectedImageOrVMID: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	}
+	request.RequestDigest = v7FullGateRequestDigest(request)
+	encoded, err := json.Marshal(v7FullGateProviderResult{
+		Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract,
+		RunID: "run-a", LifecycleID: "container:8f0f4e91", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	providerSum := sha256.Sum256(rawProvider)
-	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
-	provider := &v7ExternalFullGateProvider{
-		path: os.Args[0], kind: "container", identity: digest('a'), executableIdentity: fmt.Sprintf("sha256:%x", providerSum[:]),
-		runtimeDigest: digest('b'), clientDigest: digest('c'), policyDigest: digest('d'), attestationDigest: digest('e'),
-		capabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, implementationID: v7KnownFullGateProvider,
-		capabilitySchema: v7FullGateCapabilitySchema, imageOrVMID: digest('f'), profile: "fixture", stateRoot: stateRoot,
-		recoveryRoot: filepath.Join(stateRoot, "full-gate-recovery"),
-		binding:      v7FullGateProviderBinding{ProjectID: "project", DepartureID: "departure-order", CandidateDigest: digest('1'), GateProfile: "full", ProviderProfile: "fixture", Toolchain: "toolchain", ArtifactRef: filepath.Join(stateRoot, "artifacts", "promotion-gates", "ordering.log")},
+	var result v7FullGateProviderResult
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
 	}
-	var stages []string
-	previous := v7FullGateDurabilityHook
-	v7FullGateDurabilityHook = func(stage string) error {
-		stages = append(stages, stage)
-		return nil
-	}
-	defer func() { v7FullGateDurabilityHook = previous }()
-	request, requestPath, err := provider.newRequest(t.TempDir(), "fixture-command")
+	result.Outcome = v7FullGateOutcomePassed
+	v7SealFullGateProviderResult(request, &result)
+	encoded, err = json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"recovery_root_created_synced", "preparation_root_created_synced", "preparation_dentry_synced", "result_reservation_synced", "reservation_synced", "scope_published_synced"}
-	if strings.Join(stages, ",") != strings.Join(want, ",") {
-		t.Fatalf("request durability order = %v, want %v", stages, want)
-	}
-	stages = nil
-	result := v7CertifiedProviderResultFixture(request, v7FullGateOutcomeProvider)
-	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
-	receipt := v7GateProviderReceiptForResult(request, result)
-	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
+	if err := os.WriteFile(request.ResultPath, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	journal, err := readV7FullGateProviderOutcomeJournal(v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest))
-	if err != nil || journal.ArtifactRef != request.ArtifactRef || journal.ArtifactDigest != "" {
-		t.Fatalf("journal did not retain the preallocated unbound artifact target: %#v, %v", journal, err)
+	if _, err := readV7FullGateProviderResult(request); err != nil {
+		t.Fatalf("valid lifecycle receipt rejected: %v", err)
 	}
-	want = []string{"outcome_journal_root_created_synced", "outcome_journal_synced"}
-	if strings.Join(stages, ",") != strings.Join(want, ",") {
-		t.Fatalf("journal durability order = %v, want %v", stages, want)
-	}
-}
-
-func TestV7FullGateProviderPreparationCrashSeamsConverge(t *testing.T) {
-	stages := []struct {
-		name      string
-		stage     string
-		published bool
-	}{
-		{name: "mkdir before request", stage: "preparation_dentry_synced"},
-		{name: "result before request", stage: "result_reservation_synced"},
-		{name: "request before publish", stage: "reservation_synced"},
-		{name: "publish before wrapper", stage: "scope_published_synced", published: true},
-	}
-	for _, tc := range stages {
-		t.Run(tc.name, func(t *testing.T) {
-			stateRoot := t.TempDir()
-			store, run := openV7ProviderRecoveryRun(t, stateRoot, "preparation-"+tc.stage)
-			defer store.Close()
-			providerPath, lookupErr := exec.LookPath("true")
-			if lookupErr != nil {
-				t.Fatal(lookupErr)
-			}
-			provider := newExternalV7ProviderFixture(t, providerPath, stateRoot)
-			provider.binding.DepartureID = run.ID
-			previousDurability := v7FullGateDurabilityHook
-			v7FullGateDurabilityHook = func(stage string) error {
-				if stage == tc.stage {
-					return errors.New("fixture crash at " + stage)
-				}
-				return nil
-			}
-			_, _, err := provider.newRequest(t.TempDir(), "fixture")
-			v7FullGateDurabilityHook = previousDurability
-			if err == nil {
-				t.Fatal("injected preparation crash unexpectedly returned launch authority")
-			}
-			preparations, readErr := os.ReadDir(filepath.Join(stateRoot, "full-gate-preparing"))
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
-			recovery, readErr := os.ReadDir(filepath.Join(stateRoot, "full-gate-recovery"))
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
-			if tc.published {
-				if len(preparations) != 0 || len(recovery) != 1 {
-					t.Fatalf("published crash directories: preparing=%d recovery=%d", len(preparations), len(recovery))
-				}
-			} else if len(preparations) != 1 || len(recovery) != 0 {
-				t.Fatalf("unpublished crash directories: preparing=%d recovery=%d", len(preparations), len(recovery))
-			}
-			previousCleanup := runV7FullGateProviderCleanup
-			runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
-				request, err := scope.readRequest()
-				if err != nil {
-					return err
-				}
-				result := v7CertifiedProviderResultFixture(request, v7FullGateOutcomeCanceled)
-				return scope.persistResult(result)
-			}
-			defer func() { runV7FullGateProviderCleanup = previousCleanup }()
-			if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
-				t.Fatalf("first restart recovery: %v", err)
-			}
-			if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
-				t.Fatalf("second restart recovery: %v", err)
-			}
-			preparations, _ = os.ReadDir(filepath.Join(stateRoot, "full-gate-preparing"))
-			recovery, _ = os.ReadDir(filepath.Join(stateRoot, "full-gate-recovery"))
-			if len(preparations) != 0 || len(recovery) != 0 {
-				t.Fatalf("recovery did not retire crash state: preparing=%d recovery=%d", len(preparations), len(recovery))
-			}
-			durable, findErr := store.FindDepartureRun(run.ID)
-			if findErr != nil || durable == nil {
-				t.Fatalf("read departure: %#v, %v", durable, findErr)
-			}
-			wantOutcomes := 0
-			if tc.published {
-				wantOutcomes = 1
-			}
-			if len(durable.Gate.ProviderOutcomes) != wantOutcomes {
-				t.Fatalf("published=%t outcomes=%#v", tc.published, durable.Gate.ProviderOutcomes)
-			}
-		})
+	request.RunID = "run-b" // same PID-like value must not authorize a new scope.
+	if _, err := readV7FullGateProviderResult(request); err == nil {
+		t.Fatal("receipt from a different run was accepted")
 	}
 }
 
@@ -1069,27 +1334,6 @@ func TestV7FullGateProviderRecoveryCrashSeamsConverge(t *testing.T) {
 				t.Fatalf("durable recovered outcome = %#v, %v", durable, findErr)
 			}
 		})
-	}
-}
-
-func TestV7FullGateProviderCancellationRemovesOnlyUnboundArtifacts(t *testing.T) {
-	stateRoot := t.TempDir()
-	scope, request, result, receipt := writeV7ProviderOutcomeFixture(t, stateRoot, "departure-cancel-artifact", v7FullGateOutcomeFailed)
-	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
-		t.Fatal(err)
-	}
-	unbound := filepath.Join(stateRoot, "artifacts", "promotion-gates", "unbound-summary.log")
-	if err := os.WriteFile(unbound, []byte("unbound summary\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := removeV7ProvablyUnboundPromotionArtifacts(stateRoot, []string{request.ArtifactRef, unbound}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(request.ArtifactRef); err != nil {
-		t.Fatalf("cancellation removed journal-bound evidence: %v", err)
-	}
-	if _, err := os.Stat(unbound); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("provably unbound cancellation artifact remained: %v", err)
 	}
 }
 
@@ -1301,354 +1545,166 @@ func TestV7FullGateProviderRecoveryTreatsPublishedGreenAsTerminalAuthority(t *te
 	}
 }
 
-func TestV7FullGateProviderArtifactBindingCrashRecoversExactRedEvidence(t *testing.T) {
+func TestV7FullGateProviderReservationIsWrittenBeforeLaunch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scope", "request.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeV7FullGateReservation(path, []byte("reserved\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "reserved\n" {
+		t.Fatalf("durable reservation = %q, %v", got, err)
+	}
+	if err := writeV7FullGateReservation(path, []byte("replacement")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("reservation replacement error = %v, want os.ErrExist", err)
+	}
+}
+
+func TestV7FullGateProviderRetainsFailedCleanupRecordUntilRecoverySucceeds(t *testing.T) {
 	stateRoot := t.TempDir()
-	store, run := openV7ProviderRecoveryRun(t, stateRoot, "artifact-bound-before-departure-cas")
-	defer store.Close()
-	scope, request, result, receipt := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomeProvider)
-	exact := []byte("exact red provider evidence\nwith stable bytes\n")
-	if err := os.Remove(request.ArtifactRef); err != nil {
+	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
+	old := runV7FullGateProviderCleanup
+	defer func() { runV7FullGateProviderCleanup = old }()
+	runV7FullGateProviderCleanup = func(context.Context, string, *v7FullGateProviderScope, []string, io.Writer) error {
+		return errors.New("fixture cleanup unavailable")
+	}
+	provider := &v7ExternalFullGateProvider{path: request.ProviderPath, executableIdentity: request.ExecutableID}
+	if _, err := provider.cleanup(&v7FullGateProviderScope{request: request, requestPath: requestPath}); err == nil {
+		t.Fatal("fixture cleanup unexpectedly succeeded")
+	}
+	if _, err := os.Stat(requestPath); err != nil {
+		t.Fatalf("failed cleanup erased recovery record: %v", err)
+	}
+	if err := os.WriteFile(request.ResultPath, []byte("{malformed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := NewDaemon(stateRoot); err == nil || !errors.Is(err, errV7FullGateProvider) {
+		t.Fatalf("daemon accepted failed cleanup scope: %v", err)
 	}
-	if err := writeV7DurablePromotionArtifactAtRoot(state, request.ArtifactRef, exact); err != nil {
-		_ = state.Close()
-		t.Fatal(err)
+	runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
+		result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID}
+		result.Outcome = v7FullGateOutcomeCanceled
+		v7SealFullGateProviderResult(request, &result)
+		return scope.persistResult(result)
 	}
-	if err := state.Close(); err != nil {
-		t.Fatal(err)
+	if daemon, err := NewDaemon(stateRoot); err != nil {
+		t.Fatalf("certified cleanup did not converge at daemon startup: %v", err)
+	} else {
+		_ = daemon.Close()
 	}
-	if err := persistV7FullGateProviderOutcomeJournal(stateRoot, scope, request, result, receipt); err != nil {
-		t.Fatal(err)
-	}
-	injected := errors.New("fixture crash after fsynced artifact journal binding")
-	previous := v7FullGateDurabilityHook
-	v7FullGateDurabilityHook = func(stage string) error {
-		if stage == "outcome_artifact_bound" {
-			return injected
-		}
-		return nil
-	}
-	err = recoverV7FullGateProviderScopes(stateRoot, store)
-	v7FullGateDurabilityHook = previous
-	if !errors.Is(err, injected) {
-		t.Fatalf("artifact-binding crash seam = %v", err)
-	}
-	durable, err := store.FindDepartureRun(run.ID)
-	if err != nil || durable == nil || durable.State == DepartureStateBlocked {
-		t.Fatalf("departure CAS happened before bound-journal seam: %#v, %v", durable, err)
+	if _, err := os.Stat(filepath.Dir(requestPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reconciled cleanup scope remained: %v", err)
 	}
 	journalPath := v7FullGateProviderOutcomeJournalPath(stateRoot, request.DepartureID, request.RequestDigest)
 	journal, err := readV7FullGateProviderOutcomeJournal(journalPath)
-	if err != nil || journal.ArtifactRef != request.ArtifactRef || journal.ArtifactDigest != v7FullGateTextDigest(string(exact)) {
-		t.Fatalf("durable artifact binding = %#v, %v", journal, err)
+	if err != nil {
+		t.Fatalf("read bounded actionable cleanup outcome: %v", err)
 	}
-	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
-		t.Fatalf("restart artifact recovery: %v", err)
+	if !journal.Reconciled || journal.ScopePath != "" || journal.Action == "" {
+		t.Fatalf("cleanup outcome was not retained as bounded actionable evidence: %#v", journal)
 	}
-	durable, err = store.FindDepartureRun(run.ID)
-	if err != nil || durable == nil || durable.State != DepartureStateBlocked || durable.Gate.ArtifactRef != request.ArtifactRef || len(durable.Gate.Failure.ArtifactRefs) != 1 || durable.Gate.Failure.ArtifactRefs[0] != request.ArtifactRef {
-		t.Fatalf("recovered departure evidence = %#v, %v", durable, err)
-	}
-	got, err := os.ReadFile(durable.Gate.ArtifactRef)
-	if err != nil || !bytes.Equal(got, exact) {
-		t.Fatalf("recovered artifact content = %q, %v", got, err)
-	}
-	if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("artifact-bound recovery scope remained: %v", err)
-	}
-	if _, err := os.Stat(journalPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("artifact-bound recovery journal remained: %v", err)
+	if daemon, err := NewDaemon(stateRoot); err != nil {
+		t.Fatalf("second startup did not converge over actionable outcome: %v", err)
+	} else {
+		_ = daemon.Close()
 	}
 }
 
-func TestV7FullGateProviderRecoveryFailsUnjournaledGreenClosed(t *testing.T) {
-	stateRoot := t.TempDir()
-	store, run := openV7ProviderRecoveryRun(t, stateRoot, "unjournaled-green")
-	defer store.Close()
-	scope, request, _, _ := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomePassed)
-	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
-		t.Fatal(err)
-	}
-	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
-		t.Fatalf("second recovery: %v", err)
-	}
-	durable, err := store.FindDepartureRun(run.ID)
-	if err != nil || durable == nil || durable.Gate.Status != string(v7FullGateOutcomeProvider) || len(durable.Gate.ProviderOutcomes) != 1 || durable.Gate.ProviderOutcomes[0].Outcome != string(v7FullGateOutcomeProvider) {
-		t.Fatalf("unjournaled green was not routed fail-closed: %#v, %v", durable, err)
-	}
-	if entry, err := store.FindGateLedger(request.ProjectID, request.CandidateDigest, request.Command, request.Profile, request.Toolchain); err != nil || entry != nil {
-		t.Fatalf("unjournaled green entered ledger: %#v, %v", entry, err)
-	}
-	if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("unjournaled green scope remained: %v", err)
-	}
-}
-
-func TestV7FullGateProviderRecoveryCleansDurableRequestBeforeWrapper(t *testing.T) {
-	stateRoot := t.TempDir()
-	store, run := openV7ProviderRecoveryRun(t, stateRoot, "request-before-wrapper")
-	defer store.Close()
-	scope, request, _, _ := writeV7ProviderOutcomeFixture(t, stateRoot, run.ID, v7FullGateOutcomePassed)
-	if err := os.Remove(request.ResultPath); err != nil {
-		t.Fatal(err)
-	}
-	previous := runV7FullGateProviderCleanup
-	runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
-		result := v7CertifiedProviderResultFixture(request, v7FullGateOutcomeCanceled)
-		return scope.persistResult(result)
-	}
-	defer func() { runV7FullGateProviderCleanup = previous }()
-	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
-		t.Fatal(err)
-	}
-	if err := recoverV7FullGateProviderScopes(stateRoot, store); err != nil {
-		t.Fatalf("second recovery: %v", err)
-	}
-	durable, err := store.FindDepartureRun(run.ID)
-	if err != nil || durable == nil || len(durable.Gate.ProviderOutcomes) != 1 || durable.Gate.ProviderOutcomes[0].Outcome != string(v7FullGateOutcomeCanceled) {
-		t.Fatalf("pre-wrapper recovery outcome = %#v, %v", durable, err)
-	}
-	if _, err := os.Stat(filepath.Dir(scope.requestPath)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pre-wrapper scope remained: %v", err)
-	}
-}
-
-func TestV7FullGateProviderNormalizesOverrunAndOutcomeMismatch(t *testing.T) {
-	_, request, passed, _ := writeV7ProviderOutcomeFixture(t, t.TempDir(), "departure-normalize", v7FullGateOutcomePassed)
-	for _, reason := range []string{"daemon_measured_runtime_exceeded", "cleanup_outcome_mismatch_expected_timed_out", "wrapper_failed_after_gate_pass"} {
-		got := normalizedV7FullGateProviderFailure(request, passed, reason)
-		if got.Outcome != v7FullGateOutcomeProvider || got.Error != reason || got.ResultDigest != v7FullGateProviderResultDigest(got) || got.ReceiptDigest != v7FullGateReceiptDigest(request, got) {
-			t.Fatalf("normalization %q = %#v", reason, got)
-		}
-	}
-}
-
-func TestV7FullGateProviderContractFailuresAreTyped(t *testing.T) {
-	t.Run("identity", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "provider")
-		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		provider := newExternalV7ProviderFixture(t, path, t.TempDir())
-		provider.executableIdentity = "sha256:" + strings.Repeat("0", 64)
-		invocation, err := provider.Run(context.Background(), t.TempDir(), "fixture")
-		if err == nil || invocation.Outcome != v7FullGateOutcomeProvider || invocation.Receipt.RequestDigest != "" {
-			t.Fatalf("identity failure invocation = %#v, %v", invocation, err)
-		}
-	})
-
-	t.Run("start", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "provider")
-		if err := os.WriteFile(path, []byte("not-an-executable-format\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		provider := newExternalV7ProviderFixture(t, path, t.TempDir())
-		invocation, err := provider.Run(context.Background(), t.TempDir(), "fixture")
-		if err == nil || invocation.Outcome != v7FullGateOutcomeProvider || invocation.Receipt.RequestDigest != "" {
-			t.Fatalf("start failure invocation = %#v, %v", invocation, err)
-		}
-	})
-
-	t.Run("invalid result with certified cleanup", func(t *testing.T) {
-		stateRoot := t.TempDir()
-		path, err := exec.LookPath("true")
-		if err != nil {
-			t.Fatal(err)
-		}
-		provider := newExternalV7ProviderFixture(t, path, stateRoot)
-		previous := runV7FullGateProviderCleanup
-		runV7FullGateProviderCleanup = func(_ context.Context, _ string, scope *v7FullGateProviderScope, _ []string, _ io.Writer) error {
-			request, err := scope.readRequest()
-			if err != nil {
-				return err
+func TestV7FullGateProviderTypedOutcomesGateLedgerCertification(t *testing.T) {
+	for _, outcome := range []v7FullGateOutcome{v7FullGateOutcomePassed, v7FullGateOutcomeFailed, v7FullGateOutcomeProvider, v7FullGateOutcomeCanceled, v7FullGateOutcomeTimedOut} {
+		t.Run(string(outcome), func(t *testing.T) {
+			control := t.TempDir()
+			request := v7FullGateProviderRequest{
+				Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: "run-" + string(outcome), Workspace: control, Command: "go test ./...",
+				ProjectID: "project", DepartureID: "departure", CandidateDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Profile: "full", ProviderProfile: "fixture", Toolchain: "toolchain",
+				ResultPath: filepath.Join(control, "result.json"), ProviderID: "sha256:abababababababababababababababababababababababababababababababab", ExecutableID: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", RuntimeDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", ClientDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", PolicyDigest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", AttestationDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+				RequiredCapabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, ImplementationID: v7KnownFullGateProvider, CapabilitySchema: v7FullGateCapabilitySchema, ExpectedImageOrVMID: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+				MaxCommandBytes: v7FullGateCommandMaxBytes, MaxOutputBytes: 256, MaxRuntimeMS: 1_000, MaxArtifactBytes: 1_024,
 			}
-			result := v7CertifiedProviderResultFixture(request, v7FullGateOutcomePassed)
-			return scope.persistResult(result)
-		}
-		defer func() { runV7FullGateProviderCleanup = previous }()
-		invocation, err := provider.Run(context.Background(), t.TempDir(), "fixture")
-		if err == nil || invocation.Outcome != v7FullGateOutcomeProvider || invocation.Receipt.Outcome != string(v7FullGateOutcomeProvider) || !v7FullGateDigest(invocation.Receipt.RequestDigest) {
-			t.Fatalf("invalid-result failure invocation = %#v, %v", invocation, err)
-		}
-		journalPath := v7FullGateProviderOutcomeJournalPath(stateRoot, invocation.Receipt.DepartureID, invocation.Receipt.RequestDigest)
-		journal, readErr := readV7FullGateProviderOutcomeJournal(journalPath)
-		if readErr != nil || journal.Result.Outcome != v7FullGateOutcomeProvider || journal.Result.Error != "invalid_run_result_before_certified_cleanup" {
-			t.Fatalf("invalid-result journal = %#v, %v", journal, readErr)
-		}
-		if err := writeV7DurablePromotionArtifactAtRoot(provider.state, provider.binding.ArtifactRef, []byte("invalid result evidence\n")); err != nil {
-			t.Fatal(err)
-		}
-		if err := provider.BindFullGateProviderArtifact(provider.binding.ArtifactRef, []GateProviderReceipt{invocation.Receipt}); err != nil {
-			t.Fatal(err)
-		}
-		if err := provider.FinalizeFullGateProviderOutcome(invocation.Receipt); err != nil {
-			t.Fatalf("finalize invalid-result outcome: %v", err)
-		}
-	})
-}
-
-func TestV7FullGateProviderClosureDriftInvalidatesLedgerReceipt(t *testing.T) {
-	receipt := testV7FullGateProviderReceipt
-	provider := &v7ExternalFullGateProvider{
-		identity: receipt.ProviderClosureDigest, executableIdentity: receipt.ProviderDigest, clientDigest: receipt.ClientDigest,
-		runtimeDigest: receipt.RuntimeDigest, policyDigest: receipt.PolicyDigest, attestationDigest: receipt.AttestationDigest,
-		imageOrVMID: receipt.ImageOrVMID, profile: receipt.ProviderProfile,
-	}
-	if !provider.MatchesGateProviderReceipt(&receipt) {
-		t.Fatal("exact provider closure rejected its receipt")
-	}
-	provider.identity = "sha256:" + strings.Repeat("0", 64)
-	if provider.MatchesGateProviderReceipt(&receipt) {
-		t.Fatal("provider closure drift reused a stale ledger receipt")
+			request.RequestDigest = v7FullGateRequestDigest(request)
+			result := v7FullGateProviderResult{Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "scope-" + string(outcome), State: "cleaned", Outcome: outcome, Output: "bounded", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest, AttestationDigest: request.AttestationDigest, Capabilities: request.RequiredCapabilities, ImplementationID: request.ImplementationID, CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true, ImageOrVMID: request.ExpectedImageOrVMID, RuntimeMS: 12, ArtifactBytes: 16}
+			v7SealFullGateProviderResult(request, &result)
+			raw, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(request.ResultPath, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readV7FullGateProviderResult(request)
+			if err != nil {
+				t.Fatalf("read typed result: %v", err)
+			}
+			provider := &v7ExternalFullGateProvider{executableIdentity: request.ExecutableID, clientDigest: request.ClientDigest, runtimeDigest: request.RuntimeDigest, policyDigest: request.PolicyDigest, attestationDigest: request.AttestationDigest, imageOrVMID: request.ExpectedImageOrVMID, profile: request.ProviderProfile}
+			receipt, err := provider.recordReceipt(nil, request, got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			certified := v7CertifiedGateProviderReceipt(&receipt)
+			if certified != (outcome == v7FullGateOutcomePassed) {
+				t.Fatalf("outcome %q certified=%t", outcome, certified)
+			}
+		})
 	}
 }
 
-func newExternalV7ProviderFixture(t *testing.T, path, stateRoot string) *v7ExternalFullGateProvider {
-	t.Helper()
-	raw, err := os.ReadFile(path)
+func (scope *v7FullGateProviderScope) readRequest() (v7FullGateProviderRequest, error) {
+	if scope == nil || scope.state == nil {
+		return v7FullGateProviderRequest{}, fmt.Errorf("%w: provider request state authority is unavailable", errV7FullGateProvider)
+	}
+	return readV7FullGateProviderRequestAtRoot(scope.state, scope.requestRel)
+}
+
+func writeV7FullGateReservation(path string, raw []byte) error {
+	state, err := openV7FullGateStateRoot(filepath.Dir(filepath.Dir(path)))
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	sum := sha256.Sum256(raw)
-	executableID := fmt.Sprintf("sha256:%x", sum[:])
-	if _, verified, verifyErr := verifyV7TrustedProviderExecutable(path); verifyErr == nil {
-		executableID = verified
-	}
-	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
-	return &v7ExternalFullGateProvider{
-		path: path, kind: "container", identity: digest('a'), executableIdentity: executableID,
-		runtimeDigest: digest('b'), clientDigest: digest('c'), policyDigest: digest('d'), attestationDigest: digest('e'),
-		capabilities: []string{"candidate_read_only", "network_denied", "control_env_denied"}, implementationID: v7KnownFullGateProvider,
-		capabilitySchema: v7FullGateCapabilitySchema, imageOrVMID: digest('f'), profile: "fixture", stateRoot: stateRoot,
-		recoveryRoot: filepath.Join(stateRoot, "full-gate-recovery"),
-		binding:      v7FullGateProviderBinding{ProjectID: "project", DepartureID: "departure-contract-failure", CandidateDigest: digest('1'), GateProfile: "full", ProviderProfile: "fixture", Toolchain: "toolchain", ArtifactRef: filepath.Join(stateRoot, "artifacts", "promotion-gates", "fixture.log")},
-	}
-}
-
-func writeV7ProviderOutcomeFixture(t *testing.T, stateRoot, departureID string, outcome v7FullGateOutcome) (*v7FullGateProviderScope, v7FullGateProviderRequest, v7FullGateProviderResult, GateProviderReceipt) {
-	t.Helper()
-	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
-	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
-	request.ProjectID = "project"
-	request.DepartureID = departureID
-	request.CandidateDigest = digest('1')
-	request.Profile = "full"
-	request.ProviderProfile = "fixture"
-	request.Toolchain = "fixture-toolchain"
-	request.ArtifactRef = filepath.Join(stateRoot, "artifacts", "promotion-gates", "fixture-"+strings.ToLower(newRecordID())+".log")
-	request.ProviderID = digest('2')
-	request.ClientDigest = digest('3')
-	request.MaxCommandBytes = v7FullGateCommandMaxBytes
-	request.MaxOutputBytes = 1_024
-	request.MaxRuntimeMS = 1_000
-	request.MaxArtifactBytes = 1_024
-	request.RequestDigest = v7FullGateRequestDigest(request)
-	if err := os.MkdirAll(filepath.Dir(request.ArtifactRef), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(request.ArtifactRef, []byte("exact provider evidence\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.Marshal(request)
+	defer state.Close()
+	rel, err := state.relative(path)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	if err := os.WriteFile(requestPath, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	result := v7CertifiedProviderResultFixture(request, outcome)
-	raw, err = json.Marshal(result)
+	return state.writeDurable(rel, raw, 0o600, false)
+}
+
+func readV7FullGateProviderResult(request v7FullGateProviderRequest) (v7FullGateProviderResult, error) {
+	state, err := openV7FullGateStateRoot(filepath.Dir(request.ResultPath))
 	if err != nil {
-		t.Fatal(err)
+		return v7FullGateProviderResult{}, err
 	}
-	if err := os.WriteFile(request.ResultPath, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	scope := &v7FullGateProviderScope{request: request, requestPath: requestPath}
-	return scope, request, result, v7GateProviderReceiptForResult(request, result)
+	defer state.Close()
+	raw, err := state.readRegular(filepath.Base(request.ResultPath), v7FullGateResultMaxBytes, false)
+	return decodeV7FullGateProviderResult(raw, err, request)
 }
 
-func v7CertifiedProviderResultFixture(request v7FullGateProviderRequest, outcome v7FullGateOutcome) v7FullGateProviderResult {
-	result := v7FullGateProviderResult{
-		Schema: v7FullGateProviderSchema, Contract: v7FullGateIsolationContract, RunID: request.RunID, LifecycleID: "fixture-scope", State: "cleaned", Outcome: outcome,
-		Output: "fixture-output", ProviderID: request.ProviderID, RequestDigest: request.RequestDigest, RuntimeDigest: request.RuntimeDigest, PolicyDigest: request.PolicyDigest,
-		AttestationDigest: request.AttestationDigest, Capabilities: append([]string(nil), request.RequiredCapabilities...), ImplementationID: request.ImplementationID,
-		CapabilitySchema: request.CapabilitySchema, CandidateReadOnlyMeasured: true, NetworkMode: "none", ControlEnvAbsent: true, ControlMountsAbsent: true,
-		ImageOrVMID: request.ExpectedImageOrVMID, RuntimeMS: 10, ArtifactBytes: 16,
-	}
-	v7SealFullGateProviderResult(request, &result)
-	return result
+func v7FullGateProviderOutcomeJournalPath(stateRoot, departureID, requestDigest string) string {
+	return filepath.Join(stateRoot, v7FullGateProviderOutcomeJournalRelPath(departureID, requestDigest))
 }
 
-func writeV7RawJournalFixture(t *testing.T, path string, journal v7FullGateProviderOutcomeJournal) {
-	t.Helper()
-	raw, err := json.Marshal(journal)
+func persistV7FullGateProviderOutcomeJournal(stateRoot string, scope *v7FullGateProviderScope, request v7FullGateProviderRequest, result v7FullGateProviderResult, receipt GateProviderReceipt) error {
+	if strings.TrimSpace(stateRoot) == "" {
+		stateRoot = filepath.Dir(filepath.Dir(filepath.Dir(scope.requestPath)))
+	}
+	state, err := openV7FullGateStateRoot(stateRoot)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	defer state.Close()
+	return persistV7FullGateProviderOutcomeJournalAtRoot(state, scope, request, result, receipt)
 }
 
-func openV7ProviderRecoveryRun(t *testing.T, stateRoot, suffix string) (*RuntimeStore, DepartureRun) {
-	t.Helper()
-	store, err := OpenRuntimeStore(stateRoot)
+func readV7FullGateProviderOutcomeJournal(path string) (v7FullGateProviderOutcomeJournal, error) {
+	stateRoot := filepath.Dir(filepath.Dir(path))
+	state, err := openV7FullGateStateRoot(stateRoot)
 	if err != nil {
-		t.Fatal(err)
+		return v7FullGateProviderOutcomeJournal{}, err
 	}
-	run, _, err := store.GetOrCreateDepartureRun(DepartureRun{ProjectID: "project", PolicyID: "provider-recovery-" + strings.ReplaceAll(suffix, " ", "-"), ScheduledWindow: "2026-07-26T00:00:00Z", State: DepartureStateGating})
+	defer state.Close()
+	rel, err := state.relative(path)
 	if err != nil {
-		store.Close()
-		t.Fatal(err)
+		return v7FullGateProviderOutcomeJournal{}, err
 	}
-	return store, run
+	return readV7FullGateProviderOutcomeJournalAtRoot(state, rel)
 }
-
-// This fixture models the adversarial gate, not a host process tree: the
-// command double-forks, calls setsid, and its root exits while a daemon remains.
-// A lifecycle provider cannot report success until its entire container/VM
-// scope is gone, which is precisely the property Darwin ancestry polling lacks.
-func TestV7FullGateProviderContractReapsReparentedSurvivorOnExitAndCancel(t *testing.T) {
-	provider := &fakeV7FullGateProvider{}
-	if _, err := provider.Run(context.Background(), "/candidate", "double-fork-setsid"); err != nil {
-		t.Fatal(err)
-	}
-	if provider.survivor {
-		t.Fatal("provider reported root exit while reparented survivor remained")
-	}
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := provider.Run(cancelled, "/candidate", "double-fork-setsid"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled lifecycle scope error = %v", err)
-	}
-	if provider.survivor {
-		t.Fatal("provider cancellation left a reparented survivor")
-	}
-	if provider.cleanups != 2 {
-		t.Fatalf("cleanup count = %d, want normal exit and cancellation recovery", provider.cleanups)
-	}
-}
-
-type fakeV7FullGateProvider struct {
-	survivor bool
-	cleanups int
-}
-
-func (p *fakeV7FullGateProvider) Run(ctx context.Context, _, _ string) (v7FullGateProviderInvocation, error) {
-	// The child is intentionally outside the root process group/ancestry. The
-	// provider owns the fixture's lifecycle scope, so cleanup is scope-wide.
-	p.survivor = true
-	p.survivor = false
-	p.cleanups++
-	if err := ctx.Err(); err != nil {
-		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeCanceled}, err
-	}
-	return v7FullGateProviderInvocation{Output: []byte("provider-cleaned"), Outcome: v7FullGateOutcomePassed}, nil
-}
-
-func (p *fakeV7FullGateProvider) Close() error { return nil }

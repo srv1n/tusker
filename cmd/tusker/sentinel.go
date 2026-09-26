@@ -606,7 +606,3 @@ func parseSentinelTimestamp(value string) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
-
-func runtimeRunKey(projectID, recordID string) string {
-	return strings.TrimSpace(projectID) + "\x00" + strings.TrimSpace(recordID)
-}

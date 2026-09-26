@@ -250,11 +250,11 @@ export const api = {
     post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "set", scope, level, lane, profiles, revision }),
   modelLevelsReset: (level: string, lane: string, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
     post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "reset", scope, level, lane, revision }),
-  modelProfileSet: (profile: { name: string; displayName?: string; eligibleTiers?: string[]; harness: string; model: string; effort: string; preset?: string; access?: AgentAccessV1 }, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
+  modelProfileSet: (profile: { name: string; displayName?: string; eligibleTiers?: string[]; harness: string; model: string; effort: string; preset?: string; access?: AgentAccessV1 }, revision: string, scope = "global", projectId?: string): Promise<ModelLevelsReport> =>
     post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "profile-set", scope, ...profile, revision }),
 	modelPrivateFoldersSet: (privateFolders: string[], revision: string, scope = "global", projectId?: string): Promise<ModelLevelsReport> =>
 		post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action: "private-folders", scope, privateFolders, revision }),
-	modelProfileLifecycle: (action: "profile-disable" | "profile-enable" | "profile-remove", name: string, revision: string, scope = "project", projectId?: string): Promise<ModelLevelsReport> =>
+	modelProfileLifecycle: (action: "profile-disable" | "profile-enable" | "profile-remove", name: string, revision: string, scope = "global", projectId?: string): Promise<ModelLevelsReport> =>
 		post<ModelLevelsReport & { ok?: boolean }>(withProject("/models", projectId), { action, scope, name, revision }),
   executions: (params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionGraph> => {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value) as [string, string][]).toString();

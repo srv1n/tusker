@@ -208,16 +208,6 @@ func loadedRegisteredProjects(loaded []loadedRegisteredProject) []RegisteredProj
 	return projects
 }
 
-func loadableRegisteredProjects(loaded []loadedRegisteredProject) []RegisteredProject {
-	projects := make([]RegisteredProject, 0, len(loaded))
-	for _, item := range loaded {
-		if item.Loadable() {
-			projects = append(projects, item.Project)
-		}
-	}
-	return projects
-}
-
 func projectQuarantinedError(project RegisteredProject) error {
 	label := firstNonEmpty(registeredProjectLabel(project), project.ProjectID, project.RepoRoot)
 	message := "registered project is quarantined: " + label

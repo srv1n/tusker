@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, ArrowUpRight, Check } from "lucide-react";
 import { Mono } from "@/components/ui/primitives";
@@ -19,6 +19,7 @@ import { HeaderCard } from "./HeaderCard";
 import { DocBodyEditor } from "./DocBodyEditor";
 import { useDocgraphEditor, type KnowledgeDocEditor } from "./useDocgraphEditor";
 import { ConflictNotice, DefectsNotice, ErrorNotice, SavedNotice } from "./banners";
+import { contentsOf } from "./tree";
 
 const route = getRouteApi("/p/$projectId/knowledge/$subject");
 
@@ -108,8 +109,10 @@ function DocBody({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   return (
-    <main aria-label="Document reader" className="relative flex h-full flex-col">
+    <main aria-label="Document reader" className="relative flex h-full flex-col bg-raised">
       <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-end px-4 sm:px-6">
         <div
           aria-label="Document actions"
@@ -117,11 +120,45 @@ function DocBody({
         >
           <AutoSaveTick state={ed.saveState} />
           <SaveButton dirty={ed.dirty} saving={ed.saving} onSave={ed.save} />
+          <button
+            type="button"
+            popoverTarget="doc-meta"
+            className="h-7 rounded-lg px-2.5 font-mono text-[12px] text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          >
+            Meta
+          </button>
           <ViewSwitch projectId={projectId} active="files" />
         </div>
       </div>
-      <div className="tk-scroll flex-1 overflow-y-auto">
-        <article className="mx-auto w-full max-w-[46rem] px-4 pb-24 pt-7 sm:px-6">
+      {/* Front-matter tucked behind the toolbar's Meta button. The native
+          popover gives light-dismiss and Escape without any state here. */}
+      <div
+        id="doc-meta"
+        popover="auto"
+        aria-label="Document metadata"
+        className="fixed inset-auto right-4 top-14 m-0 w-[min(36rem,calc(100vw-2rem))] rounded-xl border border-line bg-raised p-4 text-ink shadow-lg sm:right-6"
+      >
+        <TruthfulStatus doc={doc} />
+        <HeaderCard
+          kind={doc.kind}
+          subject={doc.subject}
+          path={doc.path}
+          status={ed.status}
+          onStatusChange={ed.setStatus}
+          conformance={ed.conformance}
+          onConformanceChange={ed.setConformance}
+          lastVerified={ed.lastVerified}
+          onLastVerifiedChange={ed.setLastVerified}
+          keywords={ed.keywords}
+          onAddKeyword={ed.addKeyword}
+          onRemoveKeyword={ed.removeKeyword}
+          partOf={ed.partOf}
+          onPartOfChange={ed.setPartOf}
+          subjects={subjects}
+        />
+      </div>
+      <div ref={scrollRef} className="tk-scroll flex flex-1 justify-center gap-12 overflow-y-auto px-4 sm:px-8">
+        <article className="w-full min-w-0 max-w-[48rem] pb-32 pt-20">
           {doc.successor && (
             <Link
               to="/p/$projectId/knowledge/$subject"
@@ -145,26 +182,6 @@ function DocBody({
 
           <SaveBanners ed={ed} />
 
-          <TruthfulStatus doc={doc} />
-
-          <HeaderCard
-            kind={doc.kind}
-            subject={doc.subject}
-            path={doc.path}
-            status={ed.status}
-            onStatusChange={ed.setStatus}
-            conformance={ed.conformance}
-            onConformanceChange={ed.setConformance}
-            lastVerified={ed.lastVerified}
-            onLastVerifiedChange={ed.setLastVerified}
-            keywords={ed.keywords}
-            onAddKeyword={ed.addKeyword}
-            onRemoveKeyword={ed.removeKeyword}
-            partOf={ed.partOf}
-            onPartOfChange={ed.setPartOf}
-            subjects={subjects}
-          />
-
           {/* The rendered document is the editor — always editable, styled to
               match the reader. Keyed on the reload generation, NOT the rev: our
               own autosaves bump the rev and must never remount it mid-typing. */}
@@ -183,8 +200,65 @@ function DocBody({
           <OutgoingLinks projectId={projectId} links={doc.links} />
           <Backlinks projectId={projectId} backlinks={doc.backlinks} />
         </article>
+        <Contents body={doc.body} scrollRef={scrollRef} />
       </div>
     </main>
+  );
+}
+
+/**
+ * Right-hand numbered contents (wide viewports). Entries map by index onto the
+ * editor's rendered h2/h3 elements; the lit entry is the last heading scrolled
+ * past the top of the reader.
+ */
+function Contents({ body, scrollRef }: { body: string; scrollRef: RefObject<HTMLDivElement | null> }) {
+  const entries = useMemo(() => contentsOf(body), [body]);
+  const [active, setActive] = useState(0);
+
+  const headings = useCallback(
+    () => Array.from(scrollRef.current?.querySelectorAll<HTMLElement>(".knowledge-prose :is(h2, h3)") ?? []),
+    [scrollRef],
+  );
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = (): void => {
+      const top = el.getBoundingClientRect().top + 120;
+      let idx = 0;
+      headings().forEach((h, i) => {
+        if (h.getBoundingClientRect().top < top) idx = i;
+      });
+      setActive(idx);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [scrollRef, headings]);
+
+  if (entries.length < 2) return null;
+  return (
+    <nav aria-label="Contents" className="sticky top-0 hidden w-56 flex-none self-start pt-28 font-mono xl:block">
+      <div className="mb-4 text-[11px] uppercase tracking-[0.14em] text-faint">Contents</div>
+      <ol className="flex flex-col gap-2.5">
+        {entries.map((e, i) => (
+          <li key={i} className={cn("flex gap-3", e.level === 3 && "pl-4")}>
+            <span className={cn("w-7 flex-none text-[12px]", i === active ? "text-accent" : "text-faint")}>
+              {e.number}
+            </span>
+            <button
+              type="button"
+              onClick={() => headings()[i]?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              className={cn(
+                "min-w-0 text-left text-[12.5px] leading-snug transition-colors hover:text-ink",
+                i === active ? "font-semibold text-ink" : "text-muted",
+              )}
+            >
+              {e.text}
+            </button>
+          </li>
+        ))}
+      </ol>
+    </nav>
   );
 }
 
@@ -199,7 +273,7 @@ function TruthfulStatus({ doc }: { doc: DocgraphDocDetail }) {
   const conformance = doc.code_conformance || "unverified";
   const scopes = (doc.describes ?? []).filter((s) => s.trim() !== "");
   return (
-    <p aria-label="Document status" className="mb-4 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">
+    <p aria-label="Document status" className="mb-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[12px] text-muted">
       <span className="font-medium text-ink-soft">{truthfulState(lifecycle, conformance)}</span>
       <ConformanceChip conformance={conformance} />
       {(doc.last_verified || scopes.length > 0) && (

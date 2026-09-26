@@ -247,7 +247,7 @@ exit 0
 	t.Cleanup(func() { liveRegistry.Unregister(handle.attemptID) })
 
 	daemon := &Daemon{store: server.store}
-	if err := daemon.InterruptRun(context.Background(), original.RecordID); err != nil {
+	if err := daemon.InterruptRunScoped(context.Background(), "", original.RecordID); err != nil {
 		t.Fatal(err)
 	}
 	assertEqual(t, 1, handle.interrupts, "matching live handle receives interrupt")
@@ -293,7 +293,7 @@ func TestRunsInterruptRuntimeRunDoesNotOverwriteConcurrentLeaseClaim(t *testing.
 		t.Fatal(err)
 	}
 	var claimErr error
-	_, viaDaemon, err := interruptRuntimeRunWithHook(DefaultStateRoot(), server.store, original.RecordID, func() {
+	_, viaDaemon, err := interruptRuntimeRunWithHookScoped(DefaultStateRoot(), server.store, "", original.RecordID, func() {
 		var claimed bool
 		claimed, claimErr = server.store.ClaimRunLease(original.ProjectID, original.RecordID, "new-attempt", 1, defaultRunLeaseTTL, time.Now().UTC(), true, false, RuntimeLeaseClaimPrecondition{
 			ExpectedLeaseState: LeaseStateUnclaimed, ExpectedOwner: "", ExpectedLeaseGeneration: 0, ExpectedWorkRevision: original.WorkRevision,

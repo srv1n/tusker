@@ -17,6 +17,12 @@ func TestFactoryBootstrapDisposableDogfood(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "fresh-runtime")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
 	originalCatalog := runnerCatalogCommand
+	stubRunnerCatalogForTest(t, []RunnerCatalogModel{
+		{Model: "gpt-6-luna", Efforts: []string{"low", "medium"}, DefaultEffort: "medium"},
+		{Model: "gpt-6-terra", Efforts: []string{"low", "medium", "high"}, DefaultEffort: "medium"},
+		{Model: "gpt-6-sol", Efforts: []string{"medium", "high", "xhigh"}, DefaultEffort: "xhigh"},
+		{Model: "auto-review", Hidden: true, Efforts: []string{"low"}},
+	})
 	t.Cleanup(func() { runnerCatalogCommand = originalCatalog })
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
 		switch name {
@@ -24,7 +30,7 @@ func TestFactoryBootstrapDisposableDogfood(t *testing.T) {
 			if len(args) == 1 && args[0] == "--version" {
 				return []byte("codex 0.99.0-test\n"), nil
 			}
-			return []byte(`{"models":[{"slug":"gpt-5.6-luna","visibility":"visible","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"}]},{"slug":"gpt-5.6-terra","visibility":"visible","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-5.6-sol","visibility":"visible","default_reasoning_level":"xhigh","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]},{"slug":"auto-review","visibility":"hidden","supported_reasoning_levels":[{"effort":"low"}]}]}`), nil
+			return []byte(`{"models":[{"slug":"gpt-6-luna","visibility":"visible","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"}]},{"slug":"gpt-6-terra","visibility":"visible","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-sol","visibility":"visible","default_reasoning_level":"xhigh","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]},{"slug":"auto-review","visibility":"hidden","supported_reasoning_levels":[{"effort":"low"}]}]}`), nil
 		case "claude":
 			return []byte("claude 0.99.0-test\n"), nil
 		default:
@@ -48,7 +54,7 @@ func TestFactoryBootstrapDisposableDogfood(t *testing.T) {
 	// it must leave this profile, default, and routing rule byte-for-byte stable
 	// in their canonical JSON representation.
 	userOwnedProfile := RunnerProfileDefinition{
-		Harness: string(RunnerCodexExec), Model: "gpt-5.6-luna", Effort: "medium", PermissionPreset: "workspace-write-offline",
+		Harness: string(RunnerCodexExec), Model: "gpt-6-luna", Effort: "medium", PermissionPreset: "workspace-write-offline",
 		Sandbox:   RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(false)},
 		Subagents: RunnerSubagentPolicyDefinition{Allowed: boolPtr(false), MaxConcurrent: 0},
 	}
@@ -72,10 +78,15 @@ automation:
       profile: user-owned
       match:
         risk: high
+`); err != nil {
+		t.Fatal(err)
+	}
+	// Profiles are defined only in the global config; the project selects them.
+	writeGlobalConfigForTest(t, `automation:
   profiles:
     user-owned:
       harness: codex_exec
-      model: gpt-5.6-luna
+      model: gpt-6-luna
       effort: medium
       permission_preset: workspace-write-offline
       sandbox:
@@ -84,9 +95,7 @@ automation:
       subagents:
         allowed: false
         max_concurrent: 0
-`); err != nil {
-		t.Fatal(err)
-	}
+`)
 	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
 		t.Fatal(err)
 	}
@@ -129,8 +138,8 @@ automation:
 		}
 	}
 	for _, check := range []struct{ role, model string }{
-		{"execute-fast", "gpt-5.6-luna"}, {"execute-standard", "gpt-5.6-terra"}, {"execute-complex", "gpt-5.6-terra"},
-		{"planner", "gpt-5.6-sol"}, {"execute-frontier", "gpt-5.6-sol"}, {"review-independent", "gpt-5.6-terra"}, {"repair-complex", "gpt-5.6-terra"},
+		{"execute-fast", "gpt-6-luna"}, {"execute-standard", "gpt-6-sol"}, {"execute-complex", "gpt-6-sol"},
+		{"planner", "gpt-6-sol"}, {"execute-frontier", "gpt-6-sol"}, {"review-independent", "gpt-6-sol"}, {"repair-complex", "gpt-6-sol"},
 	} {
 		if got := profiles[check.role].Model; got != check.model {
 			t.Fatalf("%s selected %q, want %q", check.role, got, check.model)
@@ -139,6 +148,9 @@ automation:
 	for _, profile := range profiles {
 		if profile.Model == "auto-review" {
 			t.Fatal("hidden catalog model was selected")
+		}
+		if profile.Model == "gpt-6-terra" {
+			t.Fatal("excluded Terra model was selected")
 		}
 	}
 	wf := defaultWorkflow()
@@ -154,7 +166,7 @@ automation:
 	userRoute := routePreviewForNote(Note{Data: map[string]any{
 		"id": "DOG-T-USER", "title": "Preserve explicit policy", "risk": "high",
 	}}, wf, runLaneExecute)
-	if userRoute.Profile != "user-owned" || userRoute.Source != "automation.routing" || userRoute.Rule != "user-owned-high-risk" || userRoute.Model != "gpt-5.6-luna" || len(userRoute.Blockers) != 0 {
+	if userRoute.Profile != "user-owned" || userRoute.Source != "automation.routing" || userRoute.Rule != "user-owned-high-risk" || userRoute.Model != "gpt-6-luna" || len(userRoute.Blockers) != 0 {
 		t.Fatalf("reconcile preserved dead routing text instead of effective policy: %#v", userRoute)
 	}
 
@@ -194,10 +206,10 @@ automation:
 		t.Fatalf("authored wave gained authority or lost members: %#v", review)
 	}
 	for _, check := range []struct{ id, level, lane, profile, model string }{
-		{"DOG-T-0001", "light", runLaneExecute, "execute-fast", "gpt-5.6-luna"},
-		{"DOG-T-0002", "standard", runLaneExecute, "execute-standard", "gpt-5.6-terra"},
-		{"DOG-T-0003", "demanding", runLaneExecute, "execute-complex", "gpt-5.6-terra"},
-		{"DOG-T-0005", "standard", runLaneReview, "review-independent", "gpt-5.6-terra"},
+		{"DOG-T-0001", "light", runLaneExecute, "execute-fast", "gpt-6-luna"},
+		{"DOG-T-0002", "standard", runLaneExecute, "execute-standard", "gpt-6-sol"},
+		{"DOG-T-0003", "demanding", runLaneExecute, "execute-complex", "gpt-6-sol"},
+		{"DOG-T-0005", "standard", runLaneReview, "review-independent", "gpt-6-sol"},
 	} {
 		note, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", check.id+".md"))
 		if err != nil {

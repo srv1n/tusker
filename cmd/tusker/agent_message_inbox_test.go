@@ -4,10 +4,79 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestMessageHookPrint(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", "")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(exe); resolveErr == nil {
+		exe = resolved
+	}
+	if !filepath.IsAbs(exe) {
+		t.Fatalf("test binary path is not absolute: %q", exe)
+	}
+	var out bytes.Buffer
+	if err := runAgentMessageHookPrint(Args{"harness": "claude", "project": "app"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.HasPrefix(text, "Paste into .claude/settings.json") {
+		t.Fatalf("missing paste target line: %q", text)
+	}
+	var snippet struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(text[strings.Index(text, "{"):]), &snippet); err != nil {
+		t.Fatalf("snippet is not JSON: %v\n%s", err, text)
+	}
+	for _, event := range []string{"UserPromptSubmit", "Stop"} {
+		entries := snippet.Hooks[event]
+		if len(entries) != 1 || len(entries[0].Hooks) != 1 || entries[0].Hooks[0].Type != "command" {
+			t.Fatalf("%s entries=%#v", event, entries)
+		}
+		command := entries[0].Hooks[0].Command
+		if !strings.Contains(command, exe) || !strings.Contains(command, "message inbox --project 'app' --format hook") {
+			t.Fatalf("%s command=%q", event, command)
+		}
+	}
+	out.Reset()
+	if err := runAgentMessageHookPrint(Args{"harness": "codex"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "hooks.json") || !strings.Contains(out.String(), "unverified") || !strings.Contains(out.String(), "<project-id>") {
+		t.Fatalf("codex output=%q", out.String())
+	}
+	out.Reset()
+	if err := runAgentMessageHookPrint(Args{"harness": "codex", "project": "app", "json": "true"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("json output=%q err=%v", out.String(), err)
+	}
+	if payload["harness"] != "codex" || payload["verified"] != false || payload["binary"] != exe {
+		t.Fatalf("json payload=%v", payload)
+	}
+	out.Reset()
+	if err := runAgentMessageHookPrint(Args{"harness": "muse"}, &out); err == nil {
+		t.Fatal("unsupported harness was admitted")
+	}
+	if err := agentMessageHookCmd(Args{"harness": "claude"}); err == nil {
+		t.Fatal("missing print positional was admitted")
+	}
+}
 
 func TestMessageInboxHookDelivery(t *testing.T) {
 	root := t.TempDir()
@@ -171,13 +240,10 @@ func TestMessageInboxConcurrentClaimAndCapabilities(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("claims=%d, want 1", count)
 	}
-	for _, tc := range []struct {
-		harness string
-		want    bool
-	}{{"claude", true}, {"codex", false}, {"muse", false}, {"devin", false}} {
-		got, reason := workerSoftDelivery(tc.harness)
-		if got != tc.want || reason == "" {
-			t.Fatalf("%s = %v, %q", tc.harness, got, reason)
+	// Soft in-turn delivery is a declared runner capability, not a harness-name switch.
+	for runner, want := range map[RunnerName]bool{RunnerClaude: true, RunnerCodexExec: false, RunnerMuse: false, RunnerDevin: false} {
+		if got := nativeResumeRunnerCapabilities(runner).SoftSay; got != want {
+			t.Fatalf("%s SoftSay = %v, want %v", runner, got, want)
 		}
 	}
 }

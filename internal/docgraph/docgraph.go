@@ -625,41 +625,6 @@ func checkConformance(doc Document) (string, string) {
 	return "", ""
 }
 
-// MigrationDiagnostics surfaces the legacy compatibility surface that
-// validation deliberately accepts: path-inferred kinds, historical canonical
-// statuses, and missing lifecycle values. Each diagnostic needs an explicit
-// inventory disposition (declare an explicit kind and lifecycle, or record
-// the legacy mapping) during migration; none of them imply code conformance.
-func MigrationDiagnostics(corpus Corpus) []Issue {
-	var issues []Issue
-	for _, doc := range corpus.Documents {
-		if doc.KindSource == KindSourceLegacy {
-			issues = append(issues, Issue{
-				Code:    "DOC_KIND_LEGACY",
-				Path:    doc.Path,
-				Message: fmt.Sprintf("document kind %q was inferred from the file path; declare an explicit kind: doc, proposal, or decision", doc.Kind),
-			})
-		}
-		status := strings.ToLower(strings.TrimSpace(doc.Status))
-		switch {
-		case status == "canonical":
-			issues = append(issues, Issue{
-				Code:    "DOC_LIFECYCLE_LEGACY",
-				Path:    doc.Path,
-				Message: "legacy lifecycle status \"canonical\" carries no portable meaning; record current, proposed, accepted, implemented, or superseded for the document kind",
-			})
-		case status == "":
-			issues = append(issues, Issue{
-				Code:    "DOC_LIFECYCLE_LEGACY",
-				Path:    doc.Path,
-				Message: "document declares no lifecycle status; record current, proposed, accepted, implemented, or superseded for the document kind",
-			})
-		}
-	}
-	sortIssues(issues)
-	return issues
-}
-
 func isRoot(doc Document) bool {
 	return doc.Kind.IsCanonicalFamily() && (doc.Subject == "overview" || doc.Path == "docs/system/00-overview.md")
 }

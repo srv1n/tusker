@@ -317,3 +317,12 @@ func readServeStreamLine(t *testing.T, reader *bufio.Reader) string {
 	}
 	return ""
 }
+
+func (b *serveStreamBroker) clientCount() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.clients)
+}

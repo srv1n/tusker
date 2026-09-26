@@ -33,6 +33,43 @@ func seedWorkerRun(t *testing.T, store *RuntimeStore, attemptID string, generati
 	}
 }
 
+func TestWorkerIdentityForResumedNativeSession(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	parent := seedWorkerRun(t, store, "attempt-1", 1, 2, "codex_exec", "native-1")
+	if err := store.SaveAttempt(RunAttempt{AttemptID: parent.AttemptID, ProjectID: parent.ProjectID, RecordID: parent.TaskID, ItemID: parent.TaskID, Runner: parent.Provider, WorkRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	var parentExecution string
+	if err := store.queryRowScan(`SELECT execution_id FROM execution_records WHERE attempt_id = ?`, []any{parent.AttemptID}, &parentExecution); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.AttachExecution(ExecutionAttachmentInput{ProjectID: parent.ProjectID, ExecutionID: parentExecution,
+		Provider: parent.Provider, ProviderSessionID: parent.NativeSessionID}); err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{ProjectID: parent.ProjectID, RecordID: parent.TaskID, ItemID: parent.TaskID, Runner: parent.Provider,
+		ActiveAttemptID: "attempt-2", LeaseGeneration: 2, WorkRevision: 2, LeaseState: string(LeaseStateRunning), SessionRef: parent.NativeSessionID}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: run.ActiveAttemptID, ParentAttemptID: parent.AttemptID, ProjectID: run.ProjectID,
+		RecordID: run.RecordID, ItemID: run.ItemID, Runner: run.Runner, WorkRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateExecutionContinuation(ManagedExecutionInput{ProjectID: run.ProjectID, ParentExecutionID: parentExecution,
+		TaskID: run.ItemID, AttemptID: run.ActiveAttemptID, LeaseGeneration: run.LeaseGeneration, Provider: run.Runner}, ExecutionResumeOf); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := store.WorkerIdentityForRun(run)
+	if err != nil || identity == nil || identity.NativeSessionID != parent.NativeSessionID || identity.AttemptID != run.ActiveAttemptID {
+		t.Fatalf("resumed identity=%#v err=%v", identity, err)
+	}
+}
+
 func TestWorkerCoordinationIdentityFence(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {

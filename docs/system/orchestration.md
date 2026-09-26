@@ -63,11 +63,14 @@ questions and wave reports are retrieved by a hook at that session's next
 prompt or turn end. It cannot push a message into an active turn. Devin
 external contacts remain unsupported. Registration alone does not install a
 hook; the operator adds the following to their own Claude Code settings
-(`~/.claude/settings.json` or project `.claude/settings.json`):
+(`~/.claude/settings.json` or project `.claude/settings.json`).
+`tusker message hook print --harness claude --project <project-id>` prints
+this block with the running binary's absolute path already filled in; it
+never writes a file.
 
-Replace `/absolute/path/to/tusker` with the installed executable path. If the
-daemon uses a custom `TUSKER_STATE_ROOT`, prefix each hook command with
-`TUSKER_STATE_ROOT=/absolute/path/to/state` to read the same store.
+If the daemon uses a custom `TUSKER_STATE_ROOT`, prefix each hook command with
+`TUSKER_STATE_ROOT=/absolute/path/to/state` to read the same store (the print
+command adds that prefix itself when the variable is set).
 
 ```json
 {
@@ -88,8 +91,9 @@ one created by `/clear`, needs `tusker execution register` again.
 
 **Codex hook integration is unverified in the installed Codex; qualify it
 before relying on it.** The published Codex hook schema also carries
-`session_id` and supports `UserPromptSubmit` and `Stop`. The proposed operator
-owned `hooks.json` entry is:
+`session_id` and supports `UserPromptSubmit` and `Stop`.
+`tusker message hook print --harness codex --project <project-id>` prints the
+proposed operator owned `hooks.json` entry, flagged unverified:
 
 ```json
 {

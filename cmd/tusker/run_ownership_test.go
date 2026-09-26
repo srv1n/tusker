@@ -534,3 +534,80 @@ func ownershipStoreFixture(t *testing.T, recordID string) (*RuntimeStore, RunSta
 	}
 	return store, run
 }
+
+func (s *runOwnershipService) claim(run RunStatus, owner string) (runClaimResult, error) {
+	return s.claimWithAuthorization(run, owner, RunAuthorization{Source: "tusker_cli", Actor: owner, Trigger: "manual_claim"})
+}
+
+func (s *runOwnershipService) claimWithAuthorization(run RunStatus, owner string, auth RunAuthorization) (runClaimResult, error) {
+	if s == nil || s.store == nil {
+		return runClaimResult{}, tuskerError(errorConfigInvalid, "run ownership store is unavailable")
+	}
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		owner = newRecordID()
+	}
+	if run.ProjectID == "" || run.RecordID == "" || run.Runner == "" || run.WorkspacePath == "" {
+		return runClaimResult{}, tuskerError(errorInvalidArg, "claim requires project, task, runner, and workspace")
+	}
+	unlock, err := s.lockOwnedPathClaims()
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	defer unlock()
+	if err := s.guardOwnedPathClaim(); err != nil {
+		return runClaimResult{}, err
+	}
+	if run.LeaseState == "" {
+		run.LeaseState = string(LeaseStateUnclaimed)
+	}
+	if err := s.store.UpsertRunPreservingLease(run); err != nil {
+		return runClaimResult{}, err
+	}
+	current, err := s.store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || current == nil {
+		return runClaimResult{}, firstNonNil(err, tuskerError(errorNotFound, "run not found after claim preparation"))
+	}
+	now := s.now()
+	generation := current.LeaseGeneration + 1
+	claimed, err := s.store.ClaimRunLease(current.ProjectID, current.RecordID, owner, generation, defaultRunLeaseTTL, now, true, claimIsHandRun(), RuntimeLeaseClaimPrecondition{
+		ExpectedLeaseState: LeaseState(current.LeaseState), ExpectedOwner: current.LeaseOwner,
+		ExpectedLeaseGeneration: current.LeaseGeneration, ExpectedWorkRevision: current.WorkRevision,
+		ProjectConcurrencyLimit: s.projectConcurrencyLimit,
+	})
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	latest, err := s.store.FindRunScoped(current.ProjectID, current.RecordID)
+	if err != nil {
+		return runClaimResult{}, err
+	}
+	if !claimed {
+		existingAuth, _ := s.store.LatestRunAuthorization(current.ProjectID, current.RecordID)
+		return runClaimResult{OK: false, Claimed: false, OwnerRun: latest, Freshness: runFreshness(latest, now), Authorization: existingAuth}, nil
+	}
+	auth.ProjectID, auth.RecordID, auth.LeaseGeneration = current.ProjectID, current.RecordID, generation
+	auth.Actor = firstNonEmpty(strings.TrimSpace(auth.Actor), owner)
+	auth.Source = firstNonEmpty(strings.TrimSpace(auth.Source), "tusker_cli")
+	auth.CreatedAt = now.Format(time.RFC3339)
+	if err := s.store.SaveRunAuthorization(auth); err != nil {
+		return runClaimResult{}, err
+	}
+	return runClaimResult{OK: true, Claimed: true, Run: latest, Freshness: "fresh", Authorization: &auth}, nil
+}
+
+func (s *runOwnershipService) claimWorkSessionWithAuthorization(run RunStatus, owner string, auth RunAuthorization, identity RunIdentityMetadata) (runClaimResult, error) {
+	return s.claimWorkSessionWithAuthorizationWithParent(run, owner, auth, identity, "")
+}
+
+func (s *runOwnershipService) finish(identity, owner string, outcome AttemptOutcome, summary, verification, reason string) (*RunStatus, error) {
+	return s.finishWithExpectedRevision(identity, owner, outcome, summary, verification, reason, nil)
+}
+
+func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome AttemptOutcome, summary, verification, reason string, endState *RunEndState) (*RunStatus, error) {
+	return s.finishWithEndStateAtRevision(identity, owner, outcome, summary, verification, reason, endState, nil)
+}
+
+func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA string, now time.Time) (RunEndState, error) {
+	return captureRunEndStateForMaterialScope(workspace, nil, gateVerdicts, reportedBranch, reportedSHA, now)
+}

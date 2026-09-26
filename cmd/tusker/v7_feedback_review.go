@@ -321,10 +321,6 @@ func renderFeedbackReviewPacketMarkdown(packet feedbackReviewPacket) string {
 	return b.String()
 }
 
-func feedbackReviewPacketOutputPath(vaultPath, date string) string {
-	return filepath.Join(vaultPath, "feedback", "reviews", feedbackReviewDateOnly(firstNonEmpty(date, todayISO()))+".md")
-}
-
 func feedbackReviewFindings(signals []feedbackReviewSignal) []feedbackReviewFinding {
 	groups := map[string][]feedbackReviewSignal{}
 	for _, signal := range signals {

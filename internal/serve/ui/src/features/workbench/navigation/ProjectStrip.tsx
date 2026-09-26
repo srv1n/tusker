@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { openTaskSearch } from "@/features/search/TaskSearch";
 import { useDaemon, useProjectRefresh, useProjects } from "@/lib/queries";
 import { projectContainsCheckout, projectVisibleInNavigation, type CheckoutSummary, type ProjectSummary } from "@/types/domain";
-import { AddProjectForm } from "@/components/Sidebar";
+import { AddProjectForm } from "@/components/AddProjectForm";
 import {
   NAVIGATION_CHANGED_EVENT,
   movePinnedProject,
@@ -26,7 +26,7 @@ import { runnerStatus } from "./runnerStatus";
 import "./ProjectStrip.css";
 
 /** The three project sections. `match` receives the path after /p/<id>, without a trailing slash. */
-const PROJECT_SECTIONS = [
+export const PROJECT_SECTIONS = [
   { label: "Inbox", to: "/p/$projectId" as const, icon: Inbox, match: (rest: string) => rest === "" },
   { label: "Work", to: "/p/$projectId/waves" as const, icon: Layers, match: (rest: string) => /^\/(waves|tasks|runs)(\/|$)/.test(rest) },
   { label: "Docs", to: "/p/$projectId/knowledge" as const, icon: BookOpen, match: (rest: string) => /^\/(docs|knowledge)(\/|$)/.test(rest) },
@@ -76,7 +76,7 @@ function projectRailLabel(project: ProjectSummary, projects: ProjectSummary[]): 
   return `${initials}${matching.indexOf(project) + 1}`;
 }
 
-export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+export function ProjectStrip({ expanded, onToggle, className = "flex" }: { expanded: boolean; onToggle: () => void; className?: string }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { projectId: routeProjectId } = useParams({ strict: false }) as { projectId?: string };
@@ -198,7 +198,7 @@ export function ProjectStrip({ expanded, onToggle }: { expanded: boolean; onTogg
   const railButton = cn("flex items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink", expanded ? "h-[30px] w-full gap-2 px-2 text-[13px]" : "h-9 w-9 justify-center");
 
   return (
-    <aside className={cn("project-rail relative flex h-full flex-none flex-col border-r border-line-soft bg-panel text-[13px] transition-[width] duration-200", expanded ? "w-[220px]" : "w-14")} aria-label="Project navigation">
+    <aside className={cn("project-rail relative h-full flex-none flex-col border-r border-line-soft bg-panel text-[13px] transition-[width] duration-200", expanded ? "w-[220px]" : "w-14", className)} aria-label="Project navigation">
       <div className={cn("flex-none p-2", !expanded && "flex justify-center")}>
         <button type="button" onClick={() => openTaskSearch()} aria-label="Search tasks" title="Search (⌘K)" className={railButton}>
           <Search size={15} aria-hidden="true" />

@@ -638,6 +638,9 @@ func TestV7ProjectIdentityAndDiscovery(t *testing.T) {
 }
 
 func TestV7ProfileInitCreatesSkillShapedKnowledgeVault(t *testing.T) {
+	// Run outside the developer checkout: its machine-local config selects
+	// profiles that exist only in the developer's global config.
+	t.Chdir(t.TempDir())
 	vault := filepath.Join(t.TempDir(), "vault")
 	if err := initCmd(Args{"vault": vault, "yes": "true", "vault-only": "true", "no-mount": "true", "no-register": "true", "profile": "v7"}); err != nil {
 		t.Fatal(err)
@@ -2069,78 +2072,6 @@ func TestV7SaveCASRejectsOnDiskBodyEditWithStaleStateRev(t *testing.T) {
 	}
 }
 
-func TestV7MarkdownStoreLoadListSaveCASAndAppendEvent(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	must := func(args Args, fn func(Args) error) {
-		t.Helper()
-		if err := fn(args); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
-	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Store object", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
-
-	ctx := context.Background()
-	var store v7Store = v7MarkdownStore{VaultPath: vault}
-	refs, err := store.List(ctx, v7Query{Kind: "task"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(refs) != 1 {
-		t.Fatalf("expected one task ref, got %#v", refs)
-	}
-	assertEqual(t, v7ObjectID("APP-T-0001"), refs[0].ID, "store task ref id")
-
-	obj, err := store.Load(ctx, "APP-T-0001")
-	if err != nil {
-		t.Fatal(err)
-	}
-	taskObj, ok := obj.(v7MarkdownObject)
-	if !ok {
-		t.Fatalf("expected markdown object, got %T", obj)
-	}
-	baseRev := taskObj.Rev()
-	taskObj.Data["next_action"] = "Updated through the V7 markdown store."
-	nextRev, err := store.SaveCAS(ctx, taskObj, baseRev)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nextRev == "" || nextRev == baseRev {
-		t.Fatalf("expected new revision, base=%s next=%s", baseRev, nextRev)
-	}
-	if _, err := store.SaveCAS(ctx, taskObj, baseRev); err == nil {
-		t.Fatal("expected stale store SaveCAS to fail")
-	}
-	if err := store.AppendEvent(ctx, v7Event{
-		ObjectID:   "APP-T-0001",
-		ObjectKind: "task",
-		EventKind:  "updated",
-		Actor:      "agent:test",
-		Payload:    map[string]any{"source": "store-test"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	eventErrs, _, eventCount := validateV7Events(vault)
-	if len(eventErrs) != 0 {
-		t.Fatalf("expected store event to validate, got %#v", eventErrs)
-	}
-	if eventCount == 0 {
-		t.Fatal("expected store event to be written")
-	}
-	events, err := store.GetEvents(ctx, v7EventScope{ObjectID: "APP-T-0001", EventKind: "updated"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 1, len(events), "store event count")
-	assertEqual(t, "APP-T-0001", events[0].ObjectID, "store event object")
-	assertEqual(t, "updated", events[0].EventKind, "store event kind")
-	assertEqual(t, "agent:test", events[0].Actor, "store event actor")
-	assertContainsIndexTest(t, events[0].Path, "events/")
-	assertEqual(t, "store-test", stringField(events[0].Payload, "source"), "store event payload")
-}
-
 func TestV7DomainNewCreatesKnowledgeDomainLayoutAndValidates(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
@@ -3486,66 +3417,6 @@ func TestV7LeaseRejectsDuplicateActiveClaimByDifferentOwner(t *testing.T) {
 	}
 	assertEqual(t, "agent:claude", lease.Owner, "claim after release owner")
 	assertEqual(t, "active", lease.Status, "claim after release status")
-}
-
-func TestV7FileRuntimeStoreClaimHeartbeatReleaseList(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	must := func(args Args, fn func(Args) error) {
-		t.Helper()
-		if err := fn(args); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
-	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runtime store lease", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
-
-	ctx := context.Background()
-	var runtime v7RuntimeStore = v7FileRuntimeStore{VaultPath: vault}
-	lease, err := runtime.Claim(ctx, v7ObjectID("APP-T-0001"), "agent:codex", 15*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "APP-T-0001", lease.ID, "claim lease id")
-	assertEqual(t, "active", lease.Status, "claim status")
-	assertEqual(t, "agent:codex", lease.Owner, "claim owner")
-
-	leasePath := filepath.Join(filepath.Dir(vault), ".tusker-local", "leases", "APP-T-0001.json")
-	lease.ClaimedAt = "2026-05-13T05:00:00Z"
-	lease.Workspace = "../worktrees/APP-T-0001"
-	if err := writeJSON(leasePath, lease); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := runtime.Heartbeat(ctx, "APP-T-0001"); err != nil {
-		t.Fatal(err)
-	}
-	active, err := runtime.ListLeases(ctx, v7LeaseQuery{Owner: "agent:codex", Status: "active"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 1, len(active), "active lease count")
-	assertEqual(t, "2026-05-13T05:00:00Z", active[0].ClaimedAt, "heartbeat preserves claimed_at")
-	assertEqual(t, "../worktrees/APP-T-0001", active[0].Workspace, "heartbeat preserves workspace")
-
-	if err := runtime.Release(ctx, "APP-T-0001"); err != nil {
-		t.Fatal(err)
-	}
-	released, err := runtime.ListLeases(ctx, v7LeaseQuery{Task: "APP-T-0001", Status: "released"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 1, len(released), "released lease count")
-	assertEqual(t, "2026-05-13T05:00:00Z", released[0].ClaimedAt, "release preserves claimed_at")
-
-	eventErrs, _, eventCount := validateV7Events(vault)
-	if len(eventErrs) != 0 {
-		t.Fatalf("expected runtime store release event to validate, got %#v", eventErrs)
-	}
-	if eventCount == 0 {
-		t.Fatal("expected runtime store release to emit an event")
-	}
 }
 
 func TestV7ClosePolicyRequiresRiskEvidenceAndAcceptor(t *testing.T) {

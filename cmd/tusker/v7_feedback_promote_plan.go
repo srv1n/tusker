@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -132,14 +131,6 @@ type feedbackPromoteSummary struct {
 	Bounded            bool
 }
 
-func planFeedbackSignalPromotion(record feedbackRecord, options feedbackPromoteOptions) (feedbackPromotePlan, error) {
-	return planFeedbackPromotion(feedbackPromoteSourceFromFeedbackRecord(record), options)
-}
-
-func planFeedbackReviewActionPromotion(action feedbackPromoteReviewAction, options feedbackPromoteOptions) (feedbackPromotePlan, error) {
-	return planFeedbackPromotion(feedbackPromoteSourceFromReviewAction(action), options)
-}
-
 func planFeedbackPromotion(source feedbackPromoteSource, options feedbackPromoteOptions) (feedbackPromotePlan, error) {
 	source = normalizeFeedbackPromoteSource(source)
 	if source.Title == "" {
@@ -166,64 +157,6 @@ func planFeedbackPromotion(source feedbackPromoteSource, options feedbackPromote
 	plan.Outcomes = []feedbackPromoteOutcome{outcome}
 	plan.Summary = summarizeFeedbackPromoteOutcomes(plan.Outcomes, options.SummaryLimit)
 	return plan, nil
-}
-
-func feedbackPromoteSourceFromFeedbackRecord(record feedbackRecord) feedbackPromoteSource {
-	fields := record.Fields
-	if fields == nil {
-		fields = map[string]string{}
-	}
-	path := firstNonEmpty(record.RelativePath, record.Path)
-	sourceRef := firstNonEmpty(fields["source-signal"], path)
-	title := firstNonEmpty(fields["product-idea"], record.Theme, fields["friction"])
-	return normalizeFeedbackPromoteSource(feedbackPromoteSource{
-		Kind:            "feedback_signal",
-		ID:              firstNonEmpty(sourceRef, path),
-		Path:            path,
-		Title:           title,
-		Summary:         strings.Join(feedbackPromoteNonEmptyStrings([]string{fields["context"], fields["friction"], fields["product-idea"], fields["impact"]}), "\n"),
-		Friction:        fields["friction"],
-		ProductIdea:     fields["product-idea"],
-		Impact:          fields["impact"],
-		Severity:        firstNonEmpty(record.PriorityHint, fields["priority-hint"]),
-		DedupeKey:       fields["dedupe-key"],
-		SourceSignal:    sourceRef,
-		RelatedTask:     firstTaskID(fields["related"]),
-		AffectedCommand: record.AffectedCommand,
-		Prevention:      fields["prevention"],
-		OutcomeHint:     fields["promote-as"],
-		RepeatCount:     feedbackPromoteRepeatCount(fields["repeat-count"], 1),
-		Evidence: []feedbackPromoteEvidence{{
-			Source: "feedback",
-			Ref:    path,
-			Title:  title,
-			Date:   record.Date,
-		}},
-	})
-}
-
-func feedbackPromoteSourceFromReviewAction(action feedbackPromoteReviewAction) feedbackPromoteSource {
-	sourceRef := firstNonEmpty(action.SourceSignal, action.Path, action.ID)
-	return normalizeFeedbackPromoteSource(feedbackPromoteSource{
-		Kind:            "daily_review_action",
-		ID:              firstNonEmpty(action.ID, sourceRef),
-		Path:            action.Path,
-		Title:           firstNonEmpty(action.Title, action.ProductIdea, action.Friction),
-		Summary:         action.Summary,
-		Friction:        action.Friction,
-		ProductIdea:     action.ProductIdea,
-		Impact:          action.Impact,
-		Severity:        action.Severity,
-		DedupeKey:       action.DedupeKey,
-		SourceSignal:    sourceRef,
-		RelatedTask:     action.RelatedTask,
-		AffectedCommand: action.AffectedCommand,
-		Prevention:      action.Prevention,
-		OutcomeHint:     action.OutcomeHint,
-		RepeatCount:     action.RepeatCount,
-		Evidence:        action.Evidence,
-		Tags:            action.Tags,
-	})
 }
 
 func normalizeFeedbackPromoteSource(source feedbackPromoteSource) feedbackPromoteSource {
@@ -766,18 +699,6 @@ func uniqueFeedbackPromoteEvidenceRefs(items []feedbackPromoteEvidence) []string
 	return feedbackPromoteUniqueStrings(normalizePromoteRefs(refs))
 }
 
-func feedbackPromoteRepeatCount(value string, fallbackValue int) int {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fallbackValue
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 0 {
-		return fallbackValue
-	}
-	return parsed
-}
-
 func feedbackPromoteTitleKey(value string) string {
 	tokens := feedbackPromoteSignificantTokens(value)
 	if len(tokens) == 0 {
@@ -980,16 +901,6 @@ func feedbackPromoteUniqueStrings(values []string) []string {
 		}
 		seen[value] = true
 		out = append(out, value)
-	}
-	return out
-}
-
-func feedbackPromoteNonEmptyStrings(values []string) []string {
-	var out []string
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			out = append(out, value)
-		}
 	}
 	return out
 }

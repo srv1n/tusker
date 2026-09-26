@@ -157,60 +157,10 @@ func documentKindRank(kind Kind) int {
 	}
 }
 
-// DuplicateSubjects lists every subject claimed by more than one document,
-// ordered for deterministic inventory output. Forwarding stubs never own a
-// subject, so they cannot appear here. Callers that need a binding decision
-// (authorization, migration inventory) must treat these as ambiguous and
-// fail instead of silently picking one route.
-func DuplicateSubjects(corpus Corpus) []string {
-	counts := map[string]int{}
-	display := map[string]string{}
-	for _, doc := range corpus.Documents {
-		key := normalizeSubject(doc.Subject)
-		if key == "" {
-			continue
-		}
-		counts[key]++
-		if _, seen := display[key]; !seen {
-			display[key] = strings.TrimSpace(doc.Subject)
-		}
-	}
-	var out []string
-	for key, count := range counts {
-		if count > 1 {
-			out = append(out, display[key])
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// DuplicateSubjects reports the resolver's ambiguous subjects.
-func (r *Resolver) DuplicateSubjects() []string {
-	if r == nil {
-		return nil
-	}
-	var out []string
-	for key, count := range r.subjectCounts {
-		if count > 1 {
-			out = append(out, r.subjectDisplay[key])
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // ResolveReference resolves a managed subject or path using the shared
 // current-document convention.
 func ResolveReference(corpus Corpus, ref string) (Resolution, bool) {
 	return NewResolver(corpus).Resolve(ref)
-}
-
-// ResolveReferenceFrom resolves a body link relative to the source document's
-// path. Relative links are normalized before lookup, while absolute paths and
-// URLs are rejected.
-func ResolveReferenceFrom(corpus Corpus, sourcePath, ref string) (Resolution, bool) {
-	return NewResolver(corpus).ResolveFrom(sourcePath, ref)
 }
 
 // ResolveCurrentReference resolves a reference and follows a chain of
@@ -441,7 +391,7 @@ func ExtractReferences(body string) []string {
 		if inFence {
 			continue
 		}
-		visible = append(visible, line)
+		visible = append(visible, blankInlineCode(line))
 	}
 	visibleText := resolverWikiLink.ReplaceAllStringFunc(strings.Join(visible, "\n"), func(link string) string {
 		return strings.Join(strings.Fields(link), " ")
@@ -468,6 +418,52 @@ func ExtractReferences(body string) []string {
 		}
 	}
 	return refs
+}
+
+// blankInlineCode replaces inline code spans (a backtick run up to the next
+// run of the same length) with spaces so links inside them are not extracted.
+// Byte offsets are preserved; unmatched backtick runs stay literal.
+func blankInlineCode(line string) string {
+	if !strings.Contains(line, "`") {
+		return line
+	}
+	out := []byte(line)
+	runAt := func(i int) int {
+		n := 0
+		for i+n < len(line) && line[i+n] == '`' {
+			n++
+		}
+		return n
+	}
+	for i := 0; i < len(line); {
+		if line[i] != '`' {
+			i++
+			continue
+		}
+		n := runAt(i)
+		closeAt := -1
+		for j := i + n; j < len(line); {
+			if line[j] != '`' {
+				j++
+				continue
+			}
+			m := runAt(j)
+			if m == n {
+				closeAt = j
+				break
+			}
+			j += m
+		}
+		if closeAt < 0 {
+			i += n
+			continue
+		}
+		for k := i; k < closeAt+n; k++ {
+			out[k] = ' '
+		}
+		i = closeAt + n
+	}
+	return string(out)
 }
 
 // SemanticLinks extracts metadata and body relationships through the same
@@ -543,12 +539,6 @@ func (r *Resolver) SemanticLinks(corpus Corpus) ([]DocumentLink, []BrokenLink) {
 		return a.Ref < b.Ref
 	})
 	return links, broken
-}
-
-// Backlinks returns every semantic relationship that points at subject,
-// ordered for deterministic API and CLI output.
-func Backlinks(corpus Corpus, subject string) []DocumentLink {
-	return NewResolver(corpus).Backlinks(subject, corpus)
 }
 
 func (r *Resolver) Backlinks(subject string, corpus Corpus) []DocumentLink {

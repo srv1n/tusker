@@ -295,42 +295,6 @@ func (h *codexLiveHandle) threadStart(cwd string) (string, error) {
 	return resp.Thread.ID, err
 }
 
-func (h *codexLiveHandle) threadResume(sessionRef, cwd string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), h.readTimeout())
-	defer cancel()
-	var resp struct {
-		Thread struct {
-			ID string `json:"id"`
-		} `json:"thread"`
-	}
-	err := h.request(ctx, "thread/resume", map[string]any{
-		"threadId":       sessionRef,
-		"cwd":            cwd,
-		"approvalPolicy": h.policy.ApprovalPolicy,
-		"sandbox":        h.policy.ThreadSandbox,
-		"excludeTurns":   true,
-	}, &resp)
-	return resp.Thread.ID, err
-}
-
-func (h *codexLiveHandle) threadFork(sessionRef, cwd string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), h.readTimeout())
-	defer cancel()
-	var resp struct {
-		Thread struct {
-			ID string `json:"id"`
-		} `json:"thread"`
-	}
-	err := h.request(ctx, "thread/fork", map[string]any{
-		"threadId":       sessionRef,
-		"cwd":            cwd,
-		"approvalPolicy": h.policy.ApprovalPolicy,
-		"sandbox":        h.policy.ThreadSandbox,
-		"ephemeral":      false,
-	}, &resp)
-	return resp.Thread.ID, err
-}
-
 func (h *codexLiveHandle) turnStart(threadID, prompt string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -694,15 +658,11 @@ func (h *codexLiveHandle) rejectApproval(requestType string, mutating bool, reas
 }
 
 func (h *codexLiveHandle) policyDenialReason(mutating bool) string {
-	approvalPolicy := strings.TrimSpace(h.policy.ApprovalPolicy)
 	activeSandbox := firstNonEmpty(strings.TrimSpace(h.policy.TurnSandboxPolicy), strings.TrimSpace(h.policy.ThreadSandbox))
 	if mutating && activeSandbox == "read-only" {
 		return "read-only sandbox rejects mutating approval requests"
 	}
-	if approvalPolicy == "untrusted" {
-		return "approval_policy=" + approvalPolicy + " requires human approval; Tusker rejects instead of silently approving"
-	}
-	return ""
+	return approvalPolicyHumanOnlyReason(h.policy.ApprovalPolicy)
 }
 
 func (h *codexLiveHandle) workspaceRoot() string {

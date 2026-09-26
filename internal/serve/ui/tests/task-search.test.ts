@@ -42,7 +42,7 @@ describe("task search", () => {
     const projectStrip = source("src/features/workbench/navigation/ProjectStrip.tsx");
     expect(source("src/routes/__root.tsx")).toContain("<TaskSearch />");
     expect(projectStrip).toContain("openTaskSearch()");
-    expect(source("src/components/Sidebar.tsx")).not.toContain("openTaskSearch");
+    expect(source("src/components/AddProjectForm.tsx")).not.toContain("openTaskSearch");
     expect(source("src/features/panel/Panel.tsx")).toContain("onClick={openTaskSearch}");
   });
 

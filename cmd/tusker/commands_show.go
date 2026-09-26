@@ -14,6 +14,7 @@ type showTaskStatusProjection struct {
 	Title               string                             `json:"title"`
 	Status              string                             `json:"status"`
 	Readiness           string                             `json:"readiness,omitempty"`
+	StateRev            string                             `json:"state_rev,omitempty"`
 	Capsule             string                             `json:"capsule"`
 	DependencyContracts dependencyContractReviewProjection `json:"dependencyContracts"`
 }
@@ -53,7 +54,7 @@ func showCmd(args Args) error {
 			Schema: "tusker.task-status/v1", ReadOnly: true,
 			ID: stringField(note.Data, "id"), Kind: noteDisplayKind(note.Data),
 			Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status"),
-			Readiness: stringField(note.Data, "readiness"), Capsule: strings.TrimSpace(renderCapsuleWithVault(note, vaultPath)),
+			Readiness: stringField(note.Data, "readiness"), StateRev: stringField(note.Data, "state_rev"), Capsule: strings.TrimSpace(renderCapsuleWithVault(note, vaultPath)),
 			DependencyContracts: contracts,
 		})
 		return nil
@@ -156,10 +157,6 @@ func printSectionOrFallback(note Note, heading string) {
 	fmt.Fprintf(os.Stdout, "%s\n\n%s\n", noteHeaderLine(note), content)
 }
 
-func renderCapsule(note Note) string {
-	return renderCapsuleWithVault(note, "")
-}
-
 func renderCapsuleWithVault(note Note, vaultPath string) string {
 	content, hasFrontmatterCapsule := renderV7FrontmatterCapsule(note)
 	if !hasFrontmatterCapsule {
@@ -189,6 +186,9 @@ func capsuleFrontmatterFacts(note Note) string {
 	if readiness := strings.TrimSpace(stringField(note.Data, "readiness")); readiness != "" {
 		lines = append(lines, "- Readiness: "+readiness)
 	}
+	if stateRev := stringField(note.Data, "state_rev"); stateRev != "" {
+		lines = append(lines, "- State rev: "+stateRev)
+	}
 	if proofMode := strings.TrimSpace(stringField(note.Data, "proof_mode")); proofMode != "" {
 		lines = append(lines, "- Proof: "+proofMode+"/"+firstNonEmpty(stringField(note.Data, "proof_status"), "?"))
 	}
@@ -213,10 +213,6 @@ func capsuleFrontmatterFacts(note Note) string {
 	return strings.Join(lines, "\n")
 }
 
-func synthesizeCapsule(note Note) string {
-	return synthesizeCapsuleWithVault(note, "")
-}
-
 func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 	var lines []string
 	noteType := noteDisplayKind(note.Data)
@@ -235,6 +231,9 @@ func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 				"- Next owner: "+firstNonEmpty(stringField(note.Data, "next_owner"), "?"),
 				"- Next action: "+firstNonEmpty(stringField(note.Data, "next_action"), "not recorded"),
 			)
+			if stateRev := stringField(note.Data, "state_rev"); stateRev != "" {
+				lines = append(lines, "- State rev: "+stateRev)
+			}
 			if domains := normalizeList(note.Data["domains"]); len(domains) > 0 {
 				lines = append(lines, "- Domains: "+strings.Join(domains, ", "))
 				lines = append(lines, "- Project skill route: read `"+vaultDisplayPath(vaultPath, "SKILL.md")+"`, then `"+vaultDisplayPath(vaultPath, "knowledge/domains/<domain>/INDEX.md")+"` and `CANON.md`.")

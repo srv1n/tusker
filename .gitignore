@@ -57,3 +57,10 @@ internal/serve/ui/.profiles-browser-*/
 
 # Independently versioned local skill checkouts.
 /skills/apple-design/
+
+# Stray local artifacts (TTS output, undefined state roots, UI test temp dirs).
+/say-*.wav
+/undefined/
+internal/serve/ui/.human-kinds-*/
+/cmd/tusker/tusker
+*.bak-*

@@ -23,7 +23,7 @@ func (r *MuseRunner) Capabilities() RunnerCapabilities {
 func (r *MuseRunner) Start(ctx context.Context, req StartRequest) (*StartResult, error) {
 	// Muse 1.3.0 `muse exec --help` exposes no per-invocation MCP overlay.
 	// Record the supported CLI ask route instead of mutating user/workspace settings.
-	if err := NewEventLog(req.EventSinkPath).Append("worker_ask_route", req.AttemptID, RunnerMuse, map[string]any{"route": "cli"}); err != nil {
+	if err := museRecordCLIAskRoute(req.EventSinkPath, req.AttemptID, req.PromptPath); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.Command) == "" {
@@ -46,7 +46,7 @@ func (r *MuseRunner) Start(ctx context.Context, req StartRequest) (*StartResult,
 }
 
 func (r *MuseRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResult, error) {
-	if err := NewEventLog(req.EventSinkPath).Append("worker_ask_route", req.AttemptID, RunnerMuse, map[string]any{"route": "cli"}); err != nil {
+	if err := museRecordCLIAskRoute(req.EventSinkPath, req.AttemptID, req.PromptPath); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.SessionRef) == "" {
@@ -62,16 +62,7 @@ func (r *MuseRunner) Resume(ctx context.Context, req ResumeRequest) (*ResumeResu
 		}
 	}
 	argv = museCLIResumeArgv(argv, req.SessionRef)
-	startReq := StartRequest{
-		ProjectID: req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
-		Lane: req.Lane, WorkRevision: req.WorkRevision, LeaseGeneration: req.LeaseGeneration, ActiveStates: req.ActiveStates,
-		WorkingDir: req.WorkingDir, WorkspacePath: req.WorkspacePath, PromptPath: req.PromptPath,
-		EventSinkPath: req.EventSinkPath, RawLogPath: req.RawLogPath, RawLogMaxBytes: req.RawLogMaxBytes, StatusPath: req.StatusPath,
-		RepoRoot: req.RepoRoot, Command: command, CommandArgv: argv, CommandExecutableFP: req.CommandExecutableFP,
-		CommandSearchPath: req.CommandSearchPath, RunnerPathPrefix: req.RunnerPathPrefix, RunnerProfile: req.RunnerProfile,
-		RunnerHarness: req.RunnerHarness, RunnerModel: req.RunnerModel, RunnerEffort: req.RunnerEffort,
-		NotePath: req.NotePath, VaultPath: req.VaultPath, CodexPolicy: req.CodexPolicy, ExternalLoop: req.ExternalLoop,
-	}
+	startReq := req.startRequest(command, argv)
 	return startDetachedRunnerWrapper(ctx, r.Name(), startReq, &req, r.Capabilities())
 }
 
@@ -86,6 +77,40 @@ func (r *MuseRunner) Interrupt(ctx context.Context, req InterruptRequest) error 
 
 func (r *MuseRunner) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	return &CollectResult{Artifacts: map[string]string{}}, nil
+}
+
+const museAskRouteHeader = "## Asking the operator or architect (Muse)"
+
+// museAskRoutePrompt is the CLI replacement for the MCP ask tool that other
+// harnesses receive. The attempt environment supplies every identity value.
+const museAskRoutePrompt = museAskRouteHeader + `
+
+This harness has no Tusker MCP tools. When you need a decision you cannot make
+from the task contract, ask with the exact Tusker binary for this attempt:
+
+    "$TUSKER_BIN" message ask --project "$TUSKER_PROJECT_ID" --sender "task:$TUSKER_ITEM_ID" --recipient operator --key "$TUSKER_ATTEMPT_ID-<short-slug>" --body "<question>" --yield --json
+
+Use --recipient task:<TASK-ID> or --contact architect --task "$TUSKER_ITEM_ID"
+for a listed contact. The command does not wait. If you cannot continue without
+the answer, say so and end your turn; the answer is delivered into this same
+session when it resumes.
+`
+
+// museRecordCLIAskRoute records the route and appends the ask instructions to
+// this attempt's prompt once. The daemon rewrites the prompt per attempt, and
+// the section lands after any resume fingerprint marker it already carries.
+func museRecordCLIAskRoute(eventSink, attemptID, promptPath string) error {
+	if err := NewEventLog(eventSink).Append("worker_ask_route", attemptID, RunnerMuse, map[string]any{"route": "cli"}); err != nil {
+		return err
+	}
+	if strings.TrimSpace(promptPath) == "" {
+		return nil
+	}
+	prompt, err := readText(promptPath)
+	if err != nil || strings.Contains(prompt, museAskRouteHeader) {
+		return err
+	}
+	return writeText(promptPath, strings.TrimRight(prompt, "\n")+"\n\n"+museAskRoutePrompt)
 }
 
 func defaultMuseCLICommand() string { return "muse exec --json" }

@@ -172,10 +172,10 @@ setup-demo: ## Replace the owned manual demo using the installed CLI; override D
 	case "$$repo" in /*) ;; *) echo "DEMO_REPO must be an absolute path" >&2; exit 1 ;; esac; \
 	if [ -e "$$repo" ]; then \
 		[ -f "$$repo/.tusker/demo/manifest.json" ] || { echo "Refusing to remove unmarked path: $$repo" >&2; exit 1; }; \
-		project_id="$$($$cli projects list --json | jq -r --arg repo "$$repo" '.projects[] | select(.repo_root == $$repo) | .project_id' | head -n1)"; \
-		if [ -n "$$project_id" ]; then "$$cli" projects remove "$$project_id" --json; fi; \
-		rm -rf -- "$$repo"; \
 	fi; \
+	project_id="$$($$cli projects list --json | jq -r --arg repo "$$repo" '.projects[] | select(.repo_root == $$repo) | .project_id' | head -n1)"; \
+	if [ -n "$$project_id" ]; then "$$cli" projects remove "$$project_id" --json; fi; \
+	if [ -e "$$repo" ]; then rm -rf -- "$$repo"; fi; \
 	seed="$$($$cli demo seed --repo "$$repo" --scenario "$(DEMO_SCENARIO)" --visible --json)"; \
 	printf '%s\n' "$$seed"; \
 	project_id="$$(printf '%s' "$$seed" | jq -r '.runtime_project_id')"; \

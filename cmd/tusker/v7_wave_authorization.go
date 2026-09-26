@@ -269,16 +269,6 @@ func closeV7AuthorizationLocks(materialLock, waveLock *v7DocumentLock, taskLocks
 	return errors.Join(errs...)
 }
 
-func combineV7AuthorizationLockCloseError(cause, closeErr error) error {
-	if closeErr == nil {
-		return cause
-	}
-	if cause == nil {
-		return fmt.Errorf("authorization lock release failed: %w", closeErr)
-	}
-	return errors.Join(cause, fmt.Errorf("authorization lock release also failed: %w", closeErr))
-}
-
 func waveAuthorizationProjection(vaultPath string, idx v7Index, wave Note) map[string]any {
 	fingerprint, _ := waveMaterialFingerprint(vaultPath, idx, wave)
 	stored, state := stringField(wave.Data, "authorization_fingerprint"), fallback(stringField(wave.Data, "authorization"), "disarmed")

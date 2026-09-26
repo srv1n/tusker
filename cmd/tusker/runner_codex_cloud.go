@@ -28,12 +28,6 @@ type codexCloudExecutor interface {
 	RunCodexCloud(ctx context.Context, req codexCloudExecRequest) ([]byte, error)
 }
 
-type codexCloudExecutorFunc func(context.Context, codexCloudExecRequest) ([]byte, error)
-
-func (f codexCloudExecutorFunc) RunCodexCloud(ctx context.Context, req codexCloudExecRequest) ([]byte, error) {
-	return f(ctx, req)
-}
-
 type codexCloudExecRequest struct {
 	Command     string
 	Stdin       string

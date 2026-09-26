@@ -9,7 +9,7 @@ test("project rail is search, flat projects, three sections, status and settings
   const strip = source("src/features/workbench/navigation/ProjectStrip.tsx");
   const root = source("src/routes/__root.tsx");
 
-  expect(root).toContain("<ProjectStrip expanded={rails.projectExpanded}");
+  expect(root).toContain("expanded={rails.projectExpanded || drawerOpen}");
   expect(root).toContain('RAIL_LAYOUT_STORAGE_KEY = "tusker.rails.layout.v1"');
   expect(root).toContain('event.key === "\\\\"');
   expect(root).not.toContain("InvariantCircuitBanner");

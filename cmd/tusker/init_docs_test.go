@@ -19,8 +19,6 @@ func TestScaffoldDocumentationSystemCreatesMapAndTuskerSkill(t *testing.T) {
 		"docs/system/00-overview.md",
 		"docs/system/INDEX.md",
 		"docs/system/graph.json",
-		".tusker/specs",
-		".tusker/specs/decisions",
 		".agents/skills/tusker/SKILL.md",
 		".agents/skills/tusker/references/SPECS.md",
 		".claude/skills/tusker/references/SPECS.md",
@@ -30,7 +28,7 @@ func TestScaffoldDocumentationSystemCreatesMapAndTuskerSkill(t *testing.T) {
 			t.Fatalf("scaffold missing %s: %v", relative, err)
 		}
 	}
-	if len(writes) != 8 {
+	if len(writes) != 6 {
 		t.Fatalf("unexpected write report: %#v", writes)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "docs/system/00-overview.md")); err != nil {
@@ -56,7 +54,7 @@ func TestScaffoldDocumentationSystemPreservesExistingSpecSkill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(writes) != 8 {
+	if len(writes) != 6 {
 		t.Fatalf("existing external spec skills must not affect the Tusker scaffold: %#v", writes)
 	}
 	for _, relative := range []string{filepath.Join(".agents", "skills", "spec", "SKILL.md"), filepath.Join(".claude", "skills", "spec", "SKILL.md")} {

@@ -326,7 +326,7 @@ func updateV7TaskCmd(args Args) error {
 	}
 	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if id == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level light|standard|demanding] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] --by <actor> [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level light|standard|demanding] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]")
 	}
 	if !v7TaskIDPattern.MatchString(id) {
 		return tuskerError(errorInvalidArg, "invalid task id: "+id)
@@ -447,8 +447,8 @@ func updateV7TaskCmd(args Args) error {
 			return err
 		}
 		for _, ref := range refs {
-			if !v7SpecRefExists(vaultPath, ref, index.Decisions) {
-				return tuskerError(errorInvalidArg, "spec_ref does not resolve inside the repository: "+ref)
+			if msg, hint := v7SpecRefError(vaultPath, ref, index.Decisions); msg != "" {
+				return tuskerError(errorInvalidArg, msg, withHint(hint))
 			}
 		}
 		mutate("spec_refs", refs)
@@ -487,6 +487,37 @@ func updateV7TaskCmd(args Args) error {
 	if value, ok := args["owned-paths"]; ok {
 		mutate("owned_paths", normalizeOwnedPaths(splitCSV(value)))
 	}
+	// Per-task profile pins reference global profiles by name; they are
+	// routing, not contract, so they never change the fingerprint.
+	var profileWorkflow *WorkflowFile
+	for _, item := range []struct{ flag, field, lane string }{{"execute-profile", "execute_profile", runLaneExecute}, {"review-profile", "review_profile", runLaneReview}} {
+		value, set := args[item.flag]
+		if args.Bool("clear-" + item.flag) {
+			if set {
+				return tuskerError(errorInvalidArg, "--"+item.flag+" and --clear-"+item.flag+" are mutually exclusive")
+			}
+			clear(item.field)
+			continue
+		}
+		if !set {
+			continue
+		}
+		profile := strings.TrimSpace(value)
+		if profile == "" || profile == "true" {
+			return tuskerError(errorMissingArg, "--"+item.flag+" requires a global profile name; use --clear-"+item.flag+" to remove the pin")
+		}
+		if profileWorkflow == nil {
+			wf, err := loadWorkflow(vaultPath)
+			if err != nil {
+				return err
+			}
+			profileWorkflow = &wf
+		}
+		if _, err := resolveRunnerProfileForNote(Note{Data: map[string]any{item.field: profile}}, profileWorkflow.Data, item.lane); err != nil {
+			return err
+		}
+		mutate(item.field, profile)
+	}
 	if value, ok := args["generated-outputs"]; ok {
 		mutate("generated_outputs", normalizeOwnedPaths(splitCSV(value)))
 	}
@@ -504,7 +535,7 @@ func updateV7TaskCmd(args Args) error {
 		contractRebound = true
 	}
 	if len(changes) == 0 {
-		return tuskerError(errorMissingArg, "task update requires at least one mutable field: --body-file, --title, --work-level, --review-level, --spec-refs, --dependencies, --rebind-contract, --rebind-dependency-contracts, --owned-paths, or --generated-outputs")
+		return tuskerError(errorMissingArg, "task update requires at least one mutable field: --body-file, --title, --work-level, --review-level, --spec-refs, --dependencies, --rebind-contract, --rebind-dependency-contracts, --owned-paths, --generated-outputs, --execute-profile, --review-profile, --clear-execute-profile, or --clear-review-profile")
 	}
 	materialChanged := contractRebound || directWaveTaskContractFingerprint(data, body) != priorFingerprint
 	if materialChanged {
@@ -737,8 +768,8 @@ func validateDirectWaveAuthoring(vaultPath string, req directWaveAuthoringReques
 			return
 		}
 		for _, ref := range refs {
-			if !v7SpecRefExists(vaultPath, ref, index.Decisions) {
-				add("AUTHORING_REQUEST_INVALID", where+": spec_ref does not resolve inside the repository: "+ref)
+			if msg, hint := v7SpecRefError(vaultPath, ref, index.Decisions); msg != "" {
+				add("AUTHORING_REQUEST_INVALID", where+": "+msg+"; "+hint)
 			}
 		}
 	}
@@ -995,6 +1026,7 @@ type directWaveAuthoringReport struct {
 	Readiness           map[string]string `json:"readiness"`
 	ExpectedConcurrency int               `json:"expectedConcurrency"`
 	RequestFingerprint  string            `json:"requestFingerprint"`
+	Warnings            []string          `json:"warnings,omitempty"`
 }
 
 func waveV7DirectAuthoringCmd(vaultPath string, args Args) error {
@@ -1231,6 +1263,14 @@ func waveV7DirectAuthoringCmd(vaultPath string, args Args) error {
 		return err
 	}
 	report := buildDirectAuthoringReport(vaultPath, waveID, req, taskMapping, gateMapping, frontiers, fingerprint)
+	// Warn (never refuse) about contracts that `wave review --check` will
+	// refuse at Start, so the author repairs them now instead of discovering
+	// them at arming.
+	if idx, err := loadV7Index(vaultPath); err == nil {
+		for _, blocker := range directWaveArmContractBlockers(vaultPath, idx, idx.Waves[waveID]) {
+			report.Warnings = append(report.Warnings, blocker.TaskID+" "+blocker.Code+" "+blocker.Reason)
+		}
+	}
 	emitDirectAuthoringReport(report, args)
 	return nil
 }
@@ -1407,5 +1447,11 @@ func emitDirectAuthoringReport(report directWaveAuthoringReport, args Args) {
 	sort.Strings(keys)
 	for _, key := range keys {
 		fmt.Printf("  Task %s: %s\n", key, report.TaskPaths[key])
+	}
+	for _, warning := range report.Warnings {
+		fmt.Printf("warning: %s\n", warning)
+	}
+	if len(report.Warnings) > 0 {
+		fmt.Printf("  `tusker wave review %s --check` will refuse Start until these contracts are fixed.\n", report.WaveID)
 	}
 }

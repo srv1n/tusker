@@ -75,7 +75,7 @@ func validateSkillCompatibilityContract(contract skillCompatibilityContract) err
 		return fmt.Errorf("Tusker skill primary guide contract is incomplete")
 	}
 	if contract.AuthoringContract.Schema == "" || contract.AuthoringContract.Version == "" || contract.AuthoringContract.Fingerprint == "" {
-		return fmt.Errorf("Tusker skill factory-intake compatibility is incomplete")
+		return fmt.Errorf("Tusker skill authoring contract is incomplete")
 	}
 	return nil
 }

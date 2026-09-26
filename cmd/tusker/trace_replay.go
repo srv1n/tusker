@@ -589,17 +589,6 @@ func evaluateV7ReplayVerificationRow(vaultPath string, row v7VerificationRow) v7
 	return row
 }
 
-// ReplayForAdjudication replays a recorded attempt strictly from its trail for a
-// reviewer. It never calls the model or runs live tools, and it reports how many
-// model calls it made (always zero). When the recorded trail is missing a
-// boundary's step it returns a clear TRACE_REPLAY_INCOMPLETE error rather than
-// quietly reaching back to the model.
-func ReplayForAdjudication(ctx context.Context, opts TraceReplayOptions) (TraceReplayReport, error) {
-	opts.Mode = traceReplayModeAdjudicate
-	opts.ToolExecutor = nil
-	return ReplayTrace(ctx, opts)
-}
-
 // checkTraceReplayComplete fails when the recorded trail cannot stand on its own
 // for review: an empty trail, or a boundary that recorded neither an output nor
 // an error, means replaying it honestly would have to ask the model again.

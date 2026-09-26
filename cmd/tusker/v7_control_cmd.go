@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -16,17 +15,6 @@ const (
 	v7GateHardDependencyIncompleteCode = "GATE_HARD_DEPENDENCY_INCOMPLETE"
 	v7GateAuthorityReceiptStaleCode    = "GATE_AUTHORITY_RECEIPT_STALE"
 )
-
-// warnScratchReapFailed reports a failed scratch reap without failing the close
-// that already committed. Reaping is post-commit cleanup: the task is durably
-// closed and the event emitted, so the only honest outcome is a visible warning
-// plus leftover scratch that a later tusker gc reclaims.
-func warnScratchReapFailed(taskID string, err error) {
-	if err == nil {
-		return
-	}
-	fmt.Fprintf(os.Stderr, "warning: could not reap scratch for %s: %v; run tusker gc to reclaim it\n", taskID, err)
-}
 
 func inferV7ObjectKind(id string) string {
 	switch {
@@ -544,10 +532,6 @@ func v7TaskClosePolicy(vaultPath string, taskData map[string]any) (v7ClosePolicy
 	}
 	risk := strings.ToLower(fallback(stringField(taskData, "risk"), "medium"))
 	return v7ClosePolicyFor(vaultPath, risk)
-}
-
-func enforceV7ClosePolicy(vaultPath string, task Note, idx v7Index, actor string) error {
-	return enforceV7ClosePolicyWithAcceptor(vaultPath, task, idx, actor, true)
 }
 
 // enforceV7ClosePolicyWithAcceptor enforces the risk-based close policy.

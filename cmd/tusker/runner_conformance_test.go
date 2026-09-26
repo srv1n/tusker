@@ -77,12 +77,10 @@ func TestAgentProfileTestIdentity(t *testing.T) {
 	if err := os.Chmod(command, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.muse-profile", map[string]any{
+	setGlobalProfileForTest(t, "muse-profile", map[string]any{
 		"harness": "muse", "model": "muse-manual", "effort": "high", "permission_preset": "read-only",
 		"command": command + " exec --json", "sandbox": map[string]any{"mode": "read-only", "network": false}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	code, report, err := runRunnerConformance(Args{"vault": vault, "harness": "muse-profile", "preset": "read-only", "live": "true"})
 	if err != nil || code != 0 || !report.Ready || !report.Live {
 		t.Fatalf("live profile test: code=%d report=%#v err=%v", code, report, err)
@@ -102,9 +100,7 @@ func TestAgentProfileTestIdentity(t *testing.T) {
 	if err != nil || !strings.Contains(string(argv), "muse-manual") || !strings.Contains(string(argv), "--model") {
 		t.Fatalf("selected Muse profile was not invoked exactly: %q %v", argv, err)
 	}
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.muse-profile.model", "muse-edited"); err != nil {
-		t.Fatal(err)
-	}
+	setGlobalProfileForTest(t, "muse-profile.model", "muse-edited")
 	levels, err = modelLevelsRead(vault)
 	if err != nil || levels.ProfileStates["muse-profile"] != "configured_unverified" {
 		t.Fatalf("profile edit left a prior test current: %#v %v", levels.ProfileStates, err)

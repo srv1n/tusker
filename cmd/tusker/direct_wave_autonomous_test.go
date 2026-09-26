@@ -127,7 +127,7 @@ func TestDirectWaveAutonomousLateRouteRemovalDoesNotQueueNextFrontier(t *testing
 		t.Fatalf("root directive missing after wave start: %#v err=%v", directive, err)
 	}
 
-	configPath := managedTuskerLocalConfigPath(vault)
+	configPath := userGlobalTuskerConfigPath() // profiles live only in the global config
 	configText, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -143,8 +143,19 @@ func TestDirectWaveAutonomousLateRouteRemovalDoesNotQueueNextFrontier(t *testing
 
 	markDirectTaskDone(t, vault, "APP-T-0001")
 	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
-	if err := daemon.advanceAuthorizedWaveFrontiers(project); err == nil || !strings.Contains(err.Error(), "wave route admission blocked") {
-		t.Fatalf("late route removal did not block frontier admission: %v", err)
+	// The removed profile surfaces as a per-member route blocker in the wave
+	// review, so the frontier releases nothing.
+	if err := daemon.advanceAuthorizedWaveFrontiers(project); err != nil && !strings.Contains(err.Error(), "wave route admission blocked") {
+		t.Fatalf("late route removal failed for an unrelated reason: %v", err)
+	}
+	review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range review.Members {
+		if member.TaskID == "APP-T-0002" && (member.State == "ready" || !strings.Contains(member.WaitingReason, "route blocked")) {
+			t.Fatalf("late route removal left the dependent admissible: %#v", member)
+		}
 	}
 	if directive, err := store.RunDirective(project.ProjectID, "APP-T-0002"); err != nil || directive != nil {
 		t.Fatalf("removed route created a downstream directive: %#v err=%v", directive, err)

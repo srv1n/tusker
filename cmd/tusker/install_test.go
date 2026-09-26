@@ -814,3 +814,11 @@ func TestInitWritesManagedConfigWithoutReadingLegacyRootConfig(t *testing.T) {
 		t.Fatalf("root config was read as a current config: %#v", resolved.Config.Automation.Concurrency)
 	}
 }
+
+func installSkillPayload(destination string) error {
+	return installSkillPayloadWithMode(destination, skillInstallModeCopy)
+}
+
+func installSkillPayloadCopy(destination string) error {
+	return installSkillPayloadCopyFrom(destination, "")
+}

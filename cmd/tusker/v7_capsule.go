@@ -79,10 +79,6 @@ func v7CapsuleOrdered(what, useWhen, skipWhen string) orderedMap {
 	}
 }
 
-func v7EmptyCapsuleOrdered() orderedMap {
-	return v7CapsuleOrdered("", "", "")
-}
-
 func v7CapsuleTokenCount(capsule v7Capsule) int {
 	return len(strings.Fields(strings.Join([]string{capsule.What, capsule.UseWhen, capsule.SkipWhen}, " ")))
 }

@@ -152,26 +152,6 @@ func TestServeSnapshotCacheReusesBuildAndInvalidatesPerProject(t *testing.T) {
 	}
 }
 
-func TestServeSnapshotCacheEagerlyWarmsRegisteredProjects(t *testing.T) {
-	server := newServeEmptyNeedsFixture(t)
-	other := addServeProjectFixture(t, server, "backend", "BCK-T-0001", "Backend task")
-	server.warmRegisteredProjectSnapshots()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		server.snapshotMu.Lock()
-		primary := server.snapshots["app"]
-		backend := server.snapshots[serveSnapshotKey(other)]
-		ready := primary != nil && primary.ready && backend != nil && backend.ready
-		server.snapshotMu.Unlock()
-		if ready {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("registered project projections did not warm")
-}
-
 func TestServeSnapshotCacheWarmHitSkipsRegistryMetadataReload(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 	if _, err := server.loadSnapshotForProject("app"); err != nil {

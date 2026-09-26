@@ -22,11 +22,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -893,22 +891,6 @@ func demoLiveTaskStatus(vaultPath, taskID string) string {
 	return strings.ToLower(strings.TrimSpace(stringField(note.Data, "status")))
 }
 
-func demoOpenGateID(vaultPath, taskID string) string {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return ""
-	}
-	for _, gate := range idx.Gates {
-		if !v7GateTouchesTask(gate, taskID) {
-			continue
-		}
-		if status := strings.ToLower(strings.TrimSpace(stringField(gate.Data, "status"))); status != "satisfied" && status != "waived" && status != "obsolete" {
-			return stringField(gate.Data, "id")
-		}
-	}
-	return ""
-}
-
 // demoRealSelectedState reports per-selected-task terminal progress without
 // mutating anything: done counts completions, failed counts failures, and
 // terminal is true only when every selected task is done, failed, cancelled
@@ -1090,8 +1072,4 @@ func demoRealRunText(record demoRunRecord) string {
 			name, len(result.Completed), len(result.Failed), len(result.Blocked), len(result.Interrupted)))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func demoRealEntryContext() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 }

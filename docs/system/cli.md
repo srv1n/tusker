@@ -129,13 +129,25 @@ assertion or partial wave, 5 wait timeout, 1 internal error.
 | Discover installed models and reasoning choices | `tusker models catalog --json` |
 | Read effective mappings with only referenced profiles | `tusker models show --json --compact` |
 | Read every profile for administration | `tusker models show --json` |
-| Create or update a profile | `tusker models profile-set --scope global\|project --name <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> --if-revision <sha256>` |
-| Disable or enable future use | `tusker models profile-disable\|profile-enable --scope global\|project --name <name> --if-revision <sha256>` |
-| Remove an unreferenced profile | `tusker models profile-remove --scope global\|project --name <name> --if-revision <sha256>` |
+| Create or update a profile (global config only) | `tusker models profile-set [--scope global] --name <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> --if-revision <sha256>` |
+| Disable or enable future use | `tusker models profile-disable\|profile-enable [--scope global] --name <name> --if-revision <sha256>` |
+| Remove an unreferenced profile | `tusker models profile-remove [--scope global] --name <name> --if-revision <sha256>` |
 | Set an ordered primary/fallback list | `tusker models set --scope global\|project --level <level> --lane execute\|review --profiles primary,fallback --if-revision <sha256>` |
 | Reset a project field to inheritance | `tusker models reset --scope project --level <level> --lane execute\|review --if-revision <sha256>` |
 | Author task-level choices | `tusker new task ... --work-level standard --review-level demanding --review-reason "Security-sensitive review"` |
 | Explain one task's effective route | `tusker runner route <TASK-ID> --lane execute\|review --json` |
+
+Runner profiles are defined only in the global config
+(`~/.config/tusker/config.yaml`, or `$TUSKER_CONFIG`) plus built-ins. A project's
+`.tusker/config.yaml` and `config.local.yaml` may only select them: tier
+mappings (`automation.model_levels`), `automation.default_profile`, routing, and
+task `runner_profile`/`execute_profile`/`review_profile`. A project layer that
+contains `automation.profiles` or `automation.removed_profiles` fails validation
+with an error naming the file, the profiles, and the global path; a project
+reference to an unknown profile fails naming the missing profile.
+`tusker runner profiles --write` adds generated `codex_exec` profiles to the
+global config (never Terra, never the project) and proposes nothing once enabled
+global profiles already cover every tier.
 
 Writes are atomic and accept the revision returned by `models show`. Catalog
 entries carry their installed-harness provenance and supported reasoning values.
@@ -163,7 +175,7 @@ references until their next guarded save. The profile map key is its stable ID;
 effort.
 
 For a direct native Muse profile, declare the route and access contract explicitly
-in the profile document, for example:
+in the global config's `automation.profiles`, for example:
 
 ```yaml
 profiles:

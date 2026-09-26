@@ -81,7 +81,9 @@ for this surface is recorded in
 `tusker models show`: profile definitions, three level/lane mappings, field
 provenance, override state and a revision. `POST /api/models` accepts `set`,
 `reset`, `profile-set`, `profile-disable`, `profile-enable`, or `profile-remove`;
-every write uses the shared validator and rejects a stale revision. The response
+every write uses the shared validator and rejects a stale revision. Profile
+actions write only the global config (their scope defaults to `global`; `project`
+is rejected), so the project Models screen edits tier mappings only. The response
 includes profile states, reference summaries, and reference-check completeness.
 `GET /api/models/catalog` exposes the installed-harness catalog. Append
 `?refresh=1` only for an explicit metadata refresh; it refreshes discovery and

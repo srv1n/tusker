@@ -343,6 +343,7 @@ func TestDispatchDiskPressureMeasuresExistingTaskWorkspaceBeforeLeaseClaim(t *te
 func TestDiskPressureRuntimeLimitsAreConfigurable(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
 	output := captureStdout(t, func() {
 		if err := daemonLimitsCmd(Args{
 			"json":                           "true",

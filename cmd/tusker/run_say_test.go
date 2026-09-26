@@ -166,3 +166,70 @@ func TestRunsSayResumePromptContainsExactOperatorMessages(t *testing.T) {
 		t.Fatalf("resume prompt changed message order:\n%s", prompt)
 	}
 }
+
+// Daemon-dispatched attempts only reach the execution ledger through the
+// backfill projection (lease_generation 0, no provider session), so Say and
+// Continue must resolve the native identity from the canonical run row for
+// every Say-capable harness.
+func TestRunSayIdentityFromRunRowForAllHarnesses(t *testing.T) {
+	for _, runner := range []RunnerName{RunnerClaude, RunnerCodexExec, RunnerMuse, RunnerDevin} {
+		t.Run(string(runner), func(t *testing.T) {
+			root := t.TempDir()
+			store, err := OpenRuntimeStore(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SaveAttempt(RunAttempt{AttemptID: "a1", ProjectID: "p", RecordID: "P-T-0001", ItemID: "P-T-0001",
+				Runner: string(runner), Lane: runLaneExecute, WorkRevision: 1, SessionRef: "native-1"}); err != nil {
+				t.Fatal(err)
+			}
+			store.Close()
+			// Reopen: the production backfill projects the attempt without a lease generation.
+			store, err = OpenRuntimeStore(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if ledger, err := store.WorkerIdentityForRun(RunStatus{ProjectID: "p", RecordID: "P-T-0001", ItemID: "P-T-0001", ActiveAttemptID: "a1",
+				LeaseGeneration: 3, WorkRevision: 1, LeaseState: string(LeaseStateRunning)}); err != nil || ledger != nil {
+				t.Fatalf("ledger identity unexpectedly resolved: %#v %v", ledger, err)
+			}
+			if caps := nativeResumeRunnerCapabilities(runner); !caps.HardSay || !caps.ResumeSession {
+				t.Fatalf("%s must declare hard Say and resume: %#v", runner, caps)
+			}
+			run := RunStatus{ProjectID: "p", RecordID: "P-T-0001", ItemID: "P-T-0001", Runner: string(runner), ActiveAttemptID: "a1",
+				LeaseGeneration: 3, WorkRevision: 1, LeaseState: string(LeaseStateRunning), SessionRef: "native-1"}
+			identity, err := runSayWorkerIdentity(store, run)
+			if err != nil || identity == nil || identity.AttemptID != "a1" || identity.AttemptGeneration != 3 || identity.NativeSessionID != "native-1" || identity.Provider != string(runner) {
+				t.Fatalf("say identity=%#v err=%v", identity, err)
+			}
+			delivery, _, err := store.PutWorkerDelivery(WorkerDelivery{Identity: *identity, Kind: "instruction", Body: "steer", IdempotencyKey: runSayIdempotencyKey("op", "steer", *identity)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, err := pendingRunContinuationDeliveries(store, run, "a1", "native-1")
+			if err != nil || len(pending) != 1 || pending[0].DeliveryID != delivery.DeliveryID {
+				t.Fatalf("hard Say delivery not queued for the resumed prompt: %#v %v", pending, err)
+			}
+			for _, stale := range []RunStatus{
+				func() RunStatus { r := run; r.Terminal = true; return r }(),
+				func() RunStatus { r := run; r.LeaseState = string(LeaseStateReleased); return r }(),
+				func() RunStatus { r := run; r.SessionRef = ""; return r }(),
+			} {
+				if got, err := runSayWorkerIdentity(store, stale); err != nil || got != nil {
+					t.Fatalf("stale run resolved identity %#v %v", got, err)
+				}
+			}
+			if err := store.SaveSession(RunnerSession{ProjectID: "p", RecordID: "P-T-0001", Runner: string(runner), SessionRef: "native-1",
+				CurrentItemID: "P-T-0001", WorkRevision: 1, LastAttemptID: "a1", State: "open", Resumable: true}); err != nil {
+				t.Fatal(err)
+			}
+			failed := run
+			failed.ActiveAttemptID, failed.LeaseState, failed.Terminal = "", string(LeaseStateReleased), true
+			continued, err := runContinuationIdentity(store, failed)
+			if err != nil || continued == nil || continued.AttemptID != "a1" || continued.NativeSessionID != "native-1" {
+				t.Fatalf("continue identity=%#v err=%v", continued, err)
+			}
+		})
+	}
+}

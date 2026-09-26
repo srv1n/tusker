@@ -350,9 +350,7 @@ Humans may override only explicit authority gates.
         allowed: false
         max_concurrent: 0
 `, profile.Name, profile.Definition.Harness, profile.Definition.Model, profile.Definition.Effort, profile.Definition.PermissionPreset, profile.Definition.Sandbox.Mode, profile.Definition.Sandbox.Network != nil && *profile.Definition.Sandbox.Network)
-	if err := writeText(managedTuskerConfigPath(vault), config); err != nil {
-		t.Fatalf("write canonical Codex ACP profile: %v", err)
-	}
+	writeGlobalConfigForTest(t, config)
 	if _, err := loadWorkflow(vault); err != nil {
 		t.Fatalf("load canonical Codex ACP workflow fixture: %v", err)
 	}

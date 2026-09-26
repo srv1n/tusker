@@ -36,9 +36,6 @@ func TestS46ForwardingStubResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRepository() error = %v", err)
 	}
-	if got := DuplicateSubjects(corpus); len(got) != 0 {
-		t.Fatalf("stub created duplicate ownership: %#v", got)
-	}
 	var stubFound bool
 	for _, doc := range corpus.Documents {
 		if doc.Path == ".tusker/specs/legacy.md" {

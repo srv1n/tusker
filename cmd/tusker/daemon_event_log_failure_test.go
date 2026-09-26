@@ -24,7 +24,7 @@ func TestEventLogPersistenceFailureOpensInvariantCircuit(t *testing.T) {
 	}
 	daemon := &Daemon{store: store}
 
-	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "APP-T-0001", errors.New("disk full"))
+	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "project-1", "APP-T-0001", errors.New("disk full"))
 	status, err := store.ReadInvariantCircuitStatus()
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestEventLogPersistenceFailureSurvivesSentinelRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	daemon := &Daemon{store: store}
-	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "APP-T-0001", errors.New("disk full"))
+	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "project-1", "APP-T-0001", errors.New("disk full"))
 	workflow := defaultWorkflow()
 	workflow.Runtime.Sentinel.Checks = []string{"injected_unrelated_violation"}
 	status, err := daemon.refreshInvariantCircuitStatus(runtimeSentinelSnapshot{
@@ -103,7 +103,7 @@ func TestEventLogPersistenceResumeProbesEverySinkAndClearsOnlyAfterSuccess(t *te
 			t.Fatal(err)
 		}
 		saveSupervisorDecisionForEventLogFailureTest(t, store, "project-1", recordID, fmt.Sprintf("decision-%d", index+1))
-		daemon.tripEventLogPersistenceCircuit("supervisor_decision", recordID, errors.New("injected sink failure"))
+		daemon.tripEventLogPersistenceCircuit("supervisor_decision", "project-1", recordID, errors.New("injected sink failure"))
 	}
 	if err := os.Remove(paths[0]); err != nil {
 		t.Fatal(err)
@@ -207,6 +207,47 @@ func TestSupervisorDecisionUsesProjectScopedRunIdentity(t *testing.T) {
 	}
 }
 
+func TestEventLogPersistenceFailureSinkResolvesSharedTaskIDByProject(t *testing.T) {
+	stateRoot := t.TempDir()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sinks := map[string]string{}
+	for _, projectID := range []string{"project-1", "project-2"} {
+		sinks[projectID] = filepath.Join(stateRoot, projectID+"-events.jsonl")
+		if err := store.UpsertRun(RunStatus{ProjectID: projectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", EventSinkPath: sinks[projectID]}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved := saveSupervisorDecisionForEventLogFailureTest(t, store, "project-2", "APP-T-0001", "decision-p2")
+	daemon := &Daemon{store: store}
+	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "project-2", "APP-T-0001", errors.New("disk full"))
+	failures, err := store.ReadEventLogPersistenceFailures()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failures) != 1 || failures[0].ProjectID != "project-2" || failures[0].EventSinkPath != sinks["project-2"] {
+		t.Fatalf("failure did not resolve project-2 sink: %#v", failures)
+	}
+	if _, err := daemon.eventSinkPathForRecord("", "APP-T-0001"); workSessionErrorCode(err) != "RUN_IDENTITY_AMBIGUOUS" {
+		t.Fatalf("legacy project-less lookup guessed instead of refusing: %v", err)
+	}
+	if err := daemon.replayEventLogPersistenceFailure(sinks["project-2"], failures[0]); err != nil {
+		t.Fatalf("scoped quarantine replay: %v", err)
+	}
+	if text, err := readText(sinks["project-2"]); err != nil || !strings.Contains(text, saved.DecisionID) {
+		t.Fatalf("project-2 decision not replayed: %q err=%v", text, err)
+	}
+	legacy := failures[0]
+	legacy.ProjectID = ""
+	var ambiguous *TuskerError
+	if err := daemon.replayEventLogPersistenceFailure(sinks["project-2"], legacy); !errors.As(err, &ambiguous) || ambiguous.Code != "RUN_IDENTITY_AMBIGUOUS" {
+		t.Fatalf("legacy replay guessed a project: %v", err)
+	}
+}
+
 func TestLegacySupervisorLookupFailureNeedsNoEventReplay(t *testing.T) {
 	daemon := &Daemon{}
 	errs := daemon.probeEventLogPersistenceFailures([]eventLogPersistenceFailure{{EventKind: "supervisor_decision_lookup", RecordID: "APP-T-0001"}})
@@ -232,7 +273,7 @@ func TestEventLogPersistenceResumeReplaysSupervisorDecisionBeforeProbe(t *testin
 	}
 	saved := saveSupervisorDecisionForEventLogFailureTest(t, store, "project-1", recordID, "decision-replay")
 	daemon := &Daemon{store: store}
-	daemon.tripEventLogPersistenceCircuit("supervisor_decision", recordID, errors.New("injected sink failure"))
+	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "project-1", recordID, errors.New("injected sink failure"))
 	if err := os.Remove(sinkPath); err != nil {
 		t.Fatal(err)
 	}
@@ -288,8 +329,8 @@ func TestEventLogPersistenceResumeReplaysSupervisorDecisionWhenProbeSharesSink(t
 	}
 	saved := saveSupervisorDecisionForEventLogFailureTest(t, store, "project-1", recordID, "decision-shared-sink")
 	daemon := &Daemon{store: store}
-	daemon.tripEventLogPersistenceCircuit("supervisor_decision", recordID, errors.New("supervisor sink failure"))
-	daemon.tripEventLogPersistenceCircuit("runtime_event", recordID, errors.New("probe sink failure"))
+	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "project-1", recordID, errors.New("supervisor sink failure"))
+	daemon.tripEventLogPersistenceCircuit("runtime_event", "project-1", recordID, errors.New("probe sink failure"))
 	failures, err := store.ReadEventLogPersistenceFailures()
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +392,7 @@ func TestEventLogPersistenceResumeQuarantinesUnreplayableSupervisorDecision(t *t
 		t.Fatal(err)
 	}
 	daemon := &Daemon{store: store}
-	daemon.tripEventLogPersistenceCircuit("supervisor_decision", recordID, errors.New("injected sink failure"))
+	daemon.tripEventLogPersistenceCircuit("supervisor_decision", "project-1", recordID, errors.New("injected sink failure"))
 	if err := os.Remove(sinkPath); err != nil {
 		t.Fatal(err)
 	}

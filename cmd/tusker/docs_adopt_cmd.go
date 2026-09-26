@@ -407,41 +407,6 @@ func prepareDocsAdoptProposal(repoRoot string, proposal docsAdoptProposal, requi
 	return prepared, nil
 }
 
-func applyPreparedDocsAdoptTable(repoRoot string, prepared []docsAdoptPrepared) error {
-	docsAdoptApplyMu.Lock()
-	defer docsAdoptApplyMu.Unlock()
-	rollback, err := snapshotDocsAdoptBatch(repoRoot, prepared)
-	if err != nil {
-		return err
-	}
-	for _, item := range prepared {
-		if strings.EqualFold(strings.TrimSpace(item.proposal.Disposition), "leave") {
-			continue
-		}
-		if item.alreadyApplied {
-			continue
-		}
-		if err := verifyPreparedDocsAdoptCAS(repoRoot, item); err != nil {
-			return err
-		}
-	}
-	for _, item := range prepared {
-		if strings.EqualFold(strings.TrimSpace(item.proposal.Disposition), "leave") {
-			continue
-		}
-		if item.alreadyApplied {
-			continue
-		}
-		if err := applyPreparedDocsAdoptProposal(repoRoot, item); err != nil {
-			if rollbackErr := restoreDocsAdoptBatch(repoRoot, rollback); rollbackErr != nil {
-				return fmt.Errorf("%w (documentation adoption rollback failed: %v)", err, rollbackErr)
-			}
-			return err
-		}
-	}
-	return nil
-}
-
 type docsAdoptRollbackEntry struct {
 	relative string
 	exists   bool
@@ -519,10 +484,6 @@ func restoreDocsAdoptBatch(repoRoot string, rollback []docsAdoptRollbackEntry) e
 		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
-}
-
-func applyPreparedDocsAdoptProposal(repoRoot string, prepared docsAdoptPrepared) error {
-	return applyPreparedDocsAdoptProposalMoves(repoRoot, prepared, nil)
 }
 
 func applyPreparedDocsAdoptProposalMoves(repoRoot string, prepared docsAdoptPrepared, moves map[string]string) error {
@@ -1048,14 +1009,6 @@ func docsAdoptSubject(relative string, raw []byte) string {
 		}
 	}
 	return strings.TrimSuffix(filepath.Base(relative), filepath.Ext(relative))
-}
-
-func applyDocsAdoptProposal(repoRoot string, proposal docsAdoptProposal) error {
-	prepared, err := prepareDocsAdoptProposal(repoRoot, proposal, false)
-	if err != nil {
-		return err
-	}
-	return applyPreparedDocsAdoptTable(repoRoot, []docsAdoptPrepared{prepared})
 }
 
 func docsAdoptBody(raw []byte) string {

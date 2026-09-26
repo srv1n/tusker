@@ -482,22 +482,6 @@ func docsSubjectSlug(subject string) string {
 	return slug
 }
 
-func docsScaffold(subject, kind string) string {
-	normalized, ok := docsPortableKind(kind)
-	if !ok {
-		normalized = docgraph.KindDoc
-	}
-	return docsScaffoldPortable(subject, normalized, "overview", "")
-}
-
-func docsScaffoldWithParent(subject, kind, parent string) string {
-	normalized, ok := docsPortableKind(kind)
-	if !ok {
-		normalized = docgraph.KindDoc
-	}
-	return docsScaffoldPortable(subject, normalized, parent, "")
-}
-
 // docsScaffoldPortable renders a creation scaffold with an explicit portable
 // kind and kind-specific lifecycle. Creation never claims code conformance:
 // new documents start unverified and new proposals start proposed.

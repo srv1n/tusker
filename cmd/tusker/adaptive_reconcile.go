@@ -36,10 +36,6 @@ type adaptiveProjectReconcileStatus struct {
 	NextDueAt          string `json:"nextDueAt,omitempty"`
 }
 
-func adaptiveReconcileCadence(idle time.Duration, runtimeUrgent bool) (string, time.Duration) {
-	return adaptiveReconcileCadenceWithHot(idle, runtimeUrgent, reconcileHotCadence)
-}
-
 func adaptiveReconcileCadenceWithHot(idle time.Duration, runtimeUrgent bool, hotCadence time.Duration) (string, time.Duration) {
 	if runtimeUrgent {
 		return "live", reconcileLiveCadence
@@ -57,10 +53,6 @@ func adaptiveReconcileCadenceWithHot(idle time.Duration, runtimeUrgent bool, hot
 	default:
 		return "cold", reconcileColdCadence
 	}
-}
-
-func runtimeRunNeedsHotReconcile(run RunStatus) bool {
-	return runtimeRunNeedsHotReconcileAt(run, time.Now().UTC())
 }
 
 func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {

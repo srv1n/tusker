@@ -163,7 +163,13 @@ func TestWalkthroughWaveStatusStaleProofAndPausedPartialFailure(t *testing.T) {
 	writePendingDirectTask(t, vault, "APP-T-0004", "W-0001", nil)
 	writeDirectTask(t, vault, "APP-T-0005", "W-0001", nil)
 	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005"}, nil)
-	if code, _ := directWaveProofBlocker(vault, walkthroughNote(t, vault, "APP-T-0001")); code != "STRICT_PROOF_MISSING" {
+	proofKind := func(taskID string) string {
+		if cause := v7VerificationReceiptInvalidation(vault, walkthroughNote(t, vault, taskID)); cause != nil {
+			return cause.Kind
+		}
+		return ""
+	}
+	if code := proofKind("APP-T-0001"); code != "missing" {
 		t.Fatalf("pending proof code=%q", code)
 	}
 	rewriteTaskFile(t, vault, "APP-T-0005", func(data map[string]any, body string) (map[string]any, string) {
@@ -171,13 +177,13 @@ func TestWalkthroughWaveStatusStaleProofAndPausedPartialFailure(t *testing.T) {
 		rows[0].Result, rows[0].Notes = "fail", "command exited 1"
 		return data, replaceSection(body, "## Verification", renderV7VerificationTable(rows))
 	})
-	if code, _ := directWaveProofBlocker(vault, walkthroughNote(t, vault, "APP-T-0005")); code != "STRICT_PROOF_FAILED" {
+	if code := proofKind("APP-T-0005"); code != "failed" {
 		t.Fatalf("failed proof code=%q", code)
 	}
 	rewriteTaskFile(t, vault, "APP-T-0003", func(data map[string]any, body string) (map[string]any, string) {
 		return data, strings.Replace(body, "Do APP-T-0003.", "Changed APP-T-0003.", 1)
 	})
-	if code, _ := directWaveProofBlocker(vault, walkthroughNote(t, vault, "APP-T-0003")); code != "STRICT_PROOF_STALE" {
+	if code := proofKind("APP-T-0003"); code != "changed" {
 		t.Fatalf("stale proof code=%q", code)
 	}
 	start := walkthroughAdmitRun(t, vault, store, project, "W-0001", "APP-T-0001", "APP-T-0001", runLaneExecute, "worker:live")

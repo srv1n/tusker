@@ -15,7 +15,9 @@ import type {
   RunnerConformanceReport,
 } from "@/types/domain";
 
-type Scope = "global" | "project";
+// Runner profiles are defined only in the global config; projects select them
+// through tier mappings (TiersSection scope="project").
+type Scope = "global";
 type Tier = "light" | "standard" | "demanding";
 type Draft = {
   name: string;

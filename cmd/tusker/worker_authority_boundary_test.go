@@ -642,11 +642,13 @@ func configureCompletionWorkerProfilesForTest(t *testing.T, vault string) {
 			"subagents": map[string]any{"allowed": false, "max_concurrent": 0},
 		},
 	}
+	for name, profile := range profiles {
+		setGlobalProfileForTest(t, name, profile)
+	}
 	for _, setting := range []struct {
 		key   string
 		value any
 	}{
-		{"automation.profiles", profiles},
 		{"automation.default_profile", "implementation-terra"},
 		{"automation.lane_profiles", map[string]any{runLaneExecute: "implementation-terra", runLaneReview: "reviewer-terra"}},
 		{"automation.completion_reactor.mode", string(completionReactorModeAuthoritative)},

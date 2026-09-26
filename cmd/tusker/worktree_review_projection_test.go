@@ -64,7 +64,7 @@ func preparedWorktreeReviewProjection(t *testing.T) (canonicalVault, workspace, 
 	if _, err := saveV7DocumentCAS(canonicalPath, canonicalData, canonicalBody, v7FrontmatterOrder["task"], stringField(canonicalData, "state_rev")); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedCanonicalV7TaskIntoWorkspace(canonicalVault, workspace, taskID); err != nil {
+	if err := syncCanonicalV7TaskIntoWorkspace(canonicalVault, workspace, taskID); err != nil {
 		t.Fatal(err)
 	}
 	localTaskPath := filepath.Join(runnerWorktreeVaultPath(workspace, canonicalVault), "work", "tasks", taskID+".md")

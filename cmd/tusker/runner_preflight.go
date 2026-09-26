@@ -202,11 +202,6 @@ func setEnvValue(env []string, key, value string) []string {
 	return out
 }
 
-func runnerCommandPreflightBlocker(runner RunnerName, command string) string {
-	_, blocker := runnerCommandPreflight(runner, command)
-	return blocker
-}
-
 type runnerCommandPreflightResult struct {
 	ResolvedExecutable string
 	ExecutableVersion  string
@@ -409,14 +404,6 @@ func expandPathAssignment(value, baseSearchPath string) string {
 	value = strings.ReplaceAll(value, "${PATH}", baseSearchPath)
 	value = strings.ReplaceAll(value, "$PATH", baseSearchPath)
 	return value
-}
-
-func lookPathInSearchPath(executable, searchPath string) (string, error) {
-	candidates, err := executableCandidatesInSearchPath(executable, searchPath)
-	if err != nil {
-		return "", err
-	}
-	return candidates[0], nil
 }
 
 func executableCandidatesInSearchPath(executable, searchPath string) ([]string, error) {

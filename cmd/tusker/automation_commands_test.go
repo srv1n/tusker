@@ -71,9 +71,7 @@ func TestAutomationUsesRuntimeToggleAndResolvedProfileAsSingleAuthorities(t *tes
 	}
 	profile := directEmergencyRunnerProfileForTest()
 	profile["harness"] = string(RunnerDevin)
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.test-devin", profile); err != nil {
-		t.Fatal(err)
-	}
+	setGlobalProfileForTest(t, "test-devin", profile)
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard.execute", []string{"test-devin"}); err != nil {
 		t.Fatal(err)
 	}
@@ -343,9 +341,7 @@ func setDirectEmergencyProfileForAutomationTest(t *testing.T, vault string) {
 	// Legacy daemon fixtures exercise scheduling and lifecycle behavior, not
 	// ACP installation. Select direct Codex explicitly as a test-only emergency
 	// profile so the product's fresh-project ACP default remains fail-closed.
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.test-emergency-codex-exec", directEmergencyRunnerProfileForTest()); err != nil {
-		t.Fatal(err)
-	}
+	setGlobalProfileForTest(t, "test-emergency-codex-exec", directEmergencyRunnerProfileForTest())
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_profile", "test-emergency-codex-exec"); err != nil {
 		t.Fatal(err)
 	}

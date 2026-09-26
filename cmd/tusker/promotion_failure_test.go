@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -153,22 +154,6 @@ func TestPromotionFailureRouteMatrix(t *testing.T) {
 	}
 }
 
-func TestPromotionGateSetupFailureWritesArtifact(t *testing.T) {
-	store, err := OpenRuntimeStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	exec := runV7GateTierOnRef(t.TempDir(), t.TempDir(), "missing", "app", GateTierPolicy{HarvestCommands: []string{"true"}}, store)
-	if exec.Err == nil || exec.ArtifactRef == "" {
-		t.Fatalf("setup failure lacks artifact: %#v", exec)
-	}
-	raw, err := os.ReadFile(exec.ArtifactRef)
-	if err != nil || len(raw) == 0 {
-		t.Fatalf("artifact unavailable: %v %q", err, raw)
-	}
-}
-
 func TestPromotionFailurePacketKeepsSetupFallbackDefect(t *testing.T) {
 	packet := PromotionFailurePacket{Defects: []GateDefect{{Target: "fallback", Excerpt: "worktree setup failed"}}}
 	got := withPromotionGateResult(packet, GateTierResult{Outcome: gateOutcomeFailed})
@@ -178,5 +163,21 @@ func TestPromotionFailurePacketKeepsSetupFallbackDefect(t *testing.T) {
 	got = withPromotionGateResult(packet, GateTierResult{Outcome: gateOutcomeFailed, Defects: []GateDefect{{Target: "declared command", Excerpt: "red"}}})
 	if len(got.Defects) != 1 || got.Defects[0].Target != "declared command" {
 		t.Fatalf("structured tier defects were not authoritative: %#v", got.Defects)
+	}
+}
+
+func TestPromotionGateSetupFailureWritesArtifact(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	exec := runV7GateTierOnRefContext(context.Background(), t.TempDir(), t.TempDir(), "missing", "app", GateTierPolicy{HarvestCommands: []string{"true"}}, store)
+	if exec.Err == nil || exec.ArtifactRef == "" {
+		t.Fatalf("setup failure lacks artifact: %#v", exec)
+	}
+	raw, err := os.ReadFile(exec.ArtifactRef)
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("artifact unavailable: %v %q", err, raw)
 	}
 }

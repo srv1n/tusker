@@ -501,13 +501,6 @@ func (scope *v7FullGateProviderScope) openTransport() (*os.File, *os.File, *os.F
 	return requestFile, resultFile, scopeDir, nil
 }
 
-func (scope *v7FullGateProviderScope) readRequest() (v7FullGateProviderRequest, error) {
-	if scope == nil || scope.state == nil {
-		return v7FullGateProviderRequest{}, fmt.Errorf("%w: provider request state authority is unavailable", errV7FullGateProvider)
-	}
-	return readV7FullGateProviderRequestAtRoot(scope.state, scope.requestRel)
-}
-
 func (scope *v7FullGateProviderScope) readResult() (v7FullGateProviderResult, error) {
 	if scope == nil || scope.state == nil {
 		return v7FullGateProviderResult{}, fmt.Errorf("%w: provider result state authority is unavailable", errV7FullGateProvider)
@@ -770,14 +763,6 @@ func resolveV7TrustedFullGateProviderAtRoot(profile string, state *v7FullGateSta
 		return v7TrustedFullGateProvider{}, "", "", "", err
 	}
 	return trusted, path, departureFingerprint(append([]string{profile, trusted.Kind, trusted.Version, trusted.ImplementationID, trusted.CapabilitySchema, identity, trusted.ClientDigest, trusted.RuntimeDigest, trusted.PolicyDigest, trusted.AttestationDigest, trusted.ImageOrVMID}, trusted.Capabilities...)...), identity, nil
-}
-
-func v7TrustedProviderStateRoot(stateRoot string) error {
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	return state.Close()
 }
 
 func verifyV7TrustedProviderExecutable(path string) (string, string, error) {
@@ -1473,22 +1458,6 @@ func (p *v7ExternalFullGateProvider) newRequest(workspace, command string) (v7Fu
 	return request, requestPath, nil
 }
 
-// writeV7FullGateReservation makes the recovery record durable before a
-// provider can create its scope. A crash after this returns is recoverable; a
-// crash before it returns has not been granted create authority.
-func writeV7FullGateReservation(path string, raw []byte) error {
-	state, err := openV7FullGateStateRoot(filepath.Dir(filepath.Dir(path)))
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	rel, err := state.relative(path)
-	if err != nil {
-		return err
-	}
-	return state.writeDurable(rel, raw, 0o600, false)
-}
-
 func (p *v7ExternalFullGateProvider) cleanup(scope *v7FullGateProviderScope) (v7FullGateProviderResult, error) {
 	if scope == nil || strings.TrimSpace(scope.requestPath) == "" {
 		return v7FullGateProviderResult{}, fmt.Errorf("%w: provider recovery cannot locate its trusted request", errV7FullGateProvider)
@@ -1593,21 +1562,6 @@ func launchV7FullGateProviderCleanup(ctx context.Context, providerPath string, s
 	return cmd.Run()
 }
 
-func readV7FullGateProviderResult(request v7FullGateProviderRequest) (v7FullGateProviderResult, error) {
-	state, err := openV7FullGateStateRoot(filepath.Dir(request.ResultPath))
-	if err != nil {
-		return v7FullGateProviderResult{}, err
-	}
-	defer state.Close()
-	raw, err := state.readRegular(filepath.Base(request.ResultPath), v7FullGateResultMaxBytes, false)
-	return decodeV7FullGateProviderResult(raw, err, request)
-}
-
-func readV7FullGateProviderResultAtRoot(state *v7FullGateStateRoot, resultRel string, request v7FullGateProviderRequest) (v7FullGateProviderResult, error) {
-	raw, err := state.readRegular(resultRel, v7FullGateResultMaxBytes, false)
-	return decodeV7FullGateProviderResult(raw, err, request)
-}
-
 func decodeV7FullGateProviderResult(raw []byte, readErr error, request v7FullGateProviderRequest) (v7FullGateProviderResult, error) {
 	err := readErr
 	if err != nil {
@@ -1688,35 +1642,15 @@ func v7SealFullGateProviderResult(request v7FullGateProviderRequest, result *v7F
 	result.ReceiptDigest = v7FullGateReceiptDigest(request, *result)
 }
 
-func v7FullGateProviderOutcomeJournalRoot(stateRoot string) string {
-	return filepath.Join(stateRoot, "full-gate-outcomes")
-}
-
 func v7FullGateProviderOutcomeJournalRelPath(departureID, requestDigest string) string {
 	key := strings.TrimPrefix(requestDigest, "sha256:")
 	departure := strings.TrimPrefix(v7FullGateTextDigest(departureID), "sha256:")[:16]
 	return filepath.Join("full-gate-outcomes", departure+"-"+key+".json")
 }
 
-func v7FullGateProviderOutcomeJournalPath(stateRoot, departureID, requestDigest string) string {
-	return filepath.Join(stateRoot, v7FullGateProviderOutcomeJournalRelPath(departureID, requestDigest))
-}
-
 func v7FullGateProviderOutcomeJournalDigest(journal v7FullGateProviderOutcomeJournal) string {
 	receiptRaw, _ := json.Marshal(journal.Receipt)
 	return v7FullGateTextDigest(strings.Join([]string{journal.Schema, journal.DepartureID, journal.RequestDigest, journal.ScopePath, journal.Request.RequestDigest, journal.Result.ResultDigest, string(receiptRaw), journal.ArtifactRef, journal.ArtifactDigest, fmt.Sprint(journal.Reconciled), journal.Action}, "\x00"))
-}
-
-func persistV7FullGateProviderOutcomeJournal(stateRoot string, scope *v7FullGateProviderScope, request v7FullGateProviderRequest, result v7FullGateProviderResult, receipt GateProviderReceipt) error {
-	if strings.TrimSpace(stateRoot) == "" {
-		stateRoot = filepath.Dir(filepath.Dir(filepath.Dir(scope.requestPath)))
-	}
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	return persistV7FullGateProviderOutcomeJournalAtRoot(state, scope, request, result, receipt)
 }
 
 func persistV7FullGateProviderOutcomeJournalAtRoot(state *v7FullGateStateRoot, scope *v7FullGateProviderScope, request v7FullGateProviderRequest, result v7FullGateProviderResult, receipt GateProviderReceipt) error {
@@ -1757,20 +1691,6 @@ func persistV7FullGateProviderOutcomeJournalAtRoot(state *v7FullGateStateRoot, s
 	return runV7FullGateDurabilityHook("outcome_journal_synced")
 }
 
-func readV7FullGateProviderOutcomeJournal(path string) (v7FullGateProviderOutcomeJournal, error) {
-	stateRoot := filepath.Dir(filepath.Dir(path))
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return v7FullGateProviderOutcomeJournal{}, err
-	}
-	defer state.Close()
-	rel, err := state.relative(path)
-	if err != nil {
-		return v7FullGateProviderOutcomeJournal{}, err
-	}
-	return readV7FullGateProviderOutcomeJournalAtRoot(state, rel)
-}
-
 func readV7FullGateProviderOutcomeJournalAtRoot(state *v7FullGateStateRoot, rel string) (v7FullGateProviderOutcomeJournal, error) {
 	raw, err := state.readRegular(rel, v7FullGateResultMaxBytes, false)
 	if err != nil {
@@ -1786,15 +1706,6 @@ func readV7FullGateProviderOutcomeJournalAtRoot(state *v7FullGateStateRoot, rel 
 		return v7FullGateProviderOutcomeJournal{}, fmt.Errorf("%w: invalid provider outcome journal", errV7FullGateProvider)
 	}
 	return journal, nil
-}
-
-func removeV7FullGateProviderOutcomeJournal(stateRoot string, receipt GateProviderReceipt) error {
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	return removeV7FullGateProviderOutcomeJournalAtRoot(state, receipt)
 }
 
 func removeV7FullGateProviderOutcomeJournalAtRoot(state *v7FullGateStateRoot, receipt GateProviderReceipt) error {
@@ -1823,16 +1734,6 @@ func persistV7FullGateProviderResultAtRoot(state *v7FullGateStateRoot, resultRel
 	return nil
 }
 
-func writeV7DurablePromotionArtifact(path string, raw []byte) error {
-	stateRoot := filepath.Dir(filepath.Dir(filepath.Dir(path)))
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	return writeV7DurablePromotionArtifactAtRoot(state, path, raw)
-}
-
 func writeV7DurablePromotionArtifactAtRoot(state *v7FullGateStateRoot, path string, raw []byte) error {
 	rel, err := state.relative(path)
 	if err != nil || filepath.Dir(rel) != filepath.Join("artifacts", "promotion-gates") || filepath.Ext(rel) != ".log" {
@@ -1845,22 +1746,6 @@ func writeV7DurablePromotionArtifactAtRoot(state *v7FullGateStateRoot, path stri
 		return err
 	}
 	return runV7FullGateDurabilityHook("promotion_gate_artifact_synced")
-}
-
-func removeV7FullGatePromotionArtifact(stateRoot, path string) error {
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	rel, err := state.relative(path)
-	if err != nil || filepath.Dir(rel) != filepath.Join("artifacts", "promotion-gates") || filepath.Ext(rel) != ".log" {
-		return fmt.Errorf("%w: promotion artifact removal escapes the trusted artifact directory", errV7FullGateProvider)
-	}
-	if err := state.remove(rel); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return state.syncDir(filepath.Dir(rel))
 }
 
 // removeV7ProvablyUnboundPromotionArtifacts is deliberately conservative.
@@ -2279,20 +2164,6 @@ func v7FullGateOutcomeJournalTemporaryName(name string) bool {
 	return true
 }
 
-func recoverV7FullGateProviderPreparations(root string) error {
-	stateRoot := filepath.Dir(root)
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	rel, err := state.relative(root)
-	if err != nil {
-		return err
-	}
-	return recoverV7FullGateProviderPreparationsAtRoot(state, rel)
-}
-
 func recoverV7FullGateProviderPreparationsAtRoot(state *v7FullGateStateRoot, rootRel string) error {
 	entries, err := state.readDir(rootRel)
 	if err != nil {
@@ -2543,15 +2414,6 @@ func blockV7FullGateJournalOutcome(store *RuntimeStore, run *DepartureRun, journ
 	return runV7FullGateRecoveryHook("outcome_target_persisted")
 }
 
-func retireV7FullGateRecoveredOutcome(stateRoot string, journal v7FullGateProviderOutcomeJournal) error {
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	return retireV7FullGateRecoveredOutcomeAtRoot(state, journal)
-}
-
 func retireV7FullGateRecoveredOutcomeAtRoot(state *v7FullGateStateRoot, journal v7FullGateProviderOutcomeJournal) error {
 	if err := retireV7FullGateRecoveredScopeAtRoot(state, journal); err != nil {
 		return err
@@ -2560,15 +2422,6 @@ func retireV7FullGateRecoveredOutcomeAtRoot(state *v7FullGateStateRoot, journal 
 		return err
 	}
 	return runV7FullGateRecoveryHook("outcome_scope_retired")
-}
-
-func retireV7FullGateRecoveredScope(stateRoot string, journal v7FullGateProviderOutcomeJournal) error {
-	state, err := openV7FullGateStateRoot(stateRoot)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-	return retireV7FullGateRecoveredScopeAtRoot(state, journal)
 }
 
 func retireV7FullGateRecoveredScopeAtRoot(state *v7FullGateStateRoot, journal v7FullGateProviderOutcomeJournal) error {
@@ -2595,20 +2448,6 @@ func retireV7FullGateRecoveredScopeAtRoot(state *v7FullGateStateRoot, journal v7
 		}
 	}
 	return nil
-}
-
-func validV7FullGateRecoveryScopePath(root, scope string) bool {
-	rootAbs, err := filepath.Abs(filepath.Clean(root))
-	if err != nil {
-		return false
-	}
-	state, err := openV7FullGateStateRoot(filepath.Dir(rootAbs))
-	if err != nil {
-		return false
-	}
-	defer state.Close()
-	recoveryRel, err := state.relative(rootAbs)
-	return err == nil && validV7FullGateRecoveryScopePathAtRoot(state, recoveryRel, scope)
 }
 
 func validV7FullGateRecoveryScopePathAtRoot(state *v7FullGateStateRoot, recoveryRel, scope string) bool {

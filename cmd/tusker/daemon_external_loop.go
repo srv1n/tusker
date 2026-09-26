@@ -777,10 +777,6 @@ func externalLoopDispatchLeaseSnapshot(base, prepared RunStatus) RunStatus {
 	return prepared
 }
 
-func externalLoopJobAlreadyHandled(store *RuntimeStore, projectID, recordID, jobID string) (bool, error) {
-	return externalLoopJobAlreadyHandledForNote(store, projectID, recordID, jobID, Note{})
-}
-
 func externalLoopJobAlreadyHandledForNote(store *RuntimeStore, projectID, recordID, jobID string, note Note) (bool, error) {
 	if store == nil || strings.TrimSpace(jobID) == "" {
 		return false, nil

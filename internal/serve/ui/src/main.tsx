@@ -3,12 +3,35 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 
-// UI type is the platform system face (see --font-sans). The serif display
-// face is system serif; JetBrains Mono is only for exact identifiers and
-// commands.
+// UI type defaults to the platform system face (see --font-sans); the settings
+// font picker can swap in any of the bundled faces below. JetBrains Mono also
+// backs --font-mono for exact identifiers and commands.
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/jetbrains-mono/600.css";
+import "@fontsource/ibm-plex-sans/400.css";
+import "@fontsource/ibm-plex-sans/500.css";
+import "@fontsource/ibm-plex-sans/600.css";
+import "@fontsource/ibm-plex-serif/400.css";
+import "@fontsource/ibm-plex-serif/500.css";
+import "@fontsource/ibm-plex-serif/600.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+import "@fontsource/geist-sans/400.css";
+import "@fontsource/geist-sans/500.css";
+import "@fontsource/geist-sans/600.css";
+import "@fontsource/geist-mono/400.css";
+import "@fontsource/geist-mono/500.css";
+import "@fontsource/geist-mono/600.css";
+import "@fontsource/spectral/400.css";
+import "@fontsource/spectral/500.css";
+import "@fontsource/spectral/600.css";
+import "@fontsource/source-serif-4/400.css";
+import "@fontsource/source-serif-4/500.css";
+import "@fontsource/source-serif-4/600.css";
+import "@fontsource/ia-writer-duo/400.css";
+import "@fontsource/ia-writer-duo/700.css";
 
 import "@/styles/app.css";
 import { FontScaleProvider } from "@/lib/font-scale";

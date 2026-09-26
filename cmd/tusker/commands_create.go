@@ -4,13 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
-
-func bootstrap(args Args) error {
-	return bootstrapV7(args)
-}
 
 func bootstrapV7(args Args) error {
 	vaultPath, err := resolveVaultPath(args, true)
@@ -65,19 +59,6 @@ func writeDefaultTuskerConfig(vaultPath string) error {
 	configPath := managedTuskerConfigPath(vaultPath)
 	projectID := sanitizeProjectID(filepath.Base(filepath.Dir(vaultPath)))
 	root := filepath.ToSlash(filepath.Base(vaultPath))
-	profiles := semanticBootstrapProfiles(discoverRunnerCatalog(false))
-	profileYAML := ""
-	if len(profiles) > 0 {
-		profileRaw, err := yaml.Marshal(profiles)
-		if err != nil {
-			return err
-		}
-		profileYAML = "  profiles:\n" + indentBootstrapYAML(string(profileRaw), "    ") + "\n"
-	}
-	defaultProfileYAML := ""
-	if hasBootstrapProfile(profiles, "execute-standard") {
-		defaultProfileYAML = "  default_profile: execute-standard\n"
-	}
 	return writeText(configPath, fmt.Sprintf(`schema: tusker.config/v1
 project_id: %s
 
@@ -97,9 +78,8 @@ automation:
   # Automation is opt-in. Registration keeps status projections fresh; only
   # an explicit operator change may authorize daemon dispatch.
   enabled: false
-  # Editable semantic defaults. They are policy, not a machine-local model catalog.
-%s
-%s
+  # Runner profiles live only in the global config (tusker runner profiles
+  # --write); this project selects them by name via automation.model_levels.
   dispatch_scope: armed_waves
   # The deterministic review-completion reactor is separately opt-in. Its
   # modes are disabled, shadow (read-only comparison), and authoritative.
@@ -132,9 +112,5 @@ automation:
     max_children: 0
     allowed_child_types: []
     merge_rule: manual_review
-`, projectID, root, root, root, root, root, defaultProfileYAML, profileYAML))
-}
-
-func indentBootstrapYAML(value, indent string) string {
-	return indent + strings.ReplaceAll(strings.TrimSuffix(value, "\n"), "\n", "\n"+indent)
+`, projectID, root, root, root, root, root))
 }

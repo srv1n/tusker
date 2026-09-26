@@ -165,7 +165,7 @@ func workReadinessCmd(args Args) error {
 		emitJSON(out)
 	}
 	if len(blockers) > 0 {
-		return workSessionStartBlocker(blockers[0])
+		return afterResultEmitted(workSessionStartBlocker(blockers[0]))
 	}
 	return nil
 }
@@ -289,7 +289,7 @@ func workWaitCmd(args Args) error {
 				"error": "wait timeout: run did not release within bound",
 				"next":  "tusker work progress " + id,
 			})
-			return tuskerError("WAIT_TIMEOUT", "work wait timed out for "+id+" after "+fmt.Sprintf("%d", timeoutSecs)+"s", withHint("inspect with `tusker work progress "+id+"`; rerun wait with a larger --timeout"))
+			return afterResultEmitted(tuskerError("WAIT_TIMEOUT", "work wait timed out for "+id+" after "+fmt.Sprintf("%d", timeoutSecs)+"s", withHint("inspect with `tusker work progress "+id+"`; rerun wait with a larger --timeout")))
 		}
 		time.Sleep(interval)
 	}
@@ -374,17 +374,17 @@ func workReconcileCmd(args Args) error {
 	}
 	if run == nil {
 		emitJSON(reconcilePayload(id, "", "", "", nil, "", "run `tusker work start "+id+" --by <agent>` from the checkout holding the implementation"))
-		return tuskerError(errorNotFound, "work reconcile found no live work session for "+id, withHint("run `tusker work start "+id+" --by <agent>` from the checkout holding the implementation"))
+		return afterResultEmitted(tuskerError(errorNotFound, "work reconcile found no live work session for "+id, withHint("run `tusker work start "+id+" --by <agent>` from the checkout holding the implementation")))
 	}
 	if owner != "" && run.LeaseOwner != "" && owner != run.LeaseOwner &&
 		LeaseState(run.LeaseState) != LeaseStateReleased {
 		emitJSON(reconcilePayload(id, run.WorkspacePath, "", "", nil, "", ""))
-		return tuskerError("WORKSPACE_OWNER_MISMATCH", "work reconcile refused: session owned by "+run.LeaseOwner, withHint("reconcile as --by "+run.LeaseOwner+" or wait for release"))
+		return afterResultEmitted(tuskerError("WORKSPACE_OWNER_MISMATCH", "work reconcile refused: session owned by "+run.LeaseOwner, withHint("reconcile as --by "+run.LeaseOwner+" or wait for release")))
 	}
 	workRevision := intField(note.Data, "work_revision")
 	if workRevision != 0 && run.WorkRevision != workRevision {
 		emitJSON(reconcilePayload(id, run.WorkspacePath, "", "", nil, "", "reload with `tusker work progress "+id+"`"))
-		return tuskerError("WORK_SESSION_STALE", "work reconcile refused: session revision is stale (task revision "+fmt.Sprintf("%d", workRevision)+", run revision "+fmt.Sprintf("%d", run.WorkRevision)+")", withHint("reload with `tusker work progress "+id+"`; submit from the bound workspace only"))
+		return afterResultEmitted(tuskerError("WORK_SESSION_STALE", "work reconcile refused: session revision is stale (task revision "+fmt.Sprintf("%d", workRevision)+", run revision "+fmt.Sprintf("%d", run.WorkRevision)+")", withHint("reload with `tusker work progress "+id+"`; submit from the bound workspace only")))
 	}
 	checkout := v7RepoRoot(vault)
 	scope, scopeErr := canonicalTaskMaterialScope(vault, note)
@@ -401,13 +401,13 @@ func workReconcileCmd(args Args) error {
 	boundMaterial, err := workspaceTreeStateHashForPaths(run.WorkspacePath, scope, generatedOutputScope)
 	if err != nil {
 		emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, "", scope, "", "submit from the bound workspace or release and restart where the implementation lives"))
-		return tuskerError("WORKSPACE_MISMATCH", "work reconcile cannot read bound workspace material: "+err.Error(), withHint("submit from the bound workspace or release and restart where the implementation lives"))
+		return afterResultEmitted(tuskerError("WORKSPACE_MISMATCH", "work reconcile cannot read bound workspace material: "+err.Error(), withHint("submit from the bound workspace or release and restart where the implementation lives")))
 	}
 	if !workspacePathsCompatible(checkout, run.WorkspacePath) {
 		currentMaterial, hashErr := workspaceTreeStateHashForPaths(checkout, scope, generatedOutputScope)
 		if hashErr != nil || currentMaterial != boundMaterial {
 			emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, boundMaterial, scope, "", "release the stray claim and start where the implementation lives"))
-			return tuskerError("WORKSPACE_MISMATCH", "work reconcile refused: current checkout does not match the bound implementation workspace", withHint("run `tusker work submit "+id+"` from the bound workspace, or `tusker work cancel "+id+" --by "+run.LeaseOwner+" --reason <text>` then `tusker work start "+id+"` where the implementation lives"))
+			return afterResultEmitted(tuskerError("WORKSPACE_MISMATCH", "work reconcile refused: current checkout does not match the bound implementation workspace", withHint("run `tusker work submit "+id+"` from the bound workspace, or `tusker work cancel "+id+" --by "+run.LeaseOwner+" --reason <text>` then `tusker work start "+id+"` where the implementation lives")))
 		}
 	}
 	head := ""
@@ -477,11 +477,11 @@ func workProfileCmd(args Args) error {
 	} else {
 		out["ok"] = false
 		out["error"] = "no explicit lane profile configured for " + lane
-		out["next"] = "configure an explicit project or machine-local profile for lane " + lane
+		out["next"] = "select a global-config runner profile (automation.model_levels / default_profile) for lane " + lane
 	}
 	emitJSON(out)
 	if !defined {
-		return tuskerError(errorConfigInvalid, "work profile: no explicit lane profile configured for "+lane, withHint("configure an explicit project or machine-local profile for lane "+lane))
+		return afterResultEmitted(tuskerError(errorConfigInvalid, "work profile: no explicit lane profile configured for "+lane, withHint("select a global-config runner profile (automation.model_levels / default_profile) for lane "+lane)))
 	}
 	return nil
 }

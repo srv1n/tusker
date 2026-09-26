@@ -28,7 +28,7 @@ func scaffoldDocumentationSystem(repoRoot string) ([]initDocWrite, error) {
 	}
 	undo := "remove the generated documentation and repo-local skill directories manually"
 	var writes []initDocWrite
-	for _, relative := range []string{"docs/system", ".tusker/specs", ".tusker/specs/decisions"} {
+	for _, relative := range []string{"docs/system"} {
 		if symlinkPath, symlinkErr := docsAdoptSymlinkPath(repoRoot, relative); symlinkErr != nil {
 			return nil, symlinkErr
 		} else if symlinkPath != "" {

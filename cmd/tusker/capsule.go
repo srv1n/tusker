@@ -23,14 +23,6 @@ func capsuleScaffold() map[string]any {
 	}
 }
 
-func capsuleBlock(what string, useWhen, skipWhen []string) map[string]any {
-	return map[string]any{
-		"what":      strings.TrimSpace(what),
-		"use_when":  filterStrings(useWhen),
-		"skip_when": filterStrings(skipWhen),
-	}
-}
-
 func frontmatterCapsuleFor(note Note) frontmatterCapsule {
 	value, ok := note.Data["capsule"]
 	if !ok {
@@ -78,14 +70,6 @@ func capsulePayload(note Note) any {
 		"use_when":  capsule.UseWhen,
 		"skip_when": capsule.SkipWhen,
 	}
-}
-
-func capsuleSearchText(note Note) string {
-	capsule := frontmatterCapsuleFor(note)
-	if !capsule.Present {
-		return ""
-	}
-	return strings.Join(append(append([]string{capsule.What}, capsule.UseWhen...), capsule.SkipWhen...), "\n")
 }
 
 func capsuleOneLine(note Note) string {

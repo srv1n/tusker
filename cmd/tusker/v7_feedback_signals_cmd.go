@@ -193,14 +193,6 @@ func feedbackReviewOutputPath(vaultPath, date string) string {
 	return filepath.Join(vaultPath, "feedback", "reviews", firstNonEmpty(feedbackReviewDateOnly(date), todayISO())+".md")
 }
 
-func deriveFeedbackSignalsForVault(vaultPath, date string, sinceDate time.Time) ([]feedbackSignal, map[string]int, error) {
-	derivation, err := deriveFeedbackSignalsForTargets([]feedbackTarget{{vaultPath: vaultPath, repoRoot: filepath.Dir(vaultPath)}}, date, sinceDate)
-	if err != nil {
-		return nil, nil, err
-	}
-	return derivation.Signals, derivation.SourceCounts, nil
-}
-
 func deriveFeedbackSignalsForTargets(targets []feedbackTarget, date string, sinceDate time.Time) (feedbackSignalDerivation, error) {
 	derivation := feedbackSignalDerivation{SourceCounts: map[string]int{}}
 	var emissions []feedbackSignal
@@ -453,43 +445,6 @@ func feedbackSignalTasksForVault(vaultPath string, sinceDate time.Time, events [
 	return tasks, nil
 }
 
-func feedbackContractSignalsFromTasks(date string, tasks []feedbackSignalTaskInput) []feedbackSignal {
-	var signals []feedbackSignal
-	seen := map[string]bool{}
-	for _, task := range tasks {
-		labels := feedbackContractLabels(task)
-		if len(labels) == 0 {
-			continue
-		}
-		severity := "P2"
-		if containsString(labels, "thin") || containsString(labels, "unverifiable") || containsString(labels, "missing-proof-map") || containsString(labels, "contradictory") {
-			severity = "P1"
-		}
-		signal := completeFeedbackSignal(feedbackSignal{
-			Date:       date,
-			Project:    firstNonEmpty(task.Project, feedbackSignalProjectFromTask(task.ID)),
-			TaskID:     task.ID,
-			AttemptID:  task.AttemptID,
-			Source:     firstNonEmpty(task.Source, "task_contract_reducer"),
-			Category:   "acceptance_quality",
-			Severity:   severity,
-			Confidence: "high",
-			DedupeKey:  feedbackSignalDedupeKey(task.Project, "acceptance_quality", task.ID, strings.Join(labels, "-")),
-			Summary:    task.ID + " acceptance criteria are " + strings.Join(labels, ", ") + ".",
-			ObservedFacts: map[string]any{
-				"task":               task.ID,
-				"labels":             labels,
-				"acceptance_total":   task.AcceptanceTotal,
-				"missing_acceptance": feedbackSignalShortList(task.MissingAcceptance),
-				"missing_proof":      feedbackSignalShortList(task.MissingProof),
-			},
-			Recommendation: "Repair acceptance criteria and proof mapping before dispatch.",
-		})
-		signals = appendFeedbackSignal(signals, seen, signal)
-	}
-	return signals
-}
-
 func feedbackContractLabels(task feedbackSignalTaskInput) []string {
 	var labels []string
 	if task.AcceptanceTotal == 0 {
@@ -533,25 +488,6 @@ func feedbackSignalProjectFromTask(taskID string) string {
 		return taskID[:idx]
 	}
 	return ""
-}
-
-func dedupeFeedbackCommandSignals(signals []feedbackSignal) []feedbackSignal {
-	seen := map[string]feedbackSignal{}
-	for _, signal := range signals {
-		signal = completeFeedbackSignal(signal)
-		if len(validateFeedbackSignal(signal)) > 0 {
-			continue
-		}
-		current, ok := seen[signal.DedupeKey]
-		if !ok || feedbackReviewSeverityRank(signal.Severity) > feedbackReviewSeverityRank(current.Severity) {
-			seen[signal.DedupeKey] = signal
-		}
-	}
-	var out []feedbackSignal
-	for _, signal := range seen {
-		out = append(out, signal)
-	}
-	return out
 }
 
 func feedbackReviewSignalsFromFeedbackSignals(signals []feedbackSignal) []feedbackReviewSignal {

@@ -76,14 +76,6 @@ func skillPayloadFingerprint(root string) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func writeSkillMaterializationProvenance(destination, sourceKind, sourceIdentity string) error {
-	contract, err := embeddedAuthoringContractProvenance()
-	if err != nil {
-		return err
-	}
-	return writeSkillMaterializationProvenanceWithContract(destination, sourceKind, sourceIdentity, contract)
-}
-
 func writeSkillMaterializationProvenanceWithContract(destination, sourceKind, sourceIdentity string, contract authoringContractProvenance) error {
 	payload, err := skillPayloadFingerprint(destination)
 	if err != nil {

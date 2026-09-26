@@ -154,28 +154,6 @@ func NewDiagnosis(input DiagnosisInput) (Diagnosis, error) {
 	return diagnosis, nil
 }
 
-// DiagnoseUnavailable builds a diagnosis whose only finding reports
-// unavailable input. It carries no recovery action: unavailable state cannot
-// be coerced to ready and unsafe actions stay disabled.
-func DiagnoseUnavailable(dimensions ReadinessDimensions, scope DiagnosticScope, source, reason string) (Diagnosis, error) {
-	evidence := DiagnosticEvidence{
-		Source:     source,
-		Revision:   "unavailable",
-		ObservedAt: time.Now().UTC().Format(time.RFC3339),
-		Detail:     reason,
-	}
-	return NewDiagnosis(DiagnosisInput{
-		Dimensions: dimensions,
-		Findings: []DiagnosticFinding{{
-			Code:           "unavailable-input",
-			Scope:          scope,
-			Classification: DiagnosticUnavailable,
-			NextActor:      DiagnosticAuthorityOperator,
-			Evidence:       evidence,
-		}},
-	})
-}
-
 // SafeActions returns the typed recovery actions whose evidence is fresh and
 // available. Actions on stale or unavailable evidence are never safe to apply.
 func (diagnosis Diagnosis) SafeActions() []RecoveryAction {

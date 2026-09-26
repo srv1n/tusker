@@ -37,78 +37,6 @@ func TestInventoryDocsAdoptProposesLeaveAndPromote(t *testing.T) {
 	}
 }
 
-func TestApplyDocsAdoptPreservesLegacySource(t *testing.T) {
-	repo := t.TempDir()
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy system\n\nCurrent behavior.\n")
-	proposal := docsAdoptProposal{Path: "docs/legacy.md", Subject: "Legacy system", Disposition: "promote", Target: "docs/system/legacy-system.md"}
-	if err := applyDocsAdoptProposal(repo, proposal); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(proposal.Target))); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(repo, "docs/legacy.md")); err != nil {
-		t.Fatalf("legacy source must remain for review: %v", err)
-	}
-	if _, err := docgraph.ParseDocHeaders(proposal.Target, mustReadFile(t, filepath.Join(repo, filepath.FromSlash(proposal.Target)))); err != nil {
-		t.Fatalf("promoted document header invalid: %v", err)
-	}
-	legacy := string(mustReadFile(t, filepath.Join(repo, "docs/legacy.md")))
-	if legacy != "# Legacy system\n\nCurrent behavior.\n" {
-		t.Fatalf("promoted legacy source was changed: %s", legacy)
-	}
-}
-
-func TestApplyDocsAdoptMergePreservesLegacySource(t *testing.T) {
-	repo := t.TempDir()
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\nstatus: canonical\n---\n# CLI\n\nCurrent answer.\n")
-	writeTestDoc(t, repo, "docs/old-cli.md", "# Old CLI\n\nLegacy answer.\n")
-	proposal := docsAdoptProposal{Path: "docs/old-cli.md", Subject: "CLI", Disposition: "merge", Target: "docs/system/cli.md"}
-	if err := applyDocsAdoptProposal(repo, proposal); err != nil {
-		t.Fatal(err)
-	}
-	canonical := string(mustReadFile(t, filepath.Join(repo, "docs/system/cli.md")))
-	if !strings.Contains(canonical, "adopted-source:docs/old-cli.md") || !strings.Contains(canonical, "Legacy answer.") {
-		t.Fatalf("merge did not preserve legacy material: %s", canonical)
-	}
-	legacy := string(mustReadFile(t, filepath.Join(repo, "docs/old-cli.md")))
-	if legacy != "# Old CLI\n\nLegacy answer.\n" {
-		t.Fatalf("merge changed legacy source: %s", legacy)
-	}
-	if err := applyDocsAdoptProposal(repo, proposal); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(string(mustReadFile(t, filepath.Join(repo, "docs/system/cli.md"))), "adopted-source:docs/old-cli.md"); got != 1 {
-		t.Fatalf("merge was not idempotent; marker count=%d", got)
-	}
-}
-
-func TestApplyDocsAdoptTombstoneRequiresSuccessor(t *testing.T) {
-	repo := t.TempDir()
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, "docs/old.md", "# Old\n")
-	err := applyDocsAdoptProposal(repo, docsAdoptProposal{Path: "docs/old.md", Subject: "Old", Disposition: "tombstone", Target: "docs/system/missing.md"})
-	if err == nil || !strings.Contains(err.Error(), "successor target does not exist") {
-		t.Fatalf("tombstone disposition = %v", err)
-	}
-}
-
-func TestApplyDocsAdoptRefusesCanonicalTargetCollision(t *testing.T) {
-	repo := t.TempDir()
-	writeTestDoc(t, repo, "docs/system/existing.md", "---\nsubject: Existing\nstatus: canonical\n---\n# Existing\n")
-	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n\nKeep source.\n")
-	err := applyDocsAdoptProposal(repo, docsAdoptProposal{Path: "docs/legacy.md", Subject: "Legacy", Disposition: "promote", Target: "docs/system/existing.md"})
-	if err == nil || !strings.Contains(err.Error(), "canonical target collision") {
-		t.Fatalf("target collision was accepted: %v", err)
-	}
-	got := string(mustReadFile(t, filepath.Join(repo, "docs/system/existing.md")))
-	if strings.Contains(got, "Keep source.") {
-		t.Fatalf("target collision changed canonical bytes: %s", got)
-	}
-}
-
 func TestInventoryDocsAdoptSkipsVaultAndRuntimeTrees(t *testing.T) {
 	repo := t.TempDir()
 	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
@@ -469,6 +397,166 @@ func TestDocsAdoptUserSessionApprovalKeepsUnattendedHumanGate(t *testing.T) {
 	}
 }
 
+func TestDocsAdoptTableFingerprintRejectsDrift(t *testing.T) {
+	repo := t.TempDir()
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/system/new.md", "---\nsubject: new\nstatus: canonical\npart_of: overview\n---\n# New\n")
+	writeTestDoc(t, repo, "docs/old.md", "# Old\n\nOriginal.\n")
+	proposal := docsAdoptProposal{Path: "docs/old.md", Subject: "Old", Disposition: "tombstone", Target: "docs/system/new.md", SourceFingerprint: docsAdoptBytesFingerprint([]byte("different"))}
+	if _, err := preflightDocsAdoptTable(repo, []docsAdoptProposal{proposal}); err == nil || !strings.Contains(err.Error(), "source changed") {
+		t.Fatalf("source drift was accepted: %v", err)
+	}
+}
+
+func TestDocsAdoptCmdRequiresReviewedTableForMutation(t *testing.T) {
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n")
+	if err := docsAdoptCmd(Args{"vault": vault, "approve": "true", "by": "human:test"}); err == nil || !strings.Contains(err.Error(), "explicit reviewed proposal table") {
+		t.Fatalf("approve without table was accepted: %v", err)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestApplyDocsAdoptMergePreservesLegacySource(t *testing.T) {
+	repo := t.TempDir()
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\nstatus: canonical\n---\n# CLI\n\nCurrent answer.\n")
+	writeTestDoc(t, repo, "docs/old-cli.md", "# Old CLI\n\nLegacy answer.\n")
+	proposal := docsAdoptProposal{Path: "docs/old-cli.md", Subject: "CLI", Disposition: "merge", Target: "docs/system/cli.md"}
+	if err := applyDocsAdoptProposal(repo, proposal); err != nil {
+		t.Fatal(err)
+	}
+	canonical := string(mustReadFile(t, filepath.Join(repo, "docs/system/cli.md")))
+	if !strings.Contains(canonical, "adopted-source:docs/old-cli.md") || !strings.Contains(canonical, "Legacy answer.") {
+		t.Fatalf("merge did not preserve legacy material: %s", canonical)
+	}
+	legacy := string(mustReadFile(t, filepath.Join(repo, "docs/old-cli.md")))
+	if legacy != "# Old CLI\n\nLegacy answer.\n" {
+		t.Fatalf("merge changed legacy source: %s", legacy)
+	}
+	if err := applyDocsAdoptProposal(repo, proposal); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(mustReadFile(t, filepath.Join(repo, "docs/system/cli.md"))), "adopted-source:docs/old-cli.md"); got != 1 {
+		t.Fatalf("merge was not idempotent; marker count=%d", got)
+	}
+}
+
+func TestApplyDocsAdoptPreservesLegacySource(t *testing.T) {
+	repo := t.TempDir()
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy system\n\nCurrent behavior.\n")
+	proposal := docsAdoptProposal{Path: "docs/legacy.md", Subject: "Legacy system", Disposition: "promote", Target: "docs/system/legacy-system.md"}
+	if err := applyDocsAdoptProposal(repo, proposal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(proposal.Target))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "docs/legacy.md")); err != nil {
+		t.Fatalf("legacy source must remain for review: %v", err)
+	}
+	if _, err := docgraph.ParseDocHeaders(proposal.Target, mustReadFile(t, filepath.Join(repo, filepath.FromSlash(proposal.Target)))); err != nil {
+		t.Fatalf("promoted document header invalid: %v", err)
+	}
+	legacy := string(mustReadFile(t, filepath.Join(repo, "docs/legacy.md")))
+	if legacy != "# Legacy system\n\nCurrent behavior.\n" {
+		t.Fatalf("promoted legacy source was changed: %s", legacy)
+	}
+}
+
+func TestApplyDocsAdoptRefusesCanonicalTargetCollision(t *testing.T) {
+	repo := t.TempDir()
+	writeTestDoc(t, repo, "docs/system/existing.md", "---\nsubject: Existing\nstatus: canonical\n---\n# Existing\n")
+	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n\nKeep source.\n")
+	err := applyDocsAdoptProposal(repo, docsAdoptProposal{Path: "docs/legacy.md", Subject: "Legacy", Disposition: "promote", Target: "docs/system/existing.md"})
+	if err == nil || !strings.Contains(err.Error(), "canonical target collision") {
+		t.Fatalf("target collision was accepted: %v", err)
+	}
+	got := string(mustReadFile(t, filepath.Join(repo, "docs/system/existing.md")))
+	if strings.Contains(got, "Keep source.") {
+		t.Fatalf("target collision changed canonical bytes: %s", got)
+	}
+}
+
+func TestApplyDocsAdoptTombstoneRequiresSuccessor(t *testing.T) {
+	repo := t.TempDir()
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/old.md", "# Old\n")
+	err := applyDocsAdoptProposal(repo, docsAdoptProposal{Path: "docs/old.md", Subject: "Old", Disposition: "tombstone", Target: "docs/system/missing.md"})
+	if err == nil || !strings.Contains(err.Error(), "successor target does not exist") {
+		t.Fatalf("tombstone disposition = %v", err)
+	}
+}
+
+func TestDocsAdoptApplyRejectsPostPreflightSourceDrift(t *testing.T) {
+	repo := t.TempDir()
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n\nOriginal.\n")
+	source, err := os.ReadFile(filepath.Join(repo, "docs/legacy.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := preflightDocsAdoptTable(repo, []docsAdoptProposal{{
+		Path: "docs/legacy.md", Subject: "Legacy", Disposition: "promote", Target: "docs/system/legacy.md",
+		Reason: "reviewed", SourceFingerprint: docsAdoptBytesFingerprint(source),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n\nChanged after review.\n")
+	if err := applyPreparedDocsAdoptTable(repo, prepared); err == nil || !strings.Contains(err.Error(), "source changed during approval") {
+		t.Fatalf("post-preflight source drift accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "docs/system/legacy.md")); !os.IsNotExist(err) {
+		t.Fatalf("drifted source created canonical target: %v", err)
+	}
+}
+
+func TestDocsAdoptApplyRollsBackEarlierRowsOnFailure(t *testing.T) {
+	repo := t.TempDir()
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/first.md", "# First\n")
+	writeTestDoc(t, repo, "docs/second.md", "# Second\n")
+	firstSource, err := os.ReadFile(filepath.Join(repo, "docs/first.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := prepareDocsAdoptProposal(repo, docsAdoptProposal{
+		Path: "docs/first.md", Subject: "First", Disposition: "promote", Target: "docs/system/first.md",
+		SourceFingerprint: docsAdoptBytesFingerprint(firstSource),
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSource, err := os.ReadFile(filepath.Join(repo, "docs/second.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := docsAdoptPrepared{proposal: docsAdoptProposal{
+		Path: "docs/second.md", Subject: "Second", Disposition: "invalid", Target: "docs/system/second.md",
+	}, source: secondSource}
+	if err := applyPreparedDocsAdoptTable(repo, []docsAdoptPrepared{first, second}); err == nil {
+		t.Fatal("invalid later row unexpectedly applied")
+	}
+	if _, err := os.Stat(filepath.Join(repo, "docs/system/first.md")); !os.IsNotExist(err) {
+		t.Fatalf("earlier row was not rolled back: %v", err)
+	}
+}
+
 func TestDocsAdoptMixedTablePreflightAndApply(t *testing.T) {
 	repo := t.TempDir()
 	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
@@ -550,9 +638,6 @@ func TestDocsAdoptMixedTablePreflightAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := docgraph.DuplicateSubjects(corpus); len(got) != 0 {
-		t.Fatalf("tombstones duplicated current subjects: %#v", got)
-	}
 	find := docgraph.Find(corpus, "new-managed")
 	if len(find.Matches) != 1 || find.Matches[0].Subject != "new-managed" {
 		t.Fatalf("tombstone successor did not resolve uniquely: %#v", find)
@@ -566,90 +651,14 @@ func TestDocsAdoptMixedTablePreflightAndApply(t *testing.T) {
 	}
 }
 
-func TestDocsAdoptTableFingerprintRejectsDrift(t *testing.T) {
-	repo := t.TempDir()
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, "docs/system/new.md", "---\nsubject: new\nstatus: canonical\npart_of: overview\n---\n# New\n")
-	writeTestDoc(t, repo, "docs/old.md", "# Old\n\nOriginal.\n")
-	proposal := docsAdoptProposal{Path: "docs/old.md", Subject: "Old", Disposition: "tombstone", Target: "docs/system/new.md", SourceFingerprint: docsAdoptBytesFingerprint([]byte("different"))}
-	if _, err := preflightDocsAdoptTable(repo, []docsAdoptProposal{proposal}); err == nil || !strings.Contains(err.Error(), "source changed") {
-		t.Fatalf("source drift was accepted: %v", err)
-	}
+func applyPreparedDocsAdoptTable(repoRoot string, prepared []docsAdoptPrepared) error {
+	return applyPreparedDocsAdoptTableJournaled(repoRoot, "test-fingerprint", prepared)
 }
 
-func TestDocsAdoptApplyRejectsPostPreflightSourceDrift(t *testing.T) {
-	repo := t.TempDir()
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n\nOriginal.\n")
-	source, err := os.ReadFile(filepath.Join(repo, "docs/legacy.md"))
+func applyDocsAdoptProposal(repoRoot string, proposal docsAdoptProposal) error {
+	prepared, err := prepareDocsAdoptProposal(repoRoot, proposal, false)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	prepared, err := preflightDocsAdoptTable(repo, []docsAdoptProposal{{
-		Path: "docs/legacy.md", Subject: "Legacy", Disposition: "promote", Target: "docs/system/legacy.md",
-		Reason: "reviewed", SourceFingerprint: docsAdoptBytesFingerprint(source),
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n\nChanged after review.\n")
-	if err := applyPreparedDocsAdoptTable(repo, prepared); err == nil || !strings.Contains(err.Error(), "source changed during approval") {
-		t.Fatalf("post-preflight source drift accepted: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(repo, "docs/system/legacy.md")); !os.IsNotExist(err) {
-		t.Fatalf("drifted source created canonical target: %v", err)
-	}
-}
-
-func TestDocsAdoptApplyRollsBackEarlierRowsOnFailure(t *testing.T) {
-	repo := t.TempDir()
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, "docs/first.md", "# First\n")
-	writeTestDoc(t, repo, "docs/second.md", "# Second\n")
-	firstSource, err := os.ReadFile(filepath.Join(repo, "docs/first.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := prepareDocsAdoptProposal(repo, docsAdoptProposal{
-		Path: "docs/first.md", Subject: "First", Disposition: "promote", Target: "docs/system/first.md",
-		SourceFingerprint: docsAdoptBytesFingerprint(firstSource),
-	}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondSource, err := os.ReadFile(filepath.Join(repo, "docs/second.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	second := docsAdoptPrepared{proposal: docsAdoptProposal{
-		Path: "docs/second.md", Subject: "Second", Disposition: "invalid", Target: "docs/system/second.md",
-	}, source: secondSource}
-	if err := applyPreparedDocsAdoptTable(repo, []docsAdoptPrepared{first, second}); err == nil {
-		t.Fatal("invalid later row unexpectedly applied")
-	}
-	if _, err := os.Stat(filepath.Join(repo, "docs/system/first.md")); !os.IsNotExist(err) {
-		t.Fatalf("earlier row was not rolled back: %v", err)
-	}
-}
-
-func TestDocsAdoptCmdRequiresReviewedTableForMutation(t *testing.T) {
-	repo := t.TempDir()
-	vault := filepath.Join(repo, ".tusker")
-	if err := os.MkdirAll(vault, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, "docs/legacy.md", "# Legacy\n")
-	if err := docsAdoptCmd(Args{"vault": vault, "approve": "true", "by": "human:test"}); err == nil || !strings.Contains(err.Error(), "explicit reviewed proposal table") {
-		t.Fatalf("approve without table was accepted: %v", err)
-	}
-}
-
-func mustReadFile(t *testing.T, path string) []byte {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
+	return applyPreparedDocsAdoptTable(repoRoot, []docsAdoptPrepared{prepared})
 }

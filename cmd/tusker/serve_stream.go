@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,35 +159,6 @@ func (b *serveStreamBroker) remove(id int) {
 	}
 	close(client.events)
 	delete(b.clients, id)
-}
-
-func (b *serveStreamBroker) attendedProjects() []string {
-	if b == nil {
-		return nil
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	seen := map[string]struct{}{}
-	for _, client := range b.clients {
-		if client.project != "" {
-			seen[client.project] = struct{}{}
-		}
-	}
-	projects := make([]string, 0, len(seen))
-	for projectID := range seen {
-		projects = append(projects, projectID)
-	}
-	sort.Strings(projects)
-	return projects
-}
-
-func (b *serveStreamBroker) clientCount() int {
-	if b == nil {
-		return 0
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.clients)
 }
 
 func (b *serveStreamBroker) heartbeatEvery() time.Duration {

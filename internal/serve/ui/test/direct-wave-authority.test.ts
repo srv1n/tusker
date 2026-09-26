@@ -296,7 +296,7 @@ describe("surface source contracts", () => {
   });
 
   test("navigation and router expose no plan destination", () => {
-    expect(src("components/Sidebar.tsx")).not.toContain("/p/$projectId/plan");
+    expect(src("components/AddProjectForm.tsx")).not.toContain("/p/$projectId/plan");
     expect(src("features/workbench/navigation/ProjectStrip.tsx")).not.toContain("/p/$projectId/plan");
     const router = src("router.tsx");
     expect(router).not.toContain("planRoute");

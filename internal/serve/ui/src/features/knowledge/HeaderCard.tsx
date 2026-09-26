@@ -52,7 +52,7 @@ export function HeaderCard({
   subjects: string[];
 }) {
   return (
-    <section aria-label="Document details" className="mb-9 border-y border-line py-3">
+    <section aria-label="Document details" className="mt-1">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <KindBadge kind={kind} />
         <DocStatusChip status={status} />
@@ -60,13 +60,13 @@ export function HeaderCard({
         <Mono className="min-w-0 truncate text-[11px] text-faint" title={subject}>{subject}</Mono>
       </div>
 
-      <details className="group mt-2.5 rounded-lg border border-line bg-panel/30">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] font-medium text-muted outline-none transition-colors hover:bg-hover/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 [&::-webkit-details-marker]:hidden">
+      <details open className="group mt-1">
+        <summary className="flex cursor-pointer list-none items-center gap-2 py-1 font-mono text-[11.5px] text-faint outline-none transition-colors hover:text-ink focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 [&::-webkit-details-marker]:hidden">
           <ChevronRight size={13} strokeWidth={2} className="flex-none transition-transform group-open:rotate-90" />
           <span>Details</span>
           <Mono className="ml-auto min-w-0 truncate text-[10.5px] text-fainter" title={path}>{path}</Mono>
         </summary>
-        <div className="grid gap-3 border-t border-line px-3 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="mt-2 grid gap-3 rounded-lg border border-line px-3 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <span className="w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Status</span>
             <StatusEditor kind={kind} value={status} onChange={onStatusChange} />
@@ -89,11 +89,11 @@ export function HeaderCard({
               className="h-7 min-w-0 flex-1 font-mono text-[11.5px]"
             />
           </div>
-          <div className="flex min-w-0 items-start gap-2 sm:col-span-2">
+          <div className="flex min-w-0 items-start gap-2">
             <span className="mt-1 w-[62px] flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-fainter">Keywords</span>
             <KeywordsEditor keywords={keywords} onAdd={onAddKeyword} onRemove={onRemoveKeyword} />
           </div>
-          <Mono className="truncate text-[10.5px] text-fainter sm:col-span-2" title={path}>{path}</Mono>
+          <Mono className="truncate text-[10.5px] text-fainter" title={path}>{path}</Mono>
         </div>
       </details>
     </section>

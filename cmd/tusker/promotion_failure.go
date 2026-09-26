@@ -64,13 +64,6 @@ func promotionFailureOwner(candidate DepartureCandidate) string {
 	return ""
 }
 
-func promotionFailureTouchedPaths(candidate DepartureCandidate, owner string) ([]string, string) {
-	if owner == "" || len(candidate.TaskSourceSHAs) != 1 {
-		return nil, "unknown"
-	}
-	return []string{}, "none_proven"
-}
-
 func promotionFailureHardClosure(vaultPath, owner string) []string {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil || owner == "" {
@@ -189,13 +182,4 @@ func sortedPromotionTaskIDs(candidate DepartureCandidate) []string {
 	}
 	sort.Strings(ids)
 	return ids
-}
-
-func containsAny(text string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
 }

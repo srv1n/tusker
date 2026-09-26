@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
 func TestSessionMetadataWorkspaceIdentityResume(t *testing.T) {
@@ -21,7 +22,7 @@ func TestSessionMetadataWorkspaceIdentityResume(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	inspection, err := buildRunInspection(store, &run)
+	inspection, err := buildRunInspectionWithQuietAfter(store, &run, time.Now().UTC(), defaultRunQuietAfter)
 	if err != nil {
 		t.Fatal(err)
 	}

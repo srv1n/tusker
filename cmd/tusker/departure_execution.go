@@ -79,11 +79,6 @@ func departureExecutionState(state DepartureState) bool {
 	}
 }
 
-func (d *Daemon) claimDepartureExecution(runID string) bool {
-	_, claimed := d.claimDepartureExecutionContext(context.Background(), runID)
-	return claimed
-}
-
 func (d *Daemon) claimDepartureExecutionContext(parent context.Context, runID string) (context.Context, bool) {
 	if parent == nil {
 		parent = context.Background()

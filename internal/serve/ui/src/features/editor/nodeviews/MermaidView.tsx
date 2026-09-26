@@ -45,6 +45,20 @@ type DiagramState =
   | { status: "ready"; svg: string }
   | { status: "error"; message: string };
 
+/** Uppercase mono tag for the card header, from the diagram's first keyword. */
+function diagramTag(source: string): string {
+  const head = source.trim().split(/\s+/)[0] ?? "";
+  if (head === "graph" || head === "flowchart") return "Flow";
+  if (head === "sequenceDiagram") return "Sequence";
+  if (head === "classDiagram") return "Class";
+  if (head.startsWith("stateDiagram")) return "State";
+  if (head === "erDiagram") return "ER";
+  if (head === "gitGraph") return "Git";
+  if (head.startsWith("C4")) return "C4";
+  if (head === "requirementDiagram") return "Req";
+  return head ? head[0].toUpperCase() + head.slice(1) : "Diagram";
+}
+
 export function MermaidView({
   node,
   editor,
@@ -61,6 +75,7 @@ export function MermaidView({
   const editing = !!editable && selected;
 
   const [diagram, setDiagram] = useState<DiagramState>({ status: "idle" });
+  const [showSource, setShowSource] = useState(false);
   const [themeTick, setThemeTick] = useState(0);
   const firstPaint = useRef(true);
 
@@ -144,36 +159,59 @@ export function MermaidView({
         <CodeContent as="code" />
       </pre>
 
-      {/* Rendered face: diagram, error+raw, or a brief loading note. */}
+      {/* Rendered face: framed card — tag + source affordance in a slim bar,
+          the diagram on a dotted-grid canvas below. */}
       {!editing && (
         <div
           className="tk-mermaid"
           contentEditable={false}
           data-status={diagram.status}
-          role={editable ? "button" : undefined}
-          tabIndex={editable ? 0 : undefined}
-          aria-label={
-            editable ? "Mermaid diagram. Activate to edit source." : "Mermaid diagram"
-          }
-          onClick={editable ? enterEdit : undefined}
-          onKeyDown={editable ? onDiagramKeyDown : undefined}
         >
-          {diagram.status === "ready" ? (
-            <div
-              className="tk-mermaid-svg"
-              // Sanitized in `renderMermaid` via `sanitizeMermaidSvg`.
-              dangerouslySetInnerHTML={{ __html: diagram.svg }}
-            />
-          ) : diagram.status === "error" ? (
-            <div className="tk-mermaid-fallback">
+          <div className="tk-mermaid-bar">
+            <span className="tk-mermaid-tag">{diagramTag(source)}</span>
+            <button
+              type="button"
+              className="tk-mermaid-action"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (editable) enterEdit();
+                else setShowSource((value) => !value);
+              }}
+            >
+              {editable || !showSource ? "Source" : "Diagram"}
+            </button>
+          </div>
+          <div
+            className="tk-mermaid-canvas"
+            role={editable ? "button" : undefined}
+            tabIndex={editable ? 0 : undefined}
+            aria-label={
+              editable
+                ? "Mermaid diagram. Activate to edit source."
+                : "Mermaid diagram"
+            }
+            onClick={editable ? enterEdit : undefined}
+            onKeyDown={editable ? onDiagramKeyDown : undefined}
+          >
+            {showSource && !editable ? (
               <pre className="tk-mermaid-raw">{source}</pre>
-              <div className="tk-mermaid-note">Mermaid: {diagram.message}</div>
-            </div>
-          ) : diagram.status === "loading" ? (
-            <div className="tk-mermaid-loading">Rendering diagram…</div>
-          ) : (
-            <pre className="tk-mermaid-raw">{source}</pre>
-          )}
+            ) : diagram.status === "ready" ? (
+              <div
+                className="tk-mermaid-svg"
+                // Sanitized in `renderMermaid` via `sanitizeMermaidSvg`.
+                dangerouslySetInnerHTML={{ __html: diagram.svg }}
+              />
+            ) : diagram.status === "error" ? (
+              <div className="tk-mermaid-fallback">
+                <pre className="tk-mermaid-raw">{source}</pre>
+                <div className="tk-mermaid-note">Mermaid: {diagram.message}</div>
+              </div>
+            ) : diagram.status === "loading" ? (
+              <div className="tk-mermaid-loading">Rendering diagram…</div>
+            ) : (
+              <pre className="tk-mermaid-raw">{source}</pre>
+            )}
+          </div>
         </div>
       )}
     </NodeViewWrapper>

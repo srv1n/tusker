@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -77,7 +78,7 @@ func TestACPAdapterBundleValidationFailures(t *testing.T) {
 		}, want: "duplicate"},
 		{name: "manifest overlap", mutate: func(t *testing.T, request *ACPAdapterBundleValidationRequest, manifest *ACPAdapterBundleManifest) {
 			manifest.Assets = append(manifest.Assets, ACPAdapterBundleAsset{Path: request.ManifestPath, SHA256: request.ExpectedManifestSHA256, Role: "asset"})
-			manifest.Assets = SortACPAdapterBundleAssets(manifest.Assets)
+			manifest.Assets = sortedACPAdapterBundleAssets(manifest.Assets)
 			writeACPAdapterBundleManifest(t, request, *manifest)
 		}, want: "overlaps"},
 		{name: "bare PATH argv", mutate: func(t *testing.T, request *ACPAdapterBundleValidationRequest, manifest *ACPAdapterBundleManifest) {
@@ -226,7 +227,7 @@ func TestACPAdapterBundlePhysicalAliasAndRootSymlink(t *testing.T) {
 			t.Fatal(err)
 		}
 		manifest.Assets = append(manifest.Assets, ACPAdapterBundleAsset{Path: "lib/alias.js", SHA256: testACPAdapterBundleFileDigest(t, alias), Role: "asset"})
-		manifest.Assets = SortACPAdapterBundleAssets(manifest.Assets)
+		manifest.Assets = sortedACPAdapterBundleAssets(manifest.Assets)
 		writeACPAdapterBundleManifest(t, &request, manifest)
 		sealACPAdapterBundle(t, request.BundleRoot)
 		if _, err := ValidateACPAdapterBundle(request); err == nil || !strings.Contains(err.Error(), "physical duplicate") {
@@ -433,4 +434,10 @@ func makeACPAdapterBundleWritable(root string) error {
 		}
 		return os.Chmod(path, mode)
 	})
+}
+
+func sortedACPAdapterBundleAssets(assets []ACPAdapterBundleAsset) []ACPAdapterBundleAsset {
+	out := append([]ACPAdapterBundleAsset(nil), assets...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }

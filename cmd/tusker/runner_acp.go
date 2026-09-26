@@ -230,10 +230,6 @@ func (h *acpLiveHandle) Interrupt(ctx context.Context) error {
 	return interruptErr
 }
 
-func startLiveACP(ctx context.Context, req StartRequest) (*StartResult, error) {
-	return startLiveACPForRunner(ctx, req, RunnerACP)
-}
-
 func validateCodexACPAgentIdentity(info acp.AgentInfo, expectedVersion string) error {
 	expectedVersion = strings.TrimSpace(expectedVersion)
 	if info.Name != codexACPAgentName || info.Version != expectedVersion {
@@ -767,10 +763,6 @@ func acpTerminalReasonCode(result acp.PromptResult, err error) RunFailureReasonC
 	}
 }
 
-func validateACPLaunchRequest(req StartRequest) error {
-	return validateACPLaunchRequestForRunner(RunnerACP, req)
-}
-
 func validateACPLaunchRequestForRunner(runner RunnerName, req StartRequest) error {
 	if strings.TrimSpace(req.AttemptID) == "" || strings.TrimSpace(req.ProjectID) == "" || strings.TrimSpace(req.RecordID) == "" {
 		return tuskerError(errorInvalidArg, "acp_v1 requires project, record, and attempt identities")
@@ -793,10 +785,6 @@ func validateACPLaunchRequestForRunner(runner RunnerName, req StartRequest) erro
 		return err
 	}
 	return nil
-}
-
-func resolveACPRunnerLaunch(req StartRequest) (string, []string, string, error) {
-	return resolveACPRunnerLaunchForRunner(RunnerACP, req)
 }
 
 func resolveACPRunnerLaunchForRunner(runner RunnerName, req StartRequest) (string, []string, string, error) {

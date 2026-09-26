@@ -51,15 +51,19 @@ func TestTrustCompactCli(t *testing.T) {
 		}
 	})
 	var showPayload struct {
-		ID      string `json:"id"`
-		Status  string `json:"status"`
-		Capsule string `json:"capsule"`
+		ID       string `json:"id"`
+		Status   string `json:"status"`
+		StateRev string `json:"state_rev"`
+		Capsule  string `json:"capsule"`
 	}
 	if err := json.Unmarshal([]byte(showOutput), &showPayload); err != nil {
 		t.Fatalf("show output is not JSON: %v\n%s", err, showOutput)
 	}
 	if showPayload.ID != "CMP-T-0001" || showPayload.Status != "backlog" {
 		t.Fatalf("show projection lost stable identity/state: %#v", showPayload)
+	}
+	if showPayload.StateRev == "" || !strings.Contains(showPayload.Capsule, "- State rev: "+showPayload.StateRev) {
+		t.Fatalf("show projection missing state_rev in JSON or capsule: %#v", showPayload)
 	}
 	if got := len(strings.Fields(showPayload.Capsule)); got > 500 {
 		t.Fatalf("routine capsule has %d tokens, want <= 500: %s", got, showPayload.Capsule)
@@ -71,16 +75,6 @@ func TestTrustCompactCli(t *testing.T) {
 		writeTrustRoute(t, vault, domain, "CANON.md", "domain_canon")
 	}
 	long := strings.TrimSpace(strings.Repeat("route-context ", defaultV7CapsuleTokenBudget+20))
-	legacyLine := capsuleOneLine(Note{Data: map[string]any{
-		"id":      "CMP-T-0001",
-		"capsule": capsuleBlock(long, nil, nil),
-	}})
-	if got := len(strings.Fields(legacyLine)); got > defaultCapsuleTokenBudget {
-		t.Fatalf("legacy capsule line has %d tokens, want <= %d: %s", got, defaultCapsuleTokenBudget, legacyLine)
-	}
-	if !strings.Contains(legacyLine, "capsule shortened") || !strings.Contains(legacyLine, "tusker show CMP-T-0001 --capsule") {
-		t.Fatalf("legacy capsule line lacks navigable truncation: %s", legacyLine)
-	}
 	// Replace the generated route capsules with intentionally over-budget text
 	// to prove supporting context is bounded without changing task contracts.
 	for i := 1; i <= 5; i++ {

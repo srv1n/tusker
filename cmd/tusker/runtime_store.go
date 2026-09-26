@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -1725,69 +1726,95 @@ func (s *RuntimeStore) Migrate() error {
 
 // runtimeSchemaComplete is intentionally conservative. user_version is an
 // optimization marker, not authority: a copied or hand-edited database with
-// a current marker but a missing table/column must still take the legacy
-// migration path.
+// a current marker but a missing table/column/index/trigger, or an older
+// execution-ledger migration marker, must still take the full migration path.
+// The expectation is derived by running the real migration against an
+// in-memory database, so it cannot drift from the migration list.
 func (s *RuntimeStore) runtimeSchemaComplete() bool {
-	for _, table := range []string{
-		"projects", "project_rebind_audit", "project_automation_audit", "runs", "run_authorizations", "run_directives",
-		"run_identity_metadata", "attempts", "turns", "sessions", "supervisor_decisions",
-		"apply_inputs", "review_results", "gate_ledger", "batch_gate_runs", "completion_transactions",
-		"completion_authority_issuances", "resource_leases", "resource_lease_events", "daemon_settings",
-		"departure_runs", "landing_authority_issuances", "agent_access_approvals", "external_loop_events", "agent_contacts", "agent_messages", "agent_wakeups", "architect_continuations",
-		"worker_coordination_events", "worker_provider_activity", "worker_provider_cursors", "worker_deliveries", "worker_attention", "worker_provider_qualifications",
-	} {
-		var count int
-		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, []any{table}, &count); err != nil || count != 1 {
+	want, err := runtimeReferenceSchema()
+	if err != nil {
+		return false
+	}
+	have, err := s.schemaFingerprint()
+	if err != nil {
+		return false
+	}
+	for key, version := range want {
+		if got, ok := have[key]; !ok || got < version {
 			return false
 		}
 	}
-	for _, required := range []struct{ table, column string }{
-		{"projects", "project_id"}, {"projects", "repo_root"}, {"projects", "vault_root"}, {"projects", "visible"}, {"projects", "repository_key"},
-		{"runs", "project_id"}, {"runs", "record_id"}, {"runs", "item_id"}, {"runs", "lease_generation"}, {"runs", "terminal"}, {"runs", "reason_code"}, {"runs", "infrastructure_json"},
-		{"run_authorizations", "project_id"}, {"run_authorizations", "lease_generation"}, {"run_authorizations", "attempt_id"},
-		{"run_directives", "project_id"}, {"run_directives", "record_id"}, {"run_directives", "expires_at"}, {"run_directives", "wave_id"}, {"run_directives", "authorization_fingerprint"}, {"run_directives", "wave_authorized_at"},
-		{"run_identity_metadata", "project_id"}, {"run_identity_metadata", "record_id"},
-		{"attempts", "attempt_id"}, {"attempts", "project_id"}, {"attempts", "record_id"}, {"attempts", "end_state_json"}, {"attempts", "provider_idempotency_key"}, {"attempts", "reason_code"},
-		{"turns", "attempt_id"}, {"turns", "project_id"}, {"turns", "record_id"},
-		{"sessions", "project_id"}, {"sessions", "record_id"}, {"sessions", "session_ref"},
-		{"supervisor_decisions", "project_id"}, {"supervisor_decisions", "record_id"}, {"supervisor_decisions", "decision_id"},
-		{"apply_inputs", "project_id"}, {"apply_inputs", "record_id"},
-		{"apply_inputs", "event_id"}, {"apply_inputs", "work_revision"},
-		{"review_results", "project_id"}, {"review_results", "record_id"},
-		{"gate_ledger", "project_id"}, {"gate_ledger", "record_id"},
-		{"resource_leases", "resource_name"}, {"resource_lease_events", "resource_name"},
-		{"external_loop_events", "project_id"}, {"external_loop_events", "record_id"}, {"external_loop_events", "idempotency_key"},
-		{"architect_continuations", "applied_wave_id"}, {"architect_continuations", "last_error"},
-		{"agent_wakeups", "claim_id"}, {"agent_wakeups", "claimed_at"},
-		{"worker_coordination_events", "event_id"}, {"worker_provider_activity", "activity_id"}, {"worker_deliveries", "delivery_id"},
-		{"worker_provider_cursors", "cursor"}, {"worker_attention", "attention_required"}, {"worker_provider_qualifications", "capabilities_json"},
-	} {
-		rows, err := s.query(`PRAGMA table_info(` + required.table + `)`)
+	// The ledger migration also repairs same-named index/trigger drift.
+	current, err := s.executionLedgerConstraintsCurrent(executionLedgerConstraintVersion, executionLedgerConstraintVersion, executionLedgerConstraintStatements)
+	return err == nil && current
+}
+
+var (
+	runtimeReferenceSchemaOnce sync.Once
+	runtimeReferenceSchemaMap  map[string]int
+	runtimeReferenceSchemaErr  error
+)
+
+// runtimeReferenceSchema migrates a scratch in-memory database once per
+// process and records what a fully migrated store contains.
+func runtimeReferenceSchema() (map[string]int, error) {
+	runtimeReferenceSchemaOnce.Do(func() {
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
-			return false
+			runtimeReferenceSchemaErr = err
+			return
 		}
-		found := false
-		for rows.Next() {
-			var cid, notNull, pk int
-			var name, kind string
-			var defaultValue any
-			if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
-				_ = rows.Close()
-				return false
-			}
-			found = found || name == required.column
+		defer db.Close()
+		db.SetMaxOpenConns(1)
+		ref := &RuntimeStore{db: db}
+		if runtimeReferenceSchemaErr = ref.Migrate(); runtimeReferenceSchemaErr == nil {
+			runtimeReferenceSchemaMap, runtimeReferenceSchemaErr = ref.schemaFingerprint()
 		}
-		if err := rows.Close(); err != nil || !found {
-			return false
+	})
+	return runtimeReferenceSchemaMap, runtimeReferenceSchemaErr
+}
+
+// schemaFingerprint lists every schema object, every table column, and every
+// execution-ledger migration marker (with its version) in one map.
+func (s *RuntimeStore) schemaFingerprint() (map[string]int, error) {
+	out := map[string]int{}
+	rows, err := s.query(`SELECT m.type, m.name, COALESCE(p.name, '') FROM sqlite_master m
+		LEFT JOIN pragma_table_info(m.name) p ON m.type = 'table'
+		WHERE m.name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var kind, name, column string
+		if err := rows.Scan(&kind, &name, &column); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		out[kind+":"+name] = 0
+		if column != "" {
+			out["column:"+name+"."+column] = 0
 		}
 	}
-	for _, index := range []string{"projects_repo_root_unique", "projects_vault_root_unique", "resource_lease_events_resource", "external_loop_events_idempotency", "agent_messages_recipient", "agent_access_approvals_lookup"} {
-		var count int
-		if err := s.queryRowScan(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, []any{index}, &count); err != nil || count != 1 {
-			return false
-		}
+	if err := rows.Close(); err != nil {
+		return nil, err
 	}
-	return true
+	if _, ok := out["table:execution_ledger_migrations"]; !ok {
+		return out, nil
+	}
+	rows, err = s.query(`SELECT component, version FROM execution_ledger_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var component string
+		var version int
+		if err := rows.Scan(&component, &version); err != nil {
+			return nil, err
+		}
+		out["marker:"+component] = version
+	}
+	return out, rows.Err()
 }
 
 // migrateGateLedgerToolchain rebuilds the one early ledger table whose old
@@ -2456,23 +2483,6 @@ func (s *RuntimeStore) LookupRunForAttempt(projectID, attemptID string, generati
 }
 
 const runtimeRunColumns = `project_id, record_id, item_id, runner, runner_profile, runner_harness, runner_model, runner_effort, runner_fallback_reason, worker_policy_fingerprint, execute_policy_fingerprint, lane, lease_state, lease_owner, lease_generation, lease_expires_at, lease_host, attempt_outcome, active_attempt_id, workspace_path, session_ref, cloud_task_id, cloud_status, cloud_environment_id, cloud_attempt_number, pull_request_url, apply_ref, logs_summary, final_summary, process_pid, process_pgid, process_started_at, prompt_path, event_sink_path, raw_log_path, status_path, work_revision, attempt_count, next_retry_at, last_error, reason_code, infrastructure_json, last_event_at, first_event_at, last_heartbeat_at, terminal, started_at, updated_at, hand_run`
-
-func (s *RuntimeStore) ListRunsPage(limit, offset int) ([]RunStatus, bool, error) {
-	if limit <= 0 || offset < 0 {
-		return nil, false, fmt.Errorf("run page requires a positive limit and non-negative offset")
-	}
-	rows, err := s.query(`SELECT `+runtimeRunColumns+` FROM runs ORDER BY updated_at DESC, project_id, item_id LIMIT ? OFFSET ?`, limit+1, offset)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	items, err := scanRunRows(rows, limit)
-	truncated := len(items) > limit
-	if truncated {
-		items = items[:limit]
-	}
-	return items, truncated, err
-}
 
 // ListRunsForProjectPage bounds the runtime rows loaded for a Serve snapshot.
 // Legacy rows without a project ID are deliberately excluded: once multiple
@@ -3778,6 +3788,9 @@ func (s *RuntimeStore) claimRunLeaseWithWorkSessionAttempt(run RunStatus, owner 
 		if _, err := tx.Exec(`INSERT INTO attempts(attempt_id, project_id, record_id, item_id, runner, lane, worker_policy_fingerprint, work_revision, workspace_path, parent_attempt_id, branch_name, outcome, started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.AttemptID, attempt.ProjectID, attempt.RecordID, attempt.ItemID, attempt.Runner, attempt.Lane, attempt.WorkerPolicyFP, attempt.WorkRevision, attempt.WorkspacePath, attempt.ParentAttemptID, attempt.BranchName, attempt.Outcome, attempt.StartedAt); err != nil {
 			return err
 		}
+		if err := insertWorkSessionExecutionTx(tx, attempt); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`INSERT INTO run_identity_metadata(project_id,record_id,repo_root,workspace_path,workspace_mode,runner,branch,head,created_at)
 			VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id,record_id) DO UPDATE SET repo_root=excluded.repo_root, workspace_path=excluded.workspace_path, workspace_mode=excluded.workspace_mode, runner=excluded.runner, branch=excluded.branch, head=excluded.head`,
 			identity.ProjectID, identity.RecordID, identity.RepoRoot, identity.WorkspacePath, identity.WorkspaceMode, identity.Runner, identity.Branch, identity.Head, identity.CreatedAt); err != nil {
@@ -3996,11 +4009,11 @@ func (s *RuntimeStore) ReclaimExpiredRunLease(projectID, recordID string, now ti
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return false, tuskerError(errorInvalidArg, "lease reclaim requires project_id and record_id")
 	}
-	current, err := s.FindRun(recordID)
+	current, err := s.FindRunScoped(projectID, recordID)
 	if err != nil {
 		return false, err
 	}
-	if current == nil || current.ProjectID != projectID {
+	if current == nil {
 		return false, nil
 	}
 	return s.reclaimExpiredRunLeaseIfSnapshot(*current, now, ttl, reason)
@@ -5177,26 +5190,6 @@ func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalL
 	return saved, created, nil
 }
 
-func (s *RuntimeStore) FindExternalLoopEventByKey(projectID, recordID, idempotencyKey string) (*ExternalLoopEvent, error) {
-	projectID = strings.TrimSpace(projectID)
-	recordID = strings.TrimSpace(recordID)
-	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if projectID == "" || recordID == "" || idempotencyKey == "" {
-		return nil, nil
-	}
-	var event ExternalLoopEvent
-	err := s.queryRowScan(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
-		FROM external_loop_events
-		WHERE project_id = ? AND record_id = ? AND idempotency_key = ?`, []any{projectID, recordID, idempotencyKey}, &event.EventID, &event.ProjectID, &event.RecordID, &event.ItemID, &event.Runner, &event.JobID, &event.AttemptID, &event.Stage, &event.Action, &event.Status, &event.Reason, &event.PayloadJSON, &event.IdempotencyKey, &event.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &event, nil
-}
-
 func (s *RuntimeStore) ListExternalLoopEvents(projectID, recordID string) ([]ExternalLoopEvent, error) {
 	return s.listExternalLoopEvents(projectID, recordID, 0)
 }
@@ -5313,29 +5306,6 @@ func (s *RuntimeStore) MarkSessionState(projectID, sessionRef, state, endedAt, l
 		WHERE project_id = ? AND session_ref = ?`,
 		state, endedAt, lastError, boolToInt(resumable), time.Now().UTC().Format(time.RFC3339), projectID, sessionRef)
 	return err
-}
-
-func (s *RuntimeStore) ForceRetryNow(identity string) (bool, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := s.exec(`UPDATE runs SET lease_state = ?, next_retry_at = ?, updated_at = ? WHERE item_id = ? OR record_id = ?`, string(LeaseStateRetryQueued), now, now, identity, identity)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return affected > 0, nil
-}
-
-func (s *RuntimeStore) ForceRetryNowProject(projectID, identity string) (bool, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := s.exec(`UPDATE runs SET lease_state = ?, next_retry_at = ?, updated_at = ? WHERE project_id = ? AND (item_id = ? OR record_id = ?)`, string(LeaseStateRetryQueued), now, now, projectID, identity, identity)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	return affected > 0, err
 }
 
 func (s *RuntimeStore) GetSetting(key string) (string, error) {
@@ -5642,32 +5612,4 @@ func (s *RuntimeStore) RunIdentity(projectID, recordID string) (*RunIdentityMeta
 		return nil, err
 	}
 	return &identity, nil
-}
-
-func runsCmd(args Args) error {
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	runs, err := store.ListRuns()
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "count": len(runs), "runs": runs})
-		return nil
-	}
-	if len(runs) == 0 {
-		fmt.Println("(no runs)")
-		return nil
-	}
-	for _, run := range runs {
-		retry := ""
-		if strings.TrimSpace(run.NextRetryAt) != "" {
-			retry = " retry=" + run.NextRetryAt
-		}
-		fmt.Printf("%s %-12s %-12s rev=%d attempts=%d%s\n", firstNonEmpty(run.ItemID, run.RecordID), run.Runner, run.LeaseState, run.WorkRevision, run.AttemptCount, retry)
-	}
-	return nil
 }

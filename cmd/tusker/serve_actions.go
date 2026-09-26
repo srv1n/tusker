@@ -1416,26 +1416,6 @@ func (s *serveServer) handleGateAction(w http.ResponseWriter, gateID, action str
 	serveJSON(w, http.StatusOK, result)
 }
 
-func (s *serveServer) humanActionForTask(projectID, taskID string) *serveHumanAction {
-	snap, err := s.loadFreshSnapshotForProject(projectID)
-	if err != nil {
-		return nil
-	}
-	task, ok := snap.notesByID[taskID]
-	if !ok || serveNoteKind(task) != "task" {
-		return nil
-	}
-	return serveHumanActionForTask(snap, task)
-}
-
-func (s *serveServer) humanActionOwner(projectID, gateID string) string {
-	detail := s.findGateDetailForProject(gateID, projectID)
-	if detail == nil || !serveHumanOwner(detail.Owner) {
-		return ""
-	}
-	return detail.Owner
-}
-
 func (s *serveServer) handleEvidenceAddAction(w http.ResponseWriter, body serveActionBody) {
 	taskID := strings.ToUpper(firstNonEmpty(body.string("taskId", "task_id", "id"), body.string("task")))
 	args, project, projectErr := serveBaseArgsForBody(s, body)
@@ -1631,10 +1611,6 @@ func lastDaemonStartError() string {
 	return ""
 }
 
-func (s *serveServer) decorateTaskActionResult(result *serveActionResult, taskID string) {
-	s.decorateTaskActionResultForProject(result, taskID, "")
-}
-
 func (s *serveServer) decorateTaskActionResultForProject(result *serveActionResult, taskID, projectID string) {
 	if taskID == "" {
 		return
@@ -1660,10 +1636,6 @@ func (s *serveServer) currentDaemonStatus() *serveDaemonStatus {
 	return s.daemonStatusFromSnapshot(snap)
 }
 
-func (s *serveServer) findGateDetail(id string) *serveGateDetail {
-	return s.findGateDetailForProject(id, "")
-}
-
 func (s *serveServer) findGateDetailForProject(id, projectID string) *serveGateDetail {
 	snap, err := s.loadFreshSnapshotForProject(projectID)
 	if err != nil {
@@ -1676,10 +1648,6 @@ func (s *serveServer) findGateDetailForProject(id, projectID string) *serveGateD
 		}
 	}
 	return nil
-}
-
-func (s *serveServer) findEvidenceDoc(id string) *serveEvidenceDoc {
-	return s.findEvidenceDocForProject(id, "")
 }
 
 func (s *serveServer) findEvidenceDocForProject(id, projectID string) *serveEvidenceDoc {
@@ -1932,11 +1900,6 @@ func (s *serveServer) handleAttempt(w http.ResponseWriter, r *http.Request, id s
 		}
 	}
 	serveJSON(w, http.StatusNotFound, map[string]any{"error": "attempt not found"})
-}
-
-func (s *serveServer) serveAttemptDetail(run RunStatus, attempt RunAttempt) serveAttemptDetail {
-	result, _ := s.serveAttemptDetailChecked(run, attempt)
-	return result
 }
 
 func (s *serveServer) serveAttemptDetailChecked(run RunStatus, attempt RunAttempt) (serveAttemptDetail, error) {

@@ -118,7 +118,7 @@ func TestRunOperatorStateTypedToolStatus(t *testing.T) {
 		if err := os.WriteFile(run.EventSinkPath, []byte(line), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if got := runToolInFlight(run, nil); got != status.want {
+		if got := runToolInFlightFromTails(loadRunStateTails(run, nil)); got != status.want {
 			t.Fatalf("status %s: in flight=%v", status.value, got)
 		}
 	}

@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 type v7DocumentWritePreimage struct {
@@ -28,43 +26,6 @@ func ensureV7WorkNamespaces(vaultPath string) error {
 	for _, dir := range []string{"work/tasks", "work/waves", "work/gates", "work/decisions", "work/evidence", "work/events"} {
 		if err := ensureDir(filepath.Join(vaultPath, filepath.FromSlash(dir))); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func convergeUnchangedV7DocumentWrites(writes map[string]string) error {
-	for path, next := range writes {
-		current, err := readText(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if current == next {
-			delete(writes, path)
-			continue
-		}
-		currentData, currentBody, currentErr := parseFrontmatter(current)
-		nextData, nextBody, nextErr := parseFrontmatter(next)
-		if currentErr != nil || nextErr != nil {
-			continue
-		}
-		for _, field := range []string{"updated_at", "updated_by", "state_rev"} {
-			delete(currentData, field)
-			delete(nextData, field)
-		}
-		currentCanonical, err := yaml.Marshal(currentData)
-		if err != nil {
-			return err
-		}
-		nextCanonical, err := yaml.Marshal(nextData)
-		if err != nil {
-			return err
-		}
-		if bytes.Equal(currentCanonical, nextCanonical) && strings.TrimSpace(currentBody) == strings.TrimSpace(nextBody) {
-			delete(writes, path)
 		}
 	}
 	return nil

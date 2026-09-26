@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -431,36 +430,6 @@ func resolveNote(vaultPath, idOrLink string) (Note, error) {
 		}
 	}
 	return Note{}, tuskerError(errorNotFound, "Note not found: "+target, withContext(map[string]any{"id": target}))
-}
-
-func resolveRecordIDsByLink(notes []Note, value any) []string {
-	var out []string
-	for _, link := range normalizeList(value) {
-		target := wikiTarget(link)
-		recordID := ""
-		for _, note := range notes {
-			if stringField(note.Data, "id") == target {
-				recordID = stringField(note.Data, "record_id")
-				break
-			}
-		}
-		out = append(out, recordID)
-	}
-	return out
-}
-
-func nextSequence(notes []Note, acronym, kind string) int {
-	letter := map[string]string{"task": "T", "doc": "D"}[kind]
-	pattern := regexp.MustCompile("^" + acronym + "-" + letter + "-(\\d{4})$")
-	max := 0
-	for _, note := range notes {
-		match := pattern.FindStringSubmatch(stringField(note.Data, "id"))
-		if match == nil {
-			continue
-		}
-		max = maxInt(max, atoiSafe(match[1]))
-	}
-	return max + 1
 }
 
 func baseIndexShape(note Note) map[string]any {

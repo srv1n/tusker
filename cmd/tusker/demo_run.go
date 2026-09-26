@@ -458,55 +458,6 @@ func (s *demoScheduler) selectedKeys() []string {
 	return keys
 }
 
-func (s *demoScheduler) depTaskID(wave, key string) string {
-	for _, task := range s.manifest.Tasks {
-		if task.Wave == wave && task.SourceKey == key {
-			return task.TaskID
-		}
-	}
-	return ""
-}
-
-func (s *demoScheduler) depID(rec demoTaskRecord, dep string) string {
-	if strings.Contains(dep, "/") {
-		parts := strings.SplitN(dep, "/", 2)
-		for _, task := range s.manifest.Tasks {
-			if wave, ok := s.manifest.Waves[task.Wave]; ok && wave.Scope == parts[0] && task.SourceKey == parts[1] {
-				return task.TaskID
-			}
-		}
-		return ""
-	}
-	return s.depTaskID(rec.Wave, dep)
-}
-
-// waitDeps blocks until every dependency is done. A failed or blocked
-// dependency parks this task as blocked: joins never run on partial input.
-func (s *demoScheduler) waitDeps(ctx context.Context, rec demoTaskRecord) bool {
-	for {
-		ready := true
-		for _, dep := range rec.Deps {
-			id := s.depID(rec, dep)
-			status := s.taskStatus(id)
-			switch status {
-			case "done":
-			case "failed", "blocked":
-				return false
-			default:
-				ready = false
-			}
-		}
-		if ready {
-			return true
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-}
-
 func (s *demoScheduler) taskStatus(taskID string) string {
 	if taskID == "" {
 		return "missing"
@@ -520,20 +471,6 @@ func (s *demoScheduler) taskStatus(taskID string) string {
 		return "missing"
 	}
 	return strings.ToLower(strings.TrimSpace(stringField(note.Data, "status")))
-}
-
-func (s *demoScheduler) finishKey(key, outcome string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if outcome == "failed" || outcome == "blocked" {
-		s.failed[key] = true
-	}
-}
-
-func (s *demoScheduler) keyFailed(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.failed[key]
 }
 
 func (s *demoScheduler) depKey(rec demoTaskRecord, dep string) string {

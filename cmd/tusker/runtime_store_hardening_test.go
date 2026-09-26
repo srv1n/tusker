@@ -201,3 +201,45 @@ func TestListRunsForProjectPageIsScopedAndBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeSchemaCompleteTakesFastPathAndDetectsMissingLateSchema(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	store, err = OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.runtimeSchemaComplete() {
+		t.Fatal("freshly migrated store must report complete so reopen takes the fast path")
+	}
+	for _, stmt := range []string{
+		"ALTER TABLE runs DROP COLUMN infrastructure_json",
+		"DROP TRIGGER execution_cancel_no_delete",
+	} {
+		if _, err := store.exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if store.runtimeSchemaComplete() {
+		t.Fatal("store missing a late column and trigger reported complete")
+	}
+	store.Close()
+	store, err = OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if !store.runtimeSchemaComplete() {
+		t.Fatal("reopen did not run the full migration to restore missing schema")
+	}
+	if _, err := store.exec("DELETE FROM execution_ledger_migrations WHERE component = 'legacy_backfill'"); err != nil {
+		t.Fatal(err)
+	}
+	if store.runtimeSchemaComplete() {
+		t.Fatal("store that never ran the legacy backfill reported complete")
+	}
+}

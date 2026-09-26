@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   ancestorFolderIds,
   buildDocTree,
+  contentsOf,
   docMatches,
 } from "../src/features/knowledge/tree";
 import {
@@ -123,5 +124,23 @@ describe("Documents static wiring guardrails", () => {
     expect(editorHookSource).toContain("base_rev");
     expect(extensionsSource).toContain("CodeBlockWithMermaid");
     expect(extensionsSource).toContain("codeBlock: false");
+  });
+});
+
+describe("contentsOf", () => {
+  test("numbers h2/h3 headings and skips the title and fenced code", () => {
+    const body = "# Title\n\n## Summary\n\n## Architecture ##\n\n### Lease broker\n\n```md\n## not a heading\n```\n\n### Fan-out\n\n## Failure modes\n";
+    expect(contentsOf(body)).toEqual([
+      { level: 2, number: "1", text: "Summary" },
+      { level: 2, number: "2", text: "Architecture" },
+      { level: 3, number: "2.1", text: "Lease broker" },
+      { level: 3, number: "2.2", text: "Fan-out" },
+      { level: 2, number: "3", text: "Failure modes" },
+    ]);
+  });
+
+  test("drops authored heading numbers but keeps leading years", () => {
+    const body = "## 1. Why this exists\n\n### 1.2 Detail\n\n## 2026 roadmap\n";
+    expect(contentsOf(body).map((e) => e.text)).toEqual(["Why this exists", "Detail", "2026 roadmap"]);
   });
 });

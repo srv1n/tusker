@@ -93,6 +93,11 @@ providers stop rate-limiting the queue.
 EOF
 ```
 
+Each Verification Check must start with `command:`, `manual proof:`,
+`ledger:`, or `proof:`; `manual:` is not accepted and leaves the acceptance
+without planned proof. An acceptance id listed in a wave human action's
+`covers` also counts as planned proof.
+
 ## Substantial DAG example
 
 An atomic wave request authors the whole graph in one transaction:

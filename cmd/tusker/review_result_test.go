@@ -84,14 +84,6 @@ func validStoredReviewResult() ReviewResult {
 	}
 }
 
-func TestReviewResultProtocolLegacyFindingMigration(t *testing.T) {
-	note := Note{Data: map[string]any{"id": "APP-T-0001", "state_rev": "sha256:state", "work_revision": 2}, Body: "## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | test | fail | " + reviewerFindingRowMarker("review-1") + " actionable regression |\n"}
-	result, ok := legacyReviewerFindingResult(note, "review-1")
-	if !ok || result.TaskID != "APP-T-0001" || result.AttemptID != "review-1" || result.Verdict != "changes_requested" || len(result.Findings) != 1 {
-		t.Fatalf("legacy result=%#v ok=%v", result, ok)
-	}
-}
-
 func TestReviewResultProtocolStoreReplayAndConflict(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {

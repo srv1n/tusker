@@ -224,6 +224,11 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 		CodexPolicy:  withDefaultCodexPolicy(req.CodexPolicy),
 		ExternalLoop: req.ExternalLoop,
 	})
+	// Harnesses without the injected MCP server (Muse) ask through the CLI; give
+	// them the exact binary rather than whatever "tusker" PATH resolves to.
+	if exe, exeErr := os.Executable(); exeErr == nil && filepath.IsAbs(exe) {
+		cmd.Env = append(cmd.Env, "TUSKER_BIN="+exe)
+	}
 	closeStdin := attachDevNullStdin(cmd)
 	defer closeStdin()
 	var authoritativeLog *boundedRawLogWriter

@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"sort"
 	"strings"
 	"unicode"
 )
@@ -762,10 +761,4 @@ func validACPAdapterBundleDigest(value string) bool {
 	}
 	_, err := hex.DecodeString(strings.TrimPrefix(value, acpAdapterBundleDigestPrefix))
 	return err == nil
-}
-
-func SortACPAdapterBundleAssets(assets []ACPAdapterBundleAsset) []ACPAdapterBundleAsset {
-	out := append([]ACPAdapterBundleAsset(nil), assets...)
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out
 }

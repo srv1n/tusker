@@ -47,7 +47,7 @@ func integratorDependencyReports(vaultPath string, task Note) []integratorLaneRe
 	defer store.Close()
 	var reports []integratorLaneReport
 	for _, dependency := range normalizeList(task.Data["dependencies"]) {
-		run, err := store.FindRun(dependency)
+		run, err := findRunForVault(store, vaultPath, dependency)
 		if err != nil || run == nil {
 			continue
 		}

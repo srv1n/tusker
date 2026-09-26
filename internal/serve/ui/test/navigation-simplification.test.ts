@@ -9,7 +9,7 @@ test("project navigation keeps primary destinations and exposes secondary routes
   const today = source("src/features/product/TodayScreens.tsx");
 
   for (const label of ["Inbox", "Work", "Docs", "Settings"]) expect(strip).toContain(label);
-  for (const destination of ["/p/$projectId/waves", "/p/$projectId/docs", "/p/$projectId/settings", "/p/$projectId/diagnostics"]) expect(strip).toContain(destination);
+  for (const destination of ["/p/$projectId/waves", "/p/$projectId/knowledge", "/p/$projectId/settings", "/p/$projectId/diagnostics"]) expect(strip).toContain(destination);
   expect(strip).toContain("Refresh failed — check this project’s source.");
   expect(strip).toContain("Refresh projects");
   expect(strip).not.toContain("Repair in Settings");

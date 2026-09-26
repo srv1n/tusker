@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +46,7 @@ type modelLevelsReport struct {
 	ReferenceCheckComplete bool                               `json:"reference_check_complete"`
 	PrivateFolders         []string                           `json:"private_folders"`
 	Levels                 []modelLevelRow                    `json:"levels"`
+	Warnings               []string                           `json:"warnings,omitempty"`
 }
 
 func modelLevelsFromSchema(in map[string]v7schema.TuskerModelLevelConfig) map[string]ModelLevelDefinition {
@@ -125,7 +128,7 @@ func modelLevelProfiles(note Note, wf Workflow, lane string) ([]ResolvedRunnerPr
 	for i, name := range names {
 		profile, ok := wf.RunnerProfiles[name]
 		if !ok {
-			return nil, tuskerError(errorConfigInvalid, "model level references unknown runner profile "+name)
+			return nil, tuskerError(errorConfigInvalid, "automation.model_levels."+level+" references unknown profile "+name+"; define it in the global config "+userGlobalTuskerConfigPath())
 		}
 		if profile.EligibleTiers != nil && !containsString(profile.EligibleTiers, level) {
 			return nil, tuskerError(errorConfigInvalid, fmt.Sprintf("runner profile %s is not eligible for %s", name, level), withHint("add tier eligibility before assigning the profile"))
@@ -173,7 +176,7 @@ func modelLevelsRead(vault string) (modelLevelsReport, error) {
 		privateFolders, _ = stringSliceValue(raw)
 		privateFolders = cleanAccessPaths(privateFolders)
 	}
-	report := modelLevelsReport{Schema: modelLevelsSchema, Revision: configRevision(resolved.Raw), Profiles: profiles, ProfileStates: states, ProfileReferences: references, ReferenceCheckComplete: complete, PrivateFolders: privateFolders, Levels: []modelLevelRow{}}
+	report := modelLevelsReport{Schema: modelLevelsSchema, Revision: configRevision(resolved.Raw), Profiles: profiles, ProfileStates: states, ProfileReferences: references, ReferenceCheckComplete: complete, PrivateFolders: privateFolders, Levels: []modelLevelRow{}, Warnings: resolved.Warnings}
 	for _, level := range []string{"light", "standard", "demanding"} {
 		row := modelLevelRow{Level: level}
 		for _, lane := range []string{runLaneExecute, runLaneReview} {
@@ -396,13 +399,13 @@ func modelsProfileSetCmd(args Args) error {
 		return err
 	}
 	name := strings.TrimSpace(args.String("name"))
-	if scope := firstNonEmpty(args.String("scope"), "project"); scope != "project" && scope != "global" {
-		return tuskerError(errorInvalidArg, "--scope must be global or project")
+	if err := requireGlobalProfileScope(args); err != nil {
+		return err
 	}
 	if name == "" {
 		return tuskerError(errorMissingArg, "models profile-set requires --name")
 	}
-	lock, err := acquireModelSettingsLock(vault, firstNonEmpty(args.String("scope"), "project"))
+	lock, err := acquireModelSettingsLock(vault, "global")
 	if err != nil {
 		return err
 	}
@@ -459,9 +462,6 @@ func modelsProfileSetCmd(args Args) error {
 			profile.EligibleTiers = existing.EligibleTiers
 		}
 	}
-	if err := changeRemovedProfile(vault, args.String("scope"), name, false); err != nil {
-		return err
-	}
 	if profile.DisplayName == "" {
 		profile.DisplayName = generatedProfileDisplayName(profile.Harness, profile.Model, name)
 	}
@@ -473,13 +473,10 @@ func modelsProfileSetCmd(args Args) error {
 	if err := validateRunnerProfileDefinition(name, profile, "models profile-set"); err != nil {
 		return err
 	}
-	key := "automation.profiles." + name
-	if args.String("scope") == "global" {
-		_, err = setUserGlobalConfigWithReadback(key, profile)
-	} else {
-		_, err = setProjectLocalConfigWithReadback(vault, key, profile)
+	if err := changeRemovedProfile(name, false); err != nil {
+		return err
 	}
-	if err != nil {
+	if _, err = setUserGlobalConfigWithReadback("automation.profiles."+name, profile); err != nil {
 		return err
 	}
 	if args.Bool("_no-output") {
@@ -547,8 +544,42 @@ func generatedProfileDisplayName(harness, model, fallback string) string {
 	return readableProfileName(fallback)
 }
 
-func acquireModelSettingsLock(vault, scope string) (*v7DocumentLock, error) {
-	return acquireV7MaterialEpochLock(vault)
+type modelSettingsLock []*v7DocumentLock
+
+func (locks modelSettingsLock) Close() error {
+	var first error
+	for i := len(locks) - 1; i >= 0; i-- {
+		if err := locks[i].Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// acquireModelSettingsLock serializes model settings writes. Global-scope
+// writes also lock the user-global config itself, which every project shares;
+// the project epoch lock alone would let two projects race on that file. The
+// global lock is always taken last, so lock order is consistent.
+func acquireModelSettingsLock(vault, scope string) (modelSettingsLock, error) {
+	epoch, err := acquireV7MaterialEpochLock(vault)
+	if err != nil {
+		return nil, err
+	}
+	if scope != "global" {
+		return modelSettingsLock{epoch}, nil
+	}
+	path := userGlobalTuskerConfigPath()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		_ = epoch.Close()
+		return nil, err
+	}
+	global, err := acquireV7LockForIdentity("user-global-config:"+abs, path, v7DocumentLockTimeout)
+	if err != nil {
+		_ = epoch.Close()
+		return nil, err
+	}
+	return modelSettingsLock{epoch, global}, nil
 }
 
 func currentLevelMappings(report modelLevelsReport) map[string][]string {
@@ -568,15 +599,11 @@ func modelsProfileLifecycleCmd(args Args, action string) error {
 	if name == "" {
 		return tuskerError(errorMissingArg, "models "+action+" requires --name")
 	}
-	scope := firstNonEmpty(args.String("scope"), "project")
-	if scope != "project" && scope != "global" {
-		return tuskerError(errorInvalidArg, "--scope must be global or project")
+	if err := requireGlobalProfileScope(args); err != nil {
+		return err
 	}
-	path := managedTuskerLocalConfigPath(vault)
-	if scope == "global" {
-		path = userGlobalTuskerConfigPath()
-	}
-	lock, err := acquireModelSettingsLock(vault, scope)
+	path := userGlobalTuskerConfigPath()
+	lock, err := acquireModelSettingsLock(vault, "global")
 	if err != nil {
 		return err
 	}
@@ -596,13 +623,12 @@ func modelsProfileLifecycleCmd(args Args, action string) error {
 	switch action {
 	case "profile-disable", "profile-enable":
 		profile.Disabled = action == "profile-disable"
-		if scope == "global" {
-			_, err = setUserGlobalConfigWithReadback(key, profile)
-		} else {
-			_, err = setProjectLocalConfigWithReadback(vault, key, profile)
-		}
+		_, err = setUserGlobalConfigWithReadback(key, profile)
 	case "profile-remove":
-		if err = changeRemovedProfile(vault, scope, name, true); err == nil {
+		if err = refuseReferencedProfileRemoval(vault, name); err != nil {
+			return err
+		}
+		if err = changeRemovedProfile(name, true); err == nil {
 			err = removeConfigKey(path, key)
 		}
 	}
@@ -619,12 +645,32 @@ func modelsProfileLifecycleCmd(args Args, action string) error {
 	return nil
 }
 
-func changeRemovedProfile(vault, scope, name string, removed bool) error {
-	path := managedTuskerLocalConfigPath(vault)
-	if scope == "global" {
-		path = userGlobalTuskerConfigPath()
+// refuseReferencedProfileRemoval keeps a global profile from silently vanishing
+// out of any registered project's tier mappings or unstarted task overrides.
+// When some project cannot be checked, removal is refused rather than claimed
+// safe; disabling keeps references intact.
+func refuseReferencedProfileRemoval(vault, name string) error {
+	refs, complete := modelProfileReferencesForScope(vault, "global")
+	if len(refs[name]) > 0 {
+		return tuskerError(errorInvalidTransition, fmt.Sprintf("runner profile %s is still referenced by %s", name, strings.Join(refs[name], ", ")), withHint("replace or remove those references first, or disable the profile instead"))
 	}
-	raw, _, err := readTuskerConfigRawLayer(path)
+	if !complete {
+		return tuskerError(errorInvalidTransition, "runner profile "+name+" references could not be checked in every registered project", withHint("disable the profile instead, or retry once every registered project is readable"))
+	}
+	return nil
+}
+
+// requireGlobalProfileScope enforces that runner profile definitions live only
+// in the user-global config; a project may only select them.
+func requireGlobalProfileScope(args Args) error {
+	if scope := firstNonEmpty(args.String("scope"), "global"); scope != "global" {
+		return tuskerError(errorInvalidArg, "runner profiles can only be defined in the global config "+userGlobalTuskerConfigPath(), withHint("use --scope global; a project selects global profiles through model level mappings"))
+	}
+	return nil
+}
+
+func changeRemovedProfile(name string, removed bool) error {
+	raw, _, err := readTuskerConfigRawLayer(userGlobalTuskerConfigPath())
 	if err != nil {
 		return err
 	}
@@ -642,11 +688,7 @@ func changeRemovedProfile(vault, scope, name string, removed bool) error {
 		}
 		profiles = updated
 	}
-	if scope == "global" {
-		_, err = setUserGlobalConfigWithReadback("automation.removed_profiles", profiles)
-	} else {
-		_, err = setProjectLocalConfigWithReadback(vault, "automation.removed_profiles", profiles)
-	}
+	_, err = setUserGlobalConfigWithReadback("automation.removed_profiles", profiles)
 	return err
 }
 
@@ -658,20 +700,41 @@ func modelProfileReferences(vault string, resolved resolvedTuskerConfig) (map[st
 			refs[name] = append(refs[name], ref)
 		}
 	}
+	// Built-in defaults are not user references: removing a seeded profile
+	// intentionally drops it from the defaults (applyRemovedProfiles).
+	configured := func(key string) bool {
+		for _, layer := range resolved.Layers {
+			if layer.Name == configSourceBuiltIn {
+				continue
+			}
+			if _, ok := lookupConfigValue(appliedConfigRaw(layer), key); ok {
+				return true
+			}
+		}
+		return false
+	}
 	for level, mapping := range resolved.Config.Automation.ModelLevels {
-		for _, name := range mapping.Execute {
-			add(name, "model_levels."+level+".execute")
-		}
-		for _, name := range mapping.Review {
-			add(name, "model_levels."+level+".review")
+		for lane, names := range map[string][]string{"execute": mapping.Execute, "review": mapping.Review} {
+			if !configured("automation.model_levels." + level + "." + lane) {
+				continue
+			}
+			for _, name := range names {
+				add(name, "model_levels."+level+"."+lane)
+			}
 		}
 	}
-	add(resolved.Config.Automation.DefaultProfile, "default_profile")
+	if configured("automation.default_profile") {
+		add(resolved.Config.Automation.DefaultProfile, "default_profile")
+	}
 	for lane, name := range resolved.Config.Automation.LaneProfiles {
-		add(name, "lane_profiles."+lane)
+		if configured("automation.lane_profiles." + lane) {
+			add(name, "lane_profiles."+lane)
+		}
 	}
-	for _, rule := range resolved.Config.Automation.Routing {
-		add(rule.Profile, "routing."+rule.Name)
+	if configured("automation.routing") {
+		for _, rule := range resolved.Config.Automation.Routing {
+			add(rule.Profile, "routing."+rule.Name)
+		}
 	}
 	idx, err := loadV7Index(vault)
 	if err != nil {
@@ -701,6 +764,9 @@ func modelProfileReferencesForScope(vault, scope string) (map[string][]string, b
 	}
 
 	store, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
+	if errors.Is(err, fs.ErrNotExist) {
+		return refs, complete // no runtime store: no other registered projects
+	}
 	if err != nil {
 		return refs, false
 	}
@@ -724,7 +790,7 @@ func modelProfileReferencesForScope(vault, scope string) (map[string][]string, b
 		for name, values := range projectRefs {
 			for _, value := range values {
 				if !containsString(refs[name], value) {
-					refs[name] = append(refs[name], value)
+					refs[name] = append(refs[name], project.ProjectID+": "+value)
 				}
 			}
 		}

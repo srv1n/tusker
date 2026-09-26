@@ -637,11 +637,6 @@ func sortedUniqueStrings(values []string) []string {
 	sort.Strings(out)
 	return out
 }
-func reviewFingerprint(note Note, scope string) string {
-	sum := sha256.Sum256([]byte(scope + "\x00" + stringField(note.Data, "state_rev") + "\x00" + note.Body))
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
 func reviewObjectiveSnapshots(vault string, note Note) (string, string, error) {
 	return reviewObjectiveSnapshotsForMaterial(vault, note, "")
 }

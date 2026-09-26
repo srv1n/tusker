@@ -5,7 +5,7 @@ import { parseExecutionConcurrency } from "@/features/product/OperationsScreens"
 const source = (path: string) => readFileSync(path, "utf8");
 
 test("project registration is available in the sidebar and defaults automation off", () => {
-  const sidebar = source("src/components/Sidebar.tsx");
+  const sidebar = source("src/components/AddProjectForm.tsx");
   const strip = source("src/features/workbench/navigation/ProjectStrip.tsx");
   const api = source("src/lib/api.ts");
 
@@ -20,7 +20,7 @@ test("project registration is available in the sidebar and defaults automation o
 });
 
 test("project registration offers native folder browsing without pretending browsers reveal paths", () => {
-  const sidebar = source("src/components/Sidebar.tsx");
+  const sidebar = source("src/components/AddProjectForm.tsx");
   const panel = source("src/features/panel/Panel.tsx");
 
   expect(sidebar).toContain('aria-label="Browse repository folder"');
@@ -256,7 +256,7 @@ test("advanced settings expose bounded registration repair without reset control
   const repair = source("src/features/product/ProjectRegistrationRepair.tsx");
   const api = source("src/lib/api.ts");
   const queries = source("src/lib/queries.ts");
-  const sidebar = source("src/components/Sidebar.tsx");
+  const sidebar = source("src/components/AddProjectForm.tsx");
 
   expect(settings).toContain('project.health === "error"');
   expect(settings).toContain("Open registration repair");

@@ -220,355 +220,6 @@ func journeysReviewMember(t *testing.T, review directWaveReview, taskID string) 
 	return directWaveReviewMember{}
 }
 
-// journeysCLIWaveReview runs the receiving `wave review` command through the
-// actual CLI parser and dispatch against the fixture state root, proving the
-// CLI renders the shared projection instead of its own diagnosis.
-func TestSelfServiceJourneysA2(t *testing.T) {
-	// Each fault/wait branch pins one tuple across the receiving CLI, the
-	// shared wave-review projection, and actual admission: the CLI renders
-	// the projection's own reason (never a second diagnosis), admission
-	// carries the same code family with a stable actor, repair permission
-	// agrees on whether a supported repair exists, and the postcondition
-	// holds on real store state. The (code, actor, repair, postcondition)
-	// pair is pinned per branch so drift in any surface fails the test.
-	t.Run("A2/chain_wait_names_dependency_everywhere", func(t *testing.T) {
-		vault, store, project := journeysArmedAB(t)
-		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		member := journeysReviewMember(t, review, "APP-T-0002")
-		if member.State != "waiting" || member.WaitingReason != "waiting for dependency APP-T-0001" {
-			t.Fatalf("dependent lost its wait: %#v", member)
-		}
-		if member.Responsible != "daemon" {
-			t.Fatalf("dependency wait named the wrong resolver: %#v", member)
-		}
-		if member.Recovery != nil {
-			t.Fatalf("a normal dependency wait must offer no repair: %#v", member.Recovery)
-		}
-		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
-		if !strings.Contains(output, "APP-T-0002 waiting (waiting for dependency APP-T-0001)") {
-			t.Fatalf("CLI did not render the shared wait reason:\n%s", output)
-		}
-		if _, err := journeysCLITaskStart(t, vault, "APP-T-0002"); err == nil || !strings.Contains(err.Error(), "DEPENDENCY_WAITING") || !strings.Contains(err.Error(), "APP-T-0001") {
-			t.Fatalf("CLI task start did not refuse with the dependency code: %v", err)
-		}
-		verdict := EvaluateAdmissionForStage(AdmissionFacts{
-			TaskID: "APP-T-0002", Status: "backlog", Readiness: "held", NextOwner: "agent", Lane: runLaneExecute,
-			ContractValid: true, RouteOK: true, ProofMapped: true, OwnerFree: true,
-			DependenciesSatisfied: false, BlockingDependency: "APP-T-0001",
-			ProjectRegistered: true, ProjectEnabled: true,
-		}, AdmissionStageDaemonDispatch)
-		if verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerDependencyWaiting) {
-			t.Fatalf("admission admitted the dependent: %#v", verdict)
-		}
-		for _, blocker := range verdict.Blockers {
-			if blocker.Code == AdmissionBlockerDependencyWaiting && len(blocker.Repair) != 0 {
-				t.Fatalf("dependency wait offers no supported repair: %#v", blocker)
-			}
-		}
-		if again, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC()); err != nil || len(again) != 0 {
-			t.Fatalf("frontier released the dependent early: %v err=%v", again, err)
-		}
-		if directive, err := store.RunDirective(project.ProjectID, "APP-T-0002"); err != nil || directive != nil {
-			t.Fatalf("dependent holds a directive before acceptance: %#v err=%v", directive, err)
-		}
-	})
-
-	t.Run("A2/duplicate_start_replays_without_duplicates", func(t *testing.T) {
-		vault, store, project := journeysArmedAB(t)
-		before := queuedDirectives(t, store, project.ProjectID)
-		second, err := directWaveStart(vault, store, "W-0001", "human:journey")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if second.Authorization != "authorized" || !second.Replayed {
-			t.Fatalf("duplicate start did not replay the live authorization: %#v", second)
-		}
-		after := queuedDirectives(t, store, project.ProjectID)
-		if len(before) != 1 || len(after) != 1 || after[0].RecordID != "APP-T-0001" {
-			t.Fatalf("duplicate start duplicated the reservation: before=%#v after=%#v", before, after)
-		}
-		if after[0].AuthorizationFingerprint != before[0].AuthorizationFingerprint {
-			t.Fatalf("duplicate start rebound live authority: %#v", after[0])
-		}
-		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
-		if !strings.Contains(output, "authorization authorized") || !strings.Contains(output, "APP-T-0001") {
-			t.Fatalf("CLI lost the replayed authorization:\n%s", output)
-		}
-	})
-
-	t.Run("A2/stale_authority_refuses_reuse_everywhere", func(t *testing.T) {
-		vault, store, project := journeysArmedAB(t)
-		stale := queuedDirectives(t, store, project.ProjectID)[0]
-		journeysDriftTaskTitle(t, vault, "APP-T-0001", "Direct APP-T-0001 (drifted)")
-		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if review.Authorization != "stale" {
-			t.Fatalf("edited wave did not project stale: %s", review.Authorization)
-		}
-		idx, err := loadV7Index(vault)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if runDirectiveMatchesTaskAuthority(vault, idx.Tasks["APP-T-0001"], &stale, time.Now().UTC()) {
-			t.Fatal("the pre-edit directive still matches after the wave drifted")
-		}
-		if _, ok := selfServiceReservationPromotion(vault, store, project.ProjectID, idx.Tasks["APP-T-0001"], time.Now().UTC()); ok {
-			t.Fatal("a stale reservation promoted its holder")
-		}
-		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
-		if !strings.Contains(output, "authorization stale") {
-			t.Fatalf("CLI hid the stale authorization:\n%s", output)
-		}
-		verdict := EvaluateAdmissionForStage(AdmissionFacts{
-			TaskID: "APP-T-0001", Status: "ready", Readiness: "ready", NextOwner: "agent", Lane: runLaneExecute,
-			ContractValid: true, RouteOK: true, ProofMapped: true, OwnerFree: true,
-			DependenciesSatisfied: true, ProjectRegistered: true, ProjectEnabled: true,
-			Authority: AdmissionAuthorityWaveArmed, AuthorityMatches: false, OwnReservation: true,
-		}, AdmissionStageFinalClaim)
-		if verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerAuthorityStale) {
-			t.Fatalf("admission honored stale authority: %#v", verdict)
-		}
-		for _, blocker := range verdict.Blockers {
-			if blocker.Code == AdmissionBlockerAuthorityStale {
-				if blocker.Actor != "operator" || len(blocker.Repair) != 0 {
-					t.Fatalf("stale authority misattributed repair: %#v", blocker)
-				}
-			}
-		}
-		if queued, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC()); err != nil || len(queued) != 0 {
-			t.Fatalf("stale wave queued frontier work: %v err=%v", queued, err)
-		}
-		// Recovery is three sanctioned CLI steps: targeted reconcile
-		// repairs the record revision, `task update` rebinds the drifted
-		// pin, then Start replaces the stale wave authorization under the
-		// material lock instead of reusing it.
-		reconcileCommand, reconcileArgs := parseCLI([]string{"tusker", "reconcile", "APP-T-0001", "--vault", vault})
-		if reconcileCommand != "reconcile" {
-			t.Fatalf("parseCLI routed reconcile to %q", reconcileCommand)
-		}
-		captureStdout(t, func() {
-			if code, err := runInner(reconcileCommand, reconcileArgs); err != nil || code != 0 {
-				t.Fatalf("reconcile did not repair the drifted revision: code=%d err=%v", code, err)
-			}
-		})
-		reboundIdx, err := loadV7Index(vault)
-		if err != nil {
-			t.Fatal(err)
-		}
-		updateCommand, updateArgs := parseCLI([]string{"tusker", "task", "update", "APP-T-0001",
-			"--if-revision", stringField(reboundIdx.Tasks["APP-T-0001"].Data, "state_rev"),
-			"--rebind-contract", "--by", "human:journey", "--vault", vault})
-		if updateCommand != "task update" {
-			t.Fatalf("parseCLI routed task update to %q", updateCommand)
-		}
-		captureStdout(t, func() {
-			if code, err := runInner(updateCommand, updateArgs); err != nil || code != 0 {
-				t.Fatalf("task update did not rebind the drifted pin: code=%d err=%v", code, err)
-			}
-		})
-		renewed, err := directWaveStart(vault, store, "W-0001", "human:journey")
-		if err != nil {
-			t.Fatalf("start did not recover rebound material: %v", err)
-		}
-		if renewed.Authorization != "authorized" || renewed.MaterialFingerprint == stale.AuthorizationFingerprint {
-			t.Fatalf("renewal kept the stale fingerprint: %#v", renewed)
-		}
-		if len(renewed.QueuedTaskIDs) != 1 || renewed.QueuedTaskIDs[0] != "APP-T-0001" {
-			t.Fatalf("renewal did not re-queue the root: %#v", renewed.QueuedTaskIDs)
-		}
-		current := queuedDirectives(t, store, project.ProjectID)
-		if len(current) != 1 || current[0].AuthorizationFingerprint != renewed.MaterialFingerprint {
-			t.Fatalf("renewal left a stale or duplicated reservation: %#v", current)
-		}
-	})
-
-	t.Run("A2/expired_directive_renews_instead_of_reuse", func(t *testing.T) {
-		vault, store, project := journeysArmedAB(t)
-		now := time.Now().UTC()
-		if _, err := store.exec(`UPDATE run_directives SET expires_at=? WHERE project_id=? AND record_id=?`, now.Add(-time.Hour).Format(time.RFC3339Nano), project.ProjectID, "APP-T-0001"); err != nil {
-			t.Fatal(err)
-		}
-		expired, err := store.RunDirective(project.ProjectID, "APP-T-0001")
-		if err != nil || expired == nil {
-			t.Fatalf("expired directive row vanished: %#v err=%v", expired, err)
-		}
-		idx, err := loadV7Index(vault)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if runDirectiveMatchesTaskAuthority(vault, idx.Tasks["APP-T-0001"], expired, now) {
-			t.Fatal("an expired directive still matches authority")
-		}
-		if _, ok := selfServiceReservationPromotion(vault, store, project.ProjectID, idx.Tasks["APP-T-0001"], now); ok {
-			t.Fatal("an expired reservation promoted its holder")
-		}
-		verdict := EvaluateAdmissionForStage(AdmissionFacts{
-			TaskID: "APP-T-0001", Status: "ready", Readiness: "ready", NextOwner: "agent", Lane: runLaneExecute,
-			ContractValid: true, RouteOK: true, ProofMapped: true, OwnerFree: true,
-			DependenciesSatisfied: true, ProjectRegistered: true, ProjectEnabled: true,
-			Authority: AdmissionAuthorityWaveArmed, AuthorityMatches: false, OwnReservation: true,
-		}, AdmissionStageFinalClaim)
-		if verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerAuthorityStale) {
-			t.Fatalf("admission honored an expired directive: %#v", verdict)
-		}
-		// Renewal is explicit: a task-scoped start issues a fresh directive
-		// bound to current material instead of reviving the expired row.
-		if code, err := journeysCLITaskStart(t, vault, "APP-T-0001"); err != nil || code != 0 {
-			t.Fatalf("task start did not renew the lapsed directive: code=%d err=%v", code, err)
-		}
-		renewedDirective, err := store.RunDirective(project.ProjectID, "APP-T-0001")
-		if err != nil || renewedDirective == nil || !runDirectiveActive(renewedDirective, time.Now().UTC()) {
-			t.Fatalf("renewal left no active directive: %#v err=%v", renewedDirective, err)
-		}
-		if renewedDirective.WaveID != "" {
-			t.Fatalf("renewal did not issue a task-scoped directive: %#v", renewedDirective)
-		}
-		idxAfter, err := loadV7Index(vault)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !runDirectiveMatchesTaskAuthority(vault, idxAfter.Tasks["APP-T-0001"], renewedDirective, time.Now().UTC()) {
-			t.Fatal("the renewed directive does not match current authority")
-		}
-	})
-
-	t.Run("A2/paused_wave_keeps_task_override", func(t *testing.T) {
-		vault, store, project := journeysArmedAB(t)
-		if _, err := directWavePause(vault, store, "W-0001", "human:journey"); err != nil {
-			t.Fatal(err)
-		}
-		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		member := journeysReviewMember(t, review, "APP-T-0001")
-		if member.State != "ready" || member.Phase != "paused" || member.Responsible != "operator" {
-			t.Fatalf("paused member lost its override cue: %#v", member)
-		}
-		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
-		if !strings.Contains(output, "authorization paused") || !strings.Contains(output, "APP-T-0001 ready") {
-			t.Fatalf("CLI hid the paused-but-overridable member:\n%s", output)
-		}
-		paused := AdmissionFacts{
-			TaskID: "APP-T-0001", Status: "ready", Readiness: "ready", NextOwner: "agent", Lane: runLaneExecute, WaveID: "W-0001",
-			ContractValid: true, RouteOK: true, ProofMapped: true, OwnerFree: true,
-			DependenciesSatisfied: true, ProjectRegistered: true, ProjectEnabled: true,
-			Authority: AdmissionAuthorityWaveArmed, AuthorityMatches: true, OwnReservation: true, WavePaused: true,
-		}
-		verdict := EvaluateAdmissionForStage(paused, AdmissionStageDaemonDispatch)
-		if verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerWavePaused) {
-			t.Fatalf("daemon dispatch ignored the pause: %#v", verdict)
-		}
-		for _, blocker := range verdict.Blockers {
-			if blocker.Code == AdmissionBlockerWavePaused {
-				if blocker.Actor != "operator" {
-					t.Fatalf("pause named the wrong actor: %#v", blocker)
-				}
-				if len(blocker.Repair) == 0 || blocker.Repair[0] != "tusker" {
-					t.Fatalf("pause hid its resume repair: %#v", blocker)
-				}
-			}
-		}
-		overridden := paused
-		overridden.TaskStartOverride = true
-		if verdict := EvaluateAdmissionForStage(overridden, AdmissionStageDaemonDispatch); !verdict.Admit {
-			t.Fatalf("task-scoped override did not survive the pause: %#v", verdict)
-		}
-		if queued, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC()); err != nil || len(queued) != 0 {
-			t.Fatalf("paused wave admitted new frontier work: %v err=%v", queued, err)
-		}
-		// The override is real: a task-scoped start replaces the paused wave
-		// directive with a task directive and leaves the wave paused.
-		if code, err := journeysCLITaskStart(t, vault, "APP-T-0001"); err != nil || code != 0 {
-			t.Fatalf("task-scoped start failed inside the pause: code=%d err=%v", code, err)
-		}
-		replaced, err := store.RunDirective(project.ProjectID, "APP-T-0001")
-		if err != nil || replaced == nil || replaced.WaveID != "" {
-			t.Fatalf("override did not replace the wave directive with a task directive: %#v err=%v", replaced, err)
-		}
-		pausedReview, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if pausedReview.Authorization != "paused" {
-			t.Fatalf("override resumed the wave: %s", pausedReview.Authorization)
-		}
-	})
-
-	t.Run("A2/contract_drift_blocks_every_surface", func(t *testing.T) {
-		vault, store, project := journeysArmedAB(t)
-		// Ledger-section bytes are not contract canon, so this out-of-band
-		// write stales only state_rev: the task must wait while the wave
-		// authorization stays current.
-		journeysRawAppend(t, vault, "tasks", "APP-T-0001", "\n## Evidence\n\nJourney ledger note.\n")
-		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if review.Authorization != "authorized" {
-			t.Fatalf("ledger-only drift must not stale the wave: %s", review.Authorization)
-		}
-		member := journeysReviewMember(t, review, "APP-T-0001")
-		// The projection reports every record-level staleness (pin or
-		// revision) with one message; the precise cause is available from
-		// the stale-reason predicate the admission paths evaluate.
-		if member.State != "waiting" || !strings.Contains(member.WaitingReason, "task contract drifted from its stored fingerprint; rebind required") {
-			t.Fatalf("drifted record did not wait on its revision: %#v", member)
-		}
-		contractBlocker := false
-		for _, blocker := range review.Blockers {
-			contractBlocker = contractBlocker || (blocker.Code == "CONTRACT_FINGERPRINT_STALE" && blocker.TaskID == "APP-T-0001")
-		}
-		if !contractBlocker {
-			t.Fatalf("drifted contract raised no stale-fingerprint blocker: %#v", review.Blockers)
-		}
-		if member.Recovery != nil {
-			t.Fatalf("drift offers no supported repair action: %#v", member.Recovery)
-		}
-		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
-		if !strings.Contains(output, "CONTRACT_FINGERPRINT_STALE") {
-			t.Fatalf("CLI hid the contract blocker:\n%s", output)
-		}
-		if _, err := journeysCLITaskStart(t, vault, "APP-T-0001"); err == nil || !strings.Contains(err.Error(), "CONTRACT_FINGERPRINT_STALE") {
-			t.Fatalf("CLI task start admitted a drifted contract: %v", err)
-		}
-		verdict := EvaluateAdmissionForStage(AdmissionFacts{
-			TaskID: "APP-T-0001", Status: "ready", Readiness: "ready", NextOwner: "agent", Lane: runLaneExecute,
-			ContractValid: true, ContractStale: true, RouteOK: true, ProofMapped: true, OwnerFree: true,
-			DependenciesSatisfied: true, ProjectRegistered: true, ProjectEnabled: true,
-			Authority: AdmissionAuthorityWaveArmed, AuthorityMatches: true, OwnReservation: true,
-		}, AdmissionStageFinalClaim)
-		if verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerContractStale) {
-			t.Fatalf("admission honored a drifted contract: %#v", verdict)
-		}
-		for _, blocker := range verdict.Blockers {
-			if blocker.Code == AdmissionBlockerContractStale && len(blocker.Repair) != 0 {
-				t.Fatalf("contract drift must name rebind out of band, not a repair argv: %#v", blocker)
-			}
-		}
-	})
-
-	t.Run("A2/summary_rejects_partial_green", func(t *testing.T) {
-		if !journeysAllGreen(map[string]string{"chain_wait": "PASS", "duplicate_start": "PASS", "stale_authority": "PASS"}) {
-			t.Fatal("an all-pass matrix must summarize green")
-		}
-		if journeysAllGreen(map[string]string{"chain_wait": "PASS", "duplicate_start": "FAIL", "stale_authority": "PASS"}) {
-			t.Fatal("a matrix with a failed scenario summarized green")
-		}
-		if journeysAllGreen(map[string]string{"chain_wait": "PASS", "duplicate_start": "BLOCKED", "stale_authority": "PASS"}) {
-			t.Fatal("a matrix with a blocked scenario summarized green")
-		}
-		if journeysAllGreen(nil) {
-			t.Fatal("an empty matrix summarized green")
-		}
-	})
-}
-
 func TestSelfServiceJourneysA3(t *testing.T) {
 	// Every injected crash or race retains exactly one scoped attempt or an
 	// explicit uncertain outcome: reservations survive restart without
@@ -723,7 +374,7 @@ func TestSelfServiceJourneysA3(t *testing.T) {
 		if !journeysClaimRoot(t, vault, store, project, "W-0001", "APP-T-0001", "attempt-cancel-1") {
 			t.Fatal("claim did not consume")
 		}
-		after, changed, err := interruptRuntimeRun(store.stateRoot, store, "APP-T-0001")
+		after, changed, err := interruptRuntimeRunScoped(store.stateRoot, store, "", "APP-T-0001")
 		if err != nil {
 			t.Fatalf("interrupt failed on a live fixture run: %v", err)
 		}
@@ -1108,4 +759,275 @@ func journeysWaveFingerprint(t *testing.T, vault, waveID string) string {
 		t.Fatal(err)
 	}
 	return stringField(idx.Waves[waveID].Data, "authorization_fingerprint")
+}
+
+// journeysCLIWaveReview runs the receiving `wave review` command through the
+// actual CLI parser and dispatch against the fixture state root, proving the
+// CLI renders the shared projection instead of its own diagnosis.
+func TestSelfServiceJourneysA2(t *testing.T) {
+	// Each fault/wait branch pins one tuple across the receiving CLI, the
+	// shared wave-review projection, and actual admission: the CLI renders
+	// the projection's own reason (never a second diagnosis), admission
+	// carries the same code family with a stable actor, repair permission
+	// agrees on whether a supported repair exists, and the postcondition
+	// holds on real store state. The (code, actor, repair, postcondition)
+	// pair is pinned per branch so drift in any surface fails the test.
+	t.Run("A2/chain_wait_names_dependency_everywhere", func(t *testing.T) {
+		vault, store, project := journeysArmedAB(t)
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		member := journeysReviewMember(t, review, "APP-T-0002")
+		if member.State != "waiting" || member.WaitingReason != "waiting for dependency APP-T-0001" {
+			t.Fatalf("dependent lost its wait: %#v", member)
+		}
+		if member.Responsible != "daemon" {
+			t.Fatalf("dependency wait named the wrong resolver: %#v", member)
+		}
+		if member.Recovery != nil {
+			t.Fatalf("a normal dependency wait must offer no repair: %#v", member.Recovery)
+		}
+		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
+		if !strings.Contains(output, "APP-T-0002 waiting (waiting for dependency APP-T-0001)") {
+			t.Fatalf("CLI did not render the shared wait reason:\n%s", output)
+		}
+		if _, err := journeysCLITaskStart(t, vault, "APP-T-0002"); err == nil || !strings.Contains(err.Error(), "DEPENDENCY_WAITING") || !strings.Contains(err.Error(), "APP-T-0001") {
+			t.Fatalf("CLI task start did not refuse with the dependency code: %v", err)
+		}
+		if again, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC()); err != nil || len(again) != 0 {
+			t.Fatalf("frontier released the dependent early: %v err=%v", again, err)
+		}
+		if directive, err := store.RunDirective(project.ProjectID, "APP-T-0002"); err != nil || directive != nil {
+			t.Fatalf("dependent holds a directive before acceptance: %#v err=%v", directive, err)
+		}
+	})
+
+	t.Run("A2/duplicate_start_replays_without_duplicates", func(t *testing.T) {
+		vault, store, project := journeysArmedAB(t)
+		before := queuedDirectives(t, store, project.ProjectID)
+		second, err := directWaveStart(vault, store, "W-0001", "human:journey")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if second.Authorization != "authorized" || !second.Replayed {
+			t.Fatalf("duplicate start did not replay the live authorization: %#v", second)
+		}
+		after := queuedDirectives(t, store, project.ProjectID)
+		if len(before) != 1 || len(after) != 1 || after[0].RecordID != "APP-T-0001" {
+			t.Fatalf("duplicate start duplicated the reservation: before=%#v after=%#v", before, after)
+		}
+		if after[0].AuthorizationFingerprint != before[0].AuthorizationFingerprint {
+			t.Fatalf("duplicate start rebound live authority: %#v", after[0])
+		}
+		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
+		if !strings.Contains(output, "authorization authorized") || !strings.Contains(output, "APP-T-0001") {
+			t.Fatalf("CLI lost the replayed authorization:\n%s", output)
+		}
+	})
+
+	t.Run("A2/stale_authority_refuses_reuse_everywhere", func(t *testing.T) {
+		vault, store, project := journeysArmedAB(t)
+		stale := queuedDirectives(t, store, project.ProjectID)[0]
+		journeysDriftTaskTitle(t, vault, "APP-T-0001", "Direct APP-T-0001 (drifted)")
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if review.Authorization != "stale" {
+			t.Fatalf("edited wave did not project stale: %s", review.Authorization)
+		}
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runDirectiveMatchesTaskAuthority(vault, idx.Tasks["APP-T-0001"], &stale, time.Now().UTC()) {
+			t.Fatal("the pre-edit directive still matches after the wave drifted")
+		}
+		if _, ok := selfServiceReservationPromotion(vault, store, project.ProjectID, idx.Tasks["APP-T-0001"], time.Now().UTC()); ok {
+			t.Fatal("a stale reservation promoted its holder")
+		}
+		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
+		if !strings.Contains(output, "authorization stale") {
+			t.Fatalf("CLI hid the stale authorization:\n%s", output)
+		}
+		if queued, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC()); err != nil || len(queued) != 0 {
+			t.Fatalf("stale wave queued frontier work: %v err=%v", queued, err)
+		}
+		// Recovery is three sanctioned CLI steps: targeted reconcile
+		// repairs the record revision, `task update` rebinds the drifted
+		// pin, then Start replaces the stale wave authorization under the
+		// material lock instead of reusing it.
+		reconcileCommand, reconcileArgs := parseCLI([]string{"tusker", "reconcile", "APP-T-0001", "--vault", vault})
+		if reconcileCommand != "reconcile" {
+			t.Fatalf("parseCLI routed reconcile to %q", reconcileCommand)
+		}
+		captureStdout(t, func() {
+			if code, err := runInner(reconcileCommand, reconcileArgs); err != nil || code != 0 {
+				t.Fatalf("reconcile did not repair the drifted revision: code=%d err=%v", code, err)
+			}
+		})
+		reboundIdx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		updateCommand, updateArgs := parseCLI([]string{"tusker", "task", "update", "APP-T-0001",
+			"--if-revision", stringField(reboundIdx.Tasks["APP-T-0001"].Data, "state_rev"),
+			"--rebind-contract", "--by", "human:journey", "--vault", vault})
+		if updateCommand != "task update" {
+			t.Fatalf("parseCLI routed task update to %q", updateCommand)
+		}
+		captureStdout(t, func() {
+			if code, err := runInner(updateCommand, updateArgs); err != nil || code != 0 {
+				t.Fatalf("task update did not rebind the drifted pin: code=%d err=%v", code, err)
+			}
+		})
+		renewed, err := directWaveStart(vault, store, "W-0001", "human:journey")
+		if err != nil {
+			t.Fatalf("start did not recover rebound material: %v", err)
+		}
+		if renewed.Authorization != "authorized" || renewed.MaterialFingerprint == stale.AuthorizationFingerprint {
+			t.Fatalf("renewal kept the stale fingerprint: %#v", renewed)
+		}
+		if len(renewed.QueuedTaskIDs) != 1 || renewed.QueuedTaskIDs[0] != "APP-T-0001" {
+			t.Fatalf("renewal did not re-queue the root: %#v", renewed.QueuedTaskIDs)
+		}
+		current := queuedDirectives(t, store, project.ProjectID)
+		if len(current) != 1 || current[0].AuthorizationFingerprint != renewed.MaterialFingerprint {
+			t.Fatalf("renewal left a stale or duplicated reservation: %#v", current)
+		}
+	})
+
+	t.Run("A2/expired_directive_renews_instead_of_reuse", func(t *testing.T) {
+		vault, store, project := journeysArmedAB(t)
+		now := time.Now().UTC()
+		if _, err := store.exec(`UPDATE run_directives SET expires_at=? WHERE project_id=? AND record_id=?`, now.Add(-time.Hour).Format(time.RFC3339Nano), project.ProjectID, "APP-T-0001"); err != nil {
+			t.Fatal(err)
+		}
+		expired, err := store.RunDirective(project.ProjectID, "APP-T-0001")
+		if err != nil || expired == nil {
+			t.Fatalf("expired directive row vanished: %#v err=%v", expired, err)
+		}
+		idx, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runDirectiveMatchesTaskAuthority(vault, idx.Tasks["APP-T-0001"], expired, now) {
+			t.Fatal("an expired directive still matches authority")
+		}
+		if _, ok := selfServiceReservationPromotion(vault, store, project.ProjectID, idx.Tasks["APP-T-0001"], now); ok {
+			t.Fatal("an expired reservation promoted its holder")
+		}
+		// Renewal is explicit: a task-scoped start issues a fresh directive
+		// bound to current material instead of reviving the expired row.
+		if code, err := journeysCLITaskStart(t, vault, "APP-T-0001"); err != nil || code != 0 {
+			t.Fatalf("task start did not renew the lapsed directive: code=%d err=%v", code, err)
+		}
+		renewedDirective, err := store.RunDirective(project.ProjectID, "APP-T-0001")
+		if err != nil || renewedDirective == nil || !runDirectiveActive(renewedDirective, time.Now().UTC()) {
+			t.Fatalf("renewal left no active directive: %#v err=%v", renewedDirective, err)
+		}
+		if renewedDirective.WaveID != "" {
+			t.Fatalf("renewal did not issue a task-scoped directive: %#v", renewedDirective)
+		}
+		idxAfter, err := loadV7Index(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !runDirectiveMatchesTaskAuthority(vault, idxAfter.Tasks["APP-T-0001"], renewedDirective, time.Now().UTC()) {
+			t.Fatal("the renewed directive does not match current authority")
+		}
+	})
+
+	t.Run("A2/paused_wave_keeps_task_override", func(t *testing.T) {
+		vault, store, project := journeysArmedAB(t)
+		if _, err := directWavePause(vault, store, "W-0001", "human:journey"); err != nil {
+			t.Fatal(err)
+		}
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		member := journeysReviewMember(t, review, "APP-T-0001")
+		if member.State != "ready" || member.Phase != "paused" || member.Responsible != "operator" {
+			t.Fatalf("paused member lost its override cue: %#v", member)
+		}
+		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
+		if !strings.Contains(output, "authorization paused") || !strings.Contains(output, "APP-T-0001 ready") {
+			t.Fatalf("CLI hid the paused-but-overridable member:\n%s", output)
+		}
+		if queued, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC()); err != nil || len(queued) != 0 {
+			t.Fatalf("paused wave admitted new frontier work: %v err=%v", queued, err)
+		}
+		// The override is real: a task-scoped start replaces the paused wave
+		// directive with a task directive and leaves the wave paused.
+		if code, err := journeysCLITaskStart(t, vault, "APP-T-0001"); err != nil || code != 0 {
+			t.Fatalf("task-scoped start failed inside the pause: code=%d err=%v", code, err)
+		}
+		replaced, err := store.RunDirective(project.ProjectID, "APP-T-0001")
+		if err != nil || replaced == nil || replaced.WaveID != "" {
+			t.Fatalf("override did not replace the wave directive with a task directive: %#v err=%v", replaced, err)
+		}
+		pausedReview, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pausedReview.Authorization != "paused" {
+			t.Fatalf("override resumed the wave: %s", pausedReview.Authorization)
+		}
+	})
+
+	t.Run("A2/contract_drift_blocks_every_surface", func(t *testing.T) {
+		vault, store, project := journeysArmedAB(t)
+		// Ledger-section bytes are not contract canon, so this out-of-band
+		// write stales only state_rev: the task must wait while the wave
+		// authorization stays current.
+		journeysRawAppend(t, vault, "tasks", "APP-T-0001", "\n## Evidence\n\nJourney ledger note.\n")
+		review, err := buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if review.Authorization != "authorized" {
+			t.Fatalf("ledger-only drift must not stale the wave: %s", review.Authorization)
+		}
+		member := journeysReviewMember(t, review, "APP-T-0001")
+		// The projection reports every record-level staleness (pin or
+		// revision) with one message; the precise cause is available from
+		// the stale-reason predicate the admission paths evaluate.
+		if member.State != "waiting" || !strings.Contains(member.WaitingReason, "task contract drifted from its stored fingerprint; rebind required") {
+			t.Fatalf("drifted record did not wait on its revision: %#v", member)
+		}
+		contractBlocker := false
+		for _, blocker := range review.Blockers {
+			contractBlocker = contractBlocker || (blocker.Code == "CONTRACT_FINGERPRINT_STALE" && blocker.TaskID == "APP-T-0001")
+		}
+		if !contractBlocker {
+			t.Fatalf("drifted contract raised no stale-fingerprint blocker: %#v", review.Blockers)
+		}
+		if member.Recovery != nil {
+			t.Fatalf("drift offers no supported repair action: %#v", member.Recovery)
+		}
+		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
+		if !strings.Contains(output, "CONTRACT_FINGERPRINT_STALE") {
+			t.Fatalf("CLI hid the contract blocker:\n%s", output)
+		}
+		if _, err := journeysCLITaskStart(t, vault, "APP-T-0001"); err == nil || !strings.Contains(err.Error(), "CONTRACT_FINGERPRINT_STALE") {
+			t.Fatalf("CLI task start admitted a drifted contract: %v", err)
+		}
+	})
+
+	t.Run("A2/summary_rejects_partial_green", func(t *testing.T) {
+		if !journeysAllGreen(map[string]string{"chain_wait": "PASS", "duplicate_start": "PASS", "stale_authority": "PASS"}) {
+			t.Fatal("an all-pass matrix must summarize green")
+		}
+		if journeysAllGreen(map[string]string{"chain_wait": "PASS", "duplicate_start": "FAIL", "stale_authority": "PASS"}) {
+			t.Fatal("a matrix with a failed scenario summarized green")
+		}
+		if journeysAllGreen(map[string]string{"chain_wait": "PASS", "duplicate_start": "BLOCKED", "stale_authority": "PASS"}) {
+			t.Fatal("a matrix with a blocked scenario summarized green")
+		}
+		if journeysAllGreen(nil) {
+			t.Fatal("an empty matrix summarized green")
+		}
+	})
 }

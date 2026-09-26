@@ -27,9 +27,6 @@ func TestAgentCoordinationE2EFiveTasksTwoWaves(t *testing.T) {
 	if _, _, err := s.QueueAgentWakeup("app", architect, "batch", "batch", []string{q.ID, "another"}); err == nil {
 		t.Fatal("multi-message wakeup accepted")
 	}
-	if cycle := coordinationWaitCycle(map[string]string{"task4": "peer", "peer": "task4"}); len(cycle) == 0 {
-		t.Fatal("wait cycle missed")
-	}
 	report := ArchitectReport{ObjectiveID: "objective", Outcome: "stalled", Accepted: []string{"task1", "task2", "task3", "task5"}, Blockers: []string{"task4: question pending"}, PendingQuestions: []string{q.ID}, Evidence: []string{"checks pass"}}
 	_, dup, err = s.RecordArchitectContinuation("app", "wave1-rev1", report)
 	if err != nil || dup {

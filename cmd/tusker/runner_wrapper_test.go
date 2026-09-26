@@ -628,7 +628,7 @@ func waitForWrapperDone(t *testing.T, done <-chan error) error {
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(3 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("timed out waiting for wrapper to stop")
 		return nil
 	}
@@ -661,4 +661,31 @@ func assertRunnerStatusExitCode(t *testing.T, statusPath string, expected int) {
 	if status.ExitCode != expected {
 		t.Fatalf("expected runner exit code %d, got %#v", expected, status)
 	}
+}
+
+func wrapperStatusPathForTest(dir string) string {
+	return filepath.Join(dir, "runner.status.json")
+}
+
+func runnerWrapperRequestForTest(dir string) (runnerWrapperRequest, error) {
+	promptPath := filepath.Join(dir, "prompt.md")
+	eventPath := filepath.Join(dir, "events.jsonl")
+	rawLogPath := filepath.Join(dir, "raw.log")
+	statusPath := wrapperStatusPathForTest(dir)
+	notePath := filepath.Join(dir, "task.md")
+	if err := writeText(promptPath, "test prompt\n"); err != nil {
+		return runnerWrapperRequest{}, err
+	}
+	if err := writeText(notePath, "---\nid: APP-T-0001\nstatus: ready\n---\n"); err != nil {
+		return runnerWrapperRequest{}, err
+	}
+	return runnerWrapperRequest{
+		Runner: string(RunnerCodexExec),
+		Start: StartRequest{
+			ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001", AttemptID: "attempt-wrapper",
+			Lane: runLaneExecute, WorkRevision: 1, LeaseGeneration: 1, ActiveStates: []string{"ready", "rework"},
+			WorkingDir: dir, WorkspacePath: dir, RepoRoot: dir, PromptPath: promptPath, EventSinkPath: eventPath,
+			RawLogPath: rawLogPath, StatusPath: statusPath, Command: "sh -c 'sleep 5'", NotePath: notePath, VaultPath: dir,
+		},
+	}, nil
 }

@@ -96,12 +96,6 @@ func serveNeedBaseMap(snap serveSnapshot, task Note, cap serveTaskCapsule, kind 
 	}
 }
 
-func serveReviewNeed(snap serveSnapshot, task Note, cap serveTaskCapsule, blocking int) serveNeedItem {
-	need := serveNeedBaseMap(snap, task, cap, "review", blocking)
-	need["acceptance"] = serveAcceptanceRows(task)
-	return need
-}
-
 func serveReworkNeed(snap serveSnapshot, task Note, cap serveTaskCapsule, blocking int) serveNeedItem {
 	need := serveNeedBaseMap(snap, task, cap, "review", blocking)
 	need["acceptance"] = serveAcceptanceRows(task)

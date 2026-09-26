@@ -42,59 +42,6 @@ func TestCapsuleTemplatesCreateScaffolds(t *testing.T) {
 	}
 }
 
-func TestCapsuleValidationWarnsAndFailsByBudget(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "repo", ".tusker")
-	if err := ensureDir(vault); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 5\n"); err != nil {
-		t.Fatal(err)
-	}
-	note := Note{Data: map[string]any{
-		"schema":  "tusker.domain/v7",
-		"kind":    "domain",
-		"id":      "project",
-		"capsule": capsuleBlock("one two three four five six", nil, nil),
-	}}
-	var errs, warns []Issue
-	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
-	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_TOKEN_BUDGET_WARN") {
-		t.Fatalf("expected budget warning only, errs=%#v warns=%#v", errs, warns)
-	}
-	note.Data["capsule"] = capsuleBlock("one two three four five six seven eight nine ten eleven", nil, nil)
-	errs, warns = nil, nil
-	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
-	if !issuesContainCode(errs, "CAPSULE_TOKEN_BUDGET_EXCEEDED") {
-		t.Fatalf("expected hard budget error, errs=%#v warns=%#v", errs, warns)
-	}
-	delete(note.Data, "capsule")
-	errs, warns = nil, nil
-	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
-	if !issuesContainCode(warns, "CAPSULE_MISSING") {
-		t.Fatalf("expected missing capsule warning, errs=%#v warns=%#v", errs, warns)
-	}
-}
-
-func TestCapsuleValidationLeavesForeignV7SchemaOnLegacyPath(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "repo", ".tusker")
-	if err := ensureDir(vault); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 5\n"); err != nil {
-		t.Fatal(err)
-	}
-	note := Note{Data: map[string]any{
-		"schema":  "foo.bar/v7",
-		"kind":    "doc",
-		"capsule": capsuleBlock("one two three four five six", nil, nil),
-	}}
-	var errs, warns []Issue
-	validateCapsule(note, vault, "docs/spec.md", true, &errs, &warns)
-	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_LONG") || issuesContainCode(warns, "CAPSULE_TOKEN_BUDGET_WARN") {
-		t.Fatalf("foreign V7 schema should use legacy capsule validation, errs=%#v warns=%#v", errs, warns)
-	}
-}
-
 func TestCapsuleSpecValidationScansCanonicalSpecs(t *testing.T) {
 	repo := t.TempDir()
 	vault := filepath.Join(repo, ".tusker")
@@ -107,6 +54,23 @@ func TestCapsuleSpecValidationScansCanonicalSpecs(t *testing.T) {
 	errs, warns := validateSpecCapsules(vault)
 	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_MISSING") {
 		t.Fatalf("expected missing spec capsule warning, errs=%#v warns=%#v", errs, warns)
+	}
+}
+
+func setCapsuleForTest(t *testing.T, path string, order []string, capsule map[string]any) {
+	t.Helper()
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["capsule"] = capsule
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, content); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -190,19 +154,63 @@ func TestCapsuleTriageSurfacesAndPackets(t *testing.T) {
 	}
 }
 
-func setCapsuleForTest(t *testing.T, path string, order []string, capsule map[string]any) {
-	t.Helper()
-	data, body, err := parseFrontmatterMustRead(path)
-	if err != nil {
+func TestCapsuleValidationLeavesForeignV7SchemaOnLegacyPath(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "repo", ".tusker")
+	if err := ensureDir(vault); err != nil {
 		t.Fatal(err)
 	}
-	data["capsule"] = capsule
-	data["state_rev"] = v7StateRev(data, body)
-	content, err := serializeDocument(data, body, order)
-	if err != nil {
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 5\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeText(path, content); err != nil {
+	note := Note{Data: map[string]any{
+		"schema":  "foo.bar/v7",
+		"kind":    "doc",
+		"capsule": capsuleBlock("one two three four five six", nil, nil),
+	}}
+	var errs, warns []Issue
+	validateCapsule(note, vault, "docs/spec.md", true, &errs, &warns)
+	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_LONG") || issuesContainCode(warns, "CAPSULE_TOKEN_BUDGET_WARN") {
+		t.Fatalf("foreign V7 schema should use legacy capsule validation, errs=%#v warns=%#v", errs, warns)
+	}
+}
+
+func TestCapsuleValidationWarnsAndFailsByBudget(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "repo", ".tusker")
+	if err := ensureDir(vault); err != nil {
 		t.Fatal(err)
+	}
+	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 5\n"); err != nil {
+		t.Fatal(err)
+	}
+	note := Note{Data: map[string]any{
+		"schema":  "tusker.domain/v7",
+		"kind":    "domain",
+		"id":      "project",
+		"capsule": capsuleBlock("one two three four five six", nil, nil),
+	}}
+	var errs, warns []Issue
+	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
+	if len(errs) != 0 || !issuesContainCode(warns, "CAPSULE_TOKEN_BUDGET_WARN") {
+		t.Fatalf("expected budget warning only, errs=%#v warns=%#v", errs, warns)
+	}
+	note.Data["capsule"] = capsuleBlock("one two three four five six seven eight nine ten eleven", nil, nil)
+	errs, warns = nil, nil
+	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
+	if !issuesContainCode(errs, "CAPSULE_TOKEN_BUDGET_EXCEEDED") {
+		t.Fatalf("expected hard budget error, errs=%#v warns=%#v", errs, warns)
+	}
+	delete(note.Data, "capsule")
+	errs, warns = nil, nil
+	validateCapsule(note, vault, "knowledge/domains/project/INDEX.md", true, &errs, &warns)
+	if !issuesContainCode(warns, "CAPSULE_MISSING") {
+		t.Fatalf("expected missing capsule warning, errs=%#v warns=%#v", errs, warns)
+	}
+}
+
+func capsuleBlock(what string, useWhen, skipWhen []string) map[string]any {
+	return map[string]any{
+		"what":      strings.TrimSpace(what),
+		"use_when":  filterStrings(useWhen),
+		"skip_when": filterStrings(skipWhen),
 	}
 }

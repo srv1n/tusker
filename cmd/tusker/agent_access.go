@@ -79,24 +79,6 @@ func agentAccessFromSchema(in *v7schema.TuskerAgentAccessConfig) *AgentAccessV1 
 	return out
 }
 
-func agentAccessToSchema(in *AgentAccessV1) *v7schema.TuskerAgentAccessConfig {
-	if in == nil {
-		return nil
-	}
-	out := &v7schema.TuskerAgentAccessConfig{
-		Schema:             strings.TrimSpace(in.Schema),
-		Mode:               strings.TrimSpace(in.Mode),
-		Network:            in.Network,
-		DestructiveActions: strings.TrimSpace(in.DestructiveActions),
-		Folders:            make([]v7schema.TuskerAgentAccessFolderConfig, 0, len(in.Folders)),
-		PrivateFolders:     cleanAccessPaths(in.PrivateFolders),
-	}
-	for _, folder := range in.Folders {
-		out.Folders = append(out.Folders, v7schema.TuskerAgentAccessFolderConfig{Path: strings.TrimSpace(folder.Path), Access: strings.TrimSpace(folder.Access)})
-	}
-	return out
-}
-
 func validateAgentAccessDefinition(name string, access *AgentAccessV1, path string) error {
 	if access == nil {
 		return nil

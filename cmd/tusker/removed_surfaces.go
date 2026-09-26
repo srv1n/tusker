@@ -137,6 +137,17 @@ func copyRegularFile(src, dst string) error {
 }
 
 func statusCmd(args Args) error {
+	if firstNonEmpty(args.String("id"), args.String("_pos0"), args.String("status"), args.String("_pos1")) == "" {
+		vaultPath, err := resolveVaultPath(args, false)
+		if err != nil {
+			return err
+		}
+		args["vault"] = vaultPath
+		if !args.Bool("json") {
+			fmt.Printf("Vault: %s\n", vaultPath)
+		}
+		return listCmd(args)
+	}
 	id := firstNonEmpty(args.String("id"), args.String("_pos0"))
 	status := firstNonEmpty(args.String("status"), args.String("_pos1"))
 	if args.String("id") == "" && args.String("status") == "" {
@@ -164,21 +175,6 @@ func evidenceCmd(args Args) error {
 	default:
 		return tuskerError(errorMissingArg, "evidence requires add, promote, or prune")
 	}
-}
-
-func assertEvidenceGate(data map[string]any, body, id string) error {
-	risk := strings.ToLower(stringField(data, "risk"))
-	if risk == "medium" || risk == "high" || risk == "critical" {
-		if !sectionHasSubstance(body, "## Evidence") {
-			return tuskerError(errorEvidenceGate, fmt.Sprintf(`%s: risk "%s" requires substantive "## Evidence" before this transition`, id, risk), withContext(map[string]any{"id": id, "risk": risk}))
-		}
-	}
-	if stringField(data, "type") == "task" && stringField(data, "kind") == "feature" && isUISurface(data["surfaces"]) && (risk == "medium" || risk == "high" || risk == "critical") {
-		if !evidenceHasAsset(body) {
-			return tuskerError(errorUIDemoMissing, fmt.Sprintf(`%s: UI feature at risk "%s" needs a demo asset (video/gif/screenshot) in "## Evidence"`, id, risk), withContext(map[string]any{"id": id, "risk": risk}))
-		}
-	}
-	return nil
 }
 
 func firstNonEmptyList(values ...[]string) []string {

@@ -230,12 +230,6 @@ func feedbackSignalRelativePath(signal feedbackSignal) string {
 	return filepath.ToSlash(filepath.Join("feedback", "signals", signal.Date, base+"-"+hash+".json"))
 }
 
-func deriveFeedbackSignals(input feedbackSignalReducerInput) []feedbackSignal {
-	result := collapseFeedbackSignals(deriveFeedbackSignalEmissions(input))
-	sortFeedbackSignals(result.Signals)
-	return result.Signals
-}
-
 func deriveFeedbackSignalEmissions(input feedbackSignalReducerInput) []feedbackSignal {
 	date := firstNonEmpty(strings.TrimSpace(input.Date), todayISO())
 	project := strings.ToUpper(strings.TrimSpace(input.Project))
@@ -528,18 +522,6 @@ func feedbackSignalTokenBurnSignal(date, project, taskID, attemptID, source stri
 	}), true
 }
 
-func appendFeedbackSignal(signals []feedbackSignal, seen map[string]bool, signal feedbackSignal) []feedbackSignal {
-	signal = completeFeedbackSignal(signal)
-	if seen[signal.DedupeKey] {
-		return signals
-	}
-	if len(validateFeedbackSignal(signal)) > 0 {
-		return signals
-	}
-	seen[signal.DedupeKey] = true
-	return append(signals, signal)
-}
-
 func appendFeedbackSignalEmission(signals []feedbackSignal, signal feedbackSignal) []feedbackSignal {
 	signal = completeFeedbackSignal(signal)
 	if len(validateFeedbackSignal(signal)) > 0 {
@@ -593,10 +575,6 @@ func feedbackSignalCollapseKey(signal feedbackSignal) string {
 		return feedbackSignalDedupeKey(project, category, taskID, attemptID)
 	}
 	return signal.DedupeKey
-}
-
-func feedbackSignalTaskKey(project, taskID string) string {
-	return feedbackSignalDedupeKey(project, taskID)
 }
 
 func mergeFeedbackSignals(left, right feedbackSignal) feedbackSignal {
@@ -788,11 +766,6 @@ type feedbackSignalAcceptanceFactSet struct {
 	AcceptanceIDs  []string
 	AcceptanceGaps []string
 	ProofMapGaps   []string
-}
-
-func feedbackSignalAcceptanceGaps(body string) []string {
-	facts := feedbackSignalAcceptanceFacts(body)
-	return uniqueStringsPreserveOrder(append(facts.AcceptanceGaps, facts.ProofMapGaps...))
 }
 
 func feedbackSignalAcceptanceFacts(body string) feedbackSignalAcceptanceFactSet {
@@ -999,13 +972,4 @@ func firstExisting(values map[string]any, keys ...string) any {
 		}
 	}
 	return nil
-}
-
-func feedbackSignalHelpText() string {
-	return strings.Join([]string{
-		"Events are history: timestamped facts about what happened.",
-		"Feedback notes are subjective input: concise agent or human observations about product friction.",
-		"Signals are derived product facts: reducer-created records stored under .tusker/feedback/signals/YYYY-MM-DD/*.json.",
-		"Signals must summarize evidence into bounded counts, labels, paths, task IDs, and short reason excerpts instead of raw transcripts, logs, attachments, diffs, or copied source.",
-	}, "\n")
 }

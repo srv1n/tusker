@@ -300,7 +300,7 @@ func TestDaemonWorkerAttentionOperatorFlow(t *testing.T) {
 	t.Logf("attempt=%s generation=%d provider=%s session=%s attention_required=%t silence_since=%s",
 		attention.Identity.AttemptID, attention.Identity.AttemptGeneration, attention.Identity.Provider, attention.Identity.NativeSessionID,
 		attention.AttentionRequired, attention.SilenceSince)
-	inspection, err := buildRunInspection(daemon.store, current)
+	inspection, err := buildRunInspectionWithQuietAfter(daemon.store, current, time.Now().UTC(), defaultRunQuietAfter)
 	if err != nil {
 		t.Fatal(err)
 	}

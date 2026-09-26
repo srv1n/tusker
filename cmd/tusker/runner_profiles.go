@@ -24,6 +24,10 @@ const (
 
 var projectLocalConfigWriteMu sync.Mutex
 
+// userGlobalConfigWriteMu serializes in-process read-modify-write of the
+// shared user-global config (Serve handles saves for many projects at once).
+var userGlobalConfigWriteMu sync.Mutex
+
 const (
 	managedTuskerConfigName      = "config.yaml"
 	managedTuskerLocalConfigName = "config.local.yaml"
@@ -117,6 +121,9 @@ type resolvedTuskerConfig struct {
 	// typed projection; callers that need provenance must never reconstruct it
 	// from Config because Go zero values lose whether a field was set.
 	Raw map[string]any
+	// Warnings lists non-fatal problems such as references to profiles the
+	// global config does not define.
+	Warnings []string
 }
 
 type configResolveSourceValue struct {
@@ -286,8 +293,8 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 		mergeConfigRaw(effectiveRaw, appliedConfigRaw(layer))
 	}
 	applyRemovedProfiles(effectiveRaw)
-	// A project may explicitly clear the inherited profile map while relying
-	// on machine-local reconciliation to repopulate it.  In that transitional
+	// The global layer may explicitly clear the built-in profile map (project
+	// layers may not define profiles at all).  In that transitional
 	// state inherited profile references would be dangling and should not make
 	// the config unreadable before the reconciler can repair it.  Preserve
 	// values the same layer sets explicitly so validation still rejects a
@@ -317,10 +324,11 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 	if err != nil {
 		return resolvedTuskerConfig{}, err
 	}
-	if err := validateResolvedTuskerConfig(effective, layers); err != nil {
+	warnings, err := validateResolvedTuskerConfig(effective, layers)
+	if err != nil {
 		return resolvedTuskerConfig{}, err
 	}
-	return resolvedTuskerConfig{Config: effective, Layers: layers, Raw: effectiveRaw}, nil
+	return resolvedTuskerConfig{Config: effective, Layers: layers, Raw: effectiveRaw, Warnings: warnings}, nil
 }
 
 func builtInTuskerConfigRaw() map[string]any {
@@ -542,120 +550,6 @@ func userGlobalTuskerConfigPath() string {
 	return filepath.Join(".config", "tusker", "config.yaml")
 }
 
-func mergeTuskerAutomationConfig(dst *v7TuskerConfigFile, src v7TuskerConfigFile) {
-	if src.Automation.Enabled != nil {
-		dst.Automation.Enabled = src.Automation.Enabled
-	}
-	if strings.TrimSpace(src.Automation.DispatchScope) != "" {
-		dst.Automation.DispatchScope = strings.TrimSpace(src.Automation.DispatchScope)
-	}
-	if strings.TrimSpace(src.Automation.CompletionReactor.Mode) != "" {
-		dst.Automation.CompletionReactor.Mode = strings.TrimSpace(src.Automation.CompletionReactor.Mode)
-	}
-	if len(src.Automation.TriggerStates) > 0 {
-		dst.Automation.TriggerStates = append([]string{}, src.Automation.TriggerStates...)
-	}
-	if strings.TrimSpace(src.Automation.LegacyProfile) != "" {
-		dst.Automation.LegacyProfile = src.Automation.LegacyProfile
-	}
-	if strings.TrimSpace(src.Automation.DefaultRunner) != "" {
-		dst.Automation.DefaultRunner = src.Automation.DefaultRunner
-	}
-	if len(src.Automation.EnabledRunners) > 0 {
-		dst.Automation.EnabledRunners = append([]string{}, src.Automation.EnabledRunners...)
-	}
-	if strings.TrimSpace(src.Automation.DefaultProfile) != "" {
-		dst.Automation.DefaultProfile = src.Automation.DefaultProfile
-	}
-	if len(src.Automation.LaneProfiles) > 0 {
-		if dst.Automation.LaneProfiles == nil {
-			dst.Automation.LaneProfiles = map[string]string{}
-		}
-		for lane, profile := range src.Automation.LaneProfiles {
-			dst.Automation.LaneProfiles[strings.TrimSpace(lane)] = strings.TrimSpace(profile)
-		}
-	}
-	if len(src.Automation.Profiles) > 0 {
-		if dst.Automation.Profiles == nil {
-			dst.Automation.Profiles = map[string]v7schema.TuskerRunnerProfileConfig{}
-		}
-		for name, profile := range src.Automation.Profiles {
-			dst.Automation.Profiles[strings.TrimSpace(name)] = profile
-		}
-	}
-	if len(src.Automation.Routing) > 0 {
-		dst.Automation.Routing = append([]v7schema.TuskerAutomationRoutingRuleConfig{}, src.Automation.Routing...)
-	}
-	if len(src.Automation.Denylist) > 0 {
-		dst.Automation.Denylist = append([]v7schema.TuskerAutomationDenyRuleConfig{}, src.Automation.Denylist...)
-	}
-	if strings.TrimSpace(src.Automation.Workspace.Root) != "" {
-		dst.Automation.Workspace.Root = src.Automation.Workspace.Root
-	}
-	if strings.TrimSpace(src.Automation.Workspace.Strategy) != "" {
-		dst.Automation.Workspace.Strategy = src.Automation.Workspace.Strategy
-	}
-	if src.Automation.Concurrency.MaxActiveRuns > 0 {
-		dst.Automation.Concurrency.MaxActiveRuns = src.Automation.Concurrency.MaxActiveRuns
-	}
-	if src.Automation.Concurrency.MaxActiveRunsPerProject > 0 {
-		dst.Automation.Concurrency.MaxActiveRunsPerProject = src.Automation.Concurrency.MaxActiveRunsPerProject
-	}
-	if src.Automation.Concurrency.MaxContinuationRetries > 0 {
-		dst.Automation.Concurrency.MaxContinuationRetries = src.Automation.Concurrency.MaxContinuationRetries
-	}
-	if src.Automation.Concurrency.MaxConcurrentByState != nil {
-		dst.Automation.Concurrency.MaxConcurrentByState = src.Automation.Concurrency.MaxConcurrentByState
-	}
-	if src.Automation.Budget.Enabled != nil {
-		dst.Automation.Budget.Enabled = src.Automation.Budget.Enabled
-	}
-	if src.Automation.Budget.PerAttemptInputTokens > 0 {
-		dst.Automation.Budget.PerAttemptInputTokens = src.Automation.Budget.PerAttemptInputTokens
-	}
-	if src.Automation.Budget.PerAttemptOutputTokens > 0 {
-		dst.Automation.Budget.PerAttemptOutputTokens = src.Automation.Budget.PerAttemptOutputTokens
-	}
-	if src.Automation.Budget.PerTaskInputTokens > 0 {
-		dst.Automation.Budget.PerTaskInputTokens = src.Automation.Budget.PerTaskInputTokens
-	}
-	if src.Automation.Budget.PerTaskOutputTokens > 0 {
-		dst.Automation.Budget.PerTaskOutputTokens = src.Automation.Budget.PerTaskOutputTokens
-	}
-	if src.Automation.Budget.DailyInputTokens > 0 {
-		dst.Automation.Budget.DailyInputTokens = src.Automation.Budget.DailyInputTokens
-	}
-	if src.Automation.Budget.DailyOutputTokens > 0 {
-		dst.Automation.Budget.DailyOutputTokens = src.Automation.Budget.DailyOutputTokens
-	}
-	if src.Automation.ExternalLoop.MaxCycles > 0 {
-		dst.Automation.ExternalLoop.MaxCycles = src.Automation.ExternalLoop.MaxCycles
-	}
-	if src.Automation.ExternalLoop.MaxRepairContinuations > 0 {
-		dst.Automation.ExternalLoop.MaxRepairContinuations = src.Automation.ExternalLoop.MaxRepairContinuations
-	}
-	if src.Automation.ExternalLoop.MaxExternalThreads > 0 {
-		dst.Automation.ExternalLoop.MaxExternalThreads = src.Automation.ExternalLoop.MaxExternalThreads
-	}
-	if src.Automation.ExternalLoop.WallClockTimeoutHours > 0 {
-		dst.Automation.ExternalLoop.WallClockTimeoutHours = src.Automation.ExternalLoop.WallClockTimeoutHours
-	}
-	if len(src.Automation.Runners) > 0 {
-		if dst.Automation.Runners == nil {
-			dst.Automation.Runners = map[string]v7schema.TuskerAutomationRunnerConfig{}
-		}
-		for name, runner := range src.Automation.Runners {
-			dst.Automation.Runners[strings.TrimSpace(name)] = runner
-		}
-	}
-	if src.Automation.Fanout.Enabled {
-		dst.Automation.Fanout.Enabled = true
-		dst.Automation.Fanout.MaxChildren = src.Automation.Fanout.MaxChildren
-		dst.Automation.Fanout.AllowedChildTypes = append([]string{}, src.Automation.Fanout.AllowedChildTypes...)
-		dst.Automation.Fanout.MergeRule = src.Automation.Fanout.MergeRule
-	}
-}
-
 func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if !layer.Present {
 		return nil
@@ -670,6 +564,9 @@ func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if err := validateCompletionReactorModeLayer(layer); err != nil {
 		return err
 	}
+	if err := validateProjectLayerDefinesNoProfiles(layer); err != nil {
+		return err
+	}
 	for _, rule := range layer.Config.Automation.Denylist {
 		if strings.TrimSpace(rule.ID) == "" || strings.TrimSpace(rule.Pattern) == "" {
 			return tuskerError(errorConfigInvalid, "automation.denylist entries require id and pattern", withPath(layer.Path))
@@ -681,46 +578,83 @@ func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	return nil
 }
 
-func validateResolvedTuskerConfig(cfg v7TuskerConfigFile, layers []tuskerConfigLayer) error {
+// Runner profiles are a machine-wide library: only the user-global config (and
+// built-ins) may define or remove them. Project and machine-local layers only
+// select global profiles by name.
+func validateProjectLayerDefinesNoProfiles(layer tuskerConfigLayer) error {
+	if layer.Name != configSourceProject && layer.Name != configSourceLocal {
+		return nil
+	}
+	raw := appliedConfigRaw(layer)
+	for _, key := range []string{"automation.profiles", "automation.removed_profiles"} {
+		value, present := lookupConfigValue(raw, key)
+		if !present {
+			continue
+		}
+		names := sortedBootstrapMapKeys(mapAny(value), nil)
+		if key == "automation.removed_profiles" {
+			names = cleanProfileList(normalizeList(value))
+		}
+		what := key
+		if len(names) > 0 {
+			what += " (" + strings.Join(names, ", ") + ")"
+		}
+		if key == "automation.removed_profiles" {
+			return tuskerError(errorConfigInvalid,
+				fmt.Sprintf("%s sets %s; a project cannot remove global runner profiles. To stop using them here, select other profiles in this project's automation.model_levels; to delete them for every project, remove them from the global config %s", layer.Path, what, userGlobalTuskerConfigPath()),
+				withPath(layer.Path),
+				withHint("delete automation.removed_profiles from "+layer.Path+"; use `tusker models profile-remove --scope global --name <profile>` to remove a profile globally"))
+		}
+		return tuskerError(errorConfigInvalid,
+			fmt.Sprintf("%s defines %s; runner profiles may only be defined in the global config %s. Move the profile definitions there and reference them by name from this project (automation.model_levels, automation.default_profile, or task runner_profile/execute_profile/review_profile)", layer.Path, what, userGlobalTuskerConfigPath()),
+			withPath(layer.Path),
+			withHint("move automation.profiles entries to "+userGlobalTuskerConfigPath()+" and delete them from "+layer.Path))
+	}
+	return nil
+}
+
+// validateResolvedTuskerConfig rejects structurally invalid config. Profile
+// references (default_profile, lane_profiles, model_levels, routing) that name
+// a profile the global config does not define are returned as warnings, not
+// errors: profiles live only in the machine's global config, so a fresh clone
+// on a machine that lacks them must still load. Route resolution (wave start,
+// dispatch, work start) refuses the unknown profile when it is actually used.
+func validateResolvedTuskerConfig(cfg v7TuskerConfigFile, layers []tuskerConfigLayer) ([]string, error) {
 	profiles := runnerProfilesFromSchema(cfg.Automation.Profiles)
 	for name, profile := range profiles {
 		if err := validateRunnerProfileDefinition(strings.TrimSpace(name), profile, sourcePathForConfigKey(layers, "automation.profiles."+strings.TrimSpace(name))); err != nil {
-			return err
+			return nil, err
+		}
+	}
+	var warnings []string
+	unknown := func(key, profile string) {
+		if _, ok := profiles[strings.TrimSpace(profile)]; !ok {
+			warnings = append(warnings, fmt.Sprintf("%s (%s) references unknown profile %s; define it in the global config %s", key, sourcePathForConfigKey(layers, key), profile, userGlobalTuskerConfigPath()))
 		}
 	}
 	if strings.TrimSpace(cfg.Automation.DefaultProfile) != "" {
-		if _, ok := profiles[strings.TrimSpace(cfg.Automation.DefaultProfile)]; !ok {
-			path := sourcePathForConfigKey(layers, "automation.default_profile")
-			return tuskerError(errorConfigInvalid, "automation.default_profile references unknown profile "+cfg.Automation.DefaultProfile, withPath(path))
-		}
+		unknown("automation.default_profile", cfg.Automation.DefaultProfile)
 	}
 	for lane, profile := range cfg.Automation.LaneProfiles {
-		if _, ok := profiles[strings.TrimSpace(profile)]; !ok {
-			path := sourcePathForConfigKey(layers, "automation.lane_profiles."+strings.TrimSpace(lane))
-			return tuskerError(errorConfigInvalid, "automation.lane_profiles."+lane+" references unknown profile "+profile, withPath(path))
-		}
+		unknown("automation.lane_profiles."+strings.TrimSpace(lane), profile)
 	}
 	for level, mapping := range cfg.Automation.ModelLevels {
 		if !validModelLevel(level) {
-			return tuskerError(errorConfigInvalid, "automation.model_levels has unknown level "+level)
+			return nil, tuskerError(errorConfigInvalid, "automation.model_levels has unknown level "+level)
 		}
 		for _, profile := range append(append([]string{}, mapping.Execute...), mapping.Review...) {
-			if _, ok := profiles[strings.TrimSpace(profile)]; !ok {
-				return tuskerError(errorConfigInvalid, "automation.model_levels."+level+" references unknown profile "+profile)
-			}
+			unknown("automation.model_levels."+level, profile)
 		}
 	}
 	for _, rule := range cfg.Automation.Routing {
 		if strings.TrimSpace(rule.Profile) == "" {
 			path := sourcePathForConfigKey(layers, "automation.routing")
-			return tuskerError(errorConfigInvalid, "automation.routing rule "+rule.Name+" is missing profile", withPath(path))
+			return nil, tuskerError(errorConfigInvalid, "automation.routing rule "+rule.Name+" is missing profile", withPath(path))
 		}
-		if _, ok := profiles[strings.TrimSpace(rule.Profile)]; !ok {
-			path := sourcePathForConfigKey(layers, "automation.routing")
-			return tuskerError(errorConfigInvalid, "automation.routing rule "+rule.Name+" references unknown profile "+rule.Profile, withPath(path))
-		}
+		unknown("automation.routing", rule.Profile)
 	}
-	return nil
+	sort.Strings(warnings)
+	return warnings, nil
 }
 
 func validateRunnerProfileDefinition(name string, profile RunnerProfileDefinition, path string) error {
@@ -1536,6 +1470,8 @@ func configRawWithValue(path, key string, value any) (map[string]any, error) {
 }
 
 func setUserGlobalConfigWithReadback(key string, value any) (configResolveReport, error) {
+	userGlobalConfigWriteMu.Lock()
+	defer userGlobalConfigWriteMu.Unlock()
 	canonical := canonicalConfigLookupKey(key)
 	if !userGlobalConfigKeyAllowed(canonical) {
 		return configResolveReport{}, tuskerError(errorConfigInvalid, "user-global config does not allow behavioral key "+key)
@@ -1632,13 +1568,4 @@ func resolvedConfigKeyPresent(resolved resolvedTuskerConfig, key string) bool {
 
 func configValueChanged(before, after any) bool {
 	return !reflect.DeepEqual(before, after)
-}
-
-func sortedProfileNames(profiles map[string]RunnerProfileDefinition) []string {
-	names := make([]string, 0, len(profiles))
-	for name := range profiles {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

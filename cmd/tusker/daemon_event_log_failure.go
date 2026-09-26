@@ -19,6 +19,7 @@ const (
 type eventLogPersistenceFailure struct {
 	EventSinkPath string `json:"event_sink_path,omitempty"`
 	EventKind     string `json:"event_kind"`
+	ProjectID     string `json:"project_id,omitempty"`
 	RecordID      string `json:"record_id,omitempty"`
 	Reason        string `json:"reason"`
 	OpenedAt      string `json:"opened_at"`
@@ -30,11 +31,12 @@ type eventLogPersistenceFailureRegistry struct {
 	Failures []eventLogPersistenceFailure `json:"failures"`
 }
 
-func (d *Daemon) tripEventLogPersistenceCircuit(eventKind, recordID string, appendErr error) {
+func (d *Daemon) tripEventLogPersistenceCircuit(eventKind, projectID, recordID string, appendErr error) {
 	if appendErr == nil {
 		return
 	}
 	eventKind = firstNonEmpty(strings.TrimSpace(eventKind), "runtime_event")
+	projectID = strings.TrimSpace(projectID)
 	recordID = strings.TrimSpace(recordID)
 	detail := fmt.Sprintf("cannot persist %s event", eventKind)
 	if recordID != "" {
@@ -44,13 +46,14 @@ func (d *Daemon) tripEventLogPersistenceCircuit(eventKind, recordID string, appe
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	failure := eventLogPersistenceFailure{
 		EventKind:    eventKind,
+		ProjectID:    projectID,
 		RecordID:     recordID,
 		Reason:       appendErr.Error(),
 		OpenedAt:     now,
 		LastFailedAt: now,
 	}
 	if d != nil && d.store != nil {
-		if path, err := d.eventSinkPathForRecord(recordID); err == nil {
+		if path, err := d.eventSinkPathForRecord(projectID, recordID); err == nil {
 			failure.EventSinkPath = path
 		} else {
 			failure.Reason += "; resolve event sink: " + err.Error()
@@ -81,11 +84,14 @@ func (d *Daemon) tripEventLogPersistenceCircuit(eventKind, recordID string, appe
 	fmt.Fprintf(os.Stderr, "event_log_persistence_failure: %s\n", detail)
 }
 
-func (d *Daemon) eventSinkPathForRecord(recordID string) (string, error) {
+// eventSinkPathForRecord resolves within projectID. Legacy failures without a
+// project fall back to the bare lookup, which refuses with
+// RUN_IDENTITY_AMBIGUOUS rather than guessing when the ID collides.
+func (d *Daemon) eventSinkPathForRecord(projectID, recordID string) (string, error) {
 	if d == nil || d.store == nil || strings.TrimSpace(recordID) == "" {
 		return "", nil
 	}
-	run, err := d.store.FindRun(recordID)
+	run, err := findRunScopedOrAmbiguous(d.store, projectID, recordID)
 	if err != nil {
 		return "", err
 	}
@@ -194,6 +200,7 @@ func normalizeEventLogPersistenceFailures(failures []eventLogPersistenceFailure)
 	for index := range out {
 		out[index].EventSinkPath = strings.TrimSpace(out[index].EventSinkPath)
 		out[index].EventKind = firstNonEmpty(strings.TrimSpace(out[index].EventKind), "runtime_event")
+		out[index].ProjectID = strings.TrimSpace(out[index].ProjectID)
 		out[index].RecordID = strings.TrimSpace(out[index].RecordID)
 		out[index].Reason = strings.TrimSpace(out[index].Reason)
 		out[index].OpenedAt = strings.TrimSpace(out[index].OpenedAt)
@@ -206,7 +213,7 @@ func normalizeEventLogPersistenceFailures(failures []eventLogPersistenceFailure)
 }
 
 func eventLogPersistenceFailureKey(failure eventLogPersistenceFailure) string {
-	eventIdentity := strings.TrimSpace(failure.EventKind) + "\x00" + strings.TrimSpace(failure.RecordID)
+	eventIdentity := strings.TrimSpace(failure.EventKind) + "\x00" + strings.TrimSpace(failure.ProjectID) + "\x00" + strings.TrimSpace(failure.RecordID)
 	if path := strings.TrimSpace(failure.EventSinkPath); path != "" {
 		return "path\x00" + path + "\x00" + eventIdentity
 	}
@@ -236,6 +243,7 @@ func mergeEventLogPersistenceFailures(status invariantCircuitStatus, failures []
 			Detail:   detail,
 			Fields: map[string]any{
 				"event_kind":      failure.EventKind,
+				"project_id":      failure.ProjectID,
 				"event_sink_path": failure.EventSinkPath,
 				"opened_at":       failure.OpenedAt,
 				"last_failed_at":  failure.LastFailedAt,
@@ -269,7 +277,7 @@ func (d *Daemon) probeEventLogPersistenceFailures(failures []eventLogPersistence
 			continue
 		}
 		if path == "" {
-			resolved, err := d.eventSinkPathForRecord(failures[index].RecordID)
+			resolved, err := d.eventSinkPathForRecord(failures[index].ProjectID, failures[index].RecordID)
 			if err != nil {
 				probeErrors[index] = fmt.Errorf("resolve event sink for %s: %w", failures[index].RecordID, err)
 				continue
@@ -318,7 +326,7 @@ func (d *Daemon) replayEventLogPersistenceFailure(path string, failure eventLogP
 	if recordID == "" {
 		return fmt.Errorf("quarantined failed supervisor_decision event for %s: record ID is unavailable", path)
 	}
-	run, err := d.store.FindRun(recordID)
+	run, err := findRunScopedOrAmbiguous(d.store, failure.ProjectID, recordID)
 	if err != nil {
 		return fmt.Errorf("load canonical supervisor decision for %s: %w", recordID, err)
 	}

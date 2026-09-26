@@ -116,7 +116,7 @@ silently fall back to another after an attempt exists.
 | Provider route | Transport now | Reason |
 | --- | --- | --- |
 | Codex native models | `codex exec --json` | The installed CLI exposes a supported unattended interface, structured events, model/effort selection, sandbox selection, and native resume. |
-| Muse Spark 1.3 | `codex --profile muse exec --json` | Muse is reached through the operator's Codex profile and command-backed provider authentication. It is not a separate Tusker runtime or ACP endpoint. |
+| Muse | `muse exec --json` | Harness `muse` runs the operator's installed Muse CLI directly (decision D2 in [2026-09-23 harness sessions grill](decisions/2026-09-23-harness-sessions-grill.md)); the former `codex --profile muse` route is retired. Muse `serve`/MSP is not an execution transport. |
 | Claude Code | `claude -p --output-format stream-json` | The installed CLI exposes unattended streaming and resume. Its permission mapping must pass provider-specific conformance before use. |
 | Any future ACP provider | installed ACP endpoint | Admit only after handshake proves start, event stream, cancellation, resume behavior, tool authorization, final status, and usage reporting required by the selected task. |
 
@@ -160,7 +160,7 @@ Rules:
 | Provider | Read-only / workspace write | Full access |
 | --- | --- | --- |
 | Codex CLI | Compile the preset to `--sandbox`, explicit no-prompt approval policy, and an explicit workspace-write network setting supported by the detected version. | `--dangerously-bypass-approvals-and-sandbox`, only after external-containment admission. |
-| Muse via Codex | Same Codex flags, plus `--profile muse`; keep `muse-spark-1.3`. | Same containment rule as Codex. |
+| Muse CLI | Native `muse exec` workspace, approval, network, write and shell flags; private-folder exclusions and read-only external roots are unavailable. | Same containment rule as Codex. |
 | Claude Code | Admit only a verified permission mode and sandbox/tool policy that enforce the exact preset; a closest approximation is unavailable. Never use `bypassPermissions` for bounded presets. | `bypassPermissions`, only after external-containment admission. |
 | ACP | Host enforces each tool callback against the preset; unsupported permission or network semantics fail handshake. | Not admitted until full-access parity is explicitly tested. |
 
@@ -186,7 +186,7 @@ Do not publish a separate library, plugin engine, or service for this delivery.
 
 Dependencies flow from `cmd/tusker` to `internal/runner`, never back. The module
 accepts opaque attempt correlation IDs but no task schemas, vault paths, wave IDs,
-lease state, or task outcome types. Muse reuses the Codex adapter with a named profile.
+lease state, or task outcome types. Muse has its own direct `muse exec` adapter.
 Model and effort are explicit inputs, not a transport selector. Reuse `internal/acp`
 where its contracts fit; do not duplicate protocol machinery.
 
@@ -382,7 +382,7 @@ FLW-T-0030 remains the single owner of the connected runner replacement, so the 
 does not split competing edits across shared lifecycle code. Implement in order:
 
 1. Extract the module and fixture suite; disable inadmissible bundled/policy routes.
-2. Complete Codex CLI policy and lifecycle end to end; Muse shares that implementation.
+2. Complete Codex CLI policy and lifecycle end to end, then the direct Muse CLI route.
 3. Apply the same conformance contract to Claude and installed ACP. Report unsupported
    pairs honestly; an unavailable provider does not justify weakening containment.
 4. Land durable recovery, onboarding command/app surface, installed Mac canary and docs.

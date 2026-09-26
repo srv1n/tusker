@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -236,46 +235,6 @@ func withTuskerScratchWrite(vaultPath, target string, fn func() error) error {
 		}
 	}
 	return fn()
-}
-
-func secureScratchWriteText(vaultPath, target, contents string) error {
-	return withTuskerScratchWrite(vaultPath, target, func() error {
-		return secureScratchWriteTextUnlocked(vaultPath, target, contents)
-	})
-}
-
-func secureScratchWriteTextUnlocked(vaultPath, target, contents string) error {
-	parentFD, base, inside, err := secureScratchParent(vaultPath, target)
-	if err != nil {
-		return err
-	}
-	if !inside {
-		return writeText(target, contents)
-	}
-	defer unix.Close(parentFD)
-	tmp := fmt.Sprintf(".%s.tmp-%d-%d", base, os.Getpid(), time.Now().UnixNano())
-	fd, err := unix.Openat(parentFD, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return err
-	}
-	file := os.NewFile(uintptr(fd), tmp)
-	_, writeErr := file.WriteString(contents)
-	if writeErr == nil {
-		writeErr = file.Sync()
-	}
-	closeErr := file.Close()
-	if writeErr == nil {
-		writeErr = closeErr
-	}
-	if writeErr != nil {
-		_ = unix.Unlinkat(parentFD, tmp, 0)
-		return writeErr
-	}
-	if err := unix.Renameat(parentFD, tmp, parentFD, base); err != nil {
-		_ = unix.Unlinkat(parentFD, tmp, 0)
-		return err
-	}
-	return unix.Fsync(parentFD)
 }
 
 func secureScratchMove(vaultPath, source, target string) error {
@@ -656,108 +615,4 @@ func scratchEntryHasLiveRunStore(store *RuntimeStore, projectID string, projectO
 		return false, err
 	}
 	return runProcessGroupAlive(*run), nil
-}
-
-func scratchEntryHasLiveRun(vaultPath, name string) (bool, error) {
-	if !v7TaskIDPattern.MatchString(strings.TrimSpace(name)) {
-		return false, nil
-	}
-	store, err := OpenRuntimeStore(DefaultStateRoot())
-	if err != nil {
-		return false, err
-	}
-	defer store.Close()
-	projectID, ok, err := registeredProjectIDForVault(store, vaultPath)
-	if err != nil || !ok {
-		return false, err
-	}
-	run, err := store.FindRunScoped(projectID, name)
-	if err != nil {
-		return false, err
-	}
-	if run == nil {
-		return false, nil
-	}
-	return runProcessGroupAlive(*run), nil
-}
-
-// reapTaskScratch removes <vault>/scratch/<taskID>. It is a no-op when the vault
-// does not authorize deletion, when the ID is not a canonical task ID, or when
-// the task has link-only evidence pointing into that directory.
-func reapTaskScratch(vaultPath, taskID string) error {
-	taskID = strings.TrimSpace(taskID)
-	if !v7TaskIDPattern.MatchString(taskID) {
-		// A non-canonical ID must never reach a recursive delete, whatever the
-		// caller believed it was.
-		return errNotScratchChild
-	}
-	root, err := resolveScratchRoot(vaultPath)
-	if err != nil {
-		if errors.Is(err, errNotTuskerVault) {
-			return nil
-		}
-		return err
-	}
-	return withScratchRetentionLock(vaultPath, func() error {
-		if taskHasLinkOnlyScratchEvidence(vaultPath, taskID) {
-			return nil
-		}
-		return removeScratchChild(root, taskID)
-	})
-}
-
-// taskHasLinkOnlyScratchEvidence reports whether any evidence record for the
-// task is link-only with a recorded path inside scratch/<TASK-ID>/. It fails
-// open (keeps the scratch) on anything it cannot read or interpret: a false
-// keep only retains ephemeral data, while a false delete destroys the only copy
-// of referenced evidence.
-func taskHasLinkOnlyScratchEvidence(vaultPath, taskID string) bool {
-	dir := filepath.Join(vaultPath, "evidence", taskID)
-	items, err := os.ReadDir(dir)
-	if err != nil {
-		return !os.IsNotExist(err)
-	}
-	for _, item := range items {
-		if item.IsDir() || !strings.HasSuffix(item.Name(), ".md") {
-			continue
-		}
-		data, _, err := parseFrontmatterMustRead(filepath.Join(dir, item.Name()))
-		if err != nil {
-			return true
-		}
-		if stringField(data, "artifact_durability") != "link_only" {
-			continue
-		}
-		for _, recorded := range normalizeList(data["artifact_paths"]) {
-			if scratchPathRefersToTask(recorded, taskID) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// scratchPathRefersToTask reports whether a recorded evidence path lands inside
-// scratch/<taskID>/. It compares whole path components after normalizing
-// separators and cleaning the path, so "scratch/./T/x" and "scratch/a/../T/x"
-// match while "notscratch/T/x" does not.
-func scratchPathRefersToTask(recorded, taskID string) bool {
-	value := strings.TrimSpace(recorded)
-	if value == "" {
-		return false
-	}
-	if idx := strings.Index(strings.ToLower(value), "link-only:"); idx == 0 {
-		value = value[len("link-only:"):]
-	}
-	// Normalize both separator forms regardless of host OS: a path recorded on
-	// Windows must still be understood here.
-	value = strings.ReplaceAll(value, "\\", "/")
-	value = path.Clean(value)
-	parts := strings.Split(value, "/")
-	for i := 0; i+1 < len(parts); i++ {
-		if strings.EqualFold(parts[i], "scratch") && strings.EqualFold(parts[i+1], taskID) {
-			return true
-		}
-	}
-	return false
 }

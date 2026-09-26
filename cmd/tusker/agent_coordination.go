@@ -212,7 +212,9 @@ func (d *Daemon) processAgentWakeups(project string) error {
 					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
 					continue
 				}
-				if soft, _ := workerSoftDelivery(run.RunnerHarness); soft {
+				// Soft-capable runners get a grace window for in-turn delivery (Claude's
+				// PostToolUse inbox hook) before the answer escalates to hard Say.
+				if nativeResumeRunnerCapabilities(RunnerName(run.Runner)).SoftSay {
 					created, _ := time.Parse(time.RFC3339Nano, message.CreatedAt)
 					if time.Since(created) < 120*time.Second {
 						_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
@@ -590,21 +592,6 @@ func (s *RuntimeStore) QueueAgentWakeup(project string, recipient AgentAddress, 
 		return AgentWakeup{}, false, errors.New("wakeup idempotency key was reused with different content")
 	}
 	return existing, true, nil
-}
-
-func coordinationWaitCycle(edges map[string]string) []string {
-	for start := range edges {
-		seen := map[string]int{}
-		path := []string{}
-		for at := start; at != ""; at = edges[at] {
-			if i, ok := seen[at]; ok {
-				return append(path[i:], at)
-			}
-			seen[at] = len(path)
-			path = append(path, at)
-		}
-	}
-	return nil
 }
 
 type ArchitectReport struct {

@@ -370,14 +370,6 @@ func isCanonicalTuskerSkillPackage(path string) bool {
 	return validateCurrentCanonicalTuskerSkillPackage(path) == nil
 }
 
-func installedSkillStatus(destination, canonicalSource string) (string, string) {
-	// Compatibility helper retained for callers/tests outside setup doctor. The
-	// provenance classifier intentionally resolves symlinks live rather than
-	// comparing a cached destination manifest.
-	report := inspectSkillMaterialization(destination)
-	return report.Status, report.Message
-}
-
 func sameResolvedFile(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)

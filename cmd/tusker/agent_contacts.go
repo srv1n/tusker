@@ -205,7 +205,11 @@ func (s *RuntimeStore) validateExternalContactSubject(projectID, subjectID, subj
 	case "wave":
 		subject, found = idx.Waves[subjectID]
 	}
-	if !found || strings.TrimSpace(stringField(subject.Data, "project")) != projectID {
+	// Subject notes carry the vault's config project_id, while the runtime
+	// registry keys the project by ULID; accept either identity.
+	localID, _ := resolveV7ProjectID(project.VaultRoot)
+	subjectProject := strings.TrimSpace(stringField(subject.Data, "project"))
+	if !found || (subjectProject != projectID && subjectProject != localID) {
 		return tuskerError(errorNotFound, subjectKind+" not found: "+subjectID)
 	}
 	return nil

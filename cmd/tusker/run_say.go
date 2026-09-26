@@ -259,7 +259,7 @@ func runSayHardStored(store *RuntimeStore, stateRoot string, project RegisteredP
 	default:
 		return result, tuskerError(errorInvalidTransition, "runs say requires a working or quiet run; current state is "+state.State)
 	}
-	identity, err := store.WorkerIdentityForRun(run)
+	identity, err := runSayWorkerIdentity(store, run)
 	if err != nil {
 		return result, err
 	}
@@ -418,6 +418,31 @@ func runSayContext(store *RuntimeStore, run RunStatus) (RegisteredProject, Note,
 	return RegisteredProject{}, Note{}, Note{}, tuskerError(errorNotFound, "registered project for run not found")
 }
 
+// runSayWorkerIdentity keeps the canonical run-row fallback as defense in depth.
+func runSayWorkerIdentity(store *RuntimeStore, run RunStatus) (*WorkerAttemptIdentity, error) {
+	identity, err := store.WorkerIdentityForRun(run)
+	if err != nil || identity != nil {
+		return identity, err
+	}
+	if run.Terminal || (run.LeaseState != string(LeaseStateClaimed) && run.LeaseState != string(LeaseStateRunning)) {
+		return nil, nil
+	}
+	return runRowWorkerIdentity(run, run.ActiveAttemptID), nil
+}
+
+func runRowWorkerIdentity(run RunStatus, attemptID string) *WorkerAttemptIdentity {
+	identity := WorkerAttemptIdentity{
+		ProjectID: run.ProjectID, TaskID: firstNonEmpty(run.ItemID, run.RecordID),
+		AttemptID: strings.TrimSpace(attemptID), AttemptGeneration: run.LeaseGeneration,
+		WorkRevision: run.WorkRevision, Provider: strings.ToLower(strings.TrimSpace(run.Runner)),
+		NativeSessionID: strings.TrimSpace(run.SessionRef),
+	}
+	if identity.validate() != nil {
+		return nil
+	}
+	return &identity
+}
+
 func runContinuationIdentity(store *RuntimeStore, run RunStatus) (*WorkerAttemptIdentity, error) {
 	if run.SessionRef == "" || run.LeaseGeneration <= 0 || run.WorkRevision <= 0 {
 		return nil, nil
@@ -444,12 +469,18 @@ func runContinuationIdentity(store *RuntimeStore, run RunStatus) (*WorkerAttempt
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(matches) != 1 {
+	if len(matches) > 1 {
 		return nil, nil
 	}
+	if len(matches) == 0 {
+		return runRowWorkerIdentity(run, session.LastAttemptID), nil
+	}
 	view, err := store.ExecutionView(matches[0].id)
-	if err != nil || view == nil || view.ProviderSessionID == "" {
+	if err != nil {
 		return nil, err
+	}
+	if view == nil || view.ProviderSessionID == "" {
+		return runRowWorkerIdentity(run, session.LastAttemptID), nil
 	}
 	provider, err := store.ExecutionProvider(matches[0].id)
 	if err != nil {

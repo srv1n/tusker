@@ -302,9 +302,16 @@ func TestSelfServiceDiagnosticContract(t *testing.T) {
 			t.Fatal("diagnosis mutated its read-only input")
 		}
 
-		unavailable, err := DiagnoseUnavailable(dimensions, DiagnosticScope{Project: "tusker"}, "runtime", "Runtime store did not answer.")
+		unavailable, err := NewDiagnosis(DiagnosisInput{
+			Dimensions: dimensions,
+			Findings: []DiagnosticFinding{{
+				Code: "unavailable-input", Scope: DiagnosticScope{Project: "tusker"},
+				Classification: DiagnosticUnavailable, NextActor: DiagnosticAuthorityOperator,
+				Evidence: DiagnosticEvidence{Source: "runtime", Revision: "unavailable", ObservedAt: time.Now().UTC().Format(time.RFC3339), Detail: "Runtime store did not answer."},
+			}},
+		})
 		if err != nil {
-			t.Fatalf("DiagnoseUnavailable: %v", err)
+			t.Fatalf("NewDiagnosis unavailable: %v", err)
 		}
 		if unavailable.PrimaryClassification != DiagnosticUnavailable || len(unavailable.SafeActions()) != 0 {
 			t.Fatalf("unavailable diagnosis is not action-free: %#v", unavailable)
@@ -379,37 +386,5 @@ func TestSelfServiceDiagnosticContract(t *testing.T) {
 		if _, err := NewDiagnosis(shellInput); err == nil {
 			t.Fatal("embedded shell in argv was accepted")
 		}
-
-		// Existing readiness and legacy-adapter callers retain their behavior.
-		legacyDimensions := selfServiceDimensionsFixture()
-		legacyDimensions.Authorization = ReadinessDimension{State: ReadinessStateBlocked, Provenance: ReadinessProvenance{Source: "wave", Revision: "wave-r1"}}
-		contract, err := NewReadinessContract(ReadinessInput{
-			Dimensions: legacyDimensions,
-			Blockers: []ReadinessBlocker{
-				{
-					ID: "authorization", Kind: ReadinessBlockerAuthorizationMissing, Authority: ReadinessAuthorityAuthorization,
-					Affects: []ReadinessDimensionKind{ReadinessDimensionAuthorization}, WaveID: "W-0035",
-					Reason: "Wave authorization is absent.", Remedy: "Have the authorized operator arm the exact wave.",
-				},
-			},
-		})
-		if err != nil {
-			t.Fatalf("NewReadinessContract: %v", err)
-		}
-		legacy, err := ProjectLegacyReadiness(contract, ReadinessLegacyAdapter{
-			ReadinessDimension:        ReadinessDimensionAuthorization,
-			DispatchabilityDimensions: []ReadinessDimensionKind{ReadinessDimensionAuthorization},
-			BlockerDimensions:         []ReadinessDimensionKind{ReadinessDimensionAuthorization},
-		})
-		if err != nil {
-			t.Fatalf("ProjectLegacyReadiness: %v", err)
-		}
-		if legacy.Dispatchable || legacy.Readiness != string(ReadinessStateBlocked) {
-			t.Fatalf("legacy projection changed: %#v", legacy)
-		}
-		if len(legacy.Blockers) != 1 || !strings.Contains(legacy.Blockers[0], "Wave authorization is absent.") {
-			t.Fatalf("legacy blockers changed: %#v", legacy.Blockers)
-		}
-		_ = time.Now
 	})
 }

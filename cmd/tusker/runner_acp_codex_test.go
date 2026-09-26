@@ -375,29 +375,6 @@ func TestCodexACPSessionReferenceRejectsCrossAuthorityCopies(t *testing.T) {
 	}
 }
 
-func TestCodexACPStopDeliveryUnknownForbidsAutomaticRecovery(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		result acp.PromptResult
-		err    error
-	}{
-		{name: "explicit", result: acp.PromptResult{Outcome: acp.OutcomeDeliveryUnknown, Delivery: acp.DeliveryWriteComplete}, err: acp.ErrDeliveryUnknown},
-		{name: "contradictory error", result: acp.PromptResult{Outcome: acp.OutcomeCompleted, Delivery: acp.DeliveryWriteComplete}, err: acp.ErrDeliveryUnknown},
-		{name: "completed without terminal", result: acp.PromptResult{Outcome: acp.OutcomeCompleted, Delivery: acp.DeliveryWriteComplete}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			stop := CodexACPMapStop(test.result, test.err)
-			if stop.Outcome != AttemptOutcomeFailed || stop.AutoRetry || stop.AutoResume || stop.DeliveryKnown || !strings.Contains(stop.Reason, "no automatic retry or resume") {
-				t.Fatalf("delivery unknown stop=%#v", stop)
-			}
-		})
-	}
-	completed := CodexACPMapStop(acp.PromptResult{Outcome: acp.OutcomeCompleted, Delivery: acp.DeliveryTerminalReceived}, nil)
-	if completed.Outcome != AttemptOutcomeNone || !completed.DeliveryKnown {
-		t.Fatalf("completed stop=%#v", completed)
-	}
-}
-
 func codexACPTestVerifiedBundle(t *testing.T) (CodexACPDescriptor, ACPAdapterBundleValidationRequest, ACPAdapterBundleVerificationReceipt) {
 	t.Helper()
 	request, manifest := newACPAdapterBundleFixture(t)
@@ -480,22 +457,6 @@ func TestCodexACPObservationBridgeUsesRawProviderSessionWithoutRunMutation(t *te
 	var rawSession string
 	if err := store.queryRowScan(`SELECT parent_provider_session_id FROM provider_execution_observations WHERE child_handle = 'child-1'`, nil, &rawSession); err != nil || rawSession != "provider-session-1" {
 		t.Fatalf("provider correlation=%q err=%v", rawSession, err)
-	}
-}
-
-func TestCodexACPReadinessSeparatesAuthFromTaskAdmission(t *testing.T) {
-	requirements := CodexACPReadinessRequirements()
-	joined := ""
-	for _, requirement := range requirements {
-		if !requirement.Required || requirement.ID == "" || requirement.Description == "" {
-			t.Fatalf("invalid readiness requirement: %#v", requirement)
-		}
-		joined += requirement.ID + " "
-	}
-	for _, want := range []string{"adapter_manifest", "acp_conformance", "codex_auth", "task_authorization", "permission_parity"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("readiness misses %q: %s", want, joined)
-		}
 	}
 }
 

@@ -32,6 +32,7 @@ condition applies; creating a handoff needs more context than checking status.
 | Tracker diagnosis or stuck task state | `references/OPERATE.md` |
 | Queued work not progressing, Background-work scope, repair/escalation | `references/OPERATE.md` (Diagnosis and bounded self-recovery) |
 | Existing-repo onboarding | `references/REPO_ONBOARDING.md` |
+| Specs or docs outside `docs/system/`, migrating a repo | `references/MIGRATION.md` |
 | Xcode generated build-state failure | `references/XCODE_BUILD_STATE.md` |
 
 ## Completion

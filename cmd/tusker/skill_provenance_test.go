@@ -7,52 +7,6 @@ import (
 	"testing"
 )
 
-func TestMaterializedSkillProvenanceClassifiesFreshnessAndLocalEdits(t *testing.T) {
-	t.Parallel()
-	destination := filepath.Join(t.TempDir(), "tusker")
-	if err := installSkillPayloadCopy(destination); err != nil {
-		t.Fatal(err)
-	}
-	if got := inspectSkillMaterialization(destination); got.Status != "current" || got.Manifest == nil {
-		t.Fatalf("current copy provenance = %#v", got)
-	}
-	if err := os.Remove(filepath.Join(destination, skillProvenanceFilename)); err != nil {
-		t.Fatal(err)
-	}
-	if got := inspectSkillMaterialization(destination); got.Status != "missing_provenance" {
-		t.Fatalf("missing manifest status = %#v", got)
-	}
-	if err := writeSkillMaterializationProvenance(destination, "embedded", portableSkillSourceIdentity("embedded")); err != nil {
-		t.Fatal(err)
-	}
-	manifestPath := filepath.Join(destination, skillProvenanceFilename)
-	raw, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(manifestPath, strings.Replace(string(raw), "authoring_contract_version: "+authoringContractSchemaVersionForTest(t), "authoring_contract_version: 0.0.0", 1)); err != nil {
-		t.Fatal(err)
-	}
-	if got := inspectSkillMaterialization(destination); got.Status != "incompatible" {
-		t.Fatalf("manifest/package contradiction status = %#v", got)
-	}
-	if err := writeText(manifestPath, strings.Replace(string(raw), "schema: tusker.skill-materialization/v1", "schema: tusker.skill-materialization/v0", 1)); err != nil {
-		t.Fatal(err)
-	}
-	if got := inspectSkillMaterialization(destination); got.Status != "incompatible" {
-		t.Fatalf("incompatible copy status = %#v", got)
-	}
-	if err := writeText(manifestPath, string(raw)); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(filepath.Join(destination, "SKILL.md"), "local edit\n"); err != nil {
-		t.Fatal(err)
-	}
-	if got := inspectSkillMaterialization(destination); got.Status != "locally_modified" {
-		t.Fatalf("edited copy status = %#v", got)
-	}
-}
-
 func TestSymlinkProvenanceReadsLiveTarget(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -268,4 +222,54 @@ func authoringContractSchemaVersionForTest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return contract.Version
+}
+
+func TestMaterializedSkillProvenanceClassifiesFreshnessAndLocalEdits(t *testing.T) {
+	t.Parallel()
+	destination := filepath.Join(t.TempDir(), "tusker")
+	if err := installSkillPayloadCopy(destination); err != nil {
+		t.Fatal(err)
+	}
+	if got := inspectSkillMaterialization(destination); got.Status != "current" || got.Manifest == nil {
+		t.Fatalf("current copy provenance = %#v", got)
+	}
+	if err := os.Remove(filepath.Join(destination, skillProvenanceFilename)); err != nil {
+		t.Fatal(err)
+	}
+	if got := inspectSkillMaterialization(destination); got.Status != "missing_provenance" {
+		t.Fatalf("missing manifest status = %#v", got)
+	}
+	contract, err := embeddedAuthoringContractProvenance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSkillMaterializationProvenanceWithContract(destination, "embedded", portableSkillSourceIdentity("embedded"), contract); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(destination, skillProvenanceFilename)
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(manifestPath, strings.Replace(string(raw), "authoring_contract_version: "+authoringContractSchemaVersionForTest(t), "authoring_contract_version: 0.0.0", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := inspectSkillMaterialization(destination); got.Status != "incompatible" {
+		t.Fatalf("manifest/package contradiction status = %#v", got)
+	}
+	if err := writeText(manifestPath, strings.Replace(string(raw), "schema: tusker.skill-materialization/v1", "schema: tusker.skill-materialization/v0", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := inspectSkillMaterialization(destination); got.Status != "incompatible" {
+		t.Fatalf("incompatible copy status = %#v", got)
+	}
+	if err := writeText(manifestPath, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(destination, "SKILL.md"), "local edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got := inspectSkillMaterialization(destination); got.Status != "locally_modified" {
+		t.Fatalf("edited copy status = %#v", got)
+	}
 }

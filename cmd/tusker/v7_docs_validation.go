@@ -189,10 +189,6 @@ func repoFileExistsForSpec(repoRoot, relative string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-func docUpdatedAfterSpec(repoRoot, specPath, targetPath string) bool {
-	return docUpdatedAfterSpecForTarget(repoRoot, specPath, targetPath, targetPath)
-}
-
 func docUpdatedAfterSpecForTarget(repoRoot, specPath, targetPath, targetRef string) bool {
 	if gitRepoAvailable(repoRoot) && gitPathDirty(repoRoot, specPath) {
 		return false

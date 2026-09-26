@@ -53,14 +53,6 @@ func doctorObservationTime(subject Note, now time.Time) string {
 	return now.UTC().Format(time.RFC3339)
 }
 
-// diagnoseTaskForDoctor assembles the shared diagnostic facts for one task
-// across contracts, DAG, authorization, reservations, capacity, proof, and
-// review state. It is read-only: stores open read-only and nothing is
-// queued, claimed, spawned, or signaled.
-func diagnoseTaskForDoctor(vault string, store *RuntimeStore, projectID, taskID string, now time.Time) (Diagnosis, error) {
-	return diagnoseTaskForDoctorWithRuntime(vault, store, nil, projectID, taskID, now)
-}
-
 func diagnoseTaskForDoctorWithRuntime(vault string, store *RuntimeStore, runtimeErr error, projectID, taskID string, now time.Time) (Diagnosis, error) {
 	idx, err := loadV7Index(vault)
 	if err != nil {
@@ -160,12 +152,6 @@ func doctorDedupeFindingCodes(findings []DiagnosticFinding) []DiagnosticFinding 
 		seen[code]++
 	}
 	return findings
-}
-
-// diagnoseWaveForDoctor assembles the shared diagnostic facts for one wave:
-// authorization, member eligibility, frontiers, blockers, and controls.
-func diagnoseWaveForDoctor(vault string, store *RuntimeStore, projectID, waveID string, now time.Time) (Diagnosis, error) {
-	return diagnoseWaveForDoctorWithRuntime(vault, store, nil, projectID, waveID, now)
 }
 
 func diagnoseWaveForDoctorWithRuntime(vault string, store *RuntimeStore, runtimeErr error, projectID, waveID string, now time.Time) (Diagnosis, error) {

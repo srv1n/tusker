@@ -394,15 +394,6 @@ func eventLogSequenceMetadataPath(path string) string {
 	return path + ".seq"
 }
 
-func readEventLogSequenceMetadata(eventPath string) (eventLogSequenceMetadata, bool, error) {
-	parentFD, eventBase, err := openPrivatePathParent(eventPath, false)
-	if err != nil {
-		return eventLogSequenceMetadata{}, false, err
-	}
-	defer unix.Close(parentFD)
-	return readEventLogSequenceMetadataAt(parentFD, eventBase, eventPath)
-}
-
 func readEventLogSequenceMetadataAt(parentFD int, eventBase, eventPath string) (eventLogSequenceMetadata, bool, error) {
 	metadataPath := eventLogSequenceMetadataPath(eventPath)
 	metadataBase := eventBase + ".seq"
@@ -433,17 +424,6 @@ func readEventLogSequenceMetadataAt(parentFD int, eventBase, eventPath string) (
 		return eventLogSequenceMetadata{}, false, nil
 	}
 	return metadata, true, nil
-}
-
-func writeEventLogSequenceMetadata(eventPath string, metadata eventLogSequenceMetadata, verifyPaths func() error) (returnErr error) {
-	parentFD, eventBase, err := openPrivatePathParent(eventPath, true)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		joinEventLogError(&returnErr, unix.Close(parentFD), "close event log sequence metadata directory")
-	}()
-	return writeEventLogSequenceMetadataAt(parentFD, eventBase, eventPath, metadata, verifyPaths)
 }
 
 func writeEventLogSequenceMetadataAt(parentFD int, eventBase, eventPath string, metadata eventLogSequenceMetadata, verifyPaths func() error) (returnErr error) {
@@ -523,15 +503,6 @@ func snapshotEventLogFile(file *os.File, path string) (eventLogFileSnapshot, err
 	return snapshotEventLogFileInfo(info, path)
 }
 
-func snapshotEventLogPath(path string) (eventLogFileSnapshot, error) {
-	parentFD, base, err := openPrivatePathParent(path, false)
-	if err != nil {
-		return eventLogFileSnapshot{}, err
-	}
-	defer unix.Close(parentFD)
-	return snapshotEventLogPathAt(parentFD, base, path)
-}
-
 func snapshotEventLogPathAt(parentFD int, base, path string) (eventLogFileSnapshot, error) {
 	fd, err := unix.Openat(parentFD, base, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -567,15 +538,6 @@ func (f eventLogLockedFiles) verifyPathIdentities() error {
 		return err
 	}
 	return verifyEventLogPathIdentityAt(f.parentFD, f.eventBase, f.eventPath, f.event, "event log")
-}
-
-func verifyEventLogPathIdentity(path string, expected eventLogFileSnapshot, label string) error {
-	parentFD, base, err := openPrivatePathParent(path, false)
-	if err != nil {
-		return err
-	}
-	defer unix.Close(parentFD)
-	return verifyEventLogPathIdentityAt(parentFD, base, path, expected, label)
 }
 
 func verifyEventLogPathIdentityAt(parentFD int, base, path string, expected eventLogFileSnapshot, label string) error {

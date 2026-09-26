@@ -959,32 +959,3 @@ func workflowInitCmd(args Args) error {
 	}
 	return nil
 }
-
-func setWorkflowProjectRunLimit(vaultPath string, limit int) (WorkflowFile, error) {
-	if limit <= 0 {
-		return WorkflowFile{}, tuskerError(errorInvalidArg, "--max-active-runs must be > 0", withContext(map[string]any{"arg": "--max-active-runs", "value": limit}))
-	}
-	filePath := workflowPath(vaultPath)
-	text, err := readText(filePath)
-	if err != nil {
-		return WorkflowFile{}, err
-	}
-	data, body, err := parseFrontmatter(text)
-	if err != nil {
-		return WorkflowFile{}, tuskerError(errorConfigInvalid, fmt.Sprintf("failed to parse WORKFLOW.md: %s", err.Error()), withPath(filePath))
-	}
-	runtimeBlock, ok := data["runtime"].(map[string]any)
-	if !ok || runtimeBlock == nil {
-		runtimeBlock = map[string]any{}
-	}
-	runtimeBlock["max_active_runs_per_project"] = limit
-	data["runtime"] = runtimeBlock
-	fm, err := stringifyFrontmatter(data, nil)
-	if err != nil {
-		return WorkflowFile{}, err
-	}
-	if err := writeText(filePath, fm+"\n"+strings.TrimLeft(body, "\n")); err != nil {
-		return WorkflowFile{}, err
-	}
-	return loadWorkflow(vaultPath)
-}

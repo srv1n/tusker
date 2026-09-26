@@ -142,43 +142,6 @@ func defaultCrashLoopStatus() daemonCrashLoopStatus {
 	}
 }
 
-func (s *RuntimeStore) recordDaemonAbnormalStart(cause string, now time.Time) (daemonCrashLoopStatus, error) {
-	cause = firstNonEmpty(strings.TrimSpace(cause), "abnormal_exit")
-	restarts, err := s.readDaemonRestartTimestamps(now)
-	if err != nil {
-		return daemonCrashLoopStatus{}, err
-	}
-	restarts = append(restarts, now.UTC().Format(time.RFC3339Nano))
-	if err := s.writeDaemonRestartTimestamps(restarts); err != nil {
-		return daemonCrashLoopStatus{}, err
-	}
-	if err := s.SetSetting(daemonLastRestartCauseKey, cause); err != nil {
-		return daemonCrashLoopStatus{}, err
-	}
-	status, err := s.ReadCrashLoopStatus()
-	if err != nil {
-		return daemonCrashLoopStatus{}, err
-	}
-	status.LastCheckedAt = now.UTC().Format(time.RFC3339Nano)
-	status.LastRestartCause = cause
-	status.RestartCount = len(restarts)
-	status.RestartedAt = append([]string{}, restarts...)
-	status.WindowSeconds = daemonCrashLoopWindowSeconds
-	status.Burst = daemonCrashLoopBurst
-	if len(restarts) > daemonCrashLoopBurst {
-		status.Open = true
-		status.Reason = daemonCrashLoopReason
-		if strings.TrimSpace(status.OpenedAt) == "" {
-			status.OpenedAt = now.UTC().Format(time.RFC3339Nano)
-		}
-		status.Summary = fmt.Sprintf("%s: %d abnormal daemon starts within %s; run `tusker daemon resume` after repair", daemonCrashLoopReason, len(restarts), (time.Duration(daemonCrashLoopWindowSeconds) * time.Second).String())
-	}
-	if err := s.SetCrashLoopStatus(status); err != nil {
-		return daemonCrashLoopStatus{}, err
-	}
-	return status, nil
-}
-
 // beginManagedDaemonStart consumes exactly one abnormal predecessor marker.
 // A graceful run error can persist its cause before guard cleanup removes the
 // pid file; SIGKILL is inferred from the stale pid file. Manual runs do not
@@ -347,39 +310,6 @@ func decodePendingRestartCauses(raw string) []string {
 		}
 	}
 	return filtered
-}
-
-func (s *RuntimeStore) readDaemonRestartTimestamps(now time.Time) ([]string, error) {
-	raw, err := s.GetSetting(daemonRestartTimestampsKey)
-	if err != nil {
-		return nil, err
-	}
-	var stored []string
-	if strings.TrimSpace(raw) != "" {
-		if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-			return nil, err
-		}
-	}
-	cutoff := now.UTC().Add(-time.Duration(daemonCrashLoopWindowSeconds) * time.Second)
-	var filtered []string
-	for _, stamp := range stored {
-		parsed, err := time.Parse(time.RFC3339Nano, stamp)
-		if err != nil {
-			continue
-		}
-		if !parsed.Before(cutoff) {
-			filtered = append(filtered, parsed.UTC().Format(time.RFC3339Nano))
-		}
-	}
-	return filtered, nil
-}
-
-func (s *RuntimeStore) writeDaemonRestartTimestamps(stamps []string) error {
-	raw, err := json.Marshal(stamps)
-	if err != nil {
-		return err
-	}
-	return s.SetSetting(daemonRestartTimestampsKey, string(raw))
 }
 
 func (d *Daemon) crashLoopDispatchBlocker() (string, error) {

@@ -1032,6 +1032,23 @@ func (s *RuntimeStore) WorkerIdentityForRun(run RunStatus) (*WorkerAttemptIdenti
 	}
 	provider = strings.ToLower(strings.TrimSpace(firstNonEmpty(provider, matches[0].provider)))
 	sessionID := strings.TrimSpace(view.ProviderSessionID)
+	if sessionID == "" && run.SessionRef != "" && provider != "" {
+		var parentAttempt string
+		err := s.queryRowScan(`SELECT records.attempt_id FROM execution_attachment_events attachments JOIN execution_records records ON records.execution_id = attachments.execution_id WHERE attachments.project_id = ? AND attachments.provider = ? AND attachments.provider_session_id = ?`,
+			[]any{run.ProjectID, provider, run.SessionRef}, &parentAttempt)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		if err == nil {
+			related, err := s.attemptDescendsFrom(run.ProjectID, run.ActiveAttemptID, parentAttempt)
+			if err != nil {
+				return nil, err
+			}
+			if related {
+				sessionID = run.SessionRef
+			}
+		}
+	}
 	if provider == "" || sessionID == "" {
 		return nil, nil
 	}

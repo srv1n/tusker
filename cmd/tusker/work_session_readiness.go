@@ -69,14 +69,6 @@ func selfImplementationClaimAuthorization(store *RuntimeStore, run RunStatus) bo
 		strings.HasPrefix(strings.TrimSpace(auth.Trigger), "self_implementation;")
 }
 
-// workSessionAdmissionBlockers deliberately reads only the facts that make a
-// user-directed work session unsafe. Daemon dispatch, automation enablement,
-// wave authorization, runner health, and critical-risk dispatch policy are
-// separate authority domains and cannot refuse direct interactive work.
-func workSessionAdmissionBlockers(task Note, idx v7Index, notesByID, notesByRecordID map[string]Note) []ReadinessBlocker {
-	return workSessionAdmissionBlockersForLane(task, idx, notesByID, notesByRecordID, runLaneExecute)
-}
-
 func workSessionAdmissionBlockersForLane(task Note, idx v7Index, notesByID, notesByRecordID map[string]Note, lane string) []ReadinessBlocker {
 	taskID := stringField(task.Data, "id")
 	if !isV7TaskNote(task) {
@@ -101,10 +93,6 @@ func workSessionAdmissionBlockersForLane(task Note, idx v7Index, notesByID, note
 	return nil
 }
 
-func workSessionLegacyAdmissionBlockers(task Note, notesByID, notesByRecordID map[string]Note) []ReadinessBlocker {
-	return workSessionLegacyAdmissionBlockersForLane(task, notesByID, notesByRecordID, runLaneExecute)
-}
-
 func workSessionLegacyAdmissionBlockersForLane(task Note, notesByID, notesByRecordID map[string]Note, lane string) []ReadinessBlocker {
 	if blocker := workSessionTaskStateBlockerForLane(task, lane); blocker != nil {
 		return []ReadinessBlocker{*blocker}
@@ -113,10 +101,6 @@ func workSessionLegacyAdmissionBlockersForLane(task Note, notesByID, notesByReco
 		return []ReadinessBlocker{*blocker}
 	}
 	return nil
-}
-
-func workSessionTaskStateBlocker(task Note) *ReadinessBlocker {
-	return workSessionTaskStateBlockerForLane(task, runLaneExecute)
 }
 
 func workSessionTaskStateBlockerForLane(task Note, lane string) *ReadinessBlocker {

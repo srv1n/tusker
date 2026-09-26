@@ -1,9 +1,6 @@
 package main
 
-import (
-	"sort"
-	"strings"
-)
+import ()
 
 const (
 	ReadinessContractSchema  = "tusker.readiness/v1"
@@ -133,19 +130,6 @@ type ReadinessContract struct {
 	Blockers   []ReadinessBlocker  `json:"blockers"`
 }
 
-func NewReadinessContract(input ReadinessInput) (ReadinessContract, error) {
-	contract := ReadinessContract{
-		Schema:     ReadinessContractSchema,
-		Version:    ReadinessContractVersion,
-		Dimensions: input.Dimensions,
-		Blockers:   cloneReadinessBlockers(input.Blockers),
-	}
-	if err := validateReadinessContract(contract); err != nil {
-		return ReadinessContract{}, err
-	}
-	return contract, nil
-}
-
 // ReadinessLegacyAdapter explicitly selects the dimensions that drive legacy
 // fields. This prevents old readiness/dispatchable consumers from silently
 // treating every independent fact as one universal project verdict.
@@ -156,46 +140,6 @@ type ReadinessLegacyAdapter struct {
 	BlockerDimensions         []ReadinessDimensionKind  `json:"blocker_dimensions"`
 }
 
-// ProjectLegacyReadiness preserves old CLI and Serve field names from a
-// caller-selected policy. It is a pure projection over the typed contract.
-func ProjectLegacyReadiness(contract ReadinessContract, adapter ReadinessLegacyAdapter) (ReadinessLegacyProjection, error) {
-	if !validReadinessDimensionKind(adapter.ReadinessDimension) {
-		return ReadinessLegacyProjection{}, readinessContractError("legacy readiness adapter requires a readiness dimension")
-	}
-	dimensions := readinessDimensionsByKind(contract.Dimensions)
-	state := dimensions[adapter.ReadinessDimension].State
-	readiness := string(state)
-	if mapped, ok := adapter.ReadinessByState[state]; ok {
-		readiness = mapped
-	}
-	projection := ReadinessLegacyProjection{Readiness: readiness, Dispatchable: true, Blockers: []string{}}
-	for _, kind := range adapter.DispatchabilityDimensions {
-		if !validReadinessDimensionKind(kind) {
-			return ReadinessLegacyProjection{}, readinessContractError("legacy readiness adapter has an invalid dispatchability dimension")
-		}
-		state := dimensions[kind].State
-		if state != ReadinessStateReady && state != ReadinessStateNotApplicable {
-			projection.Dispatchable = false
-		}
-	}
-	for _, kind := range adapter.BlockerDimensions {
-		if !validReadinessDimensionKind(kind) {
-			return ReadinessLegacyProjection{}, readinessContractError("legacy readiness adapter has an invalid blocker dimension")
-		}
-		for _, blocker := range contract.Blockers {
-			if readinessBlockerAffects(blocker, kind) {
-				projection.Blockers = append(projection.Blockers, blocker.Reason)
-			}
-		}
-	}
-	projection.Blockers = uniqueStrings(projection.Blockers)
-	sort.Strings(projection.Blockers)
-	if projection.Blockers == nil {
-		projection.Blockers = []string{}
-	}
-	return projection, nil
-}
-
 // NewDependencyReadinessBlocker and NewHumanGateReadinessBlocker encode their
 // causes from exact IDs. They never classify free-form reason text.
 func NewDependencyReadinessBlocker(id, taskID, dependencyID, reason, remedy string) ReadinessBlocker {
@@ -204,162 +148,4 @@ func NewDependencyReadinessBlocker(id, taskID, dependencyID, reason, remedy stri
 		Affects: []ReadinessDimensionKind{ReadinessDimensionContract}, TaskID: taskID,
 		DependencyTaskID: dependencyID, Reason: reason, Remedy: remedy,
 	}
-}
-
-func NewHumanGateReadinessBlocker(id, taskID, gateID, reason, remedy string) ReadinessBlocker {
-	return ReadinessBlocker{
-		ID: id, Kind: ReadinessBlockerHumanGateOpen, Authority: ReadinessAuthorityHuman,
-		Affects: []ReadinessDimensionKind{ReadinessDimensionInteractive}, TaskID: taskID,
-		GateID: gateID, Reason: reason, Remedy: remedy,
-	}
-}
-
-func validateReadinessContract(contract ReadinessContract) error {
-	if contract.Schema != ReadinessContractSchema || contract.Version != ReadinessContractVersion {
-		return readinessContractError("unsupported readiness contract version")
-	}
-
-	dimensions := readinessDimensionsByKind(contract.Dimensions)
-	for kind, dimension := range dimensions {
-		if !validReadinessState(dimension.State) {
-			return readinessContractError("dimension " + string(kind) + " has an invalid state")
-		}
-		if strings.TrimSpace(dimension.Provenance.Source) == "" || strings.TrimSpace(dimension.Provenance.Revision) == "" {
-			return readinessContractError("dimension " + string(kind) + " is missing provenance")
-		}
-	}
-
-	blockerIDs := make(map[string]struct{}, len(contract.Blockers))
-	blockedDimensions := map[ReadinessDimensionKind]bool{}
-	for _, blocker := range contract.Blockers {
-		if err := validateReadinessBlocker(blocker); err != nil {
-			return err
-		}
-		if _, exists := blockerIDs[blocker.ID]; exists {
-			return readinessContractError("duplicate blocker id " + blocker.ID)
-		}
-		blockerIDs[blocker.ID] = struct{}{}
-		for _, kind := range blocker.Affects {
-			blockedDimensions[kind] = true
-		}
-	}
-	for kind, dimension := range dimensions {
-		if (dimension.State == ReadinessStateBlocked || dimension.State == ReadinessStateWaiting || dimension.State == ReadinessStateUnavailable) && !blockedDimensions[kind] {
-			return readinessContractError("dimension " + string(kind) + " is " + string(dimension.State) + " without a structured blocker")
-		}
-	}
-	return nil
-}
-
-func validateReadinessBlocker(blocker ReadinessBlocker) error {
-	if strings.TrimSpace(blocker.ID) == "" || !validReadinessBlockerKind(blocker.Kind) || !validReadinessAuthority(blocker.Authority) {
-		return readinessContractError("blocker requires id, stable kind, and authority")
-	}
-	if len(blocker.Affects) == 0 {
-		return readinessContractError("blocker " + blocker.ID + " must affect a readiness dimension")
-	}
-	seenDimensions := map[ReadinessDimensionKind]bool{}
-	for _, kind := range blocker.Affects {
-		if !validReadinessDimensionKind(kind) || seenDimensions[kind] {
-			return readinessContractError("blocker " + blocker.ID + " has invalid affected dimensions")
-		}
-		seenDimensions[kind] = true
-	}
-	if strings.TrimSpace(blocker.TaskID) == "" && strings.TrimSpace(blocker.GateID) == "" && strings.TrimSpace(blocker.WaveID) == "" && strings.TrimSpace(blocker.ProjectID) == "" && strings.TrimSpace(blocker.IntegrationID) == "" {
-		return readinessContractError("blocker " + blocker.ID + " must identify an affected task, gate, wave, project, or integration")
-	}
-	if !boundedReadinessText(blocker.Reason) || !boundedReadinessText(blocker.Remedy) {
-		return readinessContractError("blocker " + blocker.ID + " requires bounded reason and remedy")
-	}
-	if blocker.Kind == ReadinessBlockerDependencyIncomplete && (strings.TrimSpace(blocker.TaskID) == "" || strings.TrimSpace(blocker.DependencyTaskID) == "") {
-		return readinessContractError("dependency blocker " + blocker.ID + " requires task and dependency task ids")
-	}
-	if blocker.Kind == ReadinessBlockerHumanGateOpen && (blocker.Authority != ReadinessAuthorityHuman || strings.TrimSpace(blocker.GateID) == "") {
-		return readinessContractError("human-gate blocker " + blocker.ID + " requires human authority and gate id")
-	}
-	return nil
-}
-
-func readinessContractError(message string) error {
-	return tuskerError(errorReadinessContractInvalid, message)
-}
-
-func boundedReadinessText(value string) bool {
-	value = strings.TrimSpace(value)
-	return value != "" && len(value) <= 320
-}
-
-func readinessDimensionsByKind(dimensions ReadinessDimensions) map[ReadinessDimensionKind]ReadinessDimension {
-	return map[ReadinessDimensionKind]ReadinessDimension{
-		ReadinessDimensionContract:            dimensions.Contract,
-		ReadinessDimensionImport:              dimensions.Import,
-		ReadinessDimensionInteractive:         dimensions.Interactive,
-		ReadinessDimensionAutomation:          dimensions.Automation,
-		ReadinessDimensionAuthorization:       dimensions.Authorization,
-		ReadinessDimensionRuntime:             dimensions.Runtime,
-		ReadinessDimensionOptionalIntegration: dimensions.OptionalIntegration,
-	}
-}
-
-func validReadinessState(state ReadinessState) bool {
-	switch state {
-	case ReadinessStateReady, ReadinessStateBlocked, ReadinessStateWaiting, ReadinessStateUnavailable, ReadinessStateNotApplicable:
-		return true
-	default:
-		return false
-	}
-}
-
-func validReadinessDimensionKind(kind ReadinessDimensionKind) bool {
-	_, ok := readinessDimensionsByKind(ReadinessDimensions{})[kind]
-	return ok
-}
-
-func validReadinessAuthority(authority ReadinessAuthorityDomain) bool {
-	switch authority {
-	case ReadinessAuthorityContract, ReadinessAuthorityImport, ReadinessAuthorityInteractive, ReadinessAuthorityAutomation, ReadinessAuthorityAuthorization, ReadinessAuthorityRuntime, ReadinessAuthorityIntegration, ReadinessAuthorityHuman:
-		return true
-	default:
-		return false
-	}
-}
-
-func validReadinessBlockerKind(kind ReadinessBlockerKind) bool {
-	switch kind {
-	case ReadinessBlockerContractInvalid, ReadinessBlockerImportMissing, ReadinessBlockerInteractiveOwner, ReadinessBlockerAutomationDisabled, ReadinessBlockerAuthorizationMissing, ReadinessBlockerRuntimeUnavailable, ReadinessBlockerOptionalIntegrationMissing, ReadinessBlockerDependencyIncomplete, ReadinessBlockerHumanGateOpen, ReadinessBlockerTaskNotReady, ReadinessBlockerTaskTerminal, ReadinessBlockerWorkspaceUnsafe, ReadinessBlockerOwnedPathConflict, ReadinessBlockerWorkRevisionStale, ReadinessBlockerIntegrationUnavailable:
-		return true
-	default:
-		return false
-	}
-}
-
-func cloneReadinessBlockers(blockers []ReadinessBlocker) []ReadinessBlocker {
-	out := make([]ReadinessBlocker, len(blockers))
-	copy(out, blockers)
-	for index := range out {
-		out[index].Affects = append([]ReadinessDimensionKind(nil), blockers[index].Affects...)
-	}
-	return out
-}
-
-// ReadinessBlockerIDs returns a deterministic, read-only lookup aid for
-// consumers that need to correlate a dimension to its structured blockers.
-func (contract ReadinessContract) ReadinessBlockerIDs(kind ReadinessDimensionKind) []string {
-	var ids []string
-	for _, blocker := range contract.Blockers {
-		if readinessBlockerAffects(blocker, kind) {
-			ids = append(ids, blocker.ID)
-		}
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-func readinessBlockerAffects(blocker ReadinessBlocker, dimension ReadinessDimensionKind) bool {
-	for _, affected := range blocker.Affects {
-		if affected == dimension {
-			return true
-		}
-	}
-	return false
 }

@@ -133,6 +133,11 @@ func routePreviewForNote(note Note, wf Workflow, lane string) runnerRoutePreview
 	preview.Source, preview.Reason, preview.Rule = selected.Source, selected.Reason, selected.RuleName
 	preview.Warnings = append([]string{}, selected.Warnings...)
 	preview.Fallbacks = append([]string{}, selected.Fallbacks...)
+	// Mirror dispatch's effective policy so start refuses a profile whose runner
+	// would reject every approval request instead of failing mid-run.
+	if reason := approvalPolicyHumanOnlyReason(codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wf), lane, selected).ApprovalPolicy); reason != "" {
+		preview.Blockers = append(preview.Blockers, fmt.Sprintf("profile %s cannot run unattended: %s; repair: choose a profile with an unattended permission_preset (workspace-write-network, workspace-write-offline, danger-full-access) or agent access, or set codex.approval_policy to never or on-request", firstNonEmpty(selected.Name, selected.Definition.Harness, "default"), reason))
+	}
 	preview.Precedence = []runnerRoutePrecedence{
 		{Source: "task frontmatter", Reason: profileField, Selected: selected.Source == "task frontmatter" && selected.Reason == profileField},
 		{Source: "task frontmatter", Reason: "runner_profile (legacy)", Selected: selected.Source == "task frontmatter" && strings.Contains(selected.Reason, "runner_profile")},

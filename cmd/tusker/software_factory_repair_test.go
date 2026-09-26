@@ -165,7 +165,7 @@ func TestSoftwareFactoryRepairRestartDoesNotSuppressUnacknowledgedEffects(t *tes
 	if _, _, err := store.SaveExternalLoopEvent(apply); err != nil {
 		t.Fatal(err)
 	}
-	handled, err := externalLoopJobAlreadyHandled(store, apply.ProjectID, apply.RecordID, apply.JobID)
+	handled, err := externalLoopJobAlreadyHandledForNote(store, apply.ProjectID, apply.RecordID, apply.JobID, Note{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestSoftwareFactoryRepairRestartDoesNotSuppressUnacknowledgedEffects(t *tes
 	if !created || replayCreated || replayed.EventID != saved.EventID {
 		t.Fatalf("direct event save was not reason-independent: first=%#v replay=%#v", saved, replayed)
 	}
-	handled, err = externalLoopJobAlreadyHandled(store, closeEvent.ProjectID, closeEvent.RecordID, closeEvent.JobID)
+	handled, err = externalLoopJobAlreadyHandledForNote(store, closeEvent.ProjectID, closeEvent.RecordID, closeEvent.JobID, Note{})
 	if err != nil {
 		t.Fatal(err)
 	}

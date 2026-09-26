@@ -54,6 +54,20 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(stateRoot)
 		os.Exit(1)
 	}
+	// Never read or write the developer's real global config (runner profiles
+	// live there). Isolate through XDG_CONFIG_HOME rather than TUSKER_CONFIG:
+	// TUSKER_CONFIG outranks XDG_CONFIG_HOME/HOME, so setting it here would
+	// silently void tests that isolate with t.Setenv("XDG_CONFIG_HOME", ...).
+	if err := os.Unsetenv("TUSKER_CONFIG"); err != nil {
+		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate global config: %v\n", err)
+		_ = os.RemoveAll(stateRoot)
+		os.Exit(1)
+	}
+	if err := os.Setenv("XDG_CONFIG_HOME", filepath.Join(stateRoot, "xdg")); err != nil {
+		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate global config: %v\n", err)
+		_ = os.RemoveAll(stateRoot)
+		os.Exit(1)
+	}
 	// Do not let the host Codex/Claude session impersonate a human in fixture
 	// mutations. Tests that exercise agent-session policy set these variables
 	// explicitly with t.Setenv.

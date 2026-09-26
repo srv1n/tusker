@@ -19,19 +19,26 @@ func executionCmd(args Args, action string) error {
 			return err
 		}
 	}
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	projectID, err := resolveV7ProjectID(vaultPath)
-	if err != nil {
-		return err
+	selector := strings.TrimSpace(args.String("project"))
+	vaultPath, localID := "", ""
+	if selector == "" {
+		var err error
+		if vaultPath, err = resolveVaultPath(args, false); err != nil {
+			return err
+		}
+		if localID, err = resolveV7ProjectID(vaultPath); err != nil {
+			return err
+		}
 	}
 	store, err := OpenRuntimeStore(firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot()))
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	projectID, vaultPath, err := executionRuntimeProject(store, selector, vaultPath, localID)
+	if err != nil {
+		return err
+	}
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), "operator:"+defaultActorName())
 
 	switch action {
@@ -360,6 +367,25 @@ Actions:
 	  cancel    Request only a capability-proved cancellation; records settlement evidence
   launch    Report local launch process facts; refuses nested agent sessions
 
+The project is the runtime-registered project whose vault matches --vault or
+the current directory; --project <id|key|name> selects a registered project
+explicitly.
+
 All registration and observation operations are authority-neutral: they never
 claim a task, arm a wave, start a daemon, or create a delivery lease.`)
+}
+
+// executionRuntimeProject maps the vault to the runtime registry's project ID
+// (a ULID), which is what contacts, mailboxes and Serve key on. --project
+// selects a registered project by ID, key or name. An unregistered vault
+// keeps its config project_id so local-only executions still work.
+func executionRuntimeProject(store *RuntimeStore, selector, vaultPath, localID string) (string, string, error) {
+	if selector == "" {
+		return digestRuntimeProjectID(store, vaultPath, localID), vaultPath, nil
+	}
+	project, err := resolveLoadedRegisteredProject(store, Args{"id": selector}, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	if err != nil {
+		return "", "", err
+	}
+	return project.Project.ProjectID, project.Project.VaultRoot, nil
 }

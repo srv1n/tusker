@@ -33,33 +33,33 @@ func TestAdaptiveReconcileLiveRuntimeNeverGoesCold(t *testing.T) {
 	assertAdaptiveState(t, d, "app", "live", reconcileLiveCadence, now.Add(24*time.Hour+reconcileLiveCadence))
 
 	for _, state := range []LeaseState{LeaseStateUnclaimed, LeaseStateClaimed, LeaseStateRunning, LeaseStateRetryQueued, LeaseStateInterrupted} {
-		if !runtimeRunNeedsHotReconcile(RunStatus{LeaseState: string(state)}) {
+		if !runtimeRunNeedsHotReconcileAt(RunStatus{LeaseState: string(state)}, time.Now().UTC()) {
 			t.Fatalf("%s must keep adaptive reconciliation live", state)
 		}
 	}
-	if runtimeRunNeedsHotReconcile(RunStatus{LeaseState: string(LeaseStateUnclaimed), LastError: "automation plan do_not_dispatch: disabled"}) {
+	if runtimeRunNeedsHotReconcileAt(RunStatus{LeaseState: string(LeaseStateUnclaimed), LastError: "automation plan do_not_dispatch: disabled"}, time.Now().UTC()) {
 		t.Fatal("policy-blocked unclaimed work must be allowed to back off")
 	}
-	if !runtimeRunNeedsHotReconcile(RunStatus{
+	if !runtimeRunNeedsHotReconcileAt(RunStatus{
 		Lane: runLaneReview, LeaseState: string(LeaseStateUnclaimed), AttemptOutcome: string(AttemptOutcomeWaitingForReview),
 		LastError: "review dispatch blocked: dependency APP-T-0002 has not completed objective review (status review)",
-	}) {
+	}, time.Now().UTC()) {
 		t.Fatal("a review handoff waiting on an upstream DAG edge must keep reconciliation live")
 	}
-	if !runtimeRunNeedsHotReconcile(RunStatus{
+	if !runtimeRunNeedsHotReconcileAt(RunStatus{
 		Lane: runLaneReview, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeWaitingForReview),
 		LastError: "review dispatch blocked: dependency APP-T-0002 has not completed objective review (status review)",
-	}) {
+	}, time.Now().UTC()) {
 		t.Fatal("a released review handoff waiting on an upstream DAG edge must keep reconciliation live")
 	}
-	if !runtimeRunNeedsHotReconcile(RunStatus{
+	if !runtimeRunNeedsHotReconcileAt(RunStatus{
 		Lane: runLaneReview, LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeSucceeded),
 		LastError: "typed review result recorded; awaiting review reactor",
-	}) {
+	}, time.Now().UTC()) {
 		t.Fatal("a stored typed review result must keep the completion reactor live")
 	}
 	for _, state := range []LeaseState{LeaseStateReleased, LeaseStateParkedBudget, LeaseStateParkedNoProgress} {
-		if runtimeRunNeedsHotReconcile(RunStatus{LeaseState: string(state)}) {
+		if runtimeRunNeedsHotReconcileAt(RunStatus{LeaseState: string(state)}, time.Now().UTC()) {
 			t.Fatalf("%s must be allowed to back off", state)
 		}
 	}

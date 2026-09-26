@@ -1,7 +1,6 @@
 package docgraph
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -60,15 +59,6 @@ func TestS46DocumentRouting(t *testing.T) {
 		if GeneratedIndexRelPath != ".tusker/_generated/docs/INDEX.md" || GeneratedGraphRelPath != ".tusker/_generated/docs/graph.json" {
 			t.Fatalf("generated index/graph paths point outside .tusker/_generated/docs: %q %q", GeneratedIndexRelPath, GeneratedGraphRelPath)
 		}
-		legacy := LegacyGeneratedRelPaths()
-		if len(legacy) == 0 {
-			t.Fatal("legacy generated locations must be enumerated for migration")
-		}
-		for _, rel := range legacy {
-			if !strings.HasPrefix(rel, "docs/system/") {
-				t.Fatalf("legacy generated path %q must name the pre-S46 docs/system location", rel)
-			}
-		}
 	})
 
 	t.Run("aliases resolve without duplicate ownership", func(t *testing.T) {
@@ -85,9 +75,6 @@ func TestS46DocumentRouting(t *testing.T) {
 		}
 		if _, ok := ResolveReference(corpus, ".tusker/specs/change.md"); !ok {
 			t.Fatal("explicit portable path must resolve")
-		}
-		if dups := DuplicateSubjects(corpus); len(dups) != 0 {
-			t.Fatalf("unexpected duplicate subjects: %v", dups)
 		}
 	})
 
@@ -112,9 +99,6 @@ func TestS46DocumentRouting(t *testing.T) {
 		corpus, _, err := LoadRepository(root)
 		if err != nil {
 			t.Fatalf("LoadRepository() error = %v", err)
-		}
-		if dups := DuplicateSubjects(corpus); len(dups) != 1 {
-			t.Fatalf("duplicate subjects must be enumerated, got %v", dups)
 		}
 		if _, ok := ResolveStrictReference(corpus, "twin"); ok {
 			t.Fatal("strict resolution must refuse ambiguous duplicate subjects")

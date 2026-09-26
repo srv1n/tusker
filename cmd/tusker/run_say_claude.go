@@ -30,7 +30,7 @@ func runSaySoft(store *RuntimeStore, run RunStatus, actor, body, key string, now
 	if state.State != "working" && state.State != "quiet" {
 		return result, false, tuskerError(errorInvalidTransition, "soft Say requires a working or quiet run")
 	}
-	identity, err := store.WorkerIdentityForRun(run)
+	identity, err := runSayWorkerIdentity(store, run)
 	if err != nil {
 		return result, false, err
 	}

@@ -405,8 +405,8 @@ func applyV7ChangeProposal(vaultPath, target, targetKind string, fields map[stri
 	}
 	for _, ref := range refs {
 		clean := v7CleanSpecRef(ref)
-		if clean == "" || !v7SpecRefExists(vaultPath, clean, decisionIDs) {
-			return tuskerError(errorInvalidField, proposalID+": spec_refs reference does not resolve: "+ref+" ("+v7SpecRefFailureReason(vaultPath, clean, decisionIDs)+")", withHint(v7GoverningSpecHint()), withContext(map[string]any{"ref": ref}))
+		if msg, hint := v7SpecRefError(vaultPath, clean, decisionIDs); msg != "" {
+			return tuskerError(errorInvalidField, proposalID+": "+msg, withHint(hint), withContext(map[string]any{"ref": ref}))
 		}
 	}
 

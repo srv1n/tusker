@@ -66,6 +66,42 @@ func TestCompletionAuthorityRequiresConsumedExactDaemonStore(t *testing.T) {
 	}
 }
 
+func TestCompletionAuthorityRejectsForgedPublicReceipt(t *testing.T) {
+	_, project, daemon, result := completionReactorFixture(t, true)
+	defer daemon.Close()
+	if err := daemon.reactToReviewResult(project, completionAuthorityTestWorkflow(), result, completionReactorModeAuthoritative); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
+	if err != nil || tx == nil {
+		t.Fatal(err)
+	}
+	raw, err := gitCombined(project.RepoRoot, "show", tx.StagedSHA+":"+completionReceiptRepoPath(completionReceiptID(tx.ID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forged completionReceipt
+	if err := json.Unmarshal([]byte(raw), &forged); err != nil {
+		t.Fatal(err)
+	}
+	receipt := forged
+	receiptEntry, err := completionGitTreeEntryAt(project.RepoRoot, tx.StagedSHA, completionReceiptRepoPath(completionReceiptID(tx.ID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A worker can rewrite all public transaction fields and Git objects, but a
+	// changed semantic binding invalidates the daemon-only Ed25519 signature.
+	forged.Transaction.IntegrationBase = "0000000000000000000000000000000000000000"
+	if verifyCompletionReceiptAuthorityWithStore(project.RepoRoot, forged, receiptEntry, daemon.store, true) {
+		t.Fatal("forged full receipt authenticated without daemon capability")
+	}
+	wrongEntry := receiptEntry
+	wrongEntry.OID = strings.Repeat("f", len(receiptEntry.OID))
+	if verifyCompletionReceiptAuthorityWithStore(project.RepoRoot, receipt, wrongEntry, daemon.store, true) {
+		t.Fatal("receipt authority authenticated a different candidate receipt blob")
+	}
+}
+
 func TestCompletionAuthorityCustomStateRootRestartRequiresExplicitStore(t *testing.T) {
 	vault, project, daemon, result := completionReactorFixture(t, true)
 	closed := false
@@ -96,7 +132,7 @@ func TestCompletionAuthorityCustomStateRootRestartRequiresExplicitStore(t *testi
 	if err != nil || !authenticated {
 		t.Fatalf("custom-root restart rejected its explicitly supplied issuing store: authenticated=%t err=%v", authenticated, err)
 	}
-	if _, authenticated, err := authenticatedV7TaskCloseAuthority(task, v7ProjectID(vault)); err == nil || authenticated {
+	if _, authenticated, err := authenticatedV7TaskCloseAuthorityWithStore(task, v7ProjectID(vault), nil); err == nil || authenticated {
 		t.Fatalf("store-less convenience authentication did not fail closed: authenticated=%t err=%v", authenticated, err)
 	}
 	withStore, _ := validateV7Note(task, validationContext{
@@ -139,41 +175,5 @@ func TestCompletionAuthorityCustomStateRootRestartRequiresExplicitStore(t *testi
 		"review", "typed review "+result.ResultRevision, &authority,
 	); err == nil || !strings.Contains(err.Error(), "exact issuing daemon store") {
 		t.Fatalf("authority-bearing convenience event emission did not fail closed: %v", err)
-	}
-}
-
-func TestCompletionAuthorityRejectsForgedPublicReceipt(t *testing.T) {
-	_, project, daemon, result := completionReactorFixture(t, true)
-	defer daemon.Close()
-	if err := daemon.reactToReviewResult(project, completionAuthorityTestWorkflow(), result, completionReactorModeAuthoritative); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := daemon.store.CompletionTransactionForResult(project.ProjectID, result.TaskID, result.ResultRevision)
-	if err != nil || tx == nil {
-		t.Fatal(err)
-	}
-	raw, err := gitCombined(project.RepoRoot, "show", tx.StagedSHA+":"+completionReceiptRepoPath(completionReceiptID(tx.ID)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var forged completionReceipt
-	if err := json.Unmarshal([]byte(raw), &forged); err != nil {
-		t.Fatal(err)
-	}
-	receipt := forged
-	receiptEntry, err := completionGitTreeEntryAt(project.RepoRoot, tx.StagedSHA, completionReceiptRepoPath(completionReceiptID(tx.ID)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A worker can rewrite all public transaction fields and Git objects, but a
-	// changed semantic binding invalidates the daemon-only Ed25519 signature.
-	forged.Transaction.IntegrationBase = "0000000000000000000000000000000000000000"
-	if verifyCompletionReceiptAuthorityWithStore(project.RepoRoot, forged, receiptEntry, daemon.store, true) {
-		t.Fatal("forged full receipt authenticated without daemon capability")
-	}
-	wrongEntry := receiptEntry
-	wrongEntry.OID = strings.Repeat("f", len(receiptEntry.OID))
-	if verifyCompletionReceiptAuthorityWithStore(project.RepoRoot, receipt, wrongEntry, daemon.store, true) {
-		t.Fatal("receipt authority authenticated a different candidate receipt blob")
 	}
 }

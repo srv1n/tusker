@@ -331,6 +331,18 @@ func withDefaultCodexPolicy(policy CodexPolicy) CodexPolicy {
 	return policy
 }
 
+// approvalPolicyHumanOnlyReason names the approval policy under which every
+// harness must reject approval requests at run time: only a human could answer
+// them, and Tusker never silently approves. Runners use it per request; route
+// preview (and therefore wave/run start) uses it to refuse such profiles before
+// an unattended run is dispatched.
+func approvalPolicyHumanOnlyReason(approvalPolicy string) string {
+	if policy := strings.TrimSpace(approvalPolicy); policy == "untrusted" {
+		return "approval_policy=" + policy + " requires human approval; Tusker rejects instead of silently approving"
+	}
+	return ""
+}
+
 func codexPolicyForLane(policy CodexPolicy, lane string) CodexPolicy {
 	policy = withDefaultCodexPolicy(policy)
 	if strings.TrimSpace(lane) == runLaneReview {

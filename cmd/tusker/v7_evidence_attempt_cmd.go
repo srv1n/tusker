@@ -19,14 +19,6 @@ func defaultV7ClosePolicy(risk string) v7ClosePolicy {
 	return v7policy.DefaultClosePolicy(risk)
 }
 
-func v7CloseRequiredEvidence(risk string) []string {
-	return v7policy.RequiredEvidence(risk)
-}
-
-func v7CloseRequiredGateKinds(risk string) []string {
-	return v7policy.RequiredGateKinds(risk)
-}
-
 func v7CloseGateKindSatisfied(idx v7Index, taskID, gateKind string) bool {
 	for _, gate := range idx.Gates {
 		if stringField(gate.Data, "gate_kind") != gateKind {
@@ -545,10 +537,6 @@ func copyV7EvidenceArtifact(source, target string) error {
 		return err
 	}
 	return syncV7DocumentDirectory(filepath.Dir(target))
-}
-
-func resolveDurableEvidenceSource(input string) (string, error) {
-	return resolveDurableEvidenceSourceFrom("", input)
 }
 
 func resolveDurableEvidenceSourceFrom(root, input string) (string, error) {

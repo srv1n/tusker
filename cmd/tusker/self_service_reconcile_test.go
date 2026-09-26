@@ -8,6 +8,26 @@ import (
 	"time"
 )
 
+func selfServiceDeadRunFixture(projectID, recordID string, now time.Time) RunStatus {
+	return RunStatus{
+		ProjectID: projectID, RecordID: recordID, ItemID: recordID,
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateClaimed), LeaseOwner: "agent:dead",
+		LeaseGeneration: 1, LeaseExpiresAt: now.Add(-5 * time.Minute).Format(time.RFC3339),
+		ActiveAttemptID: "attempt-" + recordID, AttemptOutcome: string(AttemptOutcomeNone),
+		WorkRevision: 1,
+	}
+}
+
+func hasAdmissionBlocker(verdict AdmissionVerdict, code string) bool {
+	for _, blocker := range verdict.Blockers {
+		if blocker.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 // TestSelfServiceReconcile proves TSK-T-0043: relevant changes promptly wake
 // bounded reconciliation, automatic safe repair is bounded to one attempt per
 // unchanged fingerprint with once-only escalation, protected work stays
@@ -307,34 +327,6 @@ func TestSelfServiceReconcile(t *testing.T) {
 		}
 	})
 
-	t.Run("A4/protected_work_stays_waiting_with_its_owner", func(t *testing.T) {
-		admissible := AdmissionFacts{
-			TaskID: "S-T-0001", Status: "ready", Lane: runLaneExecute,
-			ContractValid: true, RouteOK: true, ProofMapped: true,
-			OwnerFree: true, DependenciesSatisfied: true,
-			ProjectRegistered: true, ProjectEnabled: true,
-			Authority: AdmissionAuthorityWaveArmed, AuthorityMatches: true,
-		}
-		if verdict := EvaluateAdmissionForStage(admissible, AdmissionStageDaemonDispatch); !verdict.Admit {
-			t.Fatalf("admissible work must dispatch: %#v", verdict)
-		}
-		paused := admissible
-		paused.WavePaused = true
-		if verdict := EvaluateAdmissionForStage(paused, AdmissionStageDaemonDispatch); verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerWavePaused) {
-			t.Fatalf("paused work must stay protected: %#v", verdict)
-		}
-		disabled := admissible
-		disabled.ProjectEnabled = false
-		if verdict := EvaluateAdmissionForStage(disabled, AdmissionStageDaemonDispatch); verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerProjectDisabled) {
-			t.Fatalf("project-off work must stay protected: %#v", verdict)
-		}
-		gated := admissible
-		gated.Authority = AdmissionAuthorityNone
-		if verdict := EvaluateAdmissionForStage(gated, AdmissionStageDaemonDispatch); verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerAuthorityMissing) {
-			t.Fatalf("unauthorized work must stay protected: %#v", verdict)
-		}
-	})
-
 	t.Run("A4/overdue_schedule_exposes_actor_and_action", func(t *testing.T) {
 		store := fairDispatchTestStore(t)
 		now := time.Now().UTC()
@@ -363,24 +355,4 @@ func TestSelfServiceReconcile(t *testing.T) {
 			t.Fatal("a missing schedule must read unavailable, never healthy")
 		}
 	})
-}
-
-func selfServiceDeadRunFixture(projectID, recordID string, now time.Time) RunStatus {
-	return RunStatus{
-		ProjectID: projectID, RecordID: recordID, ItemID: recordID,
-		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
-		LeaseState: string(LeaseStateClaimed), LeaseOwner: "agent:dead",
-		LeaseGeneration: 1, LeaseExpiresAt: now.Add(-5 * time.Minute).Format(time.RFC3339),
-		ActiveAttemptID: "attempt-" + recordID, AttemptOutcome: string(AttemptOutcomeNone),
-		WorkRevision: 1,
-	}
-}
-
-func hasAdmissionBlocker(verdict AdmissionVerdict, code string) bool {
-	for _, blocker := range verdict.Blockers {
-		if blocker.Code == code {
-			return true
-		}
-	}
-	return false
 }

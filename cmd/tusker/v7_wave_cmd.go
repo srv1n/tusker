@@ -565,15 +565,6 @@ func v7DerivedWaveState(idx v7Index, wave Note) (string, string) {
 	return "open", ""
 }
 
-func v7TaskClosedAt(task Note) string {
-	for _, key := range []string{"closed_at", "accepted_at", "updated_at", "created_at"} {
-		if value := stringField(task.Data, key); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func sortedV7Waves(idx v7Index) []Note {
 	waves := make([]Note, 0, len(idx.Waves))
 	for _, wave := range idx.Waves {
@@ -685,28 +676,6 @@ func v7WaveRuntimeRuns(vaultPath, projectID string) map[string]RunStatus {
 		}
 	}
 	return out
-}
-
-func v7WaveTaskGroup(task Note, active map[string]v7LeaseRecord) string {
-	id := stringField(task.Data, "id")
-	status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
-	readiness := strings.ToLower(strings.TrimSpace(stringField(task.Data, "readiness")))
-	if status == "done" {
-		return "done"
-	}
-	if _, ok := active[id]; ok {
-		return "running"
-	}
-	if status == "review" {
-		return "review"
-	}
-	if status == "cancelled" || status == "superseded" || readiness == "held" {
-		return "parked"
-	}
-	if status == "blocked" || strings.HasPrefix(readiness, "blocked") || strings.HasPrefix(readiness, "waiting_on") {
-		return "blocked"
-	}
-	return "ready"
 }
 
 func v7WaveProofLine(vaultPath string, idx v7Index, task Note) string {

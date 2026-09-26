@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -99,33 +98,6 @@ func errorToIssue(err error) Issue {
 		}
 	}
 	return Issue{Code: "UNKNOWN", Message: err.Error()}
-}
-
-// annotatePrimaryTuskerError preserves the first typed classification while
-// replacing that leaf with an annotated clone. Every sibling leaf remains in
-// the returned tree, so later operator and Serve formatters cannot silently
-// discard a concurrent cleanup failure.
-func annotatePrimaryTuskerError(err error, annotation string) error {
-	if err == nil {
-		return nil
-	}
-	var primary *TuskerError
-	if !errors.As(err, &primary) {
-		return fmt.Errorf("%w; %s", err, annotation)
-	}
-	cloned := *primary
-	cloned.Message = strings.TrimSuffix(cloned.Message, ".") + "; " + annotation
-	parts := []error{&cloned}
-	for _, leaf := range flattenErrorLeaves(err) {
-		if typed, ok := leaf.(*TuskerError); ok && typed == primary {
-			continue
-		}
-		parts = append(parts, leaf)
-	}
-	if len(parts) == 1 {
-		return parts[0]
-	}
-	return errors.Join(parts...)
 }
 
 // serveErrorIssue retains the primary typed code/hint/context and adds a
@@ -502,22 +474,6 @@ type validationContext struct {
 	CompletionStore *RuntimeStore
 }
 
-func parseID(id string) *parsedID {
-	if id == "" {
-		return nil
-	}
-	if epicAcronymPattern.MatchString(id) {
-		return &parsedID{Kind: "epic", Acronym: id}
-	}
-	if match := taskIDPattern.FindStringSubmatch(id); match != nil {
-		return &parsedID{Kind: "task", Acronym: match[1], Sequence: atoiSafe(match[2])}
-	}
-	if match := docIDPattern.FindStringSubmatch(id); match != nil {
-		return &parsedID{Kind: "doc", Acronym: match[1], Sequence: atoiSafe(match[2])}
-	}
-	return nil
-}
-
 func normalizeList(value any) []string {
 	switch v := value.(type) {
 	case nil:
@@ -623,24 +579,6 @@ func sectionHasSubstance(body, heading string) bool {
 	return false
 }
 
-func isUISurface(surfaces any) bool {
-	for _, surface := range normalizeList(surfaces) {
-		if _, ok := uiSurfaces[strings.ToLower(surface)]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func evidenceHasAsset(body string) bool {
-	pos := findHeading(body, "## Evidence")
-	if pos == nil {
-		return false
-	}
-	lines := strings.Split(body, "\n")[pos.Index+1 : pos.NextIndex]
-	return assetLinkRegex.MatchString(strings.Join(lines, "\n"))
-}
-
 func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 	var errors []Issue
 	var warnings []Issue
@@ -685,31 +623,6 @@ func validateNote(note Note, ctx validationContext) ([]Issue, []Issue) {
 		errors = append(errors, issue(errorUnknownType, fmt.Sprintf(`unknown type "%s"`, noteType), where, "", nil))
 	}
 	return errors, warnings
-}
-
-func validateListRecordIDMirror(data map[string]any, linkField, mirrorField string, ctx validationContext, where string, errors, warnings *[]Issue) {
-	links := normalizeList(data[linkField])
-	recordIDs := normalizeList(data[mirrorField])
-	expected := make([]string, 0, len(links))
-	for _, link := range links {
-		target := wikiTarget(link)
-		if target == "" {
-			expected = append(expected, "")
-			continue
-		}
-		recordID, ok := ctx.IDToRecordID[target]
-		if !ok {
-			current := issue(errorInvalidField, fmt.Sprintf(`%s link "%s" does not resolve to a known note`, linkField, target), where, "", map[string]any{"field": linkField, "target": target})
-			*errors = append(*errors, current)
-			return
-		}
-		expected = append(expected, recordID)
-	}
-	if stringSlicesEqual(recordIDs, expected) {
-		return
-	}
-	current := issue(errorInvalidField, fmt.Sprintf(`%s is out of sync with %s`, mirrorField, linkField), where, "run `tusker reindex --fix-links` to refresh record-id mirrors", map[string]any{"field": mirrorField, "expected": expected, "value": recordIDs})
-	*warnings = append(*warnings, current)
 }
 
 func frontmatterOrderForType(noteType string) []string {
@@ -759,51 +672,4 @@ func filterStrings(values []string) []string {
 		}
 	}
 	return out
-}
-
-func validatePublishPath(value string) string {
-	if strings.HasPrefix(value, "/") {
-		return "must not start with /"
-	}
-	if strings.HasSuffix(value, "/") {
-		return "must not end with /"
-	}
-	segments := strings.Split(value, "/")
-	if len(segments) == 0 || segments[0] == "" {
-		return "must include a top-level segment"
-	}
-	if _, ok := publicationLanes[segments[0]]; !ok {
-		return "top-level segment must be one of developer, user, release-notes, support, internal"
-	}
-	for _, segment := range segments {
-		if segment == "" {
-			return "must not contain empty segments"
-		}
-		if segment == "." || segment == ".." {
-			return `must not contain "." or ".." segments`
-		}
-	}
-	if segments[len(segments)-1] == "index" {
-		return `final segment must not be "index"`
-	}
-	return ""
-}
-
-func isIntegerValue(value any) bool {
-	switch current := value.(type) {
-	case int, int8, int16, int32, int64:
-		return true
-	case uint, uint8, uint16, uint32, uint64:
-		return true
-	case float64:
-		return current == float64(int(current))
-	case string:
-		return integerStringPattern.MatchString(strings.TrimSpace(current))
-	default:
-		return false
-	}
-}
-
-func posixRelative(root, full string) string {
-	return filepath.ToSlash(strings.TrimPrefix(strings.TrimPrefix(full, root), string(filepath.Separator)))
 }

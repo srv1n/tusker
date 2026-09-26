@@ -107,45 +107,48 @@ function currentTheme(): MermaidTheme {
   const inkSoft = readToken("--color-ink-soft", dark ? "#d8d8dc" : "#2a2a2a");
   const muted = readToken("--color-muted", dark ? "#a2a2aa" : "#565656");
   const surface = readToken("--color-surface", dark ? "#0e0e11" : "#ffffff");
+  const raised = readToken("--color-raised", dark ? "#16161a" : "#ffffff");
   const panel = readToken("--color-panel", dark ? "#16161a" : "#fafafa");
   const line = readToken("--color-line", dark ? "#2a2a31" : "#e6e6e6");
+  const fainter = readToken("--color-fainter", dark ? "#383b3f" : "#c9cdd4");
   const accent = readToken("--color-accent", dark ? "#8f7fea" : "#6b5ad1");
   const accentSoft = readToken(
     "--color-accent-soft",
     dark ? "#221f3a" : "#eeecfa",
   );
   const fontFamily = readToken(
-    "--font-sans",
-    '"Helvetica Neue", Helvetica, Arial, system-ui, sans-serif',
+    "--font-mono",
+    '"SF Mono", ui-monospace, Menlo, monospace',
   );
 
   const themeVariables: Record<string, string | boolean> = {
     darkMode: dark,
-    background: panel,
+    // The card + dotted grid come from CSS; the SVG itself stays transparent.
+    background: "transparent",
     fontFamily,
-    fontSize: "14px",
+    fontSize: "13px",
 
-    // Default (primary) node — reads like our neutral code slab.
-    primaryColor: panel,
+    // Default (primary) node — flat raised fill, hairline border, mono label.
+    primaryColor: raised,
     primaryTextColor: ink,
-    primaryBorderColor: line,
-    secondaryColor: accentSoft,
+    primaryBorderColor: fainter,
+    secondaryColor: panel,
     secondaryTextColor: ink,
-    secondaryBorderColor: accent,
+    secondaryBorderColor: fainter,
     tertiaryColor: surface,
     tertiaryTextColor: inkSoft,
-    tertiaryBorderColor: line,
+    tertiaryBorderColor: fainter,
 
     lineColor: muted,
     textColor: inkSoft,
     titleColor: ink,
 
     // Flowchart
-    mainBkg: panel,
-    nodeBorder: line,
+    mainBkg: raised,
+    nodeBorder: fainter,
     nodeTextColor: ink,
-    edgeLabelBackground: surface,
-    clusterBkg: accentSoft,
+    edgeLabelBackground: "transparent",
+    clusterBkg: "transparent",
     clusterBorder: line,
 
     // Sequence

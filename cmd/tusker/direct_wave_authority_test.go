@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,9 +15,7 @@ import (
 func authorityFixture(t *testing.T) (vault string, store *RuntimeStore, project RegisteredProject) {
 	t.Helper()
 	vault = v7DirectTestVault(t)
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.test-codex-exec", directEmergencyRunnerProfileForTest()); err != nil {
-		t.Fatal(err)
-	}
+	setGlobalProfileForTest(t, "test-codex-exec", directEmergencyRunnerProfileForTest())
 	for _, lane := range []string{"execute", "review"} {
 		if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard."+lane, []string{"test-codex-exec"}); err != nil {
 			t.Fatal(err)
@@ -392,6 +391,41 @@ func TestDirectWaveReviewPreflightsAllMemberContracts(t *testing.T) {
 	}
 }
 
+func TestDirectWaveReviewCheckJSONEmitsSingleDocument(t *testing.T) {
+	vault, _, _ := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+	rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+		return data, strings.Replace(body, "| ID | Outcome | Proof |", "| ID | Outcome | Check |", 1)
+	})
+	var cmdErr error
+	output := captureStdout(t, func() {
+		cmdErr = waveReviewCmd(Args{"vault": vault, "id": "W-0001", "check": "true", "json": "true"})
+		if cmdErr != nil {
+			reportCLIError(cmdErr, true)
+		}
+	})
+	if cmdErr == nil || errorToIssue(cmdErr).Code != errorInvalidTransition {
+		t.Fatalf("blocked wave review --check must fail with a typed error: %v", cmdErr)
+	}
+	decoder := json.NewDecoder(strings.NewReader(output))
+	var review map[string]any
+	if err := decoder.Decode(&review); err != nil {
+		t.Fatalf("first document: %v\n%s", err, output)
+	}
+	if review["waveId"] != "W-0001" {
+		t.Fatalf("first document is not the review payload: %s", output)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		t.Fatalf("want exactly one JSON document, second decode = %v (%v)\n%s", err, extra, output)
+	}
+	plain := captureStdout(t, func() { reportCLIError(tuskerError(errorNotFound, "missing"), true) })
+	if !strings.Contains(plain, `"ok":false`) {
+		t.Fatalf("unemitted error lost its JSON envelope: %q", plain)
+	}
+}
+
 func TestDirectWaveReviewSurfacesPersistentDispatchBlocker(t *testing.T) {
 	vault, store, project := authorityFixture(t)
 	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
@@ -734,7 +768,7 @@ func TestDirectWaveAuthorityRouteRemovedIsCaught(t *testing.T) {
 	if err != nil || len(review.Blockers) != 0 {
 		t.Fatalf("review=%#v err=%v", review, err)
 	}
-	configPath := managedTuskerLocalConfigPath(vault)
+	configPath := userGlobalTuskerConfigPath() // profiles live only in the global config
 	configText, err := readText(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1922,5 +1956,38 @@ func TestDirectWaveStaleDoneMemberDoesNotCompleteWave(t *testing.T) {
 		if member.TaskID == "APP-T-0001" && member.State == "completed" {
 			t.Fatalf("stale member still reported completed")
 		}
+	}
+}
+
+func TestDirectWaveStartRefusesHumanApprovalProfile(t *testing.T) {
+	vault, store, _ := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+	// The fixture's workspace-write-offline profile pins approval_policy=never,
+	// so a human-only workflow default does not affect it.
+	data, body, err := parseFrontmatterMustRead(workflowPath(vault))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["codex"] = map[string]any{"approval_policy": "untrusted"}
+	content, err := serializeDocument(data, body, nil)
+	if err != nil || writeText(workflowPath(vault), content) != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	if _, err := directWaveStart(vault, store, "W-0001", "human:sarav"); err != nil {
+		t.Fatalf("unattended preset refused: %v", err)
+	}
+	// A profile without an unattended preset inherits the human-only policy.
+	profile := directEmergencyRunnerProfileForTest()
+	delete(profile, "permission_preset")
+	setGlobalProfileForTest(t, "test-codex-exec", profile)
+	writeDirectTask(t, vault, "APP-T-0002", "W-0002", nil)
+	writeDirectWave(t, vault, "W-0002", []string{"APP-T-0002"}, nil)
+	_, err = directWaveStart(vault, store, "W-0002", "human:sarav")
+	if err == nil || !strings.Contains(err.Error(), "cannot run unattended: approval_policy=untrusted requires human approval") || !strings.Contains(err.Error(), "unattended permission_preset") {
+		t.Fatalf("err=%v", err)
+	}
+	if stringField(waveAuthorizationState(t, vault, "W-0002"), "state") == "armed" {
+		t.Fatal("wave armed despite human-only approval policy")
 	}
 }

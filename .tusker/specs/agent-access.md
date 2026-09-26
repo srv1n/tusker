@@ -61,7 +61,7 @@ Existing profiles keep their current behavior until the operator changes access.
 | X4 | The UI shows the effective controls and gaps for the exact installed route, without implying malicious-client isolation or universal script inspection. |
 | X5 | Existing profiles, tiers, overrides and execution routes migrate without permission widening or automatic starts. |
 | X6 | Exceptional approvals bind to one exact request, survive appropriate lifecycle events, and cannot authorize another attempt or changed command. |
-| X7 | Native Muse CLI is a distinct executable route; the existing Muse-through-Codex route remains addressable and unchanged. |
+| X7 | Muse runs directly as harness `muse` via `muse exec --json`; the Muse-through-Codex route (`codex --profile muse`) is retired (decision D2 in [2026-09-23 harness sessions grill](decisions/2026-09-23-harness-sessions-grill.md)). |
 | X8 | Settings and task screens use existing components, good defaults, progressive disclosure and accessible states. |
 | X9 | A new harness is onboarded by a bounded capability declaration, adapter and shared contract tests; unsupported features are explicit. |
 | X10 | Offline, installed-client and live qualification are separate, with user documentation updated when behavior ships. |
@@ -323,8 +323,7 @@ Reuse `internal/runner` prepare/policy/conformance/event interfaces and existing
 | --- | --- |
 | Codex CLI | Qualify the installed version's supported sandbox/permissions configuration and approval path. Never mix incompatible legacy sandbox flags and newer permission-profile settings. Full-access native bypass cannot stand in for project mode. |
 | Claude CLI | Reuse native permission rules and the existing PreToolUse hook seam. An additional directory that grants writes cannot represent a read-only reference by itself. Resolve conflicts with native deny/ask/allow precedence and report tool coverage. |
-| Existing `muse` | Preserve the existing Codex-profile route, configuration and saved references. Label it “Muse via Codex” where disambiguation matters. |
-| New `muse_cli` | Execute the installed Muse CLI directly through a separate dialect/adapter. Qualify approval mode, permission profile, shell/network/write scope and event handling independently. Model discovery via Muse serve does not prove execution readiness. |
+| `muse` | Execute the installed Muse CLI directly (`muse exec --json`) through its own dialect/adapter; the former Codex-profile route and the interim `muse_cli` harness name are retired (decision D2 in [2026-09-23 harness sessions grill](decisions/2026-09-23-harness-sessions-grill.md)). Qualify approval mode, permission profile, shell/network/write scope and event handling independently. Model discovery via Muse serve does not prove execution readiness. |
 | ACP | Reuse the same resolved policy and normalized permission request event. Qualify which operations the agent delegates and whether it can await/respond. ACP transport alone grants no interception or confinement guarantee. |
 | Future Devin, Grok, OpenCode, Hermes, others | Add only when selected for onboarding. Supply the bounded declaration, native mapping, output/event adapter and common tests. Remote routes must declare host-side path mapping; local folder strings cannot imply remote filesystem control. |
 

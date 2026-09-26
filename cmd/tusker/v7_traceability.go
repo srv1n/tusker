@@ -326,6 +326,22 @@ func validateV7SpecRefs(vaultPath string, note Note, decisionIDs map[string]Note
 	return warnings
 }
 
+// v7SpecRefError is the one authoring-time spec_ref check: it returns empty
+// strings when ref resolves, else a message carrying the real failure reason
+// and a repair hint. Unmanaged docs (no front matter, or no governing kind)
+// surface as missing-target or wrong-kind, so the hint names the fix.
+func v7SpecRefError(vaultPath, ref string, decisionIDs map[string]Note) (message, hint string) {
+	reason := v7SpecRefFailureReason(vaultPath, ref, decisionIDs)
+	if reason == "" {
+		return "", ""
+	}
+	hint = v7GoverningSpecHint()
+	if strings.HasPrefix(reason, "wrong kind:") || strings.HasPrefix(reason, "missing target:") {
+		hint += "; if the document exists, give it YAML front matter with `kind: spec|proposal|decision`"
+	}
+	return "spec_ref does not resolve: " + strings.TrimSpace(ref) + " (" + reason + ")", hint
+}
+
 func v7SpecRefExists(vaultPath, ref string, decisionIDs map[string]Note) bool {
 	return v7SpecRefFailureReason(vaultPath, ref, decisionIDs) == ""
 }
@@ -505,18 +521,4 @@ func v7WorkStreamRefID(raw string) string {
 		}
 	}
 	return ""
-}
-
-func v7SpecRefPath(vaultPath, ref string) string {
-	clean := v7CleanSpecRef(ref)
-	if clean == "" || v7SpecRefPathEscapes(clean) || filepath.IsAbs(clean) {
-		return ""
-	}
-	if id := v7SpecRefDecisionID(clean); id != "" {
-		return filepath.Join(vaultPath, "work", "decisions", id+".md")
-	}
-	if strings.HasPrefix(clean, "work/") {
-		return filepath.Join(vaultPath, filepath.FromSlash(clean))
-	}
-	return filepath.Join(v7RepoRoot(vaultPath), filepath.FromSlash(clean))
 }

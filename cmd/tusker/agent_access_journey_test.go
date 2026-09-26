@@ -31,9 +31,7 @@ func TestAgentAccessProviderFreeJourney(t *testing.T) {
         network: true
       eligible_tiers: [light, standard]
 `
-	if err := writeConfigTextAtomically(managedTuskerLocalConfigPath(vault), legacyConfig); err != nil {
-		t.Fatal(err)
-	}
+	writeGlobalConfigForTest(t, legacyConfig)
 	before, err := modelLevelsRead(vault)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +65,7 @@ func TestAgentAccessProviderFreeJourney(t *testing.T) {
 	}
 	if err := modelsProfileSetCmd(Args{
 		"vault":          vault,
-		"scope":          "project",
+		"scope":          "global",
 		"name":           "legacy-full",
 		"display-name":   legacy.DisplayName,
 		"harness":        legacy.Harness,

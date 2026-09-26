@@ -124,169 +124,6 @@ func mustSymlinkTest(t *testing.T, target, link string) {
 	}
 }
 
-// TestScratchSafetyReapRefusesTraversalIDs is the blocker regression: no task ID
-// that escapes scratch/<ID> may reach a recursive delete.
-func TestScratchSafetyReapRefusesTraversalIDs(t *testing.T) {
-	vault := safetyVaultTest(t)
-	parent := filepath.Dir(vault)
-	scratch := seedScratchTest(t, vault, "APP-T-0001")
-
-	insideSentinel := filepath.Join(vault, "work", "sentinel.md")
-	outsideSentinel := filepath.Join(parent, "sentinel.md")
-	const sentinelBody = "do not delete me\n"
-	for _, path := range []string{insideSentinel, outsideSentinel} {
-		if err := writeText(path, sentinelBody); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for _, id := range []string{"..", ".", "../work", "a/../../..", "APP-T-0001/../..", "", "APP-T-0001/render.wav"} {
-		err := reapTaskScratch(vault, id)
-		if !errors.Is(err, errNotScratchChild) {
-			t.Fatalf("reapTaskScratch(%q) must refuse with errNotScratchChild, got %v", id, err)
-		}
-	}
-
-	for _, path := range []string{insideSentinel, outsideSentinel} {
-		if got := mustReadTest(t, path); got != sentinelBody {
-			t.Fatalf("sentinel %s changed: %q", path, got)
-		}
-	}
-	if !dirExists(filepath.Join(vault, "work", "tasks")) {
-		t.Fatal("refused reap removed the vault work tree")
-	}
-	if !dirExists(parent) || !dirExists(vault) {
-		t.Fatal("refused reap removed a directory it must never touch")
-	}
-	if !fileExists(filepath.Join(scratch, "render.wav")) {
-		t.Fatalf("refused reap removed the task's own scratch: %s", scratch)
-	}
-
-	// The same ID without separators is the one that is allowed to delete.
-	if err := reapTaskScratch(vault, "APP-T-0001"); err != nil {
-		t.Fatal(err)
-	}
-	if dirExists(scratch) {
-		t.Fatalf("canonical reap left scratch behind: %s", scratch)
-	}
-}
-
-func TestScratchSafetyNonVaultRefusesDeletion(t *testing.T) {
-	root := t.TempDir()
-	if err := ensureDir(filepath.Join(root, "work", "tasks")); err != nil {
-		t.Fatal(err)
-	}
-	victim := seedScratchTest(t, root, "APP-T-0001")
-
-	entries, err := scanScratchEntries(root)
-	if !errors.Is(err, errNotTuskerVault) {
-		t.Fatalf("scan of a non-vault must fail closed, got entries=%v err=%v", entries, err)
-	}
-	if _, err := resolveScratchRoot(root); !errors.Is(err, errNotTuskerVault) {
-		t.Fatalf("resolveScratchRoot must refuse a non-vault, got %v", err)
-	}
-
-	plan := []scratchEntry{{Name: "APP-T-0001", Path: victim}}
-	outcome, err := applyScratchGC(root, plan, time.Now())
-	if !errors.Is(err, errNotTuskerVault) {
-		t.Fatalf("applyScratchGC must refuse a non-vault, got %v", err)
-	}
-	if len(outcome.Deleted) != 0 || outcome.Reclaimed != 0 {
-		t.Fatalf("refused apply reported work: %+v", outcome)
-	}
-	if err := reapTaskScratch(root, "APP-T-0001"); err != nil {
-		t.Fatalf("reap of a non-vault must be an inert no-op, got %v", err)
-	}
-	if !fileExists(filepath.Join(victim, "render.wav")) {
-		t.Fatalf("non-vault scratch was deleted: %s", victim)
-	}
-}
-
-func TestScratchSafetySymlinkedScratchRootRefused(t *testing.T) {
-	vault := safetyVaultTest(t)
-	external := externalDirTest(t, "elsewhere")
-	if err := ensureDir(filepath.Join(external, "APP-T-0001")); err != nil {
-		t.Fatal(err)
-	}
-	keep := filepath.Join(external, "APP-T-0001", "keepme.txt")
-	if err := writeText(keep, "outside the vault\n"); err != nil {
-		t.Fatal(err)
-	}
-	mustSymlinkTest(t, external, filepath.Join(vault, "scratch"))
-
-	if _, err := resolveScratchRoot(vault); !errors.Is(err, errScratchRootUnsafe) {
-		t.Fatalf("a symlinked scratch root must be refused, got %v", err)
-	}
-	if err := reapTaskScratch(vault, "APP-T-0001"); !errors.Is(err, errScratchRootUnsafe) {
-		t.Fatalf("reap through a symlinked scratch root must be refused, got %v", err)
-	}
-	if !fileExists(keep) {
-		t.Fatalf("reap followed the scratch symlink and deleted %s", keep)
-	}
-}
-
-func TestScratchSafetyChildSymlinkNotFollowed(t *testing.T) {
-	vault := safetyVaultTest(t)
-	external := externalDirTest(t, "linked-target")
-	keep := filepath.Join(external, "keepme.txt")
-
-	link := filepath.Join(vault, "scratch", "APP-T-0001")
-	mustSymlinkTest(t, external, link)
-	gcLink := filepath.Join(vault, "scratch", "orig-piano")
-	mustSymlinkTest(t, external, gcLink)
-
-	if err := reapTaskScratch(vault, "APP-T-0001"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(link); !os.IsNotExist(err) {
-		t.Fatalf("reap must remove the scratch symlink itself, got err=%v", err)
-	}
-
-	entries, err := scanScratchEntries(vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcome, err := applyScratchGC(vault, entries, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(outcome.Deleted) != 1 || outcome.Deleted[0].Name != "orig-piano" {
-		t.Fatalf("expected the symlink entry to be collected, got %+v", outcome)
-	}
-	if _, err := os.Lstat(gcLink); !os.IsNotExist(err) {
-		t.Fatalf("GC must remove the scratch symlink itself, got err=%v", err)
-	}
-	if !fileExists(keep) || !dirExists(external) {
-		t.Fatalf("deletion followed a child symlink and destroyed %s", external)
-	}
-}
-
-func TestScratchSafetyLinkOnlyPathMatching(t *testing.T) {
-	matches := []string{
-		"scratch/APP-T-0001/render.wav",
-		"link-only:.tusker/scratch/./APP-T-0001/render.wav",
-		".tusker/scratch/tmp/../APP-T-0001/render.wav",
-		`C:\repo\.tusker\scratch\APP-T-0001\render.wav`,
-		"SCRATCH/app-t-0001/render.wav",
-	}
-	for _, recorded := range matches {
-		if !scratchPathRefersToTask(recorded, "APP-T-0001") {
-			t.Fatalf("expected %q to refer to APP-T-0001", recorded)
-		}
-	}
-	misses := []string{
-		"notscratch/APP-T-0001/file",
-		"scratch/APP-T-0002/file",
-		"scratch/file",
-		"",
-	}
-	for _, recorded := range misses {
-		if scratchPathRefersToTask(recorded, "APP-T-0001") {
-			t.Fatalf("expected %q not to refer to APP-T-0001", recorded)
-		}
-	}
-}
-
 func writeEvidenceCardTest(t *testing.T, vault, taskID, name, body string) string {
 	t.Helper()
 	path := filepath.Join(vault, "evidence", taskID, name)
@@ -297,59 +134,6 @@ func writeEvidenceCardTest(t *testing.T, vault, taskID, name, body string) strin
 		t.Fatal(err)
 	}
 	return path
-}
-
-func TestScratchReapSparesLinkOnlyEvidence(t *testing.T) {
-	vault := safetyVaultTest(t)
-	dir := seedScratchTest(t, vault, "APP-T-0001")
-	card := writeEvidenceCardTest(t, vault, "APP-T-0001", "APP-T-0001-E-0001.md", strings.Join([]string{
-		"---",
-		`schema: "tusker.evidence/v1"`,
-		`kind: "evidence"`,
-		`id: "APP-T-0001-E-0001"`,
-		`task: "APP-T-0001"`,
-		`evidence_kind: "log_excerpt"`,
-		`artifact_durability: "link_only"`,
-		"artifact_paths:",
-		`  - "link-only:.tusker/scratch/APP-T-0001/render.wav"`,
-		"---",
-		"",
-		"# APP-T-0001-E-0001 - evidence",
-		"",
-	}, "\n"))
-
-	if err := reapTaskScratch(vault, "APP-T-0001"); err != nil {
-		t.Fatal(err)
-	}
-	if !fileExists(filepath.Join(dir, "render.wav")) {
-		t.Fatalf("link-only evidence did not spare scratch: %s", dir)
-	}
-
-	// A durability other than link_only means the artifact was copied out, so the
-	// same scratch is reapable.
-	copied := strings.Replace(mustReadTest(t, card), `artifact_durability: "link_only"`, `artifact_durability: "copied"`, 1)
-	if err := writeText(card, copied); err != nil {
-		t.Fatal(err)
-	}
-	if err := reapTaskScratch(vault, "APP-T-0001"); err != nil {
-		t.Fatal(err)
-	}
-	if dirExists(dir) {
-		t.Fatalf("reap left scratch behind without link-only evidence: %s", dir)
-	}
-}
-
-func TestScratchReapFailsOpenOnUnreadableEvidence(t *testing.T) {
-	vault := safetyVaultTest(t)
-	dir := seedScratchTest(t, vault, "APP-T-0001")
-	writeEvidenceCardTest(t, vault, "APP-T-0001", "APP-T-0001-E-0001.md", "---\nartifact_paths: [unterminated\n---\n\nbroken card\n")
-
-	if err := reapTaskScratch(vault, "APP-T-0001"); err != nil {
-		t.Fatal(err)
-	}
-	if !fileExists(filepath.Join(dir, "render.wav")) {
-		t.Fatalf("an unparseable evidence card must keep scratch, deleted: %s", dir)
-	}
 }
 
 func TestScratchReapGCRevalidatesRefreshedEntries(t *testing.T) {
@@ -589,5 +373,80 @@ func TestDocTouchCheckOnReactorClose(t *testing.T) {
 	body = body[:strings.Index(body, "\n}\n")]
 	if strings.Count(body, "v7DocTouchCheck(vaultPath, staged)") != 1 {
 		t.Fatal("canonical completion projection must check documentation drift before terminal replacement")
+	}
+}
+
+func TestScratchSafetyChildSymlinkNotFollowed(t *testing.T) {
+	vault := safetyVaultTest(t)
+	external := externalDirTest(t, "linked-target")
+	keep := filepath.Join(external, "keepme.txt")
+
+	gcLink := filepath.Join(vault, "scratch", "orig-piano")
+	mustSymlinkTest(t, external, gcLink)
+
+	entries, err := scanScratchEntries(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := applyScratchGC(vault, entries, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcome.Deleted) != 1 || outcome.Deleted[0].Name != "orig-piano" {
+		t.Fatalf("expected the symlink entry to be collected, got %+v", outcome)
+	}
+	if _, err := os.Lstat(gcLink); !os.IsNotExist(err) {
+		t.Fatalf("GC must remove the scratch symlink itself, got err=%v", err)
+	}
+	if !fileExists(keep) || !dirExists(external) {
+		t.Fatalf("deletion followed a child symlink and destroyed %s", external)
+	}
+}
+
+func TestScratchSafetyNonVaultRefusesDeletion(t *testing.T) {
+	root := t.TempDir()
+	if err := ensureDir(filepath.Join(root, "work", "tasks")); err != nil {
+		t.Fatal(err)
+	}
+	victim := seedScratchTest(t, root, "APP-T-0001")
+
+	entries, err := scanScratchEntries(root)
+	if !errors.Is(err, errNotTuskerVault) {
+		t.Fatalf("scan of a non-vault must fail closed, got entries=%v err=%v", entries, err)
+	}
+	if _, err := resolveScratchRoot(root); !errors.Is(err, errNotTuskerVault) {
+		t.Fatalf("resolveScratchRoot must refuse a non-vault, got %v", err)
+	}
+
+	plan := []scratchEntry{{Name: "APP-T-0001", Path: victim}}
+	outcome, err := applyScratchGC(root, plan, time.Now())
+	if !errors.Is(err, errNotTuskerVault) {
+		t.Fatalf("applyScratchGC must refuse a non-vault, got %v", err)
+	}
+	if len(outcome.Deleted) != 0 || outcome.Reclaimed != 0 {
+		t.Fatalf("refused apply reported work: %+v", outcome)
+	}
+	if !fileExists(filepath.Join(victim, "render.wav")) {
+		t.Fatalf("non-vault scratch was deleted: %s", victim)
+	}
+}
+
+func TestScratchSafetySymlinkedScratchRootRefused(t *testing.T) {
+	vault := safetyVaultTest(t)
+	external := externalDirTest(t, "elsewhere")
+	if err := ensureDir(filepath.Join(external, "APP-T-0001")); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(external, "APP-T-0001", "keepme.txt")
+	if err := writeText(keep, "outside the vault\n"); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlinkTest(t, external, filepath.Join(vault, "scratch"))
+
+	if _, err := resolveScratchRoot(vault); !errors.Is(err, errScratchRootUnsafe) {
+		t.Fatalf("a symlinked scratch root must be refused, got %v", err)
+	}
+	if !fileExists(keep) {
+		t.Fatalf("scratch root resolution followed the symlink and deleted %s", keep)
 	}
 }

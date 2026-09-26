@@ -535,14 +535,6 @@ func (ctx *automationCommandContext) explainTaskForRunner(note Note, runner stri
 	return ctx.explainTaskForRunnerMode(note, runner, runOverride, true, true)
 }
 
-// explainTaskForInteractiveRun deliberately excludes daemon-only opt-ins. A
-// disabled registry entry reduces daemon polling, and automation.enabled stops
-// daemon spawning; neither revokes an interactive session's ability to own a
-// task and report its run through the normal runtime store.
-func (ctx *automationCommandContext) explainTaskForInteractiveRun(note Note) automationTaskExplanation {
-	return ctx.explainTaskForRunnerMode(note, automationResolveRunner(note, ctx.Workflow.Data), nil, false, true)
-}
-
 func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner string, runOverride *RunStatus, daemonDispatch, checkRunnerHealth bool) automationTaskExplanation {
 	recordID := trackerRecordID(note)
 	runner = firstNonEmpty(strings.TrimSpace(runner), automationResolveRunner(note, ctx.Workflow.Data))

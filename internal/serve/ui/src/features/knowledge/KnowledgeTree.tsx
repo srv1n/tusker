@@ -15,16 +15,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ChevronRight, FileText, Folder, FolderOpen, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronRight, FileText, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useDocgraph } from "@/lib/queries";
 import { kindMeta } from "./bits";
 import { buildDocTree, docMatches, ancestorFolderIds, type TreeFolder, type TreeNode } from "./tree";
 import { useTreeStore } from "./treeStore";
 
-const INDENT_STEP = 16;
-const ROW_BASE_PAD = 8;
-const CHEVRON_SLOT = 16;
+const INDENT_STEP = 14;
+const ROW_BASE_PAD = 12;
+const CHEVRON_SLOT = 14;
 
 function rowPad(depth: number): number {
   return ROW_BASE_PAD + depth * INDENT_STEP;
@@ -83,18 +83,18 @@ export function KnowledgeTree({
     <div
       aria-label="Documents explorer"
       aria-busy={q.isLoading && docs.length === 0}
-      className="flex h-full min-h-0 w-full flex-col bg-panel/40"
+      className="flex h-full min-h-0 w-full flex-col border-r border-line bg-raised font-mono"
       role="region"
     >
-      <div className="flex h-14 flex-none items-center p-2">
-        <label className="flex h-10 w-full items-center gap-2 rounded-lg border border-line bg-surface px-3 transition-colors focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/10">
-          <Search size={16} className="flex-none text-faint" />
+      <div className="flex-none px-5 pb-3 pt-6">
+        <div className="mb-3 text-[11px] uppercase tracking-[0.14em] text-faint">Files</div>
+        <label className="flex h-8 w-full items-center gap-2 border-b border-line transition-colors focus-within:border-accent">
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter"
+            placeholder="filter…"
             aria-label="Filter documents"
-            className="w-full min-w-0 bg-transparent text-[13px] text-ink placeholder:text-faint focus:outline-none"
+            className="w-full min-w-0 bg-transparent text-[12.5px] text-ink placeholder:text-faint focus:outline-none"
           />
           {filter !== "" && (
             <button
@@ -103,13 +103,13 @@ export function KnowledgeTree({
               aria-label="Clear filter"
               className="flex-none text-faint transition-colors hover:text-ink"
             >
-              <X size={16} />
+              <X size={14} />
             </button>
           )}
         </label>
       </div>
 
-      <div className="tk-scroll min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="tk-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-6">
         {q.isError && docs.length === 0 ? (
           <ErrorRail error={q.error} onRetry={() => q.refetch()} />
         ) : docs.length === 0 ? (
@@ -159,23 +159,22 @@ function TreeNodeRow({
         data-selected={active ? "true" : undefined}
         title={node.title}
         className={cn(
-          "relative flex h-8 items-center rounded-lg pr-2 transition-colors focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
-          active ? "bg-active text-ink" : "text-ink-soft hover:bg-hover",
+          "relative flex h-7 items-center rounded-md pr-2 transition-colors focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
+          active ? "text-accent" : "text-ink-soft hover:text-ink",
         )}
         style={{ paddingLeft: rowPad(node.depth) }}
       >
         <Guides depth={node.depth} />
         <span className="flex-none" style={{ width: CHEVRON_SLOT }} />
-        <FileText
-          size={16}
-          strokeWidth={1.75}
-          className="flex-none opacity-80"
-          style={{ color: `var(${kindMeta[node.kind].cssVar})` }}
+        <span
+          aria-hidden
+          className="h-1.5 w-1.5 flex-none rounded-full"
+          style={{ background: `var(${kindMeta[node.kind].cssVar})` }}
         />
         <span
           className={cn(
-            "ml-2 min-w-0 flex-1 truncate text-left text-[13px]",
-            active && "font-medium",
+            "ml-2.5 min-w-0 flex-1 truncate text-left text-[12.5px]",
+            active && "font-semibold",
           )}
         >
           {filename}
@@ -209,18 +208,13 @@ function FolderRow({
       <Guides depth={node.depth} />
       <span className="flex flex-none items-center justify-center" style={{ width: CHEVRON_SLOT }}>
         <ChevronRight
-          size={16}
+          size={13}
           strokeWidth={2}
           className={cn("text-faint transition-transform", expanded && "rotate-90")}
         />
       </span>
-      {expanded ? (
-        <FolderOpen size={16} strokeWidth={1.75} className="flex-none text-faint" />
-      ) : (
-        <Folder size={16} strokeWidth={1.75} className="flex-none text-faint" />
-      )}
-      <span className="ml-2 min-w-0 flex-1 truncate text-left text-[13px] text-ink-soft">
-        {node.name}
+      <span className="ml-1 min-w-0 flex-1 truncate text-left text-[12.5px] text-muted">
+        {node.name}/
       </span>
     </>
   );
@@ -229,7 +223,7 @@ function FolderRow({
     <>
       {filtering ? (
         <div
-          className="relative flex h-8 items-center pr-2"
+          className="relative flex h-7 items-center pr-2"
           style={{ paddingLeft: rowPad(node.depth) }}
           title={node.name}
         >
@@ -243,7 +237,7 @@ function FolderRow({
           aria-controls={childrenId}
           aria-label={`${expanded ? "Collapse" : "Expand"} ${node.name}`}
           title={node.name}
-          className="relative flex h-8 w-full items-center rounded-lg pr-2 transition-colors hover:bg-hover focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          className="relative flex h-7 w-full items-center rounded-md pr-2 transition-colors hover:text-ink focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
           style={{ paddingLeft: rowPad(node.depth) }}
         >
           {inner}

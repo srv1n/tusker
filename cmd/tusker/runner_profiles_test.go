@@ -2,11 +2,54 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+// setGlobalProfileForTest defines a runner profile (or a dotted field below
+// automation.profiles) in a per-test global config. Profiles may only be
+// defined globally; project layers select them by name.
+func setGlobalProfileForTest(t *testing.T, key string, value any) string {
+	t.Helper()
+	path := os.Getenv("TUSKER_CONFIG")
+	if path == "" || filepath.Base(path) == "global-config.yaml" {
+		path = filepath.Join(t.TempDir(), "config.yaml")
+		t.Setenv("TUSKER_CONFIG", path)
+	}
+	raw, _, err := readTuskerConfigRawLayer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw == nil {
+		raw = map[string]any{}
+	}
+	setNestedConfigValue(raw, "automation.profiles."+key, cloneConfigValue(value))
+	encoded, err := yaml.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfigTextAtomically(path, string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeGlobalConfigForTest points TUSKER_CONFIG at a per-test file holding
+// content, the only layer allowed to define runner profiles.
+func writeGlobalConfigForTest(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("TUSKER_CONFIG", path)
+	if err := writeConfigTextAtomically(path, content); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 func TestGeneratedCodexProfileArgumentsPassInstalledCLIParser(t *testing.T) {
 	_, err := exec.LookPath("codex")
@@ -24,24 +67,12 @@ func TestGeneratedCodexProfileArgumentsPassInstalledCLIParser(t *testing.T) {
 
 func TestProfileConfigParsesAndRejectsUnknownValues(t *testing.T) {
 	vault := automationTestVault(t)
-	root := filepath.Dir(vault)
-	if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), strings.TrimSpace(`
-schema: tusker.config/v1
-project_id: app
-automation:
-  profiles:
-    docs-fast:
-      harness: codex_exec
-      model: mystery-model
-      effort: low
-      sandbox:
-        mode: workspace-write
-        network: true
-      subagents:
-        allowed: false
-        max_concurrent: 0
-  default_profile: docs-fast
-`)+"\n"); err != nil {
+	setGlobalProfileForTest(t, "docs-fast", map[string]any{
+		"harness": "codex_exec", "model": "mystery-model", "effort": "low",
+		"sandbox":   map[string]any{"mode": "workspace-write", "network": true},
+		"subagents": map[string]any{"allowed": false, "max_concurrent": 0},
+	})
+	if err := writeText(managedTuskerConfigPath(vault), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  default_profile: docs-fast\n"); err != nil {
 		t.Fatal(err)
 	}
 	wf, err := loadWorkflow(vault)
@@ -69,8 +100,9 @@ automation:
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			vault := automationTestVault(t)
-			root := filepath.Dir(vault)
-			if err := writeText(managedTuskerConfigPath(filepath.Join(root, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nautomation:\n  profiles:\n    bad:\n      "+tc.body+"\n      sandbox:\n        mode: workspace-write\n"); err != nil {
+			global := filepath.Join(t.TempDir(), "config.yaml")
+			t.Setenv("TUSKER_CONFIG", global)
+			if err := writeText(global, "automation:\n  profiles:\n    bad:\n      "+tc.body+"\n      sandbox:\n        mode: workspace-write\n"); err != nil {
 				t.Fatal(err)
 			}
 			_, err := loadWorkflow(vault)
@@ -81,10 +113,68 @@ automation:
 			if !ok {
 				t.Fatalf("expected TuskerError, got %T %v", err, err)
 			}
-			if !strings.Contains(typed.Message, tc.want) || !strings.Contains(typed.Path, ".tusker/config.yaml") {
+			if !strings.Contains(typed.Message, tc.want) || typed.Path != global {
 				t.Fatalf("expected legible %s error with source path, got message=%q path=%q", tc.want, typed.Message, typed.Path)
 			}
 		})
+	}
+}
+
+func TestProjectLayerCannotDefineProfilesButSelectsGlobalOnes(t *testing.T) {
+	vault := automationTestVault(t)
+	global := setGlobalProfileForTest(t, "global-worker", map[string]any{
+		"harness": "codex_exec", "model": "gpt-6-sol", "effort": "medium", "permission_preset": "workspace-write-offline",
+		"eligible_tiers": []string{"standard"},
+		"sandbox":        map[string]any{"mode": "workspace-write", "network": false},
+		"subagents":      map[string]any{"allowed": false, "max_concurrent": 0},
+	})
+	project := managedTuskerConfigPath(vault)
+	if err := writeText(project, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  model_levels:\n    standard:\n      execute: [global-worker]\n"); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveTuskerConfig(vault)
+	if err != nil {
+		t.Fatalf("project selection of a global profile must resolve: %v", err)
+	}
+	if got := resolved.Config.Automation.ModelLevels["standard"].Execute; len(got) != 1 || got[0] != "global-worker" {
+		t.Fatalf("standard execute = %v", got)
+	}
+
+	if err := writeText(project, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  model_levels:\n    standard:\n      execute: [missing-worker]\n"); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh clone on a machine whose global config lacks the profile must
+	// still load; the unknown reference is a warning at load and a refusal
+	// when the route is resolved.
+	resolved, err = resolveTuskerConfig(vault)
+	if err != nil {
+		t.Fatalf("unknown project reference must not fail config load: %v", err)
+	}
+	if len(resolved.Warnings) != 1 || !strings.Contains(resolved.Warnings[0], "unknown profile missing-worker") {
+		t.Fatalf("unknown project reference must warn naming the profile: %v", resolved.Warnings)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatalf("workflow must load with an unknown profile reference: %v", err)
+	}
+	standardTask := Note{Data: map[string]any{"id": "APP-T-0001", "title": "t", "work_level": "standard"}}
+	if _, err := resolveRunnerProfileForNote(standardTask, wf.Data, runLaneExecute); err == nil || !strings.Contains(err.Error(), "unknown profile missing-worker") {
+		t.Fatalf("route resolution must refuse the unknown profile: %v", err)
+	}
+
+	for _, path := range []string{project, managedTuskerLocalConfigPath(vault)} {
+		if err := writeText(project, "schema: tusker.config/v1\nproject_id: app\n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(path, "automation:\n  profiles:\n    local-worker:\n      harness: codex_exec\n      model: gpt-6-luna\n      effort: low\n"); err != nil {
+			t.Fatal(err)
+		}
+		_, err := resolveTuskerConfig(vault)
+		typed, ok := err.(*TuskerError)
+		if !ok || typed.Path != path || !strings.Contains(typed.Message, "local-worker") || !strings.Contains(typed.Message, "only be defined in the global config "+global) {
+			t.Fatalf("project-layer profile definition in %s must be rejected: %v", path, err)
+		}
+		_ = os.Remove(managedTuskerLocalConfigPath(vault))
 	}
 }
 

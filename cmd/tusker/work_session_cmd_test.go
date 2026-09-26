@@ -439,6 +439,50 @@ func TestWorkSessionIdentityWriteFailureRollsBackClaim(t *testing.T) {
 	}
 }
 
+func TestWorkSessionClaimRecordsExecutionInClaimTransaction(t *testing.T) {
+	store, run := ownershipStoreFixture(t, "APP-T-WORK-EXEC")
+	child := run
+	child.RecordID, child.ItemID = "APP-T-WORK-EXEC-REVIEW", "APP-T-WORK-EXEC-REVIEW"
+	if err := store.UpsertRun(child); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	claim := func(run RunStatus, attemptID, parentAttemptID string) {
+		t.Helper()
+		identity := RunIdentityMetadata{ProjectID: run.ProjectID, RecordID: run.RecordID, RepoRoot: "/tmp/repo", WorkspacePath: "/tmp/repo", WorkspaceMode: string(WorkspaceStrategyCopy), Runner: run.Runner}
+		attempt := RunAttempt{AttemptID: attemptID, ParentAttemptID: parentAttemptID, Runner: run.Runner, Lane: run.Lane}
+		claimed, err := store.claimRunLeaseWithWorkSessionAttempt(run, "agent:codex", 1, defaultRunLeaseTTL, now,
+			RuntimeLeaseClaimPrecondition{ExpectedLeaseState: LeaseStateUnclaimed, ExpectedWorkRevision: run.WorkRevision},
+			RunAuthorization{Source: "codex", Actor: "agent:codex", Trigger: "work_start"}, attempt, identity)
+		if err != nil || !claimed {
+			t.Fatalf("claim %s: claimed=%v err=%v", attemptID, claimed, err)
+		}
+	}
+	claim(run, "work-exec-parent", "")
+	claim(child, "work-exec-child", "work-exec-parent")
+	type row struct{ id, root, parent, kind, task, source string }
+	load := func(attemptID string) row {
+		t.Helper()
+		var r row
+		var generation int
+		if err := store.queryRowScan(`SELECT execution_id, root_execution_id, parent_execution_id, node_kind, task_id, source, lease_generation FROM execution_records WHERE attempt_id = ?`,
+			[]any{attemptID}, &r.id, &r.root, &r.parent, &r.kind, &r.task, &r.source, &generation); err != nil {
+			t.Fatalf("work-session attempt %s has no execution record: %v", attemptID, err)
+		}
+		if generation != 0 {
+			t.Fatalf("work-session execution must not carry a managed lease generation: %d", generation)
+		}
+		return r
+	}
+	parent, childRow := load("work-exec-parent"), load("work-exec-child")
+	if parent.kind != string(ExecutionNodeRoot) || parent.root != parent.id || parent.task != run.ItemID || parent.source != "work_session" {
+		t.Fatalf("parent execution = %#v", parent)
+	}
+	if childRow.kind != string(ExecutionNodeManagedAttempt) || childRow.parent != parent.id || childRow.root != parent.id || childRow.task != child.ItemID {
+		t.Fatalf("child execution = %#v (parent %#v)", childRow, parent)
+	}
+}
+
 func TestWorkSessionStartRefusalMatrix(t *testing.T) {
 	t.Run("dependency", func(t *testing.T) {
 		vault, _ := workSessionFixture(t, 2)

@@ -244,19 +244,3 @@ func unresolvedBlockerReason(note Note, notesByID map[string]Note, notesByRecord
 	}
 	return ""
 }
-
-func taskSummary(note Note) map[string]any {
-	return map[string]any{
-		"id":         stringField(note.Data, "id"),
-		"title":      stringField(note.Data, "title"),
-		"status":     stringField(note.Data, "status"),
-		"priority":   stringField(note.Data, "priority"),
-		"risk":       stringField(note.Data, "risk"),
-		"epic":       wikiTarget(note.Data["epic"]),
-		"assignee":   stringField(note.Data, "assignee"),
-		"path":       note.RelativePath,
-		"created":    stringField(note.Data, "created"),
-		"updated":    stringField(note.Data, "updated"),
-		"blocked_by": normalizeList(note.Data["blocked_by"]),
-	}
-}

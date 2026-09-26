@@ -1,26 +1,9 @@
 package reviewpacket
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 )
-
-func TestAnalyzeEvents(t *testing.T) {
-	events := ParseEvents(strings.Join([]string{
-		`{"kind":"file_change","payload":{"path":"cmd/tusker/main.go","insertions":3,"deletions":1}}`,
-		`{"kind":"verification","at":"2026-08-12T00:00:00Z","payload":{"command":"go test ./...","result":"pass","turn_id":"turn-1","session_ref":"session-1"}}`,
-		`{"kind":"validation_failed","payload":{"validation_command":"tusker validate","result":"failed","error":"token=secret-value"}}`,
-	}, "\n"))
-	facts := AnalyzeEvents(events)
-	assertStrings(t, facts.ChangedFiles, []string{"`cmd/tusker/main.go` (event:file_change)"})
-	assertStrings(t, facts.DiffSummary, []string{"`cmd/tusker/main.go` +3 -1 (event:file_change)"})
-	assertStrings(t, facts.VerificationCommands, []string{"`go test ./...` result=pass turn=turn-1 at=2026-08-12T00:00:00Z"})
-	assertStrings(t, facts.SessionRefs, []string{"session-1"})
-	assertStrings(t, facts.TurnIDs, []string{"turn-1"})
-	assertStrings(t, facts.ValidationSummaries, []string{"`tusker validate` result=failed"})
-	assertStrings(t, facts.OpenRisks, []string{"validation_failed: token=[redacted]"})
-}
 
 func TestRenderStablePacket(t *testing.T) {
 	doc := Document{
@@ -48,12 +31,5 @@ func TestRenderStablePacket(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "- This packet summarizes daemon-observed runtime facts. It does not embed raw logs or full transcripts.\n") {
 		t.Fatalf("unexpected packet suffix:\n%s", got)
-	}
-}
-
-func assertStrings(t *testing.T, got, want []string) {
-	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }

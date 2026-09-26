@@ -250,3 +250,5 @@ func briefTask(id, status, proof string) Note {
 func briefGate(id, kind, action, verification, why string) Note {
 	return Note{Data: map[string]any{"schema": "tusker.gate/v7", "kind": "gate", "id": id, "project": "app", "title": "Gate " + id, "gate_kind": kind, "status": "open", "owner": "human:sarav", "blocking": true, "blocks": []string{"APP-T-0001"}, "action": action, "verification": verification, "why_agent_cannot": why}}
 }
+
+func buildWaveBrief(idx v7Index, wave Note) waveBrief { return buildWaveBriefWithRuns(idx, wave, nil) }

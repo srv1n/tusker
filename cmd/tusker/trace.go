@@ -46,60 +46,6 @@ func traceRecordIsAttemptSentinel(record TraceRecord) bool {
 	return record.AttemptClosed
 }
 
-func TraceRecordJSONSchema() map[string]any {
-	nullString := []any{"string", "null"}
-	nullObject := []any{"object", "null"}
-	nullArray := []any{"array", "null"}
-	return map[string]any{
-		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"$id":                  traceRecordSchemaVersion,
-		"title":                "Tusker boundary trace record",
-		"type":                 "object",
-		"additionalProperties": false,
-		"required": []string{
-			"schema_version",
-			"trace_id",
-			"work_item_id",
-			"node_id",
-			"node_type",
-			"input",
-			"output",
-			"error",
-			"model_provider",
-			"model_name",
-			"model_params",
-			"prompt_version",
-			"skill_versions",
-			"code_sha",
-			"tool_schema_version",
-			"permission_scope",
-			"retrieved_chunk_ids",
-			"created_at",
-		},
-		"properties": map[string]any{
-			"schema_version":      map[string]any{"const": traceRecordSchemaVersion},
-			"trace_id":            map[string]any{"type": "string"},
-			"work_item_id":        map[string]any{"type": "string"},
-			"node_id":             map[string]any{"type": "string"},
-			"node_type":           map[string]any{"enum": []string{"model", "tool", "retrieval"}},
-			"input":               map[string]any{"type": []any{"object", "array", "string", "number", "boolean", "null"}},
-			"output":              map[string]any{"type": []any{"object", "array", "string", "number", "boolean", "null"}},
-			"error":               map[string]any{"type": nullObject},
-			"model_provider":      map[string]any{"type": nullString},
-			"model_name":          map[string]any{"type": nullString},
-			"model_params":        map[string]any{"type": nullObject},
-			"prompt_version":      map[string]any{"type": nullString},
-			"skill_versions":      map[string]any{"type": nullObject},
-			"code_sha":            map[string]any{"type": "string"},
-			"tool_schema_version": map[string]any{"type": nullString},
-			"permission_scope":    map[string]any{"type": nullString},
-			"retrieved_chunk_ids": map[string]any{"type": nullArray, "items": map[string]any{"type": "string"}},
-			"created_at":          map[string]any{"type": "string", "format": "date-time"},
-			"attempt_closed":      map[string]any{"type": "boolean"},
-		},
-	}
-}
-
 type TraceRecorderOptions struct {
 	VaultPath      string
 	WorkItemID     string

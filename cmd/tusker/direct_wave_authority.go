@@ -360,29 +360,6 @@ func directWaveMemberDependencyWait(task Note, idx v7Index) string {
 	return ""
 }
 
-func directWaveStrictBlocker(vaultPath string, idx v7Index, task Note, wave Note) string {
-	return v7VerificationReceiptRequirementMissing(vaultPath, task)
-}
-
-func directWaveProofBlocker(vaultPath string, task Note) (code, reason string) {
-	cause := v7VerificationReceiptInvalidation(vaultPath, task)
-	if cause == nil {
-		return "", ""
-	}
-	reason = cause.Explanation
-	switch cause.Kind {
-	case "missing":
-		code = "STRICT_PROOF_MISSING"
-	case "failed":
-		code = "STRICT_PROOF_FAILED"
-	case "unavailable":
-		code = "STRICT_PROOF_UNAVAILABLE"
-	default:
-		code = "STRICT_PROOF_STALE"
-	}
-	return code, reason
-}
-
 func directWaveDependencyContractBlocker(task Note, idx v7Index) string {
 	contracts, _ := task.Data["dependency_contracts"].([]any)
 	edges := map[string]string{}
@@ -1158,7 +1135,7 @@ func waveReviewCmd(args Args) error {
 	}
 	if args.Bool("json") {
 		emitJSON(review)
-		return checkErr
+		return afterResultEmitted(checkErr)
 	}
 	if args.Bool("quiet") {
 		return checkErr

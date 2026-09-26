@@ -313,7 +313,7 @@ func TestServeSummaryProjectsBadgeCounts(t *testing.T) {
 	if summary.GeneratedAt == "" {
 		t.Fatal("summary must include generated_at")
 	}
-	snap, err := server.loadSummarySnapshot()
+	snap, err := server.loadFreshSnapshotForProject("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1026,9 +1026,7 @@ func newServeFixture(t *testing.T) *serveServer {
 	}
 	// Serve fixtures carry a medium task, whose semantic route is
 	// execute-standard rather than the default profile.
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.execute-standard", directEmergencyRunnerProfileForTest()); err != nil {
-		t.Fatal(err)
-	}
+	setGlobalProfileForTest(t, "execute-standard", directEmergencyRunnerProfileForTest())
 	workflow, err := loadWorkflow(vault)
 	if err != nil {
 		t.Fatal(err)
@@ -1107,9 +1105,7 @@ func newServeEmptyNeedsFixture(t *testing.T) *serveServer {
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.default_runner", string(RunnerCodexExec)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.execute-standard", directEmergencyRunnerProfileForTest()); err != nil {
-		t.Fatal(err)
-	}
+	setGlobalProfileForTest(t, "execute-standard", directEmergencyRunnerProfileForTest())
 	workflow, err := loadWorkflow(vault)
 	if err != nil {
 		t.Fatal(err)

@@ -1,14 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"regexp"
-	"sync"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,39 +32,6 @@ func redactHookOutput(text string) string {
 	text = hookQuerySecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
 	text = hookBearerPattern.ReplaceAllString(text, `Bearer [REDACTED]`)
 	return hookKnownTokenPattern.ReplaceAllString(text, `[REDACTED]`)
-}
-
-type boundedHookOutput struct {
-	mu        sync.Mutex
-	buf       bytes.Buffer
-	truncated bool
-}
-
-func (w *boundedHookOutput) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	remaining := hookOutputLimit - w.buf.Len()
-	if remaining <= 0 {
-		w.truncated = true
-		return len(p), nil
-	}
-	if len(p) > remaining {
-		_, _ = w.buf.Write(p[:remaining])
-		w.truncated = true
-		return len(p), nil
-	}
-	_, _ = w.buf.Write(p)
-	return len(p), nil
-}
-
-func (w *boundedHookOutput) String() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	text := redactHookOutput(w.buf.String())
-	if w.truncated {
-		text += "\n[hook output truncated]"
-	}
-	return text
 }
 
 func writeDefaultConfig(vaultPath string) error {
@@ -194,47 +155,6 @@ func validateConfig(cfg Config, filePath string) error {
 	}
 	if cfg.Retry.BackoffSeconds == nil {
 		return tuskerError(errorConfigInvalid, "retry.backoff_seconds must be a list", withPath(filePath))
-	}
-	return nil
-}
-
-func runHooks(event string, config Config, vaultPath, id, actor, dispatchState string) error {
-	var commands []string
-	switch event {
-	case "pre_claim":
-		commands = config.Hooks.PreClaim
-	case "post_claim":
-		commands = config.Hooks.PostClaim
-	case "pre_release":
-		commands = config.Hooks.PreRelease
-	case "on_fail":
-		commands = config.Hooks.OnFail
-	}
-	if len(commands) == 0 {
-		return nil
-	}
-	timeout := time.Duration(config.HookTimeoutSeconds) * time.Second
-	for _, command := range commands {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		cmd := exec.CommandContext(ctx, "sh", "-c", command)
-		output := &boundedHookOutput{}
-		cmd.Stdout = output
-		cmd.Stderr = output
-		cmd.Env = append(os.Environ(),
-			"TUSKER_VAULT="+vaultPath,
-			"TUSKER_EVENT="+event,
-			"TUSKER_ID="+id,
-			"TUSKER_ACTOR="+actor,
-			"TUSKER_DISPATCH_STATE="+dispatchState,
-		)
-		err := cmd.Run()
-		cancel()
-		if ctx.Err() == context.DeadlineExceeded {
-			return tuskerError(errorHookTimeout, fmt.Sprintf("hook timed out after %ds", config.HookTimeoutSeconds), withContext(map[string]any{"event": event, "output": output.String()}))
-		}
-		if err != nil {
-			return tuskerError(errorHookFailed, "hook failed", withContext(map[string]any{"event": event, "output": output.String()}))
-		}
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -155,6 +156,15 @@ func TestOperatorHelpIsCommandSpecificAndInert(t *testing.T) {
 	}
 }
 
+func TestWaveCreateHelpShowsAuthoringSchema(t *testing.T) {
+	output := captureStdout(t, func() { printCommandHelp("wave create") })
+	for _, expected := range []string{"tusker.wave-authoring/v1", "human_actions:", "owned_paths:", "kind:", "command:", "ledger:"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("wave create help missing %q:\n%s", expected, output)
+		}
+	}
+}
+
 func TestMainHelpAdvertisesOperatorCommands(t *testing.T) {
 	output := captureStdout(t, printHelp)
 	for _, command := range []string{"digest", "escalate", "departure"} {
@@ -258,8 +268,14 @@ func TestListHelpExplainsProgressiveDisclosure(t *testing.T) {
 	}
 }
 
+// stdoutCaptureMu serializes captures: os.Stdout is process-wide, so two
+// overlapping captures in parallel tests would swap each other's pipes.
+var stdoutCaptureMu sync.Mutex
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
+	stdoutCaptureMu.Lock()
+	defer stdoutCaptureMu.Unlock()
 	previous := os.Stdout
 	reader, writer, err := os.Pipe()
 	if err != nil {

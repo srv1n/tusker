@@ -6,7 +6,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"strings"
 	"time"
 )
@@ -332,9 +331,4 @@ func (s *RuntimeStore) executionCancellationOutcome(executionID, requestKey stri
 		outcome.Reason = "previous cancellation request did not settle"
 	}
 	return outcome, true, nil
-}
-
-func executionLifecycleJSON(f ExecutionLifecycleEvidence) string {
-	b, _ := json.Marshal(f)
-	return string(b)
 }

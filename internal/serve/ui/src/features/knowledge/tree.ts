@@ -177,3 +177,31 @@ export function docMatches(doc: DocgraphDoc, needle: string): boolean {
     filename.toLowerCase().includes(needle)
   );
 }
+
+export interface ContentsEntry {
+  level: 2 | 3;
+  number: string;
+  text: string;
+}
+
+/** Numbered h2/h3 outline of a markdown body; fenced code is skipped. */
+export function contentsOf(body: string): ContentsEntry[] {
+  const out: ContentsEntry[] = [];
+  let fenced = false;
+  let h2 = 0;
+  let h3 = 0;
+  for (const line of body.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    const m = !fenced && /^(##|###)\s+(?:\d+(?:\.\d+)*\.\s+|\d+(?:\.\d+)+\s+)?(.+?)\s*#*$/.exec(line);
+    if (!m) continue;
+    if (m[1] === "##") {
+      h2 += 1;
+      h3 = 0;
+      out.push({ level: 2, number: String(h2), text: m[2]! });
+    } else {
+      h3 += 1;
+      out.push({ level: 3, number: `${h2}.${h3}`, text: m[2]! });
+    }
+  }
+  return out;
+}

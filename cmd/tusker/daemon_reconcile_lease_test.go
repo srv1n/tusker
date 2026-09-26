@@ -566,6 +566,11 @@ func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	current := latestRunForRecord(t, store, project.ProjectID, "APP-T-0001")
 	assertEqual(t, updated.LeaseOwner, current.LeaseOwner, "stored happy dispatch owner")
 	assertEqual(t, updated.LeaseGeneration, current.LeaseGeneration, "stored happy dispatch generation")
+	var executionID string
+	if err := store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ? AND lease_generation = ?`,
+		[]any{updated.ProjectID, updated.ActiveAttemptID, updated.LeaseGeneration}, &executionID); err != nil || executionID == "" {
+		t.Fatalf("dispatch omitted managed execution: id=%q err=%v", executionID, err)
+	}
 	attempts, err := store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")
 	if err != nil {
 		t.Fatal(err)
@@ -573,6 +578,78 @@ func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	assertEqual(t, 1, len(attempts), "happy dispatch saves one attempt")
 	if strings.TrimSpace(updated.WorkspacePath) == "" || !fileExists(updated.WorkspacePath) {
 		t.Fatalf("happy dispatch should prepare a workspace, got %q", updated.WorkspacePath)
+	}
+}
+
+func TestDaemonClaimManagedWorkerIdentityForHarnesses(t *testing.T) {
+	for _, harness := range []RunnerName{RunnerClaude, RunnerCodexExec, RunnerMuse, RunnerDevin} {
+		t.Run(string(harness), func(t *testing.T) {
+			store, err := OpenRuntimeStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			run := RunStatus{ProjectID: "project-1", RecordID: "TASK-1", ItemID: "TASK-1", Runner: string(harness),
+				LeaseState: string(LeaseStateUnclaimed), WorkRevision: 2}
+			if err := store.UpsertRun(run); err != nil {
+				t.Fatal(err)
+			}
+			claim, err := newRunOwnershipService(store).claimExistingWithAuthorization(run, "fake-attempt", RunAuthorization{
+				Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true,
+			}, RunAttempt{AttemptID: "fake-attempt", Runner: string(harness), Lane: runLaneExecute, WorkRevision: 2})
+			if err != nil || !claim.Claimed || claim.Run == nil {
+				t.Fatalf("claim=%#v err=%v", claim, err)
+			}
+			daemon := &Daemon{store: store}
+			if err := daemon.ensureManagedRunExecution(*claim.Run, Note{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := daemon.ensureManagedRunExecution(*claim.Run, Note{}); err != nil {
+				t.Fatalf("claim replay: %v", err)
+			}
+			claimed := *claim.Run
+			claimed.SessionRef = "fake-native-session"
+			if err := daemon.attachManagedRunSession(claimed); err != nil {
+				t.Fatal(err)
+			}
+			identity, err := store.WorkerIdentityForRun(claimed)
+			if err != nil || identity == nil || identity.Provider != string(harness) || identity.NativeSessionID != claimed.SessionRef ||
+				identity.AttemptID != claimed.ActiveAttemptID || identity.AttemptGeneration != claimed.LeaseGeneration || identity.WorkRevision != 2 {
+				t.Fatalf("ledger identity=%#v err=%v", identity, err)
+			}
+		})
+	}
+}
+
+func TestEnsureManagedRunExecutionAdoptsConcurrentAttemptRecord(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := RunStatus{ProjectID: "project-1", RecordID: "TASK-1", ItemID: "TASK-1", Runner: string(RunnerCodexExec), LeaseState: string(LeaseStateUnclaimed), WorkRevision: 1}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := newRunOwnershipService(store).claimExistingWithAuthorization(run, "attempt-race", RunAuthorization{Source: "daemon_auto", Actor: "daemon", Trigger: "poll", ProjectAutomationEnabled: true},
+		RunAttempt{AttemptID: "attempt-race", Runner: run.Runner, Lane: runLaneExecute, WorkRevision: 1})
+	if err != nil || !claim.Claimed || claim.Run == nil {
+		t.Fatalf("claim=%#v err=%v", claim, err)
+	}
+	// Simulate another process's one-time backfill committing a record for the
+	// attempt after the daemon's existence check (alongside its root insert)
+	// but before its managed-attempt insert.
+	if _, err := store.db.Exec(`CREATE TRIGGER backfill_race AFTER INSERT ON execution_records WHEN NEW.source = 'daemon' AND NEW.node_kind = 'root' BEGIN
+		INSERT INTO execution_records(execution_id, root_execution_id, project_id, node_kind, attempt_id, source, created_at) VALUES('exec_legacy_race', 'exec_legacy_race', NEW.project_id, 'root', 'attempt-race', 'legacy_attempt', NEW.created_at);
+	END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Daemon{store: store}).ensureManagedRunExecution(*claim.Run, Note{}); err != nil {
+		t.Fatalf("daemon must adopt the concurrently recorded attempt: %v", err)
+	}
+	var count int
+	if err := store.queryRowScan(`SELECT COUNT(*) FROM execution_records WHERE attempt_id = ?`, []any{"attempt-race"}, &count); err != nil || count != 1 {
+		t.Fatalf("attempt execution records = %d err=%v", count, err)
 	}
 }
 

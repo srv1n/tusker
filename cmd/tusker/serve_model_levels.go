@@ -39,6 +39,11 @@ func (s *serveServer) handleModelLevels(w http.ResponseWriter, r *http.Request, 
 			delete(args, "eligible-tiers")
 		}
 	}
+	if strings.HasPrefix(body.string("action"), "profile-") {
+		// Profile definitions live only in the global config; a project
+		// selects them through tier mappings ("set"/"reset").
+		args["scope"] = firstNonEmpty(body.string("scope"), "global")
+	}
 	switch body.string("action") {
 	case "set":
 		err = modelsSetCmd(args)
@@ -58,7 +63,12 @@ func (s *serveServer) handleModelLevels(w http.ResponseWriter, r *http.Request, 
 		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": issue.Message, "issue": issue})
 		return
 	}
-	s.invalidateProjectSnapshot(project.ProjectID)
+	if strings.HasPrefix(body.string("action"), "profile-") || args["scope"] == "global" {
+		// Global profiles and mappings feed every project's routes.
+		s.invalidateProjectSnapshot("")
+	} else {
+		s.invalidateProjectSnapshot(project.ProjectID)
+	}
 	report, err := modelLevelsReadForScope(project.VaultRoot, firstNonEmpty(body.string("scope"), "project"))
 	if err != nil {
 		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})

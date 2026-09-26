@@ -19,6 +19,588 @@ type departureExecutionFixture struct {
 	plan      func(RegisteredProject, Workflow) (DepartureDecision, error)
 }
 
+func TestDepartureExecutionFinalAuthorityAfterPreparation(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, wantReason string
+		mutate                 func(map[string]any)
+	}{
+		{
+			name: "disarm", kind: "wave", wantReason: "wave_authorization_not_armed:W-0001",
+			mutate: func(data map[string]any) {
+				data["authorization"] = "disarmed"
+				delete(data, "authorization_fingerprint")
+			},
+		},
+		{
+			name: "task rework", kind: "task", wantReason: "wave_member_not_done:APP-T-0001",
+			mutate: func(data map[string]any) {
+				data["status"] = "rework"
+				data["readiness"] = "ready"
+			},
+		},
+		{
+			name: "proof revocation", kind: "task", wantReason: "task_review_provenance_missing:APP-T-0001",
+			mutate: func(data map[string]any) {
+				data["proof_status"] = "pending"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-authority-"+strings.ReplaceAll(tc.name, " ", "-")+".txt")
+			store, err := OpenRuntimeStore(fixture.stateRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			run := createDepartureExecutionRun(t, store, fixture)
+			mainBefore := gitRevisionForTest(t, fixture.repo, "main")
+			targetID := "APP-T-0001"
+			targetDir := "tasks"
+			if tc.kind == "wave" {
+				targetID, targetDir = "W-0001", "waves"
+			}
+			targetPath := filepath.Join(fixture.vault, "work", targetDir, targetID+".md")
+			var livePreimage, operatorBytes string
+			var operatorMode os.FileMode
+			hookCalls := 0
+			originalBeforeHook := scheduledPromotionBeforeDefaultPrepare
+			scheduledPromotionBeforeDefaultPrepare = func() error {
+				livePreimage = mustReadIndexTest(t, targetPath)
+				return nil
+			}
+			originalAfterHook := scheduledPromotionAfterDefaultPrepare
+			scheduledPromotionAfterDefaultPrepare = func() error {
+				hookCalls++
+				data, body, parseErr := parseFrontmatter(livePreimage)
+				if parseErr != nil {
+					return parseErr
+				}
+				current, _, parseErr := parseFrontmatterMustRead(targetPath)
+				if parseErr != nil {
+					return parseErr
+				}
+				tc.mutate(data)
+				data["updated_by"] = "human:operator"
+				data["updated_at"] = "2026-07-25T23:59:00Z"
+				// This deliberately models an unmanaged/raw edit after
+				// preparation. Managed writers take the material epoch and are
+				// linearized by the dedicated barrier race below.
+				if _, saveErr := saveV7DocumentCASUnderMaterialLock(targetPath, data, body, v7FrontmatterOrder[tc.kind], stringField(current, "state_rev")); saveErr != nil {
+					return saveErr
+				}
+				operatorBytes = mustReadIndexTest(t, targetPath)
+				info, statErr := os.Stat(targetPath)
+				if statErr != nil {
+					return statErr
+				}
+				operatorMode = info.Mode().Perm()
+				return nil
+			}
+			defer func() {
+				scheduledPromotionBeforeDefaultPrepare = originalBeforeHook
+				scheduledPromotionAfterDefaultPrepare = originalAfterHook
+			}()
+
+			d := &Daemon{store: store, departurePlan: fixture.plan}
+			if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+				t.Fatal(err)
+			}
+			blocked := mustDepartureRun(t, store, run.ID)
+			if hookCalls != 1 ||
+				blocked.State != DepartureStateBlocked ||
+				blocked.Promotion.AttemptedAt == "" ||
+				!strings.Contains(blocked.BlockReason, tc.wantReason) {
+				t.Fatalf("final %s authority was not fenced: hooks=%d run=%#v", tc.name, hookCalls, blocked)
+			}
+			if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
+				t.Fatalf("final %s authority moved main: before=%s after=%s", tc.name, mainBefore, after)
+			}
+			if after := mustReadIndexTest(t, targetPath); after != operatorBytes {
+				t.Fatalf("final %s authority overwrote operator bytes", tc.name)
+			}
+			info, err := os.Stat(targetPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != operatorMode {
+				t.Fatalf("final %s authority overwrote operator mode: got=%v want=%v", tc.name, info.Mode().Perm(), operatorMode)
+			}
+		})
+	}
+}
+
+func newDepartureExecutionFixture(t *testing.T, mode, fileName string) departureExecutionFixture {
+	t.Helper()
+	stateRoot := t.TempDir()
+	repo, vault := newLandReadyForMainAdvanceTestInStateRoot(t, fileName, "departure\n", stateRoot)
+	sourceSHA := gitRevisionForTest(t, repo, "task/APP-T-0001")
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
+	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
+}
+
+func newUnstagedDepartureExecutionFixture(t *testing.T, mode, fileName string) departureExecutionFixture {
+	t.Helper()
+	stateRoot := t.TempDir()
+	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
+	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: "departure\n"})
+	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-25T00:00:00Z")
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
+	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
+}
+
+func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
+	t.Helper()
+	stateRoot := t.TempDir()
+	repo, vault := newLandTestRepo(t, 2, "test -f member-one.txt")
+	sourceOne := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"member-one.txt": "one\n"})
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
+	if err := landFrozenSourcesAsIssuedDepartureInStateRoot(t, repo, vault,
+		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:fixture-one", "_pos0": "APP-T-0001"},
+		map[string]string{"APP-T-0001": sourceOne},
+		stateRoot,
+	); err != nil {
+		t.Fatal(err)
+	}
+	assertDepartureLandingSource(t, vault, "W-0001", "APP-T-0001", sourceOne)
+	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-25T00:00:00Z")
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
+	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
+	clearDepartureTaskSourceForTest(t, vault, "APP-T-0001")
+
+	setWaveTaskState(t, vault, "APP-T-0002", "done", "done", "2026-07-25T00:01:00Z")
+	taskTwoRel := filepath.ToSlash(filepath.Join(".tusker", "work", "tasks", "APP-T-0002.md"))
+	sourceTwo := commitLandBranch(t, repo, "task/APP-T-0002", "integration/W-0001", map[string]string{
+		"member-two.txt": "two\n",
+		taskTwoRel:       mustReadIndexTest(t, filepath.Join(vault, "work", "tasks", "APP-T-0002.md")),
+	})
+	setDepartureTaskSourceForTest(t, vault, "APP-T-0002", sourceTwo)
+	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, scheduledPromotionPromote, []string{
+		"go version >/dev/null && test -f member-one.txt && test -f member-two.txt",
+	})
+}
+
+func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
+	t.Helper()
+	stateRoot := t.TempDir()
+	repo := t.TempDir()
+	runGitDir(t, repo, "init", "-b", "main")
+	runGitDir(t, repo, "config", "user.email", "test@example.com")
+	runGitDir(t, repo, "config", "user.name", "Test User")
+	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nbranches:\n  default_branch: main\n  control:\n    - main\nruntime:\n  mutation_mode: single_user_local\nautomation:\n  validation:\n    commands:\n      - \"true\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	vault := filepath.Join(repo, ".tusker")
+	mustWave(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Departure source-fence tests.", "v7": "true"}, newV7Epic)
+	for i := 1; i <= 4; i++ {
+		mustWave(t, Args{
+			"vault": vault, "quiet": "true", "epic": "APP",
+			"title": "Task " + padNumber(i), "risk": "low", "priority": "p2", "v7": "true",
+		}, newV7Task)
+	}
+	if err := writeText(filepath.Join(repo, "README.md"), "seed\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, repo, "add", ".")
+	runGitDir(t, repo, "commit", "-m", "seed")
+	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "First departure", "_pos1": "APP-T-0001", "_pos2": "APP-T-0002"}, waveV7CreateCmd)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "Second departure", "_pos1": "APP-T-0003", "_pos2": "APP-T-0004"}, waveV7CreateCmd)
+	runGitDir(t, repo, "add", "-A")
+	runGitDir(t, repo, "commit", "-m", "record departure waves")
+	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
+	runGitDir(t, repo, "branch", "-f", "integration/W-0002", "main")
+
+	for i := 1; i <= 4; i++ {
+		taskID := "APP-T-" + padNumber(i)
+		waveID := "W-0001"
+		if i > 2 {
+			waveID = "W-0002"
+		}
+		sourceSHA := commitLandBranch(t, repo, "task/"+taskID, "integration/"+waveID, map[string]string{
+			"frozen-" + strings.ToLower(taskID) + ".txt": "frozen\n",
+		})
+		setWaveTaskState(t, vault, taskID, "done", "done", "2026-07-25T00:00:00Z")
+		setDepartureTaskSourceForTest(t, vault, taskID, sourceSHA)
+	}
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage)
+	wf := setScheduledPromotionGateForTest(t, vault, []string{"go version >/dev/null"}, "full")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	armScheduledPromotionWaveForTest(t, vault, "W-0002")
+	commitScheduledPromotionWorkflowForWavesTest(t, repo, vault, []string{"W-0001", "W-0002"})
+	return departureExecutionFixtureForRepo(t, repo, vault, stateRoot, wf)
+}
+
+func configureDepartureExecutionFixture(t *testing.T, repo, vault, stateRoot, mode string, gateCommands []string) departureExecutionFixture {
+	t.Helper()
+	setScheduledPromotionPolicyForTest(t, vault, mode)
+	wf := setScheduledPromotionGateForTest(t, vault, gateCommands, "full")
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	return departureExecutionFixtureForRepo(t, repo, vault, stateRoot, wf)
+}
+
+func departureExecutionFixtureForRepo(t *testing.T, repo, vault, stateRoot string, wf Workflow) departureExecutionFixture {
+	t.Helper()
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	runGitDir(t, filepath.Dir(remote), "init", "--bare", remote)
+	runGitDir(t, repo, "remote", "add", "origin", remote)
+	runGitDir(t, repo, "push", "-u", "origin", "main")
+	project := RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault}
+	planner := defaultDeparturePlanner()
+	receiptStore, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = receiptStore.Close() })
+	planner.receiptStore = receiptStore
+	planner.gateLookup = func(string, string, []string, string, string) bool { return false }
+	return departureExecutionFixture{
+		repo: repo, vault: vault, stateRoot: stateRoot, project: project, wf: wf,
+		plan: func(project RegisteredProject, wf Workflow) (DepartureDecision, error) {
+			return planner.PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
+		},
+	}
+}
+
+func commitScheduledPromotionWorkflowForWavesTest(t *testing.T, repo, vault string, waveIDs []string) {
+	t.Helper()
+	workflow := filepath.ToSlash(filepath.Join(".tusker", "WORKFLOW.md"))
+	runGitDir(t, repo, "add", "--", workflow)
+	runGitDir(t, repo, "commit", "-m", "configure scheduled promotion")
+	for _, waveID := range waveIDs {
+		worktree := filepath.Join(t.TempDir(), "scheduled-promotion-"+strings.ToLower(waveID))
+		branch := "integration/" + waveID
+		runGitDir(t, repo, "worktree", "add", "--detach", worktree, branch)
+		if err := writeText(filepath.Join(worktree, workflow), mustReadIndexTest(t, filepath.Join(vault, "WORKFLOW.md"))); err != nil {
+			t.Fatal(err)
+		}
+		runGitDir(t, worktree, "add", "--", workflow)
+		runGitDir(t, worktree, "commit", "-m", "configure scheduled promotion")
+		next := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
+		runGitDir(t, repo, "worktree", "remove", "--force", worktree)
+		runGitDir(t, repo, "update-ref", "refs/heads/"+branch, next)
+	}
+}
+
+func setDepartureTaskSourceForTest(t *testing.T, vault, taskID, sourceSHA string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "tasks", taskID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	data["source_sha"] = sourceSHA
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func clearDepartureTaskSourceForTest(t *testing.T, vault, taskID string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "tasks", taskID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	delete(data, "source_sha")
+	delete(data, "source_commit")
+	delete(data, "source_branch_sha")
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setDepartureTaskAcceptorForTest(t *testing.T, vault, taskID, actor string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "tasks", taskID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	data["accepted_by"] = actor
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createDepartureExecutionRun(t *testing.T, store *RuntimeStore, fixture departureExecutionFixture) DepartureRun {
+	t.Helper()
+	decision, err := fixture.plan(fixture.project, fixture.wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Disposition != "ready" && decision.Disposition != "already_gated" {
+		t.Fatalf("fixture departure decision = %#v", decision)
+	}
+	run, created, err := store.GetOrCreateDepartureRun(DepartureRun{
+		ProjectID: "app", PolicyID: departurePolicyID(fixture.wf.ScheduledPromotion.Effective),
+		ScheduledWindow: time.Now().UTC().Format(time.RFC3339Nano),
+		State:           DepartureStateEvaluating, Candidate: decision.Candidate, Gate: decision.GateIntent,
+	})
+	if err != nil || !created {
+		t.Fatalf("create departure run: %#v created=%v err=%v", run, created, err)
+	}
+	return run
+}
+
+func mustDepartureRun(t *testing.T, store *RuntimeStore, runID string) DepartureRun {
+	t.Helper()
+	run, err := store.FindDepartureRun(runID)
+	if err != nil || run == nil {
+		t.Fatalf("find departure %s: %#v err=%v", runID, run, err)
+	}
+	return *run
+}
+
+func departureWaveMemberBytes(t *testing.T, vault, waveID string, taskIDs ...string) map[string]string {
+	t.Helper()
+	snapshot := make(map[string]string, len(taskIDs)+1)
+	for _, taskID := range taskIDs {
+		path := filepath.Join(vault, "work", "tasks", taskID+".md")
+		snapshot[path] = mustReadIndexTest(t, path)
+	}
+	wavePath := filepath.Join(vault, "work", "waves", waveID+".md")
+	snapshot[wavePath] = mustReadIndexTest(t, wavePath)
+	return snapshot
+}
+
+func departureWaveMemberModes(t *testing.T, files map[string]string) map[string]os.FileMode {
+	t.Helper()
+	modes := make(map[string]os.FileMode, len(files))
+	for path := range files {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		modes[path] = info.Mode()
+	}
+	return modes
+}
+
+func assertDepartureWaveMemberBytes(t *testing.T, vault string, expected map[string]string, expectedModes ...map[string]os.FileMode) {
+	t.Helper()
+	if len(expected) == 0 {
+		t.Fatal("canonical wave-member snapshot is empty")
+	}
+	for path, want := range expected {
+		got := mustReadIndexTest(t, path)
+		wantMode, gotMode := os.FileMode(0), os.FileMode(0)
+		if len(expectedModes) > 0 {
+			wantMode = expectedModes[0][path]
+		}
+		if info, statErr := os.Lstat(path); statErr == nil {
+			gotMode = info.Mode()
+		}
+		modeChanged := len(expectedModes) > 0 && gotMode != wantMode
+		if got != want || modeChanged {
+			rel, err := filepath.Rel(vault, path)
+			if err != nil {
+				rel = path
+			}
+			offset, line, wantByte, gotByte, wantLine, gotLine := departureFirstDifference(want, got)
+			t.Fatalf("canonical preimage changed for %s: first difference byte=%d line=%d want_byte=%#x got_byte=%#x want_len=%d got_len=%d want_mode=%s got_mode=%s want_line=%q got_line=%q",
+				rel, offset, line, wantByte, gotByte, len(want), len(got), wantMode, gotMode, wantLine, gotLine)
+		}
+	}
+}
+
+func departureFirstDifference(want, got string) (offset, line, wantByte, gotByte int, wantLine, gotLine string) {
+	limit := len(want)
+	if len(got) < limit {
+		limit = len(got)
+	}
+	for offset < limit && want[offset] == got[offset] {
+		offset++
+	}
+	line = strings.Count(want[:offset], "\n") + 1
+	wantByte, gotByte = -1, -1
+	if offset < len(want) {
+		wantByte = int(want[offset])
+	}
+	if offset < len(got) {
+		gotByte = int(got[offset])
+	}
+	lineAt := func(value string, at int) string {
+		start := strings.LastIndex(value[:at], "\n") + 1
+		end := strings.Index(value[at:], "\n")
+		if end < 0 {
+			end = len(value)
+		} else {
+			end += at
+		}
+		return value[start:end]
+	}
+	return offset, line, wantByte, gotByte, lineAt(want, min(offset, len(want))), lineAt(got, min(offset, len(got)))
+}
+
+func waitDepartureState(t *testing.T, store *RuntimeStore, runID string, state DepartureState) DepartureRun {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		run := mustDepartureRun(t, store, runID)
+		if run.State == state {
+			return run
+		}
+		if departureTerminal(run.State) && run.State != state {
+			t.Fatalf("departure reached %s while waiting for %s: %#v", run.State, state, run)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	run := mustDepartureRun(t, store, runID)
+	t.Fatalf("departure state = %s after timeout, want %s: %#v", run.State, state, run)
+	return DepartureRun{}
+}
+
+func gitRevisionForTest(t *testing.T, repo, ref string) string {
+	t.Helper()
+	return strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", ref))
+}
+
+func departureLandingAuditCount(t *testing.T, vault, waveID, taskID string) int {
+	t.Helper()
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", waveID+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, row := range normalizeLandingAudit(data["landings"]) {
+		if stringField(row, "task") == taskID {
+			count++
+		}
+	}
+	return count
+}
+
+func assertDepartureLandingSource(t *testing.T, vault, waveID, taskID, sourceSHA string) {
+	t.Helper()
+	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", waveID+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range normalizeLandingAudit(data["landings"]) {
+		if stringField(row, "task") == taskID &&
+			stringField(row, "gate_result") == "pass" &&
+			stringField(row, "source_sha") == sourceSHA {
+			if branch := stringField(row, "branch"); branch != "task/"+taskID {
+				t.Fatalf("%s exact landing audit branch = %q", taskID, branch)
+			}
+			actor := stringField(row, "actor")
+			fingerprint := stringField(row, "receipt_fingerprint")
+			if stringField(row, "commit") == "" ||
+				stringField(row, "tree") == "" ||
+				stringField(row, "base_sha") == "" ||
+				stringField(row, "merge_commit") == "" ||
+				stringField(row, "source_provenance") == "" ||
+				stringField(row, "gate_fingerprint") == "" ||
+				fingerprint == "" ||
+				stringField(row, "control_authority") == "" ||
+				!trustedV7LandingControlAuthority(stringField(row, "control_authority"), actor) ||
+				stringField(row, "provenance") != v7LandingAuditProvenance {
+				t.Fatalf("%s exact landing audit is not authenticated: %#v", taskID, row)
+			}
+			receipt, ok := loadV7LandingReceipt(vault, fingerprint)
+			if !ok ||
+				receipt.Actor != actor ||
+				receipt.ControlAuthority != stringField(row, "control_authority") ||
+				receipt.Fingerprint != fingerprint {
+				t.Fatalf("%s exact landing audit lost its signed receipt identity: row=%#v receipt=%#v loaded=%v", taskID, row, receipt, ok)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s/%s has no pass audit bound to source %s", waveID, taskID, sourceSHA)
+}
+
+func removeDepartureTaskLandingAudit(t *testing.T, vault, waveID, taskID, sourceSHA string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "waves", waveID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	var kept []map[string]any
+	for _, row := range normalizeLandingAudit(data["landings"]) {
+		if stringField(row, "task") == taskID && stringField(row, "source_sha") == sourceSHA {
+			continue
+		}
+		kept = append(kept, row)
+	}
+	data["landings"] = kept
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["wave"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func advanceDepartureTaskBranch(t *testing.T, repo, branch string, files map[string]string) string {
+	t.Helper()
+	worktree := filepath.Join(t.TempDir(), "advanced-task")
+	runGitDir(t, repo, "worktree", "add", worktree, branch)
+	for path, content := range files {
+		full := filepath.Join(worktree, path)
+		if err := ensureDir(filepath.Dir(full)); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(full, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitDir(t, worktree, "add", ".")
+	runGitDir(t, worktree, "commit", "-m", "advance "+branch+" after departure freeze")
+	advanced := gitRevisionForTest(t, worktree, "HEAD")
+	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
+	return advanced
+}
+
+func removeDeparturePromotionAudit(t *testing.T, vault, waveID, commit string) {
+	t.Helper()
+	path := filepath.Join(vault, "work", "waves", waveID+".md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseRev := stringField(data, "state_rev")
+	var kept []map[string]any
+	for _, row := range normalizeLandingAudit(data["landings"]) {
+		if stringField(row, "task") == "wave" && stringField(row, "commit") == commit {
+			continue
+		}
+		kept = append(kept, row)
+	}
+	data["landings"] = kept
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["wave"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func withDepartureState(run DepartureRun, state DepartureState) DepartureRun {
+	run.State = state
+	return run
+}
+
+func disarmDepartureWaveForTest(t *testing.T, vault, waveID string) {
+	t.Helper()
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave := idx.Waves[waveID]
+	data, body, err := parseFrontmatterMustRead(wave.AbsolutePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["authorization"] = "disarmed"
+	delete(data, "authorization_fingerprint")
+	delete(data, "authorized_by")
+	delete(data, "authorized_at")
+	if _, err := saveV7DocumentCAS(wave.AbsolutePath, data, body, v7FrontmatterOrder["wave"], stringField(data, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDepartureExecution(t *testing.T) {
 	t.Run("stage keeps main fixed and replay does not duplicate audit", func(t *testing.T) {
 		fixture := newUnstagedDepartureExecutionFixture(t, scheduledPromotionStage, "stage-executor.txt")
@@ -660,7 +1242,7 @@ func TestDepartureExecution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !d.claimDepartureExecution("dep-close-test") {
+		if _, claimed := d.claimDepartureExecutionContext(context.Background(), "dep-close-test"); !claimed {
 			t.Fatal("failed to register active departure worker")
 		}
 		closed := make(chan error, 1)
@@ -692,7 +1274,7 @@ func TestDepartureExecution(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("daemon close did not finish after the departure worker exited")
 		}
-		if d.claimDepartureExecution("dep-after-close") {
+		if _, claimed := d.claimDepartureExecutionContext(context.Background(), "dep-after-close"); claimed {
 			t.Fatal("daemon accepted a departure worker after close began")
 		}
 	})
@@ -933,586 +1515,4 @@ func TestDepartureExecution(t *testing.T) {
 			t.Fatal("absent policy no longer preserves legacy main advance")
 		}
 	})
-}
-
-func TestDepartureExecutionFinalAuthorityAfterPreparation(t *testing.T) {
-	for _, tc := range []struct {
-		name, kind, wantReason string
-		mutate                 func(map[string]any)
-	}{
-		{
-			name: "disarm", kind: "wave", wantReason: "wave_authorization_not_armed:W-0001",
-			mutate: func(data map[string]any) {
-				data["authorization"] = "disarmed"
-				delete(data, "authorization_fingerprint")
-			},
-		},
-		{
-			name: "task rework", kind: "task", wantReason: "wave_member_not_done:APP-T-0001",
-			mutate: func(data map[string]any) {
-				data["status"] = "rework"
-				data["readiness"] = "ready"
-			},
-		},
-		{
-			name: "proof revocation", kind: "task", wantReason: "task_review_provenance_missing:APP-T-0001",
-			mutate: func(data map[string]any) {
-				data["proof_status"] = "pending"
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newDepartureExecutionFixture(t, scheduledPromotionPromote, "final-authority-"+strings.ReplaceAll(tc.name, " ", "-")+".txt")
-			store, err := OpenRuntimeStore(fixture.stateRoot)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer store.Close()
-			run := createDepartureExecutionRun(t, store, fixture)
-			mainBefore := gitRevisionForTest(t, fixture.repo, "main")
-			targetID := "APP-T-0001"
-			targetDir := "tasks"
-			if tc.kind == "wave" {
-				targetID, targetDir = "W-0001", "waves"
-			}
-			targetPath := filepath.Join(fixture.vault, "work", targetDir, targetID+".md")
-			var livePreimage, operatorBytes string
-			var operatorMode os.FileMode
-			hookCalls := 0
-			originalBeforeHook := scheduledPromotionBeforeDefaultPrepare
-			scheduledPromotionBeforeDefaultPrepare = func() error {
-				livePreimage = mustReadIndexTest(t, targetPath)
-				return nil
-			}
-			originalAfterHook := scheduledPromotionAfterDefaultPrepare
-			scheduledPromotionAfterDefaultPrepare = func() error {
-				hookCalls++
-				data, body, parseErr := parseFrontmatter(livePreimage)
-				if parseErr != nil {
-					return parseErr
-				}
-				current, _, parseErr := parseFrontmatterMustRead(targetPath)
-				if parseErr != nil {
-					return parseErr
-				}
-				tc.mutate(data)
-				data["updated_by"] = "human:operator"
-				data["updated_at"] = "2026-07-25T23:59:00Z"
-				// This deliberately models an unmanaged/raw edit after
-				// preparation. Managed writers take the material epoch and are
-				// linearized by the dedicated barrier race below.
-				if _, saveErr := saveV7DocumentCASUnderMaterialLock(targetPath, data, body, v7FrontmatterOrder[tc.kind], stringField(current, "state_rev")); saveErr != nil {
-					return saveErr
-				}
-				operatorBytes = mustReadIndexTest(t, targetPath)
-				info, statErr := os.Stat(targetPath)
-				if statErr != nil {
-					return statErr
-				}
-				operatorMode = info.Mode().Perm()
-				return nil
-			}
-			defer func() {
-				scheduledPromotionBeforeDefaultPrepare = originalBeforeHook
-				scheduledPromotionAfterDefaultPrepare = originalAfterHook
-			}()
-
-			d := &Daemon{store: store, departurePlan: fixture.plan}
-			if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
-				t.Fatal(err)
-			}
-			blocked := mustDepartureRun(t, store, run.ID)
-			if hookCalls != 1 ||
-				blocked.State != DepartureStateBlocked ||
-				blocked.Promotion.AttemptedAt == "" ||
-				!strings.Contains(blocked.BlockReason, tc.wantReason) {
-				t.Fatalf("final %s authority was not fenced: hooks=%d run=%#v", tc.name, hookCalls, blocked)
-			}
-			if after := gitRevisionForTest(t, fixture.repo, "main"); after != mainBefore {
-				t.Fatalf("final %s authority moved main: before=%s after=%s", tc.name, mainBefore, after)
-			}
-			if after := mustReadIndexTest(t, targetPath); after != operatorBytes {
-				t.Fatalf("final %s authority overwrote operator bytes", tc.name)
-			}
-			info, err := os.Stat(targetPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if info.Mode().Perm() != operatorMode {
-				t.Fatalf("final %s authority overwrote operator mode: got=%v want=%v", tc.name, info.Mode().Perm(), operatorMode)
-			}
-		})
-	}
-}
-
-func newDepartureExecutionFixture(t *testing.T, mode, fileName string) departureExecutionFixture {
-	t.Helper()
-	stateRoot := t.TempDir()
-	repo, vault := newLandReadyForMainAdvanceTestInStateRoot(t, fileName, "departure\n", stateRoot)
-	sourceSHA := gitRevisionForTest(t, repo, "task/APP-T-0001")
-	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
-}
-
-func newUnstagedDepartureExecutionFixture(t *testing.T, mode, fileName string) departureExecutionFixture {
-	t.Helper()
-	stateRoot := t.TempDir()
-	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
-	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: "departure\n"})
-	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-25T00:00:00Z")
-	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)
-	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, mode, []string{"go version >/dev/null && test -f " + yamlQuoteForShellTest(fileName)})
-}
-
-func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
-	t.Helper()
-	stateRoot := t.TempDir()
-	repo, vault := newLandTestRepo(t, 2, "test -f member-one.txt")
-	sourceOne := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"member-one.txt": "one\n"})
-	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
-	if err := landFrozenSourcesAsIssuedDepartureInStateRoot(t, repo, vault,
-		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:fixture-one", "_pos0": "APP-T-0001"},
-		map[string]string{"APP-T-0001": sourceOne},
-		stateRoot,
-	); err != nil {
-		t.Fatal(err)
-	}
-	assertDepartureLandingSource(t, vault, "W-0001", "APP-T-0001", sourceOne)
-	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-25T00:00:00Z")
-	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceOne)
-	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
-	clearDepartureTaskSourceForTest(t, vault, "APP-T-0001")
-
-	setWaveTaskState(t, vault, "APP-T-0002", "done", "done", "2026-07-25T00:01:00Z")
-	taskTwoRel := filepath.ToSlash(filepath.Join(".tusker", "work", "tasks", "APP-T-0002.md"))
-	sourceTwo := commitLandBranch(t, repo, "task/APP-T-0002", "integration/W-0001", map[string]string{
-		"member-two.txt": "two\n",
-		taskTwoRel:       mustReadIndexTest(t, filepath.Join(vault, "work", "tasks", "APP-T-0002.md")),
-	})
-	setDepartureTaskSourceForTest(t, vault, "APP-T-0002", sourceTwo)
-	return configureDepartureExecutionFixture(t, repo, vault, stateRoot, scheduledPromotionPromote, []string{
-		"go version >/dev/null && test -f member-one.txt && test -f member-two.txt",
-	})
-}
-
-func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
-	t.Helper()
-	stateRoot := t.TempDir()
-	repo := t.TempDir()
-	runGitDir(t, repo, "init", "-b", "main")
-	runGitDir(t, repo, "config", "user.email", "test@example.com")
-	runGitDir(t, repo, "config", "user.name", "Test User")
-	if err := writeText(managedTuskerConfigPath(filepath.Join(repo, defaultRepoVaultDir)), "schema: tusker.config/v1\nproject_id: app\nbranches:\n  default_branch: main\n  control:\n    - main\nruntime:\n  mutation_mode: single_user_local\nautomation:\n  validation:\n    commands:\n      - \"true\"\n"); err != nil {
-		t.Fatal(err)
-	}
-	vault := filepath.Join(repo, ".tusker")
-	mustWave(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
-	mustWave(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Departure source-fence tests.", "v7": "true"}, newV7Epic)
-	for i := 1; i <= 4; i++ {
-		mustWave(t, Args{
-			"vault": vault, "quiet": "true", "epic": "APP",
-			"title": "Task " + padNumber(i), "risk": "low", "priority": "p2", "v7": "true",
-		}, newV7Task)
-	}
-	if err := writeText(filepath.Join(repo, "README.md"), "seed\n"); err != nil {
-		t.Fatal(err)
-	}
-	runGitDir(t, repo, "add", ".")
-	runGitDir(t, repo, "commit", "-m", "seed")
-	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "First departure", "_pos1": "APP-T-0001", "_pos2": "APP-T-0002"}, waveV7CreateCmd)
-	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "Second departure", "_pos1": "APP-T-0003", "_pos2": "APP-T-0004"}, waveV7CreateCmd)
-	runGitDir(t, repo, "add", "-A")
-	runGitDir(t, repo, "commit", "-m", "record departure waves")
-	runGitDir(t, repo, "branch", "-f", "integration/W-0001", "main")
-	runGitDir(t, repo, "branch", "-f", "integration/W-0002", "main")
-
-	for i := 1; i <= 4; i++ {
-		taskID := "APP-T-" + padNumber(i)
-		waveID := "W-0001"
-		if i > 2 {
-			waveID = "W-0002"
-		}
-		sourceSHA := commitLandBranch(t, repo, "task/"+taskID, "integration/"+waveID, map[string]string{
-			"frozen-" + strings.ToLower(taskID) + ".txt": "frozen\n",
-		})
-		setWaveTaskState(t, vault, taskID, "done", "done", "2026-07-25T00:00:00Z")
-		setDepartureTaskSourceForTest(t, vault, taskID, sourceSHA)
-	}
-	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage)
-	wf := setScheduledPromotionGateForTest(t, vault, []string{"go version >/dev/null"}, "full")
-	armScheduledPromotionWaveForTest(t, vault, "W-0001")
-	armScheduledPromotionWaveForTest(t, vault, "W-0002")
-	commitScheduledPromotionWorkflowForWavesTest(t, repo, vault, []string{"W-0001", "W-0002"})
-	return departureExecutionFixtureForRepo(t, repo, vault, stateRoot, wf)
-}
-
-func configureDepartureExecutionFixture(t *testing.T, repo, vault, stateRoot, mode string, gateCommands []string) departureExecutionFixture {
-	t.Helper()
-	setScheduledPromotionPolicyForTest(t, vault, mode)
-	wf := setScheduledPromotionGateForTest(t, vault, gateCommands, "full")
-	armScheduledPromotionWaveForTest(t, vault, "W-0001")
-	commitScheduledPromotionWorkflowForTest(t, repo, vault)
-	return departureExecutionFixtureForRepo(t, repo, vault, stateRoot, wf)
-}
-
-func departureExecutionFixtureForRepo(t *testing.T, repo, vault, stateRoot string, wf Workflow) departureExecutionFixture {
-	t.Helper()
-	remote := filepath.Join(t.TempDir(), "origin.git")
-	runGitDir(t, filepath.Dir(remote), "init", "--bare", remote)
-	runGitDir(t, repo, "remote", "add", "origin", remote)
-	runGitDir(t, repo, "push", "-u", "origin", "main")
-	project := RegisteredProject{ProjectID: "app", RepoRoot: repo, VaultRoot: vault}
-	planner := defaultDeparturePlanner()
-	receiptStore, err := OpenRuntimeStore(stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = receiptStore.Close() })
-	planner.receiptStore = receiptStore
-	planner.gateLookup = func(string, string, []string, string, string) bool { return false }
-	return departureExecutionFixture{
-		repo: repo, vault: vault, stateRoot: stateRoot, project: project, wf: wf,
-		plan: func(project RegisteredProject, wf Workflow) (DepartureDecision, error) {
-			return planner.PlanDeparture(project.VaultRoot, project.ProjectID, WorkflowFile{Data: wf})
-		},
-	}
-}
-
-func commitScheduledPromotionWorkflowForWavesTest(t *testing.T, repo, vault string, waveIDs []string) {
-	t.Helper()
-	workflow := filepath.ToSlash(filepath.Join(".tusker", "WORKFLOW.md"))
-	runGitDir(t, repo, "add", "--", workflow)
-	runGitDir(t, repo, "commit", "-m", "configure scheduled promotion")
-	for _, waveID := range waveIDs {
-		worktree := filepath.Join(t.TempDir(), "scheduled-promotion-"+strings.ToLower(waveID))
-		branch := "integration/" + waveID
-		runGitDir(t, repo, "worktree", "add", "--detach", worktree, branch)
-		if err := writeText(filepath.Join(worktree, workflow), mustReadIndexTest(t, filepath.Join(vault, "WORKFLOW.md"))); err != nil {
-			t.Fatal(err)
-		}
-		runGitDir(t, worktree, "add", "--", workflow)
-		runGitDir(t, worktree, "commit", "-m", "configure scheduled promotion")
-		next := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
-		runGitDir(t, repo, "worktree", "remove", "--force", worktree)
-		runGitDir(t, repo, "update-ref", "refs/heads/"+branch, next)
-	}
-}
-
-func setDepartureTaskSourceForTest(t *testing.T, vault, taskID, sourceSHA string) {
-	t.Helper()
-	path := filepath.Join(vault, "work", "tasks", taskID+".md")
-	data, body, err := parseFrontmatterMustRead(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseRev := stringField(data, "state_rev")
-	data["source_sha"] = sourceSHA
-	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func clearDepartureTaskSourceForTest(t *testing.T, vault, taskID string) {
-	t.Helper()
-	path := filepath.Join(vault, "work", "tasks", taskID+".md")
-	data, body, err := parseFrontmatterMustRead(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseRev := stringField(data, "state_rev")
-	delete(data, "source_sha")
-	delete(data, "source_commit")
-	delete(data, "source_branch_sha")
-	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func setDepartureTaskAcceptorForTest(t *testing.T, vault, taskID, actor string) {
-	t.Helper()
-	path := filepath.Join(vault, "work", "tasks", taskID+".md")
-	data, body, err := parseFrontmatterMustRead(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseRev := stringField(data, "state_rev")
-	data["accepted_by"] = actor
-	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func createDepartureExecutionRun(t *testing.T, store *RuntimeStore, fixture departureExecutionFixture) DepartureRun {
-	t.Helper()
-	decision, err := fixture.plan(fixture.project, fixture.wf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.Disposition != "ready" && decision.Disposition != "already_gated" {
-		t.Fatalf("fixture departure decision = %#v", decision)
-	}
-	run, created, err := store.GetOrCreateDepartureRun(DepartureRun{
-		ProjectID: "app", PolicyID: departurePolicyID(fixture.wf.ScheduledPromotion.Effective),
-		ScheduledWindow: time.Now().UTC().Format(time.RFC3339Nano),
-		State:           DepartureStateEvaluating, Candidate: decision.Candidate, Gate: decision.GateIntent,
-	})
-	if err != nil || !created {
-		t.Fatalf("create departure run: %#v created=%v err=%v", run, created, err)
-	}
-	return run
-}
-
-func mustDepartureRun(t *testing.T, store *RuntimeStore, runID string) DepartureRun {
-	t.Helper()
-	run, err := store.FindDepartureRun(runID)
-	if err != nil || run == nil {
-		t.Fatalf("find departure %s: %#v err=%v", runID, run, err)
-	}
-	return *run
-}
-
-func departureWaveMemberBytes(t *testing.T, vault, waveID string, taskIDs ...string) map[string]string {
-	t.Helper()
-	snapshot := make(map[string]string, len(taskIDs)+1)
-	for _, taskID := range taskIDs {
-		path := filepath.Join(vault, "work", "tasks", taskID+".md")
-		snapshot[path] = mustReadIndexTest(t, path)
-	}
-	wavePath := filepath.Join(vault, "work", "waves", waveID+".md")
-	snapshot[wavePath] = mustReadIndexTest(t, wavePath)
-	return snapshot
-}
-
-func departureWaveMemberModes(t *testing.T, files map[string]string) map[string]os.FileMode {
-	t.Helper()
-	modes := make(map[string]os.FileMode, len(files))
-	for path := range files {
-		info, err := os.Lstat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		modes[path] = info.Mode()
-	}
-	return modes
-}
-
-func assertDepartureWaveMemberBytes(t *testing.T, vault string, expected map[string]string, expectedModes ...map[string]os.FileMode) {
-	t.Helper()
-	if len(expected) == 0 {
-		t.Fatal("canonical wave-member snapshot is empty")
-	}
-	for path, want := range expected {
-		got := mustReadIndexTest(t, path)
-		wantMode, gotMode := os.FileMode(0), os.FileMode(0)
-		if len(expectedModes) > 0 {
-			wantMode = expectedModes[0][path]
-		}
-		if info, statErr := os.Lstat(path); statErr == nil {
-			gotMode = info.Mode()
-		}
-		modeChanged := len(expectedModes) > 0 && gotMode != wantMode
-		if got != want || modeChanged {
-			rel, err := filepath.Rel(vault, path)
-			if err != nil {
-				rel = path
-			}
-			offset, line, wantByte, gotByte, wantLine, gotLine := departureFirstDifference(want, got)
-			t.Fatalf("canonical preimage changed for %s: first difference byte=%d line=%d want_byte=%#x got_byte=%#x want_len=%d got_len=%d want_mode=%s got_mode=%s want_line=%q got_line=%q",
-				rel, offset, line, wantByte, gotByte, len(want), len(got), wantMode, gotMode, wantLine, gotLine)
-		}
-	}
-}
-
-func departureFirstDifference(want, got string) (offset, line, wantByte, gotByte int, wantLine, gotLine string) {
-	limit := len(want)
-	if len(got) < limit {
-		limit = len(got)
-	}
-	for offset < limit && want[offset] == got[offset] {
-		offset++
-	}
-	line = strings.Count(want[:offset], "\n") + 1
-	wantByte, gotByte = -1, -1
-	if offset < len(want) {
-		wantByte = int(want[offset])
-	}
-	if offset < len(got) {
-		gotByte = int(got[offset])
-	}
-	lineAt := func(value string, at int) string {
-		start := strings.LastIndex(value[:at], "\n") + 1
-		end := strings.Index(value[at:], "\n")
-		if end < 0 {
-			end = len(value)
-		} else {
-			end += at
-		}
-		return value[start:end]
-	}
-	return offset, line, wantByte, gotByte, lineAt(want, min(offset, len(want))), lineAt(got, min(offset, len(got)))
-}
-
-func waitDepartureState(t *testing.T, store *RuntimeStore, runID string, state DepartureState) DepartureRun {
-	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		run := mustDepartureRun(t, store, runID)
-		if run.State == state {
-			return run
-		}
-		if departureTerminal(run.State) && run.State != state {
-			t.Fatalf("departure reached %s while waiting for %s: %#v", run.State, state, run)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	run := mustDepartureRun(t, store, runID)
-	t.Fatalf("departure state = %s after timeout, want %s: %#v", run.State, state, run)
-	return DepartureRun{}
-}
-
-func gitRevisionForTest(t *testing.T, repo, ref string) string {
-	t.Helper()
-	return strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", ref))
-}
-
-func departureLandingAuditCount(t *testing.T, vault, waveID, taskID string) int {
-	t.Helper()
-	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", waveID+".md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	count := 0
-	for _, row := range normalizeLandingAudit(data["landings"]) {
-		if stringField(row, "task") == taskID {
-			count++
-		}
-	}
-	return count
-}
-
-func assertDepartureLandingSource(t *testing.T, vault, waveID, taskID, sourceSHA string) {
-	t.Helper()
-	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", waveID+".md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range normalizeLandingAudit(data["landings"]) {
-		if stringField(row, "task") == taskID &&
-			stringField(row, "gate_result") == "pass" &&
-			stringField(row, "source_sha") == sourceSHA {
-			if branch := stringField(row, "branch"); branch != "task/"+taskID {
-				t.Fatalf("%s exact landing audit branch = %q", taskID, branch)
-			}
-			actor := stringField(row, "actor")
-			fingerprint := stringField(row, "receipt_fingerprint")
-			if stringField(row, "commit") == "" ||
-				stringField(row, "tree") == "" ||
-				stringField(row, "base_sha") == "" ||
-				stringField(row, "merge_commit") == "" ||
-				stringField(row, "source_provenance") == "" ||
-				stringField(row, "gate_fingerprint") == "" ||
-				fingerprint == "" ||
-				stringField(row, "control_authority") == "" ||
-				!trustedV7LandingControlAuthority(stringField(row, "control_authority"), actor) ||
-				stringField(row, "provenance") != v7LandingAuditProvenance {
-				t.Fatalf("%s exact landing audit is not authenticated: %#v", taskID, row)
-			}
-			receipt, ok := loadV7LandingReceipt(vault, fingerprint)
-			if !ok ||
-				receipt.Actor != actor ||
-				receipt.ControlAuthority != stringField(row, "control_authority") ||
-				receipt.Fingerprint != fingerprint {
-				t.Fatalf("%s exact landing audit lost its signed receipt identity: row=%#v receipt=%#v loaded=%v", taskID, row, receipt, ok)
-			}
-			return
-		}
-	}
-	t.Fatalf("%s/%s has no pass audit bound to source %s", waveID, taskID, sourceSHA)
-}
-
-func removeDepartureTaskLandingAudit(t *testing.T, vault, waveID, taskID, sourceSHA string) {
-	t.Helper()
-	path := filepath.Join(vault, "work", "waves", waveID+".md")
-	data, body, err := parseFrontmatterMustRead(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseRev := stringField(data, "state_rev")
-	var kept []map[string]any
-	for _, row := range normalizeLandingAudit(data["landings"]) {
-		if stringField(row, "task") == taskID && stringField(row, "source_sha") == sourceSHA {
-			continue
-		}
-		kept = append(kept, row)
-	}
-	data["landings"] = kept
-	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["wave"], baseRev); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func advanceDepartureTaskBranch(t *testing.T, repo, branch string, files map[string]string) string {
-	t.Helper()
-	worktree := filepath.Join(t.TempDir(), "advanced-task")
-	runGitDir(t, repo, "worktree", "add", worktree, branch)
-	for path, content := range files {
-		full := filepath.Join(worktree, path)
-		if err := ensureDir(filepath.Dir(full)); err != nil {
-			t.Fatal(err)
-		}
-		if err := writeText(full, content); err != nil {
-			t.Fatal(err)
-		}
-	}
-	runGitDir(t, worktree, "add", ".")
-	runGitDir(t, worktree, "commit", "-m", "advance "+branch+" after departure freeze")
-	advanced := gitRevisionForTest(t, worktree, "HEAD")
-	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
-	return advanced
-}
-
-func removeDeparturePromotionAudit(t *testing.T, vault, waveID, commit string) {
-	t.Helper()
-	path := filepath.Join(vault, "work", "waves", waveID+".md")
-	data, body, err := parseFrontmatterMustRead(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseRev := stringField(data, "state_rev")
-	var kept []map[string]any
-	for _, row := range normalizeLandingAudit(data["landings"]) {
-		if stringField(row, "task") == "wave" && stringField(row, "commit") == commit {
-			continue
-		}
-		kept = append(kept, row)
-	}
-	data["landings"] = kept
-	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["wave"], baseRev); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func withDepartureState(run DepartureRun, state DepartureState) DepartureRun {
-	run.State = state
-	return run
-}
-
-func disarmDepartureWaveForTest(t *testing.T, vault, waveID string) {
-	t.Helper()
-	idx, err := loadV7Index(vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wave := idx.Waves[waveID]
-	data, body, err := parseFrontmatterMustRead(wave.AbsolutePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data["authorization"] = "disarmed"
-	delete(data, "authorization_fingerprint")
-	delete(data, "authorized_by")
-	delete(data, "authorized_at")
-	if _, err := saveV7DocumentCAS(wave.AbsolutePath, data, body, v7FrontmatterOrder["wave"], stringField(data, "state_rev")); err != nil {
-		t.Fatal(err)
-	}
 }

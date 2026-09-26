@@ -828,19 +828,6 @@ func (d *Daemon) recordInvariantEscalations(snapshot runtimeSentinelSnapshot, st
 	}
 }
 
-func hasOpenP0Escalation(vaultPath string) bool {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return false
-	}
-	for _, note := range idx.Escalations {
-		if stringField(note.Data, "status") == escalationStatusOpen && stringField(note.Data, "severity") == "P0" {
-			return true
-		}
-	}
-	return false
-}
-
 func escalationPayload(note Note) map[string]any {
 	return map[string]any{
 		"id":                stringField(note.Data, "id"),
@@ -1077,11 +1064,4 @@ func digestRunIsRedOrParked(run RunStatus) bool {
 
 func oneLine(value string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-}
-
-func openClosed(open bool) string {
-	if open {
-		return "open"
-	}
-	return "closed"
 }

@@ -29,6 +29,11 @@ func TestSelfServiceProcessHelper(t *testing.T) {
 	if root := strings.TrimSpace(os.Getenv("TUSKER_PROC_STATE_ROOT")); root != "" {
 		_ = os.Setenv("TUSKER_STATE_ROOT", root)
 	}
+	// TestMain isolates the helper's global config; re-point it at the
+	// parent's global config, the only layer that defines runner profiles.
+	if config := strings.TrimSpace(os.Getenv("TUSKER_PROC_CONFIG")); config != "" {
+		_ = os.Setenv("TUSKER_CONFIG", config)
+	}
 	argv := strings.Split(os.Getenv("TUSKER_HELPER_ARGV"), "\n")
 	command, args := parseCLI(append([]string{"tusker"}, argv...))
 	exitCode, err := run(command, args)
@@ -307,9 +312,7 @@ type procSelfServiceHarness struct {
 func newProcSelfServiceHarness(t *testing.T) *procSelfServiceHarness {
 	t.Helper()
 	vault := v7DirectTestVault(t)
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles.test-codex-exec", directEmergencyRunnerProfileForTest()); err != nil {
-		t.Fatal(err)
-	}
+	setGlobalProfileForTest(t, "test-codex-exec", directEmergencyRunnerProfileForTest())
 	for _, lane := range []string{"execute", "review"} {
 		if _, err := setProjectLocalConfigWithReadback(vault, "automation.model_levels.standard."+lane, []string{"test-codex-exec"}); err != nil {
 			t.Fatal(err)
@@ -373,6 +376,7 @@ func (h *procSelfServiceHarness) cli(t *testing.T, argv ...string) (string, int)
 	cmd.Env = append(scrubAgentSessionEnv(os.Environ()),
 		"TUSKER_SELF_SERVICE_HELPER=1",
 		"TUSKER_PROC_STATE_ROOT="+h.stateRoot,
+		"TUSKER_PROC_CONFIG="+userGlobalTuskerConfigPath(),
 		"TUSKER_HELPER_ARGV="+strings.Join(argv, "\n"),
 	)
 	output, err := cmd.CombinedOutput()

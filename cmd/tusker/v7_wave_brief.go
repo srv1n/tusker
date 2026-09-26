@@ -163,10 +163,6 @@ func armedWaveBriefProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7I
 	return projected, nil
 }
 
-func buildWaveBrief(idx v7Index, wave Note) waveBrief {
-	return buildWaveBriefWithRuns(idx, wave, nil)
-}
-
 func buildWaveBriefWithRuns(idx v7Index, wave Note, runs map[string]RunStatus) waveBrief {
 	waveID := stringField(wave.Data, "id")
 	b := waveBrief{

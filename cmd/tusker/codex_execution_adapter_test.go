@@ -40,34 +40,6 @@ func TestCodexExecutionAdapterLocalThreadAndChildPreserveResumeIdentity(t *testi
 	}
 }
 
-func TestCodexExecutionAdapterCloudDoesNotInventLocalProcessFacts(t *testing.T) {
-	store := executionLedgerStore(t)
-	defer store.Close()
-	root, err := store.CreateDirectExecution(DirectExecutionInput{ProjectID: "project-1", Source: "codex_cloud", Provider: "codex", Creator: "operator"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	adapter := CodexExecutionAdapter{Store: store}
-	results, err := adapter.ObserveCloud("project-1", root.ExecutionID, "cloud-task-1", "env-prod", "running", "2026-07-29T12:00:00Z", 7, "cloud-cursor-7", []CodexExecutionObservation{{SourceEventID: "cloud-child-1", ChildID: "child-1", AgentType: "explorer", Label: "Map seams", Status: "running"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 2 || results[1].ChildExecutionID == "" {
-		t.Fatalf("results=%#v", results)
-	}
-	var metadata string
-	if err := store.queryRowScan(`SELECT metadata_json FROM provider_execution_observations WHERE observation_id = ?`, []any{results[0].ObservationID}, &metadata); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(metadata, "env-prod") || strings.Contains(metadata, "pid") || strings.Contains(metadata, "heartbeat") {
-		t.Fatalf("cloud metadata=%s", metadata)
-	}
-	var runs int
-	if err := store.queryRowScan(`SELECT COUNT(*) FROM runs`, nil, &runs); err != nil || runs != 0 {
-		t.Fatalf("cloud observation wrote runs=%d err=%v", runs, err)
-	}
-}
-
 func TestCodexExecutionAdapterMalformedAndOpaqueDeliveryAreSafe(t *testing.T) {
 	store := executionLedgerStore(t)
 	defer store.Close()
@@ -106,10 +78,6 @@ func TestCodexExecutionAdapterFlagsStatusRegressionAndRejectsCloudProcessMetadat
 	regression, err := adapter.Observe(CodexExecutionObservation{ProjectID: "project-1", ParentExecutionID: root.ExecutionID, ThreadID: "cloud-1", SourceEventID: "late-running", Status: "running", OccurredAt: "2026-07-29T12:01:00Z"})
 	if err != nil || !regression.Degraded || regression.DegradedReason != "provider_status_regression_requires_authoritative_fetch" {
 		t.Fatalf("regression=%#v err=%v", regression, err)
-	}
-	_, err = adapter.ObserveCloud("project-1", root.ExecutionID, "cloud-2", "env", "running", "2026-07-29T12:00:00Z", 1, "c", []CodexExecutionObservation{{ChildID: "bad", Metadata: map[string]any{"nested": map[string]any{"process_pid": 9}}}})
-	if errorToIssue(err).Code != providerObservationRefused {
-		t.Fatalf("cloud process metadata error=%v", err)
 	}
 }
 

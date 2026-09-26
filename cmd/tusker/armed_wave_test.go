@@ -386,6 +386,52 @@ func TestArmedWaveDelivery(t *testing.T) {
 	}
 }
 
+func armedWaveStateMap(snapshot armedWaveSnapshot) map[string]string {
+	out := map[string]string{}
+	for _, member := range snapshot.Members {
+		out[member.ID] = member.State
+	}
+	return out
+}
+
+func armedWaveTestFixture(t *testing.T) (string, v7Index, Note) {
+	t.Helper()
+	vault := v7DirectTestVault(t)
+	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs_per_project", 2); err != nil {
+		t.Fatal(err)
+	}
+	armedWaveDirectTask(t, vault, "APP-T-0001", nil)
+	armedWaveDirectTask(t, vault, "APP-T-0002", []string{"APP-T-0001:hard"})
+	armedWaveDirectTask(t, vault, "APP-T-0003", []string{"APP-T-0001:hard"})
+	armedWaveDirectTask(t, vault, "APP-T-0004", []string{"APP-T-0002:soft"})
+	armedWaveDirectTask(t, vault, "APP-T-0005", []string{"APP-T-0003:hard"})
+	armedWaveDirectTask(t, vault, "APP-T-0006", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006"}, map[string]any{"concurrency": 2})
+	armWaveForTest(t, vault)
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave := idx.Waves["W-0001"]
+	return vault, idx, wave
+}
+
+func armedWaveDirectTask(t *testing.T, vault, id string, deps []string) {
+	t.Helper()
+	extra := map[string]any{
+		"status": "ready", "readiness": "ready",
+		"owned_paths": []any{"cmd/tusker/" + strings.ToLower(id) + ".go"},
+	}
+	if len(deps) > 0 {
+		edges := make([]any, 0, len(deps))
+		for _, dep := range deps {
+			edges = append(edges, dep)
+		}
+		extra["dependencies"] = edges
+	}
+	writeDirectTask(t, vault, id, "W-0001", extra)
+}
+
 func TestArmedWaveLandingCache(t *testing.T) {
 	repo := t.TempDir()
 	gitDirOutput(t, repo, "init")
@@ -432,48 +478,10 @@ func TestArmedWaveLandingCache(t *testing.T) {
 	}
 }
 
-func armedWaveStateMap(snapshot armedWaveSnapshot) map[string]string {
-	out := map[string]string{}
-	for _, member := range snapshot.Members {
-		out[member.ID] = member.State
+func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) string {
+	head, err := gitOutputTrim(workDir, "rev-parse", "HEAD")
+	if err != nil || head == "" {
+		return ""
 	}
-	return out
-}
-
-func armedWaveTestFixture(t *testing.T) (string, v7Index, Note) {
-	t.Helper()
-	vault := v7DirectTestVault(t)
-	if _, err := setProjectLocalConfigWithReadback(vault, "automation.concurrency.max_active_runs_per_project", 2); err != nil {
-		t.Fatal(err)
-	}
-	armedWaveDirectTask(t, vault, "APP-T-0001", nil)
-	armedWaveDirectTask(t, vault, "APP-T-0002", []string{"APP-T-0001:hard"})
-	armedWaveDirectTask(t, vault, "APP-T-0003", []string{"APP-T-0001:hard"})
-	armedWaveDirectTask(t, vault, "APP-T-0004", []string{"APP-T-0002:soft"})
-	armedWaveDirectTask(t, vault, "APP-T-0005", []string{"APP-T-0003:hard"})
-	armedWaveDirectTask(t, vault, "APP-T-0006", nil)
-	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006"}, map[string]any{"concurrency": 2})
-	armWaveForTest(t, vault)
-	idx, err := loadV7Index(vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wave := idx.Waves["W-0001"]
-	return vault, idx, wave
-}
-
-func armedWaveDirectTask(t *testing.T, vault, id string, deps []string) {
-	t.Helper()
-	extra := map[string]any{
-		"status": "ready", "readiness": "ready",
-		"owned_paths": []any{"cmd/tusker/" + strings.ToLower(id) + ".go"},
-	}
-	if len(deps) > 0 {
-		edges := make([]any, 0, len(deps))
-		for _, dep := range deps {
-			edges = append(edges, dep)
-		}
-		extra["dependencies"] = edges
-	}
-	writeDirectTask(t, vault, id, "W-0001", extra)
+	return v7LandingGateFingerprintFromFacts(head, laneIdentity, commands, landingToolchainProbe(workDir, commands))
 }

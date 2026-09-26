@@ -1420,3 +1420,11 @@ func TestScheduledPromotionLandingNamesEveryFrozenInputDrift(t *testing.T) {
 		})
 	}
 }
+
+func scheduledPromotionSnapshot(vaultPath, projectID, waveID string, wf Workflow) (scheduledPromotionCandidateSnapshot, error) {
+	return scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, nil)
+}
+
+func promoteScheduledWave(vaultPath, projectID, waveID string, wf Workflow, store *RuntimeStore, run *DepartureRun, actor string) (string, error) {
+	return promoteScheduledWaveContext(context.Background(), vaultPath, projectID, waveID, wf, store, run, actor)
+}

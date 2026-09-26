@@ -22,7 +22,7 @@ Replace this with the exact outcome.
 
 ## Verification
 
-Each Check must start with `command: <exact shell command>` or `manual proof: <exact steps a human runs>`.
+Each Check must start with `command: <exact shell command>`, `manual proof: <exact steps a human runs>`, or `ledger: <gate-ledger-id>`.
 
 | Covers | Check | Result | Notes |
 |---|---|---|---|

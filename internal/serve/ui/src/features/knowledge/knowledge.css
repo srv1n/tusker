@@ -1,5 +1,39 @@
-/* Documents-only reading polish. Keep graph labels readable without changing
-   the shared editor defaults used by task documents. */
+/* Documents-only reading polish: an editorial serif at reading size, scoped to
+   the knowledge reader so task documents keep the dense shared defaults. The
+   serif stack is system-native (macOS ships Iowan Old Style and Charter). */
+.knowledge-prose {
+  --font-serif: "Iowan Old Style", Charter, "Source Serif 4", "Source Serif Pro", Georgia, serif;
+  --tk-prose-body-size: 17px;
+  --tk-prose-body-leading: 28px;
+  --tk-prose-h1-size: 40px;
+  --tk-prose-h1-leading: 46px;
+  --tk-prose-h2-size: 28px;
+  --tk-prose-h2-leading: 34px;
+  --tk-prose-h3-size: 20px;
+  --tk-prose-h3-leading: 26px;
+}
+
+.knowledge-prose .tk-prose h1 {
+  margin-bottom: 1.5rem;
+  letter-spacing: -0.015em;
+}
+
+.knowledge-prose .tk-prose h2 {
+  margin-top: 3rem;
+  letter-spacing: -0.01em;
+}
+
+.knowledge-prose .tk-prose h3 {
+  margin-top: 2rem;
+  font-weight: 600;
+}
+
+.knowledge-prose .tk-prose p,
+.knowledge-prose .tk-prose li {
+  color: var(--color-ink);
+}
+
+/* Keep graph labels readable without changing the shared editor defaults. */
 .knowledge-prose .tk-mermaid-svg {
   width: min(100%, 42rem);
 }
@@ -9,7 +43,16 @@
 }
 
 @media (max-width: 639px) {
-  .knowledge-prose .tk-mermaid {
+  .knowledge-prose {
+    --tk-prose-body-size: 16px;
+    --tk-prose-body-leading: 26px;
+    --tk-prose-h1-size: 30px;
+    --tk-prose-h1-leading: 36px;
+    --tk-prose-h2-size: 23px;
+    --tk-prose-h2-leading: 29px;
+  }
+
+  .knowledge-prose .tk-mermaid-canvas {
     justify-content: flex-start;
   }
 

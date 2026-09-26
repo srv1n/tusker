@@ -195,115 +195,6 @@ type v7ClosePolicyConfigFile = v7policy.ClosePolicyConfigFile
 type v7ClosePolicyConfigRule = v7policy.ClosePolicyConfigRule
 type v7TuskerConfigFile = v7schema.TuskerConfigFile
 
-func (o v7MarkdownObject) Kind() v7ObjectKind {
-	return v7ObjectKind(effectiveV7Kind(o.Data))
-}
-
-func (o v7MarkdownObject) ID() v7ObjectID {
-	return v7ObjectID(stringField(o.Data, "id"))
-}
-
-func (o v7MarkdownObject) Rev() v7Rev {
-	return v7Rev(stringField(o.Data, "state_rev"))
-}
-
-func (o v7MarkdownObject) Validate(ctx context.Context) []Issue {
-	select {
-	case <-ctx.Done():
-		return []Issue{issue("CONTEXT_CANCELLED", ctx.Err().Error(), o.Note.RelativePath, "", nil)}
-	default:
-	}
-	note := o.Note
-	note.Data = o.Data
-	note.Body = o.Body
-	errs, _ := validateV7Note(note, validationContext{
-		RelativePath: o.Note.RelativePath,
-		Basename:     filepath.Base(o.Note.AbsolutePath),
-		VaultPath:    o.VaultPath,
-	}, firstNonEmpty(o.Note.RelativePath, o.Note.AbsolutePath))
-	return errs
-}
-
-func (s v7MarkdownStore) Load(ctx context.Context, id v7ObjectID) (v7Object, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	notes, err := listAllNotes(s.VaultPath)
-	if err != nil {
-		return nil, err
-	}
-	for _, note := range notes {
-		if stringField(note.Data, "id") != string(id) {
-			continue
-		}
-		if !isV7StoreObject(note.Data) {
-			continue
-		}
-		data, body, err := parseFrontmatterMustRead(note.AbsolutePath)
-		if err != nil {
-			return nil, err
-		}
-		return v7MarkdownObject{VaultPath: s.VaultPath, Note: note, Data: data, Body: body}, nil
-	}
-	return nil, tuskerError(errorNotFound, "V7 object not found: "+string(id))
-}
-
-func (s v7MarkdownStore) SaveCAS(ctx context.Context, obj v7Object, base v7Rev) (v7Rev, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	current, ok := obj.(v7MarkdownObject)
-	if !ok {
-		return "", tuskerError(errorInvalidArg, "markdown store can only save V7 markdown objects")
-	}
-	order := v7FrontmatterOrder[string(current.Kind())]
-	if len(order) == 0 {
-		order = frontmatterOrderForType(string(current.Kind()))
-	}
-	next, err := saveV7DocumentCAS(current.Note.AbsolutePath, current.Data, current.Body, order, string(base))
-	return v7Rev(next), err
-}
-
-func (s v7MarkdownStore) List(ctx context.Context, q v7Query) ([]v7ObjectRef, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	notes, err := listAllNotes(s.VaultPath)
-	if err != nil {
-		return nil, err
-	}
-	var refs []v7ObjectRef
-	for _, note := range notes {
-		if !isV7StoreObject(note.Data) {
-			continue
-		}
-		kind := v7ObjectKind(effectiveV7Kind(note.Data))
-		if q.Kind != "" && kind != q.Kind {
-			continue
-		}
-		refs = append(refs, v7ObjectRef{
-			ID:   v7ObjectID(stringField(note.Data, "id")),
-			Kind: kind,
-			Path: note.RelativePath,
-			Rev:  v7Rev(stringField(note.Data, "state_rev")),
-		})
-	}
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].Kind == refs[j].Kind {
-			return refs[i].ID < refs[j].ID
-		}
-		return refs[i].Kind < refs[j].Kind
-	})
-	return refs, nil
-}
-
-func (s v7MarkdownStore) AppendEvent(ctx context.Context, ev v7Event) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return emitV7Event(s.VaultPath, ev.ObjectID, ev.ObjectKind, ev.EventKind, ev.Actor, ev.Payload)
-}
-
 func (s v7MarkdownStore) GetEvents(ctx context.Context, scope v7EventScope) ([]v7Event, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -365,40 +256,6 @@ func (s v7MarkdownStore) GetEvents(ctx context.Context, scope v7EventScope) ([]v
 		return events[i].At < events[j].At
 	})
 	return events, nil
-}
-
-func (s v7FileRuntimeStore) Claim(ctx context.Context, taskID v7ObjectID, owner string, ttl time.Duration) (v7LeaseRecord, error) {
-	if err := ctx.Err(); err != nil {
-		return v7LeaseRecord{}, err
-	}
-	return s.writeLease(ctx, string(taskID), "", owner, "", currentGitBranch(), "active", ttl)
-}
-
-func (s v7FileRuntimeStore) Heartbeat(ctx context.Context, leaseID string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	lease, err := s.findActiveLease(ctx, leaseID)
-	if err != nil {
-		return err
-	}
-	_, err = s.writeLease(ctx, lease.Task, lease.ID, lease.Owner, lease.Workspace, lease.Branch, "active", 0)
-	return err
-}
-
-func (s v7FileRuntimeStore) Release(ctx context.Context, leaseID string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	lease, err := s.findActiveLease(ctx, leaseID)
-	if err != nil {
-		return err
-	}
-	released, err := s.writeLease(ctx, lease.Task, lease.ID, lease.Owner, lease.Workspace, lease.Branch, "released", 0)
-	if err != nil {
-		return err
-	}
-	return emitV7Event(s.VaultPath, released.Task, "task", "claim_released", released.Owner, map[string]any{"lease": released.ID})
 }
 
 func (s v7FileRuntimeStore) ListLeases(ctx context.Context, q v7LeaseQuery) ([]v7LeaseRecord, error) {
@@ -536,28 +393,6 @@ func isV7StoreObject(data map[string]any) bool {
 		schema == "tusker.proposal/v1"
 }
 
-func isV7NewEpicSpecForm(args Args) bool {
-	if args.String("acronym") != "" {
-		return false
-	}
-	return epicAcronymPattern.MatchString(strings.ToUpper(args.String("_pos0")))
-}
-
-func shouldDefaultNewTaskToV7(args Args) bool {
-	epic := strings.ToUpper(strings.TrimSpace(args.String("epic")))
-	if !epicAcronymPattern.MatchString(epic) {
-		return false
-	}
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return false
-	}
-	v7EpicPath := filepath.Join(vaultPath, "work", "epics", epic+".md")
-	v5EpicDir := filepath.Join(vaultPath, "epics", epic)
-	v5EpicExists := fileExists(filepath.Join(v5EpicDir, epic+".md")) || fileExists(filepath.Join(v5EpicDir, "index.md"))
-	return fileExists(v7EpicPath) && !v5EpicExists
-}
-
 func newV7Epic(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -580,6 +415,17 @@ func newV7Epic(args Args) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	specRefs := splitCSV(firstNonEmpty(args.String("spec-refs"), args.String("spec_refs")))
+	if len(specRefs) > 0 {
+		idx, err := loadV7Index(vaultPath)
+		if err != nil {
+			return err
+		}
+		for _, ref := range specRefs {
+			if msg, hint := v7SpecRefError(vaultPath, ref, idx.Decisions); msg != "" {
+				return tuskerError(errorInvalidArg, msg, withHint(hint))
+			}
+		}
+	}
 	data := map[string]any{
 		"schema":   "tusker.epic/v7",
 		"kind":     "epic",
@@ -867,8 +713,8 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 			return err
 		}
 		for _, ref := range specRefs {
-			if !v7SpecRefExists(vaultPath, ref, idx.Decisions) {
-				return tuskerError(errorInvalidArg, "spec_ref does not resolve inside the repository: "+ref)
+			if msg, hint := v7SpecRefError(vaultPath, ref, idx.Decisions); msg != "" {
+				return tuskerError(errorInvalidArg, msg, withHint(hint))
 			}
 		}
 		data["spec_refs"] = specRefs
@@ -956,11 +802,6 @@ func taskWorkLevel(explicit, complexity string) string {
 }
 
 func newAuthoredV7Task(args Args) error {
-	for _, flag := range []string{"execute-profile", "review-profile"} {
-		if strings.TrimSpace(args.String(flag)) != "" {
-			return tuskerError(errorInvalidArg, "--"+flag+" is not accepted for direct task authoring; routing is owned by configured profiles")
-		}
-	}
 	if strings.TrimSpace(args.String("work-level")) == "" {
 		return tuskerError(errorMissingField, "--work-level is required for new agent tasks; use light, standard, or demanding")
 	}
@@ -2756,124 +2597,6 @@ func briefV7Cmd(args Args) error {
 	return nil
 }
 
-func migratedV7EvidenceExists(vaultPath, taskID, source string) bool {
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return false
-	}
-	for _, evidence := range idx.Evidence[taskID] {
-		if stringField(evidence.Data, "created_by") == "tusker:migrate-v7" && strings.Contains(evidence.Body, "Migrated from the "+source) {
-			return true
-		}
-	}
-	return false
-}
-
-func writeMigratedV7EvidenceRecord(vaultPath string, task Note, evidenceID, evidenceKind, source, evidenceText string) error {
-	taskID := stringField(task.Data, "id")
-	now := time.Now().UTC().Format(time.RFC3339)
-	data := map[string]any{
-		"schema":         "tusker.evidence/v1",
-		"kind":           "evidence",
-		"id":             evidenceID,
-		"project":        v7ProjectID(vaultPath),
-		"task":           taskID,
-		"epic":           wikiTarget(task.Data["epic"]),
-		"evidence_kind":  evidenceKind,
-		"status":         "accepted",
-		"covers":         []string{},
-		"artifact_paths": []string{},
-		"created_by":     "tusker:migrate-v7",
-		"created_at":     now,
-		"accepted_by":    "tusker:migrate-v7",
-		"accepted_at":    now,
-	}
-	body := fmt.Sprintf(`# %s · Migrated evidence summary
-
-## Summary
-
-Migrated from the %s for %s.
-
-## Commands
-
-Not recorded during migration.
-
-## Result
-
-%s
-
-## Covers
-
-- Unmapped V5 evidence.
-
-## Artifact links
-
-- None.
-`, evidenceID, source, taskID, strings.TrimSpace(evidenceText))
-	data["state_rev"] = v7StateRev(data, body)
-	content, err := serializeDocument(data, body, v7FrontmatterOrder["evidence"])
-	if err != nil {
-		return err
-	}
-	if err := writeNewV7EvidenceDocument(filepath.Join(vaultPath, "evidence", taskID, evidenceID+".md"), content); err != nil {
-		return err
-	}
-	return emitV7Event(vaultPath, taskID, "task", "evidence_added", "tusker:migrate-v7", map[string]any{"evidence": evidenceID, "kind": evidenceKind})
-}
-
-func writeMigratedV7Attempt(vaultPath string, task Note, attemptID, workLog string) error {
-	taskID := stringField(task.Data, "id")
-	now := time.Now().UTC().Format(time.RFC3339)
-	data := map[string]any{
-		"schema":         "tusker.attempt/v1",
-		"kind":           "attempt",
-		"id":             attemptID,
-		"project":        v7ProjectID(vaultPath),
-		"task":           taskID,
-		"runner":         "migration",
-		"agent_model":    "",
-		"workspace_kind": "same_checkout",
-		"workspace_path": "",
-		"branch":         "",
-		"status":         "handoff",
-		"started_at":     now,
-		"ended_at":       now,
-		"pr_url":         "",
-		"evidence":       []string{},
-	}
-	body := fmt.Sprintf(`# %s · Migrated attempt summary
-
-## Outcome
-
-Migrated from the V5 task Work log for %s.
-
-## Changed areas
-
-Unknown from migrated task log.
-
-## Verification
-
-See migrated evidence records when present.
-
-## Handoff
-
-%s
-
-## Follow-ups proposed
-
-None.
-`, attemptID, taskID, strings.TrimSpace(workLog))
-	data["state_rev"] = v7StateRev(data, body)
-	content, err := serializeDocument(data, body, v7FrontmatterOrder["attempt"])
-	if err != nil {
-		return err
-	}
-	if err := writeText(filepath.Join(vaultPath, "attempts", taskID, attemptID+".md"), content); err != nil {
-		return err
-	}
-	return emitV7Event(vaultPath, taskID, "task", "attempt_handoff", "tusker:migrate-v7", map[string]any{"attempt": attemptID})
-}
-
 func bootstrapV7Dirs(vaultPath string) error {
 	for _, relative := range []string{
 		"work/epics", "work/tasks", "work/gates", "work/waves", "work/decisions", "work/inbox", "work/closeouts", "work/archive",
@@ -3970,22 +3693,6 @@ func gitRevParse(repoRoot, ref string) (string, bool) {
 	return strings.TrimSpace(string(out)), true
 }
 
-func appendV7EvidenceLink(taskPath, evidenceID, kind, summary string) error {
-	data, body, err := parseFrontmatterMustRead(taskPath)
-	if err != nil {
-		return err
-	}
-	baseRev := stringField(data, "state_rev")
-	bullet := fmt.Sprintf("- [[%s]] %s — %s", evidenceID, kind, summary)
-	if !strings.Contains(body, bullet) {
-		body = appendSectionBullet(body, "## Evidence", bullet, true)
-	}
-	data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-	data["updated_by"] = "agent:" + defaultActorName()
-	_, err = saveV7DocumentCAS(taskPath, data, body, v7FrontmatterOrder["task"], baseRev)
-	return err
-}
-
 func prepareV7Event(vaultPath, objectID, objectKind, eventKind, actor string, payload map[string]any, now time.Time) (path string, content string, err error) {
 	eventID := newRecordID()
 	event := map[string]any{
@@ -4314,10 +4021,6 @@ func resolveV7DispatchContext(vaultPath string) v7DispatchContext {
 	return v7DispatchContext{tier: tuskerTier(vaultPath), triggerStates: v7DispatchTriggerStates(vaultPath)}
 }
 
-func isV7DispatchableAgentTask(vaultPath string, task Note) bool {
-	return isV7DispatchableAgentTaskWithContext(vaultPath, task, resolveV7DispatchContext(vaultPath))
-}
-
 func isV7DispatchableAgentTaskWithContext(vaultPath string, task Note, context v7DispatchContext) bool {
 	return len(v7NextBlockers(vaultPath, task, context)) == 0
 }
@@ -4433,7 +4136,7 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 	if idx, err := loadV7Index(vaultPath); err == nil {
 		missing, unknown := v7PlannedAcceptanceProofGaps(task, idx)
 		if len(missing) > 0 {
-			reasons = append(reasons, "acceptance missing planned proof: "+strings.Join(missing, ", "))
+			reasons = append(reasons, "acceptance missing planned proof: "+strings.Join(missing, ", ")+" ("+v7VerificationGrammarHint+")")
 		}
 		if len(unknown) > 0 {
 			reasons = append(reasons, "planned proof references unknown acceptance: "+strings.Join(unknown, ", "))

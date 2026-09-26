@@ -122,16 +122,6 @@ func isCASConflict(err error) bool {
 	return errors.As(err, &typed) && typed.Code == "CAS_CONFLICT"
 }
 
-// retryFailedRun retries one failed piece of work without disturbing its
-// neighbours. It is idempotent: a repeat retry while an attempt is already live
-// or queued returns a friendly no-op instead of creating a duplicate, and two
-// concurrent retries converge on the winner's outcome rather than surfacing a
-// raw CAS conflict. It resets only the target run, so sibling runs are left
-// exactly as they were.
-func retryFailedRun(store *RuntimeStore, identity, actor, reason string, now time.Time) (retryFailedTaskResult, error) {
-	return retryFailedRunScoped(store, "", identity, actor, reason, now)
-}
-
 func retryFailedRunScoped(store *RuntimeStore, projectID, identity, actor, reason string, now time.Time) (retryFailedTaskResult, error) {
 	if store == nil {
 		return retryFailedTaskResult{}, tuskerError(errorNotFound, "run not found")
@@ -235,13 +225,6 @@ func expediteQueuedRetry(store *RuntimeStore, run *RunStatus, actor, reason stri
 		Expedited: true,
 		Reason:    "expedited " + firstNonEmpty(expedited.ItemID, expedited.RecordID) + " (was queued until " + previousDue + ")",
 	}, nil
-}
-
-// retryConcurrentReadback re-reads a run after a lost CAS race and reports the
-// winning retry's outcome as a friendly no-op, so the losing caller of a
-// concurrent pair gets a clean result rather than a raw CAS_CONFLICT.
-func retryConcurrentReadback(store *RuntimeStore, identity string, now time.Time) (retryFailedTaskResult, error) {
-	return retryConcurrentReadbackScoped(store, "", identity, now)
 }
 
 func retryConcurrentReadbackScoped(store *RuntimeStore, projectID, identity string, now time.Time) (retryFailedTaskResult, error) {

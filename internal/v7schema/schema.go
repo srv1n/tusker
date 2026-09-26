@@ -314,20 +314,6 @@ type TuskerConfigFile struct {
 	} `yaml:"validation"`
 }
 
-func ProjectID(vaultPath string, readText func(string) (string, error)) string {
-	projectPath := vaultPath + "/_system/project.yaml"
-	raw, err := readText(projectPath)
-	if err != nil {
-		return "tusker"
-	}
-	for _, line := range strings.Split(raw, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "id:") {
-			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "id:")), `"`)
-		}
-	}
-	return "tusker"
-}
-
 func StateRev(data map[string]any, body string) string {
 	copyData := map[string]any{}
 	for k, v := range data {

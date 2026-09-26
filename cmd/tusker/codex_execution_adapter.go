@@ -222,54 +222,6 @@ func knownCodexObservationStatus(status, kind string) bool {
 	}
 }
 
-// ObserveCloud records Cloud state as a provider observation, not a local
-// process result. In particular it accepts no PID/heartbeat/OS-settlement
-// metadata and always uses the durable Cloud task as the parent handle.
-func (a CodexExecutionAdapter) ObserveCloud(projectID, executionID, cloudTaskID, environmentID, status, occurredAt string, sequence int64, cursor string, children []CodexExecutionObservation) ([]ProviderObservationResult, error) {
-	if err := rejectCodexCloudLocalProcessMetadata(map[string]any{"environment_id": environmentID}); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(occurredAt) == "" {
-		occurredAt = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	metadata := map[string]any{"environment_id": strings.TrimSpace(environmentID), "observation_source": "authoritative_cloud_fetch"}
-	root := CodexExecutionObservation{ProjectID: projectID, ParentExecutionID: executionID, ThreadID: cloudTaskID, SourceSequence: sequence, SourceCursor: cursor, Kind: "cloud_status", Status: status, OccurredAt: occurredAt, Metadata: metadata,
-		Capabilities: []ProviderCapabilityFact{{Name: "parent_interrupt", State: "unknown", Provenance: "codex_cloud_status", FreshAt: occurredAt}, {Name: "independent_child_control", State: "unknown", Provenance: "codex_cloud_status", FreshAt: occurredAt}, {Name: "resume", State: "false", Provenance: "codex_cloud_status", FreshAt: occurredAt}, {Name: "enumeration", State: "true", Provenance: "codex_cloud_status", FreshAt: occurredAt}, {Name: "replay", State: "true", Provenance: "codex_cloud_status", FreshAt: occurredAt}}}
-	results := make([]ProviderObservationResult, 0, 1+len(children))
-	result, err := a.Observe(root)
-	if err != nil {
-		return nil, err
-	}
-	results = append(results, result)
-	for i := range children {
-		child := children[i]
-		child.ProjectID, child.ParentExecutionID, child.ThreadID = projectID, executionID, cloudTaskID
-		if child.SourceSequence == 0 {
-			child.SourceSequence = sequence + int64(i) + 1
-		}
-		if child.SourceCursor == "" {
-			child.SourceCursor = cursor
-		}
-		if child.OccurredAt == "" {
-			child.OccurredAt = occurredAt
-		}
-		if child.Metadata == nil {
-			child.Metadata = map[string]any{}
-		}
-		if err := rejectCodexCloudLocalProcessMetadata(child.Metadata); err != nil {
-			return nil, err
-		}
-		child.Metadata["environment_id"] = strings.TrimSpace(environmentID)
-		child.Metadata["observation_source"] = "authoritative_cloud_fetch"
-		result, err = a.Observe(child)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, result)
-	}
-	return results, nil
-}
-
 func codexProviderStatusRegression(store *RuntimeStore, event ProviderExecutionEventEnvelope) bool {
 	if store == nil || !validProviderObservationStatus(event.Status) {
 		return false
@@ -281,30 +233,6 @@ func codexProviderStatusRegression(store *RuntimeStore, event ProviderExecutionE
 	}
 	terminal := prior == "terminal" || prior == "failed" || prior == "cancelled"
 	return terminal && (event.Status == "starting" || event.Status == "running" || event.Status == "interrupt_requested")
-}
-
-func rejectCodexCloudLocalProcessMetadata(metadata map[string]any) error {
-	for key, value := range metadata {
-		normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "", ".", "").Replace(strings.TrimSpace(key)))
-		if strings.Contains(normalized, "pid") || strings.Contains(normalized, "pgid") || strings.Contains(normalized, "heartbeat") || strings.Contains(normalized, "ossettlement") || strings.Contains(normalized, "process") {
-			return providerObservationError("codex cloud observation cannot contain local process facts")
-		}
-		switch nested := value.(type) {
-		case map[string]any:
-			if err := rejectCodexCloudLocalProcessMetadata(nested); err != nil {
-				return err
-			}
-		case []any:
-			for _, item := range nested {
-				if object, ok := item.(map[string]any); ok {
-					if err := rejectCodexCloudLocalProcessMetadata(object); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func codexObservationStatus(status, kind string) string {

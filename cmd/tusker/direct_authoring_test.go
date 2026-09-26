@@ -150,26 +150,6 @@ func TestDirectWaveAuthoringNewTaskRequiresBodyFile(t *testing.T) {
 	}
 }
 
-func TestDirectWaveAuthoringNewTaskRejectsProfileOverrides(t *testing.T) {
-	for _, flag := range []string{"execute-profile", "review-profile"} {
-		t.Run(flag, func(t *testing.T) {
-			vault := v7DirectTestVault(t)
-			bodyPath := directAuthoringBodyPath(t, vault, "body.md", "# Body\n\nConcrete body.\n")
-			err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Profile override", "work-level": "standard", "body-file": bodyPath, flag: "configured-profile"})
-			if err == nil || !strings.Contains(err.Error(), "--"+flag+" is not accepted") {
-				t.Fatalf("profile override error=%v, want configured-profile refusal", err)
-			}
-			entries, readErr := os.ReadDir(filepath.Join(vault, "work", "tasks"))
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
-			if len(entries) != 0 {
-				t.Fatalf("profile override refusal wrote task records: %v", entries)
-			}
-		})
-	}
-}
-
 func TestDirectWaveAuthoringNewTaskAllocatesAndPublishesAtomically(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	baselineEvents := countV7EventFiles(t, vault, "")

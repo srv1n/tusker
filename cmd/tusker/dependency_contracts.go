@@ -124,22 +124,6 @@ func dependencyContractReviewForTask(idx v7Index, task Note) dependencyContractR
 	return out
 }
 
-func dependencyContractReviewForTaskIDs(idx v7Index, taskIDs []string) dependencyContractReviewProjection {
-	out := newDependencyContractReviewProjection()
-	ids := uniqueStrings(taskIDs)
-	sort.Strings(ids)
-	for _, id := range ids {
-		task, ok := idx.Tasks[id]
-		if !ok {
-			continue
-		}
-		projected := dependencyContractReviewForTask(idx, task)
-		out.Dependencies = append(out.Dependencies, projected.Dependencies...)
-	}
-	sortDependencyContractReviewRows(out.Dependencies)
-	return out
-}
-
 func dependencyContractReviewForTaskAtVault(vault string, task Note) (dependencyContractReviewProjection, error) {
 	idx, err := loadV7Index(vault)
 	if err != nil {

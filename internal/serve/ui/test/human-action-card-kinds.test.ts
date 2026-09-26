@@ -1,14 +1,19 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite";
+
+// Vite needs the fixture under the UI root to resolve node_modules; afterAll removes it even when the test times out.
+const fixtures: string[] = [];
+afterAll(() => { for (const dir of fixtures) rmSync(dir, { recursive: true, force: true }); });
 
 test("a mounted human action card switches gate, question, and permission without hook errors", async () => {
   const playwright = await import("/Users/sarav/.bun/install/global/node_modules/playwright/index.mjs").catch(() => undefined);
   if (!playwright) return;
   const root = resolve(import.meta.dir, "..");
   const fixture = mkdtempSync(resolve(root, ".human-kinds-"));
+  fixtures.push(fixture);
   writeFileSync(resolve(fixture, "index.html"), '<main id="root"></main><script type="module" src="/entry.tsx"></script>');
   writeFileSync(resolve(fixture, "entry.tsx"), `
 import React from "react";
@@ -41,6 +46,5 @@ const root = createRoot(document.getElementById("root")!);
   } finally {
     await browser?.close();
     await server.close();
-    rmSync(fixture, { recursive: true, force: true });
   }
 }, 20_000);

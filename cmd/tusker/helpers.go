@@ -26,28 +26,6 @@ func replaceTemplateTokens(template string, replacements map[string]string) stri
 	return output
 }
 
-func appendTransition(data map[string]any, entry orderedMap) {
-	switch current := data["transitions"].(type) {
-	case []any:
-		data["transitions"] = append(current, entry)
-	case []orderedMap:
-		data["transitions"] = append(current, entry)
-	default:
-		data["transitions"] = []any{entry}
-	}
-}
-
-func orderedTransition(at, kind, from, to, actor, reason string) orderedMap {
-	return orderedMap{
-		{Key: "at", Value: at},
-		{Key: "kind", Value: kind},
-		{Key: "from", Value: from},
-		{Key: "to", Value: to},
-		{Key: "actor", Value: actor},
-		{Key: "reason", Value: reason},
-	}
-}
-
 func appendWorkLogBullet(body, text string) string {
 	return appendSectionBullet(body, "## Work log", "- "+text, false)
 }
@@ -190,6 +168,9 @@ func resolveVaultPath(args Args, allowCreate bool) (string, error) {
 	if allowCreate {
 		return filepath.Abs(filepath.Join(startDir, defaultRepoVaultDir))
 	}
+	if stale, ok := registeredProjectWithMissingVault(startDir); ok {
+		return "", missingRegisteredVaultError(startDir, stale)
+	}
 	return "", tuskerError(
 		errorMissingArg,
 		"No Tusker vault found.\n\nRecommended:\n  tusker init --yes\n\nOther option:\n  tusker --vault <path>    # use an existing vault",
@@ -317,6 +298,52 @@ func discoverRegisteredProjectVault(startDir string) (RegisteredProject, bool, e
 		return RegisteredProject{}, false, staleRegisteredProjectVaultError(startDir, projectID, commonDir, identityMatches)
 	}
 	return RegisteredProject{}, false, nil
+}
+
+// registeredProjectWithMissingVault finds a registration for this checkout
+// whose vault directory has vanished. discoverRegisteredProjectVault cannot see
+// it because the project_id it reads lives inside the missing vault. Only call
+// it on failure paths; lookup errors are treated as "no match".
+func registeredProjectWithMissingVault(startDir string) (RegisteredProject, bool) {
+	repoRoot, err := gitFactOutput(startDir, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(repoRoot) == "" {
+		return RegisteredProject{}, false
+	}
+	repoRoot = canonicalProjectPath(repoRoot)
+	store, missing, err := openRuntimeStoreReadOnly(DefaultStateRoot())
+	if err != nil || missing {
+		return RegisteredProject{}, false
+	}
+	defer store.Close()
+	loadedProjects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	if err != nil {
+		return RegisteredProject{}, false
+	}
+	for _, loadedProject := range loadedProjects {
+		candidate := loadedProject.Project
+		if strings.TrimSpace(candidate.VaultRoot) == "" || canonicalProjectPath(candidate.RepoRoot) != repoRoot || dirExists(candidate.VaultRoot) {
+			continue
+		}
+		return candidate, true
+	}
+	return RegisteredProject{}, false
+}
+
+func missingRegisteredVaultError(startDir string, project RegisteredProject) error {
+	identity := registeredProjectLabel(project)
+	return tuskerError(
+		errorMissingArg,
+		fmt.Sprintf("Project %s (%s) was registered here with vault %s; that vault is missing.", identity, project.ProjectID, project.VaultRoot),
+		withHint(fmt.Sprintf("Run `tusker init --yes` to recreate an empty vault and reuse the %s registration, or repair the registration with `tusker projects rebind` / `tusker projects prune`.", identity)),
+		withContext(map[string]any{
+			"arg":           "--vault",
+			"cwd":           startDir,
+			"project_id":    project.ProjectID,
+			"project_name":  identity,
+			"repo_root":     project.RepoRoot,
+			"missing_vault": project.VaultRoot,
+		}),
+	)
 }
 
 func registeredProjectConfigInvalidError(startDir, repoRoot string, cause error) error {
@@ -615,21 +642,6 @@ func splitCSV(value string) []string {
 	return out
 }
 
-func splitCSVLinks(value string) []string {
-	parts := splitCSV(value)
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if strings.HasPrefix(part, "[[") && strings.HasSuffix(part, "]]") {
-			out = append(out, part)
-		} else if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {
-			out = append(out, part)
-		} else {
-			out = append(out, "[["+part+"]]")
-		}
-	}
-	return out
-}
-
 func parseBooleanArg(value string, fallback bool) (bool, error) {
 	if value == "" {
 		return fallback, nil
@@ -726,23 +738,9 @@ func defaultActorName() string {
 	return firstNonEmpty(os.Getenv("TUSKER_ACTOR"), os.Getenv("USER"), os.Getenv("LOGNAME"), "automation")
 }
 
-func suffixReason(reason string) string {
-	if strings.TrimSpace(reason) == "" {
-		return ""
-	}
-	return " — " + strings.TrimSpace(reason)
-}
-
 func fallback(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
-	}
-	return value
-}
-
-func nilIfEmpty(value string) any {
-	if strings.TrimSpace(value) == "" {
-		return nil
 	}
 	return value
 }
@@ -781,13 +779,6 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
-}
-
-func pluralY(n int) string {
-	if n == 1 {
-		return "y"
-	}
-	return "ies"
 }
 
 func countStatus(items []map[string]any, status string) int {

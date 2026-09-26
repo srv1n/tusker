@@ -329,6 +329,13 @@ func completionACPWorkerPolicyFingerprint(lane string, profile ResolvedRunnerPro
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
+// explicitProfileSource reports whether a profile came from operator config
+// (global is the only profile layer now; project/local kept for older state),
+// as opposed to built-in defaults.
+func explicitProfileSource(source string) bool {
+	return source == configSourceUserGlobal || source == configSourceProject || source == configSourceLocal
+}
+
 func completionLaneWorkerPolicy(wf Workflow, note Note, lane string) (ResolvedRunnerProfile, []string, string, error) {
 	profile, err := resolveRunProfileForLane(note, wf, lane, "")
 	if err != nil {
@@ -337,8 +344,8 @@ func completionLaneWorkerPolicy(wf Workflow, note Note, lane string) (ResolvedRu
 	declared, exists := wf.RunnerProfiles[profile.Name]
 	definitionSource := wf.RunnerProfileSources[profile.Name]
 	if profile.Name == "" || !exists || strings.TrimSpace(declared.Harness) == "" ||
-		(definitionSource != configSourceProject && definitionSource != configSourceLocal) {
-		return ResolvedRunnerProfile{}, nil, "", fmt.Errorf("completion authority requires an explicit project or machine-local profile for lane %q", lane)
+		!explicitProfileSource(definitionSource) {
+		return ResolvedRunnerProfile{}, nil, "", fmt.Errorf("completion authority requires an explicitly configured (global config) runner profile for lane %q", lane)
 	}
 	profile.Source = definitionSource
 	_, base, err := runnerForName(profile.Definition.Harness, wf)
@@ -423,9 +430,8 @@ func (d *Daemon) validateCompletionWorkerAuthority(project RegisteredProject, wf
 	executeSource := wf.RunnerProfileSources[execute.Name]
 	reviewSource := wf.RunnerProfileSources[review.Name]
 	if wf.RunnerProfiles[execute.Name].Harness == "" || wf.RunnerProfiles[review.Name].Harness == "" ||
-		(executeSource != configSourceProject && executeSource != configSourceLocal) ||
-		(reviewSource != configSourceProject && reviewSource != configSourceLocal) {
-		return fmt.Errorf("completion authority requires explicit project or machine-local lane profiles")
+		!explicitProfileSource(executeSource) || !explicitProfileSource(reviewSource) {
+		return fmt.Errorf("completion authority requires explicitly configured (global config) execute and review profiles")
 	}
 	if err := completionWorkerSafety(d.stateRoot, workspaceForCompletionSafety(project, result.TaskID), execute); err != nil {
 		return err

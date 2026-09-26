@@ -103,9 +103,6 @@ func TestS46DocumentContract(t *testing.T) {
 				t.Fatalf("legacy canonical must not translate into approval or conformance: %#v", doc)
 			}
 		}
-		diags := MigrationDiagnostics(corpus)
-		assertIssue(t, diags, "DOC_LIFECYCLE_LEGACY", ".tusker/specs/legacy.md", "legacy lifecycle")
-		assertIssue(t, diags, "DOC_KIND_LEGACY", ".tusker/specs/legacy.md", "inferred from the file path")
 	})
 
 	t.Run("matches requires stamp and scope", func(t *testing.T) {

@@ -28,13 +28,6 @@ const (
 	legacyGraphRelPath    = "docs/system/graph.json"
 )
 
-// LegacyGeneratedRelPaths lists the pre-S46 generated locations. They are
-// still maintained as a deprecated mirror by WriteDocsMap until the adoption
-// story removes them; readers must prefer the Generated* paths above.
-func LegacyGeneratedRelPaths() []string {
-	return []string{legacyIndexRelPath, legacyGraphRelPath}
-}
-
 // MapDefect names one structural reason the doc graph cannot be turned into a
 // map. Generation refuses the whole corpus when any defect is present.
 type MapDefect struct {

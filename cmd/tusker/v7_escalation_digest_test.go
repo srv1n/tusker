@@ -13,70 +13,6 @@ import (
 	"time"
 )
 
-func TestEscalationCreateRouting(t *testing.T) {
-	vault := pickupV7TestVault(t)
-	writeDigestTask(t, vault, "APP-T-0001", "Escalating task", "ready", "medium", "pending", "")
-	writeEscalationNotificationsConfig(t, vault, true)
-
-	var notifications []string
-	oldNotify := notifyEscalationUser
-	notifyEscalationUser = func(title, message string) error {
-		notifications = append(notifications, title+"|"+message)
-		return nil
-	}
-	t.Cleanup(func() { notifyEscalationUser = oldNotify })
-
-	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P2", "task": "APP-T-0001", "_pos0": "record-only escalation"}); err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 0, len(notifications), "P2 notification count")
-
-	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "_pos0": "-s", "_pos1": "P1", "_pos2": "notify escalation", "task": "APP-T-0001"}); err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 1, len(notifications), "P1 notification count")
-
-	if err := writeText(managedTuskerConfigPath(vault), "escalation:\n  notifications_enabled: false\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P1", "task": "APP-T-0001", "_pos0": "disabled notification escalation"}); err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 1, len(notifications), "disabled notification count")
-
-	writeEscalationNotificationsConfig(t, vault, true)
-	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P0", "task": "APP-T-0001", "reason": "security_concern", "_pos0": "persistent banner escalation"}); err != nil {
-		t.Fatal(err)
-	}
-	if !hasOpenP0Escalation(vault) {
-		t.Fatal("expected open P0 escalation to set serve banner flag")
-	}
-	assertEqual(t, 2, len(notifications), "P0 notification count")
-
-	project := RegisteredProject{ProjectID: v7ProjectID(vault), VaultRoot: vault}
-	recordDaemonEscalationForRun(project, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001"}, "park", "daemon parked the run")
-	idx, err := loadV7Index(vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundDaemon := false
-	for _, note := range idx.Escalations {
-		if stringField(note.Data, "source") == "daemon" && stringField(note.Data, "reason") == "park" {
-			foundDaemon = true
-		}
-	}
-	if !foundDaemon {
-		t.Fatal("expected daemon-created escalation")
-	}
-
-	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P2", "task": "APP-T-0001", "reason": "confused", "_pos0": "bad reason"}); err == nil {
-		t.Fatal("expected invalid runner escalation reason to fail")
-	}
-	if !strings.Contains(defaultWorkflowMarkdown(), "system_error|security_concern|unresolvable_conflict|stuck_loop") {
-		t.Fatal("runner prompt must state eligible escalation reasons")
-	}
-}
-
 func TestEscalationStaleBumpAck(t *testing.T) {
 	vault := pickupV7TestVault(t)
 	writeDigestTask(t, vault, "APP-T-0001", "Stale task", "ready", "medium", "pending", "")
@@ -458,5 +394,66 @@ func assertDigestSectionOrder(t *testing.T, output string) {
 			t.Fatalf("section %s out of order:\n%s", section, output)
 		}
 		last = idx
+	}
+}
+
+func TestEscalationCreateRouting(t *testing.T) {
+	vault := pickupV7TestVault(t)
+	writeDigestTask(t, vault, "APP-T-0001", "Escalating task", "ready", "medium", "pending", "")
+	writeEscalationNotificationsConfig(t, vault, true)
+
+	var notifications []string
+	oldNotify := notifyEscalationUser
+	notifyEscalationUser = func(title, message string) error {
+		notifications = append(notifications, title+"|"+message)
+		return nil
+	}
+	t.Cleanup(func() { notifyEscalationUser = oldNotify })
+
+	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P2", "task": "APP-T-0001", "_pos0": "record-only escalation"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 0, len(notifications), "P2 notification count")
+
+	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "_pos0": "-s", "_pos1": "P1", "_pos2": "notify escalation", "task": "APP-T-0001"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, len(notifications), "P1 notification count")
+
+	if err := writeText(managedTuskerConfigPath(vault), "escalation:\n  notifications_enabled: false\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P1", "task": "APP-T-0001", "_pos0": "disabled notification escalation"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 1, len(notifications), "disabled notification count")
+
+	writeEscalationNotificationsConfig(t, vault, true)
+	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P0", "task": "APP-T-0001", "reason": "security_concern", "_pos0": "persistent banner escalation"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, 2, len(notifications), "P0 notification count")
+
+	project := RegisteredProject{ProjectID: v7ProjectID(vault), VaultRoot: vault}
+	recordDaemonEscalationForRun(project, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001"}, "park", "daemon parked the run")
+	idx, err := loadV7Index(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDaemon := false
+	for _, note := range idx.Escalations {
+		if stringField(note.Data, "source") == "daemon" && stringField(note.Data, "reason") == "park" {
+			foundDaemon = true
+		}
+	}
+	if !foundDaemon {
+		t.Fatal("expected daemon-created escalation")
+	}
+
+	if err := escalationV7CreateCmd(Args{"vault": vault, "quiet": "true", "local": "true", "severity": "P2", "task": "APP-T-0001", "reason": "confused", "_pos0": "bad reason"}); err == nil {
+		t.Fatal("expected invalid runner escalation reason to fail")
+	}
+	if !strings.Contains(defaultWorkflowMarkdown(), "system_error|security_concern|unresolvable_conflict|stuck_loop") {
+		t.Fatal("runner prompt must state eligible escalation reasons")
 	}
 }

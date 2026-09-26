@@ -1016,29 +1016,6 @@ func (s *serveServer) warmSnapshot(projectID string) {
 	_, _ = s.loadFreshSnapshotForProject(projectID)
 }
 
-func (s *serveServer) warmRegisteredProjectSnapshots() {
-	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
-	if err != nil || len(loaded) == 0 {
-		log.Printf("serve snapshot warm: fallback project load_error=%v", err)
-		s.warmSnapshot("")
-		return
-	}
-	warmable := 0
-	for _, item := range loaded {
-		if item.Project.Enabled && item.LoadError == nil {
-			warmable++
-		}
-	}
-	log.Printf("serve snapshot warm: starting projects=%d warmable=%d skipped=%d", len(loaded), warmable, len(loaded)-warmable)
-	for _, item := range loaded {
-		if !item.Project.Enabled || item.LoadError != nil {
-			continue
-		}
-		projectID := item.Project.ProjectID
-		go s.warmSnapshot(projectID)
-	}
-}
-
 func (s *serveServer) refreshProjectSnapshot(projectID string) {
 	s.invalidateProjectSnapshot(projectID)
 	if s.stream != nil {
@@ -1047,19 +1024,6 @@ func (s *serveServer) refreshProjectSnapshot(projectID string) {
 			Keys: []string{"projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch", "factory-operations"},
 		})
 	}
-}
-
-func (s *serveServer) refreshRegisteredProjectSnapshots() {
-	s.invalidateProjectSnapshot("")
-	go s.warmRegisteredProjectSnapshots()
-}
-
-func (s *serveServer) buildSnapshot(includeQueue bool) (serveSnapshot, error) {
-	project, err := s.projectForSnapshot("")
-	if err != nil {
-		return serveSnapshot{}, err
-	}
-	return s.buildSnapshotForProject(project, includeQueue)
 }
 
 func (s *serveServer) buildSnapshotForProject(project RegisteredProject, includeQueue bool) (serveSnapshot, error) {
@@ -1172,10 +1136,6 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 	return snap, nil
 }
 
-func (s *serveServer) invalidateSnapshotCaches() {
-	s.invalidateProjectSnapshot("")
-}
-
 func (s *serveServer) invalidateProjectSnapshot(projectID string) {
 	projectID = strings.TrimSpace(projectID)
 	s.snapshotMu.Lock()
@@ -1247,14 +1207,6 @@ func (s *serveServer) dropProjectSnapshot(projectID string) {
 	s.summary = nil
 	s.summaryAt = time.Time{}
 	s.summaryMu.Unlock()
-}
-
-func (s *serveServer) loadQueueExplanations() map[string]automationTaskExplanation {
-	project, err := s.projectForSnapshot("")
-	if err != nil {
-		return map[string]automationTaskExplanation{}
-	}
-	return s.loadQueueExplanationsForProject(project)
 }
 
 func (s *serveServer) loadQueueExplanationsForProject(project RegisteredProject) map[string]automationTaskExplanation {
@@ -1547,25 +1499,6 @@ func (s *serveServer) handleSummary(w http.ResponseWriter, r *http.Request) {
 		Attention: serveAttentionCount(snap), Review: review, Running: running,
 		FailedRecent: failed, GeneratedAt: s.now().Format(time.RFC3339Nano),
 	})
-}
-
-// loadSummarySnapshot keeps repeated badge refreshes on the warm in-memory
-// projection. Stream-driven clients may request this endpoint several times in
-// a burst; avoid a full vault walk for every one of those requests.
-func (s *serveServer) loadSummarySnapshot() (serveSnapshot, error) {
-	now := s.now()
-	s.summaryMu.Lock()
-	defer s.summaryMu.Unlock()
-	if s.summary != nil && now.Sub(s.summaryAt) < time.Second {
-		return *s.summary, nil
-	}
-	snap, err := s.buildSnapshot(false)
-	if err != nil {
-		return serveSnapshot{}, err
-	}
-	s.summary = &snap
-	s.summaryAt = now
-	return snap, nil
 }
 
 func serveAttentionCount(snap serveSnapshot) int {

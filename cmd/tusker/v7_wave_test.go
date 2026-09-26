@@ -204,7 +204,7 @@ func TestServeWaves(t *testing.T) {
 
 	writeServeWave(t, server.vaultPath, "W-0001", "Morning batch", []string{"APP-T-0001"})
 	setServeTaskWave(t, server.vaultPath, "APP-T-0001", "W-0001")
-	server.invalidateSnapshotCaches()
+	server.invalidateProjectSnapshot("")
 	server.warmSnapshot("")
 
 	var waves []serveWaveSummary

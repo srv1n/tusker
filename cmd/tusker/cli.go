@@ -200,6 +200,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, agentMessageCmd(command, args)
 	case "message inbox":
 		return 0, agentMessageInboxCmd(args)
+	case "message hook":
+		return 0, agentMessageHookCmd(args)
 	case "mcp serve":
 		return 0, mcpServeCmd(args)
 	case "acp":
@@ -959,6 +961,8 @@ func printCommandHelp(command string) bool {
 		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
 	case "capabilities":
 		printCapabilitiesHelp()
+	case "message", "message send", "message ask", "message reply", "message list", "message show", "message consume", "message apply", "message inbox", "message hook":
+		printMessageHelp()
 	case "mcp", "mcp serve":
 		fmt.Println("Usage: tusker mcp serve [--max-wait <seconds>]\n\nServe worker ask, update, and inbox tools over stdio MCP.")
 	case "init":
@@ -968,7 +972,7 @@ func printCommandHelp(command string) bool {
 	case "runner", "runner catalog", "runner profiles", "runner route", "runner conformance", "runner test":
 		printRunnerHelp()
 	case "models", "models show", "models catalog", "models set", "models reset", "models profile-set", "models profile-disable", "models profile-enable", "models profile-remove":
-		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set --scope global|project --name <stable-id> [--display-name <name>] [--eligible-tiers <light,standard,demanding>] --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] --if-revision <sha256> [--json]\n  tusker models profile-disable|profile-enable|profile-remove --scope global|project --name <name> --if-revision <sha256> [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> --if-revision <sha256> [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review --if-revision <sha256> [--json]")
+		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set [--scope global] --name <stable-id> [--display-name <name>] [--eligible-tiers <light,standard,demanding>] --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] --if-revision <sha256> [--json]\n  tusker models profile-disable|profile-enable|profile-remove [--scope global] --name <name> --if-revision <sha256> [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> --if-revision <sha256> [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review --if-revision <sha256> [--json]\n\nProfiles are defined only in the global config; a project selects them with models set/reset.")
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()
 	case "task", "task update":
@@ -1106,7 +1110,52 @@ Purpose:
   bodies, dependencies, and human actions) into durable TSK or epic task
   records, gates, and an inert wave. An identical request_key and
   fingerprint returns the existing records; a changed request under the same
-  key conflicts. Nothing is claimed or dispatched.`)
+  key conflicts. Nothing is claimed or dispatched.
+
+Example request (tusker.wave-authoring/v1):
+  schema: tusker.wave-authoring/v1      # required, exactly this value
+  request_key: auth-wave-v1             # required (or pass --request-key), string
+  title: Auth hardening                 # required, string
+  outcome: Sessions expire server-side. # required, string
+  concurrency: 2                        # optional, int
+  spec_refs: [docs/system/auth.md]      # optional, list of governing spec/proposal/decision refs
+  shared_context: Shared notes.         # optional, string (lives once in the wave brief)
+  tasks:                                # required, at least one
+    - key: expiry                       # required, unique temporary key
+      title: Enforce session expiry     # required, string
+      work_level: standard              # required, light|standard|demanding
+      review_level: demanding           # optional, light|standard|demanding
+      review_reason: touches auth       # optional, required when review_level differs from work_level
+      epic: AUT                         # optional, existing three-letter epic (default TSK)
+      spec_refs: [docs/system/auth.md]  # optional, list
+      dependencies:                     # optional, list
+        - task: other-key               # required, key of another task in this request
+          kind: hard                    # optional, hard|soft (default hard)
+      owned_paths: [internal/auth/]     # optional, list of paths
+      generated_outputs: []             # optional, list of paths
+      implementation_notes: Notes.      # optional, string
+      body: |                           # required, non-empty task markdown
+        ## Acceptance
+        | ID | Outcome | Proof |
+        | --- | --- | --- |
+        | A1 | Expired sessions are rejected. | Verification A1 |
+        ## Verification
+        | Covers | Check | Result | Notes |
+        | --- | --- | --- | --- |
+        | A1 | command: go test ./internal/auth -count=1 | pending | |
+  human_actions:                        # optional, list
+    - key: rotate-keys                  # required, unique key
+      task: expiry                      # required, task key
+      owner: human:alice                # required, human:<name>
+      action: rotate the signing key    # required, string
+      verification: new key is live     # required, string
+      why_agent_cannot: needs prod KMS  # required, string
+      covers: [A1]                      # optional, acceptance ids of that task
+
+  Verification Check cells must start with command:, manual proof:,
+  ledger:, or proof: (manual: is not accepted). Acceptance ids covered by
+  a human action's covers also count as planned proof. After create,
+  contracts that wave review --check would refuse are printed as warnings.`)
 	case command == "wave review":
 		fmt.Println(`Usage:
   tusker wave review <WAVE-ID> [--check] [--json]
@@ -1633,7 +1682,7 @@ func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
   tusker new task [--vault <path>] --title <title> --work-level light|standard|demanding --body-file <path|-> [--epic <ACR>] [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--review-level light|standard|demanding] [--review-reason <reason>] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
-  tusker task update <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] --by <actor> [--json]
+  tusker task update <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 
@@ -1646,6 +1695,8 @@ Notes:
   Without --epic a task is allocated in the standalone TSK-T-0001 namespace and
   no epic is recorded. --body-file - reads the exact task body from stdin.
   Every supplied spec_refs path and section anchor must resolve.
+  --execute-profile/--review-profile pin one lane to a named runner profile
+  from the global config; the name must resolve or the command is refused.
 
 Examples:
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
@@ -1662,6 +1713,10 @@ func printStatusHelp() {
 	fmt.Println(`Usage:
   tusker status <id> <status> [--vault <path>] [--actor <name>] [--reason <text>]
   tusker status --id <id> --status <status> [--vault <path>] [--actor <name>] [--reason <text>]
+  tusker status [--vault <path>]
+
+  Bare tusker status (no id) prints a vault summary instead of changing
+  a task.
 
 Statuses:
   idea, backlog, ready, review, rework, superseded

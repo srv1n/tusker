@@ -37,6 +37,12 @@ func acquireV7DocumentLock(filePath string, timeout time.Duration) (*v7DocumentL
 	if err != nil {
 		return nil, err
 	}
+	return acquireV7LockForIdentity(identity, filePath, timeout)
+}
+
+// acquireV7LockForIdentity takes the named lock without requiring filePath to
+// exist, for documents (like the user-global config) that may not be created yet.
+func acquireV7LockForIdentity(identity, filePath string, timeout time.Duration) (*v7DocumentLock, error) {
 	lockDir := v7DocumentLockDirectory()
 	if err := ensureV7DocumentLockDirectory(lockDir); err != nil {
 		return nil, err

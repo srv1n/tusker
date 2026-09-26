@@ -145,10 +145,12 @@ func findRunForVault(store *RuntimeStore, vaultPath, identity string) (*RunStatu
 	if err != nil {
 		return nil, err
 	}
-	if registered {
-		return store.FindRunScoped(projectID, identity)
+	if !registered {
+		// Runs belong only to registered projects; a bare lookup would match
+		// another project's task with the same ID.
+		return nil, nil
 	}
-	return store.FindRun(identity)
+	return store.FindRunScoped(projectID, identity)
 }
 
 // FindRunScoped resolves a run only within the named registered project. A
@@ -243,10 +245,6 @@ func (s *RuntimeStore) listAttemptsForRun(projectID, recordID string, limit int)
 		out = append(out, attempt)
 	}
 	return out, rows.Err()
-}
-
-func buildRunInspection(store *RuntimeStore, run *RunStatus) (runInspection, error) {
-	return buildRunInspectionWithQuietAfter(store, run, time.Now().UTC(), defaultRunQuietAfter)
 }
 
 func buildRunInspectionWithQuietAfter(store *RuntimeStore, run *RunStatus, now time.Time, quietAfter time.Duration) (runInspection, error) {
@@ -856,20 +854,8 @@ func runsInterruptCmd(args Args) error {
 	return nil
 }
 
-// interruptRuntimeRun is the single operator interrupt path shared by the CLI
-// and Serve. A live daemon gets first ownership of its in-memory runner handle;
-// otherwise the runtime store path signals a verified process or retires a dead
-// process row with the same canonical interrupted outcome.
-func interruptRuntimeRun(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, bool, error) {
-	return interruptRuntimeRunScoped(stateRoot, store, "", identity)
-}
-
 func interruptRuntimeRunScoped(stateRoot string, store *RuntimeStore, projectID, identity string) (*RunStatus, bool, error) {
 	return interruptRuntimeRunWithHookScoped(stateRoot, store, projectID, identity, nil)
-}
-
-func interruptRuntimeRunWithHook(stateRoot string, store *RuntimeStore, identity string, afterRead func()) (*RunStatus, bool, error) {
-	return interruptRuntimeRunWithHookScoped(stateRoot, store, "", identity, afterRead)
 }
 
 func interruptRuntimeRunWithHookScoped(stateRoot string, store *RuntimeStore, projectID, identity string, afterRead func()) (*RunStatus, bool, error) {
@@ -910,20 +896,12 @@ func interruptRuntimeRunWithHookScoped(stateRoot string, store *RuntimeStore, pr
 	return run, false, err
 }
 
-func findInterruptRun(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, error) {
-	return findInterruptRunScoped(stateRoot, store, "", identity)
-}
-
 func findInterruptRunScoped(stateRoot string, store *RuntimeStore, projectID, identity string) (*RunStatus, error) {
 	run, ownedStore, err := findInterruptRunWithStoreScoped(stateRoot, store, projectID, identity)
 	if ownedStore != nil {
 		defer ownedStore.Close()
 	}
 	return run, err
-}
-
-func findInterruptRunWithStore(stateRoot string, store *RuntimeStore, identity string) (*RunStatus, *RuntimeStore, error) {
-	return findInterruptRunWithStoreScoped(stateRoot, store, "", identity)
 }
 
 func findInterruptRunWithStoreScoped(stateRoot string, store *RuntimeStore, projectID, identity string) (*RunStatus, *RuntimeStore, error) {

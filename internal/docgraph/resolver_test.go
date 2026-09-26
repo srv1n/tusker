@@ -82,7 +82,7 @@ func TestSemanticLinksBacklinksAndBrokenRoutesShareResolver(t *testing.T) {
 	if !foundBroken {
 		t.Fatalf("broken managed route was not reported: %#v", broken)
 	}
-	backlinks := Backlinks(corpus, "current-spec")
+	backlinks := NewResolver(corpus).Backlinks("current-spec", corpus)
 	if len(backlinks) != 1 || backlinks[0].From != "guide" || backlinks[0].Kind != "link" {
 		t.Fatalf("backlinks = %#v", backlinks)
 	}
@@ -179,7 +179,7 @@ func TestRepositorySpecsAreDiscoverableFromCanonicalRoot(t *testing.T) {
 }
 
 func TestExtractReferencesSkipsFencedExamplesAndImages(t *testing.T) {
-	body := "See [[guide|the guide]] and [spec](../specs/current.md#why).\n\n```md\n[[example]]\n```\n\n![preview](preview.png)\n"
+	body := "See [[guide|the guide]] and [spec](../specs/current.md#why).\n\n```md\n[[example]]\n```\n\n![preview](preview.png)\nUse `[[foo]]` or ``[x](y.md)`` literally.\n"
 	refs := ExtractReferences(body)
 	joined := strings.Join(refs, ",")
 	if joined != "guide,../specs/current.md" {

@@ -57,8 +57,7 @@
 :root {
   --tk-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --tk-display-font-family: var(--tk-font-family);
-  --tk-font-scale: 1.125;
-  /* Desktop renders the dense fixed-pixel UI a step larger; narrow screens keep the base size. */
+  --tk-font-scale: 1;
   --tk-zoom: var(--tk-font-scale);
   /* Apple macOS text styles: Body 13/16, Title 3 15/20, Title 2 17/22,
      Title 1 22/26, Large Title 26/32. */
@@ -708,20 +707,56 @@
   margin-bottom: 1.25rem;
 }
 .tk-prose .tk-mermaid {
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+  background: var(--color-raised);
+}
+.tk-prose .tk-mermaid-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid var(--color-line);
+}
+.tk-prose .tk-mermaid-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.tk-prose .tk-mermaid-action {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.tk-prose .tk-mermaid-action:hover {
+  color: var(--color-ink);
+}
+.tk-prose .tk-mermaid-canvas {
   display: flex;
   justify-content: center;
   overflow-x: auto;
-  border-radius: 8px;
-  border: 1px solid var(--color-line);
-  background: var(--color-panel);
-  padding: 1rem;
+  padding: 1.25rem;
+  /* Subtle dotted grid behind the diagram. */
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--color-muted) 30%, transparent) 1px,
+    transparent 1.5px
+  );
+  background-size: 16px 16px;
 }
-.tk-prose .tk-mermaid[role="button"] {
+.tk-prose .tk-mermaid-canvas[role="button"] {
   cursor: text;
 }
-.tk-prose .tk-mermaid:focus-visible {
+.tk-prose .tk-mermaid-canvas:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .tk-prose .tk-mermaid-svg {
   max-width: 100%;
@@ -731,6 +766,43 @@
   max-width: 100%;
   height: auto;
   margin: 0 auto;
+}
+
+/* Flat thin-line treatment: no gradients/shadows, hairline strokes, small
+   corner radius on rect nodes (decision diamonds stay diamonds). */
+.tk-prose .tk-mermaid-svg .node rect {
+  rx: 4px;
+}
+.tk-prose .tk-mermaid-svg .node rect,
+.tk-prose .tk-mermaid-svg .node polygon,
+.tk-prose .tk-mermaid-svg .node circle,
+.tk-prose .tk-mermaid-svg .node ellipse {
+  stroke-width: 1px;
+}
+.tk-prose .tk-mermaid-svg .edgePath .path,
+.tk-prose .tk-mermaid-svg .flowchart-link {
+  stroke-width: 1.25px;
+}
+.tk-prose .tk-mermaid-svg .edgeLabel {
+  font-family: var(--font-mono);
+  color: var(--color-muted);
+}
+
+/* Optional classDef names matching the diff legend: added/removed/modified. */
+.tk-prose .tk-mermaid-svg .node.added > * {
+  fill: var(--color-pass-soft);
+  stroke: var(--color-pass);
+}
+.tk-prose .tk-mermaid-svg .node.removed > * {
+  stroke: var(--color-fail);
+  stroke-dasharray: 4 3;
+}
+.tk-prose .tk-mermaid-svg .node.removed {
+  opacity: 0.55;
+}
+.tk-prose .tk-mermaid-svg .node.modified > * {
+  fill: var(--color-warn-soft);
+  stroke: var(--color-warn);
 }
 
 /* Failure fallback — the block never throws; show the raw source + a note. */
@@ -785,8 +857,4 @@
   height: auto;
 }
 
-@media (max-width: 640px) {
-  :root {
-    --tk-zoom: calc(var(--tk-font-scale) / 1.125);
-  }
-}
+

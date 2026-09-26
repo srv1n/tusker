@@ -28,11 +28,6 @@ type globalUninstallOutcome struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// planGlobalUninstall returns the non-destructive machine-level cleanup plan.
-func planGlobalUninstall() []tuskerPurgeAction {
-	return planGlobalUninstallWithState(false)
-}
-
 func planGlobalUninstallWithState(includeStateRoot bool) []tuskerPurgeAction {
 	home := userHomeDir()
 	stateRoot := filepath.Clean(DefaultStateRoot())
@@ -283,6 +278,7 @@ func tuskerGlobalUninstallCmd(args Args) error {
 	outcomes, err := applyGlobalUninstall(actions, stateRoot)
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": err == nil, "dry_run": false, "count": len(actions), "actions": globalUninstallJSONActions(actions), "outcomes": outcomes, "registered_projects": projects})
+		return afterResultEmitted(err)
 	} else if !args.Bool("quiet") {
 		fmt.Printf("Tusker global uninstall applied (%d actions).\n", len(actions))
 		printGlobalUninstallOutcomes(outcomes)

@@ -182,10 +182,6 @@ func v7CloseAuthorityDigest(value, prefix string) bool {
 	return err == nil && len(decoded) == sha256.Size
 }
 
-func authenticatedV7TaskCloseAuthority(note Note, project string) (v7TaskCloseAuthority, bool, error) {
-	return authenticatedV7TaskCloseAuthorityWithStore(note, project, nil)
-}
-
 func authenticatedV7TaskCloseAuthorityWithStore(note Note, project string, store *RuntimeStore) (v7TaskCloseAuthority, bool, error) {
 	value, present := note.Data["close_authority"]
 	if !present {
@@ -208,15 +204,6 @@ func authenticatedV7TaskCloseAuthorityWithStore(note Note, project string, store
 		return v7TaskCloseAuthority{}, false, err
 	}
 	return fact, true, nil
-}
-
-// authenticateV7TaskCloseAuthorityCommit treats the frontmatter fact as a
-// projection only. The authority is the exact task/receipt pair in the
-// deterministic completion commit, reachable from the task wave's protected
-// integration ref. Every digest in the Markdown is public and therefore
-// insufficient on its own.
-func authenticateV7TaskCloseAuthorityCommit(note Note, fact v7TaskCloseAuthority) error {
-	return authenticateV7TaskCloseAuthorityCommitWithStore(note, fact, nil)
 }
 
 func authenticateV7TaskCloseAuthorityCommitWithStore(note Note, fact v7TaskCloseAuthority, store *RuntimeStore) error {
@@ -362,10 +349,6 @@ func v7VaultRootForDocument(path string) string {
 		}
 	}
 	return ""
-}
-
-func authenticateV7EventCloseAuthority(vaultPath string, fact v7TaskCloseAuthority) error {
-	return authenticateV7EventCloseAuthorityWithStore(vaultPath, fact, nil)
 }
 
 func authenticateV7EventCloseAuthorityWithStore(vaultPath string, fact v7TaskCloseAuthority, store *RuntimeStore) error {

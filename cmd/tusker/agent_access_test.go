@@ -127,9 +127,7 @@ func TestAgentAccessMigration(t *testing.T) {
         folders: []
         private_folders: []
 `
-	if err := writeConfigTextAtomically(managedTuskerLocalConfigPath(vault), legacyAccess); err != nil {
-		t.Fatal(err)
-	}
+	writeGlobalConfigForTest(t, legacyAccess)
 	report, err := modelLevelsRead(vault)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +136,7 @@ func TestAgentAccessMigration(t *testing.T) {
 	if profile.Access == nil || profile.Access.Network != true || profile.PermissionPreset != "" {
 		t.Fatalf("access profile was not lossless: %#v", profile)
 	}
-	edit := Args{"vault": vault, "scope": "project", "name": "access-profile", "display-name": "renamed", "harness": "codex_exec", "model": "gpt-access-2", "effort": "high", "if-revision": report.Revision, "_no-output": "true"}
+	edit := Args{"vault": vault, "scope": "global", "name": "access-profile", "display-name": "renamed", "harness": "codex_exec", "model": "gpt-access-2", "effort": "high", "if-revision": report.Revision, "_no-output": "true"}
 	if err := modelsProfileSetCmd(edit); err != nil {
 		t.Fatal(err)
 	}

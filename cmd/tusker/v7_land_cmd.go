@@ -179,10 +179,6 @@ func landV7Cmd(args Args) error {
 	return landV7CmdWithAuthority(args, nil, "", nil, nil)
 }
 
-func landV7CmdWithFrozenSources(args Args, frozenSources map[string]string) error {
-	return tuskerError(errorInvalidTransition, "scheduled landing refusal: frozen sources require an internal daemon authority capability")
-}
-
 func landV7CmdWithDepartureAuthority(args Args, frozenSources map[string]string, authority *v7LandingAuthority) error {
 	if authority == nil || len(authority.private) != ed25519.PrivateKeySize {
 		return tuskerError(errorInvalidTransition, "scheduled landing refusal: daemon authority capability is unavailable")
@@ -1644,14 +1640,6 @@ var landingGateSandboxPath = func() (string, error) {
 	return exec.LookPath("sandbox-exec")
 }
 
-func v7LandingGateFingerprint(workDir, laneIdentity string, commands []string) string {
-	head, err := gitOutputTrim(workDir, "rev-parse", "HEAD")
-	if err != nil || head == "" {
-		return ""
-	}
-	return v7LandingGateFingerprintFromFacts(head, laneIdentity, commands, landingToolchainProbe(workDir, commands))
-}
-
 func v7LandingGateFingerprintFromFacts(head, laneIdentity string, commands []string, toolchains map[string]string) string {
 	parts := []string{"tusker.landing-gate/v2", head, strings.TrimSpace(laneIdentity)}
 	keys := make([]string, 0, len(toolchains))
@@ -2104,10 +2092,6 @@ func recoverV7LandingAuditFromReceipt(vaultPath, repoRoot, integrationBranch str
 		}, true
 	}
 	return v7LandingAuditEntry{}, false
-}
-
-func verifiedV7LandingReceiptTask(repoRoot, integrationBranch string, receipt v7LandingReceipt, taskID string) (v7LandingReceiptTask, bool) {
-	return verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch, receipt, taskID, nil)
 }
 
 func verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch string, receipt v7LandingReceipt, taskID string, trustedStore *RuntimeStore) (v7LandingReceiptTask, bool) {
@@ -3125,10 +3109,6 @@ func (l v7CertifiedFullGateLedger) FindGateLedger(projectID, treeHash, command, 
 
 func v7CertifiedGateProviderReceipt(receipt *GateProviderReceipt) bool {
 	return receipt != nil && receipt.Schema == v7FullGateProviderSchema && receipt.Outcome == string(v7FullGateOutcomePassed) && strings.TrimSpace(receipt.ProjectID) != "" && strings.TrimSpace(receipt.DepartureID) != "" && strings.TrimSpace(receipt.CandidateDigest) != "" && strings.TrimSpace(receipt.CommandDigest) != "" && strings.TrimSpace(receipt.Profile) != "" && strings.TrimSpace(receipt.ProviderProfile) != "" && strings.TrimSpace(receipt.Toolchain) != "" && strings.TrimSpace(receipt.LifecycleID) != "" && receipt.CleanupCertified && v7FullGateDigest(receipt.RequestDigest) && v7FullGateDigest(receipt.ProviderDigest) && v7FullGateDigest(receipt.ProviderClosureDigest) && v7FullGateDigest(receipt.ClientDigest) && v7FullGateDigest(receipt.ReceiptDigest) && v7FullGateDigest(receipt.RuntimeDigest) && v7FullGateDigest(receipt.PolicyDigest) && v7FullGateDigest(receipt.AttestationDigest) && v7FullGateDigest(receipt.ImageOrVMID) && v7FullGateDigest(receipt.CapabilitiesDigest) && v7FullGateDigest(receipt.ContainmentDigest) && v7FullGateDigest(receipt.CleanupDigest) && v7FullGateDigest(receipt.ResultDigest) && v7FullGateDigest(receipt.OutputDigest)
-}
-
-func runV7GateTierOnRef(vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {
-	return runV7GateTierOnRefContext(context.Background(), vaultPath, repoRoot, ref, projectID, policy, store)
 }
 
 func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, projectID string, policy GateTierPolicy, store *RuntimeStore) promotionGateExecution {

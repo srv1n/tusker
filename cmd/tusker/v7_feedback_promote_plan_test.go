@@ -6,46 +6,6 @@ import (
 	"testing"
 )
 
-func TestFeedbackPromotePlannerDefaultsDryRunAndCreatesCLIProposalWithPrevention(t *testing.T) {
-	record := feedbackRecord{
-		RelativePath:    "feedback/agents/2026-05-31-codex-proof-noise.md",
-		Date:            "2026-05-31",
-		PriorityHint:    "P1",
-		AffectedCommand: "tusker validate",
-		Fields: map[string]string{
-			"context":      "Agents repeatedly hit validation output that mixes owned and unrelated changes.",
-			"friction":     "Agents waste turns sorting unrelated workspace churn.",
-			"product-idea": "Scope validation output to owned changes by default.",
-			"impact":       "Promoted feedback becomes actionable without drowning the backlog.",
-			"related":      "tusker validate",
-			"dedupe-key":   "validation-owned-scope",
-		},
-	}
-
-	plan, err := planFeedbackSignalPromotion(record, feedbackPromoteOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Mode != feedbackPromoteModeDryRun || !plan.DryRun {
-		t.Fatalf("promotion planner must default to dry-run, got mode=%q dry=%v", plan.Mode, plan.DryRun)
-	}
-	if len(plan.Outcomes) != 1 {
-		t.Fatalf("expected exactly one outcome, got %#v", plan.Outcomes)
-	}
-	outcome := plan.Outcomes[0]
-	assertEqual(t, "create", outcome.Operation, "operation")
-	assertEqual(t, "cli_proposal", outcome.Kind, "kind")
-	if outcome.Prevention == "" || !strings.Contains(outcome.Prevention, "Scope validation output") {
-		t.Fatalf("expected generated prevention statement, got %q", outcome.Prevention)
-	}
-	if !containsString(outcome.SourceRefs, "feedback/agents/2026-05-31-codex-proof-noise.md") {
-		t.Fatalf("expected source ref to include feedback path, got %#v", outcome.SourceRefs)
-	}
-	if plan.Summary.Created != 1 || plan.Summary.Skipped != 0 {
-		t.Fatalf("unexpected summary: %#v", plan.Summary)
-	}
-}
-
 func TestFeedbackPromotePlannerSkipsLowPrioritySingleEvidence(t *testing.T) {
 	plan, err := planFeedbackPromotion(feedbackPromoteSource{
 		Kind:        "daily_review_action",

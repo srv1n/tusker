@@ -84,16 +84,6 @@ type CodexACPReadinessRequirement struct {
 	Required    bool
 }
 
-func CodexACPReadinessRequirements() []CodexACPReadinessRequirement {
-	return []CodexACPReadinessRequirement{
-		{ID: "adapter_manifest", Required: true, Description: "the pinned adapter runtime and declared assets are present and match the local manifest; external CODEX_PATH is unsupported"},
-		{ID: "acp_conformance", Required: true, Description: "the exact manifest fingerprint passed ACP conformance and an explicitly authorized authenticated smoke without a shell or runtime download"},
-		{ID: "codex_auth", Required: true, Description: "the selected Codex authentication path is available to the adapter process; this may be ChatGPT login or an explicit API credential"},
-		{ID: "task_authorization", Required: true, Description: "a separate Tusker lease, permission policy, and human launch authority exist for the target attempt"},
-		{ID: "permission_parity", Required: true, Description: "workspace edits and commands are one-shot-authorized only inside the bound workspace; network remains controlled by the resolved profile"},
-	}
-}
-
 // CodexACPModeForPermissionPreset is a one-way mapping of existing profile
 // vocabulary into codex-acp's INITIAL_AGENT_MODE. It does not grant tool
 // permission: the ACP broker remains the final fail-closed decision point.
@@ -933,42 +923,6 @@ type CodexACPStop struct {
 	AutoRetry     bool
 	AutoResume    bool
 	DeliveryKnown bool
-}
-
-func CodexACPMapStop(result acp.PromptResult, err error) CodexACPStop {
-	reason := ""
-	if err != nil {
-		reason = "codex ACP transport error: " + boundedACPObservation(err.Error())
-	}
-	if errors.Is(err, acp.ErrDeliveryUnknown) || result.Outcome == acp.OutcomeDeliveryUnknown ||
-		(result.Outcome == acp.OutcomeCompleted && result.Delivery != acp.DeliveryTerminalReceived) {
-		if reason == "" {
-			reason = "codex ACP delivery_unknown"
-		}
-		return CodexACPStop{Outcome: AttemptOutcomeFailed, ExitCode: 1, Reason: reason + "; no automatic retry or resume", AutoRetry: false, AutoResume: false, DeliveryKnown: false}
-	}
-	known := result.Delivery == acp.DeliveryTerminalReceived
-	switch result.Outcome {
-	case acp.OutcomeCompleted:
-		if err != nil {
-			return CodexACPStop{Outcome: AttemptOutcomeFailed, ExitCode: 1, Reason: reason, DeliveryKnown: known}
-		}
-		return CodexACPStop{Outcome: AttemptOutcomeNone, DeliveryKnown: true}
-	case acp.OutcomeBudgetExceeded:
-		return CodexACPStop{Outcome: AttemptOutcomeBudgetExceeded, ExitCode: exitCodeForOutcome(AttemptOutcomeBudgetExceeded), Reason: firstNonEmpty(reason, "codex ACP reported max_tokens"), DeliveryKnown: known}
-	case acp.OutcomeTurnCapExhausted:
-		return CodexACPStop{Outcome: AttemptOutcomeTurnCapExhausted, Reason: firstNonEmpty(reason, "codex ACP reported max_turn_requests"), DeliveryKnown: known}
-	case acp.OutcomeCancelled:
-		return CodexACPStop{Outcome: AttemptOutcomeCancelled, ExitCode: exitCodeForOutcome(AttemptOutcomeCancelled), Reason: firstNonEmpty(reason, "codex ACP prompt cancelled"), DeliveryKnown: known}
-	case acp.OutcomeRefused:
-		return CodexACPStop{Outcome: AttemptOutcomeBlocked, ExitCode: 1, Reason: firstNonEmpty(reason, "codex ACP refused the prompt or required permission"), DeliveryKnown: known}
-	case acp.OutcomeTimedOut:
-		return CodexACPStop{Outcome: AttemptOutcomeFailed, ExitCode: 1, Reason: firstNonEmpty(reason, "codex ACP prompt timed out"), DeliveryKnown: known}
-	case acp.OutcomePoisoned, acp.OutcomeProtocolFailed:
-		return CodexACPStop{Outcome: AttemptOutcomeFailed, ExitCode: 1, Reason: firstNonEmpty(reason, "codex ACP transport failed"), DeliveryKnown: known}
-	default:
-		return CodexACPStop{Outcome: AttemptOutcomeFailed, ExitCode: 1, Reason: firstNonEmpty(reason, "codex ACP terminated without a trustworthy result"), DeliveryKnown: known}
-	}
 }
 
 // ObserveCodexACPUpdate bridges an ACP session/update into the existing Codex

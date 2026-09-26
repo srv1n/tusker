@@ -251,9 +251,7 @@ func configureTaskAuthoringJourneyProfiles(t *testing.T, vault string) {
 		profile["model"] = item.model
 		profile["effort"] = "medium"
 		profile["eligible_tiers"] = []string{item.level}
-		if _, err := setProjectLocalConfigWithReadback(vault, "automation.profiles."+item.harness, profile); err != nil {
-			t.Fatal(err)
-		}
+		setGlobalProfileForTest(t, item.harness, profile)
 		if levelProfiles[item.level] == nil {
 			levelProfiles[item.level] = map[string][]string{}
 		}

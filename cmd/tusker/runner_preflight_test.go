@@ -17,7 +17,7 @@ echo "missing vendor binary" >&2
 exit 127
 `)
 
-	blocker := runnerCommandPreflightBlocker(RunnerCodexExec, brokenCodex+" exec --json --skip-git-repo-check -")
+	_, blocker := runnerCommandPreflight(RunnerCodexExec, brokenCodex+" exec --json --skip-git-repo-check -")
 	if !strings.Contains(blocker, "runner preflight blocked") ||
 		!strings.Contains(blocker, "failed health check") ||
 		!strings.Contains(blocker, "missing vendor binary") {
@@ -39,7 +39,7 @@ exit 0
 	t.Setenv("PATH", badDir)
 	t.Setenv(runnerPathPrefixEnv, goodDir)
 
-	if blocker := runnerCommandPreflightBlocker(RunnerCodexExec, "codex exec --json --skip-git-repo-check -"); blocker != "" {
+	if _, blocker := runnerCommandPreflight(RunnerCodexExec, "codex exec --json --skip-git-repo-check -"); blocker != "" {
 		t.Fatalf("expected runner path prefix to avoid broken PATH entry, got %q", blocker)
 	}
 	pathValue := envValueForPreflightTest(runnerBaseEnv(), "PATH")

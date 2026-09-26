@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "@tanstack/react-router";
 import { AlertTriangle } from "lucide-react";
+import { MobileNav } from "@/components/MobileNav";
 import { CrashLoopCircuitBanner } from "@/components/CrashLoopCircuitBanner";
 import { TaskSearch } from "@/features/search/TaskSearch";
 import { useDaemon } from "@/lib/queries";
@@ -34,6 +35,19 @@ export function RootLayout() {
   const location = useLocation();
   const embedded = isTuskerShellMode() && location.pathname === "/panel";
   const [rails, setRails] = useState(readRailLayout);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Phone project drawer: any navigation, Escape, or crossing to desktop width closes it.
+  useEffect(() => setDrawerOpen(false), [location.pathname]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const close = () => setDrawerOpen(false);
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    desktop.addEventListener("change", close);
+    window.addEventListener("keydown", onKey);
+    return () => { desktop.removeEventListener("change", close); window.removeEventListener("keydown", onKey); };
+  }, [drawerOpen]);
 
   useEffect(() => {
     try { localStorage.setItem(RAIL_LAYOUT_STORAGE_KEY, JSON.stringify(rails)); } catch { /* preference is best effort */ }
@@ -52,7 +66,14 @@ export function RootLayout() {
 
   return (
     <div className="tusker-shell flex h-dvh w-full overflow-hidden bg-surface text-ink">
-      {!embedded && <ProjectStrip expanded={rails.projectExpanded} onToggle={() => setRails((value) => ({ projectExpanded: !value.projectExpanded }))} />}
+      {!embedded && drawerOpen && <button type="button" aria-label="Close projects" onClick={() => setDrawerOpen(false)} className="fixed inset-0 z-40 bg-black/30 lg:hidden" />}
+      {!embedded && (
+        <ProjectStrip
+          expanded={rails.projectExpanded || drawerOpen}
+          onToggle={() => drawerOpen ? setDrawerOpen(false) : setRails((value) => ({ projectExpanded: !value.projectExpanded }))}
+          className={drawerOpen ? "fixed inset-y-0 left-0 z-50 flex max-w-[calc(100vw-32px)] shadow-lg lg:relative lg:z-auto lg:shadow-none" : "hidden lg:flex"}
+        />
+      )}
       <TaskSearch />
 
       <main className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${embedded ? "" : "bg-raised"}`}>
@@ -62,6 +83,7 @@ export function RootLayout() {
         <div className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </div>
+        {!embedded && <MobileNav projectsOpen={drawerOpen} onProjects={() => setDrawerOpen((open) => !open)} />}
       </main>
     </div>
   );

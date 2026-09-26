@@ -355,10 +355,6 @@ func existingUserSkillDestinations() []string {
 	return destinations
 }
 
-func installSkillPayload(destination string) error {
-	return installSkillPayloadWithMode(destination, skillInstallModeCopy)
-}
-
 func installSkillPayloadWithMode(destination, mode string) error {
 	return installSkillPayloadWithModeFrom(destination, mode, "")
 }
@@ -372,10 +368,6 @@ func installSkillPayloadWithModeFrom(destination, mode, sourceArg string) error 
 	default:
 		return tuskerError(errorInvalidArg, "invalid skill install mode: "+mode, withHint("Use --skill-mode copy or --skill-mode symlink."))
 	}
-}
-
-func installSkillPayloadCopy(destination string) error {
-	return installSkillPayloadCopyFrom(destination, "")
 }
 
 func installSkillPayloadCopyFrom(destination, sourceArg string) error {
@@ -1135,9 +1127,14 @@ func initCmd(args Args) error {
 			existingVault = discovered
 		}
 	}
+	domainIndex := v7PortableDomainAbs(v7RepoRoot(firstNonEmpty(existingVault, vaultPath)), "project")
+	domainIndexExisted := fileExists(domainIndex)
 	if existingVault != "" {
 		fmt.Printf("Vault already present at %s\n", existingVault)
 	} else {
+		if stale, ok := registeredProjectWithMissingVault(cwd); ok {
+			fmt.Printf("Notice: the previously registered vault %s is missing; creating a fresh empty vault and reusing registration %s (%s).\n", stale.VaultRoot, registeredProjectLabel(stale), stale.ProjectID)
+		}
 		doVault, err := ask(fmt.Sprintf("Create vault at %s?", vaultPath), true)
 		if err != nil {
 			return err
@@ -1158,6 +1155,9 @@ func initCmd(args Args) error {
 	}
 	if err := bootstrapV7Profile(effectiveVault, ""); err != nil {
 		return err
+	}
+	if !domainIndexExisted && fileExists(domainIndex) {
+		recordWrite(domainIndex, "remove the generated documentation and repo-local skill directories manually")
 	}
 	writes, err := scaffoldDocumentationSystem(v7RepoRoot(effectiveVault))
 	if err != nil {

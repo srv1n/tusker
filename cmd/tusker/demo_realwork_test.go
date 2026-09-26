@@ -185,8 +185,31 @@ func realWorkSeedForTest(t *testing.T, repo string) *demoManifest {
 func TestRealWorkFixtureSeedE2E(t *testing.T) {
 	bin := demoTestBinary(t)
 	demoTestEnv(t, bin)
+	// Profiles are global-only: the seeded project must route through this
+	// test-owned global layer, never define its own.
+	global := filepath.Join(t.TempDir(), "config.yaml")
+	profile := func(model, preset, mode string) string {
+		return "      harness: codex_exec\n      model: " + model + "\n      effort: medium\n      permission_preset: " + preset + "\n      sandbox:\n        mode: " + mode + "\n        network: false\n      subagents:\n        allowed: false\n"
+	}
+	levels := ""
+	for _, level := range []string{"light", "standard", "demanding"} {
+		levels += "    " + level + ":\n      execute: [g-execute]\n      review: [g-review]\n"
+	}
+	if err := os.WriteFile(global, []byte("automation:\n  profiles:\n    g-execute:\n"+profile("gpt-6-luna", "workspace-write-offline", "workspace-write")+"    g-review:\n"+profile("gpt-6-luna", "read-only", "read-only")+"  model_levels:\n"+levels), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TUSKER_CONFIG", global)
 	repo := t.TempDir()
 	manifest := realWorkSeedForTest(t, repo)
+	local, err := os.ReadFile(filepath.Join(demoVaultPath(repo), "config.local.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{"profiles:", "model_levels:", "gpt-5", "terra"} {
+		if strings.Contains(strings.ToLower(string(local)), banned) {
+			t.Fatalf("seeded project config must only reference global profiles, found %q:\n%s", banned, local)
+		}
+	}
 	if len(manifest.Waves) != 4 || len(manifest.Tasks) != 13 {
 		t.Fatalf("seed mapping: %d waves %d tasks", len(manifest.Waves), len(manifest.Tasks))
 	}
@@ -225,18 +248,18 @@ func TestRealWorkFixtureSeedE2E(t *testing.T) {
 		t.Fatalf("seeded corpus does not validate: %s", string(raw))
 	}
 	route, err := exec.run(repo, "runner", "route", manifest.Tasks["s1"].TaskID, "--lane", "execute", "--vault", vaultPath)
-	if err != nil || demoStringField(route, "profile") != "execute-fast" || demoStringField(route, "model") != "gpt-5.6-luna" {
-		t.Fatalf("standalone route is not configured Luna: route=%v err=%v", route, err)
+	if err != nil || demoStringField(route, "profile") != "g-execute" || demoStringField(route, "model") != "gpt-6-luna" {
+		t.Fatalf("standalone route is not the global profile: route=%v err=%v", route, err)
 	}
 	reviewRoute, err := exec.run(repo, "runner", "route", manifest.Tasks["s1"].TaskID, "--lane", "review", "--vault", vaultPath)
 	reviewDefinition, _ := reviewRoute["profile_definition"].(map[string]any)
 	reviewSandbox, _ := reviewDefinition["sandbox"].(map[string]any)
-	if err != nil || demoStringField(reviewRoute, "profile") != "review-independent" || demoStringField(reviewDefinition, "permission_preset") != "read-only" || demoStringField(reviewSandbox, "mode") != "read-only" {
+	if err != nil || demoStringField(reviewRoute, "profile") != "g-review" || demoStringField(reviewDefinition, "permission_preset") != "read-only" || demoStringField(reviewSandbox, "mode") != "read-only" {
 		t.Fatalf("standalone review route is not independent: route=%v err=%v", reviewRoute, err)
 	}
 	for _, key := range []string{"a1", "a4"} {
 		route, routeErr := exec.run(repo, "runner", "route", manifest.Tasks[key].TaskID, "--lane", "execute", "--vault", vaultPath)
-		if routeErr != nil || demoStringField(route, "profile") != "execute-fast" {
+		if routeErr != nil || demoStringField(route, "profile") != "g-execute" {
 			t.Fatalf("%s execute route escaped the demo profile: route=%v err=%v", key, route, routeErr)
 		}
 	}

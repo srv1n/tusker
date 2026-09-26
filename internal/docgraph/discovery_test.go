@@ -126,9 +126,9 @@ func TestBacklinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	links := Backlinks(corpus, "target")
+	links := NewResolver(corpus).Backlinks("target", corpus)
 	if len(links) != 1 || links[0].From != "guide" || links[0].Kind != "link" {
-		t.Fatalf("Backlinks() = %#v", links)
+		t.Fatalf("Resolver.Backlinks() = %#v", links)
 	}
 }
 

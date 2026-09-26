@@ -211,10 +211,6 @@ func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts [
 	return deriveRunOperatorState(facts, now, quietAfter), nil
 }
 
-func runToolInFlight(run RunStatus, attempts []RunAttempt) bool {
-	return runToolInFlightFromTails(loadRunStateTails(run, attempts))
-}
-
 func runToolInFlightFromTails(tails runStateTails) bool {
 	active := map[string]bool{}
 	for _, row := range tails.log {

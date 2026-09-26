@@ -148,17 +148,6 @@ func (p *projectFrontierIndex) addReverseClosure(id string, affected map[string]
 	}
 }
 
-func (p *projectFrontierIndex) addWaveClosure(id string, affected map[string]bool) {
-	task := p.Records[id]
-	wave := stringField(task.Data, "wave")
-	if wave == "" {
-		return
-	}
-	for _, member := range p.Waves[wave] {
-		affected[member] = true
-	}
-}
-
 func (p *projectFrontierIndex) addRecordClosure(note Note, affected map[string]bool) {
 	id := stringField(note.Data, "id")
 	if id == "" {

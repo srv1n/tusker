@@ -98,109 +98,6 @@ func landFrozenSourcesAsIssuedDepartureInStateRoot(t *testing.T, repo, vault str
 	return nil
 }
 
-// These are focused trust-boundary tests: receipt/index JSON and daemon-looking
-// labels are not authority, while a real issuance remains verifiable through
-// the exact daemon store that owns it.
-func TestV7LandingAuthorityRejectsForgedReceiptAndRuntimeRecord(t *testing.T) {
-	repo, _ := newLandTestRepo(t, 1, "true")
-	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	receipt := v7LandingReceipt{
-		Schema: v7LandingReceiptSchema, Fingerprint: "forged", ControlAuthority: v7LandingAuthorityDeparture,
-		ProjectID: "app", RepoIdentity: "sha256:forged", DepartureID: "departure-forged", PolicyID: "nightly",
-		ScheduledWindow: now, DaemonSessionID: "daemon:departure:forged", DaemonHost: "forged", DaemonProcess: "forged",
-		AuthorityID: "forged", AuthorityGen: 1, AuthoritySignature: make([]byte, ed25519.SignatureSize),
-	}
-	if verifyV7LandingReceiptAuthority(repo, receipt) {
-		t.Fatal("self-consistent receipt and daemon-looking actor label minted authority")
-	}
-
-	// A caller-provided runtime public key is equally useless without the exact
-	// durable issuance/context and a signature over the complete receipt.
-	_, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt.AuthoritySignature = ed25519.Sign(private, []byte(receipt.Fingerprint))
-	if verifyV7LandingReceiptAuthority(repo, receipt) {
-		t.Fatal("forged runtime signing session was accepted")
-	}
-}
-
-func TestV7LandingAuthorityRejectsActorLabelAndFrozenSources(t *testing.T) {
-	repo, vault := newLandTestRepo(t, 1, "true")
-	source := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"actor-label.txt": "no authority\n"})
-	err := landV7CmdWithFrozenSources(
-		Args{"vault": vault, "quiet": "true", "actor": "daemon:departure:forged", "_pos0": "APP-T-0001"},
-		map[string]string{"APP-T-0001": source},
-	)
-	if err == nil {
-		t.Fatal("actor label and frozen sources minted scheduled landing authority")
-	}
-}
-
-func TestV7LandingAuthorityVerificationUsesIssuingDaemonStore(t *testing.T) {
-	repo, vault := newLandTestRepo(t, 1, "true")
-	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "unrelated-default"))
-	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "issuing-daemon"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	receipt := issuedV7LandingAuthorityReceiptForTest(t, repo, vault, store, "departure-custom-root")
-
-	if verifyV7LandingReceiptAuthority(repo, receipt) {
-		t.Fatal("unrelated default runtime store authenticated another daemon's issuance")
-	}
-	if !verifyV7LandingReceiptAuthorityWithStore(repo, receipt, store) {
-		t.Fatal("issuing daemon store did not authenticate its own signed receipt")
-	}
-}
-
-func TestV7LandingAuthorityTrustedStoreDoesNotFallbackToDefault(t *testing.T) {
-	repo, vault := newLandTestRepo(t, 1, "true")
-	defaultRoot := filepath.Join(t.TempDir(), "canonical")
-	t.Setenv("TUSKER_STATE_ROOT", defaultRoot)
-	defaultStore, err := OpenRuntimeStore(defaultRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer defaultStore.Close()
-	wrongStore, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "other-daemon"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer wrongStore.Close()
-
-	receipt := issuedV7LandingAuthorityReceiptForTest(t, repo, vault, defaultStore, "departure-canonical")
-	canonicalIssuance, err := defaultStore.FindV7LandingAuthorityIssuance(receipt.AuthorityID)
-	if err != nil || canonicalIssuance == nil {
-		t.Fatalf("load canonical issuance: %#v err=%v", canonicalIssuance, err)
-	}
-	canonicalRun, err := defaultStore.FindDepartureRun(receipt.DepartureID)
-	if err != nil || canonicalRun == nil {
-		t.Fatalf("load canonical departure: %#v err=%v", canonicalRun, err)
-	}
-	if _, _, err := wrongStore.GetOrCreateDepartureRun(*canonicalRun); err != nil {
-		t.Fatal(err)
-	}
-	collision := *canonicalIssuance
-	collision.PublicKey, _, err = ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := wrongStore.CreateV7LandingAuthorityIssuance(collision); err != nil {
-		t.Fatal(err)
-	}
-	if !verifyV7LandingReceiptAuthority(repo, receipt) {
-		t.Fatal("nil store did not deliberately select the canonical issuance store")
-	}
-	if verifyV7LandingReceiptAuthorityWithStore(repo, receipt, wrongStore) {
-		t.Fatal("valid canonical issuance crossed into an unrelated daemon's explicit trust store")
-	}
-}
-
 func issuedV7LandingAuthorityReceiptForTest(t *testing.T, repo, vault string, store *RuntimeStore, runID string) v7LandingReceipt {
 	t.Helper()
 	source := gitRevisionForTest(t, repo, "integration/W-0001")
@@ -503,4 +400,95 @@ func TestV7LandingGateSandboxContract(t *testing.T) {
 
 func shellQuoteForSandboxTest(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// These are focused trust-boundary tests: receipt/index JSON and daemon-looking
+// labels are not authority, while a real issuance remains verifiable through
+// the exact daemon store that owns it.
+func TestV7LandingAuthorityRejectsForgedReceiptAndRuntimeRecord(t *testing.T) {
+	repo, _ := newLandTestRepo(t, 1, "true")
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	receipt := v7LandingReceipt{
+		Schema: v7LandingReceiptSchema, Fingerprint: "forged", ControlAuthority: v7LandingAuthorityDeparture,
+		ProjectID: "app", RepoIdentity: "sha256:forged", DepartureID: "departure-forged", PolicyID: "nightly",
+		ScheduledWindow: now, DaemonSessionID: "daemon:departure:forged", DaemonHost: "forged", DaemonProcess: "forged",
+		AuthorityID: "forged", AuthorityGen: 1, AuthoritySignature: make([]byte, ed25519.SignatureSize),
+	}
+	if verifyV7LandingReceiptAuthorityWithStore(repo, receipt, nil) {
+		t.Fatal("self-consistent receipt and daemon-looking actor label minted authority")
+	}
+
+	// A caller-provided runtime public key is equally useless without the exact
+	// durable issuance/context and a signature over the complete receipt.
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt.AuthoritySignature = ed25519.Sign(private, []byte(receipt.Fingerprint))
+	if verifyV7LandingReceiptAuthorityWithStore(repo, receipt, nil) {
+		t.Fatal("forged runtime signing session was accepted")
+	}
+}
+
+func TestV7LandingAuthorityTrustedStoreDoesNotFallbackToDefault(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "true")
+	defaultRoot := filepath.Join(t.TempDir(), "canonical")
+	t.Setenv("TUSKER_STATE_ROOT", defaultRoot)
+	defaultStore, err := OpenRuntimeStore(defaultRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer defaultStore.Close()
+	wrongStore, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "other-daemon"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wrongStore.Close()
+
+	receipt := issuedV7LandingAuthorityReceiptForTest(t, repo, vault, defaultStore, "departure-canonical")
+	canonicalIssuance, err := defaultStore.FindV7LandingAuthorityIssuance(receipt.AuthorityID)
+	if err != nil || canonicalIssuance == nil {
+		t.Fatalf("load canonical issuance: %#v err=%v", canonicalIssuance, err)
+	}
+	canonicalRun, err := defaultStore.FindDepartureRun(receipt.DepartureID)
+	if err != nil || canonicalRun == nil {
+		t.Fatalf("load canonical departure: %#v err=%v", canonicalRun, err)
+	}
+	if _, _, err := wrongStore.GetOrCreateDepartureRun(*canonicalRun); err != nil {
+		t.Fatal(err)
+	}
+	collision := *canonicalIssuance
+	collision.PublicKey, _, err = ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wrongStore.CreateV7LandingAuthorityIssuance(collision); err != nil {
+		t.Fatal(err)
+	}
+	if !verifyV7LandingReceiptAuthorityWithStore(repo, receipt, nil) {
+		t.Fatal("nil store did not deliberately select the canonical issuance store")
+	}
+	if verifyV7LandingReceiptAuthorityWithStore(repo, receipt, wrongStore) {
+		t.Fatal("valid canonical issuance crossed into an unrelated daemon's explicit trust store")
+	}
+}
+
+func TestV7LandingAuthorityVerificationUsesIssuingDaemonStore(t *testing.T) {
+	repo, vault := newLandTestRepo(t, 1, "true")
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "unrelated-default"))
+	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "issuing-daemon"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	receipt := issuedV7LandingAuthorityReceiptForTest(t, repo, vault, store, "departure-custom-root")
+
+	if verifyV7LandingReceiptAuthorityWithStore(repo, receipt, nil) {
+		t.Fatal("unrelated default runtime store authenticated another daemon's issuance")
+	}
+	if !verifyV7LandingReceiptAuthorityWithStore(repo, receipt, store) {
+		t.Fatal("issuing daemon store did not authenticate its own signed receipt")
+	}
 }

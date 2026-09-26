@@ -205,12 +205,6 @@ func (s *RuntimeStore) FindV7LandingAuthorityIssuance(id string) (*v7LandingAuth
 	return &issuance, nil
 }
 
-// verifyV7LandingReceiptAuthority is the command-path wrapper for the
-// configured canonical daemon store.
-func verifyV7LandingReceiptAuthority(repoRoot string, receipt v7LandingReceipt) bool {
-	return verifyV7LandingReceiptAuthorityWithStore(repoRoot, receipt, nil)
-}
-
 // verifyV7LandingReceiptAuthorityWithStore deliberately treats
 // receipt/cache/index data as hostile discovery material. A non-nil caller
 // store is an exclusive trust domain; nil deliberately selects the configured

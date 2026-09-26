@@ -52,7 +52,9 @@ tusker config resolve automation.workspace.strategy --vault ./.tusker --json
 
 Keep fixture artifacts in their owned disposable location. Inspect
 `tusker config resolve automation.profiles --vault ./.tusker --json` for the
-configured runner; do not assume a default or substitute a transport.
+configured runner; do not assume a default or substitute a transport. Profiles
+are defined only in the global config (`~/.config/tusker/config.yaml`); the project
+config selects them through `automation.model_levels` and never defines them.
 
 ## Canon and delivery
 
@@ -72,6 +74,8 @@ chapter via `tusker docs new <subject> --kind doc --domain <name>`); propose
 a change in `docs/system/proposals/`; record a settled product decision in
 `docs/system/decisions/`; migrate old knowledge with
 `tusker docs adopt --migration` (preview first, apply only an approved table).
+Knowledge outside `docs/system/` is not referenceable until migrated; follow
+`references/MIGRATION.md`, never add pointer documents.
 `.tusker/` holds tracker state and thin pointers only. Product decisions move
 to documentation; work and lifecycle decisions stay with the tracker.
 

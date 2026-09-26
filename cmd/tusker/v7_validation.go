@@ -1931,10 +1931,6 @@ func v7ValidationPolicyFor(vaultPath string) v7ValidationPolicy {
 	return policy
 }
 
-func v7BodyLineLimits(vaultPath string) (int, int) {
-	return v7BodyLineLimitsFor(vaultPath, "task")
-}
-
 func v7BodyLineLimitsFor(vaultPath, objectType string) (int, int) {
 	warnLimit, failLimit := defaultV7BodyLineLimitsFor(objectType)
 	if strings.TrimSpace(vaultPath) == "" {
@@ -2196,11 +2192,6 @@ func v7AcceptanceContainsDefaultScaffold(body string) bool {
 	return false
 }
 
-func findV7Gate(vaultPath, gateID string) (Note, bool) {
-	note, err := resolveV7Note(vaultPath, gateID, "gate")
-	return note, err == nil
-}
-
 func missingRequiredEvidence(vaultPath, taskID string, required []string) []string {
 	if len(required) == 0 {
 		return nil
@@ -2222,10 +2213,6 @@ func missingRequiredEvidence(vaultPath, taskID string, required []string) []stri
 		}
 	}
 	return missing
-}
-
-func missingV7AcceptanceProof(vaultPath string, task Note, idx v7Index) []string {
-	return computeV7ProofReport(vaultPath, task, idx).Missing
 }
 
 func v7EvidenceUsableForClose(ev Note) bool {

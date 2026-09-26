@@ -1018,7 +1018,11 @@ func listCmd(args Args) error {
 		fmt.Print(renderListTable(rows, taskCounts, args))
 	}
 	if len(rows) == 0 && !args.Bool("quiet") {
-		fmt.Println("(no matches)")
+		if args.String("type") == "" && noteType == "epic" && epic == "" && args.String("project") == "" {
+			fmt.Println("No epics in this vault (try --type task).")
+		} else {
+			fmt.Println("(no matches)")
+		}
 	}
 	if truncated > 0 && !args.Bool("quiet") {
 		fmt.Printf("(...and %d more; use a narrower filter or a higher --limit)\n", truncated)
@@ -1546,56 +1550,6 @@ func scopedTaskKey(project, taskID string) string {
 	return project + "\x00" + taskID
 }
 
-func taskCountsByEpic(notes []Note) map[string]map[string]int {
-	counts := map[string]map[string]int{}
-	for _, note := range notes {
-		if noteListKind(note.Data) != "task" {
-			continue
-		}
-		epic := wikiTarget(note.Data["epic"])
-		if epic == "" {
-			epic = stringField(note.Data, "epic")
-		}
-		if epic == "" {
-			continue
-		}
-		if counts[epic] == nil {
-			counts[epic] = map[string]int{"open": 0, "done": 0, "closed": 0, "total": 0}
-		}
-		counts[epic]["total"]++
-		status := stringField(note.Data, "status")
-		if strings.EqualFold(status, "done") {
-			counts[epic]["done"]++
-		} else if isOpenWorkStatus(status) {
-			counts[epic]["open"]++
-		} else {
-			counts[epic]["closed"]++
-		}
-	}
-	return counts
-}
-
-func sortListRows(rows []Note) {
-	sort.SliceStable(rows, func(i, j int) bool {
-		leftType := noteListKind(rows[i].Data)
-		rightType := noteListKind(rows[j].Data)
-		if leftType != rightType {
-			return listTypeRank(leftType) < listTypeRank(rightType)
-		}
-		leftStatus := listStatusRank(stringField(rows[i].Data, "status"))
-		rightStatus := listStatusRank(stringField(rows[j].Data, "status"))
-		if leftStatus != rightStatus {
-			return leftStatus < rightStatus
-		}
-		leftPriority := priorityRank(stringField(rows[i].Data, "priority"))
-		rightPriority := priorityRank(stringField(rows[j].Data, "priority"))
-		if leftPriority != rightPriority {
-			return leftPriority < rightPriority
-		}
-		return stringField(rows[i].Data, "id") < stringField(rows[j].Data, "id")
-	})
-}
-
 func noteListKind(data map[string]any) string {
 	if legacyType := stringField(data, "type"); legacyType != "" {
 		return legacyType
@@ -1832,36 +1786,6 @@ func loadDashboardRuntime(vaultPath string) map[string]any {
 	return section
 }
 
-func renderDashboardRunsBlock(runtime map[string]any, generatedAt string) string {
-	activeRuns := anySlice(runtime["active_runs"])
-	if len(activeRuns) == 0 {
-		return fmt.Sprintf("_Auto-generated %s. No live runs right now._", generatedAt)
-	}
-	lines := []string{
-		fmt.Sprintf("_Auto-generated %s. Live daemon activity is shown below._", generatedAt),
-		"",
-		"| Task | Runner | Lease | Session |",
-		"|---|---|---|---|",
-	}
-	for _, row := range activeRuns {
-		run, ok := row.(map[string]any)
-		if !ok {
-			continue
-		}
-		itemID := stringValue(run["item_id"])
-		runner := stringValue(run["runner"])
-		lease := stringValue(run["lease_state"])
-		session := stringValue(run["session_ref"])
-		if session == "" {
-			session = "—"
-		} else if len(session) > 12 {
-			session = session[:12] + "…"
-		}
-		lines = append(lines, fmt.Sprintf("| [[%s]] | `%s` | `%s` | `%s` |", itemID, runner, lease, session))
-	}
-	return strings.Join(lines, "\n")
-}
-
 func anySlice(value any) []any {
 	switch v := value.(type) {
 	case []any:
@@ -1874,12 +1798,6 @@ func anySlice(value any) []any {
 		return out
 	default:
 		return nil
-	}
-}
-
-func autoReindex(vaultPath string) {
-	if err := reindex(Args{"vault": vaultPath, "quiet": "true"}); err != nil && os.Getenv("TUSKER_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "[auto-reindex] skipped: %s\n", err.Error())
 	}
 }
 

@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 const feedbackNoteImportSchema = "tusker.feedback_note_import/v1"
@@ -64,144 +61,6 @@ type feedbackIngestResult struct {
 	Items          []feedbackIngestItem
 	WrittenImports []string
 	WrittenSignals []string
-}
-
-func feedbackIngestCmd(args Args) error {
-	result, err := buildFeedbackIngest(args)
-	if err != nil {
-		return err
-	}
-	if args.Bool("write") || args.Bool("apply") {
-		if err := writeFeedbackIngestResult(&result); err != nil {
-			return err
-		}
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{
-			"ok":            true,
-			"date":          result.Date,
-			"since":         result.Since,
-			"import_run_id": result.ImportRunID,
-			"output_vault":  result.OutputVault,
-			"targets":       feedbackTargetsJSON(result.Targets),
-			"warnings":      feedbackTargetWarningsJSON(result.Warnings),
-			"counts":        map[string]any{"targets": len(result.Targets), "notes": len(result.Items), "imports_written": len(result.WrittenImports), "signals_written": len(result.WrittenSignals)},
-			"items":         result.Items,
-			"import_paths":  result.WrittenImports,
-			"signal_paths":  result.WrittenSignals,
-		})
-		return nil
-	}
-	fmt.Print(renderFeedbackIngestMarkdown(result))
-	return nil
-}
-
-func buildFeedbackIngest(args Args) (feedbackIngestResult, error) {
-	sinceDate, since, err := feedbackCommandSince(args, "feedback ingest")
-	if err != nil {
-		return feedbackIngestResult{}, err
-	}
-	date := feedbackCommandDate(args, "feedback ingest")
-	if date == "" {
-		return feedbackIngestResult{}, tuskerError(errorInvalidArg, "feedback ingest --date must be YYYY-MM-DD: "+args.String("date"))
-	}
-	resolution, err := feedbackResolveTargets(args, true)
-	if err != nil {
-		return feedbackIngestResult{}, err
-	}
-	outputVault, err := feedbackOutputVaultPath(args, resolution.Targets)
-	if err != nil {
-		return feedbackIngestResult{}, err
-	}
-	runID := feedbackImportRunID(args, date, since, resolution.Targets)
-	result := feedbackIngestResult{
-		Date:        date,
-		Since:       since,
-		ImportRunID: runID,
-		OutputVault: outputVault,
-		Targets:     resolution.Targets,
-		Warnings:    resolution.Warnings,
-	}
-	seenSourceRefs := map[string]bool{}
-	for _, target := range resolution.Targets {
-		records, err := feedbackRecordsForVault(target.vaultPath, target.repoRoot, sinceDate)
-		if err != nil {
-			return feedbackIngestResult{}, err
-		}
-		for _, record := range records {
-			if len(record.Issues) > 0 {
-				continue
-			}
-			sourceRef := feedbackNoteSourceRef(target, record)
-			if seenSourceRefs[sourceRef] {
-				continue
-			}
-			seenSourceRefs[sourceRef] = true
-			signal := feedbackSignalFromFeedbackRecord(target, record, date, runID)
-			importPath := feedbackNoteImportPath(outputVault, runID, target, record)
-			signalPath := feedbackSignalPath(outputVault, signal)
-			result.Items = append(result.Items, feedbackIngestItem{
-				SourceRef:        sourceRef,
-				SourceProjectKey: target.projectKey,
-				SourceRepoRoot:   target.repoRoot,
-				SourceVaultRoot:  target.vaultPath,
-				SourcePath:       record.Path,
-				ImportPath:       feedbackPathRelativeToVault(outputVault, importPath),
-				SignalPath:       feedbackPathRelativeToVault(outputVault, signalPath),
-				DedupeKey:        signal.DedupeKey,
-				SignalID:         signal.ID,
-			})
-		}
-	}
-	sort.SliceStable(result.Items, func(i, j int) bool {
-		return result.Items[i].SourceRef < result.Items[j].SourceRef
-	})
-	return result, nil
-}
-
-func writeFeedbackIngestResult(result *feedbackIngestResult) error {
-	for _, item := range result.Items {
-		target, record, ok := feedbackIngestSourceRecord(result.Targets, item.SourceRef)
-		if !ok {
-			continue
-		}
-		signal := feedbackSignalFromFeedbackRecord(target, record, result.Date, result.ImportRunID)
-		signalPath, err := writeFeedbackSignal(result.OutputVault, signal)
-		if err != nil {
-			return err
-		}
-		item.SignalPath = feedbackPathRelativeToVault(result.OutputVault, signalPath)
-		importRecord := feedbackNoteImportRecordFromSignal(target, record, result.ImportRunID, signal, item.SignalPath)
-		importPath, err := writeFeedbackNoteImportRecord(result.OutputVault, importRecord)
-		if err != nil {
-			return err
-		}
-		item.ImportPath = feedbackPathRelativeToVault(result.OutputVault, importPath)
-		result.WrittenSignals = append(result.WrittenSignals, signalPath)
-		result.WrittenImports = append(result.WrittenImports, importPath)
-		for i := range result.Items {
-			if result.Items[i].SourceRef == item.SourceRef {
-				result.Items[i] = item
-				break
-			}
-		}
-	}
-	return nil
-}
-
-func feedbackIngestSourceRecord(targets []feedbackTarget, sourceRef string) (feedbackTarget, feedbackRecord, bool) {
-	for _, target := range targets {
-		records, err := feedbackRecordsForVault(target.vaultPath, target.repoRoot, time.Time{})
-		if err != nil {
-			continue
-		}
-		for _, record := range records {
-			if feedbackNoteSourceRef(target, record) == sourceRef {
-				return target, record, true
-			}
-		}
-	}
-	return feedbackTarget{}, feedbackRecord{}, false
 }
 
 func feedbackResolveTargets(args Args, includeDefault bool) (feedbackTargetResolution, error) {
@@ -367,32 +226,6 @@ func feedbackTargetBlockingWarning(target feedbackTarget) (feedbackTargetWarning
 	return feedbackTargetWarning{}, false
 }
 
-func feedbackOutputVaultPath(args Args, targets []feedbackTarget) (string, error) {
-	if outputVault := strings.TrimSpace(args.String("output-vault")); outputVault != "" {
-		return filepath.Abs(outputVault)
-	}
-	if vaultArg := strings.TrimSpace(args.String("vault")); vaultArg != "" {
-		return filepath.Abs(vaultArg)
-	}
-	if len(targets) > 0 {
-		return targets[0].vaultPath, nil
-	}
-	return resolveVaultPath(args, false)
-}
-
-func feedbackImportRunID(args Args, date, since string, targets []feedbackTarget) string {
-	if value := feedbackSlug(firstNonEmpty(args.String("import-run-id"), args.String("run-id")), ""); value != "" {
-		return value
-	}
-	var parts []string
-	for _, target := range targets {
-		parts = append(parts, target.projectKey, target.repoRoot, target.vaultPath)
-	}
-	sort.Strings(parts)
-	base := strings.Join(append([]string{date, since}, parts...), "|")
-	return "import-" + date + "-" + feedbackSignalHash(base)[:10]
-}
-
 func feedbackSignalFromFeedbackRecord(target feedbackTarget, record feedbackRecord, importDate, importRunID string) feedbackSignal {
 	sourceRef := feedbackNoteSourceRef(target, record)
 	dedupeKey := normalizedFeedbackDedupeKey(record.Fields["dedupe-key"])
@@ -442,59 +275,12 @@ func feedbackSignalCategoryFromFeedbackRecord(record feedbackRecord) string {
 	}
 }
 
-func feedbackNoteImportRecordFromSignal(target feedbackTarget, record feedbackRecord, importRunID string, signal feedbackSignal, signalPath string) feedbackNoteImportRecord {
-	return feedbackNoteImportRecord{
-		Schema:           feedbackNoteImportSchema,
-		ImportRunID:      importRunID,
-		ImportedAt:       todayISO(),
-		SourceRef:        feedbackNoteSourceRef(target, record),
-		SourceProjectKey: target.projectKey,
-		SourceRepoRoot:   target.repoRoot,
-		SourceVaultRoot:  target.vaultPath,
-		SourceNotePath:   record.Path,
-		SourceRelative:   record.RelativePath,
-		DedupeKey:        signal.DedupeKey,
-		SignalID:         signal.ID,
-		SignalPath:       signalPath,
-		Fields:           record.Fields,
-	}
-}
-
-func writeFeedbackNoteImportRecord(outputVault string, record feedbackNoteImportRecord) (string, error) {
-	path := feedbackNoteImportPathForRef(outputVault, record.ImportRunID, record.SourceProjectKey, record.SourceRelative, record.SourceRef)
-	raw, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	if err := writeText(path, string(raw)+"\n"); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
-func feedbackNoteImportPath(outputVault, importRunID string, target feedbackTarget, record feedbackRecord) string {
-	return feedbackNoteImportPathForRef(outputVault, importRunID, target.projectKey, record.RelativePath, feedbackNoteSourceRef(target, record))
-}
-
-func feedbackNoteImportPathForRef(outputVault, importRunID, projectKey, relativePath, sourceRef string) string {
-	base := feedbackSlug(projectKey+"-"+filepath.Base(relativePath), "feedback-note")
-	return filepath.Join(outputVault, "feedback", "imports", importRunID, base+"-"+feedbackSignalHash(sourceRef)[:10]+".json")
-}
-
 func feedbackNoteSourceRef(target feedbackTarget, record feedbackRecord) string {
 	return "feedback-note:" + firstNonEmpty(target.projectKey, projectKeyFromPath(target.repoRoot)) + ":" + record.RelativePath
 }
 
 func feedbackSignalBoundedFact(value string) string {
 	return feedbackShort(value, feedbackSignalMaxFactStringChars)
-}
-
-func feedbackPathRelativeToVault(vaultPath, path string) string {
-	rel, err := filepath.Rel(vaultPath, path)
-	if err != nil {
-		return filepath.ToSlash(path)
-	}
-	return filepath.ToSlash(rel)
 }
 
 func feedbackTargetsJSON(targets []feedbackTarget) []map[string]any {
@@ -533,25 +319,4 @@ func renderFeedbackTargetWarnings(b *strings.Builder, warnings []feedbackTargetW
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-}
-
-func renderFeedbackIngestMarkdown(result feedbackIngestResult) string {
-	var b strings.Builder
-	b.WriteString("# Feedback Ingest - " + result.Date + "\n\n")
-	b.WriteString("- Since: " + result.Since + "\n")
-	b.WriteString("- Import run: `" + result.ImportRunID + "`\n")
-	b.WriteString("- Output vault: " + result.OutputVault + "\n")
-	b.WriteString(fmt.Sprintf("- Targets: %d\n", len(result.Targets)))
-	b.WriteString(fmt.Sprintf("- Notes imported: %d\n\n", len(result.Items)))
-	renderFeedbackTargetWarnings(&b, result.Warnings)
-	b.WriteString("| Source project | Source note | Dedupe key | Signal |\n")
-	b.WriteString("|---|---|---|---|\n")
-	if len(result.Items) == 0 {
-		b.WriteString("| - | - | - | No feedback notes found for this window. |\n")
-		return b.String()
-	}
-	for _, item := range result.Items {
-		b.WriteString("| " + markdownCell(item.SourceProjectKey) + " | " + markdownCell(item.SourceRef) + " | `" + markdownCell(item.DedupeKey) + "` | `" + markdownCell(item.SignalID) + "` |\n")
-	}
-	return b.String()
 }

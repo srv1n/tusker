@@ -24,8 +24,9 @@ export type FontFamily =
 
 const STORAGE_KEY = "tusker-font-scale";
 const FONT_FAMILY_STORAGE_KEY = "tusker-font-family";
-// Utilities are dense fixed-pixel sizes (mostly 11–13px); default renders them near 13–15px.
-const VALUES: Record<FontScale, number> = { small: 1, default: 1.125, large: 1.25 };
+// Utilities are dense fixed-pixel sizes (mostly 11–13px); default matches the
+// OS text size exactly (zoom 1), small steps down, large steps up.
+const VALUES: Record<FontScale, number> = { small: 0.875, default: 1, large: 1.125 };
 const FAMILIES: Record<FontFamily, string> = {
   System: ' -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif',
   "Iowan Old Style": '"Iowan Old Style", Georgia, serif',
@@ -35,7 +36,7 @@ const FAMILIES: Record<FontFamily, string> = {
   "JetBrains Mono": '"JetBrains Mono", "SF Mono", ui-monospace, monospace',
   "iA Writer Duo": '"iA Writer Duo", "SF Mono", ui-monospace, monospace',
   "Source Serif": '"Source Serif 4", "Source Serif Pro", Georgia, serif',
-  Geist: 'Geist, -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+  Geist: '"Geist Sans", Geist, -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
   "Geist Mono": '"Geist Mono", "SF Mono", ui-monospace, monospace',
   Spectral: 'Spectral, Georgia, serif',
 };

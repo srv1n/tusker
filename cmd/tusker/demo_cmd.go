@@ -134,8 +134,10 @@ func demoSeed(args Args) (map[string]any, error) {
 	// Declare the fixture's required capacity as project policy: two waves
 	// run concurrently with two-task frontiers, so the demo project allows
 	// four live runs. This touches only the demo repo's local overlay, never
-	// unrelated global settings.
-	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  profiles:\n    execute-fast:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: workspace-write-offline\n      sandbox:\n        mode: workspace-write\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n    review-independent:\n      harness: codex_exec\n      model: gpt-5.6-luna\n      effort: medium\n      permission_preset: read-only\n      sandbox:\n        mode: read-only\n        network: false\n      subagents:\n        allowed: false\n        max_concurrent: 0\n  model_levels:\n    light:\n      execute: [execute-fast]\n      review: [review-independent]\n    standard:\n      execute: [execute-fast]\n      review: [review-independent]\n    demanding:\n      execute: [execute-fast]\n      review: [review-independent]\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
+	// unrelated global settings. Runner profiles and model levels are
+	// global-only: the seeded project defines none and routes through the
+	// operator's global model_levels (TUSKER_CONFIG or ~/.config/tusker).
+	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
 		return nil, err
 	}
 	createdPaths, err := demoSeedRealWorkFiles(repoRoot)

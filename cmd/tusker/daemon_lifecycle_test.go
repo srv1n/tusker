@@ -161,106 +161,6 @@ func TestDaemonPollDispatchesReleasedReviewHandoffInsideArmedWave(t *testing.T) 
 	assertEqual(t, []string{runLaneReview}, lanes, "armed-wave released execution handoff dispatches exactly one reviewer")
 }
 
-func TestEnsureDispatchedV7AttemptBindsRuntimeIdentityIdempotently(t *testing.T) {
-	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bound daemon attempt", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
-	if err := copyDirContents(vault, worktreeVault); err != nil {
-		t.Fatal(err)
-	}
-	if err := attemptV7StartCmd(Args{"vault": worktreeVault, "quiet": "true", "id": "APP-T-0001", "attempt-id": "APP-T-0001-A-0001"}); err != nil {
-		t.Fatal(err)
-	}
-
-	for i := 0; i < 2; i++ {
-		id, err := ensureDispatchedV7Attempt(vault, "APP-T-0001", "01KXGPRUNTIME0000000000000", runLaneExecute, "codex_exec", workspace, "task/app-t-0001")
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertEqual(t, "APP-T-0001-A-0002", id, "bound V7 attempt id")
-	}
-	attemptDir := filepath.Join(worktreeVault, "attempts", "APP-T-0001")
-	entries, err := os.ReadDir(attemptDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 2 || entries[1].Name() != "APP-T-0001-A-0002.md" {
-		t.Fatalf("expected prior attempt plus one idempotent daemon binding, got %#v", entries)
-	}
-	boundPath := filepath.Join(attemptDir, "APP-T-0001-A-0002.md")
-	data, body, err := parseFrontmatterMustRead(boundPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "01KXGPRUNTIME0000000000000", stringField(data, "runtime_attempt_id"), "runtime attempt binding")
-	assertEqual(t, workspace, stringField(data, "workspace_path"), "attempt workspace")
-	if stringField(data, "task_state_rev") == "" {
-		t.Fatal("daemon attempt omitted immutable task-state revision")
-	}
-
-	data["id"] = "APP-T-0001-A-0003"
-	data["state_rev"] = v7StateRev(data, body)
-	duplicate, err := serializeDocument(data, body, v7FrontmatterOrder["attempt"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeText(filepath.Join(attemptDir, "APP-T-0001-A-0003.md"), duplicate); err != nil {
-		t.Fatal(err)
-	}
-	_, err = ensureDispatchedV7Attempt(vault, "APP-T-0001", "01KXGPRUNTIME0000000000000", runLaneExecute, "codex_exec", workspace, "task/app-t-0001")
-	if err == nil || !strings.Contains(err.Error(), "multiple V7 attempts") {
-		t.Fatalf("expected duplicate runtime binding to be rejected, got %v", err)
-	}
-}
-
-func TestReviewerControlMutationRequiresBoundReviewAttempt(t *testing.T) {
-	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewer authority", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	workspace := filepath.Join(t.TempDir(), "workspace")
-	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
-	if err := copyDirContents(vault, worktreeVault); err != nil {
-		t.Fatal(err)
-	}
-	runtimeID := "01KXGPREVIEW00000000000000"
-	branch := "review/APP-T-0001/source"
-	if _, err := ensureDispatchedV7Attempt(vault, "APP-T-0001", runtimeID, runLaneReview, "codex_exec", workspace, branch); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TUSKER_ATTEMPT_ID", runtimeID)
-	t.Setenv("TUSKER_WORKSPACE", workspace)
-	t.Setenv("TUSKER_RUN_LANE", runLaneReview)
-	args := Args{"id": "APP-T-0001", "by": "reviewer:e2e"}
-	if !v7ReviewerControlMutationAllowed(worktreeVault, args, branch) {
-		t.Fatal("expected bound review attempt to authorize reviewer control mutation")
-	}
-
-	for name, mutate := range map[string]func(Args) (Args, string){
-		"wrong actor": func(next Args) (Args, string) { next["by"] = "agent:e2e"; return next, branch },
-		"wrong task":  func(next Args) (Args, string) { next["id"] = "APP-T-9999"; return next, branch },
-		"wrong branch": func(next Args) (Args, string) {
-			return next, "task/APP-T-9999"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			next := Args{"id": args["id"], "by": args["by"]}
-			next, nextBranch := mutate(next)
-			if v7ReviewerControlMutationAllowed(worktreeVault, next, nextBranch) {
-				t.Fatal("unexpected reviewer authority")
-			}
-		})
-	}
-	t.Setenv("TUSKER_RUN_LANE", runLaneExecute)
-	if v7ReviewerControlMutationAllowed(worktreeVault, args, branch) {
-		t.Fatal("execute lane must not receive reviewer control authority")
-	}
-	t.Setenv("TUSKER_RUN_LANE", runLaneReview)
-	t.Setenv("TUSKER_ATTEMPT_ID", "01KXGPMISMATCH000000000000")
-	if v7ReviewerControlMutationAllowed(worktreeVault, args, branch) {
-		t.Fatal("mismatched runtime attempt must not receive reviewer control authority")
-	}
-}
-
 func TestDispatchConsultsPlanBeforeExecute(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked readiness", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
@@ -1032,7 +932,7 @@ func TestInterruptDeadRunWithoutLiveHandleReleases(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer daemon.Close()
-	if err := daemon.InterruptRun(context.Background(), "ITEM-1"); err != nil {
+	if err := daemon.InterruptRunScoped(context.Background(), "", "ITEM-1"); err != nil {
 		t.Fatal(err)
 	}
 	run, err := daemon.store.FindRun("ITEM-1")
@@ -1245,7 +1145,6 @@ adapter &
 adapter_pid=$!
 trap 'sleep 2; printf "{\\"exit_code\\":130,\\"outcome\\":\\"interrupted\\"}" > "$STATUS_PATH"; kill -TERM "$adapter_pid"; wait "$adapter_pid"; exit 0' INT
 echo ready > "$WRAPPER_READY_PATH"
-wait "$adapter_pid"
 `
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Env = append(os.Environ(), "STATUS_PATH="+statusPath, "ADAPTER_INT_PATH="+adapterINTPath, "WRAPPER_READY_PATH="+readyPath)
@@ -1277,7 +1176,7 @@ wait "$adapter_pid"
 	}
 
 	started := time.Now()
-	if err := (&Daemon{store: store}).InterruptRun(context.Background(), run.RecordID); err != nil {
+	if err := (&Daemon{store: store}).InterruptRunScoped(context.Background(), "", run.RecordID); err != nil {
 		t.Fatal(err)
 	}
 	if elapsed := time.Since(started); elapsed < 1500*time.Millisecond || elapsed >= 5*time.Second {
@@ -1330,7 +1229,7 @@ func TestDaemonACPInterruptEscalatesIgnoredWrapperCancel(t *testing.T) {
 	if err := store.UpsertRun(run); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Daemon{store: store}).InterruptRun(context.Background(), run.RecordID); err != nil {
+	if err := (&Daemon{store: store}).InterruptRunScoped(context.Background(), "", run.RecordID); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -2107,7 +2006,9 @@ func setV7TaskStateForDaemonTest(t *testing.T, vault, taskID, status, readiness,
 	if err := writeText(taskPath, content); err != nil {
 		t.Fatal(err)
 	}
-	autoReindex(vault)
+	if err := reindex(Args{"vault": vault, "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // writeWorktreeReviewFlipForTest builds a worktree-local Tusker vault at the same
@@ -2358,5 +2259,105 @@ func TestOutcomeTextDistinguishesAwaitingLand(t *testing.T) {
 	}
 	if strings.Contains(reviewRun.LastError, "early exit") {
 		t.Fatalf("review-complete reason still reads as early exit: %q", reviewRun.LastError)
+	}
+}
+
+func TestEnsureDispatchedV7AttemptBindsRuntimeIdentityIdempotently(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bound daemon attempt", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
+	if err := copyDirFiltered(vault, worktreeVault, func(string, os.DirEntry) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	if err := attemptV7StartCmd(Args{"vault": worktreeVault, "quiet": "true", "id": "APP-T-0001", "attempt-id": "APP-T-0001-A-0001"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 2; i++ {
+		id, err := ensureDispatchedV7Attempt(vault, "APP-T-0001", "01KXGPRUNTIME0000000000000", runLaneExecute, "codex_exec", workspace, "task/app-t-0001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEqual(t, "APP-T-0001-A-0002", id, "bound V7 attempt id")
+	}
+	attemptDir := filepath.Join(worktreeVault, "attempts", "APP-T-0001")
+	entries, err := os.ReadDir(attemptDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Name() != "APP-T-0001-A-0002.md" {
+		t.Fatalf("expected prior attempt plus one idempotent daemon binding, got %#v", entries)
+	}
+	boundPath := filepath.Join(attemptDir, "APP-T-0001-A-0002.md")
+	data, body, err := parseFrontmatterMustRead(boundPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "01KXGPRUNTIME0000000000000", stringField(data, "runtime_attempt_id"), "runtime attempt binding")
+	assertEqual(t, workspace, stringField(data, "workspace_path"), "attempt workspace")
+	if stringField(data, "task_state_rev") == "" {
+		t.Fatal("daemon attempt omitted immutable task-state revision")
+	}
+
+	data["id"] = "APP-T-0001-A-0003"
+	data["state_rev"] = v7StateRev(data, body)
+	duplicate, err := serializeDocument(data, body, v7FrontmatterOrder["attempt"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(attemptDir, "APP-T-0001-A-0003.md"), duplicate); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ensureDispatchedV7Attempt(vault, "APP-T-0001", "01KXGPRUNTIME0000000000000", runLaneExecute, "codex_exec", workspace, "task/app-t-0001")
+	if err == nil || !strings.Contains(err.Error(), "multiple V7 attempts") {
+		t.Fatalf("expected duplicate runtime binding to be rejected, got %v", err)
+	}
+}
+
+func TestReviewerControlMutationRequiresBoundReviewAttempt(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewer authority", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
+	if err := copyDirFiltered(vault, worktreeVault, func(string, os.DirEntry) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := "01KXGPREVIEW00000000000000"
+	branch := "review/APP-T-0001/source"
+	if _, err := ensureDispatchedV7Attempt(vault, "APP-T-0001", runtimeID, runLaneReview, "codex_exec", workspace, branch); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TUSKER_ATTEMPT_ID", runtimeID)
+	t.Setenv("TUSKER_WORKSPACE", workspace)
+	t.Setenv("TUSKER_RUN_LANE", runLaneReview)
+	args := Args{"id": "APP-T-0001", "by": "reviewer:e2e"}
+	if !v7ReviewerControlMutationAllowed(worktreeVault, args, branch) {
+		t.Fatal("expected bound review attempt to authorize reviewer control mutation")
+	}
+
+	for name, mutate := range map[string]func(Args) (Args, string){
+		"wrong actor": func(next Args) (Args, string) { next["by"] = "agent:e2e"; return next, branch },
+		"wrong task":  func(next Args) (Args, string) { next["id"] = "APP-T-9999"; return next, branch },
+		"wrong branch": func(next Args) (Args, string) {
+			return next, "task/APP-T-9999"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			next := Args{"id": args["id"], "by": args["by"]}
+			next, nextBranch := mutate(next)
+			if v7ReviewerControlMutationAllowed(worktreeVault, next, nextBranch) {
+				t.Fatal("unexpected reviewer authority")
+			}
+		})
+	}
+	t.Setenv("TUSKER_RUN_LANE", runLaneExecute)
+	if v7ReviewerControlMutationAllowed(worktreeVault, args, branch) {
+		t.Fatal("execute lane must not receive reviewer control authority")
+	}
+	t.Setenv("TUSKER_RUN_LANE", runLaneReview)
+	t.Setenv("TUSKER_ATTEMPT_ID", "01KXGPMISMATCH000000000000")
+	if v7ReviewerControlMutationAllowed(worktreeVault, args, branch) {
+		t.Fatal("mismatched runtime attempt must not receive reviewer control authority")
 	}
 }

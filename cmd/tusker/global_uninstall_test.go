@@ -97,38 +97,6 @@ func TestGlobalUninstallYesRemovesSkillsAndConfigButNotState(t *testing.T) {
 	assertExists(t, stateMarker)
 }
 
-func TestGlobalUninstallRefusesNonTuskerBinSymlink(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
-	binDir := filepath.Join(home, ".local", "bin")
-	other := filepath.Join(t.TempDir(), "other-tool")
-	if err := writeText(other, "#!/bin/sh\nexit 0\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(other, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(binDir, "tusker")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(other, link); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, action := range planGlobalUninstall() {
-		if action.Path == link {
-			t.Fatalf("non-Tusker binary was included in uninstall plan: %#v", action)
-		}
-	}
-	if err := tuskerGlobalUninstallCmd(Args{"yes": "true", "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	assertExists(t, link)
-}
-
 func TestGlobalUninstallStateRequiresTuskerMarker(t *testing.T) {
 	home := t.TempDir()
 	stateRoot := filepath.Join(t.TempDir(), "empty-state")
@@ -227,4 +195,36 @@ func TestGlobalUninstallJSONReportsApplyErrors(t *testing.T) {
 	if len(payload.Outcomes) == 0 {
 		t.Fatalf("apply error omitted per-action outcomes: %#v", payload)
 	}
+}
+
+func TestGlobalUninstallRefusesNonTuskerBinSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
+	binDir := filepath.Join(home, ".local", "bin")
+	other := filepath.Join(t.TempDir(), "other-tool")
+	if err := writeText(other, "#!/bin/sh\nexit 0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(binDir, "tusker")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, link); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, action := range planGlobalUninstallWithState(false) {
+		if action.Path == link {
+			t.Fatalf("non-Tusker binary was included in uninstall plan: %#v", action)
+		}
+	}
+	if err := tuskerGlobalUninstallCmd(Args{"yes": "true", "quiet": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	assertExists(t, link)
 }

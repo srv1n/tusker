@@ -222,100 +222,120 @@ func TestAgentCapabilityDiscovery(t *testing.T) {
 		t.Fatalf("version/transport cache keys collapsed: calls=%d", calls)
 	}
 
-	future := discoverClaudeCatalog()
+	future := futureCatalogHarness("opencode", "OpenCode")
 	if future.Available || future.ManualEntry || future.State != "unsupported" {
 		t.Fatalf("future adapter became selectable: %#v", future)
+	}
+
+	originalCommand := runnerCatalogCommand
+	defer func() { runnerCatalogCommand = originalCommand }()
+	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
+		if name == "claude" && len(args) > 0 && args[0] == "--version" {
+			return []byte("2.0.0 (Claude Code)\n"), nil
+		}
+		return []byte(`{"loggedIn":true}`), nil
+	}
+	claude := discoverClaudeCatalog()
+	if !claude.Available || !claude.ManualEntry || claude.Group != "supported" || claude.Harness != string(RunnerClaude) || len(claude.Models) == 0 {
+		t.Fatalf("Claude Code is not selectable: %#v", claude)
+	}
+	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errors.New("not found") }
+	if missing := discoverClaudeCatalog(); missing.Available || missing.State != "unsupported" {
+		t.Fatalf("missing Claude Code reported available: %#v", missing)
 	}
 	if options := catalogHarness("codex_exec", "Codex", "supported", "setup").Options; len(options) != 1 || options[0].Kind != "enum" || !catalogContainsString(options[0].Values, "read-only") {
 		t.Fatalf("typed permission options missing: %#v", options)
 	}
 }
 
-func TestRunnerProfileBootstrap(t *testing.T) {
-	vault := automationTestVault(t)
-	path := managedTuskerConfigPath(vault)
-	original := "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n  default_profile: custom\n  routing:\n    - name: keep\n      profile: custom\n  profiles:\n    custom:\n      harness: codex_exec\n      model: gpt-5.x\n      effort: low\n      sandbox: {mode: workspace-write, network: false}\n      subagents: {allowed: false, max_concurrent: 0}\n"
-	if err := writeText(path, original); err != nil {
-		t.Fatal(err)
-	}
-	originalCommand := runnerCatalogCommand
-	originalAppServer := runnerCatalogAppServerModels
-	defer func() { runnerCatalogCommand, runnerCatalogAppServerModels = originalCommand, originalAppServer }()
+// stubRunnerCatalogForTest replaces every discovery seam so bootstrap tests
+// never launch a real Codex, Muse, or Devin binary.
+func stubRunnerCatalogForTest(t *testing.T, codexModels []RunnerCatalogModel) {
+	t.Helper()
+	command, appServer, muse, devin, executable, stateRoot := runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogMuseServerModels, runnerCatalogDevinModels, runnerCatalogCodexExecutable, runnerCatalogStateRoot
+	t.Cleanup(func() {
+		runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogMuseServerModels, runnerCatalogDevinModels, runnerCatalogCodexExecutable, runnerCatalogStateRoot = command, appServer, muse, devin, executable, stateRoot
+	})
+	root := t.TempDir()
+	runnerCatalogStateRoot = func() string { return root }
+	runnerCatalogCodexExecutable = func() string { return "codex" }
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
-		return []byte(`{"models":[{"slug":"gpt-5-terra","visibility":"visible","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}`), nil
+		if name == "codex" {
+			return []byte("codex-test"), nil
+		}
+		return nil, errCatalogFixture{}
 	}
 	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
-		return []RunnerCatalogModel{{Model: "gpt-5-terra", Efforts: []string{"low", "medium", "high", "xhigh"}}}, nil
+		if len(codexModels) == 0 {
+			return nil, errCatalogFixture{}
+		}
+		return codexModels, nil
 	}
-	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "json": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	after, err := readText(path)
-	if err != nil || after != original {
-		t.Fatalf("preview mutated config: %v %q", err, after)
-	}
-	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	after, err = readText(path)
-	if err != nil || after == original {
-		t.Fatalf("managed bootstrap did not write the selected profiles: %v %q", err, after)
-	}
-	managed, err := readText(path)
-	if err != nil || !strings.Contains(managed, "default_profile: custom") || !strings.Contains(managed, "enabled: true") || !strings.Contains(managed, "execute-standard") || !strings.Contains(managed, "name: keep") {
-		t.Fatalf("managed write failed to preserve effective policy: %v %s", err, managed)
-	}
-	if _, err := loadWorkflow(vault); err != nil {
-		t.Fatalf("written bootstrap config is invalid: %v", err)
-	}
+	runnerCatalogMuseServerModels = func(context.Context) ([]RunnerCatalogModel, error) { return nil, errCatalogFixture{} }
+	runnerCatalogDevinModels = func(context.Context) ([]RunnerCatalogModel, error) { return nil, errCatalogFixture{} }
 }
 
-func TestRunnerProfileBootstrapPreservesManagedDefault(t *testing.T) {
+func TestRunnerProfileBootstrap(t *testing.T) {
 	vault := automationTestVault(t)
-	managed := `schema: tusker.config/v1
-project_id: app
-automation:
-  enabled: false
-  default_profile: managed-owned
-  profiles:
-    managed-owned:
-      harness: codex_exec
-      model: gpt-5.x
-      effort: medium
-      sandbox: {mode: workspace-write, network: false}
-      subagents: {allowed: false, max_concurrent: 0}
-`
-	if err := writeText(managedTuskerConfigPath(vault), managed); err != nil {
+	global := setGlobalProfileForTest(t, "custom", map[string]any{"harness": "codex_exec", "model": "gpt-5.x", "effort": "low", "sandbox": map[string]any{"mode": "workspace-write", "network": false}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}})
+	projectPath := managedTuskerConfigPath(vault)
+	project := "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n  default_profile: custom\n  routing:\n    - name: keep\n      profile: custom\n"
+	if err := writeText(projectPath, project); err != nil {
 		t.Fatal(err)
 	}
-	originalCommand := runnerCatalogCommand
-	defer func() { runnerCatalogCommand = originalCommand }()
-	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
-	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := resolveTuskerConfig(vault)
+	originalGlobal, err := readText(global)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := resolved.Config.Automation.DefaultProfile; got != "managed-owned" {
-		t.Fatalf("managed default changed: got %q, want managed-owned", got)
+	stubRunnerCatalogForTest(t, []RunnerCatalogModel{
+		{Model: "gpt-6-terra", Efforts: []string{"low", "medium", "high", "xhigh"}},
+		{Model: "gpt-5.6-luna", Efforts: []string{"low", "medium", "high", "xhigh"}},
+		{Model: "gpt-6-sol", Efforts: []string{"low", "medium", "high", "xhigh"}},
+		{Model: "gpt-6-luna", Efforts: []string{"low", "medium", "high", "xhigh"}},
+	})
+	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "json": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := readText(global); err != nil || after != originalGlobal {
+		t.Fatalf("preview mutated global config: %v %q", err, after)
+	}
+	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := readText(projectPath); err != nil || after != project {
+		t.Fatalf("bootstrap must never write the project config: %v %q", err, after)
+	}
+	written, err := readText(global)
+	if err != nil || !strings.Contains(written, "custom:") || !strings.Contains(written, "execute-standard") || strings.Contains(written, "terra") || strings.Contains(written, "gpt-5.6") || strings.Contains(written, "codex_acp") {
+		t.Fatalf("global write must add codex_exec non-Terra profiles and keep existing ones: %v\n%s", err, written)
+	}
+	resolved, err := resolveTuskerConfig(vault)
+	if err != nil {
+		t.Fatalf("written bootstrap config is invalid: %v", err)
+	}
+	if resolved.Config.Automation.DefaultProfile != "custom" || resolved.Config.Automation.Profiles["execute-standard"].Harness != string(RunnerCodexExec) {
+		t.Fatalf("resolved = %#v", resolved.Config.Automation)
 	}
 }
 
-func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
-	original := runnerCatalogCommand
-	originalAppServer := runnerCatalogAppServerModels
-	defer func() { runnerCatalogCommand, runnerCatalogAppServerModels = original, originalAppServer }()
-	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
-		if name == "codex" && len(args) > 0 && args[0] == "debug" {
-			return []byte(`{"models":[{"slug":"codex-auto-review","visibility":"hide","supported_reasoning_levels":[{"effort":"high"}]},{"slug":"gpt-5-terra","visibility":"visible","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}`), nil
-		}
-		return []byte("version"), nil
+func TestRunnerProfileBootstrapSkipsWhenGlobalProfilesCoverTiers(t *testing.T) {
+	vault := automationTestVault(t)
+	global := setGlobalProfileForTest(t, "codex_exec-gpt-6-sol-medium", map[string]any{"harness": "codex_exec", "model": "gpt-6-sol", "effort": "medium", "permission_preset": "workspace-write-offline", "eligible_tiers": []string{"light", "standard", "demanding"}, "sandbox": map[string]any{"mode": "workspace-write", "network": false}, "subagents": map[string]any{"allowed": false, "max_concurrent": 0}})
+	before, err := readText(global)
+	if err != nil {
+		t.Fatal(err)
 	}
-	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) {
-		return []RunnerCatalogModel{{Model: "gpt-5-terra", Efforts: []string{"low", "medium", "high"}}}, nil
+	stubRunnerCatalogForTest(t, []RunnerCatalogModel{{Model: "gpt-6-sol", Efforts: []string{"medium"}}})
+	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
+		t.Fatal(err)
 	}
+	if after, err := readText(global); err != nil || after != before {
+		t.Fatalf("bootstrap re-proposed profiles although global profiles cover every tier: %v\n%s", err, after)
+	}
+}
+
+func TestRunnerProfileBootstrapFreshInitWritesNoProjectProfiles(t *testing.T) {
+	stubRunnerCatalogForTest(t, []RunnerCatalogModel{{Model: "gpt-6-sol", Efforts: []string{"low", "medium", "high"}}})
 	vault := automationTestVault(t)
 	if err := os.Remove(managedTuskerConfigPath(vault)); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
@@ -323,21 +343,16 @@ func TestRunnerProfileBootstrapFreshInitIncludesAllRoles(t *testing.T) {
 	if err := writeDefaultTuskerConfig(vault); err != nil {
 		t.Fatal(err)
 	}
+	raw, err := readText(managedTuskerConfigPath(vault))
+	if err != nil || strings.Contains(raw, "\n  profiles:") {
+		t.Fatalf("fresh init must not define project profiles: %v\n%s", err, raw)
+	}
 	wf, err := loadWorkflow(vault)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if wf.Data.AutomationEnabled {
 		t.Fatal("fresh init enabled automation")
-	}
-	if wf.Data.RunnerDefaultProfile != "execute-standard" {
-		t.Fatalf("default=%q", wf.Data.RunnerDefaultProfile)
-	}
-	for _, name := range []string{"planner", "execute-fast", "execute-standard", "execute-complex", "execute-frontier", "review-independent", "repair-complex"} {
-		profile, ok := wf.Data.RunnerProfiles[name]
-		if !ok || profile.Model == "codex-auto-review" || profile.Harness != string(RunnerCodexExec) {
-			t.Fatalf("bad %s profile: %#v", name, profile)
-		}
 	}
 	if _, _, err := runnerForName(string(RunnerCodexExec), wf.Data); err != nil {
 		t.Fatalf("fresh init did not admit codex_exec: %v", err)
@@ -402,6 +417,9 @@ func TestModelHarnessPresets(t *testing.T) {
 		if name == "muse" && len(args) == 1 && args[0] == "--version" {
 			return []byte("Muse Code 1.1.1"), nil
 		}
+		if name == "claude" {
+			return []byte("2.1.280 (Claude Code)"), nil
+		}
 		if name != "codex" {
 			return nil, errCatalogFixture{}
 		}
@@ -425,6 +443,9 @@ func TestModelHarnessPresets(t *testing.T) {
 	}
 	if codex := catalog.Harnesses[0]; !codex.ExecutableDetected || codex.Authentication != "authenticated" || codex.DiscoveryState != "available" || !codex.ManualEntry {
 		t.Fatalf("codex observation=%#v", codex)
+	}
+	if claude := catalog.Harnesses[1]; claude.Harness != string(RunnerClaude) || claude.Group != "supported" || !claude.ManualEntry || !claude.Available || claude.State != "available" || len(claude.Models) != 3 {
+		t.Fatalf("Claude Code must be a selectable harness: %#v", claude)
 	}
 	muse := catalog.Harnesses[2]
 	if muse.Harness != string(RunnerMuse) || !muse.Available || !muse.ExecutableDetected || muse.Authentication != "unknown" || muse.DiscoveryState != "available" || len(muse.Models) != 1 || muse.Models[0].Model != "muse-spark-1.3" || muse.Models[0].DefaultEffort != "high" || !muse.ManualEntry || muse.State != "available" {
@@ -465,7 +486,7 @@ func TestRunnerProfileEffortAndComplexity(t *testing.T) {
 	if validRunnerEffort("turbo") {
 		t.Fatal("unknown effort accepted")
 	}
-	profiles := semanticBootstrapProfiles(RunnerCatalog{Harnesses: []RunnerCatalogHarness{{Harness: "codex_exec", Source: "live", Available: true, Models: []RunnerCatalogModel{{Model: "hidden", Hidden: true, Efforts: []string{"low"}}, {Model: "gpt-5-terra", Default: true, Efforts: []string{"low", "medium", "high", "xhigh"}}}}}})
+	profiles := semanticBootstrapProfiles(RunnerCatalog{Harnesses: []RunnerCatalogHarness{{Harness: "codex_exec", Source: "live", Available: true, Models: []RunnerCatalogModel{{Model: "hidden", Hidden: true, Efforts: []string{"low"}}, {Model: "gpt-6-sol", Default: true, Efforts: []string{"low", "medium", "high", "xhigh"}}}}}})
 	if profiles["review-independent"].(map[string]any)["permission_preset"] != "read-only" {
 		t.Fatal("review profile must be read-only")
 	}
@@ -570,34 +591,16 @@ func TestFreshBootstrapWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
 	}
 }
 
-func TestProfileReconcileWithoutUsableHarnessOmitsDefaultProfile(t *testing.T) {
-	original := runnerCatalogCommand
-	originalRoot := runnerCatalogStateRoot
-	originalAppServer := runnerCatalogAppServerModels
-	originalCodexExecutable := runnerCatalogCodexExecutable
-	defer func() {
-		runnerCatalogCommand, runnerCatalogStateRoot, runnerCatalogAppServerModels, runnerCatalogCodexExecutable = original, originalRoot, originalAppServer, originalCodexExecutable
-	}()
-	root := t.TempDir()
-	t.Setenv("TUSKER_CONFIG", filepath.Join(root, "config.yaml"))
-	runnerCatalogStateRoot = func() string { return root }
-	runnerCatalogCommand = func(string, ...string) ([]byte, error) { return nil, errCatalogFixture{} }
-	runnerCatalogAppServerModels = func(context.Context) ([]RunnerCatalogModel, error) { return nil, errCatalogFixture{} }
-	runnerCatalogCodexExecutable = func() string { return "" }
+func TestProfileReconcileWithoutUsableHarnessWritesNothing(t *testing.T) {
+	stubRunnerCatalogForTest(t, nil)
+	global := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("TUSKER_CONFIG", global)
 	vault := automationTestVault(t)
-	path := managedTuskerConfigPath(vault)
-	if err := writeText(path, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: false\n  profiles: {}\n"); err != nil {
-		t.Fatal(err)
-	}
 	if err := runnerProfilesBootstrapCmd(Args{"vault": vault, "write": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := readText(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(raw, "default_profile:") {
-		t.Fatalf("reconcile invented a default profile:\n%s", raw)
+	if _, err := os.Stat(global); !os.IsNotExist(err) {
+		t.Fatalf("bootstrap without a usable harness must not write the global config: %v", err)
 	}
 }
 

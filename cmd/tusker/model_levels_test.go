@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestModelLevelsRoutingAndConfiguration(t *testing.T) {
@@ -153,7 +154,15 @@ func TestModelLevelsProfileLifecycleReferencesAndSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set := Args{"vault": vault, "scope": "project", "name": "manual", "display-name": "Manual reviewer", "eligible-tiers": "light,standard", "harness": "codex_exec", "model": "gpt-manual", "effort": "high", "preset": "workspace-write-offline", "if-revision": initial.Revision, "_no-output": "true"}
+	set := Args{"vault": vault, "scope": "global", "name": "manual", "display-name": "Manual reviewer", "eligible-tiers": "light,standard", "harness": "codex_exec", "model": "gpt-manual", "effort": "high", "preset": "workspace-write-offline", "if-revision": initial.Revision, "_no-output": "true"}
+	projectScoped := Args{}
+	for key, value := range set {
+		projectScoped[key] = value
+	}
+	projectScoped["scope"] = "project"
+	if err := modelsProfileSetCmd(projectScoped); err == nil || !strings.Contains(err.Error(), "only be defined in the global config") {
+		t.Fatalf("project-scoped profile definition must be rejected: %v", err)
+	}
 	if err := modelsProfileSetCmd(set); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +171,15 @@ func TestModelLevelsProfileLifecycleReferencesAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	referenced, _ := modelLevelsRead(vault)
-	if err := modelsProfileLifecycleCmd(Args{"vault": vault, "scope": "project", "name": "manual", "if-revision": referenced.Revision, "_no-output": "true"}, "profile-remove"); err != nil {
+	err = modelsProfileLifecycleCmd(Args{"vault": vault, "scope": "global", "name": "manual", "if-revision": referenced.Revision, "_no-output": "true"}, "profile-remove")
+	if err == nil || !strings.Contains(err.Error(), "still referenced by model_levels.standard.execute") {
+		t.Fatalf("referenced profile removal must be refused: %v", err)
+	}
+	if err := modelsResetCmd(Args{"vault": vault, "scope": "project", "level": "standard", "lane": "execute", "if-revision": referenced.Revision, "_no-output": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	unreferenced, _ := modelLevelsRead(vault)
+	if err := modelsProfileLifecycleCmd(Args{"vault": vault, "scope": "global", "name": "manual", "if-revision": unreferenced.Revision, "_no-output": "true"}, "profile-remove"); err != nil {
 		t.Fatal(err)
 	}
 	removed, _ := modelLevelsRead(vault)
@@ -170,7 +187,7 @@ func TestModelLevelsProfileLifecycleReferencesAndSnapshot(t *testing.T) {
 		t.Fatalf("removed profile still present: %#v", removed)
 	}
 
-	disabledSet := Args{"vault": vault, "scope": "project", "name": "manual-disabled", "display-name": "Manual disabled", "eligible-tiers": "light,standard", "harness": "codex_exec", "model": "gpt-manual", "effort": "high", "preset": "workspace-write-offline", "if-revision": removed.Revision, "_no-output": "true"}
+	disabledSet := Args{"vault": vault, "scope": "global", "name": "manual-disabled", "display-name": "Manual disabled", "eligible-tiers": "light,standard", "harness": "codex_exec", "model": "gpt-manual", "effort": "high", "preset": "workspace-write-offline", "if-revision": removed.Revision, "_no-output": "true"}
 	if err := modelsProfileSetCmd(disabledSet); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +196,7 @@ func TestModelLevelsProfileLifecycleReferencesAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	disabledReferenced, _ := modelLevelsRead(vault)
-	if err := modelsProfileLifecycleCmd(Args{"vault": vault, "scope": "project", "name": "manual-disabled", "if-revision": disabledReferenced.Revision, "_no-output": "true"}, "profile-disable"); err != nil {
+	if err := modelsProfileLifecycleCmd(Args{"vault": vault, "scope": "global", "name": "manual-disabled", "if-revision": disabledReferenced.Revision, "_no-output": "true"}, "profile-disable"); err != nil {
 		t.Fatal(err)
 	}
 	disabled, _ := modelLevelsRead(vault)
@@ -207,7 +224,8 @@ func TestModelLevelsProfileLifecycleReferencesAndSnapshot(t *testing.T) {
 
 func TestAgentProfileMigrationMembershipAndGuards(t *testing.T) {
 	vault := automationTestVault(t)
-	t.Setenv("TUSKER_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	global := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("TUSKER_CONFIG", global)
 	legacy := `automation:
   profiles:
     legacy-local:
@@ -217,11 +235,11 @@ func TestAgentProfileMigrationMembershipAndGuards(t *testing.T) {
       permission_preset: workspace-write-offline
       sandbox: {mode: workspace-write, network: false}
       subagents: {allowed: false}
-  model_levels:
-    light:
-      execute: [legacy-local]
 `
-	if err := writeConfigTextAtomically(managedTuskerLocalConfigPath(vault), legacy); err != nil {
+	if err := writeConfigTextAtomically(global, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfigTextAtomically(managedTuskerLocalConfigPath(vault), "automation:\n  model_levels:\n    light:\n      execute: [legacy-local]\n"); err != nil {
 		t.Fatal(err)
 	}
 	report, err := modelLevelsRead(vault)
@@ -232,7 +250,7 @@ func TestAgentProfileMigrationMembershipAndGuards(t *testing.T) {
 	if profile.DisplayName != "Codex · Legacy" || strings.Join(profile.EligibleTiers, ",") != "light" || profile.PermissionPreset != "workspace-write-offline" {
 		t.Fatalf("legacy migration changed identity, membership, or access: %#v", profile)
 	}
-	edit := Args{"vault": vault, "scope": "project", "name": "legacy-local", "display-name": "Legacy worker", "eligible-tiers": "standard", "harness": "codex_exec", "model": "gpt-legacy", "effort": "high", "preset": "workspace-write-offline", "if-revision": report.Revision, "_no-output": "true"}
+	edit := Args{"vault": vault, "scope": "global", "name": "legacy-local", "display-name": "Legacy worker", "eligible-tiers": "standard", "harness": "codex_exec", "model": "gpt-legacy", "effort": "high", "preset": "workspace-write-offline", "if-revision": report.Revision, "_no-output": "true"}
 	if err := modelsProfileSetCmd(edit); err == nil || !strings.Contains(err.Error(), "still assigned to light") {
 		t.Fatalf("referenced membership removal=%v", err)
 	}
@@ -254,3 +272,77 @@ var errTestCommandUnavailable = &testModelLevelError{}
 type testModelLevelError struct{}
 
 func (*testModelLevelError) Error() string { return "unavailable" }
+
+// A global profile referenced only by another registered project's tier
+// mapping must not be removable from this project (it would silently empty
+// that project's mapping).
+func TestModelLevelsProfileRemoveRefusesOtherProjectReference(t *testing.T) {
+	vault := automationTestVault(t)
+	other := pickupV7TestVault(t)
+	setGlobalProfileForTest(t, "shared", directEmergencyRunnerProfileForTest())
+	setGlobalProfileForTest(t, "shared.eligible_tiers", []string{"light", "standard"})
+	project := registerAutomationTestProject(t, other)
+	if _, err := setProjectLocalConfigWithReadback(other, "automation.model_levels.standard.execute", []string{"shared"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := modelLevelsRead(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = modelsProfileLifecycleCmd(Args{"vault": vault, "scope": "global", "name": "shared", "if-revision": current.Revision, "_no-output": "true"}, "profile-remove")
+	if err == nil || !strings.Contains(err.Error(), project.ProjectID+": model_levels.standard.execute") {
+		t.Fatalf("cross-project reference must block removal: %v", err)
+	}
+	if after, _ := modelLevelsRead(vault); after.Profiles["shared"].Harness == "" {
+		t.Fatal("refused removal still deleted the profile")
+	}
+}
+
+// Global-scope model settings writes from two projects must serialize on the
+// shared global config, not just each project's own epoch lock.
+func TestModelSettingsGlobalLockSpansProjects(t *testing.T) {
+	t.Setenv("TUSKER_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	first, second := pickupV7TestVault(t), pickupV7TestVault(t)
+	held, err := acquireModelSettingsLock(first, "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock, err := acquireModelSettingsLock(second, "project"); err != nil {
+		t.Fatalf("project scope must not wait on the global lock: %v", err)
+	} else {
+		_ = lock.Close()
+	}
+	acquired := make(chan error, 1)
+	go func() {
+		lock, err := acquireModelSettingsLock(second, "global")
+		if err == nil {
+			err = lock.Close()
+		}
+		acquired <- err
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("second project acquired the global model settings lock while held")
+	case <-time.After(200 * time.Millisecond):
+	}
+	_ = held.Close()
+	if err := <-acquired; err != nil {
+		t.Fatalf("second project global lock after release: %v", err)
+	}
+}
+
+func TestGlobalProfilesCoverAllTiersIgnoresReadOnlyProfiles(t *testing.T) {
+	all := []any{"light", "standard", "demanding"}
+	for name, profile := range map[string]map[string]any{
+		"preset":  {"eligible_tiers": all, "permission_preset": "read-only"},
+		"sandbox": {"eligible_tiers": all, "sandbox": map[string]any{"mode": "read-only"}},
+		"access":  {"eligible_tiers": all, "access": map[string]any{"mode": "review_only"}},
+	} {
+		if globalProfilesCoverAllTiers(map[string]any{name: profile}) {
+			t.Fatalf("%s read-only profile counted as execution coverage", name)
+		}
+	}
+	if !globalProfilesCoverAllTiers(map[string]any{"worker": map[string]any{"eligible_tiers": all, "permission_preset": "workspace-write-offline"}}) {
+		t.Fatal("writable profile must count as coverage")
+	}
+}

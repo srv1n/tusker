@@ -93,7 +93,9 @@ var (
 )
 
 func DefaultStateRoot() string {
-	if explicit := strings.TrimSpace(os.Getenv("TUSKER_STATE_ROOT")); explicit != "" {
+	// A relative root (for example the string "undefined" from an unset JS
+	// variable) would scatter runtime databases into the caller's cwd.
+	if explicit := strings.TrimSpace(os.Getenv("TUSKER_STATE_ROOT")); filepath.IsAbs(explicit) {
 		return explicit
 	}
 	if home := userHomeDir(); home != "" {
@@ -291,30 +293,6 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 }
 
-func (d *Daemon) attentionProjectsDue(now time.Time) []string {
-	if d == nil || d.stream == nil {
-		return nil
-	}
-	if d.attentionLastPoll == nil {
-		d.attentionLastPoll = map[string]time.Time{}
-	}
-	attended := d.stream.attendedProjects()
-	active := makeSet(attended...)
-	for projectID := range d.attentionLastPoll {
-		if _, ok := active[projectID]; !ok {
-			delete(d.attentionLastPoll, projectID)
-		}
-	}
-	due := make([]string, 0, len(attended))
-	for _, projectID := range attended {
-		last := d.attentionLastPoll[projectID]
-		if last.IsZero() || now.Sub(last) >= attentionProjectPollCadence {
-			due = append(due, projectID)
-		}
-	}
-	return due
-}
-
 func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 	started := time.Now()
 	var err error
@@ -445,10 +423,6 @@ func configuredReconcileInterval(raw string) time.Duration {
 	return interval
 }
 
-func (d *Daemon) InterruptRun(ctx context.Context, identity string) error {
-	return d.InterruptRunScoped(ctx, "", identity)
-}
-
 func (d *Daemon) InterruptRunScoped(ctx context.Context, projectID, identity string) error {
 	run, err := findRunScopedOrAmbiguous(d.store, projectID, identity)
 	if err != nil {
@@ -468,25 +442,6 @@ func (d *Daemon) InterruptRunScoped(ctx context.Context, projectID, identity str
 		return err
 	}
 	return interruptRunProcess(d.store, run, true)
-}
-
-func (d *Daemon) ReleaseRun(ctx context.Context, identity string) error {
-	return d.ReleaseRunScoped(ctx, "", identity)
-}
-
-func (d *Daemon) ReleaseRunScoped(ctx context.Context, projectID, identity string) error {
-	_ = ctx
-	run, err := findRunScopedOrAmbiguous(d.store, projectID, identity)
-	if err != nil {
-		return err
-	}
-	if run == nil {
-		return tuskerError(errorNotFound, "run not found: "+identity)
-	}
-	if run.ProcessPID > 0 && processIdentityMatches(*run) {
-		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
-	}
-	return finishRuntimeRun(d.store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, "released dead run by operator", false)
 }
 
 func interruptRunProcess(store *RuntimeStore, run *RunStatus, verifiedHandle bool) error {
@@ -1924,11 +1879,6 @@ func countDispatchCapacityProjectRunsByState(runs map[string]RunStatus, stateByR
 	return counts
 }
 
-func stateDispatchCapReached(state string, activeByState map[string]int, wf Workflow) bool {
-	capValue := wf.Agents.MaxConcurrentAgentsByState[strings.TrimSpace(state)]
-	return capValue > 0 && activeByState[strings.TrimSpace(state)] >= capValue
-}
-
 func stateDispatchCapReachedForRun(state string, activeByState map[string]int, wf Workflow, run RunStatus) bool {
 	state = strings.TrimSpace(state)
 	capValue := wf.Agents.MaxConcurrentAgentsByState[state]
@@ -1988,10 +1938,6 @@ func riskRank(value string) int {
 	default:
 		return 9
 	}
-}
-
-func dispatchEligibilityAllows(note Note, notesByID map[string]Note, notesByRecordID map[string]Note) bool {
-	return dispatchEligibilityReason(note, notesByID, notesByRecordID) == ""
 }
 
 func daemonDispatchBlockedReason(vaultPath string, note Note, notesByID map[string]Note, notesByRecordID map[string]Note) string {
@@ -2848,6 +2794,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		if sessionRef := acpSessionRefFromAttemptEvents(run.EventSinkPath, run.ActiveAttemptID, run.Runner); sessionRef != "" {
 			run.SessionRef = sessionRef
 			changed = true
+		}
+	}
+	if run.SessionRef != "" {
+		if err := d.attachManagedRunSession(run); err != nil {
+			return run, changed, err
 		}
 	}
 	if lastEventAt, ok := latestObservedRunEventAt(run); ok {
@@ -4249,76 +4200,6 @@ func (d *Daemon) persistRunnerInfrastructureBlock(run RunStatus, block *RunnerIn
 	return latest, true, err
 }
 
-func (d *Daemon) parkRunnerPreflightFailure(project RegisteredProject, run RunStatus, reason string) RunStatus {
-	parentAttemptID := run.ActiveAttemptID
-	parentSessionRef := run.SessionRef
-	run = parkNoProgressRun(run, reason)
-	if d != nil && d.store != nil && strings.TrimSpace(parentSessionRef) != "" {
-		_ = d.store.MarkSessionState(project.ProjectID, parentSessionRef, sessionStateForLeaseState(LeaseStateParkedNoProgress), "", run.LastError, false)
-	}
-	if d != nil {
-		d.emitSupervisorDecision(SupervisorDecision{
-			ProjectID:        project.ProjectID,
-			RecordID:         run.RecordID,
-			AttemptID:        parentAttemptID,
-			SessionRef:       parentSessionRef,
-			Kind:             string(SupervisorDecisionStopForAudit),
-			Reason:           run.LastError,
-			ParentAttemptID:  parentAttemptID,
-			ParentSessionRef: parentSessionRef,
-			WorkspacePath:    run.WorkspacePath,
-			LeaseState:       run.LeaseState,
-		})
-	}
-	return run
-}
-
-func parkNoProgressContinuation(run RunStatus, reason, updatedAt string) RunStatus {
-	if strings.TrimSpace(updatedAt) == "" {
-		updatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	run.LeaseState = string(LeaseStateParkedNoProgress)
-	run.AttemptOutcome = string(AttemptOutcomeBlocked)
-	run.LastError = reason
-	run.NextRetryAt = ""
-	run.UpdatedAt = updatedAt
-	run.Terminal = true
-	clearActiveExecution(&run)
-	return run
-}
-
-func (d *Daemon) continuationRetryCapReached(run RunStatus, wf Workflow) (bool, int, int) {
-	capValue := wf.Runtime.MaxContinuationRetries
-	if capValue < 0 {
-		capValue = 0
-	}
-	count := d.cleanExitContinuationCount(run)
-	return count >= capValue, count, capValue
-}
-
-func (d *Daemon) cleanExitContinuationCount(run RunStatus) int {
-	if d == nil || d.store == nil || strings.TrimSpace(run.ProjectID) == "" || strings.TrimSpace(run.RecordID) == "" {
-		return 0
-	}
-	decisions, err := d.store.ListRuntimeSupervisorDecisionsForRun(run.ProjectID, run.RecordID)
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, decision := range decisions {
-		if decision.Kind != string(SupervisorDecisionContinueThread) {
-			continue
-		}
-		if decision.WorkRevision != run.WorkRevision {
-			continue
-		}
-		if strings.Contains(decision.Reason, cleanExitContinuationReason) || decision.ContextSignal == "no_progress" {
-			count++
-		}
-	}
-	return count
-}
-
 func shouldDaemonPromoteCleanExitToReview(noteStatus string) bool {
 	return strings.TrimSpace(noteStatus) == ""
 }
@@ -4890,6 +4771,9 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if err := d.store.SaveRunIdentity(runIdentityForClaim(*claimResult.Run, project.RepoRoot, selectedWorkspacePath, string(workspaceStrategy), branchName)); err != nil {
 		return run, true, err
 	}
+	if err := d.ensureManagedRunExecution(*claimResult.Run, note); err != nil {
+		return run, true, err
+	}
 	run.LeaseState = string(LeaseStateClaimed)
 	run.LeaseOwner = attemptID
 	run.LeaseGeneration = leaseGeneration
@@ -5271,6 +5155,9 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		return updated, true, err
 	}
 	run = updated
+	if err := d.attachManagedRunSession(run); err != nil {
+		return run, true, err
+	}
 	d.store.finishTaskAnswerPrompt(project.ProjectID, attemptID, answerIDs, true)
 	if strings.TrimSpace(resumeSession.SessionRef) != "" {
 		if err := acceptRunContinuationDeliveries(d.store, continuationDeliveries, attemptID); err != nil {
@@ -5315,6 +5202,88 @@ func (d *Daemon) updateDispatchRunIfLease(run RunStatus, owner string, generatio
 		return latest, false, err
 	}
 	return run, true, nil
+}
+
+func (d *Daemon) ensureManagedRunExecution(run RunStatus, note Note) error {
+	var existing string
+	err := d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ?`,
+		[]any{run.ProjectID, run.ActiveAttemptID}, &existing)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	waveID := strings.TrimSpace(stringField(note.Data, "wave"))
+	parentID := ""
+	if waveID != "" {
+		err = d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND wave_id = ? AND node_kind = 'root' ORDER BY wave_authorization_generation DESC LIMIT 1`,
+			[]any{run.ProjectID, waveID}, &parentID)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+	}
+	if parentID == "" {
+		// Reuse the task's existing root so repeated claims stay one tree.
+		err = d.store.queryRowScan(`SELECT parent_execution_id FROM execution_records WHERE project_id = ? AND task_id = ? AND node_kind = 'managed_attempt' ORDER BY rowid DESC LIMIT 1`,
+			[]any{run.ProjectID, firstNonEmpty(run.ItemID, run.RecordID)}, &parentID)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+	}
+	if parentID == "" {
+		root, err := d.store.CreateDirectExecution(DirectExecutionInput{ProjectID: run.ProjectID, DisplayName: run.RecordID, Source: "daemon", Creator: "daemon"})
+		if err != nil {
+			return err
+		}
+		parentID = root.ExecutionID
+	}
+	_, err = d.store.CreateManagedExecution(ManagedExecutionInput{ProjectID: run.ProjectID, ParentExecutionID: parentID,
+		TaskID: firstNonEmpty(run.ItemID, run.RecordID), WaveID: waveID, AttemptID: run.ActiveAttemptID,
+		LeaseGeneration: run.LeaseGeneration, Provider: run.Runner, Source: "daemon", Creator: "daemon"})
+	if err != nil {
+		// The one-time legacy backfill in another process can record this
+		// attempt between the lookup above and the insert; adopt that record.
+		if lookupErr := d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ?`,
+			[]any{run.ProjectID, run.ActiveAttemptID}, &existing); lookupErr == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+func (d *Daemon) attachManagedRunSession(run RunStatus) error {
+	if run.SessionRef == "" || run.ActiveAttemptID == "" {
+		return nil
+	}
+	matched, err := d.store.RunLeaseMatches(run.ProjectID, run.RecordID, run.ActiveAttemptID, run.LeaseGeneration)
+	if err != nil || !matched {
+		return err
+	}
+	var executionID string
+	err = d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ? AND lease_generation = ?`,
+		[]any{run.ProjectID, run.ActiveAttemptID, run.LeaseGeneration}, &executionID)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var attachedAttempt string
+	err = d.store.queryRowScan(`SELECT records.attempt_id FROM execution_attachment_events attachments JOIN execution_records records ON records.execution_id = attachments.execution_id WHERE attachments.project_id = ? AND attachments.provider = ? AND attachments.provider_session_id = ?`,
+		[]any{run.ProjectID, run.Runner, run.SessionRef}, &attachedAttempt)
+	if err == nil {
+		// Already attached here, or owned by another attempt: a resumed attempt
+		// shares its predecessor's session, which stays on its original owner,
+		// and an unrelated owner must not fail every daemon tick.
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	_, _, err = d.store.AttachExecution(ExecutionAttachmentInput{ProjectID: run.ProjectID, ExecutionID: executionID,
+		Provider: run.Runner, ProviderSessionID: run.SessionRef, SessionRef: run.SessionRef, Actor: "daemon"})
+	return err
 }
 
 func (d *Daemon) persistClaimedDispatchFailure(project RegisteredProject, wf Workflow, run RunStatus, owner string, generation int, cause error) (RunStatus, bool, error) {
@@ -5533,12 +5502,12 @@ func (d *Daemon) emitSupervisorDecision(decision SupervisorDecision) {
 	}
 	saved, err := d.store.SaveSupervisorDecision(decision)
 	if err != nil {
-		d.tripEventLogPersistenceCircuit("supervisor_decision_store", firstNonEmpty(decision.RecordID, decision.ItemID), err)
+		d.tripEventLogPersistenceCircuit("supervisor_decision_store", decision.ProjectID, firstNonEmpty(decision.RecordID, decision.ItemID), err)
 		return
 	}
 	run, err := d.store.FindRunScoped(saved.ProjectID, firstNonEmpty(saved.RecordID, saved.ItemID))
 	if err != nil {
-		d.tripEventLogPersistenceCircuit("supervisor_decision_lookup", firstNonEmpty(saved.RecordID, saved.ItemID), err)
+		d.tripEventLogPersistenceCircuit("supervisor_decision_lookup", saved.ProjectID, firstNonEmpty(saved.RecordID, saved.ItemID), err)
 		return
 	}
 	if run == nil || strings.TrimSpace(run.EventSinkPath) == "" {
@@ -5571,7 +5540,7 @@ func (d *Daemon) emitSupervisorDecision(decision SupervisorDecision) {
 		"context_window_tokens": saved.ContextWindowTokens,
 		"created_at":            saved.CreatedAt,
 	}); err != nil {
-		d.tripEventLogPersistenceCircuit("supervisor_decision", firstNonEmpty(saved.RecordID, saved.ItemID), err)
+		d.tripEventLogPersistenceCircuit("supervisor_decision", saved.ProjectID, firstNonEmpty(saved.RecordID, saved.ItemID), err)
 	}
 }
 
@@ -6496,41 +6465,6 @@ func turnIDsFromEvents(events []map[string]any) []string {
 	return dedupeSortedStrings(out)
 }
 
-func tokenTotalsFromEvents(events []map[string]any) runtimeTokenTotals {
-	byTurn := map[string]runtimeTokenTotals{}
-	for i, event := range events {
-		kind := reviewPacketEventKind(event)
-		payload := reviewPacketEventPayload(event)
-		turnID := firstNonEmpty(stringValue(payload["turn_id"]), stringValue(payload["turnId"]))
-		if turnID == "" && !strings.Contains(kind, "turn") {
-			continue
-		}
-		totals := runtimeTokenTotals{
-			InputTokens:  reviewPacketInt(payload["input_tokens"]),
-			OutputTokens: reviewPacketInt(payload["output_tokens"]),
-			TotalTokens:  reviewPacketInt(payload["total_tokens"]),
-		}
-		if totals.TotalTokens == 0 && (totals.InputTokens > 0 || totals.OutputTokens > 0) {
-			totals.TotalTokens = totals.InputTokens + totals.OutputTokens
-		}
-		if totals.TotalTokens == 0 && totals.InputTokens == 0 && totals.OutputTokens == 0 {
-			continue
-		}
-		key := firstNonEmpty(turnID, fmt.Sprintf("event-%d", i))
-		byTurn[key] = totals
-	}
-	var out runtimeTokenTotals
-	for _, totals := range byTurn {
-		out.InputTokens += totals.InputTokens
-		out.OutputTokens += totals.OutputTokens
-		out.TotalTokens += totals.TotalTokens
-	}
-	if out.TotalTokens == 0 && (out.InputTokens > 0 || out.OutputTokens > 0) {
-		out.TotalTokens = out.InputTokens + out.OutputTokens
-	}
-	return out
-}
-
 func runtimeSummariesFromRun(run RunStatus) []string {
 	var out []string
 	parts := []string{}
@@ -6617,61 +6551,6 @@ func openRisksFromRun(run RunStatus) []string {
 		return []string{"runtime last_error: " + risk}
 	}
 	return nil
-}
-
-func openRisksForPacket(run RunStatus, turns []RunTurn, supervisorDecisions []RuntimeSupervisorDecision, facts reviewPacketFacts) []string {
-	risks := append([]string{}, facts.OpenRisks...)
-	for _, risk := range openRisksFromRun(run) {
-		risks = append(risks, risk)
-	}
-	for _, turn := range turns {
-		if risk := safePacketText(turn.LastError, 220); risk != "" {
-			risks = append(risks, fmt.Sprintf("turn `%s`: %s", turn.TurnID, risk))
-		}
-	}
-	for _, decision := range supervisorDecisions {
-		kind := strings.ToLower(strings.TrimSpace(decision.Kind))
-		if strings.Contains(kind, "stop") || strings.Contains(kind, "human") || strings.Contains(kind, "audit") {
-			reason := safePacketText(firstNonEmpty(decision.Reason, decision.ValidationDelta, decision.ContextSignal), 220)
-			if reason != "" {
-				risks = append(risks, fmt.Sprintf("supervisor `%s`: %s", decision.Kind, reason))
-			}
-		}
-	}
-	return dedupeSortedStrings(risks)
-}
-
-func sessionRefsForPacket(run RunStatus, turns []RunTurn, facts reviewPacketFacts) []string {
-	refs := append([]string{}, facts.SessionRefs...)
-	if ref := safePacketText(run.SessionRef, 120); ref != "" {
-		refs = append(refs, ref)
-	}
-	for _, turn := range turns {
-		if ref := safePacketText(turn.SessionRef, 120); ref != "" {
-			refs = append(refs, ref)
-		}
-	}
-	return dedupeSortedStrings(refs)
-}
-
-func turnIDsForPacket(turns []RunTurn, facts reviewPacketFacts) []string {
-	ids := append([]string{}, facts.TurnIDs...)
-	for _, turn := range turns {
-		if id := safePacketText(turn.TurnID, 120); id != "" {
-			ids = append(ids, id)
-		}
-	}
-	return dedupeSortedStrings(ids)
-}
-
-func backtickList(values []string) string {
-	var out []string
-	for _, value := range values {
-		if safe := safePacketText(value, 120); safe != "" {
-			out = append(out, "`"+safe+"`")
-		}
-	}
-	return strings.Join(out, ", ")
 }
 
 func commandDurationText(payload map[string]any) string {
@@ -6817,19 +6696,6 @@ func latestNonEmptyFileModTime(path string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return info.ModTime().UTC(), true
-}
-
-func latestRunEventAt(run RunStatus) (time.Time, bool) {
-	if latest, ok := latestObservedRunEventAt(run); ok {
-		return latest, true
-	}
-	for _, raw := range []string{run.LastEventAt, run.StartedAt, run.UpdatedAt} {
-		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(raw))
-		if err == nil {
-			return parsed.UTC(), true
-		}
-	}
-	return time.Time{}, false
 }
 
 func runStallReason(run RunStatus, wf Workflow, now time.Time) (bool, string) {
@@ -7868,17 +7734,6 @@ func reviewerActorForNote(configured string, note Note) string {
 	}
 }
 
-func reviewerVerifyCommandForNote(note Note, actor string) string {
-	if isV7TaskNote(note) {
-		covers := strings.Join(v7AcceptanceIDs(note.Body), ",")
-		if covers == "" {
-			covers = "ALL"
-		}
-		return fmt.Sprintf("tusker verify add %s --by %s --covers %s --check \"review: acceptance, evidence, gates, and docs\" --result pass --note \"<what you verified>\"", stringField(note.Data, "id"), actor, covers)
-	}
-	return fmt.Sprintf("tusker verify %s --by %s --summary \"<what you verified>\"", stringField(note.Data, "id"), actor)
-}
-
 func renderStrictWorkflowTemplate(template string, values map[string]string) (string, error) {
 	var unknown []string
 	rendered := workflowTemplatePlaceholder.ReplaceAllStringFunc(template, func(match string) string {
@@ -7902,33 +7757,6 @@ func renderStrictWorkflowTemplate(template string, values map[string]string) (st
 		return "", fmt.Errorf("WORKFLOW.md prompt template has malformed placeholder")
 	}
 	return rendered, nil
-}
-
-func markNoteReadyForReview(vaultPath, notePath string) error {
-	data, body, err := parseFrontmatterMustRead(notePath)
-	if err != nil {
-		return err
-	}
-	if err := assertEvidenceGate(data, body, stringField(data, "id")); err != nil {
-		return err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	date := todayISO()
-	prevStatus := stringField(data, "status")
-	data["status"] = "review"
-	data["review_requested_at"] = now
-	data["updated"] = date
-	appendTransition(data, orderedTransition(now, "status", prevStatus, "review", "daemon", "runner attempt succeeded"))
-	body = appendWorkLogBullet(body, fmt.Sprintf("%s — daemon — implementation pass completed; review requested", date))
-	content, err := serializeDocument(data, body, frontmatterOrderForType(stringField(data, "type")))
-	if err != nil {
-		return err
-	}
-	if err := writeText(notePath, content); err != nil {
-		return err
-	}
-	autoReindex(vaultPath)
-	return nil
 }
 
 func recordDaemonImplementationEvidence(vaultPath string, note Note, run RunStatus) error {
@@ -8158,59 +7986,6 @@ func daemonResumeCmd(args Args) error {
 	}
 	fmt.Println("Daemon dispatch may resume.")
 	return nil
-}
-
-func daemonStopFallbackCmd(args Args) error {
-	stateRoot := DefaultStateRoot()
-	liveness := readDaemonLiveness(stateRoot, time.Now().UTC())
-	if !liveness.Alive {
-		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": true, "stopped": false, "already_stopped": true})
-			return nil
-		}
-		fmt.Println("Daemon is not running")
-		return nil
-	}
-	resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "stop"})
-	if err != nil {
-		if liveness.PID == os.Getpid() {
-			return err
-		}
-		if killErr := syscall.Kill(liveness.PID, syscall.SIGTERM); killErr != nil && !strings.Contains(killErr.Error(), "no such process") {
-			return killErr
-		}
-	} else if !resp.OK {
-		return tuskerError(errorHookFailed, firstNonEmpty(resp.Message, "daemon stop failed"))
-	}
-	stopped := waitDaemonStopped(stateRoot, liveness.PID, 5*time.Second)
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": stopped, "stopped": stopped, "pid": liveness.PID})
-		if stopped {
-			return nil
-		}
-		return tuskerError(errorHookFailed, "daemon stop timed out", withContext(map[string]any{"pid": liveness.PID}))
-	}
-	if !stopped {
-		return tuskerError(errorHookFailed, "daemon stop timed out", withContext(map[string]any{"pid": liveness.PID}))
-	}
-	fmt.Printf("Stopped daemon pid %d\n", liveness.PID)
-	return nil
-}
-
-func waitDaemonStopped(stateRoot string, pid int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		if pid <= 0 || !processAlive(pid) {
-			return true
-		}
-		if _, ok, err := readDaemonPIDFile(filepath.Join(stateRoot, daemonPIDFileName)); err == nil && !ok {
-			return true
-		}
-		if !time.Now().Before(deadline) {
-			return false
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
 }
 
 func daemonLimitsCmd(args Args) error {
@@ -8566,11 +8341,6 @@ func openRuntimeStoreReadOnly(stateRoot string) (*RuntimeStore, bool, error) {
 	return store, false, err
 }
 
-func setProjectAutomation(store *RuntimeStore, project RegisteredProject, enabled bool) error {
-	_, err := setProjectAutomationAudited(store, project, enabled, defaultActorName(), "cli")
-	return err
-}
-
 // setProjectAutomationAudited flips Background work with persisted
 // actor/source/before/after/time evidence. A failed write returns an error
 // and changes nothing: callers must not report success.
@@ -8924,15 +8694,6 @@ func refreshCmd(args Args) error {
 		emitJSON(map[string]any{"ok": true})
 	}
 	return nil
-}
-
-func resolveRegisteredProject(store *RuntimeStore, args Args) (*RegisteredProject, error) {
-	loaded, err := resolveLoadedRegisteredProject(store, args, registeredProjectLoadOptions{})
-	if err != nil {
-		return nil, err
-	}
-	project := loaded.Project
-	return &project, nil
 }
 
 func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registeredProjectLoadOptions) (*loadedRegisteredProject, error) {

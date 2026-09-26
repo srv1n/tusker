@@ -823,10 +823,10 @@ func (h *claudeLiveHandle) policyDenialReason(mutating bool) string {
 	if mutating && activeSandbox == "read-only" {
 		return "read-only sandbox rejects mutating Claude Code tool approval requests"
 	}
-	if approvalPolicy == "on-request" || approvalPolicy == "untrusted" {
-		return "approval_policy=" + approvalPolicy + " requires human approval; Tusker rejects instead of silently approving"
+	if approvalPolicy == "on-request" {
+		return "approval_policy=on-request requires human approval; Tusker rejects instead of silently approving"
 	}
-	return ""
+	return approvalPolicyHumanOnlyReason(approvalPolicy)
 }
 
 func (h *claudeLiveHandle) recordApprovalDecision(method string, decision codexApprovalDecision) {

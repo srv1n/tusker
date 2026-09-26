@@ -17,6 +17,9 @@ func demoRunSessionLive(repo string, manifest *demoManifest, harness, scenario s
 	proof := demoSessionProof{Scenario: scenario, Harness: harness, Label: "live-provider", Status: "unavailable", AttemptIDs: []string{}, Observations: []demoSessionObservation{}, Checks: []demoSessionCheck{}, RecordedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	missing := map[string]string{
 		"restart": "no scoped daemon-restart fault injection; stopping the shared daemon would affect other projects",
+		// Runner profiles are global-only, so forcing a denial would mean
+		// editing the operator's global config; the demo never does that.
+		"permission-deny": "runner profiles are global-only and the demo never edits the operator's global config; pin a read-only global profile with `tusker task update <s1> --execute-profile <name>` and follow the checklist",
 	}
 	if reason := missing[scenario]; reason != "" {
 		proof.Status, proof.Reason = "unsupported", reason
@@ -41,9 +44,6 @@ func demoRunSessionLive(repo string, manifest *demoManifest, harness, scenario s
 	if project == "" || task == "" || wave == "" {
 		proof.Status, proof.Reason = "refused", "demo runtime registration or standalone task is missing; reset and reseed"
 		return proof
-	}
-	if scenario == "permission-deny" {
-		return demoRunSessionPermission(ctx, repo, project, task, wave, harness, capability.Capability, proof)
 	}
 	if scenario == "ask-wait" || scenario == "ask-nowait" {
 		if err := demoSessionPrepareAsk(repo, scenario); err != nil {

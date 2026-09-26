@@ -77,7 +77,8 @@ func TestFreshTaskDefaultAcceptanceRegistersAsPlaceholder(t *testing.T) {
 		t.Fatalf("scaffold must carry the shared default acceptance outcome constant, got:\n%s", body)
 	}
 
-	gaps := feedbackSignalAcceptanceGaps(body)
+	facts := feedbackSignalAcceptanceFacts(body)
+	gaps := append(facts.AcceptanceGaps, facts.ProofMapGaps...)
 	foundAcceptanceGap := false
 	for _, g := range gaps {
 		if g == "A1" || g == "acceptance-placeholder" {

@@ -130,6 +130,53 @@ func validExecutionRelationship(kind ExecutionRelationshipKind) bool {
 	}
 }
 
+// executionLedgerConstraintVersion and executionLedgerConstraintStatements are
+// package-level so runtimeSchemaComplete can detect same-named drift that the
+// migration repairs.
+const executionLedgerConstraintVersion = 1
+
+var executionLedgerConstraintStatements = []string{
+	`CREATE UNIQUE INDEX IF NOT EXISTS execution_records_attempt_id ON execution_records(attempt_id) WHERE attempt_id != '';`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS execution_provider_child_identity ON execution_records(project_id, parent_execution_id, provider, provider_child_handle) WHERE node_kind = 'provider_child' AND provider != '' AND provider_child_handle != '';`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS execution_edges_one_parent ON execution_edges(child_execution_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS execution_wave_generation_root ON execution_records(project_id, wave_id, wave_authorization_generation) WHERE node_kind = 'root' AND wave_id != '' AND wave_authorization_generation > 0;`,
+	`CREATE INDEX IF NOT EXISTS execution_records_root ON execution_records(root_execution_id);`,
+	`CREATE INDEX IF NOT EXISTS execution_binding_events_current ON execution_binding_events(execution_id, generation DESC);`,
+	`CREATE INDEX IF NOT EXISTS execution_attachment_events_execution ON execution_attachment_events(execution_id, created_at DESC);`,
+	`CREATE TRIGGER IF NOT EXISTS execution_edges_validate_insert BEFORE INSERT ON execution_edges BEGIN
+		SELECT CASE WHEN NEW.kind NOT IN ('retry_of','resume_of','fork_of','managed_child_of','provider_child_of') THEN RAISE(ABORT, 'invalid execution edge kind') END;
+		SELECT CASE WHEN NEW.parent_execution_id = NEW.child_execution_id THEN RAISE(ABORT, 'execution edge cannot be self-referential') END;
+		SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.parent_execution_id) OR NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge endpoint not found') END;
+		SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records parent JOIN execution_records child ON parent.project_id = child.project_id AND parent.root_execution_id = child.root_execution_id WHERE parent.execution_id = NEW.parent_execution_id AND child.execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge project/root mismatch') END;
+		SELECT CASE WHEN EXISTS (WITH RECURSIVE ancestors(id) AS (SELECT NEW.parent_execution_id UNION ALL SELECT edge.parent_execution_id FROM execution_edges edge JOIN ancestors ON edge.child_execution_id = ancestors.id) SELECT 1 FROM ancestors WHERE id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge cycle') END;
+		SELECT CASE WHEN EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id AND ((node_kind = 'root') OR (node_kind = 'provider_child' AND NEW.kind != 'provider_child_of') OR (node_kind = 'managed_attempt' AND NEW.kind NOT IN ('managed_child_of','retry_of','resume_of','fork_of')))) THEN RAISE(ABORT, 'execution edge kind does not match child node') END;
+	END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_edges_validate_update BEFORE UPDATE ON execution_edges BEGIN
+		SELECT CASE WHEN NEW.kind NOT IN ('retry_of','resume_of','fork_of','managed_child_of','provider_child_of') THEN RAISE(ABORT, 'invalid execution edge kind') END;
+		SELECT CASE WHEN NEW.parent_execution_id = NEW.child_execution_id THEN RAISE(ABORT, 'execution edge cannot be self-referential') END;
+		SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.parent_execution_id) OR NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge endpoint not found') END;
+		SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records parent JOIN execution_records child ON parent.project_id = child.project_id AND parent.root_execution_id = child.root_execution_id WHERE parent.execution_id = NEW.parent_execution_id AND child.execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge project/root mismatch') END;
+		SELECT CASE WHEN EXISTS (WITH RECURSIVE ancestors(id) AS (SELECT NEW.parent_execution_id UNION ALL SELECT edge.parent_execution_id FROM execution_edges edge JOIN ancestors ON edge.child_execution_id = ancestors.id WHERE NOT (edge.parent_execution_id = OLD.parent_execution_id AND edge.child_execution_id = OLD.child_execution_id)) SELECT 1 FROM ancestors WHERE id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge cycle') END;
+		SELECT CASE WHEN EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id AND ((node_kind = 'root') OR (node_kind = 'provider_child' AND NEW.kind != 'provider_child_of') OR (node_kind = 'managed_attempt' AND NEW.kind NOT IN ('managed_child_of','retry_of','resume_of','fork_of')))) THEN RAISE(ABORT, 'execution edge kind does not match child node') END;
+		SELECT RAISE(ABORT, 'execution edges are immutable') WHERE NEW.parent_execution_id != OLD.parent_execution_id OR NEW.child_execution_id != OLD.child_execution_id OR NEW.kind != OLD.kind OR NEW.created_at != OLD.created_at;
+	END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_edges_prevent_delete BEFORE DELETE ON execution_edges BEGIN SELECT RAISE(ABORT, 'execution edges are immutable'); END;`,
+	// Execution records are append-only. Renames and rebindings are later
+	// audited operations that add history; they never rewrite this identity
+	// ledger row or its immutable correlation facts.
+	`CREATE TRIGGER IF NOT EXISTS execution_records_immutable BEFORE UPDATE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution records are immutable'); END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_records_prevent_delete BEFORE DELETE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution records are immutable'); END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_name_events_validate_insert BEFORE INSERT ON execution_name_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id) THEN RAISE(ABORT, 'execution name event execution not found') END; END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_validate_insert BEFORE INSERT ON execution_attachment_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id AND project_id = NEW.project_id) THEN RAISE(ABORT, 'execution attachment event execution/project mismatch') END; END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_binding_events_validate_insert BEFORE INSERT ON execution_binding_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id) THEN RAISE(ABORT, 'execution binding event execution not found') END; END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_name_events_immutable BEFORE UPDATE ON execution_name_events BEGIN SELECT RAISE(ABORT, 'execution name events are immutable'); END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_name_events_prevent_delete BEFORE DELETE ON execution_name_events BEGIN SELECT RAISE(ABORT, 'execution name events are immutable'); END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_immutable BEFORE UPDATE ON execution_attachment_events BEGIN SELECT RAISE(ABORT, 'execution attachment events are immutable'); END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_prevent_delete BEFORE DELETE ON execution_attachment_events BEGIN SELECT RAISE(ABORT, 'execution attachment events are immutable'); END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_binding_events_immutable BEFORE UPDATE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
+	`CREATE TRIGGER IF NOT EXISTS execution_binding_events_prevent_delete BEFORE DELETE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
+}
+
 func (s *RuntimeStore) migrateExecutionLedger() error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS execution_records (
@@ -194,54 +241,12 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 	)`); err != nil {
 		return err
 	}
-	const constraintVersion = 1
 	var installedConstraintVersion int
 	err := s.queryRowScan(`SELECT version FROM execution_ledger_migrations WHERE component = ?`, []any{"constraints"}, &installedConstraintVersion)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	constraintStatements := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS execution_records_attempt_id ON execution_records(attempt_id) WHERE attempt_id != '';`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS execution_provider_child_identity ON execution_records(project_id, parent_execution_id, provider, provider_child_handle) WHERE node_kind = 'provider_child' AND provider != '' AND provider_child_handle != '';`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS execution_edges_one_parent ON execution_edges(child_execution_id);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS execution_wave_generation_root ON execution_records(project_id, wave_id, wave_authorization_generation) WHERE node_kind = 'root' AND wave_id != '' AND wave_authorization_generation > 0;`,
-		`CREATE INDEX IF NOT EXISTS execution_records_root ON execution_records(root_execution_id);`,
-		`CREATE INDEX IF NOT EXISTS execution_binding_events_current ON execution_binding_events(execution_id, generation DESC);`,
-		`CREATE INDEX IF NOT EXISTS execution_attachment_events_execution ON execution_attachment_events(execution_id, created_at DESC);`,
-		`CREATE TRIGGER IF NOT EXISTS execution_edges_validate_insert BEFORE INSERT ON execution_edges BEGIN
-			SELECT CASE WHEN NEW.kind NOT IN ('retry_of','resume_of','fork_of','managed_child_of','provider_child_of') THEN RAISE(ABORT, 'invalid execution edge kind') END;
-			SELECT CASE WHEN NEW.parent_execution_id = NEW.child_execution_id THEN RAISE(ABORT, 'execution edge cannot be self-referential') END;
-			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.parent_execution_id) OR NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge endpoint not found') END;
-			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records parent JOIN execution_records child ON parent.project_id = child.project_id AND parent.root_execution_id = child.root_execution_id WHERE parent.execution_id = NEW.parent_execution_id AND child.execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge project/root mismatch') END;
-			SELECT CASE WHEN EXISTS (WITH RECURSIVE ancestors(id) AS (SELECT NEW.parent_execution_id UNION ALL SELECT edge.parent_execution_id FROM execution_edges edge JOIN ancestors ON edge.child_execution_id = ancestors.id) SELECT 1 FROM ancestors WHERE id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge cycle') END;
-			SELECT CASE WHEN EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id AND ((node_kind = 'root') OR (node_kind = 'provider_child' AND NEW.kind != 'provider_child_of') OR (node_kind = 'managed_attempt' AND NEW.kind NOT IN ('managed_child_of','retry_of','resume_of','fork_of')))) THEN RAISE(ABORT, 'execution edge kind does not match child node') END;
-		END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_edges_validate_update BEFORE UPDATE ON execution_edges BEGIN
-			SELECT CASE WHEN NEW.kind NOT IN ('retry_of','resume_of','fork_of','managed_child_of','provider_child_of') THEN RAISE(ABORT, 'invalid execution edge kind') END;
-			SELECT CASE WHEN NEW.parent_execution_id = NEW.child_execution_id THEN RAISE(ABORT, 'execution edge cannot be self-referential') END;
-			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.parent_execution_id) OR NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge endpoint not found') END;
-			SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records parent JOIN execution_records child ON parent.project_id = child.project_id AND parent.root_execution_id = child.root_execution_id WHERE parent.execution_id = NEW.parent_execution_id AND child.execution_id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge project/root mismatch') END;
-			SELECT CASE WHEN EXISTS (WITH RECURSIVE ancestors(id) AS (SELECT NEW.parent_execution_id UNION ALL SELECT edge.parent_execution_id FROM execution_edges edge JOIN ancestors ON edge.child_execution_id = ancestors.id WHERE NOT (edge.parent_execution_id = OLD.parent_execution_id AND edge.child_execution_id = OLD.child_execution_id)) SELECT 1 FROM ancestors WHERE id = NEW.child_execution_id) THEN RAISE(ABORT, 'execution edge cycle') END;
-			SELECT CASE WHEN EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.child_execution_id AND ((node_kind = 'root') OR (node_kind = 'provider_child' AND NEW.kind != 'provider_child_of') OR (node_kind = 'managed_attempt' AND NEW.kind NOT IN ('managed_child_of','retry_of','resume_of','fork_of')))) THEN RAISE(ABORT, 'execution edge kind does not match child node') END;
-			SELECT RAISE(ABORT, 'execution edges are immutable') WHERE NEW.parent_execution_id != OLD.parent_execution_id OR NEW.child_execution_id != OLD.child_execution_id OR NEW.kind != OLD.kind OR NEW.created_at != OLD.created_at;
-		END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_edges_prevent_delete BEFORE DELETE ON execution_edges BEGIN SELECT RAISE(ABORT, 'execution edges are immutable'); END;`,
-		// Execution records are append-only. Renames and rebindings are later
-		// audited operations that add history; they never rewrite this identity
-		// ledger row or its immutable correlation facts.
-		`CREATE TRIGGER IF NOT EXISTS execution_records_immutable BEFORE UPDATE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution records are immutable'); END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_records_prevent_delete BEFORE DELETE ON execution_records BEGIN SELECT RAISE(ABORT, 'execution records are immutable'); END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_name_events_validate_insert BEFORE INSERT ON execution_name_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id) THEN RAISE(ABORT, 'execution name event execution not found') END; END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_validate_insert BEFORE INSERT ON execution_attachment_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id AND project_id = NEW.project_id) THEN RAISE(ABORT, 'execution attachment event execution/project mismatch') END; END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_validate_insert BEFORE INSERT ON execution_binding_events BEGIN SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM execution_records WHERE execution_id = NEW.execution_id) THEN RAISE(ABORT, 'execution binding event execution not found') END; END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_name_events_immutable BEFORE UPDATE ON execution_name_events BEGIN SELECT RAISE(ABORT, 'execution name events are immutable'); END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_name_events_prevent_delete BEFORE DELETE ON execution_name_events BEGIN SELECT RAISE(ABORT, 'execution name events are immutable'); END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_immutable BEFORE UPDATE ON execution_attachment_events BEGIN SELECT RAISE(ABORT, 'execution attachment events are immutable'); END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_attachment_events_prevent_delete BEFORE DELETE ON execution_attachment_events BEGIN SELECT RAISE(ABORT, 'execution attachment events are immutable'); END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_immutable BEFORE UPDATE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
-		`CREATE TRIGGER IF NOT EXISTS execution_binding_events_prevent_delete BEFORE DELETE ON execution_binding_events BEGIN SELECT RAISE(ABORT, 'execution binding events are immutable'); END;`,
-	}
-	constraintsCurrent, err := s.executionLedgerConstraintsCurrent(installedConstraintVersion, constraintVersion, constraintStatements)
+	constraintsCurrent, err := s.executionLedgerConstraintsCurrent(installedConstraintVersion, executionLedgerConstraintVersion, executionLedgerConstraintStatements)
 	if err != nil {
 		return err
 	}
@@ -251,7 +256,7 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 			return err
 		}
 		defer tx.Rollback()
-		for _, statement := range constraintStatements {
+		for _, statement := range executionLedgerConstraintStatements {
 			kind, name, err := sqliteSchemaObjectIdentity(statement)
 			if err != nil {
 				return err
@@ -260,20 +265,37 @@ func (s *RuntimeStore) migrateExecutionLedger() error {
 				return err
 			}
 		}
-		for _, statement := range constraintStatements {
+		for _, statement := range executionLedgerConstraintStatements {
 			if _, err := tx.Exec(statement); err != nil {
 				return err
 			}
 		}
 		if _, err := tx.Exec(`INSERT INTO execution_ledger_migrations(component, version) VALUES(?, ?)
-			ON CONFLICT(component) DO UPDATE SET version = excluded.version`, "constraints", constraintVersion); err != nil {
+			ON CONFLICT(component) DO UPDATE SET version = excluded.version`, "constraints", executionLedgerConstraintVersion); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
 	}
-	return s.backfillExecutionLedger()
+	// The legacy projection is a one-time backfill of attempts that predate the
+	// ledger. The marker lets runtimeSchemaComplete take the fast path once it
+	// has run; rerunning it on every open raced native execution creation.
+	const backfillVersion = 1
+	var installedBackfillVersion int
+	err = s.queryRowScan(`SELECT version FROM execution_ledger_migrations WHERE component = ?`, []any{"legacy_backfill"}, &installedBackfillVersion)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if installedBackfillVersion >= backfillVersion {
+		return nil
+	}
+	if err := s.backfillExecutionLedger(); err != nil {
+		return err
+	}
+	_, err = s.exec(`INSERT INTO execution_ledger_migrations(component, version) VALUES(?, ?)
+		ON CONFLICT(component) DO UPDATE SET version = excluded.version`, "legacy_backfill", backfillVersion)
+	return err
 }
 
 func (s *RuntimeStore) executionLedgerConstraintsCurrent(installedVersion, expectedVersion int, statements []string) (bool, error) {
@@ -846,6 +868,30 @@ func insertExecutionWithEdgeTx(tx *sql.Tx, record ExecutionRecord, edge Executio
 	return err
 }
 
+// insertWorkSessionExecutionTx records an interactive work-session attempt in
+// the same transaction that inserts it, since no daemon step follows to do so.
+// It carries no lease generation, matching the projection these attempts had
+// before: it makes the session visible in execution views without making it a
+// daemon-managed Say/Continue target.
+func insertWorkSessionExecutionTx(tx *sql.Tx, attempt RunAttempt) error {
+	record := ExecutionRecord{ExecutionID: newExecutionID(), ProjectID: attempt.ProjectID, NodeKind: ExecutionNodeRoot, DisplayName: attempt.RecordID, TaskID: firstNonEmpty(attempt.ItemID, attempt.RecordID), AttemptID: attempt.AttemptID, Source: "work_session", Provider: attempt.Runner, Creator: "work_session", CreatedAt: executionNow()}
+	record.RootExecutionID = record.ExecutionID
+	var edge ExecutionEdge
+	if attempt.ParentAttemptID != "" {
+		var parentID, rootID string
+		err := tx.QueryRow(`SELECT execution_id, root_execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ?`, attempt.ProjectID, attempt.ParentAttemptID).Scan(&parentID, &rootID)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if parentID != "" {
+			record.NodeKind, record.RootExecutionID, record.ParentExecutionID = ExecutionNodeManagedAttempt, rootID, parentID
+			edge = ExecutionEdge{ParentExecutionID: parentID, ChildExecutionID: record.ExecutionID, Kind: ExecutionManagedChildOf, CreatedAt: record.CreatedAt}
+		}
+	}
+	record.SearchLabel = normalizeExecutionLabel(record.DisplayName, record.TaskID, record.Provider, record.ExecutionID)
+	return insertExecutionWithEdgeTx(tx, record, edge)
+}
+
 func legacyExecutionID(attemptID string) string {
 	sum := sha256.Sum256([]byte(attemptID))
 	return fmt.Sprintf("exec_legacy_%x", sum[:12])
@@ -878,6 +924,20 @@ func (s *RuntimeStore) backfillExecutionLedger() error {
 			return err
 		}
 		defer tx.Rollback()
+		// Attempts the daemon already recorded natively are not legacy; a
+		// second projection would violate the one-record-per-attempt index.
+		legacy := attempts[:0:0]
+		for _, a := range attempts {
+			var owner string
+			err := tx.QueryRow(`SELECT execution_id FROM execution_records WHERE attempt_id = ?`, a.id).Scan(&owner)
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if owner == "" || owner == legacyExecutionID(a.id) {
+				legacy = append(legacy, a)
+			}
+		}
+		attempts = legacy
 		byID := map[string]legacyExecutionAttempt{}
 		for _, a := range attempts {
 			byID[a.id] = a

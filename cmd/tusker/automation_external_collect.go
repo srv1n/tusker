@@ -526,15 +526,6 @@ func canonicalExternalReviewFinding(value map[string]any) (string, error) {
 	return string(encoded), nil
 }
 
-func externalReviewVerdictKnown(verdict string) bool {
-	switch externalReviewVerdictClass(verdict) {
-	case "accepted", "rework", "blocked":
-		return true
-	default:
-		return false
-	}
-}
-
 func externalReviewVerdictClass(verdict string) string {
 	value := strings.ToLower(strings.TrimSpace(verdict))
 	value = strings.ReplaceAll(value, "-", "_")
@@ -948,24 +939,4 @@ func listCurrentExternalApplyInputs(store *RuntimeStore, projectID, recordID str
 		return store.ListApplyInputsForRunScope(projectID, recordID, run.WorkRevision, "", jobID)
 	}
 	return store.ListApplyInputsForRunScope(projectID, recordID, run.WorkRevision, event.EventID, event.JobID)
-}
-
-func copyDirContents(sourceDir, targetDir string) error {
-	return filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return err
-		}
-		clean := filepath.Clean(rel)
-		if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
-			return tuskerError(errorPathEscape, "artifact path escapes source directory: "+rel)
-		}
-		return copyFile(path, filepath.Join(targetDir, clean))
-	})
 }

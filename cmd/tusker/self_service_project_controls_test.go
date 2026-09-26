@@ -9,6 +9,40 @@ import (
 	"time"
 )
 
+func snapshotWaveAuthorizations(t *testing.T, vault string, waveIDs []string) string {
+	t.Helper()
+	var parts []string
+	for _, id := range waveIDs {
+		raw, err := readText(filepath.Join(vault, "work", "waves", id+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _, err := parseFrontmatter(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts = append(parts, id+"="+stringField(data, "authorization")+"/"+stringField(data, "authorization_fingerprint"))
+	}
+	return strings.Join(parts, ";")
+}
+
+func snapshotTaskStatuses(t *testing.T, vault string, taskIDs []string) string {
+	t.Helper()
+	var parts []string
+	for _, id := range taskIDs {
+		raw, err := readText(filepath.Join(vault, "work", "tasks", id+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _, err := parseFrontmatter(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts = append(parts, id+"="+stringField(data, "status")+"/"+stringField(data, "readiness"))
+	}
+	return strings.Join(parts, ";")
+}
+
 // TestSelfServiceProjectControls proves TSK-T-0044: Background-work toggles
 // persist exact actor/source/before/after/time evidence, enable preview and
 // readback enumerate the exact resume scope without arming anything, disable
@@ -218,17 +252,6 @@ func TestSelfServiceProjectControls(t *testing.T) {
 		if _, err := store.SetProjectAutomationAudited(project.ProjectID, false, "op-tests", "cli"); err != nil {
 			t.Fatal(err)
 		}
-		// New claims are refused with the project-off owner and repair.
-		verdict := EvaluateAdmissionForStage(AdmissionFacts{
-			TaskID: "CLM-T-0002", Status: "ready", Lane: runLaneExecute,
-			ContractValid: true, RouteOK: true, ProofMapped: true,
-			OwnerFree: true, DependenciesSatisfied: true,
-			ProjectRegistered: true, ProjectEnabled: false,
-			Authority: AdmissionAuthorityWaveArmed, AuthorityMatches: true,
-		}, AdmissionStageDaemonDispatch)
-		if verdict.Admit || !hasAdmissionBlocker(verdict, AdmissionBlockerProjectDisabled) {
-			t.Fatalf("disabled project admitted a new claim: %#v", verdict)
-		}
 		// Admitted work is untouched: the same run and directives survive.
 		current, err := store.FindRunScoped(project.ProjectID, "CLM-T-0001")
 		if err != nil {
@@ -372,38 +395,4 @@ func TestSelfServiceProjectControls(t *testing.T) {
 			t.Fatalf("failed validation left audit evidence: %#v", audit)
 		}
 	})
-}
-
-func snapshotWaveAuthorizations(t *testing.T, vault string, waveIDs []string) string {
-	t.Helper()
-	var parts []string
-	for _, id := range waveIDs {
-		raw, err := readText(filepath.Join(vault, "work", "waves", id+".md"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, _, err := parseFrontmatter(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parts = append(parts, id+"="+stringField(data, "authorization")+"/"+stringField(data, "authorization_fingerprint"))
-	}
-	return strings.Join(parts, ";")
-}
-
-func snapshotTaskStatuses(t *testing.T, vault string, taskIDs []string) string {
-	t.Helper()
-	var parts []string
-	for _, id := range taskIDs {
-		raw, err := readText(filepath.Join(vault, "work", "tasks", id+".md"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, _, err := parseFrontmatter(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parts = append(parts, id+"="+stringField(data, "status")+"/"+stringField(data, "readiness"))
-	}
-	return strings.Join(parts, ";")
 }

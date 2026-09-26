@@ -1,29 +1,81 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 const messageInboxLimit = 16 << 10
 
-func workerSoftDelivery(harness string) (bool, string) {
-	switch strings.ToLower(strings.TrimSpace(harness)) {
-	case "claude", "claude-code", "claude_code":
-		return true, "Claude PostToolUse additionalContext is documented"
-	case "codex", "codex_exec", "codex-exec":
-		return false, "codex exec post-tool hook context unverified; hard say is used"
-	case "muse":
-		return false, "Muse 1.3.0 help exposes no hook facility"
-	case "devin", "devin_acp", "acp":
-		return false, "Devin ACP has no hook facility; prompt only between turns"
-	default:
-		return false, "soft delivery is unverified for this harness"
+// agentMessageHookCmd prints the ready-to-paste mailbox hook block for an
+// interactive architect session. It never writes a settings file.
+func agentMessageHookCmd(args Args) error {
+	if strings.TrimSpace(args.String("_pos")) != "print" {
+		return tuskerError(errorMissingArg, "Usage: tusker message hook print --harness claude|codex [--project <id>] [--json]")
 	}
+	return runAgentMessageHookPrint(args, os.Stdout)
+}
+
+func runAgentMessageHookPrint(args Args, out io.Writer) error {
+	harness := strings.ToLower(strings.TrimSpace(args.String("harness")))
+	var target, note string
+	switch harness {
+	case "claude":
+		target = `.claude/settings.json or ~/.claude/settings.json under "hooks"`
+	case "codex":
+		target = "hooks.json"
+		note = "unverified: Codex hook output is not confirmed to reach exec context"
+	default:
+		return tuskerError(errorMissingArg, "message hook print requires --harness claude|codex")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(exe); resolveErr == nil {
+		exe = resolved
+	}
+	if !filepath.IsAbs(exe) {
+		return tuskerError(errorConfigInvalid, "tusker binary path is not absolute")
+	}
+	project := strings.TrimSpace(args.String("project"))
+	if project == "" {
+		project = "<project-id>"
+	}
+	hookCommand := shellSingleQuote(exe) + " message inbox --project " + shellSingleQuote(project) + " --format hook"
+	if stateRoot := strings.TrimSpace(os.Getenv("TUSKER_STATE_ROOT")); stateRoot != "" {
+		hookCommand = "TUSKER_STATE_ROOT=" + shellSingleQuote(stateRoot) + " " + hookCommand
+	}
+	entry := []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookCommand}}}}
+	snippet := map[string]any{"hooks": map[string]any{"UserPromptSubmit": entry, "Stop": entry}}
+	if args.Bool("json") {
+		enc := json.NewEncoder(out)
+		enc.SetEscapeHTML(false)
+		return enc.Encode(map[string]any{
+			"ok": true, "harness": harness, "binary": exe, "project": project,
+			"paste_into": target, "verified": note == "", "note": note,
+			"hook_config": snippet,
+		})
+	}
+	var snippetJSON bytes.Buffer
+	enc := json.NewEncoder(&snippetJSON)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(snippet); err != nil {
+		return err
+	}
+	if note != "" {
+		fmt.Fprintf(out, "Paste into %s (%s):\n%s", target, note, snippetJSON.String())
+		return nil
+	}
+	fmt.Fprintf(out, "Paste into %s:\n%s", target, snippetJSON.String())
+	return nil
 }
 
 // Hook failures are deliberately silent on stdout and successful to the host.

@@ -76,7 +76,7 @@ For Settings integration, the stable read/test examples are:
 
 ```sh
 tusker models catalog --json
-tusker models profile-set --scope project --name muse-review --harness muse --model <exact-id> --effort high --preset read-only
+tusker models profile-set --scope global --name muse-review --harness muse --model <exact-id> --effort high --preset read-only
 tusker runner test muse-review --json       # Check setup: no model turn
 tusker runner test muse-review --live --json # Run test: one explicit turn
 ```
@@ -93,6 +93,10 @@ fails, the last successful models remain with `discovery_state: stale`. Bundled
 discovery failure returns no invented fallback IDs.
 
 ## Configuration-only onboarding
+
+Every `automation.profiles` example below belongs in the global config
+(`~/.config/tusker/config.yaml` or `$TUSKER_CONFIG`). Project layers reject profile
+definitions and select global profiles by name through `automation.model_levels`.
 
 A compatible CLI uses an existing dialect:
 
@@ -114,7 +118,7 @@ The direct Muse route can be authored with the shared access contract:
 ```yaml
 automation:
   profiles:
-    muse-project:
+    muse-direct:
       harness: muse
       model: <installed-model-id>
       effort: medium
@@ -157,7 +161,7 @@ Devin uses its installed ACP endpoint directly:
 ```yaml
 automation:
   profiles:
-    devin-project:
+    devin-direct:
       harness: devin
       model: <exact-discovered-acp-model>
       effort: medium

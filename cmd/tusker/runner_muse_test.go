@@ -218,3 +218,38 @@ func containsExact(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestMuseCLIAskRoutePromptAndBinary(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "prompt.md")
+	marker := resumePromptContextMarkerPrefix + "sha256:" + strings.Repeat("a", 64) + "`"
+	if err := os.WriteFile(promptPath, []byte("Do the task.\n\n"+resumePromptContextHeader+"\n\n"+marker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := museRecordCLIAskRoute(filepath.Join(dir, "events.jsonl"), "a1", promptPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, _ := os.ReadFile(promptPath)
+	prompt := string(raw)
+	if strings.Count(prompt, museAskRouteHeader) != 1 || !strings.Contains(prompt, `"$TUSKER_BIN" message ask --project "$TUSKER_PROJECT_ID" --sender "task:$TUSKER_ITEM_ID"`) {
+		t.Fatalf("ask route missing or duplicated:\n%s", prompt)
+	}
+	if got := resumeContextFingerprintFromPrompt(prompt); got != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("resume fingerprint no longer parses after ask route: %q", got)
+	}
+	// The exec launch hands the worker the exact binary the prompt references.
+	status := filepath.Join(dir, "status")
+	if _, err := executeRunnerCommand(context.Background(), RunnerMuse, runnerExecRequest{
+		ProjectID: "p", RecordID: "r", ItemID: "i", AttemptID: "a1", WorkingDir: dir, WorkspacePath: dir, PromptPath: promptPath,
+		EventSinkPath: filepath.Join(dir, "events.jsonl"), RawLogPath: filepath.Join(dir, "raw.log"), StatusPath: status,
+		Command: `printf '%s' "$TUSKER_BIN"`,
+	}, RunnerCapabilities{}); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(filepath.Join(dir, "raw.log"))
+	if exe, _ := os.Executable(); !strings.Contains(string(out), exe) {
+		t.Fatalf("TUSKER_BIN not exported to worker: %q", out)
+	}
+}

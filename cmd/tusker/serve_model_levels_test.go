@@ -10,6 +10,7 @@ import (
 )
 
 func TestServeModelLevelsReadWriteConflictAndCLIAgreement(t *testing.T) {
+	t.Setenv("TUSKER_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	server := newServeEmptyNeedsFixture(t)
 	projects, err := server.store.ListProjects()
 	if err != nil || len(projects) != 1 {
@@ -33,7 +34,7 @@ func TestServeModelLevelsReadWriteConflictAndCLIAgreement(t *testing.T) {
 		t.Fatalf("task routes unavailable: %#v %#v", detail.EffectiveExecute, detail.EffectiveReview)
 	}
 
-	profileBody := `{"action":"profile-set","scope":"project","name":"manual-test","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","eligibleTiers":["standard"],"revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
+	profileBody := `{"action":"profile-set","scope":"global","name":"manual-test","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","eligibleTiers":["standard"],"revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
 	profileReq := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/models", strings.NewReader(profileBody))
 	profileReq.Header.Set("Content-Type", "application/json")
 	profileRec := httptest.NewRecorder()
@@ -117,12 +118,17 @@ func TestServeModelLevelsTaskRouteAuthoringRoundTrip(t *testing.T) {
 }
 
 func TestServeModelLevelsProfileLifecycleContract(t *testing.T) {
+	t.Setenv("TUSKER_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	server := newServeEmptyNeedsFixture(t)
 	projects, _ := server.store.ListProjects()
 	project := projects[0]
 	var initial modelLevelsReport
 	serveDecode(t, server, "/api/models?project="+project.ProjectID, &initial)
-	body := `{"action":"profile-set","scope":"project","name":"temporary","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
+	projectScoped := `{"action":"profile-set","scope":"project","name":"temporary","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
+	if rec := servePostJSON(t, server, "/api/models", projectScoped); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "only be defined in the global config") {
+		t.Fatalf("project-scoped profile-set must be rejected: %d %s", rec.Code, rec.Body.String())
+	}
+	body := `{"action":"profile-set","scope":"global","name":"temporary","harness":"codex_exec","model":"gpt-manual","effort":"high","preset":"workspace-write-offline","revision":"` + initial.Revision + `","projectId":"` + project.ProjectID + `"}`
 	rec := servePostJSON(t, server, "/api/models", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create=%d %s", rec.Code, rec.Body.String())
@@ -131,7 +137,7 @@ func TestServeModelLevelsProfileLifecycleContract(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	disable := `{"action":"profile-disable","scope":"project","name":"temporary","revision":"` + created.Revision + `","projectId":"` + project.ProjectID + `"}`
+	disable := `{"action":"profile-disable","scope":"global","name":"temporary","revision":"` + created.Revision + `","projectId":"` + project.ProjectID + `"}`
 	rec = servePostJSON(t, server, "/api/models", disable)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"temporary":"disabled"`) {
 		t.Fatalf("disable=%d %s", rec.Code, rec.Body.String())
@@ -140,7 +146,7 @@ func TestServeModelLevelsProfileLifecycleContract(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &disabled); err != nil {
 		t.Fatal(err)
 	}
-	remove := `{"action":"profile-remove","scope":"project","name":"temporary","revision":"` + disabled.Revision + `","projectId":"` + project.ProjectID + `"}`
+	remove := `{"action":"profile-remove","scope":"global","name":"temporary","revision":"` + disabled.Revision + `","projectId":"` + project.ProjectID + `"}`
 	rec = servePostJSON(t, server, "/api/models", remove)
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"temporary"`) {
 		t.Fatalf("remove=%d %s", rec.Code, rec.Body.String())
@@ -205,8 +211,8 @@ func TestServeModelLevelsGlobalUnusedProfileCanBeRemoved(t *testing.T) {
 	}
 	removeReferenced := `{"action":"profile-remove","scope":"global","name":"global-referenced","revision":"` + assigned.Revision + `","projectId":"` + project.ProjectID + `"}`
 	rec = servePostJSON(t, server, "/api/models", removeReferenced)
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), `"global-referenced"`) {
-		t.Fatalf("referenced global remove=%d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "still referenced by model_levels.light.execute") {
+		t.Fatalf("referenced global remove must be refused=%d %s", rec.Code, rec.Body.String())
 	}
 }
 
