@@ -992,8 +992,9 @@ func directWaveReviewStateSnapshot(vaultPath string, store *RuntimeStore, projec
 	if store == nil {
 		return snap
 	}
-	if projects, err := store.ListProjects(); err == nil {
-		for _, project := range projects {
+	if loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true}); err == nil {
+		for _, entry := range loaded {
+			project := entry.Project
 			if project.ProjectID == projectID || sameCanonicalProjectPath(project.VaultRoot, vaultPath) {
 				snap.project, snap.projectRegistered, snap.projectID = project, true, project.ProjectID
 				break

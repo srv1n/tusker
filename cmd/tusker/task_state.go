@@ -330,8 +330,9 @@ func cliTaskState(vaultPath string, task Note) taskState {
 	}
 	if store, missing, err := openRuntimeStoreReadOnly(DefaultStateRoot()); err == nil && !missing {
 		defer store.Close()
-		if projects, err := store.ListProjects(); err == nil {
-			for _, project := range projects {
+		if loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true}); err == nil {
+			for _, entry := range loaded {
+				project := entry.Project
 				if canonicalTaskStatePath(project.VaultRoot) == canonicalTaskStatePath(vaultPath) || project.ProjectID == snap.projectID {
 					snap.project, snap.projectRegistered, snap.projectID = project, true, project.ProjectID
 					break
