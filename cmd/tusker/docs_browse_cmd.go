@@ -39,6 +39,14 @@ func docsBrowseCmd(args Args) error {
 	}
 	fmt.Printf("%s\n", result.Path)
 	for _, entry := range result.Entries {
+		if entry.Problem != "" {
+			name := entry.Name
+			if entry.Kind == "folder" {
+				name += "/"
+			}
+			fmt.Printf("  %s — problem: %s\n", name, entry.Problem)
+			continue
+		}
 		if entry.Kind == "folder" {
 			if entry.Summary != "" {
 				fmt.Printf("  %s/ — %s\n", entry.Name, entry.Summary)
