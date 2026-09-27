@@ -48,6 +48,8 @@ material drifted. A task `start` inside a paused wave stays task-scoped and
 leaves the wave paused. `--mode background` persists a durable run directive
 for the configured runtime; it does not itself launch a runner.
 
+Actors supplied with `--by human:<name>` may be used from an agent session by default. Set `agents.act_as_owner: false` in the project's `.tusker/config.yaml` (or `config.local.yaml`) to require an owner session for human attribution; agent sessions can still use `--by agent:<name>`.
+
 ## Project and runtime commands
 
 | Need | Command |

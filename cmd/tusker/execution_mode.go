@@ -21,6 +21,13 @@ func agentSessionKind() string {
 	return ""
 }
 
+func requireOwnerSession(operation string) error {
+	if agentSessionKind() != "" {
+		return tuskerError(errorInvalidTransition, operation+" is owner-only and cannot run from an agent session")
+	}
+	return nil
+}
+
 func eventPayloadWithExecutionRole(payload map[string]any) map[string]any {
 	if role := agentSessionKind(); role != "" {
 		payload["execution_role"] = role

@@ -41,6 +41,22 @@ func writeDefaultConfig(vaultPath string) error {
 	return writeDefaultWorkflow(vaultPath)
 }
 
+func agentsMayActAsOwner(vaultPath string) (bool, error) {
+	resolved, err := resolveTuskerConfig(vaultPath)
+	if err != nil {
+		return false, err
+	}
+	value, present := lookupConfigValue(resolved.Raw, "agents.act_as_owner")
+	if !present {
+		return true, nil
+	}
+	allowed, ok := value.(bool)
+	if !ok {
+		return false, tuskerError(errorConfigInvalid, "agents.act_as_owner must be a boolean")
+	}
+	return allowed, nil
+}
+
 func loadConfig(vaultPath string) (Config, string, bool, error) {
 	if fileExists(workflowPath(vaultPath)) {
 		wfFile, err := loadWorkflow(vaultPath)
