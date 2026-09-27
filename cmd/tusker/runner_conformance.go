@@ -39,7 +39,9 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 	if preset == "" {
 		preset = runnercore.PresetReadOnly
 	}
-	vault, err := resolveVaultPath(args, false)
+	// Runner profiles are global, so conformance does not require a vault:
+	// outside a project it resolves built-in and user-global layers only.
+	vault, err := resolveOptionalVault(args, false)
 	if err != nil {
 		return 2, runnercore.ConformanceReport{}, err
 	}
@@ -102,11 +104,24 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 		}
 		defer os.RemoveAll(workspace)
 	}
+	// The live policy canary needs a protected path outside the workspace. With
+	// no vault there is no project tree to guard, so it lands in a temp dir.
+	protectedPath := ""
+	if vault != "" {
+		protectedPath = filepath.Join(vault, ".runner-conformance-sentinel")
+	} else if live {
+		sentinelDir, err := os.MkdirTemp("", "tusker-runner-sentinel-")
+		if err != nil {
+			return 2, runnercore.ConformanceReport{}, err
+		}
+		defer os.RemoveAll(sentinelDir)
+		protectedPath = filepath.Join(sentinelDir, ".runner-conformance-sentinel")
+	}
 	// A conformance turn is a disposable check, not a user task. Keep it short;
 	// Execute remains cancellable through its context/process supervision.
-	input := runnercore.RunInput{Workspace: workspace, Preset: preset, Model: model, Effort: effort, SearchPath: runnerCommandSearchPath(), Deadline: 2 * time.Minute, PolicyCanary: live, ProtectedPath: filepath.Join(vault, ".runner-conformance-sentinel"), Exercise: exercise, ExerciseScript: script}
+	input := runnercore.RunInput{Workspace: workspace, Preset: preset, Model: model, Effort: effort, SearchPath: runnerCommandSearchPath(), Deadline: 2 * time.Minute, PolicyCanary: live, ProtectedPath: protectedPath, Exercise: exercise, ExerciseScript: script}
 	if definition.Profile != "" {
-		if configured, resolveErr := resolveTuskerConfig(vault); resolveErr == nil {
+		if configured, resolveErr := resolveConformanceTuskerConfig(vault); resolveErr == nil {
 			if profile, ok := runnerProfilesFromSchema(configured.Config.Automation.Profiles)[definition.Profile]; ok {
 				draftAccess = profile.Access
 			}
@@ -144,7 +159,7 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 		report.Access = input.ResolvedAccess
 	}
 	if definition.Profile != "" {
-		resolved, resolveErr := resolveTuskerConfig(vault)
+		resolved, resolveErr := resolveConformanceTuskerConfig(vault)
 		if resolveErr != nil {
 			return 2, report, resolveErr
 		}
@@ -165,10 +180,20 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 	return 1, report, nil
 }
 
+// resolveConformanceTuskerConfig reads the effective config for a runner
+// conformance run. Profiles are defined globally, so an empty vault still
+// resolves the built-in and user-global layers instead of requiring a project.
+func resolveConformanceTuskerConfig(vaultPath string) (resolvedTuskerConfig, error) {
+	if strings.TrimSpace(vaultPath) == "" {
+		return resolveTuskerConfigForPaths("", "", false)
+	}
+	return resolveTuskerConfig(vaultPath)
+}
+
 func conformanceHarnessDefinition(vaultPath, name string) (runnercore.HarnessDefinition, string, string, error) {
 	definition := runnercore.HarnessDefinition{ID: name, Provider: runnerVendor(name), Transport: runnercore.TransportCLI, SchemaVersion: 1}
 	profileName := name
-	resolved, err := resolveTuskerConfig(vaultPath)
+	resolved, err := resolveConformanceTuskerConfig(vaultPath)
 	if err != nil {
 		return definition, "", "", err
 	}

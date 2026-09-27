@@ -250,7 +250,7 @@ func configRevision(raw map[string]any) string {
 }
 
 func modelsCmd(args Args) error {
-	vault, err := resolveModelsVault(args, false)
+	vault, err := resolveOptionalVault(args, false)
 	if err != nil {
 		return err
 	}
@@ -272,7 +272,10 @@ func modelsCmd(args Args) error {
 	return nil
 }
 
-func resolveModelsVault(args Args, requireProject bool) (string, error) {
+// resolveOptionalVault resolves the project vault when one exists but tolerates
+// its absence: profiles and model levels live in the global config, so callers
+// pass "" downstream and read only the built-in and user-global layers.
+func resolveOptionalVault(args Args, requireProject bool) (string, error) {
 	vault, err := resolveVaultPath(args, false)
 	if err == nil {
 		return vault, nil
@@ -310,7 +313,7 @@ func compactModelLevelsReport(report modelLevelsReport) modelLevelsReport {
 
 func modelsSetCmd(args Args) error {
 	scope := firstNonEmpty(args.String("scope"), "project")
-	vault, err := resolveModelsVault(args, scope != "global")
+	vault, err := resolveOptionalVault(args, scope != "global")
 	if err != nil {
 		return err
 	}
@@ -370,7 +373,7 @@ func modelsSetCmd(args Args) error {
 
 func modelsResetCmd(args Args) error {
 	scope := firstNonEmpty(args.String("scope"), "project")
-	vault, err := resolveModelsVault(args, scope != "global")
+	vault, err := resolveOptionalVault(args, scope != "global")
 	if err != nil {
 		return err
 	}
@@ -413,7 +416,7 @@ func modelsResetCmd(args Args) error {
 }
 
 func modelsProfileSetCmd(args Args) error {
-	vault, err := resolveModelsVault(args, false)
+	vault, err := resolveOptionalVault(args, false)
 	if err != nil {
 		return err
 	}
@@ -614,7 +617,7 @@ func currentLevelMappings(report modelLevelsReport) map[string][]string {
 }
 
 func modelsProfileLifecycleCmd(args Args, action string) error {
-	vault, err := resolveModelsVault(args, false)
+	vault, err := resolveOptionalVault(args, false)
 	if err != nil {
 		return err
 	}
