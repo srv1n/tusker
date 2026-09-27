@@ -233,10 +233,24 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		pollC = pollTimer.C
 		defer pollTimer.Stop()
 	}
+	wakeupTicker := time.NewTicker(reconcileLiveCadence)
+	defer wakeupTicker.Stop()
 	for {
 		select {
 		case <-runCtx.Done():
 			return nil
+		case <-wakeupTicker.C:
+			polled, err := d.pollProjectsWithPendingWakeups(runCtx)
+			if err != nil {
+				return err
+			}
+			if polled && periodic {
+				_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+				if err != nil {
+					return err
+				}
+				resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
+			}
 		case now := <-retentionC:
 			if _, err := purgeRunArtifacts(d.store, now.UTC(), false); err != nil {
 				log.Printf("run artifact retention: %v", err)

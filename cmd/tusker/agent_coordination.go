@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,44 @@ func (s *RuntimeStore) ListQueuedAgentWakeups(project string) ([]AgentWakeup, er
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+// PendingAgentWakeupProjects lists projects with wakeups the daemon should act
+// on now: queued rows and held rows whose backoff has elapsed. Held rows with
+// no backoff wait on an outside change and do not count, so they cannot pin
+// a project to the fast loop.
+func (s *RuntimeStore) PendingAgentWakeupProjects() ([]string, error) {
+	rows, err := s.query(`SELECT DISTINCT project_id FROM agent_wakeups WHERE state='queued' OR (state='held' AND claimed_at<>'' AND claimed_at<=?) ORDER BY project_id`, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	projects := []string{}
+	for rows.Next() {
+		var project string
+		if err := rows.Scan(&project); err != nil {
+			return nil, err
+		}
+		projects = append(projects, project)
+	}
+	return projects, rows.Err()
+}
+
+// pollProjectsWithPendingWakeups treats pending wakeups as work: it polls
+// their projects now instead of waiting for the adaptive schedule, which can
+// be tens of minutes for an idle project (F22).
+func (d *Daemon) pollProjectsWithPendingWakeups(ctx context.Context) (bool, error) {
+	projects, err := d.store.PendingAgentWakeupProjects()
+	if err != nil {
+		return false, err
+	}
+	for _, projectID := range projects {
+		d.noteProjectActivity(projectID, "agent_wakeup", time.Now().UTC())
+		if err := d.runPoll(ctx, projectID); err != nil {
+			return false, err
+		}
+	}
+	return len(projects) > 0, nil
 }
 
 func (s *RuntimeStore) SetAgentWakeupState(id, state string) error {
