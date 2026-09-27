@@ -163,6 +163,29 @@ func TestArmedWaveIntegrationProjectionDoesNotHideNewerCanonicalRecovery(t *test
 	}
 }
 
+func TestArmedWaveIntegrationProjectionUsesCanonicalWhenTaskMissing(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+	armWaveForTest(t, vault)
+	branch := "integration/W-0001"
+	old := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", branch))
+	worktree := filepath.Join(t.TempDir(), "integration")
+	gitDirOutput(t, repo, "worktree", "add", "--detach", worktree, branch)
+	gitDirOutput(t, worktree, "rm", "--", ".tusker/work/tasks/APP-T-0001.md")
+	gitDirOutput(t, worktree, "commit", "-m", "remove task record")
+	next := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
+	gitDirOutput(t, repo, "worktree", "remove", "--force", worktree)
+	gitDirOutput(t, repo, "update-ref", "refs/heads/"+branch, next, old)
+
+	task, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, ok, err := armedWaveIntegrationTaskProjection(vault, task)
+	if err != nil || !ok || stringField(projected.Data, "id") != stringField(task.Data, "id") || stringField(projected.Data, "status") != stringField(task.Data, "status") {
+		t.Fatalf("missing integration task did not return canonical record: id=%q status=%q ok=%t err=%v", stringField(projected.Data, "id"), stringField(projected.Data, "status"), ok, err)
+	}
+}
+
 func TestArmedWaveProjectionSurfaces(t *testing.T) {
 	vault, idx, wave := armedWaveTestFixture(t)
 	if err := writeText(filepath.Join(vault, "WORKFLOW.md"), defaultWorkflowMarkdown()); err != nil {
