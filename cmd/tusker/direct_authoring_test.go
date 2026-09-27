@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -48,6 +49,40 @@ func directAuthoringBodyPath(t *testing.T, vault, name, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestNewTaskProofRequiredVerificationWarning(t *testing.T) {
+	for _, tc := range []struct {
+		name, command string
+		wantWarning   bool
+	}{
+		{"grep", "grep -qx x f", true},
+		{"test", `test "$(head -n 1 f)" = "x"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vault := v7DirectTestVault(t)
+			body := "## Verification\n\n| Covers | Check | Result |\n| --- | --- | --- |\n| acceptance | command: " + tc.command + " | pending |\n"
+			bodyPath := directAuthoringBodyPath(t, vault, "body.md", body)
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous := os.Stderr
+			os.Stderr = writer
+			err = newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "title": tc.name, "work-level": "standard", "body-file": bodyPath})
+			_ = writer.Close()
+			os.Stderr = previous
+			warning, readErr := io.ReadAll(reader)
+			_ = reader.Close()
+			if err != nil || readErr != nil {
+				t.Fatalf("create=%v, stderr read=%v", err, readErr)
+			}
+			got := strings.Contains(string(warning), "proof_required focused_test")
+			if got != tc.wantWarning {
+				t.Fatalf("stderr=%q, want focused_test warning=%v", warning, tc.wantWarning)
+			}
+		})
+	}
 }
 
 func directAuthoringStdin(t *testing.T, content string) func() {
