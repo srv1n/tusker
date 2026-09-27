@@ -217,6 +217,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F9 | No command lists runs | todo | `tusker runs` has no `list`. Finding the active run needed a direct database query. |
 | F11 | Add one global automation switch | todo | Owner wants three levels: global, project, wave. Today only project and wave exist; the only global stop is `daemon stop`, which also stops Serve. `daemon limits` refuses 0. The switch should stop new dispatch but keep the daemon and Serve up. |
 | F12 | `projects disable --repo` on kurpod says several projects match, but `projects list` shows one | todo | Worked with `--id`. |
+| F13 | Seeded test project was hidden from the sidebar | done | `demo seed` hides projects unless `--visible` is passed; the qualification seed did not pass it. Fixed `seed.sh`, and set `visible` in the existing manifest. A hidden project gives no hint of why it is missing. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision

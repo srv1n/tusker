@@ -57,7 +57,7 @@ review_for() {
   esac
 }
 
-"$BIN" demo seed --repo "$REPO" --scenario parallel-waves --json > "$PROOF/seed.json"
+"$BIN" demo seed --repo "$REPO" --scenario parallel-waves --visible --json > "$PROOF/seed.json"
 PROJECT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["runtime_project_id"])' "$PROOF/seed.json")
 
 "$BIN" new epic --vault "$VAULT" --acronym QLH --title "Live harness qualification" >/dev/null
