@@ -1694,7 +1694,7 @@ not implementation proof.`)
 func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
-  tusker new task [--vault <path>] --title <title> --work-level light|standard|demanding --body-file <path|-> [--epic <ACR>] [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--review-level light|standard|demanding] [--review-reason <reason>] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
+  tusker new task [--vault <path>] --title <title> --work-level light|standard|demanding --body-file <path|-> [--epic <ACR>] [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--review-level light|standard|demanding] [--review-reason <reason>] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test] [--architect <address>] [--origin <address>] [--peers <name=address,...>]
   tusker task update <TASK-ID> [--if-revision <state_rev>] [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
@@ -1703,6 +1703,8 @@ Purpose:
   Create current work objects.
 
 Notes:
+  --architect names the address (operator, task:<ID> or execution:<ID>) that
+  receives the wave's wave_result when the wave completes or stalls.
   Task IDs are allocated only after a successful create. For ordered batches,
   pass explicit --id values; a refused create does not reserve an ID.
   Without --epic a task is allocated in the standalone TSK-T-0001 namespace and
