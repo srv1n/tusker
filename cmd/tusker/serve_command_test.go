@@ -1079,6 +1079,7 @@ func newServeFixture(t *testing.T) *serveServer {
 
 func newServeEmptyNeedsFixture(t *testing.T) *serveServer {
 	t.Helper()
+	clearAgentSessionEnvForTest(t)
 	root := t.TempDir()
 	vault := filepath.Join(root, ".tusker")
 	stateRoot := filepath.Join(root, "state")

@@ -164,6 +164,9 @@ func (s *serveServer) handleExecutionCancel(w http.ResponseWriter, r *http.Reque
 		serveJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "execution not found"})
 		return
 	}
+	if !s.serveRequireOperator(w, project.ProjectID, "serve execution cancel") {
+		return
+	}
 	control, err := s.store.RequestExecutionCancellation(executionID, firstNonEmpty(r.Header.Get("Idempotency-Key"), "serve"))
 	if err != nil {
 		serveJSON(w, http.StatusOK, map[string]any{"ok": false, "control": control, "error": err.Error()})

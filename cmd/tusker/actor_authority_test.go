@@ -96,6 +96,19 @@ func TestServeOperatorActorAcceptsConfiguredHumanFromAgentSession(t *testing.T) 
 	}
 }
 
+func TestServeOperatorActorHonorsProjectOwnerToggle(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
+	vault := v7DirectTestVault(t)
+	if _, err := setProjectLocalConfigWithReadback(vault, "agents.act_as_owner", false); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_THREAD_ID", "test")
+	server := &serveServer{vaultPath: vault, operatorActor: "human:operator"}
+	if _, err := server.serveOperatorActor(serveActionBody{}, "serve task run"); err == nil || !strings.Contains(err.Error(), "agents.act_as_owner: false") {
+		t.Fatalf("Serve ignored project owner toggle: %v", err)
+	}
+}
+
 func TestInternalActorSeamSeparatesDaemonAndTuskerFromPublicFlags(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	for _, raw := range []string{"daemon:completion-reactor", "tusker:batch-gate"} {
