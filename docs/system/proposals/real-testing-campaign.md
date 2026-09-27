@@ -195,7 +195,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | Q5 | Enable automation for the test project only (step 0.6) | done | Only remaining blockers: wave disarmed, and the circuit. |
 | Q6 | Codex: task QLH-T-0001, wave W-0005 | in progress | 2026-09-27 evening build: hard Say resumes the same session with the token in the prompt; Stop via Serve then `runs continue` resumes the same session (attempt 0005). An old-marker session refuses Continue with a clear `runs fresh` hint. Close via review waits on Phase 2. |
 | Q7 | Claude Code: task QLH-T-0002, wave W-0006 | todo | |
-| Q8 | Devin: task QLH-T-0003, wave W-0007 | todo | |
+| Q8 | Devin: task QLH-T-0003, wave W-0007 | done | After F57: `runs fresh`, Devin asked for line 2 in Needs you, the reply resumed it, and `tusker work submit` succeeded. Under `completion_reactor.mode: authoritative` a Codex reviewer passed it and the Phase 2 pass handler merged it into `integration/W-0007` (6c54b3e, 22:56) and closed the task. First end-to-end close through Phase 2. |
 | Q9 | Muse: task QLH-T-0004, wave W-0008 | in progress | After F45, F47 (full-access live check) and F49 (keychain): dispatch passes; CLI ask and Needs you pass; reply as `human:sarav` resumed the same Muse session with the answer in the prompt. Hard Say fails: fresh session, message lost (F52). |
 | Q10 | Run one four-task wave and watch the graph unlock | todo | |
 | Q11 | Forced-failure checks per harness | todo | Needs four fake profiles in the global config. |
@@ -265,6 +265,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F58 | Chunked gate "bare FAIL" was Go's 10-minute default timeout | fixed (gate uses `-timeout 25m`) | `[D-L]` passes in 785 s with `-v`. No test kills the process. |
 | F59 | Execution retries use up the attempt cap, so review cannot dispatch | open | Q6: Codex QLH-T-0001 submitted on its sixth attempt. The run then parked at the attempt cap (6), status `review`, and the Devin reviewer never started. `tusker redrive` reset the budget and review dispatched. The cap should count per lane, or a submit should reset it. |
 | F60 | A Devin reviewer cannot deliver its verdict | open | Q6 review of QLH-T-0001: Devin reached "pass" but the attempt failed "reviewer exited without a valid typed review result". Three causes. (1) Review runs in Devin plan mode; Devin tried "Exit plan mode" instead of `tusker review submit`. (2) The ACP permission check rejects any command with shell metacharacters (`request_shape`), so `test "$(...)"` and `tusker show ... \| head` were refused as "User rejected this tool call". (3) The review proposal travels as a `TUSKER_REVIEW_PROPOSAL_V1` line in the raw log, but the ACP raw log holds only stderr digests, not tool output, so a submitted marker would still be lost. |
+| F61 | `automation explain` errors on a landed task | open | After QLH-T-0003 landed, explain reports "armed-wave integration task is missing: integration/W-0007:.tusker/work/tasks/QLH-T-0003.md". The integration branch does not carry `.tusker/work`. Cosmetic: the task is done. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
