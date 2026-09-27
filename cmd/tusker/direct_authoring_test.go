@@ -736,7 +736,7 @@ func TestDirectWaveAuthoringUpdateReworksCompletedTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.State != "Completed" || review.Members[0].State != "completed" {
+	if review.State != "Completed" || review.Members[0].eligibility != "completed" {
 		t.Fatalf("precondition review=%#v", review.State)
 	}
 	before, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
@@ -764,7 +764,7 @@ func TestDirectWaveAuthoringUpdateReworksCompletedTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.State == "Completed" || review.Members[0].State == "completed" {
+	if review.State == "Completed" || review.Members[0].eligibility == "completed" {
 		t.Fatalf("reworked member still projects completed: %#v", review.Members[0])
 	}
 	result, err := directTaskBackgroundStart(vault, store, "APP-T-0001", "human:sarav")

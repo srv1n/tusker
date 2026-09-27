@@ -48,6 +48,9 @@ func TestDirectWaveServeReviewReturnsCanonicalProjection(t *testing.T) {
 	if len(review.Members) != 1 || review.Members[0].TaskID != "APP-T-0001" {
 		t.Fatalf("review members wrong: %#v", review.Members)
 	}
+	if review.Members[0].State == nil || review.Members[0].State.State != "backlog" || review.Members[0].State.Label != "Backlog" {
+		t.Fatalf("member did not carry the shared task state record: %#v", review.Members[0].State)
+	}
 	var waveStart, taskStart bool
 	for _, control := range review.Controls {
 		if control.Action == "wave start" && control.Enabled && control.Scope == "W-0001" {

@@ -153,7 +153,7 @@ func TestDirectWaveAutonomousLateRouteRemovalDoesNotQueueNextFrontier(t *testing
 		t.Fatal(err)
 	}
 	for _, member := range review.Members {
-		if member.TaskID == "APP-T-0002" && (member.State == "ready" || !strings.Contains(member.WaitingReason, "route blocked")) {
+		if member.TaskID == "APP-T-0002" && (member.eligibility == "ready" || !strings.Contains(member.WaitingReason, "route blocked")) {
 			t.Fatalf("late route removal left the dependent admissible: %#v", member)
 		}
 	}

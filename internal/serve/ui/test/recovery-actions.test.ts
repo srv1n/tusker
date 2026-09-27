@@ -17,14 +17,14 @@ function render(member: WaveReviewMember, state: TaskState = sampleState("blocke
 }
 
 test("failed reviewer renders the reviewer-only recovery action", () => {
-  const html = render({ taskId: readyTask.id, title: readyTask.title, state: "blocked", phase: "failed", lane: "review", waitingReason: "review proposal snapshot drifted" }, sampleState("blocked", "review proposal snapshot drifted"));
+  const html = render({ taskId: readyTask.id, title: readyTask.title, state: sampleState("blocked", "review proposal snapshot drifted"), phase: "failed", lane: "review", waitingReason: "review proposal snapshot drifted" }, sampleState("blocked", "review proposal snapshot drifted"));
   expect(html).toContain("Retry review");
   expect(html).toContain("review proposal snapshot drifted");
   expect(html).not.toContain("Review the implementation, then record the outcome");
 });
 
 test("invalid and unavailable proof render truthful check recovery", () => {
-  const base = { taskId: readyTask.id, title: readyTask.title, state: "waiting", phase: "proof_blocked" as const };
+  const base = { taskId: readyTask.id, title: readyTask.title, state: sampleState("in_review"), phase: "proof_blocked" as const };
   const changed = render({ ...base, proofInvalidation: { kind: "changed", dimension: "source", previous: "a", current: "b", nextActor: "command_executor", recovery: "rerun_checks", explanation: "accepted verification no longer matches the current source" } });
   expect(changed).toContain("Rerun checks");
   expect(changed).toContain("accepted verification no longer matches the current source");

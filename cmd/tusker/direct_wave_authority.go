@@ -48,15 +48,23 @@ type directWaveMemberRecovery struct {
 type directWaveReviewMember struct {
 	TaskID string `json:"taskId" yaml:"taskId"`
 	Title  string `json:"title" yaml:"title"`
-	State  string `json:"state" yaml:"state"`
-	Phase  string `json:"phase,omitempty" yaml:"phase,omitempty"`
-	Lane   string `json:"lane,omitempty" yaml:"lane,omitempty"`
+	// State is the member's one displayed task state (task-states.md), attached
+	// through the same adapter every other surface uses. It is nil only when
+	// the task record itself does not resolve.
+	State *taskState `json:"state,omitempty" yaml:"-"`
+	// eligibility is the internal dispatch word the review's control decisions
+	// run on (ready, waiting, running, reviewing, blocked, completed). It stays
+	// off the wire: surfaces read State.
+	eligibility string
+	Phase       string `json:"phase,omitempty" yaml:"phase,omitempty"`
+	Lane        string `json:"lane,omitempty" yaml:"lane,omitempty"`
 	// Responsible names the actor that must act next: a lease owner for live
 	// work, a gate owner for human-blocked work, "operator" when recovery needs
 	// a human/operator decision, and "daemon" for waits the scheduler resolves.
 	Responsible string `json:"responsible,omitempty" yaml:"responsible,omitempty"`
-	// CompletionReported is deliberately separate from State. A task can have
-	// reported completion but still lack current acceptance evidence.
+	// CompletionReported is deliberately separate from the member's state. A
+	// task can have reported completion but still lack current acceptance
+	// evidence.
 	CompletionReported bool                        `json:"completionReported,omitempty" yaml:"completionReported,omitempty"`
 	WaitingReason      string                      `json:"waitingReason,omitempty" yaml:"waitingReason,omitempty"`
 	Recovery           *directWaveMemberRecovery   `json:"recovery,omitempty" yaml:"recovery,omitempty"`
@@ -616,17 +624,24 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	if routeUnavailable {
 		review.Blockers = append(review.Blockers, directStartBlocker{Code: "ROUTE_UNAVAILABLE", Reason: "route resolution unavailable: " + runnerRouteBlocker(wfErr), Action: "repair WORKFLOW.md route configuration"})
 	}
+	// Member state records come from the same adapter the task/wave/inbox
+	// surfaces use, over a snapshot assembled from material already loaded
+	// here. Queue explanations stay empty: waiting detail falls back to the
+	// dependency edge, matching the CLI's snapshot.
+	stateSnap := directWaveReviewStateSnapshot(vaultPath, store, projectID, idx, wf, projectRuns)
 	for _, id := range members {
 		member := directWaveReviewMember{TaskID: id}
 		task, ok := idx.Tasks[id]
 		if !ok {
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.WaitingReason = "task record is missing"
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "MATERIAL_INVALID", TaskID: id, Reason: "member task does not resolve", Action: "restore the task record or remove it from the wave"})
 			review.Members = append(review.Members, member)
 			continue
 		}
 		member.Title = stringField(task.Data, "title")
+		memberState := serveTaskStateFor(stateSnap, task)
+		member.State = &memberState
 		member.Dependencies = normalizeList(task.Data["dependencies"])
 		member.Instructions = strings.TrimSpace(task.Body)
 		member.Acceptance = directWaveMemberAcceptance(task)
@@ -641,7 +656,7 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 				} else {
 					reason = "review route blocked: " + revErr.Error()
 				}
-				member.State = "waiting"
+				member.eligibility = "waiting"
 				member.WaitingReason = reason
 				review.Blockers = append(review.Blockers, directStartBlocker{Code: "ROUTE_INVALID", TaskID: id, Reason: reason, Action: "repair the execute/review route configuration for " + id})
 			}
@@ -704,20 +719,20 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		// complete, and a stale member is never startable. Live admitted work
 		// still reports running — the recorded blocker flags the drift.
 		case taskStale == "" && proofStale == "" && (landed[id] && status == "done" || status == "done"):
-			member.State = "completed"
+			member.eligibility = "completed"
 			member.Phase = "completed"
 		case owner != "" && admitted && liveRun.Lane == runLaneReview:
-			member.State = "reviewing"
+			member.eligibility = "reviewing"
 			member.Phase = "reviewing"
 			member.WaitingReason = "active reviewer " + owner
 		case hasStoredRun && storedRun.Lane == runLaneReview && status != "rework" && AttemptOutcome(storedRun.AttemptOutcome) != AttemptOutcomeNone && AttemptOutcome(storedRun.AttemptOutcome) != AttemptOutcomeSucceeded && strings.TrimSpace(storedRun.AttemptOutcome) != "":
-			member.State = "blocked"
+			member.eligibility = "blocked"
 			member.Phase = "failed"
 			member.Lane = storedRun.Lane
 			member.WaitingReason = firstNonEmpty(storedRun.LastError, "runtime "+storedRun.AttemptOutcome)
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "RUNTIME_FAILED", TaskID: id, Reason: member.WaitingReason, Action: "inspect the failed review attempt for " + id})
 		case status == "review" && hasStoredRun && storedRun.Terminal && storedRun.Lane == runLaneReview && !currentReviewResult:
-			member.State = "blocked"
+			member.eligibility = "blocked"
 			member.Phase = "failed"
 			member.Lane = storedRun.Lane
 			member.WaitingReason = "the previous review result does not match the current task snapshot"
@@ -727,58 +742,58 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 			// material is blocked on proof, not on a reviewer: re-running the
 			// checks is the one supported action. Review-lane failures above
 			// keep their own diagnosis and recovery.
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.Phase = "proof_blocked"
 			member.WaitingReason = proofStale
 		case status == "review":
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.Phase = "awaiting_review"
 			member.WaitingReason = firstNonEmpty(member.WaitingReason, "awaiting independent review")
 		case owner != "" && admitted:
-			member.State = "running"
+			member.eligibility = "running"
 			member.Phase = "executing"
 			member.WaitingReason = "active owner " + owner
 		case len(dispatchBlockers) > 0:
-			member.State = "blocked"
+			member.eligibility = "blocked"
 			member.Phase = "blocked"
 			member.Responsible = "operator"
 			member.WaitingReason = strings.TrimPrefix(storedRun.LastError, "dispatch blocked: ")
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "DISPATCH_BLOCKED", TaskID: id, Reason: member.WaitingReason, Action: "repair the task contract for " + id + " and retry"})
 		case status == "done" && proofStale != "":
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.Phase = "proof_blocked"
 			member.WaitingReason = proofStale
 		case hasStoredRun && storedRun.Terminal && projectedAttemptOutcome(storedRun.AttemptOutcome, storedRun.LastError) == AttemptOutcomeUnknown:
-			member.State = "blocked"
+			member.eligibility = "blocked"
 			member.Phase = "outcome_unknown"
 			member.Lane = storedRun.Lane
 			member.Responsible = "operator"
 			member.WaitingReason = firstNonEmpty(storedRun.LastError, "the worker received the task but no trustworthy final outcome was recorded")
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "OUTCOME_UNKNOWN", TaskID: id, Reason: member.WaitingReason, Action: "verify existing work and continue " + id})
 		case hasStoredRun && storedRun.Terminal && projectedAttemptOutcome(storedRun.AttemptOutcome, storedRun.LastError) != AttemptOutcomeNone && projectedAttemptOutcome(storedRun.AttemptOutcome, storedRun.LastError) != AttemptOutcomeSucceeded && strings.TrimSpace(storedRun.AttemptOutcome) != "" && !(status == "rework" && storedRun.Lane == runLaneReview):
-			member.State = "blocked"
+			member.eligibility = "blocked"
 			member.Phase = "failed"
 			member.Lane = storedRun.Lane
 			member.WaitingReason = firstNonEmpty(storedRun.LastError, "runtime "+storedRun.AttemptOutcome)
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "RUNTIME_FAILED", TaskID: id, Reason: member.WaitingReason, Action: "inspect the failed " + firstNonEmpty(storedRun.Lane, "runtime") + " attempt for " + id})
 		case taskStale != "":
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.WaitingReason = "task contract drifted from its stored fingerprint; rebind required"
-		case member.State == "waiting":
+		case member.eligibility == "waiting":
 		case status == "rework":
 			// A reviewer requested changes: this is ordinary implementation
 			// state, not an infrastructure or wave-setup failure. The execute
 			// lane re-admits it through the normal frontier.
-			member.State = "ready"
+			member.eligibility = "ready"
 			member.Phase = "rework"
 			member.WaitingReason = "review requested changes; another implementation attempt is dispatchable"
 		case depWait != "":
 			// Dependency waiting is expected DAG behavior: a member state, not
 			// a diagnostic blocker.
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.WaitingReason = "waiting for dependency " + depWait
 		case armedWaveTaskHumanBlocked(idx, task):
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.WaitingReason = "open blocking human gate"
 			gateID := ""
 			for _, action := range review.HumanActions {
@@ -789,10 +804,10 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 			}
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "HUMAN_GATE_OPEN", TaskID: id, GateID: gateID, Reason: "open human gate " + gateID + " blocks " + id, Action: "open " + id + " in the Tusker Mac app and confirm " + gateID})
 		default:
-			member.State = "ready"
+			member.eligibility = "ready"
 		}
 		if owner != "" && !admitted {
-			member.State = "waiting"
+			member.eligibility = "waiting"
 			member.WaitingReason = firstNonEmpty(member.WaitingReason, "task is held by "+owner)
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "ACTIVE_OWNER", TaskID: id, Reason: "task is held by " + owner + " outside this wave's authorization", Action: "wait for the owner to release or reclaim the lease"})
 		}
@@ -801,7 +816,7 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		// daemon's next claim, and a dispatchable member past the wave
 		// concurrency ceiling is waiting on a sibling slot. Neither is a
 		// failure or a setup problem — the scheduler resolves them.
-		if member.State == "ready" {
+		if member.eligibility == "ready" {
 			switch {
 			case review.Authorization == "paused":
 				// A paused wave admits no new frontier work, but every member
@@ -821,7 +836,7 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 					member.WaitingReason = "wave is paused; a task-scoped start dispatches without resuming, and resume re-admits queued work but does not retry failures"
 				}
 			case occupied[id]:
-				member.State = "waiting"
+				member.eligibility = "waiting"
 				member.Responsible = "daemon"
 				if member.Phase == "" {
 					member.Phase = "queued"
@@ -873,7 +888,7 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		depID := strings.TrimSpace(strings.TrimPrefix(m.WaitingReason, "waiting for dependency "))
 		if dep, ok := memberByID[depID]; ok {
 			switch {
-			case dep.State == "running" || dep.State == "reviewing" || dep.Phase == "queued" || dep.Phase == "capacity_wait":
+			case dep.eligibility == "running" || dep.eligibility == "reviewing" || dep.Phase == "queued" || dep.Phase == "capacity_wait":
 				m.Responsible = "daemon"
 			default:
 				m.Responsible = "operator"
@@ -885,10 +900,10 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	}
 	anyRunning, allDone := false, len(members) > 0
 	for _, member := range review.Members {
-		if member.State == "running" || member.State == "reviewing" {
+		if member.eligibility == "running" || member.eligibility == "reviewing" {
 			anyRunning = true
 		}
-		if member.State != "completed" {
+		if member.eligibility != "completed" {
 			allDone = false
 		}
 	}
@@ -927,7 +942,7 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		review.Controls = append(review.Controls, directStartControl{Action: "wave start", Enabled: startRefusal == nil, Scope: waveID, Reason: startReason})
 	}
 	for _, member := range review.Members {
-		control := directStartControl{Action: "task start", Enabled: !waveTerminal && (member.State == "ready" || member.State == "planned"), Scope: member.TaskID}
+		control := directStartControl{Action: "task start", Enabled: !waveTerminal && (member.eligibility == "ready" || member.eligibility == "planned"), Scope: member.TaskID}
 		for _, blocker := range review.Blockers {
 			if blocker.Code == "MEMBER_CONTRACT_INVALID" && blocker.TaskID == member.TaskID {
 				control.Enabled = false
@@ -947,6 +962,52 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	}
 	review.ExternalDependencies = directWaveExternalDependencies(idx, wave, members)
 	return review, nil
+}
+
+// directWaveReviewStateSnapshot assembles the serve snapshot shape the shared
+// task-state adapter reads, from material the review already loaded. The
+// registered project resolves so the automation flag reaches the adapter, and
+// open questions and permission waits come from the runtime store when it is
+// available.
+func directWaveReviewStateSnapshot(vaultPath string, store *RuntimeStore, projectID string, idx v7Index, wf Workflow, runs []RunStatus) serveSnapshot {
+	snap := serveSnapshot{
+		projectID: projectID,
+		notesByID: map[string]Note{},
+		queue:     map[string]automationTaskExplanation{},
+		workflow:  wf,
+		runs:      runs,
+	}
+	for id, task := range idx.Tasks {
+		snap.notesByID[id] = task
+		snap.tasks = append(snap.tasks, task)
+	}
+	for id, wave := range idx.Waves {
+		snap.notesByID[id] = wave
+		snap.waves = append(snap.waves, wave)
+	}
+	for id, gate := range idx.Gates {
+		snap.notesByID[id] = gate
+		snap.gates = append(snap.gates, gate)
+	}
+	if store == nil {
+		return snap
+	}
+	if projects, err := store.ListProjects(); err == nil {
+		for _, project := range projects {
+			if project.ProjectID == projectID || sameCanonicalProjectPath(project.VaultRoot, vaultPath) {
+				snap.project, snap.projectRegistered, snap.projectID = project, true, project.ProjectID
+				break
+			}
+		}
+	}
+	server := &serveServer{store: store, now: time.Now}
+	if questions, err := server.serveOpenQuestions(snap); err == nil {
+		snap.openQuestions = questions
+	}
+	if waits, err := server.servePermissionWaits(snap); err == nil {
+		snap.permissionWaits = waits
+	}
+	return snap
 }
 
 func directWaveExternalDependencies(idx v7Index, wave Note, members []string) []directWaveExternalDependency {
@@ -1143,7 +1204,10 @@ func waveReviewCmd(args Args) error {
 	}
 	fmt.Printf("%s %s — %s (authorization %s)\n", review.WaveID, review.Title, review.State, review.Authorization)
 	for _, member := range review.Members {
-		line := "  " + member.TaskID + " " + member.State
+		line := "  " + member.TaskID
+		if member.State != nil {
+			line += " " + member.State.Label
+		}
 		if member.WaitingReason != "" {
 			line += " (" + member.WaitingReason + ")"
 		}
@@ -1371,7 +1435,7 @@ func directWaveStart(vault string, store *RuntimeStore, waveID, actor string) (d
 	fingerprint := lockedReview.MaterialFingerprint
 	var eligible []string
 	for _, member := range lockedReview.Members {
-		if member.State == "ready" {
+		if member.eligibility == "ready" {
 			eligible = append(eligible, member.TaskID)
 		}
 	}
@@ -1737,7 +1801,7 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 	}
 	ready := map[string]bool{}
 	for _, member := range review.Members {
-		if member.State == "ready" {
+		if member.eligibility == "ready" {
 			ready[member.TaskID] = true
 		}
 	}
@@ -1945,7 +2009,7 @@ func directWaveResume(vault string, store *RuntimeStore, waveID, actor string) (
 	result.QueuedTaskIDs = queued
 	result.Replayed = replayed && len(queued) == 0
 	for _, member := range review.Members {
-		if member.State == "running" {
+		if member.eligibility == "running" {
 			result.State = "Running"
 			break
 		}
@@ -1997,6 +2061,15 @@ func (s *serveServer) handleWaveReviewAPI(w http.ResponseWriter, projectID, wave
 		return
 	}
 	if snap, err := s.loadSnapshotForProject(project.ProjectID); err == nil {
+		// Re-attach member and dependency states against the full serve
+		// snapshot: it carries queue explanations the review's own snapshot
+		// does not, so reasons match the task and wave surfaces exactly.
+		for i, member := range review.Members {
+			if task, ok := snap.notesByID[member.TaskID]; ok && serveNoteKind(task) == "task" {
+				state := serveTaskStateFor(snap, task)
+				review.Members[i].State = &state
+			}
+		}
 		for i, dep := range review.ExternalDependencies {
 			if task, ok := snap.notesByID[dep.TaskID]; ok && serveNoteKind(task) == "task" {
 				state := serveTaskStateFor(snap, task)

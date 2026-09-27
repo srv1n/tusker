@@ -134,7 +134,7 @@ func TestSelfServiceJourneys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if member := journeysReviewMember(t, review, "APP-T-0001"); member.State != "completed" {
+		if member := journeysReviewMember(t, review, "APP-T-0001"); member.eligibility != "completed" {
 			t.Fatalf("accepted root did not project completed: %#v", member)
 		}
 		for _, blocker := range review.Blockers {
@@ -161,7 +161,7 @@ func TestSelfServiceJourneys(t *testing.T) {
 			t.Fatal(err)
 		}
 		member := journeysReviewMember(t, review, "APP-T-0001")
-		if member.State != "waiting" || member.Phase != "proof_blocked" {
+		if member.eligibility != "waiting" || member.Phase != "proof_blocked" {
 			t.Fatalf("manual done did not strand the root on proof: %#v", member)
 		}
 		strictProof := false
@@ -341,7 +341,7 @@ func TestSelfServiceJourneysA3(t *testing.T) {
 			t.Fatal(err)
 		}
 		member := journeysReviewMember(t, review, "APP-T-0001")
-		if member.State != "blocked" || member.Phase != "outcome_unknown" || member.Responsible != "operator" {
+		if member.eligibility != "blocked" || member.Phase != "outcome_unknown" || member.Responsible != "operator" {
 			t.Fatalf("uncertain outcome did not route to its operator: %#v", member)
 		}
 		unknownBlocker := false
@@ -650,7 +650,7 @@ func TestSelfServiceJourneysA4(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if member := journeysReviewMember(t, dependent, "APP-T-0002"); member.State != "waiting" || !strings.Contains(member.WaitingReason, "APP-T-0001") {
+		if member := journeysReviewMember(t, dependent, "APP-T-0002"); member.eligibility != "waiting" || !strings.Contains(member.WaitingReason, "APP-T-0001") {
 			t.Fatalf("re-arm silently released the dependent: %#v", member)
 		}
 	})
@@ -779,7 +779,7 @@ func TestSelfServiceJourneysA2(t *testing.T) {
 			t.Fatal(err)
 		}
 		member := journeysReviewMember(t, review, "APP-T-0002")
-		if member.State != "waiting" || member.WaitingReason != "waiting for dependency APP-T-0001" {
+		if member.eligibility != "waiting" || member.WaitingReason != "waiting for dependency APP-T-0001" {
 			t.Fatalf("dependent lost its wait: %#v", member)
 		}
 		if member.Responsible != "daemon" {
@@ -949,7 +949,7 @@ func TestSelfServiceJourneysA2(t *testing.T) {
 			t.Fatal(err)
 		}
 		member := journeysReviewMember(t, review, "APP-T-0001")
-		if member.State != "ready" || member.Phase != "paused" || member.Responsible != "operator" {
+		if member.eligibility != "ready" || member.Phase != "paused" || member.Responsible != "operator" {
 			t.Fatalf("paused member lost its override cue: %#v", member)
 		}
 		output, _ := journeysCLIWaveReview(t, vault, "W-0001")
@@ -994,7 +994,7 @@ func TestSelfServiceJourneysA2(t *testing.T) {
 		// The projection reports every record-level staleness (pin or
 		// revision) with one message; the precise cause is available from
 		// the stale-reason predicate the admission paths evaluate.
-		if member.State != "waiting" || !strings.Contains(member.WaitingReason, "task contract drifted from its stored fingerprint; rebind required") {
+		if member.eligibility != "waiting" || !strings.Contains(member.WaitingReason, "task contract drifted from its stored fingerprint; rebind required") {
 			t.Fatalf("drifted record did not wait on its revision: %#v", member)
 		}
 		contractBlocker := false

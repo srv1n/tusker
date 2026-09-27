@@ -88,7 +88,7 @@ export function hasIndependentEligibleWork(review: WaveReview): boolean {
 /** An armed wave with only terminal failures can be replayed through Start. */
 export function canRetryWave(review: WaveReview): boolean {
   if (waveReviewStage(review) !== "failed" || review.authorization !== "authorized") return false;
-  if (review.members.some((member) => member.phase === "executing" || member.phase === "reviewing" || member.state === "running")) return false;
+  if (review.members.some((member) => member.phase === "executing" || member.phase === "reviewing" || member.state?.state === "working")) return false;
   if (!review.members.some((member) => member.recovery?.action === "retry_task" && member.recovery.enabled)) return false;
   return !review.blockers.some((blocker) => !blocker.taskId || ["WAVE_TERMINAL", "ROUTE_INVALID", "DEPENDENCY_CONTRACT_INVALID", "CONTRACT_FINGERPRINT_STALE", "ACTIVE_OWNER", "OUTCOME_UNKNOWN"].includes(blocker.code));
 }
@@ -226,9 +226,9 @@ export function WaveInstructions({ member }: { member: WaveReviewMember }) {
 }
 
 export function WaveMemberList({ review, projectId, members = [] }: { review: WaveReview; projectId?: string; members?: WaveTaskSummary[] }) {
-  const states = new Map(members.map((member) => [member.id, member.state]));
+  const summaries = new Map(members.map((member) => [member.id, member.state]));
   return <div className="divide-y divide-line" data-wave-members>{review.members.map((member) => {
-    const state = states.get(member.taskId);
+    const state = summaries.get(member.taskId) ?? member.state;
     return <article key={member.taskId} className="py-3 first:pt-0 last:pb-0" data-wave-member={member.taskId}><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[12.5px] font-semibold text-ink">{projectId ? <a href={`/p/${projectId}/tasks/${member.taskId}`} className="hover:underline">{member.title}</a> : member.title}</p>{state ? <TaskStateBadge state={state} withReason /> : null}</div><WaveInstructions member={member} /></article>;
   })}</div>;
 }

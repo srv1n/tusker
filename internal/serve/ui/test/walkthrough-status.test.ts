@@ -36,24 +36,24 @@ function renderWithRouter(element: ReturnType<typeof createElement>) {
 describe("walkthrough status", () => {
   test("uses the authoritative review for the wave start stage", () => {
     expect(waveReviewStage(review({ controls: [{ action: "wave start", enabled: true, scope: "W-1" }] }))).toBe("ready");
-    const proofBlocked = review({ members: [{ taskId: "T-1", title: "Proof", state: "blocked", phase: "proof_blocked" }] });
+    const proofBlocked = review({ members: [{ taskId: "T-1", title: "Proof", state: sampleState("in_review"), phase: "proof_blocked" }] });
     expect(waveReviewStage(proofBlocked)).toBe("blocked");
   });
 
   test("a review error or nonterminal review overrides a stale completed summary", () => {
     const wave = makeWave({ id: "W-1", status: "completed", landedAt: "2026-09-16T00:00:00Z" });
-    const staleReview = review({ state: "Completed", members: [{ taskId: "T-1", title: "Old execution", state: "running", phase: "executing" }] });
+    const staleReview = review({ state: "Completed", members: [{ taskId: "T-1", title: "Old execution", state: sampleState("working"), phase: "executing" }] });
     expect(usableWaveReview(staleReview, new Error("review endpoint offline"))).toBeUndefined();
     expect(waveSummaryWithReview(wave, staleReview, new Error("review endpoint offline"))).toMatchObject({ status: "unknown", landedAt: null });
 
-    const executing = review({ state: "Running", members: [{ taskId: "T-1", title: "Current execution", state: "running", phase: "executing" }] });
+    const executing = review({ state: "Running", members: [{ taskId: "T-1", title: "Current execution", state: sampleState("working"), phase: "executing" }] });
     const displayed = waveSummaryWithReview(wave, executing);
     expect(displayed).toMatchObject({ status: "open", landedAt: null });
   });
 
   test("member rows show the server state and its reason", () => {
     const html = renderToStaticMarkup(createElement(WaveMemberList, {
-      review: review({ members: [{ taskId: "T-2", title: "Follow-up", state: "waiting", waitingReason: "waiting for dependency T-1" }] }),
+      review: review({ members: [{ taskId: "T-2", title: "Follow-up", state: sampleState("planned", "waiting on T-1"), waitingReason: "waiting for dependency T-1" }] }),
       members: [{ id: "T-2", title: "Follow-up", group: "", status: "ready", state: sampleState("planned", "waiting on T-1"), proof: "" }],
     }));
     expect(html).toContain('data-task-state="planned"');
