@@ -125,4 +125,7 @@ for key in $KEYS; do
   author "$key" "qual-$key" "$up" "$(profile_for "$key")" "$(review_for "$key")"
   if [ -n "$FAILURE" ]; then author "$key" "qual-$key-bad" "${up}_BAD" "qual-bad-$key" "$(review_for "$key")"; fi
 done
+# Landing projects each landed task from its wave's integration branch, which
+# is cut from main when the wave is armed. Commit the task records first.
+git -C "$REPO" add .tusker && git -C "$REPO" commit -qm "Seed qualification tasks" || true
 echo "ids: $PROOF/ids.env"
