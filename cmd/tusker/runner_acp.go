@@ -932,10 +932,23 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 			continue
 		}
 	}
-	// The executable and cwd are already absolute. A fixed system PATH is
-	// retained only for adapter-spawned tools; it is independent of both
-	// RunnerPathPrefix and CommandSearchPath.
-	out = append(out, "PATH="+strings.Join([]string{"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}, string(os.PathListSeparator)))
+	// A dispatched worker finishes with `tusker work submit`, which reads its
+	// attempt identity from the environment. Pass this attempt's own identity
+	// (never inherited TUSKER_* values) and put the tusker binary on PATH.
+	path := []string{"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
+	if strings.TrimSpace(req.AttemptID) != "" {
+		out = append(out,
+			"TUSKER_PROJECT_ID="+req.ProjectID, "TUSKER_RECORD_ID="+req.RecordID, "TUSKER_ITEM_ID="+req.ItemID,
+			"TUSKER_ATTEMPT_ID="+req.AttemptID, "TUSKER_RUN_LANE="+req.Lane,
+			"TUSKER_WORK_REVISION="+fmt.Sprint(req.WorkRevision), "TUSKER_LEASE_GENERATION="+fmt.Sprint(req.LeaseGeneration),
+			"TUSKER_WORKSPACE="+req.WorkspacePath, "TUSKER_STATUS_PATH="+req.StatusPath, "TUSKER_EVENT_SINK="+req.EventSinkPath)
+		if exe, err := os.Executable(); err == nil {
+			path = append([]string{filepath.Dir(exe)}, path...)
+		}
+	}
+	// The executable and cwd are already absolute. The fixed system PATH is
+	// independent of both RunnerPathPrefix and CommandSearchPath.
+	out = append(out, "PATH="+strings.Join(path, string(os.PathListSeparator)))
 	return out
 }
 
