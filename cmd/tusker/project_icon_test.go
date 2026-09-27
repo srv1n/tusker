@@ -99,6 +99,7 @@ func TestServeProjectIconUploadOverridesDiscoveryAndClears(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := newServeServer(vault, root, defaultServeAddr, store, nil)
+	server.operatorActor = "human:test-operator"
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, solidTestIcon()); err != nil {

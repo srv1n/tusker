@@ -1064,32 +1064,38 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 // The upload is keyed by the logical project group so every checkout shares it,
 // and it outranks repository discovery when the icon endpoint serves a read.
 func (s *serveServer) handleProjectIconAction(w http.ResponseWriter, projectID string, body serveActionBody) {
-	if _, err := s.projectForSnapshot(projectID); err != nil {
+	project, err := s.projectForSnapshot(projectID)
+	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker projects icon", "", err))
 		return
 	}
-	key := s.projectIconGroupKey(projectID)
+	if _, err := s.serveOperatorActor(serveActionBody{"project": project.ProjectID}, "serve projects icon"); err != nil {
+		_, result := serveOperatorActorResult("tusker projects icon", err)
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	result := saveProjectIcon(s.projectIconGroupKey(projectID), projectID, body)
+	serveJSON(w, http.StatusOK, result)
+}
+
+func saveProjectIcon(key, projectID string, body serveActionBody) serveActionResult {
 	if body.bool("clear") {
 		err := clearStoredProjectIcon(key)
 		result := serveCommandResult("tusker projects icon", "", err)
 		result.ProjectID = projectID
-		serveJSON(w, http.StatusOK, result)
-		return
+		return result
 	}
 	raw := strings.TrimSpace(body.string("data"))
 	if raw == "" {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data is required"})
-		return
+		return serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data is required"}
 	}
 	data, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil || len(data) == 0 || len(data) > maxProjectIconBytes {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data must be a base64 image under 512 KiB"})
-		return
+		return serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data must be a base64 image under 512 KiB"}
 	}
 	ext, _, ok := projectIconUploadType(data, strings.ToLower(strings.TrimSpace(body.string("mime"))))
 	if !ok {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon must be a PNG, JPEG, GIF, WebP, ICO, or SVG image"})
-		return
+		return serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon must be a PNG, JPEG, GIF, WebP, ICO, or SVG image"}
 	}
 	path := projectIconStorePath(key)
 	if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
@@ -1103,7 +1109,7 @@ func (s *serveServer) handleProjectIconAction(w http.ResponseWriter, projectID s
 		result.Reason = "Project icon updated"
 	}
 	result.ProjectID = projectID
-	serveJSON(w, http.StatusOK, result)
+	return result
 }
 
 var serveProjectSettingValidators = map[string]func(any) (any, error){
