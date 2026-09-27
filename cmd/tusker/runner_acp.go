@@ -1026,7 +1026,7 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 
 // devinReviewerPreamble keeps a plan-mode Devin reviewer from stopping at
 // "exit plan mode" (Tusker refuses that request) instead of submitting.
-const devinReviewerPreamble = "Tusker note for this review: the session runs in plan mode. Plan mode does not block `tusker review submit`; run it directly as a shell command when the review is done. Do not ask to exit plan mode: Tusker refuses that request. Keep every shell command, including the --summary text, free of the characters ; & | ` $ < > because the permission check refuses them.\n\n"
+const devinReviewerPreamble = "Tusker note for this review: the session runs in plan mode. Plan mode does not block `tusker review submit`; run it directly as a shell command when the review is done. Do not ask to exit plan mode: Tusker refuses that request. Put the --summary text in single quotes. Outside quotes, do not use ; & | ` $ < > or line breaks: the permission check refuses them.\n\n"
 
 func acpDurationMS(value int) time.Duration {
 	if value <= 0 {
@@ -1196,8 +1196,10 @@ func evaluateDevinACPTransportPermission(ctx context.Context, eventLog *EventLog
 		return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
 	}
 	commands := strings.Split(input.Command, "&&")
-	if strings.ContainsAny(strings.Join(commands, ""), ";&|`$<>\n\r") {
-		return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
+	for _, command := range commands {
+		if unquotedShellMeta(command) {
+			return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
+		}
 	}
 	mutating, destructive, catastrophic := false, false, false
 	for _, command := range commands {
@@ -1245,6 +1247,38 @@ func evaluateDevinACPTransportPermission(ctx context.Context, eventLog *EventLog
 		return acp.AllowOnce, nil
 	}
 	return acp.Reject, nil
+}
+
+// unquotedShellMeta reports shell syntax the shell would act on: any of
+// ; & | ` $ < > or a line break outside quotes, and $ or ` inside double
+// quotes (they still expand there). Quoted text such as a review summary may
+// contain the others; single-quoted text is literal.
+func unquotedShellMeta(command string) bool {
+	var quote rune
+	escaped := false
+	for _, r := range command {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && quote != '\'':
+			escaped = true
+		case quote == '\'':
+			if r == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			if r == '"' {
+				quote = 0
+			} else if r == '$' || r == '`' {
+				return true
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case strings.ContainsRune(";&|`$<>\n\r", r):
+			return true
+		}
+	}
+	return quote != 0 || escaped
 }
 
 func acpStoredSessionRef(adapter, raw string) string {
