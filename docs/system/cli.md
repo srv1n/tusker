@@ -58,6 +58,7 @@ Actors supplied with `--by human:<name>` may be used from an agent session by de
 | --- | --- |
 | Add a project | `tusker projects add --repo . --vault ./.tusker` |
 | List projects | `tusker projects list --json` |
+| Set or remove a project icon | `tusker projects icon set <path> --id <PROJECT-ID>` or `tusker projects icon set --remove --id <PROJECT-ID>` |
 | Enable automation | `tusker projects enable --id <PROJECT-ID>` |
 | Check the daemon | `tusker daemon status --json` |
 | Check one run | `tusker runs inspect <RUN-ID> --json` |
@@ -242,6 +243,7 @@ routine routing so unused profiles do not consume context.
   [--json]` reads exactly one managed document. Use `--section <heading>` for
   one Markdown section and `--current` to follow a supersession link. Reads
   are side-effect free.
+- `tusker docs save <subject-or-path> --body-file <file> [--header-file <YAML-or-JSON-file>] [--if-revision <rev>]` saves through the same corpus checks as Serve. Without `--if-revision`, it reads the current revision first.
 - `tusker docs backlinks <subject-or-path> [--limit <n>] [--json]` shows
   incoming metadata and body relationships with a bounded `--limit`; dangling
   managed routes are listed separately. `tusker docs check

@@ -500,6 +500,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, docsCmd("verify", args)
 	case "docs adopt":
 		return 0, docsCmd("adopt", args)
+	case "docs save":
+		return 0, docsSaveCmd(args)
 	case "docs":
 		printDocsHelp()
 		return 0, nil
@@ -633,6 +635,8 @@ func runInner(command string, args Args) (int, error) {
 	case "projects automation-scope":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, projectsAutomationScopeCmd(args)
+	case "projects icon":
+		return 0, projectsIconCmd(args)
 	case "projects":
 		printProjectsHelp()
 		return 0, nil

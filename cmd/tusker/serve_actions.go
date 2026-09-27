@@ -623,20 +623,22 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 func (s *serveServer) serveOperatorActor(body serveActionBody, operation string) (string, error) {
 	// Serve is an HTTP boundary. The capability-authenticated local UI uses the
 	// server's explicitly configured operator actor. A request actor, when
-	// present, must normalize to that same identity. Neither path consults
-	// USER/LOGNAME or upgrades an agent into a human identity.
+	// present, must normalize to that same identity.
 	configured := strings.TrimSpace(s.operatorActor)
 	if configured == "" {
 		return "", tuskerError("SERVE_OPERATOR_REQUIRED", operation+" requires an explicitly configured operator actor", withHint("start Serve with --by <qualified-actor> or set TUSKER_SERVE_OPERATOR=<qualified-actor>"))
 	}
-	actor, ok := normalizeV7ProposalActor(configured)
-	if !ok {
-		return "", tuskerError(errorInvalidField, operation+" requires a qualified configured operator actor")
+	args := Args{"by": configured, "vault": s.vaultPath}
+	if projectID := body.string("projectId", "project_id", "project"); projectID != "" {
+		project, err := s.projectForSnapshot(projectID)
+		if err != nil {
+			return "", err
+		}
+		args["vault"] = firstNonEmpty(project.VaultRoot, s.vaultPath)
 	}
-	if strings.SplitN(actor, ":", 2)[0] == "human" && agentSessionKind() != "" {
-		return "", tuskerError(errorInvalidTransition,
-			operation+" cannot use human actor "+actor+" from "+agentSessionKind(),
-			withHint("run the mutation from a human terminal with explicit --by human:<name>; no agent break-glass contract exists"))
+	actor, err := resolveV7Actor(args, operation, v7ActorPolicy{})
+	if err != nil {
+		return "", err
 	}
 	if raw := body.string("actor", "by"); raw != "" {
 		requested, valid := normalizeV7ProposalActor(raw)
@@ -650,7 +652,20 @@ func (s *serveServer) serveOperatorActor(body serveActionBody, operation string)
 	return actor, nil
 }
 
+func (s *serveServer) serveRequireOperator(w http.ResponseWriter, projectID, operation string) bool {
+	_, err := s.serveOperatorActor(serveActionBody{"project": projectID}, operation)
+	if err == nil {
+		return true
+	}
+	status, result := serveOperatorActorResult(operation, err)
+	serveJSON(w, status, result)
+	return false
+}
+
 func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body serveActionBody) {
+	if !s.serveRequireOperator(w, "", "serve projects add") {
+		return
+	}
 	repoRoot := body.string("repoRoot", "repo_root", "repo", "path")
 	if repoRoot == "" {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: "project registration requires a repository path"})
@@ -702,6 +717,9 @@ func (s *serveServer) handleProjectRegisterAction(w http.ResponseWriter, body se
 }
 
 func (s *serveServer) handleProjectRemoveAction(w http.ResponseWriter, projectID string) {
+	if !s.serveRequireOperator(w, projectID, "serve projects remove") {
+		return
+	}
 	args := serveBaseArgs(s)
 	args["id"] = strings.TrimSpace(projectID)
 	args["json"] = "true"
@@ -715,6 +733,9 @@ func (s *serveServer) handleProjectRemoveAction(w http.ResponseWriter, projectID
 }
 
 func (s *serveServer) handleProjectRebindAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	if !s.serveRequireOperator(w, projectID, "serve projects rebind") {
+		return
+	}
 	repoRoot := body.string("repoRoot", "repo_root", "repo", "path")
 	if repoRoot == "" {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "project rebind requires a repository path"})
@@ -778,6 +799,9 @@ func (s *serveServer) handleSetupDoctorAction(w http.ResponseWriter, body serveA
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker setup", "", err))
 		return
 	}
+	if apply && !s.serveRequireOperator(w, project.ProjectID, "serve setup repair") {
+		return
+	}
 	args := serveBaseArgs(s)
 	args["repo"] = project.RepoRoot
 	args["json"] = "true"
@@ -804,6 +828,17 @@ func (s *serveServer) handleSetupDoctorAction(w http.ResponseWriter, body serveA
 }
 
 func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	if err := requireOwnerSession("project automation"); err != nil {
+		_, result := serveOperatorActorResult("project automation", err)
+		serveJSON(w, http.StatusForbidden, result)
+		return
+	}
+	toggleActor, actorErr := s.serveOperatorActor(serveActionBody{"project": projectID}, "serve projects automation")
+	if actorErr != nil {
+		_, result := serveOperatorActorResult("serve projects automation", actorErr)
+		serveJSON(w, http.StatusForbidden, result)
+		return
+	}
 	raw, present := body["enabled"]
 	if !present {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "project automation action requires enabled"})
@@ -829,10 +864,8 @@ func (s *serveServer) handleProjectAutomationAction(w http.ResponseWriter, proje
 	if err == nil && enabled {
 		err = validateProjectStorageBoundary(project.RepoRoot, project.VaultRoot)
 	}
-	toggleActor := ""
 	toggleBefore := false
 	if err == nil {
-		toggleActor = firstNonEmpty(configuredServeOperatorActor(), "serve")
 		toggleBefore, err = setProjectAutomationAudited(s.store, *project, enabled, toggleActor, "api")
 	}
 	if err != nil {
@@ -914,6 +947,9 @@ func (s *serveServer) handleProjectAutomationScope(w http.ResponseWriter, projec
 }
 
 func (s *serveServer) handleProjectVisibilityAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	if !s.serveRequireOperator(w, projectID, "serve projects visibility") {
+		return
+	}
 	raw, present := body["visible"]
 	if !present {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "project visibility action requires visible"})
@@ -948,6 +984,9 @@ func (s *serveServer) handleProjectVisibilityAction(w http.ResponseWriter, proje
 }
 
 func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, projectID string, body serveActionBody) {
+	if !s.serveRequireOperator(w, projectID, "serve projects settings") {
+		return
+	}
 	loaded, err := loadRegisteredProjects(s.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true, ProjectID: projectID})
 	if err != nil || len(loaded) != 1 {
 		if err == nil {
@@ -1025,32 +1064,38 @@ func (s *serveServer) handleProjectSettingsAction(w http.ResponseWriter, project
 // The upload is keyed by the logical project group so every checkout shares it,
 // and it outranks repository discovery when the icon endpoint serves a read.
 func (s *serveServer) handleProjectIconAction(w http.ResponseWriter, projectID string, body serveActionBody) {
-	if _, err := s.projectForSnapshot(projectID); err != nil {
+	project, err := s.projectForSnapshot(projectID)
+	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker projects icon", "", err))
 		return
 	}
-	key := s.projectIconGroupKey(projectID)
+	if _, err := s.serveOperatorActor(serveActionBody{"project": project.ProjectID}, "serve projects icon"); err != nil {
+		_, result := serveOperatorActorResult("tusker projects icon", err)
+		serveJSON(w, http.StatusOK, result)
+		return
+	}
+	result := saveProjectIcon(s.projectIconGroupKey(projectID), projectID, body)
+	serveJSON(w, http.StatusOK, result)
+}
+
+func saveProjectIcon(key, projectID string, body serveActionBody) serveActionResult {
 	if body.bool("clear") {
 		err := clearStoredProjectIcon(key)
 		result := serveCommandResult("tusker projects icon", "", err)
 		result.ProjectID = projectID
-		serveJSON(w, http.StatusOK, result)
-		return
+		return result
 	}
 	raw := strings.TrimSpace(body.string("data"))
 	if raw == "" {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data is required"})
-		return
+		return serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data is required"}
 	}
 	data, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil || len(data) == 0 || len(data) > maxProjectIconBytes {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data must be a base64 image under 512 KiB"})
-		return
+		return serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon data must be a base64 image under 512 KiB"}
 	}
 	ext, _, ok := projectIconUploadType(data, strings.ToLower(strings.TrimSpace(body.string("mime"))))
 	if !ok {
-		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon must be a PNG, JPEG, GIF, WebP, ICO, or SVG image"})
-		return
+		return serveActionResult{Refused: true, ProjectID: projectID, Reason: "icon must be a PNG, JPEG, GIF, WebP, ICO, or SVG image"}
 	}
 	path := projectIconStorePath(key)
 	if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
@@ -1064,7 +1109,7 @@ func (s *serveServer) handleProjectIconAction(w http.ResponseWriter, projectID s
 		result.Reason = "Project icon updated"
 	}
 	result.ProjectID = projectID
-	serveJSON(w, http.StatusOK, result)
+	return result
 }
 
 var serveProjectSettingValidators = map[string]func(any) (any, error){
@@ -1490,6 +1535,9 @@ func (s *serveServer) handleFeedbackAddAction(w http.ResponseWriter, body serveA
 		serveJSON(w, http.StatusOK, serveCommandResult("tusker feedback add", "", projectErr))
 		return
 	}
+	if !s.serveRequireOperator(w, project.ProjectID, "serve feedback add") {
+		return
+	}
 	args["_pos0"] = "add"
 	for _, key := range []string{"context", "friction", "product-idea", "productIdea", "impact", "related", "theme", "priority-hint", "priorityHint", "affected-command", "affectedCommand", "dedupe-key", "dedupeKey", "actor", "slug", "date"} {
 		if value := body.string(key); value != "" {
@@ -1509,6 +1557,14 @@ func (s *serveServer) handleFeedbackAddAction(w http.ResponseWriter, body serveA
 }
 
 func (s *serveServer) handleDaemonAction(w http.ResponseWriter, action string, body serveActionBody) {
+	if err := requireOwnerSession("daemon " + action); err != nil {
+		_, result := serveOperatorActorResult("daemon "+action, err)
+		serveJSON(w, http.StatusForbidden, result)
+		return
+	}
+	if !s.serveRequireOperator(w, "", "serve daemon "+action) {
+		return
+	}
 	var (
 		command string
 		fn      func(Args) error

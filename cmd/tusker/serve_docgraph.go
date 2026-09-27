@@ -381,27 +381,30 @@ func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Reque
 		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body: " + err.Error()})
 		return
 	}
-	if _, actorErr := s.serveOperatorActor(serveActionBody{"actor": req.Actor}, "serve docgraph save"); actorErr != nil {
+	if _, actorErr := s.serveOperatorActor(serveActionBody{"actor": req.Actor, "project": project.ProjectID}, "serve docgraph save"); actorErr != nil {
 		status, result := serveOperatorActorResult("docgraph save", actorErr)
 		serveJSON(w, status, result)
 		return
 	}
+	status, result := saveDocgraphDoc(project.RepoRoot, subject, req)
+	serveJSON(w, status, result)
+}
+
+// saveDocgraphDoc applies the same revision and corpus checks for HTTP and CLI.
+func saveDocgraphDoc(repoRoot, subject string, req serveDocgraphSaveRequest) (int, any) {
 	baseRev := strings.TrimSpace(req.BaseRev)
 	if baseRev == "" {
-		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "base_rev is required"})
-		return
+		return http.StatusBadRequest, map[string]any{"error": "base_rev is required"}
 	}
 	headerPresent := len(req.Header) > 0 && !bytes.Equal(bytes.TrimSpace(req.Header), []byte("null"))
 	bodyPresent := req.Body != nil
 	if !headerPresent && !bodyPresent {
-		serveJSON(w, http.StatusBadRequest, map[string]any{"error": "body or header is required"})
-		return
+		return http.StatusBadRequest, map[string]any{"error": "body or header is required"}
 	}
 
-	corpus, _, err := docgraph.LoadRepository(project.RepoRoot)
+	corpus, _, err := docgraph.LoadRepository(repoRoot)
 	if err != nil {
-		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	targetIndex := -1
 	for i := range corpus.Documents {
@@ -411,49 +414,43 @@ func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if targetIndex < 0 {
-		serveJSON(w, http.StatusNotFound, map[string]any{"error": "doc not found"})
-		return
+		return http.StatusNotFound, map[string]any{"error": "doc not found"}
 	}
 	relPath := corpus.Documents[targetIndex].Path
-	original, err := docgraph.ReadDocumentFile(project.RepoRoot, relPath)
+	original, err := docgraph.ReadDocumentFile(repoRoot, relPath)
 	if err != nil {
-		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	currentRev := serveDocgraphRev(original)
 	if currentRev != baseRev {
-		serveJSON(w, http.StatusConflict, map[string]any{
+		return http.StatusConflict, map[string]any{
 			"error":       "document changed on disk since it was loaded; reload before saving",
 			"code":        "DOC_SAVE_CONFLICT",
 			"current_rev": currentRev,
-		})
-		return
+		}
 	}
 
 	_, bodyStart, ok := serveDocgraphSplitFile(string(original))
 	if !ok {
-		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{
+		return http.StatusUnprocessableEntity, map[string]any{
 			"error": "document is missing valid front matter",
 			"defects": []serveDocgraphIssue{{
 				Code:    "DOC_HEADER_MISSING",
 				Path:    relPath,
 				Message: "missing YAML front matter (expected an opening --- line)",
 			}},
-		})
-		return
+		}
 	}
 
 	var headerRegion string
 	if headerPresent {
 		var headerMap map[string]any
 		if err := json.Unmarshal(req.Header, &headerMap); err != nil {
-			serveJSON(w, http.StatusBadRequest, map[string]any{"error": "header must be a JSON object"})
-			return
+			return http.StatusBadRequest, map[string]any{"error": "header must be a JSON object"}
 		}
 		yamlBytes, err := serveDocgraphMarshalHeader(headerMap)
 		if err != nil {
-			serveJSON(w, http.StatusBadRequest, map[string]any{"error": "could not encode header: " + err.Error()})
-			return
+			return http.StatusBadRequest, map[string]any{"error": "could not encode header: " + err.Error()}
 		}
 		headerRegion = "---\n" + yamlBytes + "---\n"
 	} else {
@@ -479,11 +476,10 @@ func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Reque
 			code = pe.Code
 			msg = pe.Message
 		}
-		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{
+		return http.StatusUnprocessableEntity, map[string]any{
 			"error":   "edit would produce an invalid document",
 			"defects": []serveDocgraphIssue{{Code: code, Path: relPath, Message: msg}},
-		})
-		return
+		}
 	}
 
 	baseIssues := docgraph.ValidateCorpus(corpus)
@@ -492,33 +488,29 @@ func (s *serveServer) handleDocgraphDocSave(w http.ResponseWriter, r *http.Reque
 	editedDocs[targetIndex] = newDoc
 	editedIssues := docgraph.ValidateCorpus(docgraph.Corpus{Documents: editedDocs})
 	if defects := serveDocgraphNewDefects(baseIssues, editedIssues); len(defects) > 0 {
-		serveJSON(w, http.StatusUnprocessableEntity, map[string]any{
+		return http.StatusUnprocessableEntity, map[string]any{
 			"error":   "edit would break the document's rules",
 			"defects": defects,
-		})
-		return
+		}
 	}
 
-	if err := serveDocgraphAtomicWrite(project.RepoRoot, relPath, []byte(newContent)); err != nil {
-		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+	if err := serveDocgraphAtomicWrite(repoRoot, relPath, []byte(newContent)); err != nil {
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 
-	reloaded, _, err := docgraph.LoadRepository(project.RepoRoot)
+	reloaded, _, err := docgraph.LoadRepository(repoRoot)
 	if err != nil {
-		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
-	detail, ok := serveDocgraphBuildDetail(project.RepoRoot, reloaded, newDoc.Subject)
+	detail, ok := serveDocgraphBuildDetail(repoRoot, reloaded, newDoc.Subject)
 	if !ok {
-		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": "saved document could not be reloaded"})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": "saved document could not be reloaded"}
 	}
 	warnings := []string{}
-	if stale, err := docgraph.CheckDocsMapFresh(project.RepoRoot); err == nil && len(stale) > 0 {
+	if stale, err := docgraph.CheckDocsMapFresh(repoRoot); err == nil && len(stale) > 0 {
 		warnings = append(warnings, "docs map is stale; run tusker docs map")
 	}
-	serveJSON(w, http.StatusOK, serveDocgraphSaveResponse{serveDocgraphDetail: detail, Warnings: warnings})
+	return http.StatusOK, serveDocgraphSaveResponse{serveDocgraphDetail: detail, Warnings: warnings}
 }
 
 // serveDocgraphSplitFile locates the front-matter boundary in a document's raw
