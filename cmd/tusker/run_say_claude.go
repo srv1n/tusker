@@ -25,6 +25,10 @@ func runSaySoft(store *RuntimeStore, run RunStatus, actor, body, key string, now
 	}
 	if prior != nil {
 		result.Delivery, result.Duplicate = *prior, true
+		if prior.State == "delivering" {
+			result.State = "queued"
+			result.Reason = "queued; the worker receives it at its next tool boundary"
+		}
 		return result, softSayNeedsHardFallback(*prior), nil
 	}
 	if state.State != "working" && state.State != "quiet" {
@@ -68,6 +72,9 @@ func runSaySoft(store *RuntimeStore, run RunStatus, actor, body, key string, now
 		AttemptID: identity.AttemptID, LeaseGeneration: identity.AttemptGeneration,
 		DeliveryID: delivery.DeliveryID, Op: "say", Body: body,
 	})
+	if response.WriteFailed {
+		return result, false, fmt.Errorf("soft Say write failed: %s", response.Error)
+	}
 	if err != nil || (response.Error != "" && !response.Uncertain) {
 		why := "Claude control channel unavailable"
 		if err != nil {
@@ -82,6 +89,11 @@ func runSaySoft(store *RuntimeStore, run RunStatus, actor, body, key string, now
 		return result, true, nil
 	}
 	if response.Uncertain || response.Receipt == "" {
+		if response.Queued {
+			result.State = "queued"
+			result.Reason = "queued; the worker receives it at its next tool boundary"
+			return result, false, nil
+		}
 		why := response.Error
 		if why == "" {
 			why = "Claude did not echo the message"

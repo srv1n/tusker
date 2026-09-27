@@ -25,6 +25,9 @@ func TestAgentAccessNative(t *testing.T) {
 	if musePolicy.Filesystem != "read-only" || !containsPair(museArgv, "--workspace", workspace) || !contains(museArgv, "--disable-write") || !contains(museArgv, "--disable-shell") || !contains(museArgv, "--sandbox-network") {
 		t.Fatalf("Muse native mapping = policy=%#v argv=%#v", musePolicy, museArgv)
 	}
+	if !containsPair(museArgv, "--prompt-file", "{{prompt_path}}") || contains(museArgv, "-") {
+		t.Fatalf("Muse argv must carry --prompt-file, not the retired stdin marker: %#v", museArgv)
+	}
 }
 
 func TestAgentAccessDestructive(t *testing.T) {
@@ -54,7 +57,15 @@ func TestDevinACPPolicyCompiler(t *testing.T) {
 	if err != nil || !policy.Network || !containsPair(argv, "--model", "swe-1-6-slow") || len(argv) < 2 || argv[0] != "--sandbox" || argv[1] != "acp" {
 		t.Fatalf("Devin mapping policy=%#v argv=%#v err=%v", policy, argv, err)
 	}
-	for _, preset := range []PermissionPreset{PresetReadOnly, PresetWorkspaceOffline, PresetDangerFullAccess} {
+	policy, argv, err = compilePolicy(definition, RunInput{Workspace: workspace, Preset: PresetDangerFullAccess, Model: "swe-1-6-slow"})
+	if err != nil || policy.Filesystem != "unrestricted" || policy.Approvals != "bypass" || len(argv) < 1 || argv[0] != "acp" || contains(argv, "--sandbox") {
+		t.Fatalf("Devin full access policy=%#v argv=%#v err=%v", policy, argv, err)
+	}
+	policy, argv, err = compilePolicy(definition, RunInput{Workspace: workspace, Preset: PresetReadOnly, Model: "swe-1-6-slow"})
+	if err != nil || policy.Filesystem != "read-only" || len(argv) < 2 || argv[0] != "--sandbox" {
+		t.Fatalf("Devin review policy=%#v argv=%#v err=%v", policy, argv, err)
+	}
+	for _, preset := range []PermissionPreset{PresetWorkspaceOffline} {
 		if _, _, err := compilePolicy(definition, RunInput{Workspace: workspace, Preset: preset, Model: "swe-1-6-slow"}); err == nil || !strings.Contains(err.Error(), "policy_unenforceable") {
 			t.Fatalf("Devin admitted unsupported preset %s: %v", preset, err)
 		}

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +35,51 @@ func TestRunsSayMessageInputAndKey(t *testing.T) {
 	}
 	if key == runSayIdempotencyKey("human:two", message, identity) || key == runSayIdempotencyKey("human:one", "different", identity) {
 		t.Fatal("distinct requests shared an idempotency key")
+	}
+}
+
+func TestRunSayClaudeQueuedResult(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	started, ok := processStartTime(os.Getpid())
+	if !ok {
+		t.Fatal("cannot identify test process")
+	}
+	now := time.Now().UTC()
+	run := RunStatus{ProjectID: "p", RecordID: "P-T-0001", ItemID: "P-T-0001", Runner: string(RunnerClaude),
+		LeaseState: string(LeaseStateRunning), ActiveAttemptID: "a", LeaseGeneration: 1, WorkRevision: 1,
+		SessionRef: "session", StatusPath: filepath.Join(t.TempDir(), "status.json"), ProcessPID: os.Getpid(), ProcessStartedAt: started,
+		StartedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339)}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	path := claudeControlSocketPath(run.StatusPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var request claudeControlRequest
+		if json.NewDecoder(conn).Decode(&request) == nil {
+			_ = json.NewEncoder(conn).Encode(claudeControlResponse{Queued: true})
+		}
+	}()
+	result, fallback, err := runSaySoft(store, run, "human:test", "during a tool call", "key", now)
+	if err != nil || fallback || result.Route != "soft" || result.State != "queued" || result.Reason == "" || result.Delivery.State != "delivering" {
+		t.Fatalf("queued Say result = %+v, fallback=%t, err=%v", result, fallback, err)
 	}
 }
 

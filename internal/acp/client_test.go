@@ -79,7 +79,7 @@ func TestACPHelperProcess(t *testing.T) {
 				"sessionCapabilities": map[string]any{},
 			}
 			switch mode {
-			case "load", "both", "load-malformed", "load-mismatch", "load-object", "load-object-config", "load-malformed-update", "load-config-update":
+			case "load", "both", "load-malformed", "load-mismatch", "load-object", "load-object-config", "load-malformed-update", "load-config-update", "extension-notification":
 				capabilities["loadSession"] = true
 			}
 			switch mode {
@@ -175,6 +175,9 @@ func TestACPHelperProcess(t *testing.T) {
 				continue
 			}
 			if msg.Method == "session/load" {
+				if mode == "extension-notification" {
+					writeHelper(helperMessage{JSONRPC: "2.0", Method: "_cognition.ai/turn_stats", Params: json.RawMessage(`{}`)})
+				}
 				switch mode {
 				case "load-mismatch":
 					writeUpdateForSessionForTest("different-session", 0)
@@ -250,6 +253,9 @@ func TestACPHelperProcess(t *testing.T) {
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Error: map[string]any{"code": -32000, "message": "refused"}})
 			case "missing-result":
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID})
+			case "extension-notification":
+				writeHelper(helperMessage{JSONRPC: "2.0", Method: "_cognition.ai/turn_stats", Params: json.RawMessage(`{}`)})
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: msg.ID, Result: map[string]string{"stopReason": "end_turn"}})
 			case "permission", "permission-reject-wire", "permission-string-id":
 				permissionID := json.RawMessage("91")
 				if mode == "permission-string-id" {
@@ -812,6 +818,21 @@ func TestACPLoadAndResumeRequireNegotiatedCapability(t *testing.T) {
 			t.Fatalf("resume err=%v, want capability error", err)
 		}
 	})
+}
+
+func TestACPExtensionNotificationsDuringLoadAndPrompt(t *testing.T) {
+	c := startTestClient(t, "extension-notification", nil)
+	if _, err := c.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	session, err := c.LoadSession(context.Background(), "restored-session")
+	if err != nil || session.ID != "restored-session" {
+		t.Fatalf("load session=%#v err=%v", session, err)
+	}
+	result, err := c.Prompt(context.Background(), "continue")
+	if err != nil || result.StopReason != "end_turn" {
+		t.Fatalf("prompt result=%#v err=%v", result, err)
+	}
 }
 
 func TestACPRestoreSessionValidatesIDsAndFailsClosed(t *testing.T) {

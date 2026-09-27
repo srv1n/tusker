@@ -130,14 +130,14 @@ func TestAgentAccessMuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"muse", "exec", "--json", "--workspace", "/tmp/project", "--approval-mode", "on-request", "--sandbox-network", "enabled", "--model", "muse-model", "--reasoning-effort", "high"}
+	want := []string{"muse", "exec", "--json", "--prompt-file", "{{prompt_path}}", "--workspace", "/tmp/project", "--approval-mode", "on-request", "--sandbox-network", "enabled", "--model", "muse-model", "--reasoning-effort", "high"}
 	for _, value := range want {
 		if !containsExact(argv, value) {
 			t.Fatalf("native Muse argv missing %q: %#v", value, argv)
 		}
 	}
-	if containsExact(argv, "--disable-sandbox") || containsExact(argv, "--yolo") {
-		t.Fatalf("bounded Muse route widened its policy: %#v", argv)
+	if containsExact(argv, "--disable-sandbox") || containsExact(argv, "--yolo") || containsExact(argv, "-") {
+		t.Fatalf("bounded Muse route widened its policy or kept the retired stdin marker: %#v", argv)
 	}
 
 	controls := nativeAccessControls(runnercore.HarnessDefinition{Provider: "muse", Dialect: "muse"}, &AgentAccessV1{})

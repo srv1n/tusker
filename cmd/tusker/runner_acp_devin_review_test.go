@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -10,18 +11,14 @@ import (
 )
 
 // The fake ACP fixture advertises mode/model config options only when
-// CODEX_CONFIG and INITIAL_AGENT_MODE are set. Mode "smart" is Devin's only
-// advertised session mode that auto-runs safe exec work without prompting;
-// mapping a review policy to anything else either dead-ends on Tusker's
-// fail-closed permission handler (accept-edits, ask, plan) or is wider than
-// any lane needs (bypass).
-func newDevinConfigFixtureClient(t *testing.T) (*acp.Client, acp.Session) {
+// CODEX_CONFIG and INITIAL_AGENT_MODE are set.
+func newDevinConfigFixtureClient(t *testing.T, mode string) (*acp.Client, acp.Session) {
 	t.Helper()
 	client, err := acp.Start(context.Background(), acp.Config{
 		Argv: []string{fakeACPBinary(t)}, CWD: t.TempDir(), Stderr: io.Discard,
 		Env: []string{
 			`CODEX_CONFIG={"model":"fixture-model","model_reasoning_effort":"high"}`,
-			"INITIAL_AGENT_MODE=smart",
+			"INITIAL_AGENT_MODE=" + mode,
 		},
 	})
 	if err != nil {
@@ -49,8 +46,8 @@ func TestDevinACPModeForPolicyAcceptsReviewReadOnly(t *testing.T) {
 		t.Fatalf("review lane did not resolve read-only: %#v", policy)
 	}
 	mode, err := devinACPModeForPolicy(policy)
-	if err != nil || mode != "smart" {
-		t.Fatalf("review policy mode=%q err=%v, want smart", mode, err)
+	if err != nil || mode != "plan" {
+		t.Fatalf("review policy mode=%q err=%v, want plan", mode, err)
 	}
 }
 
@@ -66,6 +63,13 @@ func TestDevinACPModeForPolicyKeepsExecuteSmart(t *testing.T) {
 	}
 }
 
+func TestDevinACPModeForPolicyFullAccess(t *testing.T) {
+	mode, err := devinACPModeForPolicy(CodexPolicy{TurnSandboxPolicy: "danger-full-access"})
+	if err != nil || mode != "bypass" {
+		t.Fatalf("full access mode=%q err=%v, want bypass", mode, err)
+	}
+}
+
 func TestDevinACPModeForPolicyStillRefusesUnsupportedPolicies(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -74,8 +78,7 @@ func TestDevinACPModeForPolicyStillRefusesUnsupportedPolicies(t *testing.T) {
 	}{
 		{name: "offline workspace-write", policy: CodexPolicy{ThreadSandbox: "workspace-write", TurnSandboxPolicy: "workspace-write", TurnSandboxNetwork: boolPtr(false)}, want: "network"},
 		{name: "workspace-write missing network bit", policy: CodexPolicy{ThreadSandbox: "workspace-write", TurnSandboxPolicy: "workspace-write"}, want: "network"},
-		{name: "danger-full-access", policy: CodexPolicy{ThreadSandbox: "danger-full-access", TurnSandboxPolicy: "danger-full-access", TurnSandboxNetwork: boolPtr(true)}, want: "read-only or networked workspace-write"},
-		{name: "blank sandbox", policy: CodexPolicy{}, want: "read-only or networked workspace-write"},
+		{name: "blank sandbox", policy: CodexPolicy{}, want: "read-only, networked workspace-write"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mode, err := devinACPModeForPolicy(tc.policy)
@@ -87,27 +90,45 @@ func TestDevinACPModeForPolicyStillRefusesUnsupportedPolicies(t *testing.T) {
 }
 
 func TestConfigureDevinSessionAcceptsReadOnlyReviewPolicy(t *testing.T) {
-	client, session := newDevinConfigFixtureClient(t)
+	client, session := newDevinConfigFixtureClient(t, "plan")
 	policy := codexPolicyForLane(CodexPolicy{
 		ApprovalPolicy:     "never",
 		ThreadSandbox:      "workspace-write",
 		TurnSandboxPolicy:  "workspace-write",
 		TurnSandboxNetwork: boolPtr(true),
 	}, runLaneReview)
-	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model"); err != nil {
+	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model", "high"); err != nil {
 		t.Fatalf("Devin review session refused the read-only lane policy: %v", err)
 	}
 }
 
 func TestConfigureDevinSessionAcceptsNetworkedExecutePolicy(t *testing.T) {
-	client, session := newDevinConfigFixtureClient(t)
+	client, session := newDevinConfigFixtureClient(t, "smart")
 	policy := CodexPolicy{
 		ApprovalPolicy:     "never",
 		ThreadSandbox:      "workspace-write",
 		TurnSandboxPolicy:  "workspace-write",
 		TurnSandboxNetwork: boolPtr(true),
 	}
-	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model"); err != nil {
+	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model", "high"); err != nil {
 		t.Fatalf("Devin execute session refused the networked workspace-write policy: %v", err)
+	}
+}
+
+func TestDevinACPMapsSWETwoMaxToAdvertisedModelAndThought(t *testing.T) {
+	// Recorded from a prompt-free Devin ACP session/new handshake.
+	var payload struct {
+		ConfigOptions []acp.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal([]byte(`{"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"swe-2-high","options":[{"value":"adaptive","name":"Adaptive"},{"value":"swe-2-high","name":"SWE-2"}]},{"id":"thought_level","name":"Thinking","type":"select","currentValue":"medium","options":[{"value":"medium","name":"Medium"},{"value":"high","name":"High"},{"value":"max","name":"Max"}]}]}`), &payload); err != nil {
+		t.Fatal(err)
+	}
+	model, thought := devinACPModelAndThought(acp.Session{ConfigOptions: payload.ConfigOptions}, "swe-2-max", "max")
+	if model != "swe-2-high" || thought != "max" {
+		t.Fatalf("model=%q thought=%q", model, thought)
+	}
+	model, thought = devinACPModelAndThought(acp.Session{}, "swe-2-max", "max")
+	if model != "swe-2-max" || thought != "" {
+		t.Fatalf("unadvertised model mapped: model=%q thought=%q", model, thought)
 	}
 }

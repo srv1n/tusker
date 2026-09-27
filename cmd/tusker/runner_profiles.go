@@ -1161,7 +1161,7 @@ func codexPolicyForResolvedProfile(base CodexPolicy, lane string, selected Resol
 		policy.CommandPolicy = runnercore.NewCommandPolicy(profile.Access.Mode == accessModeReview, profile.Access.DestructiveActions)
 	}
 	switch RunnerName(strings.TrimSpace(profile.Harness)) {
-	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerACP, RunnerDevin, RunnerCodexACP:
+	case RunnerCodex, RunnerCodexAppServer, RunnerCodexExec, RunnerACP, RunnerDevin, RunnerCodexACP, RunnerClaude, RunnerMuse:
 	default:
 		return policy
 	}

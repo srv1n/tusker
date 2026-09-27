@@ -67,6 +67,10 @@ func Execute(ctx context.Context, prepared PreparedLaunch, sink EventSink) (Exec
 	cmd := exec.CommandContext(runCtx, prepared.Executable, prepared.Argv[1:]...)
 	cmd.Dir, cmd.Env = prepared.CWD, append([]string(nil), prepared.Environment...)
 	stdin := prepared.prompt
+	if prepared.Dialect == "muse" {
+		// Muse reads the prompt from its --prompt-file argv, not stdin.
+		stdin = ""
+	}
 	if prepared.Dialect == "claude" && contains(prepared.Argv, "--input-format") {
 		encoded, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": prepared.prompt}})
 		stdin = string(encoded) + "\n"
