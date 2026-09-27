@@ -59,6 +59,37 @@ func TestDocsBrowse(t *testing.T) {
 	}
 }
 
+func TestDocsBrowseTextShowsRouting(t *testing.T) {
+	repoRoot := t.TempDir()
+	vault := filepath.Join(repoRoot, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\nstatus: canonical\nread_when: starting here\n---\n# overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/architecture/00-index.md", "---\ntitle: Architecture\nsubject: architecture\npart_of: overview\nstatus: canonical\n---\n# Architecture\n")
+	writeDocsFixture(t, repoRoot, "docs/system/guide.md", "---\nsubject: guide\npart_of: overview\nstatus: canonical\nread_when: changing the guide\nskip_when: checking a decision\n---\n# guide\n")
+	writeDocsFixture(t, repoRoot, "docs/system/zeta.md", "---\nsubject: zeta\npart_of: overview\nstatus: canonical\n---\n# zeta\n")
+
+	output := captureStdout(t, func() {
+		if err := docsBrowseCmd(Args{"vault": vault, "_pos": "docs/system"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, want := range []string{
+		"  architecture/ — Architecture\n",
+		"  guide.md — guide [canonical/canonical]\n    Read when: changing the guide\n    Skip when: checking a decision\n",
+		"  00-overview.md — overview [canonical/canonical]\n    Read when: starting here\n",
+		"  zeta.md — zeta [canonical/canonical]\n",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("browse text omitted %q:\n%s", want, output)
+		}
+	}
+	if strings.Count(output, "Read when:") != 2 || strings.Count(output, "Skip when:") != 1 {
+		t.Fatalf("browse text routing line counts wrong:\n%s", output)
+	}
+}
+
 func TestDocsBrowseRejectsEscapes(t *testing.T) {
 	repoRoot := t.TempDir()
 	vault := filepath.Join(repoRoot, ".tusker")
