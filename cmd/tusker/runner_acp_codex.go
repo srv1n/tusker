@@ -834,7 +834,7 @@ func (b CodexACPAuthorityBinding) normalized() (CodexACPAuthorityBinding, error)
 	if b.ProjectID == "" || len(b.ProjectID) > 256 || containsControl(b.ProjectID) ||
 		b.RunnerProfile == "" || len(b.RunnerProfile) > 256 || containsControl(b.RunnerProfile) ||
 		b.OriginAttemptID == "" || len(b.OriginAttemptID) > 256 || containsControl(b.OriginAttemptID) ||
-		b.WorkRevision <= 0 || !v7CloseAuthorityDigest(b.AuthPrincipalDigest, "sha256:") || !filepath.IsAbs(b.WorkspacePath) {
+		b.WorkRevision < 0 || !v7CloseAuthorityDigest(b.AuthPrincipalDigest, "sha256:") || !filepath.IsAbs(b.WorkspacePath) {
 		return CodexACPAuthorityBinding{}, errors.New("invalid Codex ACP authority binding")
 	}
 	workspace, err := filepath.EvalSymlinks(b.WorkspacePath)

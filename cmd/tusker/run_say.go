@@ -444,7 +444,7 @@ func runRowWorkerIdentity(run RunStatus, attemptID string) *WorkerAttemptIdentit
 }
 
 func runContinuationIdentity(store *RuntimeStore, run RunStatus) (*WorkerAttemptIdentity, error) {
-	if run.SessionRef == "" || run.LeaseGeneration <= 0 || run.WorkRevision <= 0 {
+	if run.SessionRef == "" || run.LeaseGeneration <= 0 || run.WorkRevision < 0 {
 		return nil, nil
 	}
 	session, err := store.FindSessionByRef(run.ProjectID, run.SessionRef)

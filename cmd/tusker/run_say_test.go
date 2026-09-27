@@ -233,3 +233,41 @@ func TestRunSayIdentityFromRunRowForAllHarnesses(t *testing.T) {
 		})
 	}
 }
+
+// A V7 task created by `tusker new task` carries no work_revision until its
+// first execute completion projects candidate 1, so the daemon dispatches the
+// first execute run at work revision 0. That run must still expose a native
+// worker identity for runs say, worker deliveries, and same-session continue.
+func TestRunSayAcceptsFirstExecuteRunAtWorkRevisionZero(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task := Note{Data: map[string]any{"schema": "tusker.task/v7", "id": "P-T-0001", "state_rev": "sha256:abc"}}
+	revision := intField(task.Data, "work_revision")
+	if revision != 0 {
+		t.Fatalf("fresh V7 task revision = %d, want 0", revision)
+	}
+	run := RunStatus{ProjectID: "p", RecordID: "P-T-0001", ItemID: "P-T-0001", Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		ActiveAttemptID: "a1", LeaseGeneration: 1, WorkRevision: revision, LeaseState: string(LeaseStateRunning), SessionRef: "thread-1"}
+	identity, err := runSayWorkerIdentity(store, run)
+	if err != nil || identity == nil || identity.WorkRevision != 0 || identity.NativeSessionID != "thread-1" {
+		t.Fatalf("say identity=%#v err=%v", identity, err)
+	}
+	if _, _, err := store.PutWorkerDelivery(WorkerDelivery{Identity: *identity, Kind: "instruction", Body: "steer", IdempotencyKey: runSayIdempotencyKey("op", "steer", *identity)}); err != nil {
+		t.Fatalf("delivery at work revision 0 rejected: %v", err)
+	}
+	if err := store.SaveSession(RunnerSession{ProjectID: "p", RecordID: "P-T-0001", Runner: string(RunnerCodexExec), SessionRef: "thread-1",
+		CurrentItemID: "P-T-0001", LastAttemptID: "a1", State: "open", Resumable: true}); err != nil {
+		t.Fatal(err)
+	}
+	failed := run
+	failed.ActiveAttemptID, failed.LeaseState, failed.Terminal = "", string(LeaseStateReleased), true
+	if continued, err := runContinuationIdentity(store, failed); err != nil || continued == nil || continued.WorkRevision != 0 {
+		t.Fatalf("continue identity=%#v err=%v", continued, err)
+	}
+	if err := (WorkerAttemptIdentity{ProjectID: "p", TaskID: "t", AttemptID: "a", AttemptGeneration: 1, WorkRevision: -1, Provider: "codex", NativeSessionID: "s"}).validate(); err == nil {
+		t.Fatal("negative work revision must stay invalid")
+	}
+}

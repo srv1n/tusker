@@ -117,3 +117,53 @@ func TestWaitingHumanYieldKeepsSessionResumableForContinue(t *testing.T) {
 		t.Fatalf("expected retry_queued run on session thread-1, got %#v", continued)
 	}
 }
+
+// After `runs interrupt`, the run row keeps the native session but its
+// prompt_path is cleared. `runs continue` must re-check the stopped attempt's
+// retained prompt instead of refusing, including for a fresh V7 task at work
+// revision 0 (no work_revision in frontmatter yet).
+func TestInterruptedRunContinuePreflightUsesStoppedAttemptPrompt(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	vault, workspace, files := t.TempDir(), t.TempDir(), t.TempDir()
+	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+	if err := writeText(taskPath, "---\nid: APP-T-0001\nstatus: ready\n---\n"); err != nil {
+		t.Fatal(err)
+	}
+	project := RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: t.TempDir(), VaultRoot: vault, Enabled: true, Health: projectHealthHealthy}
+	task := Note{AbsolutePath: taskPath, Data: map[string]any{"id": "APP-T-0001", "status": "ready", "state_rev": "sha256:x", "title": "t"}}
+	run := RunStatus{
+		ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexExec), RunnerProfile: "p",
+		RunnerHarness: "codex_exec", RunnerModel: "m", RunnerEffort: "e", Lane: runLaneExecute, WorkerPolicyFP: "w", ExecutePolicyFP: "x",
+		LeaseState: string(LeaseStateInterrupted), LeaseGeneration: 7, AttemptOutcome: string(AttemptOutcomeFailed),
+		WorkRevision: 0, AttemptCount: 1, SessionRef: "thread-1", WorkspacePath: workspace,
+	}
+	wf := WorkflowFile{Path: filepath.Join(files, "WORKFLOW.md"), Data: defaultWorkflow()}
+	fingerprint := resumeContextFingerprint(project, wf, task, workspace, runLaneExecute, run)
+	if fingerprint == "" {
+		t.Fatal("task without work_revision must still yield a resume context fingerprint")
+	}
+	promptPath := filepath.Join(files, "rev-00-execute-attempt-0001.prompt.md")
+	if err := writeText(promptPath, "body\n\n"+resumePromptContextHeader+"\n\n"+resumePromptContextMarkerPrefix+fingerprint+"`"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "attempt-1", ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute, SessionRef: "thread-1", PromptPath: promptPath, Outcome: string(AttemptOutcomeFailed)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(RunnerSession{ProjectID: "app", RecordID: "APP-T-0001", Runner: string(RunnerCodexExec), SessionRef: "thread-1",
+		CurrentItemID: "APP-T-0001", LastAttemptID: "attempt-1", WorkspacePath: workspace, State: "open", Resumable: true}); err != nil {
+		t.Fatal(err)
+	}
+	wave := Note{Data: map[string]any{"id": "W-1", "authorization": "armed", "authorization_fingerprint": "fp", "authorized_at": time.Now().UTC().Format(time.RFC3339)}}
+	session, preflightErr, reason := nativeContinuationPreflight(store, project, wave, run)
+	if preflightErr != nil || reason != "" || session == nil || session.SessionRef != "thread-1" {
+		t.Fatalf("continue preflight: session=%#v reason=%q err=%v", session, reason, preflightErr)
+	}
+}
