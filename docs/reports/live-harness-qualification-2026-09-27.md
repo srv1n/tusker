@@ -12,8 +12,8 @@ sources: [../system/proposals/real-testing-campaign.md, ../qualification/live-ha
 
 ```text
 Date:            2026-09-27 evening to 2026-09-28 ~03:00 IST    Operator: human:sarav (run by the Claude session)
-Binary:          main 7e189ee7 via make install (TuskerBar bundle sha256 f7ff8c45bb853f6e...)
-                 `tusker --version` still prints a stale describe string (fb71afec+dirty), see G-ver below
+Binary:          main fb71afec (F83) via make install; `tusker --version` reports
+                 archive/pre-convergence-main-20260727-714-gfb71afec-dirty (nearest tag is an old archive tag)
 Daemon/Serve:    TuskerBar-managed daemon, Serve on 127.0.0.1:7420
 Project:         01M3HJSNAC8SJ0BBAPZXJPF5A7 (Q6-Q8), reseeded as 01M3J72A00AAH0A8EHQ0QZND2V (Q10-Q12)
 Repo:            /tmp/tusker-live-qual (completion_reactor.mode: authoritative in config.local.yaml)
@@ -97,6 +97,5 @@ All are logged with evidence in the campaign doc
 | F76 | Warn at authoring time when no verification row can satisfy `proof_required`. |
 | F79 | A done task's run shows `failed` or `blocked` in `runs inspect`; check Serve. |
 | F82 | `tusker new task --help` omits `--architect`, `--origin`, `--peers`. |
-| G-ver | `tusker --version` prints a stale describe string, not the installed commit. |
 | Muse | Parked: no `META_API_KEY`; hard Say loses the message (F52). |
 | Claude | Steps (c) to (f) not rerun on the current build. |
