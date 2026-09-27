@@ -7138,14 +7138,18 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		rendered = strings.TrimSpace(rendered) + "\n\n## Recovery context\n\nThis is a fresh recovery session for the original task above. Prior attempt: `" + parentAttemptID + "`. Last trustworthy failure: `" + priorFailure + "`. The prior worker may have left partial or complete work. Do not assume the workspace is untouched and do not start by reimplementing the task. First inspect the current task-owned material and Git diff, then verify and preserve correct existing work, repair or complete only what remains, and run the task's required checks. Never reset or overwrite unrelated changes."
 	}
 	if fingerprint := resumeContextFingerprint(project, wfFile, note, workspacePath, lane, run); fingerprint != "" {
-		rendered = strings.TrimSpace(rendered) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+		rendered = strings.TrimSpace(rendered) + "\n\n" + resumePromptContextBlock(fingerprint)
 	}
 	return strings.TrimSpace(rendered) + "\n", nil
 }
 
 const (
-	resumePromptContextHeader       = "## Tusker Resume Context"
-	resumePromptContextMarkerPrefix = "- Stable context fingerprint: `"
+	resumePromptContextHeader        = "## Tusker Resume Context"
+	resumePromptContextVersionPrefix = "- Resume context version: `"
+	resumePromptContextMarkerPrefix  = "- Stable context fingerprint: `"
+	// resumeContextVersion is written into every prompt next to the marker. A
+	// prompt without it predates v3 and its fingerprint is not comparable.
+	resumeContextVersion = "tusker.resume-context/v3"
 )
 
 // resumeContextFingerprint binds the full prompt that established a native
@@ -7180,10 +7184,8 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 	// the struct also carries binary defaults and config overlays, so a daemon
 	// and CLI built at different commits (or a config toggle) would disagree
 	// about an unchanged workflow and refuse every native resume.
-	wfText, err := readText(wfFile.Path)
-	if err != nil {
-		return ""
-	}
+	// An unreadable file hashes as empty; the parsed body is bound as well.
+	wfText, _ := readText(wfFile.Path)
 	noteData, err := json.Marshal(note.Data)
 	if err != nil {
 		return ""
@@ -7216,8 +7218,9 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		RunLane          string `json:"run_lane"`
 		WorkspacePath    string `json:"workspace_path"`
 		WorkRevision     int    `json:"work_revision"`
+		ProfilePolicy    string `json:"profile_policy"`
 	}{
-		Version:          "tusker.resume-context/v2",
+		Version:          resumeContextVersion,
 		ProjectID:        project.ProjectID,
 		ProjectKey:       project.ProjectKey,
 		ProjectName:      project.Name,
@@ -7244,6 +7247,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		RunLane:          run.Lane,
 		WorkspacePath:    workspacePath,
 		WorkRevision:     run.WorkRevision,
+		ProfilePolicy:    resumeProfilePolicyDigest(wfFile.Data, run.RunnerProfile),
 	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
@@ -7253,7 +7257,51 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+func resumePromptContextBlock(fingerprint string) string {
+	return resumePromptContextHeader + "\n\n" + resumePromptContextVersionPrefix + resumeContextVersion + "`\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+}
+
+// resumeProfilePolicyDigest binds the selected profile's effective policy:
+// harness, model, effort, command, access, sandbox and network. Ordinary V7
+// runs carry no worker-policy fingerprint, so without this a profile policy
+// change could resume the old native session. Display names and tiers are
+// left out: they do not change what the worker may do.
+func resumeProfilePolicyDigest(wf Workflow, name string) string {
+	name = strings.TrimSpace(name)
+	definition, declared := wf.RunnerProfiles[name]
+	policy := struct {
+		Name              string                         `json:"name"`
+		Declared          bool                           `json:"declared"`
+		Harness           string                         `json:"harness"`
+		Model             string                         `json:"model"`
+		Effort            string                         `json:"effort"`
+		PermissionPreset  string                         `json:"permission_preset"`
+		Command           string                         `json:"command"`
+		NativeContainment bool                           `json:"native_containment"`
+		Sandbox           RunnerSandboxDefinition        `json:"sandbox"`
+		Subagents         RunnerSubagentPolicyDefinition `json:"subagents"`
+		Access            *AgentAccessV1                 `json:"access"`
+	}{
+		Name: name, Declared: declared, Harness: definition.Harness, Model: definition.Model, Effort: definition.Effort,
+		PermissionPreset: definition.PermissionPreset, Command: definition.Command, NativeContainment: definition.NativeContainment,
+		Sandbox: definition.Sandbox, Subagents: definition.Subagents, Access: definition.Access,
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func resumeContextFingerprintFromPrompt(prompt string) string {
+	_, fingerprint := resumeContextMarkerFromPrompt(prompt)
+	return fingerprint
+}
+
+// resumeContextMarkerFromPrompt returns the marker version and fingerprint.
+// A prompt written before v3 has no version line; its version is "".
+func resumeContextMarkerFromPrompt(prompt string) (string, string) {
 	lines := strings.Split(prompt, "\n")
 	headerIndex := -1
 	for index, line := range lines {
@@ -7261,35 +7309,40 @@ func resumeContextFingerprintFromPrompt(prompt string) string {
 			continue
 		}
 		if headerIndex >= 0 {
-			return ""
+			return "", ""
 		}
 		headerIndex = index
 	}
 	if headerIndex < 0 {
-		return ""
+		return "", ""
 	}
+	version := ""
 	for index := headerIndex + 1; index < len(lines); index++ {
 		line := strings.TrimSpace(lines[index])
 		if line == "" {
 			continue
 		}
+		if version == "" && strings.HasPrefix(line, resumePromptContextVersionPrefix) && strings.HasSuffix(line, "`") {
+			version = strings.TrimSuffix(strings.TrimPrefix(line, resumePromptContextVersionPrefix), "`")
+			continue
+		}
 		if !strings.HasPrefix(line, resumePromptContextMarkerPrefix) || !strings.HasSuffix(line, "`") {
-			return ""
+			return "", ""
 		}
 		fingerprint := strings.TrimSuffix(strings.TrimPrefix(line, resumePromptContextMarkerPrefix), "`")
 		if !strings.HasPrefix(fingerprint, "sha256:") {
-			return ""
+			return "", ""
 		}
 		hexValue := strings.TrimPrefix(fingerprint, "sha256:")
 		if len(hexValue) != sha256.Size*2 {
-			return ""
+			return "", ""
 		}
 		if _, err := hex.DecodeString(hexValue); err != nil {
-			return ""
+			return "", ""
 		}
-		return fingerprint
+		return version, fingerprint
 	}
-	return ""
+	return "", ""
 }
 
 // resumeContextFingerprintMismatch returns a non-empty reason whenever the
@@ -7344,7 +7397,11 @@ func (d *Daemon) priorResumeContextMismatch(run RunStatus, session *RunnerSessio
 	if err != nil {
 		return "stored native session prior prompt context is unavailable"
 	}
-	priorFingerprint := resumeContextFingerprintFromPrompt(priorPrompt)
+	priorVersion, priorFingerprint := resumeContextMarkerFromPrompt(priorPrompt)
+	if priorFingerprint != "" && priorVersion != resumeContextVersion {
+		return fmt.Sprintf("stored native session was started under an older resume context format (%s); start a fresh session with `tusker runs fresh %s`",
+			fallback(priorVersion, "v1 or v2, no version line"), firstNonEmpty(run.ItemID, run.RecordID))
+	}
 	if currentFingerprint == "" || priorFingerprint == "" {
 		return "stored native session prompt context fingerprint is missing or invalid"
 	}
@@ -7393,7 +7450,7 @@ func renderAttemptPromptForResume(project RegisteredProject, wfFile WorkflowFile
 		resumed = strings.TrimSpace(resumed) + "\n\n### Previous failure\n\n" + strings.SplitN(summary, "\nPrevious failure:\n", 2)[1]
 	}
 	if fingerprint != "" {
-		resumed = strings.TrimSpace(resumed) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+		resumed = strings.TrimSpace(resumed) + "\n\n" + resumePromptContextBlock(fingerprint)
 	}
 	return strings.TrimSpace(resumed) + "\n", nil
 }
