@@ -2900,7 +2900,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				run.Terminal = false
 				updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForHuman, 0, reason, finished)
 				if strings.TrimSpace(run.SessionRef) != "" {
-					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeWaitingForHuman), "", reason, sessionResumable)
 				}
 				d.emitSupervisorDecision(SupervisorDecision{
 					ProjectID: project.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
@@ -2909,7 +2909,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					Reason: reason, ParentAttemptID: parentAttemptID, ParentSessionRef: parentSessionRef,
 					WorkspacePath: run.WorkspacePath,
 				})
+				promptPath := run.PromptPath
 				clearActiveExecution(&run)
+				run.PromptPath = promptPath
 				return run, true, nil
 			}
 		}
@@ -2956,7 +2958,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				run.Terminal = false
 				updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForHuman, 0, reason, finished)
 				if strings.TrimSpace(run.SessionRef) != "" {
-					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForLeaseState(LeaseStateReleased), "", reason, false)
+					_ = d.store.MarkSessionState(project.ProjectID, run.SessionRef, sessionStateForOutcome(AttemptOutcomeWaitingForHuman), "", reason, sessionResumable)
 				}
 				d.emitSupervisorDecision(SupervisorDecision{
 					ProjectID:        project.ProjectID,
@@ -2972,7 +2974,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					ParentSessionRef: parentSessionRef,
 					WorkspacePath:    run.WorkspacePath,
 				})
+				promptPath := run.PromptPath
 				clearActiveExecution(&run)
+				run.PromptPath = promptPath
 				return run, true, nil
 			}
 			if classification.outcome == AttemptOutcomeEarlyExit {
@@ -6953,7 +6957,7 @@ func sessionStateForOutcome(outcome AttemptOutcome) string {
 	case AttemptOutcomeDispatchDeclined:
 		return "closed"
 	case AttemptOutcomeWaitingForHuman:
-		return "closed"
+		return "open"
 	case AttemptOutcomeWaitingForReview:
 		return "closed"
 	case AttemptOutcomeBudgetExceeded:
