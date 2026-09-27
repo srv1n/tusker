@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -202,5 +203,164 @@ func TestInterruptedRunContinuePreflightRecomputesResumeContext(t *testing.T) {
 	}
 	if _, _, reason := nativeContinuationPreflight(store, project, wave, run); reason != "stored native session prompt context fingerprint changed" {
 		t.Fatalf("changed task must refuse continuation, reason=%q", reason)
+	}
+}
+
+// Live F38: a daemon dispatch stamps the resume marker, the operator
+// interrupts, and `runs continue` (a CLI built at another commit) recomputes
+// the marker. The workflow file and task are unchanged, but the decoded
+// Workflow struct differs by a compiled-in default. The preflight must still
+// accept the same native session.
+func TestContinueAfterInterruptIgnoresWorkflowDefaultDrift(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project, _ := resumeFixtureProject(t, store)
+	workspace, files := t.TempDir(), t.TempDir()
+	promptPath := filepath.Join(files, "rev-00-execute-attempt-0001.prompt.md")
+	run := RunStatus{
+		ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexExec), RunnerProfile: "codex_exec-gpt-6-luna",
+		RunnerHarness: "codex_exec", RunnerModel: "gpt-6-luna", RunnerEffort: "xhigh", Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-1", LeaseGeneration: 1, ActiveAttemptID: "attempt-1",
+		AttemptOutcome: string(AttemptOutcomeNone), WorkRevision: 0, AttemptCount: 1, SessionRef: "thread-1",
+		WorkspacePath: workspace, PromptPath: promptPath,
+	}
+	loaded, err := loadProjectContents(store, project, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveV7Note(project.VaultRoot, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The dispatching daemon decoded the same WORKFLOW.md with other defaults.
+	daemonWorkflow := loaded.Workflow
+	daemonWorkflow.Data.Claude.Command = loaded.Workflow.Data.Claude.Command + " --older-default"
+	prompt, err := renderAttemptPrompt(loaded.Project, daemonWorkflow, note, workspace, 1, "attempt-1", runLaneExecute, run, RunStatus{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(promptPath, prompt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "attempt-1", ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute, SessionRef: "thread-1", PromptPath: promptPath}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(RunnerSession{ProjectID: "app", RecordID: "APP-T-0001", Runner: string(RunnerCodexExec), SessionRef: "thread-1",
+		CurrentItemID: "APP-T-0001", LastAttemptID: "attempt-1", WorkspacePath: workspace, State: "open", Resumable: true}); err != nil {
+		t.Fatal(err)
+	}
+	// The real interrupt settle step.
+	if err := finishRuntimeRunIfSnapshot(store, &run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true); err != nil {
+		t.Fatal(err)
+	}
+	interrupted, err := store.FindRunScoped("app", "APP-T-0001")
+	if err != nil || interrupted == nil || interrupted.PromptPath != "" || interrupted.LeaseState != string(LeaseStateInterrupted) {
+		t.Fatalf("interrupt did not settle as live: %#v %v", interrupted, err)
+	}
+	wave := Note{Data: map[string]any{"id": "W-1", "authorization": "armed", "authorization_fingerprint": "fp", "authorized_at": time.Now().UTC().Format(time.RFC3339)}}
+	session, preflightErr, reason := nativeContinuationPreflight(store, project, wave, *interrupted)
+	if preflightErr != nil || reason != "" || session == nil || session.SessionRef != "thread-1" {
+		t.Fatalf("continue preflight after interrupt: session=%#v reason=%q err=%v", session, reason, preflightErr)
+	}
+}
+
+// interruptedContinueFixture dispatches attempt-1 with the prompt that
+// render returns, settles a real interrupt, and returns the interrupted run.
+func interruptedContinueFixture(t *testing.T, render func(loadedRegisteredProject, Note, RunStatus, *RuntimeStore) string) (*RuntimeStore, RegisteredProject, RunStatus) {
+	t.Helper()
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	project, _ := resumeFixtureProject(t, store)
+	workspace, files := t.TempDir(), t.TempDir()
+	promptPath := filepath.Join(files, "rev-00-execute-attempt-0001.prompt.md")
+	run := RunStatus{
+		ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexExec), RunnerProfile: "codex_exec-gpt-6-luna",
+		RunnerHarness: "codex_exec", RunnerModel: "gpt-6-luna", RunnerEffort: "xhigh", Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-1", LeaseGeneration: 1, ActiveAttemptID: "attempt-1",
+		AttemptOutcome: string(AttemptOutcomeNone), WorkRevision: 0, AttemptCount: 1, SessionRef: "thread-1",
+		WorkspacePath: workspace, PromptPath: promptPath,
+	}
+	loaded, err := loadProjectContents(store, project, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveV7Note(project.VaultRoot, "APP-T-0001", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(promptPath, render(loaded, note, run, store)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "attempt-1", ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute, SessionRef: "thread-1", PromptPath: promptPath}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(RunnerSession{ProjectID: "app", RecordID: "APP-T-0001", Runner: string(RunnerCodexExec), SessionRef: "thread-1",
+		CurrentItemID: "APP-T-0001", LastAttemptID: "attempt-1", WorkspacePath: workspace, State: "open", Resumable: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := finishRuntimeRunIfSnapshot(store, &run, LeaseStateInterrupted, AttemptOutcomeCancelled, 130, "interrupt requested by operator", true); err != nil {
+		t.Fatal(err)
+	}
+	interrupted, err := store.FindRunScoped("app", "APP-T-0001")
+	if err != nil || interrupted == nil {
+		t.Fatalf("reload interrupted run: %v", err)
+	}
+	return store, project, *interrupted
+}
+
+func resumeTestWave() Note {
+	return Note{Data: map[string]any{"id": "W-1", "authorization": "armed", "authorization_fingerprint": "fp", "authorized_at": time.Now().UTC().Format(time.RFC3339)}}
+}
+
+// A profile policy change (here the sandbox moving to full access) must not
+// resume the old native session, even though V7 runs carry no worker-policy
+// fingerprint.
+func TestContinueAfterInterruptRefusesProfilePolicyDrift(t *testing.T) {
+	setGlobalProfileForTest(t, "codex_exec-gpt-6-luna", map[string]any{
+		"harness": "codex_exec", "model": "gpt-6-luna", "effort": "xhigh",
+		"sandbox": map[string]any{"mode": "workspace-write", "network": false},
+	})
+	store, project, interrupted := interruptedContinueFixture(t, func(loaded loadedRegisteredProject, note Note, run RunStatus, store *RuntimeStore) string {
+		prompt, err := renderAttemptPrompt(loaded.Project, loaded.Workflow, note, run.WorkspacePath, 1, "attempt-1", runLaneExecute, run, RunStatus{}, store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return prompt
+	})
+	if _, _, reason := nativeContinuationPreflight(store, project, resumeTestWave(), interrupted); reason != "" {
+		t.Fatalf("unchanged profile must continue, got %q", reason)
+	}
+	setGlobalProfileForTest(t, "codex_exec-gpt-6-luna", map[string]any{
+		"harness": "codex_exec", "model": "gpt-6-luna", "effort": "xhigh",
+		"sandbox": map[string]any{"mode": "danger-full-access", "network": true},
+	})
+	if _, _, reason := nativeContinuationPreflight(store, project, resumeTestWave(), interrupted); reason != "stored native session prompt context fingerprint changed" {
+		t.Fatalf("profile policy drift must refuse continue, got %q", reason)
+	}
+}
+
+// A prompt written before the version line existed names the recovery instead
+// of reporting a generic fingerprint change.
+func TestContinueRefusesOlderResumeMarkerWithRecovery(t *testing.T) {
+	store, project, interrupted := interruptedContinueFixture(t, func(loadedRegisteredProject, Note, RunStatus, *RuntimeStore) string {
+		return "body\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + "sha256:" + strings.Repeat("ab", 32) + "`\n"
+	})
+	_, _, reason := nativeContinuationPreflight(store, project, resumeTestWave(), interrupted)
+	if !strings.Contains(reason, "older resume context format") || !strings.Contains(reason, "tusker runs fresh APP-T-0001") {
+		t.Fatalf("v1 marker refusal = %q", reason)
 	}
 }
