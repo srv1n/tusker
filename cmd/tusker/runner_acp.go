@@ -999,11 +999,12 @@ func configureDevinSession(ctx context.Context, client *acp.Client, session acp.
 
 // devinACPModeForPolicy maps the resolved Tusker sandbox policy onto Devin's
 // session "mode" config option. The sandbox-exec deny wrapper contains full
-// access; review runs in Devin's plan mode.
+// access. Review runs in Devin's "ask" mode (no code changes): plan mode waits
+// for an exit-plan approval before it will run `tusker review submit`.
 func devinACPModeForPolicy(policy CodexPolicy) (string, error) {
 	switch sandbox := strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox)); sandbox {
 	case "read-only":
-		return "plan", nil
+		return "ask", nil
 	case "workspace-write":
 		if policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
 			return "", tuskerError(errorConfigInvalid, "Devin ACP requires sandboxed workspace-write with network enabled")
