@@ -3,6 +3,8 @@ title: "Agent access acceptance"
 subject: agent-access-acceptance
 part_of: system
 status: canonical
+read_when: "Checking the recorded acceptance evidence for the versioned agent-access contract."
+skip_when: "You need the contract shape itself or live provider qualification."
 ---
 
 # Agent access acceptance

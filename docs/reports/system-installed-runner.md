@@ -3,6 +3,8 @@ title: "System-installed runner delivery evidence"
 task: FLW-T-0030
 date: 2026-09-07
 status: implemented
+read_when: "Reviewing delivery evidence for the reusable runner API and runner test command."
+skip_when: "You need harness setup usage rather than this delivery record."
 ---
 
 # System-installed runner delivery evidence

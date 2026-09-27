@@ -1,6 +1,8 @@
 ---
 title: "FLW-T-0007 state integrity evidence"
 status: "historical aggregate passed; direct selector pending"
+read_when: "Reviewing the state revision and snapshot repair evidence."
+skip_when: "You need current runbook text; this is a historical evidence record."
 ---
 
 # State integrity evidence

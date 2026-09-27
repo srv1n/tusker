@@ -14,6 +14,8 @@ tags:
   - tusker/ux
   - tusker/daemon
   - tusker/diagnostics
+read_when: "Working on the resident daemon, diagnostics screens, or divergence recovery."
+skip_when: "You need visual tokens or non-daemon product flows."
 ---
 
 # Daemon, diagnostics, and recovery

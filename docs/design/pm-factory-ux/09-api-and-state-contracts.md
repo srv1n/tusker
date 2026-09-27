@@ -15,6 +15,8 @@ tags:
   - tusker/api
   - tusker/state
   - tusker/ux
+read_when: "Designing or consuming the projected product APIs, events, or state envelopes."
+skip_when: "You need visual rules or screen copy; this is the endpoint contract."
 ---
 
 # API and state contracts

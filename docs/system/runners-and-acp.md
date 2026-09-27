@@ -3,6 +3,8 @@ title: "Runners and ACP"
 subject: runners-and-acp
 part_of: overview
 status: canonical
+read_when: "Adding or testing an agent harness, checking launch routes, or working on ACP transports."
+skip_when: "You need task contracts or UI behavior rather than how an installed agent launches."
 ---
 
 # Runners and ACP

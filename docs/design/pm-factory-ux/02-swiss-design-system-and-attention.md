@@ -11,6 +11,8 @@ related:
 tags:
   - tusker/ux
   - tusker/design-system
+read_when: "Setting grid, spacing, type, color, or component rules for the proposed interface."
+skip_when: "You need product behavior or API shape rather than visual styling rules."
 ---
 
 # Swiss design system and attention

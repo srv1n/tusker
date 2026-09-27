@@ -2,6 +2,7 @@
 title: FLW-T-0023 context reuse
 status: provisional
 read_when: Reviewing safe context reuse and harness-session invalidation.
+skip_when: "You need a proven warm-reuse claim; this report records why it remains unsupported."
 ---
 
 # FLW-T-0023 context reuse

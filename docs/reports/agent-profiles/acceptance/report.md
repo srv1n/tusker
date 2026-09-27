@@ -2,6 +2,8 @@
 subject: agent-profiles-acceptance
 status: partial
 candidate: 4b5d2076-dirty
+read_when: "Checking what the agent-profiles candidate proved and where installed-runtime proof is blocked."
+skip_when: "You need the profile settings design or unrelated acceptance campaigns."
 ---
 
 # Agent Profiles acceptance report

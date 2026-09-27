@@ -14,6 +14,8 @@ tags:
   - tusker/ux
   - tusker/settings
   - tusker/runners
+read_when: "Changing project or app settings screens, defaults, provenance, or runner policy controls."
+skip_when: "You need layouts outside settings or the daemon reconciliation rules."
 ---
 
 # Settings and runner policy

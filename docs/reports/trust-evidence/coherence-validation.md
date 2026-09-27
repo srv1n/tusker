@@ -1,6 +1,8 @@
 ---
 title: "Current-source coherence validation"
 status: "compile-only and candidate build passed"
+read_when: "Confirming the current source tree compiles and the candidate binary built."
+skip_when: "You need test-level behavior proof rather than compile and build coherence."
 ---
 
 # Current-source coherence validation

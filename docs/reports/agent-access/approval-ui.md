@@ -1,3 +1,12 @@
+---
+title: "Agent access approval UI"
+subject: agent-access-approval-ui
+part_of: system
+status: fixture-pass
+read_when: "Reviewing fixture proof for the approval request card and its keyboard flow."
+skip_when: "You need live native callback or provider qualification evidence."
+---
+
 # Agent access approval UI
 
 The routed fixture at 390px covers one immutable native request through `pending` → `allowed`, duplicate delivery deduplication, a no-callback request with no decision controls, and existing `denied`/`expired` informational states. The request displays the exact server-provided redacted arguments, working folder, resolved targets, route, policy fingerprint, argument digest, consequence, and state revision.

@@ -2,6 +2,7 @@
 title: FLW-T-0021 compact CLI
 status: provisional
 read_when: Reviewing bounded Tusker reads and capsule routing.
+skip_when: "You need contract-level task packet changes or unrelated CLI output."
 ---
 
 # FLW-T-0021 compact CLI

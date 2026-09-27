@@ -2,6 +2,7 @@
 title: FLW-T-0008 token baseline
 status: measured
 read_when: Reviewing measured context and provider boundaries.
+skip_when: "You need candidate savings; this is the frozen Wave 0 denominator only."
 ---
 
 # FLW-T-0008 token baseline

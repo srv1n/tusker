@@ -3,6 +3,8 @@ title: "Provider coordination research: Codex and Muse"
 subject: provider-coordination
 status: codex-and-muse-live-execution-qualified
 observed_at: 2026-09-10
+read_when: "Checking which Codex and Muse session or coordination interfaces Tusker can call."
+skip_when: "You need Claude or ACP capabilities, or implemented coordination behavior."
 ---
 
 # Provider coordination research: Codex and Muse

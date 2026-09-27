@@ -1,3 +1,12 @@
+---
+title: "Agent-access approval lifecycle"
+subject: agent-access-approvals
+part_of: system
+status: implemented
+read_when: "Reading how one approval row is stored, settled, and recovered."
+skip_when: "You need UI evidence or the authored contract shape."
+---
+
 # Agent-access approval lifecycle
 
 Status: implemented backend contract for AAC-T-0004.

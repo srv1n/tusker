@@ -13,6 +13,8 @@ related:
 tags:
   - tusker/ux
   - tusker/information-architecture
+read_when: "Choosing product vocabulary, screen groups, or which objects a product owner sees."
+skip_when: "You need endpoint, storage, or daemon internals rather than product structure."
 ---
 
 # Product model and information architecture

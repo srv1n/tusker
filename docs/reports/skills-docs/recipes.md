@@ -1,3 +1,13 @@
+---
+title: "Worker verification and knowledge recipes"
+subject: skills-docs-recipes
+part_of: skills-and-documentation
+status: report
+created: 2026-09-12
+read_when: "Following the bounded verification recipe or fresh-reader knowledge checks."
+skip_when: "You need the skill reference text itself rather than this exercise record."
+---
+
 # Worker verification and knowledge recipes
 
 This exercise checks that a fresh reader can choose a bounded verification

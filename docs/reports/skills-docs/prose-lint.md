@@ -1,3 +1,13 @@
+---
+title: "Slash prose lint"
+subject: skills-docs-prose-lint
+part_of: skills-and-documentation
+status: report
+created: 2026-09-12
+read_when: "Checking the slash-prose lint cases and their passing verification."
+skip_when: "You need lint rules beyond slash handling or the other skills-docs reports."
+---
+
 # Slash prose lint
 
 | Case | Expected | Result |

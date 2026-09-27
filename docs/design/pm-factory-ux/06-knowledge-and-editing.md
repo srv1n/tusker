@@ -13,6 +13,8 @@ tags:
   - tusker/ux
   - tusker/knowledge
   - obsidian
+read_when: "Working on the knowledge index, document reader, backlinks, or document editing."
+skip_when: "You need delivery state or runner operations rather than document surfaces."
 ---
 
 # Knowledge and editing

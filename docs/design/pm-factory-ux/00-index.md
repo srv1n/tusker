@@ -23,6 +23,8 @@ tags:
   - tusker/ux
   - tusker/pm
   - tusker/factory
+read_when: "Starting work on the proposed PM-first experience, or finding which design note covers a topic."
+skip_when: "You need how the shipped app behaves today; this pack describes a proposed target."
 ---
 
 # Tusker PM factory experience
