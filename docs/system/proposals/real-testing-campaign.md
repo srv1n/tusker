@@ -218,6 +218,8 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F11 | Add one global automation switch | todo | Owner wants three levels: global, project, wave. Today only project and wave exist; the only global stop is `daemon stop`, which also stops Serve. `daemon limits` refuses 0. The switch should stop new dispatch but keep the daemon and Serve up. |
 | F12 | `projects disable --repo` on kurpod says several projects match, but `projects list` shows one | todo | Worked with `--id`. |
 | F13 | Seeded test project was hidden from the sidebar | done | `demo seed` hides projects unless `--visible` is passed; the qualification seed did not pass it. Fixed `seed.sh`, and set `visible` in the existing manifest. A hidden project gives no hint of why it is missing. |
+| F14 | Auto-close refuses every full-access profile, and every harness except Codex | todo | Demo seed turns on `completion_reactor: authoritative`. In that mode `completion_worker_safety.go` requires a Codex sandbox (`workspace-write`, reviewers `read-only`). Claude, Devin and Muse are refused outright. Test project switched to `disabled` on 2026-09-27; the owner lands and closes by hand. Real fix depends on D1. |
+| F15 | `automation explain` said the task was ready, then dispatch failed | todo | Explain does not run the completion-authority check, so it cannot predict F14. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
@@ -231,6 +233,12 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | V5 | Remove leftover Codex adapters if exec-only is final | todo | |
 | V6 | Label the three kinds of worker failure and route them | todo | Simple first version. |
 | V7 | Decide whether the agent message board earns its keep | todo | |
+
+## Open decisions
+
+| # | Decision | Options | Recommendation |
+| --- | --- | --- | --- |
+| D1 | What access should agents get, and what makes auto-close safe? | Today: only a Codex sandbox counts; "a denylist is not a sandbox". Owner's stance: full access, block a few dangerous commands, protect named folders. | Wrap every harness in one macOS sandbox profile (`sandbox-exec`) that allows everything except the protected folders and Tusker's own state folder. That enforces the owner's folder list for all four harnesses, and it stops a worker from forging its own review verdict, which is the real reason for today's rule. Command denylists stay per harness (Claude Code has deny rules; others vary). |
 
 ## How work gets done
 
