@@ -143,7 +143,13 @@ func modelLevelProfiles(note Note, wf Workflow, lane string) ([]ResolvedRunnerPr
 }
 
 func modelLevelsRead(vault string) (modelLevelsReport, error) {
-	resolved, err := resolveTuskerConfig(vault)
+	var resolved resolvedTuskerConfig
+	var err error
+	if vault == "" {
+		resolved, err = resolveTuskerConfigForPaths("", "", false)
+	} else {
+		resolved, err = resolveTuskerConfig(vault)
+	}
 	if err != nil {
 		return modelLevelsReport{}, err
 	}
@@ -244,7 +250,7 @@ func configRevision(raw map[string]any) string {
 }
 
 func modelsCmd(args Args) error {
-	vault, err := resolveVaultPath(args, false)
+	vault, err := resolveModelsVault(args, false)
 	if err != nil {
 		return err
 	}
@@ -263,6 +269,21 @@ func modelsCmd(args Args) error {
 		fmt.Printf("%-9s execute=%s review=%s\n", row.Level, strings.Join(row.Execute.Profiles, ","), strings.Join(row.Review.Profiles, ","))
 	}
 	return nil
+}
+
+func resolveModelsVault(args Args, requireProject bool) (string, error) {
+	vault, err := resolveVaultPath(args, false)
+	if err == nil {
+		return vault, nil
+	}
+	var issue *TuskerError
+	if errors.As(err, &issue) && issue.Code == errorMissingArg && strings.Contains(issue.Error(), "No Tusker vault found") {
+		if requireProject {
+			return "", tuskerError(errorMissingArg, "--scope project requires a Tusker vault; pass --vault <path> or run inside a project")
+		}
+		return "", nil
+	}
+	return "", err
 }
 
 func compactModelLevelsReport(report modelLevelsReport) modelLevelsReport {
@@ -287,7 +308,8 @@ func compactModelLevelsReport(report modelLevelsReport) modelLevelsReport {
 }
 
 func modelsSetCmd(args Args) error {
-	vault, err := resolveVaultPath(args, false)
+	scope := firstNonEmpty(args.String("scope"), "project")
+	vault, err := resolveModelsVault(args, scope != "global")
 	if err != nil {
 		return err
 	}
@@ -346,7 +368,8 @@ func modelsSetCmd(args Args) error {
 }
 
 func modelsResetCmd(args Args) error {
-	vault, err := resolveVaultPath(args, false)
+	scope := firstNonEmpty(args.String("scope"), "project")
+	vault, err := resolveModelsVault(args, scope != "global")
 	if err != nil {
 		return err
 	}
@@ -391,7 +414,7 @@ func modelsResetCmd(args Args) error {
 }
 
 func modelsProfileSetCmd(args Args) error {
-	vault, err := resolveVaultPath(args, false)
+	vault, err := resolveModelsVault(args, false)
 	if err != nil {
 		return err
 	}
@@ -558,25 +581,29 @@ func (locks modelSettingsLock) Close() error {
 // the project epoch lock alone would let two projects race on that file. The
 // global lock is always taken last, so lock order is consistent.
 func acquireModelSettingsLock(vault, scope string) (modelSettingsLock, error) {
-	epoch, err := acquireV7MaterialEpochLock(vault)
-	if err != nil {
-		return nil, err
+	locks := modelSettingsLock{}
+	if vault != "" {
+		epoch, err := acquireV7MaterialEpochLock(vault)
+		if err != nil {
+			return nil, err
+		}
+		locks = append(locks, epoch)
 	}
 	if scope != "global" {
-		return modelSettingsLock{epoch}, nil
+		return locks, nil
 	}
 	path := userGlobalTuskerConfigPath()
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		_ = epoch.Close()
+		_ = locks.Close()
 		return nil, err
 	}
 	global, err := acquireV7LockForIdentity("user-global-config:"+abs, path, v7DocumentLockTimeout)
 	if err != nil {
-		_ = epoch.Close()
+		_ = locks.Close()
 		return nil, err
 	}
-	return modelSettingsLock{epoch, global}, nil
+	return append(locks, global), nil
 }
 
 func currentLevelMappings(report modelLevelsReport) map[string][]string {
@@ -588,7 +615,7 @@ func currentLevelMappings(report modelLevelsReport) map[string][]string {
 }
 
 func modelsProfileLifecycleCmd(args Args, action string) error {
-	vault, err := resolveVaultPath(args, false)
+	vault, err := resolveModelsVault(args, false)
 	if err != nil {
 		return err
 	}
@@ -733,6 +760,12 @@ func modelProfileReferences(vault string, resolved resolvedTuskerConfig) (map[st
 			add(rule.Profile, "routing."+rule.Name)
 		}
 	}
+	if vault == "" {
+		for name := range refs {
+			sort.Strings(refs[name])
+		}
+		return refs, true
+	}
 	idx, err := loadV7Index(vault)
 	if err != nil {
 		return refs, false
@@ -751,7 +784,13 @@ func modelProfileReferences(vault string, resolved resolvedTuskerConfig) (map[st
 }
 
 func modelProfileReferencesForScope(vault, scope string) (map[string][]string, bool) {
-	resolved, err := resolveTuskerConfig(vault)
+	var resolved resolvedTuskerConfig
+	var err error
+	if vault == "" {
+		resolved, err = resolveTuskerConfigForPaths("", "", false)
+	} else {
+		resolved, err = resolveTuskerConfig(vault)
+	}
 	if err != nil {
 		return map[string][]string{}, false
 	}
