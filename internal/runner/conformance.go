@@ -49,6 +49,15 @@ func Conformance(ctx context.Context, definition HarnessDefinition, input RunInp
 		}
 		input.Prompt += "\nFunctional exercise (run exactly once and include its output in your final response):\n" + command
 	}
+	if live && definition.Dialect == "muse" {
+		// Muse reads its prompt from --prompt-file; land the canary prompt in
+		// the disposable live workspace for the compiled argv to reference.
+		promptPath := filepath.Join(input.Workspace, ".tusker-conformance.prompt.md")
+		if err := os.WriteFile(promptPath, []byte(input.Prompt), 0o600); err != nil {
+			return report, err
+		}
+		input.PromptPath = promptPath
+	}
 	prepared, err := Prepare(ctx, definition, input)
 	if err != nil {
 		result := CaseFail

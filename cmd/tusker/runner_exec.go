@@ -172,14 +172,19 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 			return nil, fmt.Errorf("clear stale runner status: %w", err)
 		}
 	}
-	script := fmt.Sprintf(`( %s ) < "$TUSKER_PROMPT_PATH"
-`, scriptCommand)
+	promptRedirect := ` < "$TUSKER_PROMPT_PATH"`
+	if runner == RunnerMuse {
+		// Muse reads the attempt prompt from its --prompt-file argv, not stdin.
+		promptRedirect = ""
+	}
+	script := fmt.Sprintf(`( %s )%s
+`, scriptCommand, promptRedirect)
 	if boundedRawLog {
 		// The trusted parent owns both output streams and the only writable raw
 		// log descriptor. In particular, the fixed shell does not redirect an
 		// authoritative worker around the byte-budget writer.
-		script = fmt.Sprintf(`( %s ) < "$TUSKER_PROMPT_PATH"
-`, scriptCommand)
+		script = fmt.Sprintf(`( %s )%s
+`, scriptCommand, promptRedirect)
 	}
 
 	startedPayload := map[string]any{

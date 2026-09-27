@@ -25,6 +25,9 @@ func TestAgentAccessNative(t *testing.T) {
 	if musePolicy.Filesystem != "read-only" || !containsPair(museArgv, "--workspace", workspace) || !contains(museArgv, "--disable-write") || !contains(museArgv, "--disable-shell") || !contains(museArgv, "--sandbox-network") {
 		t.Fatalf("Muse native mapping = policy=%#v argv=%#v", musePolicy, museArgv)
 	}
+	if !containsPair(museArgv, "--prompt-file", "{{prompt_path}}") || contains(museArgv, "-") {
+		t.Fatalf("Muse argv must carry --prompt-file, not the retired stdin marker: %#v", museArgv)
+	}
 }
 
 func TestAgentAccessDestructive(t *testing.T) {
