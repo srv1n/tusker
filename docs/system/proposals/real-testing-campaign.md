@@ -193,7 +193,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | Q3 | Route check (runbook step 0.5) | done | All eight lanes correct, no blockers. |
 | Q4 | Daemon, Serve and harness login check (steps 0.1, 0.2) | done | Daemon up after `make install`. Retired the stale row (F7), ran `daemon resume`; circuit closed. All four harnesses installed. |
 | Q5 | Enable automation for the test project only (step 0.6) | done | Only remaining blockers: wave disarmed, and the circuit. |
-| Q6 | Codex: task QLH-T-0001, wave W-0005 | blocked | Ran 04:59 UTC, did pause 1, asked its question, waited 300 s, yielded. Owner answered at 05:55. Run never woke (F16, F17). |
+| Q6 | Codex: task QLH-T-0001, wave W-0005 | doing | Worker done after the answer woke it (fresh session, not resumed): result.txt correct. Review failed on F21; reviewer re-pinned to Sol low, review requeued. | Ran 04:59 UTC, did pause 1, asked its question, waited 300 s, yielded. Owner answered at 05:55. Run never woke (F16, F17). |
 | Q7 | Claude Code: task QLH-T-0002, wave W-0006 | todo | |
 | Q8 | Devin: task QLH-T-0003, wave W-0007 | todo | |
 | Q9 | Muse: task QLH-T-0004, wave W-0008 | todo | Risk: Muse sandbox may block Tusker's state folder. |
@@ -220,10 +220,14 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F13 | Seeded test project was hidden from the sidebar | done | `demo seed` hides projects unless `--visible` is passed; the qualification seed did not pass it. Fixed `seed.sh`, and set `visible` in the existing manifest. A hidden project gives no hint of why it is missing. |
 | F14 | Auto-close refuses every full-access profile, and every harness except Codex | todo | Demo seed turns on `completion_reactor: authoritative`. In that mode `completion_worker_safety.go` requires a Codex sandbox (`workspace-write`, reviewers `read-only`). Claude, Devin and Muse are refused outright. Test project switched to `disabled` on 2026-09-27; the owner lands and closes by hand. Real fix depends on D1. |
 | F15 | `automation explain` said the task was ready, then dispatch failed | todo | Explain does not run the completion-authority check, so it cannot predict F14. |
-| F16 | An answer to a worker's question never wakes the run | todo | Wakeup row `wake-01m3gpx8yx9jkqeny3e9hptc47` stays `queued`, never claimed, though the daemon polls. `agent_coordination.go` has about twenty branches that park a wakeup as held, stale or unsupported. |
-| F17 | Asking a question marks the worker's session "not resumable" | todo | `daemon.go` ~2903 and ~2959 pass `resumable=false` when a worker yields for a human. `runs continue` then refuses with "stored session is not resumable", though the Codex session file exists. The yield-and-resume design cannot work as written. |
+| F16 | An answer to a worker's question never wakes the run | doing | Codex Sol low, worktree `../tusker-wt-f16`, branch `fix/f16-wakeup`. | Wakeup row `wake-01m3gpx8yx9jkqeny3e9hptc47` stays `queued`, never claimed, though the daemon polls. `agent_coordination.go` has about twenty branches that park a wakeup as held, stale or unsupported. |
+| F17 | Asking a question marks the worker's session "not resumable" | doing | Devin SWE-2 Max, worktree `../tusker-wt-f17`, branch `fix/f17-resumable`. | `daemon.go` ~2903 and ~2959 pass `resumable=false` when a worker yields for a human. `runs continue` then refuses with "stored session is not resumable", though the Codex session file exists. The yield-and-resume design cannot work as written. |
 | F18 | "Needs you" gives no call to action | todo | The task card says Needs you and Waiting, the wave says Queued, and the drawer shows a disabled Queued button. The question is not shown where the owner looks. |
 | F19 | Too many words for one state | todo | Waiting, Queued, Needs you and waiting_on_you all describe one paused run. |
+| F20 | Devin print mode refuses new folders | todo | `devin -p` fails with "Refusing to run in an untrusted workspace" in any folder not trusted by hand. Every Tusker worktree is new. `--respect-workspace-trust false` skips it. Check whether `devin acp` (Tusker's route) has the same check before Q8. |
+| F21 | Devin can never be a reviewer | todo | `runner_acp.go:941` accepts only workspace-write with network; reviewers run read-only. QLH-T-0001 review failed on it. Re-pinned that task's reviewer to Sol low. |
+| F22 | The daemon's adaptive poll ignores queued wakeups | todo | Real root cause of F16: the answer waited ~10 min for the project's next slow poll. Needs a `daemon.go` change. The F16 branch only stops one bad wakeup from blocking others. |
+| F23 | Agent actor rules differ per command | todo | `redrive --by human:sarav` works from an agent session; `task update --by human:sarav` is refused. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
@@ -236,7 +240,8 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | V4 | Proof rules by kind of work, including before and after | todo | |
 | V5 | Remove leftover Codex adapters if exec-only is final | todo | |
 | V6 | Label the three kinds of worker failure and route them | todo | Simple first version. |
-| S1 | Simplification audit of `cmd/tusker` (266,520 lines of Go, 270 source files) | todo | Keep-or-cut list per guard, judged by D2. |
+| T1 | Task states: one state per task, 8 states, reasons carry detail | doing | Spec: [task-states](task-states.md). |
+| S1 | Simplification audit of `cmd/tusker` (266,520 lines of Go, 270 source files) | doing | Opus agent, read-only; report goes to `docs/reports/simplification-audit-2026-09-27.md`. | Keep-or-cut list per guard, judged by D2. |
 | V7 | Decide whether the agent message board earns its keep | todo | |
 
 ## Open decisions
