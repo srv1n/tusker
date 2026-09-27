@@ -193,7 +193,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | Q3 | Route check (runbook step 0.5) | done | All eight lanes correct, no blockers. |
 | Q4 | Daemon, Serve and harness login check (steps 0.1, 0.2) | done | Daemon up after `make install`. Retired the stale row (F7), ran `daemon resume`; circuit closed. All four harnesses installed. |
 | Q5 | Enable automation for the test project only (step 0.6) | done | Only remaining blockers: wave disarmed, and the circuit. |
-| Q6 | Codex: task QLH-T-0001, wave W-0005 | doing | Worker done after the answer woke it (fresh session, not resumed): result.txt correct. Review failed on F21; reviewer re-pinned to Sol low, review requeued. | Ran 04:59 UTC, did pause 1, asked its question, waited 300 s, yielded. Owner answered at 05:55. Run never woke (F16, F17). |
+| Q6 | Codex: task QLH-T-0001, wave W-0005 | paused | Worker done after the answer woke it (fresh session, not resumed): result.txt correct. Review failed on F21, then parked by F25. Paused until Phase 0 and Phase 2 land: each hand push found one more guard. | Ran 04:59 UTC, did pause 1, asked its question, waited 300 s, yielded. Owner answered at 05:55. Run never woke (F16, F17). |
 | Q7 | Claude Code: task QLH-T-0002, wave W-0006 | todo | |
 | Q8 | Devin: task QLH-T-0003, wave W-0007 | todo | |
 | Q9 | Muse: task QLH-T-0004, wave W-0008 | todo | Risk: Muse sandbox may block Tusker's state folder. |
@@ -229,6 +229,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F22 | The daemon's adaptive poll ignores queued wakeups | todo | Real root cause of F16: the answer waited ~10 min for the project's next slow poll. Needs a `daemon.go` change. The F16 branch only stops one bad wakeup from blocking others. |
 | F23 | Agent actor rules differ per command | todo | `redrive` and `wave start` accept `--by human:sarav` from an agent session; `task update` refuses it. `wave start` refuses `agent:claude` and requires `--mode background`, its only mode. |
 | F24 | Changing a task's reviewer disarms its wave | todo | After the review-profile re-pin, `explain` says "wave W-0005 authorization is stale". Any task edit makes the owner re-arm the wave, even for a routing change. |
+| F25 | Config refusals count as review cycles | todo | Three instant Devin refusals (F21) used up the 3-cycle review cap. The real Sol low review then started at 06:34:29 and was cancelled 16 s later ("completion-authoritative runner cancelled: context canceled"), though completion mode is `disabled`. A requeue did not reset the review cap. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
