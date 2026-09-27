@@ -325,12 +325,6 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		_ = d.recordPollSchedule(projectID, time.Now().UTC())
 		return nil
 	}
-	if err != nil && !daemonPollErrorIsFatal(err) {
-		// One project's bad task state must not stop automation everywhere.
-		log.Printf("daemon poll: project=%s skipped: %v", firstNonEmpty(strings.TrimSpace(projectID), "*"), err)
-		_ = d.recordPollSchedule(projectID, time.Now().UTC())
-		return nil
-	}
 	if err == nil {
 		if scheduleErr := d.recordPollSchedule(projectID, time.Now().UTC()); scheduleErr != nil {
 			return scheduleErr
@@ -338,14 +332,6 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		d.persistSelfServiceSchedules(projectID)
 	}
 	return err
-}
-
-// daemonPollErrorIsFatal keeps the daemon exiting on storage and system
-// errors while typed Tusker errors, which come from project content, only
-// skip that poll.
-func daemonPollErrorIsFatal(err error) bool {
-	var typed *TuskerError
-	return err != nil && !errors.As(err, &typed)
 }
 
 func (d *Daemon) feedWatchdogBeat(now time.Time) error {
@@ -1096,85 +1082,128 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		if !loaded.Loadable() {
 			continue
 		}
+		projectID := loaded.Project.ProjectID
+		candidateCount, sentinelCount := len(dispatchCandidates), len(sentinelProjects)
+		pollErr := func() error {
 
-		project := loaded.Project
-		wfFile := loaded.Workflow
-		visibilityIntervals[project.ProjectID] = time.Duration(wfFile.Data.Runtime.VisibilityIntervalMS) * time.Millisecond
-		notes := loaded.Notes
-		sortDispatchCandidates(notes)
-		noteStatusByRecord := map[string]string{}
-		if d.pollTaskMeta == nil {
-			d.pollTaskMeta = map[string]serveStreamTaskMeta{}
-		}
-		notesByID, notesByRecordID := daemonNoteMaps(notes)
-		keep := map[string]struct{}{}
-		for _, note := range notes {
-			if daemonNoteKind(note) != "task" {
-				continue
+			project := loaded.Project
+			wfFile := loaded.Workflow
+			visibilityIntervals[project.ProjectID] = time.Duration(wfFile.Data.Runtime.VisibilityIntervalMS) * time.Millisecond
+			notes := loaded.Notes
+			sortDispatchCandidates(notes)
+			noteStatusByRecord := map[string]string{}
+			if d.pollTaskMeta == nil {
+				d.pollTaskMeta = map[string]serveStreamTaskMeta{}
 			}
-			recordID := trackerRecordID(note)
-			if recordID == "" {
-				continue
-			}
-			d.pollTaskMeta[project.ProjectID+"\x00"+recordID] = serveStreamTaskMeta{Project: project.ProjectID, TaskID: firstNonEmpty(stringField(note.Data, "id"), recordID), Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status")}
-			d.observeTaskStatusForStream(project.ProjectID, recordID, stringField(note.Data, "status"))
-			noteStatusByRecord[recordID] = stringField(note.Data, "status")
-			keep[recordID] = struct{}{}
-		}
-		sentinelProjects = append(sentinelProjects, runtimeSentinelProjectSnapshot{
-			Project:         project,
-			Workflow:        wfFile.Data,
-			NotesByID:       notesByID,
-			NotesByRecordID: notesByRecordID,
-		})
-
-		projectRuns := runsByProject[project.ProjectID]
-		if projectRuns == nil {
-			projectRuns = map[string]RunStatus{}
-		}
-		projectActiveRuns := countDispatchCapacityProjectRuns(projectRuns)
-		now := time.Now().UTC()
-		if err := d.scheduleBatchGateIfDue(project, wfFile.Data, now); err != nil {
-			return err
-		}
-		if err := d.scheduleDepartureIfDue(project, wfFile.Data, now); err != nil {
-			return err
-		}
-		if err := d.startPendingDepartureExecutions(ctx, project, wfFile.Data); err != nil {
-			return err
-		}
-		skipReviewDispatch := map[string]struct{}{}
-		for recordID, current := range projectRuns {
-			if reconciled, suppressRetry, stopChanged, err := d.reconcilePersistedStopIntent(current); err != nil {
-				return err
-			} else if stopChanged {
-				if err := d.upsertRunWithStream(current, reconciled); err != nil {
-					return err
-				}
-				globalActiveRuns += dispatchCapacityRunDelta(current, reconciled)
-				projectActiveRuns += dispatchCapacityRunDelta(current, reconciled)
-				projectRuns[recordID] = reconciled
-				current = reconciled
-				if suppressRetry {
+			notesByID, notesByRecordID := daemonNoteMaps(notes)
+			keep := map[string]struct{}{}
+			for _, note := range notes {
+				if daemonNoteKind(note) != "task" {
 					continue
 				}
-			} else if suppressRetry {
-				// Do not let retry normalization, tracker reconciliation, or
-				// auto-advance consume a run while its exact stop intent is still
-				// pending against a live owner.
-				continue
+				recordID := trackerRecordID(note)
+				if recordID == "" {
+					continue
+				}
+				d.pollTaskMeta[project.ProjectID+"\x00"+recordID] = serveStreamTaskMeta{Project: project.ProjectID, TaskID: firstNonEmpty(stringField(note.Data, "id"), recordID), Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status")}
+				d.observeTaskStatusForStream(project.ProjectID, recordID, stringField(note.Data, "status"))
+				noteStatusByRecord[recordID] = stringField(note.Data, "status")
+				keep[recordID] = struct{}{}
 			}
-			if note, ok := notesByRecordID[recordID]; ok {
-				normalized, changed, err := d.normalizeDeadRetryQueuedRun(ctx, project, wfFile, current, note)
+			sentinelProjects = append(sentinelProjects, runtimeSentinelProjectSnapshot{
+				Project:         project,
+				Workflow:        wfFile.Data,
+				NotesByID:       notesByID,
+				NotesByRecordID: notesByRecordID,
+			})
+
+			projectRuns := runsByProject[project.ProjectID]
+			if projectRuns == nil {
+				projectRuns = map[string]RunStatus{}
+			}
+			projectActiveRuns := countDispatchCapacityProjectRuns(projectRuns)
+			now := time.Now().UTC()
+			if err := d.scheduleBatchGateIfDue(project, wfFile.Data, now); err != nil {
+				return err
+			}
+			if err := d.scheduleDepartureIfDue(project, wfFile.Data, now); err != nil {
+				return err
+			}
+			if err := d.startPendingDepartureExecutions(ctx, project, wfFile.Data); err != nil {
+				return err
+			}
+			skipReviewDispatch := map[string]struct{}{}
+			for recordID, current := range projectRuns {
+				if reconciled, suppressRetry, stopChanged, err := d.reconcilePersistedStopIntent(current); err != nil {
+					return err
+				} else if stopChanged {
+					if err := d.upsertRunWithStream(current, reconciled); err != nil {
+						return err
+					}
+					globalActiveRuns += dispatchCapacityRunDelta(current, reconciled)
+					projectActiveRuns += dispatchCapacityRunDelta(current, reconciled)
+					projectRuns[recordID] = reconciled
+					current = reconciled
+					if suppressRetry {
+						continue
+					}
+				} else if suppressRetry {
+					// Do not let retry normalization, tracker reconciliation, or
+					// auto-advance consume a run while its exact stop intent is still
+					// pending against a live owner.
+					continue
+				}
+				if note, ok := notesByRecordID[recordID]; ok {
+					normalized, changed, err := d.normalizeDeadRetryQueuedRun(ctx, project, wfFile, current, note)
+					if err != nil {
+						return err
+					}
+					if changed {
+						if err := d.upsertRunWithStream(current, normalized); err != nil {
+							return err
+						}
+						projectRuns[recordID] = normalized
+						current = normalized
+					}
+					capped, capChanged := d.parkRetryQueuedRunAtAttemptCap(project, wfFile.Data, current, "queued continuation retry would exceed cap")
+					if capChanged {
+						if err := d.upsertRunWithStream(current, capped); err != nil {
+							return err
+						}
+						projectRuns[recordID] = capped
+						globalActiveRuns += dispatchCapacityRunDelta(current, capped)
+						projectActiveRuns += dispatchCapacityRunDelta(current, capped)
+						current = capped
+					}
+					eligible, eligibleChanged, err := d.reconcileExecuteRunWithPlan(ctx, project, wfFile, notes, note, current)
+					if err != nil {
+						return err
+					}
+					if eligibleChanged {
+						if err := d.store.UpsertRun(eligible); err != nil {
+							return err
+						}
+						projectRuns[recordID] = eligible
+						globalActiveRuns += dispatchCapacityRunDelta(current, eligible)
+						projectActiveRuns += dispatchCapacityRunDelta(current, eligible)
+						if strings.Contains(eligible.LastError, "automation plan do_not_dispatch") {
+							skipReviewDispatch[recordID] = struct{}{}
+						}
+						current = eligible
+					}
+				}
+				reconciled, changed, err := d.reconcileRunWithTracker(ctx, project, wfFile, current, notesByRecordID[recordID], notesByID, notesByRecordID)
 				if err != nil {
 					return err
 				}
 				if changed {
-					if err := d.upsertRunWithStream(current, normalized); err != nil {
+					if err := d.upsertRunWithStream(current, reconciled); err != nil {
 						return err
 					}
-					projectRuns[recordID] = normalized
-					current = normalized
+					projectRuns[recordID] = reconciled
+					globalActiveRuns += dispatchCapacityRunDelta(current, reconciled)
+					projectActiveRuns += dispatchCapacityRunDelta(current, reconciled)
+					current = reconciled
 				}
 				capped, capChanged := d.parkRetryQueuedRunAtAttemptCap(project, wfFile.Data, current, "queued continuation retry would exceed cap")
 				if capChanged {
@@ -1184,264 +1213,393 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = capped
 					globalActiveRuns += dispatchCapacityRunDelta(current, capped)
 					projectActiveRuns += dispatchCapacityRunDelta(current, capped)
-					current = capped
 				}
-				eligible, eligibleChanged, err := d.reconcileExecuteRunWithPlan(ctx, project, wfFile, notes, note, current)
-				if err != nil {
-					return err
-				}
-				if eligibleChanged {
-					if err := d.store.UpsertRun(eligible); err != nil {
+				if note, ok := notesByRecordID[recordID]; ok {
+					beforeAuto := projectRuns[recordID]
+					autoAdvanced, autoChanged, err := d.autoAdvanceExternalLoop(ctx, project, wfFile, notes, note, beforeAuto)
+					if err != nil {
 						return err
 					}
-					projectRuns[recordID] = eligible
-					globalActiveRuns += dispatchCapacityRunDelta(current, eligible)
-					projectActiveRuns += dispatchCapacityRunDelta(current, eligible)
-					if strings.Contains(eligible.LastError, "automation plan do_not_dispatch") {
-						skipReviewDispatch[recordID] = struct{}{}
+					if autoChanged {
+						if err := d.upsertRunWithStream(beforeAuto, autoAdvanced); err != nil {
+							return err
+						}
+						projectRuns[recordID] = autoAdvanced
+						globalActiveRuns += dispatchCapacityRunDelta(beforeAuto, autoAdvanced)
+						projectActiveRuns += dispatchCapacityRunDelta(beforeAuto, autoAdvanced)
 					}
-					current = eligible
+					beforeApplyAuto := projectRuns[recordID]
+					applyAdvanced, applyChanged, err := d.autoAdvanceExternalApplyResult(ctx, project, wfFile, notes, note, beforeApplyAuto)
+					if err != nil {
+						return err
+					}
+					if applyChanged {
+						if err := d.upsertRunWithStream(beforeApplyAuto, applyAdvanced); err != nil {
+							return err
+						}
+						projectRuns[recordID] = applyAdvanced
+						globalActiveRuns += dispatchCapacityRunDelta(beforeApplyAuto, applyAdvanced)
+						projectActiveRuns += dispatchCapacityRunDelta(beforeApplyAuto, applyAdvanced)
+					}
 				}
 			}
-			reconciled, changed, err := d.reconcileRunWithTracker(ctx, project, wfFile, current, notesByRecordID[recordID], notesByID, notesByRecordID)
-			if err != nil {
+			if err := d.advanceAuthorizedWaveFrontiers(project); err != nil {
 				return err
 			}
-			if changed {
-				if err := d.upsertRunWithStream(current, reconciled); err != nil {
-					return err
-				}
-				projectRuns[recordID] = reconciled
-				globalActiveRuns += dispatchCapacityRunDelta(current, reconciled)
-				projectActiveRuns += dispatchCapacityRunDelta(current, reconciled)
-				current = reconciled
-			}
-			capped, capChanged := d.parkRetryQueuedRunAtAttemptCap(project, wfFile.Data, current, "queued continuation retry would exceed cap")
-			if capChanged {
-				if err := d.upsertRunWithStream(current, capped); err != nil {
-					return err
-				}
-				projectRuns[recordID] = capped
-				globalActiveRuns += dispatchCapacityRunDelta(current, capped)
-				projectActiveRuns += dispatchCapacityRunDelta(current, capped)
-			}
-			if note, ok := notesByRecordID[recordID]; ok {
-				beforeAuto := projectRuns[recordID]
-				autoAdvanced, autoChanged, err := d.autoAdvanceExternalLoop(ctx, project, wfFile, notes, note, beforeAuto)
-				if err != nil {
-					return err
-				}
-				if autoChanged {
-					if err := d.upsertRunWithStream(beforeAuto, autoAdvanced); err != nil {
-						return err
-					}
-					projectRuns[recordID] = autoAdvanced
-					globalActiveRuns += dispatchCapacityRunDelta(beforeAuto, autoAdvanced)
-					projectActiveRuns += dispatchCapacityRunDelta(beforeAuto, autoAdvanced)
-				}
-				beforeApplyAuto := projectRuns[recordID]
-				applyAdvanced, applyChanged, err := d.autoAdvanceExternalApplyResult(ctx, project, wfFile, notes, note, beforeApplyAuto)
-				if err != nil {
-					return err
-				}
-				if applyChanged {
-					if err := d.upsertRunWithStream(beforeApplyAuto, applyAdvanced); err != nil {
-						return err
-					}
-					projectRuns[recordID] = applyAdvanced
-					globalActiveRuns += dispatchCapacityRunDelta(beforeApplyAuto, applyAdvanced)
-					projectActiveRuns += dispatchCapacityRunDelta(beforeApplyAuto, applyAdvanced)
-				}
-			}
-		}
-		if err := d.advanceAuthorizedWaveFrontiers(project); err != nil {
-			return err
-		}
-		stateActiveRuns := countDispatchCapacityProjectRunsByState(projectRuns, noteStatusByRecord)
+			stateActiveRuns := countDispatchCapacityProjectRunsByState(projectRuns, noteStatusByRecord)
 
-		for _, note := range notes {
-			if daemonNoteKind(note) != "task" {
-				continue
-			}
-			status := stringField(note.Data, "status")
-			if !containsString(wfFile.Data.Tracker.ActiveStates, status) {
-				projected, _, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
-				if err != nil {
-					return err
-				}
-				if ok && containsString(wfFile.Data.Tracker.ActiveStates, stringField(projected.Data, "status")) {
-					note = projected
-				} else if reservation, reservationOK := selfServiceReservationPromotion(project.VaultRoot, d.store, project.ProjectID, note, now); reservationOK && containsString(wfFile.Data.Tracker.ActiveStates, stringField(reservation.Data, "status")) {
-					// The member's own current-authorization reservation
-					// releases it from canonical backlog authoring. Anything
-					// without that backing stays waiting.
-					note = reservation
-				} else {
+			for _, note := range notes {
+				if daemonNoteKind(note) != "task" {
 					continue
 				}
-			}
-			recordID := trackerRecordID(note)
-			if recordID == "" {
-				continue
+				status := stringField(note.Data, "status")
+				if !containsString(wfFile.Data.Tracker.ActiveStates, status) {
+					projected, _, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
+					if err != nil {
+						return err
+					}
+					if ok && containsString(wfFile.Data.Tracker.ActiveStates, stringField(projected.Data, "status")) {
+						note = projected
+					} else if reservation, reservationOK := selfServiceReservationPromotion(project.VaultRoot, d.store, project.ProjectID, note, now); reservationOK && containsString(wfFile.Data.Tracker.ActiveStates, stringField(reservation.Data, "status")) {
+						// The member's own current-authorization reservation
+						// releases it from canonical backlog authoring. Anything
+						// without that backing stays waiting.
+						note = reservation
+					} else {
+						continue
+					}
+				}
+				recordID := trackerRecordID(note)
+				if recordID == "" {
+					continue
+				}
+
+				current := projectRuns[recordID]
+				current.ProjectID = project.ProjectID
+				current.RecordID = recordID
+				current.ItemID = stringField(note.Data, "id")
+				legacyRunner := resolveRunnerForNote(note, wfFile.Data)
+				if !isDispatchCapacityLeaseState(current.LeaseState) {
+					selectedProfile, profileErr := resolveRunProfileForLane(note, wfFile.Data, runLaneExecute, legacyRunner)
+					if profileErr != nil {
+						current.LastError = "dispatch blocked: runner profile: " + profileErr.Error()
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if current.LeaseState == "" {
+							current.LeaseState = string(LeaseStateUnclaimed)
+						}
+						if err := d.store.UpsertRun(current); err != nil {
+							return err
+						}
+						projectRuns[recordID] = current
+						continue
+					}
+					selectedProfile = preserveResolvedRunIdentity(current, runLaneExecute, selectedProfile)
+					current = applyResolvedProfileToRun(current, selectedProfile)
+					current.Runner = firstNonEmpty(current.Runner, legacyRunner, wfFile.Data.Agents.Default)
+				} else {
+					current.Runner = firstNonEmpty(current.Runner, legacyRunner, wfFile.Data.Agents.Default)
+				}
+				current.Lane = firstNonEmpty(current.Lane, runLaneExecute)
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if current.LeaseState == "" {
+					current.LeaseState = string(LeaseStateUnclaimed)
+				}
+				if LeaseState(current.LeaseState) == LeaseStateParkedBudget {
+					previous := current
+					current = releaseLegacyBudgetPark(current, now)
+					d.emitSupervisorDecision(SupervisorDecision{
+						ProjectID: project.ProjectID, RecordID: recordID, ItemID: current.ItemID,
+						Runner: current.Runner, WorkRevision: current.WorkRevision,
+						ParentAttemptID: previous.ActiveAttemptID, ParentSessionRef: previous.SessionRef,
+						Kind: string(SupervisorDecisionRedrive), Reason: current.LastError,
+						WorkspacePath: previous.WorkspacePath, LeaseState: current.LeaseState,
+					})
+				}
+
+				workRevision := intField(note.Data, "work_revision")
+				// Reconciliation can project a completed worktree into the canonical
+				// vault earlier in this poll. The note slice was loaded before that
+				// projection, so its revision may be one tick behind the live run. A
+				// stale cache must never move a run backwards: that would erase the
+				// execute policy bound to the completed candidate and allow the old
+				// task snapshot to be scheduled again. The next poll reloads the
+				// canonical task and continues from the newer immutable revision.
+				if workRevision < current.WorkRevision {
+					continue
+				}
+				if current.WorkRevision != workRevision {
+					oldRun := current
+					d.emitSupervisorDecision(SupervisorDecision{
+						ProjectID:        project.ProjectID,
+						RecordID:         recordID,
+						Kind:             string(SupervisorDecisionNewRevision),
+						Reason:           fmt.Sprintf("work_revision changed from %d to %d; old session refs cleared", oldRun.WorkRevision, workRevision),
+						ParentAttemptID:  oldRun.ActiveAttemptID,
+						ParentSessionRef: oldRun.SessionRef,
+						WorkspacePath:    oldRun.WorkspacePath,
+					})
+					current.WorkRevision = workRevision
+					current.AttemptCount = 0
+					current.AttemptOutcome = string(AttemptOutcomeNone)
+					current.LeaseState = string(LeaseStateUnclaimed)
+					current.NextRetryAt = ""
+					current.LastError = ""
+					current.SessionRef = ""
+					current.StartedAt = ""
+					current.LastEventAt = ""
+					current.FirstEventAt = ""
+					current.LastHeartbeatAt = ""
+					current.Lane = runLaneExecute
+					current.WorkerPolicyFP = ""
+					current.ExecutePolicyFP = ""
+					current.Terminal = false
+					clearRunCloudRefs(&current)
+					clearActiveExecution(&current)
+				}
+				if reopened, changed, reopenErr := reopenTerminalRunForDirective(project.VaultRoot, d.store, note, current, now); reopenErr != nil {
+					return reopenErr
+				} else if changed {
+					current = reopened
+				}
+				// `notes` was read before run reconciliation. An execute runner can
+				// therefore project its task to review earlier in this poll while this
+				// loop is still looking at the old ready snapshot. Do not turn that
+				// durable execute→review handoff back into a fresh execute claim. A
+				// reviewer may return work through the same lane/state shape, but it
+				// carries a different outcome and is the only case that resumes execute.
+				if shouldResumeExecuteFromReleasedReview(current) {
+					current = prepareRunForLaneDispatch(current, runLaneExecute, current.Runner)
+					current.UpdatedAt = now.Format(time.RFC3339)
+				}
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+					return err
+				}
+				projectRuns[recordID] = current
+
+				if blocked, _, err := d.automaticRetryBlockedByStopIntent(current); err != nil {
+					return err
+				} else if blocked {
+					continue
+				}
+				if shouldDispatchRun(current, now) {
+					dispatchNote := note
+					dispatchNotes := notes
+					dispatchNotesByID := notesByID
+					dispatchNotesByRecordID := notesByRecordID
+					if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
+						return err
+					} else if ok {
+						dispatchNote = projected
+						dispatchNotes = append([]Note(nil), notes...)
+						dispatchNotesByID = make(map[string]Note, len(notesByID))
+						dispatchNotesByRecordID = make(map[string]Note, len(notesByRecordID))
+						for id, candidate := range notesByID {
+							dispatchNotesByID[id] = candidate
+						}
+						for id, candidate := range notesByRecordID {
+							dispatchNotesByRecordID[id] = candidate
+						}
+						for id, candidate := range projectedIdx.Tasks {
+							dispatchNotesByID[id] = candidate
+							dispatchNotesByRecordID[trackerRecordID(candidate)] = candidate
+						}
+						for i, candidate := range dispatchNotes {
+							if projectedTask, exists := projectedIdx.Tasks[trackerRecordID(candidate)]; exists {
+								dispatchNotes[i] = projectedTask
+							}
+						}
+					}
+					if !containsString(wfFile.Data.Tracker.ActiveStates, stringField(dispatchNote.Data, "status")) {
+						if reservation, reservationOK := selfServiceReservationPromotion(project.VaultRoot, d.store, project.ProjectID, dispatchNote, now); reservationOK {
+							// The dispatch-time projection above renders canonical
+							// bytes; the member's own current-authorization
+							// reservation releases it from backlog authoring here so
+							// scope, readiness, and plan checks read one promoted note.
+							// Dependency maps keep canonical bytes: promotion never
+							// marks a dependency satisfied.
+							dispatchNote = reservation
+						}
+					}
+					// Process-level dispatch refusal (one-shot interactive commands and
+					// circuit containment) is the outer authority boundary.  Evaluate it
+					// before task-local scope/readiness projections so callers receive the
+					// actual refusal instead of a misleading per-task blocker.
+					if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+						return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
+					}
+					if reason, err := d.scopeDispatchBlocker(project, dispatchNote, wfFile.Data, projectRuns); err != nil {
+						return err
+					} else if reason != "" {
+						current.LastError = "dispatch blocked: " + reason
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+							return err
+						}
+						projectRuns[recordID] = current
+						continue
+					}
+					if reason := daemonDispatchBlockedReasonWithAuthorization(project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID, false); reason != "" {
+						current.LastError = reason
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+							return err
+						}
+						projectRuns[recordID] = current
+						continue
+					}
+					crashLoopReason, err := d.crashLoopDispatchBlocker()
+					if err != nil {
+						return err
+					}
+					if crashLoopReason != "" {
+						current.LastError = crashLoopReason
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if err := d.store.UpsertRun(current); err != nil {
+							return err
+						}
+						projectRuns[recordID] = current
+						continue
+					}
+					invariantReason, err := d.invariantDispatchBlocker(project.ProjectID)
+					if err != nil {
+						return err
+					}
+					if invariantReason != "" {
+						current.LastError = invariantReason
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+							return err
+						}
+						projectRuns[recordID] = current
+						continue
+					}
+					if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
+						current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+							return err
+						}
+						projectRuns[recordID] = current
+						continue
+					}
+					if blocked, err := d.executePlanBlockedReason(project, wfFile, dispatchNotes, dispatchNote, current); err != nil {
+						return err
+					} else if blocked != "" {
+						current.LastError = "automation plan do_not_dispatch: " + blocked
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if LeaseState(strings.TrimSpace(current.LeaseState)) == LeaseStateRetryQueued {
+							current.LeaseState = string(LeaseStateUnclaimed)
+							current.NextRetryAt = ""
+							current.Terminal = false
+							clearActiveExecution(&current)
+						}
+						if err := d.store.UpsertRun(current); err != nil {
+							return err
+						}
+						projectRuns[recordID] = current
+						continue
+					}
+					if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+						return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
+					}
+					dispatchLane := runLaneExecute
+					if stringField(dispatchNote.Data, "work_kind") == "integrator" {
+						dispatchLane = runLaneIntegrator
+					}
+					dispatchCandidates = append(dispatchCandidates, daemonDispatchCandidate{
+						Project: project, Workflow: wfFile, Note: dispatchNote, NotesByID: dispatchNotesByID, Run: current,
+						Lane: dispatchLane, Status: status,
+						StateActive:  stateActiveRuns[status],
+						ProjectLimit: projectActiveRunLimit(wfFile.Data),
+						StateLimit:   wfFile.Data.Agents.MaxConcurrentAgentsByState[status],
+						RunnerLimit:  fairDispatchRunnerLimit(wfFile.Data),
+					})
+				}
 			}
 
-			current := projectRuns[recordID]
-			current.ProjectID = project.ProjectID
-			current.RecordID = recordID
-			current.ItemID = stringField(note.Data, "id")
-			legacyRunner := resolveRunnerForNote(note, wfFile.Data)
-			if !isDispatchCapacityLeaseState(current.LeaseState) {
-				selectedProfile, profileErr := resolveRunProfileForLane(note, wfFile.Data, runLaneExecute, legacyRunner)
-				if profileErr != nil {
-					current.LastError = "dispatch blocked: runner profile: " + profileErr.Error()
-					current.UpdatedAt = now.Format(time.RFC3339)
-					if current.LeaseState == "" {
-						current.LeaseState = string(LeaseStateUnclaimed)
+			for _, note := range notes {
+				if daemonNoteKind(note) != "task" {
+					continue
+				}
+				status := stringField(note.Data, "status")
+				if !containsString(wfFile.Data.Tracker.ReviewStates, status) {
+					projected, ok, err := armedWaveIntegrationTaskProjection(project.VaultRoot, note)
+					if err != nil {
+						return err
 					}
-					if err := d.store.UpsertRun(current); err != nil {
+					if !ok || !containsString(wfFile.Data.Tracker.ReviewStates, stringField(projected.Data, "status")) {
+						continue
+					}
+					note = projected
+					status = stringField(note.Data, "status")
+				}
+				recordID := trackerRecordID(note)
+				if recordID == "" {
+					continue
+				}
+				if _, skipped := skipReviewDispatch[recordID]; skipped {
+					continue
+				}
+				current := projectRuns[recordID]
+				closed, closeErr := externalLoopCloseTaskRecordedForCurrentRun(d.store, project.ProjectID, recordID, note, current)
+				if closeErr != nil {
+					return closeErr
+				}
+				if closed {
+					continue
+				}
+				reviewCycles, err := d.reviewCycleCount(project.ProjectID, recordID)
+				if err != nil {
+					return err
+				}
+				hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, recordID, intField(note.Data, "work_revision"), stringField(note.Data, "state_rev"))
+				if err != nil {
+					return err
+				}
+				if hasResult {
+					current.ProjectID = project.ProjectID
+					current.RecordID = recordID
+					current.ItemID = stringField(note.Data, "id")
+					current.Lane = runLaneReview
+					current.WorkRevision = intField(note.Data, "work_revision")
+					current.LeaseState = string(LeaseStateReleased)
+					current.AttemptOutcome = string(AttemptOutcomeSucceeded)
+					current.NextRetryAt = ""
+					current.LastError = "typed review result recorded; awaiting review reactor"
+					current.UpdatedAt = now.Format(time.RFC3339)
+					current.Terminal = false
+					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
 					}
 					projectRuns[recordID] = current
 					continue
 				}
-				selectedProfile = preserveResolvedRunIdentity(current, runLaneExecute, selectedProfile)
-				current = applyResolvedProfileToRun(current, selectedProfile)
-				current.Runner = firstNonEmpty(current.Runner, legacyRunner, wfFile.Data.Agents.Default)
-			} else {
-				current.Runner = firstNonEmpty(current.Runner, legacyRunner, wfFile.Data.Agents.Default)
-			}
-			current.Lane = firstNonEmpty(current.Lane, runLaneExecute)
-			current.UpdatedAt = now.Format(time.RFC3339)
-			if current.LeaseState == "" {
-				current.LeaseState = string(LeaseStateUnclaimed)
-			}
-			if LeaseState(current.LeaseState) == LeaseStateParkedBudget {
-				previous := current
-				current = releaseLegacyBudgetPark(current, now)
-				d.emitSupervisorDecision(SupervisorDecision{
-					ProjectID: project.ProjectID, RecordID: recordID, ItemID: current.ItemID,
-					Runner: current.Runner, WorkRevision: current.WorkRevision,
-					ParentAttemptID: previous.ActiveAttemptID, ParentSessionRef: previous.SessionRef,
-					Kind: string(SupervisorDecisionRedrive), Reason: current.LastError,
-					WorkspacePath: previous.WorkspacePath, LeaseState: current.LeaseState,
-				})
-			}
-
-			workRevision := intField(note.Data, "work_revision")
-			// Reconciliation can project a completed worktree into the canonical
-			// vault earlier in this poll. The note slice was loaded before that
-			// projection, so its revision may be one tick behind the live run. A
-			// stale cache must never move a run backwards: that would erase the
-			// execute policy bound to the completed candidate and allow the old
-			// task snapshot to be scheduled again. The next poll reloads the
-			// canonical task and continues from the newer immutable revision.
-			if workRevision < current.WorkRevision {
-				continue
-			}
-			if current.WorkRevision != workRevision {
-				oldRun := current
-				d.emitSupervisorDecision(SupervisorDecision{
-					ProjectID:        project.ProjectID,
-					RecordID:         recordID,
-					Kind:             string(SupervisorDecisionNewRevision),
-					Reason:           fmt.Sprintf("work_revision changed from %d to %d; old session refs cleared", oldRun.WorkRevision, workRevision),
-					ParentAttemptID:  oldRun.ActiveAttemptID,
-					ParentSessionRef: oldRun.SessionRef,
-					WorkspacePath:    oldRun.WorkspacePath,
-				})
-				current.WorkRevision = workRevision
-				current.AttemptCount = 0
-				current.AttemptOutcome = string(AttemptOutcomeNone)
-				current.LeaseState = string(LeaseStateUnclaimed)
-				current.NextRetryAt = ""
-				current.LastError = ""
-				current.SessionRef = ""
-				current.StartedAt = ""
-				current.LastEventAt = ""
-				current.FirstEventAt = ""
-				current.LastHeartbeatAt = ""
-				current.Lane = runLaneExecute
-				current.WorkerPolicyFP = ""
-				current.ExecutePolicyFP = ""
-				current.Terminal = false
-				clearRunCloudRefs(&current)
-				clearActiveExecution(&current)
-			}
-			if reopened, changed, reopenErr := reopenTerminalRunForDirective(project.VaultRoot, d.store, note, current, now); reopenErr != nil {
-				return reopenErr
-			} else if changed {
-				current = reopened
-			}
-			// `notes` was read before run reconciliation. An execute runner can
-			// therefore project its task to review earlier in this poll while this
-			// loop is still looking at the old ready snapshot. Do not turn that
-			// durable execute→review handoff back into a fresh execute claim. A
-			// reviewer may return work through the same lane/state shape, but it
-			// carries a different outcome and is the only case that resumes execute.
-			if shouldResumeExecuteFromReleasedReview(current) {
-				current = prepareRunForLaneDispatch(current, runLaneExecute, current.Runner)
-				current.UpdatedAt = now.Format(time.RFC3339)
-			}
-			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-				return err
-			}
-			projectRuns[recordID] = current
-
-			if blocked, _, err := d.automaticRetryBlockedByStopIntent(current); err != nil {
-				return err
-			} else if blocked {
-				continue
-			}
-			if shouldDispatchRun(current, now) {
-				dispatchNote := note
-				dispatchNotes := notes
-				dispatchNotesByID := notesByID
-				dispatchNotesByRecordID := notesByRecordID
-				if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
-					return err
-				} else if ok {
-					dispatchNote = projected
-					dispatchNotes = append([]Note(nil), notes...)
-					dispatchNotesByID = make(map[string]Note, len(notesByID))
-					dispatchNotesByRecordID = make(map[string]Note, len(notesByRecordID))
-					for id, candidate := range notesByID {
-						dispatchNotesByID[id] = candidate
-					}
-					for id, candidate := range notesByRecordID {
-						dispatchNotesByRecordID[id] = candidate
-					}
-					for id, candidate := range projectedIdx.Tasks {
-						dispatchNotesByID[id] = candidate
-						dispatchNotesByRecordID[trackerRecordID(candidate)] = candidate
-					}
-					for i, candidate := range dispatchNotes {
-						if projectedTask, exists := projectedIdx.Tasks[trackerRecordID(candidate)]; exists {
-							dispatchNotes[i] = projectedTask
+				if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current, reviewCycles) {
+					// Never park a live run here: flipping its lease makes the wrapper
+					// heartbeat cancel the reviewer mid-turn ("completion-authoritative
+					// runner cancelled: context canceled").
+					if wfFile.Data.Reviewer.Enabled && reviewCycles >= wfFile.Data.Reviewer.MaxCycles && stringField(note.Data, "verified_at") == "" && !isDispatchingLeaseState(current.LeaseState) {
+						current.ProjectID = project.ProjectID
+						current.RecordID = recordID
+						current.ItemID = stringField(note.Data, "id")
+						current.Lane = runLaneReview
+						current.LeaseState = string(LeaseStateParkedNoProgress)
+						current.AttemptOutcome = string(AttemptOutcomeBlocked)
+						current.NextRetryAt = ""
+						current.LastError = fmt.Sprintf("review parked: automated review cycle cap reached (%d/%d); operator intervention required", reviewCycles, wfFile.Data.Reviewer.MaxCycles)
+						current.UpdatedAt = now.Format(time.RFC3339)
+						if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+							return err
 						}
+						projectRuns[recordID] = current
 					}
+					continue
 				}
-				if !containsString(wfFile.Data.Tracker.ActiveStates, stringField(dispatchNote.Data, "status")) {
-					if reservation, reservationOK := selfServiceReservationPromotion(project.VaultRoot, d.store, project.ProjectID, dispatchNote, now); reservationOK {
-						// The dispatch-time projection above renders canonical
-						// bytes; the member's own current-authorization
-						// reservation releases it from backlog authoring here so
-						// scope, readiness, and plan checks read one promoted note.
-						// Dependency maps keep canonical bytes: promotion never
-						// marks a dependency satisfied.
-						dispatchNote = reservation
-					}
-				}
-				// Process-level dispatch refusal (one-shot interactive commands and
-				// circuit containment) is the outer authority boundary.  Evaluate it
-				// before task-local scope/readiness projections so callers receive the
-				// actual refusal instead of a misleading per-task blocker.
-				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
-					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
-				}
-				if reason, err := d.scopeDispatchBlocker(project, dispatchNote, wfFile.Data, projectRuns); err != nil {
-					return err
-				} else if reason != "" {
-					current.LastError = "dispatch blocked: " + reason
+				if reason := armedWaveReviewDependencyBlocker(project.VaultRoot, note); reason != "" {
+					current.ProjectID = project.ProjectID
+					current.RecordID = recordID
+					current.ItemID = stringField(note.Data, "id")
+					current.LastError = "review dispatch blocked: " + reason
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
@@ -1449,8 +1607,53 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				if reason := daemonDispatchBlockedReasonWithAuthorization(project.VaultRoot, dispatchNote, dispatchNotesByID, dispatchNotesByRecordID, false); reason != "" {
-					current.LastError = reason
+				reviewerRunner := firstNonEmpty(wfFile.Data.Reviewer.Runner, wfFile.Data.Agents.Default)
+				selectedProfile, profileErr := resolveRunProfileForLane(note, wfFile.Data, runLaneReview, reviewerRunner)
+				if profileErr != nil {
+					current.LastError = "review dispatch blocked: runner profile: " + profileErr.Error()
+					current.UpdatedAt = now.Format(time.RFC3339)
+					if err := d.store.UpsertRun(current); err != nil {
+						return err
+					}
+					projectRuns[recordID] = current
+					continue
+				}
+				for _, warning := range selectedProfile.Warnings {
+					fmt.Fprintf(os.Stderr, "warning: task %s: %s\n", recordID, warning)
+				}
+				current.ProjectID = project.ProjectID
+				current.RecordID = recordID
+				current.ItemID = stringField(note.Data, "id")
+				current.WorkRevision = intField(note.Data, "work_revision")
+				selectedProfile = preserveResolvedRunIdentity(current, runLaneReview, selectedProfile)
+				// Execution retries must not use up the reviewer's attempts; review
+				// rounds are bounded separately by reviewer.max_cycles.
+				if current.Lane != runLaneReview {
+					current.AttemptCount = 0
+				}
+				current = prepareRunForLaneDispatch(current, runLaneReview, firstNonEmpty(selectedProfile.Definition.Harness, reviewerRunner))
+				current = applyResolvedProfileToRun(current, selectedProfile)
+				current.UpdatedAt = now.Format(time.RFC3339)
+				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+					return err
+				}
+				d.emitProjectStreamEvent(project.ProjectID, serveStreamKindReviewBatch, "review:batch", "needs", "tasks", "runs", "projects")
+				projectRuns[recordID] = current
+				if !shouldDispatchRun(current, now) {
+					continue
+				}
+				if blocked, _, err := d.automaticRetryBlockedByStopIntent(current); err != nil {
+					return err
+				} else if blocked {
+					continue
+				}
+				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
+					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
+				}
+				if reason, err := d.scopeDispatchBlocker(project, note, wfFile.Data, projectRuns); err != nil {
+					return err
+				} else if reason != "" {
+					current.LastError = "review dispatch blocked: " + reason
 					current.UpdatedAt = now.Format(time.RFC3339)
 					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
 						return err
@@ -1493,246 +1696,46 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				if blocked, err := d.executePlanBlockedReason(project, wfFile, dispatchNotes, dispatchNote, current); err != nil {
-					return err
-				} else if blocked != "" {
-					current.LastError = "automation plan do_not_dispatch: " + blocked
-					current.UpdatedAt = now.Format(time.RFC3339)
-					if LeaseState(strings.TrimSpace(current.LeaseState)) == LeaseStateRetryQueued {
-						current.LeaseState = string(LeaseStateUnclaimed)
-						current.NextRetryAt = ""
-						current.Terminal = false
-						clearActiveExecution(&current)
-					}
-					if err := d.store.UpsertRun(current); err != nil {
-						return err
-					}
-					projectRuns[recordID] = current
-					continue
-				}
 				if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
-					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneExecute}))
-				}
-				dispatchLane := runLaneExecute
-				if stringField(dispatchNote.Data, "work_kind") == "integrator" {
-					dispatchLane = runLaneIntegrator
+					return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
 				}
 				dispatchCandidates = append(dispatchCandidates, daemonDispatchCandidate{
-					Project: project, Workflow: wfFile, Note: dispatchNote, NotesByID: dispatchNotesByID, Run: current,
-					Lane: dispatchLane, Status: status,
+					Project: project, Workflow: wfFile, Note: note, NotesByID: notesByID, Run: current,
+					Lane: runLaneReview, Status: status,
 					StateActive:  stateActiveRuns[status],
 					ProjectLimit: projectActiveRunLimit(wfFile.Data),
 					StateLimit:   wfFile.Data.Agents.MaxConcurrentAgentsByState[status],
 					RunnerLimit:  fairDispatchRunnerLimit(wfFile.Data),
 				})
 			}
-		}
-
-		for _, note := range notes {
-			if daemonNoteKind(note) != "task" {
-				continue
-			}
-			status := stringField(note.Data, "status")
-			if !containsString(wfFile.Data.Tracker.ReviewStates, status) {
-				projected, ok, err := armedWaveIntegrationTaskProjection(project.VaultRoot, note)
-				if err != nil {
+			// Typed review results are consumed before the ordinary wave drain so an
+			// authoritative project has exactly one completion authority.  Legacy,
+			// disabled, and shadow modes are no-ops inside the reactor.
+			if err := d.reconcileReviewCompletion(project, wfFile.Data); err != nil {
+				if errorToIssue(err).Code != completionRepairRequiredError {
 					return err
 				}
-				if !ok || !containsString(wfFile.Data.Tracker.ReviewStates, stringField(projected.Data, "status")) {
-					continue
-				}
-				note = projected
-				status = stringField(note.Data, "status")
+				log.Printf("completion reactor: project=%s repair_required: %v", project.ProjectID, err)
 			}
-			recordID := trackerRecordID(note)
-			if recordID == "" {
-				continue
-			}
-			if _, skipped := skipReviewDispatch[recordID]; skipped {
-				continue
-			}
-			current := projectRuns[recordID]
-			closed, closeErr := externalLoopCloseTaskRecordedForCurrentRun(d.store, project.ProjectID, recordID, note, current)
-			if closeErr != nil {
-				return closeErr
-			}
-			if closed {
-				continue
-			}
-			reviewCycles, err := d.reviewCycleCount(project.ProjectID, recordID)
-			if err != nil {
+			if err := d.store.DeleteRunsNotIn(project.ProjectID, keep); err != nil {
 				return err
 			}
-			hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, recordID, intField(note.Data, "work_revision"), stringField(note.Data, "state_rev"))
-			if err != nil {
+			if err := d.store.TouchProjectPoll(project.ProjectID); err != nil {
 				return err
 			}
-			if hasResult {
-				current.ProjectID = project.ProjectID
-				current.RecordID = recordID
-				current.ItemID = stringField(note.Data, "id")
-				current.Lane = runLaneReview
-				current.WorkRevision = intField(note.Data, "work_revision")
-				current.LeaseState = string(LeaseStateReleased)
-				current.AttemptOutcome = string(AttemptOutcomeSucceeded)
-				current.NextRetryAt = ""
-				current.LastError = "typed review result recorded; awaiting review reactor"
-				current.UpdatedAt = now.Format(time.RFC3339)
-				current.Terminal = false
-				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
+			return nil
+		}()
+		if pollErr != nil {
+			if (d.dispatchRefusalReason != "" && pollErr.Error() == d.dispatchRefusalReason) || !daemonProjectPollErrorIsSkippable(pollErr) {
+				return pollErr
 			}
-			if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current, reviewCycles) {
-				// Never park a live run here: flipping its lease makes the wrapper
-				// heartbeat cancel the reviewer mid-turn ("completion-authoritative
-				// runner cancelled: context canceled").
-				if wfFile.Data.Reviewer.Enabled && reviewCycles >= wfFile.Data.Reviewer.MaxCycles && stringField(note.Data, "verified_at") == "" && !isDispatchingLeaseState(current.LeaseState) {
-					current.ProjectID = project.ProjectID
-					current.RecordID = recordID
-					current.ItemID = stringField(note.Data, "id")
-					current.Lane = runLaneReview
-					current.LeaseState = string(LeaseStateParkedNoProgress)
-					current.AttemptOutcome = string(AttemptOutcomeBlocked)
-					current.NextRetryAt = ""
-					current.LastError = fmt.Sprintf("review parked: automated review cycle cap reached (%d/%d); operator intervention required", reviewCycles, wfFile.Data.Reviewer.MaxCycles)
-					current.UpdatedAt = now.Format(time.RFC3339)
-					if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-						return err
-					}
-					projectRuns[recordID] = current
-				}
-				continue
-			}
-			if reason := armedWaveReviewDependencyBlocker(project.VaultRoot, note); reason != "" {
-				current.ProjectID = project.ProjectID
-				current.RecordID = recordID
-				current.ItemID = stringField(note.Data, "id")
-				current.LastError = "review dispatch blocked: " + reason
-				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
-			}
-			reviewerRunner := firstNonEmpty(wfFile.Data.Reviewer.Runner, wfFile.Data.Agents.Default)
-			selectedProfile, profileErr := resolveRunProfileForLane(note, wfFile.Data, runLaneReview, reviewerRunner)
-			if profileErr != nil {
-				current.LastError = "review dispatch blocked: runner profile: " + profileErr.Error()
-				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.store.UpsertRun(current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
-			}
-			for _, warning := range selectedProfile.Warnings {
-				fmt.Fprintf(os.Stderr, "warning: task %s: %s\n", recordID, warning)
-			}
-			current.ProjectID = project.ProjectID
-			current.RecordID = recordID
-			current.ItemID = stringField(note.Data, "id")
-			current.WorkRevision = intField(note.Data, "work_revision")
-			selectedProfile = preserveResolvedRunIdentity(current, runLaneReview, selectedProfile)
-			// Execution retries must not use up the reviewer's attempts; review
-			// rounds are bounded separately by reviewer.max_cycles.
-			if current.Lane != runLaneReview {
-				current.AttemptCount = 0
-			}
-			current = prepareRunForLaneDispatch(current, runLaneReview, firstNonEmpty(selectedProfile.Definition.Harness, reviewerRunner))
-			current = applyResolvedProfileToRun(current, selectedProfile)
-			current.UpdatedAt = now.Format(time.RFC3339)
-			if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
+			log.Printf("daemon poll: project=%s skipped: %v", projectID, pollErr)
+			dispatchCandidates = dispatchCandidates[:candidateCount]
+			sentinelProjects = sentinelProjects[:sentinelCount]
+			delete(visibilityIntervals, projectID)
+			if err := d.store.TouchProjectPoll(projectID); err != nil {
 				return err
 			}
-			d.emitProjectStreamEvent(project.ProjectID, serveStreamKindReviewBatch, "review:batch", "needs", "tasks", "runs", "projects")
-			projectRuns[recordID] = current
-			if !shouldDispatchRun(current, now) {
-				continue
-			}
-			if blocked, _, err := d.automaticRetryBlockedByStopIntent(current); err != nil {
-				return err
-			} else if blocked {
-				continue
-			}
-			if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
-				return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
-			}
-			if reason, err := d.scopeDispatchBlocker(project, note, wfFile.Data, projectRuns); err != nil {
-				return err
-			} else if reason != "" {
-				current.LastError = "review dispatch blocked: " + reason
-				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
-			}
-			crashLoopReason, err := d.crashLoopDispatchBlocker()
-			if err != nil {
-				return err
-			}
-			if crashLoopReason != "" {
-				current.LastError = crashLoopReason
-				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.store.UpsertRun(current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
-			}
-			invariantReason, err := d.invariantDispatchBlocker(project.ProjectID)
-			if err != nil {
-				return err
-			}
-			if invariantReason != "" {
-				current.LastError = invariantReason
-				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
-			}
-			if stateDispatchCapReachedForRun(status, stateActiveRuns, wfFile.Data, current) {
-				current.LastError = fmt.Sprintf("dispatch blocked: state %q concurrency cap reached", status)
-				current.UpdatedAt = now.Format(time.RFC3339)
-				if err := d.upsertRunWithStream(projectRuns[recordID], current); err != nil {
-					return err
-				}
-				projectRuns[recordID] = current
-				continue
-			}
-			if reason := strings.TrimSpace(d.dispatchRefusalReason); reason != "" {
-				return tuskerError(errorInvalidTransition, reason, withContext(map[string]any{"task": recordID, "lane": runLaneReview}))
-			}
-			dispatchCandidates = append(dispatchCandidates, daemonDispatchCandidate{
-				Project: project, Workflow: wfFile, Note: note, NotesByID: notesByID, Run: current,
-				Lane: runLaneReview, Status: status,
-				StateActive:  stateActiveRuns[status],
-				ProjectLimit: projectActiveRunLimit(wfFile.Data),
-				StateLimit:   wfFile.Data.Agents.MaxConcurrentAgentsByState[status],
-				RunnerLimit:  fairDispatchRunnerLimit(wfFile.Data),
-			})
-		}
-		// Typed review results are consumed before the ordinary wave drain so an
-		// authoritative project has exactly one completion authority.  Legacy,
-		// disabled, and shadow modes are no-ops inside the reactor.
-		if err := d.reconcileReviewCompletion(project, wfFile.Data); err != nil {
-			if errorToIssue(err).Code != completionRepairRequiredError {
-				return err
-			}
-			log.Printf("completion reactor: project=%s repair_required: %v", project.ProjectID, err)
-		}
-		if err := d.store.DeleteRunsNotIn(project.ProjectID, keep); err != nil {
-			return err
-		}
-		if err := d.store.TouchProjectPoll(project.ProjectID); err != nil {
-			return err
 		}
 	}
 	if err := d.dispatchFairCandidates(ctx, dispatchCandidates, globalLimit); err != nil {
@@ -1766,6 +1769,29 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		d.serve.refreshProjectSnapshot(projectID)
 	}
 	return nil
+}
+
+func daemonProjectPollErrorIsSkippable(err error) bool {
+	var typed *TuskerError
+	if !errors.As(err, &typed) {
+		return false
+	}
+	var leavesAreTyped func(error) bool
+	leavesAreTyped = func(err error) bool {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				if !leavesAreTyped(child) {
+					return false
+				}
+			}
+			return true
+		}
+		if wrapped := errors.Unwrap(err); wrapped != nil {
+			return leavesAreTyped(wrapped)
+		}
+		return errors.As(err, &typed)
+	}
+	return leavesAreTyped(err)
 }
 
 func daemonProjectNeedsTaskBodies(notes []Note) bool {
