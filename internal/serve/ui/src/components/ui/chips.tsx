@@ -7,8 +7,6 @@ import {
   outcomeToneOf,
   priorityTone,
   proofTone,
-  readinessLabelOf,
-  readinessToneOf,
   riskTone,
   statusLabelOf,
   statusToneOf,
@@ -64,14 +62,6 @@ export function PriorityChip({ priority }: { priority: Priority }) {
   return (
     <Chip tone={priorityTone[priority]} variant="outline" mono>
       {priority}
-    </Chip>
-  );
-}
-
-export function ReadinessChip({ readiness }: { readiness: string }) {
-  return (
-    <Chip tone={readinessToneOf(readiness)} variant="soft">
-      {readinessLabelOf(readiness)}
     </Chip>
   );
 }

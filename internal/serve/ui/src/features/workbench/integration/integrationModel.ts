@@ -63,50 +63,6 @@ export function waveReviewStage(review: WaveReview): WaveReviewStage {
   return review.authorization === "authorized" ? "queued" : "blocked";
 }
 
-function reviewErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Wave status could not be loaded. Try refreshing.";
-}
-
-function activeMemberStage(review: WaveReview): "executing" | "reviewing" | undefined {
-  if (review.members.some((member) => member.phase === "reviewing")) return "reviewing";
-  return review.members.some((member) => member.phase === "executing" || member.state === "running") ? "executing" : undefined;
-}
-
-function reviewHumanAction(review: WaveReview): string | undefined {
-  return review.humanActions?.map((item) => item.action.action.trim()).find(Boolean);
-}
-
-function reviewBlocker(review: WaveReview): string | undefined {
-  return review.blockers.find((blocker) => blocker.code !== "DEPENDENCY_WAITING" && blocker.code !== "HUMAN_GATE_OPEN")?.reason;
-}
-
-export function waveStartability(
-  waves: WaveSummary[],
-  reviews: WaveReview[] = [],
-  reviewErrors: Record<string, unknown> = {},
-) {
-  return Object.fromEntries(waves.map((wave) => {
-    const error = reviewErrors[wave.id];
-    const review = usableWaveReview(reviews.find((item) => item.waveId === wave.id), error);
-    const start = review?.controls.find((item) => item.action === "wave start");
-    const stage = review && waveReviewStage(review);
-    return [wave.id, !review ? {
-      state: "unknown" as const,
-      // An error is authoritative enough to suppress a stale terminal summary;
-      // an absent review without an error still permits legacy-only callers.
-      ...(error ? { stage: "unknown" as const } : {}),
-      reason: reviewErrorMessage(error),
-    } : {
-      state: stage === "ready" ? "ready" as const : "blocked" as const,
-      stage,
-      activeStage: activeMemberStage(review),
-      humanAction: reviewHumanAction(review),
-      blocker: reviewBlocker(review),
-      reason: stage === "queued" ? "Authorized; waiting for the next eligible task." : stage === "completed" || stage === "cancelled" ? undefined : start?.reason,
-    }];
-  }));
-}
-
 export function restoredPath(savedPath: string | undefined, explicitPath: string): string {
   return explicitPath || savedPath || "/";
 }

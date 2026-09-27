@@ -25,7 +25,7 @@ import {
   OutcomeChip,
   PriorityChip,
   ProofChip,
-  ReadinessChip,
+  TaskStateBadge,
   RiskChip,
   RunnerBadge,
   StatusChip,
@@ -306,13 +306,8 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
                 <StatusChip status={task.rawStatus ?? task.status} />
               </EditableFact>
             </FactRow>
-            <FactRow k="readiness">
-              <EditableFact
-                field={frontmatterByKey.readiness}
-                readOnly
-              >
-                <ReadinessChip readiness={frontmatterByKey.readiness.value} />
-              </EditableFact>
+            <FactRow k="state">
+              <TaskStateBadge state={task.state} />
             </FactRow>
             <FactRow k="priority">
               <EditableFact

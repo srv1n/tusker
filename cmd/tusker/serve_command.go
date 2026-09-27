@@ -418,7 +418,7 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDocgraphDocSave(w, r)
 		return
 	}
-	if s.handleAPIMutation(w, r, path) {
+	if s.handleTaskAuthoringMutation(w, r, path) || s.handleAPIMutation(w, r, path) {
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {

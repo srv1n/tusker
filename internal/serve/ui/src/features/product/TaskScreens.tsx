@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LayoutGrid, List, Play, ShieldCheck, Trash2 } from "lucide-react";
+import { LayoutGrid, List, Pencil, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { harnessLabel } from "@/lib/harness";
 import { RECOVERY_ACTION_LABEL, RECOVERY_EXPLANATION } from "@/lib/recovery";
 import { QueryBoundary } from "@/components/ui/states";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { api } from "@/lib/api";
-import { useDiscardTask, useRecovery, useReviewBatch, useRun, useTask, useTaskRoute, useTaskStart, useTasks } from "@/lib/queries";
+import { useDiscardTask, useRecovery, useReviewBatch, useRun, useTask, useTaskCreate, useTaskEdit, useTaskRoute, useTaskStart, useTasks, useWaveList } from "@/lib/queries";
+import { isTaskConflict, NEW_TASK_BODY, taskDraft, taskEditPatch, type TaskDraft } from "@/features/product/taskAuthoring";
 import { TaskStateBadge } from "@/components/ui/chips";
 import { boardGroups } from "@/features/workbench/board/boardModel";
 import { Markdown } from "@/features/docs/Markdown";
@@ -101,15 +102,74 @@ export function reviewOverrideNeedsReason({
   return Boolean(authoredReviewReason) || classificationChanged;
 }
 
+function useProfileOptions(projectId: string) {
+  const profiles = useQuery({ queryKey: ["models", projectId], queryFn: () => api.modelLevels(projectId) });
+  return Object.entries(profiles.data?.profiles ?? {}).filter(([name]) => !["disabled", "unavailable"].includes(profiles.data?.profile_states[name] ?? "")).map(([name, profile]) => ({ name, label: [profile.display_name || name, profile.harness, profile.model, profile.effort].filter(Boolean).join(" · ") }));
+}
+
+const fieldClass = "w-full min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-ink";
+
+/** Edit the authored contract through `tusker task update` semantics, with CAS on the revision loaded when editing began. */
+export function TaskContractEditor({ detail, projectId }: { detail: TaskDetail; projectId: string }) {
+  const edit = useTaskEdit(detail.id, projectId);
+  const profileOptions = useProfileOptions(projectId);
+  const [base, setBase] = useState<TaskDetail | null>(null);
+  const [draft, setDraft] = useState<TaskDraft>(() => taskDraft(detail));
+  const begin = () => { edit.reset(); setBase(detail); setDraft(taskDraft(detail)); };
+  if (!base) return <ProductButton onClick={begin} aria-label={`Edit task ${detail.id}`}><Pencil size={13} /> Edit task</ProductButton>;
+  const conflict = isTaskConflict(edit.error);
+  const patch = taskEditPatch(base, draft);
+  const field = (key: keyof TaskDraft) => ({ value: draft[key], disabled: edit.isPending || conflict, onChange: (event: { target: { value: string } }) => setDraft({ ...draft, [key]: event.target.value }) });
+  const pinOptions = (current: string) => <>{current && !profileOptions.some((profile) => profile.name === current) && <option value={current}>{current} · unavailable</option>}{profileOptions.map((profile) => <option key={profile.name} value={profile.name}>{profile.label}</option>)}</>;
+  return <ProductSection title="Edit task"><div className="space-y-4 rounded-lg border border-line bg-panel p-4 text-[12px]">
+    <label className="grid gap-1.5 text-muted">Title<input aria-label="Task title" {...field("title")} className={fieldClass} /></label>
+    <label className="grid gap-1.5 text-muted">Contract (goal, acceptance, notes — Markdown)<textarea aria-label="Task contract" rows={16} {...field("body")} className={cn(fieldClass, "font-mono text-[11.5px] leading-5")} /></label>
+    <div className="grid gap-4 sm:grid-cols-3">
+      <label className="grid gap-1.5 text-muted">Tier<select aria-label="Edit task tier" {...field("workLevel")} className={fieldClass}>{!base.authoredWorkLevel && <option value="" disabled>Unclassified</option>}{TIERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className="grid gap-1.5 text-muted">Worker<select aria-label="Edit task worker profile" {...field("executeProfile")} className={fieldClass}><option value="">Tier default</option>{pinOptions(draft.executeProfile)}</select></label>
+      <label className="grid gap-1.5 text-muted">Reviewer<select aria-label="Edit task reviewer profile" {...field("reviewProfile")} className={fieldClass}><option value="">Tier default</option>{pinOptions(draft.reviewProfile)}</select></label>
+    </div>
+    {conflict
+      ? <div role="alert" className="rounded-md bg-warn-soft px-3 py-2 text-warn"><p><strong>This task changed since you started editing.</strong> Your edits were not saved. Reload to load the latest version, then re-apply your changes.</p><ProductButton className="mt-2" onClick={begin}>Reload</ProductButton></div>
+      : <ActionResultLine pending={edit.isPending} error={edit.error} result={edit.data} />}
+    <div className="flex gap-2">
+      <ProductButton tone="primary" disabled={!patch || !draft.title.trim() || !draft.body.trim() || edit.isPending || conflict} onClick={() => patch && edit.mutate(patch, { onSuccess: () => setBase(null) })}>{edit.isPending ? "Saving…" : "Save"}</ProductButton>
+      <ProductButton tone="text" disabled={edit.isPending} onClick={() => setBase(null)}>Cancel</ProductButton>
+    </div>
+  </div></ProductSection>;
+}
+
+/** Create a task through `tusker new task` semantics, optionally adding it to a wave. */
+export function NewTaskForm({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const create = useTaskCreate(projectId);
+  const waves = useWaveList(projectId);
+  const navigate = useNavigate();
+  const [draft, setDraft] = useState({ title: "", workLevel: "standard", wave: "", body: NEW_TASK_BODY });
+  const field = (key: keyof typeof draft) => ({ value: draft[key], disabled: create.isPending, onChange: (event: { target: { value: string } }) => setDraft({ ...draft, [key]: event.target.value }) });
+  const submit = () => create.mutate({ ...draft, title: draft.title.trim(), wave: draft.wave || undefined }, { onSuccess: (result) => { if (result.taskId) void navigate({ to: "/p/$projectId/tasks/$taskId", params: { projectId, taskId: result.taskId } }); } });
+  return <ProductSection title="New task"><div className="space-y-4 rounded-lg border border-line bg-panel p-4 text-[12px]">
+    <label className="grid gap-1.5 text-muted">Title<input aria-label="New task title" {...field("title")} className={fieldClass} /></label>
+    <div className="grid gap-4 sm:grid-cols-2">
+      <label className="grid gap-1.5 text-muted">Tier<select aria-label="New task tier" {...field("workLevel")} className={fieldClass}>{TIERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className="grid gap-1.5 text-muted">Wave<select aria-label="New task wave" {...field("wave")} className={fieldClass}><option value="">No wave</option>{(waves.data ?? []).filter((wave) => !wave.landedAt).map((wave) => <option key={wave.id} value={wave.id}>{wave.id} · {wave.title}</option>)}</select></label>
+    </div>
+    <label className="grid gap-1.5 text-muted">Contract (goal, acceptance, notes — Markdown)<textarea aria-label="New task contract" rows={12} {...field("body")} className={cn(fieldClass, "font-mono text-[11.5px] leading-5")} /></label>
+    <ActionResultLine pending={create.isPending} error={create.error} result={create.data} />
+    <div className="flex gap-2">
+      <ProductButton tone="primary" disabled={!draft.title.trim() || !draft.body.trim() || create.isPending} onClick={submit}>{create.isPending ? "Creating…" : "Create task"}</ProductButton>
+      <ProductButton tone="text" disabled={create.isPending} onClick={onClose}>Cancel</ProductButton>
+    </div>
+  </div></ProductSection>;
+}
+
 export function TaskRouting({ detail, run, projectId }: { detail: TaskDetail; run: RunDetail | null | undefined; projectId: string }) {
   const route = useTaskRoute(detail.id, projectId);
-  const profiles = useQuery({ queryKey: ["models", projectId], queryFn: () => api.modelLevels(projectId) });
   const effectiveTier = detail.authoredWorkLevel ?? detail.effectiveExecute?.work_level ?? "standard";
   const [workLevel, setWorkLevel] = useState(effectiveTier);
   const [executeProfile, setExecuteProfile] = useState(detail.authoredExecuteProfile ?? "");
   const [reviewProfile, setReviewProfile] = useState(detail.authoredReviewProfile ?? "");
   useEffect(() => { setWorkLevel(effectiveTier); setExecuteProfile(detail.authoredExecuteProfile ?? ""); setReviewProfile(detail.authoredReviewProfile ?? ""); }, [effectiveTier, detail.authoredExecuteProfile, detail.authoredReviewProfile]);
-  const profileOptions = Object.entries(profiles.data?.profiles ?? {}).filter(([name]) => !["disabled", "unavailable"].includes(profiles.data?.profile_states[name] ?? "")).map(([name, profile]) => ({ name, label: [profile.display_name || name, profile.harness, profile.model, profile.effort].filter(Boolean).join(" · ") }));
+  const profileOptions = useProfileOptions(projectId);
   const active = run?.outcome === "running";
   const tierLabel = TIERS.find(([value]) => value === workLevel)?.[1] ?? "Tier";
   const blockers = routeBlockers(detail);
@@ -303,6 +363,7 @@ export function Tasks() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [view, setView] = useState<"board" | "list">("board");
+  const [creating, setCreating] = useState(false);
   const [epic, setEpic] = useState("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [progress, setProgress] = useState<BatchProgress | null>(null);
@@ -354,6 +415,8 @@ export function Tasks() {
       intro="The technical work behind each delivery, grouped by each task's current state."
       wide
       actions={
+        <div className="flex gap-2">
+        <ProductButton tone="primary" onClick={() => setCreating(true)} disabled={creating}><Plus size={13} /> New task</ProductButton>
         <div className="flex border border-line bg-raised">
           <ProductButton tone={view === "board" ? "primary" : "text"} className="rounded-none border-0" onClick={() => setView("board")}>
             <LayoutGrid size={13} /> Board
@@ -362,8 +425,10 @@ export function Tasks() {
             <List size={13} /> List
           </ProductButton>
         </div>
+        </div>
       }
     >
+      {creating && <NewTaskForm projectId={projectId} onClose={() => setCreating(false)} />}
       <div className="mb-8 flex flex-wrap items-center gap-2">
         <ProductLabel className="mr-2">Epic</ProductLabel>
         {["all", ...epics].map((value) => (
@@ -489,6 +554,7 @@ export function TaskDetail() {
           >
 			<div className="mb-6 rounded-lg border border-line bg-panel px-4 py-3" aria-live="polite">{detail.state.reason ? <p data-testid="task-state-reason" className="whitespace-pre-wrap text-[13px] text-ink">{detail.state.reason}</p> : null}{detail.state.next_action ? <p className="mt-1 text-[12px] text-ink-soft">Next: {detail.state.next_action}</p> : null}<p className="mt-2 text-[12px] text-muted">{outcomeUnknown ? RECOVERY_EXPLANATION : "Run queues this task. A paused wave stays paused."}</p>{!outcomeUnknown && startable && runBlocker && <p role="status" className="mt-2 text-[12px] text-warn">{runBlocker}</p>}<ActionResultLine className="mt-2" pending={outcomeUnknown ? recovery.isPending : taskStart.isPending} error={outcomeUnknown ? recovery.error : taskStart.error} result={outcomeUnknown ? recovery.data : taskStart.data} />{detail.runDirective && <p className="mt-2 text-[11px] leading-4 text-muted">{detail.runDirective.state === "queued" && `Queued by ${detail.runDirective.actor} · expires ${detail.runDirective.expiresAt}`}{detail.runDirective.state === "lapsed" && (detail.runDirective.reason ?? "The queued run lapsed before dispatch.")}{detail.runDirective.state === "consumed" && `Claimed by ${detail.runDirective.actor}.`}</p>}</div>
             <TaskContractDisclosure body={detail.body} projectId={projectId} open />
+            <TaskContractEditor key={detail.id} detail={detail} projectId={projectId} />
             <TaskRouting detail={detail} run={run.data} projectId={projectId} />
             <AgentAccessApprovalList projectId={projectId} taskId={detail.id} approvals={detail.agentAccessApprovals} onRetry={() => taskStart.mutate()} />
             {humanActions.map((action) => <div key={action.gateId} className="space-y-2"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Owner: {detail.gates.find((gate) => gate.id === action.gateId)?.owner || "Human owner"}</p><HumanActionCard action={action} taskId={detail.id} taskTitle={detail.title} projectId={projectId} approvals={detail.agentAccessApprovals} onRetry={() => taskStart.mutate()} /></div>)}

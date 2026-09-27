@@ -28,7 +28,6 @@ import { qk } from "../src/lib/queries";
 import {
   initialWaveView,
   settleEnteredWaveView,
-  waveStartability,
 } from "../src/features/workbench/integration/integrationModel";
 import { StreamStatusNote } from "../src/features/workbench/integration/StreamStatus";
 import {
@@ -298,13 +297,6 @@ describe("real-work wave entry and readiness", () => {
     expect(settleEnteredWaveView(null, wave({ status: "closed" }), false, undefined)).toBe("flow");
     // An explicit deep link still wins on entry.
     expect(settleEnteredWaveView(null, wave({ status: "closed" }), false, "flow")).toBe("flow");
-  });
-
-  test("unavailable readiness never enables start", () => {
-    expect(waveStartability([wave({ status: "open" })])["W-1"]).toEqual({
-      state: "unknown",
-      reason: "Wave status could not be loaded. Try refreshing.",
-    });
   });
 });
 
