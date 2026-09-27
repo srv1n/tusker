@@ -194,7 +194,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "evidence"}, {Command: "escalate", Subcommands: []string{"ack"}}, {Command: "factory", Subcommands: []string{"operations"}},
 		{Command: "feedback", Subcommands: []string{"add", "digest", "ingest", "promote", "review", "signals"}}, {Command: "finish"},
 		{Command: "gate"}, {Command: "gate-ledger", Subcommands: []string{"check", "record"}}, {Command: "gate-run"}, {Command: "gc", Flags: []string{"--json", "--ttl", "--vault", "--yes"}},
-		{Command: "handoff"}, {Command: "heartbeat"}, {Command: "help"}, {Command: "improve", Subcommands: []string{"scan"}},
+		{Command: "handoff"}, {Command: "heartbeat"}, {Command: "help"},
 		{Command: "init", Flags: []string{"--isolated-vault", "--vault", "--yes"}}, {Command: "install"}, {Command: "land"}, {Command: "list"}, {Command: "logbook"},
 		{Command: "knowledge", Subcommands: []string{"new"}},
 		{Command: "migrate", Subcommands: []string{"evidence-policy", "vault-root"}},
@@ -215,7 +215,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "task update", Flags: []string{"--body-file", "--by", "--clear-execute-profile", "--clear-review-profile", "--dependencies", "--execute-profile", "--generated-outputs", "--id", "--if-revision", "--json", "--owned-paths", "--rebind-contract", "--rebind-dependency-contracts", "--review-level", "--review-profile", "--review-reason", "--spec-refs", "--title", "--work-level"}, Purpose: "CAS-mutate an existing task contract's mutable authoring fields or explicitly rebind its stored contract fingerprint; identity, history, and proof are preserved."},
 		{Command: "task start", Flags: []string{"--by", "--current-workspace", "--json", "--mode"}, Purpose: "Authorize and claim one task: interactive claims in the current workspace through work start; background persists a task-scoped run directive for the runtime. Inside a paused wave the directive stays task-scoped and the wave remains paused."},
 		{Command: "run", Flags: []string{"--by", "--json"}, Purpose: "Queue one task or wave for background work."},
-		{Command: "trace", Subcommands: []string{"list", "replay", "show"}}, {Command: "uninstall", Flags: []string{"--force-state", "--state", "--yes"}}, {Command: "update"}, {Command: "validate"},
+		{Command: "trace", Subcommands: []string{"list", "show"}}, {Command: "uninstall", Flags: []string{"--force-state", "--state", "--yes"}}, {Command: "update"}, {Command: "validate"},
 		{Command: "verify", Subcommands: []string{"add", "recipe", "remove"}},
 		{Command: "vault", Subcommands: []string{"mount", "move", "repair", "set", "status", "unmount"}}, {Command: "version", Flags: []string{"--json"}},
 		{Command: "wave", Subcommands: []string{"add", "brief", "create", "outcome", "pause", "remove", "resume", "review", "show", "start"}},
@@ -224,7 +224,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "wave pause", Flags: []string{"--by", "--json"}, Purpose: "Pause new wave-owned admissions while admitted attempts finish; preserves the exact authorization fingerprint, actor, and timestamp."},
 		{Command: "wave resume", Flags: []string{"--by", "--json"}, Purpose: "Restore a paused wave to armed only while the current material still matches the stored authorization fingerprint; daemon polling then advances the remaining frontier automatically."},
 		{Command: "wave start", Flags: []string{"--by", "--json", "--mode"}, Purpose: "Authorize the exact current wave material and queue eligible roots as durable run directives; daemon polling advances each dependency frontier automatically. An offline daemon leaves an authorized wave Waiting."},
-		{Command: "work", Subcommands: []string{"cancel", "fail", "heartbeat", "profile", "progress", "readiness", "reconcile", "recover", "release", "retry", "review", "start", "status", "submit", "wait"}, Flags: []string{"--current-workspace", "--json", "--vault"}}, {Command: "worker", Subcommands: []string{"checkpoint", "message", "qualify", "reconcile", "status"}}, {Command: "xcode", Subcommands: []string{"doctor"}},
+		{Command: "work", Subcommands: []string{"cancel", "fail", "heartbeat", "profile", "progress", "readiness", "reconcile", "recover", "release", "retry", "review", "start", "status", "submit", "wait"}, Flags: []string{"--current-workspace", "--json", "--vault"}}, {Command: "worker", Subcommands: []string{"checkpoint", "message", "qualify", "reconcile", "status"}},
 	}
 }
 

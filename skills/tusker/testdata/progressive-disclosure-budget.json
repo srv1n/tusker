@@ -77,18 +77,6 @@
         "Existing Repository Onboarding",
         "Storage Boundary"
       ]
-    },
-    {
-      "id": "xcode",
-      "prompt": "Xcode failed because generated build state looks corrupted.",
-      "route": "Xcode generated build-state failure",
-      "guide": "references/XCODE_BUILD_STATE.md",
-      "loaded_words": 515,
-      "max_loaded_words": 574,
-      "required": [
-        "tusker xcode doctor",
-        "likely_infrastructure"
-      ]
     }
   ]
 }
