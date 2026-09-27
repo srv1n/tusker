@@ -664,3 +664,22 @@ func TestReviewProposalMarkerLinesUnwrapsTerminalRender(t *testing.T) {
 		t.Fatalf("truncated marker was accepted: %q", lines)
 	}
 }
+
+func TestUnquotedShellMeta(t *testing.T) {
+	for command, want := range map[string]bool{
+		`tusker review submit T-1 --summary "A1 ok; diff clean (A2)"`: false,
+		`tusker review submit T-1 --summary 'costs $5; uses a|b <x>'`: false,
+		`tusker show T-1 --vault /tmp/v`:                              false,
+		`tusker show T-1; rm -rf /tmp/x`:                              true,
+		`tusker show T-1 | head`:                                      true,
+		`echo "$(whoami)"`:                                            true,
+		"echo \"`id`\"":                                               true,
+		`tusker show T-1 > out.txt`:                                   true,
+		`echo 'unterminated`:                                          true,
+		`echo a\;b`:                                                   false,
+	} {
+		if got := unquotedShellMeta(command); got != want {
+			t.Errorf("unquotedShellMeta(%q) = %v, want %v", command, got, want)
+		}
+	}
+}
