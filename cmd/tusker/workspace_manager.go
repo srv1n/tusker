@@ -375,6 +375,23 @@ func validSharedWorkspaceRootConfig(root string) bool {
 
 func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePrepareRequest) (WorkspacePrepareResult, error) {
 	metadataPath := filepath.Join(workspacePath, ".tusker", "workspace.json")
+	if req.Strategy != WorkspaceStrategyShared && fileExists(metadataPath) {
+		if raw, err := readText(metadataPath); err == nil {
+			var existing WorkspaceMetadata
+			if json.Unmarshal([]byte(raw), &existing) == nil && existing.ProjectID != "" && existing.ProjectID != req.ProjectID {
+				_, root, err := workspacePathForRequest(req)
+				if err != nil {
+					return WorkspacePrepareResult{}, err
+				}
+				if err := assertWorkspaceWithinRoot(workspacePath, root); err != nil {
+					return WorkspacePrepareResult{}, err
+				}
+				if err := cleanupWorkspacePath(workspacePath); err != nil {
+					return WorkspacePrepareResult{}, err
+				}
+			}
+		}
+	}
 	created := false
 	if !fileExists(metadataPath) {
 		if req.Strategy != WorkspaceStrategyShared {
