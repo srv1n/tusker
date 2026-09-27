@@ -276,7 +276,7 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | parity C+D | optional revision on writes; `approvals list/respond` | Sol low | `cli.go`, `commands_v7.go`, `model_levels.go`, `agent_access_approval.go` | merged (c659ff70, 2dae9bcc). Private folders part waits for the access lane. |
 | serve parity | Serve actor rule (D3), slice G (icon, doc save to CLI), wave-review uses the task state | Sol low | `serve_actions.go`, `serve_docgraph.go`, `serve_execution_graph.go`, `direct_wave_authority.go` | running (`feat/serve-parity`) |
 | demo defaults | 0.4, F5 | Devin SWE-2 Max | `demo_cmd.go`, demo part of `serve_command.go`, `domain.ts` | running (`fix/demo-defaults`) |
-| UI authoring | parity F: edit and create tasks in the UI; T1 UI leftovers | Opus | `TaskScreens.tsx`, new `serve_task_edit.go` | running (`feat/ui-authoring`) |
+| UI authoring | parity F: edit and create tasks in the UI; T1 UI leftovers | Opus | `TaskScreens.tsx`, new `serve_task_edit.go` | merged (ab412a9e). Open: tier and pins now editable in two places (Edit form and Routing section) with different rework rules; owner to pick one. |
 
 Note 2026-09-27: the disk filled during the second full test run (681 failures, all from "no space left on device"). Merged worktrees and the Go build cache were cleared; ~9 GB free. Rerun the suite once lanes finish.
 
