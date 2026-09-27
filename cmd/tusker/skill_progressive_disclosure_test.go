@@ -155,7 +155,6 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 		"Run a task, resolve gates, watch runs":       "references/RUN.md",
 		"Tracker diagnosis or stuck task state":       "references/OPERATE.md",
 		"Existing-repo onboarding":                    "references/REPO_ONBOARDING.md",
-		"Xcode generated build-state failure":         "references/XCODE_BUILD_STATE.md",
 	}
 	for request, guide := range expectedRoutes {
 		if routeTable[request] != guide {
@@ -197,7 +196,7 @@ func TestTuskerSkillProgressiveDisclosure(t *testing.T) {
 	if err := json.Unmarshal(raw, &budget); err != nil {
 		t.Fatal(err)
 	}
-	if budget.Schema != "tusker.skill-disclosure-budget/v1" || len(budget.Cases) != 7 {
+	if budget.Schema != "tusker.skill-disclosure-budget/v1" || len(budget.Cases) != 6 {
 		t.Fatalf("budget fixture = %#v", budget)
 	}
 	routerRaw, err := os.ReadFile(filepath.Join(root, budget.Router.Path))

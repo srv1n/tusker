@@ -93,7 +93,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "improve", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "mcp", "demo", "task", "worker":
+	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "mcp", "demo", "task", "worker":
 		return true
 	default:
 		return false
@@ -352,8 +352,6 @@ func runInner(command string, args Args) (int, error) {
 		return 0, traceListCmd(args)
 	case "trace show":
 		return 0, traceShowCmd(args)
-	case "trace replay":
-		return 0, traceReplayCmd(args)
 	case "land":
 		return 0, landV7Cmd(args)
 	case "departure":
@@ -394,16 +392,6 @@ func runInner(command string, args Args) (int, error) {
 		}
 		args["_pos0"] = "promote"
 		return 0, feedbackV7Cmd(args)
-	case "improve":
-		return 0, improveV7Cmd(args)
-	case "improve scan":
-		args["_pos0"] = "scan"
-		return 0, improveV7Cmd(args)
-	case "xcode doctor":
-		return 0, xcodeDoctorCmd(args)
-	case "xcode":
-		printXcodeHelp()
-		return 0, nil
 	case "closeout", "closeout status":
 		return 0, closeoutV7Cmd(args)
 	case "evidence":
@@ -729,12 +717,6 @@ func runInner(command string, args Args) (int, error) {
 	case "help feedback":
 		printFeedbackHelp()
 		return 0, nil
-	case "help improve", "help improve scan":
-		printImproveHelp()
-		return 0, nil
-	case "help xcode", "help xcode doctor":
-		printXcodeHelp()
-		return 0, nil
 	case "help verify":
 		printVerifyHelp()
 		return 0, nil
@@ -886,8 +868,6 @@ Commands:
   departure           inspect or control scheduled departures
   feedback            add agent feedback notes and generate digests
   logbook             render a plain-language daily digest for a product reader
-  improve             opt-in scans for repeated work worth packaging
-  xcode               diagnose Xcode generated build-state failures
   attempt             start or hand off attempts
   handoff             hand off the latest attempt for a task
   brief               print human briefs
@@ -944,8 +924,6 @@ Help:
   tusker gc --help
   tusker gate --help
   tusker feedback --help
-  tusker improve --help
-  tusker xcode --help
   tusker packet --help
   tusker skill --help
 
@@ -1012,14 +990,10 @@ Purpose:
   2 for unavailable or invalid diagnoses.`)
 	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave pause", "wave resume", "wave review", "wave start", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
-	case "handoff", "finish", "gate", "trace", "trace list", "trace show", "trace replay", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy":
+	case "handoff", "finish", "gate", "trace", "trace list", "trace show", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy":
 		printV7Help()
 	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
 		printFeedbackHelp()
-	case "improve", "improve scan":
-		printImproveHelp()
-	case "xcode", "xcode doctor":
-		printXcodeHelp()
 	case "verify":
 		printVerifyHelp()
 	case "close":
