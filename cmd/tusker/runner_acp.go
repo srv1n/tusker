@@ -575,6 +575,7 @@ func (h *acpLiveHandle) observeUpdates() {
 	}
 	pending := map[string]pendingEvent{}
 	var pendingOrder []string
+	seenProposalMarkers := map[string]bool{}
 	flush := func() {
 		if dirty {
 			_ = appendACPEvent(h.eventLog, "agent_message", h.currentProvenance(), map[string]any{
@@ -632,6 +633,7 @@ func (h *acpLiveHandle) observeUpdates() {
 				}
 				_ = json.Unmarshal(activity.RawInput, &input)
 				toolTitle, toolCommand, toolStatus, toolOutput = activity.Title, input.Command, activity.Status, activityContentText(activity.Content)
+				h.logCompletedToolCallProposal(activity, seenProposalMarkers)
 				toolID := boundedACPObservation(activity.ToolCallID)
 				fields["tool_call_id"] = toolID
 				// The event reader uses message_id as the stable display identity.
@@ -685,6 +687,20 @@ func (h *acpLiveHandle) observeUpdates() {
 				pendingOrder = append(pendingOrder, key)
 			}
 			pending[key] = pendingEvent{kind: kind, fields: fields, title: toolTitle, command: toolCommand, status: toolStatus, output: truncateRunes(toolOutput, runActivityTextLimit)}
+		}
+	}
+}
+
+func (h *acpLiveHandle) logCompletedToolCallProposal(activity acpActivityUpdate, seen map[string]bool) {
+	if activity.Status != "completed" || (activity.SessionUpdate != "tool_call" && activity.SessionUpdate != "tool_call_update") {
+		return
+	}
+	for _, line := range strings.Split(activityContentText(activity.Content), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, reviewProposalMarker) && !seen[line] {
+			if _, err := fmt.Fprintln(h.log, line); err == nil {
+				seen[line] = true
+			}
 		}
 	}
 }
