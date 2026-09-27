@@ -278,6 +278,8 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | demo defaults | 0.4, F5 | Devin SWE-2 Max | `demo_cmd.go`, demo part of `serve_command.go`, `domain.ts` | merged (331fe33d): seed writes `completion_reactor: disabled`; demo projects always listed with a Demo badge; `--visible` is a no-op; epics have real summaries. |
 | UI authoring | parity F: edit and create tasks in the UI; T1 UI leftovers | Opus | `TaskScreens.tsx`, new `serve_task_edit.go` | merged (ab412a9e). Open: tier and pins now editable in two places (Edit form and Routing section) with different rework rules; owner to pick one. |
 
+Gate 2026-09-27 (after all lanes merged, plus seam fix e4980ab3): `cmd/tusker` green in four chunks (`-run '^Test[A-C]'`, `[D-L]`, `[M-R]`, `[S-Z]`, run with CLAUDECODE unset); `internal/...` green; `e2e/executionobservability` green; `e2e/crashrecovery` only fails `TestSpecToWaveDelivery`, which failed before this session (its fixture defines profiles in project config). `e2e/contractconvergence` skipped: it reruns the whole `cmd/tusker` suite. Long single runs die at ~16.5 min from this session, so run the suite in chunks.
+
 Note 2026-09-27: the disk filled during the second full test run (681 failures, all from "no space left on device"). Merged worktrees and the Go build cache were cleared; ~9 GB free. Rerun the suite once lanes finish.
 
 Queued, waiting on a file owner:
