@@ -210,7 +210,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F2 | `docs browse` should list a bad file with a problem note, not stop | running (Devin, `fix/f2-browse-skip`) | Decided 2026-09-27: browse lists the bad file with its problem; lint still fails on it. |
 | F3 | `tusker models show` fails outside a repository | fixed, unmerged (`fix/f3-models-global` 4b26e5c2) | Profiles are global, so no repository should be needed. |
 | F4 | Add `tusker wave list` | todo | |
-| F5 | Seeded epics have "TBD." as their summary | todo | |
+| F5 | Seeded epics have "TBD." as their summary | fixed (331fe33d) | |
 | F6 | Clean up the 41 registered projects, mostly dead temp folders | todo | Ask before removing any. Seven enabled projects have no vault left. |
 | F7 | One stale row froze all dispatch for five days | todo | RPF-T-0064 in `rzn/backend` (automation disabled) held `retry_queued` on a backlog task. The circuit latched on 2026-09-22 and kept the old violation after the row was retired. A disabled project should not be able to stop every project. Nothing told the owner. |
 | F8 | Resuming the daemon would start real work in the Tusker repo | done | The `tusker` project has automation on, with 7 armed waves and 8 directives. `kurpod` has 1 directive. Turned automation off for `tusker` and `kurpod` before resuming. Turn back on with `tusker projects enable --id <id>`. |
@@ -274,8 +274,8 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | access | D1 deny list, `access.protected_paths` | Sol medium (Claude reviews) | runner adapters, `config.go` | running (`feat/access-deny-list`) |
 | parity B | `wave list`, `runs list` (F4, F9) | Sol low | `cli.go`, new command files | merged (c35fe947) |
 | parity C+D | optional revision on writes; `approvals list/respond` | Sol low | `cli.go`, `commands_v7.go`, `model_levels.go`, `agent_access_approval.go` | merged (c659ff70, 2dae9bcc). Private folders part waits for the access lane. |
-| serve parity | Serve actor rule (D3), slice G (icon, doc save to CLI), wave-review uses the task state | Sol low | `serve_actions.go`, `serve_docgraph.go`, `serve_execution_graph.go`, `direct_wave_authority.go` | running (`feat/serve-parity`) |
-| demo defaults | 0.4, F5 | Devin SWE-2 Max | `demo_cmd.go`, demo part of `serve_command.go`, `domain.ts` | running (`fix/demo-defaults`) |
+| serve parity | Serve actor rule (D3), slice G (icon, doc save to CLI), wave-review uses the task state | Sol low | `serve_actions.go`, `serve_docgraph.go`, `serve_execution_graph.go`, `direct_wave_authority.go` | merged (43c678d3, eb5ffd9e, 64db6bf7): Serve follows the actor rule; `projects icon set`, `docs save` added. Not done: wave-review still has its own state words, because `integrationModel.ts:52` and `WaveAuthority.tsx:91` read them. |
+| demo defaults | 0.4, F5 | Devin SWE-2 Max | `demo_cmd.go`, demo part of `serve_command.go`, `domain.ts` | merged (331fe33d): seed writes `completion_reactor: disabled`; demo projects always listed with a Demo badge; `--visible` is a no-op; epics have real summaries. |
 | UI authoring | parity F: edit and create tasks in the UI; T1 UI leftovers | Opus | `TaskScreens.tsx`, new `serve_task_edit.go` | merged (ab412a9e). Open: tier and pins now editable in two places (Edit form and Routing section) with different rework rules; owner to pick one. |
 
 Note 2026-09-27: the disk filled during the second full test run (681 failures, all from "no space left on device"). Merged worktrees and the Go build cache were cleared; ~9 GB free. Rerun the suite once lanes finish.
