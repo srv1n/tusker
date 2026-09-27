@@ -63,6 +63,66 @@ func TestRunsContinueRefusesLiveAndCompletedAttempts(t *testing.T) {
 	}
 }
 
+func TestRunSayRefusesStaleResumeBeforeInterrupt(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project, taskPath := resumeFixtureProject(t, store)
+	workspace := t.TempDir()
+	now := time.Now().UTC()
+	started, ok := processStartTime(os.Getpid())
+	if !ok {
+		t.Fatal("cannot identify test process")
+	}
+	run := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: string(RunnerCodexExec),
+		RunnerProfile: "codex_exec-gpt-6-luna", RunnerHarness: "codex_exec", RunnerModel: "gpt-6-luna", RunnerEffort: "xhigh",
+		Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), LeaseGeneration: 1, ActiveAttemptID: "attempt-1",
+		SessionRef: "thread-1", WorkspacePath: workspace, AttemptCount: 1, ProcessPID: os.Getpid(), ProcessStartedAt: started,
+		StartedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339)}
+	loaded, err := loadProjectContents(store, project, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := resolveV7Note(project.VaultRoot, run.ItemID, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := renderAttemptPrompt(loaded.Project, loaded.Workflow, task, workspace, 1, "attempt-1", runLaneExecute, run, RunStatus{}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(t.TempDir(), "prompt.md")
+	if err := writeText(promptPath, prompt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "attempt-1", ProjectID: "app", RecordID: run.RecordID, ItemID: run.ItemID,
+		Runner: run.Runner, Lane: run.Lane, SessionRef: run.SessionRef, PromptPath: promptPath}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(RunnerSession{ProjectID: "app", RecordID: run.RecordID, Runner: run.Runner, SessionRef: run.SessionRef,
+		CurrentItemID: run.ItemID, LastAttemptID: "attempt-1", WorkspacePath: workspace, State: "open", Resumable: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, "---\nschema: tusker.task/v7\nkind: task\nid: APP-T-0001\ntitle: Changed\nstatus: ready\nstate_rev: sha256:y\n---\nBody\n"); err != nil {
+		t.Fatal(err)
+	}
+	wave := Note{Data: map[string]any{"id": "W-1", "authorization": "armed", "authorization_fingerprint": "fp", "authorized_at": now.Format(time.RFC3339)}}
+	_, err = sayRuntimeRun(store, root, project, task, wave, run, "human:test", "steer", "", now)
+	if err == nil || !strings.Contains(err.Error(), "stored native session prompt context fingerprint changed") {
+		t.Fatalf("Say preflight refusal = %v", err)
+	}
+	current, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || current == nil || current.LeaseState != string(LeaseStateRunning) || current.ActiveAttemptID != run.ActiveAttemptID {
+		t.Fatalf("Say interrupted worker: run=%#v err=%v", current, err)
+	}
+}
+
 func TestRunsSayPendingDeliveryOrderAndReceipt(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {

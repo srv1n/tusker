@@ -184,11 +184,11 @@ func clearFailedContextRecoveryIntent(store *RuntimeStore, recovery runSessionCo
 }
 
 // nativeContinuationPreflight is shared by the read model and the mutating path.
-func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject, wave Note, run RunStatus) (*RunnerSession, error, string) {
+func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject, wave Note, run RunStatus, allowLiveSay ...bool) (*RunnerSession, error, string) {
 	if run.Lane == runLaneReview {
 		return nil, nil, "native continuation is unavailable for review runs"
 	}
-	if runProcessGroupAlive(run) || isDispatchingLeaseState(run.LeaseState) {
+	if (len(allowLiveSay) == 0 || !allowLiveSay[0]) && (runProcessGroupAlive(run) || isDispatchingLeaseState(run.LeaseState)) {
 		return nil, nil, "a live owner still holds this task; reconnect or stop it before continuing"
 	}
 	if projectedAttemptOutcome(run.AttemptOutcome, run.LastError) == AttemptOutcomeSucceeded {
