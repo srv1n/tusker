@@ -1244,6 +1244,10 @@ func redriveRuntimeRunWithHook(store *RuntimeStore, run *RunStatus, actor, reaso
 	redriven.UpdatedAt = now.Format(time.RFC3339)
 	redriven.Terminal = false
 	redriven.Infrastructure = nil
+	if reviewPassHoldCode(redriven.ReasonCode) {
+		// A landing hold waits for the owner; redrive is that owner's retry.
+		redriven.ReasonCode = ""
+	}
 	clearActiveExecution(&redriven)
 	clearRunCloudRefs(&redriven)
 	reset := BudgetRedriveRecord{Actor: actor, Reason: reason, ResetAt: now.Format(time.RFC3339)}

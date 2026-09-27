@@ -352,3 +352,31 @@ func TestRedrivenRunParksAtFreshContinuationCap(t *testing.T) {
 		t.Fatalf("expected fresh continuation cap reason, got %q", parked.LastError)
 	}
 }
+
+func TestRedriveClearsReviewPassLandingHold(t *testing.T) {
+	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
+	run := RunStatus{
+		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneReview, LeaseState: string(LeaseStateReleased),
+		AttemptOutcome: string(AttemptOutcomeSucceeded), ReasonCode: string(RunFailureLandingFailed),
+		UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339),
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := redriveRuntimeRunWithHook(store, &run, "human:owner", "retry landing", now, nil); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || stored == nil {
+		t.Fatalf("stored run = %#v, %v", stored, err)
+	}
+	if reviewPassHoldCode(stored.ReasonCode) {
+		t.Fatalf("redrive kept the landing hold %q, so the pass handler would never retry", stored.ReasonCode)
+	}
+}
