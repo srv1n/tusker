@@ -52,6 +52,18 @@ func resolveV7Actor(args Args, operation string, policy v7ActorPolicy) (string, 
 	if len(policy.AllowedKinds) > 0 && !policy.AllowedKinds[kind] {
 		return "", tuskerError(errorInvalidField, operation+" requires an actor of kind "+strings.Join(sortedStrings(mapKeys(policy.AllowedKinds)), " or ")+", got "+actor)
 	}
+	if kind == "human" && agentSessionKind() != "" {
+		vaultPath, err := resolveVaultPath(args, false)
+		if err == nil {
+			allowed, err := agentsMayActAsOwner(vaultPath)
+			if err != nil {
+				return "", err
+			}
+			if !allowed {
+				return "", tuskerError(errorInvalidTransition, operation+": this project does not let agents act as the owner (agents.act_as_owner: false); ask the owner or use --by agent:<name>")
+			}
+		}
+	}
 	return actor, nil
 }
 
