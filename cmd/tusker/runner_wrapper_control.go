@@ -17,6 +17,8 @@ import (
 
 const claudeControlAckTimeout = 10 * time.Second
 
+var errClaudeEchoTimeout = errors.New("Claude echo timeout")
+
 type claudeControlRequest struct {
 	AttemptID       string `json:"attempt_id"`
 	LeaseGeneration int    `json:"lease_generation"`
@@ -26,9 +28,11 @@ type claudeControlRequest struct {
 }
 
 type claudeControlResponse struct {
-	Receipt   string `json:"receipt,omitempty"`
-	Uncertain bool   `json:"uncertain,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Receipt     string `json:"receipt,omitempty"`
+	Queued      bool   `json:"queued,omitempty"`
+	WriteFailed bool   `json:"write_failed,omitempty"`
+	Uncertain   bool   `json:"uncertain,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 // The status path is already recorded in both run and attempt rows. Hashing it
@@ -120,13 +124,7 @@ func handleClaudeControlConnection(ctx context.Context, conn net.Conn, req Start
 			response.Error = "message is empty"
 			return
 		}
-		receipt, err := handle.sendUserMessageAwaitEcho(request.Body, claudeControlAckTimeout)
-		if err != nil {
-			response.Uncertain = true
-			response.Error = err.Error()
-			return
-		}
-		response.Receipt = receipt
+		response = claudeControlSay(handle, request.Body, claudeControlAckTimeout)
 	case "interrupt":
 		if err := handle.Interrupt(ctx); err != nil {
 			response.Error = err.Error()
@@ -134,6 +132,20 @@ func handleClaudeControlConnection(ctx context.Context, conn net.Conn, req Start
 	default:
 		response.Error = "unsupported control operation"
 	}
+}
+
+func claudeControlSay(handle *claudeLiveHandle, body string, timeout time.Duration) claudeControlResponse {
+	receipt, wrote, err := handle.sendUserMessageAwaitEcho(body, timeout)
+	if err == nil {
+		return claudeControlResponse{Receipt: receipt}
+	}
+	if !wrote {
+		return claudeControlResponse{WriteFailed: true, Error: err.Error()}
+	}
+	if errors.Is(err, errClaudeEchoTimeout) {
+		return claudeControlResponse{Queued: true}
+	}
+	return claudeControlResponse{Uncertain: true, Error: err.Error()}
 }
 
 func sendClaudeWrapperControl(ctx context.Context, statusPath string, request claudeControlRequest) (claudeControlResponse, error) {

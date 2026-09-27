@@ -71,6 +71,36 @@ func TestClaudeWrapperControlChannel(t *testing.T) {
 	}
 }
 
+func TestClaudeSayEchoTimeoutIsQueued(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	response := claudeControlSay(&claudeLiveHandle{stdin: writer}, "during a tool call", time.Millisecond)
+	if !response.Queued || response.Uncertain || response.WriteFailed || response.Error != "" {
+		t.Fatalf("successful write followed by echo timeout: %+v", response)
+	}
+	line, err := bufio.NewReader(reader).ReadString('\n')
+	if err != nil || !strings.Contains(line, "during a tool call") {
+		t.Fatalf("queued stdin message = %q, %v", line, err)
+	}
+}
+
+func TestClaudeSayWriteFailureIsError(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	_ = writer.Close()
+	response := claudeControlSay(&claudeLiveHandle{stdin: writer}, "cannot write", time.Millisecond)
+	if !response.WriteFailed || response.Queued || response.Error == "" {
+		t.Fatalf("failed write: %+v", response)
+	}
+}
+
 func TestClaudeFailureCodes(t *testing.T) {
 	cases := []struct {
 		name string

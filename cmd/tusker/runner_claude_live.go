@@ -383,7 +383,7 @@ func (h *claudeLiveHandle) sendUserMessage(prompt string) error {
 	})
 }
 
-func (h *claudeLiveHandle) sendUserMessageAwaitEcho(body string, timeout time.Duration) (string, error) {
+func (h *claudeLiveHandle) sendUserMessageAwaitEcho(body string, timeout time.Duration) (string, bool, error) {
 	// The control server handles one connection at a time; this is the sole
 	// pending echo and its content must match the message just written.
 	wait := make(chan string, 1)
@@ -396,13 +396,13 @@ func (h *claudeLiveHandle) sendUserMessageAwaitEcho(body string, timeout time.Du
 		h.echoMu.Unlock()
 	}()
 	if err := h.sendUserMessage(body); err != nil {
-		return "", err
+		return "", false, err
 	}
 	select {
 	case uuid := <-wait:
-		return uuid, nil
+		return uuid, true, nil
 	case <-time.After(timeout):
-		return "", fmt.Errorf("Claude echo timeout")
+		return "", true, errClaudeEchoTimeout
 	}
 }
 
