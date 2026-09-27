@@ -269,7 +269,7 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | browse skip | F2 | Devin SWE-2 Max | `internal/docgraph/discovery.go` | merged (27df28d7) |
 | owner toggle | D3 per-project switch | Sol low | `actor_authority.go`, `config.go` | merged (1bf48115). `requireOwnerSession` wired by the daemon lane. |
 | task states | T1 | Opus (Go) + Opus (UI) | run_state, Serve responses, UI | running |
-| doc headers | V2 prep | Devin SWE-2 Max | docs front matter only | running (`docs/fill-headers`) |
+| doc headers | V2 prep | Devin SWE-2 Max | docs front matter only | merged (bb45d7b0): 52 files. 120 files in `docs/plans/` and `docs/reports/` have no front matter; left for V2. `docs check` shows 2 old errors in `.tusker/specs/`. |
 | daemon lane | owner-only wiring, 0.3 circuit auto-close, F11 kill switch, F25, F22, F12 | Opus | `daemon.go`, `runtime_store.go`, `sentinel.go`, `automation_commands.go`, `agent_coordination.go` | running (`fix/daemon-lane`) |
 | access | D1 deny list, `access.protected_paths` | Sol medium (Claude reviews) | runner adapters, `config.go` | running (`feat/access-deny-list`) |
 | parity B | `wave list`, `runs list` (F4, F9) | Sol low | `cli.go`, new command files | running (`feat/wave-runs-list`) |
