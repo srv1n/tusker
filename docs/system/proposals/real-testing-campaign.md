@@ -248,6 +248,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F41 | A policy refusal shows as Blocked `crashed` | todo (in Phase 2 brief) | QLH-T-0002's review proposal was refused by `review_proposal.go:341` (F14). The task showed Blocked "the harness failed after 3 attempts". It should be Blocked `not_allowed`, and the cap is 6 per the spec. |
 | F42 | Devin ACP refuses `swe-2-max` | fixed (49540b39) for swe-2-max only; ACP names it `swe-2-high` + `thought_level=max`. Follow-up: the catalog lists `devin models list` IDs that ACP rejects, and other SWE variants need the same general mapping | Q8 failed at launch: `ACP config option "model" did not advertise value "swe-2-max"`, though `runner catalog` lists it and `devin -p --model swe-2-max` works. The run log keeps only stderr byte counts and hashes, so it shows no cause. |
 | F43 | `runner test` needs a vault | todo | `tusker runner test <profile>` outside a repo fails with "No Tusker vault found". Profiles are global (same class as F3). |
+| F44 | Devin resume dies on a vendor ACP notification | in progress (Sol low `fix/acp-unknown-notification`) | Q8 hard Say: the interrupt and queued resume worked, but the resumed attempt failed with `acp protocol failure: unknown notification "_cognition.ai/turn_stats"` (`internal/acp/client.go:1730` poisons the client). The ACP spec says `_`-prefixed extensions are ignored. The same error used up 3 continuation retries and showed reason `unknown` (see F38 and F41). |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
@@ -329,6 +330,7 @@ never start the daemon.
 - 2026-09-27: Rerun on the F33 build. Codex passes dispatch, hard Say (same session, token delivered once), ask, Needs you, reply as `human:sarav`, Stop. Continue fails on F37. Claude blocked by F36 after moving its profile to `danger-full-access` (config backup in /tmp/tusker-agents).
 - 2026-09-27: F36 installed. Claude hit F38, recovered with Start fresh through the API (F39). Claude passes dispatch, soft Say (same attempt, token written; CLI said error, F40), ask, Needs you, reply. Stop/Continue deferred until F37.
 - 2026-09-27: Q7 Claude execute succeeded (result.txt correct, Say token, commit bd11f35). Sol low review then refused by F14 at the proposal step. Queued Phase 2 (S4) on the Opus lane after F37.
+- 2026-09-27: Q8 Devin: F42 fixed and installed. Dispatch works (ACP session). Hard Say interrupted and queued a resume; the resume failed on F44.
 - 2026-09-27: Re-armed W-0005 from the CLI on the owner's instruction (`--by human:sarav`).
 - 2026-09-27: Wrote this page. Finished Q0 to Q3. The owner ran `make install`,
   and TuskerBar started the daemon. Found the global circuit open since
