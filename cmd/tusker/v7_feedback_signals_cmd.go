@@ -887,16 +887,17 @@ func applyFeedbackPromoteTask(vaultPath string, plan *feedbackPromotePlan, outco
 	epic := strings.ToUpper(firstNonEmpty(args.String("epic"), v7EpicFromTaskID(firstNonEmpty(outcome.RelatedTasks...)), "VSD"))
 	id := nextSafeV7TaskID(vaultPath, epic)
 	if err := newV7Task(Args{
-		"vault":      vaultPath,
-		"quiet":      "true",
-		"epic":       epic,
-		"id":         id,
-		"title":      outcome.Title,
-		"status":     "backlog",
-		"priority":   strings.ToLower(firstNonEmpty(outcome.Severity, "P2")),
-		"risk":       feedbackPromoteRiskFromSeverity(outcome.Severity),
-		"size":       "m",
-		"proof-mode": "inline",
+		"vault":       vaultPath,
+		"quiet":       "true",
+		"epic":        epic,
+		"id":          id,
+		"title":       outcome.Title,
+		"status":      "backlog",
+		"priority":    strings.ToLower(firstNonEmpty(outcome.Severity, "P2")),
+		"risk":        feedbackPromoteRiskFromSeverity(outcome.Severity),
+		"size":        "m",
+		"proof-mode":  "inline",
+		"owned-paths": firstNonEmpty(args.String("owned-paths"), args.String("owned_paths")),
 	}); err != nil {
 		return err
 	}
