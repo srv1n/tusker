@@ -348,14 +348,14 @@ func TestFactoryOperationsProjection(t *testing.T) {
 		}
 		facts.Workflow.CompletionReactor = completionReactorModeProjection{
 			Effective: "legacy", Provenance: "legacy enabled config without completion_reactor.mode",
-			Warning: "example completion reactor warning", Repair: "example completion reactor repair",
+			Warning: legacyCompletionReactorModeWarning, Repair: legacyCompletionReactorModeRepair,
 		}
 		rendered := renderFactoryOperations(composeFactoryOperations(facts))
 		for _, expected := range []string{
 			"Dispatch scope warning: " + legacyDispatchScopeWarning,
 			"Dispatch scope repair: " + legacyDispatchScopeRepair,
-			"Completion reactor warning: " + "example completion reactor warning",
-			"Completion reactor repair: " + "example completion reactor repair",
+			"Completion reactor warning: " + legacyCompletionReactorModeWarning,
+			"Completion reactor repair: " + legacyCompletionReactorModeRepair,
 		} {
 			if !strings.Contains(rendered, expected) {
 				t.Fatalf("plain output omitted %q:\n%s", expected, rendered)

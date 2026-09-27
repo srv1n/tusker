@@ -5,15 +5,17 @@ import (
 )
 
 // completionReactorMode says who lands and closes a task after a passing
-// review. authoritative (the default): the daemon's pass handler does it.
-// disabled: the owner does it by hand. shadow is still accepted in config and
-// behaves like disabled.
+// review. Only authoritative turns on the daemon's pass handler. An existing
+// config with no mode keeps its previous behavior (disabled, or legacy on an
+// automation-enabled project): the owner lands and closes. New-project and
+// demo configs write authoritative explicitly.
 type completionReactorMode string
 
 const (
 	completionReactorModeDisabled      completionReactorMode = "disabled"
 	completionReactorModeShadow        completionReactorMode = "shadow"
 	completionReactorModeAuthoritative completionReactorMode = "authoritative"
+	completionReactorModeLegacy        completionReactorMode = "legacy"
 )
 
 type completionReactorModeProjection struct {
@@ -24,9 +26,13 @@ type completionReactorModeProjection struct {
 	Repair     string `json:"repair,omitempty"`
 }
 
+const legacyCompletionReactorModeWarning = "automation.completion_reactor.mode is absent on an enabled project; preserving legacy completion authority"
+const legacyCompletionReactorModeRepair = "set automation.completion_reactor.mode: disabled, shadow, or authoritative"
+
 func defaultCompletionReactorMode() completionReactorModeProjection {
 	return completionReactorModeProjection{
-		Effective:  string(completionReactorModeAuthoritative),
+		Configured: string(completionReactorModeDisabled),
+		Effective:  string(completionReactorModeDisabled),
 		Provenance: "fresh default",
 	}
 }
@@ -64,7 +70,7 @@ func completionReactorModeFromLayer(layer tuskerConfigLayer) (string, bool, erro
 	case completionReactorModeDisabled, completionReactorModeShadow, completionReactorModeAuthoritative:
 		return mode, true, nil
 	default:
-		return "", false, tuskerError(errorConfigInvalid, "automation.completion_reactor.mode must be disabled, shadow, or authoritative", withPath(layer.Path), withHint("set automation.completion_reactor.mode: authoritative (daemon lands and closes) or disabled (owner does)"))
+		return "", false, tuskerError(errorConfigInvalid, "automation.completion_reactor.mode must be disabled, shadow, or authoritative", withPath(layer.Path), withHint("set automation.completion_reactor.mode: disabled until shadow comparison is ready"))
 	}
 }
 
@@ -86,6 +92,14 @@ func resolveCompletionReactorMode(resolved resolvedTuskerConfig, automationEnabl
 		if configured {
 			return completionReactorModeProjection{Configured: mode, Effective: mode, Provenance: layer.Name}, nil
 		}
+	}
+	if automationEnabled {
+		return completionReactorModeProjection{
+			Effective:  string(completionReactorModeLegacy),
+			Provenance: "legacy enabled config without completion_reactor.mode",
+			Warning:    legacyCompletionReactorModeWarning,
+			Repair:     legacyCompletionReactorModeRepair,
+		}, nil
 	}
 	return defaultCompletionReactorMode(), nil
 }

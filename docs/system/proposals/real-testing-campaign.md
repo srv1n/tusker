@@ -337,8 +337,32 @@ flowchart LR
 ```
 
 A `changes_requested` verdict sends the findings back to the worker (rework).
-`automation.completion_reactor.mode: disabled` turns the pass handler off, and
-the owner lands and closes by hand. Any other value, or no value, turns it on.
+Only `automation.completion_reactor.mode: authoritative` turns the pass
+handler on. New-project and demo configs write it. An existing project with no
+mode keeps its old behavior: the owner lands and closes by hand. (The old
+"legacy" landing before review is gone.)
+
+Rules the handler keeps (revised after the Sol medium review):
+
+- It acts only on the result of the task's latest review attempt. If that
+  attempt recorded nothing, an older pass is not current.
+- Before landing it rechecks the pass against the task: same `state_rev`,
+  same implementation source, same proof and gates, and the execute
+  worktree's material unchanged since review. A stale pass holds the task In
+  review with the reason.
+- The diff check covers `owned_paths`, `generated_outputs`, and the task's
+  own Tusker records only (vault files named for the task). Renames count as
+  a delete plus an add, so both paths are checked. A task with no
+  `owned_paths` never auto-lands repository changes; it waits for the
+  owner's Land.
+- The task must be a current member of its wave (the wave lists it, or names
+  it as its singleton delivery task).
+- The close preflight runs before landing, so a refused close never leaves
+  reviewed work on the integration branch alone.
+- It lands exactly the reviewed commit from the stored result, not whatever
+  the task branch points at now. If that commit is already on the
+  integration branch (a stop after the ref update), the next poll only
+  closes.
 
 **Guards that go:**
 

@@ -13,29 +13,25 @@ import (
 const reviewPassActor = "reviewer:daemon-review-pass"
 
 // reviewPassHandlerEnabled reports whether a passing review lands and closes
-// the task on its own: mode authoritative, the default. disabled (and the old
-// shadow) leave landing and closing to the owner.
+// the task on its own. Only an explicit authoritative mode turns it on.
 func reviewPassHandlerEnabled(wf Workflow) bool {
-	switch completionReactorMode(strings.TrimSpace(wf.CompletionReactor.Effective)) {
-	case completionReactorModeDisabled, completionReactorModeShadow:
-		return false
-	}
-	return true
+	return completionReactorMode(strings.TrimSpace(wf.CompletionReactor.Effective)) == completionReactorModeAuthoritative
 }
 
 // reconcileReviewCompletion is the pass handler. For every task in review it
-// takes the result of the latest review attempt and acts on it:
+// takes the result of the task's latest review attempt (none if that attempt
+// recorded no result) and acts on it:
 //
 //   - pass: the daemon already ran the task's Verification commands in the task
-//     worktree before it recorded the pass (validateReviewProposal). Check the
-//     diff stays inside owned_paths, land to the wave's integration branch,
-//     then close the task.
+//     worktree before it recorded the pass (validateReviewProposal). Recheck
+//     that the pass still matches the task, its source, proof and material;
+//     check wave membership, owned_paths, and close eligibility; land exactly
+//     the reviewed commit; then close.
 //   - changes_requested: send the findings back to the worker.
 //
-// Every step is idempotent: a landed source is already an ancestor of the
-// integration branch, and a closed task is no longer in review. A crash between
-// land and close therefore finishes on the next poll. One task's failure never
-// stops the others.
+// The reviewed commit is durable in the stored result. After a crash between
+// land and close, the next poll finds that commit already on the integration
+// branch and only closes. One task's failure never stops the others.
 func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflow) error {
 	if d == nil || d.store == nil || !reviewPassHandlerEnabled(wf) {
 		return nil
@@ -60,7 +56,7 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 		if err != nil || stringField(task.Data, "status") != "review" {
 			continue
 		}
-		result, ok := d.latestReviewResult(project.ProjectID, taskID, byTask[taskID])
+		result, ok := d.currentReviewResult(project.ProjectID, taskID, byTask[taskID])
 		if !ok || result.WorkRevision != intField(task.Data, "work_revision") {
 			continue
 		}
@@ -71,25 +67,30 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 	return nil
 }
 
-// latestReviewResult picks the result of the most recent review attempt. Older
-// results describe work the worker has since changed.
-func (d *Daemon) latestReviewResult(projectID, taskID string, results []ReviewResult) (ReviewResult, bool) {
-	if len(results) == 0 {
+// currentReviewResult returns the result recorded by the task's latest review
+// attempt. When that attempt recorded nothing (for example a refused
+// proposal), an older pass is not current and nothing is returned.
+func (d *Daemon) currentReviewResult(projectID, taskID string, results []ReviewResult) (ReviewResult, bool) {
+	rows, err := d.store.ListAttemptsForRun(projectID, taskID)
+	if err != nil {
 		return ReviewResult{}, false
 	}
 	attempts := map[string]RunAttempt{}
-	if rows, err := d.store.ListAttemptsForRun(projectID, taskID); err == nil {
-		for _, attempt := range rows {
-			attempts[attempt.AttemptID] = attempt
+	latest := ""
+	for _, attempt := range rows {
+		attempts[attempt.AttemptID] = attempt
+	}
+	for _, attempt := range rows {
+		if attempt.Lane == runLaneReview && (latest == "" || completionReviewAttemptAfter(attempts, attempt.AttemptID, latest, "", "")) {
+			latest = attempt.AttemptID
 		}
 	}
-	latest := results[0]
-	for _, candidate := range results[1:] {
-		if completionReviewAttemptAfter(attempts, candidate.AttemptID, latest.AttemptID, candidate.CreatedAt, latest.CreatedAt) {
-			latest = candidate
+	for _, result := range results {
+		if latest != "" && result.AttemptID == latest {
+			return result, true
 		}
 	}
-	return latest, true
+	return ReviewResult{}, false
 }
 
 func (d *Daemon) handleReviewResult(project RegisteredProject, task Note, result ReviewResult) error {
@@ -114,85 +115,191 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 		return err
 	}
 	if run != nil && (isDispatchingLeaseState(run.LeaseState) || reviewPassHoldCode(run.ReasonCode)) {
-		// A live attempt owns the task, or an earlier landing failure is
+		// A live attempt owns the task, or an earlier landing problem is
 		// waiting for the owner. Either way there is nothing to do yet.
 		return nil
 	}
-	if _, inWave := reviewPassWave(project.VaultRoot, task); !inWave {
-		// Review hand-off binds every task to a wave (or a singleton delivery
-		// unit). A task without one was reviewed outside that path; leave it
-		// for the owner's Land, which creates the unit.
+	wave, member := reviewPassWave(project.VaultRoot, task)
+	if !member {
+		// The task is not (or no longer) a member of the wave it points at.
+		// Leave it for the owner's Land, which creates or repairs the unit.
 		return nil
 	}
-	if stray, err := reviewPassStrayPaths(project, task, result.ImplementationSHA); err != nil {
-		return err
-	} else if len(stray) > 0 {
-		finding := "The reviewed change touches files outside the task's owned_paths: " + strings.Join(stray, ", ") +
-			". Move the change inside owned_paths, or ask the architect to widen them, then request review again."
-		return returnReviewerFindingToImplementer(project.VaultRoot, taskID, finding, "daemon:review-pass")
-	}
-	if err := landV7CmdAsWaveDrain(Args{
-		"vault": project.VaultRoot,
-		"quiet": "true",
-		"_pos0": taskID,
-		"from":  d.latestExecuteWorkspace(project.ProjectID, taskID),
-	}); err != nil {
-		return d.holdReviewPassForLanding(run, err)
+	source := strings.TrimSpace(result.ImplementationSHA)
+	integration := v7WaveIntegrationBranch(wave)
+	landed := source != "" && gitRefExists(project.RepoRoot, "refs/heads/"+integration) && gitMergeBaseAncestor(project.RepoRoot, source, integration)
+	if !landed {
+		if reason := reviewPassDrift(d.store, project.VaultRoot, task, result); reason != "" {
+			return d.holdReviewPass(run, RunFailureLandingFailed, "the review pass is stale ("+reason+"); review again or land by hand")
+		}
+		stray, undeclared, err := reviewPassStrayPaths(project, task, wave, source)
+		if err != nil {
+			return err
+		}
+		if undeclared {
+			return d.holdReviewPass(run, RunFailureLandingFailed, "the task declares no owned_paths, so the daemon will not land its changes; check them and land by hand")
+		}
+		if len(stray) > 0 {
+			finding := "The reviewed change touches files outside the task's owned_paths: " + strings.Join(stray, ", ") +
+				". Move the change inside owned_paths, or ask the architect to widen them, then request review again."
+			return returnReviewerFindingToImplementer(project.VaultRoot, taskID, finding, "daemon:review-pass")
+		}
+		if err := reviewPassClosePreflight(project.VaultRoot, taskID); err != nil {
+			return d.holdReviewPass(run, RunFailureLandingFailed, "close would be refused, so nothing was landed: "+firstActionableLine("", err.Error()))
+		}
+		// Land exactly the reviewed commit, not whatever the task branch or
+		// worktree points at now. The land path uses it under its lock.
+		if err := landV7CmdAsReviewPass(Args{
+			"vault": project.VaultRoot,
+			"quiet": "true",
+			"_pos0": taskID,
+			"from":  d.latestExecuteWorkspace(project.ProjectID, taskID),
+		}, map[string]string{taskID: source}); err != nil {
+			code := RunFailureLandingFailed
+			if strings.Contains(strings.ToLower(err.Error()), "conflict") {
+				code = RunFailureMergeConflict
+			}
+			return d.holdReviewPass(run, code, firstActionableLine("", err.Error()))
+		}
+		if injectReviewPassCrash != nil {
+			if err := injectReviewPassCrash("after_land"); err != nil {
+				return err
+			}
+		}
 	}
 	if _, err := closeV7Task(project.VaultRoot, taskID, reviewPassActor, Args{
 		"vault": project.VaultRoot, "quiet": "true", "local": "true", "by": reviewPassActor,
-		"reason": "review passed (" + result.AttemptID + "); landed and closed by the daemon",
+		"reason": "review passed (" + result.AttemptID + "); landed " + source + " and closed by the daemon",
 	}, true); err != nil {
 		return fmt.Errorf("close after landing: %w", err)
 	}
 	return nil
 }
 
-// reviewPassStrayPaths lists files the reviewed commit changes outside the
-// task's owned_paths, generated_outputs, and the Tusker vault. A task that
-// declares no paths has nothing to enforce.
-func reviewPassStrayPaths(project RegisteredProject, task Note, source string) ([]string, error) {
-	repoRoot := project.RepoRoot
-	source = strings.TrimSpace(source)
-	if source == "" || !v7GitRepo(repoRoot) {
-		return nil, nil
-	}
-	scope, err := canonicalTaskMaterialScope(project.VaultRoot, task)
+// injectReviewPassCrash is a test seam that stops the handler between the ref
+// update and the close.
+var injectReviewPassCrash func(point string) error
+
+// reviewPassClosePreflight checks close eligibility before anything lands, so
+// a refused close never leaves reviewed work on the integration branch alone.
+func reviewPassClosePreflight(vaultPath, taskID string) error {
+	idx, err := loadV7Index(vaultPath)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	task, ok := idx.Tasks[taskID]
+	if !ok {
+		return tuskerError(errorNotFound, "V7 task not found: "+taskID)
+	}
+	_, err = v7ClosePreflight(vaultPath, task, idx, v7ClosePreflightRequest{
+		Args: Args{"vault": vaultPath, "local": "true", "by": reviewPassActor}, Actor: reviewPassActor, Action: "close",
+		RequireReview: true, ExpectedTaskID: taskID, SkipCommandVerification: true,
+	})
+	return err
+}
+
+// reviewPassDrift reports why a stored pass no longer describes the task: a
+// new task revision, a different implementation source, changed proof or
+// gates, or implementation material that changed after review.
+func reviewPassDrift(store *RuntimeStore, vaultPath string, task Note, result ReviewResult) string {
+	if stringField(task.Data, "state_rev") != result.TaskStateRev {
+		return "the task changed after review"
+	}
+	source, err := reviewImplementationSource(store, RunStatus{ProjectID: result.ProjectID, RecordID: result.TaskID, WorkRevision: result.WorkRevision}, task)
+	if err != nil || source != result.ImplementationSHA {
+		return "the implementation source changed after review"
+	}
+	proof, gates, err := reviewObjectiveSnapshots(vaultPath, task)
+	if err == nil && (proof != result.ProofFingerprint || gates != result.GateFingerprint) && result.MaterialFingerprint != "" {
+		proof, gates, err = reviewObjectiveSnapshotsForMaterial(vaultPath, task, result.MaterialFingerprint)
+	}
+	if err != nil {
+		return "proof is unavailable: " + err.Error()
+	}
+	if proof != result.ProofFingerprint || gates != result.GateFingerprint {
+		return "proof or gates changed after review"
+	}
+	if !reviewMaterialFingerprintValid(result.MaterialFingerprint) {
+		return "the review has no implementation material fingerprint"
+	}
+	_, expected, err := reviewImplementationParent(store, vaultPath, result.ProjectID, result.TaskID, result.WorkRevision, result.ImplementationSHA, task)
+	if err != nil {
+		return "the implementation is unavailable: " + err.Error()
+	}
+	material, err := reviewAttemptMaterialFingerprint(store, result.ProjectID, result.TaskID, result.AttemptID, result.WorkRevision, result.ImplementationSHA)
+	if err != nil || material != result.MaterialFingerprint || material != expected {
+		return "the implementation material changed after review"
+	}
+	return ""
+}
+
+// reviewPassStrayPaths lists files the reviewed commit changes outside the
+// task's owned_paths, its generated_outputs, and the task's own Tusker records
+// (files in the vault named for the task). Renames count as a delete and an
+// add, so both paths are checked. undeclared is true when the task declares no
+// owned_paths or generated_outputs but the commit changes repository files:
+// the daemon then leaves the landing to the owner.
+func reviewPassStrayPaths(project RegisteredProject, task Note, wave Note, source string) ([]string, bool, error) {
+	repoRoot := project.RepoRoot
+	if source == "" || !v7GitRepo(repoRoot) {
+		return nil, false, nil
+	}
+	taskID := strings.ToUpper(strings.TrimSpace(stringField(task.Data, "id")))
+	owned, err := normalizeWorkspaceMaterialScope(normalizeList(task.Data["owned_paths"]))
+	if err != nil {
+		return nil, false, err
 	}
 	generated, err := taskGeneratedOutputScope(task)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	scope = append(scope, generated...)
-	if len(scope) == 0 {
-		return nil, nil
-	}
-	if vaultRel, relErr := filepath.Rel(repoRoot, project.VaultRoot); relErr == nil && vaultRel != "." && !strings.HasPrefix(vaultRel, "..") {
-		scope = append(scope, filepath.ToSlash(vaultRel))
+	scope := append(owned, generated...)
+	vaultRel, relErr := filepath.Rel(repoRoot, project.VaultRoot)
+	if relErr != nil || vaultRel == "." || strings.HasPrefix(vaultRel, "..") {
+		vaultRel = ""
 	}
 	target := "HEAD"
-	if wave, ok := reviewPassWave(project.VaultRoot, task); ok {
-		if branch := v7WaveIntegrationBranch(wave); gitRefExists(repoRoot, "refs/heads/"+branch) {
-			target = branch
-		}
+	if branch := v7WaveIntegrationBranch(wave); gitRefExists(repoRoot, "refs/heads/"+branch) {
+		target = branch
 	}
 	base, err := gitOutputTrim(repoRoot, "merge-base", target, source)
 	if err != nil {
-		return nil, fmt.Errorf("owned_paths check cannot find the merge base: %w", err)
+		return nil, false, fmt.Errorf("owned_paths check cannot find the merge base: %w", err)
 	}
-	changed, err := gitOutputTrim(repoRoot, "diff", "--name-only", base, source)
+	changed, err := gitCombined(repoRoot, "diff", "--no-renames", "--name-only", "-z", base, source)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var stray []string
-	for _, path := range strings.Split(changed, "\n") {
-		if path = strings.TrimSpace(path); path != "" && !workspaceMaterialScopeContains(scope, path) {
+	for _, path := range strings.Split(changed, "\x00") {
+		path = filepath.ToSlash(strings.TrimSpace(path))
+		if path == "" || reviewPassTaskRecord(vaultRel, taskID, path) {
+			continue
+		}
+		if len(scope) == 0 {
+			return nil, true, nil
+		}
+		if !workspaceMaterialScopeContains(scope, path) {
 			stray = append(stray, path)
 		}
 	}
-	return stray, nil
+	return stray, false, nil
+}
+
+// reviewPassTaskRecord reports whether path is one of the task's own Tusker
+// records: a file inside the vault named for the task, or inside a folder
+// named for it.
+func reviewPassTaskRecord(vaultRel, taskID, path string) bool {
+	if vaultRel == "" || taskID == "" || !strings.HasPrefix(path, filepath.ToSlash(vaultRel)+"/") {
+		return false
+	}
+	for _, part := range strings.Split(strings.TrimPrefix(path, filepath.ToSlash(vaultRel)+"/"), "/") {
+		name := strings.ToUpper(strings.TrimSuffix(part, filepath.Ext(part)))
+		if name == taskID || strings.HasPrefix(name, taskID+"-") || strings.HasPrefix(name, taskID+".") || strings.HasPrefix(name, taskID+"_") {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Daemon) latestExecuteWorkspace(projectID, taskID string) string {
@@ -217,32 +324,30 @@ func reviewPassHoldCode(code string) bool {
 	return false
 }
 
-// holdReviewPassForLanding records a landing failure on the run so the task
-// shows In review with the reason, and the handler stops retrying until the
-// owner lands by hand or the task goes back to the worker.
-func (d *Daemon) holdReviewPassForLanding(run *RunStatus, landErr error) error {
+// holdReviewPass records why a passing review did not land, so the task shows
+// In review with the reason, and the handler stops retrying until the owner
+// lands by hand or the task goes back to the worker.
+func (d *Daemon) holdReviewPass(run *RunStatus, code RunFailureReasonCode, reason string) error {
 	if run == nil {
-		return landErr
-	}
-	summary := firstActionableLine("", landErr.Error())
-	code := RunFailureLandingFailed
-	if strings.Contains(strings.ToLower(landErr.Error()), "conflict") {
-		code = RunFailureMergeConflict
+		return fmt.Errorf("%s", reason)
 	}
 	updated := *run
 	updated.ReasonCode = string(code)
-	updated.LastError = limitLandingSummary(summary, 500)
+	updated.LastError = limitLandingSummary(reason, 500)
 	if err := d.upsertRunWithStream(*run, updated); err != nil {
 		return err
 	}
-	return landErr
+	return fmt.Errorf("%s", reason)
 }
 
 // reviewPassWave is the wave (or singleton delivery unit) the task lands into.
-// Membership is enough: arming governs dispatch, not landing reviewed work.
+// Both directions must agree: the task points at the wave and the wave lists
+// the task (or names it as its delivery task). Arming governs dispatch, not
+// landing reviewed work.
 func reviewPassWave(vaultPath string, task Note) (Note, bool) {
+	taskID := strings.ToUpper(strings.TrimSpace(stringField(task.Data, "id")))
 	waveID := stringField(task.Data, "wave")
-	if waveID == "" {
+	if waveID == "" || taskID == "" {
 		return Note{}, false
 	}
 	idx, err := loadV7Index(vaultPath)
@@ -250,5 +355,16 @@ func reviewPassWave(vaultPath string, task Note) (Note, bool) {
 		return Note{}, false
 	}
 	wave, ok := idx.Waves[waveID]
-	return wave, ok
+	if !ok {
+		return Note{}, false
+	}
+	if v7ImplicitDeliveryUnit(wave) {
+		return wave, strings.EqualFold(stringField(wave.Data, "delivery_task"), taskID)
+	}
+	for _, member := range normalizeList(wave.Data["members"]) {
+		if strings.EqualFold(strings.TrimSpace(wikiTarget(member)), taskID) {
+			return wave, true
+		}
+	}
+	return Note{}, false
 }

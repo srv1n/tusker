@@ -201,6 +201,17 @@ func landV7CmdAsWaveDrain(args Args) error {
 	return landV7CmdWithAuthority(args, nil, "", nil, &internal)
 }
 
+// landV7CmdAsReviewPass lands exactly the reviewed commits named in sources.
+// The land path resolves them under its lock instead of reading the task
+// branch or worktree, which may have moved after review.
+func landV7CmdAsReviewPass(args Args, sources map[string]string) error {
+	internal, err := newV7InternalActor("daemon:review-pass")
+	if err != nil {
+		return err
+	}
+	return landV7CmdWithAuthority(args, sources, "", nil, &internal)
+}
+
 func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string, capability *v7LandingAuthority, internal *v7InternalActor) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
