@@ -233,10 +233,24 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		pollC = pollTimer.C
 		defer pollTimer.Stop()
 	}
+	wakeupTicker := time.NewTicker(reconcileLiveCadence)
+	defer wakeupTicker.Stop()
 	for {
 		select {
 		case <-runCtx.Done():
 			return nil
+		case <-wakeupTicker.C:
+			polled, err := d.pollProjectsWithPendingWakeups(runCtx)
+			if err != nil {
+				return err
+			}
+			if polled && periodic {
+				_, wait, err := d.adaptiveProjectsDue(time.Now().UTC())
+				if err != nil {
+					return err
+				}
+				resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
+			}
 		case now := <-retentionC:
 			if _, err := purgeRunArtifacts(d.store, now.UTC(), false); err != nil {
 				log.Printf("run artifact retention: %v", err)
@@ -1444,7 +1458,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				invariantReason, err := d.invariantDispatchBlocker()
+				invariantReason, err := d.invariantDispatchBlocker(project.ProjectID)
 				if err != nil {
 					return err
 				}
@@ -1532,11 +1546,10 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if closed {
 				continue
 			}
-			reviewAttempts, err := d.store.ListAttemptsForRun(project.ProjectID, recordID)
+			reviewCycles, err := d.reviewCycleCount(project.ProjectID, recordID)
 			if err != nil {
 				return err
 			}
-			reviewCycles := reviewerAttemptCount(reviewAttempts)
 			hasResult, err := d.store.HasReviewResultForWork(project.ProjectID, recordID, intField(note.Data, "work_revision"), stringField(note.Data, "state_rev"))
 			if err != nil {
 				return err
@@ -1560,7 +1573,10 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				continue
 			}
 			if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current, reviewCycles) {
-				if wfFile.Data.Reviewer.Enabled && reviewCycles >= wfFile.Data.Reviewer.MaxCycles && stringField(note.Data, "verified_at") == "" {
+				// Never park a live run here: flipping its lease makes the wrapper
+				// heartbeat cancel the reviewer mid-turn ("completion-authoritative
+				// runner cancelled: context canceled").
+				if wfFile.Data.Reviewer.Enabled && reviewCycles >= wfFile.Data.Reviewer.MaxCycles && stringField(note.Data, "verified_at") == "" && !isDispatchingLeaseState(current.LeaseState) {
 					current.ProjectID = project.ProjectID
 					current.RecordID = recordID
 					current.ItemID = stringField(note.Data, "id")
@@ -1651,7 +1667,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				projectRuns[recordID] = current
 				continue
 			}
-			invariantReason, err := d.invariantDispatchBlocker()
+			invariantReason, err := d.invariantDispatchBlocker(project.ProjectID)
 			if err != nil {
 				return err
 			}
@@ -2314,11 +2330,11 @@ func (d *Daemon) reviewDispatchBlocker(project RegisteredProject, wf Workflow, n
 	if hasResult {
 		return "current review result is already recorded", nil
 	}
-	attempts, err := d.store.ListAttemptsForRun(project.ProjectID, run.RecordID)
+	reviewCycles, err := d.reviewCycleCount(project.ProjectID, run.RecordID)
 	if err != nil {
 		return "", err
 	}
-	if !reviewDispatchAllowed(project.VaultRoot, note, wf, run, reviewerAttemptCount(attempts)) {
+	if !reviewDispatchAllowed(project.VaultRoot, note, wf, run, reviewCycles) {
 		return "task is no longer review-dispatch-eligible", nil
 	}
 	return "", nil
@@ -2333,14 +2349,49 @@ func (d *Daemon) currentReviewDispatchNote(project RegisteredProject, wf Workflo
 	return note, reason, err
 }
 
+// reviewCycleCount is the review attempts that count toward the automated
+// review cycle cap: attempts since the owner's last redrive/requeue, minus
+// refusals that happened before a reviewer process ever ran.
+func (d *Daemon) reviewCycleCount(projectID, recordID string) (int, error) {
+	attempts, err := d.store.ListAttemptsForRun(projectID, recordID)
+	if err != nil {
+		return 0, err
+	}
+	redrive, err := d.store.BudgetWindowStart(projectID, recordID)
+	if err != nil {
+		return 0, err
+	}
+	return reviewerAttemptCountSince(attempts, redrive.ResetAt), nil
+}
+
 func reviewerAttemptCount(attempts []RunAttempt) int {
+	return reviewerAttemptCountSince(attempts, "")
+}
+
+func reviewerAttemptCountSince(attempts []RunAttempt, since string) int {
+	cutoff, hasCutoff := parseSentinelTimestamp(since)
 	count := 0
 	for _, attempt := range attempts {
-		if strings.EqualFold(strings.TrimSpace(attempt.Lane), runLaneReview) {
-			count++
+		if !strings.EqualFold(strings.TrimSpace(attempt.Lane), runLaneReview) || reviewAttemptNeverRan(attempt) {
+			continue
 		}
+		if started, ok := parseSentinelTimestamp(attempt.StartedAt); hasCutoff && ok && started.Before(cutoff) {
+			continue
+		}
+		count++
 	}
 	return count
+}
+
+// runnerWrapperStartChildFailurePrefix matches the status reason the runner
+// wrapper publishes when the child never started (runner_wrapper.go).
+const runnerWrapperStartChildFailurePrefix = "runner wrapper could not start child"
+
+// reviewAttemptNeverRan reports a profile/config refusal: the runner wrapper
+// could not start the reviewer child, so no review happened.
+func reviewAttemptNeverRan(attempt RunAttempt) bool {
+	return attempt.ReasonCode == string(RunFailureConfigInvalid) ||
+		strings.Contains(attempt.LastError, runnerWrapperStartChildFailurePrefix)
 }
 
 func daemonNoteKind(note Note) string {
@@ -7917,6 +7968,9 @@ func daemonDispatchScopeSummaries(projects []loadedRegisteredProject) []daemonDi
 }
 
 func daemonResumeCmd(args Args) error {
+	if err := requireOwnerSession("daemon resume"); err != nil {
+		return err
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -8406,6 +8460,13 @@ func projectAutomationScope(store *RuntimeStore, project RegisteredProject, now 
 }
 
 func setProjectEnabledCmd(args Args, enabled bool) error {
+	operation := "projects disable"
+	if enabled {
+		operation = "projects enable"
+	}
+	if err := requireOwnerSession(operation); err != nil {
+		return err
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -8673,7 +8734,10 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 	cwdTarget := ""
 	for i, raw := range []string{args.String("repo"), args.String("vault"), mustGetwd()} {
 		raw = strings.TrimSpace(raw)
-		if raw == "" {
+		// An explicit --repo/--vault is the whole selector. Scoring the cwd too
+		// let the project you happen to stand in tie with the one you named
+		// (scores are root path lengths), which reported a false ambiguity.
+		if raw == "" || (i == 2 && explicitPathSelector) {
 			continue
 		}
 		abs, err := filepath.Abs(raw)
@@ -8690,6 +8754,7 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 	bestIndex := -1
 	bestScore := -1
 	ambiguous := false
+	scores := make([]int, len(loaded))
 	for i, project := range loaded {
 		score := 0
 		for _, target := range targets {
@@ -8698,6 +8763,7 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 		if !explicitPathSelector && cwdTarget != "" {
 			score = maxInt(score, projectWorkspaceMatchScore(project.Project, runs, cwdTarget))
 		}
+		scores[i] = score
 		if score == 0 {
 			continue
 		}
@@ -8715,7 +8781,14 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 		return nil, tuskerError(errorNotFound, "no registered project matches the current path; use --id or --repo")
 	}
 	if ambiguous {
-		return nil, tuskerError(errorInvalidArg, "multiple registered projects match this path; use --id")
+		candidates := []string{}
+		for i, project := range loaded {
+			if scores[i] == bestScore {
+				candidates = append(candidates, project.Project.ProjectID+" ("+project.Project.RepoRoot+")")
+			}
+		}
+		return nil, tuskerError(errorInvalidArg, "multiple registered projects match this path; use --id with one of: "+strings.Join(candidates, ", "),
+			withContext(map[string]any{"candidates": candidates}))
 	}
 	copy := loaded[bestIndex]
 	return &copy, nil

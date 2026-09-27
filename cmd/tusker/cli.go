@@ -592,6 +592,10 @@ func runInner(command string, args Args) (int, error) {
 		return 0, nil
 	case "automation status":
 		return 0, automationStatusCmd(args)
+	case "automation on":
+		return 0, automationOnCmd(args)
+	case "automation off":
+		return 0, automationOffCmd(args)
 	case "automation queue":
 		return 0, automationQueueCmd(args)
 	case "automation explain":
@@ -1054,7 +1058,7 @@ Purpose:
 		printDaemonHelp()
 	case "config", "config resolve":
 		printConfigHelp()
-	case "automation", "automation status", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
+	case "automation", "automation status", "automation on", "automation off", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
 		printAutomationHelp()
 	case "factory", "factory operations":
 		printFactoryOperationsHelp()
@@ -1297,6 +1301,7 @@ Examples:
 func printAutomationHelp() {
 	fmt.Println(`Usage:
   tusker automation status [--json]
+  tusker automation on|off [--json]
   tusker automation queue [--project <id>|--repo <path>|--vault <path>] [--json]
   tusker automation explain <task> [--project <id>|--repo <path>|--vault <path>] [--json]
   tusker automation plan <task> [--project <id>|--repo <path>|--vault <path>] [--json]
@@ -1311,7 +1316,8 @@ Purpose:
   Dispatch bypasses polling only after the same eligibility checks pass.
 
 Behavior:
-  - status summarizes registered projects and runtime run counts
+  - status summarizes the global switch, registered projects, and runtime run counts
+  - off stops dispatch in every project and interrupts running workers (owner-only); on resumes dispatch
   - queue splits dispatchable and blocked task candidates
   - explain shows concrete blockers, selected runner, workspace, and approvals
   - plan is the canonical dispatch decision used by agents and operators

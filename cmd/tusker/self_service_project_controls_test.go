@@ -49,6 +49,7 @@ func snapshotTaskStatuses(t *testing.T, vault string, taskIDs []string) string {
 // blocks new claims while admitted work finishes, and concurrent or failing
 // writes stay truthful.
 func TestSelfServiceProjectControls(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	t.Run("A1/toggles_persist_exact_evidence", func(t *testing.T) {
 		store := fairDispatchTestStore(t)
 		project := RegisteredProject{

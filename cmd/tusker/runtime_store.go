@@ -5452,6 +5452,10 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	automationEnabled, err := s.GlobalAutomationEnabled()
+	if err != nil {
+		return nil, err
+	}
 	lastRestartCause, err := s.GetSetting(daemonLastRestartCauseKey)
 	if err != nil {
 		return nil, err
@@ -5503,6 +5507,7 @@ func (s *RuntimeStore) DaemonStatus() (map[string]any, error) {
 		"default_limit_value":       2,
 		"project_health":            projects,
 		"crashLoop":                 crashLoop,
+		"automation_global_enabled": automationEnabled,
 		"invariantCircuit":          invariantCircuit,
 		"invariant_circuit_open":    invariantCircuit.Open,
 		"invariant_circuit_reason":  invariantCircuitReason,

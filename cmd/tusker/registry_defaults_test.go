@@ -47,6 +47,7 @@ func TestRegistryDefaultsProjectsAddDisabled(t *testing.T) {
 }
 
 func TestRegistryDefaultsProjectsEnableAndDisableAutomation(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	t.Setenv("TUSKER_STATE_ROOT", filepath.Join(t.TempDir(), "state"))
 	repo, vault := registryDefaultsProjectFixture(t)
 	if err := projectsAddCmd(Args{"repo": repo, "vault": vault}); err != nil {
@@ -64,6 +65,14 @@ func TestRegistryDefaultsProjectsEnableAndDisableAutomation(t *testing.T) {
 	project := projects[0]
 	_ = store.Close()
 
+	t.Setenv("CLAUDECODE", "1")
+	for _, toggle := range []func(Args) error{projectsEnableCmd, projectsDisableCmd, daemonResumeCmd} {
+		if err := toggle(Args{"id": project.ProjectID}); err == nil || !strings.Contains(err.Error(), "is owner-only") {
+			t.Fatalf("agent session toggle error = %v", err)
+		}
+	}
+	assertRegistryAutomationState(t, project, false)
+	t.Setenv("CLAUDECODE", "")
 	if err := projectsEnableCmd(Args{"id": project.ProjectID}); err != nil {
 		t.Fatal(err)
 	}

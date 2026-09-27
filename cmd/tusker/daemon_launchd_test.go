@@ -189,6 +189,7 @@ func TestLaunchdFixtureRestartsDaemonAfterSIGKILL(t *testing.T) {
 }
 
 func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	if os.Getenv("TUSKER_PRE_RUN_LAUNCHD_FIXTURE") == "1" {
 		_ = os.Setenv("TUSKER_STATE_ROOT", os.Getenv("TUSKER_FIXTURE_STATE_ROOT"))
 		if os.Getenv("TUSKER_FIXTURE_FAIL_BEFORE_RUN") == "1" {
@@ -375,6 +376,7 @@ func stopManagedFixture(t *testing.T, stateRoot string, command *exec.Cmd) {
 }
 
 func TestCrashLoopBreakerBlocksDispatchUntilResume(t *testing.T) {
+	clearAgentSessionEnvForTest(t)
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Crash loop blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
