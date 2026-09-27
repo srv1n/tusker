@@ -243,13 +243,36 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | V5 | Remove leftover Codex adapters if exec-only is final | todo | |
 | V6 | Label the three kinds of worker failure and route them | todo | Simple first version. |
 | T1 | Task states: one state per task, 8 states, reasons carry detail | doing | Spec: [task-states](task-states.md). |
-| P1 | CLI and UI parity: everything clickable is doable from the CLI, and back | doing | Sol low read-only audit, report `docs/reports/cli-ui-parity-2026-09-27.md`; then fix slices. Covers F4, F9, F23. |
+| P1 | CLI and UI parity: everything clickable is doable from the CLI, and back | doing | [Audit](../../reports/cli-ui-parity-2026-09-27.md) done; slices A-G. Its slice A proposed refusing agents acting as the owner; overridden by D3. |
 | S1 | Simplification audit of `cmd/tusker` (266,520 lines of Go, 270 source files) | done | [Report](../../reports/simplification-audit-2026-09-27.md). Cuts about 40-50k lines. Phases 0-4, 17 slices with owned files. |
 | S2 | Phase 0: unblock the campaign (0.1 F17, 0.2 answer nudge, 0.3 circuit auto-close, 0.4 demo defaults) | doing | 0.1 with Devin; 0.2 with Sol low; 0.3 after 0.1 (both edit `daemon.go`); 0.4 after T1 (both edit Serve). |
 | S3 | Phase 1: delete unused paths (Codex cloud, external loop, Codex ACP, app server, xcode, improve, feedback signals) | todo | Mostly Devin and Sol low. |
 | S4 | Phase 2: cut the adversarial guards (completion authority becomes a pass handler; drift refusals) | todo | Tier 3: Opus or Sol medium, with cross-review. Unblocks auto-land and Q7-Q9. |
 | S5 | Phases 3-4: departures, promotion, full-gate provider; fold the CLI from 90 verbs to about 30 | todo | | Keep-or-cut list per guard, judged by D2. |
 | V7 | Decide whether the agent message board earns its keep | todo | |
+
+## Lanes (2026-09-27)
+
+Each lane owns its files. Lanes that share a hot file run one after another.
+Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
+(build, vet, tests) runs after merging.
+
+| Lane | Items | Worker | Owns | Status |
+| --- | --- | --- | --- | --- |
+| daemon.go | F17 now; then 0.3 circuit, F25 review cap, F12, F22 poll | Devin SWE-2 Max, then Sol low | `daemon.go` | F17 running |
+| answer wake | F16, 0.2 | Sol low | `agent_coordination.go`, `agent_messages.go` | done, unmerged |
+| task states | T1 | Opus | run_state, Serve responses, UI | running |
+| Devin reviewer | F21, F20 | Devin SWE-2 Max | `runner_acp.go` (Devin parts) | running |
+| global models | F3 | Sol low | `model_levels.go` | running |
+| browse text | F1 | Devin SWE-2 Max | `docs_browse_cmd.go` | running |
+| delete xcode, improve | audit slice 1.1 | Devin SWE-2 Max | slice files, `cli.go` entries | running |
+| actor rule | D3, F23, parity slice A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | running |
+
+Queued, waiting on a file owner:
+
+- `cli.go` chain after slice 1.1: parity B (`wave list`, `runs list`), then C (access approval, private folders), then D (fetch the revision for the caller).
+- After T1: 0.4 demo defaults and F5; parity F (UI task authoring) and G (Serve handler-only actions).
+- After Phase 0: Phase 2 (pass handler replaces completion authority), Tier 3.
 
 ## Open decisions
 
