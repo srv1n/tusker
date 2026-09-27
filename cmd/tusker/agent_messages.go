@@ -191,7 +191,11 @@ func (s *RuntimeStore) putAgentAnswer(m AgentMessage) (AgentMessage, bool, error
 	if err := tx.Commit(); err != nil {
 		return AgentMessage{}, false, err
 	}
-	return m, duplicate, s.queueAgentMessageWakeup(m)
+	if err := s.queueAgentMessageWakeup(m); err != nil {
+		return AgentMessage{}, false, err
+	}
+	_ = daemonControlOneWaySender(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: m.ProjectID, Cause: "agent_answer"}, 250*time.Millisecond)
+	return m, duplicate, nil
 }
 
 func normalizeAgentAddress(value, fallbackKind string) (AgentAddress, error) {

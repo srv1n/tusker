@@ -2,7 +2,37 @@ package main
 
 import (
 	"testing"
+	"time"
 )
+
+func TestAgentAnswerWakeNotifiesProjectReconcile(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	previous := daemonControlOneWaySender
+	defer func() { daemonControlOneWaySender = previous }()
+	var notifications []daemonControlRequest
+	daemonControlOneWaySender = func(_ string, req daemonControlRequest, _ time.Duration) error {
+		notifications = append(notifications, req)
+		return nil
+	}
+	question, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "task:worker", Recipient: AgentAddress{Kind: "operator", ID: "operator"}, IdempotencyKey: "question", Kind: "question", Body: "Choose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := AgentMessage{ProjectID: "app", Sender: "operator:operator", Recipient: AgentAddress{Kind: "task", ID: "worker"}, IdempotencyKey: "answer", Kind: "answer", Body: "A", ReplyTo: question.ID}
+	if _, _, err := store.PutAgentMessageAsOperator(answer); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications) != 1 || notifications[0].Command != "reconcile_project" || notifications[0].ProjectID != "app" {
+		t.Fatalf("answer notifications = %#v", notifications)
+	}
+	if !cliCommandMutatesVault("message reply") {
+		t.Fatal("CLI reply does not use mutation notification path")
+	}
+}
 
 func TestAnswerWakeContinuesPastAmbiguousRun(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())

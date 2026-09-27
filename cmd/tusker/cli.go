@@ -170,7 +170,7 @@ func run(command string, args Args) (int, error) {
 
 func cliCommandMutatesVault(command string) bool {
 	switch command {
-	case "status", "run", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo session", "demo reset":
+	case "status", "run", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo session", "demo reset", "message reply":
 		return true
 	default:
 		return false
