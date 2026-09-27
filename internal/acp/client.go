@@ -447,6 +447,7 @@ type Client struct {
 	permissionDone          map[string]chan struct{}
 	permissionState         map[string]*permissionRequestState
 	permissionInvocations   int
+	toolCalls               map[string]toolCallDetails
 	updateBytes             int
 	lastActivity            time.Time
 	updateSequence          uint64
@@ -457,6 +458,11 @@ type Client struct {
 	beforeConfigCommit      func()
 	beforePromptWrite       func()
 	beforeCancelWriteWait   func()
+}
+
+type toolCallDetails struct {
+	kind     string
+	rawInput json.RawMessage
 }
 
 // Start launches exactly one direct subprocess and starts its bounded reader.
@@ -1199,6 +1205,33 @@ func (c *Client) validateUpdateEnvelope(params json.RawMessage, sequence uint64)
 		c.session.ConfigOptions = cloneConfigOptions(configOptions)
 		c.configSequence = sequence
 	}
+	if discriminator == "tool_call" || discriminator == "tool_call_update" {
+		var tool struct {
+			ID       string          `json:"toolCallId"`
+			Kind     string          `json:"kind"`
+			RawInput json.RawMessage `json:"rawInput"`
+			Status   string          `json:"status"`
+		}
+		if json.Unmarshal(envelope.Update, &tool) == nil && validateIdentifier("toolCallId", tool.ID) == nil {
+			if tool.Status == "completed" || tool.Status == "failed" || tool.Status == "cancelled" {
+				delete(c.toolCalls, tool.ID)
+			} else if _, known := c.toolCalls[tool.ID]; (known || len(c.toolCalls) < 256) && (tool.Kind != "" || len(tool.RawInput) != 0) {
+				if len(tool.RawInput) <= maxACPPermissionRawInput {
+					details := c.toolCalls[tool.ID]
+					if tool.Kind != "" {
+						details.kind = tool.Kind
+					}
+					if len(tool.RawInput) != 0 {
+						details.rawInput = append(json.RawMessage(nil), tool.RawInput...)
+					}
+					if c.toolCalls == nil {
+						c.toolCalls = make(map[string]toolCallDetails)
+					}
+					c.toolCalls[tool.ID] = details
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -1802,9 +1835,6 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			return
 		}
 	}
-	if !isOfficialToolKind(toolCall.Kind) {
-		toolCall.Kind = "other"
-	}
 	rawLimit := c.cfg.Limits.MaxFrameBytes
 	if rawLimit > maxACPPermissionRawInput {
 		rawLimit = maxACPPermissionRawInput
@@ -1828,12 +1858,25 @@ func (c *Client) handleRequest(msg rpcMessage) {
 	if c.session != nil {
 		currentSession = c.session.ID
 	}
+	if active && p.SessionID == currentSession {
+		if details, ok := c.toolCalls[toolCall.ToolCallID]; ok {
+			if toolCall.Kind == "" {
+				toolCall.Kind = details.kind
+			}
+			if len(toolCall.RawInput) == 0 {
+				toolCall.RawInput = details.rawInput
+			}
+		}
+	}
 	c.mu.Unlock()
 	if !active || currentSession == "" || p.SessionID != currentSession {
 		<-c.permissionSem
 		_ = c.respond(id, msg.ID, nil, &rpcError{Code: -32602, Message: "permission request is not bound to the active session and turn"})
 		c.poison(fmt.Errorf("%w: permission request is not bound to the active session and turn", ErrProtocol))
 		return
+	}
+	if toolCall.Kind != "" && !isOfficialToolKind(toolCall.Kind) {
+		toolCall.Kind = "other"
 	}
 	req := PermissionRequest{
 		RequestID: id, SessionID: p.SessionID, ToolCallID: toolCall.ToolCallID, ToolKind: toolCall.Kind,

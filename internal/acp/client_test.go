@@ -266,6 +266,20 @@ func TestACPHelperProcess(t *testing.T) {
 					"toolCall":  map[string]any{"toolCallId": "tool-1", "kind": "execute", "rawInput": map[string]any{"command": "go test ./internal/acp"}},
 					"options":   testPermissionOptions(),
 				})})
+			case "permission-prior-tool-call", "permission-unknown-id":
+				writeHelper(helperMessage{JSONRPC: "2.0", Method: "session/update", Params: mustTestJSON(map[string]any{
+					"sessionId": "session-1", "update": map[string]any{
+						"sessionUpdate": "tool_call", "toolCallId": "tool-1", "kind": "execute",
+						"rawInput": map[string]any{"command": "tusker --version"},
+					},
+				})})
+				toolID := "tool-1"
+				if mode == "permission-unknown-id" {
+					toolID = "tool-unknown"
+				}
+				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
+					"sessionId": "session-1", "toolCall": map[string]any{"toolCallId": toolID}, "options": testPermissionOptions(),
+				})})
 			case "permission-unknown-tool":
 				writeHelper(helperMessage{JSONRPC: "2.0", ID: json.RawMessage("91"), Method: "session/request_permission", Params: mustTestJSON(map[string]any{
 					"sessionId": "session-1",
@@ -1211,6 +1225,42 @@ func TestACPPermissionDefaultsRejectAndNeverSelectsAllowAlways(t *testing.T) {
 			t.Fatalf("permission request=%#v rawInput=%s raw=%s", request, request.RawInput, request.Raw)
 		}
 	})
+}
+
+func TestACPPermissionUsesPriorToolCallDetailsOnlyForKnownID(t *testing.T) {
+	for _, tc := range []struct {
+		mode, kind, command string
+	}{
+		{"permission-prior-tool-call", "execute", "tusker --version"},
+		{"permission-unknown-id", "", ""},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			seen := make(chan PermissionRequest, 1)
+			c := startTestClient(t, tc.mode, func(cfg *Config) {
+				cfg.PermissionHandler = func(_ context.Context, request PermissionRequest) (PermissionDecision, error) {
+					seen <- request
+					return AllowOnce, nil
+				}
+			})
+			initializeAndSession(t, c)
+			if _, err := c.Prompt(context.Background(), "permission"); err != nil {
+				t.Fatal(err)
+			}
+			request := <-seen
+			var input struct {
+				Command string `json:"command"`
+			}
+			if len(request.RawInput) != 0 && json.Unmarshal(request.RawInput, &input) != nil {
+				t.Fatalf("invalid rawInput: %s", request.RawInput)
+			}
+			if request.ToolKind != tc.kind || input.Command != tc.command {
+				t.Fatalf("kind=%q rawInput=%s", request.ToolKind, request.RawInput)
+			}
+			if tc.kind == "" && len(request.RawInput) != 0 {
+				t.Fatalf("unknown tool gained rawInput: %s", request.RawInput)
+			}
+		})
+	}
 }
 
 func TestACPPermissionValidatesOptionsAndNormalizesToolKind(t *testing.T) {
