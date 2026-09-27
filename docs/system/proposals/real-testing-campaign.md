@@ -242,7 +242,11 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | V5 | Remove leftover Codex adapters if exec-only is final | todo | |
 | V6 | Label the three kinds of worker failure and route them | todo | Simple first version. |
 | T1 | Task states: one state per task, 8 states, reasons carry detail | doing | Spec: [task-states](task-states.md). |
-| S1 | Simplification audit of `cmd/tusker` (266,520 lines of Go, 270 source files) | doing | Opus agent, read-only; report goes to `docs/reports/simplification-audit-2026-09-27.md`. | Keep-or-cut list per guard, judged by D2. |
+| S1 | Simplification audit of `cmd/tusker` (266,520 lines of Go, 270 source files) | done | [Report](../../reports/simplification-audit-2026-09-27.md). Cuts about 40-50k lines. Phases 0-4, 17 slices with owned files. |
+| S2 | Phase 0: unblock the campaign (0.1 F17, 0.2 answer nudge, 0.3 circuit auto-close, 0.4 demo defaults) | doing | 0.1 with Devin; 0.2 with Sol low; 0.3 after 0.1 (both edit `daemon.go`); 0.4 after T1 (both edit Serve). |
+| S3 | Phase 1: delete unused paths (Codex cloud, external loop, Codex ACP, app server, xcode, improve, feedback signals) | todo | Mostly Devin and Sol low. |
+| S4 | Phase 2: cut the adversarial guards (completion authority becomes a pass handler; drift refusals) | todo | Tier 3: Opus or Sol medium, with cross-review. Unblocks auto-land and Q7-Q9. |
+| S5 | Phases 3-4: departures, promotion, full-gate provider; fold the CLI from 90 verbs to about 30 | todo | | Keep-or-cut list per guard, judged by D2. |
 | V7 | Decide whether the agent message board earns its keep | todo | |
 
 ## Open decisions
