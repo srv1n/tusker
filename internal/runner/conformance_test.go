@@ -102,6 +102,36 @@ func TestHarnessPolicyConformance(t *testing.T) {
 	}
 }
 
+func TestLegacyClaudeDefaultPolicy(t *testing.T) {
+	d := HarnessDefinition{ID: "claude", Provider: "claude", Transport: TransportCLI, Dialect: "claude", Args: []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--permission-mode", "bypassPermissions"}}
+	for _, tc := range []struct {
+		preset PermissionPreset
+		want   []string
+	}{
+		{PresetReadOnly, []string{"--permission-mode", "plan"}},
+		{PresetDangerFullAccess, []string{"--dangerously-skip-permissions"}},
+	} {
+		_, args, err := compilePolicy(d, RunInput{Preset: tc.preset})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(strings.Join(args, " "), "--output-format") != 1 || strings.Count(strings.Join(args, " "), "--input-format") != 1 || strings.Contains(strings.Join(args, " "), "bypassPermissions") {
+			t.Fatalf("duplicate or legacy Claude flags: %v", args)
+		}
+		for _, flag := range tc.want {
+			if !contains(args, flag) {
+				t.Fatalf("missing compiled permission flag %q: %v", flag, args)
+			}
+		}
+	}
+	d.Args = []string{"-p", "--permission-mode", "acceptEdits"}
+	_, _, err := compilePolicy(d, RunInput{Preset: PresetReadOnly})
+	var admissionErr *AdmissionError
+	if !errors.As(err, &admissionErr) || admissionErr.Code != "policy_conflict" {
+		t.Fatalf("non-default permission override = %v", err)
+	}
+}
+
 func TestHarnessEventConformance(t *testing.T) {
 	kind, reason, session := classifyCLIResult("codex", `{"type":"thread.started","thread_id":"s1"}`+"\n"+`{"type":"turn.completed"}`)
 	if kind != EventCompleted || reason != "" || session != "s1" {

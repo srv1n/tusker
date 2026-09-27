@@ -350,7 +350,7 @@ func defaultWorkflow() Workflow {
 	}
 	wf.Runners = map[string]RunnerDefinition{
 		string(RunnerCodexExec): {Kind: string(RunnerCodexExec), Command: defaultCodexExecCommand()},
-		string(RunnerClaude):    {Kind: string(RunnerClaude), Command: "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"},
+		string(RunnerClaude):    {Kind: string(RunnerClaude), Command: "claude -p"},
 	}
 	wf.Codex.Command = defaultCodexExecCommand()
 	wf.Codex.ApprovalPolicy = "on-request"
@@ -360,7 +360,7 @@ func defaultWorkflow() Workflow {
 	wf.Codex.ReadTimeoutMS = 30000
 	wf.Codex.StallTimeoutMS = 120000
 	wf.Codex.MaxTurns = 1
-	wf.Claude.Command = "claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions"
+	wf.Claude.Command = "claude -p"
 	wf.Extensions.Enabled = false
 	wf.Extensions.AllowedTools = []string{}
 	wf.Extensions.AllowedMCPs = []string{}
