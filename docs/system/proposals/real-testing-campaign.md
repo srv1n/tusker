@@ -196,7 +196,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | Q6 | Codex: task QLH-T-0001, wave W-0005 | paused | Worker done after the answer woke it (fresh session, not resumed): result.txt correct. Review failed on F21, then parked by F25. Paused until Phase 0 and Phase 2 land: each hand push found one more guard. | Ran 04:59 UTC, did pause 1, asked its question, waited 300 s, yielded. Owner answered at 05:55. Run never woke (F16, F17). |
 | Q7 | Claude Code: task QLH-T-0002, wave W-0006 | todo | |
 | Q8 | Devin: task QLH-T-0003, wave W-0007 | todo | |
-| Q9 | Muse: task QLH-T-0004, wave W-0008 | todo | Risk: Muse sandbox may block Tusker's state folder. |
+| Q9 | Muse: task QLH-T-0004, wave W-0008 | in progress | After F45, F47 (full-access live check) and F49 (keychain): dispatch passes; CLI ask and Needs you pass; reply as `human:sarav` resumed the same Muse session with the answer in the prompt. Hard Say fails: fresh session, message lost (F52). |
 | Q10 | Run one four-task wave and watch the graph unlock | todo | |
 | Q11 | Forced-failure checks per harness | todo | Needs four fake profiles in the global config. |
 | Q12 | Wave-done message reaches the architect session | todo | |
