@@ -186,6 +186,34 @@ func TestArmedWaveIntegrationProjectionUsesCanonicalWhenTaskMissing(t *testing.T
 	}
 }
 
+func TestArmedWaveReviewDependencyUsesCanonicalWhenTaskMissing(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+	armedWaveDirectTask(t, vault, "APP-T-0002", []string{"APP-T-0001:hard"})
+	writeArmedWaveTestFields(t, vault, map[string]any{"members": []string{"APP-T-0001", "APP-T-0002"}})
+	armWaveForTest(t, vault)
+	branch := "integration/W-0001"
+	old := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", branch))
+	worktree := filepath.Join(t.TempDir(), "integration")
+	gitDirOutput(t, repo, "worktree", "add", "--detach", worktree, branch)
+	gitDirOutput(t, worktree, "rm", "--", ".tusker/work/tasks/APP-T-0001.md")
+	gitDirOutput(t, worktree, "commit", "-m", "remove task record")
+	next := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
+	gitDirOutput(t, repo, "worktree", "remove", "--force", worktree)
+	gitDirOutput(t, repo, "update-ref", "refs/heads/"+branch, next, old)
+
+	dependent, err := resolveNote(vault, "APP-T-0002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := armedWaveReviewDependencyBlocker(vault, dependent); got != "" {
+		t.Fatalf("done canonical dependency blocked review: %q", got)
+	}
+	setWaveTaskState(t, vault, "APP-T-0001", "review", "waiting_on_review", "")
+	if got, want := armedWaveReviewDependencyBlocker(vault, dependent), "dependency APP-T-0001 has not completed objective review (status review)"; got != want {
+		t.Fatalf("review canonical dependency blocker = %q, want %q", got, want)
+	}
+}
+
 func TestArmedWaveProjectionSurfaces(t *testing.T) {
 	vault, idx, wave := armedWaveTestFixture(t)
 	if err := writeText(filepath.Join(vault, "WORKFLOW.md"), defaultWorkflowMarkdown()); err != nil {
