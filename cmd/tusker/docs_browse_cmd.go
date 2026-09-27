@@ -64,6 +64,12 @@ func docsBrowseCmd(args Args) error {
 			label += " [" + badge + "]"
 		}
 		fmt.Printf("  %s — %s\n", entry.Name, label)
+		if entry.ReadWhen != "" {
+			fmt.Printf("    Read when: %s\n", entry.ReadWhen)
+		}
+		if entry.SkipWhen != "" {
+			fmt.Printf("    Skip when: %s\n", entry.SkipWhen)
+		}
 	}
 	if result.Truncated {
 		fmt.Printf("Showing %d entries; %d omitted. Use --limit up to %d.\n", len(result.Entries), result.Omitted, docgraph.MaxBrowseLimit)
