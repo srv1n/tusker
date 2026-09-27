@@ -65,8 +65,11 @@ func TestPollOnceSkipsOnlyFailingProjectAndReturnsGlobalConfigError(t *testing.T
 	if err := daemon.PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !mutated || !strings.Contains(logs.String(), "daemon poll: project="+projects[0].ProjectID+" skipped: run changed") {
-		t.Fatalf("first project did not fail inside its poll body: %s", logs.String())
+	// The injected concurrent change makes the first project's poll lose a
+	// compare-and-swap race inside its body. That is isolated to the project and
+	// retried silently (F77); the other project is still polled below.
+	if !mutated || strings.Contains(logs.String(), "skipped: run changed") {
+		t.Fatalf("first project did not lose its CAS race silently: mutated=%t logs=%s", mutated, logs.String())
 	}
 	polled, err := daemon.store.ListProjects()
 	if err != nil || len(polled) != 2 {
