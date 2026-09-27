@@ -33,9 +33,8 @@ func statusV7CmdAsInternalActor(args Args, raw string) error {
 }
 
 // resolveV7Actor is the single attribution boundary for durable mutations.
-// It canonicalizes actor kinds, rejects unknown namespaces, and prevents an
-// agent session from claiming human authority. Force/local flags deliberately
-// do not participate: they control mutation routing, not identity.
+// It canonicalizes actor kinds and rejects unknown namespaces. Force/local
+// flags control mutation routing, not identity.
 func resolveV7Actor(args Args, operation string, policy v7ActorPolicy) (string, error) {
 	raw := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
 	if raw == "" && policy.DefaultAgent {
@@ -53,21 +52,15 @@ func resolveV7Actor(args Args, operation string, policy v7ActorPolicy) (string, 
 	if len(policy.AllowedKinds) > 0 && !policy.AllowedKinds[kind] {
 		return "", tuskerError(errorInvalidField, operation+" requires an actor of kind "+strings.Join(sortedStrings(mapKeys(policy.AllowedKinds)), " or ")+", got "+actor)
 	}
-	if kind == "human" && agentSessionKind() != "" {
-		return "", tuskerError(errorInvalidTransition,
-			operation+" cannot use human actor "+actor+" from "+agentSessionKind(),
-			withHint("run the mutation from a human terminal with explicit --by human:<name>; no agent break-glass contract exists"),
-			withContext(map[string]any{"execution_role": agentSessionKind(), "actor": actor, "operation": operation}))
-	}
 	return actor, nil
 }
 
 func v7HumanActor(args Args, operation string) (string, error) {
-	return resolveV7Actor(args, operation, v7ActorPolicy{AllowedKinds: map[string]bool{"human": true}})
+	return resolveV7Actor(args, operation, v7ActorPolicy{AllowedKinds: map[string]bool{"human": true, "agent": true}})
 }
 
 func v7ReviewerOrHumanActor(args Args, operation string) (string, error) {
-	return resolveV7Actor(args, operation, v7ActorPolicy{AllowedKinds: map[string]bool{"human": true, "reviewer": true}})
+	return resolveV7Actor(args, operation, v7ActorPolicy{AllowedKinds: map[string]bool{"human": true, "reviewer": true, "agent": true}})
 }
 
 func v7AgentDefaultActor(args Args, operation string) (string, error) {

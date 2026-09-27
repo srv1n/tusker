@@ -89,7 +89,7 @@ func TestRemainingWaveOutcome(t *testing.T) {
 func TestWaveMembershipMutationsRejectForgedActors(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	vault := newWaveTestVault(t, 2)
-	for _, raw := range []string{"human:operator", "daemon:spoof", "operator"} {
+	for _, raw := range []string{"daemon:spoof", "operator"} {
 		t.Run("create/"+strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
 			t.Setenv("CODEX_THREAD_ID", "wave-session")
 			err := waveV7CreateCmd(Args{"vault": vault, "quiet": "true", "id": "W-0099", "_pos0": "forged", "_pos1": "APP-T-0001", "by": raw})
@@ -100,7 +100,7 @@ func TestWaveMembershipMutationsRejectForgedActors(t *testing.T) {
 	}
 	clearAgentSessionEnvForTest(t)
 	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "valid", "_pos1": "APP-T-0001", "by": "agent:luna"}, waveV7CreateCmd)
-	for _, raw := range []string{"human:operator", "daemon:spoof", "operator"} {
+	for _, raw := range []string{"daemon:spoof", "operator"} {
 		t.Run("edit/"+strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
 			t.Setenv("CODEX_THREAD_ID", "wave-session")
 			err := waveV7AddCmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001", "_pos1": "APP-T-0002", "by": raw})

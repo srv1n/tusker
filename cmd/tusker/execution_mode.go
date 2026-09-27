@@ -21,6 +21,13 @@ func agentSessionKind() string {
 	return ""
 }
 
+func eventPayloadWithExecutionRole(payload map[string]any) map[string]any {
+	if role := agentSessionKind(); role != "" {
+		payload["execution_role"] = role
+	}
+	return payload
+}
+
 func rejectAgentSpawn(command string) error {
 	kind := agentSessionKind()
 	if kind == "" {

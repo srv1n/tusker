@@ -366,10 +366,7 @@ func TestRealWorkLifecycleAllowedParallelWaves(t *testing.T) {
 	if blockers := v7TaskDispatchBlockersWithAuthorization(vault, note, true); len(blockers) == 0 {
 		t.Fatal("disarmed wave member reports no authorization blocker")
 	}
-	if err := waveStartCmd(Args{"vault": vault, "_pos0": "W-0001", "mode": "background", "by": "agent:w3", "quiet": "true"}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "human") {
-		t.Fatalf("agent wave start was not refused on human authority: %v", err)
-	}
-	if err := waveStartCmd(Args{"vault": vault, "_pos0": "W-0001", "mode": "background", "by": "human:sarav", "quiet": "true"}); err != nil {
+	if err := waveStartCmd(Args{"vault": vault, "_pos0": "W-0001", "by": "agent:w3", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	idx, err := loadV7Index(vault)

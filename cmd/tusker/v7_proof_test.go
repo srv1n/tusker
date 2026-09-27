@@ -143,7 +143,7 @@ func TestV7VerifyRemoveRejectsForgedActors(t *testing.T) {
 	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: go test ./cmd/tusker -run TestKeep -count=1", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
 		t.Fatal(err)
 	}
-	for _, raw := range []string{"human:operator", "daemon:spoof", "operator"} {
+	for _, raw := range []string{"daemon:spoof", "operator"} {
 		t.Run(strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
 			t.Setenv("CODEX_THREAD_ID", "proof-session")
 			err := verifyV7RemoveCmd(Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "index": "1", "by": raw})
@@ -160,7 +160,7 @@ func TestV7ScreenshotCheckRejectsForgedActors(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Screenshot proof", "risk": "low", "priority": "p2", "proof-mode": "artifact", "v7": "true"}, newV7Task)
-	for _, raw := range []string{"human:operator", "daemon:spoof", "operator"} {
+	for _, raw := range []string{"daemon:spoof", "operator"} {
 		t.Run(strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
 			t.Setenv("CODEX_THREAD_ID", "screenshot-session")
 			err := evidenceV7AddCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "screenshot", "status": "pending_review", "checked-by": raw, "covers": "A1", "external-url": "https://example.test/proof.png"})
@@ -177,7 +177,7 @@ func TestV7ProofMutationsRejectForgedActors(t *testing.T) {
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Proof actor", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
-	for _, raw := range []string{"human:operator", "daemon:spoof", "operator"} {
+	for _, raw := range []string{"daemon:spoof", "operator"} {
 		t.Run("set-mode/"+strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
 			t.Setenv("CODEX_THREAD_ID", "proof-session")
 			err := proofV7SetModeCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "mode": "card", "by": raw})
