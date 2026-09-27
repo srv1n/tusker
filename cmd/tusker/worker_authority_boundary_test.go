@@ -24,168 +24,6 @@ func TestWorkerEnvironmentStripsDaemonAuthority(t *testing.T) {
 	}
 }
 
-func TestCompletionWorkerSafetyRejectsUnsafeProfiles(t *testing.T) {
-	state, workspace := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "workspace")
-	unsafe := ResolvedRunnerProfile{Name: "unsafe", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), PermissionPreset: "danger-full-access", Sandbox: RunnerSandboxDefinition{Mode: "danger-full-access"}}}
-	if err := completionWorkerSafety(state, workspace, unsafe); err == nil {
-		t.Fatal("danger-full-access profile must be rejected")
-	}
-	implementation := ResolvedRunnerProfile{Name: "implementation-terra", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(false)}}}
-	if err := completionWorkerSafety(state, workspace, implementation); err != nil {
-		t.Fatalf("codex_exec workspace-write must remain admissible: %v", err)
-	}
-	for _, profile := range []ResolvedRunnerProfile{
-		{Name: "reviewer-terra", Definition: RunnerProfileDefinition{Harness: string(RunnerClaude), Sandbox: RunnerSandboxDefinition{Mode: "read-only", Network: boolPtr(false)}}},
-		{Name: "codex-app", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexAppServer), Sandbox: RunnerSandboxDefinition{Mode: "read-only", Network: boolPtr(false)}}},
-		{Name: "codex-generic", Definition: RunnerProfileDefinition{Harness: string(RunnerCodex), Sandbox: RunnerSandboxDefinition{Mode: "read-only", Network: boolPtr(false)}}},
-	} {
-		if err := completionWorkerSafety(state, workspace, profile); err == nil {
-			t.Fatalf("metadata-only sandbox on %s must not authorize completion", profile.Name)
-		}
-	}
-	networked := implementation
-	networked.Name = "networked"
-	networked.Definition.Sandbox.Network = boolPtr(true)
-	if err := completionWorkerSafety(state, workspace, networked); err != nil {
-		t.Fatalf("explicit project network access must be honored: %v", err)
-	}
-	if err := completionWorkerSafety(filepath.Join(workspace, "state"), workspace, ResolvedRunnerProfile{Name: "inside", Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "workspace-write", Network: boolPtr(false)}}}); err == nil {
-		t.Fatal("state root nested in a workspace must be rejected")
-	}
-}
-
-func TestCompletionWorkerUsesAuthoredAgentAccess(t *testing.T) {
-	state, workspace := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "workspace")
-	worker := ResolvedRunnerProfile{Name: "worker", Definition: RunnerProfileDefinition{
-		Harness: string(RunnerCodexExec),
-		Access:  &AgentAccessV1{Schema: agentAccessSchemaV1, Mode: accessModeProjects, Network: true, DestructiveActions: "ask"},
-	}}
-	if err := completionWorkerSafetyForLane(state, workspace, runLaneExecute, defaultCodexExecCommand(), worker); err != nil {
-		t.Fatalf("work-in-projects profile was rejected: %v", err)
-	}
-	argv, err := completionAuthoritativeCodexExecArgv(defaultCodexExecCommand(), runLaneExecute, worker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(argv, "\x00"); !strings.Contains(got, `sandbox_mode="workspace-write"`) || !strings.Contains(got, "sandbox_workspace_write.network_access=true") {
-		t.Fatalf("authored project access was not compiled into Codex argv: %#v", argv)
-	}
-
-	reviewer := worker
-	reviewer.Name = "reviewer"
-	reviewer.Definition.Access = &AgentAccessV1{Schema: agentAccessSchemaV1, Mode: accessModeReview, Network: false, DestructiveActions: "deny"}
-	if err := completionWorkerSafetyForLane(state, workspace, runLaneReview, defaultCodexExecCommand(), reviewer); err != nil {
-		t.Fatalf("review-only profile was rejected: %v", err)
-	}
-	if _, err := completionAuthoritativeCodexExecArgv(defaultCodexExecCommand(), runLaneReview, worker); err == nil {
-		t.Fatal("work-in-projects profile must not enter the review lane")
-	}
-
-	unresolved := worker
-	unresolved.Definition.Access = nil
-	if err := completionWorkerSafety(state, workspace, unresolved); err == nil {
-		t.Fatal("profile without authored or legacy enforceable access must fail closed")
-	}
-}
-
-func TestCompletionWorkerPolicyAllowsProjectProfileSelectedByComplexity(t *testing.T) {
-	wf := completionAuthorityTestWorkflow()
-	wf.RunnerProfiles["execute-fast"] = wf.RunnerProfiles["implementation-terra"]
-	wf.RunnerProfileSources["execute-fast"] = configSourceLocal
-	delete(wf.RunnerLaneProfiles, runLaneExecute)
-	note := Note{Data: map[string]any{"complexity": "routine"}}
-
-	profile, _, _, err := completionLaneWorkerPolicy(wf, note, runLaneExecute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if profile.Name != "execute-fast" {
-		t.Fatalf("profile=%q want execute-fast", profile.Name)
-	}
-}
-
-func TestCompletionWorkerSafetyRejectsProfileShellInjection(t *testing.T) {
-	profile := ResolvedRunnerProfile{Name: "reviewer", Source: configSourceProject, Definition: RunnerProfileDefinition{Harness: string(RunnerCodexExec), Sandbox: RunnerSandboxDefinition{Mode: "read-only", Network: boolPtr(false)}}}
-	for _, command := range []string{
-		"codex exec --sandbox read-only -; touch /tmp/pwned",
-		"codex exec --sandbox read-only - > /tmp/pwned",
-		"codex exec --sandbox read-only - $(touch /tmp/pwned)",
-	} {
-		if err := completionWorkerSafetyForLane(t.TempDir(), t.TempDir(), runLaneReview, command, profile); err == nil {
-			t.Fatalf("shell-bearing command authorized completion: %q", command)
-		}
-	}
-	profile.Definition.Command = "codex exec --json -"
-	if err := completionWorkerSafetyForLane(t.TempDir(), t.TempDir(), runLaneReview, defaultCodexExecCommand(), profile); err == nil {
-		t.Fatal("project-defined profile command authorized completion")
-	}
-	profile.Definition.Command = ""
-	argv, err := completionAuthoritativeCodexExecArgv(defaultCodexExecCommand(), runLaneReview, profile)
-	if err != nil {
-		t.Fatalf("canonical authoritative argv rejected: %v", err)
-	}
-	if got := strings.Join(argv, "\x00"); !strings.Contains(got, "sandbox_mode=\"read-only\"") || !strings.Contains(got, "sandbox_workspace_write.network_access=false") {
-		t.Fatalf("canonical argv did not mechanically enforce sandbox/network: %#v", argv)
-	}
-	got := strings.Join(argv, "\x00")
-	for _, required := range []string{"--ignore-user-config", "--ignore-rules", "--disable\x00hooks"} {
-		if !strings.Contains(got, required) {
-			t.Fatalf("canonical argv did not isolate project launch policy %q: %#v", required, argv)
-		}
-	}
-}
-
-func TestCompletionCodexBindingUsesPhysicalExecutableWithoutLoginShell(t *testing.T) {
-	root := t.TempDir()
-	binDir := filepath.Join(root, "trusted-bin")
-	repo := filepath.Join(root, "repo")
-	workspace := filepath.Join(root, "workspace")
-	if err := ensureDir(binDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := ensureDir(repo); err != nil {
-		t.Fatal(err)
-	}
-	if err := ensureDir(workspace); err != nil {
-		t.Fatal(err)
-	}
-	writeRunnerPreflightScript(t, binDir, "codex", "#!/bin/sh\nprintf 'codex-test 1.0\\n'\n")
-	t.Setenv("PATH", binDir)
-	t.Setenv(runnerPathPrefixEnv, "")
-	previousLoginPath := runnerLoginShellPath
-	runnerLoginShellPath = func() string {
-		t.Fatal("authoritative binding sourced a login shell PATH")
-		return ""
-	}
-	t.Cleanup(func() { runnerLoginShellPath = previousLoginPath })
-
-	profile := ResolvedRunnerProfile{
-		Name:   "reviewer",
-		Source: configSourceProject,
-		Definition: RunnerProfileDefinition{
-			Harness: string(RunnerCodexExec),
-			Sandbox: RunnerSandboxDefinition{Mode: "read-only", Network: boolPtr(false)},
-		},
-	}
-	template, err := completionAuthoritativeCodexExecArgv(defaultCodexExecCommand(), runLaneReview, profile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	argv, executableFP, searchPath, err := completionBindAuthoritativeCodexExec(defaultCodexExecCommand(), template, workspace, repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !filepath.IsAbs(argv[0]) || filepath.Base(argv[0]) != "codex" {
-		t.Fatalf("authoritative argv did not freeze the physical executable: %#v", argv)
-	}
-	if !v7CloseAuthorityDigest(executableFP, "sha256:") || strings.TrimSpace(searchPath) == "" {
-		t.Fatalf("authoritative executable binding was incomplete: fp=%q path=%q", executableFP, searchPath)
-	}
-	if err := completionVerifyExecutableIdentity(argv[0], executableFP, searchPath); err != nil {
-		t.Fatalf("fresh executable identity did not verify: %v", err)
-	}
-}
-
 func TestReviewProposalRequiresCompleteSingleRawLogMarker(t *testing.T) {
 	p := reviewProposal{Schema: reviewProposalSchema, AttemptID: "a"}
 	raw, err := json.Marshal(p)
@@ -401,8 +239,8 @@ func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if rows[0].Result.Schema != reviewResultSchema || !v7CloseAuthorityDigest(rows[0].Result.WorkerPolicyFP, "sha256:") {
-			t.Fatalf("authoritative exact policies did not upgrade transport to v3: %#v", rows[0].Result)
+		if rows[0].Result.Schema != reviewResultSchemaV2 || rows[0].Result.WorkerPolicyFP != "" {
+			t.Fatalf("review results carry no worker-policy authority: %#v", rows[0].Result)
 		}
 		if _, _, err := daemon.reconcileRun(context.Background(), project, wfFile, run); err != nil {
 			t.Fatal(err)
@@ -421,36 +259,6 @@ func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
 		}
 		assertReviewResultCount(t, daemon.store, project.ProjectID, 0)
 	})
-
-	for name, mutate := range map[string]func(*RunStatus){
-		"one-sided policy rejects instead of downgrading": func(run *RunStatus) {
-			run.ExecutePolicyFP = ""
-		},
-		"malformed policy rejects instead of downgrading": func(run *RunStatus) {
-			run.ExecutePolicyFP = "sha256:not-a-digest"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
-			defer daemon.Close()
-			mutate(&run)
-			if err := daemon.store.UpsertRun(run); err != nil {
-				t.Fatal(err)
-			}
-			if err := writeRunnerStatusFile(run.StatusPath, 0); err != nil {
-				t.Fatal(err)
-			}
-			updated, changed, err := daemon.reconcileRun(context.Background(), project, wfFile, run)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !changed || updated.LeaseState != string(LeaseStateParkedNoProgress) ||
-				!strings.Contains(updated.LastError, "review proposal rejected") {
-				t.Fatalf("invalid claimed policy was not contained: %#v", updated)
-			}
-			assertReviewResultCount(t, daemon.store, project.ProjectID, 0)
-		})
-	}
 
 	t.Run("raw log overflow never saves", func(t *testing.T) {
 		project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
@@ -545,17 +353,9 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 	if err != nil {
 		t.Fatal(err)
 	}
-	executeProfile, _, executePolicyFP, err := completionLaneWorkerPolicy(wfFile.Data, note, runLaneExecute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reviewProfile, _, reviewPolicyFP, err := completionLaneWorkerPolicy(wfFile.Data, note, runLaneReview)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if executeProfile.Name == reviewProfile.Name {
-		t.Fatal("fixture must use independent execute and review profiles")
-	}
+	// Runs carry no worker-policy fingerprints (D2): any harness may review.
+	reviewProfile := struct{ Name string }{Name: "review-frontier"}
+	executePolicyFP, reviewPolicyFP := "", ""
 	proof, gates, err := reviewObjectiveSnapshots(vault, note)
 	if err != nil {
 		t.Fatal(err)
@@ -651,7 +451,6 @@ func configureCompletionWorkerProfilesForTest(t *testing.T, vault string) {
 	}{
 		{"automation.default_profile", "implementation-terra"},
 		{"automation.lane_profiles", map[string]any{runLaneExecute: "implementation-terra", runLaneReview: "reviewer-terra"}},
-		{"automation.completion_reactor.mode", string(completionReactorModeAuthoritative)},
 	} {
 		if _, err := setProjectLocalConfigWithReadback(vault, setting.key, setting.value); err != nil {
 			t.Fatal(err)
@@ -668,4 +467,13 @@ func assertReviewResultCount(t *testing.T, store *RuntimeStore, projectID string
 	if len(rows) != want {
 		t.Fatalf("review result count=%d want=%d rows=%#v", len(rows), want, rows)
 	}
+}
+
+func completionTestFinding(material, id, detail string) string {
+	raw, _ := json.Marshal(reviewerFindingRecord{
+		Schema: reviewerFindingSchema, ID: id, Kind: "blocking", Acceptance: []string{"A1"},
+		Evidence: []string{"review-receipt"}, Consequence: detail,
+		ClosureCondition: "re-run the exact acceptance proof", MaterialFingerprint: material,
+	})
+	return string(raw)
 }

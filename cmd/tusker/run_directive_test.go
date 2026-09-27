@@ -301,9 +301,6 @@ func TestDaemonTaskDirectiveAuthorizesExactTaskOutsideArmedWave(t *testing.T) {
 	if authorized, err := daemon.taskDirectiveLifecycleAuthorized(project.ProjectID, run); err != nil || !authorized {
 		t.Fatalf("task Play did not authorize current completed implementation lifecycle: authorized=%t err=%v", authorized, err)
 	}
-	if wave, ok, err := daemon.taskDirectiveCompletionWave(project.ProjectID, vault, task, 1); err != nil || !ok || stringField(wave.Data, "id") != "W-0001" {
-		t.Fatalf("task Play did not select its singleton completion target: wave=%#v ok=%t err=%v", wave, ok, err)
-	}
 	run.WorkRevision = 2
 	if authorized, err := daemon.taskDirectiveLifecycleAuthorized(project.ProjectID, run); err != nil || authorized {
 		t.Fatalf("task Play leaked into reopened work: authorized=%t err=%v", authorized, err)

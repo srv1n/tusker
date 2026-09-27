@@ -218,8 +218,8 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F11 | Add one global automation switch | fixed (17a818c3); UI toggle pending | Spec: [kill-switch-and-access.md](kill-switch-and-access.md). Off stops new dispatch and interrupts running workers; resumable by session ID. Owner-only. |
 | F12 | `projects disable --repo` on kurpod says several projects match, but `projects list` shows one | fixed (376fa6df) | Worked with `--id`. |
 | F13 | Seeded test project was hidden from the sidebar | done | `demo seed` hides projects unless `--visible` is passed; the qualification seed did not pass it. Fixed `seed.sh`, and set `visible` in the existing manifest. A hidden project gives no hint of why it is missing. |
-| F14 | Auto-close refuses every full-access profile, and every harness except Codex | todo | Demo seed turns on `completion_reactor: authoritative`. In that mode `completion_worker_safety.go` requires a Codex sandbox (`workspace-write`, reviewers `read-only`). Claude, Devin and Muse are refused outright. Test project switched to `disabled` on 2026-09-27; the owner lands and closes by hand. Real fix depends on D1. |
-| F15 | `automation explain` said the task was ready, then dispatch failed | todo | Explain does not run the completion-authority check, so it cannot predict F14. |
+| F14 | Auto-close refuses every full-access profile, and every harness except Codex | fixed, unmerged (`feat/phase2-pass-handler`) | Demo seed turns on `completion_reactor: authoritative`. In that mode `completion_worker_safety.go` requires a Codex sandbox (`workspace-write`, reviewers `read-only`). Claude, Devin and Muse are refused outright. Test project switched to `disabled` on 2026-09-27; the owner lands and closes by hand. Real fix depends on D1. |
+| F15 | `automation explain` said the task was ready, then dispatch failed | fixed, unmerged (`feat/phase2-pass-handler`): the dispatch-time completion check is gone, so explain and dispatch agree | Explain does not run the completion-authority check, so it cannot predict F14. |
 | F16 | An answer to a worker's question never wakes the run | done (unmerged) | Branch `fix/f16-wakeup`: `124b87c7` one bad wakeup no longer blocks others; `1adb22b5` recording an answer nudges the daemon (slice 0.2). Focused tests 94 passed. Merge at the central gate. | Wakeup row `wake-01m3gpx8yx9jkqeny3e9hptc47` stays `queued`, never claimed, though the daemon polls. `agent_coordination.go` has about twenty branches that park a wakeup as held, stale or unsupported. |
 | F17 | Asking a question marks the worker's session "not resumable" | doing | Devin SWE-2 Max, worktree `../tusker-wt-f17`, branch `fix/f17-resumable`. | `daemon.go` ~2903 and ~2959 pass `resumable=false` when a worker yields for a human. `runs continue` then refuses with "stored session is not resumable", though the Codex session file exists. The yield-and-resume design cannot work as written. |
 | F18 | "Needs you" gives no call to action | todo | The task card says Needs you and Waiting, the wave says Queued, and the drawer shows a disabled Queued button. The question is not shown where the owner looks. |
@@ -245,7 +245,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F38 | A session that never started becomes resumable |  fixed (preassigned Muse/Claude session IDs are resumable only after provider confirmation)  | Claude gets `--session-id` up front. When the attempt failed before Claude ran (F36), the next attempt used `--resume 40566fd7…` and Claude said "No conversation found with session ID". It burned the continuation cap (3) as `provider_error`. Only record a session ref as resumable once the provider confirms it. |
 | F39 | Start fresh has no CLI command | fixed (`tusker runs fresh`) | Only Serve's `POST /api/runs/<task>/control {"action":"start_fresh"}` has it. Parity rule: add `tusker runs fresh <task> --by`. Used the API to recover QLH-T-0002. |
 | F40 | Soft Say reports success as an error | fixed (2b1a16cb) | `runs say` on Claude during a long tool call returned `UNKNOWN: soft Say delivery uncertain: Claude echo timeout`, yet the token arrived after the tool call, in the same attempt. Report it as queued for the next tool boundary. |
-| F41 | A policy refusal shows as Blocked `crashed` | todo (in Phase 2 brief) | QLH-T-0002's review proposal was refused by `review_proposal.go:341` (F14). The task showed Blocked "the harness failed after 3 attempts". It should be Blocked `not_allowed`, and the cap is 6 per the spec. |
+| F41 | A policy refusal shows as Blocked `crashed` | fixed, unmerged (`feat/phase2-pass-handler`): reason `policy_refused` maps to `not_allowed` | QLH-T-0002's review proposal was refused by `review_proposal.go:341` (F14). The task showed Blocked "the harness failed after 3 attempts". It should be Blocked `not_allowed`, and the cap is 6 per the spec. |
 | F42 | Devin ACP refuses `swe-2-max` | fixed (49540b39) for swe-2-max only; ACP names it `swe-2-high` + `thought_level=max`. Follow-up: the catalog lists `devin models list` IDs that ACP rejects, and other SWE variants need the same general mapping | Q8 failed at launch: `ACP config option "model" did not advertise value "swe-2-max"`, though `runner catalog` lists it and `devin -p --model swe-2-max` works. The run log keeps only stderr byte counts and hashes, so it shows no cause. |
 | F43 | `runner test` needs a vault | todo | `tusker runner test <profile>` outside a repo fails with "No Tusker vault found". Profiles are global (same class as F3). |
 | F44 | Devin resume dies on a vendor ACP notification | fixed (18a4547b) | Q8 hard Say: the interrupt and queued resume worked, but the resumed attempt failed with `acp protocol failure: unknown notification "_cognition.ai/turn_stats"` (`internal/acp/client.go:1730` poisons the client). The ACP spec says `_`-prefixed extensions are ignored. The same error used up 3 continuation retries and showed reason `unknown` (see F38 and F41). |
@@ -278,7 +278,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | S1 | Simplification audit of `cmd/tusker` (266,520 lines of Go, 270 source files) | done | [Report](../../reports/simplification-audit-2026-09-27.md). Cuts about 40-50k lines. Phases 0-4, 17 slices with owned files. |
 | S2 | Phase 0: unblock the campaign (0.1 F17, 0.2 answer nudge, 0.3 circuit auto-close, 0.4 demo defaults) | doing | 0.1 with Devin; 0.2 with Sol low; 0.3 after 0.1 (both edit `daemon.go`); 0.4 after T1 (both edit Serve). |
 | S3 | Phase 1: delete unused paths (Codex cloud, external loop, Codex ACP, app server, xcode, improve, feedback signals) | todo | Mostly Devin and Sol low. |
-| S4 | Phase 2: cut the adversarial guards (completion authority becomes a pass handler; drift refusals) | todo | Tier 3: Opus or Sol medium, with cross-review. Unblocks auto-land and Q7-Q9. |
+| S4 | Phase 2: cut the adversarial guards (completion authority becomes a pass handler; drift refusals) | done, unmerged (`feat/phase2-pass-handler`); 2.2 leftovers listed in the plan below | Tier 3: Opus or Sol medium, with cross-review. Unblocks auto-land and Q7-Q9. |
 | S5 | Phases 3-4: departures, promotion, full-gate provider; fold the CLI from 90 verbs to about 30 | todo | | Keep-or-cut list per guard, judged by D2. |
 | V7 | Decide whether the agent message board earns its keep | todo | |
 
@@ -317,6 +317,83 @@ Queued, waiting on a file owner:
 
 - `cli.go` chain after parity B: C (access approval, private folders), then D (fetch the revision for the caller).
 - After Phase 0: Phase 2 (pass handler replaces completion authority), Tier 3.
+
+## Phase 2 plan: the pass handler (S4)
+
+Written 2026-09-27 before the change. Judged by D2: trust agents like people,
+keep the checks that catch honest mistakes, drop the ones that only exist to
+distrust the worker.
+
+What happens after a review, for any harness and any access preset:
+
+```mermaid
+flowchart LR
+  R[Reviewer proposal] --> V[Daemon runs the task's Verification commands in the task worktree]
+  V -->|a command fails| X[No pass recorded; review run parked]
+  V -->|all pass| P[Pass recorded]
+  P --> O{Diff inside owned_paths?}
+  O -->|no| RW[Back to the worker with the list of stray files]
+  O -->|yes| L[Land to the wave's integration branch]
+  L -->|merge conflict or landing gate fails| M[In review: merge conflict]
+  L -->|landed| C[Close the task]
+```
+
+A `changes_requested` verdict sends the findings back to the worker (rework).
+Only `automation.completion_reactor.mode: authoritative` turns the pass
+handler on. New-project and demo configs write it. An existing project with no
+mode keeps its old behavior: the owner lands and closes by hand. (The old
+"legacy" landing before review is gone.)
+
+Rules the handler keeps (revised after the Sol medium review):
+
+- It acts only on the result of the task's latest review attempt. If that
+  attempt recorded nothing, an older pass is not current.
+- Before landing it rechecks the pass against the task: same `state_rev`,
+  same implementation source, same proof and gates, and the execute
+  worktree's material unchanged since review. A stale pass holds the task In
+  review with the reason.
+- The diff check covers `owned_paths`, `generated_outputs`, and the task's
+  own Tusker records only (vault files named for the task). Renames count as
+  a delete plus an add, so both paths are checked. A task with no
+  `owned_paths` never auto-lands repository changes; it waits for the
+  owner's Land.
+- The task must be a current member of its wave (the wave lists it, or names
+  it as its singleton delivery task).
+- The close preflight runs before landing, so a refused close never leaves
+  reviewed work on the integration branch alone.
+- It lands exactly the reviewed commit from the stored result, not whatever
+  the task branch points at now. If that commit is already on the
+  integration branch (a stop after the ref update), the next poll only
+  closes.
+
+**Guards that go:**
+
+| Guard | Where | Why it goes |
+| --- | --- | --- |
+| Only a sandboxed Codex worker may land; reviewers must be read-only | `completion_worker_safety.go` (all but the executable-identity helpers), dispatch block in `daemon.go` | F14. Refuses Claude, Devin, Muse and every full-access profile. |
+| Exact worker-policy fingerprint, profile-routing drift, launch-argv drift at dispatch | same dispatch block | Only defends against a swapped profile. F15: `explain` cannot predict it. |
+| Command rows need an "exact authoritative worker policy" | `review_proposal.go:341` | The Q7 refusal. The daemon runs the commands itself right after this check. |
+| Review results must carry worker-policy authority (schema v3) | `review_result.go` `reviewResultPolicyForRun` | Same distrust. Old v3 rows stay readable. |
+| Completion transaction phase machine: frozen authority, signed receipts, exact staging refs, staged-object checks | `completion_reactor.go`, `completion_authority.go` | Replaced by the pass handler (~200 lines). |
+| Canonical projection of the worker's commit before review, only in authoritative mode | `daemon.go` finish paths | Only fed the phase machine. |
+| Landing before review | `autoLandArmedWaveReviewComplete` | Landing now follows a pass. Unreviewed work no longer reaches the integration branch. |
+
+**Checks that stay:** the Verification commands must pass; the review must be
+for the task's current attempt; the landed diff must stay inside
+`owned_paths` (plus the task's own `.tusker` records); the landing path's merge
+and landing gate; the close preflight (open gates, unfinished dependencies,
+required evidence, acceptance rows). A merge conflict shows In review with
+reason `merge conflict`. Retry caps, budgets, one lease per task and worktrees
+are untouched.
+
+**Left for slice 2.2 (Sol low):** `v7_completion_receipt.go`,
+`v7_close_authority.go`, `landing_authority.go` and the `close_authority`
+validation of already-closed tasks, which still read old records; the
+executable-identity check; `factory_operations.go` transaction views.
+
+**Also in this lane:** F41, where a daemon refusal of the worker's output (a
+rejected review proposal, a declined dispatch) now maps to Blocked
+`not_allowed`, not `crashed`.
 
 ## Open decisions
 

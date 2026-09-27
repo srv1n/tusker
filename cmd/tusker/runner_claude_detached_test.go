@@ -31,10 +31,7 @@ func claudeFakeScript(t *testing.T, dir, body string) string {
 
 func prepareClaudeTestArgv(t *testing.T, req *StartRequest, script string, flags ...string) {
 	t.Helper()
-	searchPath, err := completionAuthoritativeRunnerSearchPath(req.WorkspacePath, req.RepoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	searchPath := runnerCommandSearchPathWithoutLogin()
 	version, err := runnerExecutableHealthCheck(script, searchPath)
 	if err != nil {
 		t.Fatal(err)

@@ -114,8 +114,8 @@ func TestCompletionReactorModeFreshConfigAndDoctorWarningAreSideEffectFree(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(config, "completion_reactor:\n    mode: disabled") {
-		t.Fatalf("fresh config did not explicitly disable completion reactor:\n%s", config)
+	if !strings.Contains(config, "completion_reactor:\n    mode: authoritative") {
+		t.Fatalf("a new project config must turn on the review pass handler explicitly:\n%s", config)
 	}
 	if err := writeText(configPath, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {
 		t.Fatal(err)

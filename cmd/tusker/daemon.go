@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -3090,6 +3089,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				// authorise a verdict.
 				if found, refusal := d.harvestReviewProposal(project, note, run); found {
 					if refusal != "" {
+						// Tusker refused the reviewer's output: a policy call, not a
+						// harness crash (F41).
+						run.ReasonCode = string(RunFailurePolicyRefused)
 						updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, refusal, finished)
 						run.LeaseState, run.AttemptOutcome = string(LeaseStateParkedNoProgress), string(AttemptOutcomeBlocked)
 						run.NextRetryAt = ""
@@ -3202,19 +3204,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 					return run, true, nil
 				}
 			}
-			if workerSubmitted && run.Lane == runLaneExecute && completionReactorMode(wfFile.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
-				_, revision, projectionErr := projectSubmittedWorkerToCanonical(project.VaultRoot, run, endState)
-				if projectionErr != nil {
-					return run, changed, projectionErr
-				}
-				run.WorkRevision = revision
-				if note, projectionErr = recordProviderVerificationReceipts(project.VaultRoot, run, endState.MaterialFingerprint); projectionErr != nil {
-					return run, changed, projectionErr
-				}
-			}
 			if run.Lane != runLaneReview {
-				// Projection advances the canonical work revision. Persist that identity
-				// before review-packet construction looks up its execute parent.
+				// Persist the attempt before review-packet construction looks up
+				// its execute parent.
 				updateRunAttemptFromRun(d.store, run, AttemptOutcomeSucceeded, 0, "", finished)
 				if endState.Schema != "" {
 					if err := saveAttemptEndStateForRun(d.store, run, endState); err != nil {
@@ -3943,6 +3935,7 @@ func (d *Daemon) finishDispatchDeclinedRun(project RegisteredProject, wf Workflo
 	parentSessionRef := run.SessionRef
 	reason = firstNonEmpty(strings.TrimSpace(reason), "runner dispatch declined")
 	finished = firstNonEmpty(strings.TrimSpace(finished), time.Now().UTC().Format(time.RFC3339))
+	run.ReasonCode = string(RunFailurePolicyRefused)
 	updateRunAttemptFromRun(d.store, run, AttemptOutcomeDispatchDeclined, 0, reason, finished)
 	run.LeaseState = string(LeaseStateReleased)
 	run.AttemptOutcome = string(AttemptOutcomeDispatchDeclined)
@@ -3981,54 +3974,7 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 	parentSessionRef := run.SessionRef
 	reason = firstNonEmpty(strings.TrimSpace(reason), runnerReviewCompleteAwaitingLandReason)
 	finished = firstNonEmpty(strings.TrimSpace(finished), time.Now().UTC().Format(time.RFC3339))
-	loaded, loadErr := loadProjectContents(d.store, project, false)
-	if loadErr != nil {
-		return run, false, loadErr
-	}
-	if !registeredProjectIdentityMatches(project, loaded.Project) {
-		return run, false, tuskerError(errorConfigInvalid, "registered project identity changed during execution review projection")
-	}
-	authoritativeCompletion := completionReactorMode(loaded.Workflow.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative
-	projectedWorkRevision := 0
-	if authoritativeCompletion {
-		sourceSHA, revision, projectionErr := projectCompletedWorktreeReviewToCanonical(project.VaultRoot, run)
-		if projectionErr != nil {
-			projectionReason := projectExecutionReviewProjectionReason(projectionErr)
-			updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, projectionReason, finished)
-			run.LeaseState = string(LeaseStateParkedNoProgress)
-			run.AttemptOutcome = string(AttemptOutcomeBlocked)
-			run.NextRetryAt = ""
-			run.LastError = projectionReason
-			run.UpdatedAt = finished
-			run.Terminal = false
-			clearActiveExecution(&run)
-			return run, true, nil
-		}
-		reason = "runner requested review; canonical review snapshot pinned to implementation " + sourceSHA
-		projectedWorkRevision = revision
-	} else if autoLanded, err := d.autoLandArmedWaveReviewComplete(project, note, run); err != nil {
-		landReason := "armed-wave auto-land failed: " + err.Error()
-		_ = kickV7LandingTaskToRework(project.VaultRoot, run.ItemID, landReason, "daemon:wave-drain")
-		updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 1, landReason, finished)
-		run.LeaseState = string(LeaseStateParkedNoProgress)
-		run.AttemptOutcome = string(AttemptOutcomeBlocked)
-		run.NextRetryAt = ""
-		run.LastError = landReason
-		run.UpdatedAt = finished
-		run.Terminal = false
-		clearActiveExecution(&run)
-		return run, true, nil
-	} else if autoLanded {
-		reason = "runner requested review; daemon landed clean worktree to armed-wave integration"
-	}
 	updateRunAttemptFromRun(d.store, run, AttemptOutcomeWaitingForReview, 0, reason, finished)
-	// The completed execute attempt remains recorded against the revision it
-	// started on. The live run, however, must move to the canonical review
-	// candidate revision before a reviewer is scheduled; otherwise a valid typed
-	// result is rejected as snapshot drift against the stale execute row.
-	if projectedWorkRevision > 0 {
-		run.WorkRevision = projectedWorkRevision
-	}
 	run.LeaseState = string(LeaseStateReleased)
 	run.AttemptOutcome = string(AttemptOutcomeWaitingForReview)
 	run.NextRetryAt = ""
@@ -4052,72 +3998,6 @@ func (d *Daemon) finishReviewCompleteRun(project RegisteredProject, note Note, r
 		LeaseState:       run.LeaseState,
 	})
 	return run, true, nil
-}
-
-func (d *Daemon) autoLandArmedWaveReviewComplete(project RegisteredProject, note Note, run RunStatus) (bool, error) {
-	// This is a completion-authority boundary, so the workflow loaded at poll
-	// start is not sufficient: a configuration change can switch completion to
-	// authoritative before this run reaches its landing decision. Reload through
-	// the registered-project boundary to preserve quarantine semantics as well.
-	loaded, err := loadProjectContents(d.store, project, false)
-	if err != nil {
-		return false, err
-	}
-	if !registeredProjectIdentityMatches(project, loaded.Project) {
-		return false, tuskerError(errorConfigInvalid, "registered project identity changed during completion authority check")
-	}
-	wf := loaded.Workflow
-	if completionReactorMode(wf.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
-		// The authoritative completion reactor merges only after a valid typed
-		// review result.  Keeping this old pre-review path live would let an
-		// implementation exit bypass that authority boundary.
-		return false, nil
-	}
-	autoLandEligible, err := d.automaticLandingWorkspaceEligible(project.ProjectID, run.RecordID)
-	if err != nil {
-		return false, err
-	}
-	if !autoLandEligible {
-		// `copy` is the non-Git/weird-repository fallback. It does not promise a
-		// source history that can be merged safely, so keep the completed run at
-		// the explicit manual checkpoint instead of manufacturing a landing.
-		return false, nil
-	}
-	wave, _, armed := armedWaveForTask(project.VaultRoot, note)
-	if !armed {
-		return false, nil
-	}
-	taskID := stringField(note.Data, "id")
-	repoRoot := project.RepoRoot
-	integrationBranch := v7WaveIntegrationBranch(wave)
-	taskBranch := v7TaskBranchName(taskID)
-	landed := armedWaveLandedMembers(wave)[taskID]
-	integrated := gitRefExists(repoRoot, "refs/heads/"+taskBranch) && gitRefExists(repoRoot, "refs/heads/"+integrationBranch) && gitMergeBaseAncestor(repoRoot, taskBranch, integrationBranch)
-	if landed && integrated {
-		return true, nil
-	}
-	err = landV7CmdAsWaveDrain(Args{
-		"vault": project.VaultRoot,
-		"quiet": "true",
-		"_pos0": taskID,
-		"from":  run.WorkspacePath,
-		"by":    "daemon:wave-drain",
-	})
-	if err != nil {
-		return true, err
-	}
-	return true, nil
-}
-
-func (d *Daemon) automaticLandingWorkspaceEligible(projectID, recordID string) (bool, error) {
-	identity, err := d.store.RunIdentity(projectID, recordID)
-	if err != nil {
-		return false, err
-	}
-	if identity == nil {
-		return true, nil
-	}
-	return normalizeWorkspaceStrategy(WorkspaceStrategy(identity.WorkspaceMode)) != WorkspaceStrategyCopy, nil
 }
 
 func trackerStateTerminal(wf Workflow, status string) bool {
@@ -4595,59 +4475,6 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	selectedWorkspacePath, _, err := workspacePathForRequest(workspaceRequest)
 	if err != nil {
 		return run, false, err
-	}
-	if completionReactorMode(wfFile.Data.CompletionReactor.Effective) == completionReactorModeAuthoritative {
-		if err := completionWorkerSafetyForLane(d.stateRoot, selectedWorkspacePath, lane, baseCommand, selectedProfile); err != nil {
-			return run, false, tuskerError(errorInvalidTransition, err.Error())
-		}
-		expectedProfile, expectedArgv, expectedPolicyFP, expectedErr := completionLaneWorkerPolicy(wfFile.Data, note, lane)
-		if expectedErr != nil {
-			return run, false, tuskerError(errorInvalidTransition, expectedErr.Error())
-		}
-		if selectedProfile.Name != expectedProfile.Name || !reflect.DeepEqual(selectedProfile.Definition, expectedProfile.Definition) {
-			return run, false, tuskerError(errorInvalidTransition, "completion authority refuses worker profile routing drift")
-		}
-		if codexACPPlan != nil {
-			if !equalStringSlices(authoritativeArgv, expectedArgv) {
-				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses Codex ACP bundle or launch drift")
-			}
-		} else {
-			authoritativeArgv, authoritativeExecutableFP, authoritativeSearchPath, err = completionBindAuthoritativeCodexExec(baseCommand, expectedArgv, selectedWorkspacePath, project.RepoRoot)
-			if err != nil {
-				return run, false, tuskerError(errorInvalidTransition, err.Error())
-			}
-		}
-		authoritativeRawLogMaxBytes = completionAuthoritativeRawLogMaxBytes
-		policyFP := expectedPolicyFP
-		switch lane {
-		case runLaneExecute:
-			if run.WorkerPolicyFP != "" && run.WorkerPolicyFP != policyFP {
-				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses execute policy drift within a work revision")
-			}
-			if run.ExecutePolicyFP != "" && run.ExecutePolicyFP != policyFP {
-				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses execute policy drift within a work revision")
-			}
-			run.WorkerPolicyFP, run.ExecutePolicyFP = policyFP, policyFP
-		case runLaneReview:
-			_, _, expectedExecuteFP, executeErr := completionLaneWorkerPolicy(wfFile.Data, note, runLaneExecute)
-			if executeErr != nil {
-				return run, false, tuskerError(errorInvalidTransition, executeErr.Error())
-			}
-			if run.ExecutePolicyFP == "" {
-				run.ExecutePolicyFP = run.WorkerPolicyFP
-			}
-			if run.ExecutePolicyFP == "" || run.ExecutePolicyFP != expectedExecuteFP {
-				return run, false, tuskerError(errorInvalidTransition, "completion authority requires the exact locally declared execute policy used before review")
-			}
-			if run.WorkerPolicyFP != "" && run.WorkerPolicyFP != run.ExecutePolicyFP && run.WorkerPolicyFP != policyFP {
-				return run, false, tuskerError(errorInvalidTransition, "completion authority refuses review policy drift within a work revision")
-			}
-			run.WorkerPolicyFP = policyFP
-		}
-		command = baseCommand
-		if lane == runLaneReview && workspaceStrategy != WorkspaceStrategyShared && canonicalPath(selectedWorkspacePath) == canonicalPath(project.RepoRoot) {
-			return run, false, tuskerError(errorInvalidTransition, "completion authority requires an isolated noncanonical review workspace")
-		}
 	}
 	codexPolicy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(wfFile.Data), lane, selectedProfile)
 	var privateFolders []string

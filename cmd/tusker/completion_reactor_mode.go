@@ -4,9 +4,11 @@ import (
 	"strings"
 )
 
-// completionReactorMode is an authority projection only. No code should use
-// this type to start the reactor until the deterministic completion transaction
-// is implemented and explicitly made a consumer of authoritative mode.
+// completionReactorMode says who lands and closes a task after a passing
+// review. Only authoritative turns on the daemon's pass handler. An existing
+// config with no mode keeps its previous behavior (disabled, or legacy on an
+// automation-enabled project): the owner lands and closes. New-project and
+// demo configs write authoritative explicitly.
 type completionReactorMode string
 
 const (

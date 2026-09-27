@@ -316,49 +316,6 @@ func TestSoftwareFactoryProofDurableProofFindingClosureAllowsSameMaterial(t *tes
 	}
 }
 
-func TestSoftwareFactoryProofAuthoritativeCLIAndStoreBindMaterial(t *testing.T) {
-	project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
-	defer daemon.Close()
-	note, err := resolveV7Note(project.VaultRoot, run.RecordID, "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	proof, gates, err := reviewObjectiveSnapshots(project.VaultRoot, note)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
-	material, err := reviewAttemptMaterialFingerprint(daemon.store, run.ProjectID, run.RecordID, run.ActiveAttemptID, run.WorkRevision, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	finding := softwareFactoryFinding(material, "blocking")
-	if err := reviewSubmitCmd(Args{
-		"vault": project.VaultRoot, "id": run.RecordID, "attempt": run.ActiveAttemptID,
-		"by": reviewerActorForNote(wfFile.Data.Reviewer.Actor, note), "verdict": "changes_requested",
-		"summary": "authoritative material-bound finding", "finding": finding,
-		"task-rev": stringField(note.Data, "state_rev"), "source-sha": source,
-		"work-rev": strconv.Itoa(run.WorkRevision), "proof-fingerprint": proof,
-		"gate-fingerprint": gates,
-	}); err != nil {
-		t.Fatalf("authoritative CLI submission rejected: %v", err)
-	}
-	rows, err := daemon.store.ListReviewResults(project.ProjectID)
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("persisted authoritative review rows=%#v err=%v", rows, err)
-	}
-	if rows[0].Result.Schema != reviewResultSchema || rows[0].Result.MaterialFingerprint != material {
-		t.Fatalf("CLI submission did not persist exact v3 material: %#v", rows[0].Result)
-	}
-
-	missingMaterial := rows[0].Result
-	missingMaterial.MaterialFingerprint = ""
-	missingMaterial.ResultRevision = reviewResultFingerprint(missingMaterial)
-	if _, err := daemon.store.SaveReviewResult(missingMaterial); err == nil {
-		t.Fatal("SaveReviewResult accepted an authoritative result without material identity")
-	}
-}
-
 func TestSoftwareFactoryProofWorkerProposalBindsClosureAfterDaemonMaterial(t *testing.T) {
 	project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
 	defer daemon.Close()
@@ -442,57 +399,7 @@ func TestSoftwareFactoryProofWorkerProposalBindsClosureAfterDaemonMaterial(t *te
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("worker closure proposal was not persisted exactly once: rows=%#v err=%v", rows, err)
 	}
-	if rows[0].Result.Schema != reviewResultSchema || rows[0].Result.MaterialFingerprint != material || len(rows[0].Result.ClosedFindings) != 1 || rows[0].Result.ClosedFindings[0].MaterialFingerprint != material {
+	if rows[0].Result.Schema != reviewResultSchemaV2 || rows[0].Result.MaterialFingerprint != material || len(rows[0].Result.ClosedFindings) != 1 || rows[0].Result.ClosedFindings[0].MaterialFingerprint != material {
 		t.Fatalf("daemon did not bind exact material before validating closure: %#v", rows[0].Result)
-	}
-}
-
-func TestSoftwareFactoryProofCompletionRejectsMaterialDrift(t *testing.T) {
-	_, project, daemon, result := completionReactorFixture(t, true)
-	defer daemon.Close()
-	result.MaterialFingerprint = "sha256:" + strings.Repeat("f", 64)
-	result.ResultRevision = reviewResultFingerprint(result)
-	err := daemon.reactToReviewResult(project, completionAuthorityTestWorkflow(), result, completionReactorModeAuthoritative)
-	if err == nil || errorToIssue(err).Code != completionRepairRequiredError || !strings.Contains(strings.ToLower(err.Error()), "material") {
-		t.Fatalf("completion accepted or misclassified material drift: %v", err)
-	}
-}
-
-func TestSoftwareFactoryProofCompletionRequiresDurableIndependentClosure(t *testing.T) {
-	vault, project, daemon, prior := completionReactorFixture(t, true)
-	defer daemon.Close()
-	prior.Verdict = "changes_requested"
-	prior.Findings = []string{completionTestFinding(prior.MaterialFingerprint, "F-001", "repair the exact acceptance regression")}
-	prior.CreatedAt = "2026-09-14T00:00:00Z"
-	prior.ResultRevision = reviewResultFingerprint(prior)
-	if _, err := daemon.store.SaveReviewResult(prior); err != nil {
-		t.Fatal(err)
-	}
-
-	source := commitLandBranch(t, project.RepoRoot, "source/closure-repair", prior.ImplementationSHA, map[string]string{"reviewed.txt": "repaired\n"})
-	setAutomationV7TaskFields(t, vault, prior.TaskID, map[string]any{
-		"status": "review", "readiness": "waiting_on_review", "source_sha": source, "work_revision": prior.WorkRevision,
-	})
-	recordCompletionTestProof(t, vault, prior.TaskID)
-	armScheduledPromotionWaveForTest(t, vault, "W-0001")
-	candidate := completionResultForReviewedTask(t, vault, project, prior.TaskID, "review-closure-repair", "independent repair verification")
-	candidate.CreatedAt = "2026-09-14T01:00:00Z"
-	if err := daemon.reactToReviewResult(project, completionAuthorityTestWorkflow(), candidate, completionReactorModeAuthoritative); err == nil {
-		t.Fatal("completion accepted a pass without durable closure attestation")
-	}
-	candidate.ClosedFindings = []reviewerFindingClosure{{
-		Schema: reviewerFindingClosureSchema, ID: "F-001", ClosureCondition: "re-run the exact acceptance proof",
-		Evidence: []string{"repair-receipt"}, MaterialFingerprint: candidate.MaterialFingerprint,
-	}}
-	candidate.ResultRevision = reviewResultFingerprint(candidate)
-	if _, err := daemon.store.SaveReviewResult(candidate); err != nil {
-		t.Fatal(err)
-	}
-	if err := daemon.reactToReviewResult(project, completionAuthorityTestWorkflow(), candidate, completionReactorModeAuthoritative); err != nil {
-		t.Fatalf("independent exact-material closure was rejected: %v", err)
-	}
-	transaction, err := daemon.store.CompletionTransactionForResult(project.ProjectID, candidate.TaskID, candidate.ResultRevision)
-	if err != nil || transaction == nil || transaction.Phase != completionPhaseTerminal {
-		t.Fatalf("durable closure did not complete: transaction=%#v err=%v", transaction, err)
 	}
 }

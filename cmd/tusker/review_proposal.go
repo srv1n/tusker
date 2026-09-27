@@ -280,10 +280,7 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		return ReviewResult{}, tuskerError(errorConfigInvalid, "registered project identity changed during review authority check")
 	}
 	wf := loaded.Workflow
-	result.Schema, result.WorkerPolicyFP, err = reviewResultPolicyForRun(wf.Data, note, run)
-	if err != nil {
-		return ReviewResult{}, err
-	}
+	result.Schema, result.WorkerPolicyFP = reviewResultSchemaV2, ""
 	result.Runner, result.RunnerProfile = run.Runner, run.RunnerProfile
 	expectedTaskRevision := stringField(note.Data, "state_rev")
 	expectedSourceSHA, sourceErr := reviewImplementationSource(d.store, run, note)
@@ -335,10 +332,6 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		report, reportErr := loadV7ProofReport(project.VaultRoot, run.RecordID)
 		if reportErr != nil || len(report.OpenGates) != 0 {
 			return ReviewResult{}, fmt.Errorf("pass proposal requires eligible proof and no open gates before command execution")
-		}
-		_, pending := v7VerificationManifest(note.Data, parseV7VerificationRows(note.Body))
-		if len(pending) > 0 && result.Schema != reviewResultSchema {
-			return ReviewResult{}, fmt.Errorf("automatic command verification requires an exact authoritative worker policy; use interactive accept or close with manifest confirmation")
 		}
 	}
 	// A worker may request review with pending command rows. The daemon-owned

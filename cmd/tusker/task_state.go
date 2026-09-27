@@ -47,6 +47,7 @@ type taskStateRun struct {
 	AttemptCount int
 	ReasonCode   string
 	Operator     runOperatorState
+	Detail       string // last error text, for reasons that quote it
 }
 
 type taskStateFacts struct {
@@ -89,13 +90,16 @@ func deriveTaskState(f taskStateFacts) taskState {
 	if f.HasPermission {
 		return newTaskState("needs_input", "permission", "asks permission: "+firstNonEmpty(f.Permission, "an action"), "Allow or deny the request")
 	}
+	if status == "review" && f.Run != nil && reviewPassHoldCode(f.Run.ReasonCode) {
+		return landingHoldState(f.Run)
+	}
 	if state, ok := taskStateFromRun(f); ok {
 		return state
 	}
 	if f.GateText != "" {
 		if status == "review" {
 			state := newTaskState("in_review", "landing", "waiting for your Land: "+f.GateText, firstNonEmpty(f.GateAction, "Land it"))
-			state.NextActor = "you" // until auto-land accepts every harness (F14)
+			state.NextActor = "you" // an open human gate always waits for the owner
 			return state
 		}
 		return newTaskState("needs_input", "gate", f.GateText, f.GateAction)
@@ -186,7 +190,9 @@ func blockedStateForReason(run *taskStateRun) taskState {
 		guidance = run.Operator.Reason.Guidance
 	}
 	switch RunFailureReasonCode(run.ReasonCode) {
-	case RunFailurePermissionDenied, RunFailureSandboxDenied, RunFailureNetworkDenied, RunFailureMissingAccess:
+	case RunFailureMergeConflict, RunFailureLandingFailed:
+		return landingHoldState(run)
+	case RunFailurePermissionDenied, RunFailureSandboxDenied, RunFailureNetworkDenied, RunFailureMissingAccess, RunFailurePolicyRefused:
 		return newTaskState("blocked", "not_allowed", firstNonEmpty(guidance, "a permission was denied"), "Change the profile or the task, then Retry")
 	case RunFailureUsageLimit, RunFailureAuthExpired, RunFailureConfigInvalid, RunFailureContextWindow:
 		return newTaskState("blocked", "outside_problem", firstNonEmpty(guidance, "an outside problem stopped the run"), "Fix the named problem, then Retry")
@@ -198,6 +204,19 @@ func blockedStateForReason(run *taskStateRun) taskState {
 		reason = "the harness failed"
 	}
 	return newTaskState("blocked", "crashed", reason, "Open the log, then Retry")
+}
+
+// landingHoldState is In review while a passing review waits on a landing
+// problem the owner must resolve.
+func landingHoldState(run *taskStateRun) taskState {
+	if RunFailureReasonCode(run.ReasonCode) == RunFailureMergeConflict {
+		state := newTaskState("in_review", "merge_conflict", "merge conflict", "Resolve the conflict, then Land")
+		state.NextActor = "you"
+		return state
+	}
+	state := newTaskState("in_review", "landing", "landing failed: "+firstNonEmpty(run.Detail, "see the run"), "Fix the named problem, then Land")
+	state.NextActor = "you"
+	return state
 }
 
 // waveTaskState is the most urgent member state with a count reason.
@@ -288,6 +307,7 @@ func taskStateRunFor(run RunStatus, question, permission bool) *taskStateRun {
 	return &taskStateRun{
 		Lane: run.Lane, LeaseState: run.LeaseState, Terminal: run.Terminal, AttemptCount: run.AttemptCount,
 		ReasonCode: inspectedReasonCode(run, nil),
+		Detail:     oneLine(run.LastError),
 		Operator:   deriveRunOperatorState(facts, time.Now(), defaultRunQuietAfter),
 	}
 }

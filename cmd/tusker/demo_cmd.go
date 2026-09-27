@@ -139,7 +139,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	// unrelated global settings. Runner profiles and model levels are
 	// global-only: the seeded project defines none and routes through the
 	// operator's global model_levels (TUSKER_CONFIG or ~/.config/tusker).
-	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: disabled\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
+	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
 		return nil, err
 	}
 	createdPaths, err := demoSeedRealWorkFiles(repoRoot)

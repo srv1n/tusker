@@ -355,10 +355,9 @@ func reviewSubmitCmd(args Args) error {
 			return tuskerError(errorInvalidTransition, "stale implementation material fingerprint")
 		}
 	}
-	resultSchema, workerPolicyFP, policyErr := reviewResultPolicyForRun(wf.Data, note, run)
-	if policyErr != nil {
-		return tuskerError(errorInvalidTransition, policyErr.Error())
-	}
+	// Review results carry no worker-policy authority (D2): any harness and
+	// any access preset may review, and the daemon runs the commands itself.
+	resultSchema, workerPolicyFP := reviewResultSchemaV2, ""
 	if verdict == "pass" {
 		workspace, targetErr := reviewCommandVerificationWorkspace(store, vault, note, run)
 		if targetErr != nil {
@@ -378,9 +377,10 @@ func reviewSubmitCmd(args Args) error {
 		if workspace != nil {
 			proofMaterial = workspace.MaterialFingerprint
 		}
-		proofFingerprint, gateFingerprint, policyErr = reviewObjectiveSnapshotsForMaterial(vault, note, proofMaterial)
-		if policyErr != nil {
-			return policyErr
+		var snapshotErr error
+		proofFingerprint, gateFingerprint, snapshotErr = reviewObjectiveSnapshotsForMaterial(vault, note, proofMaterial)
+		if snapshotErr != nil {
+			return snapshotErr
 		}
 		proofIdx, proofErr := loadV7Index(vault)
 		if proofErr != nil {
@@ -420,47 +420,6 @@ func normalizeReviewResultProposal(result *ReviewResult) error {
 	result.Runner, result.RunnerProfile, result.WorkerPolicyFP = "", "", ""
 	result.ResultRevision = ""
 	return nil
-}
-
-// reviewResultPolicyForRun separates typed review transport from completion
-// authority. A generic review run has no policy fingerprints and persists as
-// v2. Any claimed completion policy must be complete, current, and attached to
-// an authoritative workflow; partial or drifted policy is never downgraded.
-func reviewResultPolicyForRun(wf Workflow, note Note, run RunStatus) (string, string, error) {
-	executePolicyFP := strings.TrimSpace(run.ExecutePolicyFP)
-	reviewPolicyFP := strings.TrimSpace(run.WorkerPolicyFP)
-	mode := completionReactorMode(wf.CompletionReactor.Effective)
-	if executePolicyFP == "" && reviewPolicyFP == "" {
-		if mode == completionReactorModeAuthoritative {
-			return "", "", fmt.Errorf("authoritative completion review run is missing exact execute and review worker policy")
-		}
-		return reviewResultSchemaV2, "", nil
-	}
-	if executePolicyFP == "" || reviewPolicyFP == "" {
-		return "", "", fmt.Errorf("review run carries a one-sided completion worker policy")
-	}
-	if mode != completionReactorModeAuthoritative {
-		return "", "", fmt.Errorf("review run carries completion worker policy outside authoritative completion mode")
-	}
-	_, _, expectedExecutePolicyFP, err := completionLaneWorkerPolicy(wf, note, runLaneExecute)
-	if err != nil {
-		return "", "", err
-	}
-	expectedReviewProfile, _, expectedReviewPolicyFP, err := completionLaneWorkerPolicy(wf, note, runLaneReview)
-	if err != nil {
-		return "", "", err
-	}
-	if executePolicyFP != expectedExecutePolicyFP ||
-		reviewPolicyFP != expectedReviewPolicyFP ||
-		run.RunnerProfile != expectedReviewProfile.Name ||
-		run.Runner != expectedReviewProfile.Definition.Harness {
-		return "", "", fmt.Errorf("review run completion worker policy drifted from the current exact lane profiles")
-	}
-	combined, err := completionCombinedWorkerPolicyFingerprint(executePolicyFP, reviewPolicyFP)
-	if err != nil {
-		return "", "", err
-	}
-	return reviewResultSchema, combined, nil
 }
 
 func activeReviewRunForAttempt(store *RuntimeStore, projectID, taskID string, attempt RunAttempt) (RunStatus, error) {
