@@ -110,7 +110,7 @@ func TestV7CapsuleSurfacesInListSearchShowAndPacket(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Domain packet", "risk": "low", "priority": "p2", "domains": "project", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Domain packet", "risk": "low", "priority": "p2", "domains": "project", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,7 +162,7 @@ func TestV7CapsulePacketDefaultsNoDomainTasksToProjectRoute(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "No explicit domain", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "No explicit domain", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -8,7 +8,7 @@ import (
 
 func TestV7PacketPreservesCompleteTaskContract(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Complete handoff"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Complete handoff", "owned-paths": "src"}, newV7Task)
 	task := mustV7Task(t, vault, "APP-T-0001")
 	task.Data["owned_paths"] = []string{"internal/billing/"}
 	task.Data["generated_outputs"] = []string{"generated/billing.go"}
@@ -59,7 +59,7 @@ func TestWaveAuthoringPreservesNonGoalsInPackets(t *testing.T) {
 	tasks := []map[string]any{}
 	for _, key := range []string{"one", "two"} {
 		body := "# Authored " + key + "\n\n## Intent\n\nDeliver " + key + ".\n\n## Non-goals\n\n" + strings.Join(nonGoals, "\n") + "\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | Works. |\n"
-		tasks = append(tasks, map[string]any{"key": key, "title": "Authored " + key, "work_level": "light", "body": body})
+		tasks = append(tasks, map[string]any{"key": key, "title": "Authored " + key, "work_level": "light", "owned_paths": []string{"src/" + key}, "body": body})
 	}
 	path := writeDirectIntakeRequest(t, vault, map[string]any{
 		"schema": "tusker.wave-authoring/v1", "request_key": "packet-nongoals",
@@ -91,7 +91,7 @@ func TestWaveAuthoringPreservesNonGoalsInPackets(t *testing.T) {
 
 func TestTrustHandoffPreservesIntegratorContract(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Integrate handoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Integrate handoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	task := mustV7Task(t, vault, "APP-T-0001")
 	task.Data["owned_paths"] = []string{"internal/billing/"}
 	task.Body = replaceSection(task.Body, "## Acceptance", "| A1 | Preserve the last required outcome. | command: check-last |\n")

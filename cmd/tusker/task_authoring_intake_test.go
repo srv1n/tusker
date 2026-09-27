@@ -38,10 +38,11 @@ func directIntakeRequest(tasks []map[string]any) map[string]any {
 
 func directIntakeTask(key, level string) map[string]any {
 	return map[string]any{
-		"key":        key,
-		"title":      "Task " + key,
-		"work_level": level,
-		"body":       directIntakeTaskBody("Task "+key, "Outcome "+key),
+		"key":         key,
+		"title":       "Task " + key,
+		"work_level":  level,
+		"owned_paths": []string{"src"},
+		"body":        directIntakeTaskBody("Task "+key, "Outcome "+key),
 	}
 }
 
@@ -139,7 +140,7 @@ func TestTaskAuthoringIntakeRejectsMissingOrNamedWorkLevel(t *testing.T) {
 
 func TestTaskAuthoringEntryPointsRequireExplicitWorkLevel(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	base := Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct task"}
+	base := Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct task", "owned-paths": "src"}
 	if err := newAuthoredV7Task(base); err == nil || !strings.Contains(err.Error(), "--work-level is required") {
 		t.Fatalf("direct authoring error=%v", err)
 	}

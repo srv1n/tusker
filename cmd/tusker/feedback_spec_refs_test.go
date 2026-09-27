@@ -58,6 +58,7 @@ title: Manual proof wave
 outcome: Warned.
 tasks:
   - key: only
+    owned_paths: [src]
     title: Only
     work_level: standard
     body: |

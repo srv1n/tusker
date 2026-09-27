@@ -17,7 +17,7 @@ func TestObjectiveClosePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, risk := range []string{"low", "medium", "high", "critical"} {
-		if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close " + risk, "risk": risk, "priority": "p1", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
+		if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Close " + risk, "risk": risk, "priority": "p1", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
 			t.Fatalf("create %s: %v", risk, err)
 		}
 		id := "APP-T-000" + string(rune('1'+i))
@@ -82,7 +82,7 @@ func TestHumanGateBoundary(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "Gate matrix", "summary": "Gate boundary.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate target", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Gate target", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range valid {

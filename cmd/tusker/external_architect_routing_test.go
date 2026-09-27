@@ -13,7 +13,7 @@ func externalRoutingFixture(t *testing.T) (string, *RuntimeStore, string, string
 		t.Fatal(err)
 	}
 	body := directAuthoringBodyPath(t, vault, "task.md", "# Fixture task\n\nSubstantive body.\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Fixture task", "work-level": "standard", "body-file": body}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Fixture task", "work-level": "standard", "body-file": body}); err != nil {
 		t.Fatal(err)
 	}
 	request := `schema: tusker.wave-authoring/v1
@@ -23,6 +23,7 @@ tasks:
   - key: member
     title: Member task
     work_level: light
+    owned_paths: [cmd/tusker]
     body: "# Member\n\nMember body.\n"
 `
 	requestPath := directAuthoringBodyPath(t, vault, "wave.yaml", request)

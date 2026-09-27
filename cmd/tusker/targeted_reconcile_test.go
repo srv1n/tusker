@@ -183,7 +183,7 @@ func TestV7TargetedReconcileRefusesTerminalRewind(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Terminal guard.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Guarded task", "risk": "low", "priority": "p0", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Guarded task", "risk": "low", "priority": "p0", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -362,7 +362,7 @@ func targetedReconcileFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for _, title := range []string{"First CRP task", "Second CRP task"} {
-		if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": title, "risk": "low", "priority": "p0", "v7": "true"}); err != nil {
+		if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": title, "risk": "low", "priority": "p0", "v7": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	}

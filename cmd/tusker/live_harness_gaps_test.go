@@ -18,10 +18,10 @@ func TestTaskProfilePinsCreateAndUpdate(t *testing.T) {
 	t.Setenv("TUSKER_CONFIG", global)
 	vault := v7DirectTestVault(t)
 	body := directAuthoringBodyPath(t, vault, "task.md", "# Pinned task\n\nSubstantive body.\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Bad pin", "work-level": "light", "body-file": body, "execute-profile": "no-such-profile"}); err == nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Bad pin", "work-level": "light", "body-file": body, "execute-profile": "no-such-profile"}); err == nil {
 		t.Fatal("unknown execute profile accepted")
 	}
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Pinned", "work-level": "light", "body-file": body, "execute-profile": "pin-a", "review-profile": "pin-b"}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Pinned", "work-level": "light", "body-file": body, "execute-profile": "pin-a", "review-profile": "pin-b"}); err != nil {
 		t.Fatalf("new task with profiles: %v", err)
 	}
 	read := func() map[string]any {
@@ -97,7 +97,7 @@ func TestExecutionRegisterResolvesRuntimeProject(t *testing.T) {
 	// --contact-role accepts a subject whose note carries the config
 	// project_id even though the registry keys the project by ULID.
 	body := directAuthoringBodyPath(t, vault, "contact-task.md", "# Contact subject\n\nSubstantive body.\n")
-	mustWave(t, Args{"vault": vault, "quiet": "true", "title": "Subject", "work-level": "light", "body-file": body}, newAuthoredV7Task)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "title": "Subject", "work-level": "light", "owned-paths": "src", "body-file": body}, newAuthoredV7Task)
 	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "Contact wave", "_pos1": "TSK-T-0001"}, waveV7CreateCmd)
 	if err := executionCmd(Args{"vault": vault, "state-root": stateRoot, "quiet": "true",
 		"contact-role": "architect", "wave": "W-0001",

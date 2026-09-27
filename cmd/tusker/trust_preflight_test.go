@@ -15,7 +15,7 @@ func TestTrustPreflight(t *testing.T) {
 	t.Run("status ready next and dispatch reject a placeholder contract", func(t *testing.T) {
 		vault := v7DispatchTestVault(t)
 		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Preflight fixture decision", "decision": "Use the current preflight contract."}, newV7Decision)
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete contract"}, newV7Task)
+		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete contract", "owned-paths": "src"}, newV7Task)
 		path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 		data, body, err := parseFrontmatterMustRead(path)
 		if err != nil {
@@ -52,8 +52,8 @@ func TestTrustPreflight(t *testing.T) {
 
 	t.Run("dependency wait is valid but not pickable", func(t *testing.T) {
 		vault := v7DispatchTestVault(t)
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Upstream"}, newV7Task)
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent"}, newV7Task)
+		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Upstream", "owned-paths": "src"}, newV7Task)
+		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "owned-paths": "src"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 		makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 		path := filepath.Join(vault, "work", "tasks", "APP-T-0002.md")

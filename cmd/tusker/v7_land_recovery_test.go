@@ -193,8 +193,7 @@ func TestLandNoWaveRefusal(t *testing.T) {
 	_, vault := newLandTestRepo(t, 1, "true")
 	mustWave(t, Args{
 		"vault": vault, "quiet": "true", "epic": "APP",
-		"title": "Wave-less task", "risk": "low", "priority": "p2", "v7": "true",
-	}, newV7Task)
+		"title": "Wave-less task", "risk": "low", "priority": "p2", "v7": "true", "owned-paths": "src"}, newV7Task)
 
 	err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0002"})
 	if err == nil {

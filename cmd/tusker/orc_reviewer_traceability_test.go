@@ -57,7 +57,7 @@ func TestDemandingReadyTaskRequiresSpecRefInValidationAndStatus(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "App", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Needs spec", "risk": "medium", "priority": "p2"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Needs spec", "risk": "medium", "priority": "p2"}); err != nil {
 		t.Fatal(err)
 	}
 	task, err := resolveV7Note(vault, "APP-T-0001", "task")

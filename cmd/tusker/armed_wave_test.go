@@ -355,7 +355,7 @@ func TestArmedWaveDelivery(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{
 		"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed armed-wave review",
-		"risk": "medium", "priority": "p0", "v7": "true",
+		"risk": "medium", "priority": "p0", "owned-paths": "src", "v7": "true",
 	}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status":        "review",

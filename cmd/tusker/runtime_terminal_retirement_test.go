@@ -30,7 +30,7 @@ func TestLiveRunnerRetirementRefusesBeforeIdentityClear(t *testing.T) {
 
 func TestCloseRetiresHeldRuntimeRow(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close runtime", "risk": "low", "priority": "p0", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close runtime", "risk": "low", "priority": "p0", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestCloseRetiresHeldRuntimeRow -count=1", "result": "pass", "note": "Close retirement fixture passed."}, v7TestVerificationMutation)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:test"}, statusV7Cmd)
 	project := registerAutomationTestProject(t, vault)
@@ -82,7 +82,7 @@ func TestReconcileRetiresTerminalRuntimeRows(t *testing.T) {
 	for _, status := range []string{"done", "cancelled", "backlog"} {
 		t.Run(status, func(t *testing.T) {
 			vault := automationTestVault(t)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reconcile runtime", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reconcile runtime", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 			fields := map[string]any{
 				"status":     status,
 				"readiness":  status,
@@ -140,8 +140,8 @@ func TestReconcileRetiresTerminalRuntimeRows(t *testing.T) {
 
 func TestCloseRetirementKeepsInvariantCircuitOpen(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close circuit", "risk": "low", "priority": "p0", "proof-mode": "inline", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review still trips", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close circuit", "risk": "low", "priority": "p0", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review still trips", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestCloseRetirementKeepsInvariantCircuitOpen -count=1", "result": "pass", "note": "Close circuit fixture passed."}, v7TestVerificationMutation)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:test"}, statusV7Cmd)
 	project := registerAutomationTestProject(t, vault)

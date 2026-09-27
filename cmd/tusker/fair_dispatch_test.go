@@ -515,8 +515,8 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 	t.Run("post-reactor soft dependency relock drops stale all-eligible candidate", func(t *testing.T) {
 		vault := automationTestVault(t)
 		setAllEligibleDispatchScopeForAutomationTest(t, vault)
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewed premise", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependent", "risk": "low", "priority": "p1", "dependencies": "APP-T-0001:soft", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewed premise", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependent", "risk": "low", "priority": "p1", "dependencies": "APP-T-0001:soft", "owned-paths": "src", "v7": "true"}, newV7Task)
 		for _, taskID := range []string{"APP-T-0001", "APP-T-0002"} {
 			makeV7TaskDispatchableForTest(t, vault, taskID)
 		}
@@ -589,7 +589,7 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 
 	t.Run("post-reactor completion drops stale review candidate", func(t *testing.T) {
 		vault := automationTestVault(t)
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewed task", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewed task", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review", "proof_status": "satisfied",
@@ -875,7 +875,7 @@ func fairDispatchPollProject(t *testing.T, store *RuntimeStore, projectID, acron
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "acronym": acronym, "title": projectID, "summary": "Fair dispatch fixture.", "v7": "true"}, newV7Epic)
 	for index := 0; index < tasks; index++ {
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": acronym, "title": "Work", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": acronym, "title": "Work", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, acronym+"-T-"+padNumber(index+1))
 	}
 	if err := writeDefaultWorkflow(vault); err != nil {

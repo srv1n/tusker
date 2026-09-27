@@ -214,7 +214,7 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 	t.Cleanup(func() { _ = os.RemoveAll(stateRoot) })
 	vault := pickupV7TestVault(t)
 	writeDaemonServeWorkflow(t, vault, true, "127.0.0.1:0")
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Crash loop dispatch probe", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Crash loop dispatch probe", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	store, err := OpenRuntimeStore(stateRoot)
 	if err != nil {
@@ -378,7 +378,7 @@ func stopManagedFixture(t *testing.T, stateRoot string, command *exec.Cmd) {
 func TestCrashLoopBreakerBlocksDispatchUntilResume(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Crash loop blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Crash loop blocked", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)

@@ -18,7 +18,7 @@ func acceptTestVaultWithTask(t *testing.T) (string, string) {
 	if err := writeText(filepath.Join(v7RepoRoot(vault), "test_accept.py"), "import unittest\nclass Proof(unittest.TestCase):\n    def test_accept(self):\n        self.assertTrue(True)\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Finished work", "risk": "low", "priority": "p1", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Finished work", "risk": "low", "priority": "p1", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	return vault, "APP-T-0001"

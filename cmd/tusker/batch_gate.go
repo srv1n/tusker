@@ -455,7 +455,13 @@ func createPromotionFailureRepairTask(vaultPath, gateRunID, command, excerpt, pr
 	if actorErr != nil {
 		return actorErr
 	}
-	if err := newV7TaskWithActor(Args{"vault": vaultPath, "quiet": "true", "epic": "BGR", "id": id, "title": "Repair red batch gate " + gateRunID, "risk": "medium", "priority": "p1", "status": "backlog"}, &internalActor); err != nil {
+	repairArgs := Args{"vault": vaultPath, "quiet": "true", "epic": "BGR", "id": id, "title": "Repair red batch gate " + gateRunID, "risk": "medium", "priority": "p1", "status": "backlog"}
+	if owningTask != "" {
+		if owner, err := resolveNote(vaultPath, owningTask); err == nil {
+			repairArgs["owned-paths"] = strings.Join(normalizeList(owner.Data["owned_paths"]), ",")
+		}
+	}
+	if err := newV7TaskWithActor(repairArgs, &internalActor); err != nil {
 		return err
 	}
 	note, err := resolveNote(vaultPath, id)

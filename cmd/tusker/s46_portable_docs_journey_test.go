@@ -79,7 +79,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 		// A task with governing refs resolves both subjects and carries them
 		// into the agent packet at their portable paths.
 		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Checkout rollout",
-			"domains": "billing", "spec-refs": "checkout-flow,record-choice"}, newV7Task)
+			"domains": "billing", "spec-refs": "checkout-flow,record-choice", "owned-paths": "src"}, newV7Task)
 		task, err := resolveV7Note(vault, "APP-T-0001", "task")
 		if err != nil {
 			t.Fatal(err)
@@ -241,7 +241,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 			t.Fatalf("legacy read missed the forward or repaired link:\n%s", legacy)
 		}
 		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Migrated rollout",
-			"spec-refs": "flow-plan"}, newV7Task)
+			"spec-refs": "flow-plan", "owned-paths": "src"}, newV7Task)
 		packet := captureStdout(t, func() {
 			if err := packetV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "for": "agent", "force": "true"}); err != nil {
 				t.Fatal(err)

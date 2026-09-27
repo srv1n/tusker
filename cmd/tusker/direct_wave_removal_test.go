@@ -123,8 +123,8 @@ func TestDirectWaveRemovalFixtureJourneyUsesNoPlanFile(t *testing.T) {
 		"title":       "Removal journey",
 		"outcome":     "Direct create/read/update/review/packet works with no plan file.",
 		"tasks": []map[string]any{
-			{"key": "root", "title": "Removal root", "work_level": "light", "body": "# Removal root\n\n## Intent\n\nProve direct authoring.\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | Works. |\n"},
-			{"key": "leaf", "title": "Removal leaf", "work_level": "light", "dependencies": []map[string]any{{"task": "root", "kind": "hard"}}, "body": "# Removal leaf\n\n## Intent\n\nFollow the root.\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | Works. |\n"},
+			{"key": "root", "title": "Removal root", "work_level": "light", "owned_paths": []string{"src/root"}, "body": "# Removal root\n\n## Intent\n\nProve direct authoring.\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | Works. |\n"},
+			{"key": "leaf", "title": "Removal leaf", "work_level": "light", "owned_paths": []string{"src/leaf"}, "dependencies": []map[string]any{{"task": "root", "kind": "hard"}}, "body": "# Removal leaf\n\n## Intent\n\nFollow the root.\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | Works. |\n"},
 		},
 	})
 	if err := waveV7CreateCmd(Args{"vault": vault, "file": request, "quiet": "true"}); err != nil {

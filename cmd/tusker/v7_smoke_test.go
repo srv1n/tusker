@@ -26,7 +26,7 @@ func TestV7TaskGateEvidenceAttemptReconcileFlow(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Add provider harness", "risk": "low", "priority": "p1", "evidence-required": "automated_test", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Add provider harness", "risk": "low", "priority": "p1", "evidence-required": "automated_test", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}, claimCmd)
 	assertExists(t, filepath.Join(filepath.Dir(vault), ".tusker-local", "leases", "APP-T-0001.json"))
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete OAuth.", "verification": "Provider endpoint returns ready.", "why-agent-cannot": "Human credentials or account access are required."}, newV7Gate)
@@ -97,7 +97,7 @@ func TestV7GateCreationRejectsVagueHumanGates(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Gate policy smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate policy target", "risk": "medium", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate policy target", "risk": "medium", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "manual_hold", "owner": "human:sarav", "action": "Resolve this gate so blocked work can proceed.", "verification": "Owner confirms the gate is satisfied.", "why-agent-cannot": "Human decision required."})
 	if err == nil || !strings.Contains(err.Error(), "placeholder") {
@@ -137,7 +137,7 @@ func TestV7CreateGateProposalApplyRequiresHumanContext(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Gate proposal policy.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate proposal target", "risk": "medium", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate proposal target", "risk": "medium", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_gate", "_pos1": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Provision staging OAuth credentials.", "verification": "Provider ready check passes."}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	err := proposalV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "apply", "_pos1": "APP-P-0001", "by": "human:sarav"})
@@ -156,7 +156,7 @@ func TestV7AgentReadyDashboardExcludesHumanOwnedReadyTasks(t *testing.T) {
 	}
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Dashboard ownership.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human ready", "risk": "low", "priority": "p2", "next-owner": "human:sarav", "next-source": "human_gate", "next-action": "Accept the manual gate.", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human ready", "risk": "low", "priority": "p2", "next-owner": "human:sarav", "next-source": "human_gate", "next-action": "Accept the manual gate.", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true"}, dashboardV7Cmd)
 
 	dashboard := mustReadIndexTest(t, filepath.Join(vault, "dashboards", "agent-ready.md"))
@@ -178,7 +178,7 @@ func TestV7ReconcileRepairsStaleObjectStateRevAndEmitsEvent(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual body edit", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual body edit", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -270,7 +270,7 @@ func TestV7ReconcileNeverOverwritesSameMtimeCachedBody(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Cache safety.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual body edit", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Manual body edit", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -331,7 +331,7 @@ func TestV7ReconcileRefusesTerminalRewindFromStaleObjectRev(t *testing.T) {
 	}
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Terminal stale rev", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Terminal stale rev", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	reviewData, reviewBody, err := parseFrontmatterMustRead(taskPath)
@@ -391,7 +391,7 @@ func TestV7ReconcileEpicManagedBlocksAreStable(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Epic reconcile stability.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stable managed block", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stable managed block", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	epicPath := filepath.Join(vault, "work", "epics", "APP.md")
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
@@ -420,7 +420,7 @@ func TestV7EvidenceAddUpdatesProofStatusAndTaskEvidenceSection(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence on branch", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence on branch", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	beforeData, beforeBody, err := parseFrontmatterMustRead(taskPath)
@@ -502,10 +502,10 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	}
 
 	runCLI("new", "epic", "APP", "--title", "First-class harness provider setup")
-	runCLI("new", "task", "--epic", "APP", "--title", "Add direct OpenAI provider smoke harness", "--work-level", "standard", "--kind", "feature", "--risk", "low", "--priority", "p2", "--body-file", taskBodyPath)
-	runCLI("new", "task", "--epic", "APP", "--title", "Human next action", "--work-level", "light", "--next-owner", "human:sarav", "--body-file", taskBodyPath)
-	runCLI("new", "task", "--epic", "APP", "--title", "Reviewer next action", "--work-level", "light", "--next-owner", "reviewer", "--body-file", taskBodyPath)
-	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--work-level", "light", "--next-owner", "agent", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--epic", "APP", "--title", "Add direct OpenAI provider smoke harness", "--work-level", "standard", "--kind", "feature", "--risk", "low", "--priority", "p2", "--owned-paths", "src", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--epic", "APP", "--title", "Human next action", "--work-level", "light", "--next-owner", "human:sarav", "--owned-paths", "src", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--epic", "APP", "--title", "Reviewer next action", "--work-level", "light", "--next-owner", "reviewer", "--owned-paths", "src", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--epic", "APP", "--title", "Agent next action", "--work-level", "light", "--next-owner", "agent", "--owned-paths", "src", "--body-file", taskBodyPath)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0004")
 	runCLI("new", "gate", "--blocks", "APP-T-0001", "--kind", "auth", "--owner", "human:sarav", "--action", "Complete OAuth.", "--verification", "Provider endpoint returns ready.", "--why-agent-cannot", "Human credentials or account access are required.")
@@ -873,7 +873,7 @@ func TestV7ValidationRejectsDoneTaskWithOpenGateAndMissingEvidence(t *testing.T)
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close proof", "risk": "high", "priority": "p0", "evidence-required": "automated_test", "status": "done", "readiness": "done", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close proof", "risk": "high", "priority": "p0", "evidence-required": "automated_test", "status": "done", "readiness": "done", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "reviewer", "action": "Review proof.", "verification": "Evidence accepted."}, newV7Gate)
 
 	code, err := validateCmd(Args{"vault": vault, "json": "true"})
@@ -896,7 +896,7 @@ func TestV7ReconcileIndexesDoneTasksWithOpenGates(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Done with gate", "risk": "low", "priority": "p2", "status": "done", "readiness": "done", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Done with gate", "risk": "low", "priority": "p2", "status": "done", "readiness": "done", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "reviewer", "action": "Review proof.", "verification": "Evidence accepted."}, newV7Gate)
 
 	output := captureStdout(t, func() {
@@ -928,7 +928,7 @@ func TestV7ReconcileUpdatesEpicManagedBlocks(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Managed block task", "risk": "low", "priority": "p2", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Managed block task", "risk": "low", "priority": "p2", "status": "ready", "readiness": "ready", "force-ready": "true", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "reviewer", "action": "Review proof.", "verification": "Evidence accepted."}, newV7Gate)
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 
@@ -957,7 +957,7 @@ func TestV7CreationRejectsInvalidDurableStatus(t *testing.T) {
 	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Invalid active task", "status": "active", "v7": "true"})
+	err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Invalid active task", "status": "active", "v7": "true"})
 	if err == nil {
 		t.Fatal("expected V7 task creation to reject active as a durable status")
 	}
@@ -977,7 +977,7 @@ func TestV7ValidationRejectsStaleReadyProjectionWithOpenGate(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale projection", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale projection", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "manual_hold", "owner": "human:sarav", "action": "Decide next step.", "verification": "Decision recorded.", "why-agent-cannot": "Human product direction is required before the agent can continue."}, newV7Gate)
 	forceV7TaskProjection(t, vault, "APP-T-0001", "ready", "ready", "agent", "Execute the task contract.")
 
@@ -1045,7 +1045,7 @@ func TestV7ReconcileEmitsProjectionUpdateEvent(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Projection event", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Projection event", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete OAuth.", "verification": "Provider endpoint returns ready.", "why-agent-cannot": "Human credentials or account access are required."}, newV7Gate)
 	forceV7TaskProjection(t, vault, "APP-T-0001", "ready", "ready", "agent", "Execute the task contract.")
 	must(Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
@@ -1736,7 +1736,7 @@ func TestV7ScreenshotEvidenceRequiresCheckMetadata(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Capture UI proof", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Capture UI proof", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	if err := writeText("provider-ready.png", "fake screenshot fixture\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -1853,7 +1853,7 @@ func TestV7EvidenceAddCopiesArtifactsAndMarksExceptions(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Durable artifact", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Durable artifact", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	if err := writeText(filepath.Join(repo, "proof.txt"), "durable proof\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -1901,7 +1901,7 @@ func TestV7ReviewEvidenceKindsDefaultPendingAndRequireAcceptor(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review evidence", "risk": "medium", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review evidence", "risk": "medium", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "manual_smoke", "covers": "A1", "summary": "Manual proof awaiting review."}, evidenceV7AddCmd)
 	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "evidence", "APP-T-0001", "APP-T-0001-E-0001.md"))
 	if err != nil {
@@ -1990,7 +1990,7 @@ func TestV7SaveCASRejectsStaleBaseRevision(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS conflict", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS conflict", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(taskPath)
 	if err != nil {
@@ -2048,7 +2048,7 @@ func TestV7SaveCASRejectsOnDiskBodyEditWithStaleStateRev(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS stale body", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS stale body", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(taskPath)
 	if err != nil {
@@ -2204,7 +2204,7 @@ func TestV7DashboardBuildIsDeterministicAndValidateRejectsStaleProjection(t *tes
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dashboard task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Dashboard task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := dashboardV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "build"}); err != nil {
@@ -2248,7 +2248,7 @@ func TestV7ReindexRefreshesDashboardBasesAndSummary(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Imported held task", "status": "backlog", "readiness": "held", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Imported held task", "status": "backlog", "readiness": "held", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(filepath.Join(vault, "Dashboard.md"), "# Dashboard\n\nLegacy dashboard generation was removed from the V7-only build.\n"); err != nil {
@@ -2314,7 +2314,7 @@ func TestV7SpecObjectCreationCLIForms(t *testing.T) {
 	if err := writeText(bodyPath, "## Intent\n\nAuthored spec-form task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Spec-form task outcome. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused spec-form proof. |\n"); err != nil {
 		t.Fatal(err)
 	}
-	command, args = parseCLI([]string{"tusker", "new", "task", "--vault", vault, "--quiet", "--epic", "APP", "--title", "Spec task", "--work-level", "standard", "--body-file", bodyPath})
+	command, args = parseCLI([]string{"tusker", "new", "task", "--vault", vault, "--quiet", "--epic", "APP", "--title", "Spec task", "--work-level", "standard", "--owned-paths", "src", "--body-file", bodyPath})
 	assertEqual(t, "new task", command, "new task command parse")
 	if code, err := run(command, args); err != nil || code != 0 {
 		t.Fatalf("new task spec form failed: code=%d err=%v", code, err)
@@ -2348,7 +2348,7 @@ func TestV7HandoffAliasReadsSummaryFile(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Alias handoff", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Alias handoff", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := attemptV7StartCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}); err != nil {
@@ -2387,7 +2387,7 @@ func TestV7AttemptHandoffRequestsReviewWhenUnblocked(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Handoff review", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Handoff review", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7AttemptHandoff -count=1", "result": "pass", "note": "Handoff proof passed."}, v7TestVerificationMutation)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implemented and ready."}, attemptV7HandoffCmd)
@@ -2411,7 +2411,7 @@ func TestV7FinishRequiresProofAndRequestsReview(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Finish review", "risk": "low", "priority": "p2", "evidence-required": "automated_test", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Finish review", "risk": "low", "priority": "p2", "evidence-required": "automated_test", "status": "ready", "readiness": "ready", "force-ready": "true", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 
 	err := finishV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implemented but proof is missing."})
@@ -2453,7 +2453,7 @@ func TestV7PacketIncludesDomainContextAndClosePolicy(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker",
 		"vault":             vault,
 		"quiet":             "true",
 		"epic":              "APP",
@@ -2524,7 +2524,7 @@ func TestV7SkillKnowledgeEndToEnd(t *testing.T) {
 	if err := writeText(taskBodyPath, "## Intent\n\nAuthored provider-routing task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Provider routing outcome. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused provider proof. |\n"); err != nil {
 		t.Fatal(err)
 	}
-	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "Route provider work", "--domains", "providers", "--risk", "low", "--priority", "p2", "--work-level", "standard", "--body-file", taskBodyPath)
+	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "Route provider work", "--domains", "providers", "--risk", "low", "--priority", "p2", "--work-level", "standard", "--owned-paths", "src", "--body-file", taskBodyPath)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	agentPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "agent")
 	reviewerPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "reviewer")
@@ -2606,7 +2606,7 @@ func TestV7SkillDoctorRouteAndPack(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Refresh provider auth", "domains": "providers", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Refresh provider auth", "domains": "providers", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
@@ -2736,7 +2736,7 @@ func TestV7GateControlEagerlyReconcilesTaskProjectionAndDashboards(t *testing.T)
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate projection target", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate projection target", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "auth", "owner": "human:sarav", "action": "Complete setup.", "verification": "Manual proof: setup complete.", "why-agent-cannot": "Human credentials or account access are required."}, newV7Gate)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -2786,7 +2786,7 @@ func TestV7TaskStatusControlEagerlyReconcilesProjection(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Status projection target", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Status projection target", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "local": "true", "id": "APP-T-0001", "status": "review", "by": "agent:codex"}, statusV7Cmd)
 
 	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
@@ -2810,7 +2810,7 @@ func TestV7GateSatisfyRequiresEvidenceForBlockingGate(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate evidence target", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate evidence target", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "reviewer", "action": "Review proof.", "verification": "Manual proof: evidence accepted."}, newV7Gate)
 
 	err := gateV7Transition(Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "reviewer:agent"}, "satisfied")
@@ -2845,7 +2845,7 @@ func TestV7ProposalCreatesInboxRecordAndValidates(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Inbox proposal target", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Inbox proposal target", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "automated_test", "covers": "A1", "summary": "Focused proposal apply smoke passed."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:codex"}, statusV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "close", "_pos1": "APP-T-0001", "reason": "Implementation branch is ready.", "validation": "Focused tests passed."}, proposalV7Cmd)
@@ -2929,7 +2929,7 @@ func TestV7ProposalAcceptRequiresIndependentReviewer(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self review proposal", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self review proposal", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "status", "_pos1": "APP-T-0001", "status": "review", "by": "agent:codex"}, proposalV7Cmd)
 
 	err := proposalV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "agent:codex"})
@@ -2953,7 +2953,7 @@ func TestV7StatusRejectsDoneDirectly(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct done", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct done", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	err := statusV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "done"})
 	if err == nil {
@@ -2982,7 +2982,7 @@ func TestV7CloseRequiresReviewStatus(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close from ready", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close from ready", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "automated_test", "covers": "A1", "summary": "Focused tests passed."}, evidenceV7AddCmd)
 
 	err := closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent"})
@@ -3008,7 +3008,7 @@ func TestV7StatusProposalRejectsDone(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Proposal done", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Proposal done", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	err := proposalV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "status", "_pos1": "APP-T-0001", "status": "done"})
 	if err == nil {
@@ -3040,7 +3040,7 @@ func TestV7ProposalApplyCreatesGate(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate proposal target", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate proposal target", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_gate", "_pos1": "APP-T-0001", "kind": "verification", "owner": "reviewer", "action": "Review branch proof.", "verification": "Manual proof: reviewer accepts linked evidence."}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "apply", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
@@ -3083,7 +3083,7 @@ func TestV7ProposalApplyCreatesTaskAndDecision(t *testing.T) {
 	if err := writeText(bodyPath, "## Intent\n\nApply the reviewer-approved proposal task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Proposal applies the authored task contract. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7ProposalApply -count=1 | pending | Focused proposal proof. |\n"); err != nil {
 		t.Fatal(err)
 	}
-	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "work-level": "standard", "review-level": "light", "review-reason": "bounded review", "risk": "low", "priority": "p1", "evidence-required": "automated_test", "body-file": bodyPath}, proposalV7Cmd)
+	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "work-level": "standard", "review-level": "light", "review-reason": "bounded review", "risk": "low", "priority": "p1", "owned-paths": "cmd/tusker/v7_proposal_cmd.go", "evidence-required": "automated_test", "body-file": bodyPath}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "apply", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	assertExists(t, filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
@@ -3095,6 +3095,7 @@ func TestV7ProposalApplyCreatesTaskAndDecision(t *testing.T) {
 	assertEqual(t, "standard", stringField(taskData, "work_level"), "created task work level")
 	assertEqual(t, "light", stringField(taskData, "review_level"), "created task review level")
 	assertEqual(t, "bounded review", stringField(taskData, "review_reason"), "created task review reason")
+	assertEqual(t, []string{"cmd/tusker/v7_proposal_cmd.go"}, normalizeList(taskData["owned_paths"]), "created task owned paths")
 	assertEqual(t, "automated_test", normalizeList(taskData["evidence_required"])[0], "created task evidence")
 
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_decision", "epic": "APP", "title": "Proposed architecture decision", "decision": "Use repo-local proposal application."}, proposalV7Cmd)
@@ -3259,7 +3260,7 @@ func TestV7HeartbeatAndReleasePreserveLeaseClaimAndEmitEvent(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease lifecycle", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease lifecycle", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex", "workspace": "../worktrees/APP-T-0001", "branch": "agent/APP-T-0001"}, claimCmd)
 
 	leasePath := filepath.Join(filepath.Dir(vault), ".tusker-local", "leases", "APP-T-0001.json")
@@ -3338,7 +3339,7 @@ func TestV7HeartbeatAndReleaseRequireActiveLease(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease missing", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease missing", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	err := heartbeatV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001"})
 	if err == nil {
@@ -3392,7 +3393,7 @@ func TestV7LeaseRejectsDuplicateActiveClaimByDifferentOwner(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease duplicate", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease duplicate", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}, claimCmd)
 
 	err := claimCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:claude"})
@@ -3430,7 +3431,7 @@ func TestV7ClosePolicyRequiresRiskEvidenceAndAcceptor(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Medium close policy", "risk": "medium", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Medium close policy", "risk": "medium", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "automated_test", "covers": "A1", "summary": "Focused tests passed."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:codex"}, statusV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent"}, closeV7Cmd)
@@ -3443,7 +3444,7 @@ func TestV7ClosePolicyRequiresRiskEvidenceAndAcceptor(t *testing.T) {
 		t.Fatalf("expected invalid evidence kind error, got %v", err)
 	}
 
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "High close policy", "risk": "high", "priority": "p1", "proof-mode": "card", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "High close policy", "risk": "high", "priority": "p1", "proof-mode": "card", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "kind": "automated_test", "covers": "A1", "summary": "Focused tests passed."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "kind": "human_review", "status": "accepted", "accepted-by": "human:sarav", "covers": "A1", "summary": "Human reviewed and accepted."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "status": "review", "by": "agent:codex"}, statusV7Cmd)
@@ -3461,7 +3462,7 @@ func TestV7CloseRequiresAcceptanceCoverageOrWaiver(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Acceptance coverage", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Acceptance coverage", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "automated_test", "covers": "A2", "summary": "Wrong acceptance covered."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:codex"}, statusV7Cmd)
 
@@ -3506,7 +3507,7 @@ func TestV7ValidationRejectsDoneTaskViolatingClosePolicy(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual bad close", "risk": "high", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual bad close", "risk": "high", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "automated_test", "covers": "A1", "summary": "Focused tests passed."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "human_review", "status": "accepted", "accepted-by": "human:sarav", "covers": "A1", "summary": "Human review evidence exists."}, evidenceV7AddCmd)
 
@@ -3575,7 +3576,7 @@ branches:
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Config close policy", "risk": "low", "priority": "p2", "proof-required": "manual_smoke", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Config close policy", "risk": "low", "priority": "p2", "proof-required": "manual_smoke", "owned-paths": "src", "v7": "true"}, newV7Task)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "manual_smoke", "status": "accepted", "accepted-by": "human:sarav", "covers": "A1", "summary": "Configured smoke evidence accepted."}, evidenceV7AddCmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:codex"}, statusV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent"}, closeV7Cmd)
@@ -3641,7 +3642,7 @@ func TestV7ReconcileMarksExpiredLeaseStale(t *testing.T) {
 
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease expiry", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Lease expiry", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	expired := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
 	leasePath := filepath.Join(filepath.Dir(vault), ".tusker-local", "leases", "APP-T-0001.json")
 	if err := writeJSON(leasePath, v7LeaseRecord{
@@ -3701,7 +3702,7 @@ func TestV7StateBranchSyncAndImportLeases(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "State branch lease", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "State branch lease", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := claimCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}); err != nil {
@@ -3773,7 +3774,7 @@ func TestV7StateBranchPushAndFetchRemoteLeases(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Remote state branch lease", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Remote state branch lease", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := claimCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}); err != nil {
@@ -3827,7 +3828,7 @@ func TestV7StagedBranchPolicyRejectsProtectedStateMutation(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Protected mutation", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Protected mutation", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", ".")
@@ -3903,7 +3904,7 @@ func TestV7BranchPolicyRejectsTaskAndGateDeletion(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Deleted task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Deleted task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "reviewer", "action": "Review deletion.", "verification": "Gate exists."}); err != nil {
@@ -3974,7 +3975,7 @@ func TestV7BranchPolicyHonorsConfiguredProtectStateFieldsFalse(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Configured branch policy", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Configured branch policy", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", ".")
@@ -4039,7 +4040,7 @@ func TestV7BranchPolicyAllowsExplicitSingleUserLocalMode(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Local branch policy", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Local branch policy", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", ".")
@@ -4105,7 +4106,7 @@ func TestV7ControlMutationAllowsExplicitSingleUserLocalMode(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Local mutation", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Local mutation", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", ".")
@@ -4168,7 +4169,7 @@ func TestV7ControlMutationUsesVaultRepoRootBranch(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Repo-root branch", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Repo-root branch", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", ".")
@@ -4211,7 +4212,7 @@ func TestV7BranchPolicyRejectsDetachedAndNonGitState(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Detached branch", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Detached branch", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", ".")

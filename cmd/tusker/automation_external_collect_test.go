@@ -16,7 +16,7 @@ type externalCollectJSONPayload struct {
 
 func TestAutomationCollectExternalStoresPatchAndReviewEvidence(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	note, err := resolveNote(vault, "APP-T-0001")
@@ -71,7 +71,7 @@ func TestAutomationCollectExternalStoresPatchAndReviewEvidence(t *testing.T) {
 
 func TestAutomationCollectExternalIsIdempotent(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	note, err := resolveNote(vault, "APP-T-0001")
@@ -118,7 +118,7 @@ func TestAutomationCollectExternalIsIdempotent(t *testing.T) {
 
 func TestAutomationCollectExternalNotesOnlyRecordsResearchArtifact(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External notes", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External notes", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
 
@@ -139,7 +139,7 @@ func TestAutomationCollectExternalNotesOnlyRecordsResearchArtifact(t *testing.T)
 
 func TestAutomationCollectExternalMultiplePatchesEscalates(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External apply", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
 
@@ -156,7 +156,7 @@ func TestAutomationCollectExternalMultiplePatchesEscalates(t *testing.T) {
 
 func TestAutomationCollectExternalNoArtifactsEscalates(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External empty", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External empty", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
 

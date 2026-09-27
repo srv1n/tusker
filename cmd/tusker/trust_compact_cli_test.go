@@ -16,7 +16,7 @@ func TestTrustCompactCli(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
-		if err := newV7Task(Args{
+		if err := newV7Task(Args{"owned-paths": "cmd/tusker",
 			"vault": vault,
 			"quiet": "true",
 			"epic":  "CMP",

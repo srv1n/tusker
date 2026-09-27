@@ -85,7 +85,7 @@ func TestTrustReviewCloseout(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Review freshness.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Artifact review", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "none", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Artifact review", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "none", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(taskPath)

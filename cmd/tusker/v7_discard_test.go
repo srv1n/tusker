@@ -7,8 +7,8 @@ import (
 
 func TestV7DiscardDetachesDependentsObsoletesGatesAndPreservesHistory(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Discard me", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Keep dependent", "risk": "low", "priority": "p1", "dependencies": "APP-T-0001:hard", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Discard me", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Keep dependent", "risk": "low", "priority": "p1", "dependencies": "APP-T-0001:hard", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustRunPickupTest(t, Args{
 		"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "reviewer:agent",
 		"action": "Review task.", "verification": "Task is reviewed.",
@@ -50,9 +50,9 @@ func TestV7DiscardDetachesDependentsObsoletesGatesAndPreservesHistory(t *testing
 
 func TestV7DiscardExplicitCascadeCancelsTransitiveDependents(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Root", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Child", "risk": "low", "priority": "p1", "dependencies": "APP-T-0001", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Grandchild", "risk": "low", "priority": "p1", "dependencies": "APP-T-0002", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Root", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Child", "risk": "low", "priority": "p1", "dependencies": "APP-T-0001", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Grandchild", "risk": "low", "priority": "p1", "dependencies": "APP-T-0002", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	impact, err := v7DiscardImpactForTask(vault, "APP-T-0001")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestV7DiscardExplicitCascadeCancelsTransitiveDependents(t *testing.T) {
 
 func TestV7DiscardRequiresReasonAndRejectsDoneTask(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Root", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Root", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	if err := discardV7Cmd(Args{"vault": vault, "id": "APP-T-0001"}); err == nil || errorToIssue(err).Code != errorMissingArg {
 		t.Fatalf("expected missing reason error, got %v", err)
 	}
@@ -81,7 +81,7 @@ func TestV7DiscardRequiresReasonAndRejectsDoneTask(t *testing.T) {
 
 func TestV7DiscardRetiresRuntimeForDisabledProject(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Running task", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Running task", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {

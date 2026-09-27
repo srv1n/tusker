@@ -144,9 +144,9 @@ func TestRunDirectiveBypassableBlocker(t *testing.T) {
 func TestDaemonHonorsDirectiveWithAutomationEnabled(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Not directed", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Not directed", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	installFakeCodexExec(t, filepath.Dir(vault))
 	project := registerAutomationTestProject(t, vault)
@@ -219,7 +219,7 @@ func TestDaemonHonorsDirectiveWithAutomationEnabled(t *testing.T) {
 
 func TestDaemonTaskDirectiveAuthorizesExactTaskOutsideArmedWave(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Unrelated directive", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Unrelated directive", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	writeServeWave(t, vault, "W-0001", "Disarmed batch", []string{"APP-T-0001"})
 	setServeTaskWave(t, vault, "APP-T-0001", "W-0001")
@@ -733,7 +733,7 @@ func TestDirectedClaimWrapperRegistersDaemonStampedPID(t *testing.T) {
 
 func TestInteractiveCannotDispatchDirective(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Interactive refusal", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Interactive refusal", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.enabled", false); err != nil {

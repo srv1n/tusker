@@ -180,7 +180,7 @@ func TestServeStaticCachePolicy(t *testing.T) {
 
 func TestServeQueueSnapshotDoesNotProbeRunner(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.dispatch_scope", "all_eligible"); err != nil {

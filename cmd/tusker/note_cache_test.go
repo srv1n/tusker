@@ -96,7 +96,7 @@ func TestNoteCacheIdlePollDoesNotReadOrParseNotes(t *testing.T) {
 
 func TestDaemonFrontmatterPollPromotesTaskContractsToWarmBodyCache(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Body-backed proof", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Body-backed proof", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	daemon, err := NewDaemon(DefaultStateRoot())

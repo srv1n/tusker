@@ -244,7 +244,7 @@ func inlineProofTaskTest(t *testing.T) string {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Scratch retention.", "v7": "true"}, newV7Epic)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reap scratch", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reap scratch", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run ScratchReap -count=1", "result": "pass", "note": "Focused proof passed."}, v7TestVerificationMutation)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "attempt": "APP-T-0001-A-0001", "summary": "Implementation complete.", "local": "true"}, finishV7Cmd)
@@ -268,7 +268,7 @@ func TestScratchRetainedOnTierOneDirectDone(t *testing.T) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct close", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Direct close", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	dir := seedScratchTest(t, vault, "APP-T-0001")
@@ -283,7 +283,7 @@ func TestScratchRetainedOnTierOneDirectDone(t *testing.T) {
 
 func TestScratchRetainedOnDiscard(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Discard me", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Discard me", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	dir := seedScratchTest(t, vault, "APP-T-0001")
 
 	if err := discardV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "reason": "No longer desired."}); err != nil {

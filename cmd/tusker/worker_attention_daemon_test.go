@@ -205,7 +205,7 @@ func TestWorkerDeliveryLegacyCheckMigratesOnFastPath(t *testing.T) {
 
 func TestDaemonWorkerAttentionOperatorFlow(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Worker watch", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Worker watch", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	workflowFile := workflowPath(vault)
 	raw, err := readText(workflowFile)
 	if err != nil {

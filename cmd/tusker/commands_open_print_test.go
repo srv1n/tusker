@@ -13,7 +13,7 @@ func TestPrintRendersPlainMarkdownSlices(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Build the app foundation.", "v7": "true"}, newV7Epic)
-	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Markdown task", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Markdown task", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	full := captureStdout(t, func() {
 		if err := printCmd(Args{"vault": vault, "id": "APP-T-0001", "plain": "true"}); err != nil {
@@ -56,7 +56,7 @@ func TestOpenPrintsFileAndObsidianTargetsWithoutLaunching(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Build the app foundation.", "v7": "true"}, newV7Epic)
-	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Openable task", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Openable task", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	expectedPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 
 	pathOutput := captureStdout(t, func() {
@@ -87,7 +87,7 @@ func TestOpenFallsBackToRegisteredProjectsOutsideRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Build the app foundation.", "v7": "true"}, newV7Epic)
-	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Registered task", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustRunIndexTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Registered task", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	if err := projectsAddCmd(Args{"repo": repo, "vault": vault}); err != nil {
 		t.Fatal(err)
 	}

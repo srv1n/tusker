@@ -189,8 +189,7 @@ func reviewerPromptFixture(t *testing.T) (RegisteredProject, WorkflowFile, Note)
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{
 		"vault": vault, "quiet": "true", "epic": "APP", "title": "Add provider harness",
-		"risk": "medium", "priority": "p0", "v7": "true",
-	}, newV7Task)
+		"risk": "medium", "priority": "p0", "v7": "true", "owned-paths": "src"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status":        "review",
 		"source_sha":    "abc123",

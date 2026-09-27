@@ -10,7 +10,7 @@ import (
 
 func logbookTestTask(t *testing.T, vault, id, title string) {
 	t.Helper()
-	if err := newV7Task(Args{
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker",
 		"vault": vault, "quiet": "true", "epic": "APP", "id": id,
 		"title": title, "risk": "low", "priority": "p2", "v7": "true",
 	}); err != nil {
@@ -104,7 +104,7 @@ func TestLogbookComposesFromRecords(t *testing.T) {
 		t.Fatalf("create BGR epic: %v", err)
 	}
 	logbookTestTask(t, vault, "APP-T-0001", "Claim conflict refusal")
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "BGR", "id": "BGR-T-0001",
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "BGR", "id": "BGR-T-0001",
 		"title": "Repair board regression", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatalf("create repair task: %v", err)
 	}

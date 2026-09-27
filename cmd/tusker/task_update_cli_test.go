@@ -9,7 +9,7 @@ import (
 func TestTaskUpdateCLIImplicitAndExplicitRevision(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	body := directAuthoringBodyPath(t, vault, "body.md", "# Body\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Before", "work-level": "standard", "body-file": body, "spec-refs": ".tusker/specs/delivery.md"}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Before", "work-level": "standard", "body-file": body, "spec-refs": ".tusker/specs/delivery.md"}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(vault, "work", "tasks", "TSK-T-0001.md")

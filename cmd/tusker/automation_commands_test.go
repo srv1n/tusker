@@ -23,7 +23,7 @@ func TestResolveRunnerHonorsAgentNextOwner(t *testing.T) {
 
 func TestAutomationExplainJSONReportsBlockers(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human held", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human held", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"readiness":  "held",
@@ -92,8 +92,8 @@ func TestAutomationUsesRuntimeToggleAndResolvedProfileAsSingleAuthorities(t *tes
 
 func TestAutomationQueueJSONSplitsEligibleAndBlockedWithoutMutatingLifecycle(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Held", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Held", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{
@@ -136,8 +136,8 @@ func TestAutomationQueueJSONSplitsEligibleAndBlockedWithoutMutatingLifecycle(t *
 
 func TestAutomationQueueTextShowsEligibleAndBlocked(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Held", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Runnable", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Held", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{
@@ -160,7 +160,7 @@ func TestAutomationQueueTextShowsEligibleAndBlocked(t *testing.T) {
 
 func TestPlanGateUsesCanonicalStateFromRunnerWorkspace(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Canonical ready", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Canonical ready", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 
@@ -265,7 +265,7 @@ automation:
 `)+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Fanout task", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Fanout task", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())

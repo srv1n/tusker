@@ -236,8 +236,7 @@ func testFactoryOptInAdmission(t *testing.T) {
 		vault := automationTestVault(t)
 		mustRunPickupTest(t, Args{
 			"vault": vault, "quiet": "true", "epic": "APP",
-			"title": "Factory manual work", "risk": "low", "priority": "p0", "v7": "true",
-		}, newV7Task)
+			"title": "Factory manual work", "risk": "low", "priority": "p0", "v7": "true", "owned-paths": "src"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 		initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 		project := registerAutomationTestProject(t, vault)
@@ -400,8 +399,7 @@ func testFactoryIncrementalCompatibility(t *testing.T) {
 		vault := automationTestVault(t)
 		mustRunPickupTest(t, Args{
 			"vault": vault, "quiet": "true", "epic": "APP",
-			"title": "Adaptive fixture", "risk": "low", "priority": "p0", "v7": "true",
-		}, newV7Task)
+			"title": "Adaptive fixture", "risk": "low", "priority": "p0", "v7": "true", "owned-paths": "src"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 		notes, err := listOperationalNotes(vault)
 		if err != nil {

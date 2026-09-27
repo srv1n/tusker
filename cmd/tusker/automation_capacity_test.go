@@ -13,7 +13,7 @@ import (
 
 func TestAutomationPlanRetryQueuedSelfBlockAllowsContinuationCapacity(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self parked retry", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self parked retry", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	seedCapacityRunForTest(t, project, "APP-T-0001", LeaseStateRetryQueued)
@@ -33,7 +33,7 @@ func TestDaemonRetryQueuedSelfBlockDispatchesContinuationAtProjectLimit(t *testi
 	vault := automationTestVault(t)
 	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	installCodexSleepShimForTest(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self parked daemon retry", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Self parked daemon retry", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	seedCapacityRunForTest(t, project, "APP-T-0001", LeaseStateRetryQueued)
@@ -62,8 +62,8 @@ func TestAutomationPlanActiveRunLimitCountsDistinctCapacityRuns(t *testing.T) {
 	for _, state := range []LeaseState{LeaseStateClaimed, LeaseStateRunning} {
 		t.Run(string(state), func(t *testing.T) {
 			vault := automationTestVault(t)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "First task", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Second task", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "First task", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Second task", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 			project := registerAutomationTestProject(t, vault)
@@ -84,7 +84,7 @@ func TestQueuedRunsDoNotConsumeActiveCap(t *testing.T) {
 	vault := automationTestVault(t)
 	taskIDs := make([]string, 0, 9)
 	for i := 1; i <= 9; i++ {
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": fmt.Sprintf("Cap fixture %d", i), "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": fmt.Sprintf("Cap fixture %d", i), "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 		taskID := fmt.Sprintf("APP-T-%04d", i)
 		makeV7TaskDispatchableForTest(t, vault, taskID)
 		taskIDs = append(taskIDs, taskID)
@@ -157,7 +157,7 @@ func TestActiveCapCountsRunningOnly(t *testing.T) {
 	// inflated by queued rows.
 	vault := automationTestVault(t)
 	for i := 1; i <= 4; i++ {
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": fmt.Sprintf("Blocker fixture %d", i), "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": fmt.Sprintf("Blocker fixture %d", i), "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, fmt.Sprintf("APP-T-%04d", i))
 	}
 	project := registerAutomationTestProject(t, vault)

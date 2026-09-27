@@ -30,7 +30,7 @@ func workSessionFixture(t *testing.T, count int) (string, RegisteredProject) {
 	t.Helper()
 	vault := automationTestVault(t)
 	for i := 0; i < count; i++ {
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": fmt.Sprintf("Work %d", i+1), "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": fmt.Sprintf("Work %d", i+1), "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 		id := fmt.Sprintf("APP-T-%04d", i+1)
 		makeV7TaskDispatchableForTest(t, vault, id)
 		setAutomationV7TaskFields(t, vault, id, map[string]any{"owned_paths": []string{"owned/" + id}})
@@ -155,7 +155,7 @@ func TestWorkSessionPreservingLeaseKeepsWorkspace(t *testing.T) {
 
 func TestWorkSessionInteractiveStartWithAutomationDisabled(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual work", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual work", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	project := registerAutomationTestProject(t, vault)
@@ -239,7 +239,7 @@ func TestWorkSessionLifecycleIsolatesCollidingProjectTaskIDs(t *testing.T) {
 	if err := writeDefaultWorkflow(rznVault); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPickupTest(t, Args{"vault": rznVault, "quiet": "true", "epic": "APP", "title": "RZN collision", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": rznVault, "quiet": "true", "epic": "APP", "title": "RZN collision", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, rznVault, "APP-T-0001")
 	setAutomationV7TaskFields(t, rznVault, "APP-T-0001", map[string]any{"owned_paths": []string{"rzn-owned"}})
 	initializeOrchestrationGitRepo(t, filepath.Dir(rznVault))
@@ -342,7 +342,7 @@ func TestWorkSessionLifecycleIsolatesCollidingProjectTaskIDs(t *testing.T) {
 
 func TestWorkSessionUnregisteredRepoSupportsAgentReviewPath(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual unregistered work", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual unregistered work", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 
@@ -1294,7 +1294,7 @@ func TestWorkSessionNotificationIsExactRunHintAndDoesNotSpawn(t *testing.T) {
 	if err := writeDefaultWorkflow(vault); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Notify", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Notify", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	registerAutomationTestProject(t, vault)

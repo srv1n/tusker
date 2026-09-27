@@ -195,8 +195,7 @@ func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixtu
 	for i := 1; i <= 4; i++ {
 		mustWave(t, Args{
 			"vault": vault, "quiet": "true", "epic": "APP",
-			"title": "Task " + padNumber(i), "risk": "low", "priority": "p2", "v7": "true",
-		}, newV7Task)
+			"title": "Task " + padNumber(i), "risk": "low", "priority": "p2", "v7": "true", "owned-paths": "src"}, newV7Task)
 	}
 	if err := writeText(filepath.Join(repo, "README.md"), "seed\n"); err != nil {
 		t.Fatal(err)

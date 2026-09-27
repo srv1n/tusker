@@ -514,6 +514,7 @@ func applyV7CreateTaskProposal(vaultPath, target, targetKind string, fields map[
 		"work-level":    firstNonEmpty(toString(fields["work_level"]), toString(fields["work-level"])),
 		"review-level":  firstNonEmpty(toString(fields["review_level"]), toString(fields["review-level"])),
 		"review-reason": firstNonEmpty(toString(fields["review_reason"]), toString(fields["review-reason"])),
+		"owned-paths":   serveActionBody(fields).csv("owned_paths", "owned-paths", "paths", "files"),
 		"by":            actor,
 	}
 	if evidence := firstNonEmpty(toString(fields["evidence_required"]), toString(fields["evidence-required"])); evidence != "" {
@@ -610,7 +611,7 @@ func v7ProposalFields(vaultPath string, args Args, action string) (map[string]an
 		}
 		fields["status"] = status
 	case "create_task":
-		for _, key := range []string{"id", "title", "summary", "risk", "priority", "size", "work-level", "review-level", "review-reason", "domains", "dependencies", "evidence-required", "next-owner", "next-action"} {
+		for _, key := range []string{"id", "title", "summary", "risk", "priority", "size", "work-level", "review-level", "review-reason", "owned-paths", "domains", "dependencies", "evidence-required", "next-owner", "next-action"} {
 			if value := args.String(key); value != "" {
 				fields[key] = value
 			}

@@ -11,7 +11,7 @@ func TestV7ProofRecipeSuggestsScopedCommandsFromConfig(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Recipe policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CLI proof recipe", "risk": "medium", "priority": "p2", "domains": "cli", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CLI proof recipe", "risk": "medium", "priority": "p2", "domains": "cli", "owned-paths": "src", "v7": "true"}, newV7Task)
 	writeRecipeConfig(t, vault, `
 recipes:
   - id: cli-owned-go
@@ -57,7 +57,7 @@ func TestV7ProofRecipeTextIncludesExpectedNoise(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Recipe policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Schema proof recipe", "risk": "low", "priority": "p2", "domains": "schema", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Schema proof recipe", "risk": "low", "priority": "p2", "domains": "schema", "owned-paths": "src", "v7": "true"}, newV7Task)
 	writeRecipeConfig(t, vault, `
 recipes:
   - id: schema-unit

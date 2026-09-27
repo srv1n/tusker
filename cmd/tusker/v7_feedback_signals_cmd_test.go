@@ -181,10 +181,11 @@ func TestFeedbackPromoteCommandDefaultsDryRunAndWritesOneTask(t *testing.T) {
 	}
 
 	if err := feedbackPromoteCmd(Args{
-		"vault":  vault,
-		"review": reviewPath,
-		"date":   "2026-05-31",
-		"write":  "true",
+		"vault":       vault,
+		"review":      reviewPath,
+		"date":        "2026-05-31",
+		"write":       "true",
+		"owned-paths": "src",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +268,7 @@ func TestFeedbackPromoteCommandSelectsFindingPreservesSourceRefsAndDoesNotDispat
 		t.Fatalf("promotion did not preserve source note refs: %#v", promotePayload.Outcomes[0].SourceRefs)
 	}
 
-	if err := feedbackPromoteCmd(Args{"vault": vault, "finding": findingID, "since": "2026-05-20", "date": "2026-05-22", "write": "true", "epic": "FBK", "quiet": "true"}); err != nil {
+	if err := feedbackPromoteCmd(Args{"vault": vault, "finding": findingID, "since": "2026-05-20", "date": "2026-05-22", "write": "true", "epic": "FBK", "owned-paths": "src", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	taskPath := filepath.Join(vault, "work", "tasks", "FBK-T-0001.md")

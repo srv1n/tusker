@@ -24,7 +24,7 @@ func TestAutomationAdvanceExternalCollectsRecordsPolicyAndIsIdempotent(t *testin
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	repoRoot := filepath.Dir(vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Advance external", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Advance external", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
 
@@ -74,7 +74,7 @@ func TestAutomationAdvanceExternalCollectsRecordsPolicyAndIsIdempotent(t *testin
 
 func TestAutomationAdvanceExternalRepairContinuationCapEscalates(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Repair cap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Repair cap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
 
@@ -98,7 +98,7 @@ func TestAutomationAdvanceExternalExternalThreadCapEscalates(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
 	repoRoot := filepath.Dir(vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Thread cap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Thread cap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
 

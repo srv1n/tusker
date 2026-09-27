@@ -210,7 +210,7 @@ func TestV7BlockingGatesAndAcceptanceWarnings(t *testing.T) {
 
 func TestV7ModelTaskWriteRoundTripKeepsStateRev(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "State revision task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "State revision task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")

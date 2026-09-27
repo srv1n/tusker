@@ -22,7 +22,7 @@ func TestV7ProposalChangeSpecRefsUsesAllowlistAndEmitsEvent(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 

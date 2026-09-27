@@ -131,7 +131,7 @@ func assertRegistryAutomationState(t *testing.T, project RegisteredProject, enab
 func TestDaemonHonorsDirectiveWithAutomationOff(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Directed", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	installFakeCodexExec(t, filepath.Dir(vault))

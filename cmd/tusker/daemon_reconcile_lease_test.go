@@ -16,7 +16,7 @@ import (
 func TestPollOnceDoesNotResurrectConcurrentInterrupt(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Poll interrupt fence", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Poll interrupt fence", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 
@@ -126,7 +126,7 @@ func TestPollOnceNeverAutoLandsAnArmedWave(t *testing.T) {
 func TestPollOnceAbsentInsertRaceLeavesConcurrentLiveClaimUntouched(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Absent insert claim fence", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Absent insert claim fence", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 
@@ -184,7 +184,7 @@ func TestPollOnceAbsentInsertRaceLeavesConcurrentLiveClaimUntouched(t *testing.T
 func TestEligibilityFunctionReconcileDesiredSet(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Desired set", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Desired set", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	note, err := resolveNote(vault, "APP-T-0001")
@@ -363,7 +363,7 @@ func TestDispatchLeaseClaimRejectsConcurrentInterruptState(t *testing.T) {
 	vault := automationTestVault(t)
 	installCodexSleepShimForTest(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Interrupt before claim", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Interrupt before claim", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	wfFile, err := loadWorkflow(vault)
@@ -438,7 +438,7 @@ func TestDispatchLeaseClaimRejectsConcurrentInterruptState(t *testing.T) {
 func TestDispatchLostCASAbortsBeforeWorkspacePrepAndPreservesControlMutation(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS dispatch", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS dispatch", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	wfFile, err := loadWorkflow(vault)
@@ -515,7 +515,7 @@ func TestDispatchCASHappyPathStillDispatches(t *testing.T) {
 	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	installCodexSleepShimForTest(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS happy", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "CAS happy", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	wfFile, err := loadWorkflow(vault)
@@ -673,7 +673,7 @@ func TestDispatchPostSpawnLeaseLossReapsSpawnedProcess(t *testing.T) {
 	vault := automationTestVault(t)
 	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Post spawn reap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Post spawn reap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	wfFile, err := loadWorkflow(vault)
@@ -812,7 +812,7 @@ func TestProcessIdentityProbeFailureFailsClosed(t *testing.T) {
 func TestAdoptVerifiedLivenessPrefersWrapperIdentityOverLiveChildPID(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Adopt wrapper", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Adopt wrapper", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 
@@ -910,7 +910,7 @@ func TestAdoptVerifiedLivenessPrefersWrapperIdentityOverLiveChildPID(t *testing.
 func TestReconcileIdempotentReconcileConverges(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Converge", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Converge", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "done", "readiness": "done", "next_owner": "none"})
 	project := registerAutomationTestProject(t, vault)
