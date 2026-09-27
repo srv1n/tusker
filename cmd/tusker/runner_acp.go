@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"tusker/internal/acp"
+	runnercore "tusker/internal/runner"
 )
 
 const codexACPAgentName = "@agentclientprotocol/codex-acp"
@@ -390,6 +391,9 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 			defer appendACPEvent(eventLog, "permission_resolved", provenance, fields)
 			if codexPlan != nil {
 				return evaluateCodexACPTransportPermission(permissionCtx, eventLog, handle.currentProvenance(), request, workspace, codexPlan.Mode, policy)
+			}
+			if runner == RunnerDevin {
+				return evaluateDevinACPTransportPermission(permissionCtx, eventLog, handle.currentProvenance(), request, workspace, policy)
 			}
 			return evaluateACPTransportPermission(permissionCtx, eventLog, handle.currentProvenance(), request)
 		},
@@ -980,26 +984,21 @@ func devinACPModelAndThought(session acp.Session, model, effort string) (string,
 }
 
 // devinACPModeForPolicy maps the resolved Tusker sandbox policy onto Devin's
-// session "mode" config option. Devin advertises accept-edits, smart, ask,
-// plan, and bypass; there is no advertised value that auto-approves reads and
-// exec while still gating edits. smart is the least-restrictive advertised
-// mode whose fast-model gate auto-runs safe verification commands (tests,
-// builds, lint) without a permission round-trip. That property is required
-// even for review: Tusker's generic ACP permission handler fails closed on
-// every session/request_permission callback, so under accept-edits, ask, or
-// plan an exec call would prompt, be rejected, and a reviewer could never run
-// tests. bypass also auto-approves destructive commands, which no lane needs.
+// session "mode" config option. The sandbox-exec deny wrapper contains full
+// access; review runs in Devin's plan mode.
 func devinACPModeForPolicy(policy CodexPolicy) (string, error) {
 	switch sandbox := strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox)); sandbox {
 	case "read-only":
-		return "smart", nil
+		return "plan", nil
 	case "workspace-write":
 		if policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
 			return "", tuskerError(errorConfigInvalid, "Devin ACP requires sandboxed workspace-write with network enabled")
 		}
 		return "smart", nil
+	case "danger-full-access":
+		return "bypass", nil
 	default:
-		return "", tuskerError(errorConfigInvalid, "Devin ACP requires a read-only or networked workspace-write sandbox policy")
+		return "", tuskerError(errorConfigInvalid, "Devin ACP requires a read-only, networked workspace-write, or full-access policy")
 	}
 }
 
@@ -1105,6 +1104,56 @@ func evaluateACPTransportPermission(ctx context.Context, eventLog *EventLog, pro
 		"reason_code":     decision.Audit.ReasonCode,
 	})
 	if ctx.Err() != nil || decision.Outcome == ACPPermissionCancelled {
+		return acp.Cancelled, nil
+	}
+	if decision.Outcome == ACPPermissionAllowOnce {
+		return acp.AllowOnce, nil
+	}
+	return acp.Reject, nil
+}
+
+func evaluateDevinACPTransportPermission(ctx context.Context, eventLog *EventLog, provenance acpAttemptProvenance, request acp.PermissionRequest, workspace string, policy CodexPolicy) (acp.PermissionDecision, error) {
+	var input struct {
+		Command string `json:"command"`
+		CWD     string `json:"cwd"`
+	}
+	if (request.ToolKind != "other" && request.ToolKind != "execute") || json.Unmarshal(request.RawInput, &input) != nil || strings.TrimSpace(input.Command) == "" {
+		return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
+	}
+	if fields, err := shellLikeFields(input.Command); err != nil || len(fields) == 0 {
+		return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
+	}
+	options := make([]ACPPermissionOption, 0, len(request.Options))
+	for _, option := range request.Options {
+		options = append(options, ACPPermissionOption{OptionID: option.ID, Kind: option.Kind})
+	}
+	decision := EvaluateACPPermission(ACPPermissionRequest{
+		AttemptID: provenance.AttemptID, BoundAttemptID: provenance.AttemptID,
+		SessionID: request.SessionID, BoundSessionID: request.SessionID,
+		Workspace: workspace, Target: firstNonEmpty(strings.TrimSpace(input.CWD), workspace), ToolKind: "execute",
+		Options: options, Cancelled: ctx.Err() != nil,
+	}, ACPPermissionPolicy{AllowedToolKinds: map[string]bool{"execute": true}, BudgetAuthorized: true, AllowExecute: true})
+	if decision.Outcome == ACPPermissionAllowOnce {
+		classification := runnercore.CommandPolicyRequest{
+			Mutating: commandWritesWorkspace(input.Command), Destructive: destructiveAgentCommand(input.Command),
+			Catastrophic: destructiveCommandUsesProtectedDevice(input.Command), ReviewOnly: activeCodexPolicyIsReviewOnly(policy),
+		}
+		commandDecision := commandPolicyDecision(policy, classification)
+		if commandDecision.Behavior != runnercore.CommandAutomatic {
+			decision.Outcome, decision.OptionID, decision.ReasonCode = ACPPermissionReject, "", commandDecision.Rule
+			decision.Audit.PolicyRule = "command_policy"
+			decision.Audit.Outcome, decision.Audit.ReasonCode = string(decision.Outcome), decision.ReasonCode
+		}
+	}
+	p := provenance
+	p.ToolCall = boundedACPObservation(request.ToolCallID)
+	_ = appendACPEvent(eventLog, "acp_permission_decided", p, map[string]any{
+		"operation_class": decision.Audit.OperationClass,
+		"policy_rule":     decision.Audit.PolicyRule,
+		"outcome":         decision.Audit.Outcome,
+		"reason_code":     decision.Audit.ReasonCode,
+	})
+	if decision.Outcome == ACPPermissionCancelled {
 		return acp.Cancelled, nil
 	}
 	if decision.Outcome == ACPPermissionAllowOnce {

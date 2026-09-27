@@ -157,6 +157,22 @@ func TestRunnerAccessArgvWrapping(t *testing.T) {
 	}
 }
 
+func TestDevinFullAccessProfileUsesBypassAndDenyWrapper(t *testing.T) {
+	profile := ResolvedRunnerProfile{Name: "devin-swe-2-max", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerDevin), PermissionPreset: "danger-full-access",
+		Sandbox: RunnerSandboxDefinition{Mode: "danger-full-access"},
+	}}
+	policy := codexPolicyForResolvedProfile(CodexPolicy{}, runLaneExecute, profile)
+	mode, err := devinACPModeForPolicy(policy)
+	if err != nil || mode != "bypass" {
+		t.Fatalf("Devin full-access mode=%q policy=%#v err=%v", mode, policy, err)
+	}
+	argv := wrapRunnerAccessArgv([]string{"/usr/bin/devin", "acp"}, runnerAccessPaths{protected: []string{"/tmp/private"}}, policy)
+	if runtime.GOOS == "darwin" && (len(argv) < 4 || argv[0] != "/usr/bin/sandbox-exec" || !strings.Contains(argv[2], "/tmp/private")) {
+		t.Fatalf("Devin full-access deny wrapper missing: %v", argv)
+	}
+}
+
 func TestRunnerAccessSandboxExecDarwin(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS sandbox-exec only")

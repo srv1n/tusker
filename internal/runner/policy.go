@@ -77,11 +77,14 @@ func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []stri
 }
 
 func compileDevinACPArgs(d HarnessDefinition, input RunInput, policy EffectivePolicy) (EffectivePolicy, []string, error) {
-	if input.Preset != PresetWorkspaceNetwork || policy.Filesystem != "workspace-write" || !policy.Network {
-		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP currently supports only sandboxed workspace-write with network enabled")
-	}
-	if policy.Approvals != "deny" {
-		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP currently supports destructive actions blocked, not operator approval")
+	sandboxed := true
+	switch {
+	case input.Preset == PresetReadOnly && policy.Filesystem == "read-only" && policy.Approvals == "deny":
+	case input.Preset == PresetWorkspaceNetwork && policy.Filesystem == "workspace-write" && policy.Network && policy.Approvals == "deny":
+	case input.Preset == PresetDangerFullAccess && policy.Filesystem == "unrestricted" && policy.Network && policy.Approvals == "bypass":
+		sandboxed = false
+	default:
+		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP requires read-only, networked workspace-write, or full access without operator approval")
 	}
 	if len(d.Args) != 1 || d.Args[0] != "acp" {
 		return policy, nil, admission(d, "policy_conflict", "policy", "Devin ACP command must be exactly 'devin acp'; Tusker compiles sandbox and model controls")
@@ -89,7 +92,11 @@ func compileDevinACPArgs(d HarnessDefinition, input RunInput, policy EffectivePo
 	if strings.TrimSpace(input.Model) == "" {
 		return policy, nil, admission(d, "invalid_configuration", "model", "Devin ACP requires an exact discovered model")
 	}
-	return policy, []string{"--sandbox", "acp", "--model", input.Model}, nil
+	args := []string{"acp", "--model", input.Model}
+	if sandboxed {
+		args = append([]string{"--sandbox"}, args...)
+	}
+	return policy, args, nil
 }
 
 func compileCodexArgs(d HarnessDefinition, input RunInput, base []string, policy EffectivePolicy) []string {

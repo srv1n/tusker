@@ -258,6 +258,31 @@ func TestACPAuthorityPermissionObservationFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDevinACPShellPermissionUsesCommandPolicy(t *testing.T) {
+	workspace := t.TempDir()
+	provenance := acpAttemptProvenance{AttemptID: "attempt-devin"}
+	policy := CodexPolicy{TurnSandboxPolicy: "workspace-write", TurnSandboxNetwork: boolPtr(true)}
+	for _, tc := range []struct {
+		name, kind, input string
+		want              acp.PermissionDecision
+	}{
+		{"routine git", "other", `{"command":"git add x && git commit -m y"}`, acp.AllowOnce},
+		{"force push", "other", `{"command":"git push --force"}`, acp.Reject},
+		{"root delete", "execute", `{"command":"rm -rf /"}`, acp.Reject},
+		{"unknown shape", "other", `{"prompt":"git add x"}`, acp.Reject},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decision, err := evaluateDevinACPTransportPermission(context.Background(), NewEventLog(filepath.Join(t.TempDir(), "events.jsonl")), provenance, acp.PermissionRequest{
+				SessionID: "session-devin", ToolCallID: "tool-devin", ToolKind: tc.kind,
+				RawInput: []byte(tc.input), Options: []acp.PermissionOption{{ID: "allow_once", Kind: "allow_once"}},
+			}, workspace, policy)
+			if err != nil || decision != tc.want {
+				t.Fatalf("decision=%s err=%v, want %s", decision, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestACPRuntimeEnvironmentIsPositiveAndControlPlaneFree(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", "/should-not-cross-boundary")
 	t.Setenv("TUSKER_RUNNER_PATH_PREFIX", "/attacker/bin")
