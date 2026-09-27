@@ -35,6 +35,36 @@ func TestAgentMessageOperatorRecipient(t *testing.T) {
 	}
 }
 
+func TestAgentMessageHumanSenderAnswersOperatorQuestion(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", root)
+	store, err := OpenRuntimeStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	question, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", Sender: "task:T1", IdempotencyKey: "human-q", Recipient: AgentAddress{Kind: "operator", ID: "operator"}, Kind: "question", Body: "Pick a color", ReplyRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sender := range []string{"task:T2", "agent:forge"} {
+		if err := agentMessageCmd("message reply", Args{"project": "app", "reply-to": question.ID, "sender": sender, "key": "forged-" + sender, "body": "x"}); err == nil {
+			t.Fatalf("%s answered an operator question", sender)
+		}
+	}
+	if err := agentMessageCmd("message reply", Args{"project": "app", "reply-to": question.ID, "sender": "human:sarav", "key": "human-a", "body": "teal"}); err != nil {
+		t.Fatal(err)
+	}
+	answered, err := store.AgentMessage("app", question.ID)
+	if err != nil || answered.AnsweredAt == "" {
+		t.Fatalf("answered=%#v err=%v", answered, err)
+	}
+	listed, err := store.ListAgentMessages("app", "task", "T1")
+	if err != nil || len(listed) != 1 || listed[0].Sender != "human:sarav" {
+		t.Fatalf("listed=%#v err=%v", listed, err)
+	}
+}
+
 func TestAgentMessagesDurableCorrelatedDeduplicated(t *testing.T) {
 	root := t.TempDir()
 	store, err := OpenRuntimeStore(root)
