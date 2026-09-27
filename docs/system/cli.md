@@ -62,6 +62,8 @@ Actors supplied with `--by human:<name>` may be used from an agent session by de
 | Check the daemon | `tusker daemon status --json` |
 | Check one run | `tusker runs inspect <RUN-ID> --json` |
 | List runtime runs | `tusker runs list [--project <id>] [--active] [--limit <n>] [--json]` |
+| List agent access requests | `tusker approvals list [--project <id>] [--json]` |
+| Decide one access request | `tusker approvals respond <id> --allow-once\|--block [--by human:<actor>]` |
 | Start the local service | `tusker serve` |
 
 `wave list` prints one line per wave with ID, title, status, effective

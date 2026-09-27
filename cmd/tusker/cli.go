@@ -93,7 +93,7 @@ func isCLIFlag(value string) bool {
 
 func commandTakesSubcommand(command string) bool {
 	switch command {
-	case "acp", "actor", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "mcp", "demo", "task", "worker":
+	case "acp", "actor", "approvals", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "mcp", "demo", "task", "worker":
 		return true
 	default:
 		return false
@@ -228,6 +228,12 @@ func runInner(command string, args Args) (int, error) {
 		return runnerConformanceCmd(args)
 	case "runner test":
 		return runnerConformanceCmd(args)
+	case "approvals list":
+		return 0, approvalsListCmd(args)
+	case "approvals respond":
+		return 0, approvalsRespondCmd(args)
+	case "approvals":
+		return 0, tuskerError(errorMissingArg, "Usage: tusker approvals list [--project <id>] [--json] | approvals respond <id> --allow-once|--block [--by human:<actor>]")
 	case "models", "models show":
 		return 0, modelsCmd(args)
 	case "models catalog":
@@ -941,6 +947,8 @@ func printCommandHelp(command string) bool {
 		printACPAdapterHelp()
 	case "actor", "actor correction":
 		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
+	case "approvals", "approvals list", "approvals respond":
+		fmt.Println("Usage:\n  tusker approvals list [--project <id>] [--json]\n  tusker approvals respond <id> --allow-once|--block [--by human:<actor>] [--json]")
 	case "capabilities":
 		printCapabilitiesHelp()
 	case "message", "message send", "message ask", "message reply", "message list", "message show", "message consume", "message apply", "message inbox", "message hook":

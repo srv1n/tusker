@@ -178,6 +178,7 @@ func installedCapabilityCommands() []capabilityCommand {
 	return []capabilityCommand{
 		{Command: "acp", Subcommands: []string{"doctor"}},
 		{Command: "actor", Subcommands: []string{"correction"}, Flags: []string{"--by", "--corrected-actor", "--event-id", "--gate", "--json", "--original-sha256", "--receipt"}},
+		{Command: "approvals", Subcommands: []string{"list", "respond"}, Flags: []string{"--allow-once", "--block", "--by", "--json", "--project"}, Purpose: "List agent access requests and settle one as a human operator."},
 		{Command: "acp doctor", Flags: []string{"--auth-source", "--bundle-digest", "--json"}},
 		{Command: "accept"}, {Command: "attachments"}, {Command: "attempt"},
 		{Command: "automation", Subcommands: []string{"advance-external", "collect-external", "dispatch", "explain", "external-loop", "plan", "queue", "status"}, Flags: []string{"--json"}},
