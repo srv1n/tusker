@@ -3,6 +3,8 @@ title: "Serve UI"
 subject: serve-ui
 part_of: overview
 status: canonical
+read_when: "Changing the local HTTP service, web routes, or the embedded browser app."
+skip_when: "You need CLI commands or durable record rules rather than the served interface."
 ---
 
 # Serve UI

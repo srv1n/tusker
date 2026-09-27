@@ -13,6 +13,8 @@ related:
 tags:
   - tusker/ux
   - tusker/today
+read_when: "Designing the app navigation shell or the Today screens a user sees first."
+skip_when: "You need plan, delivery, or settings detail rather than the launch experience."
 ---
 
 # Shell and Today

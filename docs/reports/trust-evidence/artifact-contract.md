@@ -1,6 +1,8 @@
 ---
 title: "FLW-T-0014 artifact contract evidence"
 status: "focused regression passed"
+read_when: "Checking close-time evidence requirements and their passing fixture proof."
+skip_when: "You need other trust-lane evidence or the live qualification record."
 ---
 
 # Artifact contract evidence

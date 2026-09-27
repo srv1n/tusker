@@ -13,6 +13,8 @@ related:
 tags:
   - tusker/ux
   - tusker/delivery
+read_when: "Working on the deliveries list or the artifact-first delivery detail page."
+skip_when: "You need plan review, settings, or daemon internals."
 ---
 
 # Deliveries and delivery detail

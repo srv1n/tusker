@@ -14,6 +14,8 @@ tags:
   - tusker/security
   - tusker/authority
   - tusker/ux
+read_when: "Deciding which actor may do what, or what confirmation each action needs."
+skip_when: "You need layout or styling; this is the authority and confirmation contract."
 ---
 
 # Guardrails, authority, and confirmations

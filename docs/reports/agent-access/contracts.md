@@ -1,3 +1,12 @@
+---
+title: "Agent access contract"
+subject: agent-access-contract
+part_of: system
+status: canonical
+read_when: "Reading the versioned agent-access profile object shared by settings, launch, and resume."
+skip_when: "You need per-route native mappings or acceptance evidence."
+---
+
 # Agent access contract
 
 This document is the shared contract for settings, route preview, conformance,

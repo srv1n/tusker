@@ -5,6 +5,8 @@ capsule:
     - "Planning or implementing execution identity, direct Codex or Claude registration, provider child tracking, or the multi-agent operations view."
   skip_when:
     - "Changing task lifecycle or daemon dispatch without changing execution identity, relationships, provider observations, or operator visibility."
+read_when: "Planning or implementing execution identity, provider child tracking, or the execution timeline."
+skip_when: "Changing task lifecycle or daemon dispatch unrelated to execution identity, relationships, or operator visibility."
 ---
 
 # Execution observability

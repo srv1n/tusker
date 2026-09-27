@@ -13,6 +13,8 @@ tags:
   - tusker/ux
   - tusker/accessibility
   - tusker/content
+read_when: "Adapting screens across widths or checking keyboard, contrast, and content rules."
+skip_when: "You need API contracts or delivery logic rather than presentation behavior."
 ---
 
 # Responsive, accessibility, and content

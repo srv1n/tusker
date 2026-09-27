@@ -3,6 +3,8 @@ title: "Execution observability"
 subject: execution-observability-system
 part_of: overview
 status: canonical
+read_when: "Working on execution identity, parent-child graphs, run timelines, or provider status readers."
+skip_when: "You need task lifecycle or dispatch rules rather than how running work is named and watched."
 ---
 
 # Execution observability

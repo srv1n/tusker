@@ -1,3 +1,14 @@
+---
+subject: documents-ui-polish-report
+title: Documents polish proof
+keywords: [documents, UI, polish, browser]
+part_of: documents-experience
+status: partial
+created: 2026-09-07
+read_when: "Checking the browser regression proof for the corrected Documents UI."
+skip_when: "Changing the Documents CLI helpers or task and runner execution."
+---
+
 # Documents polish proof
 
 Current status: corrected UI passes the parent-run browser regression suite.

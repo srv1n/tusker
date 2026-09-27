@@ -1,6 +1,8 @@
 ---
 title: "FLW-T-0015 proof category evidence"
 status: "focused regression passed"
+read_when: "Checking the proof category model and its matcher fixture evidence."
+skip_when: "You need visual-quality or human-acceptance claims; the matcher checks structure only."
 ---
 
 # Proof category evidence

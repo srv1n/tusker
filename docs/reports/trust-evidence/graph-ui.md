@@ -5,6 +5,8 @@ source_key: graph-ui
 status: partial
 revision: 03201019308fbc533e6aeace9f8c612e8b2237aa
 host: "Darwin arm64, Saravanans-MacBook-Pro.local"
+read_when: "Reviewing the knowledge graph, Mermaid, and human-receipt UI evidence."
+skip_when: "You need the finished native Mac walkthrough or the shared Go regression."
 ---
 
 # FLW-T-0025: graph and UI experience

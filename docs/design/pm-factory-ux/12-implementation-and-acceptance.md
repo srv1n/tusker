@@ -14,6 +14,8 @@ tags:
   - tusker/ux
   - tusker/implementation
   - tusker/acceptance
+read_when: "Sequencing the redesign rollout or writing acceptance for the new experience."
+skip_when: "You need one screen's layout; the numbered notes cover those."
 ---
 
 # Implementation and acceptance

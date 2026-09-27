@@ -1,6 +1,8 @@
 ---
 title: "FLW-T-0026 fresh-agent evidence"
 status: "fixture prepared; focused validation pending coordinated build"
+read_when: "Reviewing the isolated fresh-agent fixture and its preflight requirements."
+skip_when: "You need a completed live worker run; focused validation was still pending."
 ---
 
 # Fresh-agent evidence

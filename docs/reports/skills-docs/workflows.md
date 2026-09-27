@@ -3,6 +3,8 @@ title: "Everyday workflow documentation report"
 subject: skills-docs-workflows-report
 part_of: tasks-and-proof
 status: report
+read_when: "Reviewing the workflow-documentation report for FLW-T-0032."
+skip_when: "You need the current workflow guides themselves, not this acceptance record."
 ---
 
 # Everyday workflow documentation report

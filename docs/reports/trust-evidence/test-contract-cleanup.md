@@ -1,6 +1,8 @@
 ---
 title: "Native human-receipt test-contract cleanup"
 status: "source migrated; Go validation pending shared source coherence"
+read_when: "Checking how human-owned gate transitions now require native signed receipts."
+skip_when: "You need the pending grouped regression result rather than the contract change."
 ---
 
 # Native human-receipt test-contract cleanup

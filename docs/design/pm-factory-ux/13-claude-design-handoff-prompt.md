@@ -13,6 +13,8 @@ related:
 tags:
   - tusker/ux
   - tusker/handoff
+read_when: "Copying the ready-made prompt to start a Claude Design engagement on this pack."
+skip_when: "You need the design rationale itself; read the numbered notes instead."
 ---
 
 # Claude Design handoff prompt

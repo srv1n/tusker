@@ -4,6 +4,8 @@ subject: reports/skills-docs/combined-check
 part_of: skills-and-documentation
 status: report
 created: 2026-09-11
+read_when: "Reviewing the combined skills and documentation check for FLW-T-0036."
+skip_when: "You need current skill wording or unrelated task evidence."
 ---
 
 # Combined skills and documentation check

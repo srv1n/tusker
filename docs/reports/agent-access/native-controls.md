@@ -1,3 +1,12 @@
+---
+title: "Agent access native controls"
+subject: agent-access-native-controls
+part_of: system
+status: canonical
+read_when: "Checking which native controls each provider route actually supports."
+skip_when: "You need the authored contract shape or UI approval flows."
+---
+
 # Agent access native controls
 
 This report records the provider-neutral mappings implemented by the runner

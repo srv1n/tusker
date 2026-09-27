@@ -1,3 +1,12 @@
+---
+title: "Direct Muse CLI route"
+subject: agent-access-muse-native
+part_of: system
+status: canonical
+read_when: "Checking how the direct muse_cli route compiles policy into Muse arguments."
+skip_when: "You need other routes or paid model qualification evidence."
+---
+
 # Direct Muse CLI route
 
 The `muse_cli` route invokes the installed `muse` executable directly. The

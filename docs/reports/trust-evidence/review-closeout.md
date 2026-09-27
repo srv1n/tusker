@@ -1,6 +1,8 @@
 ---
 title: "FLW-T-0016 review closeout evidence"
 status: "focused regression passed"
+read_when: "Reviewing how review snapshots bind proof fingerprints and reject stale closes."
+skip_when: "You need task lifecycle rules rather than review-binding evidence."
 ---
 
 # Review closeout evidence

@@ -5,6 +5,8 @@ capsule:
     - "Changing delivery review/import readiness, interactive work admission, rollout doctor/repair, binary-skill compatibility, or the Tusker operator skill."
   skip_when:
     - "Implementing an already-correct task inside one established execution mode."
+read_when: "Changing readiness contracts, interactive admission, fleet repair, or the installed operator skill."
+skip_when: "Implementing an already-correct task inside one established execution mode."
 ---
 
 # Contract convergence and skill disclosure

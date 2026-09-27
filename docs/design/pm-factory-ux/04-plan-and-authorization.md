@@ -14,6 +14,8 @@ tags:
   - tusker/ux
   - tusker/planning
   - tusker/authorization
+read_when: "Working on how a proposed plan is reviewed and authorized by the owner."
+skip_when: "You need delivery execution, daemon dispatch, or proof handling downstream."
 ---
 
 # Plan and authorization

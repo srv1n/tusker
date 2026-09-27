@@ -3,6 +3,8 @@ title: "Platform support"
 subject: platform-support
 part_of: overview
 status: canonical
+read_when: "Building, signing, installing, or releasing Tusker on a particular operating system."
+skip_when: "You need command usage or product behavior rather than build and release mechanics."
 ---
 
 # Platform support

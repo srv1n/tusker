@@ -1,6 +1,8 @@
 ---
 title: "FLW-T-0028 full-journey evidence"
 status: "source scenario prepared; focused validation pending coordinated build"
+read_when: "Reviewing the offline full-lifecycle journey test from import to close."
+skip_when: "You need daemon, provider, or human acceptance proof."
 ---
 
 # Full-journey evidence

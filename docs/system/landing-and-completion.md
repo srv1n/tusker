@@ -3,6 +3,8 @@ title: "Landing and completion"
 subject: landing-and-completion
 part_of: overview
 status: canonical
+read_when: "Changing how reviewed work lands, how a task closes, or what receipts record."
+skip_when: "You need authoring or review rules rather than the final merge and close transaction."
 ---
 
 # Landing and completion

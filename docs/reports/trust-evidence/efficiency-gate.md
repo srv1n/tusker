@@ -2,6 +2,7 @@
 title: FLW-T-0024 efficiency gate
 status: provisional
 read_when: Reviewing deterministic workflow cost and completeness gates.
+skip_when: "You need a claimed token reduction; this gate stayed open pending a combined run."
 ---
 
 # FLW-T-0024 efficiency gate

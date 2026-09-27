@@ -1,6 +1,8 @@
 ---
 subject: agent-access-journey
 status: fixture-pass
+read_when: "Reviewing the provider-free fixture proof for profile upgrade and native callback boundaries."
+skip_when: "You need installed-provider or paid-model qualification evidence."
 ---
 
 # Agent access journey

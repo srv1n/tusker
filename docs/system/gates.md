@@ -3,6 +3,8 @@ title: "Gates"
 subject: gates
 part_of: overview
 status: canonical
+read_when: "Creating, satisfying, waiving, or retiring a gate that blocks work on an outside fact."
+skip_when: "You need ordinary test failures or task authoring rather than human or external facts."
 ---
 
 # Gates
