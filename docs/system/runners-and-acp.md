@@ -11,6 +11,23 @@ Tusker executes coding agents installed and authenticated by the operator. It do
 not bundle, install, update, or silently substitute an agent or ACP adapter. The
 canonical contract is [[runner-execution-boundary]].
 
+## Agent access paths
+
+The global `~/.config/tusker/config.yaml` may add paths denied to workers:
+
+```yaml
+access:
+  protected_paths:
+    - ~/Documents
+```
+
+Tusker always protects SSH, AWS, GnuPG, and Keychain directories. It also blocks
+writes to its config and runtime state while leaving state reads available for
+worker MCP and CLI communication. Claude receives tool deny rules; on macOS,
+Codex, Muse, and Devin run under a `sandbox-exec` path profile. The wrapper is
+unavailable on other operating systems. Command patterns in Claude are best
+effort; the other three harnesses do not yet intercept destructive Git argv.
+
 ## Supported installed routes
 
 | Harness | Structured launch | Permission support |

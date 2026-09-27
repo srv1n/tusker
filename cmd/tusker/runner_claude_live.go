@@ -163,6 +163,13 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		return nil, err
 	}
 	argv = appendClaudeMCP(argv, projection)
+	access, err := effectiveRunnerDenyPaths(workspaceCWD)
+	if err != nil {
+		return nil, err
+	}
+	if err := addClaudeAccessSettings(projection.claudeSettings, access); err != nil {
+		return nil, err
+	}
 	if !slices.Contains(argv, "--replay-user-messages") {
 		argv = append(argv, "--replay-user-messages")
 	}

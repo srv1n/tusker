@@ -275,7 +275,10 @@ type TuskerEscalationConfig struct {
 }
 
 type TuskerConfigFile struct {
-	Tier         int    `yaml:"tier"`
+	Tier   int `yaml:"tier"`
+	Access struct {
+		ProtectedPaths []string `yaml:"protected_paths"`
+	} `yaml:"access"`
 	ProjectID    string `yaml:"project_id"`
 	MutationMode string `yaml:"mutation_mode"`
 	Storage      struct {

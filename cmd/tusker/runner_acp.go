@@ -339,6 +339,11 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 	}
 	var mcpServers []any
 	if runner == RunnerDevin {
+		access, accessErr := effectiveRunnerDenyPaths(workspace)
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		argv = wrapRunnerAccessArgv(argv, access)
 		projection, projectionErr := projectWorkerMCP(req.ProjectID, req.RecordID, req.ItemID, req.AttemptID, req.LeaseGeneration, req.WorkRevision, req.EventSinkPath, req.StatusPath, 50, false)
 		if projectionErr != nil {
 			return nil, projectionErr
