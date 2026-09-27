@@ -1444,7 +1444,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				invariantReason, err := d.invariantDispatchBlocker()
+				invariantReason, err := d.invariantDispatchBlocker(project.ProjectID)
 				if err != nil {
 					return err
 				}
@@ -1651,7 +1651,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				projectRuns[recordID] = current
 				continue
 			}
-			invariantReason, err := d.invariantDispatchBlocker()
+			invariantReason, err := d.invariantDispatchBlocker(project.ProjectID)
 			if err != nil {
 				return err
 			}

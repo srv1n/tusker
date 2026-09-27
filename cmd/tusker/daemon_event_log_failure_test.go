@@ -35,7 +35,7 @@ func TestEventLogPersistenceFailureOpensInvariantCircuit(t *testing.T) {
 	if !strings.Contains(status.Summary, "APP-T-0001") || !strings.Contains(status.Summary, "disk full") {
 		t.Fatalf("event failure is not actionable: %#v", status)
 	}
-	blocker, err := daemon.invariantDispatchBlocker()
+	blocker, err := daemon.invariantDispatchBlocker("")
 	if err != nil {
 		t.Fatal(err)
 	}

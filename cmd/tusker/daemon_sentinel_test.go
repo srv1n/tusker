@@ -145,20 +145,24 @@ func TestSentinelCircuitOpenBlocksDispatchButServeReadsStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SetInvariantCircuitStatus(invariantCircuitStatus{
-		Open:     true,
-		Reason:   invariantViolationReason,
-		OpenedAt: "2026-07-06T12:00:00Z",
-		Summary:  invariantViolationReason + ": injected test violation",
-		Violations: []runtimeInvariantViolation{{
-			Check:     invariantCheckHeldLeaseDispatchEligible,
-			ProjectID: project.ProjectID,
-			RecordID:  "APP-T-0001",
-			Detail:    "injected test violation",
-		}},
-	}); err != nil {
-		t.Fatal(err)
+	injectViolation := func(projectID string) {
+		t.Helper()
+		if err := store.SetInvariantCircuitStatus(invariantCircuitStatus{
+			Open:     true,
+			Reason:   invariantViolationReason,
+			OpenedAt: "2026-07-06T12:00:00Z",
+			Summary:  invariantViolationReason + ": injected test violation",
+			Violations: []runtimeInvariantViolation{{
+				Check:     invariantCheckHeldLeaseDispatchEligible,
+				ProjectID: projectID,
+				RecordID:  "APP-T-0001",
+				Detail:    "injected test violation",
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	injectViolation(project.ProjectID)
 	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store}
 	if err := daemon.PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -168,6 +172,22 @@ func TestSentinelCircuitOpenBlocksDispatchButServeReadsStatus(t *testing.T) {
 	if !strings.Contains(run.LastError, "invariant circuit open") {
 		t.Fatalf("expected invariant blocker in run error, got %#v", run)
 	}
+	// The injected violation is not real: the poll's own sweep finds zero
+	// violations and closes the circuit without `daemon resume`.
+	closed, err := store.ReadInvariantCircuitStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, false, closed.Open, "clean sweep auto-closes circuit")
+	// A violation in another project does not block this one.
+	injectViolation("project-elsewhere")
+	if reason, err := daemon.invariantDispatchBlocker(project.ProjectID); err != nil || reason != "" {
+		t.Fatalf("foreign-project violation blocked dispatch: %q %v", reason, err)
+	}
+	if reason, _ := daemon.invariantDispatchBlocker("project-elsewhere"); !strings.Contains(reason, "invariant circuit open") {
+		t.Fatalf("offending project not blocked: %q", reason)
+	}
+	injectViolation(project.ProjectID)
 	daemonStatus, err := store.DaemonStatus()
 	if err != nil {
 		t.Fatal(err)

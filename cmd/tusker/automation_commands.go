@@ -658,7 +658,7 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	} else if reason != "" {
 		blockers = append(blockers, reason)
 	}
-	if reason, err := daemon.invariantDispatchBlocker(); err != nil {
+	if reason, err := daemon.invariantDispatchBlocker(ctx.Project.ProjectID); err != nil {
 		blockers = append(blockers, "invariant sentinel: "+err.Error())
 	} else if reason != "" {
 		blockers = append(blockers, reason)

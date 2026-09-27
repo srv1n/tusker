@@ -128,15 +128,30 @@ func (s *RuntimeStore) ClearInvariantCircuitStatus(checkedAt string) error {
 	})
 }
 
-func (d *Daemon) invariantDispatchBlocker() (string, error) {
+// invariantDispatchBlocker blocks dispatch only in a project the open circuit
+// names. Violations without a project (stalled poll, event-log storage) stay
+// global, and so does an open circuit that carries no violations at all.
+func (d *Daemon) invariantDispatchBlocker(projectID string) (string, error) {
 	if d == nil || d.store == nil {
 		return "", nil
 	}
 	status, err := d.store.ReadInvariantCircuitStatus()
-	if err != nil || !status.Open {
+	if err != nil || !status.Open || !invariantCircuitBlocksProject(status, projectID) {
 		return "", err
 	}
 	return "invariant circuit open: " + invariantCircuitSummary(status), nil
+}
+
+func invariantCircuitBlocksProject(status invariantCircuitStatus, projectID string) bool {
+	if len(status.Violations) == 0 {
+		return true
+	}
+	for _, violation := range status.Violations {
+		if violation.ProjectID == "" || violation.ProjectID == strings.TrimSpace(projectID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Daemon) refreshInvariantCircuitStatus(snapshot runtimeSentinelSnapshot) (invariantCircuitStatus, error) {
@@ -154,15 +169,13 @@ func (d *Daemon) refreshInvariantCircuitStatus(snapshot runtimeSentinelSnapshot)
 		return status, err
 	}
 	if len(status.Violations) == 0 {
-		if current.Open {
-			current.LastCheckedAt = status.LastCheckedAt
-			if err := d.store.SetInvariantCircuitStatus(current); err != nil {
-				return current, err
-			}
-			return current, nil
-		}
+		// A clean sweep closes the circuit on its own; `daemon resume`
+		// remains a manual override, not the only way out.
 		status.Open = false
 		status.Summary = "no invariant violations"
+		if current.Open {
+			status.Summary = "invariant circuit auto-closed: sweep found no violations"
+		}
 		return status, d.store.SetInvariantCircuitStatus(status)
 	}
 	if current.Open && strings.TrimSpace(current.OpenedAt) != "" {
