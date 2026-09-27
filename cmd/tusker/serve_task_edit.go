@@ -119,7 +119,7 @@ func (s *serveServer) handleTaskCreateAction(w http.ResponseWriter, body serveAc
 	taskID := nextSafeV7TaskID(project.VaultRoot, firstNonEmpty(epic, "TSK"))
 	args["id"], args["by"], args["quiet"] = taskID, actor, "true"
 	args["title"], args["work-level"], args["epic"] = body.string("title"), body.string("workLevel"), epic
-	args["owned-paths"] = body.csv("owned_paths")
+	args["owned-paths"] = body.csv("owned_paths", "ownedPaths")
 	cleanup, err := serveBodyFileArg(args, body.string("body"))
 	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult(command, "", err))

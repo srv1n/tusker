@@ -16,6 +16,8 @@ export interface TaskCreateBody {
   title: string;
   body: string;
   workLevel: string;
+  /** Comma-separated folders or files the task may change. Required. */
+  ownedPaths: string;
   wave?: string;
 }
 

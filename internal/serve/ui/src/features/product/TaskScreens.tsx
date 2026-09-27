@@ -144,19 +144,20 @@ export function NewTaskForm({ projectId, onClose }: { projectId: string; onClose
   const create = useTaskCreate(projectId);
   const waves = useWaveList(projectId);
   const navigate = useNavigate();
-  const [draft, setDraft] = useState({ title: "", workLevel: "standard", wave: "", body: NEW_TASK_BODY });
+  const [draft, setDraft] = useState({ title: "", workLevel: "standard", wave: "", ownedPaths: "", body: NEW_TASK_BODY });
   const field = (key: keyof typeof draft) => ({ value: draft[key], disabled: create.isPending, onChange: (event: { target: { value: string } }) => setDraft({ ...draft, [key]: event.target.value }) });
-  const submit = () => create.mutate({ ...draft, title: draft.title.trim(), wave: draft.wave || undefined }, { onSuccess: (result) => { if (result.taskId) void navigate({ to: "/p/$projectId/tasks/$taskId", params: { projectId, taskId: result.taskId } }); } });
+  const submit = () => create.mutate({ ...draft, title: draft.title.trim(), ownedPaths: draft.ownedPaths.trim(), wave: draft.wave || undefined }, { onSuccess: (result) => { if (result.taskId) void navigate({ to: "/p/$projectId/tasks/$taskId", params: { projectId, taskId: result.taskId } }); } });
   return <ProductSection title="New task"><div className="space-y-4 rounded-lg border border-line bg-panel p-4 text-[12px]">
     <label className="grid gap-1.5 text-muted">Title<input aria-label="New task title" {...field("title")} className={fieldClass} /></label>
     <div className="grid gap-4 sm:grid-cols-2">
       <label className="grid gap-1.5 text-muted">Tier<select aria-label="New task tier" {...field("workLevel")} className={fieldClass}>{TIERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label className="grid gap-1.5 text-muted">Wave<select aria-label="New task wave" {...field("wave")} className={fieldClass}><option value="">No wave</option>{(waves.data ?? []).filter((wave) => !wave.landedAt).map((wave) => <option key={wave.id} value={wave.id}>{wave.id} · {wave.title}</option>)}</select></label>
     </div>
+    <label className="grid gap-1.5 text-muted">Owned paths (comma-separated folders or files the task may change)<input aria-label="New task owned paths" placeholder="src/feature/, docs/feature.md" {...field("ownedPaths")} className={fieldClass} /></label>
     <label className="grid gap-1.5 text-muted">Contract (goal, acceptance, notes — Markdown)<textarea aria-label="New task contract" rows={12} {...field("body")} className={cn(fieldClass, "font-mono text-[11.5px] leading-5")} /></label>
     <ActionResultLine pending={create.isPending} error={create.error} result={create.data} />
     <div className="flex gap-2">
-      <ProductButton tone="primary" disabled={!draft.title.trim() || !draft.body.trim() || create.isPending} onClick={submit}>{create.isPending ? "Creating…" : "Create task"}</ProductButton>
+      <ProductButton tone="primary" disabled={!draft.title.trim() || !draft.ownedPaths.trim() || !draft.body.trim() || create.isPending} onClick={submit}>{create.isPending ? "Creating…" : "Create task"}</ProductButton>
       <ProductButton tone="text" disabled={create.isPending} onClick={onClose}>Cancel</ProductButton>
     </div>
   </div></ProductSection>;
