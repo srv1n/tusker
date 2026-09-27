@@ -303,6 +303,59 @@ Queued, waiting on a file owner:
 - `cli.go` chain after parity B: C (access approval, private folders), then D (fetch the revision for the caller).
 - After Phase 0: Phase 2 (pass handler replaces completion authority), Tier 3.
 
+## Phase 2 plan: the pass handler (S4)
+
+Written 2026-09-27 before the change. Judged by D2: trust agents like people,
+keep the checks that catch honest mistakes, drop the ones that only exist to
+distrust the worker.
+
+What happens after a review, for any harness and any access preset:
+
+```mermaid
+flowchart LR
+  R[Reviewer proposal] --> V[Daemon runs the task's Verification commands in the task worktree]
+  V -->|a command fails| X[No pass recorded; review run parked]
+  V -->|all pass| P[Pass recorded]
+  P --> O{Diff inside owned_paths?}
+  O -->|no| RW[Back to the worker with the list of stray files]
+  O -->|yes| L[Land to the wave's integration branch]
+  L -->|merge conflict or landing gate fails| M[In review: merge conflict]
+  L -->|landed| C[Close the task]
+```
+
+A `changes_requested` verdict sends the findings back to the worker (rework).
+`automation.completion_reactor.mode: disabled` turns the pass handler off, and
+the owner lands and closes by hand. Any other value, or no value, turns it on.
+
+**Guards that go:**
+
+| Guard | Where | Why it goes |
+| --- | --- | --- |
+| Only a sandboxed Codex worker may land; reviewers must be read-only | `completion_worker_safety.go` (all but the executable-identity helpers), dispatch block in `daemon.go` | F14. Refuses Claude, Devin, Muse and every full-access profile. |
+| Exact worker-policy fingerprint, profile-routing drift, launch-argv drift at dispatch | same dispatch block | Only defends against a swapped profile. F15: `explain` cannot predict it. |
+| Command rows need an "exact authoritative worker policy" | `review_proposal.go:341` | The Q7 refusal. The daemon runs the commands itself right after this check. |
+| Review results must carry worker-policy authority (schema v3) | `review_result.go` `reviewResultPolicyForRun` | Same distrust. Old v3 rows stay readable. |
+| Completion transaction phase machine: frozen authority, signed receipts, exact staging refs, staged-object checks | `completion_reactor.go`, `completion_authority.go` | Replaced by the pass handler (~200 lines). |
+| Canonical projection of the worker's commit before review, only in authoritative mode | `daemon.go` finish paths | Only fed the phase machine. |
+| Landing before review | `autoLandArmedWaveReviewComplete` | Landing now follows a pass. Unreviewed work no longer reaches the integration branch. |
+
+**Checks that stay:** the Verification commands must pass; the review must be
+for the task's current attempt; the landed diff must stay inside
+`owned_paths` (plus the task's own `.tusker` records); the landing path's merge
+and landing gate; the close preflight (open gates, unfinished dependencies,
+required evidence, acceptance rows). A merge conflict shows In review with
+reason `merge conflict`. Retry caps, budgets, one lease per task and worktrees
+are untouched.
+
+**Left for slice 2.2 (Sol low):** `v7_completion_receipt.go`,
+`v7_close_authority.go`, `landing_authority.go` and the `close_authority`
+validation of already-closed tasks, which still read old records; the
+executable-identity check; `factory_operations.go` transaction views.
+
+**Also in this lane:** F41, where a daemon refusal of the worker's output (a
+rejected review proposal, a declined dispatch) now maps to Blocked
+`not_allowed`, not `crashed`.
+
 ## Open decisions
 
 | # | Decision | Options | Recommendation |
