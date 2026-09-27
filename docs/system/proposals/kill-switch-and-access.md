@@ -52,7 +52,7 @@ blocks the few things that are catastrophic or not the agent's business.
 
 | Group | Blocked |
 | --- | --- |
-| Secrets | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/Library/Keychains`, `.env` files outside the task's worktree |
+| Secrets | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/Library/Keychains` (write only; harness logins read it), `.env` files outside the task's worktree |
 | Tusker state | `~/.config/tusker`, `~/Library/Application Support/tusker` |
 | Destructive git | `git push --force`, `git reset --hard` on the default branch, deleting remote branches |
 | Deletes | recursive delete of anything outside the task's worktree |

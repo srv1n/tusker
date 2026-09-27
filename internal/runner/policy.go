@@ -77,11 +77,14 @@ func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []stri
 }
 
 func compileDevinACPArgs(d HarnessDefinition, input RunInput, policy EffectivePolicy) (EffectivePolicy, []string, error) {
-	if input.Preset != PresetWorkspaceNetwork || policy.Filesystem != "workspace-write" || !policy.Network {
-		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP currently supports only sandboxed workspace-write with network enabled")
-	}
-	if policy.Approvals != "deny" {
-		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP currently supports destructive actions blocked, not operator approval")
+	sandboxed := true
+	switch {
+	case input.Preset == PresetReadOnly && policy.Filesystem == "read-only" && policy.Approvals == "deny":
+	case input.Preset == PresetWorkspaceNetwork && policy.Filesystem == "workspace-write" && policy.Network && policy.Approvals == "deny":
+	case input.Preset == PresetDangerFullAccess && policy.Filesystem == "unrestricted" && policy.Network && policy.Approvals == "bypass":
+		sandboxed = false
+	default:
+		return policy, nil, admission(d, "policy_unenforceable", "policy", "Devin ACP requires read-only, networked workspace-write, or full access without operator approval")
 	}
 	if len(d.Args) != 1 || d.Args[0] != "acp" {
 		return policy, nil, admission(d, "policy_conflict", "policy", "Devin ACP command must be exactly 'devin acp'; Tusker compiles sandbox and model controls")
@@ -89,7 +92,11 @@ func compileDevinACPArgs(d HarnessDefinition, input RunInput, policy EffectivePo
 	if strings.TrimSpace(input.Model) == "" {
 		return policy, nil, admission(d, "invalid_configuration", "model", "Devin ACP requires an exact discovered model")
 	}
-	return policy, []string{"--sandbox", "acp", "--model", input.Model}, nil
+	args := []string{"acp", "--model", input.Model}
+	if sandboxed {
+		args = append([]string{"--sandbox"}, args...)
+	}
+	return policy, args, nil
 }
 
 func compileCodexArgs(d HarnessDefinition, input RunInput, base []string, policy EffectivePolicy) []string {
@@ -180,7 +187,12 @@ func compileMuseArgs(d HarnessDefinition, input RunInput, base []string, policy 
 			compiled = append(compiled, values...)
 		}
 	}
-	if policy.Workspace != "" {
+	// Dispatch prepares argv against the registered repository before the task
+	// worktree exists (no PromptPath yet). Leave the workspace as a token so the
+	// launch layer binds Muse to the attempt's own worktree, not the checkout.
+	if strings.TrimSpace(input.PromptPath) == "" {
+		add("--workspace", "{{workspace_path}}")
+	} else if policy.Workspace != "" {
 		add("--workspace", policy.Workspace)
 	}
 	if input.Preset == PresetDangerFullAccess {
@@ -211,14 +223,16 @@ func compileMuseArgs(d HarnessDefinition, input RunInput, base []string, policy 
 		add("--reasoning-effort", input.Effort)
 	}
 	add("--json")
-	if input.ResumeSession != "" {
-		if !contains(args, "resume") {
-			args = append(args[:execAt+1], append([]string{"resume"}, args[execAt+1:]...)...)
-		}
-		compiled = append(compiled, input.ResumeSession)
+	// Muse 1.4 reads the prompt from a file, not a "-" stdin marker. The
+	// {{prompt_path}} token is expanded by the detached launch layer against
+	// the attempt's own prompt file.
+	promptFile := strings.TrimSpace(input.PromptPath)
+	if promptFile == "" {
+		promptFile = "{{prompt_path}}"
 	}
-	if input.ResumeSession == "" && !contains(args, "-") {
-		compiled = append(compiled, "-")
+	add("--prompt-file", promptFile)
+	if input.ResumeSession != "" {
+		add("--session-id", input.ResumeSession)
 	}
 	return append(args[:execAt+1], append(compiled, args[execAt+1:]...)...), nil
 }
@@ -226,7 +240,7 @@ func compileMuseArgs(d HarnessDefinition, input RunInput, base []string, policy 
 func hasForbiddenPolicyArg(args []string) bool {
 	for _, arg := range args {
 		lower := strings.ToLower(strings.TrimSpace(arg))
-		for _, prefix := range []string{"--sandbox", "--sandbox-network", "-s=", "--dangerously", "--approve-for-me", "--permission-mode", "--permission-prompts", "--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--settings", "--mcp-config", "--tools", "--add-dir", "-c", "--config", "--yolo", "--workspace", "--approval-mode"} {
+		for _, prefix := range []string{"--sandbox", "--sandbox-network", "-s=", "--dangerously", "--approve-for-me", "--permission-mode", "--permission-prompts", "--allowedtools", "--allowed-tools", "--disallowedtools", "--disallowed-tools", "--settings", "--mcp-config", "--tools", "--add-dir", "-c", "--config", "--yolo", "--workspace", "--approval-mode", "--prompt-file"} {
 			if lower == prefix || strings.HasPrefix(lower, prefix+"=") {
 				return true
 			}

@@ -63,6 +63,7 @@ type serveRunSayResponse struct {
 	Reason        string            `json:"reason,omitempty"`
 	Delivery      *WorkerDelivery   `json:"delivery,omitempty"`
 	Route         string            `json:"route,omitempty"`
+	State         string            `json:"state,omitempty"`
 	OperatorState *runOperatorState `json:"operatorState,omitempty"`
 	Duplicate     bool              `json:"duplicate,omitempty"`
 	Result        *runSayResult     `json:"result,omitempty"`
@@ -159,7 +160,7 @@ func (s *serveServer) handleRunMessage(w http.ResponseWriter, r *http.Request, t
 		return
 	}
 	latest, err := findRunScopedOrAmbiguous(s.store, run.ProjectID, run.RecordID)
-	response := serveRunSayResponse{OK: true, Delivery: &result.Delivery, Route: result.Route, OperatorState: &result.OperatorState, Duplicate: result.Duplicate, Result: &result}
+	response := serveRunSayResponse{OK: true, Delivery: &result.Delivery, Route: result.Route, State: result.State, Reason: result.Reason, OperatorState: &result.OperatorState, Duplicate: result.Duplicate, Result: &result}
 	if err != nil || latest == nil {
 		serveJSON(w, http.StatusOK, response)
 		return

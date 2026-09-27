@@ -31,8 +31,10 @@ func effectiveRunnerDenyPaths(worktree string) (runnerAccessPaths, error) {
 		return runnerAccessPaths{}, err
 	}
 	paths := runnerAccessPaths{
-		protected: []string{filepath.Join(home, ".ssh"), filepath.Join(home, ".aws"), filepath.Join(home, ".gnupg"), filepath.Join(home, "Library", "Keychains")},
-		state:     []string{filepath.Join(home, ".config", "tusker"), filepath.Dir(userGlobalTuskerConfigPath())},
+		protected: []string{filepath.Join(home, ".ssh"), filepath.Join(home, ".aws"), filepath.Join(home, ".gnupg")},
+		// Keychains are write-protected only: harnesses such as Muse read their
+		// own login from the keychain, and securityd ACLs still guard each item.
+		state: []string{filepath.Join(home, "Library", "Keychains"), filepath.Join(home, ".config", "tusker"), filepath.Dir(userGlobalTuskerConfigPath())},
 	}
 	for _, path := range resolved.Config.Access.ProtectedPaths {
 		if path == "~" {

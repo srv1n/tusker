@@ -428,6 +428,16 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 }
 
 func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus, actor string, prior *runSessionControlIntent, result runSessionControlResult) {
+	out, status := s.applyRunFreshControl(run, actor, "", prior, result)
+	serveJSON(w, status, out)
+}
+
+// applyRunFreshControl is the shared start_fresh transition for a settled run.
+// The `runs fresh` CLI command calls it through a store-bound server so the
+// queued intent, run row, session close, and supervisor decision stay
+// identical on both surfaces. The returned status is the HTTP status Serve
+// emits; CLI callers read the result fields instead.
+func (s *serveServer) applyRunFreshControl(run RunStatus, actor, reason string, prior *runSessionControlIntent, result runSessionControlResult) (runSessionControlResult, int) {
 	capability := s.runActionCapability(runSessionControlFresh, RegisteredProject{}, Note{}, run, prior)
 	if !capability.Available && capability.Reason == "start_fresh waits for the prior stop intent to settle" {
 		result.Refused = true
@@ -436,30 +446,32 @@ func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus
 		result.Pending, result.Unknown = prior.State == runSessionControlPending, prior.State == runSessionControlUnknown
 		result.Reason = capability.Reason
 		result.Intent = prior
-		serveJSON(w, http.StatusConflict, result)
-		return
+		return result, http.StatusConflict
 	}
 	if !capability.Available {
 		result.Refused = true
 		result.Supported = true
 		result.Reason = capability.Reason
-		serveJSON(w, http.StatusConflict, result)
-		return
+		return result, http.StatusConflict
 	}
 	now := time.Now().UTC()
 	expected := run
 	fresh := runSessionControlFreshRun(expected, actor, now)
+	reasonSuffix := ""
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		reasonSuffix = ": " + trimmed
+		fresh.LastError += reasonSuffix
+	}
 	intent := runSessionControlIntent{
 		Action: runSessionControlFresh, State: runSessionControlPending,
 		ProjectID: fresh.ProjectID, RecordID: fresh.RecordID, ItemID: fresh.ItemID,
-		Actor: actor, Reason: "start_fresh transition requested", LeaseGeneration: fresh.LeaseGeneration,
+		Actor: actor, Reason: "start_fresh transition requested" + reasonSuffix, LeaseGeneration: fresh.LeaseGeneration,
 		CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano),
 	}
 	if err := saveRunSessionControlIntent(s.store, intent); err != nil {
 		result.Refused = true
 		result.Reason = "could not persist start_fresh intent: " + err.Error()
-		serveJSON(w, http.StatusInternalServerError, result)
-		return
+		return result, http.StatusInternalServerError
 	}
 	updated, err := s.store.UpsertRunIfSnapshot(expected, fresh)
 	if err != nil {
@@ -469,8 +481,7 @@ func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus
 		result.Refused = true
 		result.Unknown, result.State, result.Intent = true, intent.State, &intent
 		result.Reason = intent.Reason
-		serveJSON(w, http.StatusConflict, result)
-		return
+		return result, http.StatusConflict
 	}
 	if !updated {
 		intent.State, intent.Reason = runSessionControlUnknown, "run changed while start_fresh was being applied"
@@ -479,8 +490,7 @@ func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus
 		result.Refused = true
 		result.Unknown, result.State, result.Intent = true, intent.State, &intent
 		result.Reason = intent.Reason + "; reload before retrying"
-		serveJSON(w, http.StatusConflict, result)
-		return
+		return result, http.StatusConflict
 	}
 	if strings.TrimSpace(expected.SessionRef) != "" {
 		_ = s.store.MarkSessionState(expected.ProjectID, expected.SessionRef, "closed", now.Format(time.RFC3339Nano), "start_fresh requested by "+actor, false)
@@ -495,14 +505,13 @@ func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus
 		result.Refused = true
 		result.Unknown, result.State, result.Intent = true, intent.State, &intent
 		result.Reason = intent.Reason
-		serveJSON(w, http.StatusInternalServerError, result)
-		return
+		return result, http.StatusInternalServerError
 	}
 	_, _ = s.store.SaveSupervisorDecision(SupervisorDecision{
 		ProjectID: expected.ProjectID, RecordID: expected.RecordID, ItemID: expected.ItemID,
 		Runner: expected.Runner, WorkRevision: expected.WorkRevision, AttemptID: expected.ActiveAttemptID,
 		ParentAttemptID: expected.ActiveAttemptID, SessionRef: expected.SessionRef, ParentSessionRef: expected.SessionRef,
-		Kind: string(SupervisorDecisionNewBranch), Reason: "operator start_fresh by " + actor,
+		Kind: string(SupervisorDecisionNewBranch), Reason: "operator start_fresh by " + actor + reasonSuffix,
 		WorkspacePath: expected.WorkspacePath, LeaseState: fresh.LeaseState, ContextSignal: "operator_start_fresh",
 		CreatedAt: now.Format(time.RFC3339Nano),
 	})
@@ -512,7 +521,7 @@ func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus
 	result.LeaseState, result.LeaseStateRaw, result.ProcessRunning, result.SessionRef = serveLeaseState(fresh.LeaseState), fresh.LeaseState, false, ""
 	result.Intent = &intent
 	s.refreshProjectSnapshot(fresh.ProjectID)
-	serveJSON(w, http.StatusOK, result)
+	return result, http.StatusOK
 }
 
 func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, path string) bool {

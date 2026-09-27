@@ -116,6 +116,35 @@ func TestClaudeProfilePolicyAndDenySettings(t *testing.T) {
 	}
 }
 
+func TestMuseProfilePolicyReachesArgv(t *testing.T) {
+	workflow := CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "workspace-write", TurnSandboxPolicy: "workspace-write"}
+	access := ResolvedRunnerProfile{Name: "muse-access", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerMuse),
+		Access:  &AgentAccessV1{Schema: agentAccessSchemaV1, Mode: accessModeProjects, Network: true, DestructiveActions: "ask"},
+	}}
+	policy := codexPolicyForResolvedProfile(workflow, runLaneExecute, access)
+	if policy.TurnSandboxPolicy != "workspace-write" || policy.ApprovalPolicy != "on-request" || policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
+		t.Fatalf("Muse access preset did not reach the launch policy: %#v", policy)
+	}
+	argv, err := museCLIArgv(defaultMuseCLICommand(), policy, "/tmp/project", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPair(argv, "--approval-mode", "on-request") || !containsPair(argv, "--sandbox-network", "enabled") {
+		t.Fatalf("Muse argv lost the resolved access preset: %v", argv)
+	}
+
+	// A read-only preset must downgrade even a write-capable execute lane.
+	readOnly := ResolvedRunnerProfile{Name: "muse-readonly", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerMuse), PermissionPreset: "read-only",
+	}}
+	policy = codexPolicyForResolvedProfile(workflow, runLaneExecute, readOnly)
+	argv, err = museCLIArgv(defaultMuseCLICommand(), policy, "/tmp/project", "", "")
+	if err != nil || !containsPair(argv, "--approval-mode", "never") || !containsPair(argv, "--sandbox-network", "restricted") || !containsExact(argv, "--disable-write") || !containsExact(argv, "--disable-shell") {
+		t.Fatalf("read-only Muse preset was not enforced on execute lane: policy=%#v argv=%v err=%v", policy, argv, err)
+	}
+}
+
 func TestRunnerAccessProfileAndClaudeRules(t *testing.T) {
 	paths := runnerAccessPaths{protected: []string{`/tmp/private "folder"`}, state: []string{"/tmp/state"}}
 	profile := sandboxExecProfile(paths)
@@ -154,6 +183,22 @@ func TestRunnerAccessArgvWrapping(t *testing.T) {
 		} else if len(argv) != 2 || argv[0] != "/bin/echo" {
 			t.Fatalf("%s: %v", harness, argv)
 		}
+	}
+}
+
+func TestDevinFullAccessProfileUsesBypassAndDenyWrapper(t *testing.T) {
+	profile := ResolvedRunnerProfile{Name: "devin-swe-2-max", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerDevin), PermissionPreset: "danger-full-access",
+		Sandbox: RunnerSandboxDefinition{Mode: "danger-full-access"},
+	}}
+	policy := codexPolicyForResolvedProfile(CodexPolicy{}, runLaneExecute, profile)
+	mode, err := devinACPModeForPolicy(policy)
+	if err != nil || mode != "bypass" {
+		t.Fatalf("Devin full-access mode=%q policy=%#v err=%v", mode, policy, err)
+	}
+	argv := wrapRunnerAccessArgv([]string{"/usr/bin/devin", "acp"}, runnerAccessPaths{protected: []string{"/tmp/private"}}, policy)
+	if runtime.GOOS == "darwin" && (len(argv) < 4 || argv[0] != "/usr/bin/sandbox-exec" || !strings.Contains(argv[2], "/tmp/private")) {
+		t.Fatalf("Devin full-access deny wrapper missing: %v", argv)
 	}
 }
 

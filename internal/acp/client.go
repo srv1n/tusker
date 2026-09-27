@@ -1052,7 +1052,14 @@ func (c *Client) SetConfigOption(ctx context.Context, configID, value string) (S
 		}
 	}
 	if !allowed {
-		return Session{}, fmt.Errorf("ACP config option %q did not advertise value %q", configID, value)
+		values := make([]string, 0, min(len(selected.Options), 20))
+		for i, option := range selected.Options {
+			if i == 20 {
+				break
+			}
+			values = append(values, option.Value)
+		}
+		return Session{}, fmt.Errorf("ACP config option %q did not advertise value %q (advertised: %s)", configID, value, strings.Join(values, ", "))
 	}
 	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.Request)
 	defer cancel()
@@ -1714,8 +1721,8 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			c.queueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
 			return
 		}
-		// Devin emits these informational extensions without requiring client action.
-		if msg.Method == "_cognition.ai/mcp/serversChanged" || msg.Method == "_cognition.ai/output" || msg.Method == "_cognition.ai/thinking_complete" || msg.Method == "_cognition.ai/plugins/changed" {
+		// ACP extension notifications do not require client action.
+		if strings.HasPrefix(msg.Method, "_") {
 			return
 		}
 		// Unknown notifications have no response channel. Fail closed rather

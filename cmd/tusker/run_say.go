@@ -116,6 +116,8 @@ func runOperatorMessage(args Args, required bool) (string, error) {
 type runSayResult struct {
 	Delivery      WorkerDelivery      `json:"delivery"`
 	Route         string              `json:"route"`
+	State         string              `json:"state,omitempty"`
+	Reason        string              `json:"reason,omitempty"`
 	OperatorState runOperatorState    `json:"operator_state"`
 	Continuation  serveRecoveryResult `json:"continuation"`
 	Duplicate     bool                `json:"duplicate"`
