@@ -281,22 +281,9 @@ func (s *serveServer) handleRunSessionControl(w http.ResponseWriter, r *http.Req
 	result.LeaseState = serveLeaseState(run.LeaseState)
 	result.LeaseStateRaw = run.LeaseState
 	result.ProcessRunning = runProcessGroupAlive(run)
-	if action == runSessionControlStop && !s.runActionCapability(action, snap.project, Note{}, run, nil).Available {
-		result.Refused = true
-		result.Supported = true
-		result.Settled = true
-		result.State = runSessionControlSettledState
-		result.Reason = s.runActionCapability(action, snap.project, Note{}, run, nil).Reason
-		serveJSON(w, http.StatusOK, result)
-		return
-	}
-
 	if action == runSessionControlPause {
-		result.Refused = true
-		result.Supported = false
-		result.Alternative = runSessionControlStop
-		result.Reason = s.runActionCapability(action, snap.project, Note{}, run, nil).Reason
-		serveJSON(w, http.StatusOK, result)
+		out, status := s.applyRunPauseControl(run, result)
+		serveJSON(w, status, out)
 		return
 	}
 
@@ -308,14 +295,44 @@ func (s *serveServer) handleRunSessionControl(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if action == runSessionControlStop {
-		s.handleRunStopControl(w, run, actor, intent, result)
+		s.handleRunStopControl(w, run, actor, body.string("reason"), intent, result)
 		return
 	}
 	s.handleRunFreshControl(w, run, actor, intent, result)
 }
 
-func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus, actor string, prior *runSessionControlIntent, result runSessionControlResult) {
+func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus, actor, reason string, prior *runSessionControlIntent, result runSessionControlResult) {
+	out, status := s.applyRunStopControl(run, actor, reason, prior, result)
+	serveJSON(w, status, out)
+}
+
+// applyRunPauseControl is the shared pause outcome. No runner negotiates a
+// pause capability today, so both Serve and `runs pause` return the same
+// refusal naming stop as the durable alternative.
+func (s *serveServer) applyRunPauseControl(run RunStatus, result runSessionControlResult) (runSessionControlResult, int) {
+	result.Refused = true
+	result.Supported = false
+	result.Alternative = runSessionControlStop
+	result.Reason = s.runActionCapability(runSessionControlPause, RegisteredProject{}, Note{}, run, nil).Reason
+	return result, http.StatusOK
+}
+
+// applyRunStopControl is the shared stop transition: it persists the durable
+// operator intent, interrupts the exact recorded owner, and reports settlement
+// readback. `runs stop` calls it through a store-bound server so the intent,
+// run row, and settlement states stay identical on both surfaces. The
+// returned status is the HTTP status Serve emits; CLI callers read the
+// result fields instead.
+func (s *serveServer) applyRunStopControl(run RunStatus, actor, reason string, prior *runSessionControlIntent, result runSessionControlResult) (runSessionControlResult, int) {
 	now := time.Now().UTC()
+	if capability := s.runActionCapability(runSessionControlStop, RegisteredProject{}, Note{}, run, nil); !capability.Available {
+		result.Refused = true
+		result.Supported = true
+		result.Settled = true
+		result.State = runSessionControlSettledState
+		result.Reason = capability.Reason
+		return result, http.StatusOK
+	}
 	if prior != nil && prior.Action == runSessionControlStop && prior.LeaseGeneration == run.LeaseGeneration {
 		if (prior.State == runSessionControlPending || prior.State == runSessionControlUnknown) && runSessionControlSettled(run) && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateInterrupted {
 			settled := *prior
@@ -331,27 +348,28 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 			result.Supported = true
 			result.Reason = "stop remains " + prior.State + "; waiting for exact-owner settlement"
 			result.Intent = prior
-			serveJSON(w, http.StatusOK, result)
-			return
+			return result, http.StatusOK
 		}
 		if prior.State == runSessionControlSettledState && runSessionControlSettled(run) {
 			result.OK, result.Supported, result.Settled, result.State = true, true, true, runSessionControlSettledState
 			result.Reason = "run is already stopped and settled"
 			result.Intent = prior
-			serveJSON(w, http.StatusOK, result)
-			return
+			return result, http.StatusOK
 		}
 		if prior.State == runSessionControlSettledState {
 			result.Refused, result.Unknown, result.Supported = true, true, true
 			result.State, result.Reason, result.Intent = runSessionControlUnknown, "previous stop acknowledgement is settled but the run owner changed without a new generation", prior
-			serveJSON(w, http.StatusConflict, result)
-			return
+			return result, http.StatusConflict
 		}
+	}
+	reasonSuffix := ""
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		reasonSuffix = ": " + trimmed
 	}
 	intent := runSessionControlIntent{
 		Schema: runSessionControlSchema, Action: runSessionControlStop, State: runSessionControlPending,
 		ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
-		Actor: actor, Reason: "operator stop requested", LeaseGeneration: run.LeaseGeneration,
+		Actor: actor, Reason: "operator stop requested" + reasonSuffix, LeaseGeneration: run.LeaseGeneration,
 		LeaseOwner: run.LeaseOwner, AttemptID: run.ActiveAttemptID, ProcessPID: run.ProcessPID,
 		ProcessPGID: run.ProcessPGID, ProcessStarted: run.ProcessStartedAt,
 		CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano),
@@ -360,32 +378,27 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 	if err != nil {
 		result.Refused = true
 		result.Reason = "could not persist stop intent: " + err.Error()
-		serveJSON(w, http.StatusInternalServerError, result)
-		return
+		return result, http.StatusInternalServerError
 	}
 	if !saved {
 		current, err := loadRunSessionControlIntent(s.store, run.ProjectID, run.RecordID)
 		if err != nil || current == nil {
 			result.Refused, result.Reason = true, "stop intent changed during request; reload the run"
-			serveJSON(w, http.StatusConflict, result)
-			return
+			return result, http.StatusConflict
 		}
 		if current.Action == runSessionControlStop && current.LeaseGeneration == run.LeaseGeneration &&
 			(current.State == runSessionControlPending || current.State == runSessionControlUnknown) {
 			result.Supported, result.Pending, result.Unknown = true, current.State == runSessionControlPending, current.State == runSessionControlUnknown
 			result.State, result.Reason, result.Intent = current.State, "stop remains "+current.State+"; waiting for exact-owner settlement", current
-			serveJSON(w, http.StatusOK, result)
-			return
+			return result, http.StatusOK
 		}
 		if current.Action == runSessionControlStop && current.LeaseGeneration == run.LeaseGeneration && current.State == runSessionControlSettledState {
 			result.OK, result.Supported, result.Settled = true, true, true
 			result.State, result.Reason, result.Intent = current.State, "run is already stopped and settled", current
-			serveJSON(w, http.StatusOK, result)
-			return
+			return result, http.StatusOK
 		}
 		result.Refused, result.Reason = true, "stop intent changed during request; reload the run"
-		serveJSON(w, http.StatusConflict, result)
-		return
+		return result, http.StatusConflict
 	}
 	stopped, _, err := interruptRuntimeRunScoped(DefaultStateRoot(), s.store, run.ProjectID, run.RecordID)
 	pendingIntent := intent
@@ -395,36 +408,43 @@ func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus,
 		intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		if saved, saveErr := saveRunSessionControlIntentIfPrior(s.store, intent, &pendingIntent); saveErr != nil || !saved {
 			result.Refused, result.Reason = true, "stop intent changed during interrupt; reload the run"
-			serveJSON(w, http.StatusConflict, result)
-			return
+			return result, http.StatusConflict
 		}
 		result.Refused, result.Unknown, result.Supported = true, true, true
 		result.State, result.Reason, result.Intent = intent.State, "stop acknowledgement is unresolved: "+err.Error(), &intent
-		serveJSON(w, http.StatusOK, result)
-		return
+		return result, http.StatusOK
 	}
 	if stopped == nil {
 		intent.State, intent.Reason = runSessionControlUnknown, "stop returned without canonical run readback"
-	} else if LeaseState(strings.TrimSpace(stopped.LeaseState)) == LeaseStateInterrupted && !runProcessGroupAlive(*stopped) {
-		intent.State, intent.Reason = runSessionControlSettledState, "stop acknowledged and exact owner settled"
-		result.OK, result.Settled = true, true
-		result.LeaseState, result.LeaseStateRaw = serveLeaseState(stopped.LeaseState), stopped.LeaseState
-		result.ProcessRunning = false
 	} else {
-		intent.State, intent.Reason = runSessionControlPending, "stop accepted; waiting for exact-owner settlement"
-		result.Pending = true
+		if reasonSuffix != "" {
+			// Mirror start_fresh: the operator reason stays durable on the run
+			// row while the intent Reason carries the settlement status.
+			annotated := *stopped
+			annotated.LastError = strings.TrimSpace(stopped.LastError) + reasonSuffix
+			annotated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			_, _ = s.store.UpsertRunIfSnapshot(*stopped, annotated)
+		}
+		if LeaseState(strings.TrimSpace(stopped.LeaseState)) == LeaseStateInterrupted && !runProcessGroupAlive(*stopped) {
+			intent.State, intent.Reason = runSessionControlSettledState, "stop acknowledged and exact owner settled"
+			result.OK, result.Settled = true, true
+			result.LeaseState, result.LeaseStateRaw = serveLeaseState(stopped.LeaseState), stopped.LeaseState
+			result.ProcessRunning = false
+		} else {
+			intent.State, intent.Reason = runSessionControlPending, "stop accepted; waiting for exact-owner settlement"
+			result.Pending = true
+		}
 	}
 	intent.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	if saved, saveErr := saveRunSessionControlIntentIfPrior(s.store, intent, &pendingIntent); saveErr != nil || !saved {
 		result.Refused, result.Reason = true, "stop intent changed during interrupt; reload the run"
-		serveJSON(w, http.StatusConflict, result)
-		return
+		return result, http.StatusConflict
 	}
 	result.Supported, result.State, result.Intent = true, intent.State, &intent
 	if result.Reason == "" {
 		result.Reason = intent.Reason
 	}
-	serveJSON(w, http.StatusOK, result)
+	return result, http.StatusOK
 }
 
 func (s *serveServer) handleRunFreshControl(w http.ResponseWriter, run RunStatus, actor string, prior *runSessionControlIntent, result runSessionControlResult) {

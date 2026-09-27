@@ -120,6 +120,68 @@ func TestRunSessionControlsStartFreshClearsNativeSessionAfterSettlement(t *testi
 	}
 }
 
+func TestRunsStopAndPauseCmdShareServeRunControls(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{
+		ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateInterrupted), AttemptOutcome: string(AttemptOutcomeCancelled),
+		LeaseGeneration: 4, ActiveAttemptID: "attempt-old",
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	// Pause takes the same refusal the Serve handler returns: no negotiated
+	// provider capability, with stop named as the durable alternative.
+	if err := runsPauseCmd(Args{"id": "APP-T-0001", "project": "app", "by": "operator:test"}); err == nil || !strings.Contains(err.Error(), "no negotiated pause capability") {
+		t.Fatalf("runs pause should refuse like Serve: %v", err)
+	}
+	if missing := runsPauseCmd(Args{"id": "APP-T-0001", "project": "app"}); missing == nil || !strings.Contains(missing.Error(), "--by") {
+		t.Fatalf("runs pause should require an actor like the other controls: %v", missing)
+	}
+	if err := runsStopCmd(Args{"id": "APP-T-0001", "project": "app"}); err == nil || !strings.Contains(err.Error(), "--by") {
+		t.Fatalf("runs stop should require an actor: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runsStopCmd(Args{"id": "APP-T-0001", "project": "app", "by": "operator:test", "reason": "operator handoff"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, "APP-T-0001") || !strings.Contains(output, "settled") {
+		t.Fatalf("runs stop output: %q", output)
+	}
+
+	store, err = OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	intent, err := loadRunSessionControlIntent(store, run.ProjectID, run.RecordID)
+	if err != nil || intent == nil {
+		t.Fatalf("stop intent missing: %#v %v", intent, err)
+	}
+	if intent.Action != runSessionControlStop || intent.State != runSessionControlSettledState || intent.Actor != "operator:test" {
+		t.Fatalf("stop intent did not settle through the shared transition: %#v", intent)
+	}
+	stored, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || stored == nil {
+		t.Fatalf("read stopped run: %#v %v", stored, err)
+	}
+	if stored.LeaseState != string(LeaseStateInterrupted) || stored.AttemptOutcome != string(AttemptOutcomeCancelled) {
+		t.Fatalf("runs stop did not interrupt the run: %#v", stored)
+	}
+	if !strings.Contains(stored.LastError, "operator handoff") {
+		t.Fatalf("runs stop lost the operator reason: %q", stored.LastError)
+	}
+}
+
 func TestRunsFreshCmdQueuesStartFreshIntent(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
 	store, err := OpenRuntimeStore(DefaultStateRoot())

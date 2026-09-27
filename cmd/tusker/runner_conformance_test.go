@@ -65,6 +65,39 @@ func TestDraftConformanceUsesCurrentValuesWithoutProfileState(t *testing.T) {
 	}
 }
 
+func TestRunnerTestUsesGlobalProfileWithoutVault(t *testing.T) {
+	// Runner profiles are global, so `runner test` outside any repo must not
+	// demand a vault: it resolves the user-global profile and the live policy
+	// canary's protected path lands in a temp dir instead of the vault.
+	t.Chdir(t.TempDir())
+	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
+	bin := t.TempDir()
+	command := filepath.Join(bin, "codex")
+	if err := writeText(command, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo codex-test; exit 0; fi\nif [ \"$1\" = login ]; then echo Logged; exit 0; fi\nprintf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"text\":\"TUSKER_POLICY_CANARY_ATTEMPTED\"}}' '{\"type\":\"turn.completed\"}'\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(command, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setGlobalProfileForTest(t, "outside-runner", map[string]any{
+		"harness": "codex_exec", "model": "gpt-6-sol", "effort": "low", "permission_preset": "read-only",
+		"command":   command + " exec --json -",
+		"sandbox":   map[string]any{"mode": "read-only", "network": false},
+		"subagents": map[string]any{"allowed": false, "max_concurrent": 0},
+	})
+	code, report, err := runRunnerConformance(Args{"harness": "outside-runner", "preset": "read-only", "live": "true"})
+	if err != nil || code != 0 || !report.Ready {
+		t.Fatalf("vault-less live conformance: code=%d report=%#v err=%v", code, report, err)
+	}
+	if report.ProfileID != "outside-runner" || report.Model != "gpt-6-sol" || report.Effort != "low" || report.ProfileRevision == "" {
+		t.Fatalf("global profile identity missing: %#v", report)
+	}
+	levels, err := modelLevelsRead("")
+	if err != nil || levels.ProfileStates["outside-runner"] != "tested" {
+		t.Fatalf("vault-less profile state: %#v %v", levels.ProfileStates, err)
+	}
+}
+
 func TestAgentProfileTestIdentity(t *testing.T) {
 	vault := automationTestVault(t)
 	bin := t.TempDir()

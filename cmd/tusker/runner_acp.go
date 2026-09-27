@@ -955,7 +955,7 @@ func configureDevinSession(ctx context.Context, client *acp.Client, session acp.
 	if err != nil {
 		return tuskerError(errorConfigInvalid, "Devin ACP mode configuration failed: "+err.Error())
 	}
-	model, thought := devinACPModelAndThought(current, strings.TrimSpace(model), strings.TrimSpace(effort))
+	model, thought := runnercore.DevinACPModelAndThought(current, strings.TrimSpace(model), strings.TrimSpace(effort))
 	current, err = setDevinConfigOption(ctx, client, current, "model", model)
 	if err != nil {
 		return tuskerError(errorConfigInvalid, "Devin ACP model configuration failed: "+err.Error())
@@ -966,21 +966,6 @@ func configureDevinSession(ctx context.Context, client *acp.Client, session acp.
 		}
 	}
 	return nil
-}
-
-func devinACPModelAndThought(session acp.Session, model, effort string) (string, string) {
-	if model == "swe-2-max" && effort == "max" {
-		for _, option := range session.ConfigOptions {
-			if option.ID == "model" {
-				for _, value := range option.Options {
-					if value.Value == "swe-2-high" {
-						return "swe-2-high", "max"
-					}
-				}
-			}
-		}
-	}
-	return model, ""
 }
 
 // devinACPModeForPolicy maps the resolved Tusker sandbox policy onto Devin's
