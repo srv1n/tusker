@@ -374,7 +374,11 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		}
 		report := computeV7ProofReportForMaterial(project.VaultRoot, note, proofIdx, commandProofMaterial, nil)
 		if report.Status != "satisfied" || len(report.OpenGates) != 0 {
-			return ReviewResult{}, fmt.Errorf("pass proposal requires currently satisfied proof and gates")
+			// Name the gaps: a proof_required class that no verification row can
+			// satisfy (for example a grep check for focused_test) is otherwise
+			// invisible until after a full execute and review cycle.
+			missing := append(append(append([]string(nil), report.Missing...), report.MachineMissing...), report.OpenGates...)
+			return ReviewResult{}, fmt.Errorf("pass proposal requires currently satisfied proof and gates; missing: %s", strings.Join(uniqueStrings(missing), ", "))
 		}
 	case "blocked":
 		if result.Blocker == "human" {
