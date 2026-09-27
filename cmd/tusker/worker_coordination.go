@@ -161,8 +161,10 @@ func (i WorkerAttemptIdentity) validate() error {
 	if strings.TrimSpace(i.ProjectID) == "" || strings.TrimSpace(i.TaskID) == "" || strings.TrimSpace(i.AttemptID) == "" || strings.TrimSpace(i.Provider) == "" || strings.TrimSpace(i.NativeSessionID) == "" {
 		return tuskerError(errorInvalidArg, "worker identity requires project, task, attempt, provider, and native session id")
 	}
-	if i.WorkRevision <= 0 || i.AttemptGeneration <= 0 {
-		return tuskerError(errorInvalidArg, "worker identity requires positive work revision and attempt generation")
+	// Work revision 0 is the valid pre-candidate revision: a new V7 task has no
+	// work_revision until its first execute completion projects candidate 1.
+	if i.WorkRevision < 0 || i.AttemptGeneration <= 0 {
+		return tuskerError(errorInvalidArg, "worker identity requires a non-negative work revision and positive attempt generation")
 	}
 	return nil
 }
@@ -637,7 +639,7 @@ func runSessionTerminalReceipt(run RunStatus, attempt *RunAttempt) (bool, string
 
 func (s *RuntimeStore) currentCoordinationEvents(run RunStatus, identity *WorkerAttemptIdentity) ([]WorkerCoordinationEvent, error) {
 	taskID := firstNonEmpty(run.ItemID, run.RecordID)
-	if taskID == "" || run.ActiveAttemptID == "" || run.LeaseGeneration <= 0 || run.WorkRevision <= 0 {
+	if taskID == "" || run.ActiveAttemptID == "" || run.LeaseGeneration <= 0 || run.WorkRevision < 0 {
 		return nil, nil
 	}
 	query := `SELECT event_id, project_id, task_id, work_revision, attempt_id, attempt_generation, provider, native_session_id,
@@ -983,7 +985,7 @@ func (s *RuntimeStore) WorkerAttentionForRun(run RunStatus) (*WorkerAttention, e
 }
 
 func (s *RuntimeStore) WorkerIdentityForRun(run RunStatus) (*WorkerAttemptIdentity, error) {
-	if run.Terminal || strings.TrimSpace(run.ActiveAttemptID) == "" || run.LeaseGeneration <= 0 || run.WorkRevision <= 0 {
+	if run.Terminal || strings.TrimSpace(run.ActiveAttemptID) == "" || run.LeaseGeneration <= 0 || run.WorkRevision < 0 {
 		return nil, nil
 	}
 	if run.LeaseState != string(LeaseStateClaimed) && run.LeaseState != string(LeaseStateRunning) {

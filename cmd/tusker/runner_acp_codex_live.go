@@ -422,7 +422,7 @@ func codexACPWrapperOwnsRun(run RunStatus, req StartRequest) bool {
 		strings.TrimSpace(req.AttemptID) == "" || strings.TrimSpace(run.ActiveAttemptID) == "" || req.AttemptID != run.ActiveAttemptID ||
 		strings.TrimSpace(run.LeaseOwner) == "" || req.AttemptID != run.LeaseOwner ||
 		req.LeaseGeneration <= 0 || run.LeaseGeneration <= 0 || req.LeaseGeneration != run.LeaseGeneration ||
-		req.WorkRevision <= 0 || run.WorkRevision <= 0 || req.WorkRevision != run.WorkRevision ||
+		req.WorkRevision < 0 || req.WorkRevision != run.WorkRevision ||
 		strings.TrimSpace(req.RunnerProfile) == "" || req.RunnerProfile != run.RunnerProfile ||
 		strings.TrimSpace(req.RunnerHarness) != string(RunnerCodexACP) || req.RunnerHarness != run.RunnerHarness ||
 		strings.TrimSpace(req.RunnerModel) == "" || req.RunnerModel != run.RunnerModel ||

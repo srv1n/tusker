@@ -5265,6 +5265,12 @@ func (d *Daemon) attachManagedRunSession(run RunStatus) error {
 	if err != nil || !matched {
 		return err
 	}
+	// A fresh session ref is discovered after dispatch; backfill the live
+	// attempt row instead of leaving it empty until the attempt finishes.
+	if _, err := d.store.exec(`UPDATE attempts SET session_ref = ? WHERE project_id = ? AND attempt_id = ? AND COALESCE(session_ref, '') = ''`,
+		run.SessionRef, run.ProjectID, run.ActiveAttemptID); err != nil {
+		return err
+	}
 	var executionID string
 	err = d.store.queryRowScan(`SELECT execution_id FROM execution_records WHERE project_id = ? AND attempt_id = ? AND lease_generation = ?`,
 		[]any{run.ProjectID, run.ActiveAttemptID, run.LeaseGeneration}, &executionID)
@@ -7147,8 +7153,9 @@ const (
 // The marker is carried in the prompt artifact already persisted for each
 // attempt, so this does not add a second cache or runtime schema surface.
 func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath, lane string, run RunStatus) string {
-	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
-	if _, ok := note.Data["work_revision"]; !ok || stringField(note.Data, "work_revision") == "" || strings.TrimSpace(note.AbsolutePath) == "" || strings.TrimSpace(wfFile.Path) == "" {
+	// A new V7 task has no work_revision (revision 0) and no source_sha until its
+	// first candidate is projected; both stay bound through the hashed task data.
+	if strings.TrimSpace(note.AbsolutePath) == "" || strings.TrimSpace(wfFile.Path) == "" {
 		return ""
 	}
 	if intField(note.Data, "work_revision") != run.WorkRevision {
@@ -7159,8 +7166,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		run.ProjectID, run.RecordID, run.ItemID, run.Runner, run.RunnerProfile,
 		run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.Lane, lane,
 		workspacePath, stringField(note.Data, "id"), stringField(note.Data, "state_rev"),
-		source,
-		stringField(note.Data, "title"), stringField(note.Data, "work_revision"),
+		stringField(note.Data, "title"),
 		strconv.Itoa(run.WorkRevision), run.WorkerPolicyFP, run.ExecutePolicyFP,
 	} {
 		if strings.TrimSpace(value) == "" {
@@ -7377,10 +7383,6 @@ func renderResumedAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, 
 	}
 	taskID := strings.TrimSpace(stringField(note.Data, "id"))
 	stateRevision := strings.TrimSpace(stringField(note.Data, "state_rev"))
-	_, workRevisionPresent := note.Data["work_revision"]
-	if !workRevisionPresent {
-		return "", fmt.Errorf("verified resume requires the task work_revision")
-	}
 	currentWorkRevision := intField(note.Data, "work_revision")
 	missing := []struct {
 		name  string

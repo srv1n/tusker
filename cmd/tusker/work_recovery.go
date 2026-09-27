@@ -217,6 +217,12 @@ func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject,
 	// checked against its retained prompt rather than rejected as self-equal.
 	probe := run
 	probe.ActiveAttemptID = ""
+	// Stop/interrupt clears the run's prompt path; the retained prompt is the
+	// session's last attempt prompt, which is what this preflight re-checks.
+	if strings.TrimSpace(probe.PromptPath) == "" {
+		_ = store.queryRowScan(`SELECT prompt_path FROM attempts WHERE project_id = ? AND attempt_id = ? LIMIT 1`,
+			[]any{run.ProjectID, session.LastAttemptID}, &probe.PromptPath)
+	}
 	if reason := (&Daemon{store: store}).resumeContextFingerprintMismatch(probe, session); reason != "" {
 		return nil, nil, reason
 	}
