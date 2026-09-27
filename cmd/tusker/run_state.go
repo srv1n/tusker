@@ -153,11 +153,7 @@ func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts [
 	if err != nil {
 		return runOperatorState{}, err
 	}
-	facts := runOperatorFacts{
-		LeaseState: run.LeaseState, Outcome: string(projectedAttemptOutcome(run.AttemptOutcome, run.LastError)),
-		Terminal: run.Terminal, OwnerAlive: runProcessGroupAlive(run),
-		LastHeartbeatAt: run.LastHeartbeatAt, StartedAt: run.StartedAt, UpdatedAt: run.UpdatedAt,
-	}
+	facts := runOperatorFactsFromRun(run, attempts)
 	for _, message := range messages {
 		if message.Kind == "question" && message.AnsweredAt == "" && message.OriginTaskID == run.ItemID {
 			for _, attempt := range attempts {
@@ -167,14 +163,6 @@ func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts [
 				}
 			}
 		}
-	}
-	if code := inspectedReasonCode(run, attempts); code != "" && inspectedReasonSource(run, attempts) == "driver" {
-		if spec, ok := runFailureReason(RunFailureReasonCode(code)); ok {
-			facts.Reason = &runOperatorReason{code, spec.Class, spec.Guidance, spec.Retryable, inspectedReasonSource(run, attempts)}
-		}
-	} else if run.Terminal && facts.Outcome != string(AttemptOutcomeSucceeded) && facts.Outcome != string(AttemptOutcomeWaitingForReview) {
-		spec, _ := runFailureReason(RunFailureUnknown)
-		facts.Reason = &runOperatorReason{string(RunFailureUnknown), spec.Class, spec.Guidance, spec.Retryable, "legacy_text"}
 	}
 	permissionWaits := map[string]bool{}
 	for _, row := range tails.events {
@@ -209,6 +197,25 @@ func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts [
 		facts.ToolInFlight = runToolInFlightFromTails(tails)
 	}
 	return deriveRunOperatorState(facts, now, quietAfter), nil
+}
+
+// runOperatorFactsFromRun holds the run-row facts shared by the run page and
+// the task state; callers add activity, question and permission evidence.
+func runOperatorFactsFromRun(run RunStatus, attempts []RunAttempt) runOperatorFacts {
+	facts := runOperatorFacts{
+		LeaseState: run.LeaseState, Outcome: string(projectedAttemptOutcome(run.AttemptOutcome, run.LastError)),
+		Terminal: run.Terminal, OwnerAlive: runProcessGroupAlive(run),
+		LastHeartbeatAt: run.LastHeartbeatAt, StartedAt: run.StartedAt, UpdatedAt: run.UpdatedAt,
+	}
+	if code := inspectedReasonCode(run, attempts); code != "" && inspectedReasonSource(run, attempts) == "driver" {
+		if spec, ok := runFailureReason(RunFailureReasonCode(code)); ok {
+			facts.Reason = &runOperatorReason{code, spec.Class, spec.Guidance, spec.Retryable, inspectedReasonSource(run, attempts)}
+		}
+	} else if run.Terminal && facts.Outcome != string(AttemptOutcomeSucceeded) && facts.Outcome != string(AttemptOutcomeWaitingForReview) {
+		spec, _ := runFailureReason(RunFailureUnknown)
+		facts.Reason = &runOperatorReason{string(RunFailureUnknown), spec.Class, spec.Guidance, spec.Retryable, "legacy_text"}
+	}
+	return facts
 }
 
 func runToolInFlightFromTails(tails runStateTails) bool {

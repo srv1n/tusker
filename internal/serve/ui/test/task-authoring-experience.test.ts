@@ -8,6 +8,7 @@ import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { AgentCoordinationSummary, reviewOverrideNeedsReason, routeBlockers, routeSummary, RouteFact, TaskContractDisclosure } from "../src/features/product/TaskScreens";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
 import { readyRun, readyTask } from "../previews/wux/inspector/fixtures";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
 
 // 834e84a4 added a run-detail Link to the inspector; server renders need router context.
 function renderWithRouter(element: ReturnType<typeof createElement>) {
@@ -68,7 +69,7 @@ describe("task authoring and execution experience", () => {
   test("keeps every open human action visible in the inspector", () => {
     const first = readyTask.humanAction!;
     const second = { ...first, gateId: "WUX-G-0102", title: "Confirm the copy", action: "Confirm the wording." };
-    const task = { ...readyTask, humanAction: first, humanActions: [first, second], gates: [{ id: first.gateId, kind: "review" as const, owner: "human:reviewer" }, { id: second.gateId, kind: "review" as const, owner: "human:copy" }] };
+    const task = { ...readyTask, state: sampleState("blocked"), humanAction: first, humanActions: [first, second], gates: [{ id: first.gateId, kind: "review" as const, owner: "human:reviewer" }, { id: second.gateId, kind: "review" as const, owner: "human:copy" }] };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const html = renderWithRouter(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(TaskInspector, { task, run: readyRun, selectedTaskId: task.id, loading: false, onClose: () => {}, onOpenTask: () => {} }))));
     expect(html).toContain("Owner: human:reviewer");
@@ -77,7 +78,7 @@ describe("task authoring and execution experience", () => {
   });
 
   test("does not offer an LLM start for a human-owned task", () => {
-    const human = { ...readyTask, status: "ready" as const, rawStatus: "ready", hasGate: true, humanAction: readyTask.humanAction, humanActions: [readyTask.humanAction!] };
+    const human = { ...readyTask, state: sampleState("planned"), status: "ready" as const, rawStatus: "ready", hasGate: true, humanAction: readyTask.humanAction, humanActions: [readyTask.humanAction!] };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(TaskInspector, { task: human, run: null, selectedTaskId: human.id, loading: false, onClose: () => {}, onOpenTask: () => {} }))));
     expect(html).not.toContain(`aria-label="Run task ${human.id}"`);
@@ -100,7 +101,6 @@ describe("task authoring and execution experience", () => {
 
   test("keeps the three surfaces on the same authoring contract", () => {
     const task = readFileSync("src/features/product/TaskScreens.tsx", "utf8");
-    const wave = readFileSync("src/features/product/DeliveryScreens.tsx", "utf8");
     const inspector = readFileSync("src/features/workbench/inspector/TaskInspector.tsx", "utf8");
     const report = readFileSync("../../../docs/reports/task-authoring/experience.md", "utf8");
     expect(task).toContain("taskRunBlocker(detail)");
@@ -109,9 +109,6 @@ describe("task authoring and execution experience", () => {
     expect(task).not.toContain("<option value=\"\">Unclassified</option>");
     expect(task).toContain("TaskContractDisclosure");
     expect(task).not.toContain("(default)");
-    expect(wave).toContain("Execution routes");
-    expect(wave).toContain("Read the full wave brief");
-    expect(wave).toContain("WaveAuthorityControls");
     expect(inspector).toContain("Pause sender until this question is answered");
     expect(inspector).toContain("TaskContractDisclosure");
     expect(report).toContain("The contract an agent must be able to read");

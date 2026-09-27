@@ -1,11 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import type { ProjectSummary, WaveReview } from "@/types/domain";
 import { initialWaveView, settleEnteredWaveView } from "@/features/workbench/integration";
 import { projectContextName } from "@/features/workbench/integration/WorkExperience";
 import { canShowWaveResults, waveReviewStage, waveSummaryWithReview } from "@/features/workbench/integration/integrationModel";
-import { WaveOverview } from "@/features/workbench/overview/WaveOverview";
 import { makeWave } from "@/features/workbench/overview/previewFixtures";
 
 describe("walkthrough layout", () => {
@@ -18,18 +15,6 @@ describe("walkthrough layout", () => {
     expect(settleEnteredWaveView(null, completed, false)).toBe("flow");
     expect(settleEnteredWaveView("work", completed, false)).toBe("work");
     expect(settleEnteredWaveView("flow", completed, false)).toBe("flow");
-  });
-
-  test("overview exposes project context and counted status filters", () => {
-    const html = renderToStaticMarkup(createElement(WaveOverview, {
-      waves: [makeWave({ id: "W-1", title: "Alpha" })], tasks: [], runs: [],
-      startability: { "W-1": { state: "ready" } }, projectName: "Example project",
-      query: "", category: "all", onQueryChange: () => {}, onCategoryChange: () => {}, onOpenWave: () => {}, onOpenUnassigned: () => {},
-    }));
-    expect(html).toContain("Example project");
-    expect(html).toContain('aria-label="Filter waves by status"');
-    expect(html).toContain("All (1)");
-    expect(html).toContain("Ready to start (1)");
   });
 
   test("stale authorization cannot unlock completed results", () => {

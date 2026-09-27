@@ -3,7 +3,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { WaveFlow } from "../src/features/workbench/flow/WaveFlow";
 import { crossWaveWaitSummary, type DependencyFact } from "../src/features/workbench/flow/flowGraph";
-import type { TaskDetail, WaveReview } from "../src/types/domain";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
+import type { TaskDetail, TaskState, WaveReview } from "../src/types/domain";
 
 const ALPHA_ID = "ALP-T-0004";
 const BETA_ID = "BET-T-0004";
@@ -32,6 +33,7 @@ function review(overrides: Partial<WaveReview>): WaveReview {
         title: "Assemble alpha report",
         status: "done",
         readiness: "done",
+        state: sampleState("done"),
         waveId: "W-0002",
         waveTitle: "Alpha: assemble a small report",
         classification: "external",
@@ -41,6 +43,7 @@ function review(overrides: Partial<WaveReview>): WaveReview {
         title: "Assemble beta report",
         status: "backlog",
         readiness: "held",
+        state: sampleState("planned"),
         waveId: "W-0003",
         waveTitle: "Beta: assemble an independent report",
         classification: "external",
@@ -53,7 +56,7 @@ function review(overrides: Partial<WaveReview>): WaveReview {
   };
 }
 
-function taskDetail(id: string, deps: string[]): TaskDetail {
+function taskDetail(id: string, deps: string[], state: TaskState = sampleState("backlog")): TaskDetail {
   return {
     id,
     projectId: "sample",
@@ -61,6 +64,7 @@ function taskDetail(id: string, deps: string[]): TaskDetail {
     epicId: "FOL",
     epicTitle: "Combined report",
     status: "backlog",
+    state,
     readiness: "blocked_dependency",
     priority: "p2",
     risk: "medium",
@@ -77,13 +81,14 @@ function taskDetail(id: string, deps: string[]): TaskDetail {
   };
 }
 
-function renderReview(wire: WaveReview): string {
+function renderReview(wire: WaveReview, c1State?: TaskState): string {
   const dependencyFacts: Record<string, DependencyFact> = Object.fromEntries(
     wire.externalDependencies.map((fact) => [fact.taskId, {
       kind: fact.classification,
       title: fact.title,
       status: fact.status,
       readiness: fact.readiness,
+      state: fact.state,
       waveId: fact.waveId,
       waveTitle: fact.waveTitle,
     } satisfies DependencyFact]),
@@ -93,9 +98,8 @@ function renderReview(wire: WaveReview): string {
   const summary = crossWaveWaitSummary(Object.values(dependencyFacts), wire.authorization, startEnabled);
   return [summary?.title, summary?.body, summary?.hint].filter(Boolean).join(" ") + renderToStaticMarkup(createElement(WaveFlow, {
     memberIds: MEMBERS,
-    tasks: [taskDetail(C1, [ALPHA_ID, BETA_ID]), taskDetail("FOL-T-0002", [C1]), taskDetail("FOL-T-0003", [C1]), taskDetail("FOL-T-0004", ["FOL-T-0002", "FOL-T-0003"])],
+    tasks: [taskDetail(C1, [ALPHA_ID, BETA_ID], c1State), taskDetail("FOL-T-0002", [C1]), taskDetail("FOL-T-0003", [C1]), taskDetail("FOL-T-0004", ["FOL-T-0002", "FOL-T-0003"])],
     runs: [],
-    reviewMembers: wire.members,
     dependencyFacts,
     onSelectTask: () => {},
     onViewportChange: () => {},
@@ -134,8 +138,8 @@ describe("cross-wave integrated snapshots", () => {
       authorization: "authorized",
       state: "Waiting",
       externalDependencies: [
-        { taskId: ALPHA_ID, title: "Assemble alpha report", status: "done", readiness: "done", waveId: "W-0002", waveTitle: "Alpha: assemble a small report", classification: "external" },
-        { taskId: BETA_ID, title: "Assemble beta report", status: "done", readiness: "done", waveId: "W-0003", waveTitle: "Beta: assemble an independent report", classification: "external" },
+        { taskId: ALPHA_ID, title: "Assemble alpha report", status: "done", readiness: "done", state: sampleState("done"), waveId: "W-0002", waveTitle: "Alpha: assemble a small report", classification: "external" },
+        { taskId: BETA_ID, title: "Assemble beta report", status: "done", readiness: "done", state: sampleState("done"), waveId: "W-0003", waveTitle: "Beta: assemble an independent report", classification: "external" },
       ],
       controls: [],
     }));
@@ -146,28 +150,20 @@ describe("cross-wave integrated snapshots", () => {
     expect(html).not.toContain("Unresolved dependency");
   });
 
-  test("queued admission renders one queued member and no second Start", () => {
+  test("queued admission renders one planned member and no second Start", () => {
     const html = renderReview(review({
       authorization: "authorized",
       state: "Waiting",
-      members: MEMBERS.map((taskId) => ({
-        taskId,
-        title: taskId === C1 ? "Open combined report" : `Follow-up task ${taskId}`,
-        state: taskId === C1 ? "waiting" : "backlog",
-        phase: taskId === C1 ? "queued" : undefined,
-        responsible: taskId === C1 ? "daemon" : undefined,
-        waitingReason: taskId === C1 ? "queued for dispatch" : undefined,
-        dependencies: taskId === C1 ? [ALPHA_ID, BETA_ID] : [],
-      })),
       externalDependencies: [
-        { taskId: ALPHA_ID, title: "Assemble alpha report", status: "done", readiness: "done", waveId: "W-0002", waveTitle: "Alpha: assemble a small report", classification: "external" },
-        { taskId: BETA_ID, title: "Assemble beta report", status: "done", readiness: "done", waveId: "W-0003", waveTitle: "Beta: assemble an independent report", classification: "external" },
+        { taskId: ALPHA_ID, title: "Assemble alpha report", status: "done", readiness: "done", state: sampleState("done"), waveId: "W-0002", waveTitle: "Alpha: assemble a small report", classification: "external" },
+        { taskId: BETA_ID, title: "Assemble beta report", status: "done", readiness: "done", state: sampleState("done"), waveId: "W-0003", waveTitle: "Beta: assemble an independent report", classification: "external" },
       ],
       controls: [],
-    }));
-    expect(html).toContain(`aria-label="Open combined report (${C1}), Task, Waiting"`);
-    const queued = html.match(/aria-label="[^"]*, Waiting/g) ?? [];
+    }), sampleState("planned", "queued"));
+    expect(html).toContain(`aria-label="Open combined report (${C1}), Task, Planned"`);
+    const queued = html.match(/aria-label="[^"]*, Planned/g) ?? [];
     expect(queued.length).toBe(1);
+    expect(html).toContain('title="queued"');
     expect(html).not.toContain("Start now");
     expect(html).not.toContain("Start");
     expect(html).not.toContain("Waiting for");

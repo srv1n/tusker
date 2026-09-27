@@ -4,7 +4,8 @@ subject: task-states
 keywords: [status, state, run state, labels, needs you, blocked, linear]
 part_of: real-testing-campaign
 status: accepted
-code_conformance: unverified
+code_conformance: matches
+last_verified: 2026-09-27
 created: 2026-09-27
 read_when: "Showing, computing or acting on where a task stands, in the UI, CLI or API."
 skip_when: "Changing lease, attempt or retry internals that never reach a person."

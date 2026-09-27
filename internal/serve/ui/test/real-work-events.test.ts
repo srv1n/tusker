@@ -33,14 +33,12 @@ import {
 import { StreamStatusNote } from "../src/features/workbench/integration/StreamStatus";
 import {
   acceptedDelivery,
-  actualStage,
   identitySummary,
 } from "../src/features/workbench/inspector/inspectorLogic";
 import { buildFlowGraph, topologyKey } from "../src/features/workbench/flow/flowGraph";
 import { branchesFixture, liveUpdateBase, liveUpdateNext } from "../src/features/workbench/flow/fixtures";
 import {
   acceptedRun,
-  acceptedTask,
   failedTask,
   readyTask,
 } from "../previews/wux/inspector/fixtures";
@@ -326,13 +324,6 @@ describe("real-work completion honesty", () => {
   };
 
   test("a successful process exit alone never paints the task complete", () => {
-    expect(actualStage(exitedTask, exitedRun).label).not.toBe("Delivered");
-    expect(actualStage({ ...exitedTask, status: "done" }, exitedRun)).toEqual({
-      label: "Delivered",
-      state: "completed",
-      tone: "pass",
-      live: false,
-    });
     expect(acceptedDelivery(exitedRun)).toBeNull();
   });
 
@@ -341,11 +332,9 @@ describe("real-work completion honesty", () => {
     expect(acceptedDelivery({ ...pendingDeliveryRun, delivery: undefined })).toBeNull();
     const accepted = acceptedDelivery(acceptedRun);
     expect(accepted?.summary).toContain("intent, stage, decision");
-    expect(actualStage(acceptedTask, acceptedRun).label).toBe("Checking verification · waiting for independent review");
   });
 
-  test("failure stays visible until a new truthful attempt", () => {
-    expect(actualStage(failedTask, null).label).toBe("Implementation in progress");
+  test("unavailable execution identity renders honestly", () => {
     expect(identitySummary({ state: "unavailable" })).toBe("Unavailable");
   });
 });

@@ -19,6 +19,25 @@ export type Lane = "execute" | "review";
 export type TaskStatus =
   "backlog" | "ready" | "in_progress" | "review" | "blocked" | "done";
 
+/**
+ * The one displayed task state (docs/system/proposals/task-states.md). Computed
+ * by the server; the UI only renders it and never derives a task or wave label
+ * from status, readiness, lease, attempt outcome, or operator state.
+ */
+export type TaskStateCode =
+  "backlog" | "planned" | "working" | "needs_input" | "blocked" | "in_review" | "done" | "canceled";
+
+export interface TaskState {
+  state: TaskStateCode;
+  label: string;
+  category: "not_started" | "active" | "closed";
+  next_actor: "architect" | "daemon" | "worker" | "you" | "reviewer" | "nobody";
+  reason_code: string;
+  /** One line for a person; for a worker question this is the question itself. */
+  reason: string;
+  next_action: string;
+}
+
 export type Readiness =
   "ready" | "blocked_dependency" | "blocked_gate" | "draft";
 export type Priority = "p0" | "p1" | "p2" | "p3";
@@ -291,6 +310,8 @@ export interface WaveExternalDependency {
   title?: string;
   status?: string;
   readiness?: string;
+  /** The dependency's displayed state, when the server supplies it. */
+  state?: TaskState;
   waveId?: string;
   waveTitle?: string;
   classification: "external" | "missing" | "unavailable";
@@ -724,6 +745,8 @@ export interface NeedBase {
   /** ISO timestamp the item entered the human's queue. */
   since: string;
   humanAction?: HumanAction;
+  /** Present when the need belongs to a task. */
+  state?: TaskState;
 }
 
 export interface ClarifyNeed extends NeedBase {
@@ -904,6 +927,7 @@ export interface WaveTaskSummary {
   title: string;
   group: string;
   status: string;
+  state: TaskState;
   proof: string;
   workLevel?: "light" | "standard" | "demanding";
   effectiveExecute?: TaskRoutePreview;
@@ -914,6 +938,8 @@ export interface WaveSummary {
   id: string;
   title: string;
   status: string;
+  /** Most urgent member state; `reason` counts the members. */
+  state: TaskState;
   expectedOutcome?: string | null;
   body?: string;
   landedAt?: string | null;
@@ -939,6 +965,7 @@ export interface WaveListItem {
   title: string;
   summary?: string;
   status: string;
+  state: TaskState;
   authorization: string;
   landedAt?: string | null;
   memberCount: number;
@@ -1048,6 +1075,7 @@ export interface TaskCapsule {
   epicId: string;
   epicTitle: string;
   status: TaskStatus;
+  state: TaskState;
   readiness: Readiness;
   priority: Priority;
   risk: Risk;

@@ -1300,7 +1300,7 @@ func TestReclaimParksAtCap(t *testing.T) {
 		WorkspacePath:    workspacePath,
 		ProcessPID:       deadPIDForTest(),
 		ProcessStartedAt: "1900-01-01T00:00:00Z",
-		AttemptCount:     3,
+		AttemptCount:     defaultRetryMaxAttempts,
 		NextRetryAt:      "2026-07-06T00:00:00Z",
 		UpdatedAt:        "2026-07-06T00:00:00Z",
 	}); err != nil {
@@ -1335,8 +1335,8 @@ func TestReclaimParksAtCap(t *testing.T) {
 	assertEqual(t, string(LeaseStateParkedNoProgress), run.LeaseState, "reclaim cap lease")
 	assertEqual(t, string(AttemptOutcomeBlocked), run.AttemptOutcome, "reclaim cap outcome")
 	assertEqual(t, true, run.Terminal, "reclaim cap terminal")
-	assertEqual(t, 3, run.AttemptCount, "reclaim must not create attempt")
-	if !strings.Contains(run.LastError, "attempt cap reached (3)") || !strings.Contains(run.LastError, "reclaim would create another attempt") {
+	assertEqual(t, defaultRetryMaxAttempts, run.AttemptCount, "reclaim must not create attempt")
+	if !strings.Contains(run.LastError, "attempt cap reached (6)") || !strings.Contains(run.LastError, "reclaim would create another attempt") {
 		t.Fatalf("expected reclaim cap reason, got %#v", run)
 	}
 	violations := sentinelAttemptCountWithinCaps(runtimeSentinelProjectSnapshot{Project: project, Workflow: defaultWorkflow()}, []RunStatus{run})

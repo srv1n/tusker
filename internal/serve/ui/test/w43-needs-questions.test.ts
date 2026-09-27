@@ -7,6 +7,7 @@ import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { HumanActionCard } from "../src/features/human-action/HumanActionCard";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
 import { readyTask } from "../previews/wux/inspector/fixtures";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
 
 const question = {
   kind: "question", rawKind: "question", title: "Question from WUX-T-0001", action: "Which release window?",
@@ -34,7 +35,7 @@ describe("worker questions needing the operator", () => {
   });
 
   test("inspector selects the open question in its message form", () => {
-    const task = { ...readyTask, humanAction: question, humanActions: [question], messages: [{
+    const task = { ...readyTask, state: sampleState("needs_input", question.body), humanAction: question, humanActions: [question], messages: [{
       id: "msg-1", sender: `task:${readyTask.id}`, recipient: { kind: "operator" as const, id: "operator" },
       kind: "question" as const, body: question.body, replyRequired: true, yieldSender: true,
       state: "queued", transportState: "pending", createdAt: question.askedAt,

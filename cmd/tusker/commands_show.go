@@ -17,6 +17,7 @@ type showTaskStatusProjection struct {
 	StateRev            string                             `json:"state_rev,omitempty"`
 	Capsule             string                             `json:"capsule"`
 	DependencyContracts dependencyContractReviewProjection `json:"dependencyContracts"`
+	State               *taskState                         `json:"state,omitempty"`
 }
 
 func showCmd(args Args) error {
@@ -50,12 +51,17 @@ func showCmd(args Args) error {
 		}
 	}
 	if args.Bool("json") {
+		var state *taskState
+		if noteDisplayKind(note.Data) == "task" {
+			computed := cliTaskState(vaultPath, note)
+			state = &computed
+		}
 		emitJSON(showTaskStatusProjection{
 			Schema: "tusker.task-status/v1", ReadOnly: true,
 			ID: stringField(note.Data, "id"), Kind: noteDisplayKind(note.Data),
 			Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status"),
 			Readiness: stringField(note.Data, "readiness"), StateRev: stringField(note.Data, "state_rev"), Capsule: strings.TrimSpace(renderCapsuleWithVault(note, vaultPath)),
-			DependencyContracts: contracts,
+			DependencyContracts: contracts, State: state,
 		})
 		return nil
 	}

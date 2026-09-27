@@ -9,6 +9,10 @@
 
 import type { RunSummary, TaskDetail } from "@/types/domain";
 import type { DependencyFact } from "./flowGraph";
+import { sampleState } from "../overview/previewFixtures";
+
+// Sample data only: the server computes real states.
+const SAMPLE_CODE = { backlog: "backlog", ready: "planned", in_progress: "working", review: "in_review", blocked: "blocked", done: "done" } as const;
 
 export interface FlowFixture {
   key: string;
@@ -36,6 +40,7 @@ function task(
     epicId: "sample-epic",
     epicTitle: "Sample epic",
     status,
+    state: sampleState(SAMPLE_CODE[status]),
     readiness: status === "blocked" ? "blocked_dependency" : "ready",
     priority: "p2",
     risk: "medium",

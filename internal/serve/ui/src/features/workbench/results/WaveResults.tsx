@@ -2,7 +2,8 @@ import { ArrowLeft, CircleAlert, ExternalLink, FileCheck2, FileWarning, Image, S
 import type { ReactNode } from "react";
 import { Card, Chip, Mono } from "@/components/ui/primitives";
 import { SectionLabel } from "@/components/ui/page";
-import { humanizeToken, proofTone, statusToneOf } from "@/components/ui/tone";
+import { humanizeToken, proofTone } from "@/components/ui/tone";
+import { TaskStateBadge } from "@/components/ui/chips";
 import type { Tone } from "@/components/ui/tone";
 import type { TaskDetail, WaveArtifactCard, WaveBrief, WaveSummary, WaveTaskDeliveryState } from "@/types/domain";
 
@@ -91,7 +92,7 @@ function TaskResult({ task, outcome, onOpenTask }: { task: TaskDetail; outcome?:
           </button>
           <p className="mt-1 text-[12.5px] leading-relaxed text-muted">{task.intent.trim() || "Intent not supplied."}</p>
         </div>
-        <Chip tone={statusToneOf(task.status)}>{humanizeToken(task.status)}</Chip>
+        <TaskStateBadge state={task.state} />
       </div>
 
       <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-2 lg:grid-cols-4">

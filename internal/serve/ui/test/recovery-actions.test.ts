@@ -3,18 +3,21 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
-import { failedRun, readyTask } from "../previews/wux/inspector/fixtures";
-import type { WaveReviewMember } from "../src/types/domain";
+import { failedRun, readyTask as fixtureTask } from "../previews/wux/inspector/fixtures";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
+import type { TaskState, WaveReviewMember } from "../src/types/domain";
 
-function render(member: WaveReviewMember) {
+const readyTask = fixtureTask;
+
+function render(member: WaveReviewMember, state: TaskState = sampleState("blocked")) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null,
-    createElement(TaskInspector, { task: readyTask, run: failedRun, selectedTaskId: readyTask.id, loading: false, reviewMember: member, onClose: () => {}, onOpenTask: () => {} }),
+    createElement(TaskInspector, { task: { ...readyTask, state }, run: failedRun, selectedTaskId: readyTask.id, loading: false, reviewMember: member, onClose: () => {}, onOpenTask: () => {} }),
   )));
 }
 
 test("failed reviewer renders the reviewer-only recovery action", () => {
-  const html = render({ taskId: readyTask.id, title: readyTask.title, state: "blocked", phase: "failed", lane: "review", waitingReason: "review proposal snapshot drifted" });
+  const html = render({ taskId: readyTask.id, title: readyTask.title, state: "blocked", phase: "failed", lane: "review", waitingReason: "review proposal snapshot drifted" }, sampleState("blocked", "review proposal snapshot drifted"));
   expect(html).toContain("Retry review");
   expect(html).toContain("review proposal snapshot drifted");
   expect(html).not.toContain("Review the implementation, then record the outcome");

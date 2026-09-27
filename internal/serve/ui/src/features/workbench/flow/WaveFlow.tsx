@@ -8,9 +8,8 @@
 */
 
 import { useEffect, useMemo, useRef } from "react";
-import type { RunSummary, TaskDetail, WaveReviewMember } from "@/types/domain";
+import type { RunSummary, TaskDetail, TaskStateCode, WaveTaskSummary } from "@/types/domain";
 import {
-  DISPLAY_STATE_LABEL,
   NODE_KIND_LABEL,
   NODE_WIDTH,
   TOP_DOWN_NODE_HEIGHT,
@@ -22,7 +21,6 @@ import {
   panViewport,
   zoomViewport,
   type DependencyFact,
-  type FlowDisplayState,
   type FlowNode,
   type FlowViewport,
 } from "./flowGraph";
@@ -32,9 +30,8 @@ export interface WaveFlowProps {
   tasks: TaskDetail[];
   runs: RunSummary[];
   dependencyFacts?: Record<string, DependencyFact>;
-  reviewMembers?: WaveReviewMember[];
-  /** Tasks with an open wave-level human action. */
-  needsYouIds?: string[];
+  /** Wave summary members, for title and state while a task detail loads. */
+  members?: WaveTaskSummary[];
   selectedTaskId?: string;
   viewport?: FlowViewport;
   onSelectTask: (id: string) => void;
@@ -43,56 +40,54 @@ export interface WaveFlowProps {
   error?: string;
 }
 
-function StateGlyph({ state }: { state: FlowDisplayState }) {
+function StateGlyph({ state }: { state?: TaskStateCode }) {
   const common = "flex-none";
   switch (state) {
-    case "completed":
+    case "done":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <circle cx="7" cy="7" r="6" fill="var(--color-pass-soft)" stroke="var(--color-pass)" strokeWidth="1.5" />
           <path d="M4.5 7.2 6.2 8.9 9.6 5.2" fill="none" stroke="var(--color-pass)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
-    case "executing":
+    case "working":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <circle cx="7" cy="7" r="6" fill="var(--color-info-soft)" stroke="var(--color-info)" strokeWidth="1.5" />
           <circle cx="7" cy="7" r="2.4" fill="var(--color-info)" />
         </svg>
       );
-    case "awaiting_review":
-    case "reviewing":
+    case "in_review":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <circle cx="7" cy="7" r="6" fill="var(--color-accent-soft)" stroke="var(--color-accent)" strokeWidth="1.5" />
           <path d="M7 4.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2Z" fill="var(--color-accent)" />
         </svg>
       );
-    case "ready":
-    case "queued":
+    case "planned":
+    case "backlog":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <circle cx="7" cy="7" r="6" fill="none" stroke="var(--color-muted)" strokeWidth="1.5" />
           <circle cx="7" cy="7" r="1.6" fill="var(--color-muted)" />
         </svg>
       );
-    case "blocked":
-    case "proof_blocked":
+    case "needs_input":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <rect x="2" y="2" width="10" height="10" rx="2.5" fill="var(--color-warn-soft)" stroke="var(--color-warn)" strokeWidth="1.5" />
           <path d="M4.5 4.5l5 5M9.5 4.5l-5 5" stroke="var(--color-warn)" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       );
-    case "failed":
-    case "cancelled":
+    case "blocked":
+    case "canceled":
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <circle cx="7" cy="7" r="6" fill="var(--color-fail-soft)" stroke="var(--color-fail)" strokeWidth="1.5" />
           <path d="M5 5l4 4M9 5 5 9" stroke="var(--color-fail)" strokeWidth="1.6" strokeLinecap="round" />
         </svg>
       );
-    case "unknown":
+    default:
       return (
         <svg width="14" height="14" viewBox="0 0 14 14" className={common} aria-hidden="true">
           <circle cx="7" cy="7" r="6" fill="none" stroke="var(--color-faint)" strokeWidth="1.5" strokeDasharray="2 2" />
@@ -114,10 +109,10 @@ function edgePath(x1: number, y1: number, x2: number, y2: number): string {
   return `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2 - 3}`;
 }
 
-const stateLabel = (node: FlowNode) => node.stateLabel ?? DISPLAY_STATE_LABEL[node.state];
+const stateLabel = (node: FlowNode) => node.stateLabel ?? node.state?.label ?? "State unavailable";
 
 export function WaveFlow(props: WaveFlowProps) {
-  const { memberIds, tasks, runs, dependencyFacts, reviewMembers, selectedTaskId, onSelectTask, onViewportChange } = props;
+  const { memberIds, tasks, runs, dependencyFacts, members: summaries, selectedTaskId, onSelectTask, onViewportChange } = props;
   const viewport = props.viewport ?? initialViewport();
   const canvasRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ start: Point; origin: FlowViewport } | null>(null);
@@ -126,8 +121,8 @@ export function WaveFlow(props: WaveFlowProps) {
   latest.current = { viewport, onViewportChange };
 
   const graph = useMemo(
-    () => buildFlowGraph({ memberIds, tasks, runs, dependencyFacts, reviewMembers }),
-    [memberIds, tasks, runs, dependencyFacts, reviewMembers],
+    () => buildFlowGraph({ memberIds, tasks, runs, dependencyFacts, members: summaries }),
+    [memberIds, tasks, runs, dependencyFacts, summaries],
   );
   const members = useMemo(() => graph.nodes.filter((node) => node.kind === "task"), [graph.nodes]);
   const earlier = useMemo(() => graph.nodes.filter((node) => node.kind !== "task"), [graph.nodes]);
@@ -238,7 +233,7 @@ export function WaveFlow(props: WaveFlowProps) {
                 style={{ left: at.x, top: at.y, width: PILL_WIDTH, height: PILL_HEIGHT }}
                 className={`absolute z-10 flex items-center gap-1.5 rounded-full border border-dashed bg-surface px-3 text-left text-[12px] text-muted hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${selectedTaskId === node.id ? "border-accent" : "border-line"}`}
               >
-                <StateGlyph state={node.state} />
+                <StateGlyph state={node.state?.state} />
                 <span className="truncate">{node.title}</span>
               </button>
             );
@@ -247,7 +242,7 @@ export function WaveFlow(props: WaveFlowProps) {
             const at = memberAt(node.id);
             if (!at) return null;
             const selected = selectedTaskId === node.id;
-            const needsYou = node.needsYou || props.needsYouIds?.includes(node.id);
+            const needsYou = node.state?.next_actor === "you";
             const label = stateLabel(node);
             return (
               <button
@@ -255,18 +250,17 @@ export function WaveFlow(props: WaveFlowProps) {
                 type="button"
                 onClick={() => onSelectTask(node.id)}
                 aria-pressed={selected}
-                aria-label={`${node.title} (${node.id}), ${NODE_KIND_LABEL[node.kind]}, ${label}${needsYou ? ", needs you" : ""}${node.model ? `, model ${node.model}` : ""}${selected ? ", selected" : ""}`}
+                aria-label={`${node.title} (${node.id}), ${NODE_KIND_LABEL[node.kind]}, ${label}${node.model ? `, model ${node.model}` : ""}${selected ? ", selected" : ""}`}
                 style={{ left: at.x, top: at.y, width: NODE_WIDTH, height: TOP_DOWN_NODE_HEIGHT }}
                 className={`absolute z-10 flex min-w-0 flex-col rounded-lg border bg-raised px-3 py-2.5 text-left shadow-sm transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${selected ? "border-accent ring-2 ring-accent/40" : needsYou ? "border-warn ring-1 ring-warn/40" : "border-line"}`}
               >
                 <span className="flex h-4 flex-none items-center justify-between gap-2 font-mono text-[10.5px] leading-4 text-faint">
                   <span className="truncate">{node.id}</span>
-                  {needsYou && <span className="flex-none rounded-full bg-warn-soft px-1.5 font-sans text-[10.5px] font-medium text-warn">Needs you</span>}
                 </span>
                 <span title={node.title} className="mt-1 line-clamp-2 flex-none break-words text-[13.5px] font-semibold leading-[18px] text-ink">{node.title}</span>
                 <span className="mt-auto flex h-[18px] flex-none items-center gap-1.5 text-[11.5px] leading-[18px] text-muted">
-                  <StateGlyph state={node.state} />
-                  <span className="font-medium">{label}</span>
+                  <StateGlyph state={node.state?.state} />
+                  <span className="font-medium" title={node.state?.reason || undefined}>{label}</span>
                   {node.model && <span className="truncate text-faint">· {node.model}</span>}
                 </span>
               </button>

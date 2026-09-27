@@ -5,7 +5,10 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
-import { readyRun, readyTask } from "../previews/wux/inspector/fixtures";
+import { readyRun, readyTask as fixtureTask } from "../previews/wux/inspector/fixtures";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
+
+const readyTask = { ...fixtureTask, state: sampleState("planned") };
 
 // 834e84a4 added a run-detail Link to the inspector; server renders need router context.
 function renderWithRouter(element: ReturnType<typeof createElement>) {

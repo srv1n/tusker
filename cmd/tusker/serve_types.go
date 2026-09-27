@@ -246,6 +246,7 @@ type serveWaveSummary struct {
 	Authorization   map[string]any         `json:"authorization"`
 	Brief           waveBrief              `json:"brief"`
 	Recovery        *serveRecovery         `json:"recovery,omitempty"`
+	State           taskState              `json:"state"`
 }
 
 // The overview only needs recorded list facts. Start readiness belongs to the
@@ -262,6 +263,7 @@ type serveWaveListItem struct {
 	LiveRun       bool           `json:"liveRun"`
 	ReviewWait    bool           `json:"reviewWait"`
 	Recovery      *serveRecovery `json:"recovery,omitempty"`
+	State         taskState      `json:"state"`
 }
 
 type serveWaveTaskSummary struct {
@@ -273,6 +275,7 @@ type serveWaveTaskSummary struct {
 	WorkLevel        string             `json:"workLevel,omitempty"`
 	EffectiveExecute runnerRoutePreview `json:"effectiveExecute"`
 	EffectiveReview  runnerRoutePreview `json:"effectiveReview"`
+	State            taskState          `json:"state"`
 }
 
 // serveReviewBatch is the wave-boundary review projection. Members are the
@@ -318,6 +321,7 @@ type serveTaskCapsule struct {
 	WorkRevision    int               `json:"workRevision"`
 	ReadinessSource string            `json:"readinessSource"`
 	Recovery        *serveRecovery    `json:"recovery,omitempty"`
+	State           taskState         `json:"state"`
 }
 
 type serveAcceptanceRow struct {

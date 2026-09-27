@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
 import { Mono } from "@/components/ui/primitives";
-import { PriorityChip, ReadinessChip, RiskChip, StatusChip } from "@/components/ui/chips";
+import { PriorityChip, RiskChip, TaskStateBadge } from "@/components/ui/chips";
 import type { TaskCapsule } from "@/types/domain";
 
 /** Mono task/decision id that links into its detail. */
@@ -25,18 +25,17 @@ export function TaskRef({
   );
 }
 
-/** The capsule chip set (packet §8.2): status · priority · risk · readiness. */
+/** The capsule chip set: displayed state · priority · risk. */
 export function CapsuleChips({
   capsule,
-  show = ["status", "priority", "risk"],
+  show = ["state", "priority", "risk"],
 }: {
-  capsule: Pick<TaskCapsule, "status" | "priority" | "risk" | "readiness">;
-  show?: Array<"status" | "priority" | "risk" | "readiness">;
+  capsule: Pick<TaskCapsule, "state" | "priority" | "risk">;
+  show?: Array<"state" | "priority" | "risk">;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {show.includes("status") && <StatusChip status={capsule.status} />}
-      {show.includes("readiness") && <ReadinessChip readiness={capsule.readiness} />}
+      {show.includes("state") && <TaskStateBadge state={capsule.state} />}
       {show.includes("priority") && <PriorityChip priority={capsule.priority} />}
       {show.includes("risk") && <RiskChip risk={capsule.risk} />}
     </div>

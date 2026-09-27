@@ -4,18 +4,19 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid, List, Play, ShieldCheck, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { harnessLabel } from "@/lib/harness";
-import { RECOVERY_ACTION_LABEL, RECOVERY_EXPLANATION, RECOVERY_STATE_LABEL } from "@/lib/recovery";
+import { RECOVERY_ACTION_LABEL, RECOVERY_EXPLANATION } from "@/lib/recovery";
 import { QueryBoundary } from "@/components/ui/states";
 import { ActionResultLine, useConfirm } from "@/components/ui/action-feedback";
 import { api } from "@/lib/api";
-import { useDiscardTask, useRecovery, useReviewBatch, useRun, useRuns, useTask, useTaskRoute, useTaskStart, useTasks } from "@/lib/queries";
+import { useDiscardTask, useRecovery, useReviewBatch, useRun, useTask, useTaskRoute, useTaskStart, useTasks } from "@/lib/queries";
+import { TaskStateBadge } from "@/components/ui/chips";
+import { boardGroups } from "@/features/workbench/board/boardModel";
 import { Markdown } from "@/features/docs/Markdown";
 import { AgentAccessApprovalList, HumanActionCard } from "@/features/human-action/HumanActionCard";
-import { isBatchSelectable, projectLiveExecution } from "@/features/work/work-utils";
+import { isBatchSelectable } from "@/features/work/work-utils";
 import { BatchBar, type BatchAction, type BatchItemResult, type BatchProgress, WaveReviewGroups } from "@/features/work/WaveReview";
 import type { DiscardImpact, RunDetail, TaskCapsule, TaskDetail, TaskRoutePreview } from "@/types/domain";
 import {
-  phaseTone,
   ProductButton,
   ProductEmpty,
   ProductLabel,
@@ -24,10 +25,8 @@ import {
   ProductRow,
   ProductSection,
   ProductStatus,
-  ProductUnavailable,
 } from "@/features/product/shared";
 
-const statusOrder = ["in_progress", "review", "ready", "blocked", "backlog", "done"] as const;
 const TIERS = [["light", "Tier 1 · Light"], ["standard", "Tier 2 · Standard"], ["demanding", "Tier 3 · Demanding"]] as const;
 
 export function tierLabel(workLevel?: string): string {
@@ -261,31 +260,7 @@ function TaskDiscardControl({ task, projectId }: { task: TaskDetail; projectId: 
   );
 }
 
-function columnLabel(status: (typeof statusOrder)[number]) {
-  return status === "in_progress" ? "Working now" : status.replaceAll("_", " ");
-}
-
-function statusCopy(task: TaskCapsule): string {
-  if (task.liveRun) return "Building now";
-  if (task.openGates?.length) return "Waiting for your decision";
-  switch (task.status) {
-    case "review":
-      return "Checking the work";
-    case "ready":
-      return task.readiness === "ready" ? "Ready to start" : "Waiting for prerequisites";
-    case "blocked":
-      return "Blocked";
-    case "done":
-      return "Delivered";
-    case "in_progress":
-      return "Building";
-    default:
-      return "Planned";
-  }
-}
-
 function TaskLink({ projectId, task }: { projectId: string; task: TaskCapsule }) {
-  const label = statusCopy(task);
   const priorityTone =
     task.priority === "p0"
       ? "text-fail bg-fail-soft border-fail/30"
@@ -301,7 +276,7 @@ function TaskLink({ projectId, task }: { projectId: string; task: TaskCapsule })
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="font-mono text-[10.5px] font-medium text-faint">{task.id}</span>
-        <ProductStatus tone={phaseTone(label)}>{label}</ProductStatus>
+        <TaskStateBadge state={task.state} />
       </div>
       <div className="text-[13.5px] font-semibold leading-snug text-ink group-hover:text-accent transition-colors">
         {task.title}
@@ -324,7 +299,6 @@ function TaskLink({ projectId, task }: { projectId: string; task: TaskCapsule })
 export function Tasks() {
   const { projectId } = useParams({ strict: false }) as { projectId: string };
   const tasks = useTasks(projectId);
-  const runs = useRuns(projectId);
   const reviewBatch = useReviewBatch(projectId);
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -340,12 +314,7 @@ export function Tasks() {
     setResults(null);
   }, [projectId]);
 
-  // Runtime ownership is projected into the board from fresh leases. It is
-  // intentionally not written back as a durable task lifecycle transition.
-  const all = useMemo(
-    () => projectLiveExecution(tasks.data ?? [], runs.data ?? []),
-    [tasks.data, runs.data],
-  );
+  const all = useMemo(() => tasks.data ?? [], [tasks.data]);
   const epics = useMemo(() => [...new Set(all.map((task) => task.epicId))].sort(), [all]);
   const filtered = epic === "all" ? all : all.filter((task) => task.epicId === epic);
   const selectedTasks = [...selectedIds]
@@ -382,7 +351,7 @@ export function Tasks() {
     <ProductPage
       title="Tasks"
       eyebrow={projectId}
-      intro="The technical work behind each delivery. Runtime activity is projected from leases and attempts; it is never invented as a durable task state."
+      intro="The technical work behind each delivery, grouped by each task's current state."
       wide
       actions={
         <div className="flex border border-line bg-raised">
@@ -416,29 +385,28 @@ export function Tasks() {
         {(batch) => (
           <WaveReviewGroups
             batch={batch}
-            disabled={running || tasks.isLoading || runs.isLoading}
+            disabled={running || tasks.isLoading}
             onSelectWave={(wave) => setSelectedIds(new Set(wave.members.filter(isBatchSelectable).map((task) => task.id)))}
           />
         )}
       </QueryBoundary>
 
       <QueryBoundary q={tasks} loading={<ProductLoading rows={5} />}>
-        {() => <QueryBoundary q={runs} loading={<ProductLoading rows={5} />}>
-          {() =>
+        {() =>
           filtered.length === 0 ? (
             <ProductEmpty title="No tasks in this view" detail="Change the epic filter or author a task contract for this project." />
           ) : view === "list" ? (
             <div>
               {filtered
                 .slice()
-                .sort((a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status))
+                .sort((a, b) => boardGroups.findIndex((group) => group.key === a.state.state) - boardGroups.findIndex((group) => group.key === b.state.state))
                 .map((task) => (
                   <ProductRow
                     key={task.id}
                     meta={`${task.id} · ${task.epicId}`}
                     title={task.title}
                     detail={`${task.priority.toUpperCase()} · ${task.risk} risk · ${task.readiness.replaceAll("_", " ")}`}
-                    status={<ProductStatus tone={phaseTone(statusCopy(task))}>{statusCopy(task)}</ProductStatus>}
+                    status={<TaskStateBadge state={task.state} />}
                     action={
                       <Link
                         to="/p/$projectId/tasks/$taskId"
@@ -453,12 +421,13 @@ export function Tasks() {
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 items-start">
-              {statusOrder.map((status) => {
-                const column = filtered.filter((task) => task.status === status);
+              {boardGroups.map(({ key }) => {
+                const column = filtered.filter((task) => task.state.state === key);
+                if (column.length === 0) return null;
                 return (
-                  <section key={status} className="flex min-w-0 flex-col rounded-xl border border-line bg-panel/40 p-3 shadow-2xs">
+                  <section key={key} className="flex min-w-0 flex-col rounded-xl border border-line bg-panel/40 p-3 shadow-2xs">
                     <div className="mb-3 flex items-center justify-between pb-1">
-                      <span className="text-[12.5px] font-semibold text-ink">{columnLabel(status)}</span>
+                      <span className="text-[12.5px] font-semibold text-ink">{column[0].state.label}</span>
                       <span className="rounded-full border border-line bg-surface px-2 py-0.5 font-mono text-[10.5px] font-semibold text-muted shadow-2xs">{column.length}</span>
                     </div>
                     <div className="flex flex-col gap-2.5">
@@ -475,8 +444,7 @@ export function Tasks() {
               })}
             </div>
           )
-          }
-        </QueryBoundary>}
+        }
       </QueryBoundary>
       <BatchBar
         activeIds={activeIds}
@@ -505,12 +473,11 @@ export function TaskDetail() {
     <QueryBoundary q={task} loading={<div className="h-full bg-surface p-12"><ProductLoading rows={6} /></div>}>
       {(detail) => {
         const outcomeUnknown = run.data?.outcome === "outcome-unknown";
-        const label = outcomeUnknown ? RECOVERY_STATE_LABEL : statusCopy(detail);
-        const blockers = detail.deps.filter((dependency) => dependency.status !== "done");
         const humanActions = detail.humanActions?.length ? detail.humanActions : detail.humanAction ? [detail.humanAction] : [];
         const currentStatus = detail.rawStatus ?? detail.status;
         const runBlocker = taskRunBlocker(detail);
-        const runnable = !runBlocker && !outcomeUnknown;
+        const startable = ["backlog", "planned", "blocked"].includes(detail.state.state);
+        const runnable = startable && !runBlocker && !outcomeUnknown;
         const directiveQueued = detail.runDirective?.state === "queued";
         const busy = taskStart.isPending || recovery.isPending || directiveQueued;
         return (
@@ -518,14 +485,13 @@ export function TaskDetail() {
             title={detail.title}
             eyebrow={`${projectId} / Tasks / ${detail.id}`}
             intro={detail.intent || "Task contract and objective proof."}
-			actions={<div className="flex flex-wrap items-center justify-end gap-2"><ProductStatus tone={outcomeUnknown ? "warn" : phaseTone(label)}>{label}</ProductStatus>{outcomeUnknown ? <ProductButton tone="primary" disabled={busy} onClick={() => recovery.mutate("recover_unknown")} aria-label={`${RECOVERY_ACTION_LABEL} ${detail.id}`}><Play size={13} />{recovery.isPending ? "Verifying…" : RECOVERY_ACTION_LABEL}</ProductButton> : runnable && <ProductButton tone="primary" disabled={busy} onClick={() => taskStart.mutate()} aria-label={`Run task ${detail.id}`}><Play size={13} />{directiveQueued ? "Queued" : taskStart.isPending ? "Queuing…" : "Run task"}</ProductButton>}</div>}
+			actions={<div className="flex flex-wrap items-center justify-end gap-2"><TaskStateBadge state={detail.state} />{outcomeUnknown ? <ProductButton tone="primary" disabled={busy} onClick={() => recovery.mutate("recover_unknown")} aria-label={`${RECOVERY_ACTION_LABEL} ${detail.id}`}><Play size={13} />{recovery.isPending ? "Verifying…" : RECOVERY_ACTION_LABEL}</ProductButton> : runnable && <ProductButton tone="primary" disabled={busy} onClick={() => taskStart.mutate()} aria-label={`Run task ${detail.id}`}><Play size={13} />{directiveQueued ? "Queued" : taskStart.isPending ? "Queuing…" : "Run task"}</ProductButton>}</div>}
           >
-			<div className="mb-6 rounded-lg border border-line bg-panel px-4 py-3" aria-live="polite"><p className="text-[12px] text-muted">{outcomeUnknown ? RECOVERY_EXPLANATION : "Run queues this task. A paused wave stays paused."}</p>{!outcomeUnknown && runBlocker && <p role="status" className="mt-2 text-[12px] text-warn">{runBlocker}</p>}<ActionResultLine className="mt-2" pending={outcomeUnknown ? recovery.isPending : taskStart.isPending} error={outcomeUnknown ? recovery.error : taskStart.error} result={outcomeUnknown ? recovery.data : taskStart.data} />{detail.runDirective && <p className="mt-2 text-[11px] leading-4 text-muted">{detail.runDirective.state === "queued" && `Queued by ${detail.runDirective.actor} · expires ${detail.runDirective.expiresAt}`}{detail.runDirective.state === "lapsed" && (detail.runDirective.reason ?? "The queued run lapsed before dispatch.")}{detail.runDirective.state === "consumed" && `Claimed by ${detail.runDirective.actor}.`}</p>}</div>
+			<div className="mb-6 rounded-lg border border-line bg-panel px-4 py-3" aria-live="polite">{detail.state.reason ? <p data-testid="task-state-reason" className="whitespace-pre-wrap text-[13px] text-ink">{detail.state.reason}</p> : null}{detail.state.next_action ? <p className="mt-1 text-[12px] text-ink-soft">Next: {detail.state.next_action}</p> : null}<p className="mt-2 text-[12px] text-muted">{outcomeUnknown ? RECOVERY_EXPLANATION : "Run queues this task. A paused wave stays paused."}</p>{!outcomeUnknown && startable && runBlocker && <p role="status" className="mt-2 text-[12px] text-warn">{runBlocker}</p>}<ActionResultLine className="mt-2" pending={outcomeUnknown ? recovery.isPending : taskStart.isPending} error={outcomeUnknown ? recovery.error : taskStart.error} result={outcomeUnknown ? recovery.data : taskStart.data} />{detail.runDirective && <p className="mt-2 text-[11px] leading-4 text-muted">{detail.runDirective.state === "queued" && `Queued by ${detail.runDirective.actor} · expires ${detail.runDirective.expiresAt}`}{detail.runDirective.state === "lapsed" && (detail.runDirective.reason ?? "The queued run lapsed before dispatch.")}{detail.runDirective.state === "consumed" && `Claimed by ${detail.runDirective.actor}.`}</p>}</div>
             <TaskContractDisclosure body={detail.body} projectId={projectId} open />
             <TaskRouting detail={detail} run={run.data} projectId={projectId} />
             <AgentAccessApprovalList projectId={projectId} taskId={detail.id} approvals={detail.agentAccessApprovals} onRetry={() => taskStart.mutate()} />
             {humanActions.map((action) => <div key={action.gateId} className="space-y-2"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">Owner: {detail.gates.find((gate) => gate.id === action.gateId)?.owner || "Human owner"}</p><HumanActionCard action={action} taskId={detail.id} taskTitle={detail.title} projectId={projectId} approvals={detail.agentAccessApprovals} onRetry={() => taskStart.mutate()} /></div>)}
-            {!humanActions.length && blockers.length > 0 && <ProductUnavailable><strong>Blocked by prerequisites.</strong> {blockers.map((dependency) => `${dependency.id} (${dependency.status})`).join(" · ")}</ProductUnavailable>}
 
             <ProductSection title="Agent coordination">
               <AgentCoordinationSummary task={detail} run={run.data} />
@@ -581,7 +547,6 @@ export function TaskDetail() {
                     <ProductLoading rows={2} />
                   ) : run.data ? (
                     <div className="space-y-3 text-[12px]">
-                      <ProductStatus tone={phaseTone(run.data.outcome)}>{run.data.outcome.replaceAll("-", " ")}</ProductStatus>
                       <p className="leading-5 text-muted">
                         {run.data.runner} · {run.data.model} · attempt {run.data.attemptCount}
                       </p>

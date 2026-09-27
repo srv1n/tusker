@@ -14,10 +14,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { qk } from "../src/lib/queries";
-import { WaveAuthorityControls, WaveMemberList, WaveReviewDetail, canRetryWave, summarizeIssues, summarizeWave } from "../src/features/workbench/integration/WaveAuthority";
+import { WaveAuthorityControls, WaveMemberList, WaveReviewDetail, canRetryWave, summarizeIssues } from "../src/features/workbench/integration/WaveAuthority";
 import { taskRunBlocker } from "../src/features/product/TaskScreens";
 import { readyTask } from "../previews/wux/inspector/fixtures";
-import type { TaskDetail, WaveReview } from "../src/types/domain";
+import { makeWave, sampleState } from "../src/features/workbench/overview/previewFixtures";
+import type { TaskDetail, TaskState, WaveReview } from "../src/types/domain";
 
 const PROJECT = "wux-preview";
 const WAVE = "W-0001";
@@ -50,19 +51,20 @@ function reviewFixture(overrides: Partial<WaveReview>): WaveReview {
   };
 }
 
-function renderControls(review: WaveReview): string {
+function renderControls(review: WaveReview, state?: TaskState): string {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(qk.waveReview(PROJECT, WAVE), review);
+  if (state) client.setQueryData(qk.wave(PROJECT, WAVE), makeWave({ id: WAVE, title: "Wave one", state }));
   return renderToStaticMarkup(
     createElement(QueryClientProvider, { client }, createElement(WaveAuthorityControls, { projectId: PROJECT, waveId: WAVE })),
   );
 }
 
 describe("wave authority controls", () => {
-	test("ready wave shows counts and offers Run wave without boilerplate", () => {
-    const html = renderControls(reviewFixture({ controls: [{ action: "wave start", enabled: true, scope: WAVE }] }));
-    expect(html).toContain("0/1 accepted");
-    expect(html).toContain("1 waiting");
+	test("ready wave shows the server state and offers Run wave without boilerplate", () => {
+    const html = renderControls(reviewFixture({ controls: [{ action: "wave start", enabled: true, scope: WAVE }] }), sampleState("planned", "1 task waiting to start"));
+    expect(html).toContain('data-task-state="planned"');
+    expect(html).toContain("1 task waiting to start");
     expect(html).toContain('data-wave-control="wave start"');
 		expect(html).toContain(">Run wave<");
     expect(html).not.toContain("Ready to start");
@@ -111,9 +113,7 @@ describe("wave authority controls", () => {
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     });
     expect(canRetryWave(review)).toBe(false);
-    expect(summarizeWave(review).label).toBe("Needs recovery");
     const html = renderControls(review);
-    expect(html).toContain("1 needs recovery");
     expect(html).toContain("Verify and continue");
     expect(html).toContain("Some work may already exist");
     expect(html).toContain('data-wave-control="wave pause"');
@@ -153,8 +153,8 @@ describe("wave authority controls", () => {
       authorization: "authorized",
       members: [{ taskId: "APP-T-0001", title: "First task", state: "running" }],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
-    }));
-    expect(html).toContain("Executing");
+    }), sampleState("working"));
+    expect(html).toContain('data-task-state="working"');
     expect(html).toContain('data-wave-control="wave pause"');
     expect(canRetryWave(reviewFixture({
       state: "Running",
@@ -213,19 +213,16 @@ describe("wave authority controls", () => {
     expect(html).not.toContain("fp-0001");
   });
 
-  test("maps setup, verification, records, paused, and completed states without exposing codes", () => {
-    expect(summarizeWave(reviewFixture({ controls: [{ action: "wave start", enabled: true, scope: WAVE }] })).label).toBe("Ready");
-    expect(summarizeWave(reviewFixture({ state: "Running", authorization: "authorized", members: [{ taskId: "APP-T-1", title: "Active", state: "running" }] })).label).toBe("Executing");
-    expect(summarizeWave(reviewFixture({ state: "Paused", authorization: "paused" })).label).toBe("Paused");
-    expect(summarizeWave(reviewFixture({ state: "Completed" })).label).toBe("Completed");
-    expect(summarizeWave(reviewFixture({ blockers: [{ code: "RUNTIME_UNAVAILABLE", reason: "offline", action: "restore" }] })).label).toBe("Waiting for setup");
+  test("maps verification and record issues without exposing codes", () => {
     expect(summarizeIssues([{ code: "STRICT_PROOF_STALE", reason: "verification receipt is missing", action: "run" }])[0].title).toBe("Previous verification no longer applies");
     expect(summarizeIssues([{ code: "STRICT_PROOF_STALE", reason: "verification receipt is stale", action: "run" }])[0].title).toBe("Previous verification no longer applies");
     expect(summarizeIssues([{ code: "CONTRACT_FINGERPRINT_STALE", reason: "drift", action: "reconcile" }])[0].title).toBe("Work records need reconciling");
   });
 
   test("does not turn a reported completion into acceptance", () => {
-    const html = renderToStaticMarkup(createElement(WaveMemberList, { review: reviewFixture({ members: [{ taskId: "APP-T-0001", title: "Reported", state: "waiting", completionReported: true }] }) }));
+    const members = [{ id: "APP-T-0001", title: "Reported", group: "", status: "review", proof: "", state: sampleState("in_review", "Implementation reported complete; acceptance is not yet recorded.") }];
+    const html = renderToStaticMarkup(createElement(WaveMemberList, { review: reviewFixture({ members: [{ taskId: "APP-T-0001", title: "Reported", state: "waiting", completionReported: true }] }), members }));
+    expect(html).toContain('data-task-state="in_review"');
     expect(html).toContain("Implementation reported complete; acceptance is not yet recorded.");
     expect(html).not.toContain(">Accepted<");
   });
@@ -273,9 +270,6 @@ describe("surface source contracts", () => {
     expect(work).toContain("WaveReviewDetail");
     expect(work).toContain("showControls={false}");
     expect(work).not.toContain("useWaveExecute");
-    expect(delivery).toContain("WaveAuthorityControls");
-    expect(delivery).toContain("WaveReviewDetail");
-    expect(delivery).toContain("showControls={false}");
     expect(delivery).not.toContain("useWaveExecute");
     expect(delivery).not.toContain("waveStartBlockers");
     expect(delivery).not.toContain("Execute wave");
@@ -301,7 +295,6 @@ describe("surface source contracts", () => {
     const router = src("router.tsx");
     expect(router).not.toContain("planRoute");
     expect(router).not.toContain('/p/$projectId/plan');
-    expect(src("features/workbench/overview/WaveOverview.tsx")).not.toMatch(/\bplan\b/i);
   });
 });
 

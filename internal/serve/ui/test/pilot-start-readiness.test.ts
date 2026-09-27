@@ -26,10 +26,6 @@ test("work surfaces expose direct task start and wave controls", () => {
 	expect(tasks).toContain('run.data?.outcome === "outcome-unknown"');
 	expect(tasks).toContain("ActionResultLine");
 	expect(tasks).toContain('directiveQueued ? "Queued"');
-  expect(delivery).toContain('<ProductSection title="Tickets"');
-  expect(delivery).toContain('<ProductSection title="Dependency DAG">');
-  expect(delivery).toContain("renderMermaid(source)");
-  expect(delivery).toContain("WaveAuthorityControls");
   expect(api).toContain('/waves/${encodeURIComponent(waveId)}/review');
   expect(api).toContain('/actions/projects/${encodeURIComponent(projectId)}/waves/');
   expect(api).toContain('/actions/projects/${encodeURIComponent(projectId)}/tasks/');

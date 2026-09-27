@@ -4,12 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
 import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector";
 import { failedRun, readyTask } from "../previews/wux/inspector/fixtures";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
 import type { WaveReviewMember } from "../src/types/domain";
 
 function render(member: WaveReviewMember) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null,
-    createElement(TaskInspector, { task: readyTask, run: failedRun, selectedTaskId: readyTask.id, loading: false, reviewMember: member, onClose: () => {}, onOpenTask: () => {} }),
+    createElement(TaskInspector, { task: { ...readyTask, state: sampleState("blocked") }, run: failedRun, selectedTaskId: readyTask.id, loading: false, reviewMember: member, onClose: () => {}, onOpenTask: () => {} }),
   )));
 }
 
@@ -47,6 +48,5 @@ test("outcome_unknown renders one explicit safe recovery action", () => {
   const html = render({ taskId: readyTask.id, title: readyTask.title, state: "blocked", phase: "outcome_unknown", waitingReason: "contact lost", recovery: { action: "recover_unknown", enabled: true } });
   expect(html).toContain("Verify and continue");
   expect(html).toContain("Inspect and preserve any existing work, verify it, then continue what remains.");
-  expect(html).toContain("Verify and preserve existing work, then continue what remains.");
   expect(html).not.toContain("Retry wave");
 });

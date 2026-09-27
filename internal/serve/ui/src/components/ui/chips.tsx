@@ -12,6 +12,7 @@ import {
   riskTone,
   statusLabelOf,
   statusToneOf,
+  taskStateTone,
 } from "@/components/ui/tone";
 import type {
   GateKind,
@@ -20,7 +21,28 @@ import type {
   Risk,
   RunOutcome,
   Runner,
+  TaskState,
 } from "@/types/domain";
+
+/**
+ * The one task/wave state display. Label and reason come from the server's
+ * state record; `withReason` shows the reason beside the label, otherwise it
+ * is the tooltip.
+ */
+export function TaskStateBadge({ state, withReason = false, className }: { state: TaskState; withReason?: boolean; className?: string }) {
+  const chip = (
+    <Chip tone={taskStateTone[state.state] ?? "neutral"} variant="soft" className={withReason ? undefined : className}>
+      <span data-task-state={state.state} title={state.reason || undefined}>{state.label}</span>
+    </Chip>
+  );
+  if (!withReason || !state.reason) return chip;
+  return (
+    <span className={cn("inline-flex min-w-0 items-center gap-2", className)}>
+      {chip}
+      <span className="min-w-0 truncate text-[12px] text-muted" title={state.reason}>{state.reason}</span>
+    </span>
+  );
+}
 
 export function StatusChip({ status }: { status: string }) {
   return (

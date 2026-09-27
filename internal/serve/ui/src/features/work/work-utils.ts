@@ -4,24 +4,7 @@
   table share one source of truth.
 */
 
-import type { EpicSummary, Priority, Risk, RunSummary, TaskCapsule, TaskStatus } from "@/types/domain";
-
-export function projectLiveExecution(tasks: TaskCapsule[], runs: RunSummary[]): TaskCapsule[] {
-  const byTask = new Map(runs.map((run) => [run.taskId, run]));
-  return tasks.map((task) => {
-    const run = byTask.get(task.id);
-    if (!run) return task;
-    const live = !run.terminal && run.liveness === "fresh" && ["claimed", "starting", "running"].includes(run.leaseStateRaw ?? "");
-    return {
-      ...task,
-      rawStatus: task.rawStatus ?? task.status,
-      status: live ? "in_progress" : task.status,
-      liveRun: live,
-      latestAttemptOutcome: run.outcome,
-      latestAttemptAt: run.lastHeartbeatAt ?? run.nextWakeAt ?? null,
-    };
-  });
-}
+import type { EpicSummary, Priority, Risk, TaskCapsule, TaskStatus } from "@/types/domain";
 
 export type WorkView = "board" | "table";
 

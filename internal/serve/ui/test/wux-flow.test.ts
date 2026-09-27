@@ -12,9 +12,7 @@ import {
   NODE_WIDTH,
   buildFlowGraph,
   clampViewport,
-  displayStateFor,
   essentialFlowEdges,
-  externalDependencyState,
   fitViewport,
   initialViewport,
   isLiveRun,
@@ -26,6 +24,7 @@ import {
   zoomViewport,
   type FlowViewport,
 } from "../src/features/workbench/flow/flowGraph";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
 import { chainFixture, cycleFixture, liveUpdateBase, liveUpdateNext, thirtyFixture } from "../src/features/workbench/flow/fixtures";
 
 function run(taskId: string, overrides: Partial<RunSummary> = {}): RunSummary {
@@ -128,8 +127,8 @@ describe("WaveFlow graph model", () => {
         } satisfies TaskDetail,
       ],
       dependencyFacts: {
-        "EXT-DONE": { kind: "external", title: "Assemble alpha report", status: "done", readiness: "done", waveId: "W-0002", waveTitle: "Alpha: assemble a small report" },
-        "EXT-OPEN": { kind: "external", title: "Assemble beta report", status: "backlog", readiness: "held", waveId: "W-0003", waveTitle: "Beta: assemble an independent report" },
+        "EXT-DONE": { kind: "external", title: "Assemble alpha report", status: "done", state: sampleState("done"), readiness: "done", waveId: "W-0002", waveTitle: "Alpha: assemble a small report" },
+        "EXT-OPEN": { kind: "external", title: "Assemble beta report", status: "backlog", state: sampleState("backlog"), readiness: "held", waveId: "W-0003", waveTitle: "Beta: assemble an independent report" },
         "EXT-GONE": { kind: "missing" },
         "EXT-SHUT": { kind: "unavailable" },
       },
@@ -140,15 +139,15 @@ describe("WaveFlow graph model", () => {
     const shut = factual.nodes.find((node) => node.id === "EXT-SHUT");
     expect(done?.kind).toBe("external");
     expect(done?.title).toBe("Assemble alpha report");
-    expect(done?.state).toBe("completed");
+    expect(done?.state?.state).toBe("done");
     expect(done?.context).toBe("Alpha: assemble a small report");
-    expect(open?.state).toBe("backlog");
+    expect(open?.state?.state).toBe("backlog");
     expect(open?.context).toBe("Beta: assemble an independent report");
     // Missing/unavailable keep the durable ID as title and carry explicit
     // neutral state labels instead of invented facts.
     expect(gone?.kind).toBe("missing");
     expect(gone?.title).toBe("EXT-GONE");
-    expect(gone?.state).toBe("unknown");
+    expect(gone?.state).toBeUndefined();
     expect(gone?.stateLabel).toBe("Dependency missing");
     expect(shut?.kind).toBe("unavailable");
     expect(shut?.title).toBe("EXT-SHUT");
@@ -157,14 +156,6 @@ describe("WaveFlow graph model", () => {
     expect(unavailableWarning?.text).toContain("Dependency status unavailable");
     // Valid external facts never surface as warnings.
     expect(factual.warnings.some((warning) => warning.taskIds.includes("EXT-DONE") || warning.taskIds.includes("EXT-OPEN"))).toBe(false);
-    // Canonical state mapping honors status first, then readiness.
-    expect(externalDependencyState({ kind: "external", status: "done" })).toBe("completed");
-    expect(externalDependencyState({ kind: "external", status: "review" })).toBe("reviewing");
-    expect(externalDependencyState({ kind: "external", status: "ready" })).toBe("ready");
-    expect(externalDependencyState({ kind: "external", status: "backlog" })).toBe("backlog");
-    expect(externalDependencyState({ kind: "external", readiness: "held" })).toBe("backlog");
-    expect(externalDependencyState({ kind: "external", status: "mystery", readiness: "mystery" })).toBe("unknown");
-
     // Cycles stay inspectable: nodes render, cyclic edges flag, warning lists.
     const cycle = cycleFixture();
     const cyclic = buildFlowGraph(cycle);
@@ -196,36 +187,12 @@ describe("WaveFlow graph model", () => {
     const layoutAfter = layoutFlowGraph(graphAfter, after.memberIds);
     expect(layoutAfter.positions).toEqual(layoutBefore.positions);
 
-    // But the states genuinely advanced: executing moved downstream.
+    // But the states genuinely advanced: working moved downstream.
     const stateOf = (graph: typeof graphBefore, id: string): string | undefined =>
-      graph.nodes.find((node) => node.id === id)?.state;
-    expect(stateOf(graphBefore, "WUX-T-0003")).toBe("executing");
-    expect(stateOf(graphAfter, "WUX-T-0003")).toBe("completed");
-    expect(stateOf(graphAfter, "WUX-T-0004")).toBe("executing");
-  });
-
-  test("flow display states are truthful", () => {
-    expect(displayStateFor("done", run("A"))).toBe("completed");
-    // Worker success is not completion: done alone decides completed.
-    // A live run proves current activity, so it wins; the lane keeps
-    // the worker stage distinct from the reviewer stage.
-    expect(displayStateFor("review", run("A"))).toBe("executing");
-    expect(displayStateFor("review", run("A", { lane: "review" }))).toBe("reviewing");
-    expect(displayStateFor("review", undefined)).toBe("reviewing");
-    expect(displayStateFor("blocked", undefined)).toBe("blocked");
-    expect(displayStateFor("ready", undefined)).toBe("ready");
-    expect(displayStateFor("backlog", undefined)).toBe("backlog");
-    // A stale run behind in_progress is unknown, not executing.
-    expect(
-      displayStateFor("in_progress", run("A", { liveness: "stale", leaseStateRaw: "running" })),
-    ).toBe("unknown");
-    // A terminal failed run surfaces failure.
-    expect(
-      displayStateFor("ready", run("A", { terminal: true, outcome: "failed", liveness: "stale", leaseStateRaw: "settled" })),
-    ).toBe("failed");
-    // Live runs earn executing even when the durable status lags.
-    expect(displayStateFor("ready", run("A"))).toBe("executing");
-    expect(isLiveRun(run("A", { liveness: "dead" }))).toBe(false);
+      graph.nodes.find((node) => node.id === id)?.state?.state;
+    expect(stateOf(graphBefore, "WUX-T-0003")).toBe("working");
+    expect(stateOf(graphAfter, "WUX-T-0003")).toBe("done");
+    expect(stateOf(graphAfter, "WUX-T-0004")).toBe("working");
   });
 
   test("flow model labels use verified identity only", () => {
@@ -235,6 +202,7 @@ describe("WaveFlow graph model", () => {
     expect(modelFor(run("A", { terminal: true, outcome: "succeeded", leaseStateRaw: "settled" }))).toBeUndefined();
     expect(modelFor(run("A", { model: "  " }))).toBeUndefined();
     expect(modelFor(undefined)).toBeUndefined();
+    expect(isLiveRun(run("A", { liveness: "dead" }))).toBe(false);
   });
 
   test("flow viewport math stays readable", () => {
@@ -302,13 +270,18 @@ describe("WaveFlow graph model", () => {
   test("flow unloaded members stay inspectable", () => {
     const chain = chainFixture();
     const graph = buildFlowGraph({
-      memberIds: [...chain.memberIds, "WUX-T-999"],
+      memberIds: [...chain.memberIds, "WUX-T-999", "WUX-T-998"],
       tasks: chain.tasks,
       runs: chain.runs,
+      members: [{ id: "WUX-T-998", title: "Summarized member", group: "", status: "ready", state: sampleState("blocked", "crashed"), proof: "" }],
     });
     const missing = graph.nodes.find((node) => node.id === "WUX-T-999");
     expect(missing?.missingDetail).toBe(true);
-    expect(missing?.state).toBe("unknown");
+    expect(missing?.state).toBeUndefined();
+    // A wave summary member keeps its server state while detail loads.
+    const summarized = graph.nodes.find((node) => node.id === "WUX-T-998");
+    expect(summarized?.title).toBe("Summarized member");
+    expect(summarized?.state?.state).toBe("blocked");
     expect(graph.warnings.some((warning) => warning.kind === "unavailable")).toBe(true);
   });
 });
