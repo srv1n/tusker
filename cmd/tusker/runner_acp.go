@@ -938,10 +938,11 @@ func acpDurationMS(value int) time.Duration {
 }
 
 func configureDevinSession(ctx context.Context, client *acp.Client, session acp.Session, policy CodexPolicy, model string) error {
-	if policy.ThreadSandbox != "workspace-write" || policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
-		return tuskerError(errorConfigInvalid, "Devin ACP requires sandboxed workspace-write with network enabled")
+	mode, err := devinACPModeForPolicy(policy)
+	if err != nil {
+		return err
 	}
-	current, err := setDevinConfigOption(ctx, client, session, "mode", "smart")
+	current, err := setDevinConfigOption(ctx, client, session, "mode", mode)
 	if err != nil {
 		return tuskerError(errorConfigInvalid, "Devin ACP mode configuration failed: "+err.Error())
 	}
@@ -949,6 +950,30 @@ func configureDevinSession(ctx context.Context, client *acp.Client, session acp.
 		return tuskerError(errorConfigInvalid, "Devin ACP model configuration failed: "+err.Error())
 	}
 	return nil
+}
+
+// devinACPModeForPolicy maps the resolved Tusker sandbox policy onto Devin's
+// session "mode" config option. Devin advertises accept-edits, smart, ask,
+// plan, and bypass; there is no advertised value that auto-approves reads and
+// exec while still gating edits. smart is the least-restrictive advertised
+// mode whose fast-model gate auto-runs safe verification commands (tests,
+// builds, lint) without a permission round-trip. That property is required
+// even for review: Tusker's generic ACP permission handler fails closed on
+// every session/request_permission callback, so under accept-edits, ask, or
+// plan an exec call would prompt, be rejected, and a reviewer could never run
+// tests. bypass also auto-approves destructive commands, which no lane needs.
+func devinACPModeForPolicy(policy CodexPolicy) (string, error) {
+	switch sandbox := strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox)); sandbox {
+	case "read-only":
+		return "smart", nil
+	case "workspace-write":
+		if policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
+			return "", tuskerError(errorConfigInvalid, "Devin ACP requires sandboxed workspace-write with network enabled")
+		}
+		return "smart", nil
+	default:
+		return "", tuskerError(errorConfigInvalid, "Devin ACP requires a read-only or networked workspace-write sandbox policy")
+	}
 }
 
 func setDevinConfigOption(ctx context.Context, client *acp.Client, session acp.Session, id, value string) (acp.Session, error) {
