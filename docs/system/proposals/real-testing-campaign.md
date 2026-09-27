@@ -295,7 +295,7 @@ Queued, waiting on a file owner:
 
 | D2 | How much should Tusker defend against a lying or rogue agent? | Today: fences, fingerprints, receipts and sandbox rules assume an adversarial worker. Owner's view: assume 8 or 9 in 10 agents do honest work, catch the rest in review and testing, handle failures as they come. | Agree. Keep the guards that past incidents earned: retry caps, token budgets, one lease per task, worktrees, git. Cut defenses against forged verdicts and routing drift. See the simplification audit (S1). |
 
-| D3 | Who may run a command? | Today: each command has its own actor rule; some refuse an agent acting for the owner. | One rule: every mutating command accepts `--by`. An agent following the owner's instruction may act as the owner, and the record keeps both names. Agents answer to the owner, not to a gate. Amended 2026-09-27: a per-project setting `agents.act_as_owner` (default true) lets the owner turn this off for critical projects. A few owner-only actions always refuse an agent session: the global automation switch, project automation on/off, and `daemon resume`. |
+| D3 | Who may run a command? | Today: each command has its own actor rule; some refuse an agent acting for the owner. | One rule: every mutating command accepts `--by`. An agent following the owner's instruction may act as the owner, and the record keeps both names. Agents answer to the owner, not to a gate. Amended 2026-09-27: a per-project setting `agents.act_as_owner` (default true) lets the owner turn this off for critical projects. Projects enable/disable follow that setting; dispatched workers are always refused. The global automation switch, `daemon resume`, and `approvals respond` stay owner-only. |
 
 ## How work gets done
 

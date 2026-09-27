@@ -28,6 +28,23 @@ func requireOwnerSession(operation string) error {
 	return nil
 }
 
+func requireOwnerOrActingAgent(operation, vaultPath string) error {
+	if agentSessionKind() == "" {
+		return nil
+	}
+	if strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")) != "" {
+		return requireOwnerSession(operation)
+	}
+	allowed, err := agentsMayActAsOwner(vaultPath)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return tuskerError(errorInvalidTransition, operation+": this project does not let agents act as the owner (agents.act_as_owner: false); ask the owner")
+	}
+	return nil
+}
+
 func eventPayloadWithExecutionRole(payload map[string]any) map[string]any {
 	if role := agentSessionKind(); role != "" {
 		payload["execution_role"] = role

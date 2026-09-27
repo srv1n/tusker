@@ -8464,9 +8464,6 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 	if enabled {
 		operation = "projects enable"
 	}
-	if err := requireOwnerSession(operation); err != nil {
-		return err
-	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -8487,6 +8484,9 @@ func setProjectEnabledCmd(args Args, enabled bool) error {
 		return err
 	}
 	project := loaded.Project
+	if err := requireOwnerOrActingAgent(operation, project.VaultRoot); err != nil {
+		return err
+	}
 	if args.Bool("dry-run") {
 		return emitProjectAutomationPreview(store, args, project)
 	}

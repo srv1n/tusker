@@ -66,13 +66,6 @@ func TestRegistryDefaultsProjectsEnableAndDisableAutomation(t *testing.T) {
 	_ = store.Close()
 
 	t.Setenv("CLAUDECODE", "1")
-	for _, toggle := range []func(Args) error{projectsEnableCmd, projectsDisableCmd, daemonResumeCmd} {
-		if err := toggle(Args{"id": project.ProjectID}); err == nil || !strings.Contains(err.Error(), "is owner-only") {
-			t.Fatalf("agent session toggle error = %v", err)
-		}
-	}
-	assertRegistryAutomationState(t, project, false)
-	t.Setenv("CLAUDECODE", "")
 	if err := projectsEnableCmd(Args{"id": project.ProjectID}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +74,34 @@ func TestRegistryDefaultsProjectsEnableAndDisableAutomation(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRegistryAutomationState(t, project, false)
+	if err := os.WriteFile(filepath.Join(vault, "config.yaml"), []byte("agents:\n  act_as_owner: false\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, toggle := range []struct {
+		name string
+		cmd  func(Args) error
+	}{{"projects enable", projectsEnableCmd}, {"projects disable", projectsDisableCmd}} {
+		if err := toggle.cmd(Args{"id": project.ProjectID}); err == nil || !strings.Contains(err.Error(), toggle.name+": this project does not let agents act as the owner (agents.act_as_owner: false); ask the owner") {
+			t.Fatalf("%s agent session error = %v", toggle.name, err)
+		}
+		assertRegistryAutomationState(t, project, false)
+	}
+	t.Setenv("TUSKER_ATTEMPT_ID", "attempt-1")
+	for _, toggle := range []func(Args) error{projectsEnableCmd, projectsDisableCmd} {
+		if err := toggle(Args{"id": project.ProjectID}); err == nil || !strings.Contains(err.Error(), "is owner-only and cannot run from an agent session") {
+			t.Fatalf("dispatched worker toggle error = %v", err)
+		}
+	}
+	assertRegistryAutomationState(t, project, false)
+	if err := daemonResumeCmd(Args{"id": project.ProjectID}); err == nil || !strings.Contains(err.Error(), "is owner-only") {
+		t.Fatalf("daemon resume agent session error = %v", err)
+	}
+	t.Setenv("TUSKER_ATTEMPT_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	if err := projectsEnableCmd(Args{"id": project.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
+	assertRegistryAutomationState(t, project, true)
 }
 
 func assertRegistryAutomationState(t *testing.T, project RegisteredProject, enabled bool) {
