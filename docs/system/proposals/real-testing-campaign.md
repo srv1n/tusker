@@ -227,7 +227,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F20 | Devin print mode refuses new folders | todo | `devin -p` fails with "Refusing to run in an untrusted workspace" in any folder not trusted by hand. Every Tusker worktree is new. `--respect-workspace-trust false` skips it. Check whether `devin acp` (Tusker's route) has the same check before Q8. |
 | F21 | Devin can never be a reviewer | todo | `runner_acp.go:941` accepts only workspace-write with network; reviewers run read-only. QLH-T-0001 review failed on it. Re-pinned that task's reviewer to Sol low. |
 | F22 | The daemon's adaptive poll ignores queued wakeups | todo | Real root cause of F16: the answer waited ~10 min for the project's next slow poll. Needs a `daemon.go` change. The F16 branch only stops one bad wakeup from blocking others. |
-| F23 | Agent actor rules differ per command | todo | `redrive` and `wave start` accept `--by human:sarav` from an agent session; `task update` refuses it. `wave start` refuses `agent:claude` and requires `--mode background`, its only mode. |
+| F23 | Agent actor rules differ per command | fixed in CLI, unmerged (`fix/actor-rule` f6cb5ad9); Serve's human-actor refusal and other event writers still differ | `redrive` and `wave start` accept `--by human:sarav` from an agent session; `task update` refuses it. `wave start` refuses `agent:claude` and requires `--mode background`, its only mode. |
 | F24 | Changing a task's reviewer disarms its wave | todo | After the review-profile re-pin, `explain` says "wave W-0005 authorization is stale". Any task edit makes the owner re-arm the wave, even for a routing change. |
 | F25 | Config refusals count as review cycles | todo | Three instant Devin refusals (F21) used up the 3-cycle review cap. The real Sol low review then started at 06:34:29 and was cancelled 16 s later ("completion-authoritative runner cancelled: context canceled"), though completion mode is `disabled`. A requeue did not reset the review cap. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
@@ -266,7 +266,7 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | global models | F3 | Sol low | `model_levels.go` | done, 66 focused tests pass; awaiting merge |
 | browse text | F1 | Devin SWE-2 Max | `docs_browse_cmd.go` | done, focused tests pass; awaiting merge |
 | delete xcode, improve | audit slice 1.1 | Devin SWE-2 Max | slice files, `cli.go` entries | running |
-| actor rule | D3, F23, parity slice A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | running |
+| actor rule | D3, F23, parity slice A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | done, focused tests pass; awaiting merge. Follow-up: Serve actor refusal |
 
 Queued, waiting on a file owner:
 
