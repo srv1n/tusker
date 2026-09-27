@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -688,4 +689,14 @@ func runnerWrapperRequestForTest(dir string) (runnerWrapperRequest, error) {
 			RawLogPath: rawLogPath, StatusPath: statusPath, Command: "sh -c 'sleep 5'", NotePath: notePath, VaultPath: dir,
 		},
 	}, nil
+}
+
+func TestRunnerWrapperStartFailureCodeKeepsConfigInvalid(t *testing.T) {
+	err := fmt.Errorf("start: %w", tuskerError(errorConfigInvalid, "Devin ACP model configuration failed"))
+	if got := runnerWrapperStartFailureCode(err); got != RunFailureConfigInvalid {
+		t.Fatalf("config error code = %q, want %q", got, RunFailureConfigInvalid)
+	}
+	if got := runnerWrapperStartFailureCode(errors.New("exec: not found")); got != "" {
+		t.Fatalf("untyped start error code = %q, want empty", got)
+	}
 }

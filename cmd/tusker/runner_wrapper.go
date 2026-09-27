@@ -180,7 +180,9 @@ func runRunnerWrapperWithChildStarter(
 			runnerWrapperReapACPContainmentAfterStatus(req)
 			return nil
 		}
-		runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error())
+		// A typed config error (for example an unknown model) keeps its reason
+		// code, so the run shows config_invalid instead of an unclassified failure.
+		_, _ = writeRunnerStatusFileIfAbsentWithOutcome(req.Start.StatusPath, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error(), 0, runnerWrapperStartFailureCode(err))
 		runnerWrapperReapACPContainmentAfterStatus(req)
 		return err
 	}
@@ -402,6 +404,14 @@ func runnerWrapperWaitForStatus(req StartRequest, timeout time.Duration) error {
 		runnerWrapperPublishStatusIfAbsent(req, 130, AttemptOutcomeInterrupted, "runner wrapper timed out waiting for child cleanup")
 	}
 	return nil
+}
+
+func runnerWrapperStartFailureCode(err error) RunFailureReasonCode {
+	var typed *TuskerError
+	if errors.As(err, &typed) && typed.Code == errorConfigInvalid {
+		return RunFailureConfigInvalid
+	}
+	return ""
 }
 
 func runnerWrapperPublishStatusIfAbsent(req StartRequest, exitCode int, outcome AttemptOutcome, reason string) {

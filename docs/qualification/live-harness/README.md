@@ -67,7 +67,7 @@ tusker models show --json | grep -c muse-spark-1.3-high   # G5 profile present
 for p in codex:codex_exec claude:claude-code devin:devin muse:muse; do
   REV=$(tusker models show --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["revision"])')
   tusker models profile-set --scope global --name "qual-bad-${p%%:*}" --harness "${p#*:}" \
-    --model qual-no-such-model --effort low --if-revision "$REV" --json >/dev/null
+    --model qual-no-such-model --effort low --preset danger-full-access --if-revision "$REV" --json >/dev/null
 done
 ```
 
