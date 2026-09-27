@@ -28,6 +28,7 @@ only at `task start` or `wave start`.
 | Find runnable work | `tusker next` |
 | Read one task | `tusker show <TASK-ID> --capsule` |
 | List work | `tusker list` |
+| List project waves | `tusker wave list [--project <id>\|--vault <path>] [--json]` |
 | Search tracker text | `tusker search <text>` |
 | Create a task | `tusker new task --vault ./.tusker --title "..." --work-level standard --body-file task-body.md` |
 | Author a task batch | `tusker wave create --file wave.yaml --request-key <key> --json` |
@@ -59,7 +60,14 @@ Actors supplied with `--by human:<name>` may be used from an agent session by de
 | Enable automation | `tusker projects enable --id <PROJECT-ID>` |
 | Check the daemon | `tusker daemon status --json` |
 | Check one run | `tusker runs inspect <RUN-ID> --json` |
+| List runtime runs | `tusker runs list [--project <id>] [--active] [--limit <n>] [--json]` |
 | Start the local service | `tusker serve` |
+
+`wave list` prints one line per wave with ID, title, status, effective
+authorization, total task count, and done count. Its JSON output uses the
+Serve wave list projection. `runs list` reads the runtime database, newest
+start first (default limit 100), with run ID, task ID, profile, lease state,
+start time, and attempt count. `--active` selects claimed and running leases.
 
 ## Executions
 

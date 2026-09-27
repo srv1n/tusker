@@ -293,6 +293,8 @@ func runInner(command string, args Args) (int, error) {
 		return 0, tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> --if-revision <state_rev> ...")
 	case "wave":
 		return 0, waveV7Cmd(args)
+	case "wave list":
+		return 0, waveListCmd(args)
 	case "wave review":
 		return 0, waveReviewCmd(args)
 	case "wave start":
@@ -631,6 +633,8 @@ func runInner(command string, args Args) (int, error) {
 	case "runs inspect":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsInspectCmd(args)
+	case "runs list":
+		return 0, runsListCmd(args)
 	case "streams":
 		return 0, streamsCmd(args)
 	// gate-run is deliberately not "gate run": "gate" is the human-gate
@@ -988,7 +992,7 @@ Purpose:
   new file and refuses to overwrite an existing file. Exits 0 for
   healthy/completed/normal waits, 1 for actionable faults or decisions, and
   2 for unavailable or invalid diagnoses.`)
-	case "wave", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave pause", "wave resume", "wave review", "wave start", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
+	case "wave", "wave list", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave pause", "wave resume", "wave review", "wave start", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
 		printOperatorCommandHelp(command)
 	case "handoff", "finish", "gate", "trace", "trace list", "trace show", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy":
 		printV7Help()
@@ -1044,7 +1048,7 @@ Purpose:
 		printFactoryOperationsHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune", "projects automation-scope":
 		printProjectsHelp()
-	case "runs", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs release", "runs retire", "runs redrive", "redrive":
+	case "runs", "runs list", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
 	case "serve":
 		printServeHelp()
@@ -1067,9 +1071,11 @@ Purpose:
 // never falls through to a command that opens a vault or writes state.
 func printOperatorCommandHelp(command string) {
 	switch {
+	case command == "wave list":
+		fmt.Println("Usage: tusker wave list [--project <id>|--vault <path>] [--json]\n\nList every wave in a project with its effective authorization and task counts.")
 	case command == "wave":
 		fmt.Println(`Usage:
-  tusker wave create|add|remove|show|outcome|brief|review|start|pause|resume ...
+  tusker wave list|create|add|remove|show|outcome|brief|review|start|pause|resume ...
 
 Purpose:
   Manage a named, task-backed delivery wave.`)
@@ -1395,6 +1401,7 @@ Examples:
 
 func printRunsHelp() {
 	fmt.Println(`Usage:
+	  tusker runs list [--project <id>] [--active] [--limit <n>] [--json]
 	  tusker runs claim <task-id> --owner <actor> [--project <id>] [--json]
 	  tusker runs start <task-id> --owner <actor> [--session <id>] [--pid <n>] [--pgid <n>] [--json]
 	  tusker runs heartbeat <task-id> --owner <actor> [--json]
