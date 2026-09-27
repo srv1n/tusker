@@ -11,7 +11,6 @@ import type {
   Liveness,
   Priority,
   ProofStatus,
-  Readiness,
   Risk,
   TaskStateCode,
   TaskStatus,
@@ -120,52 +119,6 @@ export const priorityTone: Record<Priority, Tone> = {
   p2: "info",
   p3: "neutral",
 };
-
-export const readinessTone: Record<Readiness, Tone> = {
-  ready: "pass",
-  blocked_dependency: "warn",
-  blocked_gate: "fail",
-  draft: "neutral",
-};
-
-export const readinessLabel: Record<Readiness, string> = {
-  ready: "Ready",
-  blocked_dependency: "Blocked · dep",
-  blocked_gate: "Blocked · gate",
-  draft: "Draft",
-};
-
-const extraReadinessTone: Record<string, Tone> = {
-  blocked_by_dependency: "warn",
-  blocked_by_gate: "fail",
-  waiting_on_review: "warn",
-  waiting_on_human: "fail",
-  waiting_on_ci: "warn",
-  held: "neutral",
-  done: "pass",
-  cancelled: "muted",
-  superseded: "muted",
-};
-
-const extraReadinessLabel: Record<string, string> = {
-  blocked_by_dependency: "Blocked · dep",
-  blocked_by_gate: "Blocked · gate",
-  waiting_on_review: "Waiting · review",
-  waiting_on_human: "Waiting · human",
-  waiting_on_ci: "Waiting · CI",
-  held: "Held",
-  done: "Done",
-  cancelled: "Cancelled",
-  superseded: "Superseded",
-};
-
-export function readinessToneOf(readiness: string): Tone {
-  return (readinessTone as Record<string, Tone>)[readiness] ?? extraReadinessTone[readiness] ?? "neutral";
-}
-
-export function readinessLabelOf(readiness: string): string {
-  return (readinessLabel as Record<string, string>)[readiness] ?? extraReadinessLabel[readiness] ?? humanizeToken(readiness);
-}
 
 export const outcomeTone: Record<KnownRunOutcome, Tone> = {
   idle: "muted",

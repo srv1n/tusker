@@ -16,6 +16,7 @@ import type {
   DocgraphSavePayload,
   DocgraphSaveResponse,
 } from "@/features/knowledge/types";
+import type { TaskCreateBody, TaskEditBody } from "@/features/product/taskAuthoring";
 
 /** Query-key factory. */
 export const qk = {
@@ -542,6 +543,22 @@ export const useTaskRoute = (taskId: string, projectId?: string) => {
   return useMutation({
     mutationFn: (body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; reviewReason?: string | null; executeProfile?: string | null; reviewProfile?: string | null }) => api.taskRoute(taskId, body, projectId).then(requireAccepted),
     onSettled: () => invalidateOperatorState(qc, taskId, projectId),
+  });
+};
+
+export const useTaskEdit = (taskId: string, projectId?: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: TaskEditBody) => api.editTask(taskId, body, projectId).then(requireAccepted),
+    onSettled: () => invalidateOperatorState(qc, taskId, projectId),
+  });
+};
+
+export const useTaskCreate = (projectId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: TaskCreateBody) => api.createTask(body, projectId).then(requireAccepted),
+    onSettled: () => invalidateOperatorState(qc, undefined, projectId),
   });
 };
 

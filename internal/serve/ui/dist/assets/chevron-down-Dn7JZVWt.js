@@ -1,0 +1,1 @@
+import{Ft as e}from"./queries-DwhDlS8q.js";var t=e(`chevron-down`,[[`path`,{d:`m6 9 6 6 6-6`,key:`qrunsl`}]]);export{t};

@@ -14,6 +14,7 @@ import type {
   DocSaveConflict,
   DocSaveDefect,
 } from "@/features/knowledge/types";
+import type { TaskCreateBody, TaskEditBody } from "@/features/product/taskAuthoring";
 import type {
   DaemonStatus,
   ActionResult,
@@ -488,6 +489,12 @@ export const api = {
   task: (id: string, projectId?: string): Promise<TaskDetail> => real(withProject(`/tasks/${id}`, projectId)),
   taskRoute: (id: string, body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; reviewReason?: string | null; executeProfile?: string | null; reviewProfile?: string | null }, projectId?: string): Promise<ActionResult> =>
     post<ActionResult>(withProject(`/tasks/${encodeURIComponent(id)}/route`, projectId), body),
+  // POST /api/tasks/:id/edit — same semantics as `tusker task update --if-revision`.
+  editTask: (id: string, body: TaskEditBody, projectId?: string): Promise<ActionResult> =>
+    post<ActionResult>(withProject(`/tasks/${encodeURIComponent(id)}/edit`, projectId), body),
+  // POST /api/tasks — same semantics as `tusker new task` (+ `wave add`).
+  createTask: (body: TaskCreateBody, projectId?: string): Promise<ActionResult> =>
+    post<ActionResult>(withProject("/tasks", projectId), body),
 
   // GET /api/docs?project=
   docs: (projectId?: string): Promise<DocListEntry[]> =>
