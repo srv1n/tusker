@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -422,6 +423,48 @@ func TestACPLogRotation(t *testing.T) {
 	data, err := os.ReadFile(req.EventSinkPath)
 	if err != nil || !strings.Contains(string(data), "raw_log_rotated") {
 		t.Fatalf("missing rotation event: %v %s", err, data)
+	}
+}
+
+func TestACPCompletedToolCallCarriesReviewProposalMarker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "acp.log")
+	log, err := openACPLogSink(StartRequest{RawLogPath: path, RawLogMaxBytes: 64 * 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := &acpLiveHandle{log: log}
+	proposal := reviewProposal{Schema: reviewProposalSchema, AttemptID: "attempt-1"}
+	raw, err := json.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := reviewProposalMarker + string(raw)
+	update, err := json.Marshal(map[string]any{"update": map[string]any{
+		"sessionUpdate": "tool_call_update", "status": "completed",
+		"content": []any{map[string]any{"type": "content", "content": map[string]string{
+			"type": "text", "text": "unrelated output\n" + marker + "\nmore output\nembedded " + marker,
+		}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activity := acpActivity(update)
+	seen := map[string]bool{}
+	handle.logCompletedToolCallProposal(activity, seen)
+	handle.logCompletedToolCallProposal(activity, seen) // ACP may repeat the completed update.
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != marker+"\n" {
+		t.Fatalf("ACP raw log = %q, want only proposal marker", data)
+	}
+	got, found, err := scanReviewProposalLog(strings.NewReader(string(data)))
+	if err != nil || !found || got.Schema != proposal.Schema || got.AttemptID != proposal.AttemptID {
+		t.Fatalf("scan ACP proposal: got=%#v found=%t err=%v", got, found, err)
 	}
 }
 
