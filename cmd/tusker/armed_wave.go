@@ -348,8 +348,13 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 		}
 		integrationBranch := armedWaveDependencyIntegrationBranch(idx, wave, dependency)
 		integrated, ok, err := v7GitNoteAtRef(repoRoot, integrationBranch, filepath.ToSlash(rel))
-		if err != nil || !ok {
+		if err != nil {
 			return dependencyID + " integration state is unavailable"
+		}
+		if !ok {
+			// Uncommitted task records are absent from every branch; the
+			// canonical record is then the only record (see F61).
+			integrated = dependency
 		}
 		if status := strings.TrimSpace(stringField(integrated.Data, "status")); status != "done" {
 			return "dependency " + dependencyID + " has not completed objective review (status " + fallback(status, "missing") + ")"
