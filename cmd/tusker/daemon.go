@@ -325,6 +325,12 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		_ = d.recordPollSchedule(projectID, time.Now().UTC())
 		return nil
 	}
+	if !daemonPollErrorIsFatal(err) {
+		// One project's bad task state must not stop automation everywhere.
+		log.Printf("daemon poll: project=%s skipped: %v", firstNonEmpty(strings.TrimSpace(projectID), "*"), err)
+		_ = d.recordPollSchedule(projectID, time.Now().UTC())
+		return nil
+	}
 	if err == nil {
 		if scheduleErr := d.recordPollSchedule(projectID, time.Now().UTC()); scheduleErr != nil {
 			return scheduleErr
@@ -332,6 +338,14 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		d.persistSelfServiceSchedules(projectID)
 	}
 	return err
+}
+
+// daemonPollErrorIsFatal keeps the daemon exiting on storage and system
+// errors while typed Tusker errors, which come from project content, only
+// skip that poll.
+func daemonPollErrorIsFatal(err error) bool {
+	var typed *TuskerError
+	return err != nil && !errors.As(err, &typed)
 }
 
 func (d *Daemon) feedWatchdogBeat(now time.Time) error {
