@@ -259,21 +259,24 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 
 | Lane | Items | Worker | Owns | Status |
 | --- | --- | --- | --- | --- |
-| daemon.go | F17 now; then 0.3 circuit, F25 review cap, F12, F22 poll | Devin SWE-2 Max, then Sol low | `daemon.go` | F17 running |
-| answer wake | F16, 0.2 | Sol low | `agent_coordination.go`, `agent_messages.go` | done, unmerged |
-| task states | T1 | Opus | run_state, Serve responses, UI | running |
-| Devin reviewer | F21, F20 | Devin SWE-2 Max | `runner_acp.go` (Devin parts) | running |
-| global models | F3 | Sol low | `model_levels.go` | done, 66 focused tests pass; awaiting merge |
-| browse text | F1 | Devin SWE-2 Max | `docs_browse_cmd.go` | done, focused tests pass; awaiting merge |
-| delete xcode, improve | audit slice 1.1 | Devin SWE-2 Max | slice files, `cli.go` entries | running |
-| actor rule | D3, F23, parity slice A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | merged to main 2026-09-27. Follow-up: Serve actor refusal |
-| owner toggle | D3 per-project switch | Sol low | `actor_authority.go`, `execution_mode.go`, `config.go`, `docs/system/cli.md` | running (`feat/agent-owner-toggle`) |
-| browse skip | F2 | Devin SWE-2 Max | `internal/docgraph/discovery.go`, `docs_browse_cmd.go` | running |
-| doc headers | V2 prep: missing `read_when`/`skip_when`, `proposals/00-index.md` | Devin SWE-2 Max | docs front matter only | running (`docs/fill-headers`) |
+| F17 resume | F17 | Devin SWE-2 Max | `daemon.go` | merged (fe5b89d8) |
+| answer wake | F16, 0.2 | Sol low | `agent_coordination.go`, `agent_messages.go` | merged |
+| global models | F3 | Sol low | `model_levels.go` | merged |
+| browse text | F1 | Devin SWE-2 Max | `docs_browse_cmd.go` | merged |
+| actor rule | D3, F23, parity A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | merged. Follow-up: Serve actor refusal (after T1) |
+| Devin reviewer | F21, F20 | Devin SWE-2 Max | `runner_acp.go` | merged (68b8a79a). Devin review runs in `smart` mode, which also allows edits in the review worktree. F20 needed no change: `devin acp` does not check workspace trust. |
+| delete xcode, improve | audit slice 1.1 | Devin SWE-2 Max | slice files, `cli.go` | merged (53c0d86f), -1,978 lines. `trace replay` handler kept: `trace.go:489` still routes to it. |
+| browse skip | F2 | Devin SWE-2 Max | `internal/docgraph/discovery.go` | merged (27df28d7) |
+| owner toggle | D3 per-project switch | Sol low | `actor_authority.go`, `config.go` | merged (1bf48115). `requireOwnerSession` wired by the daemon lane. |
+| task states | T1 | Opus (Go) + Opus (UI) | run_state, Serve responses, UI | running |
+| doc headers | V2 prep | Devin SWE-2 Max | docs front matter only | running (`docs/fill-headers`) |
+| daemon lane | owner-only wiring, 0.3 circuit auto-close, F11 kill switch, F25, F22, F12 | Opus | `daemon.go`, `runtime_store.go`, `sentinel.go`, `automation_commands.go`, `agent_coordination.go` | running (`fix/daemon-lane`) |
+| access | D1 deny list, `access.protected_paths` | Sol medium (Claude reviews) | runner adapters, `config.go` | running (`feat/access-deny-list`) |
+| parity B | `wave list`, `runs list` (F4, F9) | Sol low | `cli.go`, new command files | running (`feat/wave-runs-list`) |
 
 Queued, waiting on a file owner:
 
-- `cli.go` chain after slice 1.1: parity B (`wave list`, `runs list`), then C (access approval, private folders), then D (fetch the revision for the caller).
+- `cli.go` chain after parity B: C (access approval, private folders), then D (fetch the revision for the caller).
 - After T1: 0.4 demo defaults and F5; parity F (UI task authoring) and G (Serve handler-only actions).
 - After Phase 0: Phase 2 (pass handler replaces completion authority), Tier 3.
 
