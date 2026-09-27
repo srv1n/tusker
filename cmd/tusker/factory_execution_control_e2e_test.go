@@ -239,8 +239,7 @@ func testFactoryOptInAdmission(t *testing.T) {
 		vault := automationTestVault(t)
 		mustRunPickupTest(t, Args{
 			"vault": vault, "quiet": "true", "epic": "APP",
-			"title": "Factory manual work", "risk": "low", "priority": "p0", "v7": "true",
-		}, newV7Task)
+			"title": "Factory manual work", "risk": "low", "priority": "p0", "v7": "true", "owned-paths": "src"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 		initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 		project := registerAutomationTestProject(t, vault)
@@ -465,8 +464,7 @@ func testFactoryFailureMatrix(t *testing.T) {
 		vault := automationTestVault(t)
 		mustRunPickupTest(t, Args{
 			"vault": vault, "quiet": "true", "epic": "APP",
-			"title": "Factory reviewer exit", "risk": "low", "priority": "p0", "v7": "true",
-		}, newV7Task)
+			"title": "Factory reviewer exit", "risk": "low", "priority": "p0", "v7": "true", "owned-paths": "src"}, newV7Task)
 		setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 			"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer",
 			"source_sha": "abc123", "work_revision": 2,
@@ -754,8 +752,7 @@ func testFactoryIncrementalCompatibility(t *testing.T) {
 		vault := automationTestVault(t)
 		mustRunPickupTest(t, Args{
 			"vault": vault, "quiet": "true", "epic": "APP",
-			"title": "Adaptive fixture", "risk": "low", "priority": "p0", "v7": "true",
-		}, newV7Task)
+			"title": "Adaptive fixture", "risk": "low", "priority": "p0", "v7": "true", "owned-paths": "src"}, newV7Task)
 		makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 		notes, err := listOperationalNotes(vault)
 		if err != nil {

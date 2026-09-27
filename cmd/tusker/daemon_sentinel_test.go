@@ -68,7 +68,7 @@ func TestSentinelDetectsConfiguredInvariants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			vault := automationTestVault(t)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Sentinel invariant", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Sentinel invariant", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 			project := registerAutomationTestProject(t, vault)
 			store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -123,7 +123,7 @@ func TestSentinelIgnoresFreshHeartbeatForHandRun(t *testing.T) {
 
 func TestSentinelRefreshesTrackerStateAfterDispatch(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Fresh tracker state", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Fresh tracker state", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	project := RegisteredProject{ProjectID: "app", VaultRoot: vault}
 	stale := mustTaskData(t, vault, "APP-T-0001")
 	snapshot := []runtimeSentinelProjectSnapshot{{Project: project, NotesByRecordID: map[string]Note{"APP-T-0001": {Data: stale}}}}
@@ -136,7 +136,7 @@ func TestSentinelRefreshesTrackerStateAfterDispatch(t *testing.T) {
 
 func TestSentinelCircuitOpenBlocksDispatchButServeReadsStatus(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Circuit blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Circuit blocked", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
@@ -224,7 +224,7 @@ func TestSentinelCircuitOpenBlocksDispatchButServeReadsStatus(t *testing.T) {
 
 func TestSentinelResumeRefusesUntilViolationCleared(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Resume sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Resume sentinel", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)
@@ -260,7 +260,7 @@ func TestSentinelResumeRefusesUntilViolationCleared(t *testing.T) {
 
 func TestSentinelConfigCheckListControlsPredicates(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Config sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Config sentinel", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)
@@ -281,7 +281,7 @@ func TestSentinelConfigCheckListControlsPredicates(t *testing.T) {
 
 func TestSentinelAllowsCompletedRunnerStatusBeforeReconcile(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Completed status sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Completed status sentinel", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)
@@ -307,7 +307,7 @@ func TestSentinelAllowsCompletedRunnerStatusBeforeReconcile(t *testing.T) {
 
 func TestSentinelBoundedUsesProvidedStoreSnapshot(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bounded sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bounded sentinel", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)
@@ -357,9 +357,9 @@ func TestSentinelBoundedUsesProvidedStoreSnapshot(t *testing.T) {
 func TestSentinelDetectsStaleReviewLeaseE2EResumeAfterFix(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review stale sentinel", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review stale sentinel", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Should not dispatch", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Should not dispatch", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	project := registerAutomationTestProject(t, vault)

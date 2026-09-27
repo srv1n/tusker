@@ -237,13 +237,14 @@ func newWaveTestVault(t *testing.T, tasks int) string {
 	mustWave(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Wave tests.", "v7": "true"}, newV7Epic)
 	for i := 1; i <= tasks; i++ {
 		mustWave(t, Args{
-			"vault":    vault,
-			"quiet":    "true",
-			"epic":     "APP",
-			"title":    "Task " + padNumber(i),
-			"risk":     "low",
-			"priority": "p2",
-			"v7":       "true",
+			"vault":       vault,
+			"quiet":       "true",
+			"epic":        "APP",
+			"title":       "Task " + padNumber(i),
+			"risk":        "low",
+			"priority":    "p2",
+			"owned-paths": "src",
+			"v7":          "true",
 		}, newV7Task)
 	}
 	return vault

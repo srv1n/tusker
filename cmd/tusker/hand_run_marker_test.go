@@ -19,7 +19,7 @@ func handRunTestVault(t *testing.T) string {
 	}
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Hand-run marker smoke.", "v7": "true"}, newV7Epic)
-	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Hand-run target", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Hand-run target", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	return vault
 }
 

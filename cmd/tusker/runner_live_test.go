@@ -888,7 +888,7 @@ func TestClaudeLiveRunnerCapabilityMatrixMatchesCodexAppServer(t *testing.T) {
 func TestClaudeLiveRunnerCompletesFixtureThroughReviewLane(t *testing.T) {
 	vault := automationTestVault(t)
 	project := registerAutomationTestProject(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Claude fixture", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Claude fixture", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"work_revision": 1})
 	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: true", Result: "pass", Notes: "fixture proof"}, "agent:test"); err != nil {

@@ -77,7 +77,7 @@ func reconcileReviewFindingRunOpts(t *testing.T, opts reviewFindingRunOpts) (Run
 	t.Helper()
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewer finding", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewer finding", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	markerAttempt := opts.markerAttempt
 	if markerAttempt == "" {
 		markerAttempt = "attempt-review"

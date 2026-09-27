@@ -19,7 +19,7 @@ import (
 func TestOneShotDispatchRefusesWithDaemonRequirement(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "One shot", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "One shot", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
 
@@ -59,7 +59,7 @@ func TestReleasedReviewHandoffIsNotResetToExecute(t *testing.T) {
 func TestDaemonPollDispatchesReleasedReviewHandoff(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review handoff", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review handoff", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer",
@@ -163,7 +163,7 @@ func TestDaemonPollDispatchesReleasedReviewHandoffInsideArmedWave(t *testing.T) 
 
 func TestDispatchConsultsPlanBeforeExecute(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked readiness", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked readiness", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status":     "ready",
@@ -521,7 +521,7 @@ func TestStaleLeaseReleaseForReviewState(t *testing.T) {
 	if err := writeText(workflowPath(vault), "---\n"+strings.TrimSpace(string(raw))+"\n---\n"+wfFile.Body); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review stale run", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review stale run", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status":     "review",
@@ -571,7 +571,7 @@ func TestStaleLeaseReleaseForReviewState(t *testing.T) {
 
 func TestRetryLeaseDeadPidReleasedByPollTick(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dead retry", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dead retry", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -623,7 +623,7 @@ func TestRetryLeaseDeadPidReleasedByPollTick(t *testing.T) {
 
 func TestDispatchConsultsPlanBeforeExecuteContinuation(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Plan gated", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Plan gated", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setV7TaskStateForDaemonTest(t, vault, "APP-T-0001", "review", "waiting_on_review", "reviewer")
 	project := registerAutomationTestProject(t, vault)
@@ -679,7 +679,7 @@ func TestStaleLeaseReleaseForNonDispatchableTaskStates(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			vault := automationTestVault(t)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale lease", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale lease", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 			setV7TaskStateForDaemonTest(t, vault, "APP-T-0001", tc.status, tc.readiness, tc.owner)
 			project := registerAutomationTestProject(t, vault)
@@ -774,7 +774,7 @@ func TestRunsReleaseClearsDeadRun(t *testing.T) {
 
 func TestRunsRetireTerminalizesStaleOverCapRunAndClearsCircuit(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Retire stale", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Retire stale", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -1032,7 +1032,7 @@ func TestDispatchRecordsProcessIdentity(t *testing.T) {
 	vault := automationTestVault(t)
 	initDispatchGitRepoForTest(t, filepath.Dir(vault))
 	installCodexSleepShimForTest(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Identity", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Identity", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
@@ -1279,7 +1279,7 @@ func TestRetryCircuitBreakerMarksTerminal(t *testing.T) {
 func TestReclaimParksAtCap(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dead capped retry", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dead capped retry", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	workspacePath := t.TempDir()
@@ -1459,7 +1459,7 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			vault := automationTestVault(t)
 			disableReviewerForTest(t, vault)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Clean finish", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Clean finish", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 			if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: true", Result: "pass", Notes: "fixture proof"}, "agent:test"); err != nil {
 				t.Fatal(err)
@@ -1558,7 +1558,7 @@ func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 func TestMalformedRunnerStatusFailsOnlyTheAttempt(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Malformed runner status", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Malformed runner status", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -1607,7 +1607,7 @@ func TestMalformedRunnerStatusFailsOnlyTheAttempt(t *testing.T) {
 func TestEarlyExitClassification(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Early exit", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Early exit", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	wf := defaultWorkflow()
 	wf.Runtime.MaxContinuationRetries = 1
@@ -1734,7 +1734,7 @@ func TestDispatchDeclinedOutcomeReleasesWithoutContinuation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			vault := automationTestVault(t)
 			disableReviewerForTest(t, vault)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Declined", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Declined", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 			if len(tc.fields) > 0 {
 				setAutomationV7TaskFields(t, vault, "APP-T-0001", tc.fields)
@@ -1872,7 +1872,7 @@ func TestContinuationCapParksAllLanes(t *testing.T) {
 		t.Run(string(runner), func(t *testing.T) {
 			vault := automationTestVault(t)
 			disableReviewerForTest(t, vault)
-			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Continuation cap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+			mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Continuation cap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 			makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 			project := registerAutomationTestProject(t, vault)
 			store, err := OpenRuntimeStore(DefaultStateRoot())
@@ -2069,7 +2069,7 @@ func writeReviewCompleteWorkflowForTest(t *testing.T, vault string, maxContinuat
 func TestReviewCompleteExitTerminal(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review complete", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review complete", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	writeReviewCompleteWorkflowForTest(t, vault, 1)
 	project := registerAutomationTestProject(t, vault)
@@ -2159,7 +2159,7 @@ func TestReviewCompleteExitTerminal(t *testing.T) {
 func TestPendingReviewNotRedispatched(t *testing.T) {
 	vault := automationTestVault(t)
 	disableReviewerForTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Pending review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Pending review", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	writeReviewCompleteWorkflowForTest(t, vault, 1)
 	project := registerAutomationTestProject(t, vault)
@@ -2264,7 +2264,7 @@ func TestOutcomeTextDistinguishesAwaitingLand(t *testing.T) {
 
 func TestEnsureDispatchedV7AttemptBindsRuntimeIdentityIdempotently(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bound daemon attempt", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bound daemon attempt", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
 	if err := copyDirFiltered(vault, worktreeVault, func(string, os.DirEntry) bool { return true }); err != nil {
@@ -2317,7 +2317,7 @@ func TestEnsureDispatchedV7AttemptBindsRuntimeIdentityIdempotently(t *testing.T)
 
 func TestReviewerControlMutationRequiresBoundReviewAttempt(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewer authority", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewer authority", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
 	if err := copyDirFiltered(vault, worktreeVault, func(string, os.DirEntry) bool { return true }); err != nil {

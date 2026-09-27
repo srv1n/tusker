@@ -35,7 +35,7 @@ func TestV7ReadyTaskWithStubAcceptanceRejected(t *testing.T) {
 
 func TestV7NextSkipsStubReadyTask(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub ready", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub ready", "owned-paths": "src", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 
 	if _, ok := pickV7Next(vault, "APP", ""); ok {
@@ -45,7 +45,7 @@ func TestV7NextSkipsStubReadyTask(t *testing.T) {
 
 func TestV7PacketAgentRequiresForceForUndispatchableStub(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub packet", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub packet", "owned-paths": "src", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 
 	err := packetV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "for": "agent"})
@@ -67,7 +67,7 @@ func TestV7PacketAgentRequiresForceForUndispatchableStub(t *testing.T) {
 
 func TestV7ExplainerPacketBuildsUnderstandingScaffold(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Explainer packets", "risk": "high", "domains": "project", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Explainer packets", "risk": "high", "domains": "project", "owned-paths": "src", "v7": "true"}, newV7Task)
 	replaceV7TaskSection(t, vault, "APP-T-0001", "## Intent", "Help humans understand agent-authored changes before review.")
 	replaceV7TaskSection(t, vault, "APP-T-0001", "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Explainer packets render background, intuition, proof, and quiz sections. | Focused CLI test |")
 	replaceV7TaskSection(t, vault, "APP-T-0001", "## Knowledge delta", "| Change type | Topic | Before | After |\n|---|---|---|---|\n| added | Understanding packets | Review packets were proof-focused. | Explainer packets build human mental models. |")
@@ -99,7 +99,7 @@ func TestV7ExplainerPacketBuildsUnderstandingScaffold(t *testing.T) {
 
 func TestV7ExplainerPacketWriteUsesGeneratedPacketPath(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Write explainer packet", "domains": "project", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Write explainer packet", "domains": "project", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	if err := packetV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "for": "explainer", "write": "true"}); err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestV7ExplainerPacketWriteUsesGeneratedPacketPath(t *testing.T) {
 
 func TestV7ProofAndReviewRejectStubAcceptance(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub proof", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stub proof", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestStub -count=1", "result": "pass", "note": "Focused proof passed."}, v7TestVerificationMutation)
 
@@ -135,7 +135,7 @@ func TestV7ProofAndReviewRejectStubAcceptance(t *testing.T) {
 
 func TestV7ValidationErrorsOnSatisfiedStubAcceptance(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Satisfied stub", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Satisfied stub", "owned-paths": "src", "v7": "true"}, newV7Task)
 	forceV7DispatchPlaceholderAcceptance(t, vault, "APP-T-0001")
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(taskPath)

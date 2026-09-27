@@ -7,7 +7,7 @@ import (
 
 func TestTaskAuthoringMetadataNewTaskOmitsEmptyOptionalFields(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Minimal task"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Minimal task", "owned-paths": "src"}, newV7Task)
 
 	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, body, err := parseFrontmatterMustRead(path)
@@ -15,7 +15,7 @@ func TestTaskAuthoringMetadataNewTaskOmitsEmptyOptionalFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{
-		"architect", "origin", "runner_profile", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "evidence_required", "knowledge_nodes", "owned_paths",
+		"architect", "origin", "runner_profile", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "evidence_required", "knowledge_nodes",
 	} {
 		if _, ok := data[key]; ok {
 			t.Fatalf("minimal task should omit empty %s: %#v", key, data[key])
@@ -27,6 +27,7 @@ func TestTaskAuthoringMetadataNewTaskOmitsEmptyOptionalFields(t *testing.T) {
 		}
 	}
 	assertEqual(t, "standard", stringField(data, "work_level"), "default authored work level")
+	assertEqual(t, []string{"src"}, normalizeList(data["owned_paths"]), "owned paths")
 	assertEqual(t, "inline", stringField(data, "proof_mode"), "default proof mode")
 	assertEqual(t, []string{"focused_test", "broad_test"}, normalizeList(data["proof_required"]), "default proof requirements")
 	assertEqual(t, 0, intField(data, "evidence_budget"), "zero evidence budget")
@@ -108,7 +109,7 @@ func TestTaskAuthoringMetadataWaveTaskOmitsEmptyFields(t *testing.T) {
 		"title":       "Metadata",
 		"outcome":     "Direct wave task omits empty optional fields.",
 		"tasks": []map[string]any{
-			{"key": "only", "title": "Only", "work_level": "standard", "epic": "APP", "body": "# Only\n\nDo it.\n"},
+			{"key": "only", "title": "Only", "work_level": "standard", "epic": "APP", "owned_paths": []string{"src"}, "body": "# Only\n\nDo it.\n"},
 		},
 	})
 	if err := waveV7CreateCmd(Args{"vault": vault, "file": path, "quiet": "true"}); err != nil {
@@ -121,7 +122,7 @@ func TestTaskAuthoringMetadataWaveTaskOmitsEmptyFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{
-		"architect", "origin", "runner_profile", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "knowledge_nodes", "owned_paths", "evidence_required",
+		"architect", "origin", "runner_profile", "concurrency_group", "peer_contacts", "domains", "gates", "dependencies", "knowledge_nodes", "evidence_required",
 	} {
 		if _, ok := data[key]; ok {
 			t.Fatalf("new authored task should omit empty %s: %#v", key, data[key])

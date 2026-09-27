@@ -10,7 +10,7 @@ import (
 
 func TestReviewCycleCapIgnoresConfigRefusalsAndResetsOnRedrive(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review cap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review cap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	project := registerAutomationTestProject(t, vault)
 	daemon, err := NewDaemon(DefaultStateRoot())
 	if err != nil {
@@ -52,7 +52,7 @@ func TestReviewCycleCapIgnoresConfigRefusalsAndResetsOnRedrive(t *testing.T) {
 
 func TestReviewCycleCapNeverParksLiveReviewRun(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Live review at cap", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Live review at cap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": "abc123", "work_revision": 2})
 	project := registerAutomationTestProject(t, vault)
 	daemon, err := NewDaemon(DefaultStateRoot())

@@ -11,8 +11,8 @@ import (
 func TestV7SoftDependencyUnblocks(t *testing.T) {
 	vault := automationTestVault(t)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependency", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependency", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	registerAutomationTestProject(t, vault)
 
@@ -81,8 +81,8 @@ func TestV7SoftDependencyUnblocks(t *testing.T) {
 
 func TestV7TargetedControlProjectionMaterializesSoftDependency(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependency", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Soft dependency", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "owned-paths": "src", "v7": "true"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status": "review", "proof_status": "satisfied",
 	})
@@ -102,8 +102,8 @@ func TestV7TargetedControlProjectionMaterializesSoftDependency(t *testing.T) {
 
 func TestV7StatusReadyRefreshesSatisfiedDependencyOwner(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Upstream", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:hard", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Upstream", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:hard", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "done", "readiness": "done", "proof_status": "satisfied"})
 	setAutomationV7TaskFields(t, vault, "APP-T-0002", map[string]any{"status": "ready", "readiness": "blocked_by_dependency", "next_owner": "blocked_dependency"})
@@ -172,8 +172,8 @@ func TestV7DependencyParseCompat(t *testing.T) {
 
 func TestV7CloseOrderEnforced(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0002", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseOrderEnforced -count=1", "result": "pass", "note": "Dependent proof passed."}, v7TestVerificationMutation)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
@@ -199,9 +199,9 @@ func TestV7CloseOrderEnforced(t *testing.T) {
 
 func TestV7SoftDependencyReworkCascade(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	for _, title := range []string{"Non-started dependent", "Running dependent"} {
-		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": title, "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "v7": "true"}, newV7Task)
+		mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": title, "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:soft", "owned-paths": "src", "v7": "true"}, newV7Task)
 	}
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0003")

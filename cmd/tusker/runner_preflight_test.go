@@ -101,7 +101,7 @@ func TestRunnerPreferredPathDirsFindsEachSupportedAppBundle(t *testing.T) {
 
 func TestDaemonParksRunnerPreflightFailureWithoutRetryChurn(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Broken runner", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Broken runner", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 
 	brokenCodex := writeRunnerPreflightScript(t, t.TempDir(), "codex", `#!/bin/sh
@@ -161,7 +161,7 @@ exit 127
 
 func TestDaemonSkipsAutomationDisabledProject(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Automation off", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Automation off", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	setAllEligibleDispatchScopeForAutomationTest(t, vault)
@@ -191,7 +191,7 @@ func TestDaemonSkipsAutomationDisabledProject(t *testing.T) {
 
 func TestInteractiveClaimRegistersRunWithAutomationOff(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual automation off", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual automation off", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	initializeOrchestrationGitRepo(t, filepath.Dir(vault))
 	project := registerAutomationTestProject(t, vault)

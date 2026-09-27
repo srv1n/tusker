@@ -54,7 +54,7 @@ func TestDaemonAutoAdvanceExternalCollectsAndDispatchesApplyInput(t *testing.T) 
 	vault := automationTestVault(t)
 	installCodexSleepShimForTest(t)
 	writeDaemonExternalLoopConfig(t, vault, defaultCodexExecCommand())
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon auto advance", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon auto advance", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
@@ -103,7 +103,7 @@ func TestDaemonAutoAdvanceExternalCollectsAndDispatchesApplyInput(t *testing.T) 
 func TestDaemonAutoAdvanceExternalCollectFailureRecordsBlockedEvent(t *testing.T) {
 	vault := automationTestVault(t)
 	writeDaemonExternalLoopConfig(t, vault, `true`)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon collect blocked", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon collect blocked", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	previous := runExternalCollectFetch
@@ -148,7 +148,7 @@ func TestDaemonAutoAdvanceExternalCollectFailureRecordsBlockedEvent(t *testing.T
 func TestDaemonAutoAdvanceExternalApplyFailureDispatchesRepairContinuation(t *testing.T) {
 	vault := automationTestVault(t)
 	writeDaemonExternalLoopConfig(t, vault, `true`)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon repair continuation", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon repair continuation", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	refreshAutomationV7TaskContractFingerprint(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
@@ -193,7 +193,7 @@ func TestDaemonAutoAdvanceExternalApplyFailureDispatchesRepairContinuation(t *te
 func TestDaemonAutoAdvanceExternalReviewAcceptedClosesLowRiskTask(t *testing.T) {
 	vault := automationTestVault(t)
 	writeDaemonExternalLoopConfig(t, vault, defaultCodexExecCommand())
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon accepted external review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon accepted external review", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	project := registerAutomationTestProject(t, vault)
 	initializeOrchestrationGitRepo(t, project.RepoRoot)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
@@ -276,7 +276,7 @@ func TestDaemonAutoAdvanceExternalReviewAcceptedClosesLowRiskTask(t *testing.T) 
 
 func TestDaemonExternalCloseRefusesFailingVerification(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Failing external verification", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Failing external verification", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
 	project := registerAutomationTestProject(t, vault)
@@ -314,7 +314,7 @@ func TestDaemonExternalCloseRefusesFailingVerification(t *testing.T) {
 
 func TestDaemonExternalCloseUsesExactAcceptanceCovers(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Exact external covers", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Exact external covers", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
 	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -365,7 +365,7 @@ func TestDaemonExternalCloseUsesExactAcceptanceCovers(t *testing.T) {
 
 func TestDaemonExternalClosePreservesCombinedVerificationCover(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Combined external covers", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Combined external covers", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
 	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -416,7 +416,7 @@ func TestDaemonExternalClosePreservesCombinedVerificationCover(t *testing.T) {
 func TestDaemonAutoAdvanceExternalApplySuccessDispatchesExternalReview(t *testing.T) {
 	vault := automationTestVault(t)
 	writeDaemonExternalLoopConfig(t, vault, `true`)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon external review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Daemon external review", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "ready", "next_owner": "reviewer:agent"})
 	project := registerAutomationTestProject(t, vault)
@@ -781,7 +781,7 @@ func killRunProcess(run RunStatus) {
 // fails (owner/lease_state change to a fresh claim).
 func TestDispatchExternalApplyInputPreservesConcurrentLeaseAdvance(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Preserve concurrent advance", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Preserve concurrent advance", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	wfFile, err := loadWorkflow(vault)

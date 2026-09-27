@@ -23,6 +23,7 @@ tasks:
   - key: member
     title: Member task
     work_level: light
+    owned_paths: [cmd/tusker]
     body: "# Member\n\nMember body.\n"
 `
 	requestPath := directAuthoringBodyPath(t, vault, "wave.yaml", request)

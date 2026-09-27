@@ -395,11 +395,11 @@ func testSoftwareFactoryPacketFileAndStdinRoundTrip(t *testing.T) {
 		"## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | The exact body reaches every projection. |\n\n" +
 		"## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: go test ./cmd/tusker -run 'TestSoftwareFactoryPacket' -count=1 \\| tee packet.log | pending | |\n"
 	filePath := directAuthoringBodyPath(t, vault, "software-factory-file.md", fileBody)
-	runSoftwareFactoryPacketCLI(t, "new", "task", "--title", "File packet", "--work-level", "standard", "--body-file", filePath, "--vault", vault, "--quiet")
+	runSoftwareFactoryPacketCLI(t, "new", "task", "--title", "File packet", "--work-level", "standard", "--owned-paths", "src", "--body-file", filePath, "--vault", vault, "--quiet")
 
 	stdinBody := "# Stdin packet\n\n## Intent\n\nThe stdin body keeps a `consumer -> provider` interface literal.\n\n## Acceptance\n\n| ID | Outcome |\n| --- | --- |\n| A1 | The stdin contract remains readable. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: printf 'stdin\\n' | pending | |\n"
 	restore := directAuthoringStdin(t, stdinBody)
-	runSoftwareFactoryPacketCLIWithStdin(t, stdinBody, "new", "task", "--title", "Stdin packet", "--work-level", "standard", "--body-file", "-", "--vault", vault, "--quiet")
+	runSoftwareFactoryPacketCLIWithStdin(t, stdinBody, "new", "task", "--title", "Stdin packet", "--work-level", "standard", "--owned-paths", "src", "--body-file", "-", "--vault", vault, "--quiet")
 	restore()
 
 	idx := mustIndex(t, vault)
@@ -459,7 +459,7 @@ func testSoftwareFactoryPacketRejectsInvalidRefsAndAtomicBatches(t *testing.T) {
 	}
 
 	vault := v7DirectTestVault(t)
-	request := "schema: tusker.wave-authoring/v1\nrequest_key: packet-v1\ntitle: Packet batch\noutcome: Publish one durable packet batch.\nspec_refs:\n  - .tusker/specs/delivery.md\ntasks:\n  - key: only\n    title: Packet task\n    work_level: standard\n    spec_refs:\n      - .tusker/specs/delivery.md\n    body: |\n      # Packet task\n\n      The request-key receipt is part of the durable boundary.\n"
+	request := "schema: tusker.wave-authoring/v1\nrequest_key: packet-v1\ntitle: Packet batch\noutcome: Publish one durable packet batch.\nspec_refs:\n  - .tusker/specs/delivery.md\ntasks:\n  - key: only\n    title: Packet task\n    work_level: standard\n    owned_paths: [src]\n    spec_refs:\n      - .tusker/specs/delivery.md\n    body: |\n      # Packet task\n\n      The request-key receipt is part of the durable boundary.\n"
 	request = strings.Replace(request, "      The request-key receipt is part of the durable boundary.\n", "      The request-key receipt is part of the durable boundary.\n\n      ## Acceptance\n\n      | ID | Outcome |\n      | --- | --- |\n      | A1 | The request is durable. |\n", 1)
 	request += "human_actions:\n  - key: approval\n    task: only\n    owner: human:operator\n    action: Approve the packet.\n    verification: Human confirms the packet.\n    why_agent_cannot: The approval requires human authority.\n    covers:\n      - A1\n"
 	requestPath := directAuthoringBodyPath(t, vault, "packet-batch.yaml", request)
@@ -571,7 +571,7 @@ func testSoftwareFactoryPacketRejectsInvalidRefsAndAtomicBatches(t *testing.T) {
 
 func testSoftwareFactoryPacketColdReaderSemanticSpecimen(t *testing.T) {
 	vault := v7DirectTestVault(t)
-	request := "schema: tusker.wave-authoring/v1\nrequest_key: semantic-v1\ntitle: Semantic packet\noutcome: Preserve a consumer/provider boundary with evidence-aware review.\nshared_context: |\n  The provider owns the interface; the downstream task owns final integration.\ntasks:\n  - key: contract\n    title: Preserve the contract\n    work_level: demanding\n    body: |\n      # Preserve the contract\n\n      ## Intent\n\n      Inspect `cmd/tusker/commands_v7.go: v7Packet` and keep the durable task body authoritative.\n\n      ## Cases\n\n      - C1: A queued job proves admission, not receiver execution.\n      - C2: Unknown evidence remains pending; a self-declared boundary label is not proof.\n\n      ## Decisions\n\n      Locked: the worker supplies the interface and the downstream consumer owns integration.\n      Proposed: add a new registry is not approved.\n\n      ## Acceptance\n\n      | ID | Outcome |\n      | --- | --- |\n      | A1 | The provider contract and reviewer boundary are explicit. |\n\n      ## Verification\n\n      | Covers | Check | Result | Notes |\n      | --- | --- | --- | --- |\n      | A1 | command: go test ./cmd/tusker -run TestSoftwareFactoryPacketColdReaderSemanticSpecimen -count=1 | pending | |\n"
+	request := "schema: tusker.wave-authoring/v1\nrequest_key: semantic-v1\ntitle: Semantic packet\noutcome: Preserve a consumer/provider boundary with evidence-aware review.\nshared_context: |\n  The provider owns the interface; the downstream task owns final integration.\ntasks:\n  - key: contract\n    title: Preserve the contract\n    work_level: demanding\n    owned_paths: [src]\n    body: |\n      # Preserve the contract\n\n      ## Intent\n\n      Inspect `cmd/tusker/commands_v7.go: v7Packet` and keep the durable task body authoritative.\n\n      ## Cases\n\n      - C1: A queued job proves admission, not receiver execution.\n      - C2: Unknown evidence remains pending; a self-declared boundary label is not proof.\n\n      ## Decisions\n\n      Locked: the worker supplies the interface and the downstream consumer owns integration.\n      Proposed: add a new registry is not approved.\n\n      ## Acceptance\n\n      | ID | Outcome |\n      | --- | --- |\n      | A1 | The provider contract and reviewer boundary are explicit. |\n\n      ## Verification\n\n      | Covers | Check | Result | Notes |\n      | --- | --- | --- | --- |\n      | A1 | command: go test ./cmd/tusker -run TestSoftwareFactoryPacketColdReaderSemanticSpecimen -count=1 | pending | |\n"
 	path := directAuthoringBodyPath(t, vault, "semantic.yaml", request)
 	if err := waveV7CreateCmd(Args{"vault": vault, "quiet": "true", "file": path, "request-key": "semantic-v1"}); err != nil {
 		t.Fatal(err)

@@ -99,7 +99,7 @@ func TestPacketProhibitionCanonClassRendersInDomainContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Packet fixture.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Packet canon", "domains": "project", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Packet canon", "domains": "project", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	packet := v7Packet(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault), "agent")
 	assertContainsIndexTest(t, packet, "Prohibitions:")

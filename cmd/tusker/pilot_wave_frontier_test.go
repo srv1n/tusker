@@ -66,7 +66,7 @@ func TestPilotWaveFrontierDispatchesOnlyQualifiedWork(t *testing.T) {
 	}
 	assertEqual(t, []string{"pilot/APP-T-0002", "pilot/APP-T-0003"}, dispatched, "scheduler dispatches released dependents")
 
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Next manual wave", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Next manual wave", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0007")
 	repo := v7RepoRoot(vault)
 	runGitDir(t, repo, "config", "user.email", "test@example.com")

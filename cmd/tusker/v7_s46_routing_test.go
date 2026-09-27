@@ -90,7 +90,7 @@ func TestS46DomainRouting(t *testing.T) {
 		}
 	}
 
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Routed task", "domains": "billing,risk"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Routed task", "domains": "billing,risk", "owned-paths": "src"}, newV7Task)
 
 	// Domain list merges portable-only domains with managed records.
 	listed := captureStdout(t, func() {
@@ -299,7 +299,7 @@ func TestS46TaskReferences(t *testing.T) {
 
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Recorded choice", "decision": "Use checkout flow."}, newV7Decision)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Governed task",
-		"spec-refs": "checkout-flow,docs/system/decisions/record-choice.md,.tusker/specs/legacy-spec.md,APP-D-0001,docs/system/proposals/checkout-flow.md#Lifecycle"}, newV7Task)
+		"spec-refs": "checkout-flow,docs/system/decisions/record-choice.md,.tusker/specs/legacy-spec.md,APP-D-0001,docs/system/proposals/checkout-flow.md#Lifecycle", "owned-paths": "src"}, newV7Task)
 	decisionIDs := s46RoutingDecisions(t, vault)
 
 	// New subjects, new paths, legacy managed paths, tracker lifecycle

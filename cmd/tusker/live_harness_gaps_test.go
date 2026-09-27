@@ -97,7 +97,7 @@ func TestExecutionRegisterResolvesRuntimeProject(t *testing.T) {
 	// --contact-role accepts a subject whose note carries the config
 	// project_id even though the registry keys the project by ULID.
 	body := directAuthoringBodyPath(t, vault, "contact-task.md", "# Contact subject\n\nSubstantive body.\n")
-	mustWave(t, Args{"vault": vault, "quiet": "true", "title": "Subject", "work-level": "light", "body-file": body}, newAuthoredV7Task)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "title": "Subject", "work-level": "light", "owned-paths": "src", "body-file": body}, newAuthoredV7Task)
 	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "Contact wave", "_pos1": "TSK-T-0001"}, waveV7CreateCmd)
 	if err := executionCmd(Args{"vault": vault, "state-root": stateRoot, "quiet": "true",
 		"contact-role": "architect", "wave": "W-0001",

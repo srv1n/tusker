@@ -180,7 +180,7 @@ func TestIncrementalFrontierIndexRichControlNotificationRemainsOptional(t *testi
 
 func TestIncrementalFrontierIndexDaemonWarmHintAndFallback(t *testing.T) {
 	vaultA, vaultB := pickupV7TestVault(t), pickupV7TestVault(t)
-	mustRunPickupTest(t, Args{"vault": vaultA, "quiet": "true", "epic": "APP", "title": "Frontier target", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vaultA, "quiet": "true", "epic": "APP", "title": "Frontier target", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	notes, err := listOperationalNotes(vaultA)
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,7 @@ import (
 func reviewResultCommandFixture(t *testing.T) (string, Args) {
 	t.Helper()
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "source_sha": "abc123", "work_revision": 2, "proof_status": "satisfied"})
 	state := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TUSKER_STATE_ROOT", state)
@@ -255,7 +255,7 @@ func TestReviewResultProtocolRejectsInactiveReviewAuthority(t *testing.T) {
 
 func TestReviewResultProtocolReviewerExitRetriesThenCaps(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review exit", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review exit", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": "abc123", "work_revision": 2})
 	project := registerAutomationTestProject(t, vault)
 	statusPath := filepath.Join(t.TempDir(), "reviewer.status.json")
@@ -298,7 +298,7 @@ func TestReviewResultProtocolReviewerExitRetriesThenCaps(t *testing.T) {
 
 func TestReviewResultProtocolSavedResultSuppressesDuplicateReviewDispatch(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review duplicate", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Typed review duplicate", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": "abc123", "work_revision": 2})
 	project := registerAutomationTestProject(t, vault)
 	daemon, err := NewDaemon(DefaultStateRoot())

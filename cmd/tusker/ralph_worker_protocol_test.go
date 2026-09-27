@@ -123,7 +123,7 @@ for line in sys.stdin:
 
 func TestPlanFileLifecycle(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Plan lifecycle", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Plan lifecycle", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 
 	plan, err := ensureTaskPlanFile(vault, "APP-T-0001", "Plan lifecycle")
@@ -259,7 +259,7 @@ automation:
 `)+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Prompt context", "risk": "low", "priority": "p1", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Prompt context", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	return vault
 }

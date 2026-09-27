@@ -11,8 +11,8 @@ import (
 func setupUpstreamHoldVault(t *testing.T) string {
 	t.Helper()
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Upstream piece", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:hard", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Upstream piece", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001:hard", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	// Upstream piece is closed/green on status but its shared build-and-test failed.
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{

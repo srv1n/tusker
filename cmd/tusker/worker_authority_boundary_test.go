@@ -234,7 +234,7 @@ func TestNilStoreCannotAuthenticateCompletionAuthority(t *testing.T) {
 
 func TestWorkerReviewSubmitEmitsProposalWithoutOpeningRuntimeStore(t *testing.T) {
 	vault := automationTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Worker proposal", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Worker proposal", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "work_revision": 1})
 	note, err := resolveV7Note(vault, "APP-T-0001", "task")
 	if err != nil {
@@ -533,7 +533,7 @@ func reviewProposalDaemonFixture(t *testing.T) (RegisteredProject, *Daemon, Work
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review proposal boundary", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Review proposal boundary", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer", "source_sha": facts.Head, "work_revision": 2, "owned_paths": []string{"owned"}})
 	project := registerAutomationTestProject(t, vault)
 	configureCompletionWorkerProfilesForTest(t, vault)

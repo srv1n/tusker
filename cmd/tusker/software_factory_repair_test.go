@@ -608,7 +608,7 @@ func TestSoftwareFactoryRepairExternalReviewAuthorityBindsCurrentMaterial(t *tes
 func TestSoftwareFactoryRepairExternalReviewControllerBindsDTOBeforeAdmission(t *testing.T) {
 	repo := orchestrationGitRepo(t)
 	vault := repairTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External review authority", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "External review authority", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	facts, err := captureGitBranchFacts(repo, "main", time.Now().UTC())
 	if err != nil {
@@ -859,7 +859,7 @@ func TestSoftwareFactoryRepairDaemonCloseSuppressionRequiresCurrentCanonicalEffe
 
 func TestSoftwareFactoryRepairDaemonReviewCallerDoesNotSuppressHistoricalClose(t *testing.T) {
 	vault := repairTestVault(t)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close caller", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Close caller", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{
 		"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer:agent", "work_revision": 1,
@@ -984,7 +984,7 @@ func TestSoftwareFactoryRepairEmptyProviderIdentityReplayFailsClosedAcrossRestar
 func TestSoftwareFactoryRepairDaemonRefusesThreadOpeningWithoutProviderJobID(t *testing.T) {
 	vault := repairTestVault(t)
 	writeDaemonExternalLoopConfig(t, vault, `true`)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing provider identity", "risk": "low", "priority": "p0", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing provider identity", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	seedCollectedExternalApplyState(t, project, "APP-T-0001", "")

@@ -155,7 +155,7 @@ func TestV7VerificationDiagnosticsCarryGrammar(t *testing.T) {
 
 func TestV7DispatchRequiresCompletePlannedAcceptanceCoverage(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Planned coverage"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Planned coverage", "owned-paths": "src"}, newV7Task)
 	note := mustV7Task(t, vault, "APP-T-0001")
 	note.Data["status"] = "ready"
 	note.Data["readiness"] = "ready"
@@ -192,7 +192,7 @@ func TestV7DispatchRequiresCompletePlannedAcceptanceCoverage(t *testing.T) {
 
 func TestV7PlannedAcceptanceCoverageRejectsUnknownIDs(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Unknown coverage"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Unknown coverage", "owned-paths": "src"}, newV7Task)
 	note := mustV7Task(t, vault, "APP-T-0001")
 	note.Body = replaceSection(note.Body, "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Observable result. | Mapped verification. |")
 	note.Body = replaceSection(note.Body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A9 | command: go test ./... | pending | Wrong ID. |")

@@ -241,7 +241,7 @@ func TestRunsSayPendingDeliveryOrderAndReceipt(t *testing.T) {
 
 func TestRunsSayResumePromptContainsExactOperatorMessages(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Say prompt", "domains": "project", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Say prompt", "domains": "project", "owned-paths": "src", "v7": "true"}, newV7Task)
 	task := mustV7Task(t, vault, "APP-T-0001")
 	task.Data = cloneMap(task.Data)
 	task.Data["work_revision"] = 1

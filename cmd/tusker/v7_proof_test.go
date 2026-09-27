@@ -14,7 +14,7 @@ func TestV7InlineProofClosesWithoutEvidenceFile(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Inline proof close", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Inline proof close", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestProof -count=1", "result": "pass", "note": "Focused proof passed."}, v7TestVerificationMutation)
 
@@ -50,7 +50,7 @@ func TestV7VerifyAddParsesEscapedPipeCheck(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Escaped pipe proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Escaped pipe proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	check := "command: go test ./... | tee /tmp/proof.log"
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": check, "result": "pending", "note": "Gate execution required."}, v7TestVerificationMutation)
@@ -73,7 +73,7 @@ func TestV7VerifyRemoveByIndexUsesCASAndEmitsCleanTable(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Remove proof row", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Remove proof row", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestKeep -count=1", "result": "pending", "note": "drop note"}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestDrop -count=1", "result": "pending"}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "index": "1", "by": "agent:luna"}, verifyV7RemoveCmd)
@@ -139,7 +139,7 @@ func TestV7VerifyRemoveRejectsForgedActors(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Actor proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Actor proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: go test ./cmd/tusker -run TestKeep -count=1", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestV7ScreenshotCheckRejectsForgedActors(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Screenshot proof", "risk": "low", "priority": "p2", "proof-mode": "artifact", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Screenshot proof", "risk": "low", "priority": "p2", "proof-mode": "artifact", "owned-paths": "src", "v7": "true"}, newV7Task)
 	for _, raw := range []string{"daemon:spoof", "operator"} {
 		t.Run(strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
 			t.Setenv("CODEX_THREAD_ID", "screenshot-session")
@@ -176,7 +176,7 @@ func TestV7ProofMutationsRejectForgedActors(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Proof actor", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Proof actor", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	for _, raw := range []string{"daemon:spoof", "operator"} {
 		t.Run("set-mode/"+strings.ReplaceAll(raw, ":", "-"), func(t *testing.T) {
 			t.Setenv("CODEX_THREAD_ID", "proof-session")
@@ -199,7 +199,7 @@ func TestV7VerifyAddBlockedRecordsBlockerWithoutSatisfyingProof(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "typecheck", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "typecheck", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestShared -count=1", "result": "blocked", "note": "Owned files typecheck, broad run stops elsewhere.", "blocked-by": "cmd/tusker/other_lane.go"}, v7TestVerificationMutation)
 
@@ -232,7 +232,7 @@ func TestV7VerifyAddBlockedRequiresBlockedBy(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked proof missing attribution", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked proof missing attribution", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	err := verifyV7AddCmd(Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./...", "result": "blocked", "note": "Blocked elsewhere."})
 	if err == nil || !strings.Contains(err.Error(), "--blocked-by") {
@@ -244,7 +244,7 @@ func TestV7VerifyAddPrintsRemainingProofGaps(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Partial proof", "risk": "medium", "priority": "p2", "proof-required": "focused_test,broad_test,lint", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Partial proof", "risk": "medium", "priority": "p2", "proof-required": "focused_test,broad_test,lint", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	output := captureStdout(t, func() {
 		if err := verifyV7AddCmd(Args{"vault": vault, "_pos1": "APP-T-0001", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestFocused -count=1", "result": "pending", "note": "Gate execution required."}); err != nil {
@@ -259,7 +259,7 @@ func TestV7FinishWithoutAttemptPrintsRecoveryCommand(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing attempt finish", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing attempt finish", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestFinishWithoutAttempt -count=1", "result": "pass", "note": "Proof passed."}, v7TestVerificationMutation)
 
 	err := finishV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implementation complete.", "request-review": "true"})
@@ -275,7 +275,7 @@ func TestV7VerifyAddBatchRows(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Batch proof", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Batch proof", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	batch := strings.Join([]string{
 		"A1|command: go test ./cmd/tusker -run TestFocused -count=1|pending|Gate execution required.",
@@ -298,7 +298,7 @@ func TestV7VerifyAddBatchRowsAllowPipesInCheck(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Batch proof with pipe", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Batch proof with pipe", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	check := "command: go test ./... | tee /tmp/proof.log"
 	batch := "A1|" + check + "|pending|Gate execution required."
@@ -320,7 +320,7 @@ func TestV7VerifyAddBusyLockReturnsDeterministicRetry(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Locked proof", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Locked proof", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	release, err := acquireV7ProofWriteLock(vault, "APP-T-0001", time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -366,7 +366,7 @@ func TestV7ProofModeNoneSkipsGeneratedAcceptance(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Planning cleanup", "risk": "low", "priority": "p3", "proof-mode": "none", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Planning cleanup", "risk": "low", "priority": "p3", "proof-mode": "none", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:codex", "local": "true"}, statusV7Cmd)
 
 	if err := closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "reviewer:agent", "reason": "non-executable work accepted", "local": "true"}); err != nil {
@@ -384,7 +384,7 @@ func TestV7ProofStatusForNoneMarksAcceptanceNotRequired(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Planning cleanup", "risk": "low", "priority": "p3", "proof-mode": "none", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Planning cleanup", "risk": "low", "priority": "p3", "proof-mode": "none", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	output := captureStdout(t, func() {
 		if err := proofV7StatusCmd(Args{"vault": vault, "id": "APP-T-0001", "verbose": "true"}); err != nil {
@@ -403,7 +403,7 @@ func TestV7ProofStatusDefaultIsConcise(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Concise proof output", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Concise proof output", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Sign off on acceptance.", "verification": "Human signoff recorded for A1.", "covers": "A1", "why-agent-cannot": "Final human signoff is required by this proof policy."}, newV7Gate)
 
 	output := captureStdout(t, func() {
@@ -452,7 +452,7 @@ func TestV7HighRiskDefaultsToInlineCodeProof(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Backend high-risk task", "risk": "high", "priority": "p1", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Backend high-risk task", "risk": "high", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
 	if err != nil {
@@ -470,7 +470,7 @@ func TestV7ArtifactFinishRequiresEvidenceOrGate(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Artifact proof", "risk": "high", "priority": "p1", "proof-mode": "artifact", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Artifact proof", "risk": "high", "priority": "p1", "proof-mode": "artifact", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 
 	err := finishV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "attempt": "APP-T-0001-A-0001", "summary": "Implementation complete.", "local": "true"})
@@ -494,7 +494,7 @@ func TestV7AttemptHandoffRequiresProofBeforeReview(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete handoff", "risk": "low", "priority": "p2", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete handoff", "risk": "low", "priority": "p2", "status": "ready", "readiness": "ready", "force-ready": "true", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 
 	err := attemptV7HandoffCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implementation claims ready."})
@@ -517,7 +517,7 @@ func TestV7ValidateRejectsReviewAfterHandoffWithIncompleteProof(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Corrupted review", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Corrupted review", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "review", "by": "agent:codex", "local": "true"}, statusV7Cmd)
 
@@ -545,8 +545,8 @@ func TestV7ValidateAllowsHandoffWaitingOnUnresolvedDependency(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p2", "proof-mode": "none", "v7": "true"}, newV7Task)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked handoff", "risk": "low", "priority": "p2", "dependencies": "APP-T-0001", "status": "ready", "readiness": "ready", "force-ready": "true", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependency", "risk": "low", "priority": "p2", "proof-mode": "none", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Blocked handoff", "risk": "low", "priority": "p2", "dependencies": "APP-T-0001", "status": "ready", "readiness": "ready", "force-ready": "true", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0002", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7ValidateAllowsHandoff -count=1", "result": "pass", "note": "Dependent work proof passed."}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "runner": "codex"}, attemptV7StartCmd)
@@ -571,7 +571,7 @@ func TestV7ProofRequiredClassesAreEnforced(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Normative proof classes", "risk": "high", "priority": "p1", "proof-mode": "artifact", "proof-required": "screenshot,human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Normative proof classes", "risk": "high", "priority": "p1", "proof-mode": "artifact", "proof-required": "screenshot,human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "video", "status": "accepted", "accepted-by": "reviewer:agent", "covers": "A1", "external-url": "https://example.test/proof.mov", "summary": "Video artifact accepted."}, evidenceV7AddCmd)
 
@@ -613,7 +613,7 @@ func TestV7ProofMatchingRejectsKeywordTheater(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Structured proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Structured proof", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	// The note and command text mention a test, but the command only prints it.
 	if _, err := upsertV7Verification(vault, "APP-T-0001", v7VerificationRow{CoverText: "A1", Check: "command: echo 'go test ./cmd/tusker -run TestWrong -count=1'", Result: "pass", Notes: "Existing gate receipt."}, "reviewer:gate"); err != nil {
@@ -669,7 +669,7 @@ func TestV7AuditProofIsSatisfiableWithTypedReviewEvidence(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Audited proof", "risk": "critical", "priority": "p1", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Audited proof", "risk": "critical", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "by": "reviewer:gate", "rows": strings.Join([]string{
 		"A1|command: go test ./cmd/tusker -run TestV7AuditProofIsSatisfiableWithTypedReviewEvidence -count=1|pass|Existing focused gate receipt.",
 		"A1|command: go test ./cmd/tusker -count=1|pass|Existing broad gate receipt.",
@@ -693,7 +693,7 @@ func TestV7ProofReportClassifiesHumanOnlyGapsAsTerminalWait(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human wait", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human wait", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7ProofReportClassifiesHumanOnlyGapsAsTerminalWait -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 
 	report := computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))
@@ -707,7 +707,7 @@ func TestV7ProofReportClassifiesManualSmokeOwner(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual smoke", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "manual_smoke", "proof-required-owner": "manual_smoke=human:sarav", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Manual smoke", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "manual_smoke", "proof-required-owner": "manual_smoke=human:sarav", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7HumanWaitOwner -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 
 	report := computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))
@@ -719,7 +719,7 @@ func TestV7HumanOwnedProofRequiresHumanAcceptedArtifact(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human signoff", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human signoff", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "human signoff recorded by agent", "result": "pass", "note": "Agent summary should not satisfy human signoff."}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "human_review", "status": "accepted", "accepted-by": "reviewer:agent", "covers": "A1", "summary": "Reviewer accepted human signoff."}, evidenceV7AddCmd)
 
@@ -738,7 +738,7 @@ func TestV7ProofReportKeepsMachineProofMissingActionable(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Machine gap", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Machine gap", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "manual review", "result": "pass", "note": "Acceptance covered only."}, v7TestVerificationMutation)
 
 	report := computeV7ProofReport(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))
@@ -750,7 +750,7 @@ func TestV7CloseoutWritesHumanWaitCheckpoint(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Closeout wait", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Closeout wait", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutWritesHumanWaitCheckpoint -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 
 	if err := closeoutV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}); err != nil {
@@ -776,7 +776,7 @@ func TestV7CloseoutStatusStopsForTerminalHumanWaitWithoutCheckpoint(t *testing.T
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Pending human signoff", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Pending human signoff", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutStatusStopsForTerminalHumanWaitWithoutCheckpoint -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 
 	output := captureStdout(t, func() {
@@ -830,7 +830,7 @@ func TestV7ValidateIgnoresSupersededCloseoutFingerprint(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Superseded closeout", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Superseded closeout", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7ValidateIgnoresSupersededCloseoutFingerprint -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}, closeoutV7Cmd)
@@ -849,7 +849,7 @@ func TestV7CloseoutRejectsRiskOnlyHumanCheckpoint(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human close policy", "risk": "high", "priority": "p1", "status": "review", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human close policy", "risk": "high", "priority": "p1", "status": "review", "proof-mode": "inline", "proof-required": "focused_test", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutAllowsHumanClosePolicyCheckpoint -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 
 	err := closeoutV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"})
@@ -862,7 +862,7 @@ func TestV7CloseoutRequiresValidationAndPacket(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Closeout requirements", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Closeout requirements", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutRequiresValidationAndPacket -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 
 	err := closeoutV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true"})
@@ -879,7 +879,7 @@ func TestV7CloseoutDoesNotAdvertiseHumanWaitWhenCheckpointWriteFails(t *testing.
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Failed closeout write", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Failed closeout write", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutDoesNotAdvertiseHumanWaitWhenCheckpointWriteFails -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 	closeoutDir := filepath.Join(vault, "work", "closeouts")
 	if err := os.RemoveAll(closeoutDir); err != nil {
@@ -906,7 +906,7 @@ func TestV7CloseoutRechecksTerminalStateAfterValidation(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Validation side effect", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Validation side effect", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutRechecksTerminalStateAfterValidation -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 	mutate := `rm ` + filepath.Base(vault) + `/work/tasks/APP-T-0001.md`
 
@@ -923,7 +923,7 @@ func TestV7CloseoutStatusIgnoresStaleCheckpointAgentAction(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale closeout", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Stale closeout", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutStatusIgnoresStaleCheckpointAgentAction -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}, closeoutV7Cmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "rework", "by": "human:sarav", "reason": "Needs rework.", "local": "true"}, statusV7Cmd)
@@ -960,7 +960,7 @@ func TestV7CloseoutFingerprintInvalidatesGateChange(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate stale closeout", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Gate stale closeout", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutFingerprintInvalidatesGateChange -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "signoff", "owner": "human:sarav", "action": "Sign off.", "verification": "Human signoff recorded.", "covers": "A1", "why-agent-cannot": "Final human signoff is required by this proof policy."}, newV7Gate)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "emit-packet": "true", "validate": "printf validation-ok"}, closeoutV7Cmd)
@@ -994,7 +994,7 @@ func TestV7CloseoutFingerprintHashesDirtyRepoContent(t *testing.T) {
 	vault := filepath.Join(repo, "tusker")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dirty repo", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dirty repo", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "human_signoff", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestV7CloseoutFingerprintHashesDirtyRepoContent -count=1", "result": "pass", "note": "Machine proof passed."}, v7TestVerificationMutation)
 	if err := os.WriteFile(filepath.Join(repo, "app.txt"), []byte("dirty one\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1044,7 +1044,7 @@ func TestV7HighRiskReviewWithMachineGapsStaysReviewerOwned(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "High review gaps", "risk": "high", "priority": "p1", "status": "review", "proof-mode": "artifact", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "High review gaps", "risk": "high", "priority": "p1", "status": "review", "proof-mode": "artifact", "owned-paths": "src", "v7": "true"}, newV7Task)
 
 	projected := v7ProjectedTaskState(vault, mustV7Task(t, vault, "APP-T-0001"), mustIndex(t, vault))
 	assertEqual(t, "waiting_on_review", stringField(projected, "readiness"), "readiness")
@@ -1058,7 +1058,7 @@ func TestV7VerificationGateCanSatisfyManualProofRequirement(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Verification gate smoke", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "manual_smoke", "proof-required-owner": "manual_smoke=human:sarav", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Verification gate smoke", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "manual_smoke", "proof-required-owner": "manual_smoke=human:sarav", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0001", "kind": "verification", "owner": "human:sarav", "action": "Run manual smoke.", "verification": "Manual smoke passed.", "covers": "A1", "why-agent-cannot": "Manual smoke requires human device or environment access."}, newV7Gate)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-G-0001", "by": "human:sarav", "evidence": "Manual smoke passed."}, func(args Args) error { return gateV7Transition(args, "satisfied") })
 
@@ -1083,7 +1083,7 @@ func TestV7VerificationSummaryDoesNotAutoSatisfyDefaultCardProof(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Docs-only summary", "risk": "low", "priority": "p2", "proof-mode": "card", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Docs-only summary", "risk": "low", "priority": "p2", "proof-mode": "card", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "verification_summary", "status": "accepted", "accepted-by": "reviewer:agent", "covers": "A1", "summary": "Reviewed docs only."}, evidenceV7AddCmd)
 
@@ -1100,7 +1100,7 @@ func TestV7ValidatorRejectsSourceFileEvidenceArtifacts(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Forbidden evidence", "risk": "medium", "priority": "p2", "proof-mode": "card", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Forbidden evidence", "risk": "medium", "priority": "p2", "proof-mode": "card", "owned-paths": "src", "v7": "true"}, newV7Task)
 	sourcePath := filepath.Join(filepath.Dir(vault), "copied.go")
 	if err := os.WriteFile(sourcePath, []byte("package copied\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1120,7 +1120,7 @@ func TestV7EvidencePolicyMigrationHonorsEvidenceRequired(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence policy migration", "risk": "medium", "priority": "p2", "evidence-required": "automated_test", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence policy migration", "risk": "medium", "priority": "p2", "evidence-required": "automated_test", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "automated_test", "covers": "A1", "summary": "Focused tests passed."}, evidenceV7AddCmd)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -1176,7 +1176,7 @@ func TestV7NoteWalkerSkipsScratchMarkdown(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Scratch duplicate", "risk": "low", "priority": "p2", "proof-mode": "none", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Scratch duplicate", "risk": "low", "priority": "p2", "proof-mode": "none", "owned-paths": "src", "v7": "true"}, newV7Task)
 	scratch := filepath.Join(vault, "scratch", "APP-T-0001", "legacy-attachments", "APP-T-0001.md")
 	if err := writeText(scratch, "---\nid: APP-T-0001\nkind: task\n---\n\nscratch copy\n"); err != nil {
 		t.Fatal(err)

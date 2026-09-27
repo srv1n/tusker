@@ -18,8 +18,7 @@ func TestV7EvidenceAddFailureBeforeTaskCommitLeavesNoDanglingReference(t *testin
 		"title":    "Evidence transaction",
 		"risk":     "low",
 		"priority": "p2",
-		"v7":       "true",
-	}, newV7Task)
+		"v7":       "true", "owned-paths": "src"}, newV7Task)
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	beforeData, beforeBody, err := parseFrontmatterMustRead(taskPath)
@@ -93,7 +92,7 @@ func TestV7EvidenceArtifactsAreScopedByEvidenceID(t *testing.T) {
 	vault := filepath.Join(repo, "vault")
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "v7": "true"}, newV7Epic)
-	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Scoped evidence", "risk": "low", "priority": "p2", "v7": "true"}, newV7Task)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Scoped evidence", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	if err := writeText("proof.txt", "first evidence\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -142,8 +141,7 @@ func TestV7EvidenceArtifactsAreScopedByEvidenceID(t *testing.T) {
 func TestV7EvidenceAddDuplicateWithDifferentContentReturnsAlreadyExists(t *testing.T) {
 	vault := pickupV7TestVault(t)
 	mustRunPickupTest(t, Args{
-		"vault": vault, "quiet": "true", "epic": "APP", "title": "Duplicate evidence", "risk": "low", "priority": "p2", "v7": "true",
-	}, newV7Task)
+		"vault": vault, "quiet": "true", "epic": "APP", "title": "Duplicate evidence", "risk": "low", "priority": "p2", "v7": "true", "owned-paths": "src"}, newV7Task)
 	forced := errors.New("leave evidence orphaned")
 	v7EvidenceBeforeTaskCommitHook = func(string, string) error { return forced }
 	t.Cleanup(func() { v7EvidenceBeforeTaskCommitHook = nil })

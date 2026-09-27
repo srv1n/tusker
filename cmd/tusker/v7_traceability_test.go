@@ -10,7 +10,7 @@ func TestV7SpecRefsFrontmatterAndValidation(t *testing.T) {
 	vault := v7TraceabilityTestVault(t)
 	writeTraceabilitySpec(t, vault, ".tusker/specs/linked.md", "---\nsubject: linked-spec\npart_of: overview\n---\n# Linked spec\n")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Trace decision", "decision": "Use linked canon."}, newV7Decision)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": ".tusker/specs/linked.md,APP-D-0001"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": ".tusker/specs/linked.md,APP-D-0001", "owned-paths": "src"}, newV7Task)
 
 	// Task creation rejects unresolvable refs, so the dangling reference is
 	// injected the same way stale epic refs arrive: a direct frontmatter
@@ -64,7 +64,7 @@ func TestV7SpecRefsFrontmatterAndValidation(t *testing.T) {
 
 func TestV7WorkStreamsValidationWarnsOnUnknownWorkIDs(t *testing.T) {
 	vault := v7TraceabilityTestVault(t)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Known task"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Known task", "owned-paths": "src"}, newV7Task)
 	writeTraceabilitySpec(t, vault, ".tusker/specs/linked-work.md", strings.Join([]string{
 		"# Linked work",
 		"",
@@ -95,7 +95,7 @@ func TestV7SpecRefsSurfaceInCapsulePacketAndAutomationPlan(t *testing.T) {
 	vault := v7TraceabilityTestVault(t)
 	writeTraceabilitySpec(t, vault, ".tusker/specs/linked.md", "---\nsubject: linked-spec\npart_of: overview\n---\n# Linked spec\n")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Trace decision", "decision": "Use linked canon."}, newV7Decision)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": ".tusker/specs/linked.md,APP-D-0001"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Linked task", "spec-refs": ".tusker/specs/linked.md,APP-D-0001", "owned-paths": "src"}, newV7Task)
 
 	capsule := captureStdout(t, func() {
 		if err := showCmd(Args{"vault": vault, "_pos0": "APP-T-0001", "capsule": "true"}); err != nil {

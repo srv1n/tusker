@@ -249,7 +249,7 @@ func TestRealWorkLifecycleCompletionState(t *testing.T) {
 	plain := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": plain, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": plain, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": plain, "quiet": "true", "epic": "APP", "title": "Inline proof close", "risk": "low", "priority": "p2", "proof-mode": "inline", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": plain, "quiet": "true", "epic": "APP", "title": "Inline proof close", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": plain, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	mustV7Proof(t, Args{"vault": plain, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestProof -count=1", "result": "pass", "note": "Focused proof passed."}, v7TestVerificationMutation)
 	if err := finishV7Cmd(Args{"vault": plain, "quiet": "true", "id": "APP-T-0001", "attempt": "APP-T-0001-A-0001", "summary": "Implementation complete.", "local": "true"}); err != nil {
