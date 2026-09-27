@@ -539,6 +539,14 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 			}
 			continue
 		}
+		if reason, err := d.globalAutomationBlocker(); err != nil {
+			return err
+		} else if reason != "" {
+			if err := d.persistFairDispatchReason(runs, candidate, reason); err != nil {
+				return err
+			}
+			continue
+		}
 		// Check durable storage before scope/vault/resource inspection. The
 		// concrete workspace is checked again inside dispatch after selection.
 		if pressure, pressureErr := d.checkDiskPressureForDispatch(candidate.Project.RepoRoot); pressureErr != nil {

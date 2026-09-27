@@ -173,6 +173,7 @@ type automationStatusReport struct {
 	ParkedRuns          int                        `json:"parked_runs"`
 	MaxActiveRuns       int                        `json:"max_active_runs"`
 	LimitSource         string                     `json:"limit_source"`
+	AutomationEnabled   bool                       `json:"automation_enabled"`
 	CrashLoop           any                        `json:"crash_loop"`
 	InvariantCircuit    any                        `json:"invariant_circuit"`
 	DiskPressure        DiskPressureStatus         `json:"disk_pressure"`
@@ -216,6 +217,7 @@ func automationStatusCmd(args Args) error {
 		ParkedRuns:          intFromAny(status["parkedNoProgressRuns"]),
 		MaxActiveRuns:       intFromAny(status["max_active_runs"]),
 		LimitSource:         stringValue(status["limit_source"]),
+		AutomationEnabled:   boolFromAny(status["automation_global_enabled"]),
 		CrashLoop:           status["crashLoop"],
 		InvariantCircuit:    status["invariantCircuit"],
 		DiskPressure:        diskPressureStatusFromAny(status["disk_pressure"]),
@@ -652,6 +654,11 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		if capped, capReached := daemon.enforceAttemptCreationCap(ctx.Workflow.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
 			blockers = append(blockers, capped.LastError)
 		}
+	}
+	if reason, err := daemon.globalAutomationBlocker(); err != nil {
+		blockers = append(blockers, "automation switch: "+err.Error())
+	} else if reason != "" {
+		blockers = append(blockers, reason)
 	}
 	if reason, err := daemon.crashLoopDispatchBlocker(); err != nil {
 		blockers = append(blockers, "crash loop: "+err.Error())
@@ -1142,6 +1149,11 @@ func printAutomationStatus(report automationStatusReport) {
 		fmt.Printf("Daemon pid: %d uptime=%s\n", report.DaemonPID, (time.Duration(report.DaemonUptimeSeconds) * time.Second).String())
 	} else {
 		fmt.Println("Daemon pid: none")
+	}
+	if report.AutomationEnabled {
+		fmt.Println("Automation: on")
+	} else {
+		fmt.Println("Automation: OFF (nothing dispatches; run `tusker automation on`)")
 	}
 	fmt.Printf("Registered projects: %d\n", report.ProjectCount)
 	fmt.Printf("Active runs: %d / %d\n", report.ActiveRuns, report.MaxActiveRuns)
