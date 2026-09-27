@@ -114,6 +114,20 @@ not an ACP execution route. The no-spend setup check can prove route,
 installed executable metadata, and provider-free fixtures; it does not qualify a
 paid or live model turn.
 
+## Task state
+
+Task, wave and inbox responses carry a `state` record from the task state
+function. The web app shows only its label and reason. No screen maps lease,
+attempt outcome or readiness values to labels. The run page still shows those
+values for debugging.
+
+A wave shows its most urgent member state. The order is Blocked, Needs input,
+Working, In review, Planned, Backlog, Done. Its reason counts the members, for
+example "1 blocked, 2 working".
+
+When a worker asks a question, the task shows Needs input. The task drawer
+shows the question and a reply box.
+
 ## TuskerBar
 
 TuskerBar probes the default local endpoint. It reuses a healthy daemon or
@@ -124,6 +138,7 @@ starts the bundled daemon. It does not store task state.
 - `cmd/tusker/serve_command.go`
 - `cmd/tusker/serve_actions.go`
 - `cmd/tusker/serve_*.go`
+- `cmd/tusker/task_state.go`
 - `internal/serve/ui/src/router.tsx`
 - `internal/serve/ui/src/lib/api.ts`
 - `internal/serve/ui/src/lib/queries.ts`

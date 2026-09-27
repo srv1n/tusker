@@ -1477,7 +1477,7 @@ func (s *serveServer) handleSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	maxAttempts := snap.workflow.Retry.MaxAttempts
 	if maxAttempts <= 0 {
-		maxAttempts = 3
+		maxAttempts = defaultRetryMaxAttempts
 	}
 	review := 0
 	running := 0
@@ -1515,7 +1515,7 @@ func serveAttentionCount(snap serveSnapshot) int {
 	}
 	maxAttempts := snap.workflow.Retry.MaxAttempts
 	if maxAttempts <= 0 {
-		maxAttempts = 3
+		maxAttempts = defaultRetryMaxAttempts
 	}
 	for _, run := range snap.runs {
 		if serveTerminalFailure(run, maxAttempts) {
@@ -2077,6 +2077,7 @@ func serveWaveList(snap serveSnapshot) []serveWaveListItem {
 			Authorization: auth,
 			LandedAt:      nullIfBlank(stringField(wave.Data, "landed_at")),
 			MemberCount:   count, DoneCount: done, LiveRun: live, ReviewWait: count > 0 && review == count && done < count,
+			State: aggregateWaveState(serveWaveMemberStates(snap, wave)),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -2111,9 +2112,14 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 			WorkLevel:        stringField(task.Data, "work_level"),
 			EffectiveExecute: routePreviewForNote(task, snap.workflow, runLaneExecute),
 			EffectiveReview:  routePreviewForNote(task, snap.workflow, runLaneReview),
+			State:            serveTaskStateFor(snap, task),
 		})
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
+	states := make([]taskState, 0, len(members))
+	for _, member := range members {
+		states = append(states, member.State)
+	}
 	idx := serveSnapshotIndex(snap)
 	if projected, err := armedWaveBriefProjectedIndex(snap.project.VaultRoot, idx, wave); err == nil {
 		idx = projected
@@ -2134,6 +2140,7 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		Counts:          counts,
 		Authorization:   waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
 		Brief:           buildWaveBriefWithRuns(idx, wave, runs),
+		State:           aggregateWaveState(states),
 	}
 }
 
@@ -2531,6 +2538,7 @@ func serveTaskCapsuleFor(snap serveSnapshot, task Note) serveTaskCapsule {
 		NextAction:      stringField(task.Data, "next_action"),
 		WorkRevision:    intField(task.Data, "work_revision"),
 		ReadinessSource: "automation_queue",
+		State:           serveTaskStateFor(snap, task),
 	}
 }
 

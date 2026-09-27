@@ -143,6 +143,24 @@ A task can also pin a dependency on a producer in another scope through a
 cross-scope edge whose producer has not yet materialized stays visibly
 blocked, and readiness reports the real blocker rather than a dead reference.
 
+## Task state
+
+Every task shows one state: Backlog, Planned, Working, Needs input, Blocked,
+In review, Done or Canceled. A short reason sits under it. The state is
+computed. The stored `status` in the task file does not change.
+
+One Go function, `deriveTaskState` in `cmd/tusker/task_state.go`, computes the
+state. It reads the task file and the daemon's records: runs, open questions,
+permission requests, human gates and the wave's authorization. It returns a
+record with `state`, `label`, `category`, `next_actor`, `reason_code`,
+`reason` and `next_action`.
+
+`tusker show <TASK-ID> --json` and `tusker next --json` return the record as
+`state`. Blocked always names a reason kind: `crashed`, `outside_problem`,
+`not_allowed` or `paused`. A run that fails 6 attempts parks and shows Blocked
+`crashed`. There is no Failed state. See
+[task states](proposals/task-states.md).
+
 ## Read one task
 
 Use `tusker show <TASK-ID> --capsule`. Use a full task file only when the
@@ -158,6 +176,7 @@ Direct authoring carries the task's authored non-goals in the body itself.
 
 - `internal/v7schema/schema.go`
 - `cmd/tusker/commands_v7.go`
+- `cmd/tusker/task_state.go`
 - `cmd/tusker/v7_control_cmd.go`
 - `cmd/tusker/v7_proof_cmd.go`
 - `.tusker/WORKFLOW.md`

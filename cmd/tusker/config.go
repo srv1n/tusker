@@ -81,7 +81,7 @@ func defaultConfig() Config {
 	cfg.Hooks.PreRelease = []string{}
 	cfg.Hooks.OnFail = []string{}
 	cfg.HookTimeoutSeconds = 120
-	cfg.Retry.MaxAttempts = 3
+	cfg.Retry.MaxAttempts = defaultRetryMaxAttempts
 	cfg.Retry.BackoffSeconds = []int{30, 120, 600}
 	cfg.Workspace.Root = "."
 	cfg.Workspace.Isolation = string(WorkspaceStrategyShared)

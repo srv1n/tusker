@@ -70,13 +70,14 @@ type directWaveReviewMember struct {
 }
 
 type directWaveExternalDependency struct {
-	TaskID         string `json:"taskId" yaml:"taskId"`
-	Title          string `json:"title,omitempty" yaml:"title,omitempty"`
-	Status         string `json:"status,omitempty" yaml:"status,omitempty"`
-	Readiness      string `json:"readiness,omitempty" yaml:"readiness,omitempty"`
-	WaveID         string `json:"waveId,omitempty" yaml:"waveId,omitempty"`
-	WaveTitle      string `json:"waveTitle,omitempty" yaml:"waveTitle,omitempty"`
-	Classification string `json:"classification" yaml:"classification"`
+	TaskID         string     `json:"taskId" yaml:"taskId"`
+	Title          string     `json:"title,omitempty" yaml:"title,omitempty"`
+	Status         string     `json:"status,omitempty" yaml:"status,omitempty"`
+	Readiness      string     `json:"readiness,omitempty" yaml:"readiness,omitempty"`
+	WaveID         string     `json:"waveId,omitempty" yaml:"waveId,omitempty"`
+	WaveTitle      string     `json:"waveTitle,omitempty" yaml:"waveTitle,omitempty"`
+	Classification string     `json:"classification" yaml:"classification"`
+	State          *taskState `json:"state,omitempty" yaml:"-"`
 }
 
 type directWaveReviewHumanAction struct {
@@ -1991,6 +1992,14 @@ func (s *serveServer) handleWaveReviewAPI(w http.ResponseWriter, projectID, wave
 	if err != nil {
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: errorToIssue(err).Message})
 		return
+	}
+	if snap, err := s.loadSnapshotForProject(project.ProjectID); err == nil {
+		for i, dep := range review.ExternalDependencies {
+			if task, ok := snap.notesByID[dep.TaskID]; ok && serveNoteKind(task) == "task" {
+				state := serveTaskStateFor(snap, task)
+				review.ExternalDependencies[i].State = &state
+			}
+		}
 	}
 	serveJSON(w, http.StatusOK, review)
 }

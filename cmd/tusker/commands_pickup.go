@@ -103,7 +103,7 @@ func emitNextSelection(args Args, vaultPath string, selected Note, skipped []nex
 		}
 	}
 	if args.Bool("json") {
-		payload := map[string]any{"ok": true, "item": selected.Data}
+		payload := map[string]any{"ok": true, "item": selected.Data, "state": cliTaskState(vaultPath, selected)}
 		if explain {
 			payload["skipped"] = skipped
 		}

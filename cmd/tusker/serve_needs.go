@@ -53,7 +53,7 @@ func serveNeeds(snap serveSnapshot, now time.Time) []serveNeedItem {
 	}
 	maxAttempts := snap.workflow.Retry.MaxAttempts
 	if maxAttempts <= 0 {
-		maxAttempts = 3
+		maxAttempts = defaultRetryMaxAttempts
 	}
 	for _, run := range snap.runs {
 		if !serveTerminalFailure(run, maxAttempts) {
@@ -93,6 +93,7 @@ func serveNeedBaseMap(snap serveSnapshot, task Note, cap serveTaskCapsule, kind 
 		"blocking":    blocking,
 		"priority":    cap.Priority,
 		"since":       firstNonEmpty(cap.UpdatedAt, serveUpdatedAt(task)),
+		"state":       cap.State,
 	}
 }
 
@@ -164,6 +165,7 @@ func serveFailedNeed(snap serveSnapshot, cap serveTaskCapsule, blocking int, run
 		"since":       firstNonEmpty(cap.UpdatedAt, run.UpdatedAt, run.LastEventAt),
 		"lastError":   firstNonEmpty(run.LastError, "Run exhausted its retry budget with no lease able to continue."),
 		"attempts":    run.AttemptCount,
+		"state":       cap.State,
 	}
 	return need
 }

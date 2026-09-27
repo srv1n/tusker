@@ -33,7 +33,7 @@ func TestSentinelDetectsConfiguredInvariants(t *testing.T) {
 			name:  "attempt count past effective continuation cap",
 			check: invariantCheckAttemptCountWithinCaps,
 			setup: func(t *testing.T, store *RuntimeStore, project RegisteredProject, vault string, now time.Time) {
-				mustUpsertRun(t, store, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptCount: 5, UpdatedAt: now.Format(time.RFC3339)})
+				mustUpsertRun(t, store, RunStatus{ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Lane: runLaneExecute, LeaseState: string(LeaseStateRunning), AttemptCount: defaultRetryMaxAttempts + 1, UpdatedAt: now.Format(time.RFC3339)})
 			},
 			wantText: "attempt count exceeds",
 		},

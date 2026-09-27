@@ -334,7 +334,7 @@ func defaultWorkflow() Workflow {
 	wf.Runtime.Sentinel = defaultRuntimeSentinelConfig()
 	wf.Workspace.Root = "."
 	wf.Workspace.Strategy = string(WorkspaceStrategyShared)
-	wf.Retry.MaxAttempts = 3
+	wf.Retry.MaxAttempts = defaultRetryMaxAttempts
 	wf.Retry.BackoffMS = []int{30000, 120000, 600000}
 	wf.Reviewer.Enabled = true
 	wf.Reviewer.Runner = string(RunnerCodexExec)
@@ -571,6 +571,10 @@ func normalizeWorkflowDispatchStates(wf *Workflow) {
 	}
 	wf.Tracker.LegacyActiveStates = nil
 }
+
+// defaultRetryMaxAttempts is 5 retries after the first attempt; after that
+// the run parks and the task shows Blocked "crashed" (task-states S5).
+const defaultRetryMaxAttempts = 6
 
 func loadWorkflow(vaultPath string) (WorkflowFile, error) {
 	filePath := workflowPath(vaultPath)
