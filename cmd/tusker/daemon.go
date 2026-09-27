@@ -2829,7 +2829,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		// schedule a continuation from this run.
 		return reconciled, stopChanged, nil
 	}
-	sessionResumable := runSessionResumable(wfFile.Data, run)
 	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
 		return run, false, err
 	} else if ingested {
@@ -2846,6 +2845,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run.SessionRef = sessionRef
 			changed = true
 		}
+	}
+	// Preassigned IDs are proposals until the provider confirms the session.
+	sessionResumable, err := d.confirmedSessionResumable(wfFile.Data, run)
+	if err != nil {
+		return run, changed, err
 	}
 	if run.SessionRef != "" {
 		if err := d.attachManagedRunSession(run); err != nil {
@@ -3430,6 +3434,51 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	}
 	clearActiveExecution(&run)
 	return run, true, nil
+}
+
+func providerConfirmedRunSession(run RunStatus) bool {
+	if run.Runner == string(RunnerMuse) {
+		museSession := func(line string) string {
+			var record struct {
+				Stream struct {
+					Kind string `json:"kind"`
+					ID   string `json:"id"`
+				} `json:"stream"`
+			}
+			if json.Unmarshal([]byte(line), &record) == nil && record.Stream.Kind == "session" {
+				return record.Stream.ID
+			}
+			return ""
+		}
+		return run.SessionRef != "" && (extractFirstRef(run.RawLogPath+".head", museSession) == run.SessionRef ||
+			extractFirstRef(run.RawLogPath, museSession) == run.SessionRef)
+	}
+	if run.Runner == string(RunnerClaude) {
+		return run.SessionRef != "" && extractFirstRef(run.RawLogPath, func(line string) string {
+			var event struct {
+				Type      string `json:"type"`
+				Subtype   string `json:"subtype"`
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Type == "system" && event.Subtype == "init" {
+				return event.SessionID
+			}
+			return ""
+		}) == run.SessionRef
+	}
+	return run.SessionRef != "" && (extractSessionRef(run.RawLogPath) == run.SessionRef ||
+		acpSessionRefFromAttemptEvents(run.EventSinkPath, run.ActiveAttemptID, run.Runner) == run.SessionRef)
+}
+
+func (d *Daemon) confirmedSessionResumable(wf Workflow, run RunStatus) (bool, error) {
+	if !runSessionResumable(wf, run) || run.SessionRef == "" {
+		return false, nil
+	}
+	if providerConfirmedRunSession(run) {
+		return true, nil
+	}
+	session, err := d.store.FindSessionByRef(run.ProjectID, run.SessionRef)
+	return session != nil && session.Resumable, err
 }
 
 func (d *Daemon) recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
@@ -4090,6 +4139,9 @@ func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Wo
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
 		return run, false
 	}
+	if d.queuedOperatorContinuation(run) {
+		return run, false
+	}
 	kind := attemptCreationKindForDispatch(run)
 	capped, capReached := d.enforceAttemptCreationCap(wf, run, kind, reason)
 	if !capReached {
@@ -4113,6 +4165,18 @@ func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Wo
 		LeaseState:       run.LeaseState,
 	})
 	return run, true
+}
+
+func (d *Daemon) queuedOperatorContinuation(run RunStatus) bool {
+	if strings.TrimSpace(run.SessionRef) == "" {
+		return false
+	}
+	directive, err := d.store.RunDirective(run.ProjectID, run.RecordID)
+	if err != nil || directive == nil || directive.State != "queued" {
+		return false
+	}
+	expires, err := time.Parse(time.RFC3339Nano, directive.ExpiresAt)
+	return err == nil && time.Now().UTC().Before(expires)
 }
 
 type attemptCreationKind string
@@ -4404,7 +4468,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
 	}
-	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
+	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached && !d.queuedOperatorContinuation(run) {
 		return capped, false, nil
 	}
 	previousRun := run
@@ -5179,7 +5243,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 				ProjectID: project.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: start.SessionRef,
 				LastMessageRef: start.MessageRef,
 				WorkspacePath:  workspace.Path, CurrentItemID: run.ItemID, WorkRevision: run.WorkRevision, LastAttemptID: attemptID,
-				State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession && lane != runLaneReview,
+				State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession && lane != runLaneReview && (resumeSession.SessionRef != "" || !runner.Capabilities().PreassignSessionID),
 				StartedAt: firstNonEmpty(run.StartedAt, start.StartedAt), LastSeenAt: time.Now().UTC().Format(time.RFC3339),
 				EndedAt: firstNonEmpty(start.FinishedAt, ""), LastError: start.Reason,
 			})

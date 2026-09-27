@@ -560,6 +560,11 @@ func extractMessageRefFromJSON(line string) string {
 func findSessionRef(value any) string {
 	switch current := value.(type) {
 	case map[string]any:
+		if stream, ok := current["stream"].(map[string]any); ok && stream["kind"] == "session" {
+			if candidate := strings.TrimSpace(stringValue(stream["id"])); candidate != "" {
+				return candidate
+			}
+		}
 		for _, key := range []string{"session_id", "sessionId", "thread_id", "threadId"} {
 			if candidate := strings.TrimSpace(stringValue(current[key])); candidate != "" {
 				return candidate

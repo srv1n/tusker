@@ -5311,7 +5311,7 @@ func (s *RuntimeStore) ListSessionsForRun(projectID, recordID, runner string) ([
 
 func (s *RuntimeStore) MarkSessionState(projectID, sessionRef, state, endedAt, lastError string, resumable bool) error {
 	_, err := s.exec(`UPDATE sessions
-		SET state = ?, ended_at = ?, last_error = ?, resumable = ?, last_seen_at = ?
+		SET state = ?, ended_at = ?, last_error = ?, resumable = resumable AND ?, last_seen_at = ?
 		WHERE project_id = ? AND session_ref = ?`,
 		state, endedAt, lastError, boolToInt(resumable), time.Now().UTC().Format(time.RFC3339), projectID, sessionRef)
 	return err
