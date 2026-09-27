@@ -285,6 +285,22 @@ func TestDevinACPShellPermissionUsesCommandPolicy(t *testing.T) {
 	}
 }
 
+func TestACPRuntimeEnvironmentCarriesOwnAttemptIdentity(t *testing.T) {
+	t.Setenv("TUSKER_ATTEMPT_ID", "inherited")
+	env := acpRunnerEnvironment(StartRequest{ProjectID: "P", RecordID: "R", ItemID: "T-1", AttemptID: "A1", Lane: "execute", StatusPath: "/s"}, "/workspace", CodexPolicy{})
+	seen := map[string]string{}
+	for _, entry := range env {
+		key, value, _ := strings.Cut(entry, "=")
+		if _, dup := seen[key]; dup {
+			t.Fatalf("duplicate ACP environment key %q", key)
+		}
+		seen[key] = value
+	}
+	if seen["TUSKER_ATTEMPT_ID"] != "A1" || seen["TUSKER_PROJECT_ID"] != "P" || seen["TUSKER_RUN_LANE"] != "execute" || seen["TUSKER_STATUS_PATH"] != "/s" {
+		t.Fatalf("ACP worker lacks its own attempt identity: %#v", seen)
+	}
+}
+
 func TestACPRuntimeEnvironmentIsPositiveAndControlPlaneFree(t *testing.T) {
 	t.Setenv("TUSKER_STATE_ROOT", "/should-not-cross-boundary")
 	t.Setenv("TUSKER_RUNNER_PATH_PREFIX", "/attacker/bin")
