@@ -42,7 +42,10 @@ Safety:
   Every mutating command requires the .tusker/demo/manifest.json ownership
   marker and an exact canonical path match. Seed refuses non-empty foreign
   directories; reset previews by default, refuses active runs, and only
-  deletes demo-owned paths inside the marker repo.`)
+  deletes demo-owned paths inside the marker repo.
+
+  Demo projects are always listed in Serve and carry a "Demo" badge;
+  --visible is accepted for compatibility and does nothing.`)
 }
 
 // ---------------------------------------------------------------------------
@@ -87,10 +90,9 @@ func demoSeed(args Args) (map[string]any, error) {
 	repoRoot := canonical
 	withGate := args.Bool("with-human-gate")
 	withSecond := args.Bool("with-second-project")
-	visible := args.Bool("visible")
 
 	if existing, loadErr := demoLoadManifest(repoRoot); loadErr == nil {
-		if existing.ScenarioVersion != demoScenarioVersion || existing.HumanGate != withGate || existing.Visible != visible {
+		if existing.ScenarioVersion != demoScenarioVersion || existing.HumanGate != withGate {
 			return nil, tuskerError(demoCodeSeedMismatch, "existing seed differs (version or options); reset before reseeding", withHint("tusker demo reset --repo "+repoRoot+" --yes"))
 		}
 		return demoSeedReport(repoRoot, existing, true), nil
@@ -137,7 +139,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	// unrelated global settings. Runner profiles and model levels are
 	// global-only: the seeded project defines none and routes through the
 	// operator's global model_levels (TUSKER_CONFIG or ~/.config/tusker).
-	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: authoritative\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
+	if err := writeText(filepath.Join(vaultPath, "config.local.yaml"), "automation:\n  completion_reactor:\n    mode: disabled\n  concurrency:\n    max_active_runs: 4\n    max_active_runs_per_project: 4\n  validation:\n    commands:\n      - git diff --check\n"); err != nil {
 		return nil, err
 	}
 	createdPaths, err := demoSeedRealWorkFiles(repoRoot)
@@ -154,7 +156,7 @@ func demoSeed(args Args) (map[string]any, error) {
 	manifest := &demoManifest{
 		Schema: demoManifestSchema, Scenario: demoScenario, ScenarioVersion: demoScenarioVersion,
 		RepoRoot: repoRoot, Vault: ".tusker", SeededAt: time.Now().UTC().Format(time.RFC3339),
-		SeededBy: actor, HumanGate: withGate, Visible: visible,
+		SeededBy: actor, HumanGate: withGate,
 		Waves: map[string]demoWaveRecord{}, Tasks: map[string]demoTaskRecord{}, Profiles: profiles,
 		CreatedPaths: createdPaths,
 	}
@@ -363,7 +365,7 @@ func demoEnsureEpic(exec *demoExec, repoRoot, vaultPath string, wave demoWaveDef
 	if fileExists(filepath.Join(vaultPath, "work", "epics", wave.Epic+".md")) {
 		return nil
 	}
-	_, err := exec.run(repoRoot, "new", "epic", wave.Epic, "--title", wave.EpicTitle, "--vault", vaultPath)
+	_, err := exec.run(repoRoot, "new", "epic", wave.Epic, "--title", wave.EpicTitle, "--summary", wave.EpicSummary, "--vault", vaultPath)
 	return err
 }
 

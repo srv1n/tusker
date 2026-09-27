@@ -75,6 +75,7 @@ type serveProjectSummary struct {
 	VaultRoot               string                            `json:"vaultRoot"`
 	Auxiliary               bool                              `json:"auxiliary"`
 	Visible                 bool                              `json:"visible"`
+	Demo                    bool                              `json:"demo"`
 	Checkouts               []serveCheckoutSummary            `json:"checkouts"`
 	RegistryPreview         serveRegistryPreview              `json:"registryPreview"`
 	AutomationEnabled       bool                              `json:"automationEnabled"`

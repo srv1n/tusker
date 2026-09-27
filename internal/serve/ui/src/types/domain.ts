@@ -469,6 +469,8 @@ export interface ProjectSummary {
   vaultRoot: string;
   visible?: boolean;
   auxiliary?: boolean;
+  /** Seeded by `tusker demo seed`; carries a "Demo" badge in navigation. */
+  demo?: boolean;
   checkouts?: CheckoutSummary[];
   registryPreview?: {
     duplicatePathAliases: string[];

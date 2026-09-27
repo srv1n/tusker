@@ -27,12 +27,12 @@ func TestServeProjectsExposeAdaptiveReconciliationStatus(t *testing.T) {
 	}
 }
 
-func TestRegisteredProjectAuxiliary(t *testing.T) {
+func TestRegisteredProjectDemo(t *testing.T) {
 	repo := t.TempDir()
 	vault := filepath.Join(repo, ".tusker")
 	project := RegisteredProject{RepoRoot: repo, VaultRoot: vault}
-	if registeredProjectAuxiliary(project) {
-		t.Fatal("ordinary project classified as auxiliary")
+	if registeredProjectDemo(project) {
+		t.Fatal("ordinary project classified as demo")
 	}
 	if err := ensureDir(filepath.Join(vault, "demo")); err != nil {
 		t.Fatal(err)
@@ -40,18 +40,12 @@ func TestRegisteredProjectAuxiliary(t *testing.T) {
 	if err := writeText(filepath.Join(vault, "demo", "manifest.json"), "{}\n"); err != nil {
 		t.Fatal(err)
 	}
-	if !registeredProjectAuxiliary(project) {
-		t.Fatal("demo project not classified as auxiliary")
-	}
-	if err := writeText(filepath.Join(vault, "demo", "manifest.json"), `{"visible":true}`+"\n"); err != nil {
-		t.Fatal(err)
-	}
-	if registeredProjectAuxiliary(project) {
-		t.Fatal("visible demo project classified as auxiliary")
+	if !registeredProjectDemo(project) {
+		t.Fatal("demo project not classified as demo")
 	}
 	project = RegisteredProject{RepoRoot: filepath.Join(repo, ".tusker", "scratch", "wave", "repo")}
-	if registeredProjectAuxiliary(project) {
-		t.Fatal("ordinary scratch project classified as auxiliary")
+	if registeredProjectDemo(project) {
+		t.Fatal("ordinary scratch project classified as demo")
 	}
 }
 
