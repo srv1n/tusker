@@ -580,6 +580,7 @@ func (h *acpLiveHandle) observeUpdates() {
 	pending := map[string]pendingEvent{}
 	var pendingOrder []string
 	seenProposalMarkers := map[string]bool{}
+	toolOutputs := map[string]string{}
 	flush := func() {
 		if dirty {
 			_ = appendACPEvent(h.eventLog, "agent_message", h.currentProvenance(), map[string]any{
@@ -637,7 +638,7 @@ func (h *acpLiveHandle) observeUpdates() {
 				}
 				_ = json.Unmarshal(activity.RawInput, &input)
 				toolTitle, toolCommand, toolStatus, toolOutput = activity.Title, input.Command, activity.Status, activityContentText(activity.Content)
-				h.logCompletedToolCallProposal(activity, seenProposalMarkers)
+				h.logCompletedToolCallProposal(activity, toolOutputs, seenProposalMarkers)
 				toolID := boundedACPObservation(activity.ToolCallID)
 				fields["tool_call_id"] = toolID
 				// The event reader uses message_id as the stable display identity.
@@ -695,15 +696,31 @@ func (h *acpLiveHandle) observeUpdates() {
 	}
 }
 
+// acpToolOutputScanMax bounds the output buffered per tool call for marker
+// scanning.
+const acpToolOutputScanMax = 1 << 20
+
 // terminalEscape matches the ANSI sequences a harness terminal splices into
 // rendered tool output (CSI codes and charset selection such as ESC ( B).
 var terminalEscape = regexp.MustCompile("\x1b(?:\\[[0-9;?]*[ -/]*[@-~]|[()][0-9A-Za-z])")
 
-func (h *acpLiveHandle) logCompletedToolCallProposal(activity acpActivityUpdate, seen map[string]bool) {
-	if activity.Status != "completed" || (activity.SessionUpdate != "tool_call" && activity.SessionUpdate != "tool_call_update") {
+// logCompletedToolCallProposal buffers each tool call's output and scans it
+// when the call completes: Devin sends the output in earlier updates and a
+// bare status on the completed one.
+func (h *acpLiveHandle) logCompletedToolCallProposal(activity acpActivityUpdate, outputs map[string]string, seen map[string]bool) {
+	if activity.SessionUpdate != "tool_call" && activity.SessionUpdate != "tool_call_update" {
 		return
 	}
-	for _, line := range reviewProposalMarkerLines(activityContentText(activity.Content)) {
+	id := activity.ToolCallID
+	if text := activityContentText(activity.Content); text != "" && len(outputs[id]) < acpToolOutputScanMax {
+		outputs[id] += text + "\n"
+	}
+	if activity.Status != "completed" {
+		return
+	}
+	text := outputs[id]
+	delete(outputs, id)
+	for _, line := range reviewProposalMarkerLines(text) {
 		if !seen[line] {
 			if _, err := fmt.Fprintln(h.log, line); err == nil {
 				seen[line] = true
