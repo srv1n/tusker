@@ -7176,7 +7176,11 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 			return ""
 		}
 	}
-	wfData, err := json.Marshal(wfFile.Data)
+	// Bind the WORKFLOW.md file as written, not the decoded Workflow struct:
+	// the struct also carries binary defaults and config overlays, so a daemon
+	// and CLI built at different commits (or a config toggle) would disagree
+	// about an unchanged workflow and refuse every native resume.
+	wfText, err := readText(wfFile.Path)
 	if err != nil {
 		return ""
 	}
@@ -7193,7 +7197,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		VaultRoot        string `json:"vault_root"`
 		WorkflowPath     string `json:"workflow_path"`
 		WorkflowBody     string `json:"workflow_body"`
-		WorkflowData     string `json:"workflow_data"`
+		WorkflowText     string `json:"workflow_text"`
 		TaskPath         string `json:"task_path"`
 		TaskRelativePath string `json:"task_relative_path"`
 		TaskBody         string `json:"task_body"`
@@ -7213,7 +7217,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		WorkspacePath    string `json:"workspace_path"`
 		WorkRevision     int    `json:"work_revision"`
 	}{
-		Version:          "tusker.resume-context/v1",
+		Version:          "tusker.resume-context/v2",
 		ProjectID:        project.ProjectID,
 		ProjectKey:       project.ProjectKey,
 		ProjectName:      project.Name,
@@ -7221,7 +7225,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		VaultRoot:        project.VaultRoot,
 		WorkflowPath:     wfFile.Path,
 		WorkflowBody:     wfFile.Body,
-		WorkflowData:     string(wfData),
+		WorkflowText:     wfText,
 		TaskPath:         note.AbsolutePath,
 		TaskRelativePath: note.RelativePath,
 		TaskBody:         note.Body,
