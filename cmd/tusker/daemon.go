@@ -4140,9 +4140,6 @@ func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Wo
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
 		return run, false
 	}
-	if d.queuedOperatorContinuation(run) {
-		return run, false
-	}
 	kind := attemptCreationKindForDispatch(run)
 	capped, capReached := d.enforceAttemptCreationCap(wf, run, kind, reason)
 	if !capReached {
@@ -4169,7 +4166,7 @@ func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Wo
 }
 
 func (d *Daemon) queuedOperatorContinuation(run RunStatus) bool {
-	if strings.TrimSpace(run.SessionRef) == "" {
+	if d.store == nil || strings.TrimSpace(run.SessionRef) == "" {
 		return false
 	}
 	directive, err := d.store.RunDirective(run.ProjectID, run.RecordID)
@@ -4191,6 +4188,11 @@ const (
 )
 
 func (d *Daemon) enforceAttemptCreationCap(wf Workflow, run RunStatus, kind attemptCreationKind, reason string) (RunStatus, bool) {
+	// Caps bound automatic retries. An operator's queued Say or Continue is an
+	// explicit request for one more attempt, so every caller lets it through.
+	if d.queuedOperatorContinuation(run) {
+		return run, false
+	}
 	if kind == attemptCreationContinuation {
 		limit := maxContinuationRetries(wf)
 		if limit > 0 && d.continuationRetryCount(run) >= limit {
@@ -4469,7 +4471,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
 	}
-	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached && !d.queuedOperatorContinuation(run) {
+	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
 		return capped, false, nil
 	}
 	previousRun := run
