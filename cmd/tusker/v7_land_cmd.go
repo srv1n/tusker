@@ -1128,15 +1128,6 @@ func resolveV7GeneratedProjectionMerge(workDir string) (bool, string, error) {
 	return resolveV7ProjectionMerge(workDir, "")
 }
 
-// resolveV7CompletionProjectionMerge additionally retains the integration
-// copy of unrelated task records. A worker can carry stale control-plane
-// snapshots for other tasks in its worktree; those records are not part of
-// the reviewed implementation and cannot veto its completion. The reviewed
-// task itself is deliberately excluded from this exception.
-func resolveV7CompletionProjectionMerge(workDir, reviewedTaskID string) (bool, string, error) {
-	return resolveV7ProjectionMerge(workDir, strings.ToUpper(strings.TrimSpace(reviewedTaskID)))
-}
-
 func resolveV7ProjectionMerge(workDir, reviewedTaskID string) (bool, string, error) {
 	output, err := gitCombined(workDir, "diff", "--name-only", "--diff-filter=U")
 	if err != nil {

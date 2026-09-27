@@ -51,28 +51,6 @@ func completionReceiptRepoPath(receiptID string) string {
 	return ".tusker/completion-receipts/" + strings.TrimPrefix(receiptID, "receipt:") + ".json"
 }
 
-func newCompletionReceipt(vaultPath, taskPath string, task completionGitTreeEntry, result ReviewResult, tx *completionTransaction) (completionReceipt, []byte, error) {
-	if tx == nil || task.Mode != "100644" || task.Type != "blob" || task.OID == "" {
-		return completionReceipt{}, nil, fmt.Errorf("completion receipt requires exact regular task blob")
-	}
-	closeProjection, err := completionCloseAuthorityProjectionSnapshot(vaultPath, tx.IntegrationBase, result)
-	if err != nil {
-		return completionReceipt{}, nil, err
-	}
-	rawProjection, _ := json.Marshal(closeProjection)
-	sum := sha256.Sum256(rawProjection)
-	if tx.CloseAuthorityFP != "sha256:"+hex.EncodeToString(sum[:]) {
-		return completionReceipt{}, nil, fmt.Errorf("completion receipt close projection does not match frozen authority")
-	}
-	r := completionReceipt{Schema: completionReceiptSchema, ReceiptID: completionReceiptID(tx.ID), TaskPath: taskPath, TaskBlob: task.OID, TaskMode: task.Mode, Review: result,
-		Transaction: completionReceiptTransaction{ID: tx.ID, ProjectID: tx.ProjectID, TaskID: tx.TaskID, ResultRevision: tx.ResultRevision, ReviewedTaskStateRev: tx.ReviewedTaskStateRev, WorkRevision: tx.WorkRevision, ImplementationSHA: tx.ImplementationSHA, ReviewAttempt: tx.ReviewAttempt, IntegrationBase: tx.IntegrationBase, IntegrationRef: tx.IntegrationRef, StagingRef: tx.StagingRef, WaveID: tx.WaveID, WaveAuthorityKind: tx.WaveAuthorityKind, WaveAuthorizationFP: tx.WaveAuthorizationFP, WaveMaterialFP: tx.WaveMaterialFP, CloseAuthorityFP: tx.CloseAuthorityFP, WorkerPolicyFP: tx.WorkerPolicyFP}, Close: closeProjection, Authority: completionReceiptAuthority{ID: tx.CompletionAuthorityID, Signature: append([]byte(nil), tx.CompletionAuthoritySig...)}}
-	raw, err := json.Marshal(r)
-	if err != nil {
-		return completionReceipt{}, nil, err
-	}
-	return r, raw, nil
-}
-
 func validateCompletionReceipt(raw []byte, taskPath string, task completionGitTreeEntry, result ReviewResult, tx *completionTransaction, taskData map[string]any, taskBody string) error {
 	var receipt completionReceipt
 	if err := json.Unmarshal(raw, &receipt); err != nil {

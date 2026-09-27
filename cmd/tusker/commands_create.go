@@ -81,10 +81,10 @@ automation:
   # Runner profiles live only in the global config (tusker runner profiles
   # --write); this project selects them by name via automation.model_levels.
   dispatch_scope: armed_waves
-  # The deterministic review-completion reactor is separately opt-in. Its
-  # modes are disabled, shadow (read-only comparison), and authoritative.
+  # After a passing review the daemon lands and closes the task
+  # (authoritative). Set disabled to land and close by hand.
   completion_reactor:
-    mode: disabled
+    mode: authoritative
   trigger_states: [ready, rework]
   # Direct Codex is available after fresh setup. tusker acp setup can add the
   # pinned ACP adapter later when that machine has been configured for it.

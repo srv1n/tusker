@@ -82,9 +82,10 @@ Blocked always carries one reason kind. Each kind names a fix.
 
 ## Dependencies
 
-- Auto-land needs the completion step to accept every harness. Today it
-  accepts only a sandboxed Codex worker (campaign item F14, decision D1).
-  Until then, In review with reason `landing` waits for the owner's Land.
+- Auto-land: done in Phase 2 (S4). A passing review from any harness lands
+  and closes the task. In review shows `merge conflict` or `landing` when the
+  landing needs the owner. `completion_reactor.mode: disabled` keeps landing
+  manual.
 - Architect-first questions need the mailbox to reach the architect session
   (campaign item V6). Until then, Needs input goes to the owner.
 

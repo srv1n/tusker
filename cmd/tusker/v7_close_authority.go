@@ -46,28 +46,6 @@ type v7TaskCloseAuthorityBinding struct {
 	ClosedAt                  string `json:"closed_at"`
 }
 
-func newCompletionTaskCloseAuthority(vaultPath string, result ReviewResult, transaction *completionTransaction) (v7TaskCloseAuthority, error) {
-	if transaction == nil {
-		return v7TaskCloseAuthority{}, completionFrozenAuthorityRepairError(nil, "close audit transaction is missing")
-	}
-	fact := v7TaskCloseAuthority{
-		Schema: v7TaskCloseAuthoritySchema, Project: v7ProjectID(vaultPath),
-		TransactionID: transaction.ID, ReceiptID: completionReceiptID(transaction.ID), TaskID: result.TaskID,
-		ReviewResultRevision: result.ResultRevision, ReviewedTaskStateRev: transaction.ReviewedTaskStateRev,
-		CloseAuthorityFingerprint: transaction.CloseAuthorityFP, Actor: result.Actor,
-		ClosedAt: completionResultTimestamp(result),
-	}
-	binding, err := v7TaskCloseAuthorityBindingFingerprint(fact)
-	if err != nil {
-		return v7TaskCloseAuthority{}, err
-	}
-	fact.BindingFingerprint = binding
-	if err := validateV7TaskCloseAuthorityFact(fact, fact.Project, result.TaskID, result.Actor, "[tusker-review-result:"+result.ResultRevision+"]"); err != nil {
-		return v7TaskCloseAuthority{}, err
-	}
-	return fact, nil
-}
-
 func v7TaskCloseAuthorityBindingFingerprint(fact v7TaskCloseAuthority) (string, error) {
 	raw, err := json.Marshal(v7TaskCloseAuthorityBinding{
 		Schema: fact.Schema, Project: fact.Project, TransactionID: fact.TransactionID, ReceiptID: fact.ReceiptID,

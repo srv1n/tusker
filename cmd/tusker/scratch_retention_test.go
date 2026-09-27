@@ -294,18 +294,16 @@ func TestScratchRetainedOnDiscard(t *testing.T) {
 	}
 }
 
-// The daemon's automated close only lands through the canonical projection, and
-// that path needs a full git/review-transaction fixture. Assert the wiring at the
-// source instead of standing up one; reapTaskScratch itself is covered above.
+// The daemon's automated close is the review pass handler, which closes
+// through the same ceremony as a manual close. Assert at the source that it
+// leaves scratch to the retention policy; reapTaskScratch is covered above.
 func TestScratchNotReapedOnReactorClose(t *testing.T) {
-	source, err := readText("completion_reactor.go")
+	source, err := readText("review_pass.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := source[strings.Index(source, "func projectCompletionTaskToCanonical("):]
-	body = body[:strings.Index(body, "\n}\n")]
-	if strings.Contains(body, "reapTaskScratch(vaultPath, result.TaskID)") {
-		t.Fatal("canonical completion must leave scratch to the retention policy")
+	if strings.Contains(source, "reapTaskScratch(") {
+		t.Fatal("the review pass handler must leave scratch to the retention policy")
 	}
 }
 

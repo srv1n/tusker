@@ -89,8 +89,7 @@ the path or command.
 ## Dependencies
 
 - The completion step must accept every harness under this model (campaign
-  items F14, F15). The current rule that only a sandboxed Codex worker may
-  land goes away.
+  items F14, F15). Done in Phase 2 (S4): the Codex-sandbox-only rule is gone.
 - F11 touches `daemon.go`, so it starts after the F17 lane lands.
 - D1 touches the runner adapters, so it starts after the F21 lane lands.
 

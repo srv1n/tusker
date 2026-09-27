@@ -26,6 +26,11 @@ const (
 	RunFailureOutcomeUnknown   RunFailureReasonCode = "outcome_unknown"
 	RunFailureCancelled        RunFailureReasonCode = "cancelled"
 	RunFailureUnknown          RunFailureReasonCode = "unknown"
+	// Set by the daemon, not a driver: it refused the worker's output.
+	RunFailurePolicyRefused RunFailureReasonCode = "policy_refused"
+	// Set by the review pass handler when a passing review cannot land.
+	RunFailureMergeConflict RunFailureReasonCode = "merge_conflict"
+	RunFailureLandingFailed RunFailureReasonCode = "landing_failed"
 )
 
 type runFailureReasonSpec struct {
@@ -51,6 +56,9 @@ var runFailureReasons = map[RunFailureReasonCode]runFailureReasonSpec{
 	RunFailureOutcomeUnknown:   {"lost", false, AttemptOutcomeUnknown, "The outcome is unknown. Inspect provider state before Continuing."},
 	RunFailureCancelled:        {"failed", false, AttemptOutcomeCancelled, "The run was cancelled. Continue if work should resume."},
 	RunFailureUnknown:          {"failed", true, AttemptOutcomeFailed, "The failure is unclassified. Inspect the last events, then Continue."},
+	RunFailurePolicyRefused:    {"blocked", false, AttemptOutcomeBlocked, "Tusker refused the worker's output. Read the reason, change the task or the profile, then Retry."},
+	RunFailureMergeConflict:    {"blocked", false, AttemptOutcomeBlocked, "The reviewed work does not merge into the integration branch. Resolve the conflict, then Land."},
+	RunFailureLandingFailed:    {"blocked", false, AttemptOutcomeBlocked, "The reviewed work passed review but did not land. Read the reason, then Land."},
 }
 
 func runFailureReason(code RunFailureReasonCode) (runFailureReasonSpec, bool) {

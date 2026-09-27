@@ -22,18 +22,16 @@ func TestCompletionReactorModeResolution(t *testing.T) {
 		wantWarning       string
 	}{
 		{
-			name:              "absent disabled is fresh default",
+			name:              "absent is the pass handler by default",
 			automationEnabled: false,
-			wantConfigured:    "disabled",
-			wantEffective:     "disabled",
+			wantEffective:     "authoritative",
 			wantProvenance:    "fresh default",
 		},
 		{
-			name:              "absent enabled preserves legacy authority",
+			name:              "absent with automation on is the same default",
 			automationEnabled: true,
-			wantEffective:     "legacy",
-			wantProvenance:    "legacy enabled config without completion_reactor.mode",
-			wantWarning:       legacyCompletionReactorModeWarning,
+			wantEffective:     "authoritative",
+			wantProvenance:    "fresh default",
 		},
 		{
 			name:              "explicit disabled",
@@ -114,8 +112,8 @@ func TestCompletionReactorModeFreshConfigAndDoctorWarningAreSideEffectFree(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(config, "completion_reactor:\n    mode: disabled") {
-		t.Fatalf("fresh config did not explicitly disable completion reactor:\n%s", config)
+	if !strings.Contains(config, "completion_reactor:\n    mode: authoritative") {
+		t.Fatalf("fresh config did not turn on the review pass handler:\n%s", config)
 	}
 	if err := writeText(configPath, "schema: tusker.config/v1\nproject_id: app\nautomation:\n  enabled: true\n"); err != nil {
 		t.Fatal(err)
@@ -128,9 +126,8 @@ func TestCompletionReactorModeFreshConfigAndDoctorWarningAreSideEffectFree(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	finding := findingByCode(report, "legacy_completion_reactor_mode")
-	if finding == nil || finding.Changed || finding.Repairable || finding.Action != legacyCompletionReactorModeRepair {
-		t.Fatalf("expected read-only legacy completion mode warning, got %#v", finding)
+	if finding := findingByCode(report, "legacy_completion_reactor_mode"); finding != nil {
+		t.Fatalf("an absent completion mode is the default now, not a legacy warning: %#v", finding)
 	}
 	after, err := readText(configPath)
 	if err != nil {

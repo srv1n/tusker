@@ -455,22 +455,38 @@ func closeV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	idx, err := loadV7Index(vaultPath)
+	prev, err := closeV7Task(vaultPath, id, actor, args, false)
 	if err != nil {
 		return err
+	}
+	if !args.Bool("quiet") {
+		fmt.Printf("%s: %s -> done\n", id, prev)
+	}
+	return nil
+}
+
+// closeV7Task is the close ceremony shared by `tusker close` and the daemon's
+// review pass handler. The pass handler has already run the task's
+// Verification commands in the task worktree, so it skips re-running them in
+// the canonical checkout, which does not hold the change yet.
+func closeV7Task(vaultPath, id, actor string, args Args, skipCommandVerification bool) (string, error) {
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return "", err
 	}
 	note, ok := idx.Tasks[id]
 	if !ok {
-		return tuskerError(errorNotFound, "V7 task not found: "+id)
+		return "", tuskerError(errorNotFound, "V7 task not found: "+id)
 	}
 	preflight, err := v7ClosePreflight(vaultPath, note, idx, v7ClosePreflightRequest{
 		Args: args, Actor: actor, Action: "close", RequireReview: true, Force: args.Bool("force"), ExpectedTaskID: id,
+		SkipCommandVerification: skipCommandVerification,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := preflightCanonicalRuntimeRetirement(vaultPath, id); err != nil {
-		return err
+		return "", err
 	}
 	data, body := preflight.Task.Data, preflight.Task.Body
 	baseRev := stringField(data, "state_rev")
@@ -478,23 +494,20 @@ func closeV7Cmd(args Args) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	applyV7TaskCloseProjection(data, actor, now, nil)
 	if _, err := saveV7CloseProjectionCAS(note.AbsolutePath, data, body, baseRev, id); err != nil {
-		return err
-	}
-	if !args.Bool("quiet") {
-		fmt.Printf("%s: %s -> done\n", id, prev)
+		return "", err
 	}
 	if err := emitV7TaskClosedEvent(vaultPath, id, actor, now, prev, args.String("reason"), nil); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := retireCanonicalRuntimeRowsForTask(vaultPath, id, "done", "close ceremony", ""); err != nil {
-		return err
+		return "", err
 	}
 	affected, err := v7TaskIDsForTaskControl(vaultPath, id)
 	if err != nil {
-		return err
+		return "", err
 	}
 	_, err = reconcileV7ControlProjections(vaultPath, affected, actor, "task:"+id)
-	return err
+	return prev, err
 }
 
 func v7ReviewerIntegratedDependencyIndex(vaultPath string, args Args, task Note, idx v7Index) v7Index {
