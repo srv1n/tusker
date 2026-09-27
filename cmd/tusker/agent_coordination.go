@@ -128,7 +128,10 @@ func (d *Daemon) processAgentWakeups(project string) error {
 				continue
 			}
 		}
-		if message.WorkRevision > 0 && message.OriginTaskID != "" {
+		// Attempt-bound messages carry a route generation; their work revision is
+		// exact even when it is 0 (a new V7 task's first execute run). Only
+		// messages with neither field are unbound legacy/operator messages.
+		if (message.WorkRevision > 0 || message.RouteGeneration > 0) && message.OriginTaskID != "" {
 			origin, originErr := d.store.FindRunScoped(w.ProjectID, message.OriginTaskID)
 			if originErr != nil || origin == nil || origin.WorkRevision != message.WorkRevision || (message.RouteGeneration > 0 && origin.LeaseGeneration != message.RouteGeneration) {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
@@ -224,7 +227,7 @@ func (d *Daemon) processAgentWakeups(project string) error {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
 				continue
 			}
-			if (parent.WorkRevision > 0 && run.WorkRevision != parent.WorkRevision) || (parent.RouteGeneration > 0 && run.LeaseGeneration != parent.RouteGeneration) {
+			if ((parent.WorkRevision > 0 || parent.RouteGeneration > 0) && run.WorkRevision != parent.WorkRevision) || (parent.RouteGeneration > 0 && run.LeaseGeneration != parent.RouteGeneration) {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
 				continue
 			}

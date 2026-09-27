@@ -211,19 +211,10 @@ func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject,
 	if strings.TrimSpace(session.CurrentItemID) != "" && strings.TrimSpace(run.ItemID) != "" && session.CurrentItemID != run.ItemID {
 		return nil, nil, "stored session item_id does not match run item_id"
 	}
-	// Dispatch will validate the same fingerprint after it allocates the child
-	// attempt. Clear only the future active-attempt slot for this preflight so a
-	// session whose last attempt is still the current terminal attempt can be
-	// checked against its retained prompt rather than rejected as self-equal.
-	probe := run
-	probe.ActiveAttemptID = ""
-	// Stop/interrupt clears the run's prompt path; the retained prompt is the
-	// session's last attempt prompt, which is what this preflight re-checks.
-	if strings.TrimSpace(probe.PromptPath) == "" {
-		_ = store.queryRowScan(`SELECT prompt_path FROM attempts WHERE project_id = ? AND attempt_id = ? LIMIT 1`,
-			[]any{run.ProjectID, session.LastAttemptID}, &probe.PromptPath)
-	}
-	if reason := (&Daemon{store: store}).resumeContextFingerprintMismatch(probe, session); reason != "" {
+	// Recompute the context the continuation would be dispatched with and
+	// compare it with the fingerprint retained in the session's last prompt, so
+	// a changed task or workflow is refused here rather than at dispatch.
+	if reason := (&Daemon{store: store}).priorResumeContextMismatch(run, session, currentResumeContextFingerprint(store, project, run)); reason != "" {
 		return nil, nil, reason
 	}
 	if strings.TrimSpace(stringField(wave.Data, "id")) == "" ||
@@ -247,6 +238,20 @@ func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject,
 		return nil, nil, "native continuation is already queued"
 	}
 	return session, nil, ""
+}
+
+// currentResumeContextFingerprint renders the resume fingerprint a dispatch of
+// this execute run would stamp, from the same project loader and task index.
+func currentResumeContextFingerprint(store *RuntimeStore, project RegisteredProject, run RunStatus) string {
+	loaded, err := loadProjectContents(store, project, false)
+	if err != nil {
+		return ""
+	}
+	note, err := resolveV7Note(loaded.Project.VaultRoot, firstNonEmpty(run.ItemID, run.RecordID), "task")
+	if err != nil {
+		return ""
+	}
+	return resumeContextFingerprint(loaded.Project, loaded.Workflow, note, run.WorkspacePath, runLaneExecute, run)
 }
 
 // queueNativeSessionContinuation queues one new attempt while retaining the

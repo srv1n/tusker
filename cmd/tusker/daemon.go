@@ -7155,6 +7155,9 @@ const (
 func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, note Note, workspacePath, lane string, run RunStatus) string {
 	// A new V7 task has no work_revision (revision 0) and no source_sha until its
 	// first candidate is projected; both stay bound through the hashed task data.
+	// Worker/execute policy fingerprints are set only under completion
+	// authority; ordinary V7 dispatch leaves them empty. They are hashed below
+	// when present but are not required.
 	if strings.TrimSpace(note.AbsolutePath) == "" || strings.TrimSpace(wfFile.Path) == "" {
 		return ""
 	}
@@ -7167,7 +7170,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		run.RunnerHarness, run.RunnerModel, run.RunnerEffort, run.Lane, lane,
 		workspacePath, stringField(note.Data, "id"), stringField(note.Data, "state_rev"),
 		stringField(note.Data, "title"),
-		strconv.Itoa(run.WorkRevision), run.WorkerPolicyFP, run.ExecutePolicyFP,
+		strconv.Itoa(run.WorkRevision),
 	} {
 		if strings.TrimSpace(value) == "" {
 			return ""
@@ -7299,6 +7302,25 @@ func (d *Daemon) resumeContextFingerprintMismatch(run RunStatus, session *Runner
 	if lastAttemptID == "" || currentPromptPath == "" || lastAttemptID == strings.TrimSpace(run.ActiveAttemptID) {
 		return "stored native session has no distinct prior prompt context"
 	}
+	currentPrompt, err := readText(currentPromptPath)
+	if err != nil {
+		return "current prompt context is unavailable"
+	}
+	return d.priorResumeContextMismatch(run, session, resumeContextFingerprintFromPrompt(currentPrompt))
+}
+
+// priorResumeContextMismatch compares a current resume context fingerprint
+// with the one retained in the prompt of the session's last attempt. Dispatch
+// passes the fingerprint from the freshly rendered prompt; the continue
+// preflight recomputes it from the current workflow and task.
+func (d *Daemon) priorResumeContextMismatch(run RunStatus, session *RunnerSession, currentFingerprint string) string {
+	if d == nil || d.store == nil || session == nil {
+		return "stored native session has no verifiable prompt context"
+	}
+	lastAttemptID := strings.TrimSpace(session.LastAttemptID)
+	if lastAttemptID == "" {
+		return "stored native session has no distinct prior prompt context"
+	}
 	var priorRecordID, priorItemID, priorRunner, priorSessionRef, priorPromptPath string
 	if err := d.store.queryRowScan(`SELECT record_id, item_id, runner, session_ref, prompt_path
 		FROM attempts WHERE project_id = ? AND attempt_id = ? LIMIT 1`, []any{run.ProjectID, lastAttemptID}, &priorRecordID, &priorItemID, &priorRunner, &priorSessionRef, &priorPromptPath); err != nil {
@@ -7314,15 +7336,10 @@ func (d *Daemon) resumeContextFingerprintMismatch(run RunStatus, session *Runner
 	if priorPromptPath == "" {
 		return "stored native session prior prompt is unavailable"
 	}
-	currentPrompt, err := readText(currentPromptPath)
-	if err != nil {
-		return "current prompt context is unavailable"
-	}
 	priorPrompt, err := readText(priorPromptPath)
 	if err != nil {
 		return "stored native session prior prompt context is unavailable"
 	}
-	currentFingerprint := resumeContextFingerprintFromPrompt(currentPrompt)
 	priorFingerprint := resumeContextFingerprintFromPrompt(priorPrompt)
 	if currentFingerprint == "" || priorFingerprint == "" {
 		return "stored native session prompt context fingerprint is missing or invalid"

@@ -79,3 +79,47 @@ func TestAnswerWakeContinuesPastAmbiguousRun(t *testing.T) {
 		t.Fatalf("wakeup states = %q, %q", held, scheduled)
 	}
 }
+
+// A worker question asked during a first execute run (work revision 0) is
+// attempt-bound by its route generation. Its answer must not queue a run that
+// has since moved to revision 1, because that run's prompt would omit it.
+func TestAnswerWakeComparesWorkRevisionZeroExactly(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		runRevision int
+		wantState   string
+	}{{"same revision", 0, "scheduled"}, {"moved revision", 1, "stale"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := OpenRuntimeStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if err := store.UpsertProject(RegisteredProject{ProjectID: "app", ProjectKey: "app", Name: "app", RepoRoot: t.TempDir(), VaultRoot: t.TempDir(), Enabled: true, Health: projectHealthHealthy}); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpsertRun(RunStatus{ProjectID: "app", RecordID: "worker", ItemID: "worker", Runner: "codex_exec", WorkRevision: tc.runRevision, LeaseGeneration: 1,
+				LeaseState: string(LeaseStateReleased), AttemptOutcome: string(AttemptOutcomeWaitingForHuman)}); err != nil {
+				t.Fatal(err)
+			}
+			q, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", IdempotencyKey: "q", Sender: "task:worker", Recipient: AgentAddress{Kind: "operator", ID: "operator"},
+				WorkRevision: 0, RouteGeneration: 1, Kind: "question", Body: "Choose", YieldSender: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", IdempotencyKey: "a", Sender: "operator:operator", Recipient: AgentAddress{Kind: "task", ID: "worker"}, Kind: "answer", Body: "A", ReplyTo: q.ID}); err != nil {
+				t.Fatal(err)
+			}
+			if err := (&Daemon{store: store}).processAgentWakeups("app"); err != nil {
+				t.Fatal(err)
+			}
+			var state string
+			if err := store.queryRowScan(`SELECT state FROM agent_wakeups WHERE recipient_id='worker'`, nil, &state); err != nil {
+				t.Fatal(err)
+			}
+			if state != tc.wantState {
+				t.Fatalf("wakeup state = %q, want %q", state, tc.wantState)
+			}
+		})
+	}
+}
