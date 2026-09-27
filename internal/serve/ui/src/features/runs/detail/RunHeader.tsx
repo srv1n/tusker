@@ -64,7 +64,7 @@ export function RunHeader({
 
         {capsule && (
           <div className="mt-3">
-            <CapsuleChips capsule={capsule} show={["status", "priority", "risk"]} />
+            <CapsuleChips capsule={capsule} show={["state", "priority", "risk"]} />
           </div>
         )}
 

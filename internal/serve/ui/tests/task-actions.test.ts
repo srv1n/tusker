@@ -23,7 +23,7 @@ test("secondary task workflows are progressively disclosed one at a time", () =>
 });
 
 test("startable tasks expose direct task start with visible directive state", () => {
-  expect(task).toContain('const runnable = !runBlocker && currentStatus !== "in_progress" && currentStatus !== "blocked"');
+  expect(task).toContain('const runnable = !runBlocker && ["backlog", "planned", "blocked"].includes(task.state.state);');
   expect(task).toContain("taskStart.mutate()");
   expect(task).not.toContain("human:serve");
   expect(task).toContain('directiveQueued ? "Queued" : taskStart.isPending ? "Queuing…" : "Run task"');

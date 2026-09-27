@@ -470,7 +470,7 @@ function TaskActionPanel({ task, projectId }: { task: TaskDetail; projectId: str
     task.rawStatus ??
     (task.status === "in_progress" || task.status === "blocked" ? "ready" : task.status);
   const runBlocker = taskRunBlocker(task);
-  const runnable = !runBlocker && currentStatus !== "in_progress" && currentStatus !== "blocked";
+  const runnable = !runBlocker && ["backlog", "planned", "blocked"].includes(task.state.state);
   const terminalWave = Boolean(task.waveTerminal);
   const directiveQueued = task.runDirective?.state === "queued";
   const statusOptions = [

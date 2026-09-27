@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { cardClass } from "@/components/ui/primitives";
-import { AlertTriangle, ArrowRight, Check, CircleDashed } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export function ProductPage({
@@ -192,48 +192,6 @@ export function ProductUnavailable({ children }: { children: ReactNode }) {
     <div className="flex items-start gap-3 rounded-lg border border-warn/30 bg-warn-soft px-4 py-3 text-[12.5px] leading-relaxed text-warn">
       <AlertTriangle className="mt-0.5 flex-none" size={15} />
       <div>{children}</div>
-    </div>
-  );
-}
-
-export function phaseTone(value: string): "neutral" | "info" | "pass" | "warn" | "fail" {
-  const state = value.toLowerCase();
-  if (state.includes("fail") || state.includes("blocked") || state.includes("exhaust")) return "fail";
-  if (state.includes("wait") || state.includes("stale") || state.includes("repair") || state.includes("paused")) return "warn";
-  if (state.includes("done") || state.includes("deliver") || state.includes("land") || state.includes("pass")) return "pass";
-  if (state.includes("run") || state.includes("build") || state.includes("review") || state.includes("progress")) return "info";
-  return "neutral";
-}
-
-export function ProductPhaseStrip({ current }: { current: string }) {
-  const phases = ["Planned", "Building", "Checking", "Integrating", "Delivered"];
-  const normalized = current.toLowerCase();
-  const currentIndex =
-    normalized.includes("deliver") || normalized.includes("land")
-      ? 4
-      : normalized.includes("integr")
-        ? 3
-        : normalized.includes("review") || normalized.includes("check")
-          ? 2
-          : normalized.includes("run") || normalized.includes("build")
-            ? 1
-            : 0;
-  return (
-    <div className="grid grid-cols-5 overflow-hidden rounded-lg border border-line">
-      {phases.map((phase, index) => (
-        <div
-          key={phase}
-          className={cn(
-            "flex items-center gap-2 border-r border-line px-3 py-2.5 text-[11.5px] last:border-r-0",
-            index < currentIndex && "bg-pass-soft text-pass font-medium",
-            index === currentIndex && "bg-info-soft font-semibold text-info",
-            index > currentIndex && "bg-surface text-faint",
-          )}
-        >
-          {index < currentIndex ? <Check size={13} /> : <CircleDashed size={13} />}
-          {phase}
-        </div>
-      ))}
     </div>
   );
 }

@@ -1,415 +1,71 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "@tanstack/react-router";
-import { useQueries } from "@tanstack/react-query";
-import { ArrowRight, FileCheck2, GitMerge, Network, Pause, ShieldAlert } from "lucide-react";
-import { api } from "@/lib/api";
-import { renderMermaid } from "@/features/editor/mermaid";
-import { Markdown } from "@/features/docs/Markdown";
-import { RouteFact, routeSummary, tierLabel } from "./TaskScreens";
-import { WaveAuthorityControls, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
-import { useEpics, useFactoryOperations, useRuns, useTasks, useWaves } from "@/lib/queries";
-import type { EpicSummary, RunSummary, TaskCapsule, TaskRoutePreview, WaveSummary } from "@/types/domain";
+import { useMemo } from "react";
+import { useParams } from "@tanstack/react-router";
+import { TaskStateBadge } from "@/components/ui/chips";
+import { useEpics, useFactoryOperations, useTasks, useWaves } from "@/lib/queries";
+import type { EpicSummary, TaskCapsule } from "@/types/domain";
 import {
   ProductEmpty,
   ProductLabel,
   ProductLoading,
   ProductPage,
-  ProductPhaseStrip,
   ProductRow,
   ProductSection,
-  ProductStatus,
   ProductUnavailable,
-  phaseTone,
 } from "./shared";
 
-type ProductRouteParams = { projectId?: string; waveId?: string };
-type WaveBucket = "running" | "checking" | "needsYou" | "blocked" | "ready" | "delivered";
-
-interface WaveTask extends TaskCapsule {
-  run?: RunSummary;
-  bucket: WaveBucket;
-}
-
-const bucketCopy: Record<WaveBucket, { title: string; empty: string }> = {
-  running: { title: "Running now", empty: "Nothing is actively running in this wave." },
-  checking: { title: "Checking the work", empty: "Nothing is waiting for an objective review." },
-  needsYou: { title: "Waiting on you", empty: "Nothing in this wave needs a human decision." },
-  blocked: { title: "Blocked", empty: "Nothing is blocked." },
-  ready: { title: "Ready next", empty: "No work is waiting to begin." },
-  delivered: { title: "Landed", empty: "No tasks have landed yet." },
-};
-
-const bucketOrder: WaveBucket[] = ["running", "checking", "needsYou", "blocked", "ready", "delivered"];
-
-function routeRowLabel(route?: TaskRoutePreview): string {
-  const summary = routeSummary(route);
-  const provenance = route?.source ? ` · Source: ${route.source}${route.reason ? ` · ${route.reason}` : ""}` : "";
-  const blockers = route?.blockers?.length ? ` · Blocked: ${route.blockers.join("; ")}` : "";
-  return `${summary}${provenance}${blockers}`;
-}
+type ProductRouteParams = { projectId?: string };
 
 function useProjectId(): string {
   return (useParams({ strict: false }) as ProductRouteParams).projectId ?? "";
-}
-
-function isLiveRun(run: RunSummary | undefined): boolean {
-  return !!run && !run.terminal && run.liveness === "fresh" && ["claimed", "starting", "running"].includes(run.leaseStateRaw ?? "");
-}
-
-function waveTaskIds(wave: WaveSummary): Set<string> {
-  return new Set([...wave.memberIds, ...wave.members.map((member) => member.id)]);
-}
-
-function blockedByHuman(wave: WaveSummary): Set<string> {
-  return new Set(wave.brief.humanAction.flatMap((item) => item.blockedTaskIds));
-}
-
-function bucketFor(task: TaskCapsule, run: RunSummary | undefined, humanBlocked: Set<string>): WaveBucket {
-  // A stale/failed runner does not make a task "running". This is deliberately
-  // stricter than task status: only a fresh held execution earns that label.
-  if (task.status === "done") return "delivered";
-  if (task.hasGate || humanBlocked.has(task.id)) return "needsYou";
-  if (task.status === "blocked") return "blocked";
-  if (isLiveRun(run)) return "running";
-  if (task.status === "in_progress") return "blocked";
-  if (task.status === "review") return "checking";
-  return "ready";
-}
-
-function deriveWaveTasks(wave: WaveSummary, allTasks: TaskCapsule[], runs: RunSummary[]): WaveTask[] {
-  const tasksById = new Map(allTasks.map((task) => [task.id, task]));
-  const runsByTask = new Map(runs.map((run) => [run.taskId, run]));
-  const humanBlocked = blockedByHuman(wave);
-
-  // `members` is a compact server projection, but it omits task metadata. Keep
-  // it as a fallback so an older server payload still renders every wave member.
-  return [...waveTaskIds(wave)].map((id) => {
-    const member = wave.members.find((item) => item.id === id);
-    const task = tasksById.get(id) ?? {
-      id,
-      title: member?.title ?? id,
-      epicId: "",
-      epicTitle: "",
-      status: member?.status === "done" ? "done" : member?.status === "review" ? "review" : member?.status === "blocked" ? "blocked" : "ready",
-      readiness: member?.status === "blocked" ? "blocked_dependency" : "ready",
-      priority: "p2",
-      risk: "medium",
-      hasGate: humanBlocked.has(id),
-      updatedAt: "",
-    } satisfies TaskCapsule;
-    const run = runsByTask.get(id);
-    return { ...task, run, bucket: bucketFor(task, run, humanBlocked) };
-  });
-}
-
-function wavePhase(wave: WaveSummary, tasks: WaveTask[]): string {
-  if (wave.landedAt || tasks.length > 0 && tasks.every((task) => task.bucket === "delivered")) return "delivered";
-  if (wave.authorization.state === "paused") return "paused";
-  if (wave.authorization.stale || wave.authorization.state === "stale") return "stale";
-  if (tasks.some((task) => task.bucket === "blocked" || task.bucket === "needsYou")) return "blocked";
-  if (tasks.some((task) => task.bucket === "checking")) return "checking";
-  if (tasks.some((task) => task.bucket === "running")) return "building";
-  return wave.authorization.state === "armed" ? "planned" : "not authorized";
-}
-
-function friendlyAuthorization(wave: WaveSummary): string {
-  if (wave.authorization.stale || wave.authorization.state === "stale") return "Review again";
-  if (wave.authorization.state === "armed") return "Authorized";
-  if (wave.authorization.state === "paused") return "Paused";
-  return "Not authorized";
-}
-
-function waveStatusLabel(wave: WaveSummary, tasks: WaveTask[]): string {
-  if (wave.status) return wave.status.replaceAll("_", " ");
-  const phase = wavePhase(wave, tasks);
-  if (phase === "building") return "In progress";
-  if (phase === "checking") return "Checking";
-  if (phase === "blocked") return "Needs attention";
-  if (phase === "delivered") return "Delivered";
-  return phase === "not authorized" ? "Not authorized" : "Planned";
 }
 
 function queryFailure(...errors: Array<unknown>): unknown {
   return errors.find(Boolean);
 }
 
-export function Waves() {
-  const projectId = useProjectId();
-  const wavesQ = useWaves(projectId);
-  const tasksQ = useTasks(projectId);
-  const runsQ = useRuns(projectId);
-  const error = queryFailure(wavesQ.error, tasksQ.error, runsQ.error);
-  const loading = wavesQ.isLoading || tasksQ.isLoading || runsQ.isLoading;
-  const rows = useMemo(
-    () => (wavesQ.data ?? []).map((wave) => ({ wave, tasks: deriveWaveTasks(wave, tasksQ.data ?? [], runsQ.data ?? []) })),
-    [wavesQ.data, tasksQ.data, runsQ.data],
-  );
-
-  return (
-    <ProductPage title="Work" wide>
-      {error ? <ProductUnavailable>Could not load the delivery projection. {error instanceof Error ? error.message : "Try refreshing this project."}</ProductUnavailable> : null}
-      {loading ? <ProductLoading rows={4} /> : null}
-      {!loading && !error && rows.length === 0 ? <ProductEmpty title="No waves yet" detail="Authored waves appear here once they are created for this project." /> : null}
-      {!loading && rows.length > 0 ? (
-        <div className="border-t-2 border-ink">
-          {rows.map(({ wave, tasks }) => {
-            const phase = wavePhase(wave, tasks);
-            const landed = tasks.filter((task) => task.bucket === "delivered").length;
-            const moving = tasks.filter((task) => task.bucket === "running" || task.bucket === "checking").length;
-            const attention = tasks.filter((task) => task.bucket === "needsYou" || task.bucket === "blocked").length;
-            const status = waveStatusLabel(wave, tasks);
-            return (
-              <ProductRow
-                key={wave.id}
-                title={wave.title}
-                detail={`${tasks.length} task${tasks.length === 1 ? "" : "s"} · ${landed} landed${moving ? ` · ${moving} moving` : ""}${attention ? ` · ${attention} need attention` : ""}`}
-                status={<ProductStatus tone={phaseTone(phase)}>{status}</ProductStatus>}
-                action={<Link to="/p/$projectId/waves/$waveId" params={{ projectId, waveId: wave.id }} className="text-[12px] font-medium text-info">Open <ArrowRight className="ml-1 inline" size={14} /></Link>}
-              />
-            );
-          })}
-        </div>
-      ) : null}
-      {!tasksQ.isLoading && !tasksQ.error && (tasksQ.data ?? []).length > 0 && <ProductSection title="Tickets" count={tasksQ.data?.length ?? 0}>
-        <div className="border-t border-line">
-          {(tasksQ.data ?? []).map((task) => {
-            const run = (runsQ.data ?? []).find((item) => item.taskId === task.id);
-            const status = ticketStatus(task, run);
-            return <ProductRow key={task.id} meta={task.id} title={task.title} detail={`${task.epicId || "Unsorted"} · ${task.readiness.replaceAll("_", " ")}`} status={<ProductStatus tone={phaseTone(status)}>{status}</ProductStatus>} action={<Link to="/p/$projectId/tasks/$taskId" params={{ projectId, taskId: task.id }} className="text-[12px] font-medium text-info hover:text-ink">Open <ArrowRight className="ml-1 inline" size={14} /></Link>} />;
-          })}
-        </div>
-      </ProductSection>}
-    </ProductPage>
-  );
-}
-
-function ticketStatus(task: TaskCapsule, run: RunSummary | undefined): string {
-  if (isLiveRun(run)) return "Running";
-  if (task.hasGate || task.openGates?.length) return "Blocked";
-  if (task.status === "done") return "Delivered";
-  if (task.status === "review") return "Checking";
-  if (task.status === "in_progress") return "In progress";
-  if (task.status === "blocked") return "Blocked";
-  return task.status === "ready" ? "Ready" : "Planned";
-}
-
-export function WaveDetail({ waveId: requestedWaveId }: { waveId?: string } = {}) {
-  const params = useParams({ strict: false }) as ProductRouteParams;
-  const projectId = params.projectId ?? "";
-  const wavesQ = useWaves(projectId);
-  const tasksQ = useTasks(projectId);
-  const runsQ = useRuns(projectId);
-  const wave = (wavesQ.data ?? []).find((item) => item.id === (requestedWaveId ?? params.waveId));
-  const tasks = useMemo(() => wave ? deriveWaveTasks(wave, tasksQ.data ?? [], runsQ.data ?? []) : [], [wave, tasksQ.data, runsQ.data]);
-  const grouped = useMemo(() => new Map(bucketOrder.map((bucket) => [bucket, tasks.filter((task) => task.bucket === bucket)])), [tasks]);
-  const error = queryFailure(wavesQ.error, tasksQ.error, runsQ.error);
-
-  if (wavesQ.isLoading || tasksQ.isLoading || runsQ.isLoading) {
-    return <ProductPage title="Wave"><ProductLoading rows={5} /></ProductPage>;
-  }
-  if (error) {
-    return <ProductPage title="Wave"><ProductUnavailable>Could not load this wave. {error instanceof Error ? error.message : "Try refreshing this project."}</ProductUnavailable></ProductPage>;
-  }
-  if (!wave) {
-    return <ProductPage title="Wave"><ProductEmpty title="No wave selected" detail="Choose a delivery boundary from Waves to inspect its current outcome." /></ProductPage>;
-  }
-
-  const phase = wavePhase(wave, tasks);
-  const summary = `${tasks.filter((task) => task.bucket === "delivered").length} landed · ${tasks.filter((task) => task.bucket === "running").length} running · ${tasks.filter((task) => task.bucket === "needsYou").length} waiting on you · ${tasks.filter((task) => task.bucket === "blocked").length} blocked`;
-
-  return (
-    <ProductPage title={wave.title} intro={wave.expectedOutcome || wave.brief.outcome.summary || summary} wide actions={<WaveAuthorityControls projectId={projectId} waveId={wave.id} compact />}>
-      <div className="mb-8 flex flex-wrap items-center gap-3">
-        <ProductStatus tone={phaseTone(phase)}>{waveStatusLabel(wave, tasks)}</ProductStatus>
-        <span className="font-mono text-[11px] text-faint">{summary} · {tasks.length} tasks</span>
-      </div>
-      {wave.body && <details className="mb-8 rounded-lg border border-line bg-panel/40 px-4 py-3"><summary className="cursor-pointer text-[12px] font-medium text-muted hover:text-ink">Read the full wave brief</summary><Markdown markdown={wave.body} projectId={projectId} className="mt-4" /></details>}
-      <details className="mb-10 rounded-lg border border-line bg-panel/40 px-4 py-3">
-        <summary className="cursor-pointer text-[12px] font-medium text-muted hover:text-ink">Delivery details</summary>
-        <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
-          <ProductPhaseStrip current={phase} />
-          <div>
-            <ProductLabel>Authorization</ProductLabel>
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <ProductStatus tone={wave.authorization.state === "armed" ? "pass" : phaseTone(wave.authorization.state)}>{friendlyAuthorization(wave)}</ProductStatus>
-              <span className="text-right text-[12px] text-muted">{wave.authorization.action || "No action recorded"}</span>
-            </div>
-          </div>
-        </div>
-      </details>
-
-      <WaveReviewDetail projectId={projectId} waveId={wave.id} showControls={false} />
-
-      <ProductSection title="Execution routes" count={wave.memberIds.length}>
-        <div className="space-y-3">
-          {wave.memberIds.map((taskId) => {
-            const member = wave.members.find((item) => item.id === taskId);
-            return <div key={taskId} className="rounded-lg border border-line bg-panel p-3"><div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-mono text-[10.5px] text-faint">{taskId}</span><span className="text-[12.5px] font-semibold text-ink">{member?.title || taskId}</span>{member?.workLevel && <ProductStatus>{tierLabel(member.workLevel)}</ProductStatus>}</div><div className="grid gap-4 sm:grid-cols-2"><RouteFact label="Will execute" route={member?.effectiveExecute} /><RouteFact label="Will review" route={member?.effectiveReview} /></div></div>;
-          })}
-        </div>
-      </ProductSection>
-
-      <ProductSection title="Dependency DAG">
-        <DependencyDag projectId={projectId} tasks={tasks} />
-      </ProductSection>
-
-      {wave.brief.humanAction.length > 0 && (
-        <ProductSection title="Needs you" count={wave.brief.humanAction.length}>
-          <div className="border-t border-line">
-            {wave.brief.humanAction.map((action) => (
-              <ProductRow
-                key={action.gateId}
-                title={action.action}
-                detail={`${action.owner || "Human owner"} · ${action.blockedTaskIds.length} task${action.blockedTaskIds.length === 1 ? "" : "s"} blocked${action.why ? ` · ${action.why}` : ""}`}
-                status={<ProductStatus tone="warn">Action required</ProductStatus>}
-                action={<a href={action.gateHref} className="text-[12px] font-medium text-info hover:text-ink">Open action</a>}
-              />
-            ))}
-          </div>
-        </ProductSection>
-      )}
-
-      {bucketOrder.map((bucket) => {
-        const items = grouped.get(bucket) ?? [];
-        // Empty technical states do not get a permanent panel; the delivery
-        // summary above remains the complete count source.
-        if (items.length === 0) return null;
-        const copy = bucketCopy[bucket];
-        return (
-          <ProductSection key={bucket} title={copy.title} count={items.length}>
-            <div className="border-t border-line">
-              {items.map((task) => (
-                <ProductRow
-                  key={task.id}
-                  title={task.title}
-                  detail={task.run?.error || task.run?.outcome === "running" ? task.run?.error ?? "Work is executing." : task.hasGate ? "A human decision is required before this branch can continue." : (() => { const member = wave.members.find((item) => item.id === task.id); return member ? `${member.workLevel ? `Tier ${member.workLevel} · ` : ""}Worker: ${routeRowLabel(member.effectiveExecute)} · Reviewer: ${routeRowLabel(member.effectiveReview)}` : task.readiness.replaceAll("_", " "); })()}
-                  status={<ProductStatus tone={phaseTone(task.bucket === "needsYou" ? "waiting" : task.bucket)}>{task.bucket === "needsYou" ? "Waiting on you" : task.bucket === "checking" ? "Checking" : task.bucket === "ready" ? "Ready" : task.bucket === "delivered" ? "Landed" : task.bucket}</ProductStatus>}
-                  action={<><Link to="/p/$projectId/tasks/$taskId" params={{ projectId, taskId: task.id }} className="text-[12px] font-medium text-info hover:text-ink">Task</Link>{task.run && <Link to="/p/$projectId/runs/$taskId" params={{ projectId, taskId: task.id }} className="text-[12px] font-medium text-info hover:text-ink">Logs</Link>}</>}
-                />
-              ))}
-            </div>
-          </ProductSection>
-        );
-      })}
-
-      <ProductSection title="Outcome and proof" count={wave.brief.seeIt.length}>
-        {wave.brief.seeIt.length === 0 ? <ProductEmpty title="No accepted artifacts yet" detail="Accepted proof appears here as tasks complete their review." /> : (
-          <div className="border-t border-line">
-            {wave.brief.seeIt.map((artifact) => (
-              <ProductRow key={`${artifact.taskId}-${artifact.evidenceRef}`} title={artifact.summary} detail={artifact.acceptanceIds.length ? `Covers ${artifact.acceptanceIds.join(", ")}` : "Accepted evidence"} status={<ProductStatus tone="pass">Verified</ProductStatus>} action={<a href={artifact.evidenceHref} className="inline-flex items-center gap-1 text-[12px] font-medium text-info hover:text-ink">Open result <FileCheck2 size={14} /></a>} />
-            ))}
-          </div>
-        )}
-      </ProductSection>
-    </ProductPage>
-  );
-}
-
-function DependencyDag({ projectId, tasks }: { projectId: string; tasks: WaveTask[] }) {
-  const details = useQueries({ queries: tasks.map((task) => ({ queryKey: ["task", projectId, task.id], queryFn: () => api.task(task.id, projectId) })) });
-  const loading = details.some((query) => query.isLoading);
-  const failed = details.find((query) => query.error);
-  const edges = details.flatMap((query) => query.data?.deps.map((dependency) => ({ from: dependency.id, to: query.data?.id ?? "", title: dependency.title })) ?? []).filter((edge) => edge.to);
-  const source = useMemo(() => dependencySource(tasks, edges), [tasks, edges]);
-  const [diagram, setDiagram] = useState<{ svg?: string; error?: string } | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    setDiagram(null);
-    if (!source) return () => { active = false; };
-    void renderMermaid(source).then((result) => { if (active) setDiagram(result); });
-    return () => { active = false; };
-  }, [source]);
-
-  if (loading) return <p className="text-[12px] text-muted">Loading task dependencies…</p>;
-  if (failed && !edges.length) return <ProductUnavailable>Dependency graph unavailable. {failed.error instanceof Error ? failed.error.message : "A task detail could not be read."}</ProductUnavailable>;
-  if (!source) return <ProductEmpty title="No dependency edges recorded" detail="This wave has no task prerequisite relationships in the canonical task details." />;
-  return <div className="rounded-lg border border-line bg-panel p-3"><p className="mb-3 text-[11px] text-muted">Edges come from each task’s canonical prerequisite list. Status remains in the ticket rows above.</p>{failed && <p role="status" className="mb-3 text-[11px] text-warn">Some task details could not be read; this graph may be incomplete.</p>}{diagram?.svg ? <div className="overflow-x-auto" dangerouslySetInnerHTML={{ __html: diagram.svg }} /> : <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-muted">{diagram?.error ?? "Rendering dependency graph…"}{diagram?.error ? `\n\n${source}` : ""}</pre>}</div>;
-}
-
-function dependencySource(tasks: WaveTask[], edges: Array<{ from: string; to: string; title: string }>): string | null {
-  if (!edges.length) return null;
-  const ids = [...new Set([...tasks.map((task) => task.id), ...edges.flatMap((edge) => [edge.from, edge.to])])];
-  const nodeId = new Map(ids.map((id, index) => [id, `task${index}`]));
-  const title = new Map(tasks.map((task) => [task.id, task.title]));
-  for (const edge of edges) title.set(edge.from, edge.title);
-  const label = (id: string) => `${nodeId.get(id)}["${(title.get(id) ?? id).replaceAll("\\", "\\\\").replaceAll('"', "'")}"]`;
-  return ["flowchart LR", ...ids.map(label), ...edges.map((edge) => `${nodeId.get(edge.from)} --> ${nodeId.get(edge.to)}`)].join("\n");
-}
-
 export function Epics() {
   const projectId = useProjectId();
   const epicsQ = useEpics(projectId);
   const tasksQ = useTasks(projectId);
-  const runsQ = useRuns(projectId);
-  const rows = useMemo(() => deriveEpics(epicsQ.data ?? [], tasksQ.data ?? [], runsQ.data ?? []), [epicsQ.data, tasksQ.data, runsQ.data]);
-  const error = queryFailure(epicsQ.error, tasksQ.error, runsQ.error);
-  const loading = epicsQ.isLoading || tasksQ.isLoading || runsQ.isLoading;
+  const rows = useMemo(() => deriveEpics(epicsQ.data ?? [], tasksQ.data ?? []), [epicsQ.data, tasksQ.data]);
+  const error = queryFailure(epicsQ.error, tasksQ.error);
+  const loading = epicsQ.isLoading || tasksQ.isLoading;
 
   return (
     <ProductPage title="Epics" eyebrow="Project outcomes" intro="Outcome groups and their delivery state. Tasks remain a drill-down, not the primary unit of progress." wide>
       {error ? <ProductUnavailable>Could not load epic progress. {error instanceof Error ? error.message : "Try refreshing this project."}</ProductUnavailable> : null}
       {loading ? <ProductLoading rows={4} /> : null}
       {!loading && !error && rows.length === 0 ? <ProductEmpty title="No epics yet" detail="Epics appear when project work is grouped under an outcome." /> : null}
-      {!loading && rows.length > 0 ? <div className="border-t-2 border-ink">{rows.map((epic) => <EpicRow key={epic.id} epic={epic} />)}</div> : null}
+      {!loading && rows.length > 0 ? <div className="border-t-2 border-ink">{rows.map((epic) => <ProductRow key={epic.id} meta={epic.id} title={epic.title} detail={`${epic.counts} · ${epic.total} tasks`} />)}</div> : null}
     </ProductPage>
   );
 }
 
-function EpicRow({ epic }: { epic: ReturnType<typeof deriveEpics>[number] }) {
-  const phase = epic.blocked > 0 ? "blocked" : epic.needsYou > 0 ? "waiting" : epic.running > 0 ? "building" : epic.checking > 0 ? "checking" : epic.total > 0 && epic.landed === epic.total ? "delivered" : "planned";
-  return (
-    <ProductRow
-      meta={epic.id}
-      title={epic.title}
-      detail={`${epic.landed} delivered · ${epic.running + epic.checking} moving${epic.needsYou ? ` · ${epic.needsYou} waiting on you` : ""}${epic.blocked ? ` · ${epic.blocked} blocked` : ""} · ${epic.total} tasks`}
-      status={<ProductStatus tone={phaseTone(phase)}>{phase === "building" ? "Building" : phase === "checking" ? "Checking" : phase === "delivered" ? "Delivered" : phase === "waiting" ? "Needs your decision" : phase}</ProductStatus>}
-    />
-  );
-}
-
-function deriveEpics(epics: EpicSummary[], tasks: TaskCapsule[], runs: RunSummary[]) {
+/** Per-epic task counts by each task's displayed state label. */
+function deriveEpics(epics: EpicSummary[], tasks: TaskCapsule[]) {
   const known = new Map(epics.map((epic) => [epic.id, epic]));
   const ids = new Set([...known.keys(), ...tasks.map((task) => task.epicId)]);
-  const runsByTask = new Map(runs.map((run) => [run.taskId, run]));
   return [...ids].map((id) => {
     const tasksForEpic = tasks.filter((task) => task.epicId === id);
-    const syntheticWave: WaveSummary = {
-      id,
-      title: known.get(id)?.title ?? tasksForEpic[0]?.epicTitle ?? id,
-      status: "",
-      memberIds: tasksForEpic.map((task) => task.id),
-      members: [],
-      counts: {},
-      authorization: { state: "disarmed", stale: false, action: "" },
-      brief: { schema: "tusker.wave-brief/v1", waveId: id, title: id, waveHref: "", sectionOrder: ["outcome", "seeIt", "landed", "reworkParked", "humanAction", "documentation"], outcome: { summary: "", fullyDrained: false, counts: {}, tasks: [] }, seeIt: [], landed: [], reworkParked: [], humanAction: [], documentation: [] },
-    };
-    const visual = deriveWaveTasks(syntheticWave, tasksForEpic, [...runsByTask.values()]);
+    const byLabel = new Map<string, number>();
+    for (const task of tasksForEpic) byLabel.set(task.state.label, (byLabel.get(task.state.label) ?? 0) + 1);
     return {
       id,
       title: known.get(id)?.title ?? tasksForEpic[0]?.epicTitle ?? id,
-      total: visual.length,
-      landed: visual.filter((task) => task.bucket === "delivered").length,
-      running: visual.filter((task) => task.bucket === "running").length,
-      checking: visual.filter((task) => task.bucket === "checking").length,
-      needsYou: visual.filter((task) => task.bucket === "needsYou").length,
-      blocked: visual.filter((task) => task.bucket === "blocked").length,
+      total: tasksForEpic.length,
+      counts: [...byLabel].map(([label, count]) => `${count} ${label.toLowerCase()}`).join(" · ") || "No tasks",
+      open: tasksForEpic.filter((task) => task.state.next_actor === "you").length,
     };
-  }).sort((left, right) => right.blocked + right.needsYou - (left.blocked + left.needsYou) || left.title.localeCompare(right.title));
+  }).sort((left, right) => right.open - left.open || left.title.localeCompare(right.title));
 }
 
 export function Trains() {
   const projectId = useProjectId();
   const wavesQ = useWaves(projectId);
-  const tasksQ = useTasks(projectId);
-  const runsQ = useRuns(projectId);
   const operationsQ = useFactoryOperations(projectId);
-  const rows = useMemo(
-    () => (wavesQ.data ?? []).map((wave) => ({ wave, tasks: deriveWaveTasks(wave, tasksQ.data ?? [], runsQ.data ?? []) })),
-    [wavesQ.data, tasksQ.data, runsQ.data],
-  );
-  const error = queryFailure(wavesQ.error, tasksQ.error, runsQ.error, operationsQ.error);
-  const loading = wavesQ.isLoading || tasksQ.isLoading || runsQ.isLoading || operationsQ.isLoading;
+  const rows = wavesQ.data ?? [];
+  const error = queryFailure(wavesQ.error, operationsQ.error);
+  const loading = wavesQ.isLoading || operationsQ.isLoading;
 
   return (
     <ProductPage title="Trains" eyebrow="Integration and promotion" intro="Delivery boundaries approaching integration. This view reports only authorization and completion evidence that the current API actually supplies." wide>
@@ -422,7 +78,7 @@ export function Trains() {
       {!loading && rows.length > 0 ? (
         <ProductSection title="Delivery boundaries" count={rows.length} className="mt-10">
           <div className="border-t-2 border-ink">
-            {rows.map(({ wave, tasks }) => <TrainRow key={wave.id} wave={wave} tasks={tasks} />)}
+            {rows.map((wave) => <ProductRow key={wave.id} meta={wave.id} title={wave.title} detail={wave.state.reason} status={<TaskStateBadge state={wave.state} />} />)}
           </div>
         </ProductSection>
       ) : null}
@@ -436,28 +92,6 @@ export function Trains() {
         </ProductSection>
       ) : null}
     </ProductPage>
-  );
-}
-
-function TrainRow({ wave, tasks }: { wave: WaveSummary; tasks: WaveTask[] }) {
-  const fullyDrained = wave.brief.outcome.fullyDrained || (tasks.length > 0 && tasks.every((task) => ["delivered", "checking", "blocked", "needsYou"].includes(task.bucket)));
-  const state = wave.authorization.stale || wave.authorization.state === "stale"
-    ? "Review again"
-    : wave.authorization.state === "paused"
-      ? "Paused"
-      : wave.authorization.state !== "armed"
-        ? "Not authorized"
-        : fullyDrained
-          ? "Ready to integrate"
-          : "Building";
-  return (
-    <ProductRow
-      meta={wave.id}
-      title={wave.title}
-      detail={`${tasks.filter((task) => task.bucket === "delivered").length} landed · ${tasks.filter((task) => task.bucket === "running" || task.bucket === "checking").length} still moving · ${tasks.filter((task) => task.bucket === "blocked" || task.bucket === "needsYou").length} held`}
-      status={<ProductStatus tone={state === "Review again" || state === "Paused" ? "warn" : phaseTone(state)}>{state}</ProductStatus>}
-      action={state === "Ready to integrate" ? <GitMerge size={16} className="text-info" /> : state === "Paused" ? <Pause size={16} className="text-warn" /> : state === "Review again" ? <ShieldAlert size={16} className="text-warn" /> : <Network size={16} className="text-faint" />}
-    />
   );
 }
 

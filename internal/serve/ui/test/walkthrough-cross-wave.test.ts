@@ -3,14 +3,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { WaveFlow } from "../src/features/workbench/flow/WaveFlow";
 import { crossWaveWaitSummary, type DependencyFact } from "../src/features/workbench/flow/flowGraph";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
 import type { TaskDetail } from "../src/types/domain";
 
 const ALPHA: DependencyFact = {
-  kind: "external", title: "Assemble alpha report", status: "done", readiness: "done",
+  kind: "external", title: "Assemble alpha report", status: "done", readiness: "done", state: sampleState("done"),
   waveId: "W-0002", waveTitle: "Alpha: assemble a small report",
 };
 const BETA: DependencyFact = {
-  kind: "external", title: "Assemble beta report", status: "backlog", readiness: "held",
+  kind: "external", title: "Assemble beta report", status: "backlog", readiness: "held", state: sampleState("planned"),
   waveId: "W-0003", waveTitle: "Beta: assemble an independent report",
 };
 
@@ -22,6 +23,7 @@ function member(deps: string[]): TaskDetail {
     epicId: "FOL",
     epicTitle: "Combined report",
     status: "backlog",
+    state: sampleState("backlog"),
     readiness: "blocked_dependency",
     priority: "p2",
     risk: "medium",

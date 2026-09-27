@@ -15,7 +15,7 @@
     models by guessing.
 */
 
-import type { RunSummary, TaskDetail, TaskStatus, WaveReview, WaveReviewMember } from "@/types/domain";
+import type { RunSummary, TaskDetail, TaskState, WaveReview, WaveTaskSummary } from "@/types/domain";
 
 /** Controlled pan/zoom transform. x/y are content-space offsets in CSS px. */
 export interface FlowViewport {
@@ -30,25 +30,10 @@ export interface DependencyFact {
   title?: string;
   status?: string;
   readiness?: string;
+  state?: TaskState;
   waveId?: string;
   waveTitle?: string;
 }
-
-/** Truthful per-node progress. "failed" needs a terminal failed run; a quiet
- *  ready task with no run facts is ready, never "queued-by-inference". */
-export type FlowDisplayState =
-  | "completed"
-  | "executing"
-  | "awaiting_review"
-  | "reviewing"
-  | "proof_blocked"
-  | "cancelled"
-  | "ready"
-  | "backlog"
-  | "queued"
-  | "blocked"
-  | "failed"
-  | "unknown";
 
 export type FlowNodeKind = "task" | "external" | "unresolved" | "missing" | "unavailable";
 
@@ -56,7 +41,8 @@ export interface FlowNode {
   id: string;
   kind: FlowNodeKind;
   title: string;
-  state: FlowDisplayState;
+  /** The server-computed task state; absent for unconfirmed or missing references. */
+  state?: TaskState;
   /** Compact model name, present only for live runs with verified identity. */
   model?: string;
   /** Effective or authored work tier; routing identity remains in the inspector. */
@@ -67,8 +53,6 @@ export interface FlowNode {
   missingDetail?: boolean;
   context?: string;
   stateLabel?: string;
-  /** A named human decision (gate or review) is waiting on this task. */
-  needsYou?: boolean;
 }
 
 export interface FlowEdge {
@@ -137,74 +121,11 @@ export function isLiveRun(run: RunSummary | undefined): boolean {
   );
 }
 
-function isFailedRun(run: RunSummary | undefined): boolean {
-  if (!run) return false;
-  if (!run.terminal) return false;
-  return run.outcome === "failed" || run.outcome === "interrupted";
-}
-
-/** Map durable status + run facts to one honest display state. A live run
- *  proves current activity, so it wins over the durable status; the lane
- *  keeps the worker stage distinct from the reviewer stage. */
-export function displayStateFor(
-  status: TaskStatus,
-  run: RunSummary | undefined,
-): FlowDisplayState {
-  if (status === "done") return "completed";
-  if (run && isLiveRun(run)) return run.lane === "review" ? "reviewing" : "executing";
-  if (status === "review") return "reviewing";
-  if (status === "blocked") return "blocked";
-  if (isFailedRun(run)) return "failed";
-  if (status === "ready") {
-    if (!run) return "ready";
-    return "unknown";
-  }
-  if (status === "backlog") {
-    return "backlog";
-  }
-  return "unknown";
-}
-
-/** The wave review is the status authority when it is available. */
-export function reviewDisplayStateFor(member: WaveReviewMember | undefined): FlowDisplayState | undefined {
-  if (!member) return undefined;
-  if (member.phase === "completed" || member.state === "completed") return "completed";
-  if (member.phase === "failed") return "failed";
-  if (member.phase === "executing" || member.state === "running") return "executing";
-  if (member.phase === "reviewing") return "reviewing";
-  if (member.phase === "awaiting_review") return "awaiting_review";
-  if (member.phase === "proof_blocked") return "proof_blocked";
-  if (member.state === "cancelled") return "cancelled";
-  if (member.state === "blocked") return "blocked";
-  if (member.state === "ready") return "ready";
-  if (member.state === "waiting") return "queued";
-  return undefined;
-}
-
 /** Model identity only from a live run; never inferred from roles or lanes. */
 export function modelFor(run: RunSummary | undefined): string | undefined {
   if (!isLiveRun(run)) return undefined;
   const model = run?.model?.trim() ?? "";
   return model ? model : undefined;
-}
-
-export function externalDependencyState(fact: DependencyFact): FlowDisplayState {
-  switch (fact.status) {
-    case "done": return "completed";
-    case "review": return "reviewing";
-    case "blocked": return "blocked";
-    case "cancelled":
-    case "superseded": return "cancelled";
-    case "ready": return "ready";
-    case "backlog":
-    case "idea": return "backlog";
-  }
-  switch (fact.readiness) {
-    case "ready": return "ready";
-    case "held":
-    case "waiting": return "backlog";
-  }
-  return "unknown";
 }
 
 export interface CrossWaveWaitSummary { title: string; body: string; hint?: string }
@@ -245,7 +166,8 @@ export interface BuildFlowInput {
   tasks: TaskDetail[];
   runs?: RunSummary[];
   dependencyFacts?: Record<string, DependencyFact>;
-  reviewMembers?: WaveReviewMember[];
+  /** Wave summary members: title and state for members whose detail is not loaded. */
+  members?: WaveTaskSummary[];
 }
 
 /**
@@ -258,7 +180,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
   const members = new Set(memberIds);
   const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
   const runsByTask = new Map((input.runs ?? []).map((run) => [run.taskId, run]));
-  const reviewsByTask = new Map((input.reviewMembers ?? []).map((member) => [member.taskId, member]));
+  const summaries = new Map((input.members ?? []).map((member) => [member.id, member]));
   const facts = input.dependencyFacts ?? {};
 
   const nodes: FlowNode[] = [];
@@ -284,18 +206,14 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
   for (const id of memberIds) {
     const task = tasksById.get(id);
     const run = runsByTask.get(id);
-    const reviewState = reviewDisplayStateFor(reviewsByTask.get(id));
     if (!task) {
       nodes.push({
         id,
         kind: "task",
-        title: reviewsByTask.get(id)?.title || id,
-        // The review is still authoritative while task details are loading.
-        // Do not replace a known phase with an old run or an unknown node.
-        state: reviewState ?? "unknown",
+        title: summaries.get(id)?.title || id,
+        state: summaries.get(id)?.state,
         depIds: [],
         missingDetail: true,
-        needsYou: Boolean(reviewsByTask.get(id)?.waitingReason?.includes("human gate")),
       });
       nodeIds.add(id);
       continue;
@@ -304,11 +222,10 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
       id,
       kind: "task",
       title: task.title || id,
-      state: reviewState ?? displayStateFor(task.status, run),
+      state: task.state,
       model: modelFor(run),
       tier: task.effectiveExecute?.work_level ?? task.authoredWorkLevel,
       depIds: task.deps.map((dep) => dep.id),
-      needsYou: Boolean(task.humanActions?.length || task.humanAction || reviewsByTask.get(id)?.waitingReason?.includes("human gate")),
     });
     nodeIds.add(id);
   }
@@ -328,7 +245,6 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
           id: depId,
           kind: "unresolved",
           title: depId,
-          state: "unknown",
           depIds: [],
         });
         addEdge(depId, node.id);
@@ -340,7 +256,7 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
           id: depId,
           kind: "external",
           title: fact.title?.trim() ? fact.title : depId,
-          state: externalDependencyState(fact),
+          state: fact.state,
           context: fact.waveTitle?.trim() ? fact.waveTitle : undefined,
           depIds: [],
         });
@@ -351,7 +267,6 @@ export function buildFlowGraph(input: BuildFlowInput): FlowGraph {
         id: depId,
         kind: fact.kind,
         title: fact.title?.trim() ? fact.title : depId,
-        state: "unknown",
         stateLabel: fact.kind === "missing" ? "Dependency missing" : "Dependency status unavailable",
         depIds: [],
       });
@@ -679,25 +594,6 @@ export function fitViewport(
 export function initialViewport(): FlowViewport {
   return { ...DEFAULT_VIEWPORT };
 }
-
-/**
- * The one Work status vocabulary: Planned, Waiting, Ready, Running, Review,
- * Done, Failed. Graph, board, and wave list all read labels from here.
- */
-export const DISPLAY_STATE_LABEL: Record<FlowDisplayState, string> = {
-  completed: "Done",
-  executing: "Running",
-  awaiting_review: "Review",
-  reviewing: "Review",
-  proof_blocked: "Review",
-  cancelled: "Cancelled",
-  ready: "Ready",
-  backlog: "Planned",
-  queued: "Waiting",
-  blocked: "Waiting",
-  failed: "Failed",
-  unknown: "Unknown",
-};
 
 export const NODE_KIND_LABEL: Record<FlowNodeKind, string> = {
   task: "Task",

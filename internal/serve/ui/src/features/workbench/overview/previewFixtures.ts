@@ -1,4 +1,4 @@
-import type { RunSummary, TaskCapsule, WaveSummary } from "@/types/domain";
+import type { RunSummary, TaskCapsule, TaskState, TaskStateCode, WaveSummary } from "@/types/domain";
 
 // Fixture builders for the isolated sample-data preview and focused behavior
 // checks. Clearly labeled sample data — never production truth. Production
@@ -6,11 +6,28 @@ import type { RunSummary, TaskCapsule, WaveSummary } from "@/types/domain";
 
 let seq = 0;
 
+const SAMPLE_STATE: Record<TaskStateCode, Pick<TaskState, "label" | "category" | "next_actor">> = {
+  backlog: { label: "Backlog", category: "not_started", next_actor: "architect" },
+  planned: { label: "Planned", category: "not_started", next_actor: "daemon" },
+  working: { label: "Working", category: "active", next_actor: "worker" },
+  needs_input: { label: "Needs input", category: "active", next_actor: "you" },
+  blocked: { label: "Blocked", category: "active", next_actor: "you" },
+  in_review: { label: "In review", category: "active", next_actor: "reviewer" },
+  done: { label: "Done", category: "closed", next_actor: "nobody" },
+  canceled: { label: "Canceled", category: "closed", next_actor: "nobody" },
+};
+
+/** A sample server state record (the real one is computed by the server). */
+export function sampleState(state: TaskStateCode, reason = "", extra: Partial<TaskState> = {}): TaskState {
+  return { state, ...SAMPLE_STATE[state], reason_code: "", reason, next_action: "", ...extra };
+}
+
 export function makeWave(
   overrides: Partial<WaveSummary> & { id: string; title: string },
 ): WaveSummary {
   return {
     status: "",
+    state: sampleState("planned"),
     landedAt: null,
     memberIds: [],
     members: [],
@@ -41,6 +58,7 @@ export function makeTask(
     epicId: "WUX",
     epicTitle: "Work experience",
     status: "ready",
+    state: sampleState("planned"),
     readiness: "ready",
     priority: "p2",
     risk: "medium",

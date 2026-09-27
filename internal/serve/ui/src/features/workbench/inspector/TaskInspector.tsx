@@ -12,10 +12,9 @@ import { RECOVERY_ACTION_LABEL } from "@/lib/recovery";
 import { AgentAccessApprovalList, HumanActionCard } from "@/features/human-action/HumanActionCard";
 import { AgentCoordinationSummary, taskRunBlocker, TaskContractDisclosure, TaskRouting, tierLabel } from "@/features/product/TaskScreens";
 import { isSafeHref } from "@/features/editor/sanitize";
-import { DISPLAY_STATE_LABEL } from "../flow/flowGraph";
+import { TaskStateBadge } from "@/components/ui/chips";
 import {
   acceptedDelivery,
-  actualStage,
   currentAttemptRecord,
   failingRows,
   historicalAttemptRecords,
@@ -29,8 +28,6 @@ import {
   proofStatusForCurrentAttempt,
   resolveVisibleRun,
   resolveVisibleTask,
-  stageFromWaveReviewMember,
-  stagePhrase,
   visibleTaskIntent,
   type InspectorExecutionIdentity,
 } from "./inspectorLogic";
@@ -49,25 +46,6 @@ export interface TaskInspectorProps {
   reviewMember?: WaveReviewMember;
   onClose: () => void;
   onOpenTask: (id: string) => void;
-}
-
-const STAGE_TONE: Record<string, string> = {
-  neutral: "border-line bg-panel/60 text-muted",
-  info: "border-info/30 bg-info-soft text-info",
-  pass: "border-pass/30 bg-pass-soft text-pass",
-  warn: "border-warn/30 bg-warn-soft text-warn",
-  fail: "border-fail/30 bg-fail-soft text-fail",
-};
-
-function StageChip({ label, tone }: { label: string; tone: keyof typeof STAGE_TONE }) {
-  return (
-    <span
-      data-testid="inspector-stage"
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${STAGE_TONE[tone] ?? STAGE_TONE.neutral}`}
-    >
-      {label}
-    </span>
-  );
 }
 
 /**
@@ -210,7 +188,8 @@ function ReadyInspector({
   onClose: () => void;
   onOpenTask: (id: string) => void;
 }) {
-  const stage = stageFromWaveReviewMember(reviewMember) ?? actualStage(task, run);
+  const state = task.state;
+  const working = state.state === "working";
   const taskIntent = visibleTaskIntent(task);
   const identity = identityDisplay(executionIdentity ?? observedRunIdentity(run));
   const failures = failingRows(task);
@@ -218,7 +197,6 @@ function ReadyInspector({
   const humanActions = [...(task.humanActions ?? []), ...(task.humanAction ? [task.humanAction] : [])].filter((action, index, all) => all.findIndex((candidate) => candidate.gateId === action.gateId) === index);
   const taskStart = useTaskStart(task.id, task.projectId);
   const recovery = useRecovery(task.id, task.projectId);
-  const currentStatus = task.rawStatus ?? task.status;
   const runBlocker = taskRunBlocker(task);
   const runnable = !runBlocker;
   const directiveQueued = task.runDirective?.state === "queued";
@@ -232,17 +210,9 @@ function ReadyInspector({
       ? `${outcomeLabel({ lane: attemptLane, outcome: currentAttempt.outcome })} · attempt ${currentAttempt.n}`
       : `${outcomeLabel(run)} · attempt ${run.attemptCount}`
     : "Unavailable — no runtime record";
-  const reviewMemberStopsStart = Boolean(reviewMember && (
-    reviewMember.phase === "proof_blocked" ||
-    reviewMember.phase === "failed" ||
-    reviewMember.state === "blocked" ||
-    reviewMember.state === "cancelled" ||
-    reviewMember.phase === "completed" ||
-    reviewMember.state === "completed"
-  ));
-  // A named human action owns this work. Keep the human control visible, but
-  // never render a disabled LLM start affordance beside it.
-  const showStart = humanActions.length === 0 && !reviewMemberStopsStart && !stage.live && !["done", "review", "blocked"].includes(currentStatus);
+  // Start is offered only for work that has not started or is blocked. A named
+  // human action owns the task otherwise; never show a start affordance beside it.
+  const showStart = humanActions.length === 0 && ["backlog", "planned", "blocked"].includes(state.state);
 	const [messageBody, setMessageBody] = useState("");
 	const [messageStatus, setMessageStatus] = useState("");
 	const [contactIndex, setContactIndex] = useState(0);
@@ -277,7 +247,6 @@ function ReadyInspector({
   const proofRows = [...task.acceptance.map((row) => row.proof), ...task.verification.map((row) => row.result)].map((value) => proofStatusForCurrentAttempt(value, run));
   const route = task.effectiveExecute;
   const routingSummary = [tierLabel(task.authoredWorkLevel ?? route?.work_level).split(" · ")[0], [route?.harness, route?.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
-  const hasDecision = humanActions.length > 0 || Boolean(task.agentAccessApprovals?.length);
 
   return (
     <div className="wux-inspector-scrim-wrap">
@@ -297,9 +266,10 @@ function ReadyInspector({
 
         <div className="wux-inspector-body">
           <div className="flex flex-wrap items-center gap-2">
-            <StageChip label={DISPLAY_STATE_LABEL[stage.state]} tone={stage.tone} />
-            <span data-testid="inspector-next-action" role="status" className="min-w-0 flex-1 text-[12px] leading-5 text-muted">{stagePhrase(task, run, stage, reviewMember, hasDecision)}</span>
+            <span data-testid="inspector-stage"><TaskStateBadge state={state} /></span>
+            <span data-testid="inspector-next-action" role="status" className="min-w-0 flex-1 whitespace-pre-wrap text-[12px] leading-5 text-muted">{state.reason}</span>
           </div>
+          {state.next_action ? <p data-testid="inspector-state-next" className="mt-1 text-[12px] leading-5 text-ink-soft">Next: {state.next_action}</p> : null}
 
           <div className="mt-3 flex flex-wrap gap-2 empty:hidden">
             {reviewMember?.phase === "failed" && reviewMember.lane === "review" ? <button type="button" className="wux-inspector-action wux-inspector-action-primary" disabled={recovery.isPending} aria-busy={recovery.isPending} onClick={() => recovery.mutate("retry_review")}>{recovery.isPending ? "Queuing review…" : "Retry review"}</button> : null}
@@ -321,12 +291,6 @@ function ReadyInspector({
               <AgentAccessApprovalList projectId={task.projectId} taskId={task.id} approvals={task.agentAccessApprovals} compact />
             </div>
           ) : null}
-          {run?.outcome === "failed" && (
-            <p data-testid="inspector-failure" className="mt-3 rounded-lg border border-fail/30 bg-fail-soft px-3 py-2 text-[12.5px] leading-relaxed text-fail">
-              <strong>Last attempt failed.</strong>
-              {run.error ? ` ${run.error}` : " See the run log before retrying."}
-            </p>
-          )}
 
           <div data-testid="inspector-intent" className="wux-inspector-intent mt-4" aria-label="What this task achieves">
             <ReactMarkdown
@@ -440,7 +404,7 @@ function ReadyInspector({
 
             {task.projectId && run ? <Link data-testid="inspector-open-run" to="/p/$projectId/runs/$taskId" params={{ projectId: task.projectId, taskId: task.id }} className="block text-[12.5px] text-info underline">Open run logs and details <span aria-hidden="true">→</span></Link> : null}
             <Section title="Activity" summary={attemptDescription}>
-              <h3 className="wux-inspector-h">{stage.live ? "Current attempt" : "Latest attempt"}</h3>
+              <h3 className="wux-inspector-h">{working ? "Current attempt" : "Latest attempt"}</h3>
               <dl className="space-y-2 text-[12.5px] leading-5">
                 <div className="flex gap-2">
                   <dt className="w-24 flex-none text-muted">Profile / model</dt>

@@ -3,12 +3,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient } from "@tanstack/react-query";
 import { WaveList } from "../src/features/workbench/overview/WaveList";
-import { WaveOverview } from "../src/features/workbench/overview/WaveOverview";
-import { groupWaves, type Startability } from "../src/features/workbench/overview/groupWaves";
 import { AutomationScopeRow } from "../src/features/product/OperationsScreens";
 import { invalidateAutomationToggleQueries, qk } from "../src/lib/queries";
-import { makeRun, makeTask, makeWave } from "../src/features/workbench/overview/previewFixtures";
-import type { RecoveryDiagnosis, WaveListItem, WaveSummary } from "../src/types/domain";
+import { makeRun, makeTask, makeWave, sampleState } from "../src/features/workbench/overview/previewFixtures";
+import type { RecoveryDiagnosis, TaskState, WaveListItem, WaveSummary } from "../src/types/domain";
 
 function recovery(overrides: Partial<RecoveryDiagnosis> & { blockingCause?: string; causeCode?: string }): RecoveryDiagnosis {
   return {
@@ -19,57 +17,36 @@ function recovery(overrides: Partial<RecoveryDiagnosis> & { blockingCause?: stri
   };
 }
 
-const START: Record<string, Startability> = {
-  "W-ARMED-QUEUED": { state: "blocked", reason: "Queued." },
-  "W-OFF": { state: "blocked", reason: "Background work is off." },
-  "W-STALE": { state: "unknown", reason: "Stale read." },
-  "W-CAP": { state: "blocked", reason: "Capacity." },
-};
-
-function listItem(id: string, authorization: string, rec?: RecoveryDiagnosis): WaveListItem {
-  return { id, title: id, status: "open", authorization, memberCount: 1, doneCount: 0, recovery: rec };
+// The list shows only the server-computed wave state; recovery causes arrive as its reason.
+function listItem(id: string, authorization: string, state: TaskState, rec?: RecoveryDiagnosis): WaveListItem {
+  return { id, title: id, status: "open", state, authorization, memberCount: 1, doneCount: 0, recovery: rec };
 }
 
-function renderList(waves: WaveListItem[], backgroundWorkEnabled?: boolean) {
+function renderList(waves: WaveListItem[]) {
   return renderToStaticMarkup(createElement(WaveList, {
-    waves, backgroundWorkEnabled, query: "", onOpenWave: () => {}, loading: false,
+    waves, query: "", onOpenWave: () => {}, loading: false,
   }));
 }
 
 describe("self-service recovery rendering", () => {
-  test("A1: an armed+queued row waits under Up next with no alarm chip", () => {
+  test("A1: an armed+queued row waits under Planned with no alarm chip", () => {
     const html = renderList([
-      listItem("W-ARMED-QUEUED", "armed", recovery({ queued: true, blockingCause: "Queued. Next check 2026-09-22T00:01:00Z.", causeCode: "queued", nextActor: "daemon" })),
+      listItem("W-ARMED-QUEUED", "armed", sampleState("planned", "queued"), recovery({ queued: true, causeCode: "queued", nextActor: "daemon" })),
     ]);
-    expect(html).toContain("Up next · 1");
+    expect(html).toContain("Planned · 1");
     expect(html).not.toContain("Blocked");
-    expect(html).not.toContain("Running");
+    expect(html).not.toContain("Working");
   });
 
   test("A1: project-off, daemon-unavailable, and capacity waits stay distinct", () => {
     const html = renderList([
-      listItem("W-OFF", "armed", recovery({ blockingCause: "Background work is off for this project.", causeCode: "project_disabled", nextActor: "operator" }), ),
-      listItem("W-STALE-D", "armed", recovery({ blockingCause: "Work waits on daemon reconciliation but the last recorded poll was 2026-09-21T00:00:00Z.", causeCode: "doctor-daemon-stale", nextActor: "operator" })),
-      listItem("W-CAP", "armed", recovery({ blockingCause: "1 active run(s) hold execution capacity: T-9.", causeCode: "doctor-project-capacity", nextActor: "daemon" })),
-    ], true);
+      listItem("W-OFF", "armed", sampleState("blocked", "Background work is off for this project.")),
+      listItem("W-STALE-D", "armed", sampleState("blocked", "Work waits on daemon reconciliation but the last recorded poll was 2026-09-21T00:00:00Z.")),
+      listItem("W-CAP", "armed", sampleState("planned", "1 active run(s) hold execution capacity: T-9.")),
+    ]);
     expect(html).toContain("Background work is off for this project.");
     expect(html).toContain("last recorded poll was");
     expect(html).toContain("hold execution capacity: T-9.");
-  });
-
-  test("A1: a queued directive never earns Running", () => {
-    const waves: WaveSummary[] = [makeWave({ id: "W-Q", title: "Queued wave", memberIds: ["T-Q"] })];
-    const tasks = [makeTask({ id: "T-Q", title: "Queued task", status: "ready" })];
-    // Unclaimed run: a queued reservation, not an execution.
-    const runs = [makeRun({ taskId: "T-Q", leaseState: "unclaimed", leaseStateRaw: "unclaimed", outcome: "queued", liveness: "fresh" })];
-    const grouped = groupWaves({ waves, tasks, runs, startability: { "W-Q": { state: "blocked", reason: "Queued." } } });
-    const running = grouped.groups.find((group) => group.id === "running")!;
-    expect(running.waves.map((entry) => entry.wave.id)).not.toContain("W-Q");
-    const overview = renderToStaticMarkup(createElement(WaveOverview, {
-      waves, tasks, runs, startability: { "W-Q": { state: "blocked", reason: "Queued." } },
-      query: "", category: "all", onQueryChange: () => {}, onCategoryChange: () => {}, onOpenWave: () => {}, onOpenUnassigned: () => {},
-    }));
-    expect(overview).not.toContain(">Running<");
   });
 
   test("A2: disabled repair capability renders a reason, never a mutation", () => {
@@ -78,7 +55,7 @@ describe("self-service recovery rendering", () => {
     expect(rec.capabilities.safeRepairReason ?? "").toContain("no manual repair mutation");
     // The overview renders the cause text but no repair control: the only
     // buttons on a card are navigation and filter controls.
-    const html = renderList([listItem("W-ESC", "armed", rec)], true);
+    const html = renderList([listItem("W-ESC", "armed", sampleState("blocked", "Scheduled reconciliation is overdue since 2026-09-22T00:00:00Z."), rec)]);
     expect(html).toContain("Scheduled reconciliation is overdue");
     expect(html.match(/<button/g)?.length ?? 0).toBeGreaterThan(0);
     expect(html).not.toContain("Repair");
@@ -86,8 +63,8 @@ describe("self-service recovery rendering", () => {
   });
 
   test("A2: refused higher-impact actions keep explicit labels", () => {
-    const html = renderList([listItem("W-PAUSED", "paused", recovery({ authorization: "paused", blockingCause: "Wave is paused.", causeCode: "paused", nextActor: "operator", nextAction: "tusker wave resume W-PAUSED" }))], true);
-    expect(html).toContain(">Paused<");
+    const html = renderList([listItem("W-PAUSED", "paused", sampleState("blocked", "Wave is paused.", { reason_code: "paused" }))]);
+    expect(html).toContain(">Blocked<");
     expect(html).toContain("Wave is paused.");
   });
 

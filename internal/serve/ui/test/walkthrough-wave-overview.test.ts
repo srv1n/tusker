@@ -2,8 +2,8 @@
   TSK-T-0013 — wave overview is glanceable.
 
   Server-renders WaveAuthorityControls and WaveMemberList against seeded
-  WaveReview fixtures and asserts the compact contract: lifecycle badge,
-  colored counts, one primary action, no boilerplate prose; expected
+  WaveReview fixtures and asserts the compact contract: the server state
+  badge with its reason, one primary action, no boilerplate prose; expected
   dependency and capacity waits are neutral and named; failures stay
   specific to task and lane. Raw fingerprints and codes stay off the wave
   surface entirely; Diagnostics and the JSON review carry them.
@@ -14,8 +14,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { qk } from "../src/lib/queries";
-import { WaveAuthorityControls, WaveMemberList, capacityConstraint, summarizeIssues, waveCounts } from "../src/features/workbench/integration/WaveAuthority";
-import type { WaveReview, WaveReviewMember } from "../src/types/domain";
+import { WaveAuthorityControls, WaveMemberList, capacityConstraint, summarizeIssues } from "../src/features/workbench/integration/WaveAuthority";
+import { makeWave, sampleState } from "../src/features/workbench/overview/previewFixtures";
+import type { TaskState, WaveReview, WaveReviewMember } from "../src/types/domain";
 
 const PROJECT = "beta";
 const WAVE = "W-0003";
@@ -41,23 +42,26 @@ function reviewFixture(overrides: Partial<WaveReview>): WaveReview {
   };
 }
 
-function renderControls(review: WaveReview): string {
+function renderControls(review: WaveReview, state?: TaskState): string {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(qk.waveReview(PROJECT, WAVE), review);
+  if (state) client.setQueryData(qk.wave(PROJECT, WAVE), makeWave({ id: WAVE, title: "Beta wave", state }));
   return renderToStaticMarkup(
     createElement(QueryClientProvider, { client }, createElement(WaveAuthorityControls, { projectId: PROJECT, waveId: WAVE })),
   );
 }
 
-function renderMembers(review: WaveReview): string {
-  return renderToStaticMarkup(createElement(WaveMemberList, { review, projectId: PROJECT }));
+/** Member rows with server states, keyed by task ID. */
+function renderMembers(review: WaveReview, states: Record<string, TaskState> = {}): string {
+  const members = Object.entries(states).map(([id, state]) => ({ id, title: id, group: "", status: "", state, proof: "" }));
+  return renderToStaticMarkup(createElement(WaveMemberList, { review, projectId: PROJECT, members }));
 }
 
 describe("compact wave summary (A1)", () => {
-  test("ready wave: counts, green start, no badge or boilerplate", () => {
-    const html = renderControls(reviewFixture({ controls: [{ action: "wave start", enabled: true, scope: WAVE }] }));
-    expect(html).toContain("0/1 accepted");
-    expect(html).toContain("1 waiting");
+  test("ready wave: state badge, green start, no boilerplate", () => {
+    const html = renderControls(reviewFixture({ controls: [{ action: "wave start", enabled: true, scope: WAVE }] }), sampleState("planned", "1 planned"));
+    expect(html).toContain('data-task-state="planned"');
+    expect(html).toContain("1 planned");
     expect(html).toContain('data-wave-control="wave start"');
     expect(html).toContain("bg-pass");
     expect(html).not.toContain("Ready to start");
@@ -66,29 +70,28 @@ describe("compact wave summary (A1)", () => {
     expect(html).not.toContain("No current diagnostic records");
   });
 
-  test("executing wave: counts plus Pause with its one hint", () => {
+  test("executing wave: state reason plus Pause with its one hint", () => {
     const html = renderControls(reviewFixture({
       state: "Running",
       authorization: "authorized",
       members: [member({ state: "running", phase: "executing" }), member({ taskId: "BET-T-0002", title: "Task two" })],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
-    }));
-    expect(html).toContain(">Executing<");
-    expect(html).toContain("1 executing");
-    expect(html).toContain("1 waiting");
+    }), sampleState("working", "1 working, 1 planned"));
+    expect(html).toContain(">Working<");
+    expect(html).toContain("1 working, 1 planned");
     expect(html).toContain('data-wave-control="wave pause"');
     expect(html).toContain("Running. Pause stops new tasks; active tasks may finish.");
     expect(html).not.toContain("Agents are actively progressing");
   });
 
-  test("reviewing wave: badge plus review count", () => {
+  test("reviewing wave: badge plus review reason", () => {
     const html = renderControls(reviewFixture({
       state: "Waiting",
       authorization: "authorized",
       members: [member({ state: "reviewing", phase: "reviewing", lane: "review" })],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
-    }));
-    expect(html).toContain(">Reviewing<");
+    }), sampleState("in_review", "1 in review"));
+    expect(html).toContain(">In review<");
     expect(html).toContain("1 in review");
   });
 
@@ -97,8 +100,8 @@ describe("compact wave summary (A1)", () => {
       state: "Paused",
       authorization: "paused",
       controls: [{ action: "wave resume", enabled: true, scope: WAVE }],
-    }));
-    expect(html).toContain(">Paused<");
+    }), sampleState("blocked", "paused by you", { reason_code: "paused" }));
+    expect(html).toContain("paused by you");
     expect(html).toContain('data-wave-control="wave resume"');
     expect(html).toContain("does not retry failed tasks");
     expect(html).not.toContain('data-wave-control="wave start"');
@@ -114,21 +117,20 @@ describe("compact wave summary (A1)", () => {
     expect(html).not.toContain('data-wave-control="wave start"');
   });
 
-  test("completed wave: counts only, no action", () => {
+  test("completed wave: state only, no action", () => {
     const html = renderControls(reviewFixture({
       state: "Completed",
       authorization: "authorized",
       members: [member({ state: "completed", phase: "completed" })],
       controls: [{ action: "wave start", enabled: false, scope: WAVE, reason: "wave is already complete" }],
-    }));
-    expect(html).toContain(">Completed<");
-    expect(html).toContain("1/1 accepted");
+    }), sampleState("done"));
+    expect(html).toContain(">Done<");
     expect(html).not.toContain("data-wave-control");
   });
 });
 
 describe("expected waits stay neutral and named (A2)", () => {
-  test("dependency wait names the dependency title, not a raw code", () => {
+  test("dependency wait shows the server reason, not a raw code", () => {
     const review = reviewFixture({
       members: [
         member({ taskId: "BET-T-0001", title: "Base module", state: "running", phase: "executing" }),
@@ -136,13 +138,12 @@ describe("expected waits stay neutral and named (A2)", () => {
       ],
       frontiers: [["BET-T-0001"], ["BET-T-0002"]],
     });
-    const html = renderMembers(review);
-    expect(html).toContain("Waiting for Base module to complete");
+    const html = renderMembers(review, { "BET-T-0001": sampleState("working"), "BET-T-0002": sampleState("planned", "waiting on Base module") });
+    expect(html).toContain("waiting on Base module");
     expect(html).not.toContain("DEPENDENCY_WAITING");
-    const controls = renderControls(review);
+    const controls = renderControls(review, sampleState("working", "1 working, 1 planned"));
     expect(controls).not.toContain("DEPENDENCY_WAITING");
-    expect(controls).toContain("1 executing");
-    expect(controls).toContain("1 waiting");
+    expect(controls).toContain("1 working, 1 planned");
   });
 
   test("raw fingerprint and codes never reach the wave surface", () => {
@@ -174,8 +175,8 @@ describe("one-slot capacity (A3)", () => {
     const controls = renderControls(oneSlot);
     expect(controls).toContain("1 task at a time");
     expect(controls).toContain(`/p/${PROJECT}/settings`);
-    const members = renderMembers(oneSlot);
-    expect(members).toContain("Ready — waiting for an execution slot");
+    const members = renderMembers(oneSlot, { "BET-T-0002": sampleState("planned", "no free slot") });
+    expect(members).toContain("no free slot");
     expect(members).not.toContain("queued for dispatch");
   });
 
@@ -191,15 +192,7 @@ describe("one-slot capacity (A3)", () => {
     });
     expect(capacityConstraint(released)).toBeUndefined();
     expect(renderControls(released)).not.toContain("task at a time");
-    expect(renderMembers(released)).toContain("Queued");
     expect(renderControls(oneSlot)).not.toContain("parallel");
-  });
-
-  test("authorized ready member may say it is starting automatically", () => {
-    const html = renderMembers(reviewFixture({ authorization: "authorized", members: [member({ state: "ready" })] }));
-    expect(html).toContain("Ready — starting automatically");
-    const inert = renderMembers(reviewFixture({ authorization: "inert", members: [member({ state: "ready" })] }));
-    expect(inert).not.toContain("starting automatically");
   });
 });
 
@@ -230,22 +223,8 @@ describe("distinct failures with the responsible actor (A4)", () => {
   test("member list keeps the actor and reason on the failed row", () => {
     const html = renderMembers(reviewFixture({
       members: [member({ state: "blocked", phase: "failed", lane: "review", waitingReason: "reviewer crashed" })],
-    }));
-    expect(html).toContain("Failed: reviewer crashed");
-  });
-});
-
-describe("count model", () => {
-  test("counts cover accepted, executing, in-review, waiting and failed", () => {
-    const counts = waveCounts(reviewFixture({
-      members: [
-        member({ taskId: "BET-T-0001", state: "completed", phase: "completed" }),
-        member({ taskId: "BET-T-0002", state: "running", phase: "executing" }),
-        member({ taskId: "BET-T-0003", state: "reviewing", phase: "awaiting_review" }),
-        member({ taskId: "BET-T-0004", state: "blocked", phase: "failed" }),
-        member({ taskId: "BET-T-0005", state: "waiting", waitingReason: "waiting for dependency BET-T-0001" }),
-      ],
-    })).map((count) => count.label);
-    expect(counts).toEqual(["1/5 accepted", "1 executing", "1 in review", "1 waiting", "1 failed"]);
+    }), { "BET-T-0001": sampleState("blocked", "reviewer crashed", { reason_code: "crashed" }) });
+    expect(html).toContain(">Blocked<");
+    expect(html).toContain("reviewer crashed");
   });
 });

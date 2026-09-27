@@ -13,6 +13,7 @@ import type {
   ProofStatus,
   Readiness,
   Risk,
+  TaskStateCode,
   TaskStatus,
 } from "@/types/domain";
 
@@ -52,6 +53,18 @@ export const gateKindLabel: Record<GateKind, string> = {
   "approve-spec": "Approve spec",
   review: "Review",
   failed: "Failed",
+};
+
+/** The only task/wave state mapping in the UI: state code to color. Labels come from the server. */
+export const taskStateTone: Record<TaskStateCode, Tone> = {
+  backlog: "neutral",
+  planned: "muted",
+  working: "info",
+  needs_input: "warn",
+  blocked: "fail",
+  in_review: "accent",
+  done: "pass",
+  canceled: "muted",
 };
 
 export const statusTone: Record<TaskStatus, Tone> = {

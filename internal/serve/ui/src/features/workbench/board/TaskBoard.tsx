@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { RotateCcw } from "lucide-react";
-import type { RunSummary, TaskCapsule } from "@/types/domain";
+import type { TaskCapsule } from "@/types/domain";
 import { cn } from "@/lib/cn";
-import { availableTags, boardGroupFor, boardGroups, filterBoardTasks, needsYou, statusLabel } from "./boardModel";
+import { TaskStateBadge } from "@/components/ui/chips";
+import { availableTags, boardGroupFor, boardGroups, filterBoardTasks } from "./boardModel";
 
 export interface TaskBoardProps {
   tasks: TaskCapsule[];
-  runs: RunSummary[];
   mode: "board" | "list";
   onModeChange: (value: "board" | "list") => void;
   onSelectTask: (id: string) => void;
@@ -15,10 +15,6 @@ export interface TaskBoardProps {
   selectedTags: string[];
   onSelectedTagsChange: (tags: string[]) => void;
   tagsAvailable: boolean;
-}
-
-function NeedsYou({ task }: { task: TaskCapsule }) {
-  return needsYou(task) ? <span className="flex-none rounded-full bg-warn-soft px-1.5 text-[10.5px] font-medium text-warn">Needs you</span> : null;
 }
 
 function TaskTags({ task, tagsByTaskId, visible }: { task: TaskCapsule; tagsByTaskId?: Record<string, string[]>; visible: boolean }) {
@@ -47,9 +43,9 @@ function TaskCard({ task, tagsByTaskId, tagsVisible, onSelectTask }: {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-[10.5px] text-faint">{task.id}</span>
-        <NeedsYou task={task} />
       </div>
       <div className="mt-1 text-[13px] font-medium leading-snug text-ink group-hover:text-accent">{task.title}</div>
+      {task.state.reason ? <div className="mt-1 line-clamp-2 text-[11.5px] leading-4 text-muted">{task.state.reason}</div> : null}
       <TaskTags task={task} tagsByTaskId={tagsByTaskId} visible={tagsVisible} />
     </button>
   );
@@ -57,7 +53,6 @@ function TaskCard({ task, tagsByTaskId, tagsVisible, onSelectTask }: {
 
 export function TaskBoard({
   tasks,
-  runs,
   mode,
   onSelectTask,
   taskIds,
@@ -116,7 +111,7 @@ export function TaskBoard({
                 >
                   <span className="truncate font-mono text-[11px] text-faint">{task.id}</span>
                   <span className="truncate text-[13px] text-ink">{task.title}</span>
-                  <span className="flex items-center gap-2 text-[12px] text-muted"><NeedsYou task={task} />{statusLabel(task, runs)}</span>
+                  <TaskStateBadge state={task.state} />
                 </button>
               </li>
             ))}
@@ -125,19 +120,20 @@ export function TaskBoard({
       ) : (
         <div className="flex min-h-0 flex-1 items-stretch gap-3 overflow-x-auto p-4">
           {boardGroups.map((group) => {
-            const groupTasks = visibleTasks.filter((task) => boardGroupFor(task, runs) === group.key);
+            const groupTasks = visibleTasks.filter((task) => boardGroupFor(task) === group.key);
             if (groupTasks.length === 0) return null;
+            const label = groupTasks[0].state.label;
             const open = expanded[group.key] ?? !group.collapsed;
             if (!open) return (
-              <button key={group.key} type="button" aria-expanded={false} aria-label={`Show ${group.label} tasks (${groupTasks.length})`} onClick={() => setExpanded({ ...expanded, [group.key]: true })} className="flex w-10 flex-none flex-col items-center gap-2 rounded-lg border border-line bg-panel/40 py-3 text-[12px] text-muted hover:text-ink">
+              <button key={group.key} type="button" aria-expanded={false} aria-label={`Show ${label} tasks (${groupTasks.length})`} onClick={() => setExpanded({ ...expanded, [group.key]: true })} className="flex w-10 flex-none flex-col items-center gap-2 rounded-lg border border-line bg-panel/40 py-3 text-[12px] text-muted hover:text-ink">
                 <span className="font-mono text-[11px]">{groupTasks.length}</span>
-                <span className="[writing-mode:vertical-rl]">{group.label}</span>
+                <span className="[writing-mode:vertical-rl]">{label}</span>
               </button>
             );
             return (
-              <section key={group.key} aria-label={`${group.label} tasks`} className="flex min-h-0 w-72 flex-none flex-col rounded-lg bg-panel/40">
+              <section key={group.key} aria-label={`${label} tasks`} className="flex min-h-0 w-72 flex-none flex-col rounded-lg bg-panel/40">
                 <button type="button" aria-expanded onClick={() => setExpanded({ ...expanded, [group.key]: false })} className="flex flex-none items-center justify-between gap-2 px-3 py-2 text-left">
-                  <h2 className="text-[12.5px] font-semibold text-ink">{group.label}</h2>
+                  <h2 className="text-[12.5px] font-semibold text-ink">{label}</h2>
                   <span className="font-mono text-[11px] text-faint">{groupTasks.length}</span>
                 </button>
                 <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">

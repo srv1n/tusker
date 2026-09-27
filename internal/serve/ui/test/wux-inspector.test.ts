@@ -19,11 +19,16 @@ import { TaskInspector } from "../src/features/workbench/inspector/TaskInspector
 import { taskRunBlocker } from "../src/features/product/TaskScreens";
 import {
   acceptedDelivery,
-  actualStage,
   identityDisplay,
   resolveVisibleTask,
 } from "../src/features/workbench/inspector/inspectorLogic";
-import { acceptedRun, acceptedTask, failedTask, readyRun, readyTask } from "../previews/wux/inspector/fixtures";
+import { sampleState } from "../src/features/workbench/overview/previewFixtures";
+import * as fx from "../previews/wux/inspector/fixtures";
+
+const { acceptedRun, readyRun } = fx;
+const readyTask = { ...fx.readyTask, state: sampleState("planned") };
+const failedTask = { ...fx.failedTask, state: sampleState("blocked", "crashed") };
+const acceptedTask = { ...fx.acceptedTask, state: sampleState("done") };
 
 type InspectorProps = Parameters<typeof TaskInspector>[0];
 
@@ -151,20 +156,19 @@ describe("inspector evidence and acceptance", () => {
     expect(html).toContain('data-testid="inspector-acceptance"');
     expect(html).toContain("pass");
 
-    // Worker success is not accepted completion: a succeeded run on an
-    // unreviewed task still reads as checking, not delivered.
-    const stage = actualStage({ ...acceptedTask, status: "review" }, acceptedRun);
-    expect(stage.label.toLowerCase()).toContain("check");
+    // The stage shows the server state record, not a run-outcome derivation.
+    const reviewing = { ...acceptedTask, status: "review" as const, state: sampleState("in_review", "reviewing", { next_action: "Wait for the reviewer" }) };
+    const reviewHtml = render({ task: reviewing, run: acceptedRun, selectedTaskId: reviewing.id });
+    expect(reviewHtml).toContain('data-task-state="in_review"');
+    expect(reviewHtml).toContain("reviewing");
+    expect(reviewHtml).toContain("Next: Wait for the reviewer");
   });
 });
 
 describe("inspector parked attempts", () => {
-  test("does not present a stopped review as active checking", () => {
+  test("a task the server does not report as working shows its latest attempt", () => {
     const parked = { ...acceptedRun, outcome: "parked-no-progress" as const, liveness: "dead" as const };
-    expect(actualStage({ ...acceptedTask, status: "review" }, parked)).toEqual({
-      label: "Stopped — no progress", state: "failed", tone: "warn", live: false,
-    });
-    const task = { ...acceptedTask, status: "review" as const };
+    const task = { ...acceptedTask, status: "review" as const, state: sampleState("blocked", "crashed") };
     expect(render({ task, run: parked, selectedTaskId: task.id })).toContain("Latest attempt");
   });
 });
@@ -176,16 +180,17 @@ describe("inspector above the fold", () => {
     expect(html).toContain(`/p/${readyTask.projectId}/runs/${readyTask.id}`);
     expect(html.indexOf('data-testid="inspector-open-run"')).toBeLessThan(html.indexOf('>Activity<'));
   });
-  test("a dependency-waiting task shows the unified chip and names its prerequisites once", () => {
-    const waiting = { ...readyTask, humanAction: undefined, humanActions: [], agentAccessApprovals: [], deps: [{ id: "FLW-T-0008", title: "A", status: "backlog" as const }, { id: "FLW-T-0006", title: "B", status: "backlog" as const }] };
+  test("a dependency-waiting task shows its server state and names its prerequisites once", () => {
+    const waiting = { ...readyTask, state: sampleState("planned", "Waiting for FLW-T-0008, FLW-T-0006"), humanAction: undefined, humanActions: [], agentAccessApprovals: [], deps: [{ id: "FLW-T-0008", title: "A", status: "backlog" as const }, { id: "FLW-T-0006", title: "B", status: "backlog" as const }] };
     const html = render({ task: waiting, run: null, reviewMember: { taskId: waiting.id, title: waiting.title, state: "waiting", proofInvalidation: { kind: "missing", dimension: "command", nextActor: "command_executor", recovery: "rerun_checks", explanation: "current command proof has not been recorded" } } });
     const fold = html.slice(0, html.indexOf('data-testid="inspector-intent"'));
-    expect(fold).toContain(">Waiting</span>");
+    expect(fold).toContain('data-task-state="planned"');
     expect(fold).toContain("Waiting for FLW-T-0008, FLW-T-0006");
     expect(fold).not.toContain("Queued");
     expect(fold).not.toContain("proof has not been recorded");
     expect(fold).not.toContain("Run task");
-    expect(html.match(/FLW-T-0008/g)).toHaveLength(1);
+    // Visible text names each prerequisite once (the badge's title tooltip repeats the reason).
+    expect(html.replace(/title="[^"]*"/g, "").match(/FLW-T-0008/g)).toHaveLength(1);
     expect(html).toContain("proof not recorded");
   });
 });

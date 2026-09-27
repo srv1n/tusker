@@ -6,6 +6,7 @@ import { HumanActionCard } from "../src/features/human-action/HumanActionCard";
 import { qk } from "../src/lib/queries";
 import { WaveAuthorityControls } from "../src/features/workbench/integration/WaveAuthority";
 import { ConfirmProvider } from "../src/components/ui/action-feedback";
+import { makeWave, sampleState } from "../src/features/workbench/overview/previewFixtures";
 import type { HumanAction, WaveReview } from "../src/types/domain";
 
 const action: HumanAction = {
@@ -28,8 +29,10 @@ describe("human approval continuation", () => {
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(qk.waveReview("app", "W-0001"), review);
+    client.setQueryData(qk.wave("app", "W-0001"), makeWave({ id: "W-0001", title: "Pilot", state: sampleState("needs_input", "Pilot task needs your approval") }));
     const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(ConfirmProvider, null, createElement(WaveAuthorityControls, { projectId: "app", waveId: "W-0001" }))));
-    expect(html).toContain("Waiting for you");
+    expect(html).toContain('data-task-state="needs_input"');
+    expect(html).toContain("Pilot task needs your approval");
     expect(html).toContain("Authorize the CLI pilot.");
     expect(html).toContain("Approve and continue");
     expect(html).toContain("Review scope and limits");

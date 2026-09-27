@@ -98,7 +98,6 @@ export function WorkOverview() {
     right={<input type="search" value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="Filter waves" aria-label="Filter waves by ID, title, or description" className="h-8 w-48 min-w-0 rounded-md border border-line bg-raised px-2.5 text-[12.5px] text-ink placeholder:text-faint" />}
   ><Reading><WaveList
     waves={waves.data ?? []}
-    backgroundWorkEnabled={projects.data?.find((project) => projectContainsCheckout(project, projectId))?.automationEnabled}
     query={query}
     onOpenWave={(waveId) => navigate({ to: "/p/$projectId/waves/$waveId", params: { projectId, waveId } })}
     loading={waves.isPending}
@@ -122,7 +121,6 @@ export function WorkBoard() {
   const projectId = useProjectId();
   const location = useRouterState({ select: (state) => state.location });
   const tasks = useTasks(projectId);
-  const runs = useRuns(projectId);
   const waves = useWaves(projectId);
   const [mode, setMode] = useState<"board" | "list">("board");
   const [selected, setSelected] = useState<string | null>(null);
@@ -136,7 +134,7 @@ export function WorkBoard() {
     ? <p role="status" className="p-5 text-[13px] text-muted">Loading wave membership…</p>
     : unassigned && waves.error
       ? <p role="alert" className="p-5 text-[13px] text-fail">Unassigned tasks are unavailable until wave membership can be loaded.</p>
-      : <TaskBoard tasks={tasks.data ?? []} runs={runs.data ?? []} mode={mode} onModeChange={setMode} onSelectTask={setSelected} taskIds={unassigned ? unassignedIds : undefined} selectedTags={[]} onSelectedTagsChange={() => {}} tagsAvailable={false} />;
+      : <TaskBoard tasks={tasks.data ?? []} mode={mode} onModeChange={setMode} onSelectTask={setSelected} taskIds={unassigned ? unassignedIds : undefined} selectedTags={[]} onSelectedTagsChange={() => {}} tagsAvailable={false} />;
   return <Shell left={<WorkTitle projectId={projectId} current="board" />} right={modeToggle}>{body}<InspectorHost selected={selected} onClose={() => setSelected(null)} /></Shell>;
 }
 
@@ -173,6 +171,7 @@ export function WorkWave() {
       title: fact.title,
       status: fact.status,
       readiness: fact.readiness,
+      state: fact.state,
       waveId: fact.waveId,
       waveTitle: fact.waveTitle,
     } satisfies DependencyFact]));
@@ -210,7 +209,7 @@ export function WorkWave() {
       <nav aria-label="Wave views" className="flex rounded-md border border-line bg-panel p-0.5">{views.map(([tab, label]) => <button key={tab} type="button" aria-pressed={view === tab} onClick={() => setChosenView(tab)} className={segment(view === tab)}>{label}</button>)}</nav>
     </div>
     <WaveCallout projectId={projectId} waveId={currentWave.id} waitSummary={waitSummary} />
-    {view === "flow" ? <WaveFlow memberIds={currentWave.memberIds} tasks={tasks} runs={runs.data ?? []} reviewMembers={review.error ? undefined : review.data?.members} needsYouIds={review.error ? undefined : review.data?.humanActions?.map((item) => item.taskId)} dependencyFacts={dependencyFacts} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={review.isPending || details.some((query) => query.isPending)} error={review.error instanceof Error ? review.error.message : details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />
+    {view === "flow" ? <WaveFlow memberIds={currentWave.memberIds} tasks={tasks} runs={runs.data ?? []} members={currentWave.members} dependencyFacts={dependencyFacts} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={review.isPending || details.some((query) => query.isPending)} error={review.error instanceof Error ? review.error.message : details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />
       : <Reading>{view === "work" ? <WaveReviewDetail projectId={projectId} waveId={currentWave.id} showControls={false} showDependencies={false} /> : canShowWaveResults(review.data, review.error) ? <WaveResults wave={currentWave} tasks={tasks} onOpenDependencies={() => setChosenView("flow")} onOpenTask={setSelected} /> : <p role="status" className="text-[13px] text-muted">{review.error ? "Results unavailable: the acceptance record could not be loaded." : review.isPending ? "Checking the acceptance record…" : "Results appear once this wave is accepted."}</p>}</Reading>}
     <InspectorHost selected={selected} reviewMember={review.error ? undefined : review.data?.members.find((member) => member.taskId === selected)} onClose={() => setSelected(null)} />
   </Shell>;

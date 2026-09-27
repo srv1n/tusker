@@ -3,7 +3,6 @@ export { WaveFlow, type WaveFlowProps } from "./WaveFlow";
 export {
   buildFlowGraph,
   clampViewport,
-  displayStateFor,
   essentialFlowEdges,
   findCycles,
   fitViewport,
@@ -15,7 +14,6 @@ export {
   panViewport,
   topologyKey,
   zoomViewport,
-  DISPLAY_STATE_LABEL,
   DEFAULT_VIEWPORT,
   GAP_X,
   GAP_Y,
@@ -26,7 +24,6 @@ export {
   NODE_WIDTH,
   type BuildFlowInput,
   type DependencyFact,
-  type FlowDisplayState,
   type FlowEdge,
   type FlowGraph,
   type FlowLayout,

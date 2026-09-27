@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { ArrowRight, Waves } from "lucide-react";
-import { useNeeds, useProjects, useRuns, useTasks, useWaves } from "@/lib/queries";
-import { projectContainsCheckout, type NeedItem, type ProjectSummary, type RunSummary, type TaskCapsule, type WaveSummary } from "@/types/domain";
+import { useNeeds, useProjects, useTasks, useWaves } from "@/lib/queries";
+import { TaskStateBadge } from "@/components/ui/chips";
+import { projectContainsCheckout, type NeedItem, type ProjectSummary, type TaskCapsule, type WaveSummary } from "@/types/domain";
 import { ProjectRegistrationRepair } from "./ProjectRegistrationRepair";
 import {
-  phaseTone,
   ProductEmpty,
   ProductLoading,
   ProductPage,
@@ -15,28 +15,16 @@ import {
   ProductUnavailable,
 } from "./shared";
 
-const ACTIVE_RUN_STATES = new Set(["claimed", "starting", "running"]);
-
 function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-function activeRuns(runs: RunSummary[]) {
-  return runs.filter(
-    (run) =>
-      !run.terminal &&
-      run.liveness === "fresh" &&
-      ACTIVE_RUN_STATES.has((run.leaseStateRaw ?? run.leaseState ?? "").toLowerCase()),
-  );
+function workingTasks(tasks: TaskCapsule[]) {
+  return tasks.filter((task) => task.state.state === "working");
 }
 
-function activeWaves(waves: WaveSummary[], running: RunSummary[]) {
-  const runningTaskIds = new Set(running.map((run) => run.taskId));
-  return waves.filter((wave) => {
-    if (wave.landedAt || wave.authorization.state !== "armed" || wave.authorization.stale) return false;
-    return wave.memberIds.some((taskId) => runningTaskIds.has(taskId)) ||
-      wave.members.some((member) => runningTaskIds.has(member.id));
-  });
+function activeWaves(waves: WaveSummary[]) {
+  return waves.filter((wave) => wave.state.state === "working" || wave.state.state === "in_review");
 }
 
 function deliveredWaves(waves: WaveSummary[]) {
@@ -175,7 +163,6 @@ export function ProjectToday() {
   const needsQ = useNeeds(projectId);
   const wavesQ = useWaves(projectId);
   const tasksQ = useTasks(projectId);
-  const runsQ = useRuns(projectId);
 
   const group = projectsQ.data?.find((item) => projectContainsCheckout(item, projectId));
   const checkout = group?.checkouts?.find((item) => item.id === projectId);
@@ -183,11 +170,10 @@ export function ProjectToday() {
   const needs = needsQ.data ?? [];
   const waves = wavesQ.data ?? [];
   const tasks = tasksQ.data ?? [];
-  const runs = runsQ.data ?? [];
-  const running = activeRuns(runs);
-  const movingWaves = activeWaves(waves, running);
+  const running = workingTasks(tasks);
+  const movingWaves = activeWaves(waves);
   const landed = deliveredWaves(waves).slice(0, 3);
-  const isLoading = needsQ.isLoading || wavesQ.isLoading || tasksQ.isLoading || runsQ.isLoading;
+  const isLoading = needsQ.isLoading || wavesQ.isLoading || tasksQ.isLoading;
 
   if (projectsQ.isError) {
     return <ProductPage title="Today" eyebrow={projectId}><ProductUnavailable>Project registration could not be read.</ProductUnavailable></ProductPage>;
@@ -232,7 +218,6 @@ export function ProjectToday() {
             running={running}
             wavesError={wavesQ.isError}
             tasksError={tasksQ.isError}
-            runsError={runsQ.isError}
           />
           <TodayDelivered projectId={projectId} waves={landed} error={wavesQ.isError} />
         </>
@@ -251,13 +236,13 @@ function projectSummary({
   needs: NeedItem[];
   waves: WaveSummary[];
   tasks: TaskCapsule[];
-  running: RunSummary[];
+  running: TaskCapsule[];
   isLoading: boolean;
 }) {
   if (isLoading) return "Reading the current project projection…";
   if (needs.length > 0) return `${plural(needs.length, "item")} need your attention. The rest of the project remains visible below.`;
-  if (running.length > 0) return `${plural(running.length, "active run")} across ${plural(activeWaves(waves, running).length, "open wave")} and ${plural(tasks.length, "task")}.`;
-  return `${plural(activeWaves(waves, running).length, "open wave")} and ${plural(tasks.length, "task")} are currently recorded. Nothing needs you.`;
+  if (running.length > 0) return `${plural(running.length, "task")} working across ${plural(activeWaves(waves).length, "active wave")} and ${plural(tasks.length, "task")}.`;
+  return `${plural(activeWaves(waves).length, "active wave")} and ${plural(tasks.length, "task")} are currently recorded. Nothing needs you.`;
 }
 
 function TodayAttention({ projectId, needs, error }: { projectId: string; needs: NeedItem[]; error: boolean }) {
@@ -279,7 +264,7 @@ function TodayAttention({ projectId, needs, error }: { projectId: string; needs:
           meta={`${need.kind.replaceAll("-", " ")} · ${need.projectName}`}
           title={need.taskTitle}
           detail={needDetail(need)}
-          status={<ProductStatus tone="warn">Needs your action</ProductStatus>}
+          status={need.state ? <TaskStateBadge state={need.state} /> : <ProductStatus tone="warn">Needs your action</ProductStatus>}
           action={<a className="text-[12px] font-medium text-info hover:text-ink" href={taskHref(projectId, need.taskId)}>Open task</a>}
         />
       ))}
@@ -305,27 +290,25 @@ function TodayWorking({
   running,
   wavesError,
   tasksError,
-  runsError,
 }: {
   projectId: string;
   waves: WaveSummary[];
   tasks: TaskCapsule[];
-  running: RunSummary[];
+  running: TaskCapsule[];
   wavesError: boolean;
   tasksError: boolean;
-  runsError: boolean;
 }) {
   return (
     <ProductSection title="Working now" count={waves.length}>
-      {(wavesError || tasksError || runsError) && (
+      {(wavesError || tasksError) && (
         <ProductUnavailable>
-          {wavesError ? "Wave" : tasksError ? "Task" : "Run"} data could not be read, so this briefing does not calculate a complete working total.
+          {wavesError ? "Wave" : "Task"} data could not be read, so this briefing does not calculate a complete working total.
         </ProductUnavailable>
       )}
-      {!wavesError && waves.length === 0 && !tasksError && !runsError && (
+      {!wavesError && waves.length === 0 && !tasksError && (
         <ProductEmpty
           title="No delivery is running"
-          detail={`${plural(tasks.length, "task")} and ${plural(running.length, "active run")} are currently recorded for this project.`}
+          detail={`${plural(tasks.length, "task")} recorded; ${plural(running.length, "task")} working.`}
         />
       )}
       {!wavesError && waves.length > 0 && (
@@ -333,14 +316,13 @@ function TodayWorking({
           {waves.map((wave) => {
             const done = wave.counts.done ?? 0;
             const total = wave.memberIds.length;
-            const current = wave.status || wave.authorization.state;
             return (
               <ProductRow
                 key={wave.id}
                 meta={wave.id}
                 title={wave.title}
-                detail={wave.brief.outcome.summary || `${done} of ${total} tasks are done.`}
-                status={<ProductStatus tone={phaseTone(current)}>{current}</ProductStatus>}
+                detail={wave.state.reason || wave.brief.outcome.summary || `${done} of ${total} tasks are done.`}
+                status={<TaskStateBadge state={wave.state} />}
                 action={<Link className="text-[12px] font-medium text-info hover:text-ink" to="/p/$projectId/waves/$waveId" params={{ projectId, waveId: wave.id }}>Open wave</Link>}
               />
             );

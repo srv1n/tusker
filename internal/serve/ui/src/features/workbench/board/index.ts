@@ -4,7 +4,5 @@ export {
   boardGroupFor,
   boardGroups,
   filterBoardTasks,
-  isLiveTask,
   matchesAllSelectedTags,
-  statusLabel,
 } from "./boardModel";
