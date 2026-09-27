@@ -31,7 +31,7 @@ func TestWalkthroughWaveRecovery(t *testing.T) {
 	if review.Authorization != "authorized" {
 		t.Fatalf("started wave projected authorization=%q", review.Authorization)
 	}
-	if first := walkthroughMember(t, review, "APP-T-0001"); first.State != "waiting" || first.Phase != "queued" {
+	if first := walkthroughMember(t, review, "APP-T-0001"); first.eligibility != "waiting" || first.Phase != "queued" {
 		t.Fatalf("admitted frontier member not projected as queued: %#v", first)
 	}
 	for _, id := range []string{"APP-T-0002", "APP-T-0003"} {
@@ -85,7 +85,7 @@ func TestWalkthroughWaveRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	failed := walkthroughMember(t, review, "APP-T-0002")
-	if failed.State != "blocked" || failed.Phase != "failed" || failed.Lane != runLaneExecute || !strings.Contains(failed.WaitingReason, "workspace setup failed") {
+	if failed.eligibility != "blocked" || failed.Phase != "failed" || failed.Lane != runLaneExecute || !strings.Contains(failed.WaitingReason, "workspace setup failed") {
 		t.Fatalf("runtime failure misclassified: %#v", failed)
 	}
 	if failed.Recovery == nil || failed.Recovery.Action != "retry_task" || !failed.Recovery.Enabled {
@@ -109,7 +109,7 @@ func TestWalkthroughWaveRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if member := walkthroughMember(t, review, "APP-T-0002"); member.State != "waiting" || member.Phase != "queued" || member.Responsible != "daemon" {
+	if member := walkthroughMember(t, review, "APP-T-0002"); member.eligibility != "waiting" || member.Phase != "queued" || member.Responsible != "daemon" {
 		t.Fatalf("redriven member not projected as queued for dispatch: %#v", member)
 	}
 
@@ -167,7 +167,7 @@ func TestWalkthroughWaveRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	rework := walkthroughMember(t, review, "APP-T-0004")
-	if rework.State != "ready" || rework.Phase != "rework" || !strings.Contains(rework.WaitingReason, "review requested changes") {
+	if rework.eligibility != "ready" || rework.Phase != "rework" || !strings.Contains(rework.WaitingReason, "review requested changes") {
 		t.Fatalf("review rework misclassified: %#v", rework)
 	}
 	for _, blocker := range review.Blockers {

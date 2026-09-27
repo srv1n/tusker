@@ -36,7 +36,7 @@ function reviewFixture(overrides: Partial<WaveReview>): WaveReview {
       {
         taskId: "APP-T-0001",
         title: "First task",
-        state: "planned",
+        state: sampleState("planned"),
         executeRoute: "worker",
         reviewRoute: "reviewer",
         instructions: "Implement the first task contract exactly.",
@@ -91,7 +91,7 @@ describe("wave authority controls", () => {
     const review = reviewFixture({
       state: "Waiting",
       authorization: "authorized",
-      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "failed", waitingReason: "worker exited 1", recovery: { action: "retry_task", enabled: true } }],
+      members: [{ taskId: "APP-T-0001", title: "First task", state: sampleState("blocked", "worker exited 1"), phase: "failed", waitingReason: "worker exited 1", recovery: { action: "retry_task", enabled: true } }],
       blockers: [{ code: "RUNTIME_FAILED", taskId: "APP-T-0001", reason: "worker exited 1", action: "inspect the failed execute attempt" }],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     });
@@ -108,7 +108,7 @@ describe("wave authority controls", () => {
     const review = reviewFixture({
       state: "Waiting",
       authorization: "authorized",
-      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "outcome_unknown", waitingReason: "delivery_unknown (write_complete)", recovery: { action: "recover_unknown", enabled: true } }],
+      members: [{ taskId: "APP-T-0001", title: "First task", state: sampleState("blocked", "delivery_unknown (write_complete)"), phase: "outcome_unknown", waitingReason: "delivery_unknown (write_complete)", recovery: { action: "recover_unknown", enabled: true } }],
       blockers: [{ code: "OUTCOME_UNKNOWN", taskId: "APP-T-0001", reason: "delivery_unknown (write_complete)", action: "inspect retained work before recovery" }],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     });
@@ -124,7 +124,7 @@ describe("wave authority controls", () => {
     const html = renderControls(reviewFixture({
       state: "Waiting",
       authorization: "authorized",
-      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "outcome_unknown", recovery: { action: "recover_unknown", enabled: false, reason: "Another worker still owns this task" } }],
+      members: [{ taskId: "APP-T-0001", title: "First task", state: sampleState("blocked"), phase: "outcome_unknown", recovery: { action: "recover_unknown", enabled: false, reason: "Another worker still owns this task" } }],
       blockers: [{ code: "OUTCOME_UNKNOWN", taskId: "APP-T-0001", reason: "lost contact", action: "inspect" }],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     }));
@@ -137,7 +137,7 @@ describe("wave authority controls", () => {
     const review = reviewFixture({
       state: "Waiting",
       authorization: "authorized",
-      members: [{ taskId: "APP-T-0001", title: "First task", state: "blocked", phase: "failed", lane: "review", recovery: { action: "retry_review", enabled: true } }],
+      members: [{ taskId: "APP-T-0001", title: "First task", state: sampleState("blocked", "review failed"), phase: "failed", lane: "review", recovery: { action: "retry_review", enabled: true } }],
       blockers: [{ code: "RUNTIME_FAILED", taskId: "APP-T-0001", reason: "review failed", action: "retry review" }],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     });
@@ -151,7 +151,7 @@ describe("wave authority controls", () => {
     const html = renderControls(reviewFixture({
       state: "Running",
       authorization: "authorized",
-      members: [{ taskId: "APP-T-0001", title: "First task", state: "running" }],
+      members: [{ taskId: "APP-T-0001", title: "First task", state: sampleState("working") }],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     }), sampleState("working"));
     expect(html).toContain('data-task-state="working"');
@@ -159,7 +159,7 @@ describe("wave authority controls", () => {
     expect(canRetryWave(reviewFixture({
       state: "Running",
       authorization: "authorized",
-      members: [{ taskId: "APP-T-0001", title: "First task", state: "running", phase: "executing" }],
+      members: [{ taskId: "APP-T-0001", title: "First task", state: sampleState("working"), phase: "executing" }],
     }))).toBe(false);
   });
 
@@ -221,7 +221,7 @@ describe("wave authority controls", () => {
 
   test("does not turn a reported completion into acceptance", () => {
     const members = [{ id: "APP-T-0001", title: "Reported", group: "", status: "review", proof: "", state: sampleState("in_review", "Implementation reported complete; acceptance is not yet recorded.") }];
-    const html = renderToStaticMarkup(createElement(WaveMemberList, { review: reviewFixture({ members: [{ taskId: "APP-T-0001", title: "Reported", state: "waiting", completionReported: true }] }), members }));
+    const html = renderToStaticMarkup(createElement(WaveMemberList, { review: reviewFixture({ members: [{ taskId: "APP-T-0001", title: "Reported", state: sampleState("done"), completionReported: true }] }), members }));
     expect(html).toContain('data-task-state="in_review"');
     expect(html).toContain("Implementation reported complete; acceptance is not yet recorded.");
     expect(html).not.toContain(">Accepted<");

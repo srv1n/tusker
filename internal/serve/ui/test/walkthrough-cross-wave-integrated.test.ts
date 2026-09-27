@@ -23,7 +23,7 @@ function review(overrides: Partial<WaveReview>): WaveReview {
     members: MEMBERS.map((taskId) => ({
       taskId,
       title: taskId === C1 ? "Open combined report" : `Follow-up task ${taskId}`,
-      state: taskId === C1 ? "waiting" : "backlog",
+      state: taskId === C1 ? sampleState("planned", `waiting on ${BETA_ID}`) : sampleState("backlog"),
       waitingReason: taskId === C1 ? `waiting for dependency ${BETA_ID}` : undefined,
       dependencies: taskId === C1 ? [ALPHA_ID, BETA_ID] : [],
     })),

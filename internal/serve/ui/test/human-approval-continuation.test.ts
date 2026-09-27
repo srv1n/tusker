@@ -22,7 +22,7 @@ describe("human approval continuation", () => {
     const review: WaveReview = {
       schema: "tusker.wave-review/v1", waveId: "W-0001", title: "Pilot", outcome: "Run pilot",
       state: "Waiting", authorization: "authorized", materialFingerprint: "sha256:material",
-      members: [{ taskId: "APP-T-0001", title: "Pilot task", state: "waiting" }], frontiers: [["APP-T-0001"]],
+      members: [{ taskId: "APP-T-0001", title: "Pilot task", state: sampleState("needs_input", "CLI pilot authorization") }], frontiers: [["APP-T-0001"]],
       humanActions: [{ taskId: "APP-T-0001", taskTitle: "Pilot task", action }],
       blockers: [{ code: "HUMAN_GATE_OPEN", taskId: "APP-T-0001", gateId: action.gateId, reason: "open human gate APP-G-0001 blocks APP-T-0001", action: "open APP-T-0001 in the Tusker Mac app and confirm APP-G-0001" }],
       controls: [{ action: "wave start", enabled: true, scope: "W-0001" }],
@@ -54,8 +54,8 @@ describe("human approval continuation", () => {
       schema: "tusker.wave-review/v1", waveId: "W-0001", title: "Pilot", outcome: "Run pilot",
       state: "Waiting", authorization: "authorized", materialFingerprint: "sha256:material",
       members: [
-        { taskId: "APP-T-0001", title: "Pilot task", state: "waiting" },
-        { taskId: "APP-T-0002", title: "Independent task", state: "ready" },
+        { taskId: "APP-T-0001", title: "Pilot task", state: sampleState("needs_input", "CLI pilot authorization") },
+        { taskId: "APP-T-0002", title: "Independent task", state: sampleState("planned") },
       ], frontiers: [["APP-T-0001", "APP-T-0002"]],
       humanActions: [{ taskId: "APP-T-0001", taskTitle: "Pilot task", action }],
       blockers: [{ code: "HUMAN_GATE_OPEN", taskId: "APP-T-0001", gateId: action.gateId, reason: "open human gate APP-G-0001 blocks APP-T-0001", action: "open APP-T-0001 in the Tusker Mac app and confirm APP-G-0001" }],

@@ -54,10 +54,10 @@ export function waveReviewStage(review: WaveReview): WaveReviewStage {
   if (review.state === "Paused") return "paused";
   if (review.members.some((member) => member.phase === "failed")) return "failed";
   if (review.members.some((member) => member.phase === "proof_blocked")) return "blocked";
-  if (review.members.some((member) => member.state === "blocked")) return "failed";
+  if (review.members.some((member) => member.state?.state === "blocked")) return "failed";
   if (review.members.some((member) => member.phase === "reviewing")) return "reviewing";
-  if (review.members.some((member) => member.phase === "awaiting_review" || member.waitingReason?.includes("independent review"))) return "awaiting_review";
-  if (review.members.some((member) => member.phase === "executing" || member.state === "running")) return "executing";
+  if (review.members.some((member) => member.phase === "awaiting_review" || member.state?.state === "in_review")) return "awaiting_review";
+  if (review.members.some((member) => member.phase === "executing" || member.state?.state === "working")) return "executing";
   if (review.humanActions?.length || review.blockers.some((blocker) => blocker.code !== "DEPENDENCY_WAITING" && blocker.code !== "HUMAN_GATE_OPEN")) return "blocked";
   if (review.controls.some((control) => control.action === "wave start" && control.enabled)) return "ready";
   return review.authorization === "authorized" ? "queued" : "blocked";

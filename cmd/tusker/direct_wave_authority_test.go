@@ -250,7 +250,7 @@ func TestDirectWaveAuthorityReviewUsesOnlyDurableMaterial(t *testing.T) {
 	if review.State != "Planned" || review.Authorization != "inert" || review.MaterialFingerprint == "" {
 		t.Fatalf("review=%#v", review)
 	}
-	if len(review.Members) != 2 || review.Members[0].State != "ready" || review.Members[1].State != "waiting" {
+	if len(review.Members) != 2 || review.Members[0].eligibility != "ready" || review.Members[1].eligibility != "waiting" {
 		t.Fatalf("members=%#v", review.Members)
 	}
 	if len(review.Frontiers) != 2 || review.Frontiers[0][0] != "APP-T-0001" || review.Frontiers[1][0] != "APP-T-0002" {
@@ -437,7 +437,7 @@ func TestDirectWaveReviewSurfacesPersistentDispatchBlocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(review.Members) != 1 || review.Members[0].State != "blocked" || review.Members[0].Phase != "blocked" || !strings.Contains(review.Members[0].WaitingReason, "acceptance missing proof mapping") {
+	if len(review.Members) != 1 || review.Members[0].eligibility != "blocked" || review.Members[0].Phase != "blocked" || !strings.Contains(review.Members[0].WaitingReason, "acceptance missing proof mapping") {
 		t.Fatalf("member=%#v", review.Members)
 	}
 	if len(review.Blockers) == 0 || review.Blockers[0].Code != "DISPATCH_BLOCKED" {
@@ -526,7 +526,7 @@ func TestDirectWaveReviewExternalDependencies(t *testing.T) {
 			t.Fatal(err)
 		}
 		consumer := findMember(review, "FOL-T-0001")
-		if consumer == nil || consumer.State != "waiting" || consumer.WaitingReason != "waiting for dependency BET-T-0001" {
+		if consumer == nil || consumer.eligibility != "waiting" || consumer.WaitingReason != "waiting for dependency BET-T-0001" {
 			t.Fatalf("consumer member=%#v", consumer)
 		}
 		if strings.Contains(consumer.WaitingReason, "ALP-T-0001") {
@@ -721,7 +721,7 @@ func TestDirectStartAuthorizesPendingProofButCompletionStillRequiresIt(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.State == "Completed" || review.Members[0].State == "completed" {
+	if review.State == "Completed" || review.Members[0].eligibility == "completed" {
 		t.Fatalf("pending proof falsely completed wave: %#v", review)
 	}
 
@@ -734,7 +734,7 @@ func TestDirectStartAuthorizesPendingProofButCompletionStillRequiresIt(t *testin
 		t.Fatalf("normal proof executor: status=%q failures=%#v err=%v", report.Status, failures, err)
 	}
 	review, err = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-	if err != nil || review.Members[0].State != "completed" {
+	if err != nil || review.Members[0].eligibility != "completed" {
 		t.Fatalf("fresh proof was not accepted: review=%#v err=%v", review, err)
 	}
 
@@ -856,7 +856,7 @@ func TestDirectWaveAuthorityGateWaitingSemantics(t *testing.T) {
 			downstream = &review.Members[i]
 		}
 	}
-	if downstream == nil || downstream.State != "waiting" {
+	if downstream == nil || downstream.eligibility != "waiting" {
 		t.Fatalf("downstream member=%#v", downstream)
 	}
 	vault2, store2, project2 := authorityFixture(t)
@@ -1251,7 +1251,7 @@ func TestDirectWaveAuthorityRuntimeFactsScopedByProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review.Members[0].State != "ready" {
+	if review.Members[0].eligibility != "ready" {
 		t.Fatalf("foreign project run created a false owner: %#v", review.Members[0])
 	}
 	review, err = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", fmt.Errorf("database is locked"))
@@ -1953,7 +1953,7 @@ func TestDirectWaveStaleDoneMemberDoesNotCompleteWave(t *testing.T) {
 		t.Fatalf("stale done member did not record CONTRACT_FINGERPRINT_STALE")
 	}
 	for _, member := range review.Members {
-		if member.TaskID == "APP-T-0001" && member.State == "completed" {
+		if member.TaskID == "APP-T-0001" && member.eligibility == "completed" {
 			t.Fatalf("stale member still reported completed")
 		}
 	}

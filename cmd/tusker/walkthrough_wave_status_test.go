@@ -79,7 +79,7 @@ func TestWalkthroughWaveStatusCanonicalRunAndLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := walkthroughMember(t, review, "APP-T-0001")
-	if member.State != "running" || member.Phase != "executing" || member.Lane != runLaneExecute || !strings.Contains(member.WaitingReason, "worker:live") {
+	if member.eligibility != "running" || member.Phase != "executing" || member.Lane != runLaneExecute || !strings.Contains(member.WaitingReason, "worker:live") {
 		t.Fatalf("canonical admitted worker not projected: %#v", member)
 	}
 
@@ -88,7 +88,7 @@ func TestWalkthroughWaveStatusCanonicalRunAndLifecycle(t *testing.T) {
 	run.Terminal = true
 	walkthroughSetRun(t, store, *run)
 	review, _ = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-	if got := walkthroughMember(t, review, "APP-T-0001"); got.State == "running" || got.State == "reviewing" {
+	if got := walkthroughMember(t, review, "APP-T-0001"); got.eligibility == "running" || got.eligibility == "reviewing" {
 		t.Fatalf("terminal attempt won live projection: %#v", got)
 	}
 
@@ -102,7 +102,7 @@ func TestWalkthroughWaveStatusCanonicalRunAndLifecycle(t *testing.T) {
 	}
 	review, _ = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
 	got := walkthroughMember(t, review, "APP-T-0001")
-	if got.State == "running" || got.State == "reviewing" || !strings.Contains(got.WaitingReason, "outside") {
+	if got.eligibility == "running" || got.eligibility == "reviewing" || !strings.Contains(got.WaitingReason, "outside") {
 		t.Fatalf("outside reclaim inherited wave authority: %#v", got)
 	}
 }
@@ -141,7 +141,7 @@ func TestWalkthroughWaveStatusProofAndReviewPhases(t *testing.T) {
 		t.Fatal(err)
 	}
 	review, _ = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-	if got := walkthroughMember(t, review, "APP-T-0001"); got.State != "reviewing" || got.Phase != "reviewing" {
+	if got := walkthroughMember(t, review, "APP-T-0001"); got.eligibility != "reviewing" || got.Phase != "reviewing" {
 		t.Fatalf("active reviewer not projected: %#v", got)
 	}
 
@@ -150,7 +150,7 @@ func TestWalkthroughWaveStatusProofAndReviewPhases(t *testing.T) {
 		return data, body
 	})
 	review, _ = buildDirectWaveReview(vault, store, project.ProjectID, "W-0001", nil)
-	if review.State != "Completed" || walkthroughMember(t, review, "APP-T-0001").State != "completed" {
+	if review.State != "Completed" || walkthroughMember(t, review, "APP-T-0001").eligibility != "completed" {
 		t.Fatalf("accepted completion not projected: %#v", review)
 	}
 }
@@ -207,15 +207,15 @@ func TestWalkthroughWaveStatusStaleProofAndPausedPartialFailure(t *testing.T) {
 	if review.Authorization != "paused" || review.State != "Paused" {
 		t.Fatalf("paused admission lost: %#v", review)
 	}
-	if live := walkthroughMember(t, review, "APP-T-0001"); live.State != "running" || !live.CompletionReported {
+	if live := walkthroughMember(t, review, "APP-T-0001"); live.eligibility != "running" || !live.CompletionReported {
 		t.Fatalf("paused admitted work lost or falsely completed: %#v", live)
 	}
-	if failed := walkthroughMember(t, review, "APP-T-0002"); failed.State != "blocked" || failed.Phase != "failed" || !strings.Contains(failed.WaitingReason, "workspace setup failed") {
+	if failed := walkthroughMember(t, review, "APP-T-0002"); failed.eligibility != "blocked" || failed.Phase != "failed" || !strings.Contains(failed.WaitingReason, "workspace setup failed") {
 		t.Fatalf("partial setup failure hidden: %#v", failed)
 	}
 	for _, taskID := range []string{"APP-T-0003", "APP-T-0004", "APP-T-0005"} {
 		blocked := walkthroughMember(t, review, taskID)
-		if blocked.State != "waiting" || blocked.Phase != "proof_blocked" {
+		if blocked.eligibility != "waiting" || blocked.Phase != "proof_blocked" {
 			t.Fatalf("done task %s with invalid proof became startable: %#v", taskID, blocked)
 		}
 	}

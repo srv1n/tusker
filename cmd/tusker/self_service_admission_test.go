@@ -92,14 +92,14 @@ func TestSelfServiceAdmission(t *testing.T) {
 		}
 
 		rootMember := selfServiceReviewMember(t, vault, store, project.ProjectID, "APP-T-0001")
-		if rootMember.State == "blocked" || rootMember.State == "failed" {
+		if rootMember.eligibility == "blocked" || rootMember.eligibility == "failed" {
 			t.Fatalf("review failed the queued root: %#v", rootMember)
 		}
 		if rootMember.Responsible != "daemon" {
 			t.Fatalf("review did not attribute the queued root to the daemon: %#v", rootMember)
 		}
 		dependentMember := selfServiceReviewMember(t, vault, store, project.ProjectID, "APP-T-0002")
-		if dependentMember.State != "waiting" || !strings.Contains(dependentMember.WaitingReason, "APP-T-0001") {
+		if dependentMember.eligibility != "waiting" || !strings.Contains(dependentMember.WaitingReason, "APP-T-0001") {
 			t.Fatalf("review did not hold the dependent on the root: %#v", dependentMember)
 		}
 
@@ -259,7 +259,7 @@ func TestSelfServiceAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, member := range completedReview.Members {
-			if member.State != "completed" {
+			if member.eligibility != "completed" {
 				t.Fatalf("completed wave lost lifecycle state: %#v", member)
 			}
 		}

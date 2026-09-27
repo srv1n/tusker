@@ -22,7 +22,7 @@ const PROJECT = "beta";
 const WAVE = "W-0003";
 
 function member(overrides: Partial<WaveReviewMember>): WaveReviewMember {
-  return { taskId: "BET-T-0001", title: "Task one", state: "ready", ...overrides };
+  return { taskId: "BET-T-0001", title: "Task one", state: sampleState("planned"), ...overrides };
 }
 
 function reviewFixture(overrides: Partial<WaveReview>): WaveReview {
@@ -74,7 +74,7 @@ describe("compact wave summary (A1)", () => {
     const html = renderControls(reviewFixture({
       state: "Running",
       authorization: "authorized",
-      members: [member({ state: "running", phase: "executing" }), member({ taskId: "BET-T-0002", title: "Task two" })],
+      members: [member({ state: sampleState("working"), phase: "executing" }), member({ taskId: "BET-T-0002", title: "Task two" })],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     }), sampleState("working", "1 working, 1 planned"));
     expect(html).toContain(">Working<");
@@ -88,7 +88,7 @@ describe("compact wave summary (A1)", () => {
     const html = renderControls(reviewFixture({
       state: "Waiting",
       authorization: "authorized",
-      members: [member({ state: "reviewing", phase: "reviewing", lane: "review" })],
+      members: [member({ state: sampleState("in_review", "reviewing"), phase: "reviewing", lane: "review" })],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     }), sampleState("in_review", "1 in review"));
     expect(html).toContain(">In review<");
@@ -121,7 +121,7 @@ describe("compact wave summary (A1)", () => {
     const html = renderControls(reviewFixture({
       state: "Completed",
       authorization: "authorized",
-      members: [member({ state: "completed", phase: "completed" })],
+      members: [member({ state: sampleState("done"), phase: "completed" })],
       controls: [{ action: "wave start", enabled: false, scope: WAVE, reason: "wave is already complete" }],
     }), sampleState("done"));
     expect(html).toContain(">Done<");
@@ -133,8 +133,8 @@ describe("expected waits stay neutral and named (A2)", () => {
   test("dependency wait shows the server reason, not a raw code", () => {
     const review = reviewFixture({
       members: [
-        member({ taskId: "BET-T-0001", title: "Base module", state: "running", phase: "executing" }),
-        member({ taskId: "BET-T-0002", title: "Dependent module", state: "waiting", waitingReason: "waiting for dependency BET-T-0001" }),
+        member({ taskId: "BET-T-0001", title: "Base module", state: sampleState("working"), phase: "executing" }),
+        member({ taskId: "BET-T-0002", title: "Dependent module", state: sampleState("planned", "waiting on BET-T-0001"), waitingReason: "waiting for dependency BET-T-0001" }),
       ],
       frontiers: [["BET-T-0001"], ["BET-T-0002"]],
     });
@@ -165,8 +165,8 @@ describe("one-slot capacity (A3)", () => {
     state: "Waiting",
     authorization: "authorized",
     members: [
-      member({ taskId: "BET-T-0001", title: "Running sibling", state: "running", phase: "executing" }),
-      member({ taskId: "BET-T-0002", title: "Slot-bound sibling", state: "waiting", phase: "capacity_wait", waitingReason: "queued for dispatch; waiting for an execution slot — project capacity 1/1 in use", responsible: "daemon" }),
+      member({ taskId: "BET-T-0001", title: "Running sibling", state: sampleState("working"), phase: "executing" }),
+      member({ taskId: "BET-T-0002", title: "Slot-bound sibling", state: sampleState("planned", "queued"), phase: "capacity_wait", waitingReason: "queued for dispatch; waiting for an execution slot — project capacity 1/1 in use", responsible: "daemon" }),
     ],
     controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
   });
@@ -185,8 +185,8 @@ describe("one-slot capacity (A3)", () => {
       state: "Waiting",
       authorization: "authorized",
       members: [
-        member({ taskId: "BET-T-0001", title: "Running sibling", state: "running", phase: "executing" }),
-        member({ taskId: "BET-T-0002", title: "Queued sibling", state: "waiting", phase: "queued", waitingReason: "queued for dispatch", responsible: "daemon" }),
+        member({ taskId: "BET-T-0001", title: "Running sibling", state: sampleState("working"), phase: "executing" }),
+        member({ taskId: "BET-T-0002", title: "Queued sibling", state: sampleState("planned", "queued"), phase: "queued", waitingReason: "queued for dispatch", responsible: "daemon" }),
       ],
       controls: [{ action: "wave pause", enabled: true, scope: WAVE }],
     });
@@ -222,7 +222,7 @@ describe("distinct failures with the responsible actor (A4)", () => {
 
   test("member list keeps the actor and reason on the failed row", () => {
     const html = renderMembers(reviewFixture({
-      members: [member({ state: "blocked", phase: "failed", lane: "review", waitingReason: "reviewer crashed" })],
+      members: [member({ state: sampleState("blocked", "reviewer crashed"), phase: "failed", lane: "review", waitingReason: "reviewer crashed" })],
     }), { "BET-T-0001": sampleState("blocked", "reviewer crashed", { reason_code: "crashed" }) });
     expect(html).toContain(">Blocked<");
     expect(html).toContain("reviewer crashed");

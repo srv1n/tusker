@@ -15,14 +15,14 @@ function render(member: WaveReviewMember) {
 }
 
 test("enabled adopt_completed renders the reconcile action with pre-run copy", () => {
-  const html = render({ taskId: readyTask.id, title: readyTask.title, state: "waiting", phase: "awaiting_review", waitingReason: "awaiting independent review", recovery: { action: "adopt_completed", enabled: true } });
+  const html = render({ taskId: readyTask.id, title: readyTask.title, state: sampleState("in_review", "awaiting independent review"), phase: "awaiting_review", waitingReason: "awaiting independent review", recovery: { action: "adopt_completed", enabled: true } });
   expect(html).toContain("Reconcile completed work");
   expect(html).toContain("Verify the work already in this project and record it against this task.");
   expect(html).toContain("Implementation source: Not recorded");
 });
 
 test("adopt_completed markup carries no internal jargon", () => {
-  const html = render({ taskId: readyTask.id, title: readyTask.title, state: "waiting", phase: "awaiting_review", recovery: { action: "adopt_completed", enabled: true } });
+  const html = render({ taskId: readyTask.id, title: readyTask.title, state: sampleState("in_review"), phase: "awaiting_review", recovery: { action: "adopt_completed", enabled: true } });
   // Scope to the action button and its detail line — other inspector
   // sections legitimately render unrelated fixture content.
   const button = html.match(/<button[^>]*>Reconcile completed work<\/button>/)?.[0] ?? "";
@@ -38,14 +38,14 @@ test("adopt_completed markup carries no internal jargon", () => {
 });
 
 test("disabled adopt_completed renders its reason", () => {
-  const html = render({ taskId: readyTask.id, title: readyTask.title, state: "waiting", phase: "awaiting_review", recovery: { action: "adopt_completed", enabled: false, reason: "task is already done" } });
+  const html = render({ taskId: readyTask.id, title: readyTask.title, state: sampleState("in_review"), phase: "awaiting_review", recovery: { action: "adopt_completed", enabled: false, reason: "task is already done" } });
   expect(html).toContain("Reconcile completed work");
   expect(html).toContain("disabled");
   expect(html).toContain("task is already done");
 });
 
 test("outcome_unknown renders one explicit safe recovery action", () => {
-  const html = render({ taskId: readyTask.id, title: readyTask.title, state: "blocked", phase: "outcome_unknown", waitingReason: "contact lost", recovery: { action: "recover_unknown", enabled: true } });
+  const html = render({ taskId: readyTask.id, title: readyTask.title, state: sampleState("blocked", "contact lost"), phase: "outcome_unknown", waitingReason: "contact lost", recovery: { action: "recover_unknown", enabled: true } });
   expect(html).toContain("Verify and continue");
   expect(html).toContain("Inspect and preserve any existing work, verify it, then continue what remains.");
   expect(html).not.toContain("Retry wave");

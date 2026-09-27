@@ -348,9 +348,9 @@ func doctorWaveMemberFindings(vault string, store *RuntimeStore, runtimeErr erro
 func doctorReviewMemberFinding(member directWaveReviewMember, scope DiagnosticScope, observed, revision string) (DiagnosticFinding, bool) {
 	base := DiagnosticFinding{
 		Scope: scope, Affects: []string{member.TaskID}, NextActor: DiagnosticAuthorityAgent,
-		Evidence: DiagnosticEvidence{Source: "wave", Revision: revision, ObservedAt: observed, Detail: firstNonEmpty(member.WaitingReason, "member state "+member.State)},
+		Evidence: DiagnosticEvidence{Source: "wave", Revision: revision, ObservedAt: observed, Detail: firstNonEmpty(member.WaitingReason, "member state "+member.eligibility)},
 	}
-	switch member.State {
+	switch member.eligibility {
 	case "ready", "completed", "reviewing", "running":
 		return DiagnosticFinding{}, false
 	case "waiting":
@@ -402,7 +402,7 @@ func doctorReviewMemberFinding(member directWaveReviewMember, scope DiagnosticSc
 		}
 		return base, true
 	default:
-		base.Code = "doctor-member-" + member.State
+		base.Code = "doctor-member-" + member.eligibility
 		base.Classification = DiagnosticUnavailable
 		base.NextActor = DiagnosticAuthorityOperator
 		return base, true

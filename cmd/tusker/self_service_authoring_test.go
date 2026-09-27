@@ -298,7 +298,7 @@ func TestSelfServiceAuthoring(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, member := range review.Members {
-			if member.TaskID == "APP-T-0001" && member.State != "completed" {
+			if member.TaskID == "APP-T-0001" && member.eligibility != "completed" {
 				t.Fatalf("accepted implementation lost its lifecycle state: %#v", member)
 			}
 		}
