@@ -3083,7 +3083,7 @@ func TestV7ProposalApplyCreatesTaskAndDecision(t *testing.T) {
 	if err := writeText(bodyPath, "## Intent\n\nApply the reviewer-approved proposal task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Proposal applies the authored task contract. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7ProposalApply -count=1 | pending | Focused proposal proof. |\n"); err != nil {
 		t.Fatal(err)
 	}
-	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "work-level": "standard", "review-level": "light", "review-reason": "bounded review", "risk": "low", "priority": "p1", "evidence-required": "automated_test", "body-file": bodyPath}, proposalV7Cmd)
+	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_task", "epic": "APP", "title": "Proposed implementation task", "work-level": "standard", "review-level": "light", "review-reason": "bounded review", "risk": "low", "priority": "p1", "owned-paths": "cmd/tusker/v7_proposal_cmd.go", "evidence-required": "automated_test", "body-file": bodyPath}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "apply", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
 	assertExists(t, filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))
@@ -3095,6 +3095,7 @@ func TestV7ProposalApplyCreatesTaskAndDecision(t *testing.T) {
 	assertEqual(t, "standard", stringField(taskData, "work_level"), "created task work level")
 	assertEqual(t, "light", stringField(taskData, "review_level"), "created task review level")
 	assertEqual(t, "bounded review", stringField(taskData, "review_reason"), "created task review reason")
+	assertEqual(t, []string{"cmd/tusker/v7_proposal_cmd.go"}, normalizeList(taskData["owned_paths"]), "created task owned paths")
 	assertEqual(t, "automated_test", normalizeList(taskData["evidence_required"])[0], "created task evidence")
 
 	must(Args{"vault": vault, "quiet": "true", "_pos0": "create_decision", "epic": "APP", "title": "Proposed architecture decision", "decision": "Use repo-local proposal application."}, proposalV7Cmd)

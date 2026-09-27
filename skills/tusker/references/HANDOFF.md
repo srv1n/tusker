@@ -71,7 +71,7 @@ this skill.
 ## Ad hoc example
 
 ```sh
-tusker new task --title "Fix retry backoff" --work-level light --body-file - <<'EOF'
+tusker new task --title "Fix retry backoff" --work-level light --owned-paths cmd/worker/retry.go --body-file - <<'EOF'
 # Fix retry backoff
 
 ## Intent
@@ -114,6 +114,7 @@ tasks:
   - key: frontier-helper
     title: Extract frontier queue helper
     work_level: standard
+    owned_paths: [cmd/tusker/direct_wave_authority.go]
     body: |
       ## Intent
       Extract `queueAuthorizedWaveFrontier` from `cmd/tusker/daemon.go` into
@@ -143,6 +144,7 @@ tasks:
   - key: daemon-wiring
     title: Wire frontier advance into daemon poll
     work_level: standard
+    owned_paths: [cmd/tusker/daemon.go]
     dependencies:
       - task: frontier-helper
         kind: hard

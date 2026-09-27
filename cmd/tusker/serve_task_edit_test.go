@@ -42,7 +42,7 @@ func TestServeTaskCreateUsesNewTaskAndJoinsWave(t *testing.T) {
 	server.operatorActor = "reviewer:owner"
 	projects, _ := server.store.ListProjects()
 	project := projects[0]
-	create := `{"projectId":"` + project.ProjectID + `","title":"Created from Serve","workLevel":"light","body":"## Intent\n\nNew.\n"}`
+	create := `{"projectId":"` + project.ProjectID + `","title":"Created from Serve","workLevel":"light","owned_paths":["cmd/tusker/serve_task_edit.go"],"body":"## Intent\n\nNew.\n"}`
 	rec := servePostJSON(t, server, "/api/tasks", create)
 	var result serveActionResult
 	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil || !result.OK || result.TaskID == "" {
@@ -53,11 +53,20 @@ func TestServeTaskCreateUsesNewTaskAndJoinsWave(t *testing.T) {
 	if detail.Title != "Created from Serve" || detail.AuthoredWorkLevel != "light" {
 		t.Fatalf("created task: %#v", detail)
 	}
+	taskData, _, err := parseFrontmatterMustRead(project.VaultRoot + "/work/tasks/" + result.TaskID + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{"cmd/tusker/serve_task_edit.go"}, normalizeList(taskData["owned_paths"]), "serve task owned paths")
+	missingPaths := servePostJSON(t, server, "/api/tasks", `{"projectId":"`+project.ProjectID+`","title":"No paths","workLevel":"light","body":"x"}`)
+	if !strings.Contains(missingPaths.Body.String(), "task needs at least one owned path (owned_paths)") {
+		t.Fatalf("new task without owned paths must be refused like the CLI: %s", missingPaths.Body.String())
+	}
 	missing := servePostJSON(t, server, "/api/tasks", `{"projectId":"`+project.ProjectID+`","title":"No level","body":"x"}`)
 	if !strings.Contains(missing.Body.String(), `"refused":true`) {
 		t.Fatalf("new task without work level must be refused like the CLI: %s", missing.Body.String())
 	}
-	unknownWave := servePostJSON(t, server, "/api/tasks", `{"projectId":"`+project.ProjectID+`","title":"Waved","workLevel":"light","body":"x","wave":"NOPE-W-9999"}`)
+	unknownWave := servePostJSON(t, server, "/api/tasks", `{"projectId":"`+project.ProjectID+`","title":"Waved","workLevel":"light","owned_paths":"cmd/tusker/serve_task_edit.go,cmd/tusker/serve_task_edit_test.go","body":"x","wave":"NOPE-W-9999"}`)
 	if !strings.Contains(unknownWave.Body.String(), "could not add it to NOPE-W-9999") {
 		t.Fatalf("wave add failure must name the created task: %s", unknownWave.Body.String())
 	}
