@@ -70,6 +70,52 @@ func TestRunnerAccessClaudeSettings(t *testing.T) {
 	}
 }
 
+func TestClaudeProfilePolicyAndDenySettings(t *testing.T) {
+	workflow := CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "workspace-write", TurnSandboxPolicy: "workspace-write"}
+	full := ResolvedRunnerProfile{Name: "claude-opus-high", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerClaude), PermissionPreset: "danger-full-access",
+		Sandbox: RunnerSandboxDefinition{Mode: "danger-full-access"},
+	}}
+	policy := codexPolicyForResolvedProfile(workflow, runLaneExecute, full)
+	mode, err := claudePermissionModeForPolicy(policy)
+	if err != nil || mode != "bypassPermissions" {
+		t.Fatalf("full-access Claude profile resolved to %q, policy=%#v, err=%v", mode, policy, err)
+	}
+
+	dir := t.TempDir()
+	projection, err := projectWorkerMCP("project", "record", "item", "attempt", 1, 1, filepath.Join(dir, "events"), filepath.Join(dir, "status"), 900, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := runnerAccessPaths{protected: []string{"/tmp/private"}, state: []string{"/tmp/tusker-state"}}
+	if err := addClaudeAccessSettings(projection.claudeSettings, paths); err != nil {
+		t.Fatal(err)
+	}
+	argv := appendClaudeMCP([]string{"claude", "--permission-mode", mode}, projection)
+	if !containsRunnerArgPair(argv, "--settings", projection.claudeSettings) {
+		t.Fatalf("Claude settings missing from argv: %v", argv)
+	}
+	settings, err := os.ReadFile(projection.claudeSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range []string{`Read(//tmp/private/**)`, `Edit(//tmp/tusker-state/**)`, `Bash(git reset --hard*)`} {
+		if !strings.Contains(string(settings), rule) {
+			t.Fatalf("Claude full-access settings missing deny rule %q: %s", rule, settings)
+		}
+	}
+
+	review := ResolvedRunnerProfile{Name: "claude-review", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerClaude), PermissionPreset: "read-only",
+		Sandbox: RunnerSandboxDefinition{Mode: "read-only"},
+	}}
+	policy = codexPolicyForResolvedProfile(workflow, runLaneReview, review)
+	mode, err = claudePermissionModeForPolicy(policy)
+	if err != nil || mode != "plan" {
+		t.Fatalf("read-only Claude review resolved to %q, policy=%#v, err=%v", mode, policy, err)
+	}
+}
+
 func TestRunnerAccessProfileAndClaudeRules(t *testing.T) {
 	paths := runnerAccessPaths{protected: []string{`/tmp/private "folder"`}, state: []string{"/tmp/state"}}
 	profile := sandboxExecProfile(paths)
