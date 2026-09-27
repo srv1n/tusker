@@ -272,6 +272,7 @@ func runnerWrapperStartChild(ctx context.Context, req runnerWrapperRequest) (*St
 func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req runnerWrapperRequest, result *StartResult, stopHeartbeat <-chan string) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	var childGoneSince time.Time
 	for {
 		if fileExists(req.Start.StatusPath) {
 			runnerWrapperRecordDirectOutcome(req.Start)
@@ -282,7 +283,10 @@ func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req 
 		// without publishing a terminal status, do not leave this wrapper's
 		// heartbeat renewing the lease forever. Publish one bounded failure and
 		// let the daemon's normal retry/park policy classify it.
-		if isACPRunner(RunnerName(strings.TrimSpace(req.Runner))) && acpChildExitedWithoutStatus(result, req.Start.StatusPath) {
+		// The ACP handle closes the child and then drains the final updates
+		// before it publishes the terminal status, so a reaped child without a
+		// status is only a failure once that drain has had time to finish.
+		if isACPRunner(RunnerName(strings.TrimSpace(req.Runner))) && acpChildExitedWithoutStatus(result, req.Start.StatusPath) && childGoneFor(&childGoneSince) >= acpTerminalStatusGrace {
 			cancelChild()
 			runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "acp_v1 child exited without terminal status")
 			runnerWrapperRecordDirectOutcome(req.Start)
@@ -307,6 +311,17 @@ func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req 
 		case <-ticker.C:
 		}
 	}
+}
+
+// acpTerminalStatusGrace is how long the wrapper waits for the ACP handle's
+// own terminal status after the child is gone.
+var acpTerminalStatusGrace = 10 * time.Second
+
+func childGoneFor(since *time.Time) time.Duration {
+	if since.IsZero() {
+		*since = time.Now()
+	}
+	return time.Since(*since)
 }
 
 func acpChildExitedWithoutStatus(result *StartResult, statusPath string) bool {

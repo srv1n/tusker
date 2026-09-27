@@ -376,6 +376,43 @@ func TestRunnerACPWrapperPublishesFailureForReapedChildWithoutStatus(t *testing.
 	}
 }
 
+func TestRunnerWrapperWaitsForACPTerminalStatusAfterChildExit(t *testing.T) {
+	_, req := setupRunnerWrapperRuntime(t)
+	req.Runner = string(RunnerACP)
+	req.ContainmentPGID = 0
+	old := acpTerminalStatusGrace
+	acpTerminalStatusGrace = 3 * time.Second
+	t.Cleanup(func() { acpTerminalStatusGrace = old })
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-test.run=^TestACPReapedChildHelper$")
+	cmd.Env = append(os.Environ(), "TUSKER_ACP_REAPED_CHILD_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	// The ACP handle publishes its terminal status after draining the final
+	// updates, which can be after the child is already gone.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = writeRunnerStatusFileWithOutcome(req.Start.StatusPath, 0, AttemptOutcomeSucceeded, "", 0)
+	}()
+	if err := runnerWrapperWait(context.Background(), func() {}, req, &StartResult{PID: cmd.Process.Pid}, make(chan string)); err != nil {
+		t.Fatalf("wrapper wait returned error: %v", err)
+	}
+	status, err := readRunnerProcessStatus(req.Start.StatusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ExitCode != 0 || strings.Contains(status.Reason, "without terminal status") {
+		t.Fatalf("wrapper overwrote the late terminal status: %#v", status)
+	}
+}
+
 func TestRunnerACPOverflowTerminatorCannotBlockProducer(t *testing.T) {
 	writer, err := openBoundedRawLog(filepath.Join(t.TempDir(), "overflow.log"), 1, false)
 	if err != nil {
