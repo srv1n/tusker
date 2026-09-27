@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
-	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -65,6 +66,16 @@ func TestReviewCycleCapNeverParksLiveReviewRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
+	cmd := exec.Command("sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
 	for i := 0; i < wfFile.Data.Reviewer.MaxCycles+1; i++ {
 		if err := daemon.store.SaveAttempt(RunAttempt{
 			AttemptID: "review-" + string(rune('a'+i)), ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001",
@@ -77,8 +88,8 @@ func TestReviewCycleCapNeverParksLiveReviewRun(t *testing.T) {
 		ProjectID: project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001", Runner: "codex",
 		Lane: runLaneReview, LeaseState: string(LeaseStateRunning), ActiveAttemptID: "review-live",
 		LeaseOwner: "review-live", LeaseGeneration: 1, WorkRevision: 2, AttemptCount: 1,
-		ProcessPID: os.Getpid(), ProcessPGID: processGroupID(os.Getpid()),
-		ProcessStartedAt: recordedProcessStartTime(os.Getpid(), now.Format(time.RFC3339)),
+		ProcessPID: pid, ProcessPGID: processGroupID(pid),
+		ProcessStartedAt: recordedProcessStartTime(pid, now.Format(time.RFC3339)),
 		LastHeartbeatAt:  now.Format(time.RFC3339), LeaseExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
 		UpdatedAt: now.Format(time.RFC3339),
 	}
