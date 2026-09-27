@@ -193,7 +193,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | Q3 | Route check (runbook step 0.5) | done | All eight lanes correct, no blockers. |
 | Q4 | Daemon, Serve and harness login check (steps 0.1, 0.2) | done | Daemon up after `make install`. Retired the stale row (F7), ran `daemon resume`; circuit closed. All four harnesses installed. |
 | Q5 | Enable automation for the test project only (step 0.6) | done | Only remaining blockers: wave disarmed, and the circuit. |
-| Q6 | Codex: task QLH-T-0001, wave W-0005 | paused | Worker done after the answer woke it (fresh session, not resumed): result.txt correct. Review failed on F21, then parked by F25. Paused until Phase 0 and Phase 2 land: each hand push found one more guard. | Ran 04:59 UTC, did pause 1, asked its question, waited 300 s, yielded. Owner answered at 05:55. Run never woke (F16, F17). |
+| Q6 | Codex: task QLH-T-0001, wave W-0005 | in progress | 2026-09-27 evening build: hard Say resumes the same session with the token in the prompt; Stop via Serve then `runs continue` resumes the same session (attempt 0005). An old-marker session refuses Continue with a clear `runs fresh` hint. Close via review waits on Phase 2. |
 | Q7 | Claude Code: task QLH-T-0002, wave W-0006 | todo | |
 | Q8 | Devin: task QLH-T-0003, wave W-0007 | todo | |
 | Q9 | Muse: task QLH-T-0004, wave W-0008 | in progress | After F45, F47 (full-access live check) and F49 (keychain): dispatch passes; CLI ask and Needs you pass; reply as `human:sarav` resumed the same Muse session with the answer in the prompt. Hard Say fails: fresh session, message lost (F52). |
