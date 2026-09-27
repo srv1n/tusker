@@ -1206,9 +1206,7 @@ func waveReviewCmd(args Args) error {
 	fmt.Printf("%s %s — %s (authorization %s)\n", review.WaveID, review.Title, review.State, review.Authorization)
 	for _, member := range review.Members {
 		line := "  " + member.TaskID
-		if member.State != nil {
-			line += " " + member.State.Label
-		}
+		line += " " + member.eligibility
 		if member.WaitingReason != "" {
 			line += " (" + member.WaitingReason + ")"
 		}

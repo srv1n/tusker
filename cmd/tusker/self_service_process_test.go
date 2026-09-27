@@ -203,14 +203,13 @@ func TestSelfServiceProcess(t *testing.T) {
 	// A2: no-stream REST readback after the cross-process journey carries
 	// the same queued cause as the CLI surface.
 	harness.openStore(t)
-	server := &serveServer{store: harness.store}
+	server := &serveServer{store: harness.store, now: time.Now}
 	recorder := httptest.NewRecorder()
 	server.handleWaveReviewAPI(recorder, project.ProjectID, "W-0001")
 	var restReview struct {
 		OK      bool `json:"ok"`
 		Members []struct {
 			TaskID        string `json:"taskId"`
-			State         string `json:"state"`
 			WaitingReason string `json:"waitingReason"`
 		} `json:"members"`
 	}

@@ -19,6 +19,7 @@ func TestTaskStateTable(t *testing.T) {
 		{"not armed", taskStateFacts{Status: "ready", Readiness: "ready", WaveID: "W-1", WaveAuth: "disarmed"}, "backlog", "not_armed"},
 		{"backlog outside a wave", taskStateFacts{Status: "backlog", Readiness: "ready"}, "backlog", "not_planned"},
 		{"queued", armed(taskStateFacts{Status: "ready", Readiness: "ready"}), "planned", "queued"},
+		{"authorized wave", taskStateFacts{Status: "backlog", Readiness: "ready", WaveID: "W-1", WaveAuth: "authorized"}, "planned", "queued"},
 		{"armed backlog member", armed(taskStateFacts{Status: "backlog", Readiness: "ready"}), "planned", "queued"},
 		{"waiting on dep", armed(taskStateFacts{Status: "ready", Readiness: "ready", WaitingOn: "waiting on ALP-T-0001"}), "planned", "waiting_on"},
 		{"unclaimed lease", taskStateFacts{Status: "ready", Run: run("queued", "unclaimed", 0, "")}, "planned", "queued"},

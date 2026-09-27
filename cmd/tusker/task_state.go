@@ -117,7 +117,7 @@ func deriveTaskState(f taskStateFacts) taskState {
 	switch strings.ToLower(f.WaveAuth) {
 	case "paused":
 		return newTaskState("blocked", "paused", "wave paused", "tusker wave resume "+f.WaveID)
-	case "armed":
+	case "armed", "authorized":
 	default:
 		if f.WaveID != "" {
 			return newTaskState("backlog", "not_armed", "not armed", "tusker wave start "+f.WaveID)

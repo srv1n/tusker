@@ -67,7 +67,15 @@ func TestServeReadOnlyAndLocalhost(t *testing.T) {
 	}
 
 	server := newServeFixture(t)
-	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/tasks", nil)
+	server.requireCapability = true
+	for _, path := range []string{"/api/tasks", "/api/tasks/APP-T-0001/edit"} {
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420"+path, nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		assertEqual(t, http.StatusForbidden, rec.Code, "authoring mutation guard")
+	}
+	server.requireCapability = false
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7420/api/unsupported", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	assertEqual(t, http.StatusMethodNotAllowed, rec.Code, "mutating API route status")

@@ -124,7 +124,7 @@ func TestProjectVisibilityPersistsWithoutChangingAutomation(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
-	(&serveServer{store: store}).handleProjectVisibilityAction(response, project.ProjectID, serveActionBody{"visible": false})
+	(&serveServer{store: store, operatorActor: "agent:test"}).handleProjectVisibilityAction(response, project.ProjectID, serveActionBody{"visible": false})
 	projects, err := store.ListProjects()
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("projects=%#v err=%v", projects, err)
