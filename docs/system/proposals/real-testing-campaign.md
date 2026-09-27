@@ -245,6 +245,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F38 | A session that never started becomes resumable | todo | Claude gets `--session-id` up front. When the attempt failed before Claude ran (F36), the next attempt used `--resume 40566fd7…` and Claude said "No conversation found with session ID". It burned the continuation cap (3) as `provider_error`. Only record a session ref as resumable once the provider confirms it. |
 | F39 | Start fresh has no CLI command | todo | Only Serve's `POST /api/runs/<task>/control {"action":"start_fresh"}` has it. Parity rule: add `tusker runs fresh <task> --by`. Used the API to recover QLH-T-0002. |
 | F40 | Soft Say reports success as an error | todo | `runs say` on Claude during a long tool call returned `UNKNOWN: soft Say delivery uncertain: Claude echo timeout`, yet the token arrived after the tool call, in the same attempt. Report it as queued for the next tool boundary. |
+| F41 | A policy refusal shows as Blocked `crashed` | todo (in Phase 2 brief) | QLH-T-0002's review proposal was refused by `review_proposal.go:341` (F14). The task showed Blocked "the harness failed after 3 attempts". It should be Blocked `not_allowed`, and the cap is 6 per the spec. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
@@ -325,6 +326,7 @@ never start the daemon.
 - 2026-09-27: Merged F26, F29, F27/F28 and ran `make install`. Reseeded; `projects enable` now works from the agent session. Dispatch took one attempt (F26 fix live). Hard Say then failed on F33 and left the run Stopped (F34).
 - 2026-09-27: Rerun on the F33 build. Codex passes dispatch, hard Say (same session, token delivered once), ask, Needs you, reply as `human:sarav`, Stop. Continue fails on F37. Claude blocked by F36 after moving its profile to `danger-full-access` (config backup in /tmp/tusker-agents).
 - 2026-09-27: F36 installed. Claude hit F38, recovered with Start fresh through the API (F39). Claude passes dispatch, soft Say (same attempt, token written; CLI said error, F40), ask, Needs you, reply. Stop/Continue deferred until F37.
+- 2026-09-27: Q7 Claude execute succeeded (result.txt correct, Say token, commit bd11f35). Sol low review then refused by F14 at the proposal step. Queued Phase 2 (S4) on the Opus lane after F37.
 - 2026-09-27: Re-armed W-0005 from the CLI on the owner's instruction (`--by human:sarav`).
 - 2026-09-27: Wrote this page. Finished Q0 to Q3. The owner ran `make install`,
   and TuskerBar started the daemon. Found the global circuit open since
