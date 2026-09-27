@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"tusker/internal/acp"
+	runnercore "tusker/internal/runner"
 )
 
 // The fake ACP fixture advertises mode/model config options only when
@@ -123,11 +124,11 @@ func TestDevinACPMapsSWETwoMaxToAdvertisedModelAndThought(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"swe-2-high","options":[{"value":"adaptive","name":"Adaptive"},{"value":"swe-2-high","name":"SWE-2"}]},{"id":"thought_level","name":"Thinking","type":"select","currentValue":"medium","options":[{"value":"medium","name":"Medium"},{"value":"high","name":"High"},{"value":"max","name":"Max"}]}]}`), &payload); err != nil {
 		t.Fatal(err)
 	}
-	model, thought := devinACPModelAndThought(acp.Session{ConfigOptions: payload.ConfigOptions}, "swe-2-max", "max")
+	model, thought := runnercore.DevinACPModelAndThought(acp.Session{ConfigOptions: payload.ConfigOptions}, "swe-2-max", "max")
 	if model != "swe-2-high" || thought != "max" {
 		t.Fatalf("model=%q thought=%q", model, thought)
 	}
-	model, thought = devinACPModelAndThought(acp.Session{}, "swe-2-max", "max")
+	model, thought = runnercore.DevinACPModelAndThought(acp.Session{}, "swe-2-max", "max")
 	if model != "swe-2-max" || thought != "" {
 		t.Fatalf("unadvertised model mapped: model=%q thought=%q", model, thought)
 	}
