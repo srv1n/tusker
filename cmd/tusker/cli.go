@@ -284,13 +284,13 @@ func runInner(command string, args Args) (int, error) {
 	case "gate":
 		return 0, gateV7Cmd(args)
 	case "task update":
-		return 0, updateV7TaskCmd(args)
+		return 0, taskUpdateCLICmd(args)
 	case "task start":
 		return 0, taskStartCmd(args)
 	case "run":
 		return 0, directRunCmd(args)
 	case "task":
-		return 0, tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> --if-revision <state_rev> ...")
+		return 0, tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> [--if-revision <state_rev>] ...")
 	case "wave":
 		return 0, waveV7Cmd(args)
 	case "wave list":
@@ -954,7 +954,7 @@ func printCommandHelp(command string) bool {
 	case "runner", "runner catalog", "runner profiles", "runner route", "runner conformance", "runner test":
 		printRunnerHelp()
 	case "models", "models show", "models catalog", "models set", "models reset", "models profile-set", "models profile-disable", "models profile-enable", "models profile-remove":
-		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set [--scope global] --name <stable-id> [--display-name <name>] [--eligible-tiers <light,standard,demanding>] --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] --if-revision <sha256> [--json]\n  tusker models profile-disable|profile-enable|profile-remove [--scope global] --name <name> --if-revision <sha256> [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> --if-revision <sha256> [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review --if-revision <sha256> [--json]\n\nProfiles are defined only in the global config; a project selects them with models set/reset.")
+		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set [--scope global] --name <stable-id> [--display-name <name>] [--eligible-tiers <light,standard,demanding>] --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] [--if-revision <sha256>] [--json]\n  tusker models profile-disable|profile-enable|profile-remove [--scope global] --name <name> [--if-revision <sha256>] [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> [--if-revision <sha256>] [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review [--if-revision <sha256>] [--json]\n\nProfiles are defined only in the global config; a project selects them with models set/reset.")
 	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
 		printNewHelp()
 	case "task", "task update":
@@ -1322,7 +1322,7 @@ func printV7Help() {
 	fmt.Println(`Usage:
   tusker new epic --acronym APP --title "App foundation"
   tusker new task --title "Add login" --work-level standard --body-file task-body.md
-  tusker task update APP-T-0001 --if-revision <state_rev> --title "Add login v2" --by agent:builder
+  tusker task update APP-T-0001 [--if-revision <state_rev>] --title "Add login v2" --by agent:builder
   tusker wave create --file .tusker/scratch/wave.yaml --request-key auth-wave-v1 --json
   tusker new gate --blocks APP-T-0001 --kind auth --owner human:sarav --action "Provision credentials." --verification "The provider reports ready."
   tusker verify add APP-T-0001 --covers A1 --check "command: go test ./..." --result pending
@@ -1663,7 +1663,7 @@ func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
   tusker new task [--vault <path>] --title <title> --work-level light|standard|demanding --body-file <path|-> [--epic <ACR>] [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--review-level light|standard|demanding] [--review-reason <reason>] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--generated-outputs <csv>] [--evidence-required automated_test]
-  tusker task update <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]
+  tusker task update <TASK-ID> [--if-revision <state_rev>] [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 
@@ -1683,7 +1683,7 @@ Examples:
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
   tusker new task --vault ./.tusker --title "Implement auth" --work-level standard --body-file task-body.md \
     --spec-refs .tusker/specs/auth.md --owned-paths cmd/auth.go,internal/auth --generated-outputs internal/auth/openapi.gen.go
-  tusker task update TSK-T-0001 --if-revision sha256:<rev> --title "Implement auth v2" --by agent:builder
+  tusker task update TSK-T-0001 [--if-revision sha256:<rev>] --title "Implement auth v2" --by agent:builder
   tusker new gate --vault ./.tusker --blocks APP-T-0001 --kind auth --owner human:sarav \
     --action "Provision staging OAuth credentials." \
     --verification "Provider ready check passes." \

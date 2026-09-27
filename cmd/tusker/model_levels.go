@@ -268,6 +268,7 @@ func modelsCmd(args Args) error {
 	for _, row := range report.Levels {
 		fmt.Printf("%-9s execute=%s review=%s\n", row.Level, strings.Join(row.Execute.Profiles, ","), strings.Join(row.Review.Profiles, ","))
 	}
+	fmt.Printf("revision=%s\n", report.Revision)
 	return nil
 }
 
@@ -333,7 +334,7 @@ func modelsSetCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if expected := strings.TrimSpace(args.String("if-revision")); expected == "" || expected != current.Revision {
+	if expected := strings.TrimSpace(args.String("if-revision")); expected != "" && expected != current.Revision {
 		return tuskerError(errorInvalidTransition, "model settings changed; refresh before saving")
 	}
 	for _, name := range profiles {
@@ -397,8 +398,6 @@ func modelsResetCmd(args Args) error {
 		if current.Revision != expected {
 			return tuskerError(errorInvalidTransition, "model settings changed; refresh before saving")
 		}
-	} else {
-		return tuskerError(errorInvalidTransition, "model settings changed; refresh before saving")
 	}
 	if err := removeConfigKey(path, "automation.model_levels."+level+"."+lane); err != nil {
 		return err
@@ -434,7 +433,7 @@ func modelsProfileSetCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if expected := strings.TrimSpace(args.String("if-revision")); expected == "" || expected != current.Revision {
+	if expected := strings.TrimSpace(args.String("if-revision")); expected != "" && expected != current.Revision {
 		return tuskerError(errorInvalidTransition, "model settings changed; refresh before saving")
 	}
 	presetArg := strings.TrimSpace(args.String("preset"))
@@ -530,7 +529,7 @@ func modelsPrivateFoldersSetCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	if expected := strings.TrimSpace(args.String("if-revision")); expected == "" || expected != current.Revision {
+	if expected := strings.TrimSpace(args.String("if-revision")); expected != "" && expected != current.Revision {
 		return tuskerError(errorInvalidTransition, "model settings changed; refresh before saving")
 	}
 	paths := cleanAccessPaths(strings.Split(args.String("private-folders"), ","))

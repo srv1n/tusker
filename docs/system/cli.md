@@ -31,6 +31,7 @@ only at `task start` or `wave start`.
 | List project waves | `tusker wave list [--project <id>\|--vault <path>] [--json]` |
 | Search tracker text | `tusker search <text>` |
 | Create a task | `tusker new task --vault ./.tusker --title "..." --work-level standard --body-file task-body.md` |
+| Update a task | `tusker task update <TASK-ID> --title "..." --by <actor> [--if-revision <state_rev>] [--json]` |
 | Author a task batch | `tusker wave create --file wave.yaml --request-key <key> --json` |
 | Start one task | `tusker task start <TASK-ID> --mode interactive\|background --by <actor> [--current-workspace] --json` |
 | Start a wave | `tusker wave start <WAVE-ID> --mode background --by human:<name>\|operator:<name> --json` |
@@ -139,11 +140,11 @@ assertion or partial wave, 5 wait timeout, 1 internal error.
 | Discover installed models and reasoning choices | `tusker models catalog --json` |
 | Read effective mappings with only referenced profiles | `tusker models show --json --compact` |
 | Read every profile for administration | `tusker models show --json` |
-| Create or update a profile (global config only) | `tusker models profile-set [--scope global] --name <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> --if-revision <sha256>` |
-| Disable or enable future use | `tusker models profile-disable\|profile-enable [--scope global] --name <name> --if-revision <sha256>` |
-| Remove an unreferenced profile | `tusker models profile-remove [--scope global] --name <name> --if-revision <sha256>` |
-| Set an ordered primary/fallback list | `tusker models set --scope global\|project --level <level> --lane execute\|review --profiles primary,fallback --if-revision <sha256>` |
-| Reset a project field to inheritance | `tusker models reset --scope project --level <level> --lane execute\|review --if-revision <sha256>` |
+| Create or update a profile (global config only) | `tusker models profile-set [--scope global] --name <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> [--if-revision <sha256>]` |
+| Disable or enable future use | `tusker models profile-disable\|profile-enable [--scope global] --name <name> [--if-revision <sha256>]` |
+| Remove an unreferenced profile | `tusker models profile-remove [--scope global] --name <name> [--if-revision <sha256>]` |
+| Set an ordered primary/fallback list | `tusker models set --scope global\|project --level <level> --lane execute\|review --profiles primary,fallback [--if-revision <sha256>]` |
+| Reset a project field to inheritance | `tusker models reset --scope project --level <level> --lane execute\|review [--if-revision <sha256>]` |
 | Author task-level choices | `tusker new task ... --work-level standard --review-level demanding --review-reason "Security-sensitive review"` |
 | Explain one task's effective route | `tusker runner route <TASK-ID> --lane execute\|review --json` |
 
@@ -159,7 +160,8 @@ reference to an unknown profile fails naming the missing profile.
 global config (never Terra, never the project) and proposes nothing once enabled
 global profiles already cover every tier.
 
-Writes are atomic and accept the revision returned by `models show`. Catalog
+Writes are atomic. Omitting `--if-revision` uses the current revision; passing it
+enforces compare-and-swap. Writes return the new revision in text or JSON. Catalog
 entries carry their installed-harness provenance and supported reasoning values.
 Manual profile values remain configured even when discovery is unsupported; the
 first live preflight decides whether the route is actually available.
