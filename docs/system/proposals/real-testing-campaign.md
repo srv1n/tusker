@@ -227,7 +227,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F20 | Devin print mode refuses new folders | todo | `devin -p` fails with "Refusing to run in an untrusted workspace" in any folder not trusted by hand. Every Tusker worktree is new. `--respect-workspace-trust false` skips it. Check whether `devin acp` (Tusker's route) has the same check before Q8. |
 | F21 | Devin can never be a reviewer | todo | `runner_acp.go:941` accepts only workspace-write with network; reviewers run read-only. QLH-T-0001 review failed on it. Re-pinned that task's reviewer to Sol low. |
 | F22 | The daemon's adaptive poll ignores queued wakeups | todo | Real root cause of F16: the answer waited ~10 min for the project's next slow poll. Needs a `daemon.go` change. The F16 branch only stops one bad wakeup from blocking others. |
-| F23 | Agent actor rules differ per command | todo | `redrive --by human:sarav` works from an agent session; `task update --by human:sarav` is refused. |
+| F23 | Agent actor rules differ per command | todo | `redrive` and `wave start` accept `--by human:sarav` from an agent session; `task update` refuses it. `wave start` refuses `agent:claude` and requires `--mode background`, its only mode. |
 | F24 | Changing a task's reviewer disarms its wave | todo | After the review-profile re-pin, `explain` says "wave W-0005 authorization is stale". Any task edit makes the owner re-arm the wave, even for a routing change. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
@@ -242,6 +242,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | V5 | Remove leftover Codex adapters if exec-only is final | todo | |
 | V6 | Label the three kinds of worker failure and route them | todo | Simple first version. |
 | T1 | Task states: one state per task, 8 states, reasons carry detail | doing | Spec: [task-states](task-states.md). |
+| P1 | CLI and UI parity: everything clickable is doable from the CLI, and back | doing | Sol low read-only audit, report `docs/reports/cli-ui-parity-2026-09-27.md`; then fix slices. Covers F4, F9, F23. |
 | S1 | Simplification audit of `cmd/tusker` (266,520 lines of Go, 270 source files) | done | [Report](../../reports/simplification-audit-2026-09-27.md). Cuts about 40-50k lines. Phases 0-4, 17 slices with owned files. |
 | S2 | Phase 0: unblock the campaign (0.1 F17, 0.2 answer nudge, 0.3 circuit auto-close, 0.4 demo defaults) | doing | 0.1 with Devin; 0.2 with Sol low; 0.3 after 0.1 (both edit `daemon.go`); 0.4 after T1 (both edit Serve). |
 | S3 | Phase 1: delete unused paths (Codex cloud, external loop, Codex ACP, app server, xcode, improve, feedback signals) | todo | Mostly Devin and Sol low. |
@@ -257,6 +258,8 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 
 | D2 | How much should Tusker defend against a lying or rogue agent? | Today: fences, fingerprints, receipts and sandbox rules assume an adversarial worker. Owner's view: assume 8 or 9 in 10 agents do honest work, catch the rest in review and testing, handle failures as they come. | Agree. Keep the guards that past incidents earned: retry caps, token budgets, one lease per task, worktrees, git. Cut defenses against forged verdicts and routing drift. See the simplification audit (S1). |
 
+| D3 | Who may run a command? | Today: each command has its own actor rule; some refuse an agent acting for the owner. | One rule: every mutating command accepts `--by`. An agent following the owner's instruction may act as the owner, and the record keeps both names. Agents answer to the owner, not to a gate. |
+
 ## How work gets done
 
 The frontier model in the owner's session plans and reviews. Most building
@@ -266,6 +269,7 @@ never start the daemon.
 
 ## Log
 
+- 2026-09-27: Re-armed W-0005 from the CLI on the owner's instruction (`--by human:sarav`).
 - 2026-09-27: Wrote this page. Finished Q0 to Q3. The owner ran `make install`,
   and TuskerBar started the daemon. Found the global circuit open since
   2026-09-22 (F7). Turned off automation for `tusker` and `kurpod`, retired the
