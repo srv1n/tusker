@@ -1120,8 +1120,18 @@ func evaluateDevinACPTransportPermission(ctx context.Context, eventLog *EventLog
 	if (request.ToolKind != "other" && request.ToolKind != "execute") || json.Unmarshal(request.RawInput, &input) != nil || strings.TrimSpace(input.Command) == "" {
 		return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
 	}
-	if fields, err := shellLikeFields(input.Command); err != nil || len(fields) == 0 {
+	commands := strings.Split(input.Command, "&&")
+	if strings.ContainsAny(strings.Join(commands, ""), ";&|`$<>\n\r") {
 		return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
+	}
+	mutating, destructive, catastrophic := false, false, false
+	for _, command := range commands {
+		if fields, err := shellLikeFields(command); err != nil || len(fields) == 0 {
+			return evaluateACPTransportPermission(ctx, eventLog, provenance, request)
+		}
+		mutating = mutating || commandWritesWorkspace(command)
+		destructive = destructive || destructiveAgentCommand(command)
+		catastrophic = catastrophic || destructiveCommandUsesProtectedDevice(command)
 	}
 	options := make([]ACPPermissionOption, 0, len(request.Options))
 	for _, option := range request.Options {
@@ -1135,8 +1145,8 @@ func evaluateDevinACPTransportPermission(ctx context.Context, eventLog *EventLog
 	}, ACPPermissionPolicy{AllowedToolKinds: map[string]bool{"execute": true}, BudgetAuthorized: true, AllowExecute: true})
 	if decision.Outcome == ACPPermissionAllowOnce {
 		classification := runnercore.CommandPolicyRequest{
-			Mutating: commandWritesWorkspace(input.Command), Destructive: destructiveAgentCommand(input.Command),
-			Catastrophic: destructiveCommandUsesProtectedDevice(input.Command), ReviewOnly: activeCodexPolicyIsReviewOnly(policy),
+			Mutating: mutating, Destructive: destructive,
+			Catastrophic: catastrophic, ReviewOnly: activeCodexPolicyIsReviewOnly(policy),
 		}
 		commandDecision := commandPolicyDecision(policy, classification)
 		if commandDecision.Behavior != runnercore.CommandAutomatic {

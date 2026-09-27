@@ -267,8 +267,10 @@ func TestDevinACPShellPermissionUsesCommandPolicy(t *testing.T) {
 		want              acp.PermissionDecision
 	}{
 		{"routine git", "other", `{"command":"git add x && git commit -m y"}`, acp.AllowOnce},
+		{"later destructive git", "other", `{"command":"git status && git reset --hard"}`, acp.Reject},
 		{"force push", "other", `{"command":"git push --force"}`, acp.Reject},
 		{"root delete", "execute", `{"command":"rm -rf /"}`, acp.Reject},
+		{"shell substitution", "other", `{"command":"echo $(git reset --hard)"}`, acp.Reject},
 		{"unknown shape", "other", `{"prompt":"git add x"}`, acp.Reject},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
