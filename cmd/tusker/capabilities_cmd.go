@@ -209,7 +209,7 @@ func installedCapabilityCommands() []capabilityCommand {
 		{Command: "runner", Subcommands: []string{"catalog", "conformance", "profiles", "route", "test"}, Flags: []string{"--bundled", "--refresh", "--json", "--lane", "--write"}},
 		{Command: "runner conformance", Flags: []string{"--exercise", "--external-containment", "--harness", "--json", "--live", "--preset", "--script", "--workspace"}, Purpose: "Probe and exercise an operator-installed CLI or ACP harness without claiming work."}, {Command: "runner-wrapper"},
 		{Command: "runner test", Flags: []string{"--exercise", "--external-containment", "--harness", "--json", "--live", "--preset", "--quiet", "--script", "--workspace"}, Purpose: "Short agent-friendly alias for runner conformance; accepts the harness as the first positional argument."},
-		{Command: "runs", Subcommands: []string{"claim", "continue", "events", "fail", "heartbeat", "inspect", "interrupt", "list", "logs", "reclaim", "redrive", "release", "retire", "say", "start", "submit"}},
+		{Command: "runs", Subcommands: []string{"claim", "continue", "events", "fail", "fresh", "heartbeat", "inspect", "interrupt", "list", "logs", "reclaim", "redrive", "release", "retire", "say", "start", "submit"}},
 		{Command: "runs list", Flags: []string{"--active", "--json", "--limit", "--project"}, Purpose: "List runtime database runs newest first, optionally by project or active lease."},
 		{Command: "search"}, {Command: "serve"}, {Command: "setup", Subcommands: []string{"doctor", "repair"}}, {Command: "show"},
 		{Command: "skill", Subcommands: []string{"audit-agent-guidance", "bundle", "doctor", "pack", "route", "sync"}}, {Command: "state"}, {Command: "status"}, {Command: "streams"},

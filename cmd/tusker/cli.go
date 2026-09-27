@@ -678,6 +678,9 @@ func runInner(command string, args Args) (int, error) {
 	case "runs continue":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsContinueCmd(args)
+	case "runs fresh":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsFreshCmd(args)
 	case "runs release":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsReleaseCmd(args)
@@ -1064,7 +1067,7 @@ Purpose:
 		printFactoryOperationsHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune", "projects automation-scope":
 		printProjectsHelp()
-	case "runs", "runs list", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs release", "runs retire", "runs redrive", "redrive":
+	case "runs", "runs list", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs fresh", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
 	case "serve":
 		printServeHelp()
@@ -1432,6 +1435,7 @@ func printRunsHelp() {
   tusker runs interrupt <task-id-or-record-id> [--json]
   tusker runs say <task-id> (--message <text> | --message-file <path|->) --by <actor> [--key <idempotency-key>] [--json]
   tusker runs continue <task-id> [--message <text> | --message-file <path|->] --by <actor> [--json]
+  tusker runs fresh <task-id> --by <actor> [--reason <text>] [--vault <path>|--project <id>] [--json]
   tusker runs release <task-id-or-record-id> [--json]
   tusker runs retire <task-id-or-record-id> --reason <text> [--by <actor>] [--force] [--json]
   tusker redrive <task-id-or-record-id> --reason <text> [--by <actor>] [--json]
