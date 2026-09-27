@@ -1637,6 +1637,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			current.ItemID = stringField(note.Data, "id")
 			current.WorkRevision = intField(note.Data, "work_revision")
 			selectedProfile = preserveResolvedRunIdentity(current, runLaneReview, selectedProfile)
+			// Execution retries must not use up the reviewer's attempts; review
+			// rounds are bounded separately by reviewer.max_cycles.
+			if current.Lane != runLaneReview {
+				current.AttemptCount = 0
+			}
 			current = prepareRunForLaneDispatch(current, runLaneReview, firstNonEmpty(selectedProfile.Definition.Harness, reviewerRunner))
 			current = applyResolvedProfileToRun(current, selectedProfile)
 			current.UpdatedAt = now.Format(time.RFC3339)
