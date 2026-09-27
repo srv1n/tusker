@@ -176,12 +176,11 @@ func TestAcceptRequiresExplicitReviewer(t *testing.T) {
 		t.Fatalf("missing --by refusal did not return missing-actor error: %v", missing)
 	}
 
+	// agent:<name> is a valid actor (D3), but the close policy still needs a
+	// reviewer or human acceptor.
 	bad := acceptV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": id, "by": "agent:worker"})
 	if bad == nil {
-		t.Fatalf("accept accepted a non-namespaced actor")
-	}
-	if errorToIssue(bad).Code != errorInvalidField {
-		t.Fatalf("invalid --by refusal did not return actor-field error: %v", bad)
+		t.Fatalf("accept closed a task with only an agent acceptor")
 	}
 
 	// The refused task must stay open with no recorded acceptor.
