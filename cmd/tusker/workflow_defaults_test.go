@@ -20,6 +20,13 @@ func seedWorkflow(t *testing.T) (string, string) {
 	return vault, text
 }
 
+func TestDefaultWorkflowClaudeCommand(t *testing.T) {
+	_, text := seedWorkflow(t)
+	if !strings.Contains(text, "command: claude -p") || strings.Contains(text, "bypassPermissions") || strings.Contains(text, "--output-format stream-json") {
+		t.Fatalf("default Claude command contains stale flags")
+	}
+}
+
 func TestInitSeedsProofDefaults(t *testing.T) {
 	_, text := seedWorkflow(t)
 

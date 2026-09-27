@@ -106,7 +106,7 @@ automation:
       command: codex exec --json --skip-git-repo-check -
     claude-code:
       kind: claude-code
-      command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
+      command: claude -p
   fanout:
     enabled: false
     max_children: 0

@@ -38,10 +38,23 @@ func compilePolicy(d HarnessDefinition, input RunInput) (EffectivePolicy, []stri
 		}
 		return policy, append([]string(nil), d.Args...), nil
 	}
-	if hasForbiddenPolicyArg(d.Args) {
+	args := append([]string(nil), d.Args...)
+	legacyClaude := []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--permission-mode", "bypassPermissions"}
+	if d.Dialect == "claude" && len(args) >= len(legacyClaude) {
+		match := true
+		for i, arg := range legacyClaude {
+			if args[i] != arg {
+				match = false
+				break
+			}
+		}
+		if match {
+			args = append([]string{"-p"}, args[len(legacyClaude):]...)
+		}
+	}
+	if hasForbiddenPolicyArg(args) {
 		return policy, nil, admission(d, "policy_conflict", "policy", "configured arguments contain permission, sandbox, settings, tool, or directory overrides")
 	}
-	args := append([]string(nil), d.Args...)
 	switch d.Dialect {
 	case "codex":
 		args = compileCodexArgs(d, input, args, policy)
