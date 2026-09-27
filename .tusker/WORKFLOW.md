@@ -49,7 +49,7 @@ retry:
         - 30000
         - 120000
         - 600000
-    max_attempts: 3
+    max_attempts: 6
 reviewer:
     actor: agent:reviewer/codex
     auto_close_risks:
