@@ -42,7 +42,7 @@ profile_for() {
   case "$1" in
     codex) echo codex_exec-gpt-6-luna ;;
     claude) echo claude-opus-high ;;
-    devin) echo devin-swe-2-high ;;
+    devin) echo devin-swe-2-max ;;
     muse) echo "$MUSE_PROFILE" ;;
     *) echo "unknown harness key $1" >&2; exit 2 ;;
   esac
@@ -52,7 +52,7 @@ profile_for() {
 review_for() {
   if [ -n "$REVIEW_PROFILE" ]; then echo "$REVIEW_PROFILE"; return; fi
   case "$1" in
-    codex) echo devin-swe-2-high ;;
+    codex) echo devin-swe-2-max ;;
     *) echo codex_exec-gpt-6-sol-low ;;
   esac
 }

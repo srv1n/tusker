@@ -1,3 +1,12 @@
+---
+title: "Session recovery acceptance"
+subject: session-testing
+part_of: overview
+status: canonical
+read_when: "Checking run steering and session recovery against a real harness in a seeded repository."
+skip_when: "Running the fixture-only test suite or changing runner code."
+---
+
 # Session recovery acceptance
 
 Use a dedicated seeded repository. Keep its resident daemon running in a separate shell and open its registered project in Serve. Run one harness and one scenario at a time. A `fixture` proof checks the fake executable protocol; only an observed provider run may be called `live-provider`. `manual-required`, `unsupported`, and `unavailable` are not passes.
