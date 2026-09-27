@@ -681,6 +681,12 @@ func runInner(command string, args Args) (int, error) {
 	case "runs fresh":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsFreshCmd(args)
+	case "runs stop":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsStopCmd(args)
+	case "runs pause":
+		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
+		return 0, runsPauseCmd(args)
 	case "runs release":
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
 		return 0, runsReleaseCmd(args)
@@ -804,7 +810,7 @@ func runInner(command string, args Args) (int, error) {
 	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects rebind", "help projects remove", "help projects prune", "help projects automation-scope":
 		printProjectsHelp()
 		return 0, nil
-	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs release", "help runs retire", "help runs redrive", "help redrive":
+	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs say", "help runs continue", "help runs fresh", "help runs stop", "help runs pause", "help runs release", "help runs retire", "help runs redrive", "help redrive":
 		printRunsHelp()
 		return 0, nil
 	case "help serve":
@@ -1067,7 +1073,7 @@ Purpose:
 		printFactoryOperationsHelp()
 	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune", "projects automation-scope":
 		printProjectsHelp()
-	case "runs", "runs list", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs fresh", "runs release", "runs retire", "runs redrive", "redrive":
+	case "runs", "runs list", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs fresh", "runs stop", "runs pause", "runs release", "runs retire", "runs redrive", "redrive":
 		printRunsHelp()
 	case "serve":
 		printServeHelp()
@@ -1436,6 +1442,8 @@ func printRunsHelp() {
   tusker runs say <task-id> (--message <text> | --message-file <path|->) --by <actor> [--key <idempotency-key>] [--json]
   tusker runs continue <task-id> [--message <text> | --message-file <path|->] --by <actor> [--json]
   tusker runs fresh <task-id> --by <actor> [--reason <text>] [--vault <path>|--project <id>] [--json]
+  tusker runs stop <task-id> --by <actor> [--reason <text>] [--vault <path>|--project <id>] [--json]
+  tusker runs pause <task-id> --by <actor> [--vault <path>|--project <id>] [--json]
   tusker runs release <task-id-or-record-id> [--json]
   tusker runs retire <task-id-or-record-id> --reason <text> [--by <actor>] [--force] [--json]
   tusker redrive <task-id-or-record-id> --reason <text> [--by <actor>] [--json]
@@ -1443,10 +1451,12 @@ func printRunsHelp() {
 Purpose:
   Inspect and control daemon runtime state for a task. These commands expose
   attempts, turns, sessions, event tails, logs, and interrupts without making
-  runtime state part of task frontmatter. Redrive resets the budget window for
-  parked budget runs and queues them for the resident daemon. Retire is the
-  terminal operator path for stale, broken runtime records that must stop
-  tripping daemon invariant circuits.
+  runtime state part of task frontmatter. Stop, pause, and fresh share the
+  Serve run-control transitions, including the durable operator intent;
+  pause currently refuses because no runner negotiates a pause capability.
+  Redrive resets the budget window for parked budget runs and queues them for
+  the resident daemon. Retire is the terminal operator path for stale, broken
+  runtime records that must stop tripping daemon invariant circuits.
 
 Examples:
   tusker runs inspect APP-T-0001 --json
