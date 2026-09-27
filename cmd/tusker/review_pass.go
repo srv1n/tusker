@@ -118,6 +118,12 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 		// waiting for the owner. Either way there is nothing to do yet.
 		return nil
 	}
+	if _, inWave := reviewPassWave(project.VaultRoot, task); !inWave {
+		// Review hand-off binds every task to a wave (or a singleton delivery
+		// unit). A task without one was reviewed outside that path; leave it
+		// for the owner's Land, which creates the unit.
+		return nil
+	}
 	if stray, err := reviewPassStrayPaths(project, task, result.ImplementationSHA); err != nil {
 		return err
 	} else if len(stray) > 0 {
@@ -167,7 +173,7 @@ func reviewPassStrayPaths(project RegisteredProject, task Note, source string) (
 		scope = append(scope, filepath.ToSlash(vaultRel))
 	}
 	target := "HEAD"
-	if wave, ok := completionWaveForReviewedTask(project.VaultRoot, task); ok {
+	if wave, ok := reviewPassWave(project.VaultRoot, task); ok {
 		if branch := v7WaveIntegrationBranch(wave); gitRefExists(repoRoot, "refs/heads/"+branch) {
 			target = branch
 		}
@@ -230,4 +236,19 @@ func (d *Daemon) holdReviewPassForLanding(run *RunStatus, landErr error) error {
 		return err
 	}
 	return landErr
+}
+
+// reviewPassWave is the wave (or singleton delivery unit) the task lands into.
+// Membership is enough: arming governs dispatch, not landing reviewed work.
+func reviewPassWave(vaultPath string, task Note) (Note, bool) {
+	waveID := stringField(task.Data, "wave")
+	if waveID == "" {
+		return Note{}, false
+	}
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return Note{}, false
+	}
+	wave, ok := idx.Waves[waveID]
+	return wave, ok
 }

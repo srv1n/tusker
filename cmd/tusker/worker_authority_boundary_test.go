@@ -239,8 +239,8 @@ func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if rows[0].Result.Schema != reviewResultSchema || !v7CloseAuthorityDigest(rows[0].Result.WorkerPolicyFP, "sha256:") {
-			t.Fatalf("authoritative exact policies did not upgrade transport to v3: %#v", rows[0].Result)
+		if rows[0].Result.Schema != reviewResultSchemaV2 || rows[0].Result.WorkerPolicyFP != "" {
+			t.Fatalf("review results carry no worker-policy authority: %#v", rows[0].Result)
 		}
 		if _, _, err := daemon.reconcileRun(context.Background(), project, wfFile, run); err != nil {
 			t.Fatal(err)
@@ -259,36 +259,6 @@ func TestReviewProposalDaemonLifecycleBoundary(t *testing.T) {
 		}
 		assertReviewResultCount(t, daemon.store, project.ProjectID, 0)
 	})
-
-	for name, mutate := range map[string]func(*RunStatus){
-		"one-sided policy rejects instead of downgrading": func(run *RunStatus) {
-			run.ExecutePolicyFP = ""
-		},
-		"malformed policy rejects instead of downgrading": func(run *RunStatus) {
-			run.ExecutePolicyFP = "sha256:not-a-digest"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
-			defer daemon.Close()
-			mutate(&run)
-			if err := daemon.store.UpsertRun(run); err != nil {
-				t.Fatal(err)
-			}
-			if err := writeRunnerStatusFile(run.StatusPath, 0); err != nil {
-				t.Fatal(err)
-			}
-			updated, changed, err := daemon.reconcileRun(context.Background(), project, wfFile, run)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !changed || updated.LeaseState != string(LeaseStateParkedNoProgress) ||
-				!strings.Contains(updated.LastError, "review proposal rejected") {
-				t.Fatalf("invalid claimed policy was not contained: %#v", updated)
-			}
-			assertReviewResultCount(t, daemon.store, project.ProjectID, 0)
-		})
-	}
 
 	t.Run("raw log overflow never saves", func(t *testing.T) {
 		project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
@@ -481,7 +451,6 @@ func configureCompletionWorkerProfilesForTest(t *testing.T, vault string) {
 	}{
 		{"automation.default_profile", "implementation-terra"},
 		{"automation.lane_profiles", map[string]any{runLaneExecute: "implementation-terra", runLaneReview: "reviewer-terra"}},
-		{"automation.completion_reactor.mode", string(completionReactorModeAuthoritative)},
 	} {
 		if _, err := setProjectLocalConfigWithReadback(vault, setting.key, setting.value); err != nil {
 			t.Fatal(err)

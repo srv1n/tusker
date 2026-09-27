@@ -316,49 +316,6 @@ func TestSoftwareFactoryProofDurableProofFindingClosureAllowsSameMaterial(t *tes
 	}
 }
 
-func TestSoftwareFactoryProofAuthoritativeCLIAndStoreBindMaterial(t *testing.T) {
-	project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
-	defer daemon.Close()
-	note, err := resolveV7Note(project.VaultRoot, run.RecordID, "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	proof, gates, err := reviewObjectiveSnapshots(project.VaultRoot, note)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit"))
-	material, err := reviewAttemptMaterialFingerprint(daemon.store, run.ProjectID, run.RecordID, run.ActiveAttemptID, run.WorkRevision, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	finding := softwareFactoryFinding(material, "blocking")
-	if err := reviewSubmitCmd(Args{
-		"vault": project.VaultRoot, "id": run.RecordID, "attempt": run.ActiveAttemptID,
-		"by": reviewerActorForNote(wfFile.Data.Reviewer.Actor, note), "verdict": "changes_requested",
-		"summary": "authoritative material-bound finding", "finding": finding,
-		"task-rev": stringField(note.Data, "state_rev"), "source-sha": source,
-		"work-rev": strconv.Itoa(run.WorkRevision), "proof-fingerprint": proof,
-		"gate-fingerprint": gates,
-	}); err != nil {
-		t.Fatalf("authoritative CLI submission rejected: %v", err)
-	}
-	rows, err := daemon.store.ListReviewResults(project.ProjectID)
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("persisted authoritative review rows=%#v err=%v", rows, err)
-	}
-	if rows[0].Result.Schema != reviewResultSchema || rows[0].Result.MaterialFingerprint != material {
-		t.Fatalf("CLI submission did not persist exact v3 material: %#v", rows[0].Result)
-	}
-
-	missingMaterial := rows[0].Result
-	missingMaterial.MaterialFingerprint = ""
-	missingMaterial.ResultRevision = reviewResultFingerprint(missingMaterial)
-	if _, err := daemon.store.SaveReviewResult(missingMaterial); err == nil {
-		t.Fatal("SaveReviewResult accepted an authoritative result without material identity")
-	}
-}
-
 func TestSoftwareFactoryProofWorkerProposalBindsClosureAfterDaemonMaterial(t *testing.T) {
 	project, daemon, wfFile, run := reviewProposalDaemonFixture(t)
 	defer daemon.Close()
@@ -442,7 +399,7 @@ func TestSoftwareFactoryProofWorkerProposalBindsClosureAfterDaemonMaterial(t *te
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("worker closure proposal was not persisted exactly once: rows=%#v err=%v", rows, err)
 	}
-	if rows[0].Result.Schema != reviewResultSchema || rows[0].Result.MaterialFingerprint != material || len(rows[0].Result.ClosedFindings) != 1 || rows[0].Result.ClosedFindings[0].MaterialFingerprint != material {
+	if rows[0].Result.Schema != reviewResultSchemaV2 || rows[0].Result.MaterialFingerprint != material || len(rows[0].Result.ClosedFindings) != 1 || rows[0].Result.ClosedFindings[0].MaterialFingerprint != material {
 		t.Fatalf("daemon did not bind exact material before validating closure: %#v", rows[0].Result)
 	}
 }

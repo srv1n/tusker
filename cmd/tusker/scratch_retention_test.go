@@ -363,14 +363,18 @@ func TestRemainingArtifactRetention(t *testing.T) {
 // interactive ceremony. Keep the shared documentation-touch check wired into
 // that terminal projection so automation cannot bypass the policy.
 func TestDocTouchCheckOnReactorClose(t *testing.T) {
-	source, err := readText("completion_reactor.go")
+	// The review pass handler closes through closeV7Task, whose close
+	// preflight runs the documentation drift check.
+	pass, err := readText("review_pass.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := source[strings.Index(source, "func projectCompletionTaskToCanonical("):]
-	body = body[:strings.Index(body, "\n}\n")]
-	if strings.Count(body, "v7DocTouchCheck(vaultPath, staged)") != 1 {
-		t.Fatal("canonical completion projection must check documentation drift before terminal replacement")
+	ceremony, err := readText("v7_close_ceremony.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pass, "closeV7Task(") || !strings.Contains(ceremony, "v7DocTouchCheck(vaultPath, task)") {
+		t.Fatal("the daemon's close must run the documentation drift check")
 	}
 }
 
