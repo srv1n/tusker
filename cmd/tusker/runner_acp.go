@@ -496,7 +496,7 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 		return nil, err
 	}
 	if runner == RunnerDevin {
-		if err := configureDevinSession(ctx, client, session, policy, req.RunnerModel); err != nil {
+		if err := configureDevinSession(ctx, client, session, policy, req.RunnerModel, req.RunnerEffort); err != nil {
 			handle.close()
 			return nil, err
 		}
@@ -942,7 +942,7 @@ func acpDurationMS(value int) time.Duration {
 	return time.Duration(value) * time.Millisecond
 }
 
-func configureDevinSession(ctx context.Context, client *acp.Client, session acp.Session, policy CodexPolicy, model string) error {
+func configureDevinSession(ctx context.Context, client *acp.Client, session acp.Session, policy CodexPolicy, model, effort string) error {
 	mode, err := devinACPModeForPolicy(policy)
 	if err != nil {
 		return err
@@ -951,10 +951,32 @@ func configureDevinSession(ctx context.Context, client *acp.Client, session acp.
 	if err != nil {
 		return tuskerError(errorConfigInvalid, "Devin ACP mode configuration failed: "+err.Error())
 	}
-	if _, err := setDevinConfigOption(ctx, client, current, "model", strings.TrimSpace(model)); err != nil {
+	model, thought := devinACPModelAndThought(current, strings.TrimSpace(model), strings.TrimSpace(effort))
+	current, err = setDevinConfigOption(ctx, client, current, "model", model)
+	if err != nil {
 		return tuskerError(errorConfigInvalid, "Devin ACP model configuration failed: "+err.Error())
 	}
+	if thought != "" {
+		if _, err := setDevinConfigOption(ctx, client, current, "thought_level", thought); err != nil {
+			return tuskerError(errorConfigInvalid, "Devin ACP thinking configuration failed: "+err.Error())
+		}
+	}
 	return nil
+}
+
+func devinACPModelAndThought(session acp.Session, model, effort string) (string, string) {
+	if model == "swe-2-max" && effort == "max" {
+		for _, option := range session.ConfigOptions {
+			if option.ID == "model" {
+				for _, value := range option.Options {
+					if value.Value == "swe-2-high" {
+						return "swe-2-high", "max"
+					}
+				}
+			}
+		}
+	}
+	return model, ""
 }
 
 // devinACPModeForPolicy maps the resolved Tusker sandbox policy onto Devin's

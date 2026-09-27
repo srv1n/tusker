@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -94,7 +95,7 @@ func TestConfigureDevinSessionAcceptsReadOnlyReviewPolicy(t *testing.T) {
 		TurnSandboxPolicy:  "workspace-write",
 		TurnSandboxNetwork: boolPtr(true),
 	}, runLaneReview)
-	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model"); err != nil {
+	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model", "high"); err != nil {
 		t.Fatalf("Devin review session refused the read-only lane policy: %v", err)
 	}
 }
@@ -107,7 +108,25 @@ func TestConfigureDevinSessionAcceptsNetworkedExecutePolicy(t *testing.T) {
 		TurnSandboxPolicy:  "workspace-write",
 		TurnSandboxNetwork: boolPtr(true),
 	}
-	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model"); err != nil {
+	if err := configureDevinSession(context.Background(), client, session, policy, "fixture-model", "high"); err != nil {
 		t.Fatalf("Devin execute session refused the networked workspace-write policy: %v", err)
+	}
+}
+
+func TestDevinACPMapsSWETwoMaxToAdvertisedModelAndThought(t *testing.T) {
+	// Recorded from a prompt-free Devin ACP session/new handshake.
+	var payload struct {
+		ConfigOptions []acp.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal([]byte(`{"configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"swe-2-high","options":[{"value":"adaptive","name":"Adaptive"},{"value":"swe-2-high","name":"SWE-2"}]},{"id":"thought_level","name":"Thinking","type":"select","currentValue":"medium","options":[{"value":"medium","name":"Medium"},{"value":"high","name":"High"},{"value":"max","name":"Max"}]}]}`), &payload); err != nil {
+		t.Fatal(err)
+	}
+	model, thought := devinACPModelAndThought(acp.Session{ConfigOptions: payload.ConfigOptions}, "swe-2-max", "max")
+	if model != "swe-2-high" || thought != "max" {
+		t.Fatalf("model=%q thought=%q", model, thought)
+	}
+	model, thought = devinACPModelAndThought(acp.Session{}, "swe-2-max", "max")
+	if model != "swe-2-max" || thought != "" {
+		t.Fatalf("unadvertised model mapped: model=%q thought=%q", model, thought)
 	}
 }

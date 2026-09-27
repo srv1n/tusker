@@ -1052,7 +1052,14 @@ func (c *Client) SetConfigOption(ctx context.Context, configID, value string) (S
 		}
 	}
 	if !allowed {
-		return Session{}, fmt.Errorf("ACP config option %q did not advertise value %q", configID, value)
+		values := make([]string, 0, min(len(selected.Options), 20))
+		for i, option := range selected.Options {
+			if i == 20 {
+				break
+			}
+			values = append(values, option.Value)
+		}
+		return Session{}, fmt.Errorf("ACP config option %q did not advertise value %q (advertised: %s)", configID, value, strings.Join(values, ", "))
 	}
 	ctx, cancel := withDeadline(ctx, c.cfg.Timeouts.Request)
 	defer cancel()
