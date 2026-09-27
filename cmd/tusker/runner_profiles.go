@@ -506,6 +506,7 @@ func cloneConfigValue(value any) any {
 // behavior belongs in project or machine-local config, even when a global file
 // happens to declare it.
 var userGlobalConfigAllowlist = map[string]struct{}{
+	"access.protected_paths":                             {},
 	"automation.concurrency.max_active_runs":             {},
 	"automation.concurrency.max_active_runs_per_project": {},
 	"automation.profiles":                                {},
@@ -553,6 +554,21 @@ func userGlobalTuskerConfigPath() string {
 func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 	if !layer.Present {
 		return nil
+	}
+	if value, present := lookupConfigValue(layer.Raw, "access.protected_paths"); present {
+		if layer.Name != configSourceUserGlobal {
+			return tuskerError(errorConfigInvalid, "access.protected_paths belongs in the global config", withPath(layer.Path))
+		}
+		paths, ok := value.([]any)
+		if !ok {
+			return tuskerError(errorConfigInvalid, "access.protected_paths must be a list of paths", withPath(layer.Path))
+		}
+		for _, path := range paths {
+			value, ok := path.(string)
+			if !ok || strings.TrimSpace(value) == "" {
+				return tuskerError(errorConfigInvalid, "access.protected_paths must contain non-empty paths", withPath(layer.Path))
+			}
+		}
 	}
 	if err := validateAgentAccessRaw(appliedConfigRaw(layer), layer.Path); err != nil {
 		return err

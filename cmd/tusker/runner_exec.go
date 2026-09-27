@@ -151,6 +151,13 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 	if len(req.CommandArgv) > 0 {
 		scriptCommand = `"$@"`
 		commandArgs = append(commandArgs, replaceTemplateArgv(req.CommandArgv, tokens)...)
+		if runner == RunnerCodexExec || runner == RunnerMuse {
+			access, err := effectiveRunnerDenyPaths(workspaceCWD)
+			if err != nil {
+				return nil, err
+			}
+			commandArgs = append([]string{commandArgs[0]}, wrapRunnerAccessArgv(commandArgs[1:], access, req.CodexPolicy)...)
+		}
 		// Structured argv is already fully resolved by trusted Go code. A fixed
 		// non-login shell only supplies status-file plumbing; it cannot source
 		// repository or operator shell startup files and cannot reparse argv.
