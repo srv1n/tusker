@@ -623,20 +623,22 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 func (s *serveServer) serveOperatorActor(body serveActionBody, operation string) (string, error) {
 	// Serve is an HTTP boundary. The capability-authenticated local UI uses the
 	// server's explicitly configured operator actor. A request actor, when
-	// present, must normalize to that same identity. Neither path consults
-	// USER/LOGNAME or upgrades an agent into a human identity.
+	// present, must normalize to that same identity.
 	configured := strings.TrimSpace(s.operatorActor)
 	if configured == "" {
 		return "", tuskerError("SERVE_OPERATOR_REQUIRED", operation+" requires an explicitly configured operator actor", withHint("start Serve with --by <qualified-actor> or set TUSKER_SERVE_OPERATOR=<qualified-actor>"))
 	}
-	actor, ok := normalizeV7ProposalActor(configured)
-	if !ok {
-		return "", tuskerError(errorInvalidField, operation+" requires a qualified configured operator actor")
+	args := Args{"by": configured, "vault": s.vaultPath}
+	if projectID := body.string("projectId", "project_id", "project"); projectID != "" {
+		project, err := s.projectForSnapshot(projectID)
+		if err != nil {
+			return "", err
+		}
+		args["vault"] = firstNonEmpty(project.VaultRoot, s.vaultPath)
 	}
-	if strings.SplitN(actor, ":", 2)[0] == "human" && agentSessionKind() != "" {
-		return "", tuskerError(errorInvalidTransition,
-			operation+" cannot use human actor "+actor+" from "+agentSessionKind(),
-			withHint("run the mutation from a human terminal with explicit --by human:<name>; no agent break-glass contract exists"))
+	actor, err := resolveV7Actor(args, operation, v7ActorPolicy{})
+	if err != nil {
+		return "", err
 	}
 	if raw := body.string("actor", "by"); raw != "" {
 		requested, valid := normalizeV7ProposalActor(raw)

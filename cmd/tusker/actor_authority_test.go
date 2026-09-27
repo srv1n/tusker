@@ -83,14 +83,14 @@ func TestServeOperatorActorUsesOnlyExplicitConfiguration(t *testing.T) {
 	}
 }
 
-func TestServeOperatorActorRejectsConfiguredHumanFromAgentSession(t *testing.T) {
+func TestServeOperatorActorAcceptsConfiguredHumanFromAgentSession(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	server := &serveServer{operatorActor: "human:operator"}
 	for _, key := range []string{"TUSKER_ATTEMPT_ID", "CODEX_THREAD_ID"} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, "session")
-			if _, err := server.serveOperatorActor(serveActionBody{}, "serve task run"); err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-				t.Fatalf("serve accepted configured human from %s: %v", key, err)
+			if got, err := server.serveOperatorActor(serveActionBody{}, "serve task run"); err != nil || got != "human:operator" {
+				t.Fatalf("serve actor from %s = %q, %v", key, got, err)
 			}
 		})
 	}

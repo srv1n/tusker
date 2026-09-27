@@ -36,7 +36,12 @@ func (s *serveServer) handleExecutionRename(w http.ResponseWriter, r *http.Reque
 		serveJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid rename request"})
 		return
 	}
-	view, err := s.store.RenameExecution(project.ProjectID, executionID, body.Name, "serve:operator")
+	actor, err := s.serveOperatorActor(serveActionBody{"project": project.ProjectID}, "serve execution rename")
+	if err != nil {
+		serveJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	view, err := s.store.RenameExecution(project.ProjectID, executionID, body.Name, actor)
 	if err != nil {
 		serveJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -96,7 +101,12 @@ func (s *serveServer) handleExecutionBind(w http.ResponseWriter, r *http.Request
 	if view.BindingGeneration > 0 && view.BoundTaskID != "" {
 		action = "rebind"
 	}
-	view, err = s.store.BindExecution(ExecutionBindingInput{ProjectID: project.ProjectID, ExecutionID: executionID, TaskID: body.TaskID, WaveID: waveID, Actor: "serve:operator"}, action)
+	actor, err := s.serveOperatorActor(serveActionBody{"project": project.ProjectID}, "serve execution bind")
+	if err != nil {
+		serveJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	view, err = s.store.BindExecution(ExecutionBindingInput{ProjectID: project.ProjectID, ExecutionID: executionID, TaskID: body.TaskID, WaveID: waveID, Actor: actor}, action)
 	if err != nil {
 		serveJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": err.Error()})
 		return
