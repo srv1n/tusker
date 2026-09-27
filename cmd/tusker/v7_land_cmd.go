@@ -201,6 +201,48 @@ func landV7CmdAsWaveDrain(args Args) error {
 	return landV7CmdWithAuthority(args, nil, "", nil, &internal)
 }
 
+// recoverV7ReviewPassLanding finishes a review-pass landing that stopped
+// after the integration ref moved. Under the landing lock it finds the landing
+// receipt for this task's exact reviewed commit, checks the receipt's merge is
+// on the integration branch, and appends the wave's landing audit row (the
+// append is idempotent). Without such a receipt the commit reached the branch
+// some other way, and the caller must leave the task to the owner.
+func recoverV7ReviewPassLanding(vaultPath, taskID, waveID, source string) error {
+	release, err := acquireV7LandingLock(vaultPath)
+	if err != nil {
+		return err
+	}
+	defer release()
+	wave, err := resolveV7Note(vaultPath, waveID, "wave")
+	if err != nil {
+		return err
+	}
+	repoRoot := v7RepoRoot(vaultPath)
+	integration := v7WaveIntegrationBranch(wave)
+	for _, receipt := range indexedV7LandingReceipts(vaultPath, integration, taskID, source) {
+		if receipt.Outcome != "pass" || receipt.Target != integration || receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) ||
+			!gitMergeBaseAncestor(repoRoot, receipt.BatchHeadSHA, integration) {
+			continue
+		}
+		for _, proof := range receipt.Tasks {
+			if proof.Task != taskID || !strings.EqualFold(proof.SourceSHA, source) || !gitMergeBaseAncestor(repoRoot, proof.MergeCommit, integration) {
+				continue
+			}
+			return appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
+				Task: proof.Task, Branch: proof.Branch, SourceSHA: proof.SourceSHA,
+				SourceProvenance: proof.SourceProvenance, Target: integration,
+				BaseSHA: proof.BaseSHA, MergeCommit: proof.MergeCommit,
+				GateResult: "pass", GateSummary: receipt.GateSummary,
+				GateFingerprint: receipt.GateFingerprint, ReceiptFingerprint: receipt.Fingerprint,
+				ControlAuthority: receipt.ControlAuthority,
+				Commit:           receipt.BatchHeadSHA, Tree: receipt.BatchTreeSHA,
+				Actor: receipt.Actor, Timestamp: receipt.ReceiptIssuedAt,
+			}}, "daemon:review-pass")
+		}
+	}
+	return tuskerError(errorInvalidTransition, "the reviewed commit "+source+" is on "+integration+" but no landing receipt records it for "+taskID)
+}
+
 // landV7CmdAsReviewPass lands exactly the reviewed commits named in sources.
 // The land path resolves them under its lock instead of reading the task
 // branch or worktree, which may have moved after review.

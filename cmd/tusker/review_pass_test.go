@@ -434,3 +434,90 @@ func TestPolicyRefusalShowsNotAllowed(t *testing.T) {
 		t.Fatalf("policy refusal state = %#v, want Blocked not_allowed", state)
 	}
 }
+
+// stopAfterLand runs the handler with a stop between the ref update and the
+// close, leaving the reviewed commit landed and the task in review.
+func (env *reviewPassEnv) stopAfterLand(t *testing.T) {
+	t.Helper()
+	env.submitProposal(t, "pass")
+	injectReviewPassCrash = func(string) error { return errors.New("injected stop after land") }
+	env.passHandler(t)
+	injectReviewPassCrash = nil
+	if !env.landed() || stringField(env.task(t).Data, "status") != "review" {
+		t.Fatal("the stop after the ref update should leave the task landed but in review")
+	}
+}
+
+func (env *reviewPassEnv) waveLandingRows(t *testing.T) []map[string]any {
+	t.Helper()
+	wave, ok := reviewPassWave(env.vault, env.task(t))
+	if !ok {
+		t.Fatal("fixture task is not a wave member")
+	}
+	return normalizeLandingAudit(wave.Data["landings"])
+}
+
+// The ref moved but the wave's landing audit was never written: the resume
+// recovers the audit row from this task's landing receipt, then closes.
+func TestReviewPassRecoversMissingLandingAuditAfterStop(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	t.Cleanup(func() { injectReviewPassCrash = nil })
+	env.stopAfterLand(t)
+	wave, _ := reviewPassWave(env.vault, env.task(t))
+	data, body, err := parseFrontmatterMustRead(wave.AbsolutePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(data, "landings")
+	if _, err := saveV7DocumentCAS(wave.AbsolutePath, data, body, v7FrontmatterOrder["wave"], stringField(data, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+	env.passHandler(t)
+	if status := stringField(env.task(t).Data, "status"); status != "done" {
+		t.Fatalf("resume did not close: %q (run %#v)", status, env.latestRun(t))
+	}
+	found := false
+	for _, row := range env.waveLandingRows(t) {
+		if stringField(row, "task") == "APP-T-0001" && strings.EqualFold(stringField(row, "source_sha"), env.source) && stringField(row, "receipt_fingerprint") != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("resume did not recover the landing audit row: %#v", env.waveLandingRows(t))
+	}
+}
+
+// Without this task's landing receipt, a commit already on the integration
+// branch is not proof of this review's landing: hold for the owner.
+func TestReviewPassHoldsWithoutLandingReceiptAfterStop(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	t.Cleanup(func() { injectReviewPassCrash = nil })
+	env.stopAfterLand(t)
+	if err := os.RemoveAll(filepath.Join(DefaultStateRoot(), "landing-cache")); err != nil {
+		t.Fatal(err)
+	}
+	env.passHandler(t)
+	if status := stringField(env.task(t).Data, "status"); status != "review" {
+		t.Fatalf("a landing without a receipt must not close, got %q", status)
+	}
+	if run := env.latestRun(t); run.ReasonCode != string(RunFailureLandingFailed) || !strings.Contains(run.LastError, "no landing receipt") {
+		t.Fatalf("missing receipt must hold with a reason: %#v", run)
+	}
+}
+
+// The pass went stale while the handler was stopped: the resume must not close.
+func TestReviewPassRevalidatesStaleStateAfterStop(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	t.Cleanup(func() { injectReviewPassCrash = nil })
+	env.stopAfterLand(t)
+	if err := writeText(filepath.Join(env.worktree, "reviewed.txt"), "edited after the stop\n"); err != nil {
+		t.Fatal(err)
+	}
+	env.passHandler(t)
+	if status := stringField(env.task(t).Data, "status"); status != "review" {
+		t.Fatalf("a stale pass closed after the stop: %q", status)
+	}
+	if run := env.latestRun(t); run.ReasonCode != string(RunFailureLandingFailed) || !strings.Contains(run.LastError, "stale") {
+		t.Fatalf("stale pass after the stop must hold with a reason: %#v", run)
+	}
+}

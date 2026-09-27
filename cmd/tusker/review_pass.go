@@ -126,27 +126,35 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 		return nil
 	}
 	source := strings.TrimSpace(result.ImplementationSHA)
+	// Every check runs on every poll, including a resume after a stop between
+	// landing and close: a pass that went stale while the handler was stopped
+	// must not close the task.
+	if reason := reviewPassDrift(d.store, project.VaultRoot, task, result); reason != "" {
+		return d.holdReviewPass(run, RunFailureLandingFailed, "the review pass is stale ("+reason+"); review again or land by hand")
+	}
+	stray, undeclared, err := reviewPassStrayPaths(project, task, wave, source)
+	if err != nil {
+		return err
+	}
+	if undeclared {
+		return d.holdReviewPass(run, RunFailureLandingFailed, "the task declares no owned_paths, so the daemon will not land its changes; check them and land by hand")
+	}
+	if len(stray) > 0 {
+		finding := "The reviewed change touches files outside the task's owned_paths: " + strings.Join(stray, ", ") +
+			". Move the change inside owned_paths, or ask the architect to widen them, then request review again."
+		return returnReviewerFindingToImplementer(project.VaultRoot, taskID, finding, "daemon:review-pass")
+	}
+	if err := reviewPassClosePreflight(project.VaultRoot, taskID); err != nil {
+		return d.holdReviewPass(run, RunFailureLandingFailed, "close would be refused, so nothing more was landed or closed: "+firstActionableLine("", err.Error()))
+	}
 	integration := v7WaveIntegrationBranch(wave)
-	landed := source != "" && gitRefExists(project.RepoRoot, "refs/heads/"+integration) && gitMergeBaseAncestor(project.RepoRoot, source, integration)
-	if !landed {
-		if reason := reviewPassDrift(d.store, project.VaultRoot, task, result); reason != "" {
-			return d.holdReviewPass(run, RunFailureLandingFailed, "the review pass is stale ("+reason+"); review again or land by hand")
+	if source != "" && gitRefExists(project.RepoRoot, "refs/heads/"+integration) && gitMergeBaseAncestor(project.RepoRoot, source, integration) {
+		// Resume after a stop: the ref already moved. Close only once this
+		// task's own landing receipt is verified and its audit row is written.
+		if err := recoverV7ReviewPassLanding(project.VaultRoot, taskID, stringField(wave.Data, "id"), source); err != nil {
+			return d.holdReviewPass(run, RunFailureLandingFailed, firstActionableLine("", err.Error())+"; land by hand")
 		}
-		stray, undeclared, err := reviewPassStrayPaths(project, task, wave, source)
-		if err != nil {
-			return err
-		}
-		if undeclared {
-			return d.holdReviewPass(run, RunFailureLandingFailed, "the task declares no owned_paths, so the daemon will not land its changes; check them and land by hand")
-		}
-		if len(stray) > 0 {
-			finding := "The reviewed change touches files outside the task's owned_paths: " + strings.Join(stray, ", ") +
-				". Move the change inside owned_paths, or ask the architect to widen them, then request review again."
-			return returnReviewerFindingToImplementer(project.VaultRoot, taskID, finding, "daemon:review-pass")
-		}
-		if err := reviewPassClosePreflight(project.VaultRoot, taskID); err != nil {
-			return d.holdReviewPass(run, RunFailureLandingFailed, "close would be refused, so nothing was landed: "+firstActionableLine("", err.Error()))
-		}
+	} else {
 		// Land exactly the reviewed commit, not whatever the task branch or
 		// worktree points at now. The land path uses it under its lock.
 		if err := landV7CmdAsReviewPass(Args{
