@@ -10,7 +10,10 @@ type v7ActorPolicy struct {
 // v7InternalActor is deliberately not representable through Args/CLI flags.
 // Only trusted in-process seams may construct one, and construction accepts
 // daemon:/ or tusker:/ provenance exclusively.
-type v7InternalActor struct{ value string }
+type v7InternalActor struct {
+	value                   string
+	daemonSubmissionSources map[string]string
+}
 
 func newV7InternalActor(raw string) (v7InternalActor, error) {
 	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)

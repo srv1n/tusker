@@ -232,6 +232,54 @@ func TestReviewPassLandsAndClosesForAnyHarness(t *testing.T) {
 	env.passHandler(t) // idempotent
 }
 
+func TestReviewPassLandsDaemonSubmissionButCLIRefusesIt(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "original\n"}, []string{"reviewed.txt"})
+	runGitDir(t, env.worktree, "switch", "--detach")
+	runGitDir(t, env.repo, "branch", "-D", v7TaskBranchName("APP-T-0001"))
+	if err := writeText(filepath.Join(env.worktree, "reviewed.txt"), "daemon submission\n"); err != nil {
+		t.Fatal(err)
+	}
+	source, err := materializeWorkerSubmissionCommit(RunStatus{RecordID: "APP-T-0001", WorkspacePath: env.worktree}, []string{"reviewed.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.source = source
+	runGitDir(t, env.worktree, "reset", "--hard", source)
+	attempts, err := env.daemon.store.ListAttemptsForRun(env.project.ProjectID, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range attempts {
+		if attempt.AttemptID != "exec-1" {
+			continue
+		}
+		attempt.EndState.HeadSHA = source
+		attempt.EndState.Dirty = true
+		attempt.EndState.MaterialFingerprint, err = workspaceTreeStateHashForPaths(env.worktree, attempt.EndState.MaterialScope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt.EndStateJSON = ""
+		if err := env.daemon.store.SaveAttempt(attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := landV7Cmd(Args{"vault": env.vault, "quiet": "true", "_pos0": "APP-T-0001", "from": source}); err == nil || !strings.Contains(err.Error(), "lacks task-owned provenance") {
+		t.Fatalf("plain land must refuse the daemon submission without --trust-from: %v", err)
+	}
+	env.submitProposal(t, "pass")
+	env.passHandler(t)
+	if !env.landed() || stringField(env.task(t).Data, "status") != "done" {
+		t.Fatalf("daemon submission did not land and close: run %#v", env.latestRun(t))
+	}
+	for _, row := range env.waveLandingRows(t) {
+		if stringField(row, "task") == "APP-T-0001" && stringField(row, "source_provenance") == "daemon_submission" {
+			return
+		}
+	}
+	t.Fatalf("landing audit lacks daemon_submission provenance: %#v", env.waveLandingRows(t))
+}
+
 // Only an explicit authoritative mode turns the handler on; an existing
 // project with no mode keeps landing by hand.
 func TestReviewPassHandlerNeedsExplicitAuthoritativeMode(t *testing.T) {
