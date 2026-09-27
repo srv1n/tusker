@@ -11,7 +11,7 @@ import (
 func TestRunnerRoutePreview(t *testing.T) {
 	vault := automationTestVault(t)
 	id := "APP-T-0001"
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Route preview", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Route preview", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	repo := v7RepoRoot(vault)

@@ -67,7 +67,7 @@ func TestTierOneCreateReadySkipsDispatchabilityRefusal(t *testing.T) {
 			if _, err := setProjectLocalConfigWithReadback(vault, "tier", tc.tier); err != nil {
 				t.Fatal(err)
 			}
-			err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Ready task", "status": "ready"})
+			err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Ready task", "status": "ready"})
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "not dispatchable") {
 					t.Fatalf("expected dispatchability refusal, got %v", err)
@@ -95,7 +95,7 @@ func TestTierOneAllowsUncoveredEvidenceAsWarningOnly(t *testing.T) {
 			if _, err := setProjectLocalConfigWithReadback(vault, "tier", tc.tier); err != nil {
 				t.Fatal(err)
 			}
-			if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence target"}); err != nil {
+			if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence target"}); err != nil {
 				t.Fatal(err)
 			}
 			err := evidenceV7AddCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "manual_smoke", "summary": "Recon finding."})
@@ -126,7 +126,7 @@ func TestTierOneNextPicksPlainReadyTask(t *testing.T) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Plain ready", "status": "ready"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Plain ready", "status": "ready"}); err != nil {
 		t.Fatal(err)
 	}
 	selected, ok := pickV7Next(vault, "APP", "")
@@ -140,7 +140,7 @@ func TestTierTwoNextRestoresFullDispatchBlockers(t *testing.T) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Placeholder ready"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Placeholder ready"}); err != nil {
 		t.Fatal(err)
 	}
 	forceV7TaskProjection(t, vault, "APP-T-0001", "ready", "ready", "agent", "Execute.")
@@ -162,7 +162,7 @@ func TestTierOneStatusDoneUsesCloseProjection(t *testing.T) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct close"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Direct close"}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
@@ -207,7 +207,7 @@ func TestTierOneCloseSkipsProofGateButTierTwoKeepsIt(t *testing.T) {
 			if _, err := setProjectLocalConfigWithReadback(vault, "tier", tc.tier); err != nil {
 				t.Fatal(err)
 			}
-			if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Proofless close", "proof-mode": "inline", "proof-required": "focused_test"}); err != nil {
+			if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Proofless close", "proof-mode": "inline", "proof-required": "focused_test"}); err != nil {
 				t.Fatal(err)
 			}
 			replaceV7TaskSection(t, vault, "APP-T-0001", "## Acceptance", "| ID | Outcome | Proof |\n|---|---|---|\n| A1 | The task may close after the tier policy is applied. | Focused proof |")
@@ -243,7 +243,7 @@ func TestTierOneCloseSkipsProofGateButTierTwoKeepsIt(t *testing.T) {
 
 func TestDefaultTierStatusDoneStillRefuses(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Ceremonial close"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Ceremonial close"}); err != nil {
 		t.Fatal(err)
 	}
 	err := statusV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "status": "done"})
@@ -312,7 +312,7 @@ func TestTierOneValidateHasNoDispatchabilityErrorsForPlaceholder(t *testing.T) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Tier one placeholder", "status": "ready"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Tier one placeholder", "status": "ready"}); err != nil {
 		t.Fatal(err)
 	}
 	issues := validateV7DispatchableTasks(vault)

@@ -268,7 +268,7 @@ func TestScratchRetainedOnTierOneDirectDone(t *testing.T) {
 	if _, err := setProjectLocalConfigWithReadback(vault, "tier", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Direct close", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Direct close", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	dir := seedScratchTest(t, vault, "APP-T-0001")

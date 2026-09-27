@@ -614,6 +614,9 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	specRefs := splitCSV(firstNonEmpty(args.String("spec-refs"), args.String("spec_refs")))
 	ownedPaths := normalizeOwnedPaths(splitCSV(firstNonEmpty(args.String("owned-paths"), args.String("owned_paths"))))
+	if len(ownedPaths) == 0 {
+		return tuskerError(errorMissingField, "task needs at least one owned path (owned_paths) so its changes can be scope-checked before merge")
+	}
 	generatedOutputs := normalizeOwnedPaths(splitCSV(firstNonEmpty(args.String("generated-outputs"), args.String("generated_outputs"))))
 	data := map[string]any{
 		"schema":                "tusker.task/v7",

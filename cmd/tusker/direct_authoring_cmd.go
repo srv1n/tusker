@@ -778,6 +778,9 @@ func validateDirectWaveAuthoring(vaultPath string, req directWaveAuthoringReques
 	taskAcceptanceIDs := map[string]map[string]bool{}
 	for _, task := range req.Tasks {
 		key := strings.TrimSpace(task.Key)
+		if len(normalizeOwnedPaths(task.OwnedPaths)) == 0 {
+			add("AUTHORING_REQUEST_INVALID", key+": task needs at least one owned path (owned_paths) so its changes can be scope-checked before merge")
+		}
 		if key == "" {
 			add("AUTHORING_REQUEST_INVALID", "every task requires a nonempty temporary key")
 		} else if keys[key] {

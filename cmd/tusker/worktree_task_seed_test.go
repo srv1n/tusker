@@ -68,7 +68,7 @@ func frozenTaskWorktreeSeedFixture(t *testing.T) (canonicalVault, workspace, tas
 	}
 	runGitDir(t, repo, "add", ".tusker")
 	runGitDir(t, repo, "commit", "-m", "frozen task base")
-	if err := newV7Task(Args{"vault": canonicalVault, "quiet": "true", "epic": "APP", "title": "Imported after freeze", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": canonicalVault, "quiet": "true", "epic": "APP", "title": "Imported after freeze", "risk": "low", "priority": "p1", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	taskID = "APP-T-0001"

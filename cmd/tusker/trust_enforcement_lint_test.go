@@ -5,7 +5,7 @@ import "testing"
 func TestTrustEnforcementLintRejectsUnknownProofRequirement(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Valid proof policy"}, newV7Task)
-	err := newV7Task(Args{
+	err := newV7Task(Args{"owned-paths": "cmd/tusker",
 		"vault": vault, "quiet": "true", "epic": "APP", "title": "Unknown proof", "proof-required": "fabricated_proof", "v7": "true",
 	})
 	if err == nil || errorToIssue(err).Code != errorInvalidField {

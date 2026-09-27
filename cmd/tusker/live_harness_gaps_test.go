@@ -18,10 +18,10 @@ func TestTaskProfilePinsCreateAndUpdate(t *testing.T) {
 	t.Setenv("TUSKER_CONFIG", global)
 	vault := v7DirectTestVault(t)
 	body := directAuthoringBodyPath(t, vault, "task.md", "# Pinned task\n\nSubstantive body.\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Bad pin", "work-level": "light", "body-file": body, "execute-profile": "no-such-profile"}); err == nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Bad pin", "work-level": "light", "body-file": body, "execute-profile": "no-such-profile"}); err == nil {
 		t.Fatal("unknown execute profile accepted")
 	}
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Pinned", "work-level": "light", "body-file": body, "execute-profile": "pin-a", "review-profile": "pin-b"}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Pinned", "work-level": "light", "body-file": body, "execute-profile": "pin-a", "review-profile": "pin-b"}); err != nil {
 		t.Fatalf("new task with profiles: %v", err)
 	}
 	read := func() map[string]any {

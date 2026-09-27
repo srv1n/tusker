@@ -21,7 +21,7 @@ func TestV7NewTaskRejectsLegacyTaskIDBeforeWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Colliding V7 task", "risk": "low", "priority": "p2", "v7": "true"})
+	err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Colliding V7 task", "risk": "low", "priority": "p2", "v7": "true"})
 	if err == nil {
 		t.Fatal("expected legacy/V7 task id collision")
 	}
@@ -58,7 +58,7 @@ func TestV7GeneratedTaskIDSkipsConfiguredLegacyRootCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Safe generated task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Safe generated task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	assertExists(t, filepath.Join(vault, "work", "tasks", "APP-T-0002.md"))
@@ -72,7 +72,7 @@ func TestV7ValidateReportsMixedLayoutTaskCollisionRepair(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Current V7 task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Current V7 task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeText(filepath.Join(vault, "epics", "APP", "APP-T-0001.md"), "---\nid: APP-T-0001\ntype: task\nstatus: active\ntitle: Legacy task\n---\n\n# Legacy task\n"); err != nil {
@@ -143,7 +143,7 @@ func TestV7ProtectedActiveStatusExplainsAttemptFlowAndCapsuleRuntime(t *testing.
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Protected branch task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Protected branch task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", ".")
@@ -311,7 +311,7 @@ func TestV7PacketWarnsOnMissingRoutesAndStubAcceptance(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing packet routes", "risk": "low", "priority": "p2", "domains": "missing", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Missing packet routes", "risk": "low", "priority": "p2", "domains": "missing", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(vault, "SKILL.md")); err != nil && !os.IsNotExist(err) {

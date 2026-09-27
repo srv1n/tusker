@@ -153,7 +153,7 @@ func TestReviewResultActorHonorsConfiguredReviewerAndSession(t *testing.T) {
 func TestV7CreationActorsCanonicalizeAndAcceptAgentHuman(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	vault := pickupV7TestVault(t)
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0099", "title": "Actor provenance", "risk": "low", "priority": "p1", "by": " AGENT:builder "}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0099", "title": "Actor provenance", "risk": "low", "priority": "p1", "by": " AGENT:builder "}); err != nil {
 		t.Fatal(err)
 	}
 	taskData, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0099.md"))

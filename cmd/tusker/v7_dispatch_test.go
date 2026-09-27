@@ -9,7 +9,7 @@ import (
 func TestV7NewTaskDefaultsToBacklogHeldForCLI(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Draft task"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Draft task"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -24,7 +24,7 @@ func TestV7NewTaskDefaultsToBacklogHeldForCLI(t *testing.T) {
 func TestV7ReadyTaskWithStubAcceptanceRejected(t *testing.T) {
 	vault := v7DispatchTestVault(t)
 
-	err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bad ready task", "ready": "true"})
+	err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Bad ready task", "ready": "true"})
 	if err == nil {
 		t.Fatal("expected ready placeholder task to be rejected")
 	}

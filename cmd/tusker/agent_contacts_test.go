@@ -64,7 +64,7 @@ func TestAgentContactsRejectInvalidRole(t *testing.T) {
 
 func TestAgentContactsPacketProjectsAuthoredReferences(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Contact packet"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0001", "title": "Contact packet"}); err != nil {
 		t.Fatal(err)
 	}
 	task := mustV7Task(t, vault, "APP-T-0001")

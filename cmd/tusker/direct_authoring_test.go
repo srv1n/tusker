@@ -26,6 +26,21 @@ func v7DirectTestVault(t *testing.T) string {
 	return vault
 }
 
+func TestTaskCreationAndWavePlanningRequireOwnedPaths(t *testing.T) {
+	vault := v7DirectTestVault(t)
+	want := "task needs at least one owned path (owned_paths) so its changes can be scope-checked before merge"
+	if err := newV7Task(Args{"vault": vault, "title": "Unscoped"}); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("task create: got %v, want %q", err, want)
+	}
+	issues, _ := validateDirectWaveAuthoring(vault, directWaveAuthoringRequest{Tasks: []directWaveAuthoringTask{{Key: "one", Title: "Unscoped"}}})
+	for _, issue := range issues {
+		if strings.Contains(issue.Message, want) {
+			return
+		}
+	}
+	t.Fatalf("wave planning did not reject missing owned_paths: %#v", issues)
+}
+
 func directAuthoringBodyPath(t *testing.T, vault, name, body string) string {
 	t.Helper()
 	path := filepath.Join(v7RepoRoot(vault), ".tusker", "scratch", name)
@@ -84,13 +99,13 @@ func TestDirectWaveAuthoringNewTaskLevelsAndBodies(t *testing.T) {
 	seen := map[string]bool{}
 	for i, level := range levels {
 		bodyPath := directAuthoringBodyPath(t, vault, "body-"+level+".md", bodies[i])
-		if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Authored " + level, "work-level": level, "body-file": bodyPath}); err != nil {
+		if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Authored " + level, "work-level": level, "body-file": bodyPath}); err != nil {
 			t.Fatalf("%s: %v", level, err)
 		}
 	}
 	restore := directAuthoringStdin(t, "# Stdin task\n\nstdin body.\n")
 	defer restore()
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Stdin task", "work-level": "standard", "body-file": "-"}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Stdin task", "work-level": "standard", "body-file": "-"}); err != nil {
 		t.Fatal(err)
 	}
 	restore()
@@ -134,11 +149,11 @@ func TestDirectWaveAuthoringNewTaskLevelsAndBodies(t *testing.T) {
 
 func TestDirectWaveAuthoringNewTaskRequiresBodyFile(t *testing.T) {
 	vault := v7DirectTestVault(t)
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "No body", "work-level": "standard"}); err == nil || !strings.Contains(err.Error(), "--body-file is required") {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "No body", "work-level": "standard"}); err == nil || !strings.Contains(err.Error(), "--body-file is required") {
 		t.Fatalf("absent body-file error=%v, want MISSING_FIELD refusal", err)
 	}
 	blankPath := directAuthoringBodyPath(t, vault, "blank.md", "   \n\n\t\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Blank body", "work-level": "standard", "body-file": blankPath}); err == nil || !strings.Contains(err.Error(), "must not be whitespace-only") {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Blank body", "work-level": "standard", "body-file": blankPath}); err == nil || !strings.Contains(err.Error(), "must not be whitespace-only") {
 		t.Fatalf("whitespace-only body error=%v, want MISSING_FIELD refusal", err)
 	}
 	entries, err := os.ReadDir(filepath.Join(vault, "work", "tasks"))
@@ -160,7 +175,7 @@ func TestDirectWaveAuthoringNewTaskAllocatesAndPublishesAtomically(t *testing.T)
 		bodyPath := directAuthoringBodyPath(t, vault, "body-"+name+".md", "# "+name+"\n\nConcurrent body.\n")
 		go func(bodyPath string) {
 			<-start
-			errs <- newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Concurrent task", "work-level": "standard", "body-file": bodyPath})
+			errs <- newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Concurrent task", "work-level": "standard", "body-file": bodyPath})
 		}(bodyPath)
 	}
 	close(start)
@@ -192,7 +207,7 @@ func TestDirectWaveAuthoringNewTaskRejectsUnresolvableSpecRefs(t *testing.T) {
 		t.Run(ref, func(t *testing.T) {
 			vault := v7DirectTestVault(t)
 			bodyPath := directAuthoringBodyPath(t, vault, "body.md", "# Body\n\nConcrete body.\n")
-			err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Bad ref", "work-level": "standard", "body-file": bodyPath, "spec-refs": ref})
+			err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Bad ref", "work-level": "standard", "body-file": bodyPath, "spec-refs": ref})
 			if err == nil || !strings.Contains(err.Error(), "does not resolve") {
 				t.Fatalf("error=%v, want spec_ref resolution refusal", err)
 			}
@@ -210,7 +225,7 @@ func TestDirectWaveAuthoringNewTaskRejectsUnresolvableSpecRefs(t *testing.T) {
 func TestDirectWaveAuthoringTaskUpdateCAS(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	bodyPath := directAuthoringBodyPath(t, vault, "body.md", "# Original\n\nOriginal body.\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "CAS target", "work-level": "standard", "body-file": bodyPath, "spec-refs": ".tusker/specs/delivery.md"}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "CAS target", "work-level": "standard", "body-file": bodyPath, "spec-refs": ".tusker/specs/delivery.md"}); err != nil {
 		t.Fatal(err)
 	}
 	taskPath := filepath.Join(vault, "work", "tasks", "TSK-T-0001.md")
@@ -335,7 +350,7 @@ func TestDirectWaveAuthoringRebindsCrossWaveDependencyContract(t *testing.T) {
 func TestDirectWaveAuthoringRebindsOwnContractFingerprint(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	bodyPath := directAuthoringBodyPath(t, vault, "body.md", "# Contract pin\n\nKeep this body byte-for-byte stable.\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Contract pin", "work-level": "standard", "body-file": bodyPath}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Contract pin", "work-level": "standard", "body-file": bodyPath}); err != nil {
 		t.Fatal(err)
 	}
 	taskPath := filepath.Join(vault, "work", "tasks", "TSK-T-0001.md")
@@ -444,10 +459,12 @@ tasks:
     title: Root task
     work_level: standard
     body: "# Root\n\nRoot body.\n"
+    owned_paths: [cmd/tusker/root.go]
   - key: left
     title: Left task
     work_level: light
     body: "# Left\n\nLeft body.\n"
+    owned_paths: [cmd/tusker/left.go]
     dependencies:
       - task: root
         kind: hard
@@ -455,6 +472,7 @@ tasks:
     title: Right task
     work_level: demanding
     body: "# Right\n\nRuns cat spec.md | grep boundary verbatim.\n"
+    owned_paths: [cmd/tusker/right.go]
     dependencies:
       - task: root
 human_actions:
@@ -564,6 +582,7 @@ tasks:
     title: Only task
     work_level: standard
     body: "# Only\n\nOnly body.\n"
+    owned_paths: [cmd/tusker]
 `
 	requestPath := directAuthoringBodyPath(t, vault, "wave.yaml", request)
 	err := waveV7CreateCmd(Args{"vault": vault, "quiet": "true", "file": requestPath, "request-key": "atomic-v1", "fail-after-first-write": "true"})
@@ -656,6 +675,7 @@ tasks:
     work_level: standard
     epic: NEX
     body: "# Only\n\nOnly body.\n"
+    owned_paths: [cmd/tusker]
 `
 	requestPath := directAuthoringBodyPath(t, vault, "wave.yaml", request)
 	err := waveV7CreateCmd(Args{"vault": vault, "quiet": "true", "file": requestPath, "request-key": "epic-v1"})
@@ -794,7 +814,7 @@ func TestDirectWaveAuthoringUpdateReworksCompletedTask(t *testing.T) {
 func TestDirectWaveAuthoringUpdateEventFailureRollsBack(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	bodyPath := directAuthoringBodyPath(t, vault, "body.md", "# T\n\nOriginal body.\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Task", "work-level": "standard", "body-file": bodyPath}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Task", "work-level": "standard", "body-file": bodyPath}); err != nil {
 		t.Fatal(err)
 	}
 	taskPath := filepath.Join(vault, "work", "tasks", "TSK-T-0001.md")
@@ -844,7 +864,7 @@ func TestDirectWaveAuthoringConcurrentDependencyEditsStayAcyclic(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	for _, name := range []string{"a", "b"} {
 		bodyPath := directAuthoringBodyPath(t, vault, "body-"+name+".md", "# "+name+"\n\nBody "+name+".\n")
-		if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Task " + name, "work-level": "standard", "body-file": bodyPath}); err != nil {
+		if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Task " + name, "work-level": "standard", "body-file": bodyPath}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -892,10 +912,12 @@ tasks:
     title: First task
     work_level: standard
     body: "# First\n\nFirst body.\n"
+    owned_paths: [cmd/tusker]
   - key: second
     title: Second task
     work_level: light
     body: "# Second\n\nSecond body.\n"
+    owned_paths: [cmd/tusker]
     dependencies:
       - task: first
 human_actions:
@@ -960,6 +982,7 @@ tasks:
     title: Only task
     work_level: standard
     body: "# Only\n\nOnly body.\n"
+    owned_paths: [cmd/tusker]
 `
 	requestPath := directAuthoringBodyPath(t, vault, "wave.yaml", request)
 	baselineEvents := countV7EventFiles(t, vault, "")
@@ -998,7 +1021,7 @@ tasks:
 func TestDirectWaveAuthoringUpdatePreservesReviewAndCompletionPolicy(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	bodyPath := directAuthoringBodyPath(t, vault, "reviewed-body.md", "# Reviewed\n\nSubstantive reviewed body.\n")
-	if err := newAuthoredV7Task(Args{"vault": vault, "quiet": "true", "title": "Reviewed", "work-level": "light", "review-level": "demanding", "review-reason": "Security-sensitive diff needs the deepest review.", "body-file": bodyPath, "proof-mode": "card", "proof-required": "human_signoff"}); err != nil {
+	if err := newAuthoredV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "title": "Reviewed", "work-level": "light", "review-level": "demanding", "review-reason": "Security-sensitive diff needs the deepest review.", "body-file": bodyPath, "proof-mode": "card", "proof-required": "human_signoff"}); err != nil {
 		t.Fatal(err)
 	}
 	taskPath := filepath.Join(vault, "work", "tasks", "TSK-T-0001.md")

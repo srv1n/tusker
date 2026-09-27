@@ -42,7 +42,7 @@ func TestStrictDemandingReadyRequiresResolvableSpecRef(t *testing.T) {
 	if !ok || !strings.Contains(finding.Message, "resolvable") {
 		t.Fatalf("strict helper must reject dangling-only refs: %#v, ok=%v", finding, ok)
 	}
-	if err := newV7Task(Args{
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker",
 		"vault": vault, "quiet": "true", "epic": "APP", "title": "Force ready without spec",
 		"risk": "medium", "status": "ready", "force-ready": "true",
 	}); err == nil || !strings.Contains(err.Error(), "spec_refs") {
@@ -52,7 +52,7 @@ func TestStrictDemandingReadyRequiresResolvableSpecRef(t *testing.T) {
 
 func TestReadyCreateReportsAllContractBlockersAtOnce(t *testing.T) {
 	vault := v7DispatchTestVault(t)
-	err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete ready task", "risk": "medium", "status": "ready"})
+	err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Incomplete ready task", "risk": "medium", "status": "ready"})
 	if err == nil {
 		t.Fatal("incomplete ready task was accepted")
 	}

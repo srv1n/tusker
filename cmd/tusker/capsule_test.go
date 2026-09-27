@@ -95,7 +95,7 @@ func TestCapsuleTriageSurfacesAndPackets(t *testing.T) {
 		[]string{"changing provider integration behavior"},
 		[]string{"only checking task status"},
 	))
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Provider task", "risk": "low", "priority": "p2", "domains": "providers", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Provider task", "risk": "low", "priority": "p2", "domains": "providers", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")

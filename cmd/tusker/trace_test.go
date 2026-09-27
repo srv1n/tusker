@@ -204,7 +204,7 @@ func TestTraceReplayLiveTools(t *testing.T) {
 
 func TestTraceReplayVerifyRow(t *testing.T) {
 	vault := pickupV7TestVault(t)
-	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Replay row", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
+	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Replay row", "risk": "low", "priority": "p2", "proof-mode": "inline", "proof-required": "focused_test", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	writeReplayTraceFixture(t, vault, []TraceRecord{
