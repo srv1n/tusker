@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -694,16 +695,46 @@ func (h *acpLiveHandle) observeUpdates() {
 	}
 }
 
+// terminalEscape matches the ANSI sequences a harness terminal splices into
+// rendered tool output (CSI codes and charset selection such as ESC ( B).
+var terminalEscape = regexp.MustCompile("\x1b(?:\\[[0-9;?]*[ -/]*[@-~]|[()][0-9A-Za-z])")
+
 func (h *acpLiveHandle) logCompletedToolCallProposal(activity acpActivityUpdate, seen map[string]bool) {
 	if activity.Status != "completed" || (activity.SessionUpdate != "tool_call" && activity.SessionUpdate != "tool_call_update") {
 		return
 	}
-	for _, line := range strings.Split(activityContentText(activity.Content), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if strings.HasPrefix(line, reviewProposalMarker) && !seen[line] {
+	for _, line := range reviewProposalMarkerLines(activityContentText(activity.Content)) {
+		if !seen[line] {
 			if _, err := fmt.Fprintln(h.log, line); err == nil {
 				seen[line] = true
 			}
+		}
+	}
+}
+
+// reviewProposalMarkerLines recovers marker lines from rendered terminal
+// output. Devin returns tool output as a terminal render: long lines wrap at
+// the terminal width with escape codes at each wrap. Wrapping only inserts
+// newlines, so dropping them up to the end of the first complete JSON value
+// restores the exact bytes; the daemon still checks the canonical form.
+func reviewProposalMarkerLines(text string) []string {
+	text = terminalEscape.ReplaceAllString(text, "")
+	var lines []string
+	for start := 0; ; {
+		i := strings.Index(text[start:], reviewProposalMarker)
+		if i < 0 {
+			return lines
+		}
+		i += start
+		start = i + len(reviewProposalMarker)
+		if i > 0 && text[i-1] != '\n' {
+			continue
+		}
+		body := strings.NewReplacer("\r", "", "\n", "").Replace(text[start:])
+		decoder := json.NewDecoder(strings.NewReader(body))
+		var value json.RawMessage
+		if decoder.Decode(&value) == nil && strings.HasPrefix(body, "{") {
+			lines = append(lines, reviewProposalMarker+body[:decoder.InputOffset()])
 		}
 	}
 }

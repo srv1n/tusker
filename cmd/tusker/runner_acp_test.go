@@ -622,3 +622,27 @@ func TestRunnerACPWrapperReapDescendant(t *testing.T) {
 	}
 	select {}
 }
+
+func TestReviewProposalMarkerLinesUnwrapsTerminalRender(t *testing.T) {
+	raw, err := json.Marshal(reviewProposal{Schema: reviewProposalSchema, AttemptID: "attempt-1", Result: ReviewResult{Summary: "A1 verified; line one ok", Verdict: "pass"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := reviewProposalMarker + string(raw)
+	// Devin renders tool output in a fixed-width terminal: wrap every 40 bytes
+	// and splice charset and reset codes in at each wrap.
+	var rendered strings.Builder
+	rendered.WriteString("Ran tusker\ncompleted\n")
+	for i := 0; i < len(marker); i += 40 {
+		end := min(i+40, len(marker))
+		rendered.WriteString(marker[i:end] + "\x1b(B\x1b[0m\n")
+	}
+	rendered.WriteString("embedded " + reviewProposalMarker + "{}\n")
+	got := reviewProposalMarkerLines(rendered.String())
+	if len(got) != 1 || got[0] != marker {
+		t.Fatalf("recovered marker lines = %q, want [%q]", got, marker)
+	}
+	if lines := reviewProposalMarkerLines(reviewProposalMarker + string(raw[:len(raw)/2]) + "\n"); len(lines) != 0 {
+		t.Fatalf("truncated marker was accepted: %q", lines)
+	}
+}
