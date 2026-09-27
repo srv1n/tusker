@@ -206,7 +206,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
-| F1 | `docs browse` text output should show `read_when` and `skip_when` | todo | |
+| F1 | `docs browse` text output should show `read_when` and `skip_when` | fixed, unmerged (`fix/f1-browse-text` 37518d4c) | Some docs lack `read_when`, so they print nothing; see V2. |
 | F2 | `docs browse` should skip a bad file with a warning, not stop | todo | Needs owner decision; a test pins today's behavior. |
 | F3 | `tusker models show` fails outside a repository | fixed, unmerged (`fix/f3-models-global` 4b26e5c2) | Profiles are global, so no repository should be needed. |
 | F4 | Add `tusker wave list` | todo | |
@@ -264,7 +264,7 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | task states | T1 | Opus | run_state, Serve responses, UI | running |
 | Devin reviewer | F21, F20 | Devin SWE-2 Max | `runner_acp.go` (Devin parts) | running |
 | global models | F3 | Sol low | `model_levels.go` | done, 66 focused tests pass; awaiting merge |
-| browse text | F1 | Devin SWE-2 Max | `docs_browse_cmd.go` | running |
+| browse text | F1 | Devin SWE-2 Max | `docs_browse_cmd.go` | done, focused tests pass; awaiting merge |
 | delete xcode, improve | audit slice 1.1 | Devin SWE-2 Max | slice files, `cli.go` entries | running |
 | actor rule | D3, F23, parity slice A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | running |
 
