@@ -249,6 +249,8 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F42 | Devin ACP refuses `swe-2-max` | fixed (49540b39) for swe-2-max only; ACP names it `swe-2-high` + `thought_level=max`. Follow-up: the catalog lists `devin models list` IDs that ACP rejects, and other SWE variants need the same general mapping | Q8 failed at launch: `ACP config option "model" did not advertise value "swe-2-max"`, though `runner catalog` lists it and `devin -p --model swe-2-max` works. The run log keeps only stderr byte counts and hashes, so it shows no cause. |
 | F43 | `runner test` needs a vault | todo | `tusker runner test <profile>` outside a repo fails with "No Tusker vault found". Profiles are global (same class as F3). |
 | F44 | Devin resume dies on a vendor ACP notification | fixed (18a4547b) | Q8 hard Say: the interrupt and queued resume worked, but the resumed attempt failed with `acp protocol failure: unknown notification "_cognition.ai/turn_stats"` (`internal/acp/client.go:1730` poisons the client). The ACP spec says `_`-prefixed extensions are ignored. The same error used up 3 continuation retries and showed reason `unknown` (see F38 and F41). |
+| F45 | Muse 1.4 dropped stdin prompts | in progress (Devin `fix/muse-1-4`) | Muse self-updated to 1.4.0. `muse exec ... -` now fails "unknown option -", so live conformance fails and dispatch is blocked with `launch_changed`. Use `--prompt-file`. |
+| F46 | Devin cannot commit its own work | in progress (Sol medium `fix/devin-full-access`) | In smart mode Devin asks permission for `git add && git commit`. Tusker rejects it (`request_shape`/`invalid_request`, class `unknown`). Devin asks "Should I proceed?", and Tusker records a crash. Full access per D1 is refused: "Devin ACP currently supports only sandboxed workspace-write". |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
@@ -331,6 +333,7 @@ never start the daemon.
 - 2026-09-27: F36 installed. Claude hit F38, recovered with Start fresh through the API (F39). Claude passes dispatch, soft Say (same attempt, token written; CLI said error, F40), ask, Needs you, reply. Stop/Continue deferred until F37.
 - 2026-09-27: Q7 Claude execute succeeded (result.txt correct, Say token, commit bd11f35). Sol low review then refused by F14 at the proposal step. Queued Phase 2 (S4) on the Opus lane after F37.
 - 2026-09-27: Q8 Devin: F42 fixed and installed. Dispatch works (ACP session). Hard Say interrupted and queued a resume; the resume failed on F44.
+- 2026-09-27: F44 installed. Devin: `runs fresh` CLI works, hard Say resumes the same ACP session, ask/reply works, result.txt and say.txt correct. Commit refused by the ACP permission handler (F46), so it never submitted. Muse blocked by the 1.4 CLI change (F45).
 - 2026-09-27: Re-armed W-0005 from the CLI on the owner's instruction (`--by human:sarav`).
 - 2026-09-27: Wrote this page. Finished Q0 to Q3. The owner ran `make install`,
   and TuskerBar started the daemon. Found the global circuit open since
