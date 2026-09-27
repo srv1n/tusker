@@ -44,6 +44,7 @@ type BrowseEntry struct {
 	ReadWhen      string `json:"read_when,omitempty"`
 	SkipWhen      string `json:"skip_when,omitempty"`
 	PartOf        string `json:"part_of,omitempty"`
+	Problem       string `json:"problem,omitempty"`
 }
 
 type BrowseResult struct {
@@ -138,21 +139,23 @@ func Browse(repoRoot, relative string, limit int) (BrowseResult, error) {
 		}
 		child := pathpkg.Join(clean, entry.Name())
 		if entry.IsDir() {
+			folder := BrowseEntry{
+				Path:          child + "/",
+				Name:          entry.Name(),
+				Kind:          "folder",
+				ChildrenKnown: true,
+			}
 			summary, summaryErr := browseFolderSummary(root, child)
 			if summaryErr != nil {
 				var pathErr *PathError
 				if errors.As(summaryErr, &pathErr) {
 					return BrowseResult{}, pathErr
 				}
-				return BrowseResult{}, browseParseError(child+"/00-index.md", summaryErr)
+				folder.Problem = browseProblemText(child+"/00-index.md", summaryErr)
+			} else {
+				folder.Summary = summary
 			}
-			result.Entries = append(result.Entries, BrowseEntry{
-				Path:          child + "/",
-				Name:          entry.Name(),
-				Kind:          "folder",
-				ChildrenKnown: true,
-				Summary:       summary,
-			})
+			result.Entries = append(result.Entries, folder)
 			continue
 		}
 		// Only the known generated corpus index stays hidden. Authored
@@ -170,7 +173,13 @@ func Browse(repoRoot, relative string, limit int) (BrowseResult, error) {
 		}
 		doc, err := ParseDocHeaders(child, content)
 		if err != nil {
-			return BrowseResult{}, browseParseError(child, err)
+			result.Entries = append(result.Entries, BrowseEntry{
+				Path:    child,
+				Name:    entry.Name(),
+				Kind:    "file",
+				Problem: browseProblemText(child, err),
+			})
+			continue
 		}
 		result.Entries = append(result.Entries, BrowseEntry{
 			Path:         child,
@@ -219,12 +228,17 @@ func browseFolderSummary(root *os.Root, path string) (string, error) {
 	return DocumentTitle(doc), nil
 }
 
-func browseParseError(path string, err error) error {
-	code := "DOC_HEADER_PARSE_ERROR"
-	if parsed, ok := err.(*ParseError); ok {
-		code = parsed.Code
+// browseProblemText renders one malformed entry as "summary: CODE" so browse
+// stays useful while `docs check` keeps reporting the typed defect.
+func browseProblemText(path string, err error) string {
+	parsed, ok := err.(*ParseError)
+	if !ok {
+		return path + ": " + err.Error()
 	}
-	return &PathError{Code: code, Path: path, Message: path + ": " + err.Error()}
+	if parsed.Code == "DOC_HEADER_MISSING" {
+		return "missing front matter: " + parsed.Code
+	}
+	return parsed.Message + ": " + parsed.Code
 }
 
 // DocumentTitle returns the user-facing title without requiring every caller

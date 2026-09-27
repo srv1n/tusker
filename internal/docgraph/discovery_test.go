@@ -50,6 +50,7 @@ func TestBrowseRejectsSymlinkedDirectory(t *testing.T) {
 
 func TestBrowseReportsMalformedFolderSummary(t *testing.T) {
 	root := t.TempDir()
+	writeDiscoveryDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nstatus: canonical\n---\n# Overview\n")
 	path := filepath.Join(root, "docs/system/architecture/00-index.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -57,13 +58,44 @@ func TestBrowseReportsMalformedFolderSummary(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not front matter\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Browse(root, "docs/system", 1)
-	if err == nil || !strings.Contains(err.Error(), "front matter") {
+	result, err := Browse(root, "docs/system", 10)
+	if err != nil {
 		t.Fatalf("Browse() malformed summary error = %v", err)
 	}
-	pathErr, ok := err.(*PathError)
-	if !ok || pathErr.Code != "DOC_HEADER_MISSING" || pathErr.Path != "docs/system/architecture/00-index.md" {
-		t.Fatalf("Browse() malformed summary typed error = %#v", err)
+	if len(result.Entries) != 2 {
+		t.Fatalf("Browse() entries = %#v", result.Entries)
+	}
+	folder := result.Entries[0]
+	if folder.Kind != "folder" || folder.Name != "architecture" || folder.Summary != "" {
+		t.Fatalf("malformed folder entry = %#v", folder)
+	}
+	if !strings.Contains(folder.Problem, "missing front matter") || !strings.Contains(folder.Problem, "DOC_HEADER_MISSING") {
+		t.Fatalf("folder problem = %q", folder.Problem)
+	}
+	if result.Entries[1].Name != "00-overview.md" || result.Entries[1].Problem != "" {
+		t.Fatalf("healthy file entry = %#v", result.Entries[1])
+	}
+}
+
+func TestBrowseReportsMalformedFileEntry(t *testing.T) {
+	root := t.TempDir()
+	writeDiscoveryDoc(t, root, "docs/system/good.md", "---\nsubject: good\npart_of: overview\nstatus: canonical\n---\n# Good\n")
+	writeDiscoveryDoc(t, root, "docs/system/bad.md", "---\nsubject: [bad]\n---\n# Bad\n")
+
+	result, err := Browse(root, "docs/system", 10)
+	if err != nil {
+		t.Fatalf("Browse() error = %v", err)
+	}
+	if len(result.Entries) != 2 {
+		t.Fatalf("Browse() entries = %#v", result.Entries)
+	}
+	bad := result.Entries[0]
+	if bad.Name != "bad.md" || bad.Kind != "file" || !strings.Contains(bad.Problem, "DOC_HEADER_TYPE_INVALID") {
+		t.Fatalf("malformed file entry = %#v", bad)
+	}
+	good := result.Entries[1]
+	if good.Name != "good.md" || good.Subject != "good" || good.Problem != "" {
+		t.Fatalf("healthy file entry = %#v", good)
 	}
 }
 
