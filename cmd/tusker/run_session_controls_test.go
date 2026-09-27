@@ -119,3 +119,54 @@ func TestRunSessionControlsStartFreshClearsNativeSessionAfterSettlement(t *testi
 		}
 	}
 }
+
+func TestRunsFreshCmdQueuesStartFreshIntent(t *testing.T) {
+	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{
+		ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateInterrupted), AttemptOutcome: string(AttemptOutcomeCancelled),
+		LeaseGeneration: 9, ActiveAttemptID: "attempt-old", SessionRef: "native-old",
+		AttemptCount: 2, WorkRevision: 4,
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	output := captureStdout(t, func() {
+		if err := runsFreshCmd(Args{"id": "APP-T-0001", "project": "app", "by": "operator:test", "reason": "recover stuck session"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(output, "APP-T-0001") || !strings.Contains(output, "queued") {
+		t.Fatalf("runs fresh output: %q", output)
+	}
+
+	store, err = OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	intent, err := loadRunSessionControlIntent(store, run.ProjectID, run.RecordID)
+	if err != nil || intent == nil {
+		t.Fatalf("start_fresh intent missing: %#v %v", intent, err)
+	}
+	if intent.Action != runSessionControlFresh || intent.State != runSessionControlQueued || intent.Actor != "operator:test" {
+		t.Fatalf("start_fresh intent was not queued: %#v", intent)
+	}
+	stored, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || stored == nil {
+		t.Fatalf("read fresh run: %#v %v", stored, err)
+	}
+	if stored.LeaseState != string(LeaseStateRetryQueued) || stored.SessionRef != "" {
+		t.Fatalf("runs fresh did not queue a new session: %#v", stored)
+	}
+	if !strings.Contains(stored.LastError, runSessionControlFreshReasonPrefix) || !strings.Contains(stored.LastError, "recover stuck session") {
+		t.Fatalf("runs fresh lost the operator reason: %q", stored.LastError)
+	}
+}
