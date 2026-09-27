@@ -18,12 +18,39 @@ func TestWorkspaceManagerRejectsMismatchedExistingMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadataPath := filepath.Join(stateRoot, "workspaces", "MEM", "record-1", ".tusker", "workspace.json")
-	if err := writeText(metadataPath, `{"project_id":"other-project","record_id":"record-1","created_at":"2026-04-28T00:00:00Z"}`+"\n"); err != nil {
+	if err := writeText(metadataPath, `{"project_id":"project-1","record_id":"other-record","created_at":"2026-04-28T00:00:00Z"}`+"\n"); err != nil {
 		t.Fatal(err)
 	}
 	_, err := manager.Prepare(req)
-	if err == nil || !strings.Contains(err.Error(), "project_id does not match") {
+	if err == nil || !strings.Contains(err.Error(), "record_id does not match") {
 		t.Fatalf("expected metadata mismatch error, got %v", err)
+	}
+}
+
+func TestWorkspaceManagerReplacesStaleProjectWorkspace(t *testing.T) {
+	manager := NewWorkspaceManager()
+	req := WorkspacePrepareRequest{
+		ProjectID: "project-a", ProjectKey: "MEM", RecordID: "record-1", ItemID: "MEM-T-0001",
+		RepoRoot: t.TempDir(), StateRoot: t.TempDir(), Strategy: WorkspaceStrategyCopy,
+	}
+	first, err := manager.Prepare(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ProjectID = "project-b"
+	second, err := manager.Prepare(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Path != first.Path || !second.NewlyMaterialized {
+		t.Fatalf("stale workspace was not replaced: first=%q second=%+v", first.Path, second)
+	}
+	raw, err := readText(filepath.Join(second.Path, ".tusker", "workspace.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"project_id": "project-b"`) {
+		t.Fatalf("replacement metadata has wrong project: %s", raw)
 	}
 }
 
