@@ -992,6 +992,11 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 			"TUSKER_ATTEMPT_ID="+req.AttemptID, "TUSKER_RUN_LANE="+req.Lane,
 			"TUSKER_WORK_REVISION="+fmt.Sprint(req.WorkRevision), "TUSKER_LEASE_GENERATION="+fmt.Sprint(req.LeaseGeneration),
 			"TUSKER_WORKSPACE="+req.WorkspacePath, "TUSKER_STATUS_PATH="+req.StatusPath, "TUSKER_EVENT_SINK="+req.EventSinkPath)
+		// Review worktrees carry no vault; point tusker at the one the CLI
+		// runner would use, so `tusker review submit` works without --vault.
+		if vault := strings.TrimSpace(req.VaultPath); vault != "" {
+			out = append(out, "TUSKER_VAULT="+runnerWorkspaceVaultPath(req.WorkspacePath, vault), "TUSKER_CANONICAL_VAULT="+vault)
+		}
 		if exe, err := os.Executable(); err == nil {
 			path = append([]string{filepath.Dir(exe)}, path...)
 		}

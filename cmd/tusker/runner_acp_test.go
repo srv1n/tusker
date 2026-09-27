@@ -288,7 +288,8 @@ func TestDevinACPShellPermissionUsesCommandPolicy(t *testing.T) {
 
 func TestACPRuntimeEnvironmentCarriesOwnAttemptIdentity(t *testing.T) {
 	t.Setenv("TUSKER_ATTEMPT_ID", "inherited")
-	env := acpRunnerEnvironment(StartRequest{ProjectID: "P", RecordID: "R", ItemID: "T-1", AttemptID: "A1", Lane: "execute", StatusPath: "/s"}, "/workspace", CodexPolicy{})
+	vault := t.TempDir()
+	env := acpRunnerEnvironment(StartRequest{ProjectID: "P", RecordID: "R", ItemID: "T-1", AttemptID: "A1", Lane: "execute", StatusPath: "/s", VaultPath: vault}, "/workspace", CodexPolicy{})
 	seen := map[string]string{}
 	for _, entry := range env {
 		key, value, _ := strings.Cut(entry, "=")
@@ -297,7 +298,7 @@ func TestACPRuntimeEnvironmentCarriesOwnAttemptIdentity(t *testing.T) {
 		}
 		seen[key] = value
 	}
-	if seen["TUSKER_ATTEMPT_ID"] != "A1" || seen["TUSKER_PROJECT_ID"] != "P" || seen["TUSKER_RUN_LANE"] != "execute" || seen["TUSKER_STATUS_PATH"] != "/s" {
+	if seen["TUSKER_ATTEMPT_ID"] != "A1" || seen["TUSKER_PROJECT_ID"] != "P" || seen["TUSKER_RUN_LANE"] != "execute" || seen["TUSKER_STATUS_PATH"] != "/s" || seen["TUSKER_CANONICAL_VAULT"] != vault || seen["TUSKER_VAULT"] == "" {
 		t.Fatalf("ACP worker lacks its own attempt identity: %#v", seen)
 	}
 }
