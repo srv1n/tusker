@@ -1721,8 +1721,8 @@ func (c *Client) handleRequest(msg rpcMessage) {
 			c.queueUpdate(Update{Sequence: sequence, Method: msg.Method, Params: append(json.RawMessage(nil), msg.Params...)})
 			return
 		}
-		// Devin emits these informational extensions without requiring client action.
-		if msg.Method == "_cognition.ai/mcp/serversChanged" || msg.Method == "_cognition.ai/output" || msg.Method == "_cognition.ai/thinking_complete" || msg.Method == "_cognition.ai/plugins/changed" {
+		// ACP extension notifications do not require client action.
+		if strings.HasPrefix(msg.Method, "_") {
 			return
 		}
 		// Unknown notifications have no response channel. Fail closed rather
