@@ -8734,7 +8734,10 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 	cwdTarget := ""
 	for i, raw := range []string{args.String("repo"), args.String("vault"), mustGetwd()} {
 		raw = strings.TrimSpace(raw)
-		if raw == "" {
+		// An explicit --repo/--vault is the whole selector. Scoring the cwd too
+		// let the project you happen to stand in tie with the one you named
+		// (scores are root path lengths), which reported a false ambiguity.
+		if raw == "" || (i == 2 && explicitPathSelector) {
 			continue
 		}
 		abs, err := filepath.Abs(raw)
@@ -8751,6 +8754,7 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 	bestIndex := -1
 	bestScore := -1
 	ambiguous := false
+	scores := make([]int, len(loaded))
 	for i, project := range loaded {
 		score := 0
 		for _, target := range targets {
@@ -8759,6 +8763,7 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 		if !explicitPathSelector && cwdTarget != "" {
 			score = maxInt(score, projectWorkspaceMatchScore(project.Project, runs, cwdTarget))
 		}
+		scores[i] = score
 		if score == 0 {
 			continue
 		}
@@ -8776,7 +8781,14 @@ func resolveLoadedRegisteredProject(store *RuntimeStore, args Args, opts registe
 		return nil, tuskerError(errorNotFound, "no registered project matches the current path; use --id or --repo")
 	}
 	if ambiguous {
-		return nil, tuskerError(errorInvalidArg, "multiple registered projects match this path; use --id")
+		candidates := []string{}
+		for i, project := range loaded {
+			if scores[i] == bestScore {
+				candidates = append(candidates, project.Project.ProjectID+" ("+project.Project.RepoRoot+")")
+			}
+		}
+		return nil, tuskerError(errorInvalidArg, "multiple registered projects match this path; use --id with one of: "+strings.Join(candidates, ", "),
+			withContext(map[string]any{"candidates": candidates}))
 	}
 	copy := loaded[bestIndex]
 	return &copy, nil
