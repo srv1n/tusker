@@ -7917,6 +7917,9 @@ func daemonDispatchScopeSummaries(projects []loadedRegisteredProject) []daemonDi
 }
 
 func daemonResumeCmd(args Args) error {
+	if err := requireOwnerSession("daemon resume"); err != nil {
+		return err
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
@@ -8406,6 +8409,13 @@ func projectAutomationScope(store *RuntimeStore, project RegisteredProject, now 
 }
 
 func setProjectEnabledCmd(args Args, enabled bool) error {
+	operation := "projects disable"
+	if enabled {
+		operation = "projects enable"
+	}
+	if err := requireOwnerSession(operation); err != nil {
+		return err
+	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
 		return err
