@@ -298,6 +298,9 @@ func startLiveACPForRunnerWithSession(ctx context.Context, req StartRequest, run
 	if err != nil {
 		return nil, err
 	}
+	if runner == RunnerDevin && req.Lane == runLaneReview {
+		prompt = devinReviewerPreamble + prompt
+	}
 	log, err := openACPLogSink(req)
 	if err != nil {
 		return nil, err
@@ -968,6 +971,10 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 	return out
 }
 
+// devinReviewerPreamble keeps a plan-mode Devin reviewer from stopping at
+// "exit plan mode" (Tusker refuses that request) instead of submitting.
+const devinReviewerPreamble = "Tusker note for this review: the session runs in plan mode. Plan mode does not block `tusker review submit`; run it directly as a shell command when the review is done. Do not ask to exit plan mode: Tusker refuses that request. Keep every shell command, including the --summary text, free of the characters ; & | ` $ < > because the permission check refuses them.\n\n"
+
 func acpDurationMS(value int) time.Duration {
 	if value <= 0 {
 		return 0
@@ -999,12 +1006,12 @@ func configureDevinSession(ctx context.Context, client *acp.Client, session acp.
 
 // devinACPModeForPolicy maps the resolved Tusker sandbox policy onto Devin's
 // session "mode" config option. The sandbox-exec deny wrapper contains full
-// access. Review runs in Devin's "ask" mode (no code changes): plan mode waits
-// for an exit-plan approval before it will run `tusker review submit`.
+// access; review runs in Devin's plan mode. Ask mode is no substitute: it
+// prints commands instead of running them, so `tusker review submit` never ran.
 func devinACPModeForPolicy(policy CodexPolicy) (string, error) {
 	switch sandbox := strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox)); sandbox {
 	case "read-only":
-		return "ask", nil
+		return "plan", nil
 	case "workspace-write":
 		if policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
 			return "", tuskerError(errorConfigInvalid, "Devin ACP requires sandboxed workspace-write with network enabled")

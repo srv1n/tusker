@@ -47,8 +47,8 @@ func TestDevinACPModeForPolicyAcceptsReviewReadOnly(t *testing.T) {
 		t.Fatalf("review lane did not resolve read-only: %#v", policy)
 	}
 	mode, err := devinACPModeForPolicy(policy)
-	if err != nil || mode != "ask" {
-		t.Fatalf("review policy mode=%q err=%v, want ask", mode, err)
+	if err != nil || mode != "plan" {
+		t.Fatalf("review policy mode=%q err=%v, want plan", mode, err)
 	}
 }
 
@@ -91,7 +91,7 @@ func TestDevinACPModeForPolicyStillRefusesUnsupportedPolicies(t *testing.T) {
 }
 
 func TestConfigureDevinSessionAcceptsReadOnlyReviewPolicy(t *testing.T) {
-	client, session := newDevinConfigFixtureClient(t, "ask")
+	client, session := newDevinConfigFixtureClient(t, "plan")
 	policy := codexPolicyForLane(CodexPolicy{
 		ApprovalPolicy:     "never",
 		ThreadSandbox:      "workspace-write",
