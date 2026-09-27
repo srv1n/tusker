@@ -246,11 +246,12 @@ func recoverV7ReviewPassLanding(vaultPath, taskID, waveID, source string) error 
 // landV7CmdAsReviewPass lands exactly the reviewed commits named in sources.
 // The land path resolves them under its lock instead of reading the task
 // branch or worktree, which may have moved after review.
-func landV7CmdAsReviewPass(args Args, sources map[string]string) error {
+func landV7CmdAsReviewPass(args Args, sources, daemonSubmissionSources map[string]string) error {
 	internal, err := newV7InternalActor("daemon:review-pass")
 	if err != nil {
 		return err
 	}
+	internal.daemonSubmissionSources = daemonSubmissionSources
 	return landV7CmdWithAuthority(args, sources, "", nil, &internal)
 }
 
@@ -284,7 +285,7 @@ func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authorit
 		if err := landV7WaveToMain(vaultPath, targets[0], args, summary); err != nil {
 			return err
 		}
-	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources, authority, capability); err != nil {
+	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources, authority, capability, internal); err != nil {
 		return err
 	}
 	printV7LandingSummary(summary, args)
@@ -509,7 +510,7 @@ func v7WaveLandingReceiptAt(value any) (string, bool) {
 	return latest, found
 }
 
-func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string, capability *v7LandingAuthority) error {
+func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string, capability *v7LandingAuthority, internal *v7InternalActor) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -583,7 +584,10 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 		landTask := v7LandTask{ID: taskID, Branch: branch, SourceSHA: sourceSHA}
 		landTask.SourceProvenance = v7LandingSourceProvenance(vaultPath, repoRoot, landTask, args)
 		if landTask.SourceProvenance == "" {
-			if args.Bool("trust-from") || args.Bool("trusted-from") {
+			if internal != nil && internal.value == "daemon:review-pass" &&
+				strings.EqualFold(internal.daemonSubmissionSources[taskID], sourceSHA) && sourceSHA != "" {
+				landTask.SourceProvenance = "daemon_submission"
+			} else if args.Bool("trust-from") || args.Bool("trusted-from") {
 				landTask.SourceProvenance = "trusted_override"
 			} else {
 				return tuskerError(errorInvalidTransition, "refused landing source for "+taskID+": exact commit lacks task-owned provenance")
@@ -729,7 +733,7 @@ func v7LandingSourceProvenance(vaultPath, repoRoot string, task v7LandTask, args
 
 func trustedV7LandingSourceProvenance(provenance string) bool {
 	switch strings.TrimSpace(provenance) {
-	case "durable_task_source", "workspace_record", "workspace_claim", "task_tracker":
+	case "durable_task_source", "workspace_record", "workspace_claim", "task_tracker", "daemon_submission":
 		return true
 	default:
 		return false

@@ -157,12 +157,17 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 	} else {
 		// Land exactly the reviewed commit, not whatever the task branch or
 		// worktree points at now. The land path uses it under its lock.
+		daemonSubmissionSources := map[string]string{}
+		if parent, _, err := reviewAttemptImplementation(d.store, project.ProjectID, taskID, result.AttemptID, result.WorkRevision, source); err == nil &&
+			parent.EndState.Dirty && !parent.EndStateInvalid {
+			daemonSubmissionSources[taskID] = source
+		}
 		if err := landV7CmdAsReviewPass(Args{
 			"vault": project.VaultRoot,
 			"quiet": "true",
 			"_pos0": taskID,
 			"from":  d.latestExecuteWorkspace(project.ProjectID, taskID),
-		}, map[string]string{taskID: source}); err != nil {
+		}, map[string]string{taskID: source}, daemonSubmissionSources); err != nil {
 			code := RunFailureLandingFailed
 			if strings.Contains(strings.ToLower(err.Error()), "conflict") {
 				code = RunFailureMergeConflict
