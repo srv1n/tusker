@@ -19,6 +19,7 @@ type runnerAccessPaths struct {
 }
 
 var accessNonDarwinLog sync.Once
+var accessNativeSandboxLog sync.Once
 
 func effectiveRunnerDenyPaths(worktree string) (runnerAccessPaths, error) {
 	resolved, err := resolveTuskerConfigForPaths("", "", false)
@@ -31,14 +32,8 @@ func effectiveRunnerDenyPaths(worktree string) (runnerAccessPaths, error) {
 	}
 	paths := runnerAccessPaths{
 		protected: []string{filepath.Join(home, ".ssh"), filepath.Join(home, ".aws"), filepath.Join(home, ".gnupg"), filepath.Join(home, "Library", "Keychains")},
-		state:     []string{filepath.Join(home, ".config", "tusker"), filepath.Dir(userGlobalTuskerConfigPath()), filepath.Join(home, "Library", "Application Support", "tusker")},
+		state:     []string{filepath.Join(home, ".config", "tusker"), filepath.Dir(userGlobalTuskerConfigPath())},
 	}
-	stateRoot := DefaultStateRoot()
-	if !pathWithinResolved(stateRoot, worktree) {
-		paths.state = append(paths.state, stateRoot)
-	}
-	// ponytail: an overlapping custom state root cannot be denied wholesale;
-	// split its metadata from workspaces if this layout becomes supported.
 	for _, path := range resolved.Config.Access.ProtectedPaths {
 		if path == "~" {
 			path = home
@@ -87,7 +82,11 @@ func sandboxExecProfile(paths runnerAccessPaths) string {
 	return b.String()
 }
 
-func wrapRunnerAccessArgv(argv []string, paths runnerAccessPaths) []string {
+func wrapRunnerAccessArgv(argv []string, paths runnerAccessPaths, policy CodexPolicy) []string {
+	if strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox)) != "danger-full-access" {
+		accessNativeSandboxLog.Do(func() { log.Print("runner access: harness sandbox active; skipping sandbox-exec wrapper") })
+		return argv
+	}
 	if runtime.GOOS != "darwin" {
 		accessNonDarwinLog.Do(func() { log.Print("runner access sandbox-exec is unavailable outside darwin") })
 		return argv

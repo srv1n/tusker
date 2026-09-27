@@ -34,6 +34,9 @@ func TestRunnerAccessPaths(t *testing.T) {
 	if !containsString(paths.state, filepath.Join(home, ".config", "tusker")) {
 		t.Fatalf("missing state path: %v", paths.state)
 	}
+	if strings.Contains(sandboxExecProfile(paths), DefaultStateRoot()) {
+		t.Fatalf("runtime state root must remain writable: %v", paths.state)
+	}
 }
 
 func TestRunnerAccessOverlappingCustomStateRoot(t *testing.T) {
@@ -89,7 +92,15 @@ func TestRunnerAccessProfileAndClaudeRules(t *testing.T) {
 
 func TestRunnerAccessArgvWrapping(t *testing.T) {
 	for _, harness := range []RunnerName{RunnerCodexExec, RunnerMuse, RunnerDevin} {
-		argv := wrapRunnerAccessArgv([]string{"/bin/echo", string(harness)}, runnerAccessPaths{protected: []string{"/tmp/private"}})
+		base := []string{"/bin/echo", string(harness)}
+		paths := runnerAccessPaths{protected: []string{"/tmp/private"}}
+		for _, mode := range []string{"workspace-write", "read-only"} {
+			argv := wrapRunnerAccessArgv(base, paths, CodexPolicy{TurnSandboxPolicy: mode})
+			if !equalStringSlices(argv, base) {
+				t.Fatalf("%s %s should use native sandbox: %v", harness, mode, argv)
+			}
+		}
+		argv := wrapRunnerAccessArgv(base, paths, CodexPolicy{TurnSandboxPolicy: "danger-full-access"})
 		if runtime.GOOS == "darwin" {
 			if len(argv) != 5 || argv[0] != "/usr/bin/sandbox-exec" || argv[1] != "-p" || argv[3] != "/bin/echo" {
 				t.Fatalf("%s: %v", harness, argv)

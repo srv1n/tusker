@@ -156,7 +156,7 @@ func executeRunnerCommandWithEventLog(ctx context.Context, runner RunnerName, re
 			if err != nil {
 				return nil, err
 			}
-			commandArgs = append([]string{commandArgs[0]}, wrapRunnerAccessArgv(commandArgs[1:], access)...)
+			commandArgs = append([]string{commandArgs[0]}, wrapRunnerAccessArgv(commandArgs[1:], access, req.CodexPolicy)...)
 		}
 		// Structured argv is already fully resolved by trusted Go code. A fixed
 		// non-login shell only supplies status-file plumbing; it cannot source
