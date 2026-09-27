@@ -167,7 +167,9 @@ func (d *Daemon) processAgentWakeups(project string) error {
 			}
 			var firstAnswer string
 			if err := d.store.queryRowScan(`SELECT id FROM agent_messages WHERE project_id=? AND reply_to=? AND kind='answer' ORDER BY created_at,id LIMIT 1`, []any{w.ProjectID, parent.ID}, &firstAnswer); err != nil {
-				return err
+				log.Printf("agent wakeup %s: first answer: %v", w.ID, err)
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
 			}
 			if firstAnswer != message.ID {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "stale")
@@ -175,7 +177,9 @@ func (d *Daemon) processAgentWakeups(project string) error {
 			}
 			run, err := d.store.FindRunScoped(w.ProjectID, w.RecipientID)
 			if err != nil {
-				return err
+				log.Printf("agent wakeup %s: find run: %v", w.ID, err)
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
 			}
 			if run == nil || run.LeaseState == string(LeaseStateInterrupted) {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
@@ -186,7 +190,9 @@ func (d *Daemon) processAgentWakeups(project string) error {
 				continue
 			}
 			if blocked, _, err := d.automaticRetryBlockedByStopIntent(*run); err != nil {
-				return err
+				log.Printf("agent wakeup %s: stop intent: %v", w.ID, err)
+				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+				continue
 			} else if blocked {
 				_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
 				continue
@@ -207,7 +213,9 @@ func (d *Daemon) processAgentWakeups(project string) error {
 					continue
 				}
 				if waiting, err := d.store.agentQuestionAwaiting(w.ProjectID, parent.ID, time.Now().UTC()); err != nil {
-					return err
+					log.Printf("agent wakeup %s: question wait: %v", w.ID, err)
+					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+					continue
 				} else if waiting {
 					_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
 					continue
@@ -247,7 +255,9 @@ func (d *Daemon) processAgentWakeups(project string) error {
 		// Task addresses deliberately survive owner turnover. The normal retry
 		// scheduler resolves the current session/profile (including Muse) later.
 		if changed, err := d.store.QueueAgentContinuation(w.ProjectID, w.RecipientID); err != nil {
-			return err
+			log.Printf("agent wakeup %s: queue continuation: %v", w.ID, err)
+			_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
+			continue
 		} else if !changed {
 			_ = d.store.SetAgentWakeupClaimState(w.ID, claimID, "held")
 			continue
