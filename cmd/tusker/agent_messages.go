@@ -101,7 +101,12 @@ func (s *RuntimeStore) putAgentMessage(m AgentMessage, operatorOverride bool) (A
 		}
 		if !operatorOverride {
 			answerSender, err := normalizeAgentAddress(m.Sender, parent.Recipient.Kind)
-			if err != nil || answerSender != parent.Recipient {
+			match := err == nil && answerSender == parent.Recipient
+			if !match && parent.Recipient.Kind == "operator" {
+				sender := strings.TrimSpace(m.Sender)
+				match = strings.HasPrefix(sender, "human:") && strings.TrimSpace(strings.TrimPrefix(sender, "human:")) != ""
+			}
+			if !match {
 				return AgentMessage{}, false, errors.New("reply sender does not match original recipient")
 			}
 		}
