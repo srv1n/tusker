@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { BookOpen, ChevronDown, ChevronUp, Ellipsis, FolderPlus, Inbox, Layers, PanelLeftClose, PanelLeftOpen, Pin, RefreshCw, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Chip } from "@/components/ui/primitives";
 import { openTaskSearch } from "@/features/search/TaskSearch";
 import { useDaemon, useProjectRefresh, useProjects } from "@/lib/queries";
 import { projectContainsCheckout, projectVisibleInNavigation, type CheckoutSummary, type ProjectSummary } from "@/types/domain";
@@ -236,6 +237,7 @@ export function ProjectStrip({ expanded, onToggle, className = "flex" }: { expan
                 >
                   {tile}
                   {expanded && <span className="min-w-0 flex-1 truncate">{project.name}</span>}
+                  {expanded && project.demo && <Chip tone="accent" variant="soft" className="px-1.5 text-[10px]">Demo</Chip>}
                   {project.needsCount > 0 && <span aria-hidden="true" className={cn("h-1.5 w-1.5 shrink-0 rounded-full bg-fail", !expanded && "absolute right-1 top-1 ring-2 ring-panel")} />}
                 </button>
                 {expanded && <button type="button" aria-label={`Actions for ${project.name}`} aria-expanded={menuId === project.id} onClick={() => setMenuId((open) => open === project.id ? null : project.id)} className={cn("absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-panel text-muted hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100", menuId === project.id ? "opacity-100" : "opacity-0")}><Ellipsis size={14} aria-hidden="true" /></button>}

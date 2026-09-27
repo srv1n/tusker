@@ -1364,14 +1364,14 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		project := group.Checkouts[0]
-		auxiliary := true
+		demo := false
 		visible := false
 		active := 0
 		var worst any
 		needsCount := 0
 		checkouts := make([]serveCheckoutSummary, 0, len(group.Checkouts))
 		for checkoutIndex, checkout := range group.Checkouts {
-			auxiliary = auxiliary && registeredProjectAuxiliary(checkout)
+			demo = demo || registeredProjectDemo(checkout)
 			visible = visible || checkout.Visible
 			checkoutActive := 0
 			for _, run := range runsByProject[checkout.ProjectID] {
@@ -1405,8 +1405,8 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		items = append(items, serveProjectSummary{
 			ID: group.ID, LogicalID: group.ID, Name: group.Name,
 			RepoRoot: project.RepoRoot, VaultRoot: project.VaultRoot,
-			Auxiliary:               auxiliary,
 			Visible:                 visible,
+			Demo:                    demo,
 			Checkouts:               checkouts,
 			RegistryPreview:         registryPreview,
 			AutomationEnabled:       project.Enabled,
@@ -1428,19 +1428,11 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 	serveJSON(w, http.StatusOK, items)
 }
 
-func registeredProjectAuxiliary(project RegisteredProject) bool {
-	manifestPath := filepath.Join(project.VaultRoot, "demo", "manifest.json")
-	raw, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return fileExists(manifestPath)
-	}
-	var marker struct {
-		Visible bool `json:"visible"`
-	}
-	if err := json.Unmarshal(raw, &marker); err != nil {
-		return true
-	}
-	return !marker.Visible
+// registeredProjectDemo reports whether the registration carries the demo
+// ownership marker. Demo projects stay listed in navigation; the marker only
+// adds the "demo" label to the project payload.
+func registeredProjectDemo(project RegisteredProject) bool {
+	return fileExists(filepath.Join(project.VaultRoot, "demo", "manifest.json"))
 }
 
 func registeredProjectGroupContains(group registeredProjectGroup, projectID string) bool {

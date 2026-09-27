@@ -62,6 +62,7 @@ type demoWaveDef struct {
 	Scope       string
 	Epic        string
 	EpicTitle   string
+	EpicSummary string
 	Requirement string
 	Tasks       []demoTaskDef
 }
@@ -89,10 +90,10 @@ func demoFixtureWaves() []demoWaveDef {
 		{Key: "c4", Title: "Assemble combined report", Outcome: "Assemble the final combined report from the combined parts.", Acceptance: "The combined report exists with the exact fixture content.", Artifact: "sample/followup/report.txt", Content: "combined-report ok", DelaySecs: 3, FastSecs: 0.2, Deps: []string{"c2", "c3"}, Complexity: "complex"},
 	}
 	return []demoWaveDef{
-		{Name: "standalone", Title: "Standalone: smoke a single task", Scope: demoScopeStandalone, Epic: demoEpicStandalone, EpicTitle: "Standalone smoke", Requirement: "One individual task completes through the ordinary lifecycle with no wave siblings.", Tasks: standalone},
-		{Name: "alpha", Title: "Alpha: assemble a small report", Scope: demoScopeAlpha, Epic: demoEpicAlpha, EpicTitle: "Alpha report", Requirement: "The alpha report is assembled from three deterministic parts.", Tasks: alpha},
-		{Name: "beta", Title: "Beta: assemble an independent report", Scope: demoScopeBeta, Epic: demoEpicBeta, EpicTitle: "Beta report", Requirement: "The beta report is assembled from three deterministic parts.", Tasks: beta},
-		{Name: "follow-up", Title: "Follow-up: combine the reports", Scope: demoScopeFollowup, Epic: demoEpicFollowup, EpicTitle: "Combined report", Requirement: "The combined report joins the alpha and beta reports.", Tasks: followup},
+		{Name: "standalone", Title: "Standalone: smoke a single task", Scope: demoScopeStandalone, Epic: demoEpicStandalone, EpicTitle: "Standalone smoke", EpicSummary: "Prove one task completes the ordinary claim, submit, review, and close lifecycle on its own before the parallel waves run.", Requirement: "One individual task completes through the ordinary lifecycle with no wave siblings.", Tasks: standalone},
+		{Name: "alpha", Title: "Alpha: assemble a small report", Scope: demoScopeAlpha, Epic: demoEpicAlpha, EpicTitle: "Alpha report", EpicSummary: "Assemble the deterministic alpha report from three parts so its two branch tasks overlap observably before the join.", Requirement: "The alpha report is assembled from three deterministic parts.", Tasks: alpha},
+		{Name: "beta", Title: "Beta: assemble an independent report", Scope: demoScopeBeta, Epic: demoEpicBeta, EpicTitle: "Beta report", EpicSummary: "Assemble the deterministic beta report independently of alpha so the two waves execute in parallel.", Requirement: "The beta report is assembled from three deterministic parts.", Tasks: beta},
+		{Name: "follow-up", Title: "Follow-up: combine the reports", Scope: demoScopeFollowup, Epic: demoEpicFollowup, EpicTitle: "Combined report", EpicSummary: "Join the alpha and beta reports into one combined report, exercising the cross-scope dependency the demo exists to show.", Requirement: "The combined report joins the alpha and beta reports.", Tasks: followup},
 	}
 }
 
