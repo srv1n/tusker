@@ -207,7 +207,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | # | Item | Status | Notes |
 | --- | --- | --- | --- |
 | F1 | `docs browse` text output should show `read_when` and `skip_when` | fixed, unmerged (`fix/f1-browse-text` 37518d4c) | Some docs lack `read_when`, so they print nothing; see V2. |
-| F2 | `docs browse` should skip a bad file with a warning, not stop | todo | Needs owner decision; a test pins today's behavior. |
+| F2 | `docs browse` should list a bad file with a problem note, not stop | running (Devin, `fix/f2-browse-skip`) | Decided 2026-09-27: browse lists the bad file with its problem; lint still fails on it. |
 | F3 | `tusker models show` fails outside a repository | fixed, unmerged (`fix/f3-models-global` 4b26e5c2) | Profiles are global, so no repository should be needed. |
 | F4 | Add `tusker wave list` | todo | |
 | F5 | Seeded epics have "TBD." as their summary | todo | |
@@ -266,7 +266,10 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | global models | F3 | Sol low | `model_levels.go` | done, 66 focused tests pass; awaiting merge |
 | browse text | F1 | Devin SWE-2 Max | `docs_browse_cmd.go` | done, focused tests pass; awaiting merge |
 | delete xcode, improve | audit slice 1.1 | Devin SWE-2 Max | slice files, `cli.go` entries | running |
-| actor rule | D3, F23, parity slice A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | done, focused tests pass; awaiting merge. Follow-up: Serve actor refusal |
+| actor rule | D3, F23, parity slice A | Sol low | `actor_authority.go`, `execution_mode.go`, `direct_wave_authority.go` | merged to main 2026-09-27. Follow-up: Serve actor refusal |
+| owner toggle | D3 per-project switch | Sol low | `actor_authority.go`, `execution_mode.go`, `config.go`, `docs/system/cli.md` | running (`feat/agent-owner-toggle`) |
+| browse skip | F2 | Devin SWE-2 Max | `internal/docgraph/discovery.go`, `docs_browse_cmd.go` | running |
+| doc headers | V2 prep: missing `read_when`/`skip_when`, `proposals/00-index.md` | Devin SWE-2 Max | docs front matter only | running (`docs/fill-headers`) |
 
 Queued, waiting on a file owner:
 
@@ -282,7 +285,7 @@ Queued, waiting on a file owner:
 
 | D2 | How much should Tusker defend against a lying or rogue agent? | Today: fences, fingerprints, receipts and sandbox rules assume an adversarial worker. Owner's view: assume 8 or 9 in 10 agents do honest work, catch the rest in review and testing, handle failures as they come. | Agree. Keep the guards that past incidents earned: retry caps, token budgets, one lease per task, worktrees, git. Cut defenses against forged verdicts and routing drift. See the simplification audit (S1). |
 
-| D3 | Who may run a command? | Today: each command has its own actor rule; some refuse an agent acting for the owner. | One rule: every mutating command accepts `--by`. An agent following the owner's instruction may act as the owner, and the record keeps both names. Agents answer to the owner, not to a gate. |
+| D3 | Who may run a command? | Today: each command has its own actor rule; some refuse an agent acting for the owner. | One rule: every mutating command accepts `--by`. An agent following the owner's instruction may act as the owner, and the record keeps both names. Agents answer to the owner, not to a gate. Amended 2026-09-27: a per-project setting `agents.act_as_owner` (default true) lets the owner turn this off for critical projects. A few owner-only actions always refuse an agent session: the global automation switch, project automation on/off, and `daemon resume`. |
 
 ## How work gets done
 
