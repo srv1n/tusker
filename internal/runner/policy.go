@@ -187,7 +187,12 @@ func compileMuseArgs(d HarnessDefinition, input RunInput, base []string, policy 
 			compiled = append(compiled, values...)
 		}
 	}
-	if policy.Workspace != "" {
+	// Dispatch prepares argv against the registered repository before the task
+	// worktree exists (no PromptPath yet). Leave the workspace as a token so the
+	// launch layer binds Muse to the attempt's own worktree, not the checkout.
+	if strings.TrimSpace(input.PromptPath) == "" {
+		add("--workspace", "{{workspace_path}}")
+	} else if policy.Workspace != "" {
 		add("--workspace", policy.Workspace)
 	}
 	if input.Preset == PresetDangerFullAccess {

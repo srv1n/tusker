@@ -22,11 +22,20 @@ func TestAgentAccessNative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if musePolicy.Filesystem != "read-only" || !containsPair(museArgv, "--workspace", workspace) || !contains(museArgv, "--disable-write") || !contains(museArgv, "--disable-shell") || !contains(museArgv, "--sandbox-network") {
+	// Dispatch argv is prepared before the task worktree exists, so Muse must
+	// get the launch-time workspace token, never the registered checkout.
+	if musePolicy.Filesystem != "read-only" || !containsPair(museArgv, "--workspace", "{{workspace_path}}") || contains(museArgv, workspace) || !contains(museArgv, "--disable-write") || !contains(museArgv, "--disable-shell") || !contains(museArgv, "--sandbox-network") {
 		t.Fatalf("Muse native mapping = policy=%#v argv=%#v", musePolicy, museArgv)
 	}
 	if !containsPair(museArgv, "--prompt-file", "{{prompt_path}}") || contains(museArgv, "-") {
 		t.Fatalf("Muse argv must carry --prompt-file, not the retired stdin marker: %#v", museArgv)
+	}
+	_, directArgv, err := compilePolicy(HarnessDefinition{ID: "muse", Provider: "muse", Transport: TransportCLI, Dialect: "muse", Executable: "muse", Args: []string{"exec"}}, RunInput{Workspace: workspace, Preset: PresetReadOnly, PromptPath: "/tmp/p.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPair(directArgv, "--workspace", workspace) {
+		t.Fatalf("direct Muse launch must bind its concrete workspace: %#v", directArgv)
 	}
 }
 
