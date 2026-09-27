@@ -2828,7 +2828,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		// schedule a continuation from this run.
 		return reconciled, stopChanged, nil
 	}
-	sessionResumable := runSessionResumable(wfFile.Data, run)
 	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
 		return run, false, err
 	} else if ingested {
@@ -2845,6 +2844,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			run.SessionRef = sessionRef
 			changed = true
 		}
+	}
+	// Preassigned IDs are proposals until the provider confirms the session.
+	sessionResumable, err := d.confirmedSessionResumable(wfFile.Data, run)
+	if err != nil {
+		return run, changed, err
 	}
 	if run.SessionRef != "" {
 		if err := d.attachManagedRunSession(run); err != nil {
@@ -3424,6 +3428,52 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 	return run, true, nil
 }
 
+func providerConfirmedRunSession(run RunStatus) bool {
+	if run.Runner == string(RunnerMuse) {
+		museSession := func(line string) string {
+			var record struct {
+				Stream struct {
+					Kind string `json:"kind"`
+					ID   string `json:"id"`
+				} `json:"stream"`
+			}
+			if json.Unmarshal([]byte(line), &record) == nil && record.Stream.Kind == "session" {
+				return record.Stream.ID
+			}
+			return ""
+		}
+		return run.SessionRef != "" && (extractFirstRef(run.RawLogPath+".head", museSession) == run.SessionRef ||
+			extractFirstRef(run.RawLogPath, museSession) == run.SessionRef)
+	}
+	if run.Runner == string(RunnerClaude) {
+		return run.SessionRef != "" && extractFirstRef(run.RawLogPath, func(line string) string {
+			var event struct {
+				Type      string `json:"type"`
+				Subtype   string `json:"subtype"`
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Type == "system" && event.Subtype == "init" {
+				return event.SessionID
+			}
+			return ""
+		}) == run.SessionRef
+	}
+	// Other runners learn the ref from provider output, so it is confirmed.
+	return run.SessionRef != ""
+}
+
+func (d *Daemon) confirmedSessionResumable(wf Workflow, run RunStatus) (bool, error) {
+	if !runSessionResumable(wf, run) || run.SessionRef == "" {
+		return false, nil
+	}
+	if providerConfirmedRunSession(run) {
+		// MarkSessionState only demotes, so confirmation must promote explicitly.
+		return true, d.store.ConfirmSessionResumable(run.ProjectID, run.SessionRef)
+	}
+	session, err := d.store.FindSessionByRef(run.ProjectID, run.SessionRef)
+	return session != nil && session.Resumable, err
+}
+
 func (d *Daemon) recoverWrapperLeaseIdentity(run RunStatus) (RunStatus, bool) {
 	wrapper, ok := d.wrapperLeaseIdentityFromEvents(run)
 	if !ok {
@@ -3970,6 +4020,9 @@ func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Wo
 	if LeaseState(strings.TrimSpace(run.LeaseState)) != LeaseStateRetryQueued {
 		return run, false
 	}
+	if d.queuedOperatorContinuation(run) {
+		return run, false
+	}
 	kind := attemptCreationKindForDispatch(run)
 	capped, capReached := d.enforceAttemptCreationCap(wf, run, kind, reason)
 	if !capReached {
@@ -3993,6 +4046,18 @@ func (d *Daemon) parkRetryQueuedRunAtAttemptCap(project RegisteredProject, wf Wo
 		LeaseState:       run.LeaseState,
 	})
 	return run, true
+}
+
+func (d *Daemon) queuedOperatorContinuation(run RunStatus) bool {
+	if strings.TrimSpace(run.SessionRef) == "" {
+		return false
+	}
+	directive, err := d.store.RunDirective(run.ProjectID, run.RecordID)
+	if err != nil || directive == nil || directive.State != "queued" {
+		return false
+	}
+	expires, err := time.Parse(time.RFC3339Nano, directive.ExpiresAt)
+	return err == nil && time.Now().UTC().Before(expires)
 }
 
 type attemptCreationKind string
@@ -4284,7 +4349,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		run.LastError = "daemon auto-spawn disabled: project automation is disabled in its configuration"
 		return run, false, nil
 	}
-	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached {
+	if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationKindForDispatch(run), "dispatch would create another attempt"); capReached && !d.queuedOperatorContinuation(run) {
 		return capped, false, nil
 	}
 	previousRun := run
@@ -5006,7 +5071,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 				ProjectID: project.ProjectID, RecordID: run.RecordID, Runner: run.Runner, SessionRef: start.SessionRef,
 				LastMessageRef: start.MessageRef,
 				WorkspacePath:  workspace.Path, CurrentItemID: run.ItemID, WorkRevision: run.WorkRevision, LastAttemptID: attemptID,
-				State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession && lane != runLaneReview,
+				State: sessionStateForOutcome(start.Outcome), Resumable: runner.Capabilities().ResumeSession && lane != runLaneReview && (resumeSession.SessionRef != "" || !runner.Capabilities().PreassignSessionID),
 				StartedAt: firstNonEmpty(run.StartedAt, start.StartedAt), LastSeenAt: time.Now().UTC().Format(time.RFC3339),
 				EndedAt: firstNonEmpty(start.FinishedAt, ""), LastError: start.Reason,
 			})
@@ -6965,14 +7030,18 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 		rendered = strings.TrimSpace(rendered) + "\n\n## Recovery context\n\nThis is a fresh recovery session for the original task above. Prior attempt: `" + parentAttemptID + "`. Last trustworthy failure: `" + priorFailure + "`. The prior worker may have left partial or complete work. Do not assume the workspace is untouched and do not start by reimplementing the task. First inspect the current task-owned material and Git diff, then verify and preserve correct existing work, repair or complete only what remains, and run the task's required checks. Never reset or overwrite unrelated changes."
 	}
 	if fingerprint := resumeContextFingerprint(project, wfFile, note, workspacePath, lane, run); fingerprint != "" {
-		rendered = strings.TrimSpace(rendered) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+		rendered = strings.TrimSpace(rendered) + "\n\n" + resumePromptContextBlock(fingerprint)
 	}
 	return strings.TrimSpace(rendered) + "\n", nil
 }
 
 const (
-	resumePromptContextHeader       = "## Tusker Resume Context"
-	resumePromptContextMarkerPrefix = "- Stable context fingerprint: `"
+	resumePromptContextHeader        = "## Tusker Resume Context"
+	resumePromptContextVersionPrefix = "- Resume context version: `"
+	resumePromptContextMarkerPrefix  = "- Stable context fingerprint: `"
+	// resumeContextVersion is written into every prompt next to the marker. A
+	// prompt without it predates v3 and its fingerprint is not comparable.
+	resumeContextVersion = "tusker.resume-context/v3"
 )
 
 // resumeContextFingerprint binds the full prompt that established a native
@@ -7003,10 +7072,12 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 			return ""
 		}
 	}
-	wfData, err := json.Marshal(wfFile.Data)
-	if err != nil {
-		return ""
-	}
+	// Bind the WORKFLOW.md file as written, not the decoded Workflow struct:
+	// the struct also carries binary defaults and config overlays, so a daemon
+	// and CLI built at different commits (or a config toggle) would disagree
+	// about an unchanged workflow and refuse every native resume.
+	// An unreadable file hashes as empty; the parsed body is bound as well.
+	wfText, _ := readText(wfFile.Path)
 	noteData, err := json.Marshal(note.Data)
 	if err != nil {
 		return ""
@@ -7020,7 +7091,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		VaultRoot        string `json:"vault_root"`
 		WorkflowPath     string `json:"workflow_path"`
 		WorkflowBody     string `json:"workflow_body"`
-		WorkflowData     string `json:"workflow_data"`
+		WorkflowText     string `json:"workflow_text"`
 		TaskPath         string `json:"task_path"`
 		TaskRelativePath string `json:"task_relative_path"`
 		TaskBody         string `json:"task_body"`
@@ -7039,8 +7110,9 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		RunLane          string `json:"run_lane"`
 		WorkspacePath    string `json:"workspace_path"`
 		WorkRevision     int    `json:"work_revision"`
+		ProfilePolicy    string `json:"profile_policy"`
 	}{
-		Version:          "tusker.resume-context/v1",
+		Version:          resumeContextVersion,
 		ProjectID:        project.ProjectID,
 		ProjectKey:       project.ProjectKey,
 		ProjectName:      project.Name,
@@ -7048,7 +7120,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		VaultRoot:        project.VaultRoot,
 		WorkflowPath:     wfFile.Path,
 		WorkflowBody:     wfFile.Body,
-		WorkflowData:     string(wfData),
+		WorkflowText:     wfText,
 		TaskPath:         note.AbsolutePath,
 		TaskRelativePath: note.RelativePath,
 		TaskBody:         note.Body,
@@ -7067,6 +7139,7 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 		RunLane:          run.Lane,
 		WorkspacePath:    workspacePath,
 		WorkRevision:     run.WorkRevision,
+		ProfilePolicy:    resumeProfilePolicyDigest(wfFile.Data, run.RunnerProfile),
 	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
@@ -7076,7 +7149,51 @@ func resumeContextFingerprint(project RegisteredProject, wfFile WorkflowFile, no
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+func resumePromptContextBlock(fingerprint string) string {
+	return resumePromptContextHeader + "\n\n" + resumePromptContextVersionPrefix + resumeContextVersion + "`\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+}
+
+// resumeProfilePolicyDigest binds the selected profile's effective policy:
+// harness, model, effort, command, access, sandbox and network. Ordinary V7
+// runs carry no worker-policy fingerprint, so without this a profile policy
+// change could resume the old native session. Display names and tiers are
+// left out: they do not change what the worker may do.
+func resumeProfilePolicyDigest(wf Workflow, name string) string {
+	name = strings.TrimSpace(name)
+	definition, declared := wf.RunnerProfiles[name]
+	policy := struct {
+		Name              string                         `json:"name"`
+		Declared          bool                           `json:"declared"`
+		Harness           string                         `json:"harness"`
+		Model             string                         `json:"model"`
+		Effort            string                         `json:"effort"`
+		PermissionPreset  string                         `json:"permission_preset"`
+		Command           string                         `json:"command"`
+		NativeContainment bool                           `json:"native_containment"`
+		Sandbox           RunnerSandboxDefinition        `json:"sandbox"`
+		Subagents         RunnerSubagentPolicyDefinition `json:"subagents"`
+		Access            *AgentAccessV1                 `json:"access"`
+	}{
+		Name: name, Declared: declared, Harness: definition.Harness, Model: definition.Model, Effort: definition.Effort,
+		PermissionPreset: definition.PermissionPreset, Command: definition.Command, NativeContainment: definition.NativeContainment,
+		Sandbox: definition.Sandbox, Subagents: definition.Subagents, Access: definition.Access,
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func resumeContextFingerprintFromPrompt(prompt string) string {
+	_, fingerprint := resumeContextMarkerFromPrompt(prompt)
+	return fingerprint
+}
+
+// resumeContextMarkerFromPrompt returns the marker version and fingerprint.
+// A prompt written before v3 has no version line; its version is "".
+func resumeContextMarkerFromPrompt(prompt string) (string, string) {
 	lines := strings.Split(prompt, "\n")
 	headerIndex := -1
 	for index, line := range lines {
@@ -7084,35 +7201,40 @@ func resumeContextFingerprintFromPrompt(prompt string) string {
 			continue
 		}
 		if headerIndex >= 0 {
-			return ""
+			return "", ""
 		}
 		headerIndex = index
 	}
 	if headerIndex < 0 {
-		return ""
+		return "", ""
 	}
+	version := ""
 	for index := headerIndex + 1; index < len(lines); index++ {
 		line := strings.TrimSpace(lines[index])
 		if line == "" {
 			continue
 		}
+		if version == "" && strings.HasPrefix(line, resumePromptContextVersionPrefix) && strings.HasSuffix(line, "`") {
+			version = strings.TrimSuffix(strings.TrimPrefix(line, resumePromptContextVersionPrefix), "`")
+			continue
+		}
 		if !strings.HasPrefix(line, resumePromptContextMarkerPrefix) || !strings.HasSuffix(line, "`") {
-			return ""
+			return "", ""
 		}
 		fingerprint := strings.TrimSuffix(strings.TrimPrefix(line, resumePromptContextMarkerPrefix), "`")
 		if !strings.HasPrefix(fingerprint, "sha256:") {
-			return ""
+			return "", ""
 		}
 		hexValue := strings.TrimPrefix(fingerprint, "sha256:")
 		if len(hexValue) != sha256.Size*2 {
-			return ""
+			return "", ""
 		}
 		if _, err := hex.DecodeString(hexValue); err != nil {
-			return ""
+			return "", ""
 		}
-		return fingerprint
+		return version, fingerprint
 	}
-	return ""
+	return "", ""
 }
 
 // resumeContextFingerprintMismatch returns a non-empty reason whenever the
@@ -7167,7 +7289,11 @@ func (d *Daemon) priorResumeContextMismatch(run RunStatus, session *RunnerSessio
 	if err != nil {
 		return "stored native session prior prompt context is unavailable"
 	}
-	priorFingerprint := resumeContextFingerprintFromPrompt(priorPrompt)
+	priorVersion, priorFingerprint := resumeContextMarkerFromPrompt(priorPrompt)
+	if priorFingerprint != "" && priorVersion != resumeContextVersion {
+		return fmt.Sprintf("stored native session was started under an older resume context format (%s); start a fresh session with `tusker runs fresh %s`",
+			fallback(priorVersion, "v1 or v2, no version line"), firstNonEmpty(run.ItemID, run.RecordID))
+	}
 	if currentFingerprint == "" || priorFingerprint == "" {
 		return "stored native session prompt context fingerprint is missing or invalid"
 	}
@@ -7216,7 +7342,7 @@ func renderAttemptPromptForResume(project RegisteredProject, wfFile WorkflowFile
 		resumed = strings.TrimSpace(resumed) + "\n\n### Previous failure\n\n" + strings.SplitN(summary, "\nPrevious failure:\n", 2)[1]
 	}
 	if fingerprint != "" {
-		resumed = strings.TrimSpace(resumed) + "\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + fingerprint + "`"
+		resumed = strings.TrimSpace(resumed) + "\n\n" + resumePromptContextBlock(fingerprint)
 	}
 	return strings.TrimSpace(resumed) + "\n", nil
 }
