@@ -280,7 +280,10 @@ func armedWaveIntegrationTaskProjection(vaultPath string, task Note) (Note, bool
 		return Note{}, false, err
 	}
 	if !ok {
-		return Note{}, false, tuskerError(errorNotFound, "armed-wave integration task is missing: "+integrationBranch+":"+filepath.ToSlash(rel))
+		// Task records that were never committed are absent from every branch.
+		// The canonical record is then the only record, so project it as is:
+		// failing here aborted the whole project poll on every cycle (F61).
+		return task, true, nil
 	}
 	if effectiveV7Kind(projected.Data) != "task" || stringField(projected.Data, "id") != stringField(task.Data, "id") {
 		return Note{}, false, tuskerError(errorInvalidField, "armed-wave integration task identity mismatch: "+integrationBranch+":"+filepath.ToSlash(rel))
