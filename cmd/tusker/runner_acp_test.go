@@ -450,9 +450,26 @@ func TestACPCompletedToolCallCarriesReviewProposalMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	activity := acpActivity(update)
-	seen := map[string]bool{}
-	handle.logCompletedToolCallProposal(activity, seen)
-	handle.logCompletedToolCallProposal(activity, seen) // ACP may repeat the completed update.
+	seen, outputs := map[string]bool{}, map[string]string{}
+	handle.logCompletedToolCallProposal(activity, outputs, seen)
+	handle.logCompletedToolCallProposal(activity, outputs, seen) // ACP may repeat the completed update.
+	// Devin sends the output in progress and a bare status on completion.
+	progress, err := json.Marshal(map[string]any{"update": map[string]any{
+		"sessionUpdate": "tool_call_update", "toolCallId": "call-2", "status": "in_progress",
+		"content": []any{map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": "Ran tusker\n" + marker}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := json.Marshal(map[string]any{"update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "call-2", "status": "completed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle.logCompletedToolCallProposal(acpActivity(progress), outputs, seen)
+	handle.logCompletedToolCallProposal(acpActivity(done), outputs, seen)
+	if len(outputs) != 0 {
+		t.Fatalf("completed tool call output was not released: %#v", outputs)
+	}
 	if err := log.Close(); err != nil {
 		t.Fatal(err)
 	}
