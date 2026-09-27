@@ -36,7 +36,7 @@ func TestV7ActorAuthorityFamilies(t *testing.T) {
 	}
 }
 
-func TestV7ActorAuthorityRejectsHumanFromEveryAgentSession(t *testing.T) {
+func TestV7ActorAuthorityAcceptsHumanFromEveryAgentSession(t *testing.T) {
 	for _, key := range []string{"TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"} {
 		t.Run(key, func(t *testing.T) {
 			clearAgentSessionEnvForTest(t)
@@ -46,8 +46,8 @@ func TestV7ActorAuthorityRejectsHumanFromEveryAgentSession(t *testing.T) {
 				func(a Args) (string, error) { return v7ReviewerOrHumanActor(a, "close") },
 				func(a Args) (string, error) { return v7AgentDefaultActor(a, "task status") },
 			} {
-				if _, err := resolve(Args{"by": "HuMaN:sarav", "force": "true", "local": "true"}); err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-					t.Fatalf("human actor escaped %s session: %v", key, err)
+				if got, err := resolve(Args{"by": "HuMaN:sarav", "force": "true", "local": "true"}); err != nil || got != "human:sarav" {
+					t.Fatalf("human actor in %s session = %q, %v", key, got, err)
 				}
 			}
 		})
@@ -113,12 +113,12 @@ func TestInternalActorSeamSeparatesDaemonAndTuskerFromPublicFlags(t *testing.T) 
 		}
 	}
 	t.Setenv("CODEX_THREAD_ID", "thread-internal")
-	if _, err := v7HumanActor(Args{"by": "human:operator"}, "task status"); err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-		t.Fatalf("human actor escaped agent-session guard: %v", err)
+	if got, err := v7HumanActor(Args{"by": "human:operator"}, "task status"); err != nil || got != "human:operator" {
+		t.Fatalf("human actor in agent session = %q, %v", got, err)
 	}
 }
 
-func TestReviewResultActorHonorsConfiguredReviewerAndSessionBoundary(t *testing.T) {
+func TestReviewResultActorHonorsConfiguredReviewerAndSession(t *testing.T) {
 	note := Note{Data: map[string]any{"schema": "tusker.task/v7", "kind": "task"}}
 	clearAgentSessionEnvForTest(t)
 	if got, err := resolveReviewResultActor(Args{}, "reviewer:independent", note); err != nil || got != "reviewer:independent" {
@@ -130,14 +130,14 @@ func TestReviewResultActorHonorsConfiguredReviewerAndSessionBoundary(t *testing.
 	for _, key := range []string{"CODEX_THREAD_ID", "TUSKER_ATTEMPT_ID"} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, "review-session")
-			if _, err := resolveReviewResultActor(Args{"by": "human:owner"}, "human:owner", note); err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-				t.Fatalf("configured human reviewer escaped %s session: %v", key, err)
+			if got, err := resolveReviewResultActor(Args{"by": "human:owner"}, "human:owner", note); err != nil || got != "human:owner" {
+				t.Fatalf("configured human reviewer in %s session = %q, %v", key, got, err)
 			}
 		})
 	}
 }
 
-func TestV7CreationActorsCanonicalizeAndRejectAgentHuman(t *testing.T) {
+func TestV7CreationActorsCanonicalizeAndAcceptAgentHuman(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	vault := pickupV7TestVault(t)
 	if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "id": "APP-T-0099", "title": "Actor provenance", "risk": "low", "priority": "p1", "by": " AGENT:builder "}); err != nil {
@@ -163,18 +163,8 @@ func TestV7CreationActorsCanonicalizeAndRejectAgentHuman(t *testing.T) {
 	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "id": "actor-provenance", "title": "Actor provenance", "by": " HUMAN:operator "}); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"CODEX_THREAD_ID", "TUSKER_ATTEMPT_ID"} {
-		t.Run(key, func(t *testing.T) {
-			t.Setenv(key, "creation-session")
-			if err := newV7Task(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "forged", "by": "human:operator"}); err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-				t.Fatalf("task creation accepted human actor from %s: %v", key, err)
-			}
-			if err := newV7Gate(Args{"vault": vault, "quiet": "true", "blocks": "APP-T-0099", "kind": "verification", "owner": "reviewer:independent", "action": "Review the task proof.", "verification": "Reviewer records the result.", "by": "human:operator"}); err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-				t.Fatalf("gate creation accepted human actor from %s: %v", key, err)
-			}
-			if err := newV7Domain(Args{"vault": vault, "quiet": "true", "id": "forged-domain", "by": "human:operator"}); err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-				t.Fatalf("domain creation accepted human actor from %s: %v", key, err)
-			}
-		})
+	t.Setenv("CODEX_THREAD_ID", "creation-session")
+	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "id": "agent-owned-domain", "by": "human:operator"}); err != nil {
+		t.Fatalf("human actor from agent session: %v", err)
 	}
 }

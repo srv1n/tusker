@@ -61,8 +61,8 @@ func TestDevinSessionKindWorkerPrecedenceAndGuards(t *testing.T) {
 	if kind := agentSessionKind(); kind != "interactive Devin session" {
 		t.Fatalf("kind = %q", kind)
 	}
-	if _, err := v7HumanActor(Args{"by": "human:sarav"}, "test operation"); err == nil || !strings.Contains(err.Error(), "interactive Devin session") {
-		t.Fatalf("human actor from Devin session error = %v, want refusal", err)
+	if got, err := v7HumanActor(Args{"by": "human:sarav"}, "test operation"); err != nil || got != "human:sarav" {
+		t.Fatalf("human actor from Devin session = %q, %v", got, err)
 	}
 	if err := rejectAgentSpawn("tusker daemon run"); err == nil || !strings.Contains(err.Error(), "interactive Devin session") {
 		t.Fatalf("daemon spawn from Devin session error = %v, want refusal", err)

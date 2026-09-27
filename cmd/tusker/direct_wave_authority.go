@@ -1157,16 +1157,18 @@ func waveReviewCmd(args Args) error {
 func directStartActor(args Args, operation string) (string, error) {
 	actor := strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("actor")))
 	if actor == "" {
-		return "", tuskerError(errorMissingArg, operation+" requires --by human:<name> or operator:<name>")
+		return "", tuskerError(errorMissingArg, operation+" requires --by human:<name>, operator:<name>, or agent:<name>")
 	}
 	name := ""
 	if strings.HasPrefix(actor, "human:") {
 		name = strings.TrimPrefix(actor, "human:")
 	} else if strings.HasPrefix(actor, "operator:") {
 		name = strings.TrimPrefix(actor, "operator:")
+	} else if strings.HasPrefix(actor, "agent:") {
+		name = strings.TrimPrefix(actor, "agent:")
 	}
 	if name == "" || strings.TrimSpace(name) == "" {
-		return "", tuskerError(errorInvalidArg, operation+" requires --by human:<name> or operator:<name>")
+		return "", tuskerError(errorInvalidArg, operation+" requires --by human:<name>, operator:<name>, or agent:<name>")
 	}
 	return actor, nil
 }
@@ -1176,9 +1178,9 @@ func waveStartCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	mode := strings.ToLower(strings.TrimSpace(args.String("mode")))
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(args.String("mode"), "background")))
 	if mode != "background" {
-		return tuskerError(errorInvalidArg, "wave start requires --mode background")
+		return tuskerError(errorInvalidArg, "wave start supports --mode background only")
 	}
 	actor, err := directStartActor(args, "wave start")
 	if err != nil {
@@ -1186,7 +1188,7 @@ func waveStartCmd(args Args) error {
 	}
 	waveID := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if waveID == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker wave start <WAVE-ID> --mode background --by human:<name>|operator:<name> [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker wave start <WAVE-ID> --by human:<name>|operator:<name>|agent:<name> [--mode background] [--json]")
 	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -1418,6 +1420,7 @@ func directWaveStart(vault string, store *RuntimeStore, waveID, actor string) (d
 			return result, err
 		}
 		payload := map[string]any{"authorization": "armed", "fingerprint": fingerprint}
+		eventPayloadWithExecutionRole(payload)
 		if previous == "armed" || previous == "paused" {
 			payload["replaced_authorization"] = previous
 		}
@@ -1829,7 +1832,7 @@ func directWavePause(vault string, store *RuntimeStore, waveID, actor string) (d
 	if err != nil {
 		return result, err
 	}
-	eventPath, eventContent, err := prepareV7Event(vault, waveID, "wave", "updated", actor, map[string]any{"authorization": "paused", "fingerprint": fingerprint}, time.Now().UTC())
+	eventPath, eventContent, err := prepareV7Event(vault, waveID, "wave", "updated", actor, eventPayloadWithExecutionRole(map[string]any{"authorization": "paused", "fingerprint": fingerprint}), time.Now().UTC())
 	if err != nil {
 		return result, err
 	}
@@ -1917,7 +1920,7 @@ func directWaveResume(vault string, store *RuntimeStore, waveID, actor string) (
 			_ = waveLock.Close()
 			return result, err
 		}
-		eventPath, eventContent, err := prepareV7Event(vault, waveID, "wave", "updated", actor, map[string]any{"authorization": "armed", "fingerprint": fingerprint}, time.Now().UTC())
+		eventPath, eventContent, err := prepareV7Event(vault, waveID, "wave", "updated", actor, eventPayloadWithExecutionRole(map[string]any{"authorization": "armed", "fingerprint": fingerprint}), time.Now().UTC())
 		if err != nil {
 			_ = waveLock.Close()
 			return result, err

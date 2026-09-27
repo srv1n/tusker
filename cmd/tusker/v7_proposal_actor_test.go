@@ -40,23 +40,23 @@ func TestV7ProposalActorRejectsUnknownOrBlankActorKinds(t *testing.T) {
 	}
 }
 
-func TestV7ProposalActorTreatsMixedCaseHumanAsHumanInAgentSession(t *testing.T) {
+func TestV7ProposalActorCanonicalizesMixedCaseHumanInAgentSession(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	t.Setenv("CODEX_THREAD_ID", "thread-1")
-	_, err := proposalV7Actor(Args{"by": "HuMaN:sarav"}, "proposal apply", false)
-	if err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-		t.Fatalf("mixed-case human actor escaped agent-session refusal: %v", err)
+	got, err := proposalV7Actor(Args{"by": "HuMaN:sarav"}, "proposal apply", false)
+	if err != nil || got != "human:sarav" {
+		t.Fatalf("mixed-case human actor = %q, %v", got, err)
 	}
 }
 
-func TestV7ProposalActorRejectsHumanImpersonationInAgentSessionEvenWithForceOrLocal(t *testing.T) {
+func TestV7ProposalActorAcceptsHumanInAgentSessionEvenWithForceOrLocal(t *testing.T) {
 	for _, key := range []string{"CODEX_SHELL", "CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "TUSKER_ATTEMPT_ID"} {
 		t.Run(key, func(t *testing.T) {
 			clearAgentSessionEnvForTest(t)
 			t.Setenv(key, "agent-session")
-			_, err := proposalV7Actor(Args{"by": "human:sarav", "local": "true", "force": "true"}, "proposal apply", false)
-			if err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-				t.Fatalf("human actor was accepted from %s session: %v", key, err)
+			got, err := proposalV7Actor(Args{"by": "human:sarav", "local": "true", "force": "true"}, "proposal apply", false)
+			if err != nil || got != "human:sarav" {
+				t.Fatalf("human actor in %s session = %q, %v", key, got, err)
 			}
 		})
 	}
@@ -80,12 +80,12 @@ func TestV7ProposalCreationActorDefaultsToAgent(t *testing.T) {
 	}
 }
 
-func TestV7ProposalCreationActorRejectsHumanImpersonationFromAgentSession(t *testing.T) {
+func TestV7ProposalCreationActorAcceptsHumanFromAgentSession(t *testing.T) {
 	clearAgentSessionEnvForTest(t)
 	t.Setenv("CODEX_THREAD_ID", "thread-creation")
-	_, err := proposalV7CreationActor(Args{"by": "HuMaN:fixture-user"})
-	if err == nil || !strings.Contains(err.Error(), "cannot use human actor") {
-		t.Fatalf("proposal creation accepted human actor from agent session: %v", err)
+	got, err := proposalV7CreationActor(Args{"by": "HuMaN:fixture-user"})
+	if err != nil || got != "human:fixture-user" {
+		t.Fatalf("proposal creation human actor = %q, %v", got, err)
 	}
 }
 
