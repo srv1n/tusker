@@ -325,7 +325,7 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		_ = d.recordPollSchedule(projectID, time.Now().UTC())
 		return nil
 	}
-	if !daemonPollErrorIsFatal(err) {
+	if err != nil && !daemonPollErrorIsFatal(err) {
 		// One project's bad task state must not stop automation everywhere.
 		log.Printf("daemon poll: project=%s skipped: %v", firstNonEmpty(strings.TrimSpace(projectID), "*"), err)
 		_ = d.recordPollSchedule(projectID, time.Now().UTC())
