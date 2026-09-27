@@ -65,6 +65,9 @@ func TestMuseFailedLaunchSessionRequiresProviderConfirmation(t *testing.T) {
 	if resumable, err := d.confirmedSessionResumable(Workflow{}, run); err != nil || !resumable {
 		t.Fatal("Muse session stream did not confirm its session")
 	}
+	if stored, err := store.FindSessionByRef("p", run.SessionRef); err != nil || stored == nil || !stored.Resumable {
+		t.Fatalf("confirmed Muse session was not promoted for later resume: %+v, %v", stored, err)
+	}
 }
 
 func TestClaudeFailedLaunchSessionRequiresProviderConfirmation(t *testing.T) {

@@ -5309,6 +5309,13 @@ func (s *RuntimeStore) ListSessionsForRun(projectID, recordID, runner string) ([
 	return out, rows.Err()
 }
 
+// ConfirmSessionResumable records that the provider confirmed a preassigned
+// session, so later resume selection may use it.
+func (s *RuntimeStore) ConfirmSessionResumable(projectID, sessionRef string) error {
+	_, err := s.exec(`UPDATE sessions SET resumable = 1 WHERE project_id = ? AND session_ref = ? AND resumable = 0 AND state != 'closed'`, projectID, sessionRef)
+	return err
+}
+
 func (s *RuntimeStore) MarkSessionState(projectID, sessionRef, state, endedAt, lastError string, resumable bool) error {
 	_, err := s.exec(`UPDATE sessions
 		SET state = ?, ended_at = ?, last_error = ?, resumable = resumable AND ?, last_seen_at = ?

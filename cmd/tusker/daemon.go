@@ -3466,8 +3466,8 @@ func providerConfirmedRunSession(run RunStatus) bool {
 			return ""
 		}) == run.SessionRef
 	}
-	return run.SessionRef != "" && (extractSessionRef(run.RawLogPath) == run.SessionRef ||
-		acpSessionRefFromAttemptEvents(run.EventSinkPath, run.ActiveAttemptID, run.Runner) == run.SessionRef)
+	// Other runners learn the ref from provider output, so it is confirmed.
+	return run.SessionRef != ""
 }
 
 func (d *Daemon) confirmedSessionResumable(wf Workflow, run RunStatus) (bool, error) {
@@ -3475,7 +3475,8 @@ func (d *Daemon) confirmedSessionResumable(wf Workflow, run RunStatus) (bool, er
 		return false, nil
 	}
 	if providerConfirmedRunSession(run) {
-		return true, nil
+		// MarkSessionState only demotes, so confirmation must promote explicitly.
+		return true, d.store.ConfirmSessionResumable(run.ProjectID, run.SessionRef)
 	}
 	session, err := d.store.FindSessionByRef(run.ProjectID, run.SessionRef)
 	return session != nil && session.Resumable, err
