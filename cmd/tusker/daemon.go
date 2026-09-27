@@ -1729,7 +1729,10 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			if (d.dispatchRefusalReason != "" && pollErr.Error() == d.dispatchRefusalReason) || !daemonProjectPollErrorIsSkippable(pollErr) {
 				return pollErr
 			}
-			log.Printf("daemon poll: project=%s skipped: %v", projectID, pollErr)
+			// A lost compare-and-swap race is routine; the next poll retries it.
+			if typed := (*TuskerError)(nil); !errors.As(pollErr, &typed) || typed.Code != "CAS_CONFLICT" {
+				log.Printf("daemon poll: project=%s skipped: %v", projectID, pollErr)
+			}
 			dispatchCandidates = dispatchCandidates[:candidateCount]
 			sentinelProjects = sentinelProjects[:sentinelCount]
 			delete(visibilityIntervals, projectID)
