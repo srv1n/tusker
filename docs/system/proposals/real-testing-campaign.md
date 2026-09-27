@@ -241,6 +241,7 @@ Status values: `todo`, `doing`, `done`, `blocked`, `parked`.
 | F34 | A refused hard Say still stops the run | fixed (3193962e) | The hard Say interrupted the Codex turn first, then failed the resume check, which left the run Stopped. Say should run the resume preflight before it interrupts. |
 | F35 | Tusker's own default Claude command fails its runner policy | fixed (01926ba1) | Q7 blocked before launch: `policy_conflict: configured arguments contain permission, sandbox, settings, tool, or directory overrides`. The default `claude -p ... --permission-mode bypassPermissions` (`workflow.go:353`) is refused by `internal/runner/policy.go:41`. Ten real projects carry that command, so the fix strips the legacy tokens in code. |
 | F36 | Claude ignores the profile's access preset | in progress (Sol medium `fix/claude-profile-access`) | After moving `claude-opus-high` to `danger-full-access` (D1), launch still fails: "Claude Code cannot enforce Tusker's bounded workspace-write preset" (`runner_claude_live.go:293`). `startLiveClaude` reads the project WORKFLOW.md Codex policy (`thread_sandbox: workspace-write`) instead of the resolved profile. Before that, the old `access: work_in_projects` block was refused as `policy_unenforceable`. |
+| F37 | Continue preflight computes a different fingerprint than dispatch | in progress (Opus `fix/fp-preflight`) | Regression from the P2-1 fix (5fc63d49). Nothing changed on disk, yet `runs continue` after Stop is refused: "stored native session prompt context fingerprint changed". Both attempt prompts carry the same marker. |
 | F10 | Two different active-run counts | todo | `/api/daemon` says 0; `daemon status --json` says 1. The 1 is a stale interactive claim (CMT-T-0001 in `cinta`, `agent:claude`, no process). |
 
 ### Later: gaps against the vision
@@ -319,6 +320,7 @@ never start the daemon.
 
 - 2026-09-27: Owner authorized Claude to run `make install` and live tests without asking, until production. Project enable/disable now follows `agents.act_as_owner` (dispatched workers never); merged `fix/project-enable-owner` f8205fde. Q6 Codex rerun: dispatch, MCP ask, Needs you, reply and Stop pass; Say and Continue fail (F27, F28). Also found F26, F29-F32.
 - 2026-09-27: Merged F26, F29, F27/F28 and ran `make install`. Reseeded; `projects enable` now works from the agent session. Dispatch took one attempt (F26 fix live). Hard Say then failed on F33 and left the run Stopped (F34).
+- 2026-09-27: Rerun on the F33 build. Codex passes dispatch, hard Say (same session, token delivered once), ask, Needs you, reply as `human:sarav`, Stop. Continue fails on F37. Claude blocked by F36 after moving its profile to `danger-full-access` (config backup in /tmp/tusker-agents).
 - 2026-09-27: Re-armed W-0005 from the CLI on the owner's instruction (`--by human:sarav`).
 - 2026-09-27: Wrote this page. Finished Q0 to Q3. The owner ran `make install`,
   and TuskerBar started the daemon. Found the global circuit open since
