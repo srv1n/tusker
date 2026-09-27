@@ -304,6 +304,11 @@ func runSayHardStored(store *RuntimeStore, stateRoot string, project RegisteredP
 		_ = store.markWorkerDeliveryState(delivery.DeliveryID, map[string]bool{"stored": true}, "stale", "attempt changed before interrupt")
 		return result, tuskerError(errorInvalidTransition, "attempt changed before Say could interrupt it")
 	}
+	if _, preflightErr, reason := nativeContinuationPreflight(store, project, wave, *current, true); preflightErr != nil {
+		return result, preflightErr
+	} else if reason != "" {
+		return result, tuskerError(errorInvalidTransition, reason)
+	}
 	if current.ActiveAttemptID == identity.AttemptID {
 		_, _, err = interruptRuntimeRunScoped(stateRoot, store, run.ProjectID, run.RecordID)
 		if err != nil {
