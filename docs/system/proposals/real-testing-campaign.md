@@ -268,16 +268,19 @@ Worktrees sit next to the repo as `../tusker-wt-<name>`. One central gate
 | delete xcode, improve | audit slice 1.1 | Devin SWE-2 Max | slice files, `cli.go` | merged (53c0d86f), -1,978 lines. `trace replay` handler kept: `trace.go:489` still routes to it. |
 | browse skip | F2 | Devin SWE-2 Max | `internal/docgraph/discovery.go` | merged (27df28d7) |
 | owner toggle | D3 per-project switch | Sol low | `actor_authority.go`, `config.go` | merged (1bf48115). `requireOwnerSession` wired by the daemon lane. |
-| task states | T1 | Opus (Go) + Opus (UI) | run_state, Serve responses, UI | running |
+| task states | T1 (S1, S2, S3, S5) | Opus (Go) + Opus (UI) | run_state, Serve responses, UI | merged (6de08c01, 1daf2673), -3,307 lines. Retry default raised to 6 attempts. Screenshots for S3/S4 still owed. Open: no merge-conflict signal yet; a queued retry shows Working; stale arming fingerprint not recomputed per task. |
 | doc headers | V2 prep | Devin SWE-2 Max | docs front matter only | merged (bb45d7b0): 52 files. 120 files in `docs/plans/` and `docs/reports/` have no front matter; left for V2. `docs check` shows 2 old errors in `.tusker/specs/`. |
 | daemon lane | owner-only wiring, 0.3 circuit auto-close, F11 kill switch, F25, F22, F12 | Opus | `daemon.go`, `runtime_store.go`, `sentinel.go`, `automation_commands.go`, `agent_coordination.go` | running (`fix/daemon-lane`) |
 | access | D1 deny list, `access.protected_paths` | Sol medium (Claude reviews) | runner adapters, `config.go` | running (`feat/access-deny-list`) |
-| parity B | `wave list`, `runs list` (F4, F9) | Sol low | `cli.go`, new command files | running (`feat/wave-runs-list`) |
+| parity B | `wave list`, `runs list` (F4, F9) | Sol low | `cli.go`, new command files | merged (c35fe947) |
+| parity C+D | optional revision on writes; `approvals list/respond` | Sol low | `cli.go`, `commands_v7.go`, `model_levels.go`, `agent_access_approval.go` | running (`feat/parity-cd`). Private folders part waits for the access lane. |
+| serve parity | Serve actor rule (D3), slice G (icon, doc save to CLI), wave-review uses the task state | Sol low | `serve_actions.go`, `serve_docgraph.go`, `serve_execution_graph.go`, `direct_wave_authority.go` | running (`feat/serve-parity`) |
+| demo defaults | 0.4, F5 | Devin SWE-2 Max | `demo_cmd.go`, demo part of `serve_command.go`, `domain.ts` | running (`fix/demo-defaults`) |
+| UI authoring | parity F: edit and create tasks in the UI; T1 UI leftovers | Opus | `TaskScreens.tsx`, new `serve_task_edit.go` | running (`feat/ui-authoring`) |
 
 Queued, waiting on a file owner:
 
 - `cli.go` chain after parity B: C (access approval, private folders), then D (fetch the revision for the caller).
-- After T1: 0.4 demo defaults and F5; parity F (UI task authoring) and G (Serve handler-only actions).
 - After Phase 0: Phase 2 (pass handler replaces completion authority), Tier 3.
 
 ## Open decisions
