@@ -168,13 +168,16 @@ func museCLIArgv(command string, policy CodexPolicy, workspace, model, effort st
 		add("--reasoning-effort", effort)
 	}
 	add("--json")
+	// Muse 1.4 reads the prompt from a file, not a "-" stdin marker. The
+	// {{prompt_path}} token is expanded per attempt by the exec launch layer.
+	add("--prompt-file", "{{prompt_path}}")
 	return fields, nil
 }
 
 func museCLIHasPolicyOverride(fields []string) bool {
 	for _, field := range fields {
 		lower := strings.ToLower(strings.TrimSpace(field))
-		for _, prefix := range []string{"--yolo", "--workspace", "--approval-mode", "--sandbox-network"} {
+		for _, prefix := range []string{"--yolo", "--workspace", "--approval-mode", "--sandbox-network", "--prompt-file"} {
 			if lower == prefix || strings.HasPrefix(lower, prefix+"=") {
 				return true
 			}

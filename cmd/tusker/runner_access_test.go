@@ -116,6 +116,35 @@ func TestClaudeProfilePolicyAndDenySettings(t *testing.T) {
 	}
 }
 
+func TestMuseProfilePolicyReachesArgv(t *testing.T) {
+	workflow := CodexPolicy{ApprovalPolicy: "never", ThreadSandbox: "workspace-write", TurnSandboxPolicy: "workspace-write"}
+	access := ResolvedRunnerProfile{Name: "muse-access", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerMuse),
+		Access:  &AgentAccessV1{Schema: agentAccessSchemaV1, Mode: accessModeProjects, Network: true, DestructiveActions: "ask"},
+	}}
+	policy := codexPolicyForResolvedProfile(workflow, runLaneExecute, access)
+	if policy.TurnSandboxPolicy != "workspace-write" || policy.ApprovalPolicy != "on-request" || policy.TurnSandboxNetwork == nil || !*policy.TurnSandboxNetwork {
+		t.Fatalf("Muse access preset did not reach the launch policy: %#v", policy)
+	}
+	argv, err := museCLIArgv(defaultMuseCLICommand(), policy, "/tmp/project", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPair(argv, "--approval-mode", "on-request") || !containsPair(argv, "--sandbox-network", "enabled") {
+		t.Fatalf("Muse argv lost the resolved access preset: %v", argv)
+	}
+
+	// A read-only preset must downgrade even a write-capable execute lane.
+	readOnly := ResolvedRunnerProfile{Name: "muse-readonly", Definition: RunnerProfileDefinition{
+		Harness: string(RunnerMuse), PermissionPreset: "read-only",
+	}}
+	policy = codexPolicyForResolvedProfile(workflow, runLaneExecute, readOnly)
+	argv, err = museCLIArgv(defaultMuseCLICommand(), policy, "/tmp/project", "", "")
+	if err != nil || !containsPair(argv, "--approval-mode", "never") || !containsPair(argv, "--sandbox-network", "restricted") || !containsExact(argv, "--disable-write") || !containsExact(argv, "--disable-shell") {
+		t.Fatalf("read-only Muse preset was not enforced on execute lane: policy=%#v argv=%v err=%v", policy, argv, err)
+	}
+}
+
 func TestRunnerAccessProfileAndClaudeRules(t *testing.T) {
 	paths := runnerAccessPaths{protected: []string{`/tmp/private "folder"`}, state: []string{"/tmp/state"}}
 	profile := sandboxExecProfile(paths)

@@ -36,14 +36,18 @@ func TestAgentAccessIntegrated(t *testing.T) {
 		t.Fatalf("profile setup did not resolve: %#v err=%v", resolved, err)
 	}
 
+	promptPath := filepath.Join(workspace, "attempt.prompt.md")
+	if err := os.WriteFile(promptPath, []byte("provider-free access integration"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	prepared, err := runnercore.Prepare(context.Background(), definition, runnercore.RunInput{
 		Workspace: workspace, Preset: resolved.Effective.Preset, Model: profile.Model, Effort: profile.Effort,
-		Prompt: "provider-free access integration", ResolvedAccess: runnercoreResolvedAccess(&resolved), Access: profile.Access,
+		Prompt: "provider-free access integration", PromptPath: promptPath, ResolvedAccess: runnercoreResolvedAccess(&resolved), Access: profile.Access,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Access == nil || prepared.Access.Fingerprint == "" || !containsRunnerArgPair(prepared.Argv, "--workspace", prepared.Access.Effective.Workspace) || !containsRunnerArgPair(prepared.Argv, "--approval-mode", "on-request") {
+	if prepared.Access == nil || prepared.Access.Fingerprint == "" || !containsRunnerArgPair(prepared.Argv, "--workspace", prepared.Access.Effective.Workspace) || !containsRunnerArgPair(prepared.Argv, "--approval-mode", "on-request") || !containsRunnerArgPair(prepared.Argv, "--prompt-file", promptPath) {
 		t.Fatalf("prepared access/argv incomplete: %#v", prepared)
 	}
 	receipt, err := runnercore.Execute(context.Background(), prepared, nil)

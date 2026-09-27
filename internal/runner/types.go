@@ -223,7 +223,11 @@ type HarnessDefinition struct {
 }
 
 type RunInput struct {
-	Prompt         string           `json:"-"`
+	Prompt string `json:"-"`
+	// PromptPath is the file a dialect reads its prompt from (Muse
+	// --prompt-file). When empty, the compiled argv carries the literal
+	// {{prompt_path}} token for the launch layer to expand per attempt.
+	PromptPath     string           `json:"-"`
 	Workspace      string           `json:"workspace"`
 	Preset         PermissionPreset `json:"preset"`
 	Model          string           `json:"model,omitempty"`
