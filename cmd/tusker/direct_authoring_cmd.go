@@ -582,8 +582,14 @@ func updateV7TaskCmd(args Args) error {
 	if err := ensureDir(filepath.Dir(eventPath)); err != nil {
 		return err
 	}
+	if !args.Bool("quiet") {
+		_, _ = loadIdx()
+	}
 	if err := commitV7DocumentWritesWithLocks(map[string]string{note.AbsolutePath: taskContent, eventPath: eventContent}, directWaveTaskUpdateInjectCommitFailAfter, []*v7DocumentLock{taskLock}); err != nil {
 		return err
+	}
+	if !args.Bool("quiet") {
+		warnV7UnsatisfiableVerificationRows(id, Note{Data: data, Body: body}, idx)
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "task": id, "state_rev": nextRev, "changes": changes})
@@ -591,6 +597,25 @@ func updateV7TaskCmd(args Args) error {
 		fmt.Printf("Updated task %s (state_rev %s)\n", id, nextRev)
 	}
 	return nil
+}
+
+func warnV7UnsatisfiableVerificationRows(id string, task Note, idx v7Index) {
+	rows := parseV7VerificationRows(task.Body)
+	for _, required := range v7TaskProofRequired(task) {
+		if required == "none" || classifyProofRequirement(required, task, idx) != "machine" {
+			continue
+		}
+		satisfied := false
+		for _, row := range rows {
+			if v7InlineVerificationSatisfies(required, row) {
+				satisfied = true
+				break
+			}
+		}
+		if !satisfied {
+			fmt.Fprintf(os.Stderr, "warning: %s proof_required %s has no verification command that can satisfy it (for example `test ...` or `go test ...`); the review will be refused.\n", id, required)
+		}
+	}
 }
 
 func validateV7TaskUpdateDependencies(idx v7Index, taskID string, raws []string) ([]string, error) {

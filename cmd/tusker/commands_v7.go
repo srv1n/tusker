@@ -783,11 +783,16 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	if err := ensureDir(filepath.Dir(eventPath)); err != nil {
 		return err
 	}
+	var warningIndex v7Index
+	if !args.Bool("quiet") {
+		warningIndex, _ = loadV7Index(vaultPath)
+	}
 	if err := commitV7DocumentWritesWithLocks(map[string]string{path: content, eventPath: eventContent}, 0, []*v7DocumentLock{materialLock}); err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Created V7 task %s at %s\n", id, path)
+		warnV7UnsatisfiableVerificationRows(id, Note{Data: data, Body: body}, warningIndex)
 	}
 	return nil
 }
