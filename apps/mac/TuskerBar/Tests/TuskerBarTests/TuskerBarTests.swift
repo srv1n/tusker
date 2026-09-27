@@ -169,6 +169,34 @@ safe=visible
         }
     }
 
+    func testRuntimePipeDrainWritesShortLineAndReportsUnsafeLogPath() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("tusker-log-drain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let writer = try RuntimeLogWriter(home: home.path)
+        let pipe = Pipe()
+        let drain = RuntimePipeDrain()
+        let drained = expectation(description: "short pipe read returns before EOF")
+        DispatchQueue.global().async {
+            drain.consume(reader: pipe.fileHandleForReading, writer: writer)
+            drained.fulfill()
+        }
+        pipe.fileHandleForWriting.write(Data("startup line\n".utf8))
+        let result = XCTWaiter.wait(for: [drained], timeout: 1)
+        pipe.fileHandleForWriting.closeFile()
+        XCTAssertEqual(result, .completed)
+
+        let logs = home.appendingPathComponent("Library/Application Support/tusker/logs")
+        let current = logs.appendingPathComponent("app-daemon.log")
+        XCTAssertEqual(try String(contentsOf: current, encoding: .utf8), "startup line\n")
+        try FileManager.default.removeItem(at: current)
+        try FileManager.default.createSymbolicLink(at: current, withDestinationURL: logs.appendingPathComponent("elsewhere"))
+        writer.append(Data("must not follow link\n".utf8))
+        let errorFile = logs.appendingPathComponent("app-daemon.log-error")
+        XCTAssertTrue(try String(contentsOf: errorFile, encoding: .utf8).contains("open log handle lost owner-only authority"))
+        let mode = try FileManager.default.attributesOfItem(atPath: errorFile.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(mode?.intValue, 0o600)
+    }
+
     func testRuntimeLaunchPlanRequiresExplicitRetryAfterFailure() {
         XCTAssertTrue(RuntimeLaunchPlan.shouldStart(from: .idle, force: false))
         XCTAssertTrue(RuntimeLaunchPlan.shouldStart(from: .external, force: false))

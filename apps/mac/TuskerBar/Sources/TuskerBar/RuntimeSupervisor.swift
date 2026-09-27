@@ -387,7 +387,7 @@ private struct RuntimeReceiptLiveness: Decodable {
     }
 }
 
-private final class RuntimePipeDrain: @unchecked Sendable {
+final class RuntimePipeDrain: @unchecked Sendable {
     private let lock = NSLock()
     private var finished = false
 
@@ -395,8 +395,9 @@ private final class RuntimePipeDrain: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard !finished else { return }
-        let data = reader.readData(ofLength: 64 * 1024)
-        if !data.isEmpty { writer.append(data) }
+        var bytes = [UInt8](repeating: 0, count: 64 * 1024)
+        let count = Darwin.read(reader.fileDescriptor, &bytes, bytes.count)
+        if count > 0 { writer.append(Data(bytes.prefix(count))) }
     }
 
     func finish(reader: FileHandle, writer: RuntimeLogWriter) {
@@ -514,6 +515,18 @@ final class RuntimeLogWriter: @unchecked Sendable {
         // The daemon may continue, but this sink never writes through a path
         // whose ownership or link authority became ambiguous.
         NSLog("Tusker daemon logging stopped safely: %@", error.localizedDescription)
+        do {
+            try Self.validateDirectoryChain(home: home)
+            try Self.validateDirectory(directory)
+            let errorURL = directory.appendingPathComponent("app-daemon.log-error")
+            let errorHandle = try Self.openCurrent(errorURL)
+            defer { errorHandle.closeFile() }
+            try Self.validateCurrentPath(errorURL, handle: errorHandle)
+            let reason = error.localizedDescription.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+            try errorHandle.write(contentsOf: Self.redact(Data("[Tusker daemon logging stopped safely: \(reason)]\n".utf8)))
+        } catch {
+            NSLog("Tusker daemon log error file unavailable: %@", error.localizedDescription)
+        }
         do { try handle.close() } catch {
             NSLog("Tusker daemon log close failed: %@", error.localizedDescription)
         }
