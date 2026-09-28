@@ -180,10 +180,15 @@ func buildAdmissionReason(stats buildLaneStats, lane string, activeExecute bool)
 	if lane != runLaneExecute {
 		return ""
 	}
+	// Both signals come from past builds. With nothing of this project's
+	// running, no new builds arrive to clear them, so let one run through.
+	if !activeExecute {
+		return ""
+	}
 	if stats.Builds >= 3 && stats.MedianWaitMS > buildWaitLimit.Milliseconds() {
 		return fmt.Sprintf("waiting: build queue busy (median wait %ds)", stats.MedianWaitMS/1000)
 	}
-	if stats.WarmBuilds >= 5 && stats.DepRebuildRate > 0.3 && activeExecute {
+	if stats.WarmBuilds >= 5 && stats.DepRebuildRate > 0.3 {
 		return fmt.Sprintf("serial: dependency cache keeps rebuilding (seen: %s); mismatched build flags usually cause this", strings.Join(stats.Commands, ", "))
 	}
 	return ""

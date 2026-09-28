@@ -81,8 +81,11 @@ func TestBuildAdmissionReasons(t *testing.T) {
 		t.Fatal("review run counted as execute")
 	}
 	busy := buildLaneStats{Builds: 3, MedianWaitMS: 121000}
-	if got := buildAdmissionReason(busy, runLaneExecute, false); got != "waiting: build queue busy (median wait 121s)" {
+	if got := buildAdmissionReason(busy, runLaneExecute, true); got != "waiting: build queue busy (median wait 121s)" {
 		t.Fatal(got)
+	}
+	if got := buildAdmissionReason(busy, runLaneExecute, false); got != "" {
+		t.Fatalf("an idle project stayed blocked on past waits: %s", got)
 	}
 	if got := buildAdmissionReason(busy, runLaneReview, true); got != "" {
 		t.Fatal(got)
