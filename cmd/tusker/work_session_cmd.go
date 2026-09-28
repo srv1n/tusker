@@ -578,8 +578,12 @@ func reviewImplementationParent(store *RuntimeStore, vault, projectID, recordID 
 		}
 		currentScope, scopeErr := canonicalTaskMaterialScope(vault, note)
 		currentGeneratedOutputScope, generatedScopeErr := taskGeneratedOutputScope(note)
+		// A shared-checkout submission also commits the unowned strays it
+		// recorded, so they belong to the reviewed material.
+		expectedScope := sortedUniqueStrings(append(append([]string(nil), currentScope...), parent.EndState.StrayPaths...))
+		submittedScope := sortedUniqueStrings(append([]string(nil), parent.EndState.MaterialScope...))
 		if scopeErr != nil || generatedScopeErr != nil ||
-			strings.Join(currentScope, "\x00") != strings.Join(parent.EndState.MaterialScope, "\x00") ||
+			strings.Join(expectedScope, "\x00") != strings.Join(submittedScope, "\x00") ||
 			strings.Join(currentGeneratedOutputScope, "\x00") != strings.Join(parent.EndState.GeneratedOutputScope, "\x00") {
 			return RunAttempt{}, "", tuskerError(errorInvalidTransition, "review refused: declared implementation material scope changed after execute submission")
 		}

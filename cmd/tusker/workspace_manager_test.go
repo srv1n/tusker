@@ -280,3 +280,20 @@ func TestWorkspaceStrategyForRunKeepsInFlightWorkspaceKind(t *testing.T) {
 		}
 	}
 }
+
+func TestSharedCheckoutRunHoldsWorkUntilSubmittedWorkLands(t *testing.T) {
+	cases := []struct {
+		run  RunStatus
+		want bool
+	}{
+		{RunStatus{Lane: runLaneExecute, LeaseState: string(LeaseStateRunning)}, true},
+		{RunStatus{Lane: runLaneExecute, LeaseState: string(LeaseStateUnclaimed)}, false},               // queued or retired
+		{RunStatus{Lane: runLaneReview, LeaseState: string(LeaseStateRetryQueued)}, true},               // submitted, not landed
+		{RunStatus{Lane: runLaneReview, LeaseState: string(LeaseStateReleased), Terminal: true}, false}, // finished
+	}
+	for _, c := range cases {
+		if got := sharedCheckoutRunHoldsWork(c.run); got != c.want {
+			t.Fatalf("sharedCheckoutRunHoldsWork(%+v) = %v, want %v", c.run, got, c.want)
+		}
+	}
+}

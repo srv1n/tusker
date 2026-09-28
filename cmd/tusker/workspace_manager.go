@@ -199,7 +199,14 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 
 // sharedCheckoutRunHoldsWork reports whether an execute run still owns edits in
 // the checkout: running, or paused in a state it can resume from.
+// sharedCheckoutRunHoldsWork reports whether a run owns its scope's files in
+// the shared checkout: while it executes, and after submit until its work
+// lands (a live review-lane run). Counting only executing runs let the next
+// submitter sweep a submitted task's files into its own commit.
 func sharedCheckoutRunHoldsWork(run RunStatus) bool {
+	if run.Lane == runLaneReview {
+		return !run.Terminal
+	}
 	if run.Lane != runLaneExecute {
 		return false
 	}
