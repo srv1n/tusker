@@ -1079,9 +1079,20 @@ func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 	if dependencies != "" {
 		args = append(args, "--dependencies", dependencies)
 	}
+	// b2f1d39f requires owned paths at creation; the fixture re-authors them
+	// inline below, next to the artifact contract, so drop the created block.
+	ownedPath := filepath.ToSlash(filepath.Join("owned", strings.ToLower(expectedID)+".txt"))
+	args = append(args, "--owned-paths", ownedPath)
 	h.cliOK(h.repoDir, args...)
 	taskPath := filepath.Join(h.vaultDir, "work", "tasks", expectedID+".md")
 	body := h.readFile(taskPath)
+	if start := strings.Index(body, "\nowned_paths:"); start >= 0 {
+		stop := start + 1 + strings.Index(body[start+1:], "\n")
+		for strings.HasPrefix(body[stop:], "\n  - ") {
+			stop += 1 + strings.Index(body[stop+1:], "\n")
+		}
+		body = body[:start] + body[stop:]
+	}
 	body = replaceSection(body, "## Acceptance", strings.TrimSpace(`| ID | Outcome | Proof |
 |---|---|---|
 | A1 | The fake runner reaches the scenario-specific terminal behavior. | E2E harness assertion |`))
@@ -1093,7 +1104,6 @@ func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 		h.t.Fatalf("task %s has no frontmatter end", expectedID)
 	}
 	end += 4
-	ownedPath := filepath.ToSlash(filepath.Join("owned", strings.ToLower(expectedID)+".txt"))
 	body = body[:end] + "\nowned_paths: [" + ownedPath + "]\nartifact_contract:\n  kind: trace\n  path: " + ownedPath + "\n  summary: Process-boundary crash and convergence timeline.\n  acceptance_ids: [A1]\n" + body[end:]
 	h.writeFile(taskPath, body)
 	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
