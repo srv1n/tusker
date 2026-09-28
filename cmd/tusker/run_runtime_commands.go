@@ -1171,7 +1171,7 @@ func redriveCmd(args Args) error {
 	now := time.Now().UTC()
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "operator redrive")
-	if runProcessGroupAlive(*run) {
+	if classifyRunLiveness(*run) == runLivenessAlive {
 		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
 	}
 	// Route through the idempotent retry primitive so a second redrive of a
@@ -1233,7 +1233,7 @@ func redriveRuntimeRunWithHook(store *RuntimeStore, run *RunStatus, actor, reaso
 	actor = firstNonEmpty(strings.TrimSpace(actor), defaultActorName())
 	reason = firstNonEmpty(strings.TrimSpace(reason), "operator redrive")
 	expected := *run
-	if runProcessGroupAlive(expected) {
+	if classifyRunLiveness(expected) == runLivenessAlive {
 		return BudgetRedriveRecord{}, tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
 	}
 	if expected.Terminal && (LeaseState(expected.LeaseState) == LeaseStateClaimed || LeaseState(expected.LeaseState) == LeaseStateRunning) {
