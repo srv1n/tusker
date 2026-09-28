@@ -416,6 +416,9 @@ func runnerEnv(req runnerLaunchEnv) []string {
 	if actor := strings.TrimSpace(req.Actor); actor != "" {
 		baseEnv = setEnvValue(baseEnv, "TUSKER_ACTOR", actor)
 	}
+	if req.AttemptID != "" {
+		baseEnv = buildLaneWorkerEnv(baseEnv)
+	}
 	return append(baseEnv,
 		"TUSKER_PROJECT_ID="+req.ProjectID,
 		"TUSKER_CANONICAL_PROJECT_ID="+canonicalProjectID,

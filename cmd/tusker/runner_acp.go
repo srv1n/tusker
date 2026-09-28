@@ -1021,6 +1021,9 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 	// The executable and cwd are already absolute. The fixed system PATH is
 	// independent of both RunnerPathPrefix and CommandSearchPath.
 	out = append(out, "PATH="+strings.Join(path, string(os.PathListSeparator)))
+	if req.AttemptID != "" {
+		out = buildLaneWorkerEnv(out)
+	}
 	return out
 }
 

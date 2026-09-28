@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 func main() {
+	if tool := filepath.Base(os.Args[0]); tool == "cargo" || tool == "xcodebuild" || tool == "swift" {
+		os.Exit(runBuildLane(tool, os.Args[1:]))
+	}
 	command, args := parseCLI(os.Args)
 	exitCode, err := run(command, args)
 	if err != nil {

@@ -255,6 +255,8 @@ type TuskerAutomationConfig struct {
 		MaxActiveRuns           int            `yaml:"max_active_runs"`
 		MaxActiveRunsPerProject int            `yaml:"max_active_runs_per_project"`
 		WeightBudget            int            `yaml:"weight_budget"`
+		BuildLane               *bool          `yaml:"build_lane"`
+		BuildSlots              int            `yaml:"build_slots"`
 		MaxLoadPerCPU           float64        `yaml:"max_load_per_cpu"`
 		MaxContinuationRetries  int            `yaml:"max_continuation_retries"`
 		MaxConcurrentByState    map[string]int `yaml:"max_concurrent_by_state"`
