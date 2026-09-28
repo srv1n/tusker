@@ -49,6 +49,10 @@ func TestLinkedWorktreeUsesRegisteredCanonicalVaultAndRefusesImplicitDuplicate(t
 	if err := os.Chdir(feature); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("TUSKER_ATTEMPT_ID", "")
+	t.Setenv("TUSKER_PROJECT_ID", "")
+	t.Setenv("TUSKER_CANONICAL_VAULT", "")
+	t.Setenv("TUSKER_VAULT", "")
 
 	if _, err := resolveVaultPath(Args{}, false); err == nil {
 		t.Fatal("missing-vault route unexpectedly succeeded")
@@ -57,6 +61,30 @@ func TestLinkedWorktreeUsesRegisteredCanonicalVaultAndRefusesImplicitDuplicate(t
 	} else if typed, ok := err.(*TuskerError); !ok || !strings.Contains(typed.Hint, "--use-project-vault") {
 		t.Fatalf("missing-vault route omitted use-project-vault hint: %#v", err)
 	}
+	t.Setenv("TUSKER_PROJECT_ID", project.ProjectID)
+	t.Setenv("TUSKER_CANONICAL_VAULT", canonicalVault)
+	if _, err := resolveVaultPath(Args{}, false); err == nil || !strings.Contains(err.Error(), "canonical vault-owning checkout") {
+		t.Fatalf("vault env without attempt unexpectedly succeeded: %v", err)
+	}
+	t.Setenv("TUSKER_ATTEMPT_ID", "attempt-1")
+	if got, err := resolveVaultPath(Args{}, false); err != nil || got != project.VaultRoot {
+		t.Fatalf("dispatched attempt resolved %q, %v; want %q", got, err, project.VaultRoot)
+	}
+	t.Setenv("TUSKER_PROJECT_ID", "other-project")
+	if _, err := resolveVaultPath(Args{}, false); err == nil || !strings.Contains(err.Error(), "canonical vault-owning checkout") {
+		t.Fatalf("mismatched project ID unexpectedly succeeded: %v", err)
+	}
+	t.Setenv("TUSKER_PROJECT_ID", project.ProjectID)
+	t.Setenv("TUSKER_CANONICAL_VAULT", filepath.Join(feature, defaultRepoVaultDir))
+	if _, err := resolveVaultPath(Args{}, false); err == nil || !strings.Contains(err.Error(), "canonical vault-owning checkout") {
+		t.Fatalf("mismatched canonical vault unexpectedly succeeded: %v", err)
+	}
+	t.Setenv("TUSKER_CANONICAL_VAULT", "")
+	t.Setenv("TUSKER_VAULT", canonicalVault)
+	if got, err := resolveVaultPath(Args{}, false); err != nil || got != project.VaultRoot {
+		t.Fatalf("dispatched attempt fallback resolved %q, %v; want %q", got, err, project.VaultRoot)
+	}
+	t.Setenv("TUSKER_ATTEMPT_ID", "")
 	got, err := resolveVaultPath(Args{"use-project-vault": "true"}, false)
 	if err != nil {
 		t.Fatal(err)
