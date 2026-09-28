@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -123,7 +124,10 @@ func normalizeWorkspaceMaterialScope(scope []string) ([]string, error) {
 	out := make([]string, 0, len(scope))
 	for _, raw := range scope {
 		path := strings.Trim(strings.TrimSpace(filepath.ToSlash(raw)), "/")
-		if path == "" || path == "." || strings.HasPrefix(path, "../") || strings.Contains(path, "/../") || gateLedgerIgnoresPath(path) {
+		// Scope paths reach git as pathspecs, so "cmd/.." or ":(top)" would widen
+		// a scoped restore to the whole checkout. Only clean relative paths pass.
+		if path == "" || path == "." || path == ".." || strings.HasPrefix(path, "../") || pathpkg.Clean(path) != path ||
+			strings.HasPrefix(path, ":") || gateLedgerIgnoresPath(path) {
 			return nil, fmt.Errorf("invalid workspace material scope path %q", raw)
 		}
 		if !seen[path] {

@@ -282,14 +282,34 @@ func abandonSharedCheckoutScope(store *RuntimeStore, run RunStatus) error {
 	if err != nil {
 		return err
 	}
+	// Touch only paths that still hold what the abandoned ref just preserved.
+	// Anything written since (a retry already at work) is left in place.
+	// ponytail: a staged version that differs from the working file is not in
+	// the ref; keep the index too if that ever matters.
+	preserved := func(path string) bool {
+		want, _ := gitOutputTrim(run.WorkspacePath, "rev-parse", "--verify", "-q", commit+":"+path)
+		if want == "" {
+			_, err := os.Lstat(filepath.Join(run.WorkspacePath, filepath.FromSlash(path)))
+			return os.IsNotExist(err)
+		}
+		got, err := gitOutputTrim(run.WorkspacePath, "hash-object", "--", path)
+		return err == nil && got == want
+	}
 	if tracked != "" {
-		paths := strings.Split(strings.TrimSuffix(tracked, "\x00"), "\x00")
-		if _, err := gitOutputTrim(run.WorkspacePath, append([]string{"restore", "--source=HEAD", "--staged", "--worktree", "--"}, paths...)...); err != nil {
-			return err
+		var paths []string
+		for _, path := range strings.Split(strings.TrimSuffix(tracked, "\x00"), "\x00") {
+			if preserved(path) {
+				paths = append(paths, path)
+			}
+		}
+		if len(paths) > 0 {
+			if _, err := gitOutputTrim(run.WorkspacePath, append([]string{"restore", "--source=HEAD", "--staged", "--worktree", "--"}, paths...)...); err != nil {
+				return err
+			}
 		}
 	}
 	for _, path := range strings.Split(untracked, "\x00") {
-		if path != "" && workspaceMaterialScopeContains(scope, path) {
+		if path != "" && workspaceMaterialScopeContains(scope, path) && preserved(path) {
 			if err := os.Remove(filepath.Join(run.WorkspacePath, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
 				return err
 			}
