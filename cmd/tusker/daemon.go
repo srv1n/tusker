@@ -7578,7 +7578,8 @@ func renderResumedAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, 
 	}
 
 	fmt.Fprintf(&b, "\n### Resume Safety\n\n")
-	fmt.Fprintf(&b, "- If existing history is missing, stale, or conflicts with any identity above, stop and require a full fresh prompt; never infer an omitted contract or authority.\n")
+	fmt.Fprintf(&b, "- Every resume gets a new attempt number and attempt id, so an attempt in the history that differs from the one above is expected, not a conflict.\n")
+	fmt.Fprintf(&b, "- If existing history is missing, stale, or conflicts with any other identity above, stop and require a full fresh prompt; never infer an omitted contract or authority.\n")
 	fmt.Fprintf(&b, "- A material task or spec revision, changed work revision, workspace, runner/adapter, policy authority, or lost session requires the complete fresh prompt path.\n")
 	fmt.Fprintf(&b, "- Preserve all mandatory requirements from the existing contract and report a concrete blocker when they cannot be verified.\n")
 	return strings.TrimSpace(b.String()), nil
