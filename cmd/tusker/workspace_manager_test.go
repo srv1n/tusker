@@ -258,3 +258,25 @@ func TestWorkspaceManagerRejectsMismatchedBranchMetadata(t *testing.T) {
 		t.Fatalf("expected branch metadata mismatch error, got %v", err)
 	}
 }
+
+func TestWorkspaceStrategyForRunKeepsInFlightWorkspaceKind(t *testing.T) {
+	repo := t.TempDir()
+	project := RegisteredProject{RepoRoot: repo}
+	var shared, worktree Workflow
+	shared.Workspace.Strategy, worktree.Workspace.Strategy = "shared", "worktree"
+	cases := []struct {
+		wf   Workflow
+		path string
+		want WorkspaceStrategy
+	}{
+		{shared, "", WorkspaceStrategyShared},
+		{shared, filepath.Join(repo, "..", "worktrees", "APP-T-0001"), WorkspaceStrategyWorktree},
+		{worktree, repo, WorkspaceStrategyShared},
+		{worktree, "", WorkspaceStrategyWorktree},
+	}
+	for _, c := range cases {
+		if got := workspaceStrategyForRun(c.wf, project, RunStatus{WorkspacePath: c.path}, nil); got != c.want {
+			t.Fatalf("strategy %q path %q = %q, want %q", c.wf.Workspace.Strategy, c.path, got, c.want)
+		}
+	}
+}

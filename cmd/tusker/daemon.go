@@ -5270,7 +5270,7 @@ func (d *Daemon) persistClaimedDispatchFailure(project RegisteredProject, wf Wor
 }
 
 func (d *Daemon) workspaceStrategyForDispatch(project RegisteredProject, wf Workflow, run RunStatus) WorkspaceStrategy {
-	return workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
+	return workspaceStrategyForRun(wf, project, run, nil)
 }
 
 func ensureDispatchedV7Attempt(canonicalVault, taskID, runtimeAttemptID, lane, runner, workspacePath, branch string) (string, error) {
@@ -7006,8 +7006,23 @@ func workspaceStrategyFromWorkflow(value string) WorkspaceStrategy {
 	}
 }
 
+// workspaceStrategyForRun keeps a task in the kind of workspace it started in;
+// a strategy change applies to new tasks. Otherwise a worktree task would be
+// reviewed or reworked in the shared checkout, which lacks its commits.
 func workspaceStrategyForRun(wf Workflow, project RegisteredProject, run RunStatus, runs []RunStatus) WorkspaceStrategy {
-	return workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
+	configured := workspaceStrategyFromWorkflow(wf.Workspace.Strategy)
+	if strings.TrimSpace(run.WorkspacePath) == "" || strings.TrimSpace(project.RepoRoot) == "" {
+		return configured
+	}
+	inCheckout := sameCanonicalProjectPath(run.WorkspacePath, project.RepoRoot)
+	if inCheckout && configured != WorkspaceStrategyShared {
+		return WorkspaceStrategyShared
+	}
+	if !inCheckout && configured == WorkspaceStrategyShared {
+		// ponytail: clone/copy tasks also resume as worktrees; store the strategy on the run if those need to survive a switch.
+		return WorkspaceStrategyWorktree
+	}
+	return configured
 }
 
 var workflowTemplatePlaceholder = regexp.MustCompile(`{{\s*([A-Za-z0-9_.]+)\s*}}`)
