@@ -172,12 +172,7 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 	vault := projects[0].Project.VaultRoot
 	activeScopes := make([][]string, 0)
 	for _, run := range runs {
-		// An interrupted or redriven execute run is unclaimed but not done: its
-		// files in the checkout are its own unfinished work, and counting them as
-		// strays let interrupted tasks (the caller included) block each other
-		// forever. Only terminal runs give up their scope here.
-		ownsScope := sharedCheckoutRunHoldsWork(run) || (run.Lane == runLaneExecute && !run.Terminal)
-		if run.ProjectID != req.ProjectID || !ownsScope || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
+		if run.ProjectID != req.ProjectID || !sharedCheckoutRunOwnsFiles(run) || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
 			continue
 		}
 		scope, scopeErr := sharedCheckoutRunScope(store, run)
@@ -217,6 +212,14 @@ func sharedCheckoutRunScope(store *RuntimeStore, run RunStatus) ([]string, error
 // the shared checkout: while it executes, and after submit until its work
 // lands (a live review-lane run). Counting only executing runs let the next
 // submitter sweep a submitted task's files into its own commit.
+// sharedCheckoutRunOwnsFiles reports whether a run's scope in the shared
+// checkout is its own. An interrupted, redriven or reworking execute run is
+// unclaimed but not done: its files are its unfinished work, not strays for
+// another task to sweep into its commit. Only terminal runs give up their scope.
+func sharedCheckoutRunOwnsFiles(run RunStatus) bool {
+	return sharedCheckoutRunHoldsWork(run) || (run.Lane == runLaneExecute && !run.Terminal)
+}
+
 func sharedCheckoutRunHoldsWork(run RunStatus) bool {
 	if run.Lane == runLaneReview {
 		return !run.Terminal

@@ -177,7 +177,7 @@ func sharedCheckoutStrays(store *RuntimeStore, run RunStatus, own []string) ([]s
 	}
 	others := make(map[string][]string)
 	for _, other := range runs {
-		if other.ProjectID != run.ProjectID || other.RecordID == run.RecordID || !sharedCheckoutRunHoldsWork(other) || !sameCanonicalProjectPath(other.WorkspacePath, run.WorkspacePath) {
+		if other.ProjectID != run.ProjectID || other.RecordID == run.RecordID || !sharedCheckoutRunOwnsFiles(other) || !sameCanonicalProjectPath(other.WorkspacePath, run.WorkspacePath) {
 			continue
 		}
 		scope, err := sharedCheckoutRunScope(store, other)

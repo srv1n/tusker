@@ -177,6 +177,15 @@ func TestSharedCheckoutStraysAndFailureCleanup(t *testing.T) {
 	if !containsString(stray, "stray.txt") || overlaps["owned/APP-T-0002/other.txt"] != "APP-T-0002" {
 		t.Fatalf("stray=%v overlaps=%v", stray, overlaps)
 	}
+	// A task waiting in rework is unclaimed but still owns its unfinished files.
+	waiting := runs["APP-T-0002"]
+	waiting.LeaseState = string(LeaseStateUnclaimed)
+	if err := store.UpsertRun(waiting); err != nil {
+		t.Fatal(err)
+	}
+	if stray, overlaps, err = sharedCheckoutStrays(store, one, scope); err != nil || containsString(stray, "owned/APP-T-0002/other.txt") || overlaps["owned/APP-T-0002/other.txt"] != "APP-T-0002" {
+		t.Fatalf("unclaimed rework task lost its files: stray=%v overlaps=%v err=%v", stray, overlaps, err)
+	}
 	// The socket submit path passes commitDirty=false; a shared checkout must
 	// still get Tusker's scope commit because the worker cannot make one.
 	endState, err := captureSubmissionEndState(store, one, `{"A1":"pass"}`, "", "", false)
