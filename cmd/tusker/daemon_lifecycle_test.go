@@ -1590,6 +1590,7 @@ func TestEarlyExitClassification(t *testing.T) {
 	run := latestRunForRecord(t, daemon.store, project.ProjectID, "APP-T-0001")
 	assertEqual(t, string(LeaseStateParkedNoProgress), run.LeaseState, "early exit cap lease")
 	assertEqual(t, string(AttemptOutcomeBlocked), run.AttemptOutcome, "early exit cap outcome")
+	assertEqual(t, string(RunFailureEarlyExit), run.ReasonCode, "early exit cap reason code")
 	assertEqual(t, true, run.Terminal, "early exit cap terminal")
 	if !strings.Contains(run.LastError, "continuation retry cap reached (1): "+runnerEarlyExitActiveTrackerReason) {
 		t.Fatalf("expected early-exit cap reason, got %#v", run)

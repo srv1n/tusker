@@ -11,7 +11,7 @@ func TestRunFailureReasonCodes(t *testing.T) {
 		RunFailureUsageLimit: "blocked", RunFailureAuthExpired: "blocked", RunFailurePermissionDenied: "blocked",
 		RunFailureSandboxDenied: "blocked", RunFailureNetworkDenied: "blocked", RunFailureMissingAccess: "blocked",
 		RunFailureContextWindow: "failed", RunFailureMaxTurns: "failed", RunFailureMaxBudget: "blocked",
-		RunFailureConfigInvalid: "blocked", RunFailureProviderError: "failed", RunFailureProcessLost: "lost",
+		RunFailureConfigInvalid: "blocked", RunFailureProviderError: "failed", RunFailureEarlyExit: "failed", RunFailureProcessLost: "lost",
 		RunFailureOutcomeUnknown: "lost", RunFailureCancelled: "failed", RunFailureUnknown: "failed",
 		RunFailurePolicyRefused: "blocked", RunFailureMergeConflict: "blocked", RunFailureLandingFailed: "blocked",
 	}

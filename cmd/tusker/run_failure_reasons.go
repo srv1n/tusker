@@ -22,6 +22,7 @@ const (
 	RunFailureMaxBudget        RunFailureReasonCode = "max_budget"
 	RunFailureConfigInvalid    RunFailureReasonCode = "config_invalid"
 	RunFailureProviderError    RunFailureReasonCode = "provider_error"
+	RunFailureEarlyExit        RunFailureReasonCode = "early_exit"
 	RunFailureProcessLost      RunFailureReasonCode = "process_lost"
 	RunFailureOutcomeUnknown   RunFailureReasonCode = "outcome_unknown"
 	RunFailureCancelled        RunFailureReasonCode = "cancelled"
@@ -52,6 +53,7 @@ var runFailureReasons = map[RunFailureReasonCode]runFailureReasonSpec{
 	RunFailureMaxBudget:        {"blocked", false, AttemptOutcomeBlocked, "The run budget was exhausted. Raise the budget, then Continue."},
 	RunFailureConfigInvalid:    {"blocked", false, AttemptOutcomeBlocked, "The runner configuration is invalid. Fix it, then Continue."},
 	RunFailureProviderError:    {"failed", true, AttemptOutcomeFailed, "The provider failed. Inspect the last events, then Continue."},
+	RunFailureEarlyExit:        {"failed", true, AttemptOutcomeEarlyExit, "The worker exited before completing the task. Inspect the last events, then Continue."},
 	RunFailureProcessLost:      {"lost", false, AttemptOutcomeUnknown, "The runner process was lost. Inspect the attempt before Continuing."},
 	RunFailureOutcomeUnknown:   {"lost", false, AttemptOutcomeUnknown, "The outcome is unknown. Inspect provider state before Continuing."},
 	RunFailureCancelled:        {"failed", false, AttemptOutcomeCancelled, "The run was cancelled. Continue if work should resume."},

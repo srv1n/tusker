@@ -83,11 +83,10 @@ if "--version" in sys.argv:
     print("fake Claude 1.0")
     sys.exit(0)
 assert sys.argv[sys.argv.index("--resume")+1]=="claude-predecessor", sys.argv
+assert sys.argv[-1]=="Fresh claude prompt.\n", sys.argv
 for line in sys.stdin:
     msg=json.loads(line)
-    if msg.get("type")=="control_request":
-        continue
-    if msg.get("type")=="user":
+    if msg.get("request",{}).get("subtype")=="set_permission_mode":
         assert os.environ.get("TUSKER_SESSION_REF","")=="claude-predecessor", os.environ.get("TUSKER_SESSION_REF")
         print(json.dumps({"type":"assistant","session_id":"claude-predecessor","uuid":"claude-msg-resumed","message":{"id":"claude-msg-resumed","role":"assistant","content":[{"type":"text","text":"resumed"}]}}), flush=True)
         break

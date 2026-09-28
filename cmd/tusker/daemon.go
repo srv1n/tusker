@@ -3082,6 +3082,7 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				return run, true, nil
 			}
 			if classification.outcome == AttemptOutcomeEarlyExit {
+				run.ReasonCode = string(RunFailureEarlyExit)
 				parentAttemptID := run.ActiveAttemptID
 				parentSessionRef := run.SessionRef
 				reason := classification.reason
