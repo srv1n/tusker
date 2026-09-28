@@ -33,6 +33,7 @@ const (
 type DepartureCandidate struct {
 	CargoTaskIDs             []string          `json:"cargo_task_ids,omitempty"`
 	WaveIDs                  []string          `json:"wave_ids,omitempty"`
+	DeferredWaves            map[string]string `json:"deferred_waves,omitempty"`
 	TaskStateRevisions       map[string]string `json:"task_state_revisions,omitempty"`
 	TaskSourceSHAs           map[string]string `json:"task_source_shas,omitempty"`
 	WaveAuthorization        string            `json:"wave_authorization,omitempty"`
