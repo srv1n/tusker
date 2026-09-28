@@ -379,6 +379,9 @@ func installV7FullGateProviderFixture(t *testing.T) {
 	t.Helper()
 	previous := newV7FullGateProvider
 	newV7FullGateProvider = func(profile, _, _ string) (v7FullGateProvider, error) {
+		if profile == "" {
+			return &v7HostFullGateProvider{}, nil
+		}
 		if profile != "test-fixture" {
 			return nil, fmt.Errorf("fixture provider profile %q is unavailable", profile)
 		}

@@ -3272,6 +3272,9 @@ func runV7GateTierOnRefContext(ctx context.Context, vaultPath, repoRoot, ref, pr
 		ProjectID: projectID, DepartureID: v7FullGateDepartureID(ctx), CandidateDigest: frozenTreeHash, GateProfile: policy.Profile, ProviderProfile: policy.IsolationProvider,
 		Toolchain: runtime.Toolchain(tmp, policy.HarvestCommands), ArtifactRef: path,
 	}
+	if strings.TrimSpace(policy.IsolationProvider) == "" {
+		providerBinding.ProviderProfile = v7HostFullGateProfile
+	}
 	if providerCanBind {
 		if err := providerBinder.BindFullGateProvider(providerBinding); err != nil {
 			failure := writeFailure("promotion full-gate refusal: " + err.Error())

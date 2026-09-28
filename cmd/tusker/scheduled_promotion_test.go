@@ -507,6 +507,52 @@ func setScheduledPromotionGateForTest(t *testing.T, vault string, commands []str
 	return wf.Data
 }
 
+func setScheduledPromotionHostGateForTest(t *testing.T, vault string, commands []string) Workflow {
+	t.Helper()
+	path := workflowPath(vault)
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["orchestration"] = map[string]any{"gate": map[string]any{"harvest_commands": commands}}
+	text, err := serializeDocument(data, body, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, text); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wf.Data
+}
+
+func TestScheduledPromotionHostFullGatePromotes(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "host-gate.txt", "candidate\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
+	wf := setScheduledPromotionHostGateForTest(t, vault, []string{"test -f host-gate.txt"})
+	armScheduledPromotionWaveForTest(t, vault, "W-0001")
+	commitScheduledPromotionWorkflowForTest(t, repo, vault)
+	before := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run := newScheduledPromotionRunForTest(t, store, "2026-07-25T20:20:00Z")
+	if _, err := promoteScheduledWave(vault, "app", "W-0001", wf, store, &run, "daemon:test"); err != nil {
+		t.Fatal(err)
+	}
+	if after := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")); after == before {
+		t.Fatal("host full gate did not promote")
+	}
+	if len(run.Gate.ProviderReceipts) != 1 || run.Gate.ProviderReceipts[0].ProviderProfile != v7HostFullGateProfile {
+		t.Fatalf("host receipt missing: %#v", run.Gate.ProviderReceipts)
+	}
+}
+
 func commitCanonicalTaskStateToWaveIntegrationForTest(t *testing.T, repo, vault, taskID, waveID string) {
 	t.Helper()
 	branch := "integration/" + waveID
@@ -708,7 +754,7 @@ func TestScheduledPromotionLandingPreservesDivergentUntrackedControlState(t *tes
 func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "full-gate.txt", "candidate\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
-	wf := setScheduledPromotionGateForTest(t, vault, []string{"echo FULL_GATE_EXECUTED >&2; exit 1"}, "canonical")
+	wf := setScheduledPromotionHostGateForTest(t, vault, []string{"echo FULL_GATE_EXECUTED >&2; exit 1"})
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	commitScheduledPromotionWorkflowForTest(t, repo, vault)
 	beforeMain := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))
@@ -716,7 +762,7 @@ func TestScheduledPromotionLandingRunsFrozenFullGateContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Gate.Command != "echo FULL_GATE_EXECUTED >&2; exit 1" || snapshot.Gate.Profile != "canonical" || snapshot.Gate.Toolchain == "" {
+	if snapshot.Gate.Command != "echo FULL_GATE_EXECUTED >&2; exit 1" || snapshot.Gate.Toolchain == "" {
 		t.Fatalf("frozen full-gate identity is incomplete: %#v", snapshot.Gate)
 	}
 
@@ -856,7 +902,7 @@ func TestScheduledPromotionLandingHeartbeatsLongFullGateLease(t *testing.T) {
 func TestScheduledPromotionLandingCrashBeforeRefUpdateResumesExactIntent(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "pre-ref-crash.txt", "candidate\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)
-	wf := setScheduledPromotionGateForTest(t, vault, []string{"test -f pre-ref-crash.txt"}, "")
+	wf := setScheduledPromotionHostGateForTest(t, vault, []string{"test -f pre-ref-crash.txt"})
 	armScheduledPromotionWaveForTest(t, vault, "W-0001")
 	commitScheduledPromotionWorkflowForTest(t, repo, vault)
 	beforeMain := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main"))

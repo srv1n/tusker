@@ -827,13 +827,15 @@ func scheduledPromotionToolchainFingerprint(repoRoot string, commands []string) 
 	return departureFingerprint(parts...)
 }
 
-// Full-gate ledger proof is valid only under the configured provider contract
-// that produced it. This prevents an old sandbox-exec or unrestricted pass
-// from bypassing the lifecycle boundary before a full promotion.
+// Full-gate ledger proof is valid only under the host or configured provider
+// contract that produced it.
 func scheduledPromotionFullGateToolchainFingerprint(repoRoot string, commands []string, provider, stateRoot string) string {
 	base := scheduledPromotionToolchainFingerprint(repoRoot, commands)
 	if base == "" {
 		return ""
+	}
+	if strings.TrimSpace(provider) == "" {
+		return departureFingerprint(v7HostFullGateProfile, base)
 	}
 	_, _, identity, _, err := resolveV7TrustedFullGateProvider(provider, stateRoot)
 	if err != nil {
@@ -1209,7 +1211,11 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 		if !verifier.MatchesGateProviderReceipt(entry.ProviderReceipt) {
 			return fmt.Errorf("full_gate_receipt_invalid:%s", command)
 		}
-		if run.Gate.ProviderReceipts[index] != *entry.ProviderReceipt || entry.ProviderReceipt.Outcome != string(v7FullGateOutcomePassed) || entry.ProviderReceipt.ProjectID != projectID || entry.ProviderReceipt.CandidateDigest != ledgerTreeHash || entry.ProviderReceipt.CommandDigest != v7FullGateTextDigest(command) || entry.ProviderReceipt.Profile != current.Gate.Profile || entry.ProviderReceipt.ProviderProfile != policy.IsolationProvider || entry.ProviderReceipt.Toolchain != current.Gate.Toolchain {
+		expectedProviderProfile := policy.IsolationProvider
+		if strings.TrimSpace(expectedProviderProfile) == "" {
+			expectedProviderProfile = v7HostFullGateProfile
+		}
+		if run.Gate.ProviderReceipts[index] != *entry.ProviderReceipt || entry.ProviderReceipt.Outcome != string(v7FullGateOutcomePassed) || entry.ProviderReceipt.ProjectID != projectID || entry.ProviderReceipt.CandidateDigest != ledgerTreeHash || entry.ProviderReceipt.CommandDigest != v7FullGateTextDigest(command) || entry.ProviderReceipt.Profile != current.Gate.Profile || entry.ProviderReceipt.ProviderProfile != expectedProviderProfile || entry.ProviderReceipt.Toolchain != current.Gate.Toolchain {
 			return fmt.Errorf("full_gate_receipt_contract_invalid:%s", command)
 		}
 	}

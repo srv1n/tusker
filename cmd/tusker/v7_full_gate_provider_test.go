@@ -27,6 +27,11 @@ func TestV7FullGateProviderUnsupportedPlatformIsTypedRefusal(t *testing.T) {
 	if err := v7FullGateProviderPlatformError(); err == nil || errorToIssue(err).Code != v7FullGateProviderUnsupportedPlatformCode {
 		t.Fatalf("platform refusal = %v, want %s", err, v7FullGateProviderUnsupportedPlatformCode)
 	}
+	if host, err := newV7FullGateProvider("", t.TempDir(), t.TempDir()); err != nil {
+		t.Fatalf("host provider refused on linux: %v", err)
+	} else if _, ok := host.(*v7HostFullGateProvider); !ok {
+		t.Fatalf("empty profile resolved to %T, want host", host)
+	}
 	provider, err := newV7FullGateProvider("unused", t.TempDir(), t.TempDir())
 	if err == nil || provider != nil || errorToIssue(err).Code != v7FullGateProviderUnsupportedPlatformCode {
 		t.Fatalf("provider resolution = provider=%v err=%v, want typed refusal", provider, err)

@@ -23,8 +23,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// This is intentionally a provider boundary, not a Darwin process-tree
-// implementation. Darwin exposes useful identity facts (audit PID versions,
+// The configured isolation provider is intentionally a provider boundary, not
+// a Darwin process-tree implementation. Darwin exposes useful identity facts (audit PID versions,
 // start times, SessionCreate), but no public unprivileged API that can
 // enumerate and terminate every process in a launch/audit scope after a
 // double-fork/reparent. A provider must own a container or VM and make its
@@ -276,6 +276,9 @@ var v7FullGateProviderRegistryPath = func(stateRoot string) string {
 }
 
 var newV7FullGateProvider = func(profile, repoRoot, stateRoot string) (v7FullGateProvider, error) {
+	if strings.TrimSpace(profile) == "" {
+		return &v7HostFullGateProvider{}, nil
+	}
 	if err := v7FullGateProviderPlatformError(); err != nil {
 		return nil, err
 	}
@@ -293,6 +296,70 @@ var newV7FullGateProvider = func(profile, repoRoot, stateRoot string) (v7FullGat
 		return nil, fmt.Errorf("%w: trusted provider executable must not be repository-local", errV7FullGateProvider)
 	}
 	return &v7ExternalFullGateProvider{path: path, kind: trusted.Kind, identity: identity, executableIdentity: executableIdentity, runtimeDigest: trusted.RuntimeDigest, clientDigest: trusted.ClientDigest, policyDigest: trusted.PolicyDigest, attestationDigest: trusted.AttestationDigest, capabilities: append([]string(nil), trusted.Capabilities...), implementationID: trusted.ImplementationID, capabilitySchema: trusted.CapabilitySchema, imageOrVMID: trusted.ImageOrVMID, profile: profile, stateRoot: state.path, state: state, recoveryRoot: filepath.Join(state.path, "full-gate-recovery")}, nil
+}
+
+// Host receipts certify the command result and its binding, not container/VM isolation.
+const v7HostFullGateProfile = "host"
+
+type v7HostFullGateProvider struct{ binding v7FullGateProviderBinding }
+
+func (p *v7HostFullGateProvider) Close() error { return nil }
+
+func (p *v7HostFullGateProvider) BindFullGateProvider(binding v7FullGateProviderBinding) error {
+	if binding.ProjectID == "" || binding.DepartureID == "" || binding.CandidateDigest == "" || binding.GateProfile == "" || binding.ProviderProfile != v7HostFullGateProfile || binding.Toolchain == "" || binding.ArtifactRef == "" {
+		return fmt.Errorf("%w: incomplete host full-gate binding", errV7FullGateProvider)
+	}
+	p.binding = binding
+	return nil
+}
+
+func v7HostFullGateReceipt(binding v7FullGateProviderBinding, command, output string, outcome v7FullGateOutcome) GateProviderReceipt {
+	receipt := GateProviderReceipt{
+		Schema: v7FullGateProviderSchema, Outcome: string(outcome), ProjectID: binding.ProjectID, DepartureID: binding.DepartureID,
+		CandidateDigest: binding.CandidateDigest, CommandDigest: v7FullGateTextDigest(command), Profile: binding.GateProfile,
+		ProviderProfile: v7HostFullGateProfile, Toolchain: binding.Toolchain, OutputDigest: v7FullGateTextDigest(output),
+		ProviderDigest: v7FullGateTextDigest("host:command-runner"), ProviderClosureDigest: v7FullGateTextDigest("host:no-isolation"),
+		ClientDigest: v7FullGateTextDigest("host:client"), RuntimeDigest: v7FullGateTextDigest("host:runtime"),
+		PolicyDigest: v7FullGateTextDigest("host:policy"), AttestationDigest: v7FullGateTextDigest("host:attestation"),
+		ImageOrVMID: v7FullGateTextDigest("host:no-image"), CapabilitiesDigest: v7FullGateTextDigest("host:capabilities"),
+		ContainmentDigest: v7FullGateTextDigest("host:no-containment"), CleanupDigest: v7FullGateTextDigest("host:command-finished"),
+		CleanupCertified: true,
+	}
+	receipt.RequestDigest = v7FullGateStringsDigest([]string{receipt.ProjectID, receipt.DepartureID, receipt.CandidateDigest, receipt.CommandDigest, receipt.Profile, receipt.ProviderProfile, receipt.Toolchain})
+	receipt.LifecycleID = receipt.RequestDigest
+	receipt.ResultDigest = v7FullGateStringsDigest([]string{receipt.RequestDigest, receipt.OutputDigest, receipt.Outcome})
+	receipt.ReceiptDigest = v7FullGateStringsDigest([]string{receipt.ResultDigest, receipt.CleanupDigest})
+	return receipt
+}
+
+func (p *v7HostFullGateProvider) MatchesGateProviderReceipt(receipt *GateProviderReceipt) bool {
+	if !v7CertifiedGateProviderReceipt(receipt) || receipt.ProviderProfile != v7HostFullGateProfile {
+		return false
+	}
+	expected := v7HostFullGateReceipt(v7FullGateProviderBinding{ProjectID: receipt.ProjectID, DepartureID: receipt.DepartureID, CandidateDigest: receipt.CandidateDigest, GateProfile: receipt.Profile, Toolchain: receipt.Toolchain}, "", "", v7FullGateOutcomePassed)
+	expected.CommandDigest, expected.OutputDigest = receipt.CommandDigest, receipt.OutputDigest
+	expected.RequestDigest = v7FullGateStringsDigest([]string{expected.ProjectID, expected.DepartureID, expected.CandidateDigest, expected.CommandDigest, expected.Profile, expected.ProviderProfile, expected.Toolchain})
+	expected.LifecycleID = expected.RequestDigest
+	expected.ResultDigest = v7FullGateStringsDigest([]string{expected.RequestDigest, expected.OutputDigest, expected.Outcome})
+	expected.ReceiptDigest = v7FullGateStringsDigest([]string{expected.ResultDigest, expected.CleanupDigest})
+	return *receipt == expected
+}
+
+func (p *v7HostFullGateProvider) Run(ctx context.Context, workspace, command string) (v7FullGateProviderInvocation, error) {
+	if p.binding.ProjectID == "" {
+		return v7FullGateProviderInvocation{Outcome: v7FullGateOutcomeProvider}, fmt.Errorf("%w: host gate is unbound", errV7FullGateProvider)
+	}
+	output, err := runGateCommandContext(ctx, workspace, command)
+	outcome := v7FullGateOutcomePassed
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		outcome = v7FullGateOutcomeTimedOut
+	} else if ctx.Err() != nil {
+		outcome = v7FullGateOutcomeCanceled
+	} else if err != nil {
+		outcome = v7FullGateOutcomeFailed
+	}
+	receipt := v7HostFullGateReceipt(p.binding, command, output, outcome)
+	return v7FullGateProviderInvocation{Output: []byte(output), Outcome: outcome, Receipt: receipt}, err
 }
 
 type v7ExternalFullGateProvider struct {
