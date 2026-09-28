@@ -98,6 +98,53 @@ func TestDepartureCheckProjectSelectsRegisteredVault(t *testing.T) {
 	if err := departureCheckCmd(Args{"project": "missing", "state-root": stateRoot}); err == nil || !strings.Contains(err.Error(), "project not found: missing") {
 		t.Fatalf("missing project error = %v", err)
 	}
+	// With --vault, a key still resolves to the id the gate records use.
+	output = captureStdout(t, func() {
+		if err := departureCheckCmd(Args{"vault": targetVault, "project": project.ProjectKey, "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := json.Unmarshal([]byte(output), &payload); err != nil || payload.Decision.ProjectID != project.ProjectID {
+		t.Fatalf("--vault --project <key> planned %q, want %q (%v)", payload.Decision.ProjectID, project.ProjectID, err)
+	}
+	if err := departureCheckCmd(Args{"vault": otherVault, "project": project.ProjectID}); err == nil || !strings.Contains(err.Error(), "different vault") {
+		t.Fatalf("mismatched vault error = %v", err)
+	}
+}
+
+func TestDepartureProjectIDPrefersIDAndRefusesAmbiguousName(t *testing.T) {
+	stateRoot := t.TempDir()
+	registerDepartureTestProject(t, stateRoot, "alpha")
+	registerDepartureTestProject(t, stateRoot, "beta")
+	registerDepartureTestProject(t, stateRoot, "gamma")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	projects, err := store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// beta is named after alpha's id; alpha and gamma share a name.
+	for _, project := range projects {
+		project.Name = "shared"
+		if project.ProjectID == "beta" {
+			project.Name = "alpha"
+		}
+		if err := store.UpsertProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if id, err := departureProjectID(store, "alpha"); err != nil || id != "alpha" {
+		t.Fatalf("id lookup = %q %v, want alpha", id, err)
+	}
+	if id, err := departureProjectID(store, "key-beta"); err != nil || id != "beta" {
+		t.Fatalf("key lookup = %q %v, want beta", id, err)
+	}
+	if _, err := departureProjectID(store, "shared"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous name error = %v", err)
+	}
 }
 
 func TestDepartureCLIStatusAndBoundedHistoryJSON(t *testing.T) {
@@ -583,8 +630,15 @@ func registerDepartureTestProject(t *testing.T, stateRoot, projectID string) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	vault := departurePlannerTestVault(t)
-	project := newRegisteredProject(filepath.Dir(vault), vault)
+	repo := t.TempDir()
+	vault := filepath.Join(repo, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDefaultWorkflow(vault); err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(repo, vault)
 	project.ProjectID, project.ProjectKey = projectID, "key-"+projectID
 	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)

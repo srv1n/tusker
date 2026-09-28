@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -27,12 +28,38 @@ func departureProjectID(store *RuntimeStore, raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, project := range loadedRegisteredProjects(loaded) {
-		if project.ProjectID == raw || project.ProjectKey == raw || project.Name == raw {
-			return project.ProjectID, nil
+	projects := loadedRegisteredProjects(loaded)
+	// An exact id wins over a key, and a key over a name: names are not unique,
+	// and one project's name may equal another project's id.
+	for _, match := range []func(RegisteredProject) bool{
+		func(p RegisteredProject) bool { return p.ProjectID == raw },
+		func(p RegisteredProject) bool { return p.ProjectKey == raw },
+		func(p RegisteredProject) bool { return p.Name == raw },
+	} {
+		var found []string
+		for _, project := range projects {
+			if match(project) {
+				found = append(found, project.ProjectID)
+			}
+		}
+		if len(found) > 1 {
+			return "", tuskerError(errorInvalidArg, "project name is ambiguous: "+raw+"; use the project id or key")
+		}
+		if len(found) == 1 {
+			return found[0], nil
 		}
 	}
 	return "", tuskerError(errorNotFound, "project not found: "+raw)
+}
+
+func sameResolvedPath(left, right string) bool {
+	if l, err := filepath.EvalSymlinks(left); err == nil {
+		left = l
+	}
+	if r, err := filepath.EvalSymlinks(right); err == nil {
+		right = r
+	}
+	return sameCleanPath(left, right)
 }
 
 func departureCheckCmd(args Args) error {
@@ -60,6 +87,25 @@ func departureCheckCmd(args Args) error {
 		vaultPath, err = resolveVaultPath(args, false)
 		if err != nil {
 			return err
+		}
+		// A registered project is named by its id in gate records, so resolve a
+		// key or name here too. An unregistered id stays a read-only preview.
+		store, openErr := OpenRuntimeStore(firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot()))
+		if openErr != nil {
+			return openErr
+		}
+		defer store.Close()
+		if resolved, resolveErr := departureProjectID(store, projectID); resolveErr == nil {
+			project, lookupErr := projectByID(store, resolved)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if !sameResolvedPath(project.VaultRoot, vaultPath) {
+				return tuskerError(errorInvalidArg, "project "+projectID+" is registered for a different vault: "+project.VaultRoot)
+			}
+			projectID = resolved
+		} else if typed, ok := resolveErr.(*TuskerError); !ok || typed.Code != errorNotFound {
+			return resolveErr
 		}
 	}
 	wf, err := loadWorkflow(vaultPath)
