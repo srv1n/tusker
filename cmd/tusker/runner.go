@@ -423,6 +423,7 @@ func runnerEnv(req runnerLaunchEnv) []string {
 	if req.WorkspaceStrategy == WorkspaceStrategyShared {
 		baseEnv = setEnvValue(baseEnv, "TUSKER_SHARED_CHECKOUT", "1")
 	}
+	baseEnv = sharedReviewCargoTargetEnv(baseEnv, req.WorkspacePath, req.RepoRoot)
 	return append(baseEnv,
 		"TUSKER_PROJECT_ID="+req.ProjectID,
 		"TUSKER_CANONICAL_PROJECT_ID="+canonicalProjectID,
@@ -467,6 +468,16 @@ func runnerEnv(req runnerLaunchEnv) []string {
 		"TUSKER_EXTENSION_ALLOW_TUSKER_READ_TOOLS="+fmt.Sprintf("%t", extensionPolicy.AllowTuskerReadTools),
 		"TUSKER_EXTENSION_POLICY_JSON="+string(extensionPolicyJSON),
 	)
+}
+
+// sharedReviewCargoTargetEnv lets a worker running outside a shared checkout
+// (a shared-checkout review worktree) reuse the checkout's cargo build cache.
+func sharedReviewCargoTargetEnv(env []string, workspace, repoRoot string) []string {
+	if strings.TrimSpace(repoRoot) == "" || sameCanonicalProjectPath(workspace, repoRoot) || !sharedWorkspaceMetadata(repoRoot) ||
+		runnerEnvValue(env, "CARGO_TARGET_DIR") != "" {
+		return env
+	}
+	return setEnvValue(env, "CARGO_TARGET_DIR", filepath.Join(repoRoot, "target"))
 }
 
 func runnerEnvValue(env []string, key string) string {

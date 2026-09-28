@@ -52,8 +52,11 @@ type WorkspacePrepareRequest struct {
 	// workspace root at once. Zero leaves the cap off. The number is measured,
 	// not guessed (see .tusker/specs/build-and-test-economics.md). Opening a new
 	// work copy past the cap is refused before any git worktree is created.
-	MaxLiveWorktrees   int
-	AllowDirtyTracked  bool
+	MaxLiveWorktrees  int
+	AllowDirtyTracked bool
+	// DetachedCommit materializes a detached worktree at this commit instead of
+	// a task branch: a shared-checkout review runs on the submitted commit.
+	DetachedCommit     string
 	startingDirtyPaths []string
 }
 
@@ -197,8 +200,6 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 	return offenders, nil
 }
 
-// sharedCheckoutRunHoldsWork reports whether an execute run still owns edits in
-// the checkout: running, or paused in a state it can resume from.
 // sharedCheckoutRunHoldsWork reports whether a run owns its scope's files in
 // the shared checkout: while it executes, and after submit until its work
 // lands (a live review-lane run). Counting only executing runs let the next
@@ -315,9 +316,9 @@ func activeWorkspacePaths(stateRoot string) (map[string]struct{}, bool) {
 		return nil, false
 	}
 	// ponytail: scan recorded runs at the workspace cap; use an active-path query if history makes preparation slow.
-	runs, listErr := store.ListRuns()
-	closeErr := store.Close()
-	if listErr != nil || closeErr != nil {
+	defer store.Close()
+	runs, err := store.ListRuns()
+	if err != nil {
 		return nil, false
 	}
 	active := make(map[string]struct{})
@@ -326,6 +327,15 @@ func activeWorkspacePaths(stateRoot string) (map[string]struct{}, bool) {
 			continue
 		}
 		active[workspacePathIdentity(run.WorkspacePath)] = struct{}{}
+		// A shared-checkout review runs in its own worktree, recorded on the
+		// attempt rather than the run.
+		review, err := sharedReviewWorkspace(store, run)
+		if err != nil {
+			return nil, false
+		}
+		if review != "" {
+			active[workspacePathIdentity(review)] = struct{}{}
+		}
 	}
 	return active, true
 }
@@ -631,6 +641,9 @@ func validateWorkspaceMetadata(metadata WorkspaceMetadata, req WorkspacePrepareR
 
 func workspaceKeyForRequest(req WorkspacePrepareRequest) string {
 	recordID := strings.TrimSpace(req.RecordID)
+	if commit := strings.TrimSpace(req.DetachedCommit); commit != "" {
+		return recordID + "__review-" + sanitizeWorkspaceKey(commit[:min(12, len(commit))])
+	}
 	branchName := strings.TrimSpace(req.BranchName)
 	if branchName == "" {
 		return recordID
@@ -661,6 +674,14 @@ func sanitizeWorkspaceKey(value string) string {
 		return "branch"
 	}
 	return cleaned
+}
+
+// prepareSharedReviewWorktree materializes a detached worktree of a shared
+// checkout's submitted commit under the project's usual worktree root.
+func prepareSharedReviewWorktree(m WorkspaceManager, req WorkspacePrepareRequest, commit string) (string, error) {
+	req.Strategy, req.BranchName, req.BranchBase, req.DetachedCommit = WorkspaceStrategyWorktree, "", "", commit
+	prepared, err := m.Prepare(req)
+	return prepared.Path, err
 }
 
 func (m *FSWorkspaceManager) Cleanup(path string) error {
@@ -739,7 +760,7 @@ func (m *FSWorkspaceManager) materializeWorkspace(workspacePath string, req Work
 			args = append(args, "-b", branch, workspacePath, firstNonEmpty(strings.TrimSpace(req.BranchBase), "HEAD"))
 		}
 	} else {
-		args = []string{"-C", req.RepoRoot, "worktree", "add", "--detach", workspacePath, "HEAD"}
+		args = []string{"-C", req.RepoRoot, "worktree", "add", "--detach", workspacePath, firstNonEmpty(strings.TrimSpace(req.DetachedCommit), "HEAD")}
 	}
 	if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("materialize %s workspace: %w: %s", req.Strategy, err, strings.TrimSpace(string(output)))

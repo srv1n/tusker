@@ -578,12 +578,7 @@ func reviewImplementationParent(store *RuntimeStore, vault, projectID, recordID 
 		}
 		currentScope, scopeErr := canonicalTaskMaterialScope(vault, note)
 		currentGeneratedOutputScope, generatedScopeErr := taskGeneratedOutputScope(note)
-		// A shared-checkout submission also commits the unowned strays it
-		// recorded, so they belong to the reviewed material.
-		expectedScope := sortedUniqueStrings(append(append([]string(nil), currentScope...), parent.EndState.StrayPaths...))
-		submittedScope := sortedUniqueStrings(append([]string(nil), parent.EndState.MaterialScope...))
-		if scopeErr != nil || generatedScopeErr != nil ||
-			strings.Join(expectedScope, "\x00") != strings.Join(submittedScope, "\x00") ||
+		if scopeErr != nil || generatedScopeErr != nil || !submittedMaterialScopeMatches(currentScope, parent) ||
 			strings.Join(currentGeneratedOutputScope, "\x00") != strings.Join(parent.EndState.GeneratedOutputScope, "\x00") {
 			return RunAttempt{}, "", tuskerError(errorInvalidTransition, "review refused: declared implementation material scope changed after execute submission")
 		}
@@ -594,6 +589,15 @@ func reviewImplementationParent(store *RuntimeStore, vault, projectID, recordID 
 		return parent, material, nil
 	}
 	return RunAttempt{}, "", tuskerError(errorInvalidTransition, "review requires a successful execute attempt bound to the current source")
+}
+
+// submittedMaterialScopeMatches reports whether the task's declared scope is
+// still the one execute submitted. A shared-checkout submission also commits
+// the unowned strays it recorded, so they belong to the reviewed material.
+func submittedMaterialScopeMatches(scope []string, parent RunAttempt) bool {
+	expected := sortedUniqueStrings(append(append([]string(nil), scope...), parent.EndState.StrayPaths...))
+	submitted := sortedUniqueStrings(append([]string(nil), parent.EndState.MaterialScope...))
+	return strings.Join(expected, "\x00") == strings.Join(submitted, "\x00")
 }
 
 func verifiedImplementationWorkspaceMaterial(parent RunAttempt) (string, error) {

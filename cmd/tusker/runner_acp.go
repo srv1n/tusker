@@ -1027,7 +1027,7 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 	if req.AttemptID != "" {
 		out = buildLaneWorkerEnv(out)
 	}
-	return out
+	return sharedReviewCargoTargetEnv(out, req.WorkspacePath, req.RepoRoot)
 }
 
 // devinReviewerPreamble keeps a plan-mode Devin reviewer from stopping at

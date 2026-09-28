@@ -2866,7 +2866,20 @@ func (d *Daemon) runLeaseRenewalDispatchable(project RegisteredProject, wf Workf
 	return containsString(wf.Tracker.ActiveStates, status)
 }
 
+// reconcileRun removes a shared-checkout review worktree once its review
+// attempt has ended, whatever the outcome.
 func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus) (RunStatus, bool, error) {
+	updated, changed, err := d.reconcileRunAttempt(ctx, project, wfFile, run)
+	if err == nil && run.Lane == runLaneReview && isDispatchingLeaseState(run.LeaseState) &&
+		(!isDispatchingLeaseState(updated.LeaseState) || updated.ActiveAttemptID != run.ActiveAttemptID) {
+		if path, _ := sharedReviewWorkspace(d.store, run); path != "" {
+			_ = cleanupWorkspacePath(path)
+		}
+	}
+	return updated, changed, err
+}
+
+func (d *Daemon) reconcileRunAttempt(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus) (RunStatus, bool, error) {
 	switch LeaseState(run.LeaseState) {
 	case LeaseStateClaimed, LeaseStateRunning:
 	default:
@@ -3125,7 +3138,8 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 				// A reviewer that changed its worktree cannot submit authority. This
 				// check precedes proposal persistence so dirty output never becomes a
 				// durable review result.
-				if reason := reviewerWorkspaceDirtyReason(run.WorkspacePath); reason != "" {
+				reviewWorkspace, _ := sharedReviewWorkspace(d.store, run)
+				if reason := reviewerWorkspaceDirtyReason(firstNonEmpty(reviewWorkspace, run.WorkspacePath)); reason != "" {
 					parentAttemptID := run.ActiveAttemptID
 					parentSessionRef := run.SessionRef
 					updateRunAttemptFromRun(d.store, run, AttemptOutcomeBlocked, 1, reason, finished)
@@ -4713,12 +4727,16 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	}
 	parentAttemptID := ""
 	childType := ""
+	reviewCommit := ""
 	if lane == runLaneReview {
 		parent, parentErr := daemonReviewImplementationAttempt(d.store, project.VaultRoot, run, note)
 		if parentErr != nil {
 			return run, false, parentErr
 		}
 		parentAttemptID = parent.AttemptID
+		if workspaceStrategy == WorkspaceStrategyShared {
+			reviewCommit = parent.EndState.HeadSHA
+		}
 	} else if recoveryParent, recoveryErr := pendingOutcomeUnknownRecoveryParent(d.store, previousRun); recoveryErr != nil {
 		return run, false, recoveryErr
 	} else if recoveryParent != "" {
@@ -4832,6 +4850,15 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if err := mirrorApplyInputsIntoWorkspace(d.store, project, run, workspace.Path); err != nil {
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
+	// A shared-checkout reviewer runs in a throwaway worktree of the submitted
+	// commit: the checkout carries other tasks' uncommitted edits. The run keeps
+	// the checkout as its workspace so it still owns its files there.
+	workingDir := workspace.Path
+	if reviewCommit != "" {
+		if workingDir, err = prepareSharedReviewWorktree(workspaceManager, workspaceRequest, reviewCommit); err != nil {
+			return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
+		}
+	}
 
 	runDir := filepath.Join(d.stateRoot, "runs", project.ProjectKey, run.RecordID)
 	if err := ensureDir(runDir); err != nil {
@@ -4843,7 +4870,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	rawLogPath := filepath.Join(runDir, attemptStem+".raw.log")
 	statusPath := filepath.Join(runDir, attemptStem+".status.json")
 	attempt := attemptIntent
-	attempt.WorkspacePath = workspace.Path
+	attempt.WorkspacePath = workingDir
 	attempt.PromptPath = promptPath
 	attempt.EventSinkPath = eventSinkPath
 	attempt.RawLogPath = rawLogPath
@@ -4862,7 +4889,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		return d.persistClaimedDispatchFailure(project, wfFile.Data, run, attemptID, leaseGeneration, err)
 	}
 
-	prompt, err := renderAttemptPrompt(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store)
+	prompt, err := renderAttemptPrompt(project, wfFile, note, workingDir, ordinal, attemptID, lane, run, previousRun, d.store)
 	if err != nil {
 		attempt.Outcome = string(AttemptOutcomeFailed)
 		attempt.LastError = err.Error()
@@ -4919,8 +4946,8 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		WorkRevision:           run.WorkRevision,
 		LeaseGeneration:        run.LeaseGeneration,
 		ActiveStates:           wfFile.Data.Tracker.ActiveStates,
-		WorkingDir:             workspace.Path,
-		WorkspacePath:          workspace.Path,
+		WorkingDir:             workingDir,
+		WorkspacePath:          workingDir,
 		RepoRoot:               project.RepoRoot,
 		PromptPath:             promptPath,
 		EventSinkPath:          eventSinkPath,
@@ -4975,7 +5002,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		// task packet in its provider history. Send only the current, durable
 		// identity and outcome delta. The helper falls back to the full prompt if
 		// any identity needed to safely bind that delta is missing.
-		resumedPrompt, promptErr := renderAttemptPromptForResume(project, wfFile, note, workspace.Path, ordinal, attemptID, lane, run, previousRun, d.store, resumeSession, continuationDeliveries...)
+		resumedPrompt, promptErr := renderAttemptPromptForResume(project, wfFile, note, workingDir, ordinal, attemptID, lane, run, previousRun, d.store, resumeSession, continuationDeliveries...)
 		if promptErr != nil {
 			attempt.Outcome = string(AttemptOutcomeFailed)
 			attempt.LastError = promptErr.Error()
