@@ -15,6 +15,8 @@ import (
 const (
 	defaultDiskPressureMinFreeBytes   uint64  = 2 << 30
 	defaultDiskPressureMinFreePercent float64 = 1
+	// The default byte floor never asks for more than this share of a filesystem.
+	defaultDiskPressureSmallFSPercent float64 = 10
 
 	diskPressureConfigSettingKey = "disk_pressure_config"
 	diskPressureStatusSettingKey = "disk_pressure_status"
@@ -353,6 +355,13 @@ func evaluateDiskPressure(config DiskPressureConfig, paths []diskPressurePath, s
 				}
 				percentFloor := diskPressurePercentBytes(observation.TotalBytes, config.MinFreePercent)
 				observation.EffectiveThresholdBytes = config.MinFreeBytes
+				// The default byte floor is meant for ordinary disks; on a small
+				// filesystem (a tmpfs, a VM disk) it could never be satisfied.
+				if config.Source == "default" {
+					if smallCap := diskPressurePercentBytes(observation.TotalBytes, defaultDiskPressureSmallFSPercent); smallCap < observation.EffectiveThresholdBytes {
+						observation.EffectiveThresholdBytes = smallCap
+					}
+				}
 				if percentFloor > observation.EffectiveThresholdBytes {
 					observation.EffectiveThresholdBytes = percentFloor
 				}

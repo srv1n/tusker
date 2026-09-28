@@ -35,6 +35,9 @@ type automationCommandContext struct {
 	StateActiveRuns    map[string]int
 	DispatchRefusal    string
 	runnerCache        map[string]runnerResolution
+	// daemonOwned marks the daemon's own plan check; the daemon measures disk
+	// pressure itself at claim time, so a stored reading must not block it.
+	daemonOwned bool
 }
 
 type runnerResolution struct {
@@ -669,6 +672,14 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		blockers = append(blockers, "invariant sentinel: "+err.Error())
 	} else if reason != "" {
 		blockers = append(blockers, reason)
+	}
+	// Read the daemon's last measurement; explain must not write a new one.
+	if !ctx.daemonOwned {
+		if pressure, err := ctx.Store.DiskPressureStatus(); err != nil {
+			blockers = append(blockers, "disk pressure: "+err.Error())
+		} else if pressure.DispatchPaused {
+			blockers = append(blockers, diskPressureDispatchReason(pressure))
+		}
 	}
 	blockers = append(blockers, ctx.concurrencyBlockers(note, run)...)
 	fanout := ctx.fanoutSummary(recordID)

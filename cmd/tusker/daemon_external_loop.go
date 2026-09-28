@@ -628,6 +628,7 @@ func (d *Daemon) automationContextForDaemon(project RegisteredProject, wfFile Wo
 		ProjectRuns:        map[string]RunStatus{},
 		NoteStatusByRecord: map[string]string{},
 		StateActiveRuns:    map[string]int{},
+		daemonOwned:        true,
 	}
 	for _, note := range notes {
 		if daemonNoteKind(note) != "task" {

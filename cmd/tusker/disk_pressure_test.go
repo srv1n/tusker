@@ -13,6 +13,23 @@ import (
 	"time"
 )
 
+func TestDiskPressureDefaultFloorScalesDownOnSmallFilesystem(t *testing.T) {
+	// A 1 GiB filesystem with 512 MiB free can never reach the 2 GiB default.
+	small := func(string) (diskFilesystemStat, error) {
+		return diskFilesystemStat{Blocks: 1024, AvailableBlocks: 512, BlockSize: 1 << 20}, nil
+	}
+	paths := []diskPressurePath{{Kind: "workspace", Path: t.TempDir()}}
+	status := evaluateDiskPressure(defaultDiskPressureConfig(), paths, small, time.Now())
+	assertEqual(t, "ok", status.State, "default floor on a small filesystem")
+	assertEqual(t, uint64(diskPressurePercentBytes(1<<30, 10)), status.EffectiveThresholdBytes, "floor capped at 10% of the filesystem")
+
+	// An explicit byte floor is taken as written.
+	explicit := defaultDiskPressureConfig()
+	explicit.Source = "runtime"
+	status = evaluateDiskPressure(explicit, paths, small, time.Now())
+	assertEqual(t, "paused", status.State, "explicit floor is not capped")
+}
+
 func TestDiskPressureDefaultsEffectiveFloorWarningAndDisable(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	workspacePath := filepath.Join(t.TempDir(), "workspaces", "APP-T-0001")
@@ -611,4 +628,43 @@ func TestServeDiskPressureLimitsForwardRuntimeSettings(t *testing.T) {
 	var daemonStatus serveDaemonStatus
 	serveDecode(t, server, "/api/daemon", &daemonStatus)
 	assertEqual(t, "disabled", daemonStatus.DiskPressure.State, "Serve disk pressure disabled status")
+}
+
+func TestAutomationExplainReportsDiskPressurePause(t *testing.T) {
+	vault := automationTestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Disk blocked", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
+	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
+	registerAutomationTestProject(t, vault)
+	setAllEligibleDispatchScopeForAutomationTest(t, vault)
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, diskStat: func(string) (diskFilesystemStat, error) {
+		return diskFilesystemStat{Blocks: 100, AvailableBlocks: 1, BlockSize: 1 << 30}, nil
+	}}
+	if _, err := daemon.checkDiskPressureForDispatch(""); err != nil {
+		t.Fatal(err)
+	}
+	note, err := resolveNote(vault, "APP-T-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := loadAutomationCommandContext(Args{"vault": vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+	explanation := ctx.explainTask(note)
+	if explanation.Dispatchable || !strings.Contains(strings.Join(explanation.Blockers, "; "), diskPressureErrorPrefix) {
+		t.Fatalf("explain hid the disk-pressure pause: %#v", explanation.Blockers)
+	}
+	// The daemon's own plan check measures at claim time and ignores the stored reading.
+	ctx.daemonOwned = true
+	for _, blocker := range ctx.explainTask(note).Blockers {
+		if strings.Contains(blocker, diskPressureErrorPrefix) {
+			t.Fatalf("daemon plan check blocked on a stored reading: %q", blocker)
+		}
+	}
 }
