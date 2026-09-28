@@ -9,6 +9,9 @@ import (
 )
 
 func main() {
+	if filepath.Base(os.Args[0]) == buildLaneRustcWrapper {
+		os.Exit(runRustcWrapper(os.Args[1:]))
+	}
 	if tool := filepath.Base(os.Args[0]); tool == "cargo" || tool == "xcodebuild" || tool == "swift" {
 		os.Exit(runBuildLane(tool, os.Args[1:]))
 	}

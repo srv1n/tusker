@@ -22,6 +22,8 @@ type buildLaneStats struct {
 	Commands           []string
 }
 
+// buildLaneEntry is one xcodebuild/swift build, or one rustc compile. Rustc
+// lines carry Local and are grouped into builds by target dir and cargo pid.
 type buildLaneEntry struct {
 	At           time.Time `json:"at"`
 	ProjectID    string    `json:"project_id"`
@@ -29,6 +31,64 @@ type buildLaneEntry struct {
 	Cold         bool      `json:"cold"`
 	WaitMS       int64     `json:"wait_ms"`
 	CompiledDeps int       `json:"compiled_deps"`
+	Target       string    `json:"target"`
+	CargoPID     int       `json:"cargo_pid"`
+	Crate        string    `json:"crate"`
+	Local        *bool     `json:"local"`
+}
+
+// groupRustcBuilds folds rustc lines into one entry per cargo build: the
+// latest time, the longest slot wait, and the dependency crates compiled.
+// The first build of a target dir in the window counts as cold.
+func groupRustcBuilds(entries []buildLaneEntry) []buildLaneEntry {
+	type key struct {
+		target string
+		pid    int
+	}
+	builds := make([]buildLaneEntry, 0, len(entries))
+	started := map[int]time.Time{}
+	index := map[key]int{}
+	for _, entry := range entries {
+		if entry.Local == nil {
+			builds = append(builds, entry)
+			continue
+		}
+		k := key{entry.Target, entry.CargoPID}
+		i, ok := index[k]
+		if !ok {
+			i = len(builds)
+			index[k] = i
+			builds = append(builds, buildLaneEntry{At: entry.At, ProjectID: entry.ProjectID, Target: entry.Target, Cmd: "cargo rebuilt"})
+			started[i] = entry.At
+		}
+		build := &builds[i]
+		if entry.At.After(build.At) {
+			build.At = entry.At
+		}
+		if entry.At.Before(started[i]) {
+			started[i] = entry.At
+		}
+		if entry.WaitMS > build.WaitMS {
+			build.WaitMS = entry.WaitMS
+		}
+		if !*entry.Local {
+			build.CompiledDeps++
+			if build.CompiledDeps <= 3 {
+				build.Cmd += " " + entry.Crate
+			}
+		}
+	}
+	order := make([]int, 0, len(started))
+	for i := range started {
+		order = append(order, i)
+	}
+	sort.Slice(order, func(a, b int) bool { return started[order[a]].Before(started[order[b]]) })
+	seen := map[string]bool{}
+	for _, i := range order {
+		builds[i].Cold = !seen[builds[i].Target]
+		seen[builds[i].Target] = true
+	}
+	return builds
 }
 
 var buildLaneCache struct {
@@ -73,6 +133,7 @@ func readBuildLaneStats(stateRoot string, now time.Time) map[string]buildLaneSta
 	}
 	stats := make(map[string]buildLaneStats, len(byProject))
 	for projectID, builds := range byProject {
+		builds = groupRustcBuilds(builds)
 		sort.Slice(builds, func(i, j int) bool { return builds[i].At.After(builds[j].At) })
 		if len(builds) > 10 {
 			builds = builds[:10]
@@ -89,7 +150,7 @@ func readBuildLaneStats(stateRoot string, now time.Time) map[string]buildLaneSta
 					rebuilds++
 				}
 			}
-			if build.CompiledDeps > 0 && build.Cmd != "" && !seen[build.Cmd] && len(result.Commands) < 3 {
+			if !build.Cold && build.CompiledDeps > 0 && build.Cmd != "" && !seen[build.Cmd] && len(result.Commands) < 3 {
 				seen[build.Cmd] = true
 				result.Commands = append(result.Commands, build.Cmd)
 			}
@@ -115,7 +176,7 @@ func buildAdmissionReason(stats buildLaneStats, lane string, activeExecute bool)
 		return fmt.Sprintf("waiting: build queue busy (median wait %ds)", stats.MedianWaitMS/1000)
 	}
 	if stats.WarmBuilds >= 5 && stats.DepRebuildRate > 0.3 && activeExecute {
-		return fmt.Sprintf("serial: dependency cache keeps rebuilding (commands: %s); mismatched build flags usually cause this", strings.Join(stats.Commands, ", "))
+		return fmt.Sprintf("serial: dependency cache keeps rebuilding (seen: %s); mismatched build flags usually cause this", strings.Join(stats.Commands, ", "))
 	}
 	return ""
 }

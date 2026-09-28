@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,7 +18,7 @@ func buildLaneFixture(t *testing.T, script string) string {
 	if err := os.Mkdir(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "cargo"), []byte("#!/bin/sh\n"+script+"\n"), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "swift"), []byte("#!/bin/sh\n"+script+"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -43,13 +44,7 @@ func buildLaneRecords(t *testing.T, root string) []map[string]any {
 	return records
 }
 
-func TestBuildLaneCompilingAndDigest(t *testing.T) {
-	w := &buildLaneStderr{}
-	_, _ = w.Write([]byte("   Compiling own v0.1.0 (/tmp/own)\nCompiling dep v1.0.0\nCom"))
-	_, _ = w.Write([]byte("piling gitdep v2.0.0 (https://example.com/repo)\n"))
-	if w.local != 1 || w.deps != 2 {
-		t.Fatalf("local=%d deps=%d", w.local, w.deps)
-	}
+func TestBuildLaneDigest(t *testing.T) {
 	t.Setenv("RUSTFLAGS", "-C opt-level=1")
 	cmd1, a := buildLaneSummary("cargo", []string{"build", "--release", "src/a.rs"})
 	cmd2, b := buildLaneSummary("cargo", []string{"build", "src/b.rs", "--release"})
@@ -72,7 +67,7 @@ func TestBuildLaneNestedSkipsLock(t *testing.T) {
 	defer lock.Close()
 	t.Setenv("TUSKER_BUILD_LANE_HELD", "1")
 	done := make(chan int, 1)
-	go func() { done <- runBuildLane("cargo", []string{"build"}) }()
+	go func() { done <- runBuildLane("swift", []string{"build"}) }()
 	select {
 	case code := <-done:
 		if code != 0 {
@@ -94,7 +89,7 @@ func TestBuildLaneSerializes(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			if code := runBuildLane("cargo", []string{"build"}); code != 0 {
+			if code := runBuildLane("swift", []string{"build"}); code != 0 {
 				t.Errorf("exit %d", code)
 			}
 		}()
@@ -106,17 +101,6 @@ func TestBuildLaneSerializes(t *testing.T) {
 	}
 }
 
-func TestBuildLaneSharedCheckoutGuard(t *testing.T) {
-	buildLaneFixture(t, "exit 0")
-	t.Setenv("TUSKER_SHARED_CHECKOUT", "1")
-	if code := runBuildLane("cargo", []string{"fmt"}); code != 2 {
-		t.Fatalf("fmt exit %d", code)
-	}
-	if code := runBuildLane("cargo", []string{"fmt", "--", "src/main.rs"}); code != 0 {
-		t.Fatalf("file fmt exit %d", code)
-	}
-}
-
 func TestBuildLaneWorkerEnv(t *testing.T) {
 	root := buildLaneFixture(t, "exit 0")
 	t.Setenv("TUSKER_STATE_ROOT", root)
@@ -125,10 +109,17 @@ func TestBuildLaneWorkerEnv(t *testing.T) {
 	if !strings.HasPrefix(runnerEnvValue(env, "PATH"), dir+string(os.PathListSeparator)) {
 		t.Fatalf("PATH=%q", runnerEnvValue(env, "PATH"))
 	}
-	for _, name := range []string{"cargo", "swift", "xcodebuild"} {
+	for _, name := range []string{"tusker-rustc", "swift", "xcodebuild"} {
 		if _, err := os.Readlink(filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if runnerEnvValue(env, "RUSTC_WRAPPER") != filepath.Join(dir, "tusker-rustc") || runnerEnvValue(env, "CARGO_BUILD_JOBS") == "" {
+		t.Fatalf("cargo env: RUSTC_WRAPPER=%q CARGO_BUILD_JOBS=%q", runnerEnvValue(env, "RUSTC_WRAPPER"), runnerEnvValue(env, "CARGO_BUILD_JOBS"))
+	}
+	chained := buildLaneWorkerEnv([]string{"PATH=/usr/bin", "RUSTC_WRAPPER=sccache"})
+	if runnerEnvValue(chained, "TUSKER_RUSTC_WRAPPER_NEXT") != "sccache" {
+		t.Fatal("existing RUSTC_WRAPPER was not chained")
 	}
 	if runnerEnvValue(env, "TUSKER_BUILD_LANE_STATE_ROOT") != root {
 		t.Fatal("state root not passed")
@@ -139,31 +130,50 @@ func TestBuildLaneWorkerEnv(t *testing.T) {
 	}
 }
 
-func TestBuildLaneHeavySkipsToolchainAndGlobalFlags(t *testing.T) {
-	if !buildLaneHeavy("cargo", []string{"+nightly", "-q", "check"}) || buildLaneHeavy("cargo", []string{"-q", "metadata"}) {
-		t.Fatal("subcommand detection must skip +toolchain and global flags")
+func TestBuildLaneHeavyOnlyForSwiftBuilds(t *testing.T) {
+	if !buildLaneHeavy("swift", []string{"test"}) || buildLaneHeavy("swift", []string{"package", "resolve"}) || buildLaneHeavy("cargo", []string{"build"}) {
+		t.Fatal("heavy detection")
 	}
 }
 
-func TestBuildLaneUnquietKeepsTestHarnessQuiet(t *testing.T) {
-	cases := []struct {
-		in, want []string
-		quiet    bool
-	}{
-		{[]string{"test", "-q", "-p", "alpha"}, []string{"test", "-p", "alpha", "--", "--quiet"}, true},
-		{[]string{"+nightly", "--quiet", "test", "--", "name"}, []string{"+nightly", "test", "--", "--quiet", "name"}, true},
-		{[]string{"check", "-q"}, []string{"check"}, true},
-		{[]string{"test", "--", "-q"}, []string{"test", "--", "-q"}, false},
+// TestRustcWrapperHelper is the child process for TestRustcWrapperQueuesAndLogs;
+// the wrapper execs rustc, so it cannot run inside the test process.
+func TestRustcWrapperHelper(t *testing.T) {
+	if os.Getenv("TUSKER_RUSTC_HELPER") != "1" {
+		t.Skip("helper process")
 	}
-	for _, c := range cases {
-		got, quiet := buildLaneUnquiet(c.in)
-		if quiet != c.quiet || strings.Join(got, " ") != strings.Join(c.want, " ") {
-			t.Fatalf("buildLaneUnquiet(%q) = %q, %v; want %q, %v", c.in, got, quiet, c.want, c.quiet)
+	os.Exit(runRustcWrapper(strings.Split(os.Getenv("TUSKER_RUSTC_ARGS"), " ")))
+}
+
+func TestRustcWrapperQueuesAndLogs(t *testing.T) {
+	root := t.TempDir()
+	out := filepath.Join(root, "ran")
+	rustc := filepath.Join(root, "rustc")
+	if err := os.WriteFile(rustc, []byte("#!/bin/sh\necho \"$@\" >> "+out+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cargoHome := filepath.Join(root, "cargo-home")
+	run := func(manifest string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestRustcWrapperHelper$")
+		cmd.Env = append(os.Environ(), "TUSKER_RUSTC_HELPER=1", "TUSKER_RUSTC_ARGS="+strings.Join(append([]string{rustc}, args...), " "),
+			"TUSKER_BUILD_LANE_STATE_ROOT="+filepath.Join(root, "state"), "CARGO_HOME="+cargoHome, "CARGO_MANIFEST_DIR="+manifest, "TUSKER_PROJECT_ID=p", "TUSKER_RUSTC_WRAPPER_NEXT=")
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("wrapper: %v\n%s", err, b)
 		}
 	}
-	for line, status := range map[string]bool{"   Compiling alpha v0.1.0 (/x)": true, "    Finished `test` profile": true, "warning: unused": false, "error[E0425]: x": false, "test result: ok": false} {
-		if cargoStatusLine.MatchString(line) != status {
-			t.Fatalf("cargoStatusLine(%q) != %v", line, status)
-		}
+	run("", "-vV")
+	run(filepath.Join(root, "ws", "crates", "alpha"), "--crate-name", "alpha", "src/lib.rs", "--out-dir", filepath.Join(root, "ws", "target", "debug", "deps"))
+	run(filepath.Join(cargoHome, "registry", "src", "serde-1.0.0"), "--crate-name", "serde", "src/lib.rs", "--out-dir", filepath.Join(root, "ws", "target", "debug", "deps"))
+	ran, err := os.ReadFile(out)
+	if err != nil || strings.Count(string(ran), "\n") != 3 {
+		t.Fatalf("rustc runs: %q %v", ran, err)
+	}
+	records := buildLaneRecords(t, filepath.Join(root, "state"))
+	if len(records) != 2 {
+		t.Fatalf("probe must not log; got %#v", records)
+	}
+	if records[0]["crate"] != "alpha" || records[0]["local"] != true || records[1]["local"] != false || records[1]["target"] != filepath.Join(root, "ws", "target") {
+		t.Fatalf("records: %#v", records)
 	}
 }

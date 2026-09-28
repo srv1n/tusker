@@ -37,7 +37,7 @@ func TestBuildAdmissionStats(t *testing.T) {
 	if got.Builds != 10 || got.WarmBuilds != 8 || got.MedianWaitMS != 4500 || got.DepRebuildRate != 0.5 {
 		t.Fatalf("stats: %+v", got)
 	}
-	if strings.Join(got.Commands, ",") != "cargo test 1,cargo test 3" {
+	if strings.Join(got.Commands, ",") != "cargo test 3,cargo test 1" {
 		t.Fatalf("commands: %v", got.Commands)
 	}
 	if other := readBuildLaneStats(root, now.Add(32*time.Minute)); len(other) != 0 {
@@ -88,7 +88,7 @@ func TestBuildAdmissionReasons(t *testing.T) {
 		t.Fatal(got)
 	}
 	rebuild := buildLaneStats{Builds: 5, WarmBuilds: 5, DepRebuildRate: 0.4, Commands: []string{"cargo test"}}
-	if got := buildAdmissionReason(rebuild, runLaneExecute, true); !strings.Contains(got, "serial: dependency cache keeps rebuilding (commands: cargo test)") || !strings.Contains(got, "mismatched build flags") {
+	if got := buildAdmissionReason(rebuild, runLaneExecute, true); !strings.Contains(got, "serial: dependency cache keeps rebuilding (seen: cargo test)") || !strings.Contains(got, "mismatched build flags") {
 		t.Fatal(got)
 	}
 	if got := buildAdmissionReason(rebuild, runLaneExecute, false); got != "" {
@@ -107,5 +107,27 @@ func TestBuildAdmissionReasons(t *testing.T) {
 	writeBuildAdmissionLog(t, root, "")
 	if stats := readBuildLaneStats(root, time.Now()); len(stats) != 0 {
 		t.Fatal(stats)
+	}
+}
+
+func TestBuildAdmissionGroupsRustcLines(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	var lines strings.Builder
+	line := func(at time.Duration, pid int, crate string, local bool, wait int) {
+		fmt.Fprintf(&lines, `{"at":%q,"project_id":"p","tool":"rustc","target":"/ws/target","cargo_pid":%d,"crate":%q,"local":%t,"wait_ms":%d}`+"\n", now.Add(-at).Format(time.RFC3339Nano), pid, crate, local, wait)
+	}
+	line(9*time.Minute, 1, "serde", false, 10) // cold first build
+	line(9*time.Minute, 1, "alpha", true, 500)
+	line(5*time.Minute, 2, "alpha", true, 0) // warm, local only
+	line(time.Minute, 3, "serde", false, 0)  // warm, rebuilt a dependency
+	line(time.Minute, 3, "tokio", false, 0)
+	writeBuildAdmissionLog(t, root, lines.String())
+	got := readBuildLaneStats(root, now)["p"]
+	if got.Builds != 3 || got.WarmBuilds != 2 || got.DepRebuildRate != 0.5 || got.MedianWaitMS != 0 {
+		t.Fatalf("stats: %+v", got)
+	}
+	if strings.Join(got.Commands, ",") != "cargo rebuilt serde tokio" {
+		t.Fatalf("commands: %v", got.Commands)
 	}
 }

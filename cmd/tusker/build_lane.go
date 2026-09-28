@@ -9,19 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 )
-
-var localCompile = regexp.MustCompile(`^\s*Compiling \S+ v\S+ \(/`)
-
-// cargoStatusLine matches cargo's right-aligned progress lines ("   Compiling x",
-// "    Finished ..."). Diagnostics ("warning:", "error:") are lowercase.
-var cargoStatusLine = regexp.MustCompile(`^\s+[A-Z][A-Za-z-]+ `)
 
 func buildLaneSettings() (bool, int) {
 	cfg, _, present, err := readTuskerConfigLayer(userGlobalTuskerConfigPath())
@@ -39,6 +32,10 @@ func buildLaneSettings() (bool, int) {
 	return true, slots
 }
 
+// buildLaneRustcWrapper is the argv0 cargo runs through RUSTC_WRAPPER. The
+// variable survives login shells, which rebuild PATH ahead of any PATH shim.
+const buildLaneRustcWrapper = "tusker-rustc"
+
 func ensureBuildLaneShims(stateRoot string) (string, error) {
 	dir := filepath.Join(stateRoot, "build-lane", "bin")
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -48,7 +45,10 @@ func ensureBuildLaneShims(stateRoot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, tool := range []string{"cargo", "xcodebuild", "swift"} {
+	// A cargo PATH shim lost to login shells that rebuild PATH; RUSTC_WRAPPER
+	// replaces it, so drop links left by older installs.
+	_ = os.Remove(filepath.Join(dir, "cargo"))
+	for _, tool := range []string{"xcodebuild", "swift", buildLaneRustcWrapper} {
 		link := filepath.Join(dir, tool)
 		target, err := os.Readlink(link)
 		if err == nil && target == exe {
@@ -86,6 +86,14 @@ func buildLaneWorkerEnv(env []string) []string {
 		return env
 	}
 	env = setEnvValue(env, "PATH", dir+string(os.PathListSeparator)+runnerEnvValue(env, "PATH"))
+	wrapper := filepath.Join(dir, buildLaneRustcWrapper)
+	if prev := runnerEnvValue(env, "RUSTC_WRAPPER"); prev != "" && prev != wrapper {
+		env = setEnvValue(env, "TUSKER_RUSTC_WRAPPER_NEXT", prev)
+	}
+	env = setEnvValue(env, "RUSTC_WRAPPER", wrapper)
+	if runnerEnvValue(env, "CARGO_BUILD_JOBS") == "" {
+		env = setEnvValue(env, "CARGO_BUILD_JOBS", fmt.Sprint(max(1, runtime.NumCPU()-2)))
+	}
 	return setEnvValue(env, "TUSKER_BUILD_LANE_STATE_ROOT", root)
 }
 
@@ -126,51 +134,12 @@ func buildLaneHeavy(tool string, args []string) bool {
 		}
 		return true
 	}
-	// Skip a rustup "+toolchain" and leading global flags to reach the subcommand.
-	for len(args) > 0 && (strings.HasPrefix(args[0], "+") || strings.HasPrefix(args[0], "-")) {
-		args = args[1:]
-	}
-	if len(args) == 0 {
-		return false
-	}
-	if tool == "swift" {
-		switch args[0] {
-		case "build", "test", "run":
-			return true
-		}
+	if tool != "swift" || len(args) == 0 {
 		return false
 	}
 	switch args[0] {
-	case "build", "b", "check", "c", "test", "t", "clippy", "run", "r", "bench", "doc", "rustc", "fix":
+	case "build", "test", "run":
 		return true
-	}
-	return false
-}
-
-func buildLaneGuard(tool string, args []string) bool {
-	if os.Getenv("TUSKER_SHARED_CHECKOUT") != "1" || tool != "cargo" || len(args) == 0 {
-		return false
-	}
-	switch args[0] {
-	case "fix":
-		return true
-	case "fmt":
-		for i, a := range args {
-			if a == "--" {
-				for _, file := range args[i+1:] {
-					if !strings.HasPrefix(file, "-") {
-						return false
-					}
-				}
-			}
-		}
-		return true
-	case "clippy":
-		for _, a := range args[1:] {
-			if a == "--fix" {
-				return true
-			}
-		}
 	}
 	return false
 }
@@ -239,79 +208,6 @@ func buildLaneSummary(tool string, args []string) (string, string) {
 	return display, hex.EncodeToString(sum[:])[:16]
 }
 
-// buildLaneUnquiet removes cargo's -q so the lane can count compiled crates.
-// The caller then hides cargo's status lines itself. For "test" the harness
-// stays quiet, so the agent sees the same output it asked for.
-func buildLaneUnquiet(args []string) ([]string, bool) {
-	out := make([]string, 0, len(args)+2)
-	quiet, sep := false, -1
-	for _, a := range args {
-		if sep < 0 && (a == "-q" || a == "--quiet") {
-			quiet = true
-			continue
-		}
-		if sep < 0 && a == "--" {
-			sep = len(out)
-		}
-		out = append(out, a)
-	}
-	sub := ""
-	for _, a := range out {
-		if !strings.HasPrefix(a, "+") && !strings.HasPrefix(a, "-") {
-			sub = a
-			break
-		}
-	}
-	if !quiet || sub != "test" {
-		return out, quiet
-	}
-	if sep < 0 {
-		return append(out, "--", "--quiet"), true
-	}
-	return append(out[:sep+1], append([]string{"--quiet"}, out[sep+1:]...)...), true
-}
-
-type buildLaneStderr struct {
-	deps, local int
-	quiet       bool
-	pending     string
-}
-
-func (w *buildLaneStderr) Write(p []byte) (int, error) {
-	if !w.quiet {
-		if _, err := os.Stderr.Write(p); err != nil {
-			return 0, err
-		}
-	}
-	w.pending += string(p)
-	for {
-		i := strings.IndexByte(w.pending, '\n')
-		if i < 0 {
-			break
-		}
-		raw := w.pending[:i+1]
-		line := strings.TrimSuffix(w.pending[:i], "\r")
-		w.pending = w.pending[i+1:]
-		if localCompile.MatchString(line) {
-			w.local++
-		} else if strings.HasPrefix(strings.TrimSpace(line), "Compiling ") {
-			w.deps++
-		}
-		if w.quiet && !cargoStatusLine.MatchString(line) {
-			os.Stderr.WriteString(raw)
-		}
-	}
-	return len(p), nil
-}
-
-// Flush writes a trailing line that had no newline.
-func (w *buildLaneStderr) Flush() {
-	if w.quiet && w.pending != "" && !cargoStatusLine.MatchString(w.pending) {
-		os.Stderr.WriteString(w.pending)
-	}
-	w.pending = ""
-}
-
 func appendBuildLaneLog(root string, record map[string]any) error {
 	dir := filepath.Join(root, "build-lane")
 	guard, err := os.OpenFile(filepath.Join(dir, "log.lock"), os.O_CREATE|os.O_RDWR, 0644)
@@ -334,7 +230,7 @@ func appendBuildLaneLog(root string, record map[string]any) error {
 		var lines []string
 		for scanner.Scan() {
 			lines = append(lines, scanner.Text())
-			if len(lines) > 2000 {
+			if len(lines) > 4000 {
 				lines = lines[1:]
 			}
 		}
@@ -364,11 +260,9 @@ func appendBuildLaneLog(root string, record map[string]any) error {
 	return err
 }
 
+// runBuildLane fronts xcodebuild and swift, which have no environment hook.
+// Cargo goes through runRustcWrapper instead.
 func runBuildLane(tool string, args []string) int {
-	if buildLaneGuard(tool, args) {
-		fmt.Fprintln(os.Stderr, "tusker: other agents share this checkout; format or fix only your files, e.g. rustfmt <file>...")
-		return 2
-	}
 	root := os.Getenv("TUSKER_BUILD_LANE_STATE_ROOT")
 	if root == "" {
 		root = DefaultStateRoot()
@@ -380,11 +274,10 @@ func runBuildLane(tool string, args []string) int {
 		return 1
 	}
 	heavy := buildLaneHeavy(tool, args) && os.Getenv("TUSKER_BUILD_LANE_HELD") != "1"
-	var slot *os.File
 	var waitMS int64
 	if heavy {
 		_, slots := buildLaneSettings()
-		slot, waitMS, err = buildLaneSlot(root, slots)
+		slot, wait, err := buildLaneSlot(root, slots)
 		if err != nil {
 			// A sandboxed worker may be unable to open the lock. Build anyway:
 			// an unqueued build is slower for the machine, a failed one is wrong.
@@ -392,49 +285,17 @@ func runBuildLane(tool string, args []string) int {
 			heavy = false
 		} else {
 			defer slot.Close()
+			waitMS = wait
 		}
 	}
-	cold := false
-	if heavy && tool == "cargo" {
-		target := os.Getenv("CARGO_TARGET_DIR")
-		if target == "" {
-			if top, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-				target = filepath.Join(strings.TrimSpace(string(top)), "target")
-			}
-		}
-		if target != "" {
-			_, err := os.Stat(target)
-			cold = os.IsNotExist(err)
-		}
-	}
-	runArgs := args
-	stderr := &buildLaneStderr{}
-	if heavy && tool == "cargo" {
-		runArgs, stderr.quiet = buildLaneUnquiet(args)
-	}
-	cmd := exec.Command(realTool, runArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	if heavy && tool == "cargo" {
-		cmd.Stderr = stderr
-	} else {
-		cmd.Stderr = os.Stderr
-	}
-	env := os.Environ()
+	cmd := exec.Command(realTool, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = os.Environ()
 	if heavy {
-		env = setEnvValue(env, "TUSKER_BUILD_LANE_HELD", "1")
+		cmd.Env = setEnvValue(cmd.Env, "TUSKER_BUILD_LANE_HELD", "1")
 	}
-	if tool == "cargo" && os.Getenv("CARGO_BUILD_JOBS") == "" {
-		jobs := runtime.NumCPU() - 2
-		if jobs < 1 {
-			jobs = 1
-		}
-		env = setEnvValue(env, "CARGO_BUILD_JOBS", fmt.Sprint(jobs))
-	}
-	cmd.Env = env
 	start := time.Now()
 	err = cmd.Run()
-	stderr.Flush()
 	buildMS := time.Since(start).Milliseconds()
 	code := 0
 	if err != nil {
@@ -451,10 +312,132 @@ func runBuildLane(tool string, args []string) int {
 			checkout = strings.TrimSpace(string(top))
 		}
 		summary, digest := buildLaneSummary(tool, args)
-		record := map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "project_id": os.Getenv("TUSKER_PROJECT_ID"), "task_id": os.Getenv("TUSKER_ITEM_ID"), "checkout": checkout, "tool": tool, "cmd": summary, "flags_digest": digest, "cold": cold, "wait_ms": waitMS, "build_ms": buildMS, "compiled_local": stderr.local, "compiled_deps": stderr.deps, "exit": code}
+		record := map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "project_id": os.Getenv("TUSKER_PROJECT_ID"), "task_id": os.Getenv("TUSKER_ITEM_ID"), "checkout": checkout, "tool": tool, "cmd": summary, "flags_digest": digest, "wait_ms": waitMS, "build_ms": buildMS, "exit": code}
 		if e := appendBuildLaneLog(root, record); e != nil {
 			fmt.Fprintln(os.Stderr, "tusker: build lane log:", e)
 		}
 	}
 	return code
+}
+
+// rustcHeld keeps the slot lock reachable until exec replaces the process.
+var rustcHeld *os.File
+
+// runRustcWrapper runs as cargo's RUSTC_WRAPPER; args are the rustc path and
+// its arguments. A compile waits for one of NumCPU machine-wide slots, logs
+// one line, then execs rustc. The slot lock stays open across exec and frees
+// when rustc exits, and exec keeps cargo's jobserver descriptors intact.
+func runRustcWrapper(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "tusker-rustc: expected a rustc path")
+		return 1
+	}
+	if next := os.Getenv("TUSKER_RUSTC_WRAPPER_NEXT"); next != "" {
+		args = append([]string{next}, args...)
+	}
+	path, err := exec.LookPath(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tusker-rustc:", err)
+		return 1
+	}
+	if rustcCompiles(args) {
+		root := os.Getenv("TUSKER_BUILD_LANE_STATE_ROOT")
+		if root == "" {
+			root = DefaultStateRoot()
+		}
+		start := time.Now()
+		slot, err := rustcSlot(root, runtime.NumCPU())
+		if err == nil {
+			_, _, errno := syscall.Syscall(syscall.SYS_FCNTL, slot.Fd(), syscall.F_SETFD, 0)
+			if errno != 0 {
+				err = errno
+			}
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "tusker-rustc: build lane unavailable, compiling without the queue:", err)
+		} else {
+			rustcHeld = slot
+			if e := appendBuildLaneLog(root, rustcRecord(args, time.Since(start).Milliseconds())); e != nil {
+				fmt.Fprintln(os.Stderr, "tusker-rustc: build lane log:", e)
+			}
+		}
+	}
+	err = syscall.Exec(path, args, os.Environ())
+	fmt.Fprintln(os.Stderr, "tusker-rustc:", err)
+	return 1
+}
+
+// rustcCompiles skips cargo's probes (rustc -vV, --print) that name no source.
+func rustcCompiles(args []string) bool {
+	for _, a := range args[1:] {
+		if strings.HasSuffix(a, ".rs") {
+			return true
+		}
+	}
+	return false
+}
+
+func rustcSlot(root string, slots int) (*os.File, error) {
+	dir := filepath.Join(root, "build-lane")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+	files := make([]*os.File, 0, slots)
+	defer func() {
+		for _, f := range files {
+			if f != nil {
+				f.Close()
+			}
+		}
+	}()
+	for i := 0; i < max(1, slots); i++ {
+		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("rustc-%d.lock", i)), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	for {
+		for i, f := range files {
+			err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			if err == nil {
+				files[i] = nil
+				return f, nil
+			}
+			if err != syscall.EWOULDBLOCK {
+				return nil, err
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func rustcRecord(args []string, waitMS int64) map[string]any {
+	flag := func(name string) string {
+		for i, a := range args {
+			if a == name && i+1 < len(args) {
+				return args[i+1]
+			}
+			if strings.HasPrefix(a, name+"=") {
+				return strings.TrimPrefix(a, name+"=")
+			}
+		}
+		return ""
+	}
+	// --out-dir is <target>/<profile>/deps, or <target>/<profile>/build/<unit>
+	// for build scripts; the target directory identifies the build cache.
+	target := flag("--out-dir")
+	if filepath.Base(target) == "deps" {
+		target = filepath.Dir(filepath.Dir(target))
+	} else if filepath.Base(filepath.Dir(target)) == "build" {
+		target = filepath.Dir(filepath.Dir(filepath.Dir(target)))
+	}
+	cargoHome := os.Getenv("CARGO_HOME")
+	if cargoHome == "" {
+		home, _ := os.UserHomeDir()
+		cargoHome = filepath.Join(home, ".cargo")
+	}
+	manifest := os.Getenv("CARGO_MANIFEST_DIR")
+	local := !strings.HasPrefix(manifest, filepath.Join(cargoHome, "registry")+string(os.PathSeparator)) && !strings.HasPrefix(manifest, filepath.Join(cargoHome, "git")+string(os.PathSeparator))
+	return map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "project_id": os.Getenv("TUSKER_PROJECT_ID"), "task_id": os.Getenv("TUSKER_ITEM_ID"), "tool": "rustc", "target": target, "cargo_pid": os.Getppid(), "crate": firstNonEmpty(os.Getenv("CARGO_CRATE_NAME"), flag("--crate-name")), "local": local, "wait_ms": waitMS}
 }
