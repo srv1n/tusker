@@ -273,6 +273,31 @@ func TestDeparturePlannerImplicitSingletonPublishesAtomically(t *testing.T) {
 	}
 }
 
+func TestDeparturePlannerSkipsWaveAlreadyLanded(t *testing.T) {
+	vault := departurePlannerTestVault(t)
+	writeDepartureTestTask(t, vault, "APP-T-0001", "W-0001")
+	writeDepartureTestWave(t, vault, "W-0001", "disarmed", "")
+	markDepartureTestWaveImplicitSingleton(t, vault, "W-0001", "APP-T-0001")
+	path := filepath.Join(vault, "work", "waves", "W-0001.md")
+	data, body, err := parseFrontmatterMustRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["landed_at"] = "2026-09-28T04:28:05Z"
+	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["wave"], stringField(data, "state_rev")); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf.Data.ScheduledPromotion.Effective = scheduledPromotionProjection(ScheduledPromotionPolicy{Mode: scheduledPromotionShadow}, true, "test")
+	decision, err := departurePlannerTestPlanner(false, false).PlanDeparture(vault, "project", wf)
+	if err != nil || decision.Disposition != "empty" || len(decision.Candidate.WaveIDs) != 0 {
+		t.Fatalf("a landed wave became cargo again: %#v err=%v", decision, err)
+	}
+}
+
 func TestDeparturePlannerPinsLocalDefaultBranchAheadOfRemote(t *testing.T) {
 	vault := departurePlannerTestVault(t)
 	wf, err := loadWorkflow(vault)

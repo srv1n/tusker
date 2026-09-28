@@ -137,6 +137,13 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 			cargoWaves[fact.ID] = true
 		}
 	}
+	// Promoted members stay done, so a wave already on the default branch would
+	// otherwise ride every later departure until staging refuses it.
+	for waveID := range cargoWaves {
+		if v7WaveHasDurableTerminal(idx.Waves[waveID]) {
+			delete(cargoWaves, waveID)
+		}
+	}
 	remote, hasRemote := p.remote(repoRoot)
 	if hasRemote {
 		decision.Fetch = DepartureFetchFact{Attempted: true, Remote: remote, Ref: defaultBranch}
