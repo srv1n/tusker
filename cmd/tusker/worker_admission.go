@@ -54,7 +54,17 @@ func heavyProjectDirs(root string) []string {
 		if err != nil {
 			return nil
 		}
-		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".tusker" || strings.HasSuffix(entry.Name(), ".xcodeproj") || strings.HasSuffix(entry.Name(), ".xcworkspace")) {
+		if entry.IsDir() && path != root {
+			// ponytail: depth 3 and a fixed skip list keep the walk cheap per poll; cache per repo HEAD if deep monorepos need it.
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") || name == "target" || name == "node_modules" || name == "build" || name == "DerivedData" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			if rel, _ := filepath.Rel(root, path); strings.Count(filepath.ToSlash(rel), "/") >= 3 {
+				return filepath.SkipDir
+			}
+		}
+		if entry.IsDir() && (strings.HasSuffix(entry.Name(), ".xcodeproj") || strings.HasSuffix(entry.Name(), ".xcworkspace")) {
 			if strings.HasSuffix(entry.Name(), ".xcodeproj") || strings.HasSuffix(entry.Name(), ".xcworkspace") {
 				rel, _ := filepath.Rel(root, filepath.Dir(path))
 				dirs = append(dirs, filepath.ToSlash(rel))
