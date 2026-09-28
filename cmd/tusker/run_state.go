@@ -33,6 +33,7 @@ type runOperatorState struct {
 }
 
 type runOperatorFacts struct {
+	TaskDone        bool
 	LeaseState      string
 	Outcome         string
 	Terminal        bool
@@ -82,6 +83,9 @@ func deriveRunOperatorState(f runOperatorFacts, now time.Time, quietAfter time.D
 	set := func(name, since string, reason *runOperatorReason) runOperatorState {
 		state.State, state.Since, state.Reason = name, firstNonEmpty(since, f.UpdatedAt, f.StartedAt), reason
 		return state
+	}
+	if f.TaskDone {
+		return set("finished", f.UpdatedAt, nil)
 	}
 	activeLease := f.LeaseState == string(LeaseStateClaimed) || f.LeaseState == string(LeaseStateRunning)
 	if f.OwnerAlive && (f.OpenQuestionID != "" || f.PermissionWait) || f.Outcome == string(AttemptOutcomeWaitingForHuman) {
@@ -154,6 +158,11 @@ func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts [
 		return runOperatorState{}, err
 	}
 	facts := runOperatorFactsFromRun(run, attempts)
+	if project, err := projectByID(store, run.ProjectID); err == nil {
+		if task, err := resolveV7Note(project.VaultRoot, run.ItemID, "task"); err == nil {
+			facts.TaskDone = stringField(task.Data, "status") == "done"
+		}
+	}
 	for _, message := range messages {
 		if message.Kind == "question" && message.AnsweredAt == "" && message.OriginTaskID == run.ItemID {
 			for _, attempt := range attempts {

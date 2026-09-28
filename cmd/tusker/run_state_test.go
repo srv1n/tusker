@@ -106,6 +106,36 @@ func TestRunOperatorStatePrecedence(t *testing.T) {
 	}
 }
 
+func TestRunOperatorStateClosedTaskOverridesFailedAttempt(t *testing.T) {
+	store, run := ownershipStoreFixture(t, "APP-T-0001")
+	vault := t.TempDir()
+	if err := store.UpsertProject(RegisteredProject{ProjectID: run.ProjectID, VaultRoot: vault}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(vault, "work", "tasks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	run.Terminal = true
+	run.AttemptOutcome = string(AttemptOutcomeFailed)
+	attempts := []RunAttempt{{AttemptID: "failed-attempt", Outcome: string(AttemptOutcomeFailed)}}
+	for _, tc := range []struct{ status, want string }{{"done", "finished"}, {"review", "failed"}} {
+		t.Run(tc.status, func(t *testing.T) {
+			path := filepath.Join(vault, "work", "tasks", run.ItemID+".md")
+			body := "---\nschema: tusker.task/v7\nkind: task\nid: " + run.ItemID + "\nstatus: " + tc.status + "\n---\n"
+			if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := runOperatorStateFromAttempts(store, run, attempts, time.Now(), defaultRunQuietAfter, true, runStateTails{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != tc.want {
+				t.Fatalf("state = %q, want %q", got.State, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunOperatorStateTypedToolStatus(t *testing.T) {
 	store, run := ownershipStoreFixture(t, "APP-T-TYPED")
 	_ = store
