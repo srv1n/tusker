@@ -232,6 +232,53 @@ func TestReviewPassLandsAndClosesForAnyHarness(t *testing.T) {
 	env.passHandler(t) // idempotent
 }
 
+func TestReviewPassDepartureRecoversLandingReceipt(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	env.submitProposal(t, "pass")
+	env.passHandler(t)
+	assertReviewPassDepartureRecovery(t, env)
+}
+
+func assertReviewPassDepartureRecovery(t *testing.T, env *reviewPassEnv) {
+	t.Helper()
+	if !env.landed() {
+		t.Fatal("review-pass source was not integrated")
+	}
+	candidate := DepartureCandidate{CargoTaskIDs: []string{"APP-T-0001"}, WaveIDs: []string{"W-0001"},
+		TaskStateRevisions: map[string]string{"APP-T-0001": stringField(env.task(t).Data, "state_rev")},
+		TaskSourceSHAs:     map[string]string{"APP-T-0001": env.source}}
+	if unstaged, err := departureUnstagedCargo(env.project, candidate, env.daemon.store); err != nil || len(unstaged) != 0 {
+		t.Fatalf("review-pass landing is not authenticated for departure: unstaged=%v err=%v", unstaged, err)
+	}
+	wrongStore, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "unrelated-store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wrongStore.Close()
+	if unstaged, err := departureUnstagedCargo(env.project, candidate, wrongStore); err != nil || len(unstaged) != 1 {
+		t.Fatalf("unrelated store authenticated review-pass landing: unstaged=%v err=%v", unstaged, err)
+	}
+	run, _, err := env.daemon.store.GetOrCreateDepartureRun(DepartureRun{ProjectID: env.project.ProjectID,
+		PolicyID: "review-pass-departure", ScheduledWindow: time.Now().UTC().Format(time.RFC3339Nano),
+		State: DepartureStateStaging, Candidate: candidate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := env.daemon.issueV7LandingAuthority(env.project, env.wfFile.Data, run, candidate, "integration/W-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setScheduledPromotionPolicyForTest(t, env.vault, scheduledPromotionStage)
+	before := departureLandingAuditCount(t, env.vault, "W-0001", "APP-T-0001")
+	removeDepartureTaskLandingAudit(t, env.vault, "W-0001", "APP-T-0001", env.source)
+	if err := stageScheduledTasksWithAuthority(env.vault, []string{"APP-T-0001"}, candidate.TaskSourceSHAs, "daemon:departure:"+run.ID, authority); err != nil {
+		t.Fatalf("departure staging did not recover review-pass receipt: %v", err)
+	}
+	if after := departureLandingAuditCount(t, env.vault, "W-0001", "APP-T-0001"); after != before {
+		t.Fatalf("departure recovery duplicated landing audit: before=%d after=%d", before, after)
+	}
+}
+
 func TestReviewPassLandsDaemonSubmissionButCLIRefusesIt(t *testing.T) {
 	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "original\n"}, []string{"reviewed.txt"})
 	runGitDir(t, env.worktree, "switch", "--detach")
@@ -274,6 +321,7 @@ func TestReviewPassLandsDaemonSubmissionButCLIRefusesIt(t *testing.T) {
 	}
 	for _, row := range env.waveLandingRows(t) {
 		if stringField(row, "task") == "APP-T-0001" && stringField(row, "source_provenance") == "daemon_submission" {
+			assertReviewPassDepartureRecovery(t, env)
 			return
 		}
 	}

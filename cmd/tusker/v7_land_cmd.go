@@ -2146,7 +2146,7 @@ func verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch string, r
 	if receipt.Schema != v7LandingReceiptSchema ||
 		receipt.Outcome != "pass" ||
 		receipt.Target != integrationBranch ||
-		!trustedV7LandingControlAuthority(receipt.ControlAuthority, receipt.Actor) ||
+		!(trustedV7LandingControlAuthority(receipt.ControlAuthority, receipt.Actor) || reviewPassV7LandingAuthority(receipt.ControlAuthority, receipt.Actor)) ||
 		receipt.GateFingerprint != v7LandingGateFingerprintFromFacts(receipt.BatchHeadSHA, receipt.LaneIdentity, receipt.Commands, receipt.Toolchains) ||
 		receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) ||
 		len(receipt.Commands) == 0 ||
@@ -2180,7 +2180,8 @@ func verifiedV7LandingReceiptTaskWithStore(repoRoot, integrationBranch string, r
 	var wanted v7LandingReceiptTask
 	for _, proof := range receipt.Tasks {
 		if proof.Task == "" || proof.Branch != v7TaskBranchName(proof.Task) ||
-			!trustedV7LandingSourceProvenance(proof.SourceProvenance) ||
+			!(trustedV7LandingSourceProvenance(proof.SourceProvenance) ||
+				reviewPassV7LandingAuthority(receipt.ControlAuthority, receipt.Actor) && proof.SourceProvenance == "task_branch_head") ||
 			proof.SourceSHA == "" || proof.BaseSHA == "" || proof.MergeCommit == "" ||
 			proofsByMerge[proof.MergeCommit].Task != "" {
 			return v7LandingReceiptTask{}, false

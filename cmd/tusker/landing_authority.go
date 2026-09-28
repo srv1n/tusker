@@ -211,6 +211,9 @@ func (s *RuntimeStore) FindV7LandingAuthorityIssuance(id string) (*v7LandingAuth
 // canonical store for historical command-path recovery. An issuance created
 // before the isolated gate plus its daemon-private signature confers authority.
 func verifyV7LandingReceiptAuthorityWithStore(repoRoot string, receipt v7LandingReceipt, trustedStore *RuntimeStore) bool {
+	if reviewPassV7LandingAuthority(receipt.ControlAuthority, receipt.Actor) {
+		return verifyV7ReviewPassReceiptAuthorityWithStore(repoRoot, receipt, trustedStore)
+	}
 	if receipt.Schema != v7LandingReceiptSchema ||
 		receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) ||
 		receipt.ControlAuthority != v7LandingAuthorityDeparture || receipt.AuthorityID == "" ||
@@ -233,6 +236,51 @@ func verifyV7LandingReceiptAuthorityWithStore(repoRoot string, receipt v7Landing
 	}
 	defer store.Close()
 	return verifyV7LandingReceiptAuthorityInStore(receipt, store)
+}
+
+func reviewPassV7LandingAuthority(authority, actor string) bool {
+	return authority == "" && actor == "daemon:review-pass"
+}
+
+// Review-pass receipts have no departure signature; the trusted store and
+// closed task must independently bind the reviewed source before recovery.
+func verifyV7ReviewPassReceiptAuthorityWithStore(repoRoot string, receipt v7LandingReceipt, trustedStore *RuntimeStore) bool {
+	if receipt.Schema != v7LandingReceiptSchema || receipt.Fingerprint != v7LandingReceiptFingerprint(receipt) ||
+		len(receipt.Tasks) != 1 || len(receipt.AuthoritySignature) != 0 {
+		return false
+	}
+	store := trustedStore
+	if store == nil {
+		var err error
+		store, err = OpenRuntimeStoreReadOnly(DefaultStateRoot())
+		if err != nil {
+			return false
+		}
+		defer store.Close()
+	}
+	vaultPath := filepath.Join(repoRoot, defaultRepoVaultDir)
+	projectID := v7ProjectID(vaultPath)
+	if registeredID, registered, err := registeredProjectIDForVault(store, vaultPath); err != nil {
+		return false
+	} else if registered && registeredID != "" {
+		projectID = registeredID
+	}
+	proof := receipt.Tasks[0]
+	task, err := resolveV7Note(vaultPath, proof.Task, "task")
+	if err != nil || stringField(task.Data, "status") != "done" || stringField(task.Data, "source_sha") != proof.SourceSHA {
+		return false
+	}
+	rows, err := store.ListReviewResults(projectID)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.Repair == nil && row.TaskID == proof.Task && row.Result.Verdict == "pass" &&
+			row.Result.ImplementationSHA == proof.SourceSHA {
+			return true
+		}
+	}
+	return false
 }
 
 func verifyV7LandingReceiptAuthorityInStore(receipt v7LandingReceipt, store *RuntimeStore) bool {

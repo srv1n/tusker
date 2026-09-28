@@ -675,8 +675,10 @@ func authenticatedV7LandingAuditSourceWithStore(repoRoot, integrationBranch stri
 			stringField(row, "branch") != v7TaskBranchName(taskID) ||
 			stringField(row, "target") != integrationBranch ||
 			stringField(row, "gate_result") != "pass" ||
-			stringField(row, "provenance") != v7LandingAuditProvenance ||
-			!trustedV7LandingControlAuthority(stringField(row, "control_authority"), stringField(row, "actor")) {
+			!(stringField(row, "provenance") == v7LandingAuditProvenance ||
+				stringField(row, "provenance") == "" && reviewPassV7LandingAuthority(stringField(row, "control_authority"), stringField(row, "actor"))) ||
+			!(trustedV7LandingControlAuthority(stringField(row, "control_authority"), stringField(row, "actor")) ||
+				reviewPassV7LandingAuthority(stringField(row, "control_authority"), stringField(row, "actor"))) {
 			continue
 		}
 		if _, err := time.Parse(time.RFC3339, stringField(row, "timestamp")); err != nil {
