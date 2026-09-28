@@ -57,6 +57,10 @@ func Execute(ctx context.Context, prepared PreparedLaunch, sink EventSink) (Exec
 	if len(prepared.Argv) == 0 || prepared.Argv[0] != prepared.Executable {
 		return ExecutionReceipt{}, errors.New("invalid prepared launch argv")
 	}
+	launchArgv := prepared.Argv
+	if len(prepared.LaunchArgv) > 0 {
+		launchArgv = prepared.LaunchArgv
+	}
 	deadline := prepared.Deadline
 	if deadline <= 0 {
 		deadline = defaultRunDeadline
@@ -64,7 +68,7 @@ func Execute(ctx context.Context, prepared PreparedLaunch, sink EventSink) (Exec
 	runCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	stdout, stderr := &cappedBuffer{limit: prepared.OutputLimit}, &cappedBuffer{limit: prepared.OutputLimit}
-	cmd := exec.CommandContext(runCtx, prepared.Executable, prepared.Argv[1:]...)
+	cmd := exec.CommandContext(runCtx, launchArgv[0], launchArgv[1:]...)
 	cmd.Dir, cmd.Env = prepared.CWD, append([]string(nil), prepared.Environment...)
 	stdin := prepared.prompt
 	if prepared.Dialect == "muse" {

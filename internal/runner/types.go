@@ -248,7 +248,8 @@ type RunInput struct {
 	// applied profile/shared-folder precedence and route qualification. Keeping
 	// the report on the runner input makes the prepared launch immutable and
 	// prevents adapters from silently re-resolving policy.
-	ResolvedAccess *ResolvedAccess `json:"-"`
+	ResolvedAccess  *ResolvedAccess                   `json:"-"`
+	LiveArgvWrapper func([]string) ([]string, string) `json:"-"`
 }
 
 type EffectivePolicy struct {
@@ -273,6 +274,7 @@ type PreparedLaunch struct {
 	Model              string           `json:"model,omitempty"`
 	Effort             string           `json:"effort,omitempty"`
 	Argv               []string         `json:"argv"`
+	LaunchArgv         []string         `json:"-"`
 	CWD                string           `json:"cwd"`
 	Environment        []string         `json:"-"`
 	EnvironmentNames   []string         `json:"environment_names"`

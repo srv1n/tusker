@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	runnercore "tusker/internal/runner"
 )
@@ -35,6 +39,116 @@ func TestHarnessConformanceReport(t *testing.T) {
 	command, ok := capabilityCommandNamed(manifest.Commands, "runner conformance")
 	if !ok || !containsString(command.Flags, "--harness") || !containsString(command.Flags, "--live") {
 		t.Fatalf("runner conformance capability = %#v", command)
+	}
+}
+
+func TestMuseConformanceAdmission(t *testing.T) {
+	vault := automationTestVault(t)
+	command := filepath.Join(t.TempDir(), "muse")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\necho 'Muse Code 1'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setGlobalProfileForTest(t, "muse-admission", map[string]any{
+		"harness": "muse", "model": "muse-manual", "effort": "high", "permission_preset": "danger-full-access",
+		"command": command + " exec --json", "sandbox": map[string]any{"mode": "danger-full-access", "network": true},
+		"subagents": map[string]any{"allowed": false, "max_concurrent": 0},
+	})
+	selected := ResolvedRunnerProfile{Name: "muse-admission", Definition: RunnerProfileDefinition{Harness: "muse", PermissionPreset: "danger-full-access"}}
+	workspace := v7RepoRoot(vault)
+	_, err := preparedRunnerForDispatch(vault, RunnerMuse, "", selected, CodexPolicy{}, workspace, runnerCommandSearchPath())
+	var admission *runnercore.AdmissionError
+	if !errors.As(err, &admission) || admission.Code != "live_check_missing" || !strings.Contains(admission.Remedy, "tusker runner test muse-admission --preset danger-full-access --external-containment --live") {
+		t.Fatalf("missing live check = %#v", err)
+	}
+	definition, model, effort, err := conformanceHarnessDefinition(vault, selected.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := runnercore.Prepare(context.Background(), definition, runnercore.RunInput{Workspace: workspace, Preset: runnercore.PresetDangerFullAccess, Model: model, Effort: effort, SearchPath: runnerCommandSearchPath(), VerifiedAuth: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	validUntil := time.Now().Add(time.Hour)
+	if err := saveConformanceReport(DefaultStateRoot(), runnercore.ConformanceReport{HarnessID: selected.Name, Preset: runnercore.PresetDangerFullAccess, Live: true, Ready: true, ValidUntil: &validUntil, ExecutableIdentity: prepared.ExecutableIdentity, Cases: []runnercore.ConformanceCase{{ID: "deny_list", Result: runnercore.CasePass}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedRunnerForDispatch(vault, RunnerMuse, "", selected, CodexPolicy{}, workspace, runnerCommandSearchPath()); err != nil {
+		t.Fatalf("matching live check: %v", err)
+	}
+	if err := os.WriteFile(command, []byte("#!/bin/sh\necho 'Muse Code 2'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = preparedRunnerForDispatch(vault, RunnerMuse, "", selected, CodexPolicy{}, workspace, runnerCommandSearchPath())
+	if !errors.As(err, &admission) || admission.Code != "launch_changed" {
+		t.Fatalf("changed executable = %#v", err)
+	}
+}
+
+func TestRunnerTestDefaultsToProfilePreset(t *testing.T) {
+	vault := automationTestVault(t)
+	command := filepath.Join(t.TempDir(), "muse")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\necho 'Muse Code 1'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setGlobalProfileForTest(t, "preset-default", map[string]any{
+		"harness": "muse", "model": "muse-manual", "effort": "high", "permission_preset": "workspace-write-offline",
+		"command":   command + " exec --json",
+		"sandbox":   map[string]any{"mode": "workspace-write", "network": false},
+		"subagents": map[string]any{"allowed": false, "max_concurrent": 0},
+	})
+	code, report, err := runRunnerConformance(Args{"vault": vault, "harness": "preset-default"})
+	if err != nil || code != 0 || report.Preset != runnercore.PresetWorkspaceOffline {
+		t.Fatalf("default preset = %q code=%d err=%v", report.Preset, code, err)
+	}
+}
+
+func TestRunnerTestLiveAccessWrapping(t *testing.T) {
+	definition := runnercore.HarnessDefinition{Provider: "muse", Transport: runnercore.TransportCLI, Dialect: "muse"}
+	wrapper, err := liveConformanceArgvWrapper(definition, t.TempDir(), runnercore.PresetDangerFullAccess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, evidence := wrapper([]string{"/usr/bin/muse", "exec"})
+	if runtime.GOOS == "darwin" {
+		if len(argv) < 5 || argv[0] != "/usr/bin/sandbox-exec" || !strings.Contains(argv[2], "Keychains") || argv[3] != "/usr/bin/muse" {
+			t.Fatalf("live deny-list argv = %q", argv)
+		}
+	} else if argv[0] != "/usr/bin/muse" || !strings.Contains(evidence, "unavailable") {
+		t.Fatalf("unsupported host evidence = %q %q", argv, evidence)
+	}
+	definition.Transport = runnercore.TransportACP
+	fallback, err := liveConformanceArgvWrapper(definition, t.TempDir(), runnercore.PresetDangerFullAccess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, evidence = fallback([]string{"/usr/bin/acp"})
+	if !strings.Contains(evidence, "not applied") {
+		t.Fatalf("unsupported transport evidence = %q", evidence)
+	}
+}
+
+func TestRunnerTestLiveUsesWrappedArgv(t *testing.T) {
+	bin := t.TempDir()
+	command := filepath.Join(bin, "codex")
+	wrapper := filepath.Join(bin, "wrapper")
+	marker := filepath.Join(bin, "wrapped")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo codex-test; exit 0; fi\nif [ \"$1\" = login ]; then echo Logged; exit 0; fi\nprintf '%s\\n' '{\"type\":\"turn.completed\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte(fmt.Sprintf("#!/bin/sh\nprintf wrapped > %q\nexec \"$@\"\n", marker)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report, err := runnercore.Conformance(context.Background(), runnercore.HarnessDefinition{ID: "wrapped", Provider: "openai", Transport: runnercore.TransportCLI, Dialect: "codex", Executable: command, SchemaVersion: 1}, runnercore.RunInput{
+		Workspace: t.TempDir(), Preset: runnercore.PresetReadOnly, SearchPath: bin,
+		LiveArgvWrapper: func(argv []string) ([]string, string) {
+			return append([]string{wrapper}, argv...), "fixture wrapper applied"
+		},
+	}, true)
+	if err != nil || !report.Ready {
+		t.Fatalf("wrapped live check = %#v %v", report, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("live launch bypassed wrapper: %v", err)
 	}
 }
 
