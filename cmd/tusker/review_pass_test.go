@@ -521,6 +521,24 @@ func TestReviewChangesRequestedReturnsTaskToWorker(t *testing.T) {
 	}
 }
 
+// A pass whose verification command fails goes back to the worker with the
+// failure, instead of parking the review.
+func TestReviewPassWithFailingCommandReturnsTaskToWorker(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"other.txt": "no reviewed file\n"}, []string{"other.txt"})
+	env.submitProposal(t, "pass")
+	rows, err := env.daemon.store.ListReviewResults(env.project.ProjectID)
+	if err != nil || len(rows) != 1 || rows[0].Result.Verdict != "changes_requested" {
+		t.Fatalf("failed command must record changes_requested, got %#v %v", rows, err)
+	}
+	env.passHandler(t)
+	if task := env.task(t); stringField(task.Data, "status") != "rework" || !strings.Contains(task.Body, "verification command failed") {
+		t.Fatalf("the failure must reach the worker; status=%q", stringField(task.Data, "status"))
+	}
+	if env.landed() {
+		t.Fatal("work with a failing command landed")
+	}
+}
+
 // F41: Tusker refusing a worker's output is not a harness crash.
 func TestPolicyRefusalShowsNotAllowed(t *testing.T) {
 	run := RunStatus{Lane: runLaneReview, LeaseState: string(LeaseStateParkedNoProgress), AttemptOutcome: string(AttemptOutcomeBlocked),

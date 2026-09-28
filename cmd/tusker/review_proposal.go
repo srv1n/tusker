@@ -44,6 +44,46 @@ func (d *Daemon) harvestReviewProposal(project RegisteredProject, note Note, run
 	return true, ""
 }
 
+func reviewCommandFailureSummary(failures []v7VerificationExecutionFailure) string {
+	summary := fmt.Sprintf("The reviewer proposed pass, but %d verification command(s) failed when the daemon ran them; first: row %s: %s", len(failures), failures[0].Row.CoverText, failures[0].Message)
+	return clipBytes(summary, reviewResultMaxSummary)
+}
+
+func reviewCommandFailureFindings(failures []v7VerificationExecutionFailure, material string) []string {
+	findings := make([]string, 0, len(failures))
+	for index, failure := range failures {
+		if index == reviewResultMaxFindings {
+			break
+		}
+		cover := strings.TrimSpace(failure.Row.CoverText)
+		record := reviewerFindingRecord{
+			Schema:              reviewerFindingSchema,
+			ID:                  fmt.Sprintf("verify-%d", index+1),
+			Kind:                "blocking",
+			Acceptance:          []string{firstNonEmpty(cover, "verification")},
+			Evidence:            []string{clipBytes(strings.TrimSpace(failure.Row.Check), reviewResultMaxEvidenceChars)},
+			Consequence:         clipBytes("verification command failed: "+strings.TrimSpace(failure.Message), 400),
+			ClosureCondition:    "the verification command for " + firstNonEmpty(cover, "this row") + " passes on the resubmitted work",
+			RepairScope:         reviewerFindingRepairScopeProof,
+			MaterialFingerprint: material,
+		}
+		raw, err := json.Marshal(record)
+		if err != nil {
+			continue
+		}
+		findings = append(findings, string(raw))
+	}
+	return findings
+}
+
+// clipBytes keeps at most n bytes without splitting a rune.
+func clipBytes(value string, n int) string {
+	if len(value) <= n {
+		return value
+	}
+	return strings.ToValidUTF8(value[:n], "")
+}
+
 func reviewProposalFromRawLog(raw []byte) (reviewProposal, bool, error) {
 	// A final newline is required.  The wrapper may reconcile while its child is
 	// still writing, and accepting a partial marker would make transport timing
@@ -344,13 +384,16 @@ func (d *Daemon) validateReviewProposal(project RegisteredProject, note Note, ru
 		if targetErr != nil {
 			return ReviewResult{}, targetErr
 		}
-		fresh, _, failures, executeErr := executeV7CommandVerificationRowsInWorkspace(project.VaultRoot, note, nil, "daemon:review-proof", true, workspace)
+		// rerun-invalid resets rows whose receipt no longer matches this
+		// material, so a row that failed before a rework runs again.
+		fresh, _, failures, executeErr := executeV7CommandVerificationRowsInWorkspace(project.VaultRoot, note, Args{"rerun-invalid": "true"}, "daemon:review-proof", true, workspace)
 		if executeErr != nil {
 			return ReviewResult{}, executeErr
 		}
 		if len(failures) > 0 {
-			failure := failures[0]
-			return ReviewResult{}, fmt.Errorf("command verification row %s failed: %s", failure.Row.CoverText, failure.Message)
+			// A failed command is a finding, not a broken proposal: send the
+			// task back to rework with the failure instead of parking review.
+			result.Verdict, result.Summary, result.Findings, result.ClosedFindings = "changes_requested", reviewCommandFailureSummary(failures), reviewCommandFailureFindings(failures, result.MaterialFingerprint), nil
 		}
 		note = fresh
 		result.TaskStateRev = stringField(note.Data, "state_rev")
