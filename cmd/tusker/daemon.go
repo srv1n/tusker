@@ -239,6 +239,13 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		case <-runCtx.Done():
 			return nil
 		case <-wakeupTicker.C:
+			// The watchdog guards this loop, not poll frequency. With no project
+			// due (all disabled, or a long cold wait) no poll feeds the beat, and
+			// an idle daemon was killed every few minutes. A stuck poll still
+			// blocks this loop, so hangs are still caught.
+			if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
+				return err
+			}
 			polled, err := d.pollProjectsWithPendingWakeups(runCtx)
 			if err != nil {
 				return err
