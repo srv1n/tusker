@@ -110,12 +110,18 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 		}
 		if !continuing {
 			if !req.AllowDirtyTracked {
-				tracked, dirtyErr := inPlaceTrackedDirtyPaths(req.RepoRoot)
+				dirty, dirtyErr := inPlaceTrackedDirtyPaths(req.RepoRoot)
 				if dirtyErr != nil {
 					return WorkspacePrepareResult{}, dirtyErr
 				}
-				if len(tracked) > 0 {
-					return WorkspacePrepareResult{}, fmt.Errorf("shared workspace has dirty tracked files: %s", strings.Join(tracked[:min(len(tracked), 3)], ", "))
+				if len(dirty) > 0 {
+					offenders, checkErr := sharedCheckoutUnclaimedDirtyPaths(req, dirty)
+					if checkErr != nil {
+						return WorkspacePrepareResult{}, checkErr
+					}
+					if len(offenders) > 0 {
+						return WorkspacePrepareResult{}, fmt.Errorf("shared workspace has dirty tracked files: %s", strings.Join(offenders, ", "))
+					}
 				}
 			}
 			if req.startingDirtyPaths, err = inPlaceDirtyPaths(req.RepoRoot); err != nil {
@@ -144,6 +150,86 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 		}
 	}
 	return m.prepareAtPath(workspacePath, req)
+}
+
+func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []string) ([]string, error) {
+	store, err := OpenRuntimeStoreReadOnly(req.StateRoot)
+	if err != nil {
+		return dirty, nil
+	}
+	defer store.Close()
+	runs, err := store.ListRuns()
+	if err != nil {
+		return dirty, nil
+	}
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: req.ProjectID})
+	if err != nil || len(projects) != 1 || projects[0].LoadError != nil {
+		return dirty, nil
+	}
+	vault := projects[0].Project.VaultRoot
+	activeScopes := make([][]string, 0)
+	for _, run := range runs {
+		if run.ProjectID != req.ProjectID || run.RecordID == req.RecordID || !sharedCheckoutRunHoldsWork(run) || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
+			continue
+		}
+		scope, scopeErr := canonicalRunAuthoredScope(store, run)
+		if scopeErr == nil {
+			activeScopes = append(activeScopes, scope)
+		}
+	}
+	idx, _ := loadV7Index(vault)
+	var offenders []string
+	for _, path := range dirty {
+		claimed := false
+		for _, scope := range activeScopes {
+			if workspaceMaterialScopeContains(scope, path) {
+				claimed = true
+				break
+			}
+		}
+		if !claimed {
+			claimed = sharedCheckoutSubmittedBlob(req.RepoRoot, path, idx)
+		}
+		if !claimed {
+			offenders = append(offenders, path)
+		}
+	}
+	return offenders, nil
+}
+
+// sharedCheckoutRunHoldsWork reports whether an execute run still owns edits in
+// the checkout: running, or paused in a state it can resume from.
+func sharedCheckoutRunHoldsWork(run RunStatus) bool {
+	if run.Lane != runLaneExecute {
+		return false
+	}
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateClaimed, LeaseStateRunning, LeaseStateRetryQueued, LeaseStateParkedNoProgress, LeaseStateParkedBudget, LeaseStateInterrupted:
+		return true
+	}
+	return false
+}
+
+func sharedCheckoutSubmittedBlob(repoRoot, path string, idx v7Index) bool {
+	actual, err := gitOutputTrim(repoRoot, "hash-object", "--", path)
+	if err != nil {
+		return false
+	}
+	for _, task := range idx.Tasks {
+		status := stringField(task.Data, "status")
+		source := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"))
+		if (status != "review" && status != "done") || source == "" {
+			continue
+		}
+		if gitMergeBaseAncestor(repoRoot, source, "HEAD") {
+			continue
+		}
+		blob, blobErr := gitOutputTrim(repoRoot, "rev-parse", source+":"+path)
+		if blobErr == nil && blob == actual {
+			return true
+		}
+	}
+	return false
 }
 
 // liveWorktreeCapRefusal refuses opening a new live work copy once the count of
@@ -513,7 +599,8 @@ func porcelainDirtyPaths(line string) []string {
 
 func workspacePathIsTuskerBookkeeping(path string) bool {
 	path = filepath.ToSlash(strings.TrimSpace(path))
-	return path == ".tusker" || strings.HasPrefix(path, ".tusker/")
+	return path == ".tusker" || strings.HasPrefix(path, ".tusker/") ||
+		path == workerLifecycleRequestFile || strings.HasPrefix(path, ".tusker-worker-lifecycle-")
 }
 
 func validateWorkspaceMetadata(metadata WorkspaceMetadata, req WorkspacePrepareRequest) error {

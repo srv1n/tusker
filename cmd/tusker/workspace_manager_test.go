@@ -86,6 +86,71 @@ func TestWorkspaceRootRejectsSharedRuntimeEscapes(t *testing.T) {
 	}
 }
 
+func TestSharedCheckoutWorkspacePrepareAcceptsOwnedAndSubmittedDirt(t *testing.T) {
+	vault, project := workSessionFixture(t, 2)
+	manager := NewWorkspaceManager()
+	req := WorkspacePrepareRequest{ProjectID: project.ProjectID, ProjectKey: project.ProjectKey, RecordID: "APP-T-0001", ItemID: "APP-T-0001", RepoRoot: project.RepoRoot, StateRoot: DefaultStateRoot(), Strategy: WorkspaceStrategyShared}
+	if _, err := manager.Prepare(req); err != nil {
+		t.Fatal(err)
+	}
+	if err := startWorkSessionTest(t, vault, req.RecordID, "agent:one"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	run, err := store.FindRunScoped(project.ProjectID, req.RecordID)
+	if err != nil || run == nil {
+		t.Fatalf("active run unavailable: %v", err)
+	}
+	run.WorkspacePath = project.RepoRoot
+	run.Lane = runLaneExecute
+	run.LeaseState = string(LeaseStateRunning)
+	if err := store.UpsertRun(*run); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(project.RepoRoot, "owned", req.RecordID, "own.txt")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(path, "owned"); err != nil {
+		t.Fatal(err)
+	}
+	req.RecordID, req.ItemID = "APP-T-0002", "APP-T-0002"
+	if _, err := manager.Prepare(req); err != nil {
+		t.Fatalf("disjoint second run refused owned dirt: %v", err)
+	}
+	// Untracked files never block; a modified tracked file nobody owns does.
+	unknown := filepath.Join(project.RepoRoot, "unknown.txt")
+	if err := writeText(unknown, "unknown"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, project.RepoRoot, "add", "unknown.txt")
+	runGitDir(t, project.RepoRoot, "commit", "-q", "-m", "track unknown")
+	if err := writeText(unknown, "changed"); err != nil {
+		t.Fatal(err)
+	}
+	req.RecordID, req.ItemID = "APP-T-0003", "APP-T-0003"
+	if _, err := manager.Prepare(req); err == nil || !strings.Contains(err.Error(), "unknown.txt") {
+		t.Fatalf("unknown dirt was accepted: %v", err)
+	}
+	runGitDir(t, project.RepoRoot, "checkout", "--", "unknown.txt")
+	source, err := materializeWorkerSubmissionCommit(*run, []string{"owned/APP-T-0001/own.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setAutomationV7TaskFields(t, vault, run.ItemID, map[string]any{"status": "review", "source_sha": source})
+	run.LeaseState = string(LeaseStateReleased)
+	if err := store.UpsertRun(*run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Prepare(req); err != nil {
+		t.Fatalf("submitted identical dirt was refused: %v", err)
+	}
+}
+
 func TestWorkspaceRootRejectsSymlinkEscapeWithMissingTail(t *testing.T) {
 	stateRoot := t.TempDir()
 	sharedRoot := filepath.Join(stateRoot, "workspaces")

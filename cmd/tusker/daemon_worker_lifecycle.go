@@ -38,15 +38,27 @@ func queueWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
 	if err != nil {
 		return err
 	}
-	return writeConfigTextAtomically(workerLifecycleRequestPath(run.WorkspacePath), string(payload))
+	return writeConfigTextAtomically(workerLifecycleRequestPath(run.WorkspacePath, run.ActiveAttemptID), string(payload))
 }
 
-func workerLifecycleRequestPath(workspace string) string {
+func workerLifecycleRequestPath(workspace string, attempt ...string) string {
+	if len(attempt) > 0 && attempt[0] != "" && sharedWorkspaceMetadata(workspace) {
+		return filepath.Join(workspace, ".tusker-worker-lifecycle-"+filepath.Base(attempt[0])+".json")
+	}
 	return filepath.Join(workspace, workerLifecycleRequestFile)
 }
 
+func sharedWorkspaceMetadata(workspace string) bool {
+	raw, err := os.ReadFile(filepath.Join(workspace, ".tusker", "workspace.json"))
+	if err != nil {
+		return false
+	}
+	var metadata WorkspaceMetadata
+	return json.Unmarshal(raw, &metadata) == nil && normalizeWorkspaceStrategy(WorkspaceStrategy(metadata.Strategy)) == WorkspaceStrategyShared
+}
+
 func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool, error) {
-	path := workerLifecycleRequestPath(run.WorkspacePath)
+	path := workerLifecycleRequestPath(run.WorkspacePath, run.ActiveAttemptID)
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, false, nil
@@ -61,10 +73,8 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, false, fmt.Errorf("decode worker lifecycle request: %w", err)
 	}
-	// The workspace slot holds a single request. Until requests are
-	// attempt-scoped, a shared checkout can expose another run's request to
-	// this reconciler: leave it untouched for the matching owner instead of
-	// applying or dropping it.
+	// Keep the identity check even with attempt-scoped files: the request is
+	// untrusted worker input.
 	if req.Worker != nil && (req.ProjectID != run.ProjectID || req.Worker.RecordID != run.RecordID ||
 		req.Worker.AttemptID != run.ActiveAttemptID || req.Worker.LeaseGeneration != run.LeaseGeneration) {
 		return nil, false, nil
@@ -87,20 +97,31 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 		if err != nil {
 			return nil, false, err
 		}
+		commitScope, err := canonicalRunAuthoredScope(d.store, *run)
+		if err != nil {
+			return nil, false, err
+		}
+		var stray []string
+		var overlaps map[string]string
+		if sharedWorkspaceMetadata(run.WorkspacePath) && run.Lane == runLaneExecute {
+			stray, overlaps, err = sharedCheckoutStrays(d.store, *run, commitScope)
+			if err != nil {
+				return nil, false, err
+			}
+			materialScope = append(materialScope, stray...)
+			commitScope = append(commitScope, stray...)
+		}
 		endState, err := captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC(), generatedOutputScope)
 		if err != nil {
 			return nil, false, err
 		}
 		if endState.Dirty {
-			commitScope, scopeErr := canonicalRunAuthoredScope(d.store, *run)
-			if scopeErr != nil {
-				return nil, false, scopeErr
-			}
 			endState.HeadSHA, err = materializeWorkerSubmissionCommit(*run, commitScope)
 			if err != nil {
 				return nil, false, err
 			}
 		}
+		endState.StrayPaths, endState.Overlaps = stray, overlaps
 		if err := d.applyWorkerLifecycle(req); err != nil {
 			return nil, false, err
 		}
@@ -120,6 +141,59 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 	}
 	updated, err := d.store.FindRunScoped(run.ProjectID, run.RecordID)
 	return updated, true, err
+}
+
+func sharedCheckoutStrays(store *RuntimeStore, run RunStatus, own []string) ([]string, map[string]string, error) {
+	dirty, err := inPlaceDirtyPaths(run.WorkspacePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	runs, err := store.ListRuns()
+	if err != nil {
+		return nil, nil, err
+	}
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true, ProjectID: run.ProjectID})
+	if err != nil || len(projects) != 1 || projects[0].LoadError != nil {
+		return nil, nil, firstNonNil(err, fmt.Errorf("shared checkout project unavailable"))
+	}
+	idx, err := loadV7Index(projects[0].Project.VaultRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	others := make(map[string][]string)
+	for _, other := range runs {
+		if other.ProjectID != run.ProjectID || other.RecordID == run.RecordID || !sharedCheckoutRunHoldsWork(other) || !sameCanonicalProjectPath(other.WorkspacePath, run.WorkspacePath) {
+			continue
+		}
+		scope, err := canonicalRunAuthoredScope(store, other)
+		if err != nil {
+			return nil, nil, err
+		}
+		others[other.ItemID] = scope
+	}
+	var stray []string
+	overlaps := make(map[string]string)
+	for _, path := range dirty {
+		if workspaceMaterialScopeContains(own, path) {
+			continue
+		}
+		if sharedCheckoutSubmittedBlob(run.WorkspacePath, path, idx) {
+			continue
+		}
+		owner := ""
+		for taskID, scope := range others {
+			if workspaceMaterialScopeContains(scope, path) {
+				owner = taskID
+				break
+			}
+		}
+		if owner != "" {
+			overlaps[path] = owner
+		} else {
+			stray = append(stray, path)
+		}
+	}
+	return stray, overlaps, nil
 }
 
 func materializeWorkerSubmissionCommit(run RunStatus, materialScope []string) (string, error) {
@@ -145,8 +219,20 @@ func materializeWorkerSubmissionCommit(run RunStatus, materialScope []string) (s
 	if _, err := runGit("read-tree", parent); err != nil {
 		return "", err
 	}
-	if _, err := runGit(append([]string{"add", "-f", "-A", "--"}, materialScope...)...); err != nil {
+	dirty, err := inPlaceDirtyPaths(run.WorkspacePath)
+	if err != nil {
 		return "", err
+	}
+	var stage []string
+	for _, path := range dirty {
+		if workspaceMaterialScopeContains(materialScope, path) {
+			stage = append(stage, path)
+		}
+	}
+	if len(stage) > 0 {
+		if _, err := runGit(append([]string{"add", "-f", "-A", "--"}, stage...)...); err != nil {
+			return "", err
+		}
 	}
 	tree, err := runGit("write-tree")
 	if err != nil {
@@ -155,12 +241,71 @@ func materializeWorkerSubmissionCommit(run RunStatus, materialScope []string) (s
 	return runGit("-c", "commit.gpgsign=false", "commit-tree", tree, "-p", parent, "-m", "Tusker worker submission "+run.RecordID)
 }
 
+func abandonSharedCheckoutScope(store *RuntimeStore, run RunStatus) error {
+	if run.Lane != runLaneExecute || !sharedWorkspaceMetadata(run.WorkspacePath) || run.ActiveAttemptID == "" {
+		return nil
+	}
+	attempts, err := store.ListAttemptsForRun(run.ProjectID, run.RecordID)
+	if err != nil {
+		return err
+	}
+	for _, attempt := range attempts {
+		if attempt.AttemptID == run.ActiveAttemptID && attempt.EndState.Schema != "" {
+			return nil
+		}
+	}
+	scope, err := canonicalRunAuthoredScope(store, run)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"status", "--porcelain", "--untracked-files=all", "--"}, scope...)
+	dirty, err := gitOutputTrim(run.WorkspacePath, args...)
+	if err != nil || dirty == "" {
+		return err
+	}
+	commit, err := materializeWorkerSubmissionCommit(run, scope)
+	if err != nil {
+		return err
+	}
+	ref := "refs/tusker/abandoned/" + run.ItemID + "-" + run.ActiveAttemptID
+	if _, err := gitOutputTrim(run.WorkspacePath, "update-ref", ref, commit); err != nil {
+		return err
+	}
+	untracked, err := gitCombined(run.WorkspacePath, append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, scope...)...)
+	if err != nil {
+		return err
+	}
+	tracked, err := gitCombined(run.WorkspacePath, append([]string{"ls-files", "-z", "--"}, scope...)...)
+	if err != nil {
+		return err
+	}
+	if tracked != "" {
+		paths := strings.Split(strings.TrimSuffix(tracked, "\x00"), "\x00")
+		if _, err := gitOutputTrim(run.WorkspacePath, append([]string{"restore", "--source=HEAD", "--staged", "--worktree", "--"}, paths...)...); err != nil {
+			return err
+		}
+	}
+	for _, path := range strings.Split(untracked, "\x00") {
+		if path != "" && workspaceMaterialScopeContains(scope, path) {
+			if err := os.Remove(filepath.Join(run.WorkspacePath, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {
 	run, err := validateWorkerLifecycle(store, req)
 	if err != nil {
 		return err
 	}
 	w := req.Worker
+	if w.Action == "fail" || w.Action == "release" {
+		if err := abandonSharedCheckoutScope(store, *run); err != nil {
+			return err
+		}
+	}
 	args := Args{"id": run.RecordID, "project": run.ProjectID, "owner": run.LeaseOwner, "revision": fmt.Sprintf("%d", run.WorkRevision),
 		"deliverable": w.Deliverable, "verification": w.Verification, "gate-verdicts": w.GateVerdicts, "reason": w.Reason,
 		"actor": daemonLifecycleActor, "quiet": "true"}

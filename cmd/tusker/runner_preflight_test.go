@@ -89,6 +89,21 @@ func TestRunnerEnvSeparatesRuntimeAndCanonicalProjectIdentity(t *testing.T) {
 	assertEqual(t, filepath.Join(workspace, ".tusker"), runnerEnvValue(env, "TUSKER_WORKSPACE_VAULT"), "workspace vault")
 }
 
+func TestSharedCheckoutWorkerAndACPEnvironment(t *testing.T) {
+	for _, strategy := range []WorkspaceStrategy{WorkspaceStrategyShared, WorkspaceStrategyWorktree} {
+		want := ""
+		if strategy == WorkspaceStrategyShared {
+			want = "1"
+		}
+		if got := runnerEnvValue(runnerEnv(runnerLaunchEnv{WorkspaceStrategy: strategy}), "TUSKER_SHARED_CHECKOUT"); got != want {
+			t.Fatalf("worker strategy %s: %q", strategy, got)
+		}
+		if got := runnerEnvValue(acpRunnerEnvironment(StartRequest{AttemptID: "a1", WorkspaceStrategy: strategy}, "/workspace", CodexPolicy{}), "TUSKER_SHARED_CHECKOUT"); got != want {
+			t.Fatalf("ACP strategy %s: %q", strategy, got)
+		}
+	}
+}
+
 func TestRunnerPreferredPathDirsFindsEachSupportedAppBundle(t *testing.T) {
 	standalone := t.TempDir()
 	chatGPT := t.TempDir()
