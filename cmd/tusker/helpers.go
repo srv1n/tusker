@@ -157,6 +157,16 @@ func resolveVaultPath(args Args, allowCreate bool) (string, error) {
 		if found != "" && sameCanonicalProjectPath(found, project.VaultRoot) {
 			return found, nil
 		}
+		if strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")) != "" &&
+			(strings.TrimSpace(os.Getenv("TUSKER_PROJECT_ID")) == "" || strings.TrimSpace(os.Getenv("TUSKER_PROJECT_ID")) == project.ProjectID) {
+			vault := strings.TrimSpace(os.Getenv("TUSKER_CANONICAL_VAULT"))
+			if vault == "" {
+				vault = strings.TrimSpace(os.Getenv("TUSKER_VAULT"))
+			}
+			if sameCanonicalProjectPath(vault, project.VaultRoot) {
+				return project.VaultRoot, nil
+			}
+		}
 		return "", registeredProjectVaultError(startDir, project)
 	}
 	if found != "" {
