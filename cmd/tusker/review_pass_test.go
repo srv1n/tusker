@@ -644,3 +644,29 @@ func TestReviewPassStrayCheckIgnoresCommitsAlreadyOnHead(t *testing.T) {
 		t.Fatalf("a commit already on HEAD was blamed on the task: stray=%v err=%v", stray, err)
 	}
 }
+
+// A rework resubmission keeps the work revision; the previous review's verdict
+// must not be applied again before the new commit is reviewed.
+func TestReviewPassIgnoresVerdictOlderThanResubmission(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	env.submitProposal(t, "changes_requested")
+	env.passHandler(t)
+	if stringField(env.task(t).Data, "status") != "rework" {
+		t.Fatal("fixture: changes_requested did not return the task")
+	}
+	if err := env.daemon.store.SaveAttempt(RunAttempt{AttemptID: "exec-2", ProjectID: env.project.ProjectID, RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute, WorkRevision: 0, WorkspacePath: env.worktree, Outcome: string(AttemptOutcomeSucceeded),
+		StartedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	setAutomationV7TaskFields(t, env.vault, "APP-T-0001", map[string]any{"status": "review"})
+	release := env.run
+	release.LeaseState, release.ActiveAttemptID, release.LeaseOwner = string(LeaseStateReleased), "", ""
+	if err := env.daemon.store.UpsertRun(release); err != nil {
+		t.Fatal(err)
+	}
+	env.passHandler(t)
+	if got := stringField(env.task(t).Data, "status"); got != "review" {
+		t.Fatalf("the old verdict was applied to the resubmission: status=%q", got)
+	}
+}

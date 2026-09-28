@@ -80,10 +80,20 @@ func (d *Daemon) currentReviewResult(projectID, taskID string, results []ReviewR
 	for _, attempt := range rows {
 		attempts[attempt.AttemptID] = attempt
 	}
+	latestExecute := ""
 	for _, attempt := range rows {
 		if attempt.Lane == runLaneReview && (latest == "" || completionReviewAttemptAfter(attempts, attempt.AttemptID, latest, "", "")) {
 			latest = attempt.AttemptID
 		}
+		if attempt.Lane == runLaneExecute && (latestExecute == "" || completionReviewAttemptAfter(attempts, attempt.AttemptID, latestExecute, "", "")) {
+			latestExecute = attempt.AttemptID
+		}
+	}
+	// A rework resubmission keeps the work revision, so until its own review
+	// runs, the previous review's verdict still looked current and was applied
+	// again to the new commit.
+	if latest != "" && latestExecute != "" && completionReviewAttemptAfter(attempts, latestExecute, latest, "", "") {
+		return ReviewResult{}, false
 	}
 	for _, result := range results {
 		if latest != "" && result.AttemptID == latest {
