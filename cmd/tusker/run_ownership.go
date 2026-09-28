@@ -124,6 +124,11 @@ func ownedPathConflict(candidate Note, notes map[string]Note, runs []RunStatus, 
 	}
 	for _, run := range runs {
 		liveness, blocking := holderLiveness(run, now)
+		// A parked or submitted task still has its files on disk in a shared
+		// checkout, so its scope stays claimed even without a live lease.
+		if !blocking && sharedCheckoutRunHoldsWork(run) && sharedWorkspaceMetadata(run.WorkspacePath) {
+			liveness, blocking = "holds_shared_checkout_work", true
+		}
 		if run.ItemID == stringField(candidate.Data, "id") || !blocking {
 			continue
 		}

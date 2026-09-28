@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -610,4 +611,25 @@ func (s *runOwnershipService) finishWithEndState(identity, owner string, outcome
 
 func captureRunEndState(workspace, gateVerdicts, reportedBranch, reportedSHA string, now time.Time) (RunEndState, error) {
 	return captureRunEndStateForMaterialScope(workspace, nil, gateVerdicts, reportedBranch, reportedSHA, now)
+}
+
+func TestOwnedPathConflictKeepsParkedSharedCheckoutWorkClaimed(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".tusker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".tusker", "workspace.json"), []byte(`{"strategy":"shared"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	holder := Note{Data: map[string]any{"id": "APP-T-A", "owned_paths": []string{"src"}}}
+	candidate := Note{Data: map[string]any{"id": "APP-T-B", "owned_paths": []string{"src/a.go"}}}
+	parked := RunStatus{ItemID: "APP-T-A", Lane: runLaneExecute, LeaseState: string(LeaseStateParkedBudget), WorkspacePath: repo}
+	if conflict, found := ownedPathConflict(candidate, map[string]Note{"APP-T-A": holder}, []RunStatus{parked}, now); !found || conflict["liveness"] != "holds_shared_checkout_work" {
+		t.Fatalf("parked shared-checkout holder released its scope: %#v found=%t", conflict, found)
+	}
+	parked.WorkspacePath = t.TempDir()
+	if _, found := ownedPathConflict(candidate, map[string]Note{"APP-T-A": holder}, []RunStatus{parked}, now); found {
+		t.Fatal("parked worktree holder should not block a new claim")
+	}
 }

@@ -204,12 +204,12 @@ func buildLaneSlot(root string, slots int) (*os.File, int64, error) {
 }
 
 func buildLaneSummary(tool string, args []string) (string, string) {
-	sub := ""
+	sub, rest := "", []string(nil)
 	if len(args) > 0 {
-		sub = args[0]
+		sub, rest = args[0], args[1:]
 	}
 	flags := []string{}
-	for _, a := range args[1:] {
+	for _, a := range rest {
 		if strings.HasPrefix(a, "-") && !strings.Contains(a, "/") && !strings.Contains(a, "\\") {
 			flags = append(flags, a)
 		}
