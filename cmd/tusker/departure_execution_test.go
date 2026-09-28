@@ -179,8 +179,9 @@ func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFix
 	})
 }
 
-func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
+func newMultiWaveDepartureExecutionFixture(t *testing.T, conflicting ...bool) departureExecutionFixture {
 	t.Helper()
+	installV7FullGateProviderFixture(t)
 	stateRoot := t.TempDir()
 	repo := t.TempDir()
 	runGitDir(t, repo, "init", "-b", "main")
@@ -215,9 +216,13 @@ func newMultiWaveDepartureExecutionFixture(t *testing.T) departureExecutionFixtu
 		if i > 2 {
 			waveID = "W-0002"
 		}
-		sourceSHA := commitLandBranch(t, repo, "task/"+taskID, "integration/"+waveID, map[string]string{
+		files := map[string]string{
 			"frozen-" + strings.ToLower(taskID) + ".txt": "frozen\n",
-		})
+		}
+		if len(conflicting) > 0 && conflicting[0] && (i == 1 || i == 3) {
+			files["conflict.txt"] = waveID + "\n"
+		}
+		sourceSHA := commitLandBranch(t, repo, "task/"+taskID, "integration/"+waveID, files)
 		setWaveTaskState(t, vault, taskID, "done", "done", "2026-07-25T00:00:00Z")
 		setDepartureTaskSourceForTest(t, vault, taskID, sourceSHA)
 	}
@@ -751,6 +756,56 @@ func TestDepartureExecution(t *testing.T) {
 			}
 		}
 	})
+
+	for _, conflict := range []bool{false, true} {
+		name := "promote departs both ready waves"
+		if conflict {
+			name = "promote defers a conflicting later wave"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := newMultiWaveDepartureExecutionFixture(t, conflict)
+			fixture.wf.ScheduledPromotion.Effective = scheduledPromotionProjection(ScheduledPromotionPolicy{Mode: scheduledPromotionPromote}, true, "test")
+			setScheduledPromotionPolicyForTest(t, fixture.vault, scheduledPromotionPromote)
+			commitScheduledPromotionWorkflowForWavesTest(t, fixture.repo, fixture.vault, []string{"W-0001", "W-0002"})
+			runGitDir(t, fixture.repo, "push", "origin", "main")
+			store, err := OpenRuntimeStore(fixture.stateRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			run := createDepartureExecutionRun(t, store, fixture)
+			d := &Daemon{store: store, departurePlan: fixture.plan}
+			if err := d.executeDeparture(context.Background(), fixture.project, fixture.wf, run.ID); err != nil {
+				t.Fatal(err)
+			}
+			passed := mustDepartureRun(t, store, run.ID)
+			want := []string{"W-0001", "W-0002"}
+			if conflict {
+				want = want[:1]
+				if !strings.Contains(passed.Candidate.DeferredWaves["W-0002"], "wave W-0002 conflicts with W-0001; departs next window") {
+					t.Fatalf("missing conflict deferral: %#v", passed.Candidate.DeferredWaves)
+				}
+			}
+			if passed.State != DepartureStatePassed || !sameDepartureStrings(passed.Candidate.WaveIDs, want) || passed.Promotion.CommittedSHA != gitRevisionForTest(t, fixture.repo, "main") {
+				t.Fatalf("combined promotion result: %#v", passed)
+			}
+			wantTasks := []string{"APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004"}
+			if conflict {
+				wantTasks = wantTasks[:2]
+			}
+			if !sameDepartureStrings(passed.Candidate.CargoTaskIDs, wantTasks) {
+				t.Fatalf("departed tasks = %#v, want %#v", passed.Candidate.CargoTaskIDs, wantTasks)
+			}
+			for _, waveID := range want {
+				if count := departureLandingAuditCount(t, fixture.vault, waveID, "wave"); count != 1 {
+					t.Fatalf("%s promotion audit count = %d", waveID, count)
+				}
+			}
+			if conflict && departureLandingAuditCount(t, fixture.vault, "W-0002", "wave") != 0 {
+				t.Fatal("deferred wave received a promotion audit")
+			}
+		})
+	}
 
 	t.Run("stage refuses a mutable source ref with named drift", func(t *testing.T) {
 		fixture := newUnstagedDepartureExecutionFixture(t, scheduledPromotionStage, "mutable-source-ref.txt")

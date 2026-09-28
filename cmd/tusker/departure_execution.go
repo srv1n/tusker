@@ -287,8 +287,8 @@ func (d *Daemon) executeDepartureEvaluation(project RegisteredProject, wf Workfl
 		}
 		return d.blockDepartureRun(run, "departure refusal: mode "+policy.Mode+" cannot stage cargo")
 	}
-	if policy.Promote && len(decision.Candidate.WaveIDs) != 1 {
-		return d.blockDepartureRun(run, fmt.Sprintf("departure refusal: promote mode requires exactly one cargo wave; found %d", len(decision.Candidate.WaveIDs)))
+	if policy.Promote && len(decision.Candidate.WaveIDs) == 0 {
+		return d.blockDepartureRun(run, "departure refusal: promote mode requires cargo waves")
 	}
 	if len(decision.Candidate.CargoTaskIDs) == 0 {
 		return d.blockDepartureRun(run, "departure recompute required: cargo_drift")
@@ -367,8 +367,8 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	if !policy.Stage {
 		return d.blockDepartureRun(run, "departure refusal: mode "+policy.Mode+" cannot stage cargo")
 	}
-	if policy.Promote && len(run.Candidate.WaveIDs) != 1 {
-		return d.blockDepartureRun(run, fmt.Sprintf("departure refusal: promote mode requires exactly one cargo wave; found %d", len(run.Candidate.WaveIDs)))
+	if policy.Promote && len(run.Candidate.WaveIDs) == 0 {
+		return d.blockDepartureRun(run, "departure refusal: promote mode requires cargo waves")
 	}
 	if len(run.Candidate.CargoTaskIDs) == 0 {
 		return d.blockDepartureRun(run, "departure refusal: durable cargo task identity is missing")
@@ -425,7 +425,7 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	} else if hold != nil {
 		return d.blockDepartureRun(run, departureHoldBlockReason(hold))
 	}
-	snapshot, err := departurePromotionSnapshotAfterStaging(project, wf, run.Candidate.WaveIDs[0], run.Candidate, d.store)
+	snapshot, deferred, err := departurePromotionSnapshotAfterStaging(project, wf, run.Candidate.WaveIDs, run.Candidate, d.store)
 	if err != nil {
 		if departureExecutionTransient(err) {
 			return err
@@ -443,6 +443,7 @@ func (d *Daemon) executeDepartureStaging(project RegisteredProject, wf Workflow,
 	_, err = d.transitionDepartureRun(run, func(next *DepartureRun) {
 		next.State = DepartureStateGating
 		next.Candidate, next.Gate = snapshot.Candidate, snapshot.Gate
+		next.Candidate.DeferredWaves = deferred
 		next.BlockReason = ""
 	})
 	return err
@@ -487,32 +488,34 @@ func departureExactLandingAudited(repoRoot string, wave Note, taskID, integratio
 	return ok && strings.EqualFold(audited, strings.TrimSpace(sourceSHA))
 }
 
-func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workflow, waveID string, durable DepartureCandidate, trustedStore *RuntimeStore) (scheduledPromotionCandidateSnapshot, error) {
+func departurePromotionSnapshotAfterStaging(project RegisteredProject, wf Workflow, waveIDs []string, durable DepartureCandidate, trustedStore *RuntimeStore) (scheduledPromotionCandidateSnapshot, map[string]string, error) {
 	if err := validateDepartureDurableCargoWithStore(project.VaultRoot, durable, trustedStore); err != nil {
-		return scheduledPromotionCandidateSnapshot{}, err
+		return scheduledPromotionCandidateSnapshot{}, nil, err
 	}
 	idx, err := loadV7Index(project.VaultRoot)
 	if err != nil {
-		return scheduledPromotionCandidateSnapshot{}, err
+		return scheduledPromotionCandidateSnapshot{}, nil, err
 	}
-	wave, ok := idx.Waves[waveID]
-	if !ok {
-		return scheduledPromotionCandidateSnapshot{}, tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+	for _, waveID := range waveIDs {
+		wave, ok := idx.Waves[waveID]
+		if !ok {
+			return scheduledPromotionCandidateSnapshot{}, nil, tuskerError(errorNotFound, "V7 wave not found: "+waveID)
+		}
+		if err := syncV7WaveControlStateToIntegration(project.VaultRoot, wave, v7WaveIntegrationBranch(wave)); err != nil {
+			return scheduledPromotionCandidateSnapshot{}, nil, err
+		}
 	}
-	if err := syncV7WaveControlStateToIntegration(project.VaultRoot, wave, v7WaveIntegrationBranch(wave)); err != nil {
-		return scheduledPromotionCandidateSnapshot{}, err
-	}
-	return scheduledPromotionSnapshotWithStore(project.VaultRoot, project.ProjectID, waveID, wf, trustedStore)
+	return scheduledPromotionSnapshotWavesWithStore(project.VaultRoot, project.ProjectID, waveIDs, wf, trustedStore)
 }
 
 func departurePostStagingDrift(run DepartureRun, snapshot scheduledPromotionCandidateSnapshot) string {
-	if len(run.Candidate.WaveIDs) != 1 || snapshot.WaveID != run.Candidate.WaveIDs[0] {
+	if len(snapshot.Candidate.WaveIDs) == 0 {
 		return "wave"
 	}
-	if !sameDepartureStrings(run.Candidate.CargoTaskIDs, snapshot.Candidate.CargoTaskIDs) {
-		return "cargo"
-	}
-	for _, taskID := range run.Candidate.CargoTaskIDs {
+	for _, taskID := range snapshot.Candidate.CargoTaskIDs {
+		if !containsString(run.Candidate.CargoTaskIDs, taskID) {
+			return "cargo"
+		}
 		if run.Candidate.TaskStateRevisions[taskID] != snapshot.Candidate.TaskStateRevisions[taskID] {
 			return "task"
 		}
@@ -537,8 +540,8 @@ func (d *Daemon) executeDepartureGating(ctx context.Context, project RegisteredP
 	} else if hold != nil {
 		return d.blockDepartureRun(run, departureHoldBlockReason(hold))
 	}
-	if !wf.ScheduledPromotion.Effective.Promote || len(run.Candidate.WaveIDs) != 1 {
-		return d.blockDepartureRun(run, "departure refusal: scheduled promotion requires exactly one durable cargo wave")
+	if !wf.ScheduledPromotion.Effective.Promote || len(run.Candidate.WaveIDs) == 0 {
+		return d.blockDepartureRun(run, "departure refusal: scheduled promotion requires durable cargo waves")
 	}
 	if err := d.store.ClearResourceLeaseWaiter("gate:full", project.ProjectID); err != nil {
 		return err
@@ -596,7 +599,7 @@ func (d *Daemon) executeDeparturePromoted(ctx context.Context, project Registere
 	if wf.ScheduledPromotion.Effective.Release {
 		return errDepartureExecutionDeferred
 	}
-	if len(run.Candidate.WaveIDs) != 1 {
+	if len(run.Candidate.WaveIDs) == 0 {
 		return d.blockDepartureRun(run, "departure refusal: promoted row is missing its durable cargo wave")
 	}
 	durable := run

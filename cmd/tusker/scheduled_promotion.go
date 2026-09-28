@@ -42,6 +42,77 @@ type scheduledPromotionCandidateSnapshot struct {
 	DefaultBranch string
 }
 
+// scheduledPromotionSnapshotWavesWithStore freezes the combined tree without
+// moving a branch. A merge conflict defers only the later wave.
+func scheduledPromotionSnapshotWavesWithStore(vaultPath, projectID string, waveIDs []string, wf Workflow, store *RuntimeStore, mergeOntoMain ...bool) (scheduledPromotionCandidateSnapshot, map[string]string, error) {
+	if len(waveIDs) == 0 {
+		return scheduledPromotionCandidateSnapshot{}, nil, tuskerError(errorInvalidTransition, "promotion candidate refusal: no cargo waves")
+	}
+	waveIDs = append([]string(nil), waveIDs...)
+	sort.Strings(waveIDs)
+	repoRoot := v7RepoRoot(vaultPath)
+	var combined scheduledPromotionCandidateSnapshot
+	deferred := map[string]string{}
+	merge := len(waveIDs) > 1 || (len(mergeOntoMain) > 0 && mergeOntoMain[0])
+	for _, waveID := range waveIDs {
+		next, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+		if err != nil {
+			return scheduledPromotionCandidateSnapshot{}, nil, err
+		}
+		if !merge {
+			combined = next
+			continue
+		}
+		if len(combined.Candidate.WaveIDs) > 0 && (combined.Candidate.ExpectedDefaultBranchSHA != next.Candidate.ExpectedDefaultBranchSHA || combined.Gate.Command != next.Gate.Command || combined.Gate.Toolchain != next.Gate.Toolchain) {
+			return scheduledPromotionCandidateSnapshot{}, nil, tuskerError(errorInvalidTransition, "promotion recompute required: combined_contract_drift")
+		}
+		base := next.Candidate.ExpectedDefaultBranchSHA
+		if len(combined.Candidate.WaveIDs) > 0 {
+			base = combined.Candidate.CandidateSHA
+		}
+		output, mergeErr := gitCombined(repoRoot, "merge-tree", "--write-tree", base, next.Candidate.CandidateSHA)
+		if mergeErr != nil {
+			var exit *exec.ExitError
+			if !errors.As(mergeErr, &exit) || exit.ExitCode() != 1 {
+				return scheduledPromotionCandidateSnapshot{}, nil, mergeErr
+			}
+			with := "main"
+			if len(combined.Candidate.WaveIDs) > 0 {
+				with = combined.Candidate.WaveIDs[len(combined.Candidate.WaveIDs)-1]
+			}
+			deferred[waveID] = fmt.Sprintf("wave %s conflicts with %s; departs next window", waveID, with)
+			continue
+		}
+		tree := strings.TrimSpace(output)
+		command := exec.Command("git", "-C", repoRoot, "commit-tree", tree, "-p", base, "-p", next.Candidate.CandidateSHA, "-m", "Scheduled departure candidate")
+		command.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2000-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2000-01-01T00:00:00Z")
+		commitOutput, err := command.CombinedOutput()
+		if err != nil {
+			return scheduledPromotionCandidateSnapshot{}, nil, fmt.Errorf("build combined candidate: %s: %w", strings.TrimSpace(string(commitOutput)), err)
+		}
+		commit := strings.TrimSpace(string(commitOutput))
+		if len(combined.Candidate.WaveIDs) == 0 {
+			combined = next
+			combined.Candidate.CandidateSHA, combined.Candidate.CandidateTreeHash = commit, tree
+			combined.Gate.TreeHash = tree
+			continue
+		}
+		combined.Candidate.CandidateSHA, combined.Candidate.CandidateTreeHash = commit, tree
+		combined.Candidate.WaveIDs = append(combined.Candidate.WaveIDs, waveID)
+		combined.Candidate.CargoTaskIDs = uniqueDepartureStrings(append(combined.Candidate.CargoTaskIDs, next.Candidate.CargoTaskIDs...))
+		for taskID, rev := range next.Candidate.TaskStateRevisions {
+			combined.Candidate.TaskStateRevisions[taskID] = rev
+			combined.Candidate.TaskSourceSHAs[taskID] = next.Candidate.TaskSourceSHAs[taskID]
+		}
+		combined.Candidate.WaveAuthorization = departureFingerprint(combined.Candidate.WaveAuthorization, next.Candidate.WaveAuthorization)
+		combined.Gate.TreeHash = tree
+	}
+	if len(combined.Candidate.WaveIDs) == 0 {
+		return scheduledPromotionCandidateSnapshot{}, deferred, tuskerError(errorInvalidTransition, "promotion candidate refusal: no cargo wave can merge onto main")
+	}
+	return combined, deferred, nil
+}
+
 // scheduledPromotionAllowsDefaultAdvance preserves the legacy/manual path only
 // for repositories that did not opt in. Once configured, the durable departure
 // executor is the sole authority allowed to move the default branch.
@@ -348,7 +419,7 @@ func validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID string, c
 }
 
 func validateScheduledPromotionDurableCargoIndexWithStore(vaultPath string, idx v7Index, waveID string, candidate DepartureCandidate, trustedStore *RuntimeStore) error {
-	if !sameDepartureStrings(uniqueDepartureStrings(normalizeList(candidate.WaveIDs)), []string{waveID}) {
+	if !containsString(candidate.WaveIDs, waveID) {
 		return tuskerError(errorInvalidTransition, "promotion recompute required: wave_membership_drift")
 	}
 	if err := validateDepartureDurableCargoIndexWithStore(vaultPath, idx, candidate, trustedStore); err != nil {
@@ -423,8 +494,10 @@ func validateScheduledPromotionPreparedAuthorityWithStore(vaultPath, waveID stri
 	if err != nil {
 		return err
 	}
-	if err := validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, waveID, trustedStore); err != nil {
-		return err
+	for _, id := range candidate.WaveIDs {
+		if err := validateScheduledPromotionWaveAuthorityIndexWithStore(vaultPath, idx, id, trustedStore); err != nil {
+			return err
+		}
 	}
 	if err := validateScheduledPromotionDurableCargoIndexWithStore(vaultPath, idx, waveID, candidate, trustedStore); err != nil {
 		return err
@@ -539,6 +612,11 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, waveID, store); err != nil {
 		return nil, err
 	}
+	for _, id := range candidate.WaveIDs {
+		if err := validateScheduledPromotionWaveAuthorityWithStore(vaultPath, id, store); err != nil {
+			return nil, err
+		}
+	}
 	if err := validateScheduledPromotionDurableCargoWithStore(vaultPath, waveID, candidate, store); err != nil {
 		return nil, err
 	}
@@ -556,9 +634,17 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 		}
 	}
 	repoRoot := v7RepoRoot(vaultPath)
-	preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave)
+	preparation := &v7WaveMemberPreparation{}
+	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return nil, err
+	}
+	for _, id := range candidate.WaveIDs {
+		memberPreparation, prepareErr := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, idx.Waves[id])
+		if prepareErr != nil {
+			return nil, errors.Join(prepareErr, preparation.restore())
+		}
+		preparation.paths = append(preparation.paths, memberPreparation.paths...)
 	}
 	restore := func(cause error) error {
 		return errors.Join(cause, preparation.finishAfterRefAttempt(repoRoot, defaultBranch, expectedSHA, intendedSHA))
@@ -934,6 +1020,15 @@ func appendScheduledPromotionAudit(vaultPath, waveID, defaultBranch, commit, gat
 	}}, actor)
 }
 
+func appendScheduledPromotionAudits(vaultPath string, waveIDs []string, defaultBranch, commit, gateSummary, actor string) error {
+	for _, waveID := range waveIDs {
+		if err := appendScheduledPromotionAudit(vaultPath, waveID, defaultBranch, commit, gateSummary, actor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func inspectScheduledPromotionIntent(repoRoot string, promotion DeparturePromotion) (string, string, error) {
 	if strings.TrimSpace(promotion.IntendedSHA) == "" {
 		return "", "", fmt.Errorf("legacy promotion intent lacks intended_sha")
@@ -1066,7 +1161,7 @@ func validateScheduledPromotionRecoveryProof(vaultPath, projectID, waveID string
 	if !wf.Data.ScheduledPromotion.Effective.Promote {
 		return fmt.Errorf("full_gate_policy_not_promote")
 	}
-	current, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf.Data, store)
+	current, _, err := scheduledPromotionSnapshotWavesWithStore(vaultPath, projectID, run.Candidate.WaveIDs, wf.Data, store, run.Candidate.CandidateSHA != "" && run.Candidate.CandidateSHA != run.Candidate.IntegrationBaseSHA)
 	if err != nil {
 		return fmt.Errorf("full_gate_snapshot_unavailable: %w", err)
 	}
@@ -1146,7 +1241,7 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 		if err := persistScheduledPromotionCommit(store, run, run.Promotion.ExpectedRef, run.Promotion.IntendedSHA); err != nil {
 			return "", err
 		}
-		if err := appendScheduledPromotionAudit(vaultPath, waveID, run.Promotion.CommittedRef, run.Promotion.CommittedSHA, "durable promotion intent replay: "+run.Gate.Command, actor); err != nil {
+		if err := appendScheduledPromotionAudits(vaultPath, run.Candidate.WaveIDs, run.Promotion.CommittedRef, run.Promotion.CommittedSHA, "durable promotion intent replay: "+run.Gate.Command, actor); err != nil {
 			return "", err
 		}
 		return run.Promotion.CommittedSHA, nil
@@ -1260,6 +1355,10 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if store == nil || run == nil {
 		return "", fmt.Errorf("scheduled promotion requires a departure runtime row")
 	}
+	waveIDs := run.Candidate.WaveIDs
+	if len(waveIDs) == 0 {
+		waveIDs = []string{waveID}
+	}
 	if run.State == DepartureStateRepairing && run.Gate.Failure.Identity != "" {
 		if err := resumePromotionFailureRouting(vaultPath, store, run); err != nil {
 			return "", err
@@ -1272,7 +1371,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		}
 		repoRoot := v7RepoRoot(vaultPath)
 		if current, err := gitOutputTrim(repoRoot, "rev-parse", run.Promotion.CommittedRef+"^{commit}"); err == nil && current == run.Promotion.CommittedSHA {
-			if err := appendScheduledPromotionAudit(vaultPath, waveID, run.Promotion.CommittedRef, current, "durable promotion replay: "+run.Gate.Command, actor); err != nil {
+			if err := appendScheduledPromotionAudits(vaultPath, run.Candidate.WaveIDs, run.Promotion.CommittedRef, current, "durable promotion replay: "+run.Gate.Command, actor); err != nil {
 				return "", err
 			}
 			return current, nil
@@ -1315,10 +1414,11 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if err := syncV7WaveControlStateToIntegration(vaultPath, wave, integrationBranch); err != nil {
 		return "", err
 	}
-	before, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+	before, _, err := scheduledPromotionSnapshotWavesWithStore(vaultPath, projectID, waveIDs, wf, store, run.Candidate.CandidateSHA != "" && run.Candidate.CandidateSHA != run.Candidate.IntegrationBaseSHA)
 	if err != nil {
 		return "", err
 	}
+	before.Candidate.DeferredWaves = run.Candidate.DeferredWaves
 	if run.Candidate.CandidateSHA != "" {
 		expected := scheduledPromotionCandidateSnapshot{WaveID: waveID, Candidate: run.Candidate, Gate: run.Gate, DefaultBranch: before.DefaultBranch}
 		if drift := scheduledPromotionSnapshotDrift(expected, before); drift != "" {
@@ -1530,7 +1630,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	} else if hold != nil {
 		return "", departureHoldError(hold)
 	}
-	after, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+	after, _, err := scheduledPromotionSnapshotWavesWithStore(vaultPath, projectID, waveIDs, wf, store, run.Candidate.CandidateSHA != "" && run.Candidate.CandidateSHA != run.Candidate.IntegrationBaseSHA)
 	if err != nil {
 		return "", err
 	}
@@ -1545,7 +1645,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	}
 	// A final snapshot makes every mutable input explicit. update-ref supplies
 	// the final default-ref CAS even if another writer races after this read.
-	final, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+	final, _, err := scheduledPromotionSnapshotWavesWithStore(vaultPath, projectID, waveIDs, wf, store, run.Candidate.CandidateSHA != "" && run.Candidate.CandidateSHA != run.Candidate.IntegrationBaseSHA)
 	if err != nil {
 		return "", err
 	}
@@ -1560,7 +1660,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 	if err := scheduledPromotionBeforeDefaultPrepare(); err != nil {
 		return "", err
 	}
-	late, err := scheduledPromotionSnapshotWithStore(vaultPath, projectID, waveID, wf, store)
+	late, _, err := scheduledPromotionSnapshotWavesWithStore(vaultPath, projectID, waveIDs, wf, store, run.Candidate.CandidateSHA != "" && run.Candidate.CandidateSHA != run.Candidate.IntegrationBaseSHA)
 	if err != nil {
 		return "", err
 	}
@@ -1647,7 +1747,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		return "", err
 	}
 	leaseOutcome = "promotion passed"
-	if err := appendScheduledPromotionAudit(vaultPath, waveID, before.DefaultBranch, mergeCommit, gateSummary, actor); err != nil {
+	if err := appendScheduledPromotionAudits(vaultPath, run.Candidate.WaveIDs, before.DefaultBranch, mergeCommit, gateSummary, actor); err != nil {
 		return "", err
 	}
 	return mergeCommit, nil
