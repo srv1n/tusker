@@ -26,6 +26,14 @@ func setScheduledPromotionPolicyForTest(t *testing.T, vault, mode string) Workfl
 		t.Fatal(err)
 	}
 	data["scheduled_promotion"] = map[string]any{"version": 1, "mode": mode}
+	// These fixtures land integration-branch work into a clean main checkout
+	// (worktree strategy); shared-checkout landing has its own test.
+	workspace, _ := data["workspace"].(map[string]any)
+	if workspace == nil {
+		workspace = map[string]any{}
+	}
+	workspace["strategy"], workspace["root"] = string(WorkspaceStrategyWorktree), "workspaces"
+	data["workspace"] = workspace
 	text, err := serializeDocument(data, body, nil)
 	if err != nil {
 		t.Fatal(err)

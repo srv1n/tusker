@@ -634,12 +634,32 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 		}
 	}
 	repoRoot := v7RepoRoot(vaultPath)
+	shared, err := sharedCheckoutStrategy(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	if shared {
+		// A clean checkout has no submitted work on disk to adopt; it lands
+		// the usual way, which writes the landed files.
+		dirty, err := inPlaceDirtyPaths(repoRoot)
+		if err != nil {
+			return nil, err
+		}
+		shared = len(dirty) > 0
+	}
+	advance := advanceV7DefaultBranchRef
+	waveIDs := candidate.WaveIDs
+	if shared {
+		// The shared checkout is live agent work: never check out control
+		// docs over it. The in-place advance touches only the index.
+		advance, waveIDs = advanceV7DefaultBranchRefShared, nil
+	}
 	preparation := &v7WaveMemberPreparation{}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range candidate.WaveIDs {
+	for _, id := range waveIDs {
 		memberPreparation, prepareErr := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, idx.Waves[id])
 		if prepareErr != nil {
 			return nil, errors.Join(prepareErr, preparation.restore())
@@ -680,7 +700,7 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	if err := ctx.Err(); err != nil {
 		return nil, restore(err)
 	}
-	checkouts, err = advanceV7DefaultBranchRef(repoRoot, defaultBranch, intendedSHA, expectedSHA)
+	checkouts, err = advance(repoRoot, defaultBranch, intendedSHA, expectedSHA)
 	if err != nil {
 		message := "promotion refusal: default_ref_drift: " + err.Error()
 		if recovery {
