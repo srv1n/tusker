@@ -638,20 +638,11 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	if err != nil {
 		return nil, err
 	}
-	if shared {
-		// A clean checkout has no submitted work on disk to adopt; it lands
-		// the usual way, which writes the landed files.
-		dirty, err := inPlaceDirtyPaths(repoRoot)
-		if err != nil {
-			return nil, err
-		}
-		shared = len(dirty) > 0
-	}
 	advance := advanceV7DefaultBranchRef
 	waveIDs := candidate.WaveIDs
 	if shared {
 		// The shared checkout is live agent work: never check out control
-		// docs over it. The in-place advance touches only the index.
+		// docs over it. The in-place advance writes only files nobody changed.
 		advance, waveIDs = advanceV7DefaultBranchRefShared, nil
 	}
 	preparation := &v7WaveMemberPreparation{}
@@ -710,6 +701,24 @@ func scheduledPromotionAdvanceRefUnderMaterialEpoch(
 	}
 	preparation.commit()
 	return checkouts, nil
+}
+
+// finishScheduledPromotionCommittedRef finishes a promotion whose ref already
+// sits at the intended SHA. A shared checkout may have moved its ref without
+// installing the prepared index (crash or failed rename), so its index is
+// repaired first.
+func finishScheduledPromotionCommittedRef(vaultPath, repoRoot string, promotion DeparturePromotion) error {
+	checkouts := v7DefaultBranchCheckouts(repoRoot, promotion.ExpectedRef)
+	shared, err := sharedCheckoutStrategy(vaultPath)
+	if err != nil {
+		return err
+	}
+	if shared && len(checkouts) == 1 {
+		if err := repairSharedCheckoutIndexAfterAdvance(checkouts[0].Path, promotion.ExpectedSHA, promotion.IntendedSHA); err != nil {
+			return err
+		}
+	}
+	return finishV7DefaultBranchAdvance(checkouts)
 }
 
 func scheduledPromotionTaskAcceptedReview(vaultPath string, task Note) error {
@@ -1273,7 +1282,7 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 		return run.Promotion.CommittedSHA, nil
 	}
 	if state == scheduledPromotionIntentCommitted {
-		if err := finishV7DefaultBranchAdvance(v7DefaultBranchCheckouts(repoRoot, run.Promotion.ExpectedRef)); err != nil {
+		if err := finishScheduledPromotionCommittedRef(vaultPath, repoRoot, run.Promotion); err != nil {
 			return "", err
 		}
 		return complete()
@@ -1301,7 +1310,7 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 		return "", tuskerError(errorInvalidTransition, "promotion recovery blocked: "+err.Error())
 	}
 	if state == scheduledPromotionIntentCommitted {
-		if err := finishV7DefaultBranchAdvance(v7DefaultBranchCheckouts(repoRoot, run.Promotion.ExpectedRef)); err != nil {
+		if err := finishScheduledPromotionCommittedRef(vaultPath, repoRoot, run.Promotion); err != nil {
 			return "", err
 		}
 		return complete()
@@ -1346,7 +1355,7 @@ func resumeScheduledPromotionIntent(ctx context.Context, vaultPath, projectID, w
 	)
 	if err != nil {
 		if state, _, inspectErr := inspectScheduledPromotionIntent(repoRoot, run.Promotion); inspectErr == nil && state == scheduledPromotionIntentCommitted {
-			if finishErr := finishV7DefaultBranchAdvance(v7DefaultBranchCheckouts(repoRoot, run.Promotion.ExpectedRef)); finishErr != nil {
+			if finishErr := finishScheduledPromotionCommittedRef(vaultPath, repoRoot, run.Promotion); finishErr != nil {
 				return "", finishErr
 			}
 			leaseOutcome = "promotion intent replay observed committed ref"
