@@ -285,13 +285,18 @@ func reviewPassStrayPaths(project RegisteredProject, task Note, wave Note, sourc
 	if relErr != nil || vaultRel == "." || strings.HasPrefix(vaultRel, "..") {
 		vaultRel = ""
 	}
-	target := "HEAD"
-	if branch := v7WaveIntegrationBranch(wave); gitRefExists(repoRoot, "refs/heads/"+branch) {
-		target = branch
-	}
-	base, err := gitOutputTrim(repoRoot, "merge-base", target, source)
+	base, err := gitOutputTrim(repoRoot, "merge-base", "HEAD", source)
 	if err != nil {
 		return nil, false, fmt.Errorf("owned_paths check cannot find the merge base: %w", err)
+	}
+	// Compare against the nearer of HEAD and the wave's integration branch.
+	// A shared checkout lands on HEAD and never advances the integration
+	// branch, so diffing from its older base blamed the task for commits
+	// already on HEAD, such as the one that authored the wave.
+	if branch := v7WaveIntegrationBranch(wave); gitRefExists(repoRoot, "refs/heads/"+branch) {
+		if waveBase, waveErr := gitOutputTrim(repoRoot, "merge-base", branch, source); waveErr == nil && waveBase != base && gitMergeBaseAncestor(repoRoot, base, waveBase) {
+			base = waveBase
+		}
 	}
 	changed, err := gitCombined(repoRoot, "diff", "--no-renames", "--name-only", "-z", base, source)
 	if err != nil {

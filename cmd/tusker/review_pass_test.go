@@ -617,3 +617,30 @@ func TestReviewPassRevalidatesStaleStateAfterStop(t *testing.T) {
 		t.Fatalf("stale pass after the stop must hold with a reason: %#v", run)
 	}
 }
+
+// A shared checkout lands on HEAD and never advances the wave's integration
+// branch, so commits already on HEAD are not the task's changes.
+func TestReviewPassStrayCheckIgnoresCommitsAlreadyOnHead(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	if err := writeText(filepath.Join(env.repo, "authored.txt"), "wave authoring\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, env.repo, "add", "authored.txt")
+	runGitDir(t, env.repo, "commit", "-q", "-m", "author the wave after wave start")
+	shared := filepath.Join(t.TempDir(), "shared")
+	runGitDir(t, env.repo, "worktree", "add", "-q", "--detach", shared, "HEAD")
+	if err := writeText(filepath.Join(shared, "reviewed.txt"), "shared submission\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, shared, "add", "reviewed.txt")
+	runGitDir(t, shared, "commit", "-q", "-m", "submission")
+	source := strings.TrimSpace(gitDirOutput(t, shared, "rev-parse", "HEAD"))
+	wave, ok := reviewPassWave(env.vault, env.task(t))
+	if !ok {
+		t.Fatal("fixture task is not a wave member")
+	}
+	stray, _, err := reviewPassStrayPaths(env.project, env.task(t), wave, source)
+	if err != nil || len(stray) != 0 {
+		t.Fatalf("a commit already on HEAD was blamed on the task: stray=%v err=%v", stray, err)
+	}
+}
