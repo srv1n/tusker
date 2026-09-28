@@ -290,7 +290,7 @@ func countLiveWorktrees(root, stateRoot string) int {
 		if !fileExists(metadataPath) {
 			continue
 		}
-		if workspaceCopyStale(metadataPath) {
+		if workspaceCopyStale(metadataPath) || staleReviewWorktree(entry.Name(), metadataPath) {
 			// A dead preparer PID is not enough to prove that a workspace is
 			// orphaned: the detached runner may have outlived the daemon that
 			// prepared it, and interactive runs may have PID zero. If runtime
@@ -682,6 +682,16 @@ func sanitizeWorkspaceKey(value string) string {
 // checkout's submitted commit under the project's usual worktree root.
 func prepareSharedReviewWorktree(m WorkspaceManager, req WorkspacePrepareRequest, commit string) (string, error) {
 	req.Strategy, req.BranchName, req.BranchBase, req.DetachedCommit = WorkspaceStrategyWorktree, "", "", commit
+	// A leftover from an earlier attempt is only reused when it is still a
+	// clean checkout of the submission; anything else is recreated.
+	if path, root, err := workspacePathForRequest(req); err == nil && fileExists(path) && assertWorkspaceWithinRoot(path, root) == nil {
+		if head, headErr := gitOutputTrim(path, "rev-parse", "HEAD"); headErr != nil || head != commit || reviewerWorkspaceDirtyReason(path) != "" {
+			if err := cleanupWorkspacePath(path); err != nil {
+				return "", err
+			}
+			_ = exec.Command("git", "-C", req.RepoRoot, "worktree", "prune").Run()
+		}
+	}
 	prepared, err := m.Prepare(req)
 	return prepared.Path, err
 }
@@ -791,4 +801,16 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// staleReviewWorktree lets pruning reclaim a shared-checkout review worktree
+// whose preparer, the daemon, is still alive. Some finish paths never reach
+// reconcileRun's cleanup; the active-owner check still protects live reviews,
+// and the age floor covers the moment before the attempt records the path.
+func staleReviewWorktree(name, metadataPath string) bool {
+	if !strings.Contains(name, "__review-") {
+		return false
+	}
+	info, err := os.Stat(metadataPath)
+	return err == nil && time.Since(info.ModTime()) > 10*time.Minute
 }

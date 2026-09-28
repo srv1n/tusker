@@ -162,6 +162,9 @@ func TestSharedCheckoutStraysAndFailureCleanup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.Symlink("own.txt", filepath.Join(project.RepoRoot, "owned/APP-T-0001/link")); err != nil {
+		t.Fatal(err)
+	}
 	one := runs["APP-T-0001"]
 	scope, err := canonicalRunAuthoredScope(store, one)
 	if err != nil {
@@ -202,6 +205,9 @@ func TestSharedCheckoutStraysAndFailureCleanup(t *testing.T) {
 	if fileExists(filepath.Join(project.RepoRoot, "owned/APP-T-0001/own.txt")) {
 		t.Fatal("failed run's untracked file survived cleanup")
 	}
+	if _, err := os.Lstat(filepath.Join(project.RepoRoot, "owned/APP-T-0001/link")); !os.IsNotExist(err) {
+		t.Fatalf("failed run's unchanged symlink survived cleanup: %v", err)
+	}
 	if got, _ := readText(trackedPath); got != "before" {
 		t.Fatalf("failed run's tracked file was not restored: %q", got)
 	}
@@ -214,6 +220,45 @@ func TestSharedCheckoutStraysAndFailureCleanup(t *testing.T) {
 	}
 	if got, err := gitOutputTrim(project.RepoRoot, "show", ref+":owned/APP-T-0001/tracked.txt"); err != nil || got != "after" {
 		t.Fatalf("abandoned ref missing tracked edit: %q %v", got, err)
+	}
+}
+
+func TestSharedCheckoutCleanupMatchesRawSnapshotIdentity(t *testing.T) {
+	repo := t.TempDir()
+	initializeOrchestrationGitRepo(t, repo)
+	dir := filepath.Join(repo, "owned")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"same.txt", "chmod.txt", "rewrite.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("same.txt", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := materializeWorkerSubmissionCommit(RunStatus{RecordID: "APP-T-0001", WorkspacePath: repo}, []string{"owned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Edits after the snapshot, as a retry already at work would make.
+	if err := os.Chmod(filepath.Join(dir, "chmod.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rewrite.txt"), []byte("newer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]bool{
+		"owned/same.txt": true, "owned/link": true, "owned/gone.txt": true,
+		"owned/chmod.txt": false, "owned/rewrite.txt": false, "owned/new.txt": false,
+	} {
+		if got := sharedCheckoutPathMatchesCommit(repo, commit, path); got != want {
+			t.Errorf("%s matches snapshot = %v, want %v", path, got, want)
+		}
 	}
 }
 

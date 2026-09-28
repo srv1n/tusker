@@ -217,7 +217,7 @@ func materializeWorkerSubmissionCommit(run RunStatus, materialScope []string) (s
 		return "", err
 	}
 	defer os.RemoveAll(tmp)
-	env := append(os.Environ(), "GIT_INDEX_FILE="+filepath.Join(tmp, "index"))
+	env := append(os.Environ(), "GIT_INDEX_FILE="+filepath.Join(tmp, "index"), "GIT_LITERAL_PATHSPECS=1")
 	runGit := func(args ...string) (string, error) {
 		cmd := exec.Command("git", append([]string{"-C", run.WorkspacePath}, args...)...)
 		cmd.Env = env
@@ -261,8 +261,10 @@ func abandonSharedCheckoutScope(store *RuntimeStore, run RunStatus) error {
 	if err != nil {
 		return err
 	}
-	args := append([]string{"status", "--porcelain", "--untracked-files=all", "--"}, scope...)
-	dirty, err := gitOutputTrim(run.WorkspacePath, args...)
+	// Scope paths and git-listed names are literal file names, never globs or
+	// pathspec magic.
+	lit := func(args ...string) []string { return append([]string{"--literal-pathspecs"}, args...) }
+	dirty, err := gitOutputTrim(run.WorkspacePath, lit(append([]string{"status", "--porcelain", "--untracked-files=all", "--"}, scope...)...)...)
 	if err != nil || dirty == "" {
 		return err
 	}
@@ -274,48 +276,77 @@ func abandonSharedCheckoutScope(store *RuntimeStore, run RunStatus) error {
 	if _, err := gitOutputTrim(run.WorkspacePath, "update-ref", ref, commit); err != nil {
 		return err
 	}
-	untracked, err := gitCombined(run.WorkspacePath, append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, scope...)...)
+	untracked, err := gitCombined(run.WorkspacePath, lit(append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, scope...)...)...)
 	if err != nil {
 		return err
 	}
-	tracked, err := gitCombined(run.WorkspacePath, append([]string{"ls-files", "-z", "--"}, scope...)...)
+	tracked, err := gitCombined(run.WorkspacePath, lit(append([]string{"ls-files", "-z", "--"}, scope...)...)...)
 	if err != nil {
 		return err
 	}
-	// Touch only paths that still hold what the abandoned ref just preserved.
-	// Anything written since (a retry already at work) is left in place.
+	// Touch only paths that still hold exactly what the abandoned ref just
+	// preserved. Anything written since (a retry already at work) is left in place.
 	// ponytail: a staged version that differs from the working file is not in
 	// the ref; keep the index too if that ever matters.
-	preserved := func(path string) bool {
-		want, _ := gitOutputTrim(run.WorkspacePath, "rev-parse", "--verify", "-q", commit+":"+path)
-		if want == "" {
-			_, err := os.Lstat(filepath.Join(run.WorkspacePath, filepath.FromSlash(path)))
-			return os.IsNotExist(err)
-		}
-		got, err := gitOutputTrim(run.WorkspacePath, "hash-object", "--", path)
-		return err == nil && got == want
-	}
 	if tracked != "" {
 		var paths []string
 		for _, path := range strings.Split(strings.TrimSuffix(tracked, "\x00"), "\x00") {
-			if preserved(path) {
+			if sharedCheckoutPathMatchesCommit(run.WorkspacePath, commit, path) {
 				paths = append(paths, path)
 			}
 		}
 		if len(paths) > 0 {
-			if _, err := gitOutputTrim(run.WorkspacePath, append([]string{"restore", "--source=HEAD", "--staged", "--worktree", "--"}, paths...)...); err != nil {
+			if _, err := gitOutputTrim(run.WorkspacePath, lit(append([]string{"restore", "--source=HEAD", "--staged", "--worktree", "--"}, paths...)...)...); err != nil {
 				return err
 			}
 		}
 	}
 	for _, path := range strings.Split(untracked, "\x00") {
-		if path != "" && workspaceMaterialScopeContains(scope, path) && preserved(path) {
+		if path != "" && workspaceMaterialScopeContains(scope, path) && sharedCheckoutPathMatchesCommit(run.WorkspacePath, commit, path) {
 			if err := os.Remove(filepath.Join(run.WorkspacePath, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// sharedCheckoutPathMatchesCommit reports whether the working-tree entry at path
+// is raw-identical to commit's entry: same kind (file or symlink), executable
+// bit, symlink target and unfiltered bytes. A path absent from commit matches
+// only while it is still absent.
+func sharedCheckoutPathMatchesCommit(workspace, commit, path string) bool {
+	abs := filepath.Join(workspace, filepath.FromSlash(path))
+	info, statErr := os.Lstat(abs)
+	entry, err := gitCombined(workspace, "--literal-pathspecs", "ls-tree", "-z", commit, "--", path)
+	if err != nil {
+		return false
+	}
+	meta, name, ok := strings.Cut(strings.TrimSuffix(entry, "\x00"), "\t")
+	if !ok || name != path {
+		return entry == "" && os.IsNotExist(statErr)
+	}
+	fields := strings.Fields(meta) // <mode> <type> <oid>
+	if statErr != nil || len(fields) != 3 || fields[1] != "blob" {
+		return false
+	}
+	var got string
+	switch mode := info.Mode(); {
+	case mode&os.ModeSymlink != 0 && fields[0] == "120000":
+		got, err = os.Readlink(abs)
+	case mode.IsRegular() && mode.Perm()&0o100 != 0 && fields[0] == "100755",
+		mode.IsRegular() && mode.Perm()&0o100 == 0 && fields[0] == "100644":
+		var raw []byte
+		raw, err = os.ReadFile(abs)
+		got = string(raw)
+	default:
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	want, err := gitCombined(workspace, "cat-file", "blob", fields[2])
+	return err == nil && want == got
 }
 
 func applyWorkerLifecycle(store *RuntimeStore, req daemonControlRequest) error {

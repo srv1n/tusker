@@ -750,6 +750,13 @@ func finishRuntimeRunIfSnapshot(store *RuntimeStore, run *RunStatus, state Lease
 	interrupted.UpdatedAt = now
 	interrupted.Terminal = false
 	clearActiveExecution(&interrupted)
+	// Clean the shared checkout while this attempt still holds the lease, so no
+	// new attempt can claim the task and write mid-restore. If the CAS then
+	// loses, the abandoned ref still holds everything cleanup touched.
+	var abandonErr error
+	if !resumable {
+		abandonErr = abandonSharedCheckoutScope(store, expected)
+	}
 	ok, err := store.InterruptRunIfSnapshot(expected, interrupted)
 	if err != nil {
 		return err
@@ -757,10 +764,8 @@ func finishRuntimeRunIfSnapshot(store *RuntimeStore, run *RunStatus, state Lease
 	if !ok {
 		return tuskerError("CAS_CONFLICT", "run changed while interrupt was being applied: "+firstNonEmpty(expected.ItemID, expected.RecordID), withHint("reload the run and retry; Tusker did not overwrite the newer lease or process state"))
 	}
-	if !resumable {
-		if err := abandonSharedCheckoutScope(store, expected); err != nil {
-			return err
-		}
+	if abandonErr != nil {
+		return abandonErr
 	}
 	updateRunAttemptFromRun(store, expected, outcome, exitCode, reason, now)
 	if strings.TrimSpace(expected.SessionRef) != "" {
@@ -2869,12 +2874,12 @@ func (d *Daemon) runLeaseRenewalDispatchable(project RegisteredProject, wf Workf
 // reconcileRun removes a shared-checkout review worktree once its review
 // attempt has ended, whatever the outcome.
 func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus) (RunStatus, bool, error) {
+	// Resolve the worktree before reconciliation finalizes the attempt.
+	reviewPath, _ := sharedReviewWorkspace(d.store, run)
 	updated, changed, err := d.reconcileRunAttempt(ctx, project, wfFile, run)
-	if err == nil && run.Lane == runLaneReview && isDispatchingLeaseState(run.LeaseState) &&
+	if err == nil && reviewPath != "" && isDispatchingLeaseState(run.LeaseState) &&
 		(!isDispatchingLeaseState(updated.LeaseState) || updated.ActiveAttemptID != run.ActiveAttemptID) {
-		if path, _ := sharedReviewWorkspace(d.store, run); path != "" {
-			_ = cleanupWorkspacePath(path)
-		}
+		_ = cleanupWorkspacePath(reviewPath)
 	}
 	return updated, changed, err
 }
@@ -5887,6 +5892,12 @@ func updateRunAttemptFromRun(store *RuntimeStore, run RunStatus, outcome Attempt
 		for _, existing := range attempts {
 			if existing.AttemptID == run.ActiveAttemptID {
 				attempt.EndStateJSON = existing.EndStateJSON
+				// A shared-checkout review attempt records its own worktree;
+				// keep it so the worktree can still be found and removed.
+				if existing.Lane == runLaneReview && strings.TrimSpace(existing.WorkspacePath) != "" &&
+					!sameCanonicalProjectPath(existing.WorkspacePath, run.WorkspacePath) {
+					attempt.WorkspacePath = existing.WorkspacePath
+				}
 				break
 			}
 		}

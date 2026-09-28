@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,10 +43,11 @@ func TestSharedCheckoutReviewRunsInWorktreeAtSubmission(t *testing.T) {
 		t.Fatal("fixture: shared checkout should be dirty")
 	}
 
-	path, err := prepareSharedReviewWorktree(NewWorkspaceManager(), WorkspacePrepareRequest{
+	req := WorkspacePrepareRequest{
 		ProjectID: "P1", ProjectKey: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", RepoRoot: shared, StateRoot: stateRoot,
 		Strategy: WorkspaceStrategyShared, BranchName: "task/app-t-0001",
-	}, sha)
+	}
+	path, err := prepareSharedReviewWorktree(NewWorkspaceManager(), req, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +96,38 @@ func TestSharedCheckoutReviewRunsInWorktreeAtSubmission(t *testing.T) {
 		t.Fatal("changed review worktree material still bound to the submission")
 	}
 
-	if err := cleanupWorkspacePath(reviewPath); err != nil || fileExists(reviewPath) {
-		t.Fatalf("review worktree not removed: err=%v", err)
+	// A retry must not reuse a dirty leftover worktree.
+	if again, err := prepareSharedReviewWorktree(NewWorkspaceManager(), req, sha); err != nil || again != reviewPath {
+		t.Fatalf("re-prepare = %q err=%v, want %q", again, err, reviewPath)
+	}
+	if err := reviewWorktreeMatchesSubmission(reviewPath, parent); err != nil {
+		t.Fatalf("dirty leftover review worktree was reused: %v", err)
+	}
+	if reason := reviewerWorkspaceDirtyReason(reviewPath); reason != "" {
+		t.Fatalf("recreated review worktree is dirty: %s", reason)
+	}
+
+	// Finalizing the review attempt through the daemon removes the worktree
+	// and leaves the attempt pointing at it, not at the shared checkout.
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	run.LeaseState, run.AttemptOutcome, run.ProcessPID, run.AttemptCount = string(LeaseStateRunning), string(AttemptOutcomeNone), dead.Process.Pid, 1
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	updated, _, err := daemon.reconcileRun(context.Background(), RegisteredProject{ProjectID: "P1"}, WorkflowFile{Data: defaultWorkflow()}, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isDispatchingLeaseState(updated.LeaseState) && updated.ActiveAttemptID == run.ActiveAttemptID {
+		t.Fatalf("fixture: review attempt was not finalized: %#v", updated)
+	}
+	attempts, err := store.ListAttemptsForRun("P1", "APP-T-0001")
+	if err != nil || len(attempts) != 1 || attempts[0].WorkspacePath != reviewPath || attempts[0].Outcome == string(AttemptOutcomeNone) {
+		t.Fatalf("finalized review attempt = %#v err=%v, want outcome recorded on %q", attempts, err, reviewPath)
+	}
+	if fileExists(reviewPath) {
+		t.Fatal("review worktree survived its finalized attempt")
 	}
 	if list, _ := gitOutputTrim(shared, "worktree", "list"); strings.Contains(list, reviewPath) {
 		t.Fatalf("git still lists the removed review worktree:\n%s", list)

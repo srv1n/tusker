@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestWorkspaceMaterialScopeRejectsPathspecEscapes(t *testing.T) {
-	for _, bad := range []string{"cmd/..", "cmd/../x", "a/./b", ":(top)", ":/", "..", "a//b"} {
+	for _, bad := range []string{"cmd/..", "cmd/../x", "a/./b", ":(top)", ":/", "..", "a//b", "src/*", "a?b", "[ab]"} {
 		if _, err := normalizeWorkspaceMaterialScope([]string{bad}); err == nil {
 			t.Errorf("scope %q accepted", bad)
 		}
