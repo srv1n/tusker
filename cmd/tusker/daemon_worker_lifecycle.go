@@ -219,20 +219,8 @@ func materializeWorkerSubmissionCommit(run RunStatus, materialScope []string) (s
 	if _, err := runGit("read-tree", parent); err != nil {
 		return "", err
 	}
-	dirty, err := inPlaceDirtyPaths(run.WorkspacePath)
-	if err != nil {
+	if _, err := runGit(append([]string{"add", "-f", "-A", "--"}, materialScope...)...); err != nil {
 		return "", err
-	}
-	var stage []string
-	for _, path := range dirty {
-		if workspaceMaterialScopeContains(materialScope, path) {
-			stage = append(stage, path)
-		}
-	}
-	if len(stage) > 0 {
-		if _, err := runGit(append([]string{"add", "-f", "-A", "--"}, stage...)...); err != nil {
-			return "", err
-		}
 	}
 	tree, err := runGit("write-tree")
 	if err != nil {

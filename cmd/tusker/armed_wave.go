@@ -378,7 +378,7 @@ func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map
 	if reason := directWaveTaskContractStaleReason(task); reason != "" {
 		return reason
 	}
-	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared && len(normalizeOwnedPaths(normalizeList(task.Data["owned_paths"]))) == 0 {
+	if stringField(task.Data, "wave") != "" && workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared && len(normalizeOwnedPaths(normalizeList(task.Data["owned_paths"]))) == 0 {
 		for _, run := range runs {
 			if run.ItemID != stringField(task.Data, "id") && isDispatchingLeaseState(run.LeaseState) {
 				return "shared-checkout tasks need owned_paths while another run is active"
