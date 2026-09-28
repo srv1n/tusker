@@ -271,6 +271,31 @@ func TestDeparturePlannerImplicitSingletonPublishesAtomically(t *testing.T) {
 	}
 }
 
+func TestDeparturePlannerPinsLocalDefaultBranchAheadOfRemote(t *testing.T) {
+	vault := departurePlannerTestVault(t)
+	wf, err := loadWorkflow(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf.Data.ScheduledPromotion.Effective = scheduledPromotionProjection(ScheduledPromotionPolicy{Mode: scheduledPromotionShadow}, true, "test")
+	planner := defaultDeparturePlanner()
+	planner.remote = func(string) (string, bool) { return "origin", true }
+	planner.fetch = func(context.Context, string, string, string) error { return nil }
+	planner.rev = func(_ string, ref string) (string, bool) {
+		switch ref {
+		case "main":
+			return "local-sha", true
+		case "refs/remotes/origin/main":
+			return "remote-sha", true
+		}
+		return "", false
+	}
+	decision, err := planner.PlanDeparture(vault, "project", wf)
+	if err != nil || decision.Candidate.ExpectedDefaultBranchSHA != "local-sha" {
+		t.Fatalf("planner must pin the local default branch that staging snapshots: %#v %v", decision.Candidate, err)
+	}
+}
+
 func TestDeparturePlannerDiscoversCompletedWaveFromExactLandingAudits(t *testing.T) {
 	fixture := newMultiMemberDepartureExecutionFixture(t)
 	idx, err := loadV7Index(fixture.vault)

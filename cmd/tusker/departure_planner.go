@@ -152,9 +152,11 @@ func (p departurePlanner) PlanDeparture(vaultPath, projectID string, wf Workflow
 		decision.Fetch.Succeeded = true
 	}
 	decision.DefaultRef.Name = defaultBranch
-	if sha, ok := p.rev(repoRoot, "refs/remotes/"+remote+"/"+defaultBranch); ok {
+	// Promotion advances the local default branch, and staging snapshots it, so
+	// the plan must pin the same ref. The remote copy is only a fallback.
+	if sha, ok := p.rev(repoRoot, defaultBranch); ok {
 		decision.Candidate.ExpectedDefaultBranchSHA = sha
-	} else if sha, ok := p.rev(repoRoot, defaultBranch); ok {
+	} else if sha, ok := p.rev(repoRoot, "refs/remotes/"+remote+"/"+defaultBranch); ok {
 		decision.Candidate.ExpectedDefaultBranchSHA = sha
 	}
 	for _, fact := range decision.Tasks {
