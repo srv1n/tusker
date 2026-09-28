@@ -137,6 +137,26 @@ func TestSharedCheckoutWorkspacePrepareAcceptsOwnedAndSubmittedDirt(t *testing.T
 		t.Fatalf("unknown dirt was accepted: %v", err)
 	}
 	runGitDir(t, project.RepoRoot, "checkout", "--", "unknown.txt")
+	// An interrupted then redriven run is unclaimed but not done; its tracked
+	// edits are its unfinished work, not strays that block every other task.
+	tracked := filepath.Join(project.RepoRoot, "owned", "APP-T-0001", "tracked.txt")
+	if err := writeText(tracked, "base"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, project.RepoRoot, "add", "owned/APP-T-0001/tracked.txt")
+	runGitDir(t, project.RepoRoot, "commit", "-q", "-m", "track owned file")
+	if err := writeText(tracked, "unfinished"); err != nil {
+		t.Fatal(err)
+	}
+	run.LeaseState = string(LeaseStateUnclaimed)
+	if err := store.UpsertRun(*run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Prepare(req); err != nil {
+		t.Fatalf("an unclaimed run's unfinished edits blocked another task: %v", err)
+	}
+	runGitDir(t, project.RepoRoot, "checkout", "--", "owned/APP-T-0001/tracked.txt")
+	run.LeaseState = string(LeaseStateRunning)
 	source, err := materializeWorkerSubmissionCommit(*run, []string{"owned/APP-T-0001/own.txt"})
 	if err != nil {
 		t.Fatal(err)

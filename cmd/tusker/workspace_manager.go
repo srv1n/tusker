@@ -172,7 +172,12 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 	vault := projects[0].Project.VaultRoot
 	activeScopes := make([][]string, 0)
 	for _, run := range runs {
-		if run.ProjectID != req.ProjectID || run.RecordID == req.RecordID || !sharedCheckoutRunHoldsWork(run) || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
+		// An interrupted or redriven execute run is unclaimed but not done: its
+		// files in the checkout are its own unfinished work, and counting them as
+		// strays let interrupted tasks (the caller included) block each other
+		// forever. Only terminal runs give up their scope here.
+		ownsScope := sharedCheckoutRunHoldsWork(run) || (run.Lane == runLaneExecute && !run.Terminal)
+		if run.ProjectID != req.ProjectID || !ownsScope || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
 			continue
 		}
 		scope, scopeErr := canonicalRunAuthoredScope(store, run)
