@@ -173,13 +173,6 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if !slices.Contains(argv, "--replay-user-messages") {
 		argv = append(argv, "--replay-user-messages")
 	}
-	prompt, err := readText(req.PromptPath)
-	if err != nil {
-		return nil, err
-	}
-	if resume != nil && strings.TrimSpace(resume.SessionRef) != "" {
-		argv = append(argv, prompt)
-	}
 	if !filepath.IsAbs(argv[0]) {
 		return nil, tuskerError(errorConfigInvalid, "prepared Claude executable must be an absolute path")
 	}
@@ -262,10 +255,12 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err := handle.setPermissionMode(permissionMode); err != nil {
 		_ = appendRawLogLine(req.RawLogPath, "failed to set claude permission mode: "+err.Error())
 	}
-	if resume == nil || strings.TrimSpace(resume.SessionRef) == "" {
-		if err := handle.sendUserMessage(prompt); err != nil {
-			return nil, err
-		}
+	prompt, err := readText(req.PromptPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := handle.sendUserMessage(prompt); err != nil {
+		return nil, err
 	}
 	handle.waitForSession(5 * time.Second)
 

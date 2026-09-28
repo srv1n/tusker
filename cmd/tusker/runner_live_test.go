@@ -1121,10 +1121,11 @@ if "--version" in sys.argv:
     print("fake Claude 1.0")
     sys.exit(0)
 assert "--resume claude-session-before-restart" in " ".join(sys.argv), sys.argv
-assert sys.argv[-1]=="Resume prompt.\n", sys.argv
 for line in sys.stdin:
     msg=json.loads(line)
-    if msg.get("request",{}).get("subtype")=="set_permission_mode":
+    if msg.get("type")=="control_request":
+        continue
+    if msg.get("type")=="user":
         assert os.environ["TUSKER_SESSION_REF"]=="claude-session-before-restart", os.environ.get("TUSKER_SESSION_REF")
         print(json.dumps({"type":"assistant","session_id":"claude-session-before-restart","message":{"id":"msg-resumed","role":"assistant","content":[{"type":"text","text":"resumed"}],"usage":{"input_tokens":5,"output_tokens":3}}}), flush=True)
         print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":"claude-session-before-restart","usage":{"input_tokens":5,"output_tokens":3}}), flush=True)

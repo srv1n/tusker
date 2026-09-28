@@ -200,12 +200,6 @@ args=sys.argv[1:]
 with open(os.environ["TUSKER_CLAUDE_ARGV_PATH"],"a") as f: f.write(json.dumps(args)+"\n")
 with open(os.environ["TUSKER_CLAUDE_ENV_PATH"],"a") as f: f.write(os.environ.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "")+"\n")
 session=args[args.index("--session-id")+1] if "--session-id" in args else args[args.index("--resume")+1]
-if "--resume" in args:
-    for line in sys.stdin:
-        if json.loads(line).get("request",{}).get("subtype")=="set_permission_mode":
-            print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":session}),flush=True)
-            break
-    sys.exit(0)
 for line in sys.stdin:
     if json.loads(line).get("type")=="user":
         print(json.dumps({"type":"result","subtype":"success","is_error":False,"session_id":session}),flush=True)
@@ -230,10 +224,6 @@ for line in sys.stdin:
 	req.Start.AttemptID = "attempt-resume"
 	req.Start.StatusPath = filepath.Join(dir, "resume.status.json")
 	req.Start.RawLogPath = filepath.Join(dir, "resume.raw.log")
-	resumePrompt := "Continue the task from where you stopped; check any command you started."
-	if err := writeText(req.Start.PromptPath, resumePrompt); err != nil {
-		t.Fatal(err)
-	}
 	resumedResult, err := startLiveClaude(context.Background(), req.Start, &ResumeRequest{SessionRef: id})
 	if err != nil {
 		t.Fatal(err)
@@ -259,9 +249,6 @@ for line in sys.stdin:
 	}
 	if claudeArgValue(observedStart, "--session-id") != id || claudeArgValue(observedResume, "--resume") != id {
 		t.Fatalf("fake Claude session flags: start=%v resume=%v", observedStart, observedResume)
-	}
-	if observedResume[len(observedResume)-1] != resumePrompt {
-		t.Fatalf("resume prompt = %q", observedResume[len(observedResume)-1])
 	}
 	envRaw, err := os.ReadFile(envPath)
 	if err != nil || string(envRaw) != "1\n1\n" {
