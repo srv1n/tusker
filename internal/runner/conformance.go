@@ -86,6 +86,15 @@ func Conformance(ctx context.Context, definition HarnessDefinition, input RunInp
 		report.FinishedAt, report.Ready = time.Now().UTC(), false
 		return report, nil
 	}
+	if input.LiveArgvWrapper != nil {
+		argv, evidence := input.LiveArgvWrapper(prepared.Argv)
+		result := CaseNotRun
+		if len(argv) > 0 && argv[0] != prepared.Argv[0] {
+			prepared.LaunchArgv = argv
+			result = CasePass
+		}
+		report.Cases = append(report.Cases, ConformanceCase{ID: "deny_list", Result: result, Evidence: evidence})
+	}
 	receipt, execErr := Execute(ctx, prepared, nil)
 	if execErr != nil {
 		report.Cases = append(report.Cases, ConformanceCase{ID: "live_canary", Result: CaseFail, Evidence: bounded(receipt.Reason, 500)})

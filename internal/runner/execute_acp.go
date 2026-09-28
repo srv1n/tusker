@@ -29,8 +29,12 @@ func executeACP(ctx context.Context, prepared PreparedLaunch, sink EventSink) (E
 	runCtx, cancel := context.WithTimeout(ctx, prepared.Deadline)
 	defer cancel()
 	var stderr bytes.Buffer
+	launchArgv := prepared.Argv
+	if len(prepared.LaunchArgv) > 0 {
+		launchArgv = prepared.LaunchArgv
+	}
 	client, err := acp.Start(runCtx, acp.Config{
-		Argv: prepared.Argv, CWD: prepared.CWD, Env: prepared.Environment, Stderr: &stderr,
+		Argv: launchArgv, CWD: prepared.CWD, Env: prepared.Environment, Stderr: &stderr,
 		Limits:   acp.Limits{MaxFrameBytes: maxProtocolFrame, MaxUpdateBytes: prepared.OutputLimit},
 		Timeouts: acp.Timeouts{Prompt: prepared.Deadline},
 		PermissionHandler: func(context.Context, acp.PermissionRequest) (acp.PermissionDecision, error) {

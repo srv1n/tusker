@@ -35,10 +35,6 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 	if harness == "" {
 		return 2, runnercore.ConformanceReport{}, tuskerError(errorMissingArg, "runner conformance requires --harness")
 	}
-	preset := runnercore.PermissionPreset(strings.TrimSpace(args.String("preset")))
-	if preset == "" {
-		preset = runnercore.PresetReadOnly
-	}
 	// Runner profiles are global, so conformance does not require a vault:
 	// outside a project it resolves built-in and user-global layers only.
 	vault, err := resolveOptionalVault(args, false)
@@ -48,6 +44,17 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 	definition, model, effort, err := conformanceHarnessDefinition(vault, harness)
 	if err != nil {
 		return 2, runnercore.ConformanceReport{}, err
+	}
+	preset := runnercore.PermissionPreset(strings.TrimSpace(args.String("preset")))
+	if preset == "" && definition.Profile != "" {
+		resolved, resolveErr := resolveConformanceTuskerConfig(vault)
+		if resolveErr != nil {
+			return 2, runnercore.ConformanceReport{}, resolveErr
+		}
+		preset = runnercore.PermissionPreset(strings.TrimSpace(runnerProfilesFromSchema(resolved.Config.Automation.Profiles)[definition.Profile].PermissionPreset))
+	}
+	if preset == "" {
+		preset = runnercore.PresetReadOnly
 	}
 	var draftAccess *runnercore.AgentAccessV1
 	if args.Bool("draft") {
@@ -143,6 +150,12 @@ func runRunnerConformance(args Args) (int, runnercore.ConformanceReport, error) 
 		}
 		input.Access, input.ResolvedAccess = draftAccess, &resolved
 	}
+	if live {
+		input.LiveArgvWrapper, err = liveConformanceArgvWrapper(definition, workspace, input.Preset)
+		if err != nil {
+			return 2, runnercore.ConformanceReport{}, err
+		}
+	}
 	if args.Bool("setup") {
 		now := time.Now().UTC()
 		report := runnercore.ConformanceReport{Schema: runnercore.ConformanceSchema, HarnessID: definition.ID, Provider: definition.Provider, Dialect: definition.Dialect, Transport: definition.Transport, HostOS: runtime.GOOS, HostArchitecture: runtime.GOARCH, Preset: input.Preset, Model: model, Effort: effort, StartedAt: now, FinishedAt: now, Live: false, Ready: false, Cases: []runnercore.ConformanceCase{{ID: "access_resolution", Result: runnercore.CasePass, Evidence: "resolved without runtime, authentication, handshake, canary, or model probes"}}}
@@ -188,6 +201,28 @@ func resolveConformanceTuskerConfig(vaultPath string) (resolvedTuskerConfig, err
 		return resolveTuskerConfigForPaths("", "", false)
 	}
 	return resolveTuskerConfig(vaultPath)
+}
+
+func liveConformanceArgvWrapper(definition runnercore.HarnessDefinition, workspace string, preset runnercore.PermissionPreset) (func([]string) ([]string, string), error) {
+	if !((definition.Transport == runnercore.TransportCLI && (definition.Dialect == "codex" || definition.Dialect == "muse")) || (definition.Transport == runnercore.TransportACP && definition.Provider == "devin")) {
+		return func(argv []string) ([]string, string) {
+			return argv, "runner deny-list wrapper not applied to " + string(definition.Transport) + "/" + definition.Dialect + " transport"
+		}, nil
+	}
+	access, err := effectiveRunnerDenyPaths(workspace)
+	if err != nil {
+		return nil, err
+	}
+	return func(argv []string) ([]string, string) {
+		wrapped := wrapRunnerAccessArgv(argv, access, CodexPolicy{TurnSandboxPolicy: string(preset)})
+		if len(wrapped) > 0 && wrapped[0] != argv[0] {
+			return wrapped, "runner deny-list sandbox-exec applied"
+		}
+		if runtime.GOOS != "darwin" && preset == runnercore.PresetDangerFullAccess {
+			return wrapped, "runner deny-list sandbox-exec unavailable outside darwin"
+		}
+		return wrapped, "harness sandbox active; deny-list wrapper not used"
+	}, nil
 }
 
 func conformanceHarnessDefinition(vaultPath, name string) (runnercore.HarnessDefinition, string, string, error) {
@@ -315,10 +350,25 @@ func preparedRunnerForDispatch(vaultPath string, runner RunnerName, command stri
 	}
 	var cached runnercore.ConformanceReport
 	if definition.Provider == "muse" {
-		raw, readErr := os.ReadFile(conformanceReportCachePath(DefaultStateRoot(), runnercore.ConformanceReport{HarnessID: definition.ID, Preset: preset}))
-		if readErr == nil && json.Unmarshal(raw, &cached) == nil && cached.Ready && cached.ValidUntil != nil && cached.ValidUntil.After(time.Now().UTC()) {
-			input.VerifiedAuth = true
+		raw, readErr := os.ReadFile(conformanceReportCachePath(DefaultStateRoot(), runnercore.ConformanceReport{HarnessID: definition.ID, Preset: input.Preset}))
+		valid := readErr == nil && json.Unmarshal(raw, &cached) == nil && cached.Live && cached.Ready && cached.HarnessID == definition.ID && cached.Preset == input.Preset && cached.ValidUntil != nil && cached.ValidUntil.After(time.Now().UTC())
+		if valid && input.Preset == runnercore.PresetDangerFullAccess && runtime.GOOS == "darwin" {
+			valid = false
+			for _, check := range cached.Cases {
+				if check.ID == "deny_list" && check.Result == runnercore.CasePass {
+					valid = true
+					break
+				}
+			}
 		}
+		if !valid {
+			remedy := "tusker runner test " + definition.ID + " --preset " + string(input.Preset)
+			if input.Preset == runnercore.PresetDangerFullAccess {
+				remedy += " --external-containment"
+			}
+			return runnercore.PreparedLaunch{}, &runnercore.AdmissionError{Code: "live_check_missing", HarnessID: definition.ID, Check: "live_conformance", Reason: "No valid live conformance report for preset " + string(input.Preset), Remedy: remedy + " --live"}
+		}
+		input.VerifiedAuth = true
 	}
 	prepared, err := runnercore.Prepare(context.Background(), definition, input)
 	if err == nil && definition.Provider == "muse" && cached.ExecutableIdentity != prepared.ExecutableIdentity {
