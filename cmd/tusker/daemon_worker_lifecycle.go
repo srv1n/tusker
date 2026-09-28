@@ -180,7 +180,7 @@ func sharedCheckoutStrays(store *RuntimeStore, run RunStatus, own []string) ([]s
 		if other.ProjectID != run.ProjectID || other.RecordID == run.RecordID || !sharedCheckoutRunHoldsWork(other) || !sameCanonicalProjectPath(other.WorkspacePath, run.WorkspacePath) {
 			continue
 		}
-		scope, err := canonicalRunAuthoredScope(store, other)
+		scope, err := sharedCheckoutRunScope(store, other)
 		if err != nil {
 			return nil, nil, err
 		}

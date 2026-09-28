@@ -155,6 +155,17 @@ func TestSharedCheckoutWorkspacePrepareAcceptsOwnedAndSubmittedDirt(t *testing.T
 	if _, err := manager.Prepare(req); err != nil {
 		t.Fatalf("an unclaimed run's unfinished edits blocked another task: %v", err)
 	}
+	// Submitted and in review, the run still owns its files until they land.
+	run.Lane, run.LeaseState = runLaneReview, string(LeaseStateRunning)
+	if err := store.UpsertRun(*run); err != nil {
+		t.Fatal(err)
+	}
+	reviewReq := req
+	reviewReq.RecordID, reviewReq.ItemID = "APP-T-0004", "APP-T-0004"
+	if _, err := manager.Prepare(reviewReq); err != nil {
+		t.Fatalf("a run in review lost its files to the dirty check: %v", err)
+	}
+	run.Lane = runLaneExecute
 	runGitDir(t, project.RepoRoot, "checkout", "--", "owned/APP-T-0001/tracked.txt")
 	run.LeaseState = string(LeaseStateRunning)
 	source, err := materializeWorkerSubmissionCommit(*run, []string{"owned/APP-T-0001/own.txt"})

@@ -180,7 +180,7 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 		if run.ProjectID != req.ProjectID || !ownsScope || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
 			continue
 		}
-		scope, scopeErr := canonicalRunAuthoredScope(store, run)
+		scope, scopeErr := sharedCheckoutRunScope(store, run)
 		if scopeErr == nil {
 			activeScopes = append(activeScopes, scope)
 		}
@@ -203,6 +203,14 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 		}
 	}
 	return offenders, nil
+}
+
+// sharedCheckoutRunScope is the task scope a shared-checkout run owns. Scope
+// resolution only answers for the execute lane, but a run in review still owns
+// its submitted files in the checkout until they land.
+func sharedCheckoutRunScope(store *RuntimeStore, run RunStatus) ([]string, error) {
+	run.Lane = runLaneExecute
+	return canonicalRunAuthoredScope(store, run)
 }
 
 // sharedCheckoutRunHoldsWork reports whether a run owns its scope's files in
