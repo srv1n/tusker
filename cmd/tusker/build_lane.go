@@ -490,5 +490,23 @@ func rustcRecord(args []string, waitMS int64) map[string]any {
 	}
 	manifest := os.Getenv("CARGO_MANIFEST_DIR")
 	local := !strings.HasPrefix(manifest, filepath.Join(cargoHome, "registry")+string(os.PathSeparator)) && !strings.HasPrefix(manifest, filepath.Join(cargoHome, "git")+string(os.PathSeparator))
-	return map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "project_id": os.Getenv("TUSKER_PROJECT_ID"), "task_id": os.Getenv("TUSKER_ITEM_ID"), "tool": "rustc", "target": target, "cargo_pid": os.Getppid(), "crate": firstNonEmpty(os.Getenv("CARGO_CRATE_NAME"), flag("--crate-name")), "local": local, "wait_ms": waitMS}
+	return map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "project_id": os.Getenv("TUSKER_PROJECT_ID"), "task_id": os.Getenv("TUSKER_ITEM_ID"), "tool": "rustc", "target": target, "cargo_pid": os.Getppid(), "cargo_start": processStartTicks(os.Getppid()), "crate": firstNonEmpty(os.Getenv("CARGO_CRATE_NAME"), flag("--crate-name")), "local": local, "wait_ms": waitMS}
+}
+
+// processStartTicks is a process's start time from /proc, in clock ticks since
+// boot. Codex runs each sandboxed command in its own pid namespace, so every
+// cargo there is pid 2; the start time is the same inside and outside the
+// namespace and tells those builds apart. Empty where /proc is absent (macOS),
+// where pids are already unique.
+func processStartTicks(pid int) string {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	// The command name may contain spaces; fields resume after its ')'.
+	fields := strings.Fields(string(raw[strings.LastIndexByte(string(raw), ')')+1:]))
+	if len(fields) < 20 {
+		return ""
+	}
+	return fields[19]
 }

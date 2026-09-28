@@ -23,7 +23,8 @@ type buildLaneStats struct {
 }
 
 // buildLaneEntry is one xcodebuild/swift build, or one rustc compile. Rustc
-// lines carry Local and are grouped into builds by target dir and cargo pid.
+// lines carry Local and are grouped into builds by target dir and cargo
+// process (pid plus start time, since sandboxed cargos share a pid).
 type buildLaneEntry struct {
 	At           time.Time `json:"at"`
 	ProjectID    string    `json:"project_id"`
@@ -33,6 +34,7 @@ type buildLaneEntry struct {
 	CompiledDeps int       `json:"compiled_deps"`
 	Target       string    `json:"target"`
 	CargoPID     int       `json:"cargo_pid"`
+	CargoStart   string    `json:"cargo_start"`
 	Crate        string    `json:"crate"`
 	Local        *bool     `json:"local"`
 }
@@ -44,6 +46,7 @@ func groupRustcBuilds(entries []buildLaneEntry) []buildLaneEntry {
 	type key struct {
 		target string
 		pid    int
+		start  string
 	}
 	builds := make([]buildLaneEntry, 0, len(entries))
 	started := map[int]time.Time{}
@@ -53,7 +56,7 @@ func groupRustcBuilds(entries []buildLaneEntry) []buildLaneEntry {
 			builds = append(builds, entry)
 			continue
 		}
-		k := key{entry.Target, entry.CargoPID}
+		k := key{entry.Target, entry.CargoPID, entry.CargoStart}
 		i, ok := index[k]
 		if !ok {
 			i = len(builds)

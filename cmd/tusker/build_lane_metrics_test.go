@@ -134,3 +134,16 @@ func TestBuildAdmissionGroupsRustcLines(t *testing.T) {
 		t.Fatalf("commands: %v", got.Commands)
 	}
 }
+
+func TestBuildAdmissionSplitsSandboxedCargosSharingAPid(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	var lines strings.Builder
+	for _, start := range []string{"100", "200", "300"} {
+		fmt.Fprintf(&lines, `{"at":%q,"project_id":"p","tool":"rustc","target":"/ws/target","cargo_pid":2,"cargo_start":%q,"crate":"alpha","local":true,"wait_ms":0}`+"\n", now.Add(-time.Minute).Format(time.RFC3339Nano), start)
+	}
+	writeBuildAdmissionLog(t, root, lines.String())
+	if got := readBuildLaneStats(root, now)["p"]; got.Builds != 3 {
+		t.Fatalf("three sandboxed cargos (all pid 2) merged: %+v", got)
+	}
+}
