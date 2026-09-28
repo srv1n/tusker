@@ -1761,7 +1761,7 @@ func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool 
 		return v7CommandInvokesTest(command)
 	case "typecheck":
 		return v7CommandInvokesAny(command, map[string][]string{
-			"cargo": {"check", "test"}, "go": {"test"}, "swift": {"build", "test"}, "tsc": nil, "npx": {"tsc"},
+			"cargo": {"check", "test"}, "go": {"test"}, "swift": {"build", "test"}, "xcodebuild": nil, "tsc": nil, "npx": {"tsc"},
 		})
 	case "lint":
 		return v7CommandInvokesAny(command, map[string][]string{
@@ -1920,6 +1920,7 @@ func v7CommandInvokesTest(command string) bool {
 	return v7CommandInvokesAny(command, map[string][]string{
 		"test": nil, "[": nil,
 		"go": {"test"}, "cargo": {"test"}, "swift": {"test"}, "dotnet": {"test"},
+		"xcodebuild": {"test", "test-without-building"},
 		"npm": {"test", "run:test"}, "pnpm": {"test", "run:test"}, "yarn": {"test"}, "bun": {"test"},
 		"pytest": nil, "jest": nil, "vitest": nil, "make": {"test"},
 		"python": {"-m:pytest", "-m:unittest"}, "python3": {"-m:pytest", "-m:unittest"},
