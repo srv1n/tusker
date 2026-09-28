@@ -103,6 +103,14 @@ func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {
 	}
 }
 
+// runWaitsForAdmission reports a queued run held by capacity, load, or the
+// build queue. Those clear on their own, so its project keeps the hot cadence
+// instead of backing off to a 30-minute poll.
+func runWaitsForAdmission(run RunStatus) bool {
+	return !run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateUnclaimed &&
+		(strings.HasPrefix(run.LastError, fairDispatchReasonPrefix) || strings.HasPrefix(run.LastError, "automation plan do_not_dispatch: waiting: "))
+}
+
 func (d *Daemon) noteProjectActivity(projectID, reason string, now time.Time) {
 	projectID = strings.TrimSpace(projectID)
 	if d == nil || projectID == "" {
@@ -158,9 +166,13 @@ func (d *Daemon) recordPollSchedule(projectID string, now time.Time) error {
 		return err
 	}
 	urgent := map[string]bool{}
+	waiting := map[string]bool{}
 	for _, run := range runs {
 		if runtimeRunNeedsHotReconcileAt(run, now) {
 			urgent[run.ProjectID] = true
+		}
+		if runWaitsForAdmission(run) {
+			waiting[run.ProjectID] = true
 		}
 	}
 	enabled := map[string]bool{}
@@ -169,6 +181,9 @@ func (d *Daemon) recordPollSchedule(projectID string, now time.Time) error {
 			continue
 		}
 		enabled[project.ProjectID] = true
+		if waiting[project.ProjectID] {
+			d.noteProjectActivity(project.ProjectID, "dispatch_waiting", now)
+		}
 		d.recordProjectPoll(project.ProjectID, now, urgent[project.ProjectID])
 	}
 	if projectID == "" {

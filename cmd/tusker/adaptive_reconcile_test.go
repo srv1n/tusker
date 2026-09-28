@@ -119,3 +119,23 @@ func assertAdaptiveState(t *testing.T, d *Daemon, projectID, tier string, cadenc
 		t.Fatalf("adaptive state mismatch: %#v", status)
 	}
 }
+
+func TestRunWaitsForAdmissionOnlyForQueuedCapacityWaits(t *testing.T) {
+	queued := RunStatus{LeaseState: string(LeaseStateUnclaimed)}
+	for reason, want := range map[string]bool{
+		"automation plan do_not_dispatch: waiting: machine busy (load 5.9 per CPU)": true,
+		fairDispatchReasonPrefix + "project capacity reached (4/4)":                 true,
+		"automation plan do_not_dispatch: wave W-0002 authorization is disarmed":    false,
+		"": false,
+	} {
+		queued.LastError = reason
+		if got := runWaitsForAdmission(queued); got != want {
+			t.Fatalf("runWaitsForAdmission(%q) = %v, want %v", reason, got, want)
+		}
+	}
+	queued.LastError = fairDispatchReasonPrefix + "x"
+	queued.Terminal = true
+	if runWaitsForAdmission(queued) {
+		t.Fatal("terminal run must not keep its project hot")
+	}
+}
