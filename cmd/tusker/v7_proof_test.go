@@ -656,6 +656,7 @@ func TestV7ProofCommandMatcherHandlesWrappedAndPositionedCommands(t *testing.T) 
 		{"build", `xcodebuild -scheme App -showBuildSettings`, false},
 		{"build", `xcodebuild -scheme App build`, true},
 		{"build", `xcodebuild -showBuildSettings -configuration build`, false},
+		{"build", `xcodebuild -showBuildTimingSummary build`, true},
 		{"focused_test", `xcodebuild -scheme test build`, false},
 		{"focused_test", `xcodebuild -quiet -scheme App CODE_SIGNING_ALLOWED=NO test`, true},
 		{"build", `cargo test`, true},

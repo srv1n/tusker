@@ -1934,7 +1934,7 @@ func v7CommandInvokesTest(command string) bool {
 // xcodebuildFlags are the xcodebuild options that take no value, lowercased
 // like parsed arguments; every other option consumes the next argument, so
 // "-configuration build" is not a build.
-var xcodebuildFlags = makeSet("-list", "-showbuildsettings", "-showsdks", "-showdestinations", "-showtestplans",
+var xcodebuildFlags = makeSet("-list", "-showbuildsettings", "-showbuildtimingsummary", "-showsdks", "-showdestinations", "-showtestplans",
 	"-quiet", "-json", "-version", "-usage", "-help", "-dry-run", "-n", "-alltargets", "-parallelizetargets",
 	"-allowprovisioningupdates", "-allowprovisioningdeviceregistration", "-hideshellscriptenvironment",
 	"-skippackagepluginvalidation", "-skipmacrovalidation", "-skipunavailableactions",

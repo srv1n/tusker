@@ -55,25 +55,32 @@ func reviewCommandFailureFindings(failures []v7VerificationExecutionFailure, mat
 		if index == reviewResultMaxFindings {
 			break
 		}
-		cover := clipBytes(firstNonEmpty(strings.TrimSpace(failure.Row.CoverText), "verification"), 64)
+		fullCover := firstNonEmpty(strings.TrimSpace(failure.Row.CoverText), "verification")
 		// Shrink the free text until the encoded finding fits the result limit;
 		// JSON escaping can grow it past the sum of the clipped fields.
-		for limit := 300; limit >= 16; limit /= 2 {
+		finding := ""
+		for limit := 256; limit >= 4 && finding == ""; limit /= 2 {
+			cover := clipBytes(fullCover, limit/4)
+			if strings.TrimSpace(cover) == "" {
+				cover = "verification"
+			}
 			raw, err := json.Marshal(reviewerFindingRecord{
 				Schema:              reviewerFindingSchema,
 				ID:                  fmt.Sprintf("verify-%d", index+1),
 				Kind:                "blocking",
 				Acceptance:          []string{cover},
-				Evidence:            []string{clipBytes(strings.TrimSpace(failure.Row.Check), limit)},
+				Evidence:            []string{firstNonEmpty(clipBytes(strings.TrimSpace(failure.Row.Check), limit), "verification command")},
 				Consequence:         clipBytes("verification command failed: "+strings.TrimSpace(failure.Message), limit),
 				ClosureCondition:    "the verification command for " + cover + " passes on the resubmitted work",
 				RepairScope:         reviewerFindingRepairScopeProof,
 				MaterialFingerprint: material,
 			})
 			if err == nil && len(raw) <= reviewResultMaxFindingChars {
-				findings = append(findings, string(raw))
-				break
+				finding = string(raw)
 			}
+		}
+		if finding != "" {
+			findings = append(findings, finding)
 		}
 	}
 	return findings

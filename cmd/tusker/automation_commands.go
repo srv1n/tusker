@@ -673,21 +673,6 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	} else if reason != "" {
 		blockers = append(blockers, reason)
 	}
-	// Measure this project's filesystems without recording the result: the
-	// stored status merges other projects' workspaces.
-	if !ctx.daemonOwned {
-		if config, err := ctx.Store.DiskPressureConfig(); err != nil {
-			blockers = append(blockers, "disk pressure: "+err.Error())
-		} else {
-			paths := []diskPressurePath{{Kind: "state_root", Path: ctx.StateRoot}}
-			if strings.TrimSpace(ctx.Project.RepoRoot) != "" {
-				paths = append(paths, diskPressurePath{Kind: "workspace", Path: ctx.Project.RepoRoot})
-			}
-			if pressure := evaluateDiskPressure(config, paths, runtimeDiskStat, time.Now()); pressure.DispatchPaused {
-				blockers = append(blockers, diskPressureDispatchReason(pressure))
-			}
-		}
-	}
 	blockers = append(blockers, ctx.concurrencyBlockers(note, run)...)
 	fanout := ctx.fanoutSummary(recordID)
 	policy := codexPolicyForResolvedProfile(codexPolicyFromWorkflow(ctx.Workflow.Data), lane, selectedProfile)
@@ -700,6 +685,25 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	}
 	existing := ctx.existingRunPointer(recordID)
 	workspaceStrategy := workspaceStrategyForRun(ctx.Workflow.Data, ctx.Project, run, ctx.projectRunsSlice())
+	// Measure this project's filesystems without recording the result: the
+	// stored status merges other projects' workspaces.
+	if !ctx.daemonOwned {
+		if config, err := ctx.Store.DiskPressureConfig(); err != nil {
+			blockers = append(blockers, "disk pressure: "+err.Error())
+		} else {
+			paths := []diskPressurePath{{Kind: "state_root", Path: ctx.StateRoot}}
+			// Dispatch measures the selected workspace; a worktree or clone may sit
+			// on another filesystem than the repo.
+			for _, path := range []string{ctx.Project.RepoRoot, automationWorkspacePath(ctx.StateRoot, ctx.Project, ctx.Workflow.Data, run, workspaceStrategy)} {
+				if strings.TrimSpace(path) != "" {
+					paths = append(paths, diskPressurePath{Kind: "workspace", Path: path})
+				}
+			}
+			if pressure := evaluateDiskPressure(config, paths, runtimeDiskStat, time.Now()); pressure.DispatchPaused {
+				blockers = append(blockers, diskPressureDispatchReason(pressure))
+			}
+		}
+	}
 	blockers = uniqueStrings(blockers)
 	waveID, waveState, waveReason := ctx.armedWaveTaskProjection(note)
 	return automationTaskExplanation{

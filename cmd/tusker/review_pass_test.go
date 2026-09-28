@@ -692,7 +692,7 @@ func TestReviewPassIgnoresVerdictOlderThanResubmission(t *testing.T) {
 func TestReviewCommandFailureFindingsFitTheResultLimit(t *testing.T) {
 	// "<" encodes as six bytes of JSON, so clipped fields alone do not bound the size.
 	long := strings.Repeat("<", 2000)
-	failures := []v7VerificationExecutionFailure{{Row: v7VerificationRow{CoverText: strings.Repeat("A", 200), Check: "command: " + long}, Message: long}}
+	failures := []v7VerificationExecutionFailure{{Row: v7VerificationRow{CoverText: long, Check: "command: " + long}, Message: long}}
 	findings := reviewCommandFailureFindings(failures, "sha256:"+strings.Repeat("0", 64))
 	if len(findings) != 1 || len(findings[0]) > reviewResultMaxFindingChars {
 		t.Fatalf("finding does not fit: %d findings, first %d bytes", len(findings), len(findings[0]))
