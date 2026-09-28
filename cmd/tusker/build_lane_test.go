@@ -144,3 +144,26 @@ func TestBuildLaneHeavySkipsToolchainAndGlobalFlags(t *testing.T) {
 		t.Fatal("subcommand detection must skip +toolchain and global flags")
 	}
 }
+
+func TestBuildLaneUnquietKeepsTestHarnessQuiet(t *testing.T) {
+	cases := []struct {
+		in, want []string
+		quiet    bool
+	}{
+		{[]string{"test", "-q", "-p", "alpha"}, []string{"test", "-p", "alpha", "--", "--quiet"}, true},
+		{[]string{"+nightly", "--quiet", "test", "--", "name"}, []string{"+nightly", "test", "--", "--quiet", "name"}, true},
+		{[]string{"check", "-q"}, []string{"check"}, true},
+		{[]string{"test", "--", "-q"}, []string{"test", "--", "-q"}, false},
+	}
+	for _, c := range cases {
+		got, quiet := buildLaneUnquiet(c.in)
+		if quiet != c.quiet || strings.Join(got, " ") != strings.Join(c.want, " ") {
+			t.Fatalf("buildLaneUnquiet(%q) = %q, %v; want %q, %v", c.in, got, quiet, c.want, c.quiet)
+		}
+	}
+	for line, status := range map[string]bool{"   Compiling alpha v0.1.0 (/x)": true, "    Finished `test` profile": true, "warning: unused": false, "error[E0425]: x": false, "test result: ok": false} {
+		if cargoStatusLine.MatchString(line) != status {
+			t.Fatalf("cargoStatusLine(%q) != %v", line, status)
+		}
+	}
+}

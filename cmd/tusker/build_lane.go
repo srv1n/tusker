@@ -19,6 +19,10 @@ import (
 
 var localCompile = regexp.MustCompile(`^\s*Compiling \S+ v\S+ \(/`)
 
+// cargoStatusLine matches cargo's right-aligned progress lines ("   Compiling x",
+// "    Finished ..."). Diagnostics ("warning:", "error:") are lowercase.
+var cargoStatusLine = regexp.MustCompile(`^\s+[A-Z][A-Za-z-]+ `)
+
 func buildLaneSettings() (bool, int) {
 	cfg, _, present, err := readTuskerConfigLayer(userGlobalTuskerConfigPath())
 	if err != nil || !present {
@@ -235,19 +239,57 @@ func buildLaneSummary(tool string, args []string) (string, string) {
 	return display, hex.EncodeToString(sum[:])[:16]
 }
 
+// buildLaneUnquiet removes cargo's -q so the lane can count compiled crates.
+// The caller then hides cargo's status lines itself. For "test" the harness
+// stays quiet, so the agent sees the same output it asked for.
+func buildLaneUnquiet(args []string) ([]string, bool) {
+	out := make([]string, 0, len(args)+2)
+	quiet, sep := false, -1
+	for _, a := range args {
+		if sep < 0 && (a == "-q" || a == "--quiet") {
+			quiet = true
+			continue
+		}
+		if sep < 0 && a == "--" {
+			sep = len(out)
+		}
+		out = append(out, a)
+	}
+	sub := ""
+	for _, a := range out {
+		if !strings.HasPrefix(a, "+") && !strings.HasPrefix(a, "-") {
+			sub = a
+			break
+		}
+	}
+	if !quiet || sub != "test" {
+		return out, quiet
+	}
+	if sep < 0 {
+		return append(out, "--", "--quiet"), true
+	}
+	return append(out[:sep+1], append([]string{"--quiet"}, out[sep+1:]...)...), true
+}
+
 type buildLaneStderr struct {
 	deps, local int
+	quiet       bool
 	pending     string
 }
 
 func (w *buildLaneStderr) Write(p []byte) (int, error) {
-	n, err := os.Stderr.Write(p)
+	if !w.quiet {
+		if _, err := os.Stderr.Write(p); err != nil {
+			return 0, err
+		}
+	}
 	w.pending += string(p)
 	for {
 		i := strings.IndexByte(w.pending, '\n')
 		if i < 0 {
 			break
 		}
+		raw := w.pending[:i+1]
 		line := strings.TrimSuffix(w.pending[:i], "\r")
 		w.pending = w.pending[i+1:]
 		if localCompile.MatchString(line) {
@@ -255,8 +297,19 @@ func (w *buildLaneStderr) Write(p []byte) (int, error) {
 		} else if strings.HasPrefix(strings.TrimSpace(line), "Compiling ") {
 			w.deps++
 		}
+		if w.quiet && !cargoStatusLine.MatchString(line) {
+			os.Stderr.WriteString(raw)
+		}
 	}
-	return n, err
+	return len(p), nil
+}
+
+// Flush writes a trailing line that had no newline.
+func (w *buildLaneStderr) Flush() {
+	if w.quiet && w.pending != "" && !cargoStatusLine.MatchString(w.pending) {
+		os.Stderr.WriteString(w.pending)
+	}
+	w.pending = ""
 }
 
 func appendBuildLaneLog(root string, record map[string]any) error {
@@ -354,10 +407,14 @@ func runBuildLane(tool string, args []string) int {
 			cold = os.IsNotExist(err)
 		}
 	}
-	cmd := exec.Command(realTool, args...)
+	runArgs := args
+	stderr := &buildLaneStderr{}
+	if heavy && tool == "cargo" {
+		runArgs, stderr.quiet = buildLaneUnquiet(args)
+	}
+	cmd := exec.Command(realTool, runArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	stderr := &buildLaneStderr{}
 	if heavy && tool == "cargo" {
 		cmd.Stderr = stderr
 	} else {
@@ -377,6 +434,7 @@ func runBuildLane(tool string, args []string) int {
 	cmd.Env = env
 	start := time.Now()
 	err = cmd.Run()
+	stderr.Flush()
 	buildMS := time.Since(start).Milliseconds()
 	code := 0
 	if err != nil {
