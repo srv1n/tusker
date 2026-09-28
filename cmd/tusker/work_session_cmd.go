@@ -715,7 +715,7 @@ func workerLifecycleControl(args Args, action string) error {
 		return nil
 	}
 	payload, _ := json.Marshal(request)
-	if err := writeConfigTextAtomically(workerLifecycleRequestPath(os.Getenv("TUSKER_WORKSPACE")), string(payload)); err != nil {
+	if err := writeConfigTextAtomically(workerLifecycleRequestPath(os.Getenv("TUSKER_WORKSPACE"), request.Worker.AttemptID), string(payload)); err != nil {
 		return tuskerError(errorInvalidTransition, "worker lifecycle handoff failed: "+err.Error())
 	}
 	emitJSON(map[string]any{"ok": true, "action": action, "attempt_id": request.Worker.AttemptID, "authority": "resident_daemon", "handoff": "workspace_request"})

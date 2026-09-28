@@ -87,6 +87,7 @@ type RunnerCapabilities struct {
 }
 
 type StartRequest struct {
+	WorkspaceStrategy      WorkspaceStrategy
 	ProjectID              string
 	RecordID               string
 	ItemID                 string
@@ -416,6 +417,9 @@ func runnerEnv(req runnerLaunchEnv) []string {
 	if actor := strings.TrimSpace(req.Actor); actor != "" {
 		baseEnv = setEnvValue(baseEnv, "TUSKER_ACTOR", actor)
 	}
+	if req.WorkspaceStrategy == WorkspaceStrategyShared {
+		baseEnv = setEnvValue(baseEnv, "TUSKER_SHARED_CHECKOUT", "1")
+	}
 	return append(baseEnv,
 		"TUSKER_PROJECT_ID="+req.ProjectID,
 		"TUSKER_CANONICAL_PROJECT_ID="+canonicalProjectID,
@@ -480,6 +484,7 @@ func withDefaultExtensionPolicy(policy ExtensionPolicy) ExtensionPolicy {
 }
 
 type runnerLaunchEnv struct {
+	WorkspaceStrategy WorkspaceStrategy
 	ProjectID         string
 	RecordID          string
 	ItemID            string

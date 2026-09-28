@@ -463,6 +463,8 @@ type RunEndState struct {
 	MaterialFingerprint  string            `json:"material_fingerprint"`
 	MaterialScope        []string          `json:"material_scope,omitempty"`
 	GeneratedOutputScope []string          `json:"generated_output_scope,omitempty"`
+	StrayPaths           []string          `json:"stray_paths,omitempty"`
+	Overlaps             map[string]string `json:"overlaps,omitempty"`
 	GateVerdicts         map[string]string `json:"gate_verdicts"`
 	ReportedBranch       string            `json:"reported_branch,omitempty"`
 	ReportedHeadSHA      string            `json:"reported_head_sha,omitempty"`

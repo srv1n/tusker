@@ -757,6 +757,9 @@ func finishRuntimeRunIfSnapshot(store *RuntimeStore, run *RunStatus, state Lease
 	if !ok {
 		return tuskerError("CAS_CONFLICT", "run changed while interrupt was being applied: "+firstNonEmpty(expected.ItemID, expected.RecordID), withHint("reload the run and retry; Tusker did not overwrite the newer lease or process state"))
 	}
+	if err := abandonSharedCheckoutScope(store, expected); err != nil {
+		return err
+	}
 	updateRunAttemptFromRun(store, expected, outcome, exitCode, reason, now)
 	if strings.TrimSpace(expected.SessionRef) != "" {
 		_ = store.MarkSessionState(expected.ProjectID, expected.SessionRef, sessionStateForLeaseState(state), "", reason, resumable)
@@ -768,6 +771,11 @@ func finishRuntimeRunIfSnapshot(store *RuntimeStore, run *RunStatus, state Lease
 func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, outcome AttemptOutcome, exitCode int, reason string, resumable bool) error {
 	if store == nil || run == nil {
 		return nil
+	}
+	if outcome != AttemptOutcomeSucceeded {
+		if err := abandonSharedCheckoutScope(store, *run); err != nil {
+			return err
+		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	updateRunAttemptFromRun(store, *run, outcome, exitCode, reason, now)
@@ -3292,6 +3300,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			return run, true, nil
 		}
 		reason := classification.reason
+		if err := abandonSharedCheckoutScope(d.store, run); err != nil {
+			return run, changed, err
+		}
 		updateRunAttemptFromRun(d.store, run, classification.outcome, classification.exitCode, reason, finished)
 		run = d.scheduleRetry(run, wfFile.Data, reason)
 		if strings.TrimSpace(run.SessionRef) != "" {
@@ -3343,6 +3354,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			if _, err := d.stopRunExecution(ctx, run); err != nil {
 				reason = reason + ": " + err.Error()
 			}
+			if err := abandonSharedCheckoutScope(d.store, run); err != nil {
+				return run, changed, err
+			}
 			updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 124, reason, now)
 			run = d.scheduleRetry(run, wfFile.Data, reason)
 			run.UpdatedAt = now
@@ -3380,6 +3394,9 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		parentAttemptID := run.ActiveAttemptID
 		parentSessionRef := run.SessionRef
 		workspacePath := run.WorkspacePath
+		if err := abandonSharedCheckoutScope(d.store, run); err != nil {
+			return run, changed, err
+		}
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeCancelled, 130, reason, now)
 		if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationReclaim, reason+"; reclaim would create another attempt"); capReached {
 			run = capped
@@ -3447,6 +3464,11 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		return run, true, nil
 	}
 	if result.Outcome != AttemptOutcomeNone || result.LeaseState == LeaseStateReleased {
+		if result.Outcome != AttemptOutcomeSucceeded {
+			if err := abandonSharedCheckoutScope(d.store, run); err != nil {
+				return run, changed, err
+			}
+		}
 		updateRunAttemptFromRun(d.store, run, result.Outcome, exitCodeForOutcome(result.Outcome), result.Reason, now)
 	}
 	if result.LeaseState == LeaseStateRetryQueued && result.Outcome == AttemptOutcomeNone {
@@ -4899,6 +4921,7 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 		})
 	}
 	startReq := StartRequest{
+		WorkspaceStrategy:      workspaceStrategy,
 		ProjectID:              project.ProjectID,
 		RecordID:               run.RecordID,
 		ItemID:                 run.ItemID,
@@ -7061,6 +7084,26 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 	}
 	if runtimeContext := renderExternalLoopRuntimePromptContext(store, project.ProjectID, trackerRecordID(note), run); runtimeContext != "" {
 		rendered = strings.TrimSpace(rendered) + "\n\n" + runtimeContext
+	}
+	if workspaceStrategyFromWorkflow(wfFile.Data.Workspace.Strategy) == WorkspaceStrategyShared && lane == runLaneExecute {
+		var b strings.Builder
+		b.WriteString("## Shared checkout\n\nOther active tasks at dispatch:\n")
+		if store != nil {
+			runs, err := store.ListRuns()
+			if err != nil {
+				return "", err
+			}
+			for _, other := range runs {
+				if other.ProjectID != project.ProjectID || other.RecordID == run.RecordID || other.Lane != runLaneExecute || !isDispatchingLeaseState(other.LeaseState) || !sameCanonicalProjectPath(other.WorkspacePath, workspacePath) {
+					continue
+				}
+				if task, err := resolveV7Note(project.VaultRoot, other.ItemID, "task"); err == nil {
+					fmt.Fprintf(&b, "- %s: %s\n", other.ItemID, strings.Join(normalizeOwnedPaths(normalizeList(task.Data["owned_paths"])), ", "))
+				}
+			}
+		}
+		b.WriteString("Build and test with the normal commands; builds queue automatically, one at a time. If errors are only in files another task owns, wait a minute and rerun rather than editing them. Edit outside your owned paths only when unavoidable and name those files in your submission. Format only your own files. Rerun a failing test once before treating it as yours.")
+		rendered = strings.TrimSpace(rendered) + "\n\n" + b.String()
 	}
 	parentAttemptID, recoveryErr := pendingOutcomeUnknownRecoveryParent(store, previousRun)
 	if recoveryErr != nil {

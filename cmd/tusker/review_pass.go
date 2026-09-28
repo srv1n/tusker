@@ -136,6 +136,22 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 	if err != nil {
 		return err
 	}
+	if parent, _, parentErr := reviewAttemptImplementation(d.store, project.ProjectID, taskID, result.AttemptID, result.WorkRevision, source); parentErr == nil && !parent.EndStateInvalid {
+		for _, path := range parent.EndState.StrayPaths {
+			for i := 0; i < len(stray); i++ {
+				if stray[i] == path {
+					stray = append(stray[:i], stray[i+1:]...)
+					break
+				}
+			}
+		}
+		for _, owner := range parent.EndState.Overlaps {
+			dependency, dependencyErr := resolveV7Note(project.VaultRoot, owner, "task")
+			if dependencyErr != nil || stringField(dependency.Data, "status") != "done" {
+				return nil // The review reactor retries after the overlapping task lands.
+			}
+		}
+	}
 	if undeclared {
 		return d.holdReviewPass(run, RunFailureLandingFailed, "the task declares no owned_paths, so the daemon will not land its changes; check them and land by hand")
 	}

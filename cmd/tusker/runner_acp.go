@@ -1014,6 +1014,9 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 		if vault := strings.TrimSpace(req.VaultPath); vault != "" {
 			out = append(out, "TUSKER_VAULT="+runnerWorkspaceVaultPath(req.WorkspacePath, vault), "TUSKER_CANONICAL_VAULT="+vault)
 		}
+		if req.WorkspaceStrategy == WorkspaceStrategyShared {
+			out = append(out, "TUSKER_SHARED_CHECKOUT=1")
+		}
 		if exe, err := os.Executable(); err == nil {
 			path = append([]string{filepath.Dir(exe)}, path...)
 		}

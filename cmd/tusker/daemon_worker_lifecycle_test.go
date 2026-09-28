@@ -82,6 +82,128 @@ func TestWorkerSubmitQueuesUntilTerminalReconciliation(t *testing.T) {
 	}
 }
 
+func TestSharedCheckoutLifecycleRequestsArePerAttempt(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".tusker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(workspace, ".tusker", "workspace.json"), `{"strategy":"shared"}`); err != nil {
+		t.Fatal(err)
+	}
+	one := workerLifecycleRequestPath(workspace, "attempt-one")
+	two := workerLifecycleRequestPath(workspace, "attempt-two")
+	if one == two || one == workerLifecycleRequestPath(workspace) {
+		t.Fatalf("shared lifecycle slots collide: %q %q", one, two)
+	}
+	if err := writeText(one, "one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(two, "two"); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := readText(one); raw != "one" {
+		t.Fatalf("first slot changed: %q", raw)
+	}
+	if got := workerLifecycleRequestPath(t.TempDir(), "attempt-one"); !strings.HasSuffix(got, workerLifecycleRequestFile) {
+		t.Fatalf("worktree slot changed: %s", got)
+	}
+}
+
+func TestSharedCheckoutStraysAndFailureCleanup(t *testing.T) {
+	vault, project := workSessionFixture(t, 2)
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		if err := startWorkSessionTest(t, vault, id, "agent:"+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runs := make(map[string]RunStatus)
+	for _, id := range []string{"APP-T-0001", "APP-T-0002"} {
+		run, err := store.FindRunScoped(project.ProjectID, id)
+		if err != nil || run == nil {
+			t.Fatalf("missing run %s: %v", id, err)
+		}
+		run.WorkspacePath = project.RepoRoot
+		run.ActiveAttemptID = "attempt-" + id
+		run.Lane = runLaneExecute
+		run.LeaseState = string(LeaseStateRunning)
+		if err := store.UpsertRun(*run); err != nil {
+			t.Fatal(err)
+		}
+		runs[id] = *run
+	}
+	if err := writeText(filepath.Join(vault, "workspace.json"), `{"strategy":"shared"}`); err != nil {
+		t.Fatal(err)
+	}
+	trackedPath := filepath.Join(project.RepoRoot, "owned/APP-T-0001/tracked.txt")
+	if err := os.MkdirAll(filepath.Dir(trackedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(trackedPath, "before"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, project.RepoRoot, "add", "owned/APP-T-0001/tracked.txt")
+	runGitDir(t, project.RepoRoot, "commit", "-m", "seed tracked scope")
+	if err := writeText(trackedPath, "after"); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		"owned/APP-T-0001/own.txt": "own", "owned/APP-T-0002/other.txt": "other", "stray.txt": "stray",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(project.RepoRoot, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeText(filepath.Join(project.RepoRoot, path), content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one := runs["APP-T-0001"]
+	scope, err := canonicalRunAuthoredScope(store, one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray, overlaps, err := sharedCheckoutStrays(store, one, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(stray, "stray.txt") || overlaps["owned/APP-T-0002/other.txt"] != "APP-T-0002" {
+		t.Fatalf("stray=%v overlaps=%v", stray, overlaps)
+	}
+	commit, err := materializeWorkerSubmissionCommit(one, append(scope, stray...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := gitOutputTrim(project.RepoRoot, "show", commit+":stray.txt"); err != nil || got != "stray" {
+		t.Fatalf("unclaimed stray omitted: %q %v", got, err)
+	}
+	if _, err := gitOutputTrim(project.RepoRoot, "show", commit+":owned/APP-T-0002/other.txt"); err == nil {
+		t.Fatal("other run's path was staged")
+	}
+	if err := abandonSharedCheckoutScope(store, one); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(filepath.Join(project.RepoRoot, "owned/APP-T-0001/own.txt")) {
+		t.Fatal("failed run's untracked file survived cleanup")
+	}
+	if got, _ := readText(trackedPath); got != "before" {
+		t.Fatalf("failed run's tracked file was not restored: %q", got)
+	}
+	if !fileExists(filepath.Join(project.RepoRoot, "owned/APP-T-0002/other.txt")) || !fileExists(filepath.Join(project.RepoRoot, "stray.txt")) {
+		t.Fatal("cleanup touched paths outside failed run's scope")
+	}
+	ref := "refs/tusker/abandoned/" + one.ItemID + "-" + one.ActiveAttemptID
+	if got, err := gitOutputTrim(project.RepoRoot, "show", ref+":owned/APP-T-0001/own.txt"); err != nil || got != "own" {
+		t.Fatalf("abandoned ref missing work: %q %v", got, err)
+	}
+	if got, err := gitOutputTrim(project.RepoRoot, "show", ref+":owned/APP-T-0001/tracked.txt"); err != nil || got != "after" {
+		t.Fatalf("abandoned ref missing tracked edit: %q %v", got, err)
+	}
+}
+
 func TestWorkerSubmitAcceptsCanonicalWorkspaceAlias(t *testing.T) {
 	store := fairDispatchTestStore(t)
 	root := t.TempDir()

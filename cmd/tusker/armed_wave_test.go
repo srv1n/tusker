@@ -360,7 +360,7 @@ func writeArmedWaveTestFields(t *testing.T, vault string, fields map[string]any)
 	}
 }
 
-func TestCurrentCheckoutUsesConfiguredProjectCapacity(t *testing.T) {
+func TestSharedCheckoutArmedWaveUsesConfiguredProjectCapacity(t *testing.T) {
 	vault, idx, _ := armedWaveTestFixture(t)
 	task := idx.Tasks["APP-T-0001"]
 	wf := defaultWorkflow()
@@ -369,8 +369,16 @@ func TestCurrentCheckoutUsesConfiguredProjectCapacity(t *testing.T) {
 	if got := projectActiveRunLimit(wf); got != 2 {
 		t.Fatalf("current checkout ignored configured capacity: %d", got)
 	}
-	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "shared-checkout armed waves require runtime.max_active_runs_per_project = 1" {
-		t.Fatalf("parallel shared-checkout wave was admitted: %q", got)
+	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "" {
+		t.Fatalf("disjoint parallel shared-checkout wave was rejected: %q", got)
+	}
+	empty := task
+	empty.Data = cloneMap(task.Data)
+	empty.Data["owned_paths"] = []string{}
+	empty.Data["contract_fingerprint"] = ""
+	empty.Data["state_rev"] = v7StateRev(empty.Data, empty.Body)
+	if got := armedWaveDispatchBlocker(vault, empty, wf, map[string]RunStatus{"other": {ItemID: "APP-T-0002", LeaseState: string(LeaseStateRunning)}}); !strings.Contains(got, "need owned_paths") {
+		t.Fatalf("empty shared-checkout ownership was admitted: %q", got)
 	}
 	wf.Runtime.MaxActiveRunsPerProject = 1
 	if got := armedWaveDispatchBlocker(vault, task, wf, nil); got != "" {

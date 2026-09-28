@@ -45,6 +45,22 @@ func TestRenderAttemptPromptUsesWorkflowBodyTemplate(t *testing.T) {
 	}
 }
 
+func TestSharedCheckoutPromptOnlyInSharedExecute(t *testing.T) {
+	project := RegisteredProject{ProjectID: "p"}
+	wf := WorkflowFile{Body: "Task {{ note.id }}"}
+	note := Note{Data: map[string]any{"id": "T-1"}}
+	for _, strategy := range []WorkspaceStrategy{WorkspaceStrategyShared, WorkspaceStrategyWorktree} {
+		wf.Data.Workspace.Strategy = string(strategy)
+		prompt, err := renderAttemptPrompt(project, wf, note, "/workspace", 1, "a1", runLaneExecute, RunStatus{}, RunStatus{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(prompt, "## Shared checkout") != (strategy == WorkspaceStrategyShared) {
+			t.Fatalf("strategy %s prompt: %s", strategy, prompt)
+		}
+	}
+}
+
 func TestRenderAttemptPromptExplainsFreshRecoverySession(t *testing.T) {
 	project := RegisteredProject{ProjectID: "project-123", Name: "Memory"}
 	wfFile := WorkflowFile{Path: "/vault/WORKFLOW.md", Body: "Original task {{ note.id }}"}
