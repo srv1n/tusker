@@ -297,3 +297,13 @@ func TestSharedCheckoutRunHoldsWorkUntilSubmittedWorkLands(t *testing.T) {
 		}
 	}
 }
+
+func TestSharedWorkspaceMetadataIgnoresStaleProjectID(t *testing.T) {
+	stale := WorkspaceMetadata{ProjectID: "old-registration", RecordID: "APP-T-0001", RepoRoot: "/repo", Strategy: string(WorkspaceStrategyShared)}
+	if err := validateWorkspaceMetadata(stale, WorkspacePrepareRequest{ProjectID: "app", RecordID: "APP-T-0002", RepoRoot: "/repo", Strategy: WorkspaceStrategyShared}); err != nil {
+		t.Fatalf("shared checkout refused a stale project_id: %v", err)
+	}
+	if err := validateWorkspaceMetadata(stale, WorkspacePrepareRequest{ProjectID: "app", RecordID: "APP-T-0001", RepoRoot: "/repo", Strategy: WorkspaceStrategyWorktree}); err == nil {
+		t.Fatal("worktree accepted metadata from another project")
+	}
+}

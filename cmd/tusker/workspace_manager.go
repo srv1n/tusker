@@ -623,11 +623,15 @@ func workspacePathIsTuskerBookkeeping(path string) bool {
 }
 
 func validateWorkspaceMetadata(metadata WorkspaceMetadata, req WorkspacePrepareRequest) error {
-	if metadata.ProjectID != "" && metadata.ProjectID != req.ProjectID {
-		return tuskerError(errorConfigInvalid, "workspace metadata project_id does not match requested project", withPath(req.RecordID))
-	}
+	// The shared checkout is the project's own registered repo root, and every
+	// Prepare rewrites its metadata. A project_id left by an earlier registration
+	// of the same repo (re-added, or copied from another machine) is stale, not
+	// foreign, so it must not block the checkout forever.
 	if normalizeWorkspaceStrategy(req.Strategy) == WorkspaceStrategyShared {
 		return nil
+	}
+	if metadata.ProjectID != "" && metadata.ProjectID != req.ProjectID {
+		return tuskerError(errorConfigInvalid, "workspace metadata project_id does not match requested project", withPath(req.RecordID))
 	}
 	if metadata.RecordID != "" && metadata.RecordID != req.RecordID {
 		return tuskerError(errorConfigInvalid, "workspace metadata record_id does not match requested record", withPath(req.RecordID))
