@@ -122,6 +122,10 @@ func buildLaneHeavy(tool string, args []string) bool {
 		}
 		return true
 	}
+	// Skip a rustup "+toolchain" and leading global flags to reach the subcommand.
+	for len(args) > 0 && (strings.HasPrefix(args[0], "+") || strings.HasPrefix(args[0], "-")) {
+		args = args[1:]
+	}
 	if len(args) == 0 {
 		return false
 	}
@@ -329,10 +333,13 @@ func runBuildLane(tool string, args []string) int {
 		_, slots := buildLaneSettings()
 		slot, waitMS, err = buildLaneSlot(root, slots)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "tusker:", err)
-			return 1
+			// A sandboxed worker may be unable to open the lock. Build anyway:
+			// an unqueued build is slower for the machine, a failed one is wrong.
+			fmt.Fprintln(os.Stderr, "tusker: build lane unavailable, building without the queue:", err)
+			heavy = false
+		} else {
+			defer slot.Close()
 		}
-		defer slot.Close()
 	}
 	cold := false
 	if heavy && tool == "cargo" {

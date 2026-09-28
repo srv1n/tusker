@@ -138,3 +138,9 @@ func TestBuildLaneWorkerEnv(t *testing.T) {
 		t.Fatal("ACP worker PATH lacks build lane")
 	}
 }
+
+func TestBuildLaneHeavySkipsToolchainAndGlobalFlags(t *testing.T) {
+	if !buildLaneHeavy("cargo", []string{"+nightly", "-q", "check"}) || buildLaneHeavy("cargo", []string{"-q", "metadata"}) {
+		t.Fatal("subcommand detection must skip +toolchain and global flags")
+	}
+}
