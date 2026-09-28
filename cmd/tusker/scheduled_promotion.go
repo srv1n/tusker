@@ -1644,7 +1644,7 @@ func promoteScheduledWaveContext(ctx context.Context, vaultPath, projectID, wave
 		return "", tuskerError(errorInvalidTransition, "promotion recompute required: "+drift+"_drift")
 	}
 	repoRoot := v7RepoRoot(vaultPath)
-	message := fmt.Sprintf("Scheduled promotion %s", waveID)
+	message := "Scheduled promotion " + strings.Join(waveIDs, ", ")
 	mergeCommit, err := gitOutputTrim(repoRoot, "commit-tree", before.Candidate.CandidateSHA+"^{tree}", "-p", before.Candidate.ExpectedDefaultBranchSHA, "-p", before.Candidate.CandidateSHA, "-m", message)
 	if err != nil {
 		return "", err
