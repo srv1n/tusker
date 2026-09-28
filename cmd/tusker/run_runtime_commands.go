@@ -1171,9 +1171,11 @@ func redriveCmd(args Args) error {
 	now := time.Now().UTC()
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "operator redrive")
-	// Route through the idempotent retry primitive so a second redrive of a run
-	// whose attempt is already live or queued is a no-op that reports honestly
-	// instead of double-dispatching a competing attempt. The retry primitive
+	if runProcessGroupAlive(*run) {
+		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
+	}
+	// Route through the idempotent retry primitive so a second redrive of a
+	// queued run reports honestly instead of double-dispatching. The retry primitive
 	// owns the supervisor-decision audit trail for every requeue/expedite it
 	// applies, so no audit is written here.
 	retry, err := retryFailedRunScoped(store, args.String("project"), identity, actor, reason, now)
@@ -1231,6 +1233,20 @@ func redriveRuntimeRunWithHook(store *RuntimeStore, run *RunStatus, actor, reaso
 	actor = firstNonEmpty(strings.TrimSpace(actor), defaultActorName())
 	reason = firstNonEmpty(strings.TrimSpace(reason), "operator redrive")
 	expected := *run
+	if runProcessGroupAlive(expected) {
+		return BudgetRedriveRecord{}, tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
+	}
+	if expected.Terminal && (LeaseState(expected.LeaseState) == LeaseStateClaimed || LeaseState(expected.LeaseState) == LeaseStateRunning) {
+		attempts, err := store.ListAttemptsForRun(expected.ProjectID, expected.RecordID)
+		if err != nil {
+			return BudgetRedriveRecord{}, err
+		}
+		for _, attempt := range attempts {
+			if attempt.Outcome == "" || attempt.Outcome == string(AttemptOutcomeNone) {
+				return BudgetRedriveRecord{}, tuskerError(errorInvalidTransition, "run has a non-terminal attempt; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
+			}
+		}
+	}
 	if afterRead != nil {
 		afterRead()
 	}

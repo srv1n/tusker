@@ -837,7 +837,7 @@ func serveRedriveRefusal(rawStatus string, run RunStatus) (bool, string) {
 		return true, "redrive is already queued; wait for the daemon to claim it or interrupt the queued run first"
 	}
 	if runProcessGroupAlive(run) {
-		return true, "run is still executing; interrupt it before redrive"
+		return true, "run is still executing; use tusker runs interrupt " + firstNonEmpty(run.ItemID, run.RecordID) + " before redrive"
 	}
 	return false, ""
 }

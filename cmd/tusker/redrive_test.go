@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -379,4 +380,90 @@ func TestRedriveClearsReviewPassLandingHold(t *testing.T) {
 	if reviewPassHoldCode(stored.ReasonCode) {
 		t.Fatalf("redrive kept the landing hold %q, so the pass handler would never retry", stored.ReasonCode)
 	}
+}
+
+func TestRedriveReleasesDeadTerminalCrash(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{
+		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-crashed", ActiveAttemptID: "attempt-crashed",
+		LeaseExpiresAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+		AttemptOutcome: string(AttemptOutcomeFailed), AttemptCount: 6, Terminal: true,
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttempt(RunAttempt{AttemptID: "attempt-crashed", ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID, Outcome: string(AttemptOutcomeFailed), FinishedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = captureStdout(t, func() {
+		if err := redriveCmd(Args{"id": run.ItemID, "by": "human:owner", "reason": "retry crashed task"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	store, err = OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	got, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || got == nil {
+		t.Fatalf("redriven run = %#v, %v", got, err)
+	}
+	assertEqual(t, string(LeaseStateRetryQueued), got.LeaseState, "queued lease")
+	assertEqual(t, "", got.LeaseOwner, "owner released")
+	assertEqual(t, "", got.ActiveAttemptID, "attempt retired")
+	assertEqual(t, 0, got.AttemptCount, "attempt budget reset")
+	if blocker := automationRunBlocker(*got, time.Now().UTC().Add(time.Second)); blocker != "" {
+		t.Fatalf("redrive remains blocked: %s", blocker)
+	}
+}
+
+func TestRedriveRefusesLiveOwnerWithInterruptHint(t *testing.T) {
+	if _, ok := processStartTime(os.Getpid()); !ok {
+		t.Skip("platform does not expose process start time")
+	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunStatus{
+		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), LeaseOwner: "attempt-live", ActiveAttemptID: "attempt-live",
+		ProcessPID: os.Getpid(), ProcessStartedAt: recordedProcessStartTime(os.Getpid(), ""),
+		AttemptOutcome: string(AttemptOutcomeFailed), AttemptCount: 6, Terminal: true,
+	}
+	if err := store.UpsertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = redriveCmd(Args{"id": run.ItemID, "reason": "retry crashed task"})
+	if err == nil || !strings.Contains(err.Error(), "tusker runs interrupt APP-T-0001") {
+		t.Fatalf("expected interrupt refusal, got %v", err)
+	}
+	store, err = OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	got, err := store.FindRunScoped(run.ProjectID, run.RecordID)
+	if err != nil || got == nil {
+		t.Fatalf("live run = %#v, %v", got, err)
+	}
+	assertEqual(t, run.LeaseOwner, got.LeaseOwner, "live owner preserved")
+	assertEqual(t, run.AttemptCount, got.AttemptCount, "budget unchanged")
 }
