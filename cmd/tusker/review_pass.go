@@ -145,12 +145,10 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 				}
 			}
 		}
-		for _, owner := range parent.EndState.Overlaps {
-			dependency, dependencyErr := resolveV7Note(project.VaultRoot, owner, "task")
-			if dependencyErr != nil || stringField(dependency.Data, "status") != "done" {
-				return nil // The review reactor retries after the overlapping task lands.
-			}
-		}
+		// EndState.Overlaps names other tasks' dirty files left out of this
+		// commit. They are not dependencies: the review tested this commit
+		// alone in its own worktree, and waiting on them deadlocked parallel
+		// tasks that each saw the other's files.
 	}
 	if undeclared {
 		return d.holdReviewPass(run, RunFailureLandingFailed, "the task declares no owned_paths, so the daemon will not land its changes; check them and land by hand")
