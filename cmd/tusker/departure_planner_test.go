@@ -45,6 +45,61 @@ func TestDepartureCLIEmitsStableDisabledJSON(t *testing.T) {
 	}
 }
 
+func TestDepartureCheckProjectSelectsRegisteredVault(t *testing.T) {
+	stateRoot := t.TempDir()
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	otherRepo := t.TempDir()
+	otherVault := filepath.Join(otherRepo, ".tusker")
+	if err := os.MkdirAll(otherVault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDefaultWorkflow(otherVault); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(otherRepo)
+	targetVault := departurePlannerTestVault(t)
+	data, body, err := parseFrontmatterMustRead(workflowPath(targetVault))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["scheduled_promotion"] = map[string]any{"version": 1, "mode": scheduledPromotionShadow}
+	workflow, err := serializeDocument(data, body, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(workflowPath(targetVault), workflow); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := newRegisteredProject(filepath.Dir(targetVault), targetVault)
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output := captureStdout(t, func() {
+		if err := departureCheckCmd(Args{"project": project.ProjectID, "json": "true"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var payload struct {
+		Decision DepartureDecision `json:"decision"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Decision.Policy.Mode != scheduledPromotionShadow || payload.Decision.Disposition == "disabled" {
+		t.Fatalf("--project selected the wrong workflow: %s", output)
+	}
+	if err := departureCheckCmd(Args{"project": "missing", "state-root": stateRoot}); err == nil || !strings.Contains(err.Error(), "project not found: missing") {
+		t.Fatalf("missing project error = %v", err)
+	}
+}
+
 func TestDepartureCLIStatusAndBoundedHistoryJSON(t *testing.T) {
 	stateRoot := t.TempDir()
 	store, err := OpenRuntimeStore(stateRoot)

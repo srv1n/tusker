@@ -16,13 +16,28 @@ var departureControlNotify = func(stateRoot, projectID, cause string) {
 }
 
 func departureCheckCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
 	projectID := strings.TrimSpace(args.String("project"))
 	if projectID == "" {
 		return tuskerError(errorMissingArg, "--project is required")
+	}
+	var vaultPath string
+	var err error
+	if strings.TrimSpace(args.String("vault")) == "" {
+		store, openErr := OpenRuntimeStore(firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot()))
+		if openErr != nil {
+			return openErr
+		}
+		defer store.Close()
+		project, lookupErr := projectByID(store, projectID)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		vaultPath = project.VaultRoot
+	} else {
+		vaultPath, err = resolveVaultPath(args, false)
+		if err != nil {
+			return err
+		}
 	}
 	wf, err := loadWorkflow(vaultPath)
 	if err != nil {

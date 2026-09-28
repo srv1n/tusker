@@ -183,7 +183,7 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 	if _, err := closeV7Task(project.VaultRoot, taskID, reviewPassActor, Args{
 		"vault": project.VaultRoot, "quiet": "true", "local": "true", "by": reviewPassActor,
 		"reason": "review passed (" + result.AttemptID + "); landed " + source + " and closed by the daemon",
-	}, true); err != nil {
+	}, true, source); err != nil {
 		return fmt.Errorf("close after landing: %w", err)
 	}
 	return nil

@@ -455,7 +455,7 @@ func closeV7Cmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	prev, err := closeV7Task(vaultPath, id, actor, args, false)
+	prev, err := closeV7Task(vaultPath, id, actor, args, false, "")
 	if err != nil {
 		return err
 	}
@@ -469,7 +469,7 @@ func closeV7Cmd(args Args) error {
 // review pass handler. The pass handler has already run the task's
 // Verification commands in the task worktree, so it skips re-running them in
 // the canonical checkout, which does not hold the change yet.
-func closeV7Task(vaultPath, id, actor string, args Args, skipCommandVerification bool) (string, error) {
+func closeV7Task(vaultPath, id, actor string, args Args, skipCommandVerification bool, sourceSHA string) (string, error) {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return "", err
@@ -493,6 +493,9 @@ func closeV7Task(vaultPath, id, actor string, args Args, skipCommandVerification
 	prev := stringField(data, "status")
 	now := time.Now().UTC().Format(time.RFC3339)
 	applyV7TaskCloseProjection(data, actor, now, nil)
+	if sourceSHA != "" {
+		data["source_sha"] = sourceSHA
+	}
 	if _, err := saveV7CloseProjectionCAS(note.AbsolutePath, data, body, baseRev, id); err != nil {
 		return "", err
 	}
