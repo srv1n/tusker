@@ -122,17 +122,21 @@ func TestSharedCheckoutWorkspacePrepareAcceptsOwnedAndSubmittedDirt(t *testing.T
 	if _, err := manager.Prepare(req); err != nil {
 		t.Fatalf("disjoint second run refused owned dirt: %v", err)
 	}
+	// Untracked files never block; a modified tracked file nobody owns does.
 	unknown := filepath.Join(project.RepoRoot, "unknown.txt")
 	if err := writeText(unknown, "unknown"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, project.RepoRoot, "add", "unknown.txt")
+	runGitDir(t, project.RepoRoot, "commit", "-q", "-m", "track unknown")
+	if err := writeText(unknown, "changed"); err != nil {
 		t.Fatal(err)
 	}
 	req.RecordID, req.ItemID = "APP-T-0003", "APP-T-0003"
 	if _, err := manager.Prepare(req); err == nil || !strings.Contains(err.Error(), "unknown.txt") {
 		t.Fatalf("unknown dirt was accepted: %v", err)
 	}
-	if err := os.Remove(unknown); err != nil {
-		t.Fatal(err)
-	}
+	runGitDir(t, project.RepoRoot, "checkout", "--", "unknown.txt")
 	source, err := materializeWorkerSubmissionCommit(*run, []string{"owned/APP-T-0001/own.txt"})
 	if err != nil {
 		t.Fatal(err)

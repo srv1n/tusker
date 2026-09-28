@@ -110,7 +110,7 @@ func (m *FSWorkspaceManager) Prepare(req WorkspacePrepareRequest) (WorkspacePrep
 		}
 		if !continuing {
 			if !req.AllowDirtyTracked {
-				dirty, dirtyErr := inPlaceDirtyPaths(req.RepoRoot)
+				dirty, dirtyErr := inPlaceTrackedDirtyPaths(req.RepoRoot)
 				if dirtyErr != nil {
 					return WorkspacePrepareResult{}, dirtyErr
 				}
@@ -169,7 +169,7 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 	vault := projects[0].Project.VaultRoot
 	activeScopes := make([][]string, 0)
 	for _, run := range runs {
-		if run.ProjectID != req.ProjectID || run.RecordID == req.RecordID || !isDispatchingLeaseState(run.LeaseState) || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
+		if run.ProjectID != req.ProjectID || run.RecordID == req.RecordID || !sharedCheckoutRunHoldsWork(run) || !sameCanonicalProjectPath(run.WorkspacePath, req.RepoRoot) {
 			continue
 		}
 		scope, scopeErr := canonicalRunAuthoredScope(store, run)
@@ -195,6 +195,19 @@ func sharedCheckoutUnclaimedDirtyPaths(req WorkspacePrepareRequest, dirty []stri
 		}
 	}
 	return offenders, nil
+}
+
+// sharedCheckoutRunHoldsWork reports whether an execute run still owns edits in
+// the checkout: running, or paused in a state it can resume from.
+func sharedCheckoutRunHoldsWork(run RunStatus) bool {
+	if run.Lane != runLaneExecute {
+		return false
+	}
+	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
+	case LeaseStateClaimed, LeaseStateRunning, LeaseStateRetryQueued, LeaseStateParkedNoProgress, LeaseStateParkedBudget, LeaseStateInterrupted:
+		return true
+	}
+	return false
 }
 
 func sharedCheckoutSubmittedBlob(repoRoot, path string, idx v7Index) bool {

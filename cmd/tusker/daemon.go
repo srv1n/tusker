@@ -757,8 +757,10 @@ func finishRuntimeRunIfSnapshot(store *RuntimeStore, run *RunStatus, state Lease
 	if !ok {
 		return tuskerError("CAS_CONFLICT", "run changed while interrupt was being applied: "+firstNonEmpty(expected.ItemID, expected.RecordID), withHint("reload the run and retry; Tusker did not overwrite the newer lease or process state"))
 	}
-	if err := abandonSharedCheckoutScope(store, expected); err != nil {
-		return err
+	if !resumable {
+		if err := abandonSharedCheckoutScope(store, expected); err != nil {
+			return err
+		}
 	}
 	updateRunAttemptFromRun(store, expected, outcome, exitCode, reason, now)
 	if strings.TrimSpace(expected.SessionRef) != "" {
@@ -772,7 +774,7 @@ func finishRuntimeRun(store *RuntimeStore, run *RunStatus, state LeaseState, out
 	if store == nil || run == nil {
 		return nil
 	}
-	if outcome != AttemptOutcomeSucceeded {
+	if outcome != AttemptOutcomeSucceeded && !resumable {
 		if err := abandonSharedCheckoutScope(store, *run); err != nil {
 			return err
 		}
@@ -3300,9 +3302,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			return run, true, nil
 		}
 		reason := classification.reason
-		if err := abandonSharedCheckoutScope(d.store, run); err != nil {
-			return run, changed, err
-		}
 		updateRunAttemptFromRun(d.store, run, classification.outcome, classification.exitCode, reason, finished)
 		run = d.scheduleRetry(run, wfFile.Data, reason)
 		if strings.TrimSpace(run.SessionRef) != "" {
@@ -3354,9 +3353,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 			if _, err := d.stopRunExecution(ctx, run); err != nil {
 				reason = reason + ": " + err.Error()
 			}
-			if err := abandonSharedCheckoutScope(d.store, run); err != nil {
-				return run, changed, err
-			}
 			updateRunAttemptFromRun(d.store, run, AttemptOutcomeFailed, 124, reason, now)
 			run = d.scheduleRetry(run, wfFile.Data, reason)
 			run.UpdatedAt = now
@@ -3394,9 +3390,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		parentAttemptID := run.ActiveAttemptID
 		parentSessionRef := run.SessionRef
 		workspacePath := run.WorkspacePath
-		if err := abandonSharedCheckoutScope(d.store, run); err != nil {
-			return run, changed, err
-		}
 		updateRunAttemptFromRun(d.store, run, AttemptOutcomeCancelled, 130, reason, now)
 		if capped, capReached := d.enforceAttemptCreationCap(wfFile.Data, run, attemptCreationReclaim, reason+"; reclaim would create another attempt"); capReached {
 			run = capped
@@ -3464,11 +3457,6 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 		return run, true, nil
 	}
 	if result.Outcome != AttemptOutcomeNone || result.LeaseState == LeaseStateReleased {
-		if result.Outcome != AttemptOutcomeSucceeded {
-			if err := abandonSharedCheckoutScope(d.store, run); err != nil {
-				return run, changed, err
-			}
-		}
 		updateRunAttemptFromRun(d.store, run, result.Outcome, exitCodeForOutcome(result.Outcome), result.Reason, now)
 	}
 	if result.LeaseState == LeaseStateRetryQueued && result.Outcome == AttemptOutcomeNone {
