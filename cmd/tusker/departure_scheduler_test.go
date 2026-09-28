@@ -59,6 +59,49 @@ func TestDepartureSchedulerUsesSharedDailyWindowClock(t *testing.T) {
 	}
 }
 
+func TestDepartureSchedulerNewPolicyWaitsForLocalWindow(t *testing.T) {
+	loc := time.FixedZone("IST", 5*3600+1800)
+	at := func(hour, minute int) time.Time { return time.Date(2026, 9, 28, hour, minute, 0, 0, loc) }
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	wf := defaultWorkflow()
+	wf.ScheduledPromotion.Effective = scheduledPromotionProjection(ScheduledPromotionPolicy{Mode: scheduledPromotionPromote}, true, "test")
+	wf.Orchestration.BatchGate.Windows = []string{"08:12"}
+	project := RegisteredProject{ProjectID: "app"}
+	d := &Daemon{store: store, departurePlan: func(RegisteredProject, Workflow) (DepartureDecision, error) {
+		return DepartureDecision{Disposition: "empty"}, nil
+	}}
+	if err := d.scheduleDepartureIfDue(project, wf, at(8, 9)); err != nil {
+		t.Fatal(err)
+	}
+	if due := d.departureProjectsDue(at(8, 9)); len(due) != 0 {
+		t.Fatalf("departure due before local window: %v", due)
+	}
+	if runs, err := store.ListDepartureRuns(project.ProjectID); err != nil || len(runs) != 0 {
+		t.Fatalf("new policy fired yesterday's window: runs=%v err=%v", runs, err)
+	}
+	if err := d.scheduleDepartureIfDue(project, wf, at(8, 12)); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := store.ListDepartureRuns(project.ProjectID)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("local window runs=%v err=%v", runs, err)
+	}
+	if want := at(8, 12).UTC().Format(time.RFC3339Nano); runs[0].ScheduledWindow != want {
+		t.Fatalf("scheduled_window=%q want %q", runs[0].ScheduledWindow, want)
+	}
+	wf.Orchestration.BatchGate.Windows = []string{"08:11"}
+	if err := d.scheduleDepartureIfDue(project, wf, at(8, 13)); err != nil {
+		t.Fatal(err)
+	}
+	if runs, err := store.ListDepartureRuns(project.ProjectID); err != nil || len(runs) != 1 {
+		t.Fatalf("edited policy backfilled an earlier window: runs=%v err=%v", runs, err)
+	}
+}
+
 func TestDepartureSchedulerHoldsAreDurableAndExplainResume(t *testing.T) {
 	store, err := OpenRuntimeStore(t.TempDir())
 	if err != nil {
@@ -207,6 +250,10 @@ func TestDepartureSchedulerMisfireAndIdempotency(t *testing.T) {
 	stage.ScheduledPromotion.Effective = scheduledPromotionProjection(ScheduledPromotionPolicy{Mode: scheduledPromotionStage}, true, "test")
 	stage.Orchestration.BatchGate.Windows = []string{"13:00", "19:00"}
 	d := &Daemon{store: store}
+	if err := d.scheduleDepartureIfDue(project, stage, time.Date(2026, 7, 25, 12, 0, 0, 0, time.Local)); err != nil {
+		t.Fatal(err)
+	}
+	d = &Daemon{store: store}
 	if err := d.scheduleDepartureIfDue(project, stage, late); err != nil {
 		t.Fatal(err)
 	}
@@ -226,6 +273,9 @@ func TestDepartureSchedulerMisfireAndIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := d.scheduleDepartureIfDue(project, promote, late.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.scheduleDepartureIfDue(project, promote, time.Date(2026, 7, 25, 19, 0, 0, 0, time.Local)); err != nil {
 		t.Fatal(err)
 	}
 	runs, err = store.ListDepartureRuns(project.ProjectID)

@@ -1122,7 +1122,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				projectRuns = map[string]RunStatus{}
 			}
 			projectActiveRuns := countDispatchCapacityProjectRuns(projectRuns)
-			now := time.Now().UTC()
+			now := time.Now()
 			if err := d.scheduleBatchGateIfDue(project, wfFile.Data, now); err != nil {
 				return err
 			}

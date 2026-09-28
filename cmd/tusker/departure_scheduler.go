@@ -40,6 +40,11 @@ type departureSchedule struct {
 	Next      time.Time
 }
 
+type departurePolicyStart struct {
+	Signature string    `json:"signature"`
+	At        time.Time `json:"at"`
+}
+
 func departurePolicyID(policy ScheduledPromotionProjection) string {
 	return fmt.Sprintf("scheduled-promotion/v%d/%s", scheduledPromotionPolicyVersion, policy.Mode)
 }
@@ -223,13 +228,21 @@ func (d *Daemon) planScheduledDeparture(project RegisteredProject, wf Workflow) 
 
 func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, now time.Time) error {
 	policy := wf.ScheduledPromotion.Effective
+	startKey := "departure.policy.start." + project.ProjectID
 	if _, err := d.store.ReconcileDepartureRunsForProject(project, d.activeDepartureExecutionIDs()...); err != nil {
 		return err
 	}
 	if err := d.refreshDepartureSchedule(project.ProjectID, wf, now); err != nil {
 		return err
 	}
+	raw, err := d.store.GetSetting(startKey)
+	if err != nil {
+		return err
+	}
 	if !policy.Observe {
+		if raw != "" {
+			return d.store.SetSetting(startKey, "")
+		}
 		return nil
 	}
 	// A red promotion records its failure intent before it mutates canonical
@@ -243,9 +256,32 @@ func (d *Daemon) scheduleDepartureIfDue(project RegisteredProject, wf Workflow, 
 		return err
 	}
 	if len(windows) == 0 {
+		if raw != "" {
+			return d.store.SetSetting(startKey, "")
+		}
 		return nil
 	}
+	signature := fmt.Sprintf("%v:%v", wf.ScheduledPromotion, windows)
+	var start departurePolicyStart
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &start); err != nil {
+			return fmt.Errorf("decode %s: %w", startKey, err)
+		}
+	}
+	if start.Signature != signature {
+		start = departurePolicyStart{Signature: signature, At: now}
+		encoded, err := json.Marshal(start)
+		if err != nil {
+			return err
+		}
+		if err := d.store.SetSetting(startKey, string(encoded)); err != nil {
+			return err
+		}
+	}
 	window := mergeWindowMostRecent(windows, now)
+	if window.Before(start.At) {
+		return nil
+	}
 	windowKey := window.UTC().Format(time.RFC3339Nano)
 	policyID := departurePolicyID(policy)
 	if existing, err := d.store.FindDepartureRunByWindow(project.ProjectID, policyID, windowKey); err != nil {
