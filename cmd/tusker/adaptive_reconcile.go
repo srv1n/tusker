@@ -108,7 +108,9 @@ func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {
 // instead of backing off to a 30-minute poll.
 func runWaitsForAdmission(run RunStatus) bool {
 	return !run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateUnclaimed &&
-		(strings.HasPrefix(run.LastError, fairDispatchReasonPrefix) || strings.HasPrefix(run.LastError, "automation plan do_not_dispatch: waiting: "))
+		(strings.HasPrefix(run.LastError, fairDispatchReasonPrefix) || strings.HasPrefix(run.LastError, "automation plan do_not_dispatch: waiting: ") ||
+			// Capacity blockers are joined in any order ahead of scheduling.
+			(strings.HasPrefix(run.LastError, "automation plan do_not_dispatch: ") && strings.Contains(run.LastError, "active run limit reached")))
 }
 
 func (d *Daemon) noteProjectActivity(projectID, reason string, now time.Time) {

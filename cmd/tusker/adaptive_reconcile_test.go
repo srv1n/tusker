@@ -126,6 +126,7 @@ func TestRunWaitsForAdmissionOnlyForQueuedCapacityWaits(t *testing.T) {
 		"automation plan do_not_dispatch: waiting: machine busy (load 5.9 per CPU)": true,
 		fairDispatchReasonPrefix + "project capacity reached (4/4)":                 true,
 		"automation plan do_not_dispatch: wave W-0002 authorization is disarmed":    false,
+		"automation plan do_not_dispatch: global active run limit reached (8/8)":    true,
 		"": false,
 	} {
 		queued.LastError = reason
