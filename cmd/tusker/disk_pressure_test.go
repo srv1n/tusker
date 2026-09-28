@@ -641,10 +641,11 @@ func TestAutomationExplainReportsDiskPressurePause(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, diskStat: func(string) (diskFilesystemStat, error) {
-		return diskFilesystemStat{Blocks: 100, AvailableBlocks: 1, BlockSize: 1 << 30}, nil
-	}}
-	if _, err := daemon.checkDiskPressureForDispatch(""); err != nil {
+	// Another workspace ran out of space; the stored status records it.
+	elsewhere := t.TempDir()
+	low := diskFilesystemStat{Blocks: 100, AvailableBlocks: 1, BlockSize: 1 << 30}
+	daemon := &Daemon{stateRoot: DefaultStateRoot(), store: store, diskStat: func(string) (diskFilesystemStat, error) { return low, nil }}
+	if _, err := daemon.checkDiskPressureForDispatch(elsewhere); err != nil {
 		t.Fatal(err)
 	}
 	note, err := resolveNote(vault, "APP-T-0001")
@@ -656,15 +657,30 @@ func TestAutomationExplainReportsDiskPressurePause(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ctx.Close()
-	explanation := ctx.explainTask(note)
-	if explanation.Dispatchable || !strings.Contains(strings.Join(explanation.Blockers, "; "), diskPressureErrorPrefix) {
-		t.Fatalf("explain hid the disk-pressure pause: %#v", explanation.Blockers)
+	hasPause := func() bool {
+		return strings.Contains(strings.Join(ctx.explainTask(note).Blockers, "; "), diskPressureErrorPrefix)
 	}
-	// The daemon's own plan check measures at claim time and ignores the stored reading.
-	ctx.daemonOwned = true
-	for _, blocker := range ctx.explainTask(note).Blockers {
-		if strings.Contains(blocker, diskPressureErrorPrefix) {
-			t.Fatalf("daemon plan check blocked on a stored reading: %q", blocker)
+	if hasPause() {
+		t.Fatal("explain reported another workspace's pause")
+	}
+	repoRoot, err := filepath.EvalSymlinks(ctx.Project.RepoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := runtimeDiskStat
+	t.Cleanup(func() { runtimeDiskStat = previous })
+	runtimeDiskStat = func(path string) (diskFilesystemStat, error) {
+		if strings.HasPrefix(path, repoRoot) {
+			return low, nil
 		}
+		return previous(path)
+	}
+	if !hasPause() {
+		t.Fatal("explain hid this project's disk-pressure pause")
+	}
+	// The daemon's own plan check measures at claim time instead.
+	ctx.daemonOwned = true
+	if hasPause() {
+		t.Fatal("daemon plan check measured disk pressure twice")
 	}
 }

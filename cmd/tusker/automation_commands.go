@@ -673,12 +673,19 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	} else if reason != "" {
 		blockers = append(blockers, reason)
 	}
-	// Read the daemon's last measurement; explain must not write a new one.
+	// Measure this project's filesystems without recording the result: the
+	// stored status merges other projects' workspaces.
 	if !ctx.daemonOwned {
-		if pressure, err := ctx.Store.DiskPressureStatus(); err != nil {
+		if config, err := ctx.Store.DiskPressureConfig(); err != nil {
 			blockers = append(blockers, "disk pressure: "+err.Error())
-		} else if pressure.DispatchPaused {
-			blockers = append(blockers, diskPressureDispatchReason(pressure))
+		} else {
+			paths := []diskPressurePath{{Kind: "state_root", Path: ctx.StateRoot}}
+			if strings.TrimSpace(ctx.Project.RepoRoot) != "" {
+				paths = append(paths, diskPressurePath{Kind: "workspace", Path: ctx.Project.RepoRoot})
+			}
+			if pressure := evaluateDiskPressure(config, paths, runtimeDiskStat, time.Now()); pressure.DispatchPaused {
+				blockers = append(blockers, diskPressureDispatchReason(pressure))
+			}
 		}
 	}
 	blockers = append(blockers, ctx.concurrencyBlockers(note, run)...)
