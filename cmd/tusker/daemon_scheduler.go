@@ -482,7 +482,7 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 					if _, ok := heavyDirs[root]; !ok {
 						heavyDirs[root] = heavyProjectDirs(root)
 					}
-					legacyWeights[key] = taskAdmissionWeight(note, heavyDirs[root])
+					legacyWeights[key] = taskAdmissionWeight(note, heavyDirs[root], sharedBuildLane(project.Workflow.Data))
 				}
 			}
 		}
@@ -592,7 +592,7 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 			if _, ok := heavyDirs[root]; !ok {
 				heavyDirs[root] = heavyProjectDirs(root)
 			}
-			weight = taskAdmissionWeight(candidate.Note, heavyDirs[root])
+			weight = taskAdmissionWeight(candidate.Note, heavyDirs[root], sharedBuildLane(candidate.Workflow.Data))
 		}
 		if reason := weightAdmissionReason(weightUsed, globalActive, budget, weight); reason != "" {
 			if err := d.persistFairDispatchReason(runs, candidate, reason); err != nil {

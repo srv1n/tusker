@@ -1064,7 +1064,7 @@ func (ctx *automationCommandContext) concurrencyBlockers(note Note, run RunStatu
 			}
 			weight := 1
 			if run.Lane != runLaneReview {
-				weight = taskAdmissionWeight(note, heavyProjectDirs(ctx.Project.RepoRoot))
+				weight = taskAdmissionWeight(note, heavyProjectDirs(ctx.Project.RepoRoot), sharedBuildLane(ctx.Workflow.Data))
 			}
 			if reason := weightAdmissionReason(used, ctx.GlobalActiveRuns, budget, weight); reason != "" {
 				blockers = append(blockers, "waiting: "+reason)

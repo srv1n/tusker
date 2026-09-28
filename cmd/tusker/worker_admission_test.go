@@ -33,11 +33,11 @@ func TestWeightDerivation(t *testing.T) {
 		{"swift/lib.go", 4}, {"other/file.rs", 4}, {"other/file.swift", 4}, {"docs/README.md", 1},
 	} {
 		note := Note{Data: map[string]any{"owned_paths": []string{tc.path}}}
-		if got := taskAdmissionWeight(note, dirs); got != tc.want {
+		if got := taskAdmissionWeight(note, dirs, false); got != tc.want {
 			t.Errorf("%s: weight %d, want %d", tc.path, got, tc.want)
 		}
 	}
-	if got := taskAdmissionWeight(Note{Data: map[string]any{"weight": 2, "owned_paths": []string{"rust"}}}, dirs); got != 2 {
+	if got := taskAdmissionWeight(Note{Data: map[string]any{"weight": 2, "owned_paths": []string{"rust"}}}, dirs, false); got != 2 {
 		t.Fatalf("explicit override: %d", got)
 	}
 }
@@ -87,5 +87,16 @@ func TestLoadGate(t *testing.T) {
 	}
 	if got := loadGateReason(0, func() (float64, error) { t.Fatal("feature off read load"); return 0, nil }, pressure); got != "" {
 		t.Fatal(got)
+	}
+}
+
+func TestTaskAdmissionWeightIsLightInSharedBuildLane(t *testing.T) {
+	note := Note{Data: map[string]any{"owned_paths": []string{"crates/alpha/"}}}
+	if got := taskAdmissionWeight(note, []string{"."}, true); got != 1 {
+		t.Fatalf("shared build lane weight = %d, want 1", got)
+	}
+	note.Data["weight"] = 3
+	if got := taskAdmissionWeight(note, []string{"."}, true); got != 3 {
+		t.Fatalf("explicit weight = %d, want 3", got)
 	}
 }

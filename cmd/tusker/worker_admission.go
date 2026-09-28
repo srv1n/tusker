@@ -29,10 +29,15 @@ func taskWeightArg(args Args) (int, bool, error) {
 }
 
 // taskAdmissionWeight is pure; heavyDirs are repository-relative directories
-// containing a Rust, Swift package, or Xcode project marker.
-func taskAdmissionWeight(note Note, heavyDirs []string) int {
+// containing a Rust, Swift package, or Xcode project marker. In a shared
+// checkout behind the build lane, compiles already queue for a build slot and
+// build admission backs off on cache loss, so heavy work weighs 1 there.
+func taskAdmissionWeight(note Note, heavyDirs []string, sharedLane bool) int {
 	if weight := intField(note.Data, "weight"); weight >= 1 && weight <= 8 {
 		return weight
+	}
+	if sharedLane {
+		return 1
 	}
 	for _, owned := range normalizeList(note.Data["owned_paths"]) {
 		owned = filepath.ToSlash(filepath.Clean(owned))
@@ -78,6 +83,11 @@ func heavyProjectDirs(root string) []string {
 		return nil
 	})
 	return dirs
+}
+
+func sharedBuildLane(wf Workflow) bool {
+	enabled, _ := buildLaneSettings()
+	return enabled && workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared
 }
 
 func weightAdmissionReason(used, active, budget, next int) string {
