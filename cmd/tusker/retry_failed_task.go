@@ -80,6 +80,10 @@ func retryHasLiveAttempt(run RunStatus, now time.Time) retryLiveness {
 	if retryProcessVerifiablyAlive(run) {
 		return retryLiveAttempt
 	}
+	// A terminal attempt cannot be kept live by its leftover lease TTL.
+	if run.Terminal && AttemptOutcome(run.AttemptOutcome) != AttemptOutcomeNone && run.AttemptOutcome != "" {
+		return retryNotLive
+	}
 	switch LeaseState(strings.TrimSpace(run.LeaseState)) {
 	case LeaseStateClaimed, LeaseStateRunning:
 		if retryLeaseUnexpired(run, now) {
