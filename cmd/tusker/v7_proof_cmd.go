@@ -1751,6 +1751,10 @@ func v7ProofRequiredClassSatisfied(taskID, required string, task Note, idx v7Ind
 	return false
 }
 
+// xcodebuildCompileActions are the xcodebuild actions that compile the code;
+// -list, -showBuildSettings and test-without-building do not.
+var xcodebuildCompileActions = []string{"build", "build-for-testing", "test", "archive", "analyze"}
+
 func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool {
 	command, ok := v7VerificationCommand(row.Check)
 	if !ok {
@@ -1761,7 +1765,7 @@ func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool 
 		return v7CommandInvokesTest(command)
 	case "typecheck":
 		return v7CommandInvokesAny(command, map[string][]string{
-			"cargo": {"check", "test"}, "go": {"test"}, "swift": {"build", "test"}, "xcodebuild": nil, "tsc": nil, "npx": {"tsc"},
+			"cargo": {"check", "test"}, "go": {"test"}, "swift": {"build", "test"}, "xcodebuild": xcodebuildCompileActions, "tsc": nil, "npx": {"tsc"},
 		})
 	case "lint":
 		return v7CommandInvokesAny(command, map[string][]string{
@@ -1770,7 +1774,7 @@ func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool 
 		})
 	case "build":
 		return v7CommandInvokesAny(command, map[string][]string{
-			"go": {"build", "test"}, "swift": {"build"}, "xcodebuild": nil, "npm": {"run:build"}, "make": {"build"},
+			"go": {"build", "test"}, "swift": {"build"}, "xcodebuild": xcodebuildCompileActions, "npm": {"run:build"}, "make": {"build"},
 			"cargo": {"build", "test"}, "tsc": nil,
 		})
 	case "ci":
