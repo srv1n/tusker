@@ -442,6 +442,12 @@ func (d *Daemon) refreshFairDispatchCandidate(candidate daemonDispatchCandidate,
 }
 
 func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemonDispatchCandidate, globalLimit int) error {
+	config, err := resolveTuskerConfigForRepo("", false)
+	if err != nil {
+		return err
+	}
+	budget := config.Config.Automation.Concurrency.WeightBudget
+	maxLoad := config.Config.Automation.Concurrency.MaxLoadPerCPU
 	allRuns, err := d.store.ListRuns()
 	if err != nil {
 		return err
@@ -450,12 +456,52 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 	projectActive := map[string]int{}
 	runnerActive := map[string]int{}
 	globalActive := 0
+	weightUsed := 0
+	heavyDirs := map[string][]string{}
+	legacyWeights := map[string]int{}
+	if budget > 0 {
+		legacyActive := map[string]bool{}
+		for _, run := range allRuns {
+			if runConsumesDispatchCapacity(run) && run.Lane != runLaneReview && run.Weight < 1 {
+				legacyActive[fairDispatchRunKey(run.ProjectID, run.RecordID)] = true
+			}
+		}
+		if len(legacyActive) > 0 {
+			projects, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{Notes: true, FrontmatterOnly: true, OperationalOnly: true})
+			if err != nil {
+				return err
+			}
+			for _, project := range projects {
+				root := project.Project.RepoRoot
+				for _, note := range project.Notes {
+					key := fairDispatchRunKey(project.Project.ProjectID, trackerRecordID(note))
+					if !legacyActive[key] {
+						continue
+					}
+					if _, ok := heavyDirs[root]; !ok {
+						heavyDirs[root] = heavyProjectDirs(root)
+					}
+					legacyWeights[key] = taskAdmissionWeight(note, heavyDirs[root])
+				}
+			}
+		}
+	}
 	for _, run := range allRuns {
 		runs[fairDispatchRunKey(run.ProjectID, run.RecordID)] = run
 		if !runConsumesDispatchCapacity(run) {
 			continue
 		}
 		globalActive++
+		if budget > 0 {
+			weight := run.Weight
+			if weight < 1 && run.Lane != runLaneReview {
+				weight = legacyWeights[fairDispatchRunKey(run.ProjectID, run.RecordID)]
+			}
+			if run.Lane == runLaneReview || weight < 1 {
+				weight = 1
+			}
+			weightUsed += weight
+		}
 		projectActive[run.ProjectID]++
 		runnerActive[run.Runner]++
 	}
@@ -539,6 +585,26 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 			}
 			continue
 		}
+		weight := 1
+		if budget > 0 && candidate.Lane != runLaneReview {
+			root := candidate.Project.RepoRoot
+			if _, ok := heavyDirs[root]; !ok {
+				heavyDirs[root] = heavyProjectDirs(root)
+			}
+			weight = taskAdmissionWeight(candidate.Note, heavyDirs[root])
+		}
+		if reason := weightAdmissionReason(weightUsed, globalActive, budget, weight); reason != "" {
+			if err := d.persistFairDispatchReason(runs, candidate, reason); err != nil {
+				return err
+			}
+			continue
+		}
+		if reason := loadGateReason(maxLoad, machineLoadPerCPU, machineMemoryPressure); reason != "" {
+			if err := d.persistFairDispatchReason(runs, candidate, reason); err != nil {
+				return err
+			}
+			continue
+		}
 		if reason, err := d.globalAutomationBlocker(); err != nil {
 			return err
 		} else if reason != "" {
@@ -585,6 +651,9 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 		}
 
 		before := run
+		if budget > 0 {
+			run.Weight = weight
+		}
 		if fairDispatchReasonIsOwned(run.LastError) {
 			run.LastError = ""
 		}
@@ -620,6 +689,7 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 
 		if delta := dispatchCapacityRunDelta(before, updated); delta > 0 {
 			globalActive += delta
+			weightUsed += weight * delta
 			projectActive[candidate.Project.ProjectID] += delta
 			runnerActive[updated.Runner] += delta
 			stateSelected[stateKey] += delta

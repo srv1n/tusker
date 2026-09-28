@@ -380,6 +380,10 @@ func updateV7TaskCmd(args Args) error {
 		return idx, err
 	}
 	changes := map[string]any{}
+	weight, weightSet, err := taskWeightArg(args)
+	if err != nil {
+		return err
+	}
 	mutate := func(field string, next any) {
 		if toString(data[field]) == toString(next) {
 			return
@@ -486,6 +490,9 @@ func updateV7TaskCmd(args Args) error {
 	}
 	if value, ok := args["owned-paths"]; ok {
 		mutate("owned_paths", normalizeOwnedPaths(splitCSV(value)))
+	}
+	if weightSet {
+		mutate("weight", weight)
 	}
 	// Per-task profile pins reference global profiles by name; they are
 	// routing, not contract, so they never change the fingerprint.

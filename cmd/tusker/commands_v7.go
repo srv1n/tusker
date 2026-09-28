@@ -605,6 +605,10 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		proofRequiredOwner[required] = owner
 	}
 	evidenceBudget := defaultV7EvidenceBudget(proofMode)
+	weight, weightSet, err := taskWeightArg(args)
+	if err != nil {
+		return err
+	}
 	if budget := strings.TrimSpace(args.String("evidence-budget")); budget != "" {
 		evidenceBudget = atoiSafe(budget)
 		if evidenceBudget < 0 {
@@ -649,6 +653,9 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		"created_by":            actor,
 		"updated_at":            now,
 		"updated_by":            actor,
+	}
+	if weightSet {
+		data["weight"] = weight
 	}
 	if epicSupplied {
 		data["epic"] = epic

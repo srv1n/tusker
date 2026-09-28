@@ -1045,6 +1045,32 @@ func (ctx *automationCommandContext) concurrencyBlockers(note Note, run RunStatu
 	if stateDispatchCapReachedForRun(status, ctx.StateActiveRuns, ctx.Workflow.Data, run) {
 		blockers = append(blockers, fmt.Sprintf("state %q concurrency cap reached", status))
 	}
+	if config, err := resolveTuskerConfigForRepo("", false); err == nil {
+		budget := config.Config.Automation.Concurrency.WeightBudget
+		if budget > 0 {
+			used := 0
+			for _, active := range ctx.Runs {
+				if !runConsumesDispatchCapacity(active) || (active.ProjectID == run.ProjectID && active.RecordID == run.RecordID) {
+					continue
+				}
+				weight := active.Weight
+				if active.Lane == runLaneReview || weight < 1 {
+					weight = 1
+				}
+				used += weight
+			}
+			weight := 1
+			if run.Lane != runLaneReview {
+				weight = taskAdmissionWeight(note, heavyProjectDirs(ctx.Project.RepoRoot))
+			}
+			if reason := weightAdmissionReason(used, ctx.GlobalActiveRuns, budget, weight); reason != "" {
+				blockers = append(blockers, "waiting: "+reason)
+			}
+		}
+		if reason := loadGateReason(config.Config.Automation.Concurrency.MaxLoadPerCPU, machineLoadPerCPU, machineMemoryPressure); reason != "" {
+			blockers = append(blockers, "waiting: "+reason)
+		}
+	}
 	return blockers
 }
 

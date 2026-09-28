@@ -241,6 +241,7 @@ type RunStatus struct {
 	WorkerPolicyFP       string                     `json:"worker_policy_fingerprint"`
 	ExecutePolicyFP      string                     `json:"execute_policy_fingerprint"`
 	Lane                 string                     `json:"lane"`
+	Weight               int                        `json:"weight,omitempty"`
 	LeaseState           string                     `json:"lease_state"`
 	LeaseOwner           string                     `json:"lease_owner"`
 	LeaseGeneration      int                        `json:"lease_generation"`

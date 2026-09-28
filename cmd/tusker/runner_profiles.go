@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -508,6 +509,8 @@ func cloneConfigValue(value any) any {
 var userGlobalConfigAllowlist = map[string]struct{}{
 	"access.protected_paths":                             {},
 	"automation.concurrency.max_active_runs":             {},
+	"automation.concurrency.weight_budget":               {},
+	"automation.concurrency.max_load_per_cpu":            {},
 	"automation.concurrency.max_active_runs_per_project": {},
 	"automation.profiles":                                {},
 	"automation.private_folders":                         {},
@@ -588,8 +591,13 @@ func validateTuskerConfigLayer(layer tuskerConfigLayer) error {
 			return tuskerError(errorConfigInvalid, "automation.denylist entries require id and pattern", withPath(layer.Path))
 		}
 	}
-	if layer.Config.Automation.Concurrency.MaxActiveRuns < 0 || layer.Config.Automation.Concurrency.MaxActiveRunsPerProject < 0 {
+	if layer.Config.Automation.Concurrency.MaxActiveRuns < 0 || layer.Config.Automation.Concurrency.MaxActiveRunsPerProject < 0 || layer.Config.Automation.Concurrency.WeightBudget < 0 || layer.Config.Automation.Concurrency.MaxLoadPerCPU < 0 || math.IsNaN(layer.Config.Automation.Concurrency.MaxLoadPerCPU) || math.IsInf(layer.Config.Automation.Concurrency.MaxLoadPerCPU, 0) {
 		return tuskerError(errorConfigInvalid, "automation.concurrency limits must be > 0 when set", withPath(layer.Path))
+	}
+	for _, key := range []string{"automation.concurrency.weight_budget", "automation.concurrency.max_load_per_cpu"} {
+		if _, present := lookupConfigValue(layer.Raw, key); present && layer.Name != configSourceUserGlobal {
+			return tuskerError(errorConfigInvalid, key+" belongs in the global config", withPath(layer.Path))
+		}
 	}
 	return nil
 }

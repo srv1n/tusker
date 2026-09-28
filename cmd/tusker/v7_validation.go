@@ -95,6 +95,9 @@ func validateV7FrontmatterSize(note Note, ctx validationContext, where string, w
 }
 
 func validateV7Task(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
+	if raw, ok := note.Data["weight"]; ok && !validTaskWeight(raw) {
+		*errors = append(*errors, issue(errorInvalidField, "task weight must be an integer from 1 to 8", where, "", nil))
+	}
 	data := note.Data
 	if complexity := strings.TrimSpace(stringField(data, "complexity")); complexity != "" && complexity != "routine" && complexity != "standard" && complexity != "complex" && complexity != "frontier" {
 		*errors = append(*errors, issue(errorInvalidField, "task complexity must be routine, standard, complex, or frontier", where, "omit complexity for compatibility or use a semantic complexity level", map[string]any{"complexity": complexity}))

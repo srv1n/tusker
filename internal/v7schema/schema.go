@@ -40,7 +40,7 @@ var (
 var FrontmatterOrder = map[string][]string{
 	"task": {
 		"schema", "kind", "id", "project", "title", "epic", "status", "readiness", "priority", "risk", "size",
-		"wave",
+		"wave", "weight",
 		"proof_mode", "proof_status", "proof_required", "proof_required_owner", "evidence_budget", "raw_artifacts_allowed", "raw_artifacts_reason",
 		"machine_status", "human_status", "closeout_status", "agent_action",
 		"next_owner", "next_source", "next_ref", "next_action", "domains", "spec_refs", "gates", "dependencies", "evidence_required", "architect", "architect_source", "origin", "peer_contacts",
@@ -254,6 +254,8 @@ type TuskerAutomationConfig struct {
 	Concurrency struct {
 		MaxActiveRuns           int            `yaml:"max_active_runs"`
 		MaxActiveRunsPerProject int            `yaml:"max_active_runs_per_project"`
+		WeightBudget            int            `yaml:"weight_budget"`
+		MaxLoadPerCPU           float64        `yaml:"max_load_per_cpu"`
 		MaxContinuationRetries  int            `yaml:"max_continuation_retries"`
 		MaxConcurrentByState    map[string]int `yaml:"max_concurrent_by_state"`
 	} `yaml:"concurrency"`
