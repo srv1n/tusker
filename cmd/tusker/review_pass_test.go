@@ -226,8 +226,8 @@ func TestReviewPassLandsAndClosesForAnyHarness(t *testing.T) {
 	if !env.landed() {
 		t.Fatal("reviewed commit did not land on the integration branch")
 	}
-	if status := stringField(env.task(t).Data, "status"); status != "done" {
-		t.Fatalf("task status = %q, want done", status)
+	if task := env.task(t); stringField(task.Data, "status") != "done" || stringField(task.Data, "source_sha") != env.source {
+		t.Fatalf("closed task status/source = %q/%q, want done/%q", stringField(task.Data, "status"), stringField(task.Data, "source_sha"), env.source)
 	}
 	env.passHandler(t) // idempotent
 }
