@@ -7154,7 +7154,7 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 				}
 			}
 		}
-		b.WriteString("Build and test with the normal commands; builds queue automatically, one at a time. If errors are only in files another task owns, wait a minute and rerun rather than editing them. Edit outside your owned paths only when unavoidable and name those files in your submission. Format only your own files. Rerun a failing test once before treating it as yours.")
+		b.WriteString("Build and test with the normal commands; builds queue automatically, one at a time. If errors are only in files another task owns, wait a minute and rerun rather than editing them. Edit outside your owned paths only when unavoidable and name those files in your submission. Format only your own files. Rerun a failing test once before treating it as yours. Do not commit: leave your changes uncommitted and submit; Tusker commits your owned paths, even when .git is read-only to you.")
 		rendered = strings.TrimSpace(rendered) + "\n\n" + b.String()
 	}
 	parentAttemptID, recoveryErr := pendingOutcomeUnknownRecoveryParent(store, previousRun)
