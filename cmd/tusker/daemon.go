@@ -2322,8 +2322,8 @@ func reviewImplementationSource(store *RuntimeStore, run RunStatus, note Note) (
 	if err != nil {
 		return "", err
 	}
-	for i := len(attempts) - 1; i >= 0; i-- {
-		attempt := attempts[i]
+	// Attempts list newest first; a rework resubmission keeps the work revision.
+	for _, attempt := range attempts {
 		if attempt.Lane == runLaneExecute && attempt.WorkRevision == run.WorkRevision && attempt.Outcome == string(AttemptOutcomeSucceeded) && attempt.EndState.HeadSHA != "" {
 			return attempt.EndState.HeadSHA, nil
 		}

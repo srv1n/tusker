@@ -1640,6 +1640,25 @@ func TestProjectedWorkerAttemptBecomesCurrentReviewSource(t *testing.T) {
 	}
 }
 
+func TestReviewSourceIsNewestResubmission(t *testing.T) {
+	store := fairDispatchTestStore(t)
+	run := fairDispatchTestRun("project-shared", "APP-T-0001")
+	for i, sha := range []string{"old111", "new222"} {
+		if err := store.SaveAttempt(RunAttempt{
+			AttemptID: "attempt-" + sha, ProjectID: run.ProjectID, RecordID: run.RecordID, ItemID: run.ItemID,
+			Lane: runLaneExecute, WorkRevision: 0, Outcome: string(AttemptOutcomeSucceeded),
+			StartedAt: time.Date(2026, 9, 28, 15, i, 0, 0, time.UTC).Format(time.RFC3339),
+			EndState:  RunEndState{Schema: "tusker.run-end-state/v2", HeadSHA: sha},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source, err := reviewImplementationSource(store, run, Note{Data: map[string]any{"work_revision": 0}})
+	if err != nil || source != "new222" {
+		t.Fatalf("review source = %q, %v; want the newest resubmission", source, err)
+	}
+}
+
 func TestDispatchDeclinedOutcomeReleasesWithoutContinuation(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
