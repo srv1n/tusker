@@ -93,35 +93,10 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 			return nil, false, err
 		}
 		verdictJSON, _ := json.Marshal(verdicts)
-		materialScope, generatedOutputScope, err := canonicalRunMaterialScopeWithGeneratedOutputs(d.store, *run)
+		endState, err := captureSubmissionEndState(d.store, *run, string(verdictJSON), "", "", true)
 		if err != nil {
 			return nil, false, err
 		}
-		commitScope, err := canonicalRunAuthoredScope(d.store, *run)
-		if err != nil {
-			return nil, false, err
-		}
-		var stray []string
-		var overlaps map[string]string
-		if sharedWorkspaceMetadata(run.WorkspacePath) && run.Lane == runLaneExecute {
-			stray, overlaps, err = sharedCheckoutStrays(d.store, *run, commitScope)
-			if err != nil {
-				return nil, false, err
-			}
-			materialScope = append(materialScope, stray...)
-			commitScope = append(commitScope, stray...)
-		}
-		endState, err := captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, string(verdictJSON), "", "", time.Now().UTC(), generatedOutputScope)
-		if err != nil {
-			return nil, false, err
-		}
-		if endState.Dirty {
-			endState.HeadSHA, err = materializeWorkerSubmissionCommit(*run, commitScope)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		endState.StrayPaths, endState.Overlaps = stray, overlaps
 		if err := d.applyWorkerLifecycle(req); err != nil {
 			return nil, false, err
 		}
@@ -141,6 +116,46 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 	}
 	updated, err := d.store.FindRunScoped(run.ProjectID, run.RecordID)
 	return updated, true, err
+}
+
+// captureSubmissionEndState records a submitted run's end state. A shared
+// checkout never holds a task commit, so Tusker commits the task's scope, plus
+// unowned strays, through a private index. commitDirty extends the commit to
+// sandboxed workers that could not commit in their own worktree.
+func captureSubmissionEndState(store *RuntimeStore, run RunStatus, verdicts, branch, sha string, commitDirty bool) (RunEndState, error) {
+	materialScope, generatedOutputScope, err := canonicalRunMaterialScopeWithGeneratedOutputs(store, run)
+	if err != nil {
+		return RunEndState{}, err
+	}
+	commitScope, err := canonicalRunAuthoredScope(store, run)
+	if err != nil {
+		return RunEndState{}, err
+	}
+	var stray []string
+	var overlaps map[string]string
+	shared := sharedWorkspaceMetadata(run.WorkspacePath) && run.Lane == runLaneExecute
+	if shared {
+		stray, overlaps, err = sharedCheckoutStrays(store, run, commitScope)
+		if err != nil {
+			return RunEndState{}, err
+		}
+		materialScope = append(materialScope, stray...)
+		commitScope = append(commitScope, stray...)
+	}
+	endState, err := captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, verdicts, branch, sha, time.Now().UTC(), generatedOutputScope)
+	if err != nil {
+		return RunEndState{}, err
+	}
+	// An interactive current-workspace session binds review to HEAD plus its
+	// uncommitted material; only dispatched workers need Tusker's commit.
+	if endState.Dirty && ((shared && !run.HandRun) || commitDirty) {
+		endState.HeadSHA, err = materializeWorkerSubmissionCommit(run, commitScope)
+		if err != nil {
+			return RunEndState{}, err
+		}
+	}
+	endState.StrayPaths, endState.Overlaps = stray, overlaps
+	return endState, nil
 }
 
 func sharedCheckoutStrays(store *RuntimeStore, run RunStatus, own []string) ([]string, map[string]string, error) {

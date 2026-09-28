@@ -739,11 +739,7 @@ func runsLifecycleWithStore(store *RuntimeStore, args Args, action string, outpu
 		if findErr != nil || current == nil {
 			return firstNonNil(findErr, tuskerError(errorNotFound, "run not found: "+id))
 		}
-		materialScope, generatedOutputScope, scopeErr := canonicalRunMaterialScopeWithGeneratedOutputs(store, *current)
-		if scopeErr != nil {
-			return scopeErr
-		}
-		endState, captureErr := captureRunEndStateForMaterialScope(current.WorkspacePath, materialScope, firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), args.String("branch"), firstNonEmpty(args.String("head-sha"), args.String("sha")), time.Now().UTC(), generatedOutputScope)
+		endState, captureErr := captureSubmissionEndState(store, *current, firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), args.String("branch"), firstNonEmpty(args.String("head-sha"), args.String("sha")), false)
 		if captureErr != nil {
 			return captureErr
 		}

@@ -129,6 +129,7 @@ func TestSharedCheckoutStraysAndFailureCleanup(t *testing.T) {
 		}
 		run.WorkspacePath = project.RepoRoot
 		run.ActiveAttemptID = "attempt-" + id
+		run.HandRun = false // simulate daemon-dispatched workers
 		run.Lane = runLaneExecute
 		run.LeaseState = string(LeaseStateRunning)
 		if err := store.UpsertRun(*run); err != nil {
@@ -172,6 +173,18 @@ func TestSharedCheckoutStraysAndFailureCleanup(t *testing.T) {
 	}
 	if !containsString(stray, "stray.txt") || overlaps["owned/APP-T-0002/other.txt"] != "APP-T-0002" {
 		t.Fatalf("stray=%v overlaps=%v", stray, overlaps)
+	}
+	// The socket submit path passes commitDirty=false; a shared checkout must
+	// still get Tusker's scope commit because the worker cannot make one.
+	endState, err := captureSubmissionEndState(store, one, `{"A1":"pass"}`, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head, _ := gitRevParse(project.RepoRoot, "HEAD^{commit}"); endState.HeadSHA == "" || endState.HeadSHA == head {
+		t.Fatalf("shared submission was not committed: head=%s end=%s", head, endState.HeadSHA)
+	}
+	if got, err := gitOutputTrim(project.RepoRoot, "show", endState.HeadSHA+":owned/APP-T-0001/own.txt"); err != nil || got != "own" {
+		t.Fatalf("shared submission commit lacks owned file: %q %v", got, err)
 	}
 	commit, err := materializeWorkerSubmissionCommit(one, append(scope, stray...))
 	if err != nil {
