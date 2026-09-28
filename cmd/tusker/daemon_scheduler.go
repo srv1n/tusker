@@ -448,6 +448,7 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 	}
 	budget := config.Config.Automation.Concurrency.WeightBudget
 	maxLoad := config.Config.Automation.Concurrency.MaxLoadPerCPU
+	buildStats := readBuildLaneStats(d.stateRoot, time.Now().UTC())
 	allRuns, err := d.store.ListRuns()
 	if err != nil {
 		return err
@@ -594,6 +595,12 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 			weight = taskAdmissionWeight(candidate.Note, heavyDirs[root])
 		}
 		if reason := weightAdmissionReason(weightUsed, globalActive, budget, weight); reason != "" {
+			if err := d.persistFairDispatchReason(runs, candidate, reason); err != nil {
+				return err
+			}
+			continue
+		}
+		if reason := buildAdmissionReason(buildStats[candidate.Project.ProjectID], candidate.Lane, projectHasActiveExecute(projectRuns, candidate.Project.ProjectID, run.RecordID)); reason != "" {
 			if err := d.persistFairDispatchReason(runs, candidate, reason); err != nil {
 				return err
 			}

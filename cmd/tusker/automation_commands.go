@@ -1045,6 +1045,9 @@ func (ctx *automationCommandContext) concurrencyBlockers(note Note, run RunStatu
 	if stateDispatchCapReachedForRun(status, ctx.StateActiveRuns, ctx.Workflow.Data, run) {
 		blockers = append(blockers, fmt.Sprintf("state %q concurrency cap reached", status))
 	}
+	if reason := buildAdmissionReason(readBuildLaneStats(ctx.StateRoot, time.Now().UTC())[ctx.Project.ProjectID], run.Lane, projectHasActiveExecute(ctx.projectRunsSlice(), ctx.Project.ProjectID, run.RecordID)); reason != "" {
+		blockers = append(blockers, reason)
+	}
 	if config, err := resolveTuskerConfigForRepo("", false); err == nil {
 		budget := config.Config.Automation.Concurrency.WeightBudget
 		if budget > 0 {
