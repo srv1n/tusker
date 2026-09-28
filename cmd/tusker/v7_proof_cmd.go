@@ -1931,6 +1931,34 @@ func v7CommandInvokesTest(command string) bool {
 	})
 }
 
+// xcodebuildFlags are the xcodebuild options that take no value, lowercased
+// like parsed arguments; every other option consumes the next argument, so
+// "-configuration build" is not a build.
+var xcodebuildFlags = makeSet("-list", "-showbuildsettings", "-showsdks", "-showdestinations", "-showtestplans",
+	"-quiet", "-json", "-version", "-usage", "-help", "-dry-run", "-n", "-alltargets", "-parallelizetargets",
+	"-allowprovisioningupdates", "-allowprovisioningdeviceregistration", "-hideshellscriptenvironment",
+	"-skippackagepluginvalidation", "-skipmacrovalidation", "-skipunavailableactions",
+	"-disableautomaticpackageresolution", "-onlyusepackageversionsfromresolvedfile")
+
+// xcodebuildActions returns the actions of an xcodebuild invocation: bare
+// words that are neither option values nor NAME=value build settings. An
+// unknown option is assumed to take a value, which can only hide an action.
+func xcodebuildActions(args []string) []string {
+	var actions []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case strings.HasPrefix(arg, "-"):
+			if _, ok := xcodebuildFlags[arg]; !ok {
+				i++
+			}
+		case !strings.Contains(arg, "="):
+			actions = append(actions, arg)
+		}
+	}
+	return actions
+}
+
 type v7ShellCommandInvocation struct {
 	name string
 	args []string
@@ -1944,6 +1972,9 @@ func v7CommandInvokesAny(command string, tools map[string][]string) bool {
 		}
 		if len(want) == 0 {
 			return true
+		}
+		if invocation.name == "xcodebuild" {
+			invocation.args = xcodebuildActions(invocation.args)
 		}
 		for _, pattern := range want {
 			if strings.HasPrefix(pattern, "-") {
