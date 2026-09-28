@@ -633,3 +633,19 @@ func TestOwnedPathConflictKeepsParkedSharedCheckoutWorkClaimed(t *testing.T) {
 		t.Fatal("parked worktree holder should not block a new claim")
 	}
 }
+
+func TestOwnershipClaimsOverlapAcrossPathKinds(t *testing.T) {
+	owned := taskOwnershipClaim{Kind: "owned_path", Value: "generated"}
+	output := taskOwnershipClaim{Kind: "generated_output", Value: "generated/client.go"}
+	nested := taskOwnershipClaim{Kind: "generated_output", Value: "generated/api"}
+	key := taskOwnershipClaim{Kind: "migration_key", Value: "generated"}
+	if !taskOwnershipClaimsOverlap(owned, output) || !taskOwnershipClaimsOverlap(output, owned) {
+		t.Fatal("owned dir and generated file inside it must collide")
+	}
+	if !taskOwnershipClaimsOverlap(nested, taskOwnershipClaim{Kind: "generated_output", Value: "generated/api/v1.go"}) {
+		t.Fatal("nested generated outputs must collide")
+	}
+	if taskOwnershipClaimsOverlap(owned, key) {
+		t.Fatal("migration keys are not paths")
+	}
+}

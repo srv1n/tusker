@@ -529,7 +529,9 @@ func (m *FSWorkspaceManager) prepareAtPath(workspacePath string, req WorkspacePr
 	if err != nil {
 		return WorkspacePrepareResult{}, err
 	}
-	if err := writeText(metadataPath, string(raw)+"\n"); err != nil {
+	// Shared-checkout workers read this file while another Prepare rewrites
+	// it; a truncated read would send their lifecycle request to the wrong file.
+	if err := writeFileAtomic(metadataPath, append(raw, '\n')); err != nil {
 		return WorkspacePrepareResult{}, err
 	}
 	return WorkspacePrepareResult{Path: workspacePath, Metadata: metadata, NewlyMaterialized: created}, nil
@@ -766,4 +768,27 @@ func (m *FSWorkspaceManager) materializeWorkspace(workspacePath string, req Work
 		return fmt.Errorf("materialize %s workspace: %w: %s", req.Strategy, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	if err := ensureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

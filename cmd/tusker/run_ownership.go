@@ -75,8 +75,8 @@ type taskOwnershipClaim struct {
 }
 
 // taskOwnershipClaims projects every authored collision surface into the one
-// existing claim lock. Paths overlap by prefix; generated outputs and migration
-// keys are exact names in their own namespaces.
+// existing claim lock. Owned paths and generated outputs overlap by prefix;
+// migration keys are exact names in their own namespace.
 func taskOwnershipClaims(note Note) []taskOwnershipClaim {
 	claims := make([]taskOwnershipClaim, 0)
 	for _, path := range normalizeOwnedPaths(normalizeList(note.Data["owned_paths"])) {
@@ -94,13 +94,12 @@ func taskOwnershipClaims(note Note) []taskOwnershipClaim {
 }
 
 func taskOwnershipClaimsOverlap(left, right taskOwnershipClaim) bool {
-	if left.Kind != right.Kind {
-		return false
-	}
-	if left.Kind == "owned_path" {
+	// Owned paths and generated outputs are both files on disk, and submit and
+	// cleanup act on them together, so they collide by prefix across kinds.
+	if left.Kind != "migration_key" && right.Kind != "migration_key" {
 		return ownedPathsOverlap(left.Value, right.Value)
 	}
-	return left.Value == right.Value
+	return left.Kind == right.Kind && left.Value == right.Value
 }
 
 func taskOwnershipConflictCode(kind string) string {
