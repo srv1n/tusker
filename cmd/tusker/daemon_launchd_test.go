@@ -28,6 +28,9 @@ func TestWatchdogStallExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	oldFloor := daemonWatchdogMinThreshold
+	daemonWatchdogMinThreshold = 0
+	t.Cleanup(func() { daemonWatchdogMinThreshold = oldFloor })
 	var exitReason string
 	oldExit := daemonWatchdogExit
 	daemonWatchdogExit = func(reason string) {
@@ -64,6 +67,7 @@ func TestWatchdogStallExitRestartsThroughLaunchdFixture(t *testing.T) {
 		defer store.Close()
 		daemon := &Daemon{stateRoot: stateRoot, store: store}
 		if os.Getenv("TUSKER_FIXTURE_GENERATION") == "1" {
+			daemonWatchdogMinThreshold = 0
 			now := time.Now().UTC()
 			if daemon.feedWatchdogBeat(now) != nil {
 				os.Exit(3)

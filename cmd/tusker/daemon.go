@@ -83,6 +83,7 @@ const (
 
 var (
 	daemonWatchdogCheckInterval = 5 * time.Second
+	daemonWatchdogMinThreshold  = 2 * time.Minute
 	daemonGuardAcquire          = acquireDaemonGuard
 	daemonCreate                = NewDaemon
 	daemonWatchdogExit          = func(reason string) {
@@ -399,7 +400,10 @@ func (d *Daemon) watchdogStale(now time.Time, tick time.Duration) (bool, string,
 	if err != nil {
 		return true, "watchdog beat is invalid: " + beatRaw, nil
 	}
-	threshold := 3 * tick
+	// A live run drops the cadence to 5s, and 15s is shorter than one healthy
+	// poll on a slow disk; the watchdog then killed every startup before its
+	// first poll finished. Hang detection only needs minutes.
+	threshold := max(3*tick, daemonWatchdogMinThreshold)
 	age := now.UTC().Sub(beatAt)
 	if age <= threshold {
 		return false, "", nil

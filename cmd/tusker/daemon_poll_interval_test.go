@@ -84,3 +84,26 @@ func TestWatchdogTracksEffectivePollInterval(t *testing.T) {
 		t.Fatalf("watchdog must reject a beat older than 3 × effective interval (%s)", interval)
 	}
 }
+
+func TestWatchdogToleratesSlowPollAtLiveCadence(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	if err := store.SetSetting("daemon_watchdog_beat_at", now.Add(-90*time.Second).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if stale, _, err := daemon.watchdogStale(now, reconcileLiveCadence); err != nil || stale {
+		t.Fatalf("a 90s poll at live cadence killed the daemon: stale=%v err=%v", stale, err)
+	}
+	if err := store.SetSetting("daemon_watchdog_beat_at", now.Add(-daemonWatchdogMinThreshold-time.Second).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if stale, _, err := daemon.watchdogStale(now, reconcileLiveCadence); err != nil || !stale {
+		t.Fatalf("a hang past the floor was not caught: stale=%v err=%v", stale, err)
+	}
+}
