@@ -80,8 +80,7 @@ func buildLaneWorkerEnv(env []string) []string {
 	if !enabled {
 		return env
 	}
-	root := DefaultStateRoot()
-	dir, err := ensureBuildLaneShims(root)
+	dir, err := ensureBuildLaneShims(DefaultStateRoot())
 	if err != nil {
 		return env
 	}
@@ -94,7 +93,33 @@ func buildLaneWorkerEnv(env []string) []string {
 	if runnerEnvValue(env, "CARGO_BUILD_JOBS") == "" {
 		env = setEnvValue(env, "CARGO_BUILD_JOBS", fmt.Sprint(max(1, runtime.NumCPU()-2)))
 	}
-	return setEnvValue(env, "TUSKER_BUILD_LANE_STATE_ROOT", root)
+	if root, err := buildLaneDataRoot(); err == nil {
+		env = setEnvValue(env, "TUSKER_BUILD_LANE_STATE_ROOT", root)
+	}
+	return env
+}
+
+// buildLaneDataRoot holds the slot locks and build log. Sandboxed workers
+// (Codex workspace-write) may write only their checkout and /tmp, so the data
+// lives in a private per-user /tmp folder; the shims stay in the state root,
+// which the sandbox only needs to read.
+func buildLaneDataRoot() (string, error) {
+	if root := os.Getenv("TUSKER_BUILD_LANE_STATE_ROOT"); root != "" {
+		return root, nil
+	}
+	root := filepath.Join("/tmp", fmt.Sprintf("tusker-%d", os.Getuid()))
+	if err := os.Mkdir(root, 0o700); err != nil && !os.IsExist(err) {
+		return "", err
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || !ok || int(stat.Uid) != os.Getuid() || info.Mode().Perm()&0o022 != 0 {
+		return "", fmt.Errorf("%s is not a private directory owned by this user", root)
+	}
+	return root, nil
 }
 
 func buildLaneTool(tool, shimDir string) (string, error) {
@@ -263,17 +288,18 @@ func appendBuildLaneLog(root string, record map[string]any) error {
 // runBuildLane fronts xcodebuild and swift, which have no environment hook.
 // Cargo goes through runRustcWrapper instead.
 func runBuildLane(tool string, args []string) int {
-	root := os.Getenv("TUSKER_BUILD_LANE_STATE_ROOT")
-	if root == "" {
-		root = DefaultStateRoot()
-	}
-	shimDir := filepath.Join(root, "build-lane", "bin")
+	root, rootErr := buildLaneDataRoot()
+	shimDir := filepath.Join(DefaultStateRoot(), "build-lane", "bin")
 	realTool, err := buildLaneTool(tool, shimDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tusker:", err)
 		return 1
 	}
 	heavy := buildLaneHeavy(tool, args) && os.Getenv("TUSKER_BUILD_LANE_HELD") != "1"
+	if heavy && rootErr != nil {
+		fmt.Fprintln(os.Stderr, "tusker: build lane unavailable, building without the queue:", rootErr)
+		heavy = false
+	}
 	var waitMS int64
 	if heavy {
 		_, slots := buildLaneSettings()
@@ -341,12 +367,12 @@ func runRustcWrapper(args []string) int {
 		return 1
 	}
 	if rustcCompiles(args) {
-		root := os.Getenv("TUSKER_BUILD_LANE_STATE_ROOT")
-		if root == "" {
-			root = DefaultStateRoot()
-		}
 		start := time.Now()
-		slot, err := rustcSlot(root, runtime.NumCPU())
+		root, err := buildLaneDataRoot()
+		var slot *os.File
+		if err == nil {
+			slot, err = rustcSlot(root, runtime.NumCPU())
+		}
 		if err == nil {
 			_, _, errno := syscall.Syscall(syscall.SYS_FCNTL, slot.Fd(), syscall.F_SETFD, 0)
 			if errno != 0 {

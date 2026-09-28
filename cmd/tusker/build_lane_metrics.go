@@ -99,6 +99,14 @@ var buildLaneCache struct {
 	entries []buildLaneEntry
 }
 
+func readBuildLaneStatsForMachine(now time.Time) map[string]buildLaneStats {
+	root, err := buildLaneDataRoot()
+	if err != nil {
+		return map[string]buildLaneStats{}
+	}
+	return readBuildLaneStats(root, now)
+}
+
 func readBuildLaneStats(stateRoot string, now time.Time) map[string]buildLaneStats {
 	path := filepath.Join(stateRoot, "build-lane", "builds.jsonl")
 	info, err := os.Stat(path)
