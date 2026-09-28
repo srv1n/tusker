@@ -15,6 +15,26 @@ var departureControlNotify = func(stateRoot, projectID, cause string) {
 	_ = sendDaemonControlOneWay(stateRoot, request, 250*time.Millisecond)
 }
 
+// departureProjectID resolves --project given as a registered project's ID,
+// key or name. Departure rows and holds are keyed by ID, so an unresolved key
+// read as "no departures" and a hold on it held nothing.
+func departureProjectID(store *RuntimeStore, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	if err != nil {
+		return "", err
+	}
+	for _, project := range loadedRegisteredProjects(loaded) {
+		if project.ProjectID == raw || project.ProjectKey == raw || project.Name == raw {
+			return project.ProjectID, nil
+		}
+	}
+	return "", tuskerError(errorNotFound, "project not found: "+raw)
+}
+
 func departureCheckCmd(args Args) error {
 	projectID := strings.TrimSpace(args.String("project"))
 	if projectID == "" {
@@ -28,6 +48,9 @@ func departureCheckCmd(args Args) error {
 			return openErr
 		}
 		defer store.Close()
+		if projectID, err = departureProjectID(store, projectID); err != nil {
+			return err
+		}
 		project, lookupErr := projectByID(store, projectID)
 		if lookupErr != nil {
 			return lookupErr
@@ -68,6 +91,9 @@ func departureStatusCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	if projectID, err = departureProjectID(store, projectID); err != nil {
+		return err
+	}
 	runs, err := store.ListDepartureRuns(projectID)
 	if err != nil {
 		return err
@@ -122,6 +148,9 @@ func departureHistoryCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	if projectID, err = departureProjectID(store, projectID); err != nil {
+		return err
+	}
 	runs, err := store.ListDepartureRuns(projectID)
 	if err != nil {
 		return err
@@ -159,6 +188,9 @@ func departureHoldCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	if projectID, err = departureProjectID(store, projectID); err != nil {
+		return err
+	}
 	hold, err := store.SetDepartureHold(projectID, args.Bool("release-only"), reason, by, time.Now().UTC())
 	if err != nil {
 		return err
@@ -184,6 +216,9 @@ func departureResumeCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	if projectID, err = departureProjectID(store, projectID); err != nil {
+		return err
+	}
 	hold, err := store.ResumeDepartureHold(projectID, args.Bool("release-only"), by, time.Now().UTC())
 	if err != nil {
 		return err

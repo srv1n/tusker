@@ -153,6 +153,10 @@ func TestDepartureSchedulerHoldAndResumeCLIIsRealAndAttributable(t *testing.T) {
 		notifications = append(notifications, notification{stateRoot: stateRoot, projectID: projectID, cause: cause})
 	}
 	stateRoot := t.TempDir()
+	registerDepartureTestProject(t, stateRoot, "app")
+	if err := departureHoldCmd(Args{"state-root": stateRoot, "project": "missing", "reason": "maintenance", "by": "human:sara"}); err == nil || !strings.Contains(err.Error(), "project not found: missing") {
+		t.Fatalf("hold on an unknown project = %v, want project not found", err)
+	}
 	holdOut := captureStdout(t, func() {
 		if err := departureHoldCmd(Args{"state-root": stateRoot, "project": "app", "reason": "maintenance", "by": "human:sara", "json": "true"}); err != nil {
 			t.Fatal(err)

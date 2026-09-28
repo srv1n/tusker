@@ -102,6 +102,7 @@ func TestDepartureCheckProjectSelectsRegisteredVault(t *testing.T) {
 
 func TestDepartureCLIStatusAndBoundedHistoryJSON(t *testing.T) {
 	stateRoot := t.TempDir()
+	registerDepartureTestProject(t, stateRoot, "project")
 	store, err := OpenRuntimeStore(stateRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +121,8 @@ func TestDepartureCLIStatusAndBoundedHistoryJSON(t *testing.T) {
 		}
 	})
 	history := captureStdout(t, func() {
-		if err := departureHistoryCmd(Args{"project": "project", "state-root": stateRoot, "limit": "2", "json": "true"}); err != nil {
+		// A project key resolves to the ID the departure rows are stored under.
+		if err := departureHistoryCmd(Args{"project": "key-project", "state-root": stateRoot, "limit": "2", "json": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -543,6 +545,23 @@ func markDepartureTestWaveImplicitSingleton(t *testing.T, vault, waveID, taskID 
 	data["delivery_task"] = taskID
 	data["release_authorized"] = false
 	if _, err := saveV7DocumentCAS(path, data, body, v7FrontmatterOrder["wave"], baseRev); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// registerDepartureTestProject registers a project with a fixed ID and the key
+// "key-<id>" so departure commands can resolve --project.
+func registerDepartureTestProject(t *testing.T, stateRoot, projectID string) {
+	t.Helper()
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	vault := departurePlannerTestVault(t)
+	project := newRegisteredProject(filepath.Dir(vault), vault)
+	project.ProjectID, project.ProjectKey = projectID, "key-"+projectID
+	if err := store.UpsertProject(project); err != nil {
 		t.Fatal(err)
 	}
 }
