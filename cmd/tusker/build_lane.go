@@ -72,19 +72,67 @@ func ensureBuildLaneShims(stateRoot string) (string, error) {
 			return "", err
 		}
 	}
+	for name, body := range buildLaneShellFiles() {
+		path := filepath.Join(stateRoot, "build-lane", name)
+		if old, err := os.ReadFile(path); err == nil && string(old) == body {
+			continue
+		}
+		if err := writeFileAtomic(path, []byte(body)); err != nil {
+			return "", err
+		}
+	}
 	return dir, nil
 }
 
-func buildLaneWorkerEnv(env []string) []string {
-	enabled, _ := buildLaneSettings()
-	if !enabled {
-		return env
+// buildLaneShellFiles keeps the shim dir first on PATH in the login shells
+// agents run commands through (Codex: zsh -lc). Those shells rebuild PATH in
+// /etc/zprofile (path_helper) and the user's dotfiles, so a PATH prefix alone
+// loses to /usr/bin/swift. ZDOTDIR points zsh at these wrappers, which source
+// the user's real files and then put the shim dir back in front; bash -lc
+// reads BASH_ENV after its profiles.
+func buildLaneShellFiles() map[string]string {
+	files := map[string]string{
+		"bashenv": `[ -n "$TUSKER_BASH_ENV_NEXT" ] && . "$TUSKER_BASH_ENV_NEXT"
+[ -n "$TUSKER_BUILD_LANE_BIN" ] && PATH="$TUSKER_BUILD_LANE_BIN:$PATH"
+`,
+	}
+	for _, f := range []string{".zshenv", ".zprofile", ".zshrc", ".zlogin"} {
+		files[filepath.Join("zdotdir", f)] = `_tusker_zd=$ZDOTDIR; ZDOTDIR=${TUSKER_USER_ZDOTDIR:-$HOME}
+[[ -r $ZDOTDIR/` + f + ` ]] && source $ZDOTDIR/` + f + `
+TUSKER_USER_ZDOTDIR=$ZDOTDIR; ZDOTDIR=$_tusker_zd; unset _tusker_zd
+[[ -n $TUSKER_BUILD_LANE_BIN ]] && path=($TUSKER_BUILD_LANE_BIN ${path:#$TUSKER_BUILD_LANE_BIN})
+`
+	}
+	return files
+}
+
+// buildLaneIntercept reports the shim dir when the lane is on and its shims
+// and shell hooks are installed; only then do workers' builds queue.
+func buildLaneIntercept() (string, bool) {
+	if enabled, _ := buildLaneSettings(); !enabled {
+		return "", false
 	}
 	dir, err := ensureBuildLaneShims(DefaultStateRoot())
-	if err != nil {
+	return dir, err == nil
+}
+
+func buildLaneWorkerEnv(env []string) []string {
+	dir, ok := buildLaneIntercept()
+	if !ok {
 		return env
 	}
 	env = setEnvValue(env, "PATH", dir+string(os.PathListSeparator)+runnerEnvValue(env, "PATH"))
+	env = setEnvValue(env, "TUSKER_BUILD_LANE_BIN", dir)
+	zdotdir := filepath.Join(filepath.Dir(dir), "zdotdir")
+	if prev := runnerEnvValue(env, "ZDOTDIR"); prev != "" && prev != zdotdir {
+		env = setEnvValue(env, "TUSKER_USER_ZDOTDIR", prev)
+	}
+	env = setEnvValue(env, "ZDOTDIR", zdotdir)
+	bashEnv := filepath.Join(filepath.Dir(dir), "bashenv")
+	if prev := runnerEnvValue(env, "BASH_ENV"); prev != "" && prev != bashEnv {
+		env = setEnvValue(env, "TUSKER_BASH_ENV_NEXT", prev)
+	}
+	env = setEnvValue(env, "BASH_ENV", bashEnv)
 	wrapper := filepath.Join(dir, buildLaneRustcWrapper)
 	if prev := runnerEnvValue(env, "RUSTC_WRAPPER"); prev != "" && prev != wrapper {
 		env = setEnvValue(env, "TUSKER_RUSTC_WRAPPER_NEXT", prev)
@@ -171,36 +219,8 @@ func buildLaneHeavy(tool string, args []string) bool {
 
 func buildLaneSlot(root string, slots int) (*os.File, int64, error) {
 	start := time.Now()
-	dir := filepath.Join(root, "build-lane")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, 0, err
-	}
-	if slots < 1 {
-		slots = 1
-	}
-	for i := 0; i < slots; i++ {
-		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("slot-%d.lock", i)), os.O_CREATE|os.O_RDWR, 0644)
-		if err != nil {
-			return nil, 0, err
-		}
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			return f, time.Since(start).Milliseconds(), nil
-		}
-		f.Close()
-		if err != syscall.EWOULDBLOCK {
-			return nil, 0, err
-		}
-	}
-	f, err := os.OpenFile(filepath.Join(dir, "slot-0.lock"), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, 0, err
-	}
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, 0, err
-	}
-	return f, time.Since(start).Milliseconds(), nil
+	f, err := laneSlot(root, "slot", slots)
+	return f, time.Since(start).Milliseconds(), err
 }
 
 func buildLaneSummary(tool string, args []string) (string, string) {
@@ -404,6 +424,11 @@ func rustcCompiles(args []string) bool {
 }
 
 func rustcSlot(root string, slots int) (*os.File, error) {
+	return laneSlot(root, "rustc", slots)
+}
+
+// laneSlot takes whichever of the prefix-N.lock slots frees first.
+func laneSlot(root, prefix string, slots int) (*os.File, error) {
 	dir := filepath.Join(root, "build-lane")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
@@ -417,7 +442,7 @@ func rustcSlot(root string, slots int) (*os.File, error) {
 		}
 	}()
 	for i := 0; i < max(1, slots); i++ {
-		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("rustc-%d.lock", i)), os.O_CREATE|os.O_RDWR, 0644)
+		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%s-%d.lock", prefix, i)), os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			return nil, err
 		}

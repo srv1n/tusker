@@ -86,8 +86,8 @@ func heavyProjectDirs(root string) []string {
 }
 
 func sharedBuildLane(wf Workflow) bool {
-	enabled, _ := buildLaneSettings()
-	return enabled && workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared
+	_, intercepting := buildLaneIntercept()
+	return intercepting && workspaceStrategyFromWorkflow(wf.Workspace.Strategy) == WorkspaceStrategyShared
 }
 
 func weightAdmissionReason(used, active, budget, next int) string {

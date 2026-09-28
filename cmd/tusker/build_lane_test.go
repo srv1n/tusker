@@ -177,3 +177,66 @@ func TestRustcWrapperQueuesAndLogs(t *testing.T) {
 		t.Fatalf("records: %#v", records)
 	}
 }
+
+func TestBuildLaneSlotTakesFirstFreed(t *testing.T) {
+	root := t.TempDir()
+	a, _, err := buildLaneSlot(root, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, _, err := buildLaneSlot(root, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan error, 1)
+	go func() {
+		f, _, err := buildLaneSlot(root, 2)
+		if err == nil {
+			f.Close()
+		}
+		got <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	b.Close() // free the second slot; the first stays held
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter did not take the freed slot")
+	}
+}
+
+func TestBuildLaneLoginShellsKeepShim(t *testing.T) {
+	root := buildLaneFixture(t, "exit 0")
+	t.Setenv("TUSKER_STATE_ROOT", root)
+	home := t.TempDir()
+	// Dotfiles that reorder PATH the way real ones do, plus a marker proving they still run.
+	reorder := "export PATH=/usr/bin:$PATH\nexport TUSKER_TEST_DOTFILE=1\n"
+	for _, f := range []string{".zprofile", ".profile"} {
+		if err := os.WriteFile(filepath.Join(home, f), []byte(reorder), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := buildLaneWorkerEnv([]string{"HOME=" + home, "PATH=/usr/bin:/bin"})
+	want := filepath.Join(root, "build-lane", "bin", "swift") + "\n1\n"
+	ran := false
+	for _, shell := range []string{"zsh", "bash"} {
+		path, err := exec.LookPath(shell)
+		if err != nil {
+			continue
+		}
+		ran = true
+		cmd := exec.Command(path, "-lc", "command -v swift; echo $TUSKER_TEST_DOTFILE")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil || string(out) != want {
+			t.Errorf("%s -lc: %q %v, want %q", shell, out, err, want)
+		}
+	}
+	if !ran {
+		t.Skip("no zsh or bash")
+	}
+}
