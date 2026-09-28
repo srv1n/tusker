@@ -283,3 +283,26 @@ func TestFilteredGoTestEvidenceRejectsSpoofAndUnsupportedSelectors(t *testing.T)
 		})
 	}
 }
+
+func TestV7CargoFilteredTestEvidence(t *testing.T) {
+	for _, command := range []string{"cargo test -q -p alpha label_is_name", "cargo test label_is_name -- --exact"} {
+		if _, ok := v7SupportedFilteredTestArgs(command); !ok {
+			t.Errorf("%q refused", command)
+		}
+	}
+	for _, command := range []string{"cargo test label -- --nocapture", "cargo test label -- --show-output", "echo 'test result: ok. 1 passed;'; cargo test label"} {
+		if _, ok := v7SupportedFilteredTestArgs(command); ok {
+			t.Errorf("%q accepted", command)
+		}
+	}
+	output := "running 1 test\n.\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+	if count, ok := v7FilteredTestMatchCount("cargo test -q -p alpha label_is_name", output); !ok || count != 1 {
+		t.Fatalf("count=%d ok=%v, want 1 true", count, ok)
+	}
+	if count, ok := v7CargoTestMatchCount("running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out\n"); !ok || count != 0 {
+		t.Fatalf("zero-match count=%d ok=%v", count, ok)
+	}
+	if _, ok := v7CargoTestMatchCount("error: could not compile"); ok {
+		t.Fatal("output without a summary was trusted")
+	}
+}

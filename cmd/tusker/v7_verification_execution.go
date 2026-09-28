@@ -259,9 +259,9 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 	filtered := v7FilteredTestCommand(command)
 	var cmd *exec.Cmd
 	if filtered {
-		args, ok := v7SupportedGoTestArgs(command)
+		args, ok := v7SupportedFilteredTestArgs(command)
 		if !ok {
-			message := "filtered test command uses unsupported selector runner or shell syntax; use a single go test -run invocation"
+			message := "filtered test command uses unsupported selector runner or shell syntax; use a single go test -run or cargo test <filter> invocation"
 			return v7RejectedVerificationCommandObservation(started, message)
 		}
 		cmd = exec.Command(args[0], args[1:]...)
@@ -313,7 +313,7 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 			obs.MatchCount = count
 			if !parsed {
 				obs.ExitCode = 1
-				obs.Message = "filtered test command produced untrusted test evidence; use go test -json"
+				obs.Message = "filtered test command produced untrusted test evidence; use go test -json or cargo test"
 				return obs, errors.New(obs.Message)
 			}
 			if count == 0 {
@@ -390,8 +390,63 @@ func v7FilteredTestMatchCount(command, output string) (int, bool) {
 	if !v7FilteredTestCommand(command) {
 		return 0, false
 	}
+	if args, ok := v7SupportedCargoTestArgs(command); ok && args[0] == "cargo" {
+		return v7CargoTestMatchCount(output)
+	}
 	count, parsed := v7GoTestJSONMatchCount(output)
 	return count, parsed
+}
+
+// v7CargoTestMatchCount sums the passed counts on libtest's per-binary
+// "test result:" summary lines. Test output is captured unless --nocapture or
+// --show-output is set, and both are refused, so a test cannot print a fake
+// summary.
+func v7CargoTestMatchCount(output string) (int, bool) {
+	count, saw := 0, false
+	for _, line := range strings.Split(output, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "test result: ")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) < 3 || fields[2] != "passed;" {
+			return 0, false
+		}
+		n, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return 0, false
+		}
+		count, saw = count+n, true
+	}
+	return count, saw
+}
+
+// v7SupportedFilteredTestArgs is the argv for a filtered test the executor can
+// count matches for: go test -run, or cargo test with a filter.
+func v7SupportedFilteredTestArgs(command string) ([]string, bool) {
+	if args, ok := v7SupportedGoTestArgs(command); ok {
+		return args, true
+	}
+	return v7SupportedCargoTestArgs(command)
+}
+
+// v7SupportedCargoTestArgs accepts one direct cargo test invocation, run
+// without a shell. Flags that uncapture test output are refused because they
+// would let a test print its own summary line.
+func v7SupportedCargoTestArgs(command string) ([]string, bool) {
+	if len(v7ShellCommandSegments(command)) != 1 {
+		return nil, false
+	}
+	args, ok := v7VerificationCommandFields(command)
+	if !ok || len(args) < 3 || args[0] != "cargo" || args[1] != "test" {
+		return nil, false
+	}
+	for _, arg := range args[2:] {
+		if arg == "--nocapture" || arg == "--show-output" {
+			return nil, false
+		}
+	}
+	return args, true
 }
 
 func v7GoTestJSONMatchCount(output string) (int, bool) {
@@ -667,7 +722,7 @@ func v7VerificationReceiptCurrent(task Note, row v7VerificationRow, currentMater
 	}
 	if v7FilteredTestCommand(row.Check) {
 		command, _ := v7VerificationCommand(row.Check)
-		if _, ok := v7SupportedGoTestArgs(command); !ok {
+		if _, ok := v7SupportedFilteredTestArgs(command); !ok {
 			return false
 		}
 		count, err := strconv.Atoi(fields["match_count"])
