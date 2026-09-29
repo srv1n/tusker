@@ -643,6 +643,13 @@ func ensureV7DomainLayout(domainDir string) error {
 		if err := ensureDir(filepath.Join(domainDir, relative)); err != nil {
 			return err
 		}
+		// Git drops empty directories; keep the layout in every clone.
+		keep := filepath.Join(domainDir, relative, ".gitkeep")
+		if !fileExists(keep) {
+			if err := writeText(keep, ""); err != nil {
+				return err
+			}
+		}
 	}
 	glossaryPath := filepath.Join(domainDir, "glossary.md")
 	if !fileExists(glossaryPath) {
