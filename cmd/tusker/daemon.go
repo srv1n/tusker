@@ -4236,16 +4236,28 @@ func (d *Daemon) continuationRetryCount(run RunStatus) int {
 	}
 	attemptID := strings.TrimSpace(run.ActiveAttemptID)
 	sessionRef := strings.TrimSpace(run.SessionRef)
+	// A continuation into a new attempt records several decisions: the queue
+	// request (continue_attempt keyed to the finished attempt) and the dispatch
+	// and resume of the new attempt. Skip the request and count each new
+	// attempt once. A continuation inside the same attempt counts per decision.
+	started := map[string]bool{}
 	count := 0
 	for _, decision := range decisions {
 		if decision.Kind != string(SupervisorDecisionContinueThread) && decision.Kind != string(SupervisorDecisionContinueAttempt) {
 			continue
 		}
-		if attemptID != "" && (decision.AttemptID == attemptID || decision.TargetAttemptID == attemptID || decision.ParentAttemptID == attemptID) {
-			count++
+		newAttempt := decision.AttemptID != "" && decision.AttemptID != decision.ParentAttemptID
+		if decision.Kind == string(SupervisorDecisionContinueAttempt) && !newAttempt {
 			continue
 		}
-		if sessionRef != "" && (decision.SessionRef == sessionRef || decision.TargetSessionRef == sessionRef || decision.ParentSessionRef == sessionRef) {
+		if !(attemptID != "" && (decision.AttemptID == attemptID || decision.TargetAttemptID == attemptID || decision.ParentAttemptID == attemptID) ||
+			sessionRef != "" && (decision.SessionRef == sessionRef || decision.TargetSessionRef == sessionRef || decision.ParentSessionRef == sessionRef)) {
+			continue
+		}
+		if !newAttempt {
+			count++
+		} else if !started[decision.AttemptID] {
+			started[decision.AttemptID] = true
 			count++
 		}
 	}

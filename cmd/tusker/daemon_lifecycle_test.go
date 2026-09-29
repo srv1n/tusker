@@ -1381,6 +1381,40 @@ func TestContinuationRetryCapParksNoProgress(t *testing.T) {
 	assertEqual(t, 1, intFromAny(status["parkedNoProgressRuns"]), "parked status count")
 }
 
+func TestContinuationIntoNewAttemptCountsOnce(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	daemon := &Daemon{stateRoot: stateRoot, store: store}
+	wf := defaultWorkflow()
+	wf.Runtime.MaxContinuationRetries = 2
+	run := RunStatus{
+		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
+		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
+		LeaseState: string(LeaseStateRunning), AttemptOutcome: string(AttemptOutcomeNone),
+		ActiveAttemptID: "attempt-2", SessionRef: "session-1", AttemptCount: 2,
+	}
+	// The daemon's record of one continuation from attempt-1 into attempt-2:
+	// the queue request, the dispatch, and the session resume.
+	for _, decision := range []SupervisorDecision{
+		{Kind: string(SupervisorDecisionContinueAttempt), AttemptID: "attempt-1", ParentAttemptID: "attempt-1", TargetAttemptID: "attempt-1", SessionRef: "session-1"},
+		{Kind: string(SupervisorDecisionContinueAttempt), AttemptID: "attempt-2", TargetAttemptID: "attempt-2"},
+		{Kind: string(SupervisorDecisionContinueThread), AttemptID: "attempt-2", ParentAttemptID: "attempt-1", TargetAttemptID: "attempt-2", SessionRef: "session-1"},
+	} {
+		decision.ProjectID, decision.RecordID, decision.Reason = run.ProjectID, run.RecordID, "runner early exit"
+		if _, err := store.SaveSupervisorDecision(decision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertEqual(t, 1, daemon.continuationRetryCount(run), "continuations counted")
+	if _, queued := daemon.scheduleContinuationRetry(run, wf, "runner early exit"); !queued {
+		t.Fatal("second continuation parked after one continuation with a cap of two")
+	}
+}
+
 func TestCleanFinishReleasesLeaseBothRunnerLanes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
