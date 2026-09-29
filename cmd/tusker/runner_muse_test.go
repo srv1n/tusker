@@ -248,6 +248,7 @@ func TestMuseCLIAskRoutePromptAndBinary(t *testing.T) {
 	}, RunnerCapabilities{}); err != nil {
 		t.Fatal(err)
 	}
+	waitForStatusFile(t, status)
 	out, _ := os.ReadFile(filepath.Join(dir, "raw.log"))
 	if exe, _ := os.Executable(); !strings.Contains(string(out), exe) {
 		t.Fatalf("TUSKER_BIN not exported to worker: %q", out)

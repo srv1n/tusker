@@ -15,6 +15,7 @@ func TestV7SoftDependencyUnblocks(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Dependent", "risk": "low", "priority": "p0", "dependencies": "APP-T-0001", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0002")
 	registerAutomationTestProject(t, vault)
+	setHermeticAutomationRunnerForTest(t)
 
 	cases := []struct {
 		name      string

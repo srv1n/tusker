@@ -27,6 +27,7 @@ func TestAutomationAdvanceExternalCollectsRecordsPolicyAndIsIdempotent(t *testin
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Advance external", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
+	setHermeticAutomationRunnerForTest(t)
 
 	jobID := "cgpt_policy_patch"
 	fetchCommand := seedExternalFetchFixture(t, repoRoot, jobID, map[string]string{
@@ -101,6 +102,7 @@ func TestAutomationAdvanceExternalExternalThreadCapEscalates(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Thread cap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	registerAutomationTestProject(t, vault)
+	setHermeticAutomationRunnerForTest(t)
 
 	firstFetch := seedExternalFetchFixture(t, repoRoot, "cgpt-thread-1", map[string]string{"thread-1.patch": "diff --git a/a b/a\n"})
 	first := runAdvanceExternalForTest(t, vault, Args{"id": "APP-T-0001", "job": "cgpt-thread-1", "runner": "chatgpt-browser", "fetch-command": firstFetch, "max-external-threads": "1", "json": "true"})

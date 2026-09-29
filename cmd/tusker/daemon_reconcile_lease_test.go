@@ -676,6 +676,7 @@ func TestDispatchPostSpawnLeaseLossReapsSpawnedProcess(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Post spawn reap", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	setHermeticAutomationRunnerForTest(t)
 	wfFile, err := loadWorkflow(vault)
 	if err != nil {
 		t.Fatal(err)

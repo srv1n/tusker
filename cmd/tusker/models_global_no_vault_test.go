@@ -10,6 +10,13 @@ func TestModelsGlobalWithoutVault(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("TUSKER_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	t.Setenv("TUSKER_STATE_ROOT", t.TempDir())
+	store, err := OpenRuntimeStore(DefaultStateRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	report, err := modelLevelsRead("")
 	if err != nil || len(report.Levels) != 3 || len(report.Profiles) == 0 {
 		t.Fatalf("global report: %#v, %v", report, err)

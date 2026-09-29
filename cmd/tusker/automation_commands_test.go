@@ -101,6 +101,7 @@ func TestAutomationQueueJSONSplitsEligibleAndBlockedWithoutMutatingLifecycle(t *
 		"next_owner": "human:pm",
 	})
 	registerAutomationTestProject(t, vault)
+	setHermeticAutomationRunnerForTest(t)
 	if _, err := setProjectLocalConfigWithReadback(vault, "automation.dispatch_scope", "all_eligible"); err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +164,7 @@ func TestPlanGateUsesCanonicalStateFromRunnerWorkspace(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Canonical ready", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
+	setHermeticAutomationRunnerForTest(t)
 
 	workspace := t.TempDir()
 	staleVault := filepath.Join(workspace, ".tusker")
@@ -350,6 +352,13 @@ func setDirectEmergencyProfileForAutomationTest(t *testing.T, vault string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func setHermeticAutomationRunnerForTest(t *testing.T) {
+	t.Helper()
+	profile := directEmergencyRunnerProfileForTest()
+	profile["command"] = installCodexSleepShimForTest(t) + " exec --json --skip-git-repo-check -"
+	setGlobalProfileForTest(t, "test-emergency-codex-exec", profile)
 }
 
 func directEmergencyRunnerProfileForTest() map[string]any {

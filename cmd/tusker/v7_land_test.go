@@ -295,6 +295,9 @@ func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (str
 
 func newLandReadyForMainAdvanceTestInStateRoot(t *testing.T, fileName, content, stateRoot string) (string, string) {
 	t.Helper()
+	if _, err := landingGateSandboxPath(); err != nil {
+		t.Skip("isolated full gate unavailable: " + err.Error())
+	}
 	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)

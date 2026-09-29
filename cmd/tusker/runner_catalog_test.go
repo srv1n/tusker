@@ -407,10 +407,17 @@ func TestModelHarnessPresets(t *testing.T) {
 		runnerCatalogCommand, runnerCatalogAppServerModels, runnerCatalogMuseServerModels, runnerCatalogDevinModels, runnerCatalogCodexExecutable, runnerCatalogStateRoot = original, originalAppServer, originalMuseServer, originalDevin, originalCodexExecutable, originalStateRoot
 	}()
 	root := t.TempDir()
+	for _, name := range []string{"codex", "muse"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("#!/bin/sh\necho fixture\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TUSKER_CONFIG", filepath.Join(root, "config.yaml"))
 	runnerCatalogStateRoot = func() string { return root }
-	runnerCatalogCodexExecutable = func() string { return "codex" }
+	runnerCatalogCodexExecutable = func() string { return filepath.Join(root, "codex") }
 	runnerCatalogCommand = func(name string, args ...string) ([]byte, error) {
+		name = filepath.Base(name)
 		if name == "devin" && len(args) == 1 && args[0] == "--version" {
 			return []byte("devin 3000.10.21"), nil
 		}

@@ -17,6 +17,7 @@ func TestAutomationPlanRetryQueuedSelfBlockAllowsContinuationCapacity(t *testing
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
 	project := registerAutomationTestProject(t, vault)
 	seedCapacityRunForTest(t, project, "APP-T-0001", LeaseStateRetryQueued)
+	setHermeticAutomationRunnerForTest(t)
 
 	plan := automationPlanForTest(t, vault, "APP-T-0001")
 	if plan.Decision != "dispatch" {
@@ -92,6 +93,7 @@ func TestQueuedRunsDoNotConsumeActiveCap(t *testing.T) {
 	setProjectActiveRunCapForCapacityTest(t, vault, 5)
 	project := registerAutomationTestProject(t, vault)
 	setGlobalActiveRunLimitForCapacityTest(t, 5)
+	setHermeticAutomationRunnerForTest(t)
 	seedCapacityRunForTest(t, project, taskIDs[0], LeaseStateRunning)
 	for _, taskID := range taskIDs[1:] {
 		seedCapacityRunForTest(t, project, taskID, LeaseStateRetryQueued)
@@ -239,7 +241,7 @@ func seedCapacityRunForTest(t *testing.T, project RegisteredProject, recordID st
 	}
 }
 
-func installCodexSleepShimForTest(t *testing.T) {
+func installCodexSleepShimForTest(t *testing.T) string {
 	t.Helper()
 	binDir := filepath.Join(t.TempDir(), "bin")
 	if err := ensureDir(binDir); err != nil {
@@ -253,6 +255,7 @@ func installCodexSleepShimForTest(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return shim
 }
 
 func setProjectActiveRunCapForCapacityTest(t *testing.T, vault string, limit int) {
