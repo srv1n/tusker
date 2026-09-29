@@ -2458,6 +2458,17 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	}
 	if gitMergeBaseAncestor(repoRoot, integrationBranch, defaultBranch) {
 		mainRev, _ := gitOutputTrim(repoRoot, "rev-parse", defaultBranch)
+		// A shared-checkout land can move main and then fail to install its
+		// prepared index. Finish that index before cleaning up the wave.
+		if landed, _ := gitOutputTrim(repoRoot, "rev-parse", "--verify", "-q", mainRev+"^2"); landed == integrationRev {
+			if shared, err := sharedCheckoutStrategy(vaultPath); err != nil {
+				return err
+			} else if checkouts := v7DefaultBranchCheckouts(repoRoot, defaultBranch); shared && len(checkouts) == 1 {
+				if err := repairSharedCheckoutIndexAfterAdvance(checkouts[0].Path, mainRev+"^1", mainRev); err != nil {
+					return err
+				}
+			}
+		}
 		actor := landV7Actor(args)
 		if err := appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
 			Task: "wave", Branch: integrationBranch, Target: defaultBranch,

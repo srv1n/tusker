@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -549,14 +550,51 @@ func gitShowFileOK(repo, ref, path string) bool {
 	return exec.Command("git", "-C", repo, "show", ref+":"+path).Run() == nil
 }
 
-func TestWaveLandSharedCheckoutAdvancesInPlaceAroundOperatorWork(t *testing.T) {
+// sharedWaveLandTest readies a wave in a shared-checkout project. An empty
+// workspace.strategy means shared; no scheduled_promotion stanza keeps manual
+// wave landing allowed.
+func sharedWaveLandTest(t *testing.T) (string, string) {
+	t.Helper()
 	repo, vault := newLandReadyForMainAdvanceTest(t, "shared-land.txt", "shared land\n")
-	// An empty workspace.strategy means shared. No scheduled_promotion stanza
-	// keeps manual wave landing allowed.
 	wf := defaultWorkflow()
 	wf.ScheduledPromotion = ScheduledPromotionPolicy{}
 	_, body, _ := strings.Cut(strings.TrimPrefix(defaultWorkflowMarkdown(), "---\n"), "\n---\n")
 	writeWorkflowForPreflightTest(t, vault, wf, body)
+	return repo, vault
+}
+
+func TestWaveLandSharedCheckoutRetryRepairsIndexAfterFailedInstall(t *testing.T) {
+	repo, vault := sharedWaveLandTest(t)
+	sharedCheckoutRename = func(string, string) error { return os.ErrPermission }
+	err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"})
+	sharedCheckoutRename = os.Rename
+	if err == nil {
+		t.Fatal("a failed index install must fail the land")
+	}
+	lock := filepath.Join(repo, ".git", "index.lock")
+	// With the prepared index still in the lock, the retry refuses and keeps the wave.
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err == nil || !strings.Contains(err.Error(), lock) {
+		t.Fatalf("retry must report the stale lock, got %v", err)
+	}
+	if !gitBranchExists(repo, "integration/W-0001") {
+		t.Fatal("a refused retry must keep the integration branch")
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
+		t.Fatalf("retry after clearing the lock: %v", err)
+	}
+	if status := gitDirOutput(t, repo, "status", "--porcelain", "--", "shared-land.txt"); strings.TrimSpace(status) != "" {
+		t.Fatalf("retry must repair the index for the landed file, got %q", status)
+	}
+	if gitBranchExists(repo, "integration/W-0001") {
+		t.Fatal("a completed retry cleans up the integration branch")
+	}
+}
+
+func TestWaveLandSharedCheckoutAdvancesInPlaceAroundOperatorWork(t *testing.T) {
+	repo, vault := sharedWaveLandTest(t)
 	if shared, err := sharedCheckoutStrategy(vault); err != nil || !shared {
 		t.Fatalf("fixture must use the shared strategy: shared=%v err=%v", shared, err)
 	}
