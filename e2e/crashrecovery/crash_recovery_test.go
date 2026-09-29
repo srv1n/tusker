@@ -948,6 +948,10 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
   lane_profiles:
     execute: implementation-terra
     review: reviewer-terra
+`
+		// 02fd45d1 admits runner profiles only from the global config.
+		h.mustMkdir(filepath.Join(h.tempRoot, "config", "tusker"))
+		h.writeFile(filepath.Join(h.tempRoot, "config", "tusker", "config.yaml"), `automation:
   profiles:
     implementation-terra:
       harness: codex_exec
@@ -963,7 +967,7 @@ func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
       permission_preset: read-only
       sandbox: {mode: read-only, network: false}
       subagents: {allowed: false, max_concurrent: 0}
-`
+`)
 	}
 	config := fmt.Sprintf(`schema: tusker.config/v1
 project_id: crash-recovery-e2e
