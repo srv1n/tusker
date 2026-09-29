@@ -86,9 +86,7 @@ test("execution settings form rejects invalid concurrency visibly without submis
   // form. jsdom stands in for the browser because this sandbox denies the
   // TCP bind a dev-server browser test would need; the input events, React
   // state, validation message, and mutation payload are all exercised.
-  const { JSDOM } = await import(
-    "/Users/sarav/.bun/install/global/node_modules/jsdom/lib/api.js"
-  );
+  const { JSDOM } = await import("jsdom");
   const dom = new JSDOM(
     '<!doctype html><html><body><main id="root"></main></body></html>',
     { url: "http://localhost/", pretendToBeVisual: true },
