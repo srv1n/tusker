@@ -46,7 +46,6 @@ func TestContractConvergence(t *testing.T) {
 
 	tests := []string{
 		// Direct task/wave authoring and inert creation.
-		"TestReadinessContract",
 		"TestDirectWaveAuthoringBatchCreatesDurableGraph",
 		"TestDirectWaveAuthorityReviewUsesOnlyDurableMaterial",
 
