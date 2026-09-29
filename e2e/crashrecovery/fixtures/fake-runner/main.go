@@ -75,6 +75,14 @@ func main() {
 		}
 		if *completeStatus != "" {
 			if *completeStatus == "review" {
+				if os.Getenv("TUSKER_RUN_LANE") == "review" {
+					if err := submitTaskReview(*tuskerBin, os.Getenv("TUSKER_ITEM_ID")); err != nil {
+						fmt.Fprintf(os.Stderr, "fake-runner review failed: %v\n", err)
+						os.Exit(16)
+					}
+					emitHeartbeat()
+					return
+				}
 				if err := ensureGitEndState(); err != nil {
 					fmt.Fprintf(os.Stderr, "fake-runner git end state failed: %v\n", err)
 					os.Exit(15)
@@ -177,7 +185,7 @@ func ensureGitEndState() error {
 	return run("commit", "--allow-empty", "-m", "fixture end state")
 }
 
-func commitWorkspaceEndState() error {
+func commitWorkspaceEndState(paths ...string) error {
 	workspace := os.Getenv("TUSKER_WORKSPACE")
 	if workspace == "" {
 		return fmt.Errorf("missing TUSKER_WORKSPACE")
@@ -192,7 +200,7 @@ func commitWorkspaceEndState() error {
 		}
 		return nil
 	}
-	if err := run("add", "-A"); err != nil {
+	if err := run(append([]string{"add", "-f", "-A", "--"}, paths...)...); err != nil {
 		return err
 	}
 	return run("commit", "--allow-empty", "-m", "fixture reviewed state")
@@ -248,6 +256,9 @@ func runDeliveryFixture(tuskerBin string) error {
 	// rework attempt remains dispatchable under the authoring grammar.
 	focusedCheck := "command: test -s " + artifactRel
 	if err := run("test", "-s", artifactRel); err != nil {
+		return err
+	}
+	if err := commitWorkspaceEndState(artifactRel, filepath.ToSlash(filepath.Join("docs", "delivery", strings.ToLower(taskID)+".md"))); err != nil {
 		return err
 	}
 	return submitTaskWork(tuskerBin, "fixture implementation and durable artifact complete", focusedCheck)
