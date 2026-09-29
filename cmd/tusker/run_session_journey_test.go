@@ -303,7 +303,8 @@ func TestRunSessionJourney(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer store.Close()
-		at := time.Date(2026, time.September, 22, 12, 0, 0, 0, time.UTC)
+		// The queued directive expires a week after at, so at must be the real clock.
+		at := time.Now().UTC().Truncate(time.Second)
 		run := RunStatus{
 			ProjectID: "isolated-project", RecordID: "TSK-T-0054-context", ItemID: "TSK-T-0054-context",
 			Runner: string(RunnerCodexExec), Lane: runLaneExecute, LeaseState: string(LeaseStateReleased),

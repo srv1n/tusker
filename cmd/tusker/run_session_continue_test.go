@@ -45,7 +45,8 @@ func TestRunSessionContinueExplicitContextRecoveryUsesFreshSession(t *testing.T)
 	}
 	defer store.Close()
 
-	now := time.Date(2026, time.September, 22, 12, 0, 0, 0, time.UTC)
+	// The queued directive expires a week after now, so now must be the real clock.
+	now := time.Now().UTC().Truncate(time.Second)
 	run := RunStatus{
 		ProjectID: "project-1", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
 		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
