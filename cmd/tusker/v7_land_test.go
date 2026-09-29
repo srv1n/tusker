@@ -564,36 +564,63 @@ func sharedWaveLandTest(t *testing.T) (string, string) {
 }
 
 func TestWaveLandSharedCheckoutRetryRepairsIndexAfterFailedInstall(t *testing.T) {
-	repo, vault := sharedWaveLandTest(t)
-	sharedCheckoutRename = func(string, string) error { return os.ErrPermission }
-	err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"})
-	sharedCheckoutRename = os.Rename
-	if err == nil {
-		t.Fatal("a failed index install must fail the land")
-	}
-	lock := filepath.Join(repo, ".git", "index.lock")
-	// With the prepared index still in the lock, the retry refuses and keeps the wave.
-	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err == nil || !strings.Contains(err.Error(), lock) {
-		t.Fatalf("retry must report the stale lock, got %v", err)
-	}
-	if !gitBranchExists(repo, "integration/W-0001") {
-		t.Fatal("a refused retry must keep the integration branch")
-	}
-	if err := os.Remove(lock); err != nil {
-		t.Fatal(err)
-	}
-	// Another landing moves main past the wave merge before the retry.
-	// Like Tusker's own landings, it builds the commit without the index.
-	later := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", "main^{tree}", "-p", "main", "-m", "later landing"))
-	runGitDir(t, repo, "update-ref", "refs/heads/main", later)
-	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
-		t.Fatalf("retry after clearing the lock: %v", err)
-	}
-	if status := gitDirOutput(t, repo, "status", "--porcelain", "--", "shared-land.txt"); strings.TrimSpace(status) != "" {
-		t.Fatalf("retry must repair the index for the landed file, got %q", status)
-	}
-	if gitBranchExists(repo, "integration/W-0001") {
-		t.Fatal("a completed retry cleans up the integration branch")
+	for _, revert := range []bool{false, true} {
+		t.Run(fmt.Sprintf("later landing reverts the file=%v", revert), func(t *testing.T) {
+			repo, vault := sharedWaveLandTest(t)
+			sharedCheckoutRename = func(string, string) error { return os.ErrPermission }
+			err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"})
+			sharedCheckoutRename = os.Rename
+			if err == nil {
+				t.Fatal("a failed index install must fail the land")
+			}
+			lock := filepath.Join(repo, ".git", "index.lock")
+			// With the prepared index still in the lock, the retry refuses and keeps the wave.
+			if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err == nil || !strings.Contains(err.Error(), lock) {
+				t.Fatalf("retry must report the stale lock, got %v", err)
+			}
+			if !gitBranchExists(repo, "integration/W-0001") {
+				t.Fatal("a refused retry must keep the integration branch")
+			}
+			if err := os.Remove(lock); err != nil {
+				t.Fatal(err)
+			}
+			// A later landing moves main past the wave merge before the retry.
+			// Like Tusker's own landings, it builds its commit without the index.
+			// When revert is set, it removes the wave's file again, which is the
+			// pre-wave state the stale index still holds.
+			tree := gitDirOutput(t, repo, "rev-parse", "main^{tree}")
+			if revert {
+				cmd := exec.Command("git", "-C", repo, "rm", "-q", "--cached", "shared-land.txt")
+				scratch := filepath.Join(t.TempDir(), "index")
+				cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+scratch)
+				read := exec.Command("git", "-C", repo, "read-tree", "main")
+				read.Env = cmd.Env
+				write := exec.Command("git", "-C", repo, "write-tree")
+				write.Env = cmd.Env
+				if out, err := read.CombinedOutput(); err != nil {
+					t.Fatalf("%v: %s", err, out)
+				}
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%v: %s", err, out)
+				}
+				out, err := write.Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+				tree = string(out)
+			}
+			later := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", strings.TrimSpace(tree), "-p", "main", "-m", "later landing"))
+			runGitDir(t, repo, "update-ref", "refs/heads/main", later)
+			if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
+				t.Fatalf("retry after clearing the lock: %v", err)
+			}
+			if staged := gitDirOutput(t, repo, "diff", "--cached", "--name-only"); strings.TrimSpace(staged) != "" {
+				t.Fatalf("after the retry the index must match main, got staged %q", staged)
+			}
+			if gitBranchExists(repo, "integration/W-0001") {
+				t.Fatal("a completed retry cleans up the integration branch")
+			}
+		})
 	}
 }
 

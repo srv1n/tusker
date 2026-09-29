@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -185,11 +186,21 @@ var sharedCheckoutRename = os.Rename
 // ref moved but whose prepared index was never installed: every path in
 // oldRev..newRev whose index entry is still oldRev's gets newRev's entry.
 // Nothing else is touched. A leftover index.lock is reported, never removed.
+// Paths that a later commit on HEAD changed again are left alone: the index
+// already follows HEAD there.
 func repairSharedCheckoutIndexAfterAdvance(workDir, oldRev, newRev string) error {
 	changes, paths, err := sharedCheckoutChanges(workDir, oldRev, newRev)
 	if err != nil {
 		return err
 	}
+	later, _, err := sharedCheckoutChanges(workDir, newRev, "HEAD")
+	if err != nil {
+		return err
+	}
+	for path := range later {
+		delete(changes, path)
+	}
+	paths = slices.DeleteFunc(paths, func(path string) bool { _, ok := later[path]; return ok })
 	index, err := sharedCheckoutIndexEntries(workDir, changes)
 	if err != nil {
 		return err
