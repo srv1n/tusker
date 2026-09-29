@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -153,11 +152,12 @@ func watchSecretReadSentinel(t *testing.T, path string) func() bool {
 
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source")
+	// go test runs in the package directory; runtime.Caller breaks under -trimpath.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	root, err := filepath.Abs(filepath.Join(filepath.Dir(source), "..", ".."))
+	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

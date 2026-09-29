@@ -241,7 +241,6 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 		CompleteStatus: "review", StallTimeoutMS: 5000, MaxAttempts: 2, WorkspaceStrategy: "shared",
 		CompletionReactor: "authoritative",
 	})
-	h.disableReviewer()
 	h.createRunnableTaskID("APP-T-0001", "armed root", "")
 	h.createRunnableTaskID("APP-T-0002", "armed next frontier", "APP-T-0001:soft")
 	for _, taskID := range []string{"APP-T-0001", "APP-T-0002"} {
@@ -799,7 +798,6 @@ func newHarness(t *testing.T, name string) *harness {
 	h.vaultDir = filepath.Join(h.repoDir, ".tusker")
 	h.mustMkdir(h.repoDir)
 	h.cliOK(h.repoDir, "init", "--yes", "--vault", h.vaultDir, "--quiet")
-	h.disableReviewer()
 	h.cliOK(h.repoDir, "new", "epic", "--vault", h.vaultDir, "--acronym", "APP", "--title", "Crash Recovery", "--summary", "Crash recovery e2e fixtures.", "--v7", "true", "--quiet")
 	return h
 }
@@ -870,12 +868,12 @@ func goTool() string {
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	// go test runs in the package directory; runtime.Caller breaks under -trimpath.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	return root
+	return filepath.Clean(filepath.Join(wd, "..", ".."))
 }
 
 func (h *harness) configureFakeRunner(cfg fakeRunnerConfig) {
@@ -1169,14 +1167,6 @@ func (h *harness) gitOK(args ...string) []byte {
 		h.t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return out
-}
-
-func (h *harness) disableReviewer() {
-	h.t.Helper()
-	path := filepath.Join(h.vaultDir, "WORKFLOW.md")
-	text := h.readFile(path)
-	text = replaceYAMLScalarUnder(text, "reviewer:", "  enabled:", "  enabled: false")
-	h.writeFile(path, text)
 }
 
 func (h *harness) cliOK(dir string, args ...string) []byte {
