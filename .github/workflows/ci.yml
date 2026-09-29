@@ -152,6 +152,7 @@ jobs:
       - name: Run supported Go tests
         shell: bash
         run: |
+          go mod download
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             # cmd/tusker, internal/runner and the ACP process tests are
             # Unix-only (Windows is unsupported for the daemon); keep Windows
@@ -176,7 +177,10 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Run Linux e2e suite
-        run: go test -timeout=25m -p=1 ./e2e/...
+        # The e2e packages build cmd/tusker with GOPROXY=off; fetch modules first.
+        run: |
+          go mod download
+          go test -timeout=25m -p=1 ./e2e/...
 
   race-linux:
     name: Go race detector (Linux)
