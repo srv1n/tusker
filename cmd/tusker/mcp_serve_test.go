@@ -106,6 +106,10 @@ func TestMCPServeAskIdentityAndRetry(t *testing.T) {
 	if messages[0].Sender != "task:T1" || messages[0].WorkRevision != 3 || messages[0].RouteGeneration != 2 {
 		t.Fatal(messages[0])
 	}
+	// A zero-wait ask still yields, so ending the turn to wait parks the run.
+	if !messages[0].YieldSender {
+		t.Fatal("zero-wait MCP ask must yield the sender")
+	}
 	if _, err := callMCPTool(context.Background(), store, mcpCall("ask", map[string]any{"to": "peer:missing", "question": "?"}), 0, func(time.Duration) {}); err == nil {
 		t.Fatal("unresolved peer accepted")
 	}
