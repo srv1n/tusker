@@ -32,10 +32,11 @@ tusker init --yes
 tusker projects add --repo . --vault ./.tusker
 ```
 
-Set the landing gate to the project's test command. `tusker init` writes
-none, and without one the gate falls back to `go build ./...` and every
-landing of a non-Go project fails. In `.tusker/config.yaml`, under
-`automation:`, add:
+Check the landing gate. `tusker init` detects the test command (`npm test`,
+`cargo test`, `make test`, `pytest`, or `python3 -m unittest`) and writes it
+to `.tusker/config.yaml` under `automation.validation.commands`. If it
+detects none, it says so; add the block yourself, or every landing of a
+non-Go project fails the built-in Go gate:
 
 ```yaml
   validation:
@@ -141,7 +142,6 @@ For every problem, send:
 - After a crash in the middle of a landing, Git's `.git/index.lock` can be
   left behind. Tusker refuses the retry and names the file; remove it only if
   no Git command is running, then retry.
-- `tusker init` does not set a landing gate; see step 2.
 - On Linux the daemon runs tasks but refuses to land them: scheduled
   landing runs gates in macOS `sandbox-exec` and fails closed with
   "host cannot isolate gate execution". Run the end-to-end pass on macOS.

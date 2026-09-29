@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -14,8 +17,12 @@ func bootstrapV7(args Args) error {
 	if err := bootstrapV7Dirs(vaultPath); err != nil {
 		return err
 	}
+	configExisted := fileExists(managedTuskerConfigPath(vaultPath))
 	if err := writeDefaultTuskerConfig(vaultPath); err != nil {
 		return err
+	}
+	if repo := filepath.Dir(vaultPath); !configExisted && !args.Bool("quiet") && detectValidationCommands(repo) == nil && !fileExists(filepath.Join(repo, "go.mod")) {
+		fmt.Fprintln(os.Stderr, "tusker init: no test command detected; set automation.validation.commands in .tusker/config.yaml before landing (the built-in gate runs Go commands).")
 	}
 	if err := ensureV7Domain(vaultPath, "project", "Project", "Durable project knowledge."); err != nil {
 		return err
@@ -85,7 +92,7 @@ automation:
   # (authoritative). Set disabled to land and close by hand.
   completion_reactor:
     mode: authoritative
-  trigger_states: [ready, rework]
+%s  trigger_states: [ready, rework]
   # Direct Codex is available after fresh setup. tusker acp setup can add the
   # pinned ACP adapter later when that machine has been configured for it.
   default_runner: codex_exec
@@ -112,5 +119,57 @@ automation:
     max_children: 0
     allowed_child_types: []
     merge_rule: manual_review
-`, projectID, root, root, root, root, root))
+`, projectID, root, root, root, root, root, validationConfigBlock(filepath.Dir(vaultPath))))
+}
+
+// validationConfigBlock writes the landing gate for the test command init can
+// detect. Go repositories and undetected ones keep the built-in Go gate.
+func validationConfigBlock(repoRoot string) string {
+	commands := detectValidationCommands(repoRoot)
+	if len(commands) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("  # Landing gate, detected by tusker init. Edit to match the project.\n  validation:\n    commands:\n")
+	for _, command := range commands {
+		fmt.Fprintf(&b, "      - %s\n", command)
+	}
+	return b.String()
+}
+
+// detectValidationCommands returns the test command for a non-Go repository
+// root, or nil when there is nothing to detect.
+func detectValidationCommands(repoRoot string) []string {
+	read := func(name string) string {
+		raw, err := os.ReadFile(filepath.Join(repoRoot, name))
+		if err != nil {
+			return ""
+		}
+		return string(raw)
+	}
+	if fileExists(filepath.Join(repoRoot, "go.mod")) {
+		return nil
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal([]byte(read("package.json")), &pkg) == nil && pkg.Scripts["test"] != "" && !strings.Contains(pkg.Scripts["test"], "no test specified") {
+		return []string{"npm test"}
+	}
+	if fileExists(filepath.Join(repoRoot, "Cargo.toml")) {
+		return []string{"cargo test"}
+	}
+	if regexp.MustCompile(`(?m)^test:`).MatchString(read("Makefile")) {
+		return []string{"make test"}
+	}
+	if fileExists(filepath.Join(repoRoot, "pytest.ini")) || strings.Contains(read("pyproject.toml"), "[tool.pytest") {
+		return []string{"python3 -m pytest"}
+	}
+	if pyTests, _ := filepath.Glob(filepath.Join(repoRoot, "test_*.py")); len(pyTests) > 0 {
+		return []string{"python3 -m unittest"}
+	}
+	if pyTests, _ := filepath.Glob(filepath.Join(repoRoot, "tests", "test_*.py")); len(pyTests) > 0 {
+		return []string{"python3 -m unittest discover -s tests"}
+	}
+	return nil
 }
