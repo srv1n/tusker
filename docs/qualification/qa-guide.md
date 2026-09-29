@@ -130,5 +130,8 @@ For every problem, send:
 - After a crash in the middle of a landing, Git's `.git/index.lock` can be
   left behind. Tusker refuses the retry and names the file; remove it only if
   no Git command is running, then retry.
+- On Linux the daemon runs tasks but refuses to land them: scheduled
+  landing runs gates in macOS `sandbox-exec` and fails closed with
+  "host cannot isolate gate execution". Run the end-to-end pass on macOS.
 - Windows is not supported for the daemon or TuskerBar.
 - The Serve UI is the review surface; some actions exist only in the CLI.
