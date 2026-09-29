@@ -2459,12 +2459,13 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	if gitMergeBaseAncestor(repoRoot, integrationBranch, defaultBranch) {
 		mainRev, _ := gitOutputTrim(repoRoot, "rev-parse", defaultBranch)
 		// A shared-checkout land can move main and then fail to install its
-		// prepared index. Finish that index before cleaning up the wave.
-		if landed, _ := gitOutputTrim(repoRoot, "rev-parse", "--verify", "-q", mainRev+"^2"); landed == integrationRev {
-			if shared, err := sharedCheckoutStrategy(vaultPath); err != nil {
-				return err
-			} else if checkouts := v7DefaultBranchCheckouts(repoRoot, defaultBranch); shared && len(checkouts) == 1 {
-				if err := repairSharedCheckoutIndexAfterAdvance(checkouts[0].Path, mainRev+"^1", mainRev); err != nil {
+		// prepared index. Finish that index before cleaning up the wave, even
+		// if other landings have moved main since.
+		if shared, err := sharedCheckoutStrategy(vaultPath); err != nil {
+			return err
+		} else if checkouts := v7DefaultBranchCheckouts(repoRoot, defaultBranch); shared && len(checkouts) == 1 {
+			if merge := v7WaveMergeOnMain(repoRoot, mainRev, integrationRev); merge != "" {
+				if err := repairSharedCheckoutIndexAfterAdvance(checkouts[0].Path, merge+"^1", merge); err != nil {
 					return err
 				}
 			}
@@ -2861,6 +2862,21 @@ func v7WaveIntegrationMemberStatus(vaultPath string, wave Note, member string) (
 		return "", false, tuskerError(errorInvalidField, "wave integration member identity mismatch: "+integrationBranch+":"+rel)
 	}
 	return stringField(data, "status"), true, nil
+}
+
+// v7WaveMergeOnMain finds the wave merge commit on main's first-parent
+// history whose second parent is the landed integration revision.
+func v7WaveMergeOnMain(repoRoot, mainRev, integrationRev string) string {
+	out, err := gitOutputTrim(repoRoot, "rev-list", "--first-parent", "--merges", "--parents", mainRev)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if fields := strings.Fields(line); len(fields) >= 3 && fields[2] == integrationRev {
+			return fields[0]
+		}
+	}
+	return ""
 }
 
 func advanceV7DefaultBranch(repoRoot, defaultBranch, newRev, oldRev string) error {

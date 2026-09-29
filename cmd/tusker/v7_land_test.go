@@ -582,6 +582,10 @@ func TestWaveLandSharedCheckoutRetryRepairsIndexAfterFailedInstall(t *testing.T)
 	if err := os.Remove(lock); err != nil {
 		t.Fatal(err)
 	}
+	// Another landing moves main past the wave merge before the retry.
+	// Like Tusker's own landings, it builds the commit without the index.
+	later := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", "main^{tree}", "-p", "main", "-m", "later landing"))
+	runGitDir(t, repo, "update-ref", "refs/heads/main", later)
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
 		t.Fatalf("retry after clearing the lock: %v", err)
 	}
