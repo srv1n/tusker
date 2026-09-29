@@ -205,7 +205,9 @@ func (s *RuntimeStore) putAgentAnswer(m AgentMessage) (AgentMessage, bool, error
 
 func normalizeAgentAddress(value, fallbackKind string) (AgentAddress, error) {
 	value = strings.TrimSpace(value)
-	if value == "operator:operator" || (value == "operator" && fallbackKind == "operator") {
+	// Task IDs never read "operator", so a bare "operator" is the operator
+	// whatever kind the caller defaulted to.
+	if value == "operator:operator" || value == "operator" {
 		return AgentAddress{Kind: "operator", ID: "operator"}, nil
 	}
 	if strings.Contains(value, ":") {

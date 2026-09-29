@@ -136,3 +136,12 @@ func TestAgentAnswerInheritsQuestionRoute(t *testing.T) {
 		t.Fatalf("duplicate answer=%#v duplicate=%v err=%v", again, dup, err)
 	}
 }
+
+func TestNormalizeAgentAddressBareOperatorIsOperator(t *testing.T) {
+	for _, kind := range []string{"task", "execution", "operator"} {
+		got, err := normalizeAgentAddress("operator", kind)
+		if err != nil || got != (AgentAddress{Kind: "operator", ID: "operator"}) {
+			t.Fatalf("fallback %s: got %#v err %v", kind, got, err)
+		}
+	}
+}
