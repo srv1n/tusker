@@ -548,3 +548,29 @@ func gitShowFile(t *testing.T, repo, ref, path string) string {
 func gitShowFileOK(repo, ref, path string) bool {
 	return exec.Command("git", "-C", repo, "show", ref+":"+path).Run() == nil
 }
+
+func TestWaveLandSharedCheckoutAdvancesInPlaceAroundOperatorWork(t *testing.T) {
+	repo, vault := newLandReadyForMainAdvanceTest(t, "shared-land.txt", "shared land\n")
+	// An empty workspace.strategy means shared. No scheduled_promotion stanza
+	// keeps manual wave landing allowed.
+	wf := defaultWorkflow()
+	wf.ScheduledPromotion = ScheduledPromotionPolicy{}
+	_, body, _ := strings.Cut(strings.TrimPrefix(defaultWorkflowMarkdown(), "---\n"), "\n---\n")
+	writeWorkflowForPreflightTest(t, vault, wf, body)
+	if shared, err := sharedCheckoutStrategy(vault); err != nil || !shared {
+		t.Fatalf("fixture must use the shared strategy: shared=%v err=%v", shared, err)
+	}
+	if err := writeText(filepath.Join(repo, "operator.txt"), "operator local change\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
+		t.Fatalf("shared-checkout wave land must advance around unrelated operator work: %v", err)
+	}
+	assertEqual(t, strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "main")), strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "HEAD")), "checked-out main HEAD advances")
+	assertEqual(t, "shared land\n", mustReadIndexTest(t, filepath.Join(repo, "shared-land.txt")), "landed file is on disk")
+	assertEqual(t, "operator local change\n", mustReadIndexTest(t, filepath.Join(repo, "operator.txt")), "operator work is untouched")
+	if status := gitDirOutput(t, repo, "status", "--porcelain", "--", "shared-land.txt"); strings.TrimSpace(status) != "" {
+		t.Fatalf("landed file must be clean in the index, got %q", status)
+	}
+}

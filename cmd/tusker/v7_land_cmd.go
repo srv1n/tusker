@@ -2496,14 +2496,30 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	if err != nil {
 		return err
 	}
-	preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave)
+	shared, err := sharedCheckoutStrategy(vaultPath)
 	if err != nil {
 		return err
 	}
-	if err := advanceV7DefaultBranch(repoRoot, defaultBranch, mergeCommit, mainRev); err != nil {
-		return errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, defaultBranch, mainRev, mergeCommit))
+	if shared {
+		// The shared checkout is live agent work: never check out control
+		// docs over it. The in-place advance writes only files nobody changed.
+		checkouts, err := advanceV7DefaultBranchRefShared(repoRoot, defaultBranch, mergeCommit, mainRev)
+		if err != nil {
+			return err
+		}
+		if err := finishV7DefaultBranchAdvance(checkouts); err != nil {
+			return err
+		}
+	} else {
+		preparation, err := prepareV7WaveMembersForDefaultAdvance(repoRoot, vaultPath, defaultBranch, wave)
+		if err != nil {
+			return err
+		}
+		if err := advanceV7DefaultBranch(repoRoot, defaultBranch, mergeCommit, mainRev); err != nil {
+			return errors.Join(err, preparation.finishAfterRefAttempt(repoRoot, defaultBranch, mainRev, mergeCommit))
+		}
+		preparation.commit()
 	}
-	preparation.commit()
 	actor := landV7Actor(args)
 	if err := appendV7WaveLandingAudit(vaultPath, waveID, []v7LandingAuditEntry{{
 		Task: "wave", Branch: integrationBranch, Target: defaultBranch,
