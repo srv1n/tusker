@@ -214,6 +214,46 @@ func TestArmedWaveReviewDependencyUsesCanonicalWhenTaskMissing(t *testing.T) {
 	}
 }
 
+func TestArmedWaveReviewDependencyReadsSharedCheckoutRecord(t *testing.T) {
+	for _, strategy := range []string{"shared", "worktree"} {
+		t.Run(strategy, func(t *testing.T) {
+			repo, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+			wf := defaultWorkflow()
+			wf.ScheduledPromotion = ScheduledPromotionPolicy{}
+			wf.Workspace.Strategy = strategy
+			_, body, _ := strings.Cut(strings.TrimPrefix(defaultWorkflowMarkdown(), "---\n"), "\n---\n")
+			writeWorkflowForPreflightTest(t, vault, wf, body)
+			armedWaveDirectTask(t, vault, "APP-T-0002", []string{"APP-T-0001:hard"})
+			writeArmedWaveTestFields(t, vault, map[string]any{"members": []string{"APP-T-0001", "APP-T-0002"}})
+			armWaveForTest(t, vault)
+			// The integration branch still records the dependency in review,
+			// while the checkout closed it in place.
+			branch := "integration/W-0001"
+			old := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", branch))
+			worktree := filepath.Join(t.TempDir(), "integration")
+			gitDirOutput(t, repo, "worktree", "add", "--detach", worktree, branch)
+			setWaveTaskState(t, filepath.Join(worktree, ".tusker"), "APP-T-0001", "review", "waiting_on_review", "")
+			gitDirOutput(t, worktree, "commit", "-am", "dependency in review")
+			next := strings.TrimSpace(gitDirOutput(t, worktree, "rev-parse", "HEAD"))
+			gitDirOutput(t, repo, "worktree", "remove", "--force", worktree)
+			gitDirOutput(t, repo, "update-ref", "refs/heads/"+branch, next, old)
+			setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T00:00:00Z")
+
+			dependent, err := resolveNote(vault, "APP-T-0002")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := armedWaveReviewDependencyBlocker(vault, dependent)
+			if strategy == "shared" && got != "" {
+				t.Fatalf("shared checkout dependency closed in place still blocked review: %q", got)
+			}
+			if want := "dependency APP-T-0001 has not completed objective review (status review)"; strategy == "worktree" && got != want {
+				t.Fatalf("worktree dependency blocker = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestArmedWaveProjectionSurfaces(t *testing.T) {
 	vault, idx, wave := armedWaveTestFixture(t)
 	if err := writeText(filepath.Join(vault, "WORKFLOW.md"), defaultWorkflowMarkdown()); err != nil {

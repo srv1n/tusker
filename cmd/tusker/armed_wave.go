@@ -336,6 +336,9 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 		return ""
 	}
 	repoRoot := v7RepoRoot(vaultPath)
+	// A shared checkout lands and closes in place, leaving the integration
+	// branch behind; the checkout's record is the current one.
+	shared, _ := sharedCheckoutStrategy(vaultPath)
 	for _, edge := range v7TaskDependencyEdges(task, idx) {
 		dependencyID := edge.ID
 		dependency, ok := idx.Tasks[dependencyID]
@@ -351,7 +354,7 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 		if err != nil {
 			return dependencyID + " integration state is unavailable"
 		}
-		if !ok {
+		if !ok || shared {
 			// Uncommitted task records are absent from every branch; the
 			// canonical record is then the only record (see F61).
 			integrated = dependency
