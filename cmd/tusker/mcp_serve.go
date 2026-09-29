@@ -279,9 +279,7 @@ func callMCPTool(ctx context.Context, store *RuntimeStore, call mcpToolCall, max
 		}
 		message, err := store.agentMessageByKey(id.ProjectID, "task:"+id.ItemID, key)
 		if errors.Is(err, sql.ErrNoRows) {
-			// Always yield: the pending reply tells the agent it may end its
-			// turn, and a non-yield question makes that turn end an early exit.
-			candidate := AgentMessage{IdempotencyKey: key, ProjectID: id.ProjectID, Sender: "task:" + id.ItemID, Recipient: recipient, OriginTaskID: id.ItemID, WorkRevision: id.WorkRevision, RouteGeneration: id.LeaseGeneration, RecipientGeneration: generation, Kind: "question", Body: a.Question, ReplyRequired: true, YieldSender: true}
+			candidate := AgentMessage{IdempotencyKey: key, ProjectID: id.ProjectID, Sender: "task:" + id.ItemID, Recipient: recipient, OriginTaskID: id.ItemID, WorkRevision: id.WorkRevision, RouteGeneration: id.LeaseGeneration, RecipientGeneration: generation, Kind: "question", Body: a.Question, ReplyRequired: true, YieldSender: a.WaitSeconds > 0}
 			if err := candidate.validate(); err != nil {
 				return "", err
 			}

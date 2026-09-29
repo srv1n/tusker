@@ -90,7 +90,14 @@ func (d *Daemon) openYieldQuestion(run RunStatus) (bool, error) {
 		return false, err
 	}
 	for _, m := range messages {
-		if m.Kind == "question" && m.Sender == "task:"+run.ItemID && m.YieldSender && m.AnsweredAt == "" && m.WorkRevision == run.WorkRevision && (m.RouteGeneration == 0 || m.RouteGeneration == run.LeaseGeneration) {
+		if m.Kind == "question" && m.Sender == "task:"+run.ItemID && (m.YieldSender || m.ReplyRequired) && m.AnsweredAt == "" && m.WorkRevision == run.WorkRevision && (m.RouteGeneration == 0 || m.RouteGeneration == run.LeaseGeneration) {
+			// The turn ended with this question open, so the agent yielded in
+			// fact: record it, and the answer then resumes the session.
+			if !m.YieldSender {
+				if _, err := d.store.exec(`UPDATE agent_messages SET yield_sender=1 WHERE project_id=? AND id=?`, m.ProjectID, m.ID); err != nil {
+					return false, err
+				}
+			}
 			return true, nil
 		}
 	}

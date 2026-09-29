@@ -218,3 +218,23 @@ func TestMailboxPromptDelivery(t *testing.T) {
 		t.Fatalf("duplicate prompt=%q ids=%#v err=%v", prompt, ids, err)
 	}
 }
+
+func TestMailboxTurnEndWithOpenNonYieldQuestionYields(t *testing.T) {
+	store, err := OpenRuntimeStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	d := &Daemon{store: store}
+	run := RunStatus{ProjectID: "app", RecordID: "task-1", ItemID: "task-1", WorkRevision: 1, LeaseGeneration: 1}
+	q, _, err := store.PutAgentMessage(AgentMessage{ProjectID: "app", IdempotencyKey: "q", Sender: "task:task-1", Recipient: AgentAddress{Kind: "operator", ID: "operator"}, OriginTaskID: "task-1", WorkRevision: 1, RouteGeneration: 1, Kind: "question", Body: "Choose", ReplyRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open, err := d.openYieldQuestion(run); err != nil || !open {
+		t.Fatalf("turn end with an open zero-wait ask must wait: %v, %v", open, err)
+	}
+	if !parentYieldQuestion(store, "app", q.ID) {
+		t.Fatal("the question must now yield so its answer resumes the session")
+	}
+}
