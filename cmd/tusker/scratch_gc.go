@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,8 +34,11 @@ func scratchGCCmd(args Args) error {
 	}
 	ttl := time.Duration(ttlDays) * 24 * time.Hour
 	now := time.Now()
-	cutoff := now.Add(-ttl)
-	stale, err := planScratchGC(vaultPath, ttl, now)
+	entries, err := scanScratchEntries(vaultPath)
+	if err != nil {
+		return scratchGCVaultError(vaultPath, err)
+	}
+	stale, cutoff, err := planScratchReclaim(vaultPath, entries, ttl, defaultScratchBudgetBytes, now)
 	if err != nil {
 		return scratchGCVaultError(vaultPath, err)
 	}
@@ -79,7 +83,7 @@ func scratchGCCmd(args Args) error {
 		printScratchGCOutcome(outcome)
 		return nil
 	}
-	fmt.Printf("%d stale scratch entries older than %dd (%s). Re-run with --yes to apply.\n", len(stale), ttlDays, humanBytes(total))
+	fmt.Printf("%d scratch entries to reclaim: older than %dd, or idle while scratch is over its %s budget (%s). Re-run with --yes to apply.\n", len(stale), ttlDays, humanBytes(defaultScratchBudgetBytes), humanBytes(total))
 	return nil
 }
 
@@ -226,8 +230,12 @@ func printGCHelp() {
 
 Purpose:
   Sweep .tusker/scratch/, deleting any top-level entry — task-keyed or
-  hand-named — whose newest content is older than the TTL. Scratch is
-  ephemeral by contract; anything durable belongs in evidence.
+  hand-named — whose newest content is older than the TTL. While scratch is
+  over its 200MiB budget, entries idle for an hour go too: hand-named first,
+  then scratch of closed or discarded tasks, largest first. An open task's
+  scratch is never evicted for budget. Scratch is ephemeral by
+  contract; anything durable belongs in evidence. The daemon runs this sweep
+  hourly for enabled projects.
 
 Behavior:
   - default is dry-run; pass --yes to apply (--yes is the only apply flag)
@@ -241,4 +249,39 @@ Examples:
   tusker gc
   tusker gc --ttl 7 --json
   tusker gc --yes`)
+}
+
+// sweepRegisteredScratch runs the default scratch sweep for every enabled
+// project. Best effort: a failing project is logged and the rest still run.
+func sweepRegisteredScratch(store *RuntimeStore, now time.Time) {
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true})
+	if err != nil {
+		log.Printf("scratch retention: %v", err)
+		return
+	}
+	for _, loaded := range projects {
+		project := loaded.Project
+		if !project.Enabled {
+			continue
+		}
+		entries, err := scanScratchEntries(project.VaultRoot)
+		if errors.Is(err, errNotTuskerVault) || err == nil && len(entries) == 0 {
+			continue
+		}
+		var plan []scratchEntry
+		var cutoff time.Time
+		if err == nil {
+			plan, cutoff, err = planScratchReclaim(project.VaultRoot, entries, defaultScratchTTLDays*24*time.Hour, defaultScratchBudgetBytes, now)
+		}
+		if err == nil && len(plan) > 0 {
+			var outcome scratchGCOutcome
+			outcome, err = applyScratchGCWithStore(store, project.VaultRoot, plan, cutoff)
+			if len(outcome.Deleted) > 0 {
+				log.Printf("scratch retention: project=%s deleted=%d bytes=%d", project.ProjectID, len(outcome.Deleted), outcome.Reclaimed)
+			}
+		}
+		if err != nil {
+			log.Printf("scratch retention: project=%s: %v", project.ProjectID, err)
+		}
+	}
 }

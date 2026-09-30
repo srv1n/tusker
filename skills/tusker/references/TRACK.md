@@ -69,5 +69,7 @@ independent review. Submission is not completion; follow
 Add planned checks with `tusker verify add <TASK-ID> --covers A1 --check
 "command: go test ./..." --result pending`. Only the executor records PASS/FAIL.
 Choose the smallest checks covering acceptance, attach required evidence, and reserve human
-review for explicit gates. Use CLI-managed scratch for transient logs. Never
-manufacture proof or rewrite lifecycle fields to clear a refusal.
+review for explicit gates. Use CLI-managed scratch for transient logs and summaries. Keep
+large build or test output (result bundles, device diagnostics) in the system temp directory:
+scratch has a 200MiB budget and idle entries are evicted. Never manufacture proof or rewrite
+lifecycle fields to clear a refusal.

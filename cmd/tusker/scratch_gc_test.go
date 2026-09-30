@@ -216,3 +216,34 @@ func TestScratchGCReportsPartialFailure(t *testing.T) {
 		t.Fatalf("expected %s to survive the failed removal: %v", locked, err)
 	}
 }
+
+// A same-day dump that pushes scratch over budget is evicted; an open task's
+// scratch and an entry still being written are kept.
+func TestScratchGCEvictsOverBudget(t *testing.T) {
+	vault := pickupV7TestVault(t)
+	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Open work", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)
+	sized := func(name string, size int64, age time.Duration) string {
+		dir := seedAgedScratch(t, vault, name, age)
+		if err := os.Truncate(filepath.Join(dir, "blob.bin"), size); err != nil {
+			t.Fatal(err)
+		}
+		backdateTree(t, dir, age)
+		return dir
+	}
+	openTask := sized("APP-T-0001", 150<<20, 3*time.Hour)
+	dump := sized("mac-parity", 150<<20, 2*time.Hour)
+	writing := sized("still-writing", 1<<10, time.Minute)
+	olderSmall := sized("older-notes", 1<<10, 48*time.Hour)
+
+	if err := scratchGCCmd(Args{"vault": vault, "quiet": "true", "yes": "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dump); !os.IsNotExist(err) {
+		t.Fatalf("expected the over-budget dump %s to be evicted, got err=%v", dump, err)
+	}
+	for _, dir := range []string{openTask, writing, olderSmall} {
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("expected %s to survive budget eviction: %v", dir, err)
+		}
+	}
+}

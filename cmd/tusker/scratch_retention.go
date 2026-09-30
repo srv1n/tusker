@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -467,16 +469,11 @@ func totalScratchBytes(entries []scratchEntry) int64 {
 	return total
 }
 
-// staleScratchEntries selects entries whose newest content predates the cutoff.
-func staleScratchEntries(entries []scratchEntry, cutoff time.Time) []scratchEntry {
-	stale := make([]scratchEntry, 0, len(entries))
-	for _, entry := range entries {
-		if entry.Newest.Before(cutoff) {
-			stale = append(stale, entry)
-		}
-	}
-	return stale
-}
+// scratchIdleGrace keeps budget eviction away from entries that are still being
+// written.
+// ponytail: mtime idleness; a hand-named entry whose writer pauses longer than
+// this can be evicted mid-use. Task-keyed scratch is protected by task state.
+const scratchIdleGrace = time.Hour
 
 // planScratchGC returns entries whose newest content is older than ttl.
 func planScratchGC(vaultPath string, ttl time.Duration, now time.Time) ([]scratchEntry, error) {
@@ -484,51 +481,102 @@ func planScratchGC(vaultPath string, ttl time.Duration, now time.Time) ([]scratc
 	if err != nil {
 		return nil, err
 	}
+	plan, _, err := planScratchReclaim(vaultPath, entries, ttl, math.MaxInt64, now)
+	return plan, err
+}
+
+// planScratchReclaim is the TTL sweep plus budget eviction. While scratch stays
+// over budget it also takes idle entries: hand-named ones first, then scratch of
+// released tasks, largest first so the fewest entries go. An open task's scratch is never taken. The
+// returned cutoff is what applyScratchGC re-checks each entry against.
+func planScratchReclaim(vaultPath string, entries []scratchEntry, ttl time.Duration, budget int64, now time.Time) ([]scratchEntry, time.Time, error) {
+	cutoff := now.Add(-ttl)
+	if len(entries) == 0 {
+		return nil, cutoff, nil
+	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
-		return nil, err
+		return nil, cutoff, err
 	}
-	stale := make([]scratchEntry, 0, len(entries))
+	plan := make([]scratchEntry, 0, len(entries))
+	remaining := totalScratchBytes(entries)
+	var candidates []scratchEntry
+	idle := now.Add(-scratchIdleGrace)
 	for _, entry := range entries {
-		if task, ok := idx.Tasks[entry.Name]; ok {
-			terminal := firstNonEmpty(stringField(task.Data, "closed_at"), stringField(task.Data, "discarded_at"))
-			stamp, parseErr := time.Parse(time.RFC3339, terminal)
-			if parseErr == nil && !boolField(task.Data, "artifacts_keep") && !strings.HasPrefix(stringField(task.Data, "readiness"), "waiting_on_human") && !stamp.Add(ttl).After(now) {
-				stale = append(stale, entry)
-			}
+		task, isTask := idx.Tasks[entry.Name]
+		if isTask && scratchTaskReleased(task, cutoff) || !isTask && entry.Newest.Before(cutoff) {
+			plan = append(plan, entry)
+			remaining -= entry.Bytes
 			continue
 		}
-		if entry.Newest.Before(now.Add(-ttl)) {
-			stale = append(stale, entry)
+		if isTask && scratchTaskReleased(task, idle) && entry.Newest.Before(idle) || !isTask && !v7TaskIDPattern.MatchString(entry.Name) && entry.Newest.Before(idle) {
+			candidates = append(candidates, entry)
 		}
 	}
-	return stale, nil
+	if remaining <= budget {
+		return plan, cutoff, nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		iTask, jTask := v7TaskIDPattern.MatchString(candidates[i].Name), v7TaskIDPattern.MatchString(candidates[j].Name)
+		if iTask != jTask {
+			return !iTask
+		}
+		return candidates[i].Bytes > candidates[j].Bytes
+	})
+	for _, entry := range candidates {
+		if remaining <= budget {
+			break
+		}
+		plan = append(plan, entry)
+		remaining -= entry.Bytes
+	}
+	if idle.After(cutoff) {
+		cutoff = idle
+	}
+	return plan, cutoff, nil
+}
+
+// scratchTaskReleased reports whether a task's scratch may go: the task closed
+// or was discarded at or before the given time, and nothing pins it.
+func scratchTaskReleased(task Note, before time.Time) bool {
+	terminal := firstNonEmpty(stringField(task.Data, "closed_at"), stringField(task.Data, "discarded_at"))
+	stamp, err := time.Parse(time.RFC3339, terminal)
+	return err == nil && !boolField(task.Data, "artifacts_keep") && !strings.HasPrefix(stringField(task.Data, "readiness"), "waiting_on_human") && !stamp.After(before)
 }
 
 // applyScratchGC removes planned entries, re-measuring each one immediately
 // before deletion and skipping any that became active after planning. It stops
 // at the first failure but still reports everything it completed.
 func applyScratchGC(vaultPath string, entries []scratchEntry, cutoff time.Time) (scratchGCOutcome, error) {
+	return applyScratchGCWithStore(nil, vaultPath, entries, cutoff)
+}
+
+// applyScratchGCWithStore checks live runs in store; nil opens the default
+// state root. The daemon passes its own store so a non-default root is honored.
+func applyScratchGCWithStore(store *RuntimeStore, vaultPath string, entries []scratchEntry, cutoff time.Time) (scratchGCOutcome, error) {
 	var outcome scratchGCOutcome
 	err := withScratchRetentionLock(vaultPath, func() error {
 		var innerErr error
-		outcome, innerErr = applyScratchGCUnlocked(vaultPath, entries, cutoff)
+		outcome, innerErr = applyScratchGCUnlocked(store, vaultPath, entries, cutoff)
 		return innerErr
 	})
 	return outcome, err
 }
 
-func applyScratchGCUnlocked(vaultPath string, entries []scratchEntry, cutoff time.Time) (scratchGCOutcome, error) {
+func applyScratchGCUnlocked(store *RuntimeStore, vaultPath string, entries []scratchEntry, cutoff time.Time) (scratchGCOutcome, error) {
 	var outcome scratchGCOutcome
 	root, err := resolveScratchRoot(vaultPath)
 	if err != nil {
 		return outcome, err
 	}
-	store, storeErr := OpenRuntimeStore(DefaultStateRoot())
-	if storeErr != nil {
-		return outcome, storeErr
+	if store == nil {
+		opened, openErr := OpenRuntimeStore(DefaultStateRoot())
+		if openErr != nil {
+			return outcome, openErr
+		}
+		defer opened.Close()
+		store = opened
 	}
-	defer store.Close()
 	projectID, projectOK, projectErr := registeredProjectIDForVault(store, vaultPath)
 	if projectErr != nil {
 		return outcome, projectErr
@@ -541,6 +589,11 @@ func applyScratchGCUnlocked(vaultPath string, entries []scratchEntry, cutoff tim
 			}
 			outcome.Failed = entry.Path
 			return outcome, err
+		}
+		if current.Newest.After(entry.Newest) {
+			// Written after planning: someone is using it.
+			outcome.Skipped = append(outcome.Skipped, current)
+			continue
 		}
 		if !current.Newest.Before(cutoff) {
 			if !v7TaskIDPattern.MatchString(entry.Name) {
@@ -555,9 +608,7 @@ func applyScratchGCUnlocked(vaultPath string, entries []scratchEntry, cutoff tim
 				return outcome, indexErr
 			}
 			task, ok := idx.Tasks[entry.Name]
-			terminal := firstNonEmpty(stringField(task.Data, "closed_at"), stringField(task.Data, "discarded_at"))
-			stamp, stampErr := time.Parse(time.RFC3339, terminal)
-			if !ok || stampErr != nil || boolField(task.Data, "artifacts_keep") || strings.HasPrefix(stringField(task.Data, "readiness"), "waiting_on_human") || stamp.After(cutoff) {
+			if !ok || !scratchTaskReleased(task, cutoff) {
 				outcome.Skipped = append(outcome.Skipped, current)
 				continue
 			}

@@ -218,28 +218,29 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 	default:
 		total := totalScratchBytes(entries)
 		if total > defaultScratchBudgetBytes {
-			cutoff := time.Now().Add(-defaultScratchTTLDays * 24 * time.Hour)
-			stale := staleScratchEntries(entries, cutoff)
+			finding := setupFinding{Code: "scratch_size", Status: "warning", Path: scratchRootPath(localVault)}
+			stale, cutoff, planErr := planScratchReclaim(localVault, entries, defaultScratchTTLDays*24*time.Hour, defaultScratchBudgetBytes, time.Now())
 			var staleBytes int64
 			for _, entry := range stale {
 				staleBytes += entry.Bytes
 			}
-			finding := setupFinding{
-				Code:   "scratch_size",
-				Status: "warning",
-				Path:   scratchRootPath(localVault),
-				Message: fmt.Sprintf("scratch is %.0fM (budget %.0fM); %.0fM is stale (older than %dd) and reclaimable",
-					float64(total)/(1<<20), float64(defaultScratchBudgetBytes)/(1<<20), float64(staleBytes)/(1<<20), defaultScratchTTLDays),
-				Action:     "run tusker gc to reclaim stale scratch",
-				Repairable: true,
-			}
-			if len(stale) == 0 {
-				// Nothing has aged out yet, so the default sweep would delete nothing.
-				// Say that instead of pointing at a repair that is a no-op.
-				finding.Message = fmt.Sprintf("scratch is %.0fM (budget %.0fM) but nothing is older than %dd yet",
-					float64(total)/(1<<20), float64(defaultScratchBudgetBytes)/(1<<20), defaultScratchTTLDays)
-				finding.Action = fmt.Sprintf("promote anything durable to evidence, then run tusker gc --ttl <days> below %d to reclaim early", defaultScratchTTLDays)
-				finding.Repairable = false
+			switch {
+			case planErr != nil:
+				finding.Message = fmt.Sprintf("scratch is %.0fM (budget %.0fM) but could not be planned: %v",
+					float64(total)/(1<<20), float64(defaultScratchBudgetBytes)/(1<<20), planErr)
+				finding.Action = "fix the task index error, then rerun setup doctor"
+			case len(stale) == 0:
+				// Everything left belongs to open tasks or is still being written, so
+				// the sweep would delete nothing. Say that instead of pointing at a
+				// repair that is a no-op.
+				finding.Message = fmt.Sprintf("scratch is %.0fM (budget %.0fM) but all of it belongs to open tasks or changed in the last hour",
+					float64(total)/(1<<20), float64(defaultScratchBudgetBytes)/(1<<20))
+				finding.Action = "move large build or test output out of scratch; keep only summaries there"
+			default:
+				finding.Message = fmt.Sprintf("scratch is %.0fM (budget %.0fM); %.0fM is reclaimable (older than %dd, or idle and unowned)",
+					float64(total)/(1<<20), float64(defaultScratchBudgetBytes)/(1<<20), float64(staleBytes)/(1<<20), defaultScratchTTLDays)
+				finding.Action = "run tusker gc to reclaim scratch"
+				finding.Repairable = true
 			}
 			if apply && input.repairs("core") && len(stale) > 0 {
 				outcome, gcErr := applyScratchGC(localVault, stale, cutoff)

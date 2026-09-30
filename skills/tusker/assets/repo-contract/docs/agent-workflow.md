@@ -32,8 +32,9 @@ state.
 ## Proof
 
 Map each check to acceptance row IDs. State the command and the result. Keep
-large logs in task scratch. Do not treat a packet, process exit, or model claim
-as proof.
+logs in task scratch. Keep large build or test output in the system temp
+directory; scratch has a size budget and is pruned. Do not treat a packet,
+process exit, or model claim as proof.
 
 ## Sources
 

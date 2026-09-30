@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -147,10 +148,27 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	if _, err := purgeRunArtifacts(d.store, time.Now().UTC(), false); err != nil {
 		log.Printf("run artifact retention: %v", err)
 	}
+	// The sweep walks every scratch tree; run it off the loop so a large tree
+	// cannot starve the watchdog beat. One sweep at a time; Run waits for it.
+	var scratchSweeps sync.WaitGroup
+	var scratchSweeping atomic.Bool
+	defer scratchSweeps.Wait()
+	sweepScratch := func(now time.Time) {
+		if !scratchSweeping.CompareAndSwap(false, true) {
+			return
+		}
+		scratchSweeps.Add(1)
+		go func() {
+			defer scratchSweeps.Done()
+			defer scratchSweeping.Store(false)
+			sweepRegisteredScratch(d.store, now)
+		}()
+	}
+	sweepScratch(time.Now())
 	var retentionTick *time.Ticker
 	var retentionC <-chan time.Time
 	if !once {
-		retentionTick = time.NewTicker(24 * time.Hour)
+		retentionTick = time.NewTicker(time.Hour)
 		retentionC = retentionTick.C
 		defer retentionTick.Stop()
 	}
@@ -262,6 +280,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			if _, err := purgeRunArtifacts(d.store, now.UTC(), false); err != nil {
 				log.Printf("run artifact retention: %v", err)
 			}
+			sweepScratch(now)
 		case projectID := <-d.notifyWake:
 			if projectID == "*" {
 				if err := d.runPoll(runCtx, ""); err != nil {
