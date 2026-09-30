@@ -76,7 +76,12 @@ func TestRunnerWrapperChildInheritsWrapperProcessGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = syscall.Kill(result.PID, syscall.SIGKILL) }()
+	defer func() {
+		_ = syscall.Kill(result.PID, syscall.SIGKILL)
+		// The runner goroutine writes the status file after the child exits;
+		// let it finish before TempDir cleanup removes the directory.
+		waitForStatusFile(t, result.StatusPath)
+	}()
 
 	childPGID := processGroupID(result.PID)
 	wrapperPGID := processGroupID(os.Getpid())

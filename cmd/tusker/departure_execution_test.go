@@ -150,6 +150,7 @@ func newUnstagedDepartureExecutionFixture(t *testing.T, mode, fileName string) d
 
 func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFixture {
 	t.Helper()
+	skipWithoutIsolatedLandingGate(t)
 	stateRoot := t.TempDir()
 	repo, vault := newLandTestRepo(t, 2, "test -f member-one.txt")
 	sourceOne := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{"member-one.txt": "one\n"})
@@ -181,6 +182,7 @@ func newMultiMemberDepartureExecutionFixture(t *testing.T) departureExecutionFix
 
 func newMultiWaveDepartureExecutionFixture(t *testing.T, conflicting ...bool) departureExecutionFixture {
 	t.Helper()
+	skipWithoutIsolatedLandingGate(t)
 	installV7FullGateProviderFixture(t)
 	stateRoot := t.TempDir()
 	repo := t.TempDir()
@@ -607,6 +609,7 @@ func disarmDepartureWaveForTest(t *testing.T, vault, waveID string) {
 
 func TestDepartureExecution(t *testing.T) {
 	t.Run("stage keeps main fixed and replay does not duplicate audit", func(t *testing.T) {
+		skipWithoutIsolatedLandingGate(t)
 		fixture := newUnstagedDepartureExecutionFixture(t, scheduledPromotionStage, "stage-executor.txt")
 		store, err := OpenRuntimeStore(fixture.stateRoot)
 		if err != nil {
@@ -1334,9 +1337,7 @@ func TestDepartureExecution(t *testing.T) {
 	})
 
 	t.Run("daemon close cancels a blocking full gate before waiting", func(t *testing.T) {
-		if _, err := landingGateSandboxPath(); err != nil {
-			t.Skip("isolated full gate unavailable: " + err.Error())
-		}
+		skipWithoutIsolatedLandingGate(t)
 		stateRoot := t.TempDir()
 		repo, vault := newLandReadyForMainAdvanceTestInStateRoot(t, "cancel-gate.txt", "departure\n", stateRoot)
 		sourceSHA := gitRevisionForTest(t, repo, "task/APP-T-0001")

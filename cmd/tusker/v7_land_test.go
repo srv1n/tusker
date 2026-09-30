@@ -293,11 +293,18 @@ func newLandReadyForMainAdvanceTest(t *testing.T, fileName, content string) (str
 	return newLandReadyForMainAdvanceTestInStateRoot(t, fileName, content, DefaultStateRoot())
 }
 
-func newLandReadyForMainAdvanceTestInStateRoot(t *testing.T, fileName, content, stateRoot string) (string, string) {
+// skipWithoutIsolatedLandingGate skips tests that land through the full gate,
+// which only runs in macOS sandbox-exec.
+func skipWithoutIsolatedLandingGate(t *testing.T) {
 	t.Helper()
 	if _, err := landingGateSandboxPath(); err != nil {
 		t.Skip("isolated full gate unavailable: " + err.Error())
 	}
+}
+
+func newLandReadyForMainAdvanceTestInStateRoot(t *testing.T, fileName, content, stateRoot string) (string, string) {
+	t.Helper()
+	skipWithoutIsolatedLandingGate(t)
 	repo, vault := newLandTestRepo(t, 1, "test -f "+yamlQuoteForShellTest(fileName))
 	sourceSHA := commitLandBranch(t, repo, "task/APP-T-0001", "integration/W-0001", map[string]string{fileName: content})
 	setDepartureTaskSourceForTest(t, vault, "APP-T-0001", sourceSHA)

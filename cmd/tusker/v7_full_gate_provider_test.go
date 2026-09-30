@@ -240,6 +240,7 @@ func TestV7FullGateProviderRecoveryRefusesIncompleteScope(t *testing.T) {
 }
 
 func TestV7FullGateProviderCloseUsesActiveRequestPath(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	stateRoot := t.TempDir()
 	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
 	old := runV7FullGateProviderCleanup
@@ -272,6 +273,7 @@ func TestV7FullGateProviderCloseUsesActiveRequestPath(t *testing.T) {
 }
 
 func TestV7FullGateProviderCloseWaitsForPublishedWrapperBeforeCleanup(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	stateRoot := t.TempDir()
 	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
 	old := runV7FullGateProviderCleanup
@@ -493,6 +495,7 @@ func TestV7FullGateProviderDarwinDescriptorTransportUsesOnlyRequestAndResult(t *
 }
 
 func TestV7FullGateProviderRejectsVerifyToExecReplacementBeforeLaunch(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	stateRoot := t.TempDir()
 	binary := filepath.Join(t.TempDir(), "provider")
 	original, err := os.ReadFile(os.Args[0])
@@ -631,6 +634,7 @@ func TestV7FullGateProviderRetiresOnlyAfterOutcomeAcknowledgement(t *testing.T) 
 }
 
 func TestV7FullGateProviderPreparationCrashSeamsConverge(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	stages := []struct {
 		name      string
 		stage     string
@@ -735,6 +739,7 @@ func TestV7FullGateProviderRecoveryFailsUnjournaledGreenClosed(t *testing.T) {
 }
 
 func TestV7FullGateProviderRecoveryCleansDurableRequestBeforeWrapper(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	stateRoot := t.TempDir()
 	store, run := openV7ProviderRecoveryRun(t, stateRoot, "request-before-wrapper")
 	defer store.Close()
@@ -1021,6 +1026,7 @@ func TestV7FullGateProviderCancellationRemovesOnlyUnboundArtifacts(t *testing.T)
 }
 
 func TestV7FullGateProviderContractFailuresAreTyped(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	t.Run("identity", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "provider")
 		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
@@ -1567,6 +1573,7 @@ func TestV7FullGateProviderReservationIsWrittenBeforeLaunch(t *testing.T) {
 }
 
 func TestV7FullGateProviderRetainsFailedCleanupRecordUntilRecoverySucceeds(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	stateRoot := t.TempDir()
 	requestPath, request := writeV7ProviderRecoveryRequest(t, stateRoot)
 	old := runV7FullGateProviderCleanup

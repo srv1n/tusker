@@ -668,6 +668,7 @@ func TestScheduledPromotionLandingFrozenCandidateCASAndReplay(t *testing.T) {
 }
 
 func TestScheduledPromotionLandingImplicitSingletonNeedsNoWaveArm(t *testing.T) {
+	skipWithoutIsolatedLandingGate(t)
 	stateRoot := t.TempDir()
 	repo, vault := newLandTestRepo(t, 1, "test -f singleton-promoted.txt")
 	clearWaveBackpointer(t, vault, "APP-T-0001")
