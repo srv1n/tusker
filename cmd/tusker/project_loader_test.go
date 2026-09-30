@@ -98,3 +98,29 @@ func TestProjectLoadSkipsMissingTrackerRootWithoutRepeatQuarantineWrite(t *testi
 		t.Fatalf("identical missing-root quarantine must not write again")
 	}
 }
+
+func TestQuarantineLoadErrorKeepsStoredEnabledState(t *testing.T) {
+	store, err := OpenRuntimeStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := RegisteredProject{ProjectID: "p", ProjectKey: "p", Name: "p", RepoRoot: t.TempDir(), VaultRoot: filepath.Join(t.TempDir(), "gone"), Enabled: true}
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetProjectEnabled(project.ProjectID, false); err != nil {
+		t.Fatal(err)
+	}
+	// A background reader still holds the enabled copy when the load fails.
+	if _, err := quarantineRegisteredProjectLoadError(store, project, requireRegisteredProjectTrackerRoot(project)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := projectByID(store, project.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Enabled || stored.Health != projectHealthError {
+		t.Fatalf("quarantine rewrote enabled or skipped health: enabled=%t health=%s", stored.Enabled, stored.Health)
+	}
+}

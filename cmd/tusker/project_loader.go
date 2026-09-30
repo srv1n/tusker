@@ -161,7 +161,7 @@ func quarantineRegisteredProjectLoadError(store *RuntimeStore, project Registere
 	if store == nil {
 		return project, nil
 	}
-	if err := store.UpsertProject(project); err != nil {
+	if applied, err := store.SetProjectHealth(project.ProjectID, project.VaultRoot, project.Health, project.LastError); err != nil || !applied {
 		return project, err
 	}
 	if _, err := os.Stat(project.VaultRoot); os.IsNotExist(err) {

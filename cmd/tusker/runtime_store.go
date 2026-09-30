@@ -1902,7 +1902,11 @@ func (s *RuntimeStore) ensureColumn(tableName, columnName, stmt string) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = s.exec(stmt)
+	// Another process opening the same store can add the column between the
+	// check and the ALTER; the column existing is the outcome we want.
+	if _, err = s.exec(stmt); err != nil && strings.Contains(err.Error(), "duplicate column name") {
+		return nil
+	}
 	return err
 }
 
@@ -2208,6 +2212,19 @@ func (s *RuntimeStore) SetProjectEnabled(projectID string, enabled bool) error {
 		return tuskerError(errorNotFound, "project not found: "+projectID)
 	}
 	return nil
+}
+
+// SetProjectHealth records a load failure without rewriting the rest of the
+// row, so a stale in-memory project cannot flip enabled back. The write is
+// fenced to the vault it loaded from; it reports false if the registration
+// has since moved or gone.
+func (s *RuntimeStore) SetProjectHealth(projectID, vaultRoot string, health ProjectHealth, lastError string) (bool, error) {
+	result, err := s.exec(`UPDATE projects SET health = ?, last_error = ? WHERE project_id = ? AND vault_root = ?`, string(health), lastError, projectID, vaultRoot)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
 }
 
 func (s *RuntimeStore) SetProjectVisible(projectID string, visible bool) error {
