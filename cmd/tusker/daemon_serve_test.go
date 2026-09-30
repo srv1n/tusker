@@ -309,7 +309,7 @@ func stopDaemonRunForTest(t *testing.T, stateRoot string, errCh <-chan error) {
 
 func shortDaemonServeTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "tusker-daemon-serve-*")
+	dir, err := os.MkdirTemp(shortTempParent(), "tusker-daemon-serve-*")
 	if err != nil {
 		t.Fatal(err)
 	}

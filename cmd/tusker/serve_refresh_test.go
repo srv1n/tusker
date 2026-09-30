@@ -21,7 +21,7 @@ func TestServeRefreshTargetsProjectAndCollapsesRapidRequests(t *testing.T) {
 		t.Fatal("expected scoped stream subscription")
 	}
 	defer unsubscribe()
-	stateRoot, err := os.MkdirTemp("/tmp", "tusker-refresh-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "tusker-refresh-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestServeRefreshTargetsProjectAndCollapsesRapidRequests(t *testing.T) {
 
 func TestServeRefreshRejectsMissingDaemonWithoutMutatingSnapshot(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
-	stateRoot, err := os.MkdirTemp("/tmp", "tusker-refresh-down-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "tusker-refresh-down-")
 	if err != nil {
 		t.Fatal(err)
 	}

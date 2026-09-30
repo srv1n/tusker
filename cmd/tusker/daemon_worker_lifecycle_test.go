@@ -12,7 +12,7 @@ import (
 )
 
 func TestSandboxedWorkerLifecycleUsesDaemonBoundaryWithoutRuntimeStore(t *testing.T) {
-	stateRoot, err := os.MkdirTemp("/tmp", "twl-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "twl-")
 	if err != nil {
 		t.Fatal(err)
 	}

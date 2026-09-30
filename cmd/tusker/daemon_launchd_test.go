@@ -115,7 +115,7 @@ func TestLaunchdFixtureRestartsDaemonAfterSIGKILL(t *testing.T) {
 		}
 		return
 	}
-	stateRoot, err := os.MkdirTemp("/tmp", "tusker-run15-launchd-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "tusker-run15-launchd-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 		return
 	}
 
-	stateRoot, err := os.MkdirTemp("/tmp", "tusker-run15-crash-loop-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "tusker-run15-crash-loop-")
 	if err != nil {
 		t.Fatal(err)
 	}

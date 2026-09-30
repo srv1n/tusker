@@ -704,3 +704,12 @@ func assertValidationTestTerminatedBySignal(t *testing.T, err error, signal sysc
 		t.Fatalf("lock holder exit status = %#v, want signal %s", exitErr.Sys(), signal)
 	}
 }
+
+// shortTempParent keeps Unix socket paths under the ~104-byte limit: macOS's
+// per-user TMPDIR is too long, so fall back to /tmp only when TMPDIR is.
+func shortTempParent() string {
+	if dir := os.TempDir(); len(dir) <= 40 {
+		return dir
+	}
+	return "/tmp"
+}

@@ -803,10 +803,12 @@ func newHarness(t *testing.T, name string) *harness {
 }
 
 func shortTempParent() string {
-	if st, err := os.Stat("/tmp"); err == nil && st.IsDir() {
-		return "/tmp"
+	// Unix socket paths are capped near 104 bytes; macOS's per-user TMPDIR is
+	// too long, so fall back to /tmp only when TMPDIR is.
+	if dir := os.TempDir(); len(dir) <= 40 {
+		return dir
 	}
-	return os.TempDir()
+	return "/tmp"
 }
 
 func e2eBinaries(t *testing.T) (string, string) {

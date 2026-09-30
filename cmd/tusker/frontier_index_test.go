@@ -139,7 +139,7 @@ func TestIncrementalFrontierIndexBoundedTenThousandTaskMutation(t *testing.T) {
 }
 
 func TestIncrementalFrontierIndexRichControlNotificationRemainsOptional(t *testing.T) {
-	stateRoot, err := os.MkdirTemp("/tmp", "tusker-frontier-notify-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "tusker-frontier-notify-")
 	if err != nil {
 		t.Fatal(err)
 	}

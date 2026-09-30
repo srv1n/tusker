@@ -10,7 +10,7 @@ import (
 )
 
 func TestWriteNotifyCLIUsesRepoIdentityAndCompletesSocketWrite(t *testing.T) {
-	stateRoot, err := os.MkdirTemp("/tmp", "tusker-notify-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "tusker-notify-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestWriteNotifyCLIUsesRepoIdentityAndCompletesSocketWrite(t *testing.T) {
 }
 
 func TestWriteNotifyUsesRegisteredRuntimeIdentityInsteadOfConfigIdentity(t *testing.T) {
-	stateRoot, err := os.MkdirTemp("/tmp", "tusker-notify-registered-")
+	stateRoot, err := os.MkdirTemp(shortTempParent(), "tusker-notify-registered-")
 	if err != nil {
 		t.Fatal(err)
 	}

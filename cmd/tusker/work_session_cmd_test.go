@@ -1284,7 +1284,7 @@ func TestWorkSessionLegacyEntryPointsDelegate(t *testing.T) {
 }
 
 func TestWorkSessionNotificationIsExactRunHintAndDoesNotSpawn(t *testing.T) {
-	shortState, err := os.MkdirTemp("/tmp", "tws-")
+	shortState, err := os.MkdirTemp(shortTempParent(), "tws-")
 	if err != nil {
 		t.Fatal(err)
 	}
