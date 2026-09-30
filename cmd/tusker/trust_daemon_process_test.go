@@ -25,7 +25,8 @@ func TestTrustDaemonProcess(t *testing.T) {
 		unrelatedPGID := processGroupID(unrelated.Process.Pid)
 		t.Cleanup(func() { terminateAndReapRunnerCommand(unrelated, unrelatedPGID) })
 		terminateAndReapRunnerCommand(owned, ownedPGID)
-		if processGroupExists(ownedPGID) {
+		// The orphaned sleep is reaped by init, not by us; give it a moment.
+		if !waitForProcessGroupStop(ownedPGID, 5*time.Second) {
 			t.Fatalf("owned child group %d survived cancellation", ownedPGID)
 		}
 		if !processGroupExists(unrelatedPGID) {
