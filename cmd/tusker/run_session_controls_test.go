@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -34,16 +34,21 @@ func TestRunSessionControlsPauseRequiresProviderAcknowledgement(t *testing.T) {
 
 func TestRunSessionControlsStopKeepsStaleOwnerUnknown(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
-	pgid, err := syscall.Getpgid(os.Getpid())
-	if err != nil {
+	// A live group leader whose recorded start time is wrong: a reused PID.
+	// Don't use the test's own group; its leader may already have exited.
+	other := exec.Command("sleep", "30")
+	other.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := other.Start(); err != nil {
 		t.Fatal(err)
 	}
+	pgid := other.Process.Pid
+	t.Cleanup(func() { terminateAndReapRunnerCommand(other, pgid) })
 	run := RunStatus{
 		ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001",
 		Runner: string(RunnerCodexExec), Lane: runLaneExecute,
 		LeaseState: string(LeaseStateRunning), LeaseGeneration: 7,
 		LeaseOwner: "attempt-stale", ActiveAttemptID: "attempt-stale",
-		ProcessPID: os.Getpid(), ProcessPGID: pgid, ProcessStartedAt: "2000-01-01T00:00:00Z",
+		ProcessPID: pgid, ProcessPGID: pgid, ProcessStartedAt: "2000-01-01T00:00:00Z",
 	}
 	if err := server.store.UpsertRun(run); err != nil {
 		t.Fatal(err)

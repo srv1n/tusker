@@ -19,6 +19,9 @@ func TestDemoSessionFakeCodexNativeLineage(t *testing.T) {
 	}
 	provider := `#!/usr/bin/env python3
 import json, os, sys
+if sys.argv[1:] == ["--version"]:
+    print("codex-cli 0.0.0-fake")
+    sys.exit(0)
 root = os.environ["TUSKER_FAKE_CODEX_ROOT"]
 argv = sys.argv[1:]
 with open(os.path.join(root, "argv.log"), "a") as f:
@@ -44,6 +47,9 @@ for event in ({"type":"thread.started","session_id":session},
 		t.Fatal(err)
 	}
 	t.Setenv("TUSKER_FAKE_CODEX_ROOT", root)
+	// Runners launch through a login shell; keep the user's profile from
+	// putting a real codex ahead of the fake.
+	t.Setenv("HOME", root)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	workspace := filepath.Join(root, "workspace")
 	if err := os.Mkdir(workspace, 0o755); err != nil {

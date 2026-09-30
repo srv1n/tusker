@@ -517,6 +517,9 @@ func installFakeCodexExec(t *testing.T, root string) {
 	scriptPath := filepath.Join(bin, "codex")
 	script := `#!/usr/bin/env python3
 import json, os, sys
+if sys.argv[1:] == ["--version"]:
+    print("codex-cli 0.0.0-fake")
+    sys.exit(0)
 with open("` + filepath.ToSlash(argsLog) + `", "a", encoding="utf-8") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
 session = "session-start"
@@ -542,6 +545,9 @@ for line in [
 	if err := os.Chmod(scriptPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Runners launch through a login shell; keep the user's profile from
+	// putting a real codex ahead of the fake.
+	t.Setenv("HOME", root)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
