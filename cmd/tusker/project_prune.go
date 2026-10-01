@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type projectPruneReport struct {
@@ -60,35 +60,30 @@ func pruneMissingRegisteredProjects(store *RuntimeStore, dryRun bool) (projectPr
 
 	missing := make([]RegisteredProject, 0)
 	for _, project := range projects {
-		isMissing, err := registeredProjectTrackerRootMissing(project)
-		if err != nil {
-			return report, err
-		}
-		if isMissing {
+		// A root that cannot be statted (a macOS privacy block) is not proof
+		// the project is gone, and must not stop the other registrations.
+		if isMissing, err := registeredProjectTrackerRootMissing(project); err == nil && isMissing {
 			missing = append(missing, project)
 		}
 	}
 	if len(missing) == 0 {
 		return report, nil
 	}
-	if !dryRun {
-		for _, project := range missing {
-			active, err := store.ListProjectNonTerminalRuns(project.ProjectID)
-			if err != nil {
-				return report, err
-			}
-			if blocking := projectRebindBlockingRuns(active); len(blocking) != 0 {
-				return report, projectRebindNonTerminalRunsError(project.ProjectID, blocking)
-			}
-			directives, err := store.ListActiveRunDirectives(project.ProjectID, time.Now().UTC())
-			if err != nil {
-				return report, err
-			}
-			if len(directives) != 0 {
-				return report, projectRebindActiveDirectivesError(project.ProjectID, directives)
-			}
+	// A tracker root that is gone can host no new work, so only a run with a
+	// live owner or process holds its registration. Leftover workspace paths
+	// and directives of finished runs do not, and one held project must not
+	// keep the rest of the registry dead.
+	removable := missing[:0]
+	for _, project := range missing {
+		live, err := missingProjectHasLiveRun(store, project.ProjectID)
+		if err != nil {
+			return report, err
+		}
+		if !live {
+			removable = append(removable, project)
 		}
 	}
+	missing = removable
 	if dryRun {
 		for _, project := range missing {
 			report.RemovedProjects = append(report.RemovedProjects, project.ProjectID)
@@ -214,4 +209,57 @@ func removeDanglingWorkspaceMount(mountPath, trackerRoot string, dryRun bool) (b
 		}
 	}
 	return true, nil
+}
+
+// sweepRegisteredProjects keeps the registry to projects that still exist:
+// a registration whose tracker root is gone is removed (re-run `tusker init`
+// to bring it back), and a load error that no longer reproduces is cleared.
+// It never enables a project or schedules work.
+func sweepRegisteredProjects(store *RuntimeStore) {
+	report, err := pruneMissingRegisteredProjects(store, false)
+	if err != nil {
+		log.Printf("project registry sweep: prune: %v", err)
+	} else if len(report.RemovedProjects) > 0 {
+		log.Printf("project registry sweep: removed=%s", strings.Join(report.RemovedProjects, ","))
+	}
+	if err := healRegisteredProjects(store); err != nil {
+		log.Printf("project registry sweep: heal: %v", err)
+	}
+}
+
+// healRegisteredProjects clears a recorded load error once the project loads
+// again. Disabled projects are never reloaded by the daemon, so without this a
+// transient failure (a repo reset mid-flight, a sandboxed read) sticks forever.
+func healRegisteredProjects(store *RuntimeStore) error {
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{LoadDisabled: true})
+	if err != nil {
+		return err
+	}
+	for _, item := range loaded {
+		if !item.Loadable() || item.Project.Health != projectHealthError {
+			continue
+		}
+		health := projectHealthHealthy
+		if !item.Project.Enabled {
+			health = projectHealthDisabled
+		}
+		if _, err := store.SetProjectHealth(item.Project.ProjectID, item.Project.VaultRoot, health, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func missingProjectHasLiveRun(store *RuntimeStore, projectID string) (bool, error) {
+	runs, err := store.ListProjectNonTerminalRuns(projectID)
+	if err != nil {
+		return false, err
+	}
+	for _, run := range runs {
+		if isDispatchingLeaseState(run.Status) || strings.TrimSpace(run.AttemptID) != "" ||
+			strings.TrimSpace(run.LeaseOwner) != "" || run.ProcessPID != 0 || run.ProcessPGID != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }

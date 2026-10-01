@@ -210,3 +210,58 @@ func TestRemoveDanglingWorkspaceMountRestatsTrackerRoot(t *testing.T) {
 	}
 	assertSymlinkTarget(t, mount, trackerRoot)
 }
+
+func TestSweepRegisteredProjectsRemovesDeadAndClearsStaleErrors(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
+	store, err := OpenRuntimeStore(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	staleVault := pickupV7TestVault(t)
+	writeDaemonServeWorkflow(t, staleVault, false, "")
+	brokenVault := filepath.Join(t.TempDir(), ".tusker")
+	if err := os.MkdirAll(brokenVault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goneVault := filepath.Join(t.TempDir(), "gone", ".tusker")
+	register := func(id, vault string) {
+		project := RegisteredProject{ProjectID: id, ProjectKey: id, Name: id, RepoRoot: filepath.Dir(vault), VaultRoot: vault, WorkflowPath: workflowPath(vault), Health: projectHealthError, LastError: "registered project tracker root is missing: " + vault}
+		if err := store.UpsertProject(project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	register("stale", staleVault)
+	register("broken", brokenVault)
+	register("gone", goneVault)
+	register("gone-busy", filepath.Join(t.TempDir(), "busy", ".tusker"))
+	if _, err := store.exec(`INSERT INTO runs (project_id, record_id, item_id, lease_state, workspace_path) VALUES (?, ?, ?, ?, ?)`, "gone", "r1", "t1", "retry_queued", "/tmp/leftover"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.exec(`INSERT INTO runs (project_id, record_id, item_id, lease_state, lease_owner) VALUES (?, ?, ?, ?, ?)`, "gone-busy", "r2", "t2", "retry_queued", "daemon-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	sweepRegisteredProjects(store)
+
+	projects, err := store.ListProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]RegisteredProject{}
+	for _, project := range projects {
+		byID[project.ProjectID] = project
+	}
+	if _, ok := byID["gone"]; ok {
+		t.Fatal("registration with a missing tracker root was kept")
+	}
+	if _, ok := byID["gone-busy"]; !ok {
+		t.Fatal("registration with a live run was removed")
+	}
+	assertEqual(t, projectHealthDisabled, byID["stale"].Health, "stale error cleared")
+	assertEqual(t, "", byID["stale"].LastError, "stale error text cleared")
+	assertEqual(t, false, byID["stale"].Enabled, "heal does not enable")
+	assertEqual(t, projectHealthError, byID["broken"].Health, "real load error kept")
+}

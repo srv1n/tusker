@@ -161,6 +161,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		go func() {
 			defer scratchSweeps.Done()
 			defer scratchSweeping.Store(false)
+			sweepRegisteredProjects(d.store)
 			sweepRegisteredScratch(d.store, now)
 		}()
 	}
