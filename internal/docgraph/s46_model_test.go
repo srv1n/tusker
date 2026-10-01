@@ -19,8 +19,8 @@ import (
 // successor link, owns no subject, and resolves to the current document.
 func TestS46ForwardingStubResolution(t *testing.T) {
 	root := t.TempDir()
-	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeDoc(t, root, "docs/system/proposals/new.md", "---\nsubject: new-home\nkind: proposal\nstatus: accepted\npart_of: overview\n---\n# New\n")
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeDoc(t, root, "docs/system/proposals/new.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: new-home\nkind: proposal\nstatus: accepted\npart_of: overview\n---\n# New\n")
 	writeDoc(t, root, ".tusker/specs/legacy.md", "---\nstatus: superseded\nsuperseded_by: new-home\n---\nSee [the new location](../../docs/system/proposals/new-home.md).\n")
 
 	issues, err := ValidateRepository(root)
@@ -63,8 +63,8 @@ func TestS46ForwardingStubResolution(t *testing.T) {
 // known generated corpus index and symlinked entries stay out.
 func TestS46AuthoredIndexVisibility(t *testing.T) {
 	root := t.TempDir()
-	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeDoc(t, root, "docs/system/domains/waves/INDEX.md", "---\nsubject: waves-index\npart_of: overview\n---\n# Waves index\n")
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeDoc(t, root, "docs/system/domains/waves/INDEX.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: waves-index\npart_of: overview\n---\n# Waves index\n")
 	writeDoc(t, root, "docs/system/INDEX.md", "<!-- tusker:docs-map:begin -->\n# Documentation index\n")
 	target := filepath.Join(root, filepath.FromSlash("docs/system/real.md"))
 	if err := os.Symlink(filepath.Join(root, "outside.md"), target); err != nil {
@@ -117,8 +117,8 @@ func TestS46AuthoredIndexVisibility(t *testing.T) {
 // migration diagnostic instead of a stale-map failure.
 func TestS46GeneratedFreshness(t *testing.T) {
 	root := t.TempDir()
-	writeDoc(t, root, "docs/system/00-overview.md", "---\ntitle: \"Overview\"\nsubject: overview\n---\n\n# Overview\n")
-	writeDoc(t, root, "docs/system/cli.md", "---\ntitle: \"CLI\"\nsubject: cli\npart_of: overview\n---\n\n# CLI\n")
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\ntitle: \"Overview\"\nsubject: overview\n---\n\n# Overview\n")
+	writeDoc(t, root, "docs/system/cli.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\ntitle: \"CLI\"\nsubject: cli\npart_of: overview\n---\n\n# CLI\n")
 	if _, _, err := LoadRepository(root); err != nil {
 		t.Fatalf("plain overview must load with generated outputs absent: %v", err)
 	}

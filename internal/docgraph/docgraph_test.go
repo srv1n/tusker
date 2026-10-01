@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseDocHeaders(t *testing.T) {
-	content := []byte("---\nsubject: orchestration\nkeywords: [daemon, workers]\npart_of: overview\ndescribes: [internal/docgraph, cmd/tusker/docs_cmd.go]\nupdates: [docs/system/00-overview.md]\nsources: [operator-notes]\nlast_verified: '2026-08-01'\n---\n\n# Orchestration\n")
+	content := []byte("---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: orchestration\nkeywords: [daemon, workers]\npart_of: overview\ndescribes: [internal/docgraph, cmd/tusker/docs_cmd.go]\nupdates: [docs/system/00-overview.md]\nsources: [operator-notes]\nlast_verified: '2026-08-01'\n---\n\n# Orchestration\n")
 	doc, err := ParseDocHeaders("docs/system/orchestration.md", content)
 	if err != nil {
 		t.Fatalf("ParseDocHeaders() error = %v", err)
@@ -29,9 +29,9 @@ func TestParseDocHeaders(t *testing.T) {
 
 func TestLoadRepositoryBuildsOneCorpusAcrossDocumentKinds(t *testing.T) {
 	root := t.TempDir()
-	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
-	writeDoc(t, root, ".tusker/specs/example.md", "---\nsubject: example-spec\nkeywords: [example]\npart_of: overview\n---\n# Example\n")
-	writeDoc(t, root, ".tusker/specs/decisions/example.md", "---\nsubject: example-decision\nkeywords: [example]\npart_of: example-spec\ndecides_for: .tusker/specs/example.md\n---\n# Decision\n")
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
+	writeDoc(t, root, ".tusker/specs/example.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: example-spec\nkeywords: [example]\npart_of: overview\n---\n# Example\n")
+	writeDoc(t, root, ".tusker/specs/decisions/example.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: example-decision\nkeywords: [example]\npart_of: example-spec\ndecides_for: .tusker/specs/example.md\n---\n# Decision\n")
 
 	corpus, issues, err := LoadRepository(root)
 	if err != nil {
@@ -51,13 +51,13 @@ func TestLoadRepositoryBuildsOneCorpusAcrossDocumentKinds(t *testing.T) {
 
 func TestHeaderLintNamesDefects(t *testing.T) {
 	root := t.TempDir()
-	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
-	writeDoc(t, root, "docs/system/duplicate.md", "---\nsubject: overview\nkeywords: [duplicate]\npart_of: overview\n---\n# Duplicate\n")
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
+	writeDoc(t, root, "docs/system/duplicate.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nkeywords: [duplicate]\npart_of: overview\n---\n# Duplicate\n")
 	writeDoc(t, root, "docs/system/missing.md", "---\ntitle: Missing\n---\n# Missing\n")
 	flagged := []string{"guide-v2.md", "notes_new.md", "guide-final.md", "report (1).md"}
 	notFlagged := []string{"part-1.md", "step-02.md"}
 	for _, filename := range append(append([]string{}, flagged...), notFlagged...) {
-		writeDoc(t, root, filepath.Join("docs/system", filename), "---\nsubject: "+filename+"\npart_of: overview\n---\n# Guide\n")
+		writeDoc(t, root, filepath.Join("docs/system", filename), "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: "+filename+"\npart_of: overview\n---\n# Guide\n")
 	}
 
 	issues, err := ValidateRepository(root)
@@ -77,10 +77,10 @@ func TestHeaderLintNamesDefects(t *testing.T) {
 
 func TestDecisionLogRequiresDecidesFor(t *testing.T) {
 	root := t.TempDir()
-	writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
-	writeDoc(t, root, ".tusker/specs/example.md", "---\nsubject: example-spec\npart_of: overview\n---\n# Example\n")
-	writeDoc(t, root, ".tusker/specs/decisions/orphan.md", "---\nsubject: orphan-decision\npart_of: example-spec\n---\n# Decision\n")
-	writeDoc(t, root, ".tusker/specs/decisions/linked.md", "---\nsubject: linked-decision\npart_of: example-spec\ndecides_for: .tusker/specs/example.md\n---\n# Decision\n")
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
+	writeDoc(t, root, ".tusker/specs/example.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: example-spec\npart_of: overview\n---\n# Example\n")
+	writeDoc(t, root, ".tusker/specs/decisions/orphan.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: orphan-decision\npart_of: example-spec\n---\n# Decision\n")
+	writeDoc(t, root, ".tusker/specs/decisions/linked.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: linked-decision\npart_of: example-spec\ndecides_for: .tusker/specs/example.md\n---\n# Decision\n")
 
 	issues, err := ValidateRepository(root)
 	if err != nil {
@@ -99,13 +99,13 @@ func TestTombstoneSuccessorRequired(t *testing.T) {
 	}{
 		{
 			name:    "missing successor",
-			body:    "---\nsubject: old-guide\nkeywords: [guide]\npart_of: overview\nstatus: superseded\n---\nUse the new guide.\n",
+			body:    "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: old-guide\nkeywords: [guide]\npart_of: overview\nstatus: superseded\n---\nUse the new guide.\n",
 			code:    "DOC_TOMBSTONE_SUCCESSOR_MISSING",
 			message: "must name its successor",
 		},
 		{
 			name:    "unknown successor",
-			body:    "---\nsubject: old-guide\nkeywords: [guide]\npart_of: overview\nstatus: superseded\nsuperseded_by: new-guide\n---\nUse the new guide.\n",
+			body:    "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: old-guide\nkeywords: [guide]\npart_of: overview\nstatus: superseded\nsuperseded_by: new-guide\n---\nUse the new guide.\n",
 			code:    "DOC_TOMBSTONE_SUCCESSOR_NOT_FOUND",
 			message: "subject does not exist",
 		},
@@ -113,7 +113,7 @@ func TestTombstoneSuccessorRequired(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeDoc(t, root, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
+			writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
 			writeDoc(t, root, "docs/system/old-guide.md", tc.body)
 			issues, err := ValidateRepository(root)
 			if err != nil {

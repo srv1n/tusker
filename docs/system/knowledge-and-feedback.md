@@ -40,6 +40,9 @@ governing spec.
 
 Search includes `read_when` metadata. Results expose both `read_when` and
 `skip_when` so readers can choose the right page without opening every body.
+Every managed document except a forwarding stub must carry both lines;
+`tusker docs check` fails without them and `tusker docs new` requires
+`--read-when` and `--skip-when`.
 Skip guidance does not count as a positive search match.
 
 Search resolves superseded subjects forward and reports the historical subject

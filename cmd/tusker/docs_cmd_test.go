@@ -29,10 +29,10 @@ func TestDocsNewRefusesDuplicateSubject(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/orchestration.md", "---\nsubject: orchestration\nkeywords: [worktree]\npart_of: overview\n---\n# Orchestration\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nkeywords: [system]\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/orchestration.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: orchestration\nkeywords: [worktree]\npart_of: overview\n---\n# Orchestration\n")
 
-	args := Args{"vault": vault, "_pos": "orchestration", "_pos0": "orchestration"}
+	args := Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "orchestration", "_pos0": "orchestration"}
 	err := docsNewCmd(args)
 	if err == nil {
 		t.Fatalf("docs new accepted an existing subject")
@@ -48,7 +48,7 @@ func TestDocsNewRefusesDuplicateSubject(t *testing.T) {
 		t.Fatalf("refusal message does not point at the existing file: %q", tuskerErr.Message)
 	}
 
-	args = Args{"vault": vault, "_pos": "worktree-lifecycle", "_pos0": "worktree-lifecycle"}
+	args = Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "worktree-lifecycle", "_pos0": "worktree-lifecycle"}
 	if err := docsNewCmd(args); err != nil {
 		t.Fatalf("docs new refused a fresh subject: %v", err)
 	}
@@ -70,11 +70,11 @@ func TestDocsNewUsesManagedRootAndIgnoresUnrelatedDebt(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: project-guide\nstatus: canonical\n---\n# Project guide\n")
-	writeDocsFixture(t, repoRoot, "docs/system/broken.md", "---\nsubject: broken\npart_of: project-guide\nstatus: canonical\n---\n# Broken\n\nSee [[missing]].\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: project-guide\nstatus: canonical\n---\n# Project guide\n")
+	writeDocsFixture(t, repoRoot, "docs/system/broken.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: broken\npart_of: project-guide\nstatus: canonical\n---\n# Broken\n\nSee [[missing]].\n")
 
 	output := captureStdout(t, func() {
-		if err := docsNewCmd(Args{"vault": vault, "_pos": "sample", "kind": "spec", "print": "true", "json": "true"}); err != nil {
+		if err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "sample", "kind": "spec", "print": "true", "json": "true"}); err != nil {
 			t.Fatalf("docs new: %v", err)
 		}
 	})
@@ -89,7 +89,7 @@ func TestDocsNewUsesManagedRootAndIgnoresUnrelatedDebt(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoRoot, "docs/system/proposals/sample.md")); !os.IsNotExist(err) {
 		t.Fatalf("--print mutated the repository: %v", err)
 	}
-	if err := docsNewCmd(Args{"vault": vault, "_pos": "sample", "kind": "spec", "quiet": "true"}); err != nil {
+	if err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "sample", "kind": "spec", "quiet": "true"}); err != nil {
 		t.Fatalf("write locally valid scaffold: %v", err)
 	}
 	path := filepath.Join(repoRoot, "docs/system/proposals/sample.md")
@@ -101,11 +101,11 @@ func TestDocsNewUsesManagedRootAndIgnoresUnrelatedDebt(t *testing.T) {
 		t.Fatal(err)
 	}
 	captureStdout(t, func() {
-		if err := docsCheckCmd(Args{"vault": vault, "_pos": "docs/system/proposals/sample.md", "json": "true"}); err == nil {
+		if err := docsCheckCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "docs/system/proposals/sample.md", "json": "true"}); err == nil {
 			t.Fatal("proper validation gate accepted the newly introduced dangling link")
 		}
 	})
-	if err := docsCheckCmd(Args{"vault": vault, "_pos": "docs/system/broken.md", "quiet": "true"}); err == nil {
+	if err := docsCheckCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "docs/system/broken.md", "quiet": "true"}); err == nil {
 		t.Fatal("proper validation gate accepted the pre-existing dangling link")
 	}
 }
@@ -116,7 +116,7 @@ func TestDocsNewExplainsMissingManagedRoot(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := docsNewCmd(Args{"vault": vault, "_pos": "sample", "kind": "spec", "print": "true"})
+	err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "sample", "kind": "spec", "print": "true"})
 	if err == nil || !strings.Contains(err.Error(), "docs/system/00-overview.md must declare a subject") {
 		t.Fatalf("missing-root error = %v", err)
 	}
@@ -124,7 +124,7 @@ func TestDocsNewExplainsMissingManagedRoot(t *testing.T) {
 
 func TestDocsNewRefusesSymlinkedRootParentAndLeaf(t *testing.T) {
 	newArgs := func(vault string) Args {
-		return Args{"vault": vault, "_pos": "new-doc", "_pos0": "new-doc"}
+		return Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "new-doc", "_pos0": "new-doc"}
 	}
 	t.Run("root", func(t *testing.T) {
 		realRoot := t.TempDir()
@@ -182,8 +182,8 @@ func TestDocsVerifyAndDocTouchWaiverParsing(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\nlast_verified: '2026-01-01'\n---\n# CLI\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: cli\npart_of: overview\nlast_verified: '2026-01-01'\n---\n# CLI\n")
 	runDocsGit(t, repoRoot, "init", "-b", "main")
 	runDocsGit(t, repoRoot, "config", "user.email", "test@example.com")
 	runDocsGit(t, repoRoot, "config", "user.name", "Test")
@@ -191,7 +191,7 @@ func TestDocsVerifyAndDocTouchWaiverParsing(t *testing.T) {
 	runDocsGit(t, repoRoot, "commit", "-m", "seed")
 	expectedDate := time.Now().Local().Format("2006-01-02")
 	expectedCommit := strings.TrimSpace(docsGitOutput(t, repoRoot, "rev-parse", "HEAD"))
-	if err := docsVerifyCmd(Args{"vault": vault, "_pos": "cli"}); err != nil {
+	if err := docsVerifyCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "cli"}); err != nil {
 		t.Fatalf("docs verify: %v", err)
 	}
 	updated, err := os.ReadFile(filepath.Join(repoRoot, "docs/system/cli.md"))
@@ -223,14 +223,14 @@ func TestDocsAdoptDryRunAndLegacyApplyAliasesNeverWrite(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
 	writeDocsFixture(t, repoRoot, "docs/legacy.md", "# Legacy\n\nKeep this source byte-for-byte.\n")
 	source := filepath.Join(repoRoot, "docs/legacy.md")
 	before, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := docsAdoptCmd(Args{"vault": vault, "dry-run": "true", "approve": "true"}); err != nil {
+	if err := docsAdoptCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "dry-run": "true", "approve": "true"}); err != nil {
 		t.Fatalf("approve dry-run: %v", err)
 	}
 	if after, readErr := os.ReadFile(source); readErr != nil || string(after) != string(before) {
@@ -241,7 +241,7 @@ func TestDocsAdoptDryRunAndLegacyApplyAliasesNeverWrite(t *testing.T) {
 	}
 	for _, alias := range []string{"yes", "apply"} {
 		for _, value := range []string{"true", "false"} {
-			if err := docsAdoptCmd(Args{"vault": vault, alias: value}); err == nil || !strings.Contains(err.Error(), "--approve only") {
+			if err := docsAdoptCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, alias: value}); err == nil || !strings.Contains(err.Error(), "--approve only") {
 				t.Fatalf("--%s was accepted as an apply alias: %v", alias, err)
 			}
 		}
@@ -254,8 +254,8 @@ func TestDocTouchWarningIsNonBlocking(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
 	writeDocsFixture(t, repoRoot, "pkg/code.go", "package pkg\n")
 	runDocsGit(t, repoRoot, "init", "-b", "main")
 	runDocsGit(t, repoRoot, "config", "user.email", "test@example.com")
@@ -309,8 +309,8 @@ func TestDocTouchBlockFailsClosedWithoutRangeAuthority(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
 	if err := os.WriteFile(filepath.Join(vault, "config.yaml"), []byte("docs:\n  touch_rule: block\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -326,8 +326,8 @@ func TestDocTouchBlockRequiresDocEditOrExplicitWaiver(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
 	writeDocsFixture(t, repoRoot, "pkg/code.go", "package pkg\n")
 	runDocsGit(t, repoRoot, "init", "-b", "main")
 	runDocsGit(t, repoRoot, "config", "user.email", "test@example.com")
@@ -351,7 +351,7 @@ func TestDocTouchBlockRequiresDocEditOrExplicitWaiver(t *testing.T) {
 	if err := v7DocTouchCheck(vault, waived); err != nil {
 		t.Fatalf("explicit doc-touch waiver should satisfy block mode: %v", err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n\nUpdated behavior.\n")
+	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n\nUpdated behavior.\n")
 	runDocsGit(t, repoRoot, "add", "docs/system/cli.md")
 	runDocsGit(t, repoRoot, "commit", "-m", "update docs")
 	head = strings.TrimSpace(docsGitOutput(t, repoRoot, "rev-parse", "HEAD"))
@@ -367,8 +367,8 @@ func TestDocTouchUnclaimedPathsStayNonBlockingAndDocsStatusReportsGap(t *testing
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/cli.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: cli\npart_of: overview\ndescribes: [pkg]\n---\n# CLI\n")
 	writeDocsFixture(t, repoRoot, "pkg/code.go", "package pkg\n")
 	writeDocsFixture(t, repoRoot, "internal/code.go", "package internal\n")
 	runDocsGit(t, repoRoot, "init", "-b", "main")
@@ -388,7 +388,7 @@ func TestDocTouchUnclaimedPathsStayNonBlockingAndDocsStatusReportsGap(t *testing
 		t.Fatalf("unclaimed code path must not block doc-touch close: %v", err)
 	}
 	output := captureStdout(t, func() {
-		if err := docsStatusCmd(Args{"vault": vault, "json": "true"}); err != nil {
+		if err := docsStatusCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "json": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -409,7 +409,7 @@ func TestDocTouchChangedPathsUsesRecordedBaseRange(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
 	writeDocsFixture(t, repoRoot, "pkg/code.go", "package pkg\n")
 	runDocsGit(t, repoRoot, "init", "-b", "main")
 	runDocsGit(t, repoRoot, "config", "user.email", "test@example.com")
@@ -444,4 +444,17 @@ func docsGitOutput(t *testing.T, root string, args ...string) string {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return string(output)
+}
+
+func TestDocsNewRequiresTriageLines(t *testing.T) {
+	for _, args := range []Args{
+		{"_pos": "guide"},
+		{"_pos": "guide", "read-when": "Changing guides."},
+		{"_pos": "guide", "read-when": "Changing guides.", "skip-when": "  "},
+	} {
+		var tuskerErr *TuskerError
+		if err := docsNewCmd(args); !errors.As(err, &tuskerErr) || tuskerErr.Code != errorMissingArg {
+			t.Fatalf("docsNewCmd(%v) = %v, want %s", args, err, errorMissingArg)
+		}
+	}
 }

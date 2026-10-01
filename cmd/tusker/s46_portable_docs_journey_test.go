@@ -25,13 +25,13 @@ func TestS46PortableDocsJourney(t *testing.T) {
 	t.Run("fresh journey reaches CLI packet and API consumers", func(t *testing.T) {
 		repo := t.TempDir()
 		vault := filepath.Join(repo, ".tusker")
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Journey policy.", "v7": "true"}, newV7Epic)
-		writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
+		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true"}, bootstrap)
+		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Journey policy.", "v7": "true"}, newV7Epic)
+		writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
 
 		newDoc := func(subject, kind, domain string, extra Args) string {
 			t.Helper()
-			args := Args{"vault": vault, "_pos": subject, "_pos0": subject, "json": "true"}
+			args := Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": subject, "_pos0": subject, "json": "true"}
 			if kind != "" {
 				args["kind"] = kind
 			}
@@ -56,7 +56,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 			return created.Path
 		}
 
-		if path := newDoc("billing-overview", "", "billing", Args{"index": "true"}); path != "docs/system/domains/billing/00-index.md" {
+		if path := newDoc("billing-overview", "", "billing", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "index": "true"}); path != "docs/system/domains/billing/00-index.md" {
 			t.Fatalf("domain index path = %q", path)
 		}
 		if path := newDoc("invoicing", "", "billing", nil); path != "docs/system/domains/billing/invoicing.md" {
@@ -65,7 +65,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 		if path := newDoc("checkout-flow", "proposal", "", nil); path != "docs/system/proposals/checkout-flow.md" {
 			t.Fatalf("proposal path = %q", path)
 		}
-		if path := newDoc("record-choice", "decision", "", Args{"decides-for": "checkout-flow"}); path != "docs/system/decisions/record-choice.md" {
+		if path := newDoc("record-choice", "decision", "", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "decides-for": "checkout-flow"}); path != "docs/system/decisions/record-choice.md" {
 			t.Fatalf("decision path = %q", path)
 		}
 
@@ -78,7 +78,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 
 		// A task with governing refs resolves both subjects and carries them
 		// into the agent packet at their portable paths.
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Checkout rollout",
+		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true", "epic": "APP", "title": "Checkout rollout",
 			"domains": "billing", "spec-refs": "checkout-flow,record-choice", "owned-paths": "src"}, newV7Task)
 		task, err := resolveV7Note(vault, "APP-T-0001", "task")
 		if err != nil {
@@ -90,7 +90,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 			}
 		}
 		packet := captureStdout(t, func() {
-			if err := packetV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "for": "agent", "force": "true"}); err != nil {
+			if err := packetV7Cmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "id": "APP-T-0001", "for": "agent", "force": "true"}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -102,7 +102,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 
 		// CLI search, read, browse, and backlinks agree on the same corpus.
 		found := captureStdout(t, func() {
-			if err := docsFindCmd(Args{"vault": vault, "_pos": "checkout", "json": "true"}); err != nil {
+			if err := docsFindCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "checkout", "json": "true"}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -110,7 +110,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 			t.Fatalf("docs find missed the proposal:\n%s", found)
 		}
 		read := captureStdout(t, func() {
-			if err := docsReadCmd(Args{"vault": vault, "_pos": "checkout-flow", "json": "true"}); err != nil {
+			if err := docsReadCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "checkout-flow", "json": "true"}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -118,7 +118,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 			t.Fatalf("docs read missed the linked decision reference:\n%s", read)
 		}
 		browsed := captureStdout(t, func() {
-			if err := docsBrowseCmd(Args{"vault": vault, "_pos": "docs/system/proposals", "json": "true"}); err != nil {
+			if err := docsBrowseCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "docs/system/proposals", "json": "true"}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -126,7 +126,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 			t.Fatalf("docs browse missed the proposal:\n%s", browsed)
 		}
 		backlinks := captureStdout(t, func() {
-			if err := docsBacklinksCmd(Args{"vault": vault, "_pos": "checkout-flow", "json": "true"}); err != nil {
+			if err := docsBacklinksCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "checkout-flow", "json": "true"}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -135,7 +135,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 		}
 
 		checked := captureStdout(t, func() {
-			if err := docsCheckCmd(Args{"vault": vault, "json": "true"}); err != nil {
+			if err := docsCheckCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "json": "true"}); err != nil {
 				t.Fatalf("docs check: %v", err)
 			}
 		})
@@ -146,7 +146,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 		// Regenerate maps once; the packet consumer above already ran, and
 		// the API consumer below reads the regenerated graph location.
 		mapped := captureStdout(t, func() {
-			if err := docsMapCmd(Args{"vault": vault, "json": "true"}); err != nil {
+			if err := docsMapCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "json": "true"}); err != nil {
 				t.Fatalf("docs map: %v", err)
 			}
 		})
@@ -196,13 +196,13 @@ func TestS46PortableDocsJourney(t *testing.T) {
 
 	t.Run("migrated journey preserves data across stale and interrupted apply", func(t *testing.T) {
 		repo, vault := s46MigrationRepo(t)
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Migration policy.", "v7": "true"}, newV7Epic)
+		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true"}, bootstrap)
+		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Migration policy.", "v7": "true"}, newV7Epic)
 
 		// Preview is read-only and fingerprinted before any write.
 		before := s46MigrationState(t, repo)
 		preview := captureStdout(t, func() {
-			if err := docsAdoptCmd(Args{"vault": vault, "migration": "true", "json": "true"}); err != nil {
+			if err := docsAdoptCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "migration": "true", "json": "true"}); err != nil {
 				t.Fatalf("migration preview: %v", err)
 			}
 		})
@@ -233,17 +233,17 @@ func TestS46PortableDocsJourney(t *testing.T) {
 			t.Fatalf("legacy reference does not reopen at the portable target: %#v ok=%v", current, ok)
 		}
 		legacy := captureStdout(t, func() {
-			if err := docsReadCmd(Args{"vault": vault, "_pos": ".tusker/specs/flow-plan.md", "json": "true"}); err != nil {
+			if err := docsReadCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": ".tusker/specs/flow-plan.md", "json": "true"}); err != nil {
 				t.Fatalf("docs read legacy path: %v", err)
 			}
 		})
 		if !strings.Contains(legacy, "docs/system/proposals/flow-plan.md") || !strings.Contains(legacy, "flow-details.md") {
 			t.Fatalf("legacy read missed the forward or repaired link:\n%s", legacy)
 		}
-		mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Migrated rollout",
+		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true", "epic": "APP", "title": "Migrated rollout",
 			"spec-refs": "flow-plan", "owned-paths": "src"}, newV7Task)
 		packet := captureStdout(t, func() {
-			if err := packetV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "for": "agent", "force": "true"}); err != nil {
+			if err := packetV7Cmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "id": "APP-T-0001", "for": "agent", "force": "true"}); err != nil {
 				t.Fatal(err)
 			}
 		})

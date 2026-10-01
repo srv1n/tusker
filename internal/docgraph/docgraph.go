@@ -538,6 +538,16 @@ func validateHeader(doc Document) []Issue {
 	if !stub && !isRoot(doc) && strings.TrimSpace(doc.PartOf) == "" {
 		issues = append(issues, Issue{Code: "DOC_REQUIRED_FIELD_MISSING", Path: doc.Path, Message: `missing required header field "part_of"`})
 	}
+	// read_when and skip_when are the one-line triage that docs find and
+	// browse show agents before they open a file; a document without them
+	// forces a full read to rule it out.
+	if !stub {
+		for _, key := range []string{"read_when", "skip_when"} {
+			if strings.TrimSpace(scalar(doc.Raw[key])) == "" {
+				issues = append(issues, Issue{Code: "DOC_REQUIRED_FIELD_MISSING", Path: doc.Path, Message: fmt.Sprintf("missing required header field %q", key)})
+			}
+		}
+	}
 	if doc.Kind == KindDecision && strings.TrimSpace(doc.DecidesFor) == "" {
 		issues = append(issues, Issue{Code: "DOC_REQUIRED_FIELD_MISSING", Path: doc.Path, Message: `missing required header field "decides_for"`})
 	}

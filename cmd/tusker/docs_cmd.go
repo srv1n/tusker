@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -363,6 +364,13 @@ func docsNewCmd(args Args) error {
 	if domain != "" && !docsDomainPattern.MatchString(domain) {
 		return tuskerError(errorInvalidArg, `docs new --domain must be a lowercase slug like "billing", got: `+domain)
 	}
+	// Every managed document carries one-line triage that docs find and
+	// browse show agents before they open it, so creation requires both.
+	readWhen := strings.Join(strings.Fields(args.String("read-when")), " ")
+	skipWhen := strings.Join(strings.Fields(args.String("skip-when")), " ")
+	if readWhen == "" || skipWhen == "" {
+		return tuskerError(errorMissingArg, `docs new needs --read-when and --skip-when, one line each, for example: --read-when "Changing worktree creation or cleanup." --skip-when "You need task lifecycle rather than worktree mechanics."`)
+	}
 	wantIndex := args.Bool("index")
 	if wantIndex && (kind != docgraph.KindDoc || domain == "") {
 		return tuskerError(errorInvalidArg, "docs new --index scaffolds a domain reading index: use it with --kind doc (or no --kind) and --domain <name>")
@@ -431,7 +439,7 @@ func docsNewCmd(args Args) error {
 		}
 		return tuskerError(errorAlreadyExists, "a file already exists at "+relative+"; pick a different subject or update that file")
 	}
-	scaffold := docsScaffoldPortable(subject, kind, parent, decidesFor)
+	scaffold := docsScaffoldPortable(subject, kind, parent, decidesFor, readWhen, skipWhen)
 	candidate, parseErr := docgraph.ParseDocHeaders(relative, []byte(scaffold))
 	if parseErr != nil {
 		return tuskerError(errorInvalidField, "generated document scaffold is invalid: "+parseErr.Error(), withPath(relative))
@@ -485,7 +493,7 @@ func docsSubjectSlug(subject string) string {
 // docsScaffoldPortable renders a creation scaffold with an explicit portable
 // kind and kind-specific lifecycle. Creation never claims code conformance:
 // new documents start unverified and new proposals start proposed.
-func docsScaffoldPortable(subject string, kind docgraph.Kind, parent, decidesFor string) string {
+func docsScaffoldPortable(subject string, kind docgraph.Kind, parent, decidesFor, readWhen, skipWhen string) string {
 	created := time.Now().Local().Format("2006-01-02")
 	var builder strings.Builder
 	builder.WriteString("---\n")
@@ -506,8 +514,8 @@ func docsScaffoldPortable(subject string, kind docgraph.Kind, parent, decidesFor
 	builder.WriteString("code_conformance: unverified # unverified, matches, drift, or not_applicable; matches needs last_verified scope and stamp\n")
 	fmt.Fprintf(&builder, "created: %s      # date this document was first written\n", created)
 	builder.WriteString("last_verified:          # date @ commit this document was last checked against code\n")
-	builder.WriteString("read_when: \"\"           # one line: when a reader should open this\n")
-	builder.WriteString("skip_when: \"\"           # one line: when a reader should look elsewhere\n")
+	fmt.Fprintf(&builder, "read_when: %s # one line: when a reader should open this\n", strconv.Quote(readWhen))
+	fmt.Fprintf(&builder, "skip_when: %s # one line: when a reader should look elsewhere\n", strconv.Quote(skipWhen))
 	if kind == docgraph.KindProposal {
 		builder.WriteString("updates: []             # current documents this change will update when implemented\n")
 		builder.WriteString("sources: []             # links or records supporting this contract\n")

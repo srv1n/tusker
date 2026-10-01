@@ -1187,8 +1187,12 @@ func docsAdoptMaybeStubLegacySource(repoRoot string, proposal docsAdoptProposal,
 // preserves the source body (with co-migrated links repaired), parent,
 // decision target and keywords, and records the legacy path in sources.
 func docsAdoptPromotedDoc(proposal docsAdoptProposal, source []byte, kind docgraph.Kind, lifecycle, conformance string, moves map[string]string) string {
-	partOf, decidesFor, keywords := "", "", []string{}
+	partOf, decidesFor, readWhen, skipWhen, keywords := "", "", "", "", []string{}
 	if data, _, err := parseFrontmatter(string(source)); err == nil && data != nil {
+		// Carry the source's triage lines; without them the adopted document
+		// fails docs check until someone writes them.
+		readWhen = strings.TrimSpace(stringField(data, "read_when"))
+		skipWhen = strings.TrimSpace(stringField(data, "skip_when"))
 		partOf = strings.TrimSpace(fmt.Sprint(data["part_of"]))
 		decidesFor = strings.TrimSpace(fmt.Sprint(data["decides_for"]))
 		if partOf == "<nil>" {
@@ -1237,7 +1241,11 @@ func docsAdoptPromotedDoc(proposal docsAdoptProposal, source []byte, kind docgra
 	b.WriteString(conformance)
 	b.WriteString("\ncreated: ")
 	b.WriteString(created)
-	b.WriteString("\nlast_verified:\nread_when: \"\"\nskip_when: \"\"\n")
+	b.WriteString("\nlast_verified:\nread_when: ")
+	b.WriteString(strconv.Quote(readWhen))
+	b.WriteString("\nskip_when: ")
+	b.WriteString(strconv.Quote(skipWhen))
+	b.WriteString("\n")
 	if kind == docgraph.KindProposal {
 		b.WriteString("updates: []\ndecisions_locked: false\n")
 	}

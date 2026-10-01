@@ -149,6 +149,8 @@ title: Demo parallel waves fixture
 # this governing spec, which parents to itself so ` + "`tusker docs check`" + ` validates.
 part_of: demo-parallel-waves
 status: canonical
+read_when: "Running or changing the disposable repeatable-work demo."
+skip_when: "Working on real project documentation."
 ---
 
 # Demo parallel waves fixture

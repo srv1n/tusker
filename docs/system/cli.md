@@ -140,7 +140,7 @@ assertion or partial wave, 5 wait timeout, 1 internal error.
 
 | Need | Command |
 | --- | --- |
-| Discover installed models and reasoning choices | `tusker models catalog --json` |
+| Discover installed models and reasoning choices | `tusker runner catalog --json` |
 | Read effective mappings with only referenced profiles | `tusker models show --json --compact` |
 | Read every profile for administration | `tusker models show --json` |
 | Create or update a profile (global config only) | `tusker models profile-set [--scope global] --name <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> [--if-revision <sha256>]` |
@@ -228,11 +228,14 @@ routine routing so unused profiles do not consume context.
 - Search returns a bounded shortlist with `read_when` and `skip_when` guidance.
   JSON also reports `total_matches` and `truncated`; open the returned subject
   or stable path to read the full document.
-- `tusker docs new <subject> --kind doc|proposal|decision` creates a document
-  in the portable tree: a `doc` without `--domain` defaults to the system
+- `tusker docs new <subject> --read-when <line> --skip-when <line> --kind
+  doc|proposal|decision` creates a document in the portable tree. Both triage
+  lines are required: a `doc` without `--domain` defaults to the system
   root, `--domain <name>` targets `docs/system/domains/<name>/`, proposals go
   to `docs/system/proposals/`, and decisions to `docs/system/decisions/`.
-  `--kind spec` stays accepted as the spelling for proposal.
+  `--kind spec` stays accepted as the spelling for proposal. `tusker docs
+  check` reports any managed document other than a forwarding stub that lacks
+  `read_when` or `skip_when` as `DOC_REQUIRED_FIELD_MISSING`.
 - `.tusker/` holds tracker state and thin pointers only; product decisions
   move to documentation while work and lifecycle decisions stay with the
   tracker.

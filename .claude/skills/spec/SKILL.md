@@ -10,7 +10,8 @@ conversation — it is three artifacts in the repo, and the session is not done
 until all three exist.
 
 Before reading or writing any doc/spec, run `tusker docs find <query>`; create
-canonical docs only through `tusker docs new`.
+canonical docs only through `tusker docs new`, which requires one-line
+`--read-when` and `--skip-when` triage.
 
 ## The grill protocol (how to run the discussion)
 

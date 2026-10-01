@@ -10,9 +10,9 @@ import (
 func TestS46DocumentRouting(t *testing.T) {
 	t.Run("portable roots share one corpus", func(t *testing.T) {
 		root := t.TempDir()
-		writeDoc(t, root, "docs/system/00-overview.md", "---\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
-		writeDoc(t, root, "docs/system/domains/billing/00-index.md", "---\nkind: doc\nsubject: billing-index\npart_of: overview\nstatus: current\n---\n# Billing\n")
-		writeDoc(t, root, ".tusker/specs/change.md", "---\nkind: proposal\nsubject: change\npart_of: overview\nstatus: proposed\n---\n# Change\n")
+		writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
+		writeDoc(t, root, "docs/system/domains/billing/00-index.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: billing-index\npart_of: overview\nstatus: current\n---\n# Billing\n")
+		writeDoc(t, root, ".tusker/specs/change.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: proposal\nsubject: change\npart_of: overview\nstatus: proposed\n---\n# Change\n")
 		corpus, issues, err := LoadRepository(root)
 		if err != nil {
 			t.Fatalf("LoadRepository() error = %v", err)
@@ -27,10 +27,10 @@ func TestS46DocumentRouting(t *testing.T) {
 
 	t.Run("authored indexes stay visible while generated output is excluded", func(t *testing.T) {
 		root := t.TempDir()
-		writeDoc(t, root, "docs/system/00-overview.md", "---\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
-		writeDoc(t, root, "docs/system/domains/billing/00-index.md", "---\nkind: doc\nsubject: billing-index\npart_of: overview\nstatus: current\n---\n# Billing\n")
-		writeDoc(t, root, "docs/system/domains/billing/INDEX.md", "---\nkind: doc\nsubject: billing-nested-index\npart_of: billing-index\nstatus: current\n---\n# Nested\n")
-		writeDoc(t, root, "docs/system/INDEX.md", "---\nkind: doc\nsubject: legacy-generated\npart_of: overview\nstatus: current\n---\n# Generated\n")
+		writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
+		writeDoc(t, root, "docs/system/domains/billing/00-index.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: billing-index\npart_of: overview\nstatus: current\n---\n# Billing\n")
+		writeDoc(t, root, "docs/system/domains/billing/INDEX.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: billing-nested-index\npart_of: billing-index\nstatus: current\n---\n# Nested\n")
+		writeDoc(t, root, "docs/system/INDEX.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: legacy-generated\npart_of: overview\nstatus: current\n---\n# Generated\n")
 		corpus, _, err := LoadRepository(root)
 		if err != nil {
 			t.Fatalf("LoadRepository() error = %v", err)
@@ -63,9 +63,9 @@ func TestS46DocumentRouting(t *testing.T) {
 
 	t.Run("aliases resolve without duplicate ownership", func(t *testing.T) {
 		root := t.TempDir()
-		writeDoc(t, root, "docs/system/00-overview.md", "---\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
-		writeDoc(t, root, "docs/system/guide.md", "---\nkind: doc\nsubject: guide\npart_of: overview\nstatus: current\naliases: [how-to]\n---\nSee [the change](change) and [[how-to]].\n")
-		writeDoc(t, root, ".tusker/specs/change.md", "---\nkind: proposal\nsubject: change\npart_of: overview\nstatus: proposed\n---\n# Change\n")
+		writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
+		writeDoc(t, root, "docs/system/guide.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: guide\npart_of: overview\nstatus: current\naliases: [how-to]\n---\nSee [the change](change) and [[how-to]].\n")
+		writeDoc(t, root, ".tusker/specs/change.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: proposal\nsubject: change\npart_of: overview\nstatus: proposed\n---\n# Change\n")
 		corpus, _, err := LoadRepository(root)
 		if err != nil {
 			t.Fatalf("LoadRepository() error = %v", err)
@@ -80,8 +80,8 @@ func TestS46DocumentRouting(t *testing.T) {
 
 	t.Run("escapes and duplicates are rejected", func(t *testing.T) {
 		root := t.TempDir()
-		writeDoc(t, root, "docs/system/00-overview.md", "---\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
-		writeDoc(t, root, "docs/system/guide.md", "---\nkind: doc\nsubject: guide\npart_of: overview\nstatus: current\n---\n# Guide\n")
+		writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
+		writeDoc(t, root, "docs/system/guide.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: guide\npart_of: overview\nstatus: current\n---\n# Guide\n")
 		escapeCorpus, _, err := LoadRepository(root)
 		if err != nil {
 			t.Fatalf("LoadRepository() error = %v", err)
@@ -94,8 +94,8 @@ func TestS46DocumentRouting(t *testing.T) {
 				t.Fatalf("lenient resolution must refuse escape/external reference %q", escaped)
 			}
 		}
-		writeDoc(t, root, "docs/system/a.md", "---\nkind: doc\nsubject: twin\npart_of: overview\nstatus: current\n---\n# A\n")
-		writeDoc(t, root, "docs/system/b.md", "---\nkind: doc\nsubject: twin\npart_of: overview\nstatus: current\n---\n# B\n")
+		writeDoc(t, root, "docs/system/a.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: twin\npart_of: overview\nstatus: current\n---\n# A\n")
+		writeDoc(t, root, "docs/system/b.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: twin\npart_of: overview\nstatus: current\n---\n# B\n")
 		corpus, _, err := LoadRepository(root)
 		if err != nil {
 			t.Fatalf("LoadRepository() error = %v", err)

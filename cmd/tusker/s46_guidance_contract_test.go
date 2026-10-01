@@ -92,11 +92,11 @@ func TestS46GuidanceContract(t *testing.T) {
 
 	// Implemented scaffold boundaries: kind-specific lifecycle separate from
 	// code conformance, proposals carry updates, decisions carry decides_for.
-	docScaffold := docsScaffoldPortable("scaffold-doc", docgraph.KindDoc, "overview", "")
+	docScaffold := docsScaffoldPortable("scaffold-doc", docgraph.KindDoc, "overview", "", "Reading this test document.", "Reading anything else.")
 	assertS46Contains(t, "doc scaffold", docScaffold, "kind: doc", "status: current")
-	proposalScaffold := docsScaffoldPortable("scaffold-cap", docgraph.KindProposal, "overview", "")
+	proposalScaffold := docsScaffoldPortable("scaffold-cap", docgraph.KindProposal, "overview", "", "Reading this test document.", "Reading anything else.")
 	assertS46Contains(t, "proposal scaffold", proposalScaffold, "kind: proposal", "status: proposed", "updates: []")
-	decisionScaffold := docsScaffoldPortable("scaffold-model", docgraph.KindDecision, "overview", "scaffold-cap")
+	decisionScaffold := docsScaffoldPortable("scaffold-model", docgraph.KindDecision, "overview", "scaffold-cap", "Reading this test document.", "Reading anything else.")
 	assertS46Contains(t, "decision scaffold", decisionScaffold, "kind: decision", "decides_for: scaffold-cap")
 	for _, scaffold := range []string{docScaffold, proposalScaffold, decisionScaffold} {
 		assertS46Contains(t, "scaffold", scaffold, "code_conformance: unverified")
@@ -106,15 +106,15 @@ func TestS46GuidanceContract(t *testing.T) {
 	// actionable destinations and passes repository validation.
 	fresh := t.TempDir()
 	writeDocsFixture(t, fresh, "docs/system/00-overview.md",
-		"---\nsubject: overview\nkind: doc\nstatus: current\n---\n\n# Overview\n")
+		"---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nkind: doc\nstatus: current\n---\n\n# Overview\n")
 	writeDocsFixture(t, fresh, "docs/system/domains/billing/00-index.md",
-		"---\nsubject: billing\nkind: doc\nstatus: current\npart_of: overview\n---\n\n# Billing\n")
+		"---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: billing\nkind: doc\nstatus: current\npart_of: overview\n---\n\n# Billing\n")
 	writeDocsFixture(t, fresh, "docs/system/domains/billing/billing-overview.md",
-		"---\nsubject: billing-overview\nkind: doc\nstatus: current\npart_of: billing\n---\n\n# Billing overview\n")
+		"---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: billing-overview\nkind: doc\nstatus: current\npart_of: billing\n---\n\n# Billing overview\n")
 	writeDocsFixture(t, fresh, "docs/system/proposals/billing-cap.md",
-		"---\nsubject: billing-cap\nkind: proposal\nstatus: proposed\npart_of: overview\nupdates: [billing-overview]\n---\n\n# Billing cap\n")
+		"---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: billing-cap\nkind: proposal\nstatus: proposed\npart_of: overview\nupdates: [billing-overview]\n---\n\n# Billing cap\n")
 	writeDocsFixture(t, fresh, "docs/system/decisions/billing-model.md",
-		"---\nsubject: billing-model\nkind: decision\nstatus: proposed\npart_of: overview\ndecides_for: billing-cap\n---\n\n# Billing model\n")
+		"---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: billing-model\nkind: decision\nstatus: proposed\npart_of: overview\ndecides_for: billing-cap\n---\n\n# Billing model\n")
 	issues, err := docgraph.ValidateRepository(fresh)
 	if err != nil {
 		t.Fatal(err)

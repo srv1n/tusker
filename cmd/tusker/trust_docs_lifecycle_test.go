@@ -69,7 +69,7 @@ func TestTrustDocsLifecycle(t *testing.T) {
 		t.Fatalf("broken map route = issues %#v err %v", issues, err)
 	}
 
-	if !strings.Contains(docsScaffoldPortable("new-spec", docgraph.KindProposal, "overview", ""), "decisions_locked: false") {
+	if !strings.Contains(docsScaffoldPortable("new-spec", docgraph.KindProposal, "overview", "", "Reading this test document.", "Reading anything else."), "decisions_locked: false") {
 		t.Fatal("spec scaffold omitted decisions_locked lifecycle field")
 	}
 }

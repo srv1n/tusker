@@ -17,7 +17,7 @@ func s46CLIRepo(t *testing.T) (repoRoot, vault string) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
 	return repoRoot, vault
 }
 
@@ -40,7 +40,7 @@ func TestS46PortableDocsCLI(t *testing.T) {
 	repoRoot, vault := s46CLIRepo(t)
 	newDoc := func(subject, kind, domain string, extra Args) string {
 		t.Helper()
-		args := Args{"vault": vault, "_pos": subject, "_pos0": subject, "json": "true"}
+		args := Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": subject, "_pos0": subject, "json": "true"}
 		if kind != "" {
 			args["kind"] = kind
 		}
@@ -65,7 +65,7 @@ func TestS46PortableDocsCLI(t *testing.T) {
 		return created.Path
 	}
 
-	if path := newDoc("billing-overview", "", "billing", Args{"index": "true"}); path != "docs/system/domains/billing/00-index.md" {
+	if path := newDoc("billing-overview", "", "billing", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "index": "true"}); path != "docs/system/domains/billing/00-index.md" {
 		t.Fatalf("domain index path = %q", path)
 	}
 	if path := newDoc("invoicing", "", "billing", nil); path != "docs/system/domains/billing/invoicing.md" {
@@ -77,7 +77,7 @@ func TestS46PortableDocsCLI(t *testing.T) {
 	if path := newDoc("legacy-alias", "spec", "", nil); path != "docs/system/proposals/legacy-alias.md" {
 		t.Fatalf("spec alias path = %q", path)
 	}
-	if path := newDoc("record-choice", "decision", "", Args{"decides-for": "checkout-flow"}); path != "docs/system/decisions/record-choice.md" {
+	if path := newDoc("record-choice", "decision", "", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "decides-for": "checkout-flow"}); path != "docs/system/decisions/record-choice.md" {
 		t.Fatalf("decision path = %q", path)
 	}
 
@@ -131,7 +131,7 @@ func TestS46PortableDocsCLI(t *testing.T) {
 		t.Fatalf("domain browse entries = %#v", browse.Entries)
 	}
 	text := captureStdout(t, func() {
-		if err := docsBrowseCmd(Args{"vault": vault, "_pos": "docs/system/domains/billing"}); err != nil {
+		if err := docsBrowseCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "docs/system/domains/billing"}); err != nil {
 			t.Fatalf("browse text: %v", err)
 		}
 	})
@@ -147,7 +147,7 @@ func TestS46PortableDocsCLI(t *testing.T) {
 func TestS46PortableDocsInit(t *testing.T) {
 	t.Run("repeated init preserves user material", func(t *testing.T) {
 		repo := t.TempDir()
-		userDoc := "---\nkind: doc\nsubject: handbook\npart_of: overview\nstatus: current\n---\n\n# Handbook\n\nKeep these bytes.\n"
+		userDoc := "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: handbook\npart_of: overview\nstatus: current\n---\n\n# Handbook\n\nKeep these bytes.\n"
 		if _, err := scaffoldDocumentationSystem(repo); err != nil {
 			t.Fatal(err)
 		}
@@ -188,7 +188,7 @@ func TestS46PortableDocsInit(t *testing.T) {
 	t.Run("preview never writes", func(t *testing.T) {
 		_, vault := s46CLIRepo(t)
 		output := captureStdout(t, func() {
-			if err := docsNewCmd(Args{"vault": vault, "_pos": "preview-only", "kind": "decision", "print": "true", "json": "true"}); err != nil {
+			if err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "preview-only", "kind": "decision", "print": "true", "json": "true"}); err != nil {
 				t.Fatalf("preview: %v", err)
 			}
 		})
@@ -204,11 +204,11 @@ func TestS46PortableDocsInit(t *testing.T) {
 			args Args
 			want string
 		}{
-			{"unknown kind", Args{"_pos": "x", "kind": "essay"}, "--kind"},
-			{"bad domain", Args{"_pos": "x", "domain": "../escape"}, "--domain"},
-			{"domain with proposal", Args{"_pos": "x", "kind": "proposal", "domain": "billing"}, "--domain applies to docs only"},
-			{"chapter without index", Args{"_pos": "x", "domain": "billing"}, "--index"},
-			{"index without domain", Args{"_pos": "x", "index": "true"}, "--domain"},
+			{"unknown kind", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "_pos": "x", "kind": "essay"}, "--kind"},
+			{"bad domain", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "_pos": "x", "domain": "../escape"}, "--domain"},
+			{"domain with proposal", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "_pos": "x", "kind": "proposal", "domain": "billing"}, "--domain applies to docs only"},
+			{"chapter without index", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "_pos": "x", "domain": "billing"}, "--index"},
+			{"index without domain", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "_pos": "x", "index": "true"}, "--domain"},
 		}
 		for _, tc := range bad {
 			t.Run(tc.name, func(t *testing.T) {
@@ -222,14 +222,14 @@ func TestS46PortableDocsInit(t *testing.T) {
 				}
 			})
 		}
-		if err := docsNewCmd(Args{"vault": vault, "_pos": "billing-overview", "domain": "billing", "index": "true"}); err != nil {
+		if err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "billing-overview", "domain": "billing", "index": "true"}); err != nil {
 			t.Fatalf("create domain index: %v", err)
 		}
-		err := docsNewCmd(Args{"vault": vault, "_pos": "billing-overview", "domain": "billing", "index": "true"})
+		err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "billing-overview", "domain": "billing", "index": "true"})
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("recreate index error = %v", err)
 		}
-		err = docsNewCmd(Args{"vault": vault, "_pos": "billing-overview"})
+		err = docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "billing-overview"})
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("duplicate subject error = %v", err)
 		}
@@ -244,7 +244,7 @@ func TestS46PortableDocsInit(t *testing.T) {
 		if err := os.Symlink(target, filepath.Join(repoRoot, "docs/system/domains", "billing")); err != nil {
 			t.Fatal(err)
 		}
-		err := docsNewCmd(Args{"vault": vault, "_pos": "billing-overview", "_pos0": "billing-overview", "domain": "billing", "index": "true"})
+		err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "billing-overview", "_pos0": "billing-overview", "domain": "billing", "index": "true"})
 		if err == nil {
 			t.Fatal("symlinked domain accepted a write")
 		}

@@ -15,10 +15,10 @@ func TestDocsCheck(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\nstatus: canonical\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/guide.md", "---\nsubject: overview\npart_of: overview\nstatus: canonical\n---\n# Guide\nSee [[missing]].\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nstatus: canonical\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/guide.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\npart_of: overview\nstatus: canonical\n---\n# Guide\nSee [[missing]].\n")
 	output := captureStdout(t, func() {
-		err := docsCheckCmd(Args{"vault": vault, "json": "true"})
+		err := docsCheckCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "json": "true"})
 		var checkFailure *docsCheckFailure
 		if !errors.As(err, &checkFailure) || checkFailure.Count < 2 {
 			t.Fatalf("docs check failure = %v", err)
@@ -37,7 +37,7 @@ func TestDocsCheck(t *testing.T) {
 		}
 	}
 	output = captureStdout(t, func() {
-		code, err := runInner("docs check", Args{"vault": vault, "json": "true"})
+		code, err := runInner("docs check", Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "json": "true"})
 		if code != 1 || err != nil {
 			t.Fatalf("runInner docs check exit = %d, err=%v", code, err)
 		}
@@ -51,7 +51,7 @@ func TestDocsCheck(t *testing.T) {
 	}
 
 	output = captureStdout(t, func() {
-		err := docsCheckCmd(Args{"vault": vault, "_pos": "docs/system/guide.md", "json": "true"})
+		err := docsCheckCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "docs/system/guide.md", "json": "true"})
 		var checkFailure *docsCheckFailure
 		if !errors.As(err, &checkFailure) || checkFailure.Count != 2 {
 			t.Fatalf("targeted docs check failure = %v", err)
@@ -72,9 +72,9 @@ func TestDocsScaffold(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nsubject: overview\nstatus: canonical\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nstatus: canonical\n---\n# Overview\n")
 	output := captureStdout(t, func() {
-		if err := docsNewCmd(Args{"vault": vault, "_pos": "new guide", "json": "true", "print": "true"}); err != nil {
+		if err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "new guide", "json": "true", "print": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -93,7 +93,7 @@ func TestDocsScaffold(t *testing.T) {
 		t.Fatalf("--print wrote scaffold: %v", err)
 	}
 
-	if err := docsNewCmd(Args{"vault": vault, "_pos": "new guide"}); err != nil {
+	if err := docsNewCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "_pos": "new guide"}); err != nil {
 		t.Fatalf("docs new: %v", err)
 	}
 	created, err := os.ReadFile(filepath.Join(repoRoot, "docs/system/new-guide.md"))

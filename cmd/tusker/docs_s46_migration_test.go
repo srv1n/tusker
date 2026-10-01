@@ -17,10 +17,12 @@ func s46MigrationRepo(t *testing.T) (repo, vault string) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
 	writeTestDoc(t, repo, ".tusker/specs/flow-plan.md", strings.Join([]string{
 		"---",
 		"subject: flow-plan",
+		"read_when: \"Reading fixture.\"",
+		"skip_when: \"Reading elsewhere.\"",
 		"part_of: overview",
 		"status: canonical",
 		"---",
@@ -32,6 +34,8 @@ func s46MigrationRepo(t *testing.T) (repo, vault string) {
 	writeTestDoc(t, repo, ".tusker/specs/flow-details.md", strings.Join([]string{
 		"---",
 		"subject: flow-details",
+		"read_when: \"Reading fixture.\"",
+		"skip_when: \"Reading elsewhere.\"",
 		"part_of: overview",
 		"status: canonical",
 		"---",
@@ -41,6 +45,8 @@ func s46MigrationRepo(t *testing.T) (repo, vault string) {
 	writeTestDoc(t, repo, ".tusker/specs/decisions/flow-choice.md", strings.Join([]string{
 		"---",
 		"subject: flow-choice",
+		"read_when: \"Reading fixture.\"",
+		"skip_when: \"Reading elsewhere.\"",
 		"part_of: flow-plan",
 		"decides_for: flow-plan",
 		"status: canonical",
@@ -51,6 +57,8 @@ func s46MigrationRepo(t *testing.T) (repo, vault string) {
 	writeTestDoc(t, repo, ".tusker/knowledge/domains/billing/00-index.md", strings.Join([]string{
 		"---",
 		"subject: billing-overview",
+		"read_when: \"Reading fixture.\"",
+		"skip_when: \"Reading elsewhere.\"",
 		"part_of: overview",
 		"---",
 		"# Billing",
@@ -308,7 +316,7 @@ func TestS46DocsMigration(t *testing.T) {
 
 	t.Run("target collision leaves canonical bytes alone", func(t *testing.T) {
 		repo, vault := s46MigrationRepo(t)
-		writeTestDoc(t, repo, "docs/system/proposals/flow-plan.md", "---\nkind: proposal\nsubject: different-plan\npart_of: overview\nstatus: proposed\n---\n# Different\n")
+		writeTestDoc(t, repo, "docs/system/proposals/flow-plan.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: proposal\nsubject: different-plan\npart_of: overview\nstatus: proposed\n---\n# Different\n")
 		canonical := string(mustReadFile(t, filepath.Join(repo, "docs/system/proposals/flow-plan.md")))
 		source, err := os.ReadFile(filepath.Join(repo, ".tusker/specs/flow-plan.md"))
 		if err != nil {
@@ -381,8 +389,8 @@ func TestS46DocsMigration(t *testing.T) {
 		if err := os.MkdirAll(vault, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-		writeTestDoc(t, repo, ".tusker/specs/flow-plan.md", "---\nsubject: flow-plan\npart_of: overview\n---\n# Flow plan\n")
+		writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+		writeTestDoc(t, repo, ".tusker/specs/flow-plan.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: flow-plan\npart_of: overview\n---\n# Flow plan\n")
 		runGitDir(t, repo, "add", "-A")
 		runGitDir(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-m", "base")
 		planPath := filepath.Join(repo, ".tusker/specs/flow-plan.md")
@@ -457,9 +465,9 @@ func s46RecoveryRepo(t *testing.T) (repo, vault string) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nsubject: overview\n---\n# Overview\n")
-	writeTestDoc(t, repo, ".tusker/specs/spec-a.md", "---\nsubject: spec-a\npart_of: overview\nstatus: canonical\n---\n# Spec A\n")
-	writeTestDoc(t, repo, ".tusker/specs/spec-b.md", "---\nsubject: spec-b\npart_of: overview\nstatus: canonical\n---\n# Spec B\n")
+	writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\n---\n# Overview\n")
+	writeTestDoc(t, repo, ".tusker/specs/spec-a.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: spec-a\npart_of: overview\nstatus: canonical\n---\n# Spec A\n")
+	writeTestDoc(t, repo, ".tusker/specs/spec-b.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: spec-b\npart_of: overview\nstatus: canonical\n---\n# Spec B\n")
 	return repo, vault
 }
 
@@ -599,10 +607,10 @@ func TestS46DocsResetBoundary(t *testing.T) {
 	runGitDir(t, repo, "init", "-b", "main")
 	vault := filepath.Join(repo, defaultRepoVaultDir)
 	portable := map[string]string{
-		"docs/system/00-overview.md":              "---\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n",
-		"docs/system/proposals/flow-plan.md":      "---\nkind: proposal\nsubject: flow-plan\npart_of: overview\nstatus: proposed\n---\n# Flow plan\n",
-		"docs/system/decisions/flow-choice.md":    "---\nkind: decision\nsubject: flow-choice\npart_of: overview\ndecides_for: flow-plan\nstatus: proposed\n---\n# Flow choice\n",
-		"docs/system/domains/billing/00-index.md": "---\nkind: doc\nsubject: billing-overview\npart_of: overview\nstatus: current\n---\n# Billing\n",
+		"docs/system/00-overview.md":              "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n",
+		"docs/system/proposals/flow-plan.md":      "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: proposal\nsubject: flow-plan\npart_of: overview\nstatus: proposed\n---\n# Flow plan\n",
+		"docs/system/decisions/flow-choice.md":    "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: decision\nsubject: flow-choice\npart_of: overview\ndecides_for: flow-plan\nstatus: proposed\n---\n# Flow choice\n",
+		"docs/system/domains/billing/00-index.md": "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: billing-overview\npart_of: overview\nstatus: current\n---\n# Billing\n",
 		".tusker/specs/keep.md":                   "# Keep this spec\n",
 		".tusker/work/tasks/APP-T-0001.md":        "stale task\n",
 		"src/keep.go":                             "package src\n",
