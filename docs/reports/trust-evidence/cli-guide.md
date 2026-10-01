@@ -1,3 +1,9 @@
+---
+title: "CLI guide evidence"
+read_when: "Recovering the evidence that CLI help and the tusker skill guide describe pending command verification and handoff correctly (historical record)."
+skip_when: "You need the current CLI guide; read the tusker skill or the current docs/system chapter."
+---
+
 # CLI guide evidence
 
 Status: command/proof guidance passed; skill density and convergence need the

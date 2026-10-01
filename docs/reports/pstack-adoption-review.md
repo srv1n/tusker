@@ -1,3 +1,9 @@
+---
+title: "pstack adoption review"
+read_when: "Recovering the 11 September 2026 research review recommending what Tusker should adopt from pstack."
+skip_when: "You need the current product contract or an approved plan; this is only a proposal, read the system docs."
+---
+
 # pstack adoption review
 
 Research review and recommendations, 11 September 2026. This is a proposal, not a changed product contract or an implementation plan approved for execution.

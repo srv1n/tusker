@@ -1,3 +1,9 @@
+---
+title: "Workspace recovery evidence"
+read_when: "Recovering the TestTrustWorkspaceRecovery evidence: git worktree failure, dirty checkpoints, and ownership at cap pressure (historical record)."
+skip_when: "You need current workspace recovery behavior; read the current docs/system chapter."
+---
+
 # Workspace recovery evidence
 
 - Revision: `03201019`; host: `Saravanans-MacBook-Pro.local`.

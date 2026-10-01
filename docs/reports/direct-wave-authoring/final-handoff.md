@@ -1,3 +1,9 @@
+---
+title: "W-0025 final handoff — direct task/wave authoring"
+read_when: "Recovering the W-0025 final handoff for tickets FLW-T-0043 to FLW-T-0050: delivery-plan deletion and real-vault migration (historical record)."
+skip_when: "You need current authoring commands or specs; read the current docs/system chapter and .tusker/specs."
+---
+
 # W-0025 final handoff — direct task/wave authoring
 
 Audience: the next agent picking this up. Read this first, then the detailed

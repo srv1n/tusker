@@ -1,3 +1,9 @@
+---
+title: "Agent capabilities and discovery"
+read_when: "Recovering the 2026-09-09 research on installed Codex and Muse capability discovery, access controls and setup-check versus profile-test boundary."
+skip_when: "You need the current runner catalog or agent profile contract (tusker.runner-catalog/v1); read the current system chapter."
+---
+
 # Agent capabilities and discovery
 
 **Observed:** 2026-09-09 (Asia/Kolkata)  

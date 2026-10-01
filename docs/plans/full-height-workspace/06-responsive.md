@@ -1,3 +1,9 @@
+---
+title: "06. Finish tablet and phone navigation without stacked top bars"
+read_when: "Checking the WUX-T-0025 packet for tablet overlay and phone bottom-navigation workspace behavior."
+skip_when: "You need desktop rails or current shipped navigation; read the shell packet or current docs/system chapter."
+---
+
 # 06. Finish tablet and phone navigation without stacked top bars
 
 Source key: `responsive`. Canonical executable contract: `.tusker/specs/full-height-workspace.plan.yaml`. This packet is rendered from that plan; update the plan and regenerate the packet together. Tracker ID: `WUX-T-0025`; wave: `W-0021` (held/disarmed).

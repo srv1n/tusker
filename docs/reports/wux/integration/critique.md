@@ -1,3 +1,9 @@
+---
+title: "Integration visual review"
+read_when: "Recovering the integration-context visual critique of the wave overview desktop screenshot (score 7.1/10)."
+skip_when: "You need independent acceptance evidence or current UI design; this critique is non-independent."
+---
+
 # Integration visual review
 
 Screenshot: `desktop.png`

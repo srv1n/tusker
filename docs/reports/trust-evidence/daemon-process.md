@@ -1,3 +1,9 @@
+---
+title: "Daemon process evidence"
+read_when: "Recovering the TestTrustDaemonProcess evidence for daemon process-group ownership, stale identity rejection, capped retries and idle reconciliation."
+skip_when: "You need other trust-lane evidence or current daemon behavior; read the current system chapter."
+---
+
 # Daemon process evidence
 
 - Revision: `03201019`; host: `Saravanans-MacBook-Pro.local`.

@@ -1,3 +1,9 @@
+---
+title: "S46 adoption receipt (TSK-T-0061) — BLOCKED, no migration applied"
+read_when: "Recovering the S46 adoption receipt TSK-T-0061: blocked migration inventory and the owner actions needed before apply (historical record)."
+skip_when: "You need the current migration state or apply procedure; read the current docs/system chapter."
+---
+
 # S46 adoption receipt (TSK-T-0061) — BLOCKED, no migration applied
 
 Outcome: the Tusker repository was re-inventoried and the migration story's

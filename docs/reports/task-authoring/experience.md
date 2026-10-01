@@ -1,3 +1,9 @@
+---
+title: "Task authoring and execution experience"
+read_when: "Checking the UI contract and behavior matrix for task authoring, review and execution facts shown before Start across detail, inspector and wave views."
+skip_when: "You need CLI intake syntax; read intake.md. This is not a browser or live-provider qualification."
+---
+
 # Task authoring and execution experience
 
 This report records the UI contract for task authoring, review and execution. It is an implementation handoff and source-level behavior matrix; it does not claim a built-browser or live-provider qualification.

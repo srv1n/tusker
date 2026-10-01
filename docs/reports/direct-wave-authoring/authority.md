@@ -1,3 +1,9 @@
+---
+title: "Direct wave/task review and start authority"
+read_when: "Recovering the recorded contract for direct wave review and start authority without delivery plans."
+skip_when: "You need current wave or task start commands; read the current docs/system chapter or CLI help."
+---
+
 # Direct wave/task review and start authority
 
 Direct review/start replaces delivery-plan authority for canonical records.

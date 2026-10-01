@@ -1,3 +1,9 @@
+---
+title: "Independent coordination acceptance — 11 September 2026"
+read_when: "Recovering the historical independent black-box acceptance record, 11 PASS rerun, for agent coordination on 11 September 2026."
+skip_when: "You need the current coordination design or later repairs; read pro-review-reconciliation.md or the current system chapter."
+---
+
 # Independent coordination acceptance — 11 September 2026
 
 ## Current independent recheck

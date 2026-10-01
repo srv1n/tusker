@@ -1,3 +1,9 @@
+---
+title: "Agent access profile UI fixture"
+read_when: "Recovering the Playwright fixture captures of Settings, Agents, Profiles at desktop, narrow, and zoomed widths (historical evidence record)."
+skip_when: "You need current agent profile behavior; read the current docs/system chapter."
+---
+
 # Agent access profile UI fixture
 
 These are routed Playwright fixture captures of Settings → Agents → Profiles using the production stylesheet and design tokens:

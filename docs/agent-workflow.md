@@ -1,3 +1,9 @@
+---
+title: "Agent workflow"
+read_when: "Checking how interactive sessions versus resident-daemon workers must behave, including refusals and proof expectations."
+skip_when: "You need task lifecycle commands or gate details; read the current Tusker system chapters instead."
+---
+
 # Agent workflow
 
 This repository has two execution modes.

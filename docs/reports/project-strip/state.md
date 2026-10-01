@@ -1,3 +1,9 @@
+---
+title: "Compact project navigation: state proof"
+read_when: "Recovering the PASS proof for project-strip navigation state helpers covering migration, pin order, recency and unsafe route fallback."
+skip_when: "You need the current project navigation implementation or later wux navigation evidence; read the current UI system chapter."
+---
+
 # Compact project navigation: state proof
 
 ## Result

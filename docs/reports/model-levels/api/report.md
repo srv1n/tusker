@@ -1,3 +1,9 @@
+---
+title: "Model settings API acceptance"
+read_when: "Recovering the acceptance evidence for GET/POST /api/models and tusker models show sharing the model-levels/v1 resolver."
+skip_when: "You need the current model settings contract or CLI usage; read the current docs/system chapter."
+---
+
 # Model settings API acceptance
 
 `GET /api/models` and `tusker models show --json` use the same resolver and

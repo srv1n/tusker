@@ -1,3 +1,9 @@
+---
+title: "Preflight evidence"
+read_when: "Recovering the evidence that status ready, next and daemon dispatch share one dispatch-blocker policy and refuse placeholder contracts."
+skip_when: "You need other trust-lane evidence or current dispatch rules; read the current system chapter."
+---
+
 # Preflight evidence
 
 Status: focused contract validation passed.

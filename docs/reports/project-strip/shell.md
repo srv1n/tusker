@@ -1,3 +1,9 @@
+---
+title: "Compact project navigation: browser proof"
+read_when: "Recovering the browser proof for the compact project navigation strip across 0, 1, 13 and 50 projects (historical evidence record)."
+skip_when: "You need current project strip behavior; read the current docs/system chapter or source."
+---
+
 # Compact project navigation: browser proof
 
 ## Result

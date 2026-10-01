@@ -1,3 +1,9 @@
+---
+title: "AI contribution policy"
+read_when: "Checking the rule on AI-assisted contributions: no AI attribution, contributor ownership, and required verification evidence."
+skip_when: "You need commit or PR mechanics; read CLAUDE.md or the current docs/system chapter."
+---
+
 # AI contribution policy
 
 AI-assisted work is allowed. The configured Git user owns the change.

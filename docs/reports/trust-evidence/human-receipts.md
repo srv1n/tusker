@@ -1,3 +1,9 @@
+---
+title: "Human receipt evidence"
+read_when: "Recovering evidence for human-owned gate receipts: five-minute single-use Serve challenges and the pending AppKit click."
+skip_when: "You need the current human gate contract; read the current docs/system chapter."
+---
+
 # Human receipt evidence
 
 Status: focused contract validation passed; one real AppKit click remains.

@@ -1,3 +1,9 @@
+---
+title: "Self-service recovery qualification (TSK-T-0048)"
+read_when: "Recovering the TSK-T-0048 W-0038 qualification of CLI and Serve recovery surfaces, scenario verdicts, and discovered gaps."
+skip_when: "You need current recovery commands or procedures; read the current docs/system chapter."
+---
+
 # Self-service recovery qualification (TSK-T-0048)
 
 Bounded consumer-level qualification of the CLI and Serve recovery surfaces

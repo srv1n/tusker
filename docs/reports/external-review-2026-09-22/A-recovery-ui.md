@@ -1,3 +1,9 @@
+---
+title: "External review A: recovery UI (2026-09-22)"
+read_when: "Recovering the 2026-09-22 external review result requesting changes on recovery projection, wave retry controls and settings batch handler."
+skip_when: "You need current recovery UI behavior or the fixed state; this is a historical review verdict, read the current system chapter."
+---
+
 # RESULT
 
 ```json

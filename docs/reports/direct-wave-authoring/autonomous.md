@@ -1,3 +1,9 @@
+---
+title: "Autonomous direct-wave execution (D8)"
+read_when: "Recovering the historical record of autonomous direct-wave execution: wave start, frontier queueing, capacity, pause and resume."
+skip_when: "You need current wave commands or scheduling behavior; read the current docs/system chapter."
+---
+
 # Autonomous direct-wave execution (D8)
 
 One `wave start` durably authorizes exact wave material. The resident daemon's

@@ -1,3 +1,9 @@
+---
+title: "Harness sessions, global profiles, and cleanup - review brief"
+read_when: "Recovering the historical review brief for commit 02fd45d1 covering Claude Code harness picker, global-only profiles, and run steering."
+skip_when: "You need current harness, profile, or steering behavior; read the current docs/system chapter."
+---
+
 # Harness sessions, global profiles, and cleanup — review brief
 
 Commit under review: `02fd45d1` ("Restore Claude Code harness, enforce global-only

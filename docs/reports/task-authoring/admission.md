@@ -1,3 +1,9 @@
+---
+title: "Task authoring admission contract"
+read_when: "Recovering the FLW-T-0037 task-authoring admission contract on route resolution for worker and reviewer lanes."
+skip_when: "You need current profile or route resolution behavior; read the current docs/system chapter."
+---
+
 # Task authoring admission contract
 
 This report records the route and admission contract for FLW-T-0037. A task

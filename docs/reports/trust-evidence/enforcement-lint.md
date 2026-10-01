@@ -1,3 +1,9 @@
+---
+title: "Enforcement and lint evidence"
+read_when: "Recovering the evidence for hard proof_required enforcement, malformed evidence rejection and the advisory top-layer lint."
+skip_when: "You need other trust-lane evidence or current lint rules; read the current system chapter."
+---
+
 # Enforcement and lint evidence
 
 Status: focused enforcement validation passed; advisory lint remains a separate

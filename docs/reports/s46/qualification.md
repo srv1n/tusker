@@ -1,3 +1,9 @@
+---
+title: "S46 qualification (TSK-T-0062) — 2026-09-23"
+read_when: "Recovering the TSK-T-0062 S46 qualification verdicts for documentation journeys across docs, CLI, docgraph and Documents UI."
+skip_when: "You need the adoption receipt or current docs workflow; read adoption.md or the current docs system chapter."
+---
+
 # S46 qualification (TSK-T-0062) — 2026-09-23
 
 Scope: fresh, migrated, and tool-independent documentation journeys across

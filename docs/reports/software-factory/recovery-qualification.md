@@ -1,3 +1,9 @@
+---
+title: "Recovery qualification - 2026-09-16"
+read_when: "Recovering the 2026-09-16 software-factory recovery qualification result, retained diagnosis, and what was not run."
+skip_when: "You need current recovery behavior or procedures; read the current docs/system chapter."
+---
+
 # Recovery qualification — 2026-09-16
 
 ## Result

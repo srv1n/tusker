@@ -1,3 +1,9 @@
+---
+title: "Model-level routing acceptance"
+read_when: "Recovering the model-level routing acceptance results: catalog truth, inheritance, precedence, and fallback identity (historical report, 2026-09-09)."
+skip_when: "You need current routing behavior or configuration; read the current docs/system chapter."
+---
+
 # Model-level routing acceptance
 
 Candidate: current dirty checkout on 2026-09-09. No daemon, automation dispatch,

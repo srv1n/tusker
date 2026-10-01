@@ -1,3 +1,9 @@
+---
+title: "01. Preserve checkout-scoped workspace views and pane preferences"
+read_when: "Recovering the historical plan packet WUX-T-0020 for typed workspace-state helpers, migration tests and pane preference persistence."
+skip_when: "You need the current workspace implementation or the canonical .tusker/specs/full-height-workspace.plan.yaml contract instead."
+---
+
 # 01. Preserve checkout-scoped workspace views and pane preferences
 
 Source key: `state`. Canonical executable contract: `.tusker/specs/full-height-workspace.plan.yaml`. This packet is rendered from that plan; update the plan and regenerate the packet together. Tracker ID: `WUX-T-0020`; wave: `W-0021` (held/disarmed).

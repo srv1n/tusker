@@ -1,3 +1,9 @@
+---
+title: "Compact project navigation: qualification report"
+read_when: "Recovering the qualification record for the horizontal project strip replacing the sidebar, including open live-interaction gates."
+skip_when: "You need the current project navigation UI behavior; read the current docs/system chapter."
+---
+
 # Compact project navigation: qualification report
 
 ## Verdict

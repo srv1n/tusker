@@ -1,3 +1,9 @@
+---
+title: "Full-height workspace shell audit"
+read_when: "Recovering the 2026-09-11 audit evidence of the unified collapsible left navigation shell with 48px targets and persisted layout."
+skip_when: "You need the current shell implementation or navigation behavior; read the current UI system chapter."
+---
+
 # Full-height workspace shell audit
 
 Date: 2026-09-11

@@ -1,3 +1,9 @@
+---
+title: "Tooling cleanup (scripts lane)"
+read_when: "Recovering the record of scripts/ tooling cleanup, including removed check-file-size files and caller evidence."
+skip_when: "You need current script inventory or build tooling; read the Makefile and current docs/system chapter."
+---
+
 # Tooling cleanup (scripts lane)
 
 Scope: `scripts/` except `measure-agent-workflows.py`, its fixtures/self-checks,

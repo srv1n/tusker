@@ -1,3 +1,9 @@
+---
+title: "Direct task and wave authoring"
+read_when: "Recovering the record of direct task and wave authoring, standalone TSK task IDs and inert creation defaults."
+skip_when: "You need the current authoring workflow; read the current docs/system chapter or CLI help."
+---
+
 # Direct task and wave authoring
 
 Direct authoring creates canonical task, gate, and wave records without a

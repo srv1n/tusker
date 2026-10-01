@@ -1,3 +1,9 @@
+---
+title: "Runner-harness patterns: what Tusker should copy"
+read_when: "Studying runner-harness patterns to copy: runtime resolution, ACP vs CLI transport, permission projection, recovery, and terminal status (research, 2026-09-07)."
+skip_when: "You need Tusker's implemented runner behavior; read the current docs/system chapter."
+---
+
 # Runner-harness patterns: what Tusker should copy
 
 Date: 2026-09-07

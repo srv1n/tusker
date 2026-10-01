@@ -1,3 +1,9 @@
+---
+title: "Agent coordination qualification"
+read_when: "Recovering the historical agent-coordination qualification record, including the 11/11 public-CLI acceptance result."
+skip_when: "You need current coordination behavior or the post-review disposition; read pro-review-reconciliation.md or the system chapter."
+---
+
 # Agent coordination qualification
 
 The post-review disposition and current qualification boundary are recorded in

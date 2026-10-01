@@ -1,3 +1,9 @@
+---
+title: "DAG leases evidence"
+read_when: "Recovering the trust-lane evidence for DAG leases, resource claim races, expiry reassignment and ownership conflicts."
+skip_when: "You need other trust-lane evidence or the live qualification record."
+---
+
 # DAG leases evidence
 
 - Revision: `03201019`; host: `Saravanans-MacBook-Pro.local`.

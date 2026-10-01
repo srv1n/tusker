@@ -1,3 +1,9 @@
+---
+title: "07. Qualify the built full-height workspace and publish the handoff result"
+read_when: "Implementing or auditing the full-height workspace qualification packet that builds once and records geometry, navigation, and state evidence."
+skip_when: "You need an individual surface's implementation packet or the current workspace behavior; read the other packets or current UI docs."
+---
+
 # 07. Qualify the built full-height workspace and publish the handoff result
 
 Source key: `qualification`. Canonical executable contract: `.tusker/specs/full-height-workspace.plan.yaml`. This packet is rendered from that plan; update the plan and regenerate the packet together. Tracker ID: `WUX-T-0026`; wave: `W-0021` (held/disarmed).

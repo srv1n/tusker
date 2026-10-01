@@ -1,3 +1,9 @@
+---
+title: "W-0027 repair and recovery"
+read_when: "Recovering the FLW-T-0053 bounded repair path: external-loop admission, caps, counters, and durable transitions (historical report, 2026-09-14)."
+skip_when: "You need current repair and recovery behavior; read the current docs/system chapter."
+---
+
 # W-0027 repair and recovery
 
 Date: 2026-09-14

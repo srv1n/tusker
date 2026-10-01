@@ -1,3 +1,9 @@
+---
+title: "02. Build the desktop project and section rails with a shared feature surface"
+read_when: "Checking the WUX-T-0021 packet for the 48px project rail and 88px section rail shell."
+skip_when: "You need the current workspace navigation behavior; read the canonical plan yaml or current docs/system chapter."
+---
+
 # 02. Build the desktop project and section rails with a shared feature surface
 
 Source key: `shell`. Canonical executable contract: `.tusker/specs/full-height-workspace.plan.yaml`. This packet is rendered from that plan; update the plan and regenerate the packet together. Tracker ID: `WUX-T-0021`; wave: `W-0021` (held/disarmed).

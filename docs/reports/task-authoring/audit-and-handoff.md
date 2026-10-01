@@ -1,3 +1,9 @@
+---
+title: "W-0023: close the authoring-to-execution gaps"
+read_when: "Recovering the W-0023 audit of task authoring and start-path gaps, with FLW-T-0037 through FLW-T-0041 handoffs."
+skip_when: "You need the current task authoring contract; read the current docs/system chapter."
+---
+
 # W-0023: close the authoring-to-execution gaps
 
 ## Result of the audit

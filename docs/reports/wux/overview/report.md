@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0004 report — grouped wave overview"
+read_when: "Recovering the WUX-T-0004 grouped wave overview report on groupWaves and WaveOverview sample-data checks."
+skip_when: "You need live API integration (WUX-T-0009) or current overview behavior; read the current docs/system chapter."
+---
+
 # WUX-T-0004 report — grouped wave overview
 
 Sample-data preview and focused behavior checks. No leaf claims the app is

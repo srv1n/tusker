@@ -1,3 +1,9 @@
+---
+title: "RESULT"
+read_when: "Recovering the raw 2026-09-22 external review result on admission and ownership, verdict request_changes with JSON findings."
+skip_when: "You need the current admission or ownership design; read the current docs/system chapter, not this review output."
+---
+
 # RESULT
 
 ```json

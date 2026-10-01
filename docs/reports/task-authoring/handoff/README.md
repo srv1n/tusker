@@ -1,3 +1,9 @@
+---
+title: "Recovered partial work for W-0023"
+read_when: "Recovering the historical patch bundle of reverted architect work for W-0023 executors, including admission.patch for FLW-T-0037."
+skip_when: "You need current code or the authoring audit narrative; read audit-and-handoff.md or the source."
+---
+
 # Recovered partial work for W-0023
 
 The architect prematurely implemented these bounded changes, then reverted them after a scope correction. The user asked that completed effort be preserved for the assigned executors. These patches recover that prior work; they are not applied to the active product and are not accepted completion.

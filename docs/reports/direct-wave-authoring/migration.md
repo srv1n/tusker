@@ -1,3 +1,9 @@
+---
+title: "Delivery-plan to direct-wave migration"
+read_when: "Recovering the record of migrate direct-waves: converting legacy delivery-plan tasks, waves, and gates into direct-wave records."
+skip_when: "You are not migrating legacy delivery plans; read the current docs/system chapter on waves."
+---
+
 # Delivery-plan to direct-wave migration
 
 `migrate direct-waves` converts legacy delivery-plan material — durable

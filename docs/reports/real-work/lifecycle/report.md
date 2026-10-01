@@ -1,3 +1,9 @@
+---
+title: "Real-work lifecycle: consistent execution and closeout across CLI and UI"
+read_when: "Recovering the real-work lifecycle report on consistent execution and closeout across CLI and UI, including the WUX-T-0013 incident (historical record)."
+skip_when: "You need the current lifecycle contract; read the current docs/system chapter."
+---
+
 # Real-work lifecycle: consistent execution and closeout across CLI and UI
 
 Date: 2026-09-07.

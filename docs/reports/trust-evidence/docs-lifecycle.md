@@ -1,3 +1,9 @@
+---
+title: "Documentation lifecycle evidence"
+read_when: "Recovering the FLW-T-0027 evidence of the documentation lifecycle ownership chain, changes, and executed checks."
+skip_when: "You need the current docs lifecycle rules; read the current docs/system chapter."
+---
+
 # Documentation lifecycle evidence
 
 Status: source implementation and canonical spec move are complete; the

@@ -1,3 +1,9 @@
+---
+title: "Full-height workspace handoff"
+read_when: "Recovering the full-height workspace handoff index: ticket order, specification link, and dependency order of the packets (historical plan)."
+skip_when: "You need current workspace UI behavior or a single ticket's contract; read the current docs/system chapter or that ticket."
+---
+
 # Full-height workspace handoff
 
 Specification and tickets only. No application code was edited, no application build/tests were run, no implementation agents were launched, and no wave was armed or dispatched.

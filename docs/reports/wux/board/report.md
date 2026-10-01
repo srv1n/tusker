@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0008 board preview evidence"
+read_when: "Recovering the WUX-T-0008 board preview fixture evidence, browser checks, and screenshot critique."
+skip_when: "You need the live board behavior or integration; read WUX integration report or current UI docs."
+---
+
 # WUX-T-0008 board preview evidence
 
 ## Scope

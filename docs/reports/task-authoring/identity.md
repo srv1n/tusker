@@ -1,3 +1,9 @@
+---
+title: "Task authoring identity and self implementation"
+read_when: "Recovering the authoring_provenance contract and self-implementation rules for task authoring identity (historical report)."
+skip_when: "You need the live task schema; read the current docs/system chapter."
+---
+
 # Task authoring identity and self implementation
 
 ## Contract

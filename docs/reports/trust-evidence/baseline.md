@@ -1,3 +1,9 @@
+---
+title: "FLW-T-0006 - Independent baseline-test evidence (help/skill lane)"
+read_when: "Recovering the FLW-T-0006 independent baseline-test PASS/FAIL matrix for the help and skill lane, with reported defects."
+skip_when: "You need current test status or other trust lanes; run the tests or read the current docs/system chapter."
+---
+
 # FLW-T-0006 · Independent baseline-test evidence (help/skill lane)
 
 Lane: `cmd/tusker/fresh_clone_baseline_test.go`,

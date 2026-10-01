@@ -1,3 +1,9 @@
+---
+title: "Agent coordination contract"
+read_when: "Recovering the agent coordination contract: contacts, message idempotency, delivery receipts, and public surfaces (historical report)."
+skip_when: "You need the live messaging behavior; read the current docs/system chapter on agent coordination."
+---
+
 # Agent coordination contract
 
 Tusker stores logical contacts separately from dependency edges. Contacts are project-scoped `architect`, `origin`, or named `peer` references targeting a task owner or exact execution. Replacements use an expected generation and retain a predecessor ID; stale replacement is refused.

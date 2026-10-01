@@ -1,3 +1,9 @@
+---
+title: "Direct wave authority - Serve/UI experience"
+read_when: "Recovering the FLW-T-0046 record of Serve/UI endpoints, DTOs, surfaces, and accessibility for direct-wave authority."
+skip_when: "You need the current wave UI or API contract; read the current docs/system chapter."
+---
+
 # Direct wave authority — Serve/UI experience
 
 FLW-T-0046. The UI now reads and drives the canonical direct-wave authority

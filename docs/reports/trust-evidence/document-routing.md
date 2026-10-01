@@ -1,3 +1,9 @@
+---
+title: "Document routing evidence"
+read_when: "Recovering the evidence for document routing and the managed docs corpus move (FLW-T-0022), with executed checks (historical record)."
+skip_when: "You need current doc resolver behavior; use tusker docs find or the current docs/system chapter."
+---
+
 # Document routing evidence
 
 Status: source implementation and canonical spec move are complete; the

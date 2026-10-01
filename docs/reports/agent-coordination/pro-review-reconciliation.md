@@ -1,3 +1,9 @@
+---
+title: "ChatGPT Pro review reconciliation — 11 September 2026"
+read_when: "Recovering how each ChatGPT Pro review finding on agent coordination was dispositioned and repaired on 11 September 2026."
+skip_when: "You need the current agent-coordination behavior rather than this historical review record; read the current system chapter."
+---
+
 # ChatGPT Pro review reconciliation — 11 September 2026
 
 ## Outcome

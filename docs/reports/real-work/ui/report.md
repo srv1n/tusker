@@ -1,3 +1,9 @@
+---
+title: "Real-work UI acceptance report"
+read_when: "Recovering the 2026-09-07 real-work UI acceptance record and its unrun live seeded journey."
+skip_when: "You need live-proof status or current Work UI behavior; read the current docs/system chapter."
+---
+
 # Real-work UI acceptance report
 
 Date: 2026-09-07

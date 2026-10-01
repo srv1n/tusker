@@ -1,3 +1,9 @@
+---
+title: "S46 guidance walkthrough (TSK-T-0060)"
+read_when: "Recovering the TSK-T-0060 cold-reader walkthrough of the docs/system folder tree and init guidance in a disposable project."
+skip_when: "You need the current docs layout rules or init guidance; read docs/system/00-overview.md or the current system chapter."
+---
+
 # S46 guidance walkthrough (TSK-T-0060)
 
 Cold-reader walkthrough exercised in a disposable project at `/tmp/s46g-walk`

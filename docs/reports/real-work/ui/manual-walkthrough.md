@@ -1,3 +1,9 @@
+---
+title: "Manual walkthrough — real-work UI acceptance"
+read_when: "Running the operator's manual real-work UI acceptance walkthrough against the seeded fixture project after machine lanes pass."
+skip_when: "Machine acceptance lanes have not passed yet, or you are an agent; read the completion-and-integrated-acceptance plan first."
+---
+
 # Manual walkthrough — real-work UI acceptance
 
 Use this walkthrough only after the machine lanes in `[[completion-and-integrated-acceptance#canonical-end-to-end-execution-plan]]`; required browser skips remain incomplete.

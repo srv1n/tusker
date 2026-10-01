@@ -1,3 +1,9 @@
+---
+title: "Direct wave authoring — delivery-plan removal completion"
+read_when: "Recovering the delivery-plan removal completion report for direct wave authoring: deletion inventory and proof classes (historical record)."
+skip_when: "You need current wave authoring behavior; read the current docs/system chapter or final-handoff.md."
+---
+
 # Direct wave authoring — delivery-plan removal completion
 
 Status: code cutover complete in this working tree. Independent review is

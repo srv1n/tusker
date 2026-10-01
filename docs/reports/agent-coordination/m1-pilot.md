@@ -1,3 +1,9 @@
+---
+title: "M1 pilot - prepared, not run"
+read_when: "Recovering the historical M1 agent-coordination pilot setup, fixture, and the 11/11 mailbox acceptance recheck record."
+skip_when: "You need the current coordination protocol or live pilot results; read the current docs/system chapter."
+---
+
 # M1 pilot — prepared, not run
 
 The independently rerun public mailbox acceptance is **11/11 PASS** on the Pro-reviewed candidate `a081654635afc6d1fad2e71b5c82ccca772c2487710cbedb45f4dd19ad503dad`. [Fresh receipt](acceptance-independent-recheck-2026-09-11.json). This pilot tests the remaining real-agent journey. It has not launched a model.

@@ -1,3 +1,9 @@
+---
+title: "Run-session continuity qualification (TSK-T-0054)"
+read_when: "Recovering the TSK-T-0054 qualification evidence for W-0039 run-session continuity, proof boundaries, and scenario matrix."
+skip_when: "You need current run-session behavior rather than historical qualification; read the current docs/system chapter."
+---
+
 # Run-session continuity qualification (TSK-T-0054)
 
 This report is the qualification record for W-0039's final integration task.

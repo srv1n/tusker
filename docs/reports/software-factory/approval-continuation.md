@@ -1,3 +1,9 @@
+---
+title: "Human approval continuation"
+read_when: "Recovering how HumanActionCard approval calls the gate satisfy mutation and continues authorized waves (historical report)."
+skip_when: "You need current gate approval behavior; read the current docs/system chapter."
+---
+
 # Human approval continuation
 
 ## Implemented flow

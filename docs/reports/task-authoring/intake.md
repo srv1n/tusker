@@ -1,3 +1,9 @@
+---
+title: "Task authoring intake contract"
+read_when: "Checking the agent-facing intake contract for typed tusker.wave-authoring/v1 wave requests and generated lifecycle bookkeeping."
+skip_when: "You need UI behavior for authoring and execution; read experience.md or the current system chapter."
+---
+
 # Task authoring intake contract
 
 This report is the agent-facing contract for the current Tusker intake path. It

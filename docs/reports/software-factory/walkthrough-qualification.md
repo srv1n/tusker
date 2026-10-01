@@ -1,3 +1,9 @@
+---
+title: "W-0028 walkthrough qualification"
+read_when: "Recovering the 2026-09-16 W-0028 deterministic qualification of settings, status projection, Start lifecycle and inspector proof rendering."
+skip_when: "You need browser, installed-product or provider qualification, or current behavior; read the current system chapter."
+---
+
 # W-0028 walkthrough qualification
 
 Date: 2026-09-16. Scope: the shared source checkout only. This report does not

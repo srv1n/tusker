@@ -1,3 +1,9 @@
+---
+title: "Unused Go cleanup"
+read_when: "Recovering the 2026-09-05 record of removing the retired active_spend_monotonic sentinel compatibility path."
+skip_when: "You need current workflow configuration or evaluator behavior; read the current docs/system chapter."
+---
+
 # Unused Go cleanup
 
 Date: 2026-09-05

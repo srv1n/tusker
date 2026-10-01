@@ -1,3 +1,9 @@
+---
+title: "Fresh-agent fixture efficiency boundary"
+read_when: "Recovering why the fresh-agent fixture records process correctness rather than efficiency, and how usage claims stay unknown (historical report)."
+skip_when: "You need actual efficiency measurements or live agent run receipts; read those runs' evidence instead."
+---
+
 # Fresh-agent fixture efficiency boundary
 
 The fixture records process correctness, not synthetic efficiency. A fresh

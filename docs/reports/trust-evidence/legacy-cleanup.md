@@ -1,3 +1,9 @@
+---
+title: "Legacy cleanup evidence"
+read_when: "Recovering the evidence for removing V5/V6 command fences and legacy wrappers from cmd/tusker (historical record)."
+skip_when: "You need current command surfaces; read the current docs/system chapter or source."
+---
+
 # Legacy cleanup evidence
 
 ## Batch A

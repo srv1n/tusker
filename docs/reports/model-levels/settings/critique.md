@@ -1,3 +1,9 @@
+---
+title: "Screenshot-only critique"
+read_when: "Recovering the screenshot-only self-critique of the model-levels settings page at 1440 and 390 widths, with known wording issues."
+skip_when: "You need the current model-levels settings behavior or spec rather than this historical visual critique."
+---
+
 # Screenshot-only critique
 
 This is a fresh screenshot-only self-critique of the final 1440 x 1400 and 390

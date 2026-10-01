@@ -1,3 +1,9 @@
+---
+title: "QA guide: first end-to-end pass"
+read_when: "Running a tester's first end-to-end pass from install to one task landed on main."
+skip_when: "You need per-harness deep checks or forced-failure runs; read live-harness/README.md instead."
+---
+
 # QA guide: first end-to-end pass
 
 This guide takes a tester from install to one task landed on `main`, then

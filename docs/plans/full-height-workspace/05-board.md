@@ -1,3 +1,9 @@
+---
+title: "05. Give Board the remaining canvas and restore its view state"
+read_when: "Recovering the historical plan packet WUX-T-0024 for the full-height Board canvas, single toolbar and restored view state."
+skip_when: "You need current Board behavior or the canonical .tusker/specs/full-height-workspace.plan.yaml contract instead."
+---
+
 # 05. Give Board the remaining canvas and restore its view state
 
 Source key: `board`. Canonical executable contract: `.tusker/specs/full-height-workspace.plan.yaml`. This packet is rendered from that plan; update the plan and regenerate the packet together. Tracker ID: `WUX-T-0024`; wave: `W-0021` (held/disarmed).

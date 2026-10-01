@@ -1,3 +1,9 @@
+---
+title: "External review triage and task waves — 2026-09-22"
+read_when: "Recovering the triage of 20 external review findings (2026-09-22) and the task waves created from them (historical record)."
+skip_when: "You need current bug status or live source behavior; verify against current source and the tracker."
+---
+
 # External review triage and task waves — 2026-09-22
 
 20 findings: **17 still supported by current source; 3 addressed in source and retained as regression requirements.** No new runtime reproduction, test, build, installation, daemon launch or live provider execution was performed. This is planning and inert task creation only.

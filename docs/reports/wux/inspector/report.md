@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0006 — TaskInspector report"
+read_when: "Recovering the WUX-T-0006 record of the TaskInspector component, its pure helpers and sample-data preview."
+skip_when: "You need the current TaskInspector implementation or contract; read the source and current UI system chapter."
+---
+
 # WUX-T-0006 — TaskInspector report
 
 ## What was built

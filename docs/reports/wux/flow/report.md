@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0005 evidence report — readable interactive wave graph"
+read_when: "Recovering the WUX-T-0005 evidence for the readable interactive wave graph (WaveFlow), with changed files and fixtures (historical record)."
+skip_when: "You need current wave graph behavior; read the current docs/system chapter or source."
+---
+
 # WUX-T-0005 evidence report — readable interactive wave graph
 
 Fixture preview only. Every task, state and model in the preview is labeled

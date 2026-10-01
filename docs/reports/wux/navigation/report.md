@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0003 — persistent project and wave navigator"
+read_when: "Recovering the WUX-T-0003 evidence report for persistent project and wave navigation state, restore fallbacks and sample-data preview."
+skip_when: "You need the live navigation implementation or later integration; read the source and current UI system chapter."
+---
+
 # WUX-T-0003 — persistent project and wave navigator · evidence report
 
 Source key: `navigation`. Sample-data preview; **not** live integration.

@@ -1,3 +1,9 @@
+---
+title: "Live-harness qualification runbook (D6)"
+read_when: "Running the manual live-provider qualification for W-0042 run sessions and W-0043 agent mailbox against Claude Code, Codex, Devin, Muse."
+skip_when: "You are an agent (operator-only runbook needing daemon, provider spend), or want fixture proof in run-session-continuity-qualification.md."
+---
+
 # Live-harness qualification runbook (D6)
 
 Manual end-to-end checks for W-0042 (run sessions) and W-0043 (agent mailbox) against real Claude Code, Codex, Devin and Muse. Decision D6 in `.tusker/specs/decisions/2026-09-23-harness-sessions-grill.md` requires this before a real project is promoted. The existing fixture proof, `docs/reports/run-session-continuity-qualification.md`, leaves "live provider" as NOT RUN. This runbook covers that gap.

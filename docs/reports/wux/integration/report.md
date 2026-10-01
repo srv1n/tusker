@@ -1,3 +1,9 @@
+---
+title: "Work integration report"
+read_when: "Recovering the 2026-09-07 record of composing the six WUX leaf components into production Work routes."
+skip_when: "You need current Work surface behavior; read the current docs/system chapter."
+---
+
 # Work integration report
 
 Date: 2026-09-07

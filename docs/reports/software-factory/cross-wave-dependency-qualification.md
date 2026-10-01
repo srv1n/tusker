@@ -1,3 +1,9 @@
+---
+title: "W-0031 cross-wave dependency qualification"
+read_when: "Recovering the 2026-09-20 W-0031 deterministic qualification of cross-wave hard dependencies and frontier continuation queuing exactly once."
+skip_when: "You need current dependency or wave authorization behavior; read the current system chapter instead of this historical report."
+---
+
 # W-0031 cross-wave dependency qualification
 
 Date: 2026-09-20. Scope: the shared source checkout only. This report does

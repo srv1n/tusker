@@ -1,3 +1,9 @@
+---
+title: "03. Give Docs a full-height reader and collapsible contextual tree"
+read_when: "Implementing or auditing WUX-T-0022, the Docs KnowledgeShell and KnowledgeReader move onto WorkspaceSurface with a collapsible tree."
+skip_when: "You need the live Docs UI behavior or other full-height-workspace packets; read the plan YAML or current UI docs."
+---
+
 # 03. Give Docs a full-height reader and collapsible contextual tree
 
 Source key: `docs`. Canonical executable contract: `.tusker/specs/full-height-workspace.plan.yaml`. This packet is rendered from that plan; update the plan and regenerate the packet together. Tracker ID: `WUX-T-0022`; wave: `W-0021` (held/disarmed).

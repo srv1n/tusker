@@ -1,3 +1,9 @@
+---
+title: "Adapter contract evidence"
+read_when: "Recovering the trust-lane evidence for the adapter contract, ACP resume refusal and capability flags."
+skip_when: "You need other trust-lane evidence or the live qualification record."
+---
+
 # Adapter contract evidence
 
 - Revision: `03201019`; host: `Saravanans-MacBook-Pro.local`.

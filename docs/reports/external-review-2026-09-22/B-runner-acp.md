@@ -1,3 +1,9 @@
+---
+title: "External review 2026-09-22: runner and ACP"
+read_when: "Recovering the external 2026-09-22 review findings on runner and ACP cancellation, cleanup and response-ordering defects."
+skip_when: "You need current runner or ACP behavior; read docs/system/runners-and-acp.md and the code instead."
+---
+
 # RESULT
 
 ```json

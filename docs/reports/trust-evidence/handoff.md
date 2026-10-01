@@ -1,3 +1,9 @@
+---
+title: "Handoff evidence"
+read_when: "Recovering the trust-lane evidence that packets and integrator handoffs preserve the full task contract."
+skip_when: "You need other trust-lane evidence or the live qualification record."
+---
+
 # Handoff evidence
 
 Status: focused packet regression passed.

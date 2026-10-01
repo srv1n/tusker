@@ -1,3 +1,9 @@
+---
+title: "Real-work test repository - fixture report"
+read_when: "Recovering the 2026-09-07 record of the real-work parallel-waves fixture, its offline journey results, and unmet prerequisites."
+skip_when: "You need the current fixture or acceptance plan; read the current docs/system chapter."
+---
+
 # Real-work test repository — fixture report
 
 Canonical integrated execution order, proof classes, timeout behavior and cleanup: `[[completion-and-integrated-acceptance#canonical-end-to-end-execution-plan]]`.

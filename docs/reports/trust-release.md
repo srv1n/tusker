@@ -1,3 +1,9 @@
+---
+title: "Trust release acceptance"
+read_when: "Recovering the trust release acceptance design: TestTrustFullJourney offline route and the e2e/agent_journey fresh-worker route."
+skip_when: "You need live qualification steps or current release procedure; read the live-harness runbook or current system chapter."
+---
+
 # Trust release acceptance
 
 The release path has two separate evidence layers.

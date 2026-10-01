@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0003 — design critique (static self-review, no screenshots)"
+read_when: "Recovering the WUX-T-0003 static self-review of navigation design against the critique rubric (historical, substitute critique)."
+skip_when: "You need an independent screenshot critique or current navigation behavior; read the current docs/system chapter."
+---
+
 # WUX-T-0003 — design critique (static self-review, no screenshots)
 
 Status: **substitute, not the required independent critique.** No rendered

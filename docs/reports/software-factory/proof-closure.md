@@ -1,3 +1,9 @@
+---
+title: "W-0027 proof closure"
+read_when: "Recovering the FLW-T-0052 record that closed proof, review and completion authority gaps via the task Verification ledger."
+skip_when: "You need current proof or verification rules; read the current system chapter instead of this historical report."
+---
+
 # W-0027 proof closure
 
 Date: 2026-09-14

@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0007 results reader proof"
+read_when: "Recovering the WUX-T-0007 results reader proof: required checks, browser interaction, and acceptance mapping."
+skip_when: "You need the live results reader behavior; read the current docs/system chapter."
+---
+
 # WUX-T-0007 results reader proof
 
 Date: 2026-09-07

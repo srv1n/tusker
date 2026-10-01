@@ -1,3 +1,9 @@
+---
+title: "W-0025 completed-work review"
+read_when: "Recovering the independent Sol review of W-0025 tickets FLW-T-0043, 0044, 0045 and 0047 and its verdicts (historical record)."
+skip_when: "You need the final accepted state of these tickets; read final-handoff.md or the current docs/system chapter."
+---
+
 # W-0025 completed-work review
 
 Independent reviewer: Sol, medium reasoning. Scope: reported completed

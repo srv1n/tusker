@@ -1,3 +1,9 @@
+---
+title: "W-0025 continuation handoff"
+read_when: "Recovering the historical W-0025 continuation handoff for FLW-T-0050, 0048, 0046 and 0049."
+skip_when: "You need current task state or working-tree rules; read the live task packets and current docs."
+---
+
 # W-0025 continuation handoff
 
 This write-up hands the remaining wave (FLW-T-0050, 0048, 0046, 0049) to the

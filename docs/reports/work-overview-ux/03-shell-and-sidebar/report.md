@@ -1,3 +1,9 @@
+---
+title: "Work shell and sidebar — rendered check"
+read_when: "Recovering the rendered check of the Work shell header and sidebar attention indicator."
+skip_when: "You need current Work shell behavior; read the current docs/system chapter."
+---
+
 # Work shell and sidebar — rendered check
 
 ## After

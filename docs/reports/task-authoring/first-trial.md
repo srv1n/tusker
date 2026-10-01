@@ -1,3 +1,9 @@
+---
+title: "W-0023 first trial: current boundary"
+read_when: "Recovering the W-0023 first-trial boundary of task-authoring acceptance results for FLW-T-0041."
+skip_when: "You need current authoring behavior or full qualification; read the current docs/system chapter."
+---
+
 # W-0023 first trial: current boundary
 
 | Acceptance | Result | Evidence |

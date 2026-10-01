@@ -1,3 +1,9 @@
+---
+title: "Automatic profile defaults"
+read_when: "Recovering the evidence for AAC-T-0008 automatic agent-access profile defaults, inherited protected folders and compatibility setup journeys."
+skip_when: "You need the current agent-access contract or profile behavior; read the agent-access spec and system chapter instead."
+---
+
 # Automatic profile defaults
 
 Implemented AAC-T-0008 with the existing `tusker.agent-access/v1` contract.

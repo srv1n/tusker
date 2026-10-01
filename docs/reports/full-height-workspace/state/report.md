@@ -1,3 +1,9 @@
+---
+title: "WUX-T-0020 state report"
+read_when: "Recovering the WUX-T-0020 workspace navigation state verification and acceptance evidence."
+skip_when: "You need current workspace navigation behavior; read the current docs/system chapter or canonical plan."
+---
+
 # WUX-T-0020 state report
 
 ## Verification

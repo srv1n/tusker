@@ -1,3 +1,9 @@
+---
+title: "Task authoring completion review"
+read_when: "Recovering the task authoring completion review: tier choice, independent review findings, and their dispositions (historical record)."
+skip_when: "You need current task authoring commands; read the tusker skill or the current docs/system chapter."
+---
+
 # Task authoring completion review
 
 The task-authoring path is implemented across the shipped skill, V2 intake,

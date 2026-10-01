@@ -1,3 +1,9 @@
+---
+title: "Direct-authoring guidance (FLW-T-0048)"
+read_when: "Recovering the FLW-T-0048 record of canonical direct task and wave authoring guidance and its command and help wording matrix."
+skip_when: "You need the current authoring workflow or command help; run tusker help or read the current system chapter."
+---
+
 # Direct-authoring guidance (FLW-T-0048)
 
 Canonical agent guidance now teaches direct durable authoring only: the task

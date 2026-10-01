@@ -1,3 +1,9 @@
+---
+title: "W-0027 team handoff"
+read_when: "Recovering the W-0027 software-factory team handoff and its task dependency table (FLW-T-0051 onward)."
+skip_when: "You need current task packets or state; read the live packets, not this handoff."
+---
+
 # W-0027 team handoff
 
 Created September 14 through the repository-local `./tusker` CLI. Inert;

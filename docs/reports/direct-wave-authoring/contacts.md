@@ -1,3 +1,9 @@
+---
+title: "External agent contacts and connector capabilities"
+read_when: "Checking how tusker execution register publishes external architect, origin or peer contacts on tasks and waves, with connector capabilities."
+skip_when: "You are authoring tasks or waves directly; read guidance.md or the current system chapter for authoring commands."
+---
+
 # External agent contacts and connector capabilities
 
 `tusker execution register --contact-role` publishes a pre-existing external

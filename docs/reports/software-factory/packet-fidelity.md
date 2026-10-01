@@ -1,3 +1,9 @@
+---
+title: "Software-factory packet fidelity"
+read_when: "Recovering the FLW-T-0051 evidence that direct-authored tasks render faithful worker and reviewer packets without extra metadata."
+skip_when: "You need the current packet format or authoring rules; read the current docs/system chapter."
+---
+
 # Software-factory packet fidelity
 
 ## Scope

@@ -1,3 +1,9 @@
+---
+title: "Model Settings acceptance"
+read_when: "Recovering the acceptance evidence for the Model Settings ProfilesSection UI tests and renders."
+skip_when: "You need current model-level or profile behavior; read the current docs/system chapter."
+---
+
 # Model Settings acceptance
 
 The production `ProfilesSection` is rendered with deterministic API data; the

@@ -1,3 +1,9 @@
+---
+title: "04. Move Waves navigation left and start the graph below one toolbar"
+read_when: "Recovering the WUX-T-0023 ticket packet for moving Waves navigation left and starting the graph below one toolbar (historical plan)."
+skip_when: "You need current Waves UI behavior; read the live packet via tusker packet or the current docs/system chapter."
+---
+
 # 04. Move Waves navigation left and start the graph below one toolbar
 
 Source key: `waves`. Canonical executable contract: `.tusker/specs/full-height-workspace.plan.yaml`. This packet is rendered from that plan; update the plan and regenerate the packet together. Tracker ID: `WUX-T-0023`; wave: `W-0021` (held/disarmed).
