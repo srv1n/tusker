@@ -138,7 +138,7 @@ release-test: ## Run offline release/install integrity fixtures
 	@set -eu; for test_script in scripts/tests/test-release-*.sh scripts/tests/test-mac-atomic-swap.sh; do sh "$$test_script"; done
 
 install-bin: build ## Build/install binary and refresh existing root user skills
-	./"$(DIST_BIN)" update --bin --bin-dir "$(BIN_DIR)"
+	./"$(DIST_BIN)" install --bin --bin-dir "$(BIN_DIR)"
 	@printf "$(GREEN)OK install-bin complete$(RESET)\n"
 
 install-cli: install-bin ## Alias for the cross-platform CLI install

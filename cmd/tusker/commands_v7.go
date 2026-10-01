@@ -1249,7 +1249,7 @@ func redactV7Cmd(args Args) error {
 
 func validateV7ClosePolicyConfig(configPath, risk string, policy v7ClosePolicy) error {
 	if policy.RequiredAcceptor == "human" {
-		return tuskerError(errorConfigInvalid, "legacy close_policy."+risk+".required_acceptor: human treats risk as human authority", withPath(configPath), withHint("run `tusker migrate close-policy --write`; preserve genuine authority and subjective acceptance as explicit gates"))
+		return tuskerError(errorConfigInvalid, "legacy close_policy."+risk+".required_acceptor: human treats risk as human authority", withPath(configPath), withHint("set required_acceptor to reviewer_agent in the config; preserve genuine authority and subjective acceptance as explicit gates"))
 	}
 	if policy.RequiredAcceptor != "reviewer_agent" {
 		return tuskerError(errorConfigInvalid, "invalid close_policy."+risk+".required_acceptor: "+policy.RequiredAcceptor, withPath(configPath))
@@ -1294,7 +1294,7 @@ func attemptV7Cmd(args Args) error {
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
 		return attemptV7HandoffCmd(args)
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker attempt start|handoff <task-id> ...")
+		return tuskerError(errorMissingArg, "Usage: tusker work start <task-id> --by <agent>; hand back with tusker finish <task-id> --request-review")
 	}
 }
 
@@ -4740,7 +4740,7 @@ func v7ReviewerControlMutationAllowed(vaultPath string, args Args, branch string
 func v7ProtectedImplementationFlowHint(args Args) string {
 	taskID := firstNonEmpty(args.String("id"), args.String("_pos0"), "<TASK-ID>")
 	if strings.EqualFold(args.String("status"), "active") || strings.EqualFold(args.String("_pos1"), "active") {
-		return "no durable `active` status; use `tusker work start " + taskID + " --by <agent>` (claims the same session as `tusker attempt start " + taskID + "`) → `tusker verify add " + taskID + " …` → `tusker work submit " + taskID + " --by <agent> …` (or legacy `tusker attempt handoff " + taskID + "` → `tusker finish " + taskID + " --request-review`, auto-proposes on protected branches)."
+		return "no durable `active` status; use `tusker work start " + taskID + " --by <agent>` → `tusker verify add " + taskID + " …` → `tusker work submit " + taskID + " --by <agent> …`, or `tusker finish " + taskID + " --request-review` (auto-proposes on protected branches)."
 	}
 	return "durable state changes on this branch go through `tusker finish " + taskID + " --request-review` (auto-proposes on implementation branches)."
 }

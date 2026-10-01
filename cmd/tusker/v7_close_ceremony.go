@@ -128,7 +128,7 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 			return v7ClosePreflightResult{}, tuskerError(
 				errorInvalidTransition,
 				id+": close requires status review",
-				withHint("run `tusker status "+id+" review` on a control/local branch, or `tusker propose status "+id+" --status review` from an implementation branch"),
+				withHint("run `tusker status "+id+" review` on a control/local branch, or `tusker proposal status "+id+" --status review` from an implementation branch"),
 				withContext(map[string]any{"status": status}),
 			)
 		}

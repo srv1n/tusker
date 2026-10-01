@@ -157,7 +157,7 @@ func TestV7AgentReadyDashboardExcludesHumanOwnedReadyTasks(t *testing.T) {
 	must(Args{"vault": vault, "quiet": "true"}, bootstrap)
 	must(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "Dashboard ownership.", "v7": "true"}, newV7Epic)
 	must(Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Human ready", "risk": "low", "priority": "p2", "next-owner": "human:sarav", "next-source": "human_gate", "next-action": "Accept the manual gate.", "owned-paths": "src", "v7": "true"}, newV7Task)
-	must(Args{"vault": vault, "quiet": "true"}, dashboardV7Cmd)
+	must(Args{"vault": vault, "quiet": "true"}, reindex)
 
 	dashboard := mustReadIndexTest(t, filepath.Join(vault, "dashboards", "agent-ready.md"))
 	if strings.Contains(dashboard, "APP-T-0001") {
@@ -520,23 +520,25 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("gate", "satisfy", "APP-G-0001", "--evidence", "Provider ready endpoint returned OpenAI model.", "--by", "human:sarav")
 	runCLI("gate", "waive", "APP-G-0002", "--reason", "Live smoke deferred to release candidate.")
 	runCLI("gate", "obsolete", "APP-G-0003", "--reason", "Task superseded.")
-	runCLI("claim", "APP-T-0001", "--owner", "agent:codex")
-	runCLI("heartbeat", "APP-T-0001")
-	runCLI("release", "APP-T-0001")
+	// The legacy file-lease lifecycle has no CLI verbs; drive it directly.
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}, claimCmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001"}, heartbeatV7Cmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001"}, releaseV7Cmd)
 	runCLI("evidence", "add", "APP-T-0001", "--kind", "automated_test", "--covers", "A1,A2", "--summary", "Focused provider smoke tests passed.")
 	runCLI("evidence", "add", "APP-T-0001", "--kind", "screenshot", "--path", "./provider-ready.png", "--covers", "A3", "--status", "accepted", "--checked-by", "reviewer:agent")
-	runCLI("attempt", "start", "APP-T-0001")
-	runCLI("attempt", "handoff", "APP-T-0001", "--summary", "./summary.md")
-	runCLI("propose", "close", "APP-T-0001", "--reason", "Implementation branch is ready.")
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "start", "_pos1": "APP-T-0001"}, attemptV7Cmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "./summary.md"}, attemptV7HandoffCmd)
+	runCLI("proposal", "close", "APP-T-0001", "--reason", "Implementation branch is ready.")
 	runCLI("proposal", "list", "--target", "APP-T-0001")
 	runCLI("proposal", "accept", "APP-P-0001", "--by", "human:sarav")
 	runCLI("packet", "APP-T-0001", "--for", "agent", "--force")
 	runCLI("packet", "APP-T-0001", "--for", "reviewer")
 	runCLI("brief", "APP-T-0001")
 	runCLI("brief", "--owner", "human:sarav")
-	runCLI("dashboard", "build")
-	openOutput := runCLI("dashboard", "open", "human-actions")
-	assertContainsIndexTest(t, openOutput, filepath.Join(vault, "dashboards", "human-actions.md"))
+	runCLI("reindex")
+	if !fileExists(filepath.Join(vault, "dashboards", "human-actions.md")) {
+		t.Fatal("reindex did not build the human-actions dashboard")
+	}
 	runCLI("next", "--owner", "agent")
 	runCLI("reconcile")
 	runCLI("status", "APP-T-0001", "review", "--reason", "Ready for independent review.")
@@ -2207,7 +2209,7 @@ func TestV7DashboardBuildIsDeterministicAndValidateRejectsStaleProjection(t *tes
 	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Dashboard task", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := dashboardV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "build"}); err != nil {
+	if err := reindex(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	first := map[string]string{}
@@ -2218,7 +2220,7 @@ func TestV7DashboardBuildIsDeterministicAndValidateRejectsStaleProjection(t *tes
 		}
 		first[rel] = raw
 	}
-	if err := dashboardV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "build"}); err != nil {
+	if err := reindex(Args{"vault": vault, "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 	for rel, before := range first {
@@ -2334,43 +2336,6 @@ func TestV7SpecObjectCreationCLIForms(t *testing.T) {
 	}
 	assertEqual(t, "tusker.epic/v7", stringField(epicData, "schema"), "spec form epic schema")
 	assertEqual(t, "tusker.task/v7", stringField(taskData, "schema"), "spec form task schema")
-	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
-		t.Fatalf("validate failed: code=%d err=%v", code, err)
-	}
-}
-
-func TestV7HandoffAliasReadsSummaryFile(t *testing.T) {
-	dir := t.TempDir()
-	vault := filepath.Join(dir, "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Alias handoff", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := attemptV7StartCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}); err != nil {
-		t.Fatal(err)
-	}
-	summaryPath := filepath.Join(dir, "summary.md")
-	if err := writeText(summaryPath, "Implemented through top-level handoff.\n\nEvidence is linked separately.\n"); err != nil {
-		t.Fatal(err)
-	}
-
-	command, args := parseCLI([]string{"tusker", "handoff", "APP-T-0001", "--vault", vault, "--quiet", "--summary", summaryPath, "--no-review-proposal"})
-	assertEqual(t, "handoff", command, "handoff command parse")
-	if code, err := run(command, args); err != nil || code != 0 {
-		t.Fatalf("handoff failed: code=%d err=%v", code, err)
-	}
-	attemptPath := filepath.Join(vault, "attempts", "APP-T-0001", "APP-T-0001-A-0001.md")
-	data, body, err := parseFrontmatterMustRead(attemptPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "handoff", stringField(data, "status"), "attempt status")
-	assertContainsIndexTest(t, body, "Implemented through top-level handoff.")
 	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
 		t.Fatalf("validate failed: code=%d err=%v", code, err)
 	}
@@ -2621,7 +2586,7 @@ func TestV7SkillDoctorRouteAndPack(t *testing.T) {
 	assertContainsIndexTest(t, routeOutput, "knowledge/domains/providers/INDEX.md")
 	assertContainsIndexTest(t, routeOutput, "knowledge/domains/providers/CANON.md")
 	packOutput := captureStdout(t, func() {
-		if err := skillV7PackCmd(Args{"vault": vault, "id": "APP-T-0001", "for": "agent", "budget": "6000"}); err != nil {
+		if err := packetV7Cmd(Args{"vault": vault, "id": "APP-T-0001", "for": "agent", "budget": "6000"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -3741,61 +3706,6 @@ func TestV7StateBranchSyncAndImportLeases(t *testing.T) {
 	assertExists(t, localLeasePath)
 	imported := mustReadIndexTest(t, localLeasePath)
 	assertContainsIndexTest(t, imported, `"task": "APP-T-0001"`)
-}
-
-func TestV7StateBranchPushAndFetchRemoteLeases(t *testing.T) {
-	previousWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chdir(previousWD); err != nil {
-			t.Fatalf("restore working directory: %v", err)
-		}
-	})
-	root := t.TempDir()
-	remote := filepath.Join(root, "remote.git")
-	repo := filepath.Join(root, "repo")
-	vault := filepath.Join(repo, "tusker")
-	runGitDir(t, root, "init", "--bare", remote)
-	if err := ensureDir(repo); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repo); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, "init", "-b", "main")
-	runGit(t, "config", "user.email", "test@example.com")
-	runGit(t, "config", "user.name", "Tusker Test")
-	runGit(t, "remote", "add", "origin", remote)
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := newV7Task(Args{"owned-paths": "cmd/tusker", "vault": vault, "quiet": "true", "epic": "APP", "title": "Remote state branch lease", "risk": "low", "priority": "p2", "v7": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := claimCmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := stateV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "sync", "push": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	remoteLease := gitDirOutput(t, remote, "show", "tusker/state:leases/APP-T-0001.json")
-	assertContainsIndexTest(t, remoteLease, `"owner": "agent:codex"`)
-
-	localLeasePath := filepath.Join(repo, ".tusker-local", "leases", "APP-T-0001.json")
-	if err := os.Remove(localLeasePath); err != nil {
-		t.Fatal(err)
-	}
-	if err := stateV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "import", "fetch": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	imported := mustReadIndexTest(t, localLeasePath)
-	assertContainsIndexTest(t, imported, `"owner": "agent:codex"`)
 }
 
 func TestV7StagedBranchPolicyRejectsProtectedStateMutation(t *testing.T) {

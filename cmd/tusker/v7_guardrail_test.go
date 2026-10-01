@@ -25,9 +25,9 @@ func TestV7GuardrailNoDiataxisInRuntimePolicyOrProjectSkill(t *testing.T) {
 
 func TestV7GuardrailTopLevelHelpAndBootstrapDoNotExposeLegacyDocsTaxonomy(t *testing.T) {
 	for name, output := range map[string]string{
-		"main": captureStdout(t, printHelp),
+		"main": captureStdout(t, func() { printHelp(true) }),
 		"init": captureStdout(t, printInitHelp),
-		"v7":   captureStdout(t, printV7Help),
+		"full": captureStdout(t, func() { _, _ = runInner("help", Args{"full": "true", "all": "true"}) }),
 	} {
 		lower := strings.ToLower(output)
 		for _, forbidden := range []string{"diataxis", "diátaxis", "tutorial", "how-to", "explanation", "_config/docs-map.yaml"} {

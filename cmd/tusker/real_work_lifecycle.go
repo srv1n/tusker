@@ -17,7 +17,6 @@ package main
 //   tusker work review <id> --by reviewer:... claim the independent review session
 //   tusker review submit <id> --attempt ...   reviewer verdict (shared validators)
 //   tusker close <id> --by reviewer|human ... accepted completion (requires review)
-//   tusker work cancel <id> --by <owner>      release ownership (CAS, prevents late success)
 //   tusker work retry <id> --by <agent>       truthful new attempt after terminal state
 //
 // Legacy aliases `attempt start`, `attempt handoff`, and `finish` participate
@@ -50,7 +49,7 @@ const realWorkLifecycleSchema = "tusker.work-lifecycle/v1"
 // the file-attempt lookup and the runtime bridge, so every path teaches the
 // same recognized replacement.
 func v7MissingAttemptError(taskID string) error {
-	return tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state; run `tusker work start "+taskID+" --by <agent>` (or `tusker attempt start "+taskID+"`, which claims the same session), then retry `tusker finish "+taskID+" --request-review`"))
+	return tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state; run `tusker work start "+taskID+" --by <agent>`, then retry `tusker finish "+taskID+" --request-review`"))
 }
 
 // realWorkStage derives the operator-visible stage from the run row and task
@@ -335,7 +334,7 @@ func workRetryCmd(args Args) error {
 		return err
 	}
 	if run != nil && (LeaseState(run.LeaseState) == LeaseStateClaimed || LeaseState(run.LeaseState) == LeaseStateRunning) {
-		return tuskerError(errorInvalidTransition, "work retry refused: session still live for "+id, withHint("cancel first with `tusker work cancel "+id+" --by "+run.LeaseOwner+" --reason <text>`"))
+		return tuskerError(errorInvalidTransition, "work retry refused: session still live for "+id, withHint("cancel first with `tusker work release "+id+" --by "+run.LeaseOwner+" --reason <text>`"))
 	}
 	if args.String("owner") == "" {
 		args["owner"] = firstNonEmpty(args.String("by"), args.String("actor"))
@@ -407,7 +406,7 @@ func workReconcileCmd(args Args) error {
 		currentMaterial, hashErr := workspaceTreeStateHashForPaths(checkout, scope, generatedOutputScope)
 		if hashErr != nil || currentMaterial != boundMaterial {
 			emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, boundMaterial, scope, "", "release the stray claim and start where the implementation lives"))
-			return afterResultEmitted(tuskerError("WORKSPACE_MISMATCH", "work reconcile refused: current checkout does not match the bound implementation workspace", withHint("run `tusker work submit "+id+"` from the bound workspace, or `tusker work cancel "+id+" --by "+run.LeaseOwner+" --reason <text>` then `tusker work start "+id+"` where the implementation lives")))
+			return afterResultEmitted(tuskerError("WORKSPACE_MISMATCH", "work reconcile refused: current checkout does not match the bound implementation workspace", withHint("run `tusker work submit "+id+"` from the bound workspace, or `tusker work release "+id+" --by "+run.LeaseOwner+" --reason <text>` then `tusker work start "+id+"` where the implementation lives")))
 		}
 	}
 	head := ""

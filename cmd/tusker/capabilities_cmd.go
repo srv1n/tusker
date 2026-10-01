@@ -31,10 +31,11 @@ type capabilitiesManifest struct {
 }
 
 type capabilityCommand struct {
-	Command     string   `json:"command"`
-	Subcommands []string `json:"subcommands,omitempty"`
-	Flags       []string `json:"flags,omitempty"`
-	Purpose     string   `json:"purpose,omitempty"`
+	Command   string `json:"command"`
+	Group     string `json:"group"`
+	Purpose   string `json:"purpose"`
+	UseWhen   string `json:"use_when,omitempty"`
+	AvoidWhen string `json:"avoid_when,omitempty"`
 }
 
 type capabilitySchemas struct {
@@ -123,7 +124,7 @@ func buildCapabilitiesManifest(info *debug.BuildInfo, executable string) (capabi
 			string(RunnerMuse),
 		},
 		RunnerCatalogSchema: "tusker.runner-catalog/v1",
-		Deprecations:        []capabilityDeprecation{{Command: "propose", Replacement: "proposal"}},
+		Deprecations:        []capabilityDeprecation{},
 	}
 	sortCapabilitiesManifest(&manifest)
 	compatibility, err := buildCapabilityCompatibility(manifest)
@@ -171,74 +172,21 @@ func buildCapabilityCompatibility(manifest capabilitiesManifest) (capabilityComp
 	return projection, nil
 }
 
-// installedCapabilityCommands is intentionally a complete public CLI inventory,
-// rather than a short list of the commands this feature happens to need. Keep
-// new command families here when they are added to runInner.
+// installedCapabilityCommands lists every visible command in the command
+// table; internal plumbing stays out of the public inventory.
 func installedCapabilityCommands() []capabilityCommand {
-	return []capabilityCommand{
-		{Command: "acp", Subcommands: []string{"doctor"}},
-		{Command: "actor", Subcommands: []string{"correction"}, Flags: []string{"--by", "--corrected-actor", "--event-id", "--gate", "--json", "--original-sha256", "--receipt"}},
-		{Command: "approvals", Subcommands: []string{"list", "respond"}, Flags: []string{"--allow-once", "--block", "--by", "--json", "--project"}, Purpose: "List agent access requests and settle one as a human operator."},
-		{Command: "acp doctor", Flags: []string{"--auth-source", "--bundle-digest", "--json"}},
-		{Command: "accept"}, {Command: "attachments"}, {Command: "attempt"},
-		{Command: "automation", Subcommands: []string{"advance-external", "collect-external", "dispatch", "explain", "external-loop", "off", "on", "plan", "queue", "status"}, Flags: []string{"--json"}},
-		{Command: "brief"}, {Command: "capabilities", Flags: []string{"--json"}}, {Command: "claim"}, {Command: "close"},
-		{Command: "closeout", Subcommands: []string{"status"}}, {Command: "config", Subcommands: []string{"resolve"}},
-		{Command: "context", Subcommands: []string{"audit"}}, {Command: "daemon", Subcommands: []string{"install", "limits", "resume", "run", "service", "status", "stop", "uninstall"}},
-		{Command: "dashboard"}, {Command: "demo", Subcommands: []string{"check", "reset", "run", "seed", "session", "status", "wait"}, Flags: []string{"--fail-once", "--fast", "--json", "--mode", "--profile", "--reject-once", "--repo", "--require-harness", "--scenario", "--timeout", "--until", "--waves", "--with-human-gate", "--with-second-project", "--yes"}, Purpose: "Seed and drive a disposable deterministic demo (one standalone task plus three waves, thirteen tasks) through the native CLI; seed is inert and reset previews by default. Offline timer lane is the default; --mode real resolves configured profiles and never substitutes another harness."},
-		{Command: "departure", Subcommands: []string{"check", "history", "hold", "resume", "status"}}, {Command: "digest"}, {Command: "discard"},
-		{Command: "doctor", Flags: []string{"--json", "--output", "--vault"}, Purpose: "Diagnose one task or wave across contracts, DAG, authorization, reservations, capacity, proof, review, and daemon freshness; read-only with an exact permitted next action and 0/1/2 exit semantics."},
-		{Command: "docs", Subcommands: []string{"adopt", "backlinks", "browse", "check", "find", "map", "new", "read", "save", "status", "verify"}, Flags: []string{"--approval-token", "--approve", "--by", "--dry-run", "--json", "--limit", "--section", "--table"}},
-		{Command: "domain", Subcommands: []string{"canon", "list", "new", "show"}},
-		{Command: "execution", Subcommands: []string{"attach", "bind", "cancel", "detach", "inbox", "launch", "list", "rebind", "register", "rename", "show"}, Flags: []string{"--json"}},
-		{Command: "execution register", Flags: []string{"--by", "--connection-id", "--contact-name", "--contact-role", "--conversation-id", "--harness", "--if-generation", "--json", "--project", "--provider", "--source", "--task", "--wave"}, Purpose: "Allocate a direct-execution ID or, with --contact-role, atomically register a pre-existing external agent conversation as a role contact on a durable task or wave."},
-		{Command: "evidence"}, {Command: "escalate", Subcommands: []string{"ack"}}, {Command: "factory", Subcommands: []string{"operations"}},
-		{Command: "feedback", Subcommands: []string{"add", "digest", "ingest", "promote", "review", "signals"}}, {Command: "finish"},
-		{Command: "gate"}, {Command: "gate-ledger", Subcommands: []string{"check", "record"}}, {Command: "gate-run"}, {Command: "gc", Flags: []string{"--json", "--ttl", "--vault", "--yes"}},
-		{Command: "handoff"}, {Command: "heartbeat"}, {Command: "help"},
-		{Command: "init", Flags: []string{"--isolated-vault", "--vault", "--yes"}}, {Command: "install"}, {Command: "land"}, {Command: "list"}, {Command: "logbook"},
-		{Command: "knowledge", Subcommands: []string{"new"}},
-		{Command: "migrate", Subcommands: []string{"evidence-policy", "vault-root"}},
-		{Command: "message", Subcommands: []string{"apply", "ask", "consume", "hook", "inbox", "list", "reply", "send", "show"}, Flags: []string{"--body", "--harness", "--id", "--json", "--key", "--project", "--recipient", "--recipient-kind", "--reply-to", "--sender", "--yield"}, Purpose: "Persist and inspect correlated task or execution messages; transport and wakeup remain capability-gated."},
-		{Command: "mcp", Subcommands: []string{"serve"}},
-		{Command: "models", Subcommands: []string{"catalog", "profile-disable", "profile-enable", "profile-remove", "profile-set", "reset", "set", "show"}, Flags: []string{"--command", "--compact", "--display-name", "--effort", "--eligible-tiers", "--harness", "--if-revision", "--json", "--lane", "--level", "--model", "--name", "--preset", "--profiles", "--scope"}},
-		{Command: "new", Subcommands: []string{"decision", "epic", "gate", "task"}, Flags: []string{"--architect", "--body-file", "--dependencies", "--domains", "--epic", "--evidence-budget", "--evidence-required", "--execute-profile", "--gates", "--generated-outputs", "--id", "--origin", "--owned-paths", "--peers", "--review-level", "--review-profile", "--review-reason", "--spec-refs", "--title", "--vault", "--weight", "--work-level"}}, {Command: "next"}, {Command: "open"}, {Command: "packet"}, {Command: "print"},
-		{Command: "projects", Subcommands: []string{"add", "automation-scope", "disable", "enable", "icon", "limits", "list", "prune", "rebind", "remove"}, Flags: []string{"--allow-dirty", "--dry-run", "--id", "--json", "--repo", "--vault"}}, {Command: "proof"}, {Command: "proposal"}, {Command: "publish", Subcommands: []string{"skill"}}, {Command: "purge"},
-		{Command: "reconcile", Flags: []string{"--dry-run", "--id", "--json"}}, {Command: "redact"}, {Command: "redrive"}, {Command: "refresh"}, {Command: "reindex"}, {Command: "release"}, {Command: "relaunch", Flags: []string{"--dry-run", "--json", "--repo", "--yes"}}, {Command: "reset", Flags: []string{"--dry-run", "--json", "--repo", "--yes"}},
-		{Command: "review", Subcommands: []string{"submit"}, Flags: []string{"--attempt", "--covers", "--gate-fingerprint", "--proof-fingerprint", "--source-sha", "--task-rev", "--verdict", "--work-rev"}},
-		{Command: "runner", Subcommands: []string{"catalog", "conformance", "profiles", "route", "test"}, Flags: []string{"--bundled", "--refresh", "--json", "--lane", "--write"}},
-		{Command: "runner conformance", Flags: []string{"--exercise", "--external-containment", "--harness", "--json", "--live", "--preset", "--script", "--workspace"}, Purpose: "Probe and exercise an operator-installed CLI or ACP harness without claiming work."}, {Command: "runner-wrapper"},
-		{Command: "runner test", Flags: []string{"--exercise", "--external-containment", "--harness", "--json", "--live", "--preset", "--quiet", "--script", "--workspace"}, Purpose: "Short agent-friendly alias for runner conformance; accepts the harness as the first positional argument."},
-		{Command: "runs", Subcommands: []string{"claim", "continue", "events", "fail", "fresh", "heartbeat", "inspect", "interrupt", "list", "logs", "pause", "reclaim", "redrive", "release", "retire", "say", "start", "stop", "submit"}},
-		{Command: "runs list", Flags: []string{"--active", "--json", "--limit", "--project"}, Purpose: "List runtime database runs newest first, optionally by project or active lease."},
-		{Command: "runs stop", Flags: []string{"--by", "--json", "--project", "--reason", "--vault"}, Purpose: "Request the shared Serve stop control for a run: persist the operator intent, interrupt the exact recorded owner, and report settlement."},
-		{Command: "runs pause", Flags: []string{"--by", "--json", "--project", "--vault"}, Purpose: "Request the shared Serve pause control; no runner negotiates pause, so it refuses with stop as the durable alternative."},
-		{Command: "search"}, {Command: "serve"}, {Command: "setup", Subcommands: []string{"doctor", "repair"}}, {Command: "show"},
-		{Command: "skill", Subcommands: []string{"audit-agent-guidance", "bundle", "doctor", "pack", "route", "sync"}}, {Command: "state"}, {Command: "status"}, {Command: "streams"},
-		{Command: "sync-repo-contract"}, {Command: "task", Subcommands: []string{"start", "update"}},
-		{Command: "task update", Flags: []string{"--body-file", "--by", "--clear-execute-profile", "--clear-review-profile", "--dependencies", "--execute-profile", "--generated-outputs", "--id", "--if-revision", "--json", "--owned-paths", "--rebind-contract", "--rebind-dependency-contracts", "--review-level", "--review-profile", "--review-reason", "--spec-refs", "--title", "--weight", "--work-level"}, Purpose: "CAS-mutate an existing task contract's mutable authoring fields or explicitly rebind its stored contract fingerprint; identity, history, and proof are preserved."},
-		{Command: "task start", Flags: []string{"--by", "--current-workspace", "--json", "--mode"}, Purpose: "Authorize and claim one task: interactive claims in the current workspace through work start; background persists a task-scoped run directive for the runtime. Inside a paused wave the directive stays task-scoped and the wave remains paused."},
-		{Command: "run", Flags: []string{"--by", "--json"}, Purpose: "Queue one task or wave for background work."},
-		{Command: "trace", Subcommands: []string{"list", "show"}}, {Command: "uninstall", Flags: []string{"--force-state", "--state", "--yes"}}, {Command: "update"}, {Command: "validate"},
-		{Command: "verify", Subcommands: []string{"add", "recipe", "remove"}},
-		{Command: "vault", Subcommands: []string{"mount", "move", "repair", "set", "status", "unmount"}}, {Command: "version", Flags: []string{"--json"}},
-		{Command: "wave", Subcommands: []string{"add", "brief", "create", "list", "outcome", "pause", "remove", "resume", "review", "show", "start"}},
-		{Command: "wave list", Flags: []string{"--json", "--project", "--vault"}, Purpose: "List every project wave with effective authorization and task counts."},
-		{Command: "wave create", Flags: []string{"--file", "--id", "--json", "--request-key", "--summary", "--title"}, Purpose: "Create a wave from existing task IDs, or atomically author a complete tusker.wave-authoring/v1 request with --file and --request-key; direct authoring is inert and idempotent."},
-		{Command: "wave review", Flags: []string{"--check", "--json"}, Purpose: "Read the durable wave/task/gate material projection: state, authorization, members, frontiers, blockers, and controls; --check fails unless Start is enabled."},
-		{Command: "wave pause", Flags: []string{"--by", "--json"}, Purpose: "Pause new wave-owned admissions while admitted attempts finish; preserves the exact authorization fingerprint, actor, and timestamp."},
-		{Command: "wave resume", Flags: []string{"--by", "--json"}, Purpose: "Restore a paused wave to armed only while the current material still matches the stored authorization fingerprint; daemon polling then advances the remaining frontier automatically."},
-		{Command: "wave start", Flags: []string{"--by", "--json", "--mode"}, Purpose: "Authorize the exact current wave material and queue eligible roots as durable run directives; daemon polling advances each dependency frontier automatically. An offline daemon leaves an authorized wave Waiting."},
-		{Command: "work", Subcommands: []string{"cancel", "fail", "heartbeat", "profile", "progress", "readiness", "reconcile", "recover", "release", "retry", "review", "start", "status", "submit", "wait"}, Flags: []string{"--current-workspace", "--json", "--vault"}}, {Command: "worker", Subcommands: []string{"checkpoint", "message", "qualify", "reconcile", "status"}},
+	var out []capabilityCommand
+	for _, c := range cliCommands {
+		if c.Hidden {
+			continue
+		}
+		out = append(out, capabilityCommand{Command: c.Name, Group: c.Group, Purpose: c.Summary, UseWhen: c.Use, AvoidWhen: c.Avoid})
 	}
+	return out
 }
 
 func sortCapabilitiesManifest(manifest *capabilitiesManifest) {
 	sort.Slice(manifest.Commands, func(i, j int) bool { return manifest.Commands[i].Command < manifest.Commands[j].Command })
-	for i := range manifest.Commands {
-		sort.Strings(manifest.Commands[i].Subcommands)
-		sort.Strings(manifest.Commands[i].Flags)
-	}
 	sort.Strings(manifest.Schemas.Task)
 	sort.Strings(manifest.Schemas.Review)
 	sort.Strings(manifest.Schemas.Completion)

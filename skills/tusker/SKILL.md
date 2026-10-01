@@ -5,9 +5,9 @@ description: Manage Tusker tasks, proof, gates, and repository knowledge. Use wh
 
 # Tusker
 
-Mutate tracker state only through the CLI. Use targeted `--help` for syntax;
-`tusker capabilities --json` resolves command/version uncertainty. Report refusals
-without rewriting generated state or expanding the assignment.
+Mutate tracker state only through the CLI. Find commands with
+`tusker help | grep <word>`; read one with `tusker <command> --help`. Report
+refusals without rewriting generated state or expanding the assignment.
 
 Interactive sessions implement authorized work through interactive claims;
 never launch a daemon or nested worker. With `TUSKER_ATTEMPT_ID`, follow the

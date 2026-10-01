@@ -27,27 +27,6 @@ type streamRow struct {
 	EndState       *RunEndState `json:"end_state,omitempty"`
 }
 
-func streamsCmd(args Args) error {
-	ctx, err := loadAutomationCommandContext(args)
-	if err != nil {
-		return err
-	}
-	defer ctx.Close()
-	rows, err := buildStreamRows(ctx, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if err := writeStreamBoard(ctx.Project.VaultRoot, rows); err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "schema": "tusker.streams/v1", "streams": rows})
-		return nil
-	}
-	fmt.Print(renderStreamBoard(rows))
-	return nil
-}
-
 func buildStreamRows(ctx *automationCommandContext, now time.Time) ([]streamRow, error) {
 	rows := []streamRow{}
 	for _, run := range ctx.Runs {

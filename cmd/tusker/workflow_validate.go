@@ -393,7 +393,7 @@ func validateReviewerPolicy(policy ReviewerPolicy, enabledAgents []string, fileP
 		return tuskerError(errorConfigInvalid, "reviewer.max_cycles must be at least 1", withPath(filePath))
 	}
 	if len(policy.HumanRequiredRisks) > 0 {
-		return tuskerError(errorConfigInvalid, "legacy reviewer.human_required_risks treats risk as human authority", withPath(filePath), withHint("run `tusker migrate close-policy --write`; use explicit gates for capability, external authority, unresolved intent, or subjective acceptance"))
+		return tuskerError(errorConfigInvalid, "legacy reviewer.human_required_risks treats risk as human authority", withPath(filePath), withHint("remove reviewer.human_required_risks from WORKFLOW.md; use explicit gates for capability, external authority, unresolved intent, or subjective acceptance"))
 	}
 	seen := map[string]string{}
 	for field, values := range map[string][]string{

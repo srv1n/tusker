@@ -187,7 +187,7 @@ func TestWaveShowAndFilters(t *testing.T) {
 		t.Fatalf("wave list filter included non-member:\n%s", listOutput)
 	}
 
-	mustWave(t, Args{"vault": vault, "quiet": "true"}, dashboardV7Cmd)
+	mustWave(t, Args{"vault": vault, "quiet": "true"}, reindex)
 	dashboard := mustReadIndexTest(t, filepath.Join(vault, "dashboards", "review-queue.md"))
 	if !strings.Contains(dashboard, "| Task | Wave | Risk | Next action |") || !strings.Contains(dashboard, "W-0001") {
 		t.Fatalf("review dashboard missing wave filter surface:\n%s", dashboard)

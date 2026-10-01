@@ -228,14 +228,6 @@ func TestSelfServiceDoctor(t *testing.T) {
 				continue
 			}
 			foundDoctor = true
-			hasJSON, hasOutput := false, false
-			for _, flag := range entry.Flags {
-				hasJSON = hasJSON || flag == "--json"
-				hasOutput = hasOutput || flag == "--output"
-			}
-			if !hasJSON || !hasOutput {
-				t.Fatalf("capabilities doctor entry lacks flags: %#v", entry)
-			}
 		}
 		if !foundDoctor {
 			t.Fatal("capabilities manifest has no doctor entry")

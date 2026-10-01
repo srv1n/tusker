@@ -36,9 +36,8 @@ func TestHarnessConformanceReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command, ok := capabilityCommandNamed(manifest.Commands, "runner conformance")
-	if !ok || !containsString(command.Flags, "--harness") || !containsString(command.Flags, "--live") {
-		t.Fatalf("runner conformance capability = %#v", command)
+	if command, ok := capabilityCommandNamed(manifest.Commands, "runner test"); !ok || command.UseWhen == "" {
+		t.Fatalf("runner test capability = %#v", command)
 	}
 }
 

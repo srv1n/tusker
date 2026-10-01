@@ -1,9 +1,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -23,7 +21,7 @@ var factoryOperationsSectionOrder = []string{
 var factoryOperationsNow = func() time.Time { return time.Now().UTC() }
 
 // factoryOperationsProjection is the single read-only operations contract
-// consumed by `tusker factory operations --json` and Serve. It deliberately
+// consumed by Serve. It deliberately
 // carries bounded product and control-plane facts, never runner exhaust.
 type factoryOperationsProjection struct {
 	Schema            string                           `json:"schema"`
@@ -176,78 +174,6 @@ type factoryOperationsFacts struct {
 	DefaultSHA          string
 	WaveFacts           map[string]factoryOperationsWaveFact
 	Now                 time.Time
-}
-
-func factoryOperationsCmd(args Args) error {
-	if err := validateFactoryOperationsArgs(args); err != nil {
-		return err
-	}
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	workflow, err := loadWorkflow(vaultPath)
-	if err != nil {
-		return err
-	}
-	store, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if store != nil {
-		defer store.Close()
-	}
-	project := RegisteredProject{
-		ProjectID:    v7ProjectID(vaultPath),
-		ProjectKey:   projectKeyFromPath(v7RepoRoot(vaultPath)),
-		Name:         v7ProjectID(vaultPath),
-		RepoRoot:     v7RepoRoot(vaultPath),
-		VaultRoot:    vaultPath,
-		WorkflowPath: workflow.Path,
-		Enabled:      false,
-		Health:       projectHealthDisabled,
-	}
-	projection, err := buildFactoryOperations(vaultPath, project, workflow.Data, store, factoryOperationsNow())
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(projection)
-		return nil
-	}
-	fmt.Print(renderFactoryOperations(projection))
-	return nil
-}
-
-func printFactoryOperationsHelp() {
-	fmt.Println(`Usage:
-  tusker factory operations [--json]
-
-Purpose:
-  Read one bounded operations projection shared with Serve and desktop.
-
-The projection is read-only. It reports delivered work, live work, objective
-review/rework, machine blockers, genuine human gates, and the next frontier.
-It never dispatches work, changes lifecycle state, or updates Git refs.`)
-}
-
-func validateFactoryOperationsArgs(args Args) error {
-	for key, value := range args {
-		switch key {
-		case "json":
-			if value != "true" {
-				return tuskerError(errorInvalidArg, "factory operations accepts --json as a switch without a value")
-			}
-		case "_pos", "_pos0", "_pos1", "_pos2":
-			return tuskerError(errorInvalidArg, "factory operations accepts no positional arguments")
-		default:
-			if strings.HasPrefix(key, "_pos") {
-				return tuskerError(errorInvalidArg, "factory operations accepts no positional arguments")
-			}
-			return tuskerError(errorInvalidArg, "factory operations is read-only and does not support --"+key)
-		}
-	}
-	return nil
 }
 
 func buildFactoryOperations(vaultPath string, project RegisteredProject, workflow Workflow, store *RuntimeStore, now time.Time) (factoryOperationsProjection, error) {

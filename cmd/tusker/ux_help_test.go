@@ -56,7 +56,7 @@ func TestMissingVaultGuidancePreservesStructuredContext(t *testing.T) {
 func TestUpdateHelpExplainsSkillRefresh(t *testing.T) {
 	output := captureStdout(t, printUpdateHelp)
 	for _, expected := range []string{
-		"tusker update [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]",
+		"tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]",
 		"refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude only",
 		"with --all-user-skills",
 		"with --repo, refreshes the repo-local .agents skill install",
@@ -85,91 +85,11 @@ func TestVaultHelpExplainsSharedObsidianMounts(t *testing.T) {
 	}
 }
 
-func TestRuntimeCommandParsingIncludesOperatorGroups(t *testing.T) {
-	cases := []struct {
-		argv    []string
-		command string
-		id      string
-	}{
-		{[]string{"tusker", "daemon", "status"}, "daemon status", ""},
-		{[]string{"tusker", "daemon", "run", "--once"}, "daemon run", ""},
-		{[]string{"tusker", "daemon", "resume"}, "daemon resume", ""},
-		{[]string{"tusker", "projects", "add", "--repo", "."}, "projects add", ""},
-		{[]string{"tusker", "runs", "inspect", "ORC-T-0018"}, "runs inspect", "ORC-T-0018"},
-		{[]string{"tusker", "work", "start", "ORC-T-0018", "--by", "agent:codex"}, "work start", "ORC-T-0018"},
-		{[]string{"tusker", "work", "status", "ORC-T-0018"}, "work status", "ORC-T-0018"},
-		{[]string{"tusker", "work", "heartbeat", "ORC-T-0018"}, "work heartbeat", "ORC-T-0018"},
-		{[]string{"tusker", "work", "submit", "ORC-T-0018"}, "work submit", "ORC-T-0018"},
-		{[]string{"tusker", "work", "fail", "ORC-T-0018"}, "work fail", "ORC-T-0018"},
-		{[]string{"tusker", "work", "release", "ORC-T-0018"}, "work release", "ORC-T-0018"},
-		{[]string{"tusker", "config", "resolve", "automation.profiles", "--json"}, "config resolve", "automation.profiles"},
-		{[]string{"tusker", "help", "runs", "events"}, "help runs events", ""},
-		{[]string{"tusker", "help", "work", "start"}, "help work start", ""},
-		{[]string{"tusker", "help", "config", "resolve"}, "help config resolve", ""},
-	}
-	for _, tc := range cases {
-		command, args := parseCLI(tc.argv)
-		assertEqual(t, tc.command, command, "parsed command")
-		if tc.id != "" {
-			assertEqual(t, tc.id, args.String("_pos0"), "parsed positional id")
-		}
-	}
-}
-
-func TestHookCommandIsNotAdvertisedOrParsedAsSubcommand(t *testing.T) {
-	if output := captureStdout(t, printHelp); strings.Contains(output, "\n  hook ") {
-		t.Fatalf("main help advertises removed hook command:\n%s", output)
-	}
-	if printCommandHelp("hook") {
-		t.Fatal("removed hook command still has a help handler")
-	}
-	command, args := parseCLI([]string{"tusker", "hook", "install"})
-	assertEqual(t, "hook", command, "removed hook command parsing")
-	assertEqual(t, "install", args.String("_pos0"), "removed hook positional argument")
-}
-
-func TestOperatorHelpIsCommandSpecificAndInert(t *testing.T) {
-	commands := []string{
-		"wave", "wave create", "land", "brief", "dashboard", "closeout",
-		"closeout status", "gate-run", "digest", "escalate", "escalate ack",
-		"departure", "departure check",
-	}
-	for _, command := range commands {
-		output := captureStdout(t, func() {
-			if !printCommandHelp(command) {
-				t.Fatalf("%s has no command-specific help", command)
-			}
-		})
-		if !strings.Contains(output, "Usage:") || !strings.Contains(output, "tusker "+command) {
-			t.Fatalf("%s help is not command-specific:\n%s", command, output)
-		}
-		if strings.Contains(output, "Tusker - V7 repo-local work tracking") {
-			t.Fatalf("%s help fell back to global usage:\n%s", command, output)
-		}
-	}
-
-	for _, command := range commands {
-		code, err := run(command, Args{"help": "true"})
-		if code != 0 || err != nil {
-			t.Fatalf("%s --help failed: code=%d err=%v", command, code, err)
-		}
-	}
-}
-
 func TestWaveCreateHelpShowsAuthoringSchema(t *testing.T) {
 	output := captureStdout(t, func() { printCommandHelp("wave create") })
 	for _, expected := range []string{"tusker.wave-authoring/v1", "human_actions:", "owned_paths:", "kind:", "command:", "ledger:"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("wave create help missing %q:\n%s", expected, output)
-		}
-	}
-}
-
-func TestMainHelpAdvertisesOperatorCommands(t *testing.T) {
-	output := captureStdout(t, printHelp)
-	for _, command := range []string{"digest", "escalate", "departure"} {
-		if !strings.Contains(output, "\n  "+command) {
-			t.Fatalf("main help missing %s:\n%s", command, output)
 		}
 	}
 }
@@ -199,8 +119,8 @@ func TestRuntimeHelpExplainsOperatorSurface(t *testing.T) {
 			}
 		}
 	}
-	mainHelp := captureStdout(t, printHelp)
-	for _, expected := range []string{"daemon", "projects", "runs", "refresh", "search", "show", "context"} {
+	mainHelp := captureStdout(t, func() { printHelp(false) })
+	for _, expected := range []string{"daemon", "projects", "runs", "refresh", "search", "show"} {
 		if !strings.Contains(mainHelp, expected) {
 			t.Fatalf("main help missing %q:\n%s", expected, mainHelp)
 		}
@@ -232,20 +152,6 @@ func TestShowHelpExplainsCapsuleFirst(t *testing.T) {
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("show help missing %q:\n%s", expected, output)
-		}
-	}
-}
-
-func TestContextHelpExplainsTranscriptAudit(t *testing.T) {
-	output := captureStdout(t, printContextHelp)
-	for _, expected := range []string{
-		"tusker context audit",
-		"codex-session.jsonl",
-		"largest tool outputs",
-		"--top <n>",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("context help missing %q:\n%s", expected, output)
 		}
 	}
 }
@@ -308,4 +214,75 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatal(err)
 	}
 	return string(result.output)
+}
+
+func TestParseCLIJoinsOnlyTableSubcommands(t *testing.T) {
+	cases := []struct {
+		argv    []string
+		command string
+		pos0    string
+	}{
+		{[]string{"tusker", "daemon", "status"}, "daemon status", ""},
+		{[]string{"tusker", "runs", "inspect", "ORC-T-0018"}, "runs inspect", "ORC-T-0018"},
+		{[]string{"tusker", "work", "start", "ORC-T-0018", "--by", "agent:codex"}, "work start", "ORC-T-0018"},
+		{[]string{"tusker", "config", "resolve", "automation.profiles", "--json"}, "config resolve", "automation.profiles"},
+		{[]string{"tusker", "gate", "satisfy", "G-0001"}, "gate", "satisfy"},
+		{[]string{"tusker", "hook", "install"}, "hook", "install"},
+		{[]string{"tusker", "help", "runs", "events"}, "help", "runs"},
+	}
+	for _, tc := range cases {
+		command, args := parseCLI(tc.argv)
+		assertEqual(t, tc.command, command, "parsed command")
+		assertEqual(t, tc.pos0, args.String("_pos0"), "first positional")
+	}
+}
+
+// Every command must answer --help from the table without opening a vault,
+// and carry the use/avoid guidance agents grep for.
+func TestEveryCommandHasInertGuidedHelp(t *testing.T) {
+	groups := map[string]bool{}
+	for _, g := range cliGroups {
+		groups[g.Name] = true
+	}
+	for _, c := range cliCommands {
+		if !groups[c.Group] {
+			t.Errorf("%s: unknown group %q", c.Name, c.Group)
+		}
+		if c.Summary == "" || !strings.HasPrefix(c.Use, "Use ") || c.Avoid == "" {
+			t.Errorf("%s: missing summary or use/avoid guidance: %#v", c.Name, c)
+		}
+		output := captureStdout(t, func() {
+			if code, err := runInner(c.Name, Args{"help": "true"}); code != 0 || err != nil {
+				t.Errorf("%s --help: code=%d err=%v", c.Name, code, err)
+			}
+		})
+		if !strings.Contains(output, "tusker "+c.Name+" — ") {
+			t.Errorf("%s --help is not command-specific:\n%s", c.Name, output)
+		}
+	}
+}
+
+func TestMainHelpListsEveryVisibleCommandOnOneGreppableLine(t *testing.T) {
+	output := captureStdout(t, func() { printHelp(false) })
+	for _, c := range cliCommands {
+		has := strings.Contains(output, "tusker "+c.Name+" ")
+		if has == c.Hidden {
+			t.Errorf("%s: hidden=%t but listed=%t", c.Name, c.Hidden, has)
+		}
+	}
+	if strings.Contains(output, "\n  hook ") || printCommandHelp("hook") {
+		t.Fatal("removed hook command is still advertised")
+	}
+}
+
+func TestUnknownAndRemovedCommandsPointToReplacements(t *testing.T) {
+	if _, err := runInner("claim", Args{"json": "true"}); err == nil || !strings.Contains(errorToIssue(err).Hint, "tusker work start") {
+		t.Fatalf("removed claim did not name its replacement: %v", err)
+	}
+	if got := suggestCommands("runs inspct"); len(got) == 0 || got[0] != "runs inspect" {
+		t.Fatalf("suggestions for a typo = %v", got)
+	}
+	if code, _ := runInner("runs bogus", Args{}); code == 0 {
+		t.Fatal("unknown subcommand of a family succeeded")
+	}
 }

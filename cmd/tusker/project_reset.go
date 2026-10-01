@@ -87,7 +87,6 @@ func printResetHelp() {
 	fmt.Println(`Usage:
   tusker reset --yes [--repo <path>]
   tusker reset --dry-run [--repo <path>] [--json]
-  tusker relaunch --yes [--repo <path>]
 
 Purpose:
   Delete known repo-local Tusker state and initialize a clean V7 vault.
@@ -99,6 +98,5 @@ Purpose:
 Behavior:
   - --dry-run previews the deletion plan without changing anything
   - without --yes, the command refuses to delete anything
-  - repo pointers, repo-contract files, and Obsidian mounts are not recreated
-  - the relaunch alias is kept for the “delete and relaunch” workflow`)
+  - repo pointers, repo-contract files, and Obsidian mounts are not recreated`)
 }

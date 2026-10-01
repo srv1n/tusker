@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 )
@@ -64,40 +63,21 @@ type Config struct {
 	} `yaml:"definition_of_done" json:"definition_of_done"`
 }
 
+// parseCLI joins the first two words into one command when the command table
+// has that subcommand; otherwise the second word stays a positional argument.
 func parseCLI(argv []string) (string, Args) {
-	var command string
-	if len(argv) > 1 {
-		command = argv[1]
-		if command == "help" && len(argv) > 2 && !isCLIFlag(argv[2]) {
-			command = "help " + argv[2]
-			if len(argv) > 3 && !isCLIFlag(argv[3]) && commandTakesSubcommand(argv[2]) {
-				command = command + " " + argv[3]
-				return command, parseArgs(argv[4:])
-			}
-			return command, parseArgs(argv[3:])
-		}
-		if len(argv) > 2 && !isCLIFlag(argv[2]) && commandTakesSubcommand(command) {
-			command = command + " " + argv[2]
-			return command, parseArgs(argv[3:])
-		}
+	if len(argv) < 2 {
+		return "", parseArgs(nil)
 	}
-	if len(argv) <= 2 {
-		return command, parseArgs(nil)
+	command, rest := argv[1], argv[2:]
+	if len(rest) > 0 && !isCLIFlag(rest[0]) && lookupCommand(command+" "+rest[0]) != nil {
+		command, rest = command+" "+rest[0], rest[1:]
 	}
-	return command, parseArgs(argv[2:])
+	return command, parseArgs(rest)
 }
 
 func isCLIFlag(value string) bool {
 	return strings.HasPrefix(value, "-")
-}
-
-func commandTakesSubcommand(command string) bool {
-	switch command {
-	case "acp", "actor", "approvals", "docs", "domain", "knowledge", "publish", "skill", "setup", "new", "vault", "daemon", "automation", "projects", "runs", "runner", "models", "gate-ledger", "context", "config", "migrate", "feedback", "wave", "review", "trace", "escalate", "departure", "factory", "work", "execution", "message", "mcp", "demo", "task", "worker":
-		return true
-	default:
-		return false
-	}
 }
 
 func parseArgs(argv []string) Args {
@@ -168,15 +148,6 @@ func run(command string, args Args) (int, error) {
 	return code, err
 }
 
-func cliCommandMutatesVault(command string) bool {
-	switch command {
-	case "status", "run", "discard", "verify add", "verify remove", "evidence add", "gate new", "gate satisfy", "gate waive", "new task", "new epic", "new decision", "task update", "task start", "wave start", "actor correction", "reconcile", "finish", "close", "accept", "handoff", "work recover", "demo seed", "demo run", "demo session", "demo reset", "message reply":
-		return true
-	default:
-		return false
-	}
-}
-
 func notifyDaemonForVault(args Args) {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -185,927 +156,9 @@ func notifyDaemonForVault(args Args) {
 	notifyDaemonForVaultPath(vaultPath)
 }
 
-func runInner(command string, args Args) (int, error) {
-	if args.Bool("help") && command != "" {
-		if printCommandHelp(command) {
-			return 0, nil
-		}
-	}
-	switch command {
-	case "version", "--version":
-		return 0, versionCmd(args)
-	case "capabilities":
-		return 0, capabilitiesCmd(args)
-	case "message send", "message ask", "message reply", "message list", "message show", "message consume", "message apply":
-		return 0, agentMessageCmd(command, args)
-	case "message inbox":
-		return 0, agentMessageInboxCmd(args)
-	case "message hook":
-		return 0, agentMessageHookCmd(args)
-	case "mcp serve":
-		return 0, mcpServeCmd(args)
-	case "acp":
-		if err := validateACPAdapterCommandArgs(args); err != nil {
-			return 0, tuskerError(errorInvalidArg, err.Error())
-		}
-		printACPAdapterHelp()
-		return 0, nil
-	case "acp doctor":
-		return 0, acpDoctorCommand(args)
-	case "runner-wrapper":
-		return 0, runnerWrapperCmd(args)
-	case "runner":
-		printRunnerHelp()
-		return 0, nil
-	case "runner catalog":
-		return 0, runnerCatalogCmd(args)
-	case "runner profiles":
-		return 0, runnerProfilesBootstrapCmd(args)
-	case "runner route":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runnerRouteCmd(args)
-	case "runner conformance":
-		return runnerConformanceCmd(args)
-	case "runner test":
-		return runnerConformanceCmd(args)
-	case "approvals list":
-		return 0, approvalsListCmd(args)
-	case "approvals respond":
-		return 0, approvalsRespondCmd(args)
-	case "approvals":
-		return 0, tuskerError(errorMissingArg, "Usage: tusker approvals list [--project <id>] [--json] | approvals respond <id> --allow-once|--block [--by human:<actor>]")
-	case "models", "models show":
-		return 0, modelsCmd(args)
-	case "models catalog":
-		return 0, runnerCatalogCmd(args)
-	case "models set":
-		return 0, modelsSetCmd(args)
-	case "models reset":
-		return 0, modelsResetCmd(args)
-	case "models profile-set":
-		return 0, modelsProfileSetCmd(args)
-	case "models profile-disable", "models profile-enable", "models profile-remove":
-		return 0, modelsProfileLifecycleCmd(args, command)
-	case "new epic":
-		return 0, newV7Epic(args)
-	case "new task":
-		return 0, newAuthoredV7Task(args)
-	case "new gate":
-		return 0, newV7Gate(args)
-	case "new decision":
-		return 0, newV7Decision(args)
-	case "status":
-		return 0, statusCmd(args)
-	case "discard":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, discardV7Cmd(args)
-	case "next":
-		return 0, nextCmd(args)
-	case "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review":
-		return 0, workSessionCmd(args, strings.TrimPrefix(command, "work "))
-	case "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile":
-		return 0, workRealLifecycleCmd(args, strings.TrimPrefix(command, "work "))
-	case "work recover":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, workRecoverCmd(args)
-	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
-		return 0, executionCmd(args, strings.TrimSpace(strings.TrimPrefix(command, "execution")))
-	case "worker":
-		printWorkerHelp()
-		return 0, nil
-	case "worker checkpoint", "worker status", "worker message", "worker reconcile", "worker qualify":
-		return 0, workerCmd(args, strings.TrimPrefix(command, "worker "))
-	case "claim":
-		return 0, claimCmd(args)
-	case "heartbeat":
-		return 0, heartbeatV7Cmd(args)
-	case "release":
-		return 0, releaseV7Cmd(args)
-	case "handoff":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, attemptV7HandoffCmd(args)
-	case "finish":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, finishV7Cmd(args)
-	case "gate":
-		return 0, gateV7Cmd(args)
-	case "task update":
-		return 0, taskUpdateCLICmd(args)
-	case "task start":
-		return 0, taskStartCmd(args)
-	case "run":
-		return 0, directRunCmd(args)
-	case "task":
-		return 0, tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> [--if-revision <state_rev>] ...")
-	case "wave":
-		return 0, waveV7Cmd(args)
-	case "wave list":
-		return 0, waveListCmd(args)
-	case "wave review":
-		return 0, waveReviewCmd(args)
-	case "wave start":
-		return 0, waveStartCmd(args)
-	case "wave create":
-		return 0, waveV7CreateCmd(args)
-	case "wave add":
-		return 0, waveV7AddCmd(args)
-	case "wave remove":
-		return 0, waveV7RemoveCmd(args)
-	case "wave show":
-		return 0, waveV7ShowCmd(args)
-	case "wave outcome":
-		return 0, waveV7OutcomeCmd(args)
-	case "wave brief":
-		return 0, waveV7BriefCmd(args)
-	case "wave pause":
-		return 0, waveV7PauseCmd(args)
-	case "wave resume":
-		return 0, waveV7ResumeCmd(args)
-	case "factory":
-		printFactoryOperationsHelp()
-		return 0, nil
-	case "factory operations":
-		return 0, factoryOperationsCmd(args)
-	case "review submit":
-		return 0, reviewSubmitCmd(args)
-	case "demo":
-		return demoCmd(args)
-	case "demo seed":
-		return demoSeedCmd(args)
-	case "demo status":
-		return demoStatusCmd(args)
-	case "demo run":
-		return demoRunCmd(args)
-	case "demo session":
-		return demoSessionCmd(args)
-	case "demo wait":
-		return demoWaitCmd(args)
-	case "demo check":
-		return demoCheckCmd(args)
-	case "demo reset":
-		return demoResetCmd(args)
-	case "escalate":
-		return 0, escalationV7Cmd(args)
-	case "escalate ack":
-		return 0, escalationV7AckCmd(args)
-	case "digest":
-		return 0, digestCmd(args)
-	case "doctor":
-		return executionDoctorCmd(args)
-	case "logbook":
-		return 0, logbookCmd(args)
-	case "trace":
-		return 0, traceV7Cmd(args)
-	case "trace list":
-		return 0, traceListCmd(args)
-	case "trace show":
-		return 0, traceShowCmd(args)
-	case "land":
-		return 0, landV7Cmd(args)
-	case "departure":
-		printDepartureHelp()
-		return 0, nil
-	case "departure check":
-		return 0, departureCheckCmd(args)
-	case "departure status":
-		return 0, departureStatusCmd(args)
-	case "departure history":
-		return 0, departureHistoryCmd(args)
-	case "departure hold":
-		return 0, departureHoldCmd(args)
-	case "departure resume":
-		return 0, departureResumeCmd(args)
-	case "proof":
-		return 0, proofV7Cmd(args)
-	case "feedback":
-		return 0, feedbackV7Cmd(args)
-	case "feedback add":
-		args["_pos0"] = "add"
-		return 0, feedbackV7Cmd(args)
-	case "feedback digest":
-		args["_pos0"] = "digest"
-		return 0, feedbackV7Cmd(args)
-	case "feedback ingest":
-		args["_pos0"] = "ingest"
-		return 0, feedbackV7Cmd(args)
-	case "feedback signals":
-		args["_pos0"] = "signals"
-		return 0, feedbackV7Cmd(args)
-	case "feedback review":
-		args["_pos0"] = "review"
-		return 0, feedbackV7Cmd(args)
-	case "feedback promote":
-		if ref := strings.TrimSpace(args.String("_pos0")); ref != "" {
-			args["_pos1"] = ref
-		}
-		args["_pos0"] = "promote"
-		return 0, feedbackV7Cmd(args)
-	case "closeout", "closeout status":
-		return 0, closeoutV7Cmd(args)
-	case "evidence":
-		return 0, evidenceCmd(args)
-	case "attachments":
-		return 0, attachmentsV7Cmd(args)
-	case "attempt":
-		return 0, attemptV7Cmd(args)
-	case "proposal", "propose":
-		return 0, proposalV7Cmd(args)
-	case "actor":
-		fmt.Println("Usage: tusker actor correction plan|apply|list ...")
-		return 0, nil
-	case "actor correction":
-		return 0, actorCorrectionV7Cmd(args)
-	case "redact":
-		return 0, redactV7Cmd(args)
-	case "verify":
-		if strings.ToLower(args.String("_pos0")) == "add" {
-			return 0, verifyV7AddCmd(args)
-		}
-		if strings.ToLower(args.String("_pos0")) == "remove" {
-			return 0, verifyV7RemoveCmd(args)
-		}
-		if strings.ToLower(args.String("_pos0")) == "recipe" {
-			return 0, verifyV7RecipeCmd(args)
-		}
-		printVerifyHelp()
-		return 0, nil
-	case "close":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, closeV7Cmd(args)
-	case "accept":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, acceptV7Cmd(args)
-	case "redrive":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, redriveCmd(args)
-	case "reconcile":
-		return 0, reconcileV7Cmd(args)
-	case "brief":
-		return 0, briefV7Cmd(args)
-	case "packet":
-		return 0, packetV7Cmd(args)
-	case "dashboard":
-		return 0, dashboardV7Cmd(args)
-	case "state":
-		return 0, stateV7Cmd(args)
-	case "migrate evidence-policy":
-		return 0, migrateV7EvidencePolicyCmd(args)
-	case "reindex":
-		return 0, reindex(args)
-	case "reset", "relaunch":
-		return 0, resetCmd(args)
-	case "validate":
-		return validateCmd(args)
-	case "purge":
-		return 0, tuskerPurgeCmd(args)
-	case "uninstall":
-		return 0, tuskerGlobalUninstallCmd(args)
-	case "gc":
-		return 0, scratchGCCmd(args)
-	case "list":
-		return 0, listCmd(args)
-	case "search":
-		return 0, searchCmd(args)
-	case "show":
-		return 0, showCmd(args)
-	case "print":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, printCmd(args)
-	case "open":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, openCmd(args)
-	case "context audit":
-		return 0, contextAuditCmd(args)
-	case "docs find":
-		return 0, docsCmd("find", args)
-	case "docs new":
-		return 0, docsCmd("new", args)
-	case "docs browse":
-		return 0, docsCmd("browse", args)
-	case "docs read":
-		return 0, docsCmd("read", args)
-	case "docs backlinks":
-		return 0, docsCmd("backlinks", args)
-	case "docs check":
-		err := docsCmd("check", args)
-		if _, ok := err.(*docsCheckFailure); ok {
-			return 1, nil
-		}
-		return 0, err
-	case "docs map":
-		return 0, docsCmd("map", args)
-	case "docs status":
-		return 0, docsCmd("status", args)
-	case "docs verify":
-		return 0, docsCmd("verify", args)
-	case "docs adopt":
-		return 0, docsCmd("adopt", args)
-	case "docs save":
-		return 0, docsSaveCmd(args)
-	case "docs":
-		printDocsHelp()
-		return 0, nil
-	case "domain list":
-		return 0, domainV7ListCmd(args)
-	case "domain show":
-		return 0, domainV7ShowCmd(args)
-	case "domain new":
-		return 0, newV7Domain(args)
-	case "domain canon":
-		return 0, domainV7CanonCmd(args)
-	case "domain":
-		printDomainHelp()
-		return 0, nil
-	case "knowledge new":
-		return 0, knowledgeV7NewCmd(args)
-	case "skill doctor":
-		return skillV7DoctorCmd(args)
-	case "skill route":
-		return 0, skillV7RouteCmd(args)
-	case "skill pack":
-		return 0, skillV7PackCmd(args)
-	case "skill sync":
-		return 0, skillSyncCmd(args)
-	case "skill bundle":
-		return 0, skillBundleCmd(args)
-	case "skill audit-agent-guidance":
-		return skillV7AuditAgentGuidanceCmd(args)
-	case "setup doctor":
-		return 0, setupDoctorCmd(args, false)
-	case "setup repair":
-		return 0, setupDoctorCmd(args, true)
-	case "setup":
-		printSetupHelp()
-		return 0, nil
-	case "skill":
-		printSkillHelp()
-		return 0, nil
-	case "knowledge":
-		printKnowledgeHelp()
-		return 0, nil
-	case "publish skill":
-		return 0, publishSkillCmd(args)
-	case "publish":
-		printPublishHelp()
-		return 0, nil
-	case "vault set":
-		return 0, vaultSetCmd(args)
-	case "vault status":
-		return 0, vaultStatusCmd(args)
-	case "vault mount":
-		return 0, vaultMountCmd(args)
-	case "vault unmount":
-		return 0, vaultUnmountCmd(args)
-	case "vault repair":
-		return 0, vaultRepairCmd(args)
-	case "vault move":
-		return 0, vaultMoveCmd(args)
-	case "vault":
-		printVaultHelp()
-		return 0, nil
-	case "daemon run":
-		return 0, daemonRunCmd(args)
-	case "daemon install":
-		args["_pos0"] = "install"
-		return 0, daemonServiceCmd(args)
-	case "daemon uninstall":
-		args["_pos0"] = "uninstall"
-		return 0, daemonServiceCmd(args)
-	case "daemon status":
-		return 0, daemonStatusCmd(args)
-	case "daemon stop":
-		return 0, daemonStopCmd(args)
-	case "daemon limits":
-		return 0, daemonLimitsCmd(args)
-	case "daemon resume":
-		return 0, daemonResumeCmd(args)
-	case "daemon service":
-		return 0, daemonServiceCmd(args)
-	case "daemon":
-		printDaemonHelp()
-		return 0, nil
-	case "config resolve":
-		args["key"] = firstNonEmpty(args.String("key"), args.String("_pos0"))
-		return 0, configResolveCmd(args)
-	case "config":
-		printConfigHelp()
-		return 0, nil
-	case "automation status":
-		return 0, automationStatusCmd(args)
-	case "automation on":
-		return 0, automationOnCmd(args)
-	case "automation off":
-		return 0, automationOffCmd(args)
-	case "automation queue":
-		return 0, automationQueueCmd(args)
-	case "automation explain":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, automationExplainCmd(args)
-	case "automation plan":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, automationPlanCmd(args)
-	case "automation dispatch":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, automationDispatchCmd(args)
-	case "automation collect-external":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, automationCollectExternalCmd(args)
-	case "automation external-loop":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, automationExternalLoopCmd(args)
-	case "automation advance-external":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, automationAdvanceExternalCmd(args)
-	case "automation":
-		printAutomationHelp()
-		return 0, nil
-	case "projects add":
-		return 0, projectsAddCmd(args)
-	case "projects list":
-		return 0, projectsListCmd(args)
-	case "projects limits":
-		return 0, projectsLimitsCmd(args)
-	case "projects enable":
-		return 0, projectsEnableCmd(args)
-	case "projects disable":
-		return 0, projectsDisableCmd(args)
-	case "projects rebind":
-		return 0, projectsRebindCmd(args)
-	case "projects remove":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, projectsRemoveCmd(args)
-	case "projects prune":
-		return 0, projectsPruneCmd(args)
-	case "projects automation-scope":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, projectsAutomationScopeCmd(args)
-	case "projects icon":
-		return 0, projectsIconCmd(args)
-	case "projects":
-		printProjectsHelp()
-		return 0, nil
-	case "runs inspect":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsInspectCmd(args)
-	case "runs list":
-		return 0, runsListCmd(args)
-	case "streams":
-		return 0, streamsCmd(args)
-	// gate-run is deliberately not "gate run": "gate" is the human-gate
-	// namespace and must keep its own subcommand parsing.
-	case "gate-run":
-		return gateRunCmd(args)
-	case "gate-ledger check", "gate-ledger record":
-		return 0, gateLedgerCmd(args, strings.TrimPrefix(command, "gate-ledger "))
-	case "runs claim":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsClaimCmd(args)
-	case "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsLifecycleCmd(args, strings.TrimPrefix(command, "runs "))
-	case "runs logs":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsLogsCmd(args)
-	case "runs events":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsEventsCmd(args)
-	case "runs interrupt":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsInterruptCmd(args)
-	case "runs say":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsSayCmd(args)
-	case "runs continue":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsContinueCmd(args)
-	case "runs fresh":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsFreshCmd(args)
-	case "runs stop":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsStopCmd(args)
-	case "runs pause":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsPauseCmd(args)
-	case "runs release":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsReleaseCmd(args)
-	case "runs retire":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, runsRetireCmd(args)
-	case "runs redrive":
-		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-		return 0, redriveCmd(args)
-	case "runs":
-		printRunsHelp()
-		return 0, nil
-	case "serve":
-		return 0, serveCmd(args)
-	case "refresh":
-		return 0, refreshCmd(args)
-	case "install":
-		return 0, installCmd(args)
-	case "update":
-		return 0, updateCmd(args)
-	case "sync-repo-contract":
-		return 0, syncRepoContract(args)
-	case "init":
-		return 0, initCmd(args)
-	case "help new", "help new epic", "help new task", "help new bug", "help new doc", "help new gate", "help new decision":
-		printNewHelp()
-		return 0, nil
-	case "help status":
-		printStatusHelp()
-		return 0, nil
-	case "help discard":
-		printDiscardHelp()
-		return 0, nil
-	case "help next":
-		printNextHelp()
-		return 0, nil
-	case "help claim":
-		printClaimHelp()
-		return 0, nil
-	case "help worker", "help worker checkpoint", "help worker status", "help worker message", "help worker reconcile", "help worker qualify":
-		printWorkerHelp()
-		return 0, nil
-	case "help evidence":
-		printEvidenceHelp()
-		return 0, nil
-	case "help review", "help review submit":
-		printReviewHelp()
-		return 0, nil
-	case "help actor", "help actor correction":
-		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
-		return 0, nil
-	case "help handoff", "help gate", "help wave", "help wave create", "help wave add", "help wave remove", "help wave show", "help wave outcome", "help wave brief", "help wave pause", "help wave resume", "help land", "help attempt", "help proposal", "help propose", "help brief", "help packet", "help closeout", "help closeout status", "help dashboard", "help reconcile", "help state", "help migrate":
-		printV7Help()
-		return 0, nil
-	case "help feedback":
-		printFeedbackHelp()
-		return 0, nil
-	case "help verify":
-		printVerifyHelp()
-		return 0, nil
-	case "help close":
-		printCloseHelp()
-		return 0, nil
-	case "help demo":
-		printDemoHelp()
-		return 0, nil
-	case "help list":
-		printListHelp()
-		return 0, nil
-	case "help search":
-		printSearchHelp()
-		return 0, nil
-	case "help show":
-		printShowHelp()
-		return 0, nil
-	case "help print":
-		printPrintHelp()
-		return 0, nil
-	case "help open":
-		printOpenHelp()
-		return 0, nil
-	case "help context", "help context audit":
-		printContextHelp()
-		return 0, nil
-	case "help validate":
-		printValidateHelp()
-		return 0, nil
-	case "help reindex":
-		printReindexHelp()
-		return 0, nil
-	case "help docs", "help docs find", "help docs new", "help docs browse", "help docs read", "help docs backlinks", "help docs check", "help docs map", "help docs status", "help docs verify", "help docs adopt":
-		printDocsHelp()
-		return 0, nil
-	case "help domain", "help domain list", "help domain show", "help domain new", "help domain canon":
-		printDomainHelp()
-		return 0, nil
-	case "help knowledge", "help knowledge new":
-		printKnowledgeHelp()
-		return 0, nil
-	case "help skill", "help skill doctor", "help skill route", "help skill pack":
-		printSkillHelp()
-		return 0, nil
-	case "help publish", "help publish skill":
-		printPublishHelp()
-		return 0, nil
-	case "help vault", "help vault set", "help vault status", "help vault mount", "help vault unmount", "help vault repair", "help vault move":
-		printVaultHelp()
-		return 0, nil
-	case "help daemon", "help daemon run", "help daemon status", "help daemon limits", "help daemon resume", "help daemon stop", "help daemon service":
-		printDaemonHelp()
-		return 0, nil
-	case "help automation", "help automation status", "help automation queue", "help automation explain", "help automation plan", "help automation dispatch", "help automation collect-external", "help automation external-loop", "help automation advance-external":
-		printAutomationHelp()
-		return 0, nil
-	case "help factory", "help factory operations":
-		printFactoryOperationsHelp()
-		return 0, nil
-	case "help config", "help config resolve":
-		printConfigHelp()
-		return 0, nil
-	case "help projects", "help projects add", "help projects list", "help projects limits", "help projects enable", "help projects disable", "help projects rebind", "help projects remove", "help projects prune", "help projects automation-scope":
-		printProjectsHelp()
-		return 0, nil
-	case "help runs", "help runs inspect", "help runs logs", "help runs events", "help runs interrupt", "help runs say", "help runs continue", "help runs fresh", "help runs stop", "help runs pause", "help runs release", "help runs retire", "help runs redrive", "help redrive":
-		printRunsHelp()
-		return 0, nil
-	case "help serve":
-		printServeHelp()
-		return 0, nil
-	case "help refresh":
-		printRefreshHelp()
-		return 0, nil
-	case "help install":
-		printInstallHelp()
-		return 0, nil
-	case "help update":
-		printUpdateHelp()
-		return 0, nil
-	case "help purge":
-		printPurgeHelp()
-		return 0, nil
-	case "help sync-repo-contract":
-		printSyncRepoContractHelp()
-		return 0, nil
-	case "help init":
-		printInitHelp()
-		return 0, nil
-	case "help reset", "help relaunch":
-		printResetHelp()
-		return 0, nil
-	case "help", "--help", "-h", "":
-		printHelp()
-		return 0, nil
-	default:
-		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": false, "error": errorToIssue(tuskerError(errorInvalidArg, "unknown command: "+command))})
-		} else {
-			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
-			printHelp()
-		}
-		return 1, nil
-	}
-}
-
-func printHelp() {
-	fmt.Println(`Tusker - repo-local work tracking
-
-Vault discovery: if [--vault] is omitted, tusker walks up from the current
-working directory looking for a repo-local .tusker/ vault. Current markers
-include .tusker/config.yaml, .tusker/work, and .tusker/knowledge/domains.
-For a linked worktree without its own vault, use --use-project-vault to route
-to the registered canonical checkout. Creating a separate graph requires the
-explicit tusker init --isolated-vault confirmation.
-
-Start here:
-  tusker init --yes
-  tusker capabilities --json
-  tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
-  tusker new task --vault ./.tusker --title "Implement auth" --work-level standard --body-file task-body.md
-
-Commands:
-  init                initialize or refresh a repo vault
-  reset               delete Tusker state, preserve specs, and relaunch a repo
-  relaunch            alias for reset
-  capabilities        print the installed-binary capability manifest (JSON only)
-  new                 create epics, tasks, gates, and decisions
-  list                list work records
-  search              search tracker notes without generated files or attachments
-  show                show a bounded note capsule or selected section
-  print               render a Tusker note as terminal-friendly Markdown
-  open                open a Tusker note in the OS, editor, or Obsidian
-  context             audit Codex JSONL context and tool-output bloat
-  status              move a task through its workflow
-  discard             abandon work safely while preserving its history
-  next                show the next pickable task
-  work                atomically own and retire one interactive work session
-  worker              record worker checkpoints, attention, and bounded deliveries
-  claim               alias for work start
-  evidence            add evidence records
-  gate                list, satisfy, waive, or obsolete gates
-  demo                seed and drive a disposable deterministic demo project
-  wave                create, edit, and show named task batches
-  land                run the serialized wave merge lane
-  digest              render the operator morning digest
-  escalate            record or acknowledge runner escalations
-  departure           inspect or control scheduled departures
-  feedback            add agent feedback notes and generate digests
-  logbook             render a plain-language daily digest for a product reader
-  attempt             start or hand off attempts
-  handoff             hand off the latest attempt for a task
-  brief               print human briefs
-  packet              generate agent or reviewer packets
-  closeout            emit or inspect terminal human-wait checkpoints
-  dashboard           build or open generated dashboards
-  reconcile           recompute readiness and next-action projections
-  state               sync, import, or export runtime state branch files
-  vault               symlink repo trackers into a shared Obsidian vault
-  daemon              operator loop for registered local projects
-  config              inspect resolved Tusker configuration with provenance
-  automation          plan, inspect, and manually dispatch daemon automation work
-  factory             inspect the read-only factory operations projection
-  projects            register repositories for daemon pickup
-  runs                inspect, tail, interrupt, release, and retire daemon runs
-  streams             show the generated live/landed orchestration lane board
-  gate-run            run gate-tier proof in harvest mode behind preflight refusal
-  gate-ledger         check or record tree-keyed gate results
-  serve               serve the read-only localhost control room
-  refresh             run one daemon poll tick
-  install             install skill bundles; binary link is opt-in with --bin
-  purge               dry-run or remove generated Tusker repo state
-  uninstall           dry-run or remove machine-level Tusker state
-  gc                  sweep stale entries out of .tusker/scratch
-  close               close a task after gates and evidence pass
-  accept              accept, confirm proof, and close a green task in one step
-  validate            check vault invariants
-  reindex             rebuild generated indexes
-  update              refresh skill bundles; binary link is opt-in with --bin
-  skill               doctor, route, and pack project skills
-  setup               diagnose and repair local onboarding drift
-
-Help:
-  tusker new --help
-  tusker discard --help
-  tusker vault --help
-  tusker daemon --help
-  tusker config --help
-  tusker automation --help
-  tusker automation plan <task> --json
-  tusker runs --help
-  tusker demo --help
-  tusker serve --help
-  tusker search --help
-  tusker show --help
-  tusker print --help
-  tusker open --help
-  tusker context --help
-  tusker status --help
-  tusker install --help
-  tusker reset --help
-  tusker relaunch --help
-  tusker purge --help
-  tusker gc --help
-  tusker gate --help
-  tusker feedback --help
-  tusker packet --help
-  tusker skill --help
-
-Global flags:
-  --json           Emit machine-readable output on success and error.`)
-}
-
-func printCommandHelp(command string) bool {
-	switch command {
-	case "acp", "acp install", "acp doctor", "acp setup":
-		printACPAdapterHelp()
-	case "actor", "actor correction":
-		fmt.Println("Usage: tusker actor correction plan|apply|list ...\n\nActor corrections are append-only, human-gated metadata projections; original event bytes never change. Apply is unavailable until exact-verification human-control authority is installed.")
-	case "approvals", "approvals list", "approvals respond":
-		fmt.Println("Usage:\n  tusker approvals list [--project <id>] [--json]\n  tusker approvals respond <id> --allow-once|--block [--by human:<actor>] [--json]")
-	case "capabilities":
-		printCapabilitiesHelp()
-	case "message", "message send", "message ask", "message reply", "message list", "message show", "message consume", "message apply", "message inbox", "message hook":
-		printMessageHelp()
-	case "mcp", "mcp serve":
-		fmt.Println("Usage: tusker mcp serve [--max-wait <seconds>]\n\nServe worker ask, update, and inbox tools over stdio MCP.")
-	case "init":
-		printInitHelp()
-	case "reset", "relaunch":
-		printResetHelp()
-	case "runner", "runner catalog", "runner profiles", "runner route", "runner conformance", "runner test":
-		printRunnerHelp()
-	case "models", "models show", "models catalog", "models set", "models reset", "models profile-set", "models profile-disable", "models profile-enable", "models profile-remove":
-		fmt.Println("Usage:\n  tusker models show [--json] [--compact]\n  tusker models catalog [--json]\n  tusker models profile-set [--scope global] --name <stable-id> [--display-name <name>] [--eligible-tiers <light,standard,demanding>] --harness <harness> --model <id> --effort <effort> --preset <preset> [--command <path>] [--if-revision <sha256>] [--json]\n  tusker models profile-disable|profile-enable|profile-remove [--scope global] --name <name> [--if-revision <sha256>] [--json]\n  tusker models set --scope global|project --level light|standard|demanding --lane execute|review --profiles <ordered,csv> [--if-revision <sha256>] [--json]\n  tusker models reset --scope global|project --level <level> --lane execute|review [--if-revision <sha256>] [--json]\n\nProfiles are defined only in the global config; a project selects them with models set/reset.")
-	case "new", "new epic", "new task", "new bug", "new doc", "new gate", "new decision":
-		printNewHelp()
-	case "task", "task update":
-		printNewHelp()
-	case "task start":
-		fmt.Println("Usage: tusker task start <TASK-ID> --mode interactive|background --by <actor> [--current-workspace] [--json]")
-	case "run":
-		fmt.Println("Usage: tusker run <TASK-ID|WAVE-ID> [--by human:<name>|operator:<name>] [--json]\n\nQueues the exact task or wave for background work.")
-	case "status":
-		printStatusHelp()
-	case "discard":
-		printDiscardHelp()
-	case "next":
-		printNextHelp()
-	case "work", "work start", "work status", "work heartbeat", "work submit", "work fail", "work release", "work review", "work readiness", "work progress", "work wait", "work cancel", "work retry", "work reconcile", "work profile", "work recover":
-		printWorkSessionHelp()
-	case "worker", "worker checkpoint", "worker status", "worker message", "worker reconcile", "worker qualify":
-		printWorkerHelp()
-	case "execution", "execution register", "execution attach", "execution rename", "execution bind", "execution detach", "execution rebind", "execution inbox", "execution list", "execution show", "execution cancel", "execution launch":
-		printExecutionHelp()
-	case "claim":
-		printClaimHelp()
-	case "evidence":
-		printEvidenceHelp()
-	case "doctor":
-		fmt.Println(`Usage:
-  tusker doctor <TASK-ID|WAVE-ID> [--json] [--output <new-path>]
-
-Purpose:
-  Diagnose one task or wave across contracts, DAG, authorization, queued
-  reservations, capacity, proof, review, and daemon freshness. Read-only:
-  nothing is queued, claimed, spawned, or signaled. Human output leads with
-  the primary cause and the exact permitted next action; --json retains the
-  complete versioned diagnosis. --output writes the same bounded JSON to a
-  new file and refuses to overwrite an existing file. Exits 0 for
-  healthy/completed/normal waits, 1 for actionable faults or decisions, and
-  2 for unavailable or invalid diagnoses.`)
-	case "wave", "wave list", "wave create", "wave add", "wave remove", "wave show", "wave outcome", "wave brief", "wave pause", "wave resume", "wave review", "wave start", "land", "brief", "dashboard", "closeout", "closeout status", "gate-run", "digest", "escalate", "escalate ack", "departure", "departure check", "departure status", "departure history", "departure hold", "departure resume":
-		printOperatorCommandHelp(command)
-	case "handoff", "finish", "gate", "trace", "trace list", "trace show", "proof", "attempt", "proposal", "propose", "redact", "packet", "reconcile", "state", "attachments", "migrate", "migrate evidence-policy":
-		printV7Help()
-	case "feedback", "feedback add", "feedback digest", "feedback ingest", "feedback signals", "feedback review", "feedback promote":
-		printFeedbackHelp()
-	case "verify":
-		printVerifyHelp()
-	case "close":
-		printCloseHelp()
-	case "demo", "demo seed", "demo status", "demo run", "demo session", "demo wait", "demo check", "demo reset":
-		printDemoHelp()
-	case "list":
-		printListHelp()
-	case "search":
-		printSearchHelp()
-	case "show":
-		printShowHelp()
-	case "print":
-		printPrintHelp()
-	case "open":
-		printOpenHelp()
-	case "context", "context audit":
-		printContextHelp()
-	case "validate":
-		printValidateHelp()
-	case "purge":
-		printPurgeHelp()
-	case "gc":
-		printGCHelp()
-	case "reindex":
-		printReindexHelp()
-	case "docs", "docs find", "docs new", "docs browse", "docs read", "docs backlinks", "docs check", "docs map", "docs status", "docs verify", "docs adopt":
-		printDocsHelp()
-	case "domain", "domain list", "domain show", "domain new", "domain canon":
-		printDomainHelp()
-	case "knowledge", "knowledge new":
-		printKnowledgeHelp()
-	case "skill", "skill doctor", "skill route", "skill pack", "skill sync", "skill bundle", "skill audit-agent-guidance":
-		printSkillHelp()
-	case "setup", "setup doctor", "setup repair":
-		printSetupHelp()
-	case "publish", "publish skill":
-		printPublishHelp()
-	case "vault", "vault set", "vault status", "vault mount", "vault unmount", "vault repair", "vault move":
-		printVaultHelp()
-	case "daemon", "daemon run", "daemon status", "daemon limits", "daemon resume", "daemon stop", "daemon service":
-		printDaemonHelp()
-	case "config", "config resolve":
-		printConfigHelp()
-	case "automation", "automation status", "automation on", "automation off", "automation queue", "automation explain", "automation plan", "automation dispatch", "automation collect-external", "automation external-loop", "automation advance-external":
-		printAutomationHelp()
-	case "factory", "factory operations":
-		printFactoryOperationsHelp()
-	case "projects", "projects add", "projects list", "projects limits", "projects enable", "projects disable", "projects rebind", "projects remove", "projects prune", "projects automation-scope":
-		printProjectsHelp()
-	case "runs", "runs list", "runs claim", "runs start", "runs heartbeat", "runs submit", "runs fail", "runs reclaim", "runs inspect", "runs logs", "runs events", "runs interrupt", "runs say", "runs continue", "runs fresh", "runs stop", "runs pause", "runs release", "runs retire", "runs redrive", "redrive":
-		printRunsHelp()
-	case "serve":
-		printServeHelp()
-	case "refresh":
-		printRefreshHelp()
-	case "install":
-		printInstallHelp()
-	case "update":
-		printUpdateHelp()
-	case "sync-repo-contract":
-		printSyncRepoContractHelp()
-	default:
-		return false
-	}
-	return true
-}
-
-// printOperatorCommandHelp is intentionally side-effect free. Keep these
-// short command contracts separate from the broad examples so `--help`
-// never falls through to a command that opens a vault or writes state.
-func printOperatorCommandHelp(command string) {
-	switch {
-	case command == "wave list":
-		fmt.Println("Usage: tusker wave list [--project <id>|--vault <path>] [--json]\n\nList every wave in a project with its effective authorization and task counts.")
-	case command == "wave":
-		fmt.Println(`Usage:
-  tusker wave list|create|add|remove|show|outcome|brief|review|start|pause|resume ...
-
-Purpose:
-  Manage a named, task-backed delivery wave.`)
-	case command == "wave create":
-		fmt.Println(`Usage:
+// printWaveCreateHelp documents the wave authoring request schema.
+func printWaveCreateHelp() {
+	fmt.Println(`Usage:
   tusker wave create "<title>" <TASK-ID>...
   tusker wave create --file <path|-> --request-key <stable-key> [--json]
 
@@ -1161,102 +214,6 @@ Example request (tusker.wave-authoring/v1):
   ledger:, or proof: (manual: is not accepted). Acceptance ids covered by
   a human action's covers also count as planned proof. After create,
   contracts that wave review --check would refuse are printed as warnings.`)
-	case command == "wave review":
-		fmt.Println(`Usage:
-  tusker wave review <WAVE-ID> [--check] [--json]
-
-Purpose:
-  Read the durable wave/task/gate projection: state, authorization, material
-  fingerprint, member eligibility, dependency frontiers, blockers with repair
-  actions, and controls. --check exits nonzero unless Start is enabled while
-  still showing the review. Read-only; no plan, factory, or runtime mutation.`)
-	case command == "wave start":
-		fmt.Println(`Usage:
-  tusker wave start <WAVE-ID> --mode background --by human:<name>|operator:<name> [--json]
-
-Purpose:
-  Validate wave material and execute/review routes, authorize the exact
-  current wave fingerprint, and queue only currently eligible roots as
-  durable run directives. Daemon polling advances each dependency frontier
-  automatically under the stored authorization; no second Start is needed.
-  An offline daemon leaves the wave authorized and Waiting; it is never
-  reported Running.`)
-	case command == "wave pause":
-		fmt.Println(`Usage:
-  tusker wave pause <WAVE-ID> --by human:<name>|operator:<name> [--json]
-
-Purpose:
-  Pause new wave-owned admissions while admitted attempts finish. Preserves
-  the exact authorization fingerprint, actor, and timestamp; the wave
-  projects Paused and no new workers or reviewers start. An explicit
-  task start inside a paused wave stays task-scoped and leaves the wave
-  paused.`)
-	case command == "wave resume":
-		fmt.Println(`Usage:
-  tusker wave resume <WAVE-ID> --by human:<name>|operator:<name> [--json]
-
-Purpose:
-  Restore a paused wave to armed without reauthorizing changed material.
-  Refuses when the current fingerprint differs from the stored
-  authorization; resume then lets daemon polling advance the remaining
-  dependency frontier automatically.`)
-	case strings.HasPrefix(command, "wave "):
-		fmt.Printf("Usage:\n  tusker %s ...\n\nPurpose:\n  Operate on a named delivery wave.\n", command)
-	case command == "land":
-		fmt.Println(`Usage:
-  tusker land <TASK-ID|WAVE-ID> [--json]
-
-Purpose:
-  Run the serialized merge lane for a task or wave.`)
-	case command == "brief":
-		fmt.Println(`Usage:
-  tusker brief [<TASK-ID>] [--owner <owner>] [--json]
-
-Purpose:
-  Print a bounded human brief without changing tracker state.`)
-	case command == "dashboard":
-		fmt.Println(`Usage:
-  tusker dashboard build|open <name>
-
-Purpose:
-  Build or locate generated dashboards.`)
-	case strings.HasPrefix(command, "closeout"):
-		fmt.Printf("Usage:\n  tusker %s <TASK-ID> [options]\n\nPurpose:\n  Emit or inspect a terminal human-wait checkpoint.\n", command)
-	case command == "gate-run":
-		fmt.Println(`Usage:
-  tusker gate-run [--changed] [--command <command>] [--profile <name>] [--json]
-
-Purpose:
-  Run configured gate-tier proof. Help performs no preflight or execution.`)
-	case command == "digest":
-		fmt.Println(`Usage:
-  tusker digest [--since <RFC3339|YYYY-MM-DD>] [--all] [--json]
-
-Purpose:
-  Render the operator digest. Without --since or --all, show the last 24 hours;
-  --all explicitly includes all recorded state.`)
-	case command == "escalate":
-		fmt.Println(`Usage:
-  tusker escalate -s <P0|P1|P2> --task <TASK-ID> --reason <reason> <description>
-  tusker escalate ack <ESC-ID> --by <actor>
-
-Purpose:
-  Record or acknowledge a bounded runner escalation.`)
-	case command == "escalate ack":
-		fmt.Println(`Usage:
-  tusker escalate ack <ESC-ID> --by <actor> [--json]
-
-Purpose:
-  Acknowledge one open escalation.`)
-	case command == "departure":
-		fmt.Println(`Usage:
-  tusker departure check|status|history|hold|resume ...
-
-Purpose:
-  Inspect or control scheduled promotion departures.`)
-	case strings.HasPrefix(command, "departure "):
-		fmt.Printf("Usage:\n  tusker %s ...\n\nPurpose:\n  Inspect or control scheduled promotion departures.\n", command)
-	}
 }
 
 func printDaemonHelp() {
@@ -1345,34 +302,6 @@ Examples:
   tusker automation advance-external APP-T-0001 --event apply_failed --reason "git apply conflict" --json`)
 }
 
-func printV7Help() {
-	fmt.Println(`Usage:
-  tusker new epic --acronym APP --title "App foundation"
-  tusker new task --title "Add login" --work-level standard --body-file task-body.md
-  tusker task update APP-T-0001 [--if-revision <state_rev>] --title "Add login v2" --by agent:builder
-  tusker wave create --file .tusker/scratch/wave.yaml --request-key auth-wave-v1 --json
-  tusker new gate --blocks APP-T-0001 --kind auth --owner human:sarav --action "Provision credentials." --verification "The provider reports ready."
-  tusker verify add APP-T-0001 --covers A1 --check "command: go test ./..." --result pending
-  tusker attempt handoff APP-T-0001
-  tusker finish APP-T-0001 --request-review
-  tusker review submit APP-T-0001 ...
-  tusker close APP-T-0001
-  tusker task start APP-T-0001 --mode interactive --by agent:builder --current-workspace --json
-  tusker wave start W-0001 --mode background --by human:sarav --json
-  tusker wave pause W-0001 --by human:sarav --json
-  tusker wave resume W-0001 --by human:sarav --json
-  tusker migrate evidence-policy [--write] [--json]
-
-Purpose:
-  Manage repository work records, proof, gates, review, delivery, and closeout.
-  Direct task and wave authoring is canonical: "new task --body-file" and
-  "wave create --file --request-key" write inert durable records, and
-  "task start"/"wave start" are the one-action scoped authorizations. A wave
-  Start arms the exact current material; daemon polling then advances each
-  dependency frontier automatically. "wave pause" blocks new admissions while
-  admitted attempts finish; "wave resume" restores unchanged authorization.`)
-}
-
 func printProjectsHelp() {
 	fmt.Println(`Usage:
   tusker projects add [--repo <path>] [--vault <path>] [--json]
@@ -1430,13 +359,7 @@ Examples:
 
 func printRunsHelp() {
 	fmt.Println(`Usage:
-	  tusker runs list [--project <id>] [--active] [--limit <n>] [--json]
-	  tusker runs claim <task-id> --owner <actor> [--project <id>] [--json]
-	  tusker runs start <task-id> --owner <actor> [--session <id>] [--pid <n>] [--pgid <n>] [--json]
-	  tusker runs heartbeat <task-id> --owner <actor> [--json]
-	  tusker runs submit <task-id> --owner <actor> --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass,A2=pass> [--branch <name>] [--head-sha <sha>] [--json]
-	  tusker runs fail <task-id> --owner <actor> --reason <text> [--json]
-	  tusker runs reclaim <task-id> --owner <actor> --reason <text> [--json]
+  tusker runs list [--project <id>] [--active] [--limit <n>] [--json]
   tusker runs inspect <task-id-or-record-id> [--json]
   tusker runs logs <task-id-or-record-id> [--lines <n>] [--follow] [--json]
   tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
@@ -1482,7 +405,6 @@ func printWorkSessionHelp() {
   tusker work progress <task-id> [--json]
   tusker work wait <task-id> [--timeout 60] [--json]
   tusker work reconcile <task-id> --by <agent> [--json]
-  tusker work cancel <task-id> --by <owner> --reason <text> [--json]
   tusker work retry <task-id> --by <agent> [--json]
   tusker work profile <task-id> [--lane execute|review] [--json]
   tusker work recover <task-id> --action rerun_checks --by human:<name>|operator:<name> --vault <path> [--json]
@@ -1494,10 +416,10 @@ Purpose:
   it validates the current repository and serializes ownership of that checkout.
   The default work start keeps its configured isolated-workspace behavior.
   It never enables automation, arms a wave, starts a daemon, or launches a
-  worker. Claim is an alias for work start.
+  worker.
   Supported lifecycle: ready -> work start -> work reconcile ->
   work submit -> work review -> review submit -> close.
-  Legacy attempt start/handoff/finish participate in the same contract.`)
+  tusker finish <TASK-ID> --request-review is the shared-checkout handback.`)
 }
 
 func printRefreshHelp() {
@@ -1547,7 +469,6 @@ func printSkillHelp() {
   tusker skill doctor --package <path> [--strict] [--json]
   tusker skill audit-agent-guidance [--repo <path>] [--write|--draft] [--target feedback|knowledge] [--json]
   tusker skill route "<intent>" [--json]
-  tusker skill pack <TASK-ID> --budget <n> --for agent
   tusker skill sync [--repo <path>] [--mode symlink|copy] [--source <checkout>] [--json]
   tusker skill bundle [--repo <path>] [--out <path>] [--dereference-symlinks] [--json]
 
@@ -1555,8 +476,7 @@ Purpose:
   Validate and route project skills. skill doctor checks the repo skill
   package, domain routes, forbidden source-truth paths, local absolute paths,
   and task-domain coverage. skill route returns the
-  smallest ordered read set for an intent. skill pack is an explicit wrapper
-  over tusker packet for bounded task context. skill sync refreshes repo-local
+  smallest ordered read set for an intent. skill sync refreshes repo-local
   generated skill installs, defaulting to symlink mode. Pass --source when
   running from outside the Tusker checkout. skill bundle creates a portable
   materialized copy for cloud/handoff contexts. audit-agent-guidance finds
@@ -1567,7 +487,6 @@ Examples:
   tusker skill doctor --strict --json
   tusker skill audit-agent-guidance --write
   tusker skill route "change provider auth refresh logic" --json
-  tusker skill pack VSD-T-0010 --budget 6000 --for agent
   tusker skill sync --repo .
   tusker skill sync --repo . --source ~/src/tusker
   tusker skill bundle --repo . --out .tusker/_generated/skill-bundle`)
@@ -1651,8 +570,8 @@ func printDocsHelp() {
   tusker docs read <subject-or-path> [--section <heading>] [--current] [--json]
   tusker docs backlinks <subject-or-path> [--limit <n>] [--json]
   tusker docs check [<subject-or-path>] [--json]
-  tusker docs new <subject> [--kind doc|proposal|decision|spec] [--domain <name>] [--index] [--decides-for <subject>]
-  tusker docs new <subject> [--kind doc|proposal|decision|spec] --print [--json]
+  tusker docs new <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] [--domain <name>] [--index] [--decides-for <subject>]
+  tusker docs new <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] --print [--json]
   tusker docs map
   tusker docs status
   tusker docs verify <subject>
@@ -1779,16 +698,6 @@ Ranking:
   priority first (p0 before p1), then risk (critical before high), then task id.
   --explain prints the selected task plus skipped candidates and reasons.
   --claim uses the same rules, then writes a local lease.`)
-}
-
-func printClaimHelp() {
-	fmt.Println(`Usage:
-  tusker claim <id> --as <agent-or-person> [--vault <path>] [--reason <text>] [--json]
-
-Purpose:
-  Assign one ready/rework task by creating a runtime lease. Claim rejects idea,
-  backlog, review, done, cancelled, superseded, and tasks with unresolved
-  blocked_by dependencies.`)
 }
 
 func printEvidenceHelp() {
@@ -1949,20 +858,6 @@ Examples:
   tusker open ING-T-0016 --editor
   tusker open ING-T-0016 --obsidian
   tusker open ING-T-0016 --project mobile --json`)
-}
-
-func printContextHelp() {
-	fmt.Println(`Usage:
-  tusker context audit --file <codex-session.jsonl> [--top <n>] [--json]
-
-Purpose:
-  Summarize a Codex JSONL transcript without dumping raw session content.
-  Reports output categories, largest tool outputs, token totals, and concrete
-  context-reduction recommendations.
-
-Examples:
-  tusker context audit --file ~/.codex/sessions/2026/05/09/session.jsonl
-  tusker context audit --file ./thread.jsonl --top 20 --json`)
 }
 
 func printValidateHelp() {

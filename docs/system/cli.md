@@ -12,6 +12,23 @@ skip_when: "You need the rationale or lifecycle rule behind a command."
 The installed program help is the command authority. It shows the commands
 that this build can run. A machine-readable command list is also available.
 
+One command table (`cmd/tusker/commands_table.go`) drives dispatch, help,
+`capabilities --json`, and daemon notification. Every command belongs to one
+group (setup, find, author, start, work, runs, deliver, docs, models, daemon,
+maintain) and carries a summary, a "Use when" line, and a "Not for" line that
+names the neighbouring command to use instead.
+
+| Need | Command |
+| --- | --- |
+| Find a command by word | `tusker help \| grep <word>` |
+| List one group | `tusker help \| grep '^runs '` |
+| Search use/avoid guidance | `tusker help --full \| grep -B3 <word>` |
+| Read one command or family | `tusker help <command>` or `tusker <command> --help` |
+| Include internal and retiring commands | `tusker help --all` |
+
+A failing command prints `help: tusker <command> --help`. A removed command
+name fails with the replacement command in its hint.
+
 ## Common work commands
 
 `tusker wave create ... --summary "<expected outcome>"` records the capability promised by a wave. `tusker wave outcome <WAVE-ID> --summary "<expected outcome>"` updates it. `wave show` and `wave brief` keep that promise separate from the derived completion result.
@@ -34,7 +51,7 @@ only at `task start` or `wave start`.
 | Update a task | `tusker task update <TASK-ID> --title "..." --by <actor> [--if-revision <state_rev>] [--json]` |
 | Author a task batch | `tusker wave create --file wave.yaml --request-key <key> --json` |
 | Start one task | `tusker task start <TASK-ID> --mode interactive\|background --by <actor> [--current-workspace] --json` |
-| Start a wave | `tusker wave start <WAVE-ID> --mode background --by human:<name>\|operator:<name> --json` |
+| Start a wave | `tusker wave start <WAVE-ID> --by human:<name>\|operator:<name> --json` |
 | Pause / resume a wave | `tusker wave pause\|resume <WAVE-ID> --by human:<name>\|operator:<name> --json` |
 | Change task state | `tusker status <TASK-ID> <STATE> --reason "..."` |
 | Add a check result | `tusker verify add <TASK-ID> ...` |

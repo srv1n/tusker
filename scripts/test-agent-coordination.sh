@@ -8,8 +8,8 @@ case "$mode" in
     (cd internal/serve/ui && bun test test/agent-coordination.test.ts && bun run typecheck)
     ;;
   --live)
-    go run ./cmd/tusker runner conformance --harness codex_exec --preset read-only --live --exercise print --json
-    go run ./cmd/tusker runner conformance --harness muse --preset read-only --live --exercise print --json
+    go run ./cmd/tusker runner test --harness codex_exec --preset read-only --live --exercise print --json
+    go run ./cmd/tusker runner test --harness muse --preset read-only --live --exercise print --json
     ;;
   *) echo "usage: $0 --offline|--live" >&2; exit 2 ;;
 esac

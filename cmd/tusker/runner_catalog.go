@@ -1265,7 +1265,6 @@ func printRunnerHelp() {
   tusker runner profiles [--bundled] [--write] [--json]
   tusker runner route <TASK-ID> --lane execute|review --json
   tusker runner test <id-or-profile> [--preset <preset>] [--live] [--exercise print|timer] [--script <executable>] [--json|--quiet]
-  tusker runner conformance --harness <id-or-profile> [same flags]
 
 Catalog observes installed harnesses without authentication or model launch. --bundled
 selects an explicit bundled/offline Codex catalog source; --refresh bypasses a fresh

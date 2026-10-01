@@ -7,9 +7,10 @@ func TestRunnerMigrationConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	acp, ok := capabilityCommandNamed(manifest.Commands, "acp")
-	if !ok || containsString(acp.Subcommands, "install") || containsString(acp.Subcommands, "setup") {
-		t.Fatalf("bundled ACP lifecycle remains advertised: %#v", acp)
+	for _, name := range []string{"acp", "acp install", "acp setup"} {
+		if acp, ok := capabilityCommandNamed(manifest.Commands, name); ok {
+			t.Fatalf("bundled ACP lifecycle remains advertised: %#v", acp)
+		}
 	}
 	for _, command := range []string{"acp install", "acp setup"} {
 		if code, err := runInner(command, Args{}); err != nil || code == 0 {

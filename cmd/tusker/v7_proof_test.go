@@ -267,7 +267,7 @@ func TestV7FinishWithoutAttemptPrintsRecoveryCommand(t *testing.T) {
 	assertEqual(t, errorNotFound, issue.Code, "missing attempt code")
 	assertContainsIndexTest(t, issue.Message, "No attempt exists for APP-T-0001")
 	assertContainsIndexTest(t, issue.Hint, "attempts are runtime/session state")
-	assertContainsIndexTest(t, issue.Hint, "tusker attempt start APP-T-0001")
+	assertContainsIndexTest(t, issue.Hint, "tusker work start APP-T-0001")
 	assertContainsIndexTest(t, issue.Hint, "tusker finish APP-T-0001 --request-review")
 }
 

@@ -375,14 +375,6 @@ func v7SkillRoutesForIntent(vaultPath, intent string) ([]string, error) {
 	return routes, nil
 }
 
-func skillV7PackCmd(args Args) error {
-	args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-	if args.String("id") == "" {
-		return tuskerError(errorMissingArg, "skill pack requires a task id", withHint("use `tusker skill pack <TASK-ID> --for agent`"))
-	}
-	return packetV7Cmd(args)
-}
-
 func v7SkillForbiddenReadGlobs() []string {
 	return []string{
 		"work/**",

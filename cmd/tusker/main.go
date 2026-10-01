@@ -19,6 +19,9 @@ func main() {
 	exitCode, err := run(command, args)
 	if err != nil {
 		reportCLIError(err, args.Bool("json"))
+		if !args.Bool("json") && lookupCommand(command) != nil {
+			fmt.Fprintf(os.Stderr, "  help: tusker %s --help\n", command)
+		}
 		if exitCode == 0 {
 			exitCode = 1
 		}

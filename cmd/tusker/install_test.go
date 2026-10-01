@@ -303,7 +303,7 @@ func TestInstallCommandLeavesExistingUserSkillsAloneByDefault(t *testing.T) {
 		}
 	}
 
-	if err := installCmd(Args{"quiet": "true"}); err != nil {
+	if err := updateCmd(Args{"quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -313,7 +313,7 @@ func TestInstallCommandLeavesExistingUserSkillsAloneByDefault(t *testing.T) {
 		}
 	}
 
-	if err := installCmd(Args{"all-user-skills": "true", "quiet": "true"}); err != nil {
+	if err := updateCmd(Args{"all-user-skills": "true", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -331,7 +331,7 @@ func TestInstallCommandStillInstallsExplicitUserSkills(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	if err := installCmd(Args{"codex-user": "true", "claude-user": "true", "no-bin": "true", "quiet": "true"}); err != nil {
+	if err := updateCmd(Args{"codex-user": "true", "claude-user": "true", "no-bin": "true", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -453,7 +453,7 @@ func TestInstallCommandInstallsRepoSkillsWithoutBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := t.TempDir()
-	if err := installCmd(Args{"repo": repo, "no-bin": "true", "quiet": "true"}); err != nil {
+	if err := updateCmd(Args{"repo": repo, "no-bin": "true", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -481,7 +481,7 @@ func TestInstallCommandCopyModeMaterializesRepoSkills(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	repo := t.TempDir()
 
-	if err := installCmd(Args{"repo": repo, "no-bin": "true", "skill-mode": "copy", "quiet": "true"}); err != nil {
+	if err := updateCmd(Args{"repo": repo, "no-bin": "true", "skill-mode": "copy", "quiet": "true"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -624,25 +624,6 @@ func TestPurgeTuskerStateRemovesOnlyGeneratedTuskerState(t *testing.T) {
 	assertContainsIndexTest(t, agents, "Human rule.")
 	assertContainsIndexTest(t, agents, "Keep me.")
 	assertNotContainsIndexTest(t, agents, tuskerPointerBegin)
-}
-
-func TestInstallHelpExplainsInstallerFlags(t *testing.T) {
-	output := captureStdout(t, printInstallHelp)
-	for _, expected := range []string{
-		"tusker install [--bin-dir <path>]",
-		"refreshes already-installed user skills in ~/.agents, ~/.codex, and ~/.claude",
-		"--codex-user installs ~/.agents/skills/tusker",
-		"--claude-user installs ~/.claude/skills/tusker",
-		"repo-local installs default to symlink mode",
-		"refreshes the managed AGENTS.md/CLAUDE.md Tusker bootstrap block",
-		"compact proof/context guidance",
-		"--refresh-existing-user-skills also refreshes existing user skills when --repo is used",
-		"--source points symlink mode at a canonical Tusker checkout or skill dir",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("install help missing %q:\n%s", expected, output)
-		}
-	}
 }
 
 func assertIsSymlink(t *testing.T, path string) {

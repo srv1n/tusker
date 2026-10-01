@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"regexp"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -44,14 +42,15 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 		t.Fatalf("binary provenance = %#v", manifest.Binary)
 	}
 	assertSortedCapabilities(t, manifest)
-	for _, command := range []string{"automation", "capabilities", "daemon", "docs", "projects", "reindex", "runs", "verify", "wave", "work"} {
+	for _, command := range []string{"automation plan", "capabilities", "daemon status", "docs find", "projects add", "reindex", "runs inspect", "verify", "wave start", "work start"} {
 		if !capabilitiesContainCommand(manifest.Commands, command) {
 			t.Fatalf("manifest omitted command family %q", command)
 		}
 	}
-	createCapability, ok := capabilityCommandNamed(manifest.Commands, "wave create")
-	if !ok || !containsString(createCapability.Flags, "--file") || !containsString(createCapability.Flags, "--request-key") {
-		t.Fatalf("manifest omitted the supported direct wave authoring path: %#v", createCapability)
+	for _, command := range manifest.Commands {
+		if command.Group == "" || command.Purpose == "" || command.UseWhen == "" || command.AvoidWhen == "" {
+			t.Fatalf("capability lacks group, purpose, or use/avoid guidance: %#v", command)
+		}
 	}
 	if capabilitiesContainCommand(manifest.Commands, "hook") {
 		t.Fatal("Tusker must not advertise repository hook installation")
@@ -65,70 +64,6 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 	if !containsString(manifest.Schemas.Task, "tusker.task/v7") || !containsString(manifest.Schemas.Task, "tusker.wave/v7") || !containsString(manifest.Schemas.Review, reviewResultSchema) || !containsString(manifest.Schemas.Completion, completionTransactionSchema) || !containsString(manifest.Schemas.Receipt, v7LandingReceiptSchema) {
 		t.Fatalf("manifest omitted core schemas: %#v", manifest.Schemas)
 	}
-}
-
-func TestCapabilityInventoryCoversDispatcher(t *testing.T) {
-	raw, err := os.ReadFile("cli.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := strings.Index(string(raw), "func runInner(")
-	end := strings.Index(string(raw), "\nfunc printHelp(")
-	if start < 0 || end <= start {
-		t.Fatal("cannot isolate runInner dispatcher")
-	}
-	manifest, err := buildCapabilitiesManifest(nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(string(raw)[start:end], "\n")
-	quoted := regexp.MustCompile(`"([^"]+)"`)
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(line, "case ") || !strings.HasSuffix(line, ":") {
-			continue
-		}
-		caseExpression := strings.TrimSuffix(strings.TrimPrefix(line, "case "), ":")
-		j := i + 1
-		for ; j < len(lines); j++ {
-			next := strings.TrimSpace(lines[j])
-			if strings.HasPrefix(next, "case ") || strings.HasPrefix(next, "default:") {
-				break
-			}
-		}
-		for _, match := range quoted.FindAllStringSubmatch(caseExpression, -1) {
-			caseName := strings.TrimSpace(match[1])
-			parts := strings.Fields(caseName)
-			if len(parts) == 0 {
-				continue
-			}
-			command := parts[0]
-			if command == "legacy" || command == "help" || strings.HasPrefix(command, "-") {
-				continue
-			}
-			deprecated := capabilityDeprecationNamed(manifest.Deprecations, caseName)
-			if deprecated {
-				continue
-			}
-			capability, ok := capabilityCommandNamed(manifest.Commands, command)
-			if !ok {
-				t.Errorf("runInner public command %q is absent from capabilities", command)
-				continue
-			}
-			if len(parts) > 1 && !containsString(capability.Subcommands, parts[1]) {
-				t.Errorf("runInner public command %q subcommand %q is absent from capabilities", command, parts[1])
-			}
-		}
-	}
-}
-
-func capabilityDeprecationNamed(deprecations []capabilityDeprecation, name string) bool {
-	for _, deprecation := range deprecations {
-		if deprecation.Command == name {
-			return true
-		}
-	}
-	return false
 }
 
 func capabilityCommandNamed(commands []capabilityCommand, name string) (capabilityCommand, bool) {
@@ -204,11 +139,6 @@ func assertSortedCapabilities(t *testing.T, manifest capabilitiesManifest) {
 	for i := 1; i < len(manifest.Commands); i++ {
 		if manifest.Commands[i-1].Command >= manifest.Commands[i].Command {
 			t.Fatalf("commands are not sorted: %#v", manifest.Commands)
-		}
-	}
-	for _, command := range manifest.Commands {
-		if !capabilityStringsSorted(command.Subcommands) || !capabilityStringsSorted(command.Flags) {
-			t.Fatalf("command is not sorted: %#v", command)
 		}
 	}
 	if !capabilityStringsSorted(manifest.Schemas.Task) || !capabilityStringsSorted(manifest.Schemas.Review) || !capabilityStringsSorted(manifest.Schemas.Completion) || !capabilityStringsSorted(manifest.Schemas.Receipt) || !capabilityStringsSorted(manifest.RunnerAdapters) {

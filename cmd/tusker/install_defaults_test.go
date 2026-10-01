@@ -13,7 +13,7 @@ func TestInstallWithoutBinDoesNotCreateBinarySymlink(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	if err := installCmd(Args{"bin-dir": binDir}); err != nil {
+	if err := updateCmd(Args{"bin-dir": binDir}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(binDir, "tusker")); !os.IsNotExist(err) {

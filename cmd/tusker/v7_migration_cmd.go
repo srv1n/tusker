@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -147,88 +146,4 @@ func emitV7PacketStatus(args Args, vaultPath, id, audience, content string, cont
 	}
 	fmt.Print(content)
 	return nil
-}
-
-func dashboardV7Cmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	switch strings.ToLower(args.String("_pos0")) {
-	case "build", "":
-		idx, err := loadV7Index(vaultPath)
-		if err != nil {
-			return err
-		}
-		if err := buildV7Dashboards(vaultPath, idx); err != nil {
-			return err
-		}
-		if !args.Bool("quiet") {
-			fmt.Println("Built V7 dashboards.")
-		}
-		return nil
-	case "open":
-		name := fallback(args.String("_pos1"), "human-actions")
-		fmt.Println(filepath.Join(vaultPath, "dashboards", name+".md"))
-		return nil
-	default:
-		return tuskerError(errorInvalidArg, "Usage: tusker dashboard build|open <name>")
-	}
-}
-
-func stateV7Cmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	backend := v7GitStateBackend{VaultPath: vaultPath}
-	switch strings.ToLower(args.String("_pos0")) {
-	case "sync", "push", "":
-		branch := fallback(args.String("branch"), v7StateBranch(vaultPath))
-		remote := args.String("remote")
-		if remote == "" && (args.Bool("push") || strings.ToLower(args.String("_pos0")) == "push") {
-			remote = "origin"
-		}
-		commit, err := backend.Sync(context.Background(), v7StateSyncOptions{Branch: branch, Remote: remote, Message: args.String("message")})
-		if err != nil {
-			return err
-		}
-		if !args.Bool("quiet") {
-			target := branch
-			if remote != "" {
-				target = remote + "/" + branch
-			}
-			fmt.Printf("Synced V7 runtime state to %s at %s\n", target, commit)
-		}
-		return nil
-	case "import":
-		branch := fallback(args.String("branch"), v7StateBranch(vaultPath))
-		remote := args.String("remote")
-		if remote == "" && args.Bool("fetch") {
-			remote = "origin"
-		}
-		count, err := backend.Import(context.Background(), v7StateSyncOptions{Branch: branch, Remote: remote})
-		if err != nil {
-			return err
-		}
-		if !args.Bool("quiet") {
-			fmt.Printf("Imported %d V7 lease%s from %s\n", count, plural(count), branch)
-		}
-		return nil
-	case "export":
-		dir := args.String("dir")
-		if dir == "" {
-			dir = filepath.Join(filepath.Dir(vaultPath), ".tusker-runtime", "state")
-		}
-		count, err := backend.Export(context.Background(), v7StateSyncOptions{Dir: dir})
-		if err != nil {
-			return err
-		}
-		if !args.Bool("quiet") {
-			fmt.Printf("Exported %d V7 state file%s to %s\n", count, plural(count), dir)
-		}
-		return nil
-	default:
-		return tuskerError(errorInvalidArg, "Usage: tusker state sync|import|export")
-	}
 }

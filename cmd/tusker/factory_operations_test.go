@@ -431,76 +431,8 @@ func TestFactoryOperationsProjection(t *testing.T) {
 		if !reflect.DeepEqual(apiProjection.SectionOrder, factoryOperationsSectionOrder) {
 			t.Fatalf("section order = %#v", apiProjection.SectionOrder)
 		}
-		previousWD, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chdir(filepath.Dir(server.vaultPath)); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.Chdir(previousWD) })
-		command, parsed := parseCLI([]string{"tusker", "factory", "operations", "--json"})
-		if command != "factory operations" || !parsed.Bool("json") {
-			t.Fatalf("parseCLI = %q %#v", command, parsed)
-		}
-		var commandErr error
-		output := captureStdout(t, func() {
-			code, err := run(command, parsed)
-			commandErr = err
-			if code != 0 {
-				t.Fatalf("factory operations exit code = %d", code)
-			}
-		})
-		if commandErr != nil {
-			t.Fatal(commandErr)
-		}
-		var cliProjection factoryOperationsProjection
-		if err := json.Unmarshal([]byte(output), &cliProjection); err != nil {
-			t.Fatalf("decode CLI projection: %v\n%s", err, output)
-		}
-		if !reflect.DeepEqual(cliProjection, apiProjection) {
-			t.Fatalf("CLI and Serve projections diverged\nCLI: %#v\nAPI: %#v", cliProjection, apiProjection)
-		}
-		if cliCommandMutatesVault("factory operations") {
-			t.Fatal("factory operations was accidentally classified as a mutating CLI command")
-		}
-		helpCommand, helpArgs := parseCLI([]string{"tusker", "help", "factory", "operations"})
-		helpOutput := captureStdout(t, func() {
-			code, helpErr := run(helpCommand, helpArgs)
-			if code != 0 || helpErr != nil {
-				t.Fatalf("factory help failed: code=%d err=%v", code, helpErr)
-			}
-		})
-		if !strings.Contains(helpOutput, "read-only") || !strings.Contains(helpOutput, "factory operations") {
-			t.Fatalf("factory help missing public contract:\n%s", helpOutput)
-		}
-		bareCommand, bareArgs := parseCLI([]string{"tusker", "factory"})
-		bareOutput := captureStdout(t, func() {
-			code, bareErr := run(bareCommand, bareArgs)
-			if code != 0 || bareErr != nil {
-				t.Fatalf("bare factory command failed: code=%d err=%v", code, bareErr)
-			}
-		})
-		if bareCommand != "factory" || !strings.Contains(bareOutput, "tusker factory operations") {
-			t.Fatalf("bare factory command did not route to help: command=%q\n%s", bareCommand, bareOutput)
-		}
-		for _, flag := range []string{"write", "refresh", "dispatch"} {
-			code, mutationErr := run("factory operations", Args{flag: "true"})
-			if code != 0 || mutationErr == nil || !strings.Contains(mutationErr.Error(), "read-only") {
-				t.Fatalf("--%s refusal: code=%d err=%v", flag, code, mutationErr)
-			}
-		}
-		for _, argv := range [][]string{
-			{"tusker", "factory", "operations", "--wat"},
-			{"tusker", "factory", "operations", "extra"},
-			{"tusker", "factory", "operations", "--json", "false"},
-			{"tusker", "factory", "operations", "--vault", server.vaultPath},
-		} {
-			invalidCommand, invalidArgs := parseCLI(argv)
-			code, invalidErr := run(invalidCommand, invalidArgs)
-			if code != 0 || invalidErr == nil || errorToIssue(invalidErr).Code != errorInvalidArg {
-				t.Fatalf("%v was not refused exactly: code=%d args=%#v err=%v", argv, code, invalidArgs, invalidErr)
-			}
+		if code, _ := runInner("factory operations", Args{"json": "true"}); code == 0 {
+			t.Fatal("removed factory CLI still dispatches; Serve is the only reader")
 		}
 		post := httptest.NewRequest(http.MethodPost, "/api/factory-operations?project=app", nil)
 		post.Host = "127.0.0.1:7420"

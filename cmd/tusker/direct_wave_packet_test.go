@@ -326,42 +326,16 @@ func TestDirectWavePacketHelpAndCapabilitiesMatchDispatch(t *testing.T) {
 	for _, c := range commands {
 		byName[c.Command] = c
 	}
-	for _, name := range []string{"new", "task start", "task update", "wave create", "wave start", "wave pause", "wave resume"} {
-		if _, ok := byName[name]; !ok {
+	for _, name := range []string{"new task", "task start", "task update", "wave create", "wave start", "wave pause", "wave resume", "wave review"} {
+		c, ok := byName[name]
+		if !ok {
 			t.Fatalf("capabilities manifest is missing %q", name)
 		}
-	}
-	for _, flag := range []string{"--body-file", "--work-level"} {
-		found := false
-		for _, f := range byName["new"].Flags {
-			if f == flag {
-				found = true
-			}
+		if c.Purpose == "" || c.UseWhen == "" || c.AvoidWhen == "" {
+			t.Fatalf("capability %q lacks purpose or use/avoid guidance: %#v", name, c)
 		}
-		if !found {
-			t.Fatalf("new-task capability lost required flag %s", flag)
-		}
-	}
-	if !strings.Contains(byName["wave start"].Purpose, "dependency frontier automatically") {
-		t.Fatalf("wave start purpose does not describe automatic frontier advancement: %q", byName["wave start"].Purpose)
-	}
-	if !strings.Contains(byName["wave pause"].Purpose, "admissions") || !strings.Contains(byName["wave resume"].Purpose, "armed") {
-		t.Fatalf("pause/resume purposes do not match actual semantics: %#v %#v", byName["wave pause"].Purpose, byName["wave resume"].Purpose)
-	}
-	for _, name := range []string{"new", "task start", "wave create", "wave start", "wave pause", "wave resume"} {
-		if strings.Contains(strings.ToLower(byName[name].Purpose), "delivery import") || strings.Contains(strings.ToLower(byName[name].Purpose), "delivery plan") {
+		if strings.Contains(strings.ToLower(c.Purpose+c.UseWhen), "delivery plan") {
 			t.Fatalf("canonical %q guidance recommends a delivery plan", name)
-		}
-	}
-	for _, sub := range []string{"start", "pause", "resume", "create", "review"} {
-		found := false
-		for _, s := range byName["wave"].Subcommands {
-			if s == sub {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("wave capability lost dispatched subcommand %q", sub)
 		}
 	}
 }
@@ -659,7 +633,7 @@ func testSoftwareFactoryPacketCLIHelpDispatchCapabilityParity(t *testing.T) {
 			break
 		}
 	}
-	if waveCreate.Command != "wave create" || !strings.Contains(waveCreate.Purpose, "atomically") {
+	if waveCreate.Command != "wave create" || !strings.Contains(waveCreate.UseWhen, "atomically") {
 		t.Fatalf("capability manifest lost wave-create parity: %#v", waveCreate)
 	}
 }

@@ -249,7 +249,7 @@ func TestSelfServiceProcess(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("unimplemented repair reported success:\n%s", out)
 	}
-	if !strings.Contains(out, "Unknown command: repair") {
+	if !strings.Contains(out, "Unknown command: tusker repair") {
 		t.Fatalf("unimplemented repair hid its refusal:\n%s", out)
 	}
 	if strings.Contains(out, `"ok":true`) {

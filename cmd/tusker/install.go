@@ -198,120 +198,6 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 	return nil
 }
 
-func installCmd(args Args) error {
-	if args.Bool("help") {
-		printInstallHelp()
-		return nil
-	}
-
-	installedSkills := []string{}
-	destinations := []string{}
-	repoPath := strings.TrimSpace(args.String("repo"))
-	repoRoot := ""
-	userSkillSelection := args.Bool("all-user-skills") || args.Bool("refresh-existing-user-skills") || args.Bool("codex-user") || args.Bool("claude-user")
-	existingSkills := []string{}
-	if args.Bool("all-user-skills") || args.Bool("refresh-existing-user-skills") {
-		existingSkills = existingUserSkillDestinations()
-		destinations = append(destinations, existingSkills...)
-	}
-	if args.Bool("codex-user") {
-		destinations = append(destinations, defaultCodexUserSkillDestination())
-	}
-	if args.Bool("claude-user") {
-		destinations = append(destinations, filepath.Join(userHomeDir(), ".claude", "skills", currentSkillInstallDir))
-	}
-	if !userSkillSelection {
-		existingSkills = existingUserSkillDestinations()
-	}
-	if repoPath != "" {
-		var err error
-		repoRoot, err = filepath.Abs(repoPath)
-		if err != nil {
-			return err
-		}
-		destinations = append(destinations,
-			filepath.Join(repoRoot, ".agents", "skills", currentSkillInstallDir),
-			filepath.Join(repoRoot, ".claude", "skills", currentSkillInstallDir),
-		)
-	}
-	destinations = uniqueInstallDestinations(destinations)
-
-	installedSkillModes := map[string]string{}
-	for _, destination := range destinations {
-		mode, err := skillInstallModeForDestination(args, destination, repoRoot)
-		if err != nil {
-			return err
-		}
-		if err := installSkillPayloadWithModeFrom(destination, mode, args.String("source")); err != nil {
-			return err
-		}
-		installedSkills = append(installedSkills, destination)
-		installedSkillModes[destination] = mode
-	}
-
-	pointerUpdates := []repoPointerUpdate{}
-	feedbackReadme := ""
-	guidanceWarning := ""
-	if repoRoot != "" {
-		var err error
-		pointerUpdates, err = upsertRepoTuskerPointers(repoRoot, "")
-		if err != nil {
-			return err
-		}
-		guidanceWarning = repoAgentGuidanceFlatteningWarning(repoRoot, "", pointerUpdates)
-		path, created, err := ensureFeedbackReadmeForRepo(repoRoot)
-		if err != nil {
-			return err
-		}
-		if created {
-			feedbackReadme = path
-		}
-	}
-
-	binaryInstalled := false
-	if args.Bool("bin") && !args.Bool("no-bin") {
-		if err := installBinarySymlink(args); err != nil {
-			return err
-		}
-		binaryInstalled = true
-	}
-
-	if args.Bool("json") {
-		emitJSON(map[string]any{
-			"ok":                   true,
-			"binary_installed":     binaryInstalled,
-			"installed_skills":     installedSkills,
-			"skill_modes":          installedSkillModes,
-			"updated_pointers":     repoPointerUpdatePaths(pointerUpdates),
-			"feedback_readme":      nullIfEmptyString(feedbackReadme),
-			"guidance_warning":     nullIfEmptyString(guidanceWarning),
-			"skill_source":         nullIfEmptyString(args.String("skill-source")),
-			"skill_source_kind":    nullIfEmptyString(args.String("skill-source-kind")),
-			"existing_user_skills": existingSkills,
-		})
-		return nil
-	}
-
-	for _, destination := range installedSkills {
-		fmt.Printf("Installed Tusker skill at %s (%s)\n", destination, installedSkillModes[destination])
-	}
-	for _, update := range pointerUpdates {
-		fmt.Printf("%s %s\n", capitalize(update.action), update.path)
-	}
-	if feedbackReadme != "" {
-		fmt.Printf("Created %s\n", feedbackReadme)
-	}
-	if guidanceWarning != "" {
-		fmt.Printf("Warning: %s\n", guidanceWarning)
-	}
-	if !userSkillSelection {
-		printUserSkillRefreshGuidance("install", existingSkills)
-	} else if len(installedSkills) == 0 {
-		fmt.Println("No install destinations selected.")
-	}
-	return nil
-}
-
 func printUserSkillRefreshGuidance(command string, destinations []string) {
 	if len(destinations) == 0 {
 		fmt.Println("No existing Tusker user skill installs found.")
@@ -913,7 +799,7 @@ func findRepoRoot(start string) (string, error) {
 
 func printUpdateHelp() {
 	fmt.Println(`Usage:
-  tusker update [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]
+  tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]
 
 Purpose:
   Refresh selected skill installs from the currently running binary. Use --bin
@@ -939,42 +825,6 @@ Examples:
   tusker update --repo . --repo-only --no-bin
   tusker update --repo . --repo-only --no-bin --skill-mode copy
   tusker update --repo . --repo-only --no-bin --skill-mode symlink --source ~/src/tusker`)
-}
-
-func printInstallHelp() {
-	fmt.Println(`Usage:
-  tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--refresh-existing-user-skills] [--skill-mode copy|symlink] [--source <checkout>] [--force] [--json]
-
-Purpose:
-  Install selected skill bundles from the currently running binary. Use --bin
-  when a PATH symlink should also be created. This is used by make install and
-  the shell installer.
-
-Behavior:
-  - refreshes already-installed user skills in ~/.agents, ~/.codex, and ~/.claude
-    only with --all-user-skills, --codex-user, or --claude-user; with no user
-    flag it reports existing installs and prints the exact refresh command
-  - --codex-user installs ~/.agents/skills/tusker
-  - --claude-user installs ~/.claude/skills/tusker
-  - --repo installs the repo-local .agents skill bundle and the generated
-    .claude compatibility install without ambient user skill refresh;
-    repo-local installs default to symlink mode, while user installs default
-    to copy mode
-    and refreshes the managed AGENTS.md/CLAUDE.md Tusker bootstrap block
-    with compact proof/context guidance
-  - --refresh-existing-user-skills also refreshes existing user skills when --repo is used
-  - relinks tusker on PATH only with --bin; --no-bin remains accepted as a no-op
-  - --source points symlink mode at a canonical Tusker checkout or skill dir
-  - --force is accepted for installer compatibility
-
-Examples:
-  tusker install --bin
-  tusker install --all-user-skills
-  tusker install --codex-user --claude-user
-  tusker install --repo . --no-bin
-  tusker install --repo . --no-bin --skill-mode copy
-  tusker install --repo . --no-bin --skill-mode symlink --source ~/src/tusker
-  tusker install --no-bin`)
 }
 
 func printSkillSyncHelp() {

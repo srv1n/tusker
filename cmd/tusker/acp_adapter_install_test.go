@@ -39,20 +39,16 @@ func TestACPAdapterInstallIsLocalOnlyAndCLIIsRetired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	capability, ok := capabilityCommandNamed(manifest.Commands, "acp")
-	if !ok || len(capability.Flags) != 0 || containsString(capability.Subcommands, "install") || containsString(capability.Subcommands, "setup") || !containsString(capability.Subcommands, "doctor") {
-		t.Fatalf("acp capability = %#v", capability)
-	}
-	_, installOK := capabilityCommandNamed(manifest.Commands, "acp install")
-	doctorCapability, doctorOK := capabilityCommandNamed(manifest.Commands, "acp doctor")
-	if installOK || !doctorOK || !containsString(doctorCapability.Flags, "--bundle-digest") || containsString(doctorCapability.Flags, "--artifact") {
-		t.Fatalf("retired install or doctor capability mismatch: install=%t doctor=%#v", installOK, doctorCapability)
+	for _, name := range []string{"acp", "acp install", "acp doctor"} {
+		if capability, ok := capabilityCommandNamed(manifest.Commands, name); ok {
+			t.Fatalf("retiring ACP command %q is advertised: %#v", name, capability)
+		}
 	}
 	if code, err := runInner("acp install", Args{}); err != nil || code == 0 {
 		t.Fatalf("retired acp install result: code=%d err=%v", code, err)
 	}
-	if _, err := runInner("acp", Args{"unexpected": "true"}); err == nil {
-		t.Fatal("root acp accepted arbitrary args")
+	if code, _ := runInner("acp", Args{"_pos0": "unexpected"}); code == 0 {
+		t.Fatal("root acp accepted an arbitrary subcommand")
 	}
 	if err := validateACPAdapterCommandArgs(Args{"json": "true", "artifact": "/x"}, "json", "bundle-digest"); err == nil {
 		t.Fatal("cross-subcommand flag was accepted")

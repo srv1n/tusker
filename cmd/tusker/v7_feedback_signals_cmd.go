@@ -987,3 +987,11 @@ func feedbackPromoteRiskFromSeverity(severity string) string {
 		return "medium"
 	}
 }
+
+func atoiDefault(value string, fallback int) int {
+	parsed := atoiSafe(value)
+	if parsed == 0 && strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return parsed
+}

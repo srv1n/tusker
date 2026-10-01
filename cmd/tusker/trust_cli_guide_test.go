@@ -7,9 +7,9 @@ import (
 )
 
 func TestTrustCliGuideUsesExecutorRecordedCommandProof(t *testing.T) {
-	help := captureStdout(t, printV7Help)
+	help := captureStdout(t, func() { printCommandHelp("verify") })
 	newHelp := captureStdout(t, printNewHelp)
-	if strings.Contains(help, `--check "go test ./..." --result pass`) || !strings.Contains(help, `--check "command: go test ./..." --result pending`) {
+	if strings.Contains(help, `--check "go test`) || !strings.Contains(help, `--check "command: <cmd>"`) || !strings.Contains(help, "Command rows must be pending") {
 		t.Fatalf("v7 help advertises a forgeable command-proof route:\n%s", help)
 	}
 
