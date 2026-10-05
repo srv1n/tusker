@@ -115,3 +115,10 @@ func TestCodePathRefsIgnoresOverIndentedFence(t *testing.T) {
 		t.Fatalf("codePathRefs() = %v, want [missing/file.go]", got)
 	}
 }
+
+func TestCodePathRefsKeepsQuestionMarkGlobs(t *testing.T) {
+	got := codePathRefs("See `missing/file?.go` and `api/x?a=b`.\n")
+	if len(got) != 1 || got[0] != "missing/file?.go" {
+		t.Fatalf("codePathRefs() = %v, want [missing/file?.go]", got)
+	}
+}

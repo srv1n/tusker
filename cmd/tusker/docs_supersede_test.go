@@ -134,3 +134,71 @@ func TestDocsSupersedeRefusalsWriteNothing(t *testing.T) {
 		})
 	}
 }
+
+// An edit landing between preparing the predecessor update and committing it
+// must refuse the supersession rather than be overwritten.
+func TestDocsSupersedeRefusesConcurrentPredecessorEdit(t *testing.T) {
+	repoRoot, vault := supersedeFixture(t)
+	oldPath := filepath.Join(repoRoot, "docs/system/decisions/d-old.md")
+	edited := readDoc(t, repoRoot, "docs/system/decisions/d-old.md") + "\nconcurrent edit\n"
+	docsSupersedeBeforeCommit = func() {
+		if err := os.WriteFile(oldPath, []byte(edited), 0o644); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { docsSupersedeBeforeCommit = nil })
+	err := docsNewCmd(supersedeArgs(vault, "d-next", "decision", "d-old"))
+	if err == nil || !strings.Contains(err.Error(), "changed after it was read") {
+		t.Fatalf("err = %v, want concurrent-edit refusal", err)
+	}
+	if got := readDoc(t, repoRoot, "docs/system/decisions/d-old.md"); got != edited {
+		t.Fatalf("concurrent edit erased:\n%s", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(repoRoot, "docs/system/decisions/d-next.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("successor written despite refusal: %v", statErr)
+	}
+}
+
+func TestDocsSupersedeRefusesSymlinkedDocsRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	vault := filepath.Join(repoRoot, ".tusker")
+	writeDocsFixture(t, outside, "system/00-overview.md", "---\nkind: doc\nsubject: overview\nstatus: current\ncode_conformance: not_applicable\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\n---\n# Overview\n")
+	if err := os.Symlink(outside, filepath.Join(repoRoot, "docs")); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "---\nsubject: d-old\npart_of: overview\ndecides_for: overview\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\n---\n# Decision\n"
+	writeDocsFixture(t, repoRoot, ".tusker/specs/decisions/d-old.md", legacy)
+	err := docsNewCmd(supersedeArgs(vault, "d-next", "decision", "d-old"))
+	if err == nil {
+		t.Fatal("supersession through a symlinked docs/ must be refused")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "system/decisions/d-next.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("successor written outside the repository: %v", statErr)
+	}
+	if got := readDoc(t, repoRoot, ".tusker/specs/decisions/d-old.md"); got != legacy {
+		t.Fatalf("predecessor rewritten:\n%s", got)
+	}
+}
+
+func TestDocsSupersedeRefusesDirtyPredecessorInLinkedWorktree(t *testing.T) {
+	repoRoot, _ := supersedeFixture(t)
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runDocsGit(t, repoRoot, "worktree", "add", "-q", worktree)
+	vault := filepath.Join(worktree, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(worktree, "docs/system/decisions/d-old.md")
+	dirty := readDoc(t, worktree, "docs/system/decisions/d-old.md") + "\nedit\n"
+	if err := os.WriteFile(oldPath, []byte(dirty), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := docsNewCmd(supersedeArgs(vault, "d-next", "decision", "d-old"))
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("err = %v, want dirty refusal in linked worktree", err)
+	}
+	if got := readDoc(t, worktree, "docs/system/decisions/d-old.md"); got != dirty {
+		t.Fatalf("dirty predecessor rewritten:\n%s", got)
+	}
+}

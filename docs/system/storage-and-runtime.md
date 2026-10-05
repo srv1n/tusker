@@ -8,6 +8,8 @@ read_when: "Checking repository, tracker, or machine runtime storage boundaries.
 skip_when: "You need task proof, scheduling, or document search behavior."
 ---
 <!-- docs-check: ignore-path runs/ -->
+<!-- docs-check: ignore-path .tusker/scratch/ -->
+<!-- docs-check: ignore-path .tusker/_generated/ -->
 
 # Storage and runtime
 

@@ -46,6 +46,17 @@ func commitV7DocumentWrites(writes map[string]string, failAfter int) error {
 // across separate file descriptors on every supported platform. Write paths
 // not covered by a live caller lock retain the normal sorted acquisition.
 func commitV7DocumentWritesWithLocks(writes map[string]string, failAfter int, heldLocks []*v7DocumentLock) error {
+	return commitV7DocumentWritesGuarded(writes, failAfter, heldLocks, nil)
+}
+
+// commitV7DocumentWritesExpecting commits writes only if every path in
+// expected still holds exactly those bytes once the document locks are held,
+// so content prepared from an earlier read cannot erase a concurrent edit.
+func commitV7DocumentWritesExpecting(writes map[string]string, expected map[string][]byte) error {
+	return commitV7DocumentWritesGuarded(writes, 0, nil, expected)
+}
+
+func commitV7DocumentWritesGuarded(writes map[string]string, failAfter int, heldLocks []*v7DocumentLock, expected map[string][]byte) error {
 	paths := make([]string, 0, len(writes))
 	for path := range writes {
 		paths = append(paths, path)
@@ -118,6 +129,11 @@ func commitV7DocumentWritesWithLocks(writes map[string]string, failAfter int, he
 			return err
 		}
 		backups[path] = v7DocumentWritePreimage{Content: raw, Mode: info.Mode().Perm(), Existed: true}
+	}
+	for path, want := range expected {
+		if backup := backups[path]; !backup.Existed || !bytes.Equal(backup.Content, want) {
+			return tuskerError(errorInvalidTransition, "document changed after it was read; nothing was written, rerun the command", withPath(path))
+		}
 	}
 
 	var attemptedPaths []string

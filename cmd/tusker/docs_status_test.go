@@ -63,3 +63,43 @@ func TestDocsStatusStaleStrictExitsNonzeroOnlyWhenStale(t *testing.T) {
 		t.Fatalf("text must mark STALE, err=%v:\n%s", err, text)
 	}
 }
+
+// A strict stale failure in --json mode prints exactly one JSON document:
+// the result. main must not append an error envelope.
+func TestDocsStatusStaleStrictJSONEmitsOneDocument(t *testing.T) {
+	repoRoot := t.TempDir()
+	vault := filepath.Join(repoRoot, ".tusker")
+	if err := os.MkdirAll(vault, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	header := "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\n"
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", header+"subject: overview\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "pkg/code.go", "package pkg\n")
+	runDocsGit(t, repoRoot, "init", "-b", "main")
+	runDocsGit(t, repoRoot, "add", ".")
+	runDocsGit(t, repoRoot, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed")
+	c := strings.TrimSpace(docsGitOutput(t, repoRoot, "rev-parse", "HEAD"))
+	writeDocsFixture(t, repoRoot, "docs/system/cli.md", header+"subject: cli\npart_of: overview\ndescribes: [pkg]\nlast_verified: '2026-08-18 @ "+c+"'\n---\n# CLI\n")
+	writeDocsFixture(t, repoRoot, "pkg/code.go", "package pkg\n\nvar X = 1\n")
+	runDocsGit(t, repoRoot, "add", ".")
+	runDocsGit(t, repoRoot, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "touch")
+
+	var err error
+	out := captureStdout(t, func() {
+		err = docsStatusCmd(Args{"vault": vault, "stale": "true", "strict": "true", "json": "true"})
+		if err != nil {
+			reportCLIError(err, true)
+		}
+	})
+	if err == nil {
+		t.Fatal("stale strict must fail")
+	}
+	decoder := json.NewDecoder(strings.NewReader(out))
+	var first, second map[string]any
+	if jerr := decoder.Decode(&first); jerr != nil || first["documents"] == nil {
+		t.Fatalf("first JSON document must be the result: %v\n%s", jerr, out)
+	}
+	if decoder.Decode(&second) == nil {
+		t.Fatalf("a second JSON document was printed:\n%s", out)
+	}
+}

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -90,5 +92,45 @@ func TestDocsTouchDocEditWaiverAndBadRef(t *testing.T) {
 	writeDocsFixture(t, repoRoot, "pkg/new.go", "package pkg\n")
 	if issue := errorToIssue(func() error { _, err := runDocsTouch(t, "--vault", vault, "--since", "base"); return err }()); issue.Code != "DOC_TOUCH_DRIFT" {
 		t.Fatalf("untracked code change: issue=%#v", issue)
+	}
+}
+
+// A staged change whose working copy was restored to HEAD still counts.
+func TestDocsTouchStagedThenRestoredChange(t *testing.T) {
+	repoRoot, vault := docsTouchRepo(t, "block")
+	writeDocsFixture(t, repoRoot, "pkg/code.go", "package pkg\n\nvar Staged = 2\n")
+	runDocsGit(t, repoRoot, "add", "pkg/code.go")
+	runDocsGit(t, repoRoot, "restore", "--source=HEAD", "--worktree", "pkg/code.go")
+	_, err := runDocsTouch(t, "--vault", vault, "--since", "HEAD")
+	if issue := errorToIssue(err); issue.Code != "DOC_TOUCH_DRIFT" {
+		t.Fatalf("staged-only change: issue=%#v", issue)
+	}
+}
+
+// Under block with --json, stdout must hold exactly one JSON document.
+func TestDocsTouchJSONBlockEmitsOneDocument(t *testing.T) {
+	_, vault := docsTouchRepo(t, "block")
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+	runErr := docsCmd("touch", parseArgs([]string{"--vault", vault, "--since", "base", "--json"}))
+	reportCLIError(runErr, true)
+	_ = writer.Close()
+	os.Stdout = oldStdout
+	output, _ := io.ReadAll(reader)
+	_ = reader.Close()
+	if issue := errorToIssue(runErr); issue.Code != "DOC_TOUCH_DRIFT" {
+		t.Fatalf("issue=%#v", issue)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(output)))
+	var first any
+	if err := decoder.Decode(&first); err != nil {
+		t.Fatalf("decode: %v output=%q", err, output)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		t.Fatalf("want exactly one JSON document, got trailing data (err=%v) output=%q", err, output)
 	}
 }

@@ -109,9 +109,9 @@ func codePathCandidate(span string) (string, bool) {
 	}
 	// Not repo paths: absolute paths and API/slash routes (/api/x, /clear),
 	// home paths (~/.config), <placeholder> templates, env assignments and
-	// query strings, and versioned schema IDs.
+	// query strings (key=value), and versioned schema IDs. A bare ? is a glob.
 	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, "~") ||
-		strings.ContainsAny(s, "<>=?") || schemaID.MatchString(s) {
+		strings.ContainsAny(s, "<>=") || schemaID.MatchString(s) {
 		return "", false
 	}
 	if i := strings.Index(s, "#"); i >= 0 {

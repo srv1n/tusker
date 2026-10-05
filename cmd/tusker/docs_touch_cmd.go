@@ -68,18 +68,25 @@ func docsTouchCmd(args Args) error {
 		emitJSON(result)
 	}
 	if rule == "block" && len(missing) > 0 {
-		return tuskerError("DOC_TOUCH_DRIFT", "documentation drift since "+ref+": "+strings.Join(missing, ", "), withContext(map[string]any{"documents": missing, "changed_paths": changed}))
+		err := tuskerError("DOC_TOUCH_DRIFT", "documentation drift since "+ref+": "+strings.Join(missing, ", "), withContext(map[string]any{"documents": missing, "changed_paths": changed}))
+		if args.Bool("json") {
+			return afterResultEmitted(err)
+		}
+		return err
 	}
 	return nil
 }
 
-// docsTouchChangedPaths unions the committed range with the working tree.
-// --no-renames makes a rename show as delete + add, so both paths count.
+// docsTouchChangedPaths unions the committed range, the index (vs HEAD), the
+// worktree (vs index) and untracked files; `git diff HEAD` alone would hide a
+// staged change whose working copy was restored. --no-renames makes a rename
+// show as delete + add, so both paths count.
 func docsTouchChangedPaths(repoRoot, ref string) ([]string, error) {
 	var all strings.Builder
 	for _, gitArgs := range [][]string{
 		{"diff", "--no-renames", "--name-only", "-z", ref + "...HEAD"},
-		{"diff", "--no-renames", "--name-only", "-z", "HEAD"},
+		{"diff", "--no-renames", "--name-only", "-z", "--cached"},
+		{"diff", "--no-renames", "--name-only", "-z"},
 		{"ls-files", "--others", "--exclude-standard", "-z"},
 	} {
 		output, err := gitCombined(repoRoot, gitArgs...)

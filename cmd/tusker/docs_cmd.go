@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -97,7 +99,11 @@ func docsStatusCmd(args Args) error {
 		}
 	}
 	if staleOnly && args.Bool("strict") && staleCount > 0 {
-		return tuskerError("DOCS_STALE", fmt.Sprintf("%d stale document(s): described code changed since last_verified", staleCount))
+		err := tuskerError("DOCS_STALE", fmt.Sprintf("%d stale document(s): described code changed since last_verified", staleCount))
+		if args.Bool("json") {
+			return afterResultEmitted(err)
+		}
+		return err
 	}
 	return nil
 }
@@ -515,15 +521,23 @@ func docsNewCmd(args Args) error {
 			return err
 		}
 	} else {
-		// Both documents land together or neither does.
+		// Both documents land together or neither does. Apply the ordinary
+		// writer's no-symlinked-ancestor rule to both paths, and commit only if
+		// the predecessor still holds the bytes the update was prepared from.
+		for _, rel := range []string{relative, predecessor.doc.Path} {
+			if _, err := docgraph.ReadDocumentFile(repoRoot, rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return tuskerError(errorInvalidTransition, "docs new --supersedes refuses an unsafe document path: "+err.Error(), withPath(rel))
+			}
+		}
 		if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
 			return err
 		}
-		writes := map[string]string{
-			absolute: scaffold,
-			filepath.Join(repoRoot, filepath.FromSlash(predecessor.doc.Path)): predecessor.content,
+		oldAbsolute := filepath.Join(repoRoot, filepath.FromSlash(predecessor.doc.Path))
+		writes := map[string]string{absolute: scaffold, oldAbsolute: predecessor.content}
+		if docsSupersedeBeforeCommit != nil {
+			docsSupersedeBeforeCommit()
 		}
-		if err := commitV7DocumentWrites(writes, 0); err != nil {
+		if err := commitV7DocumentWritesExpecting(writes, map[string][]byte{oldAbsolute: predecessor.raw}); err != nil {
 			return err
 		}
 	}
@@ -546,6 +560,7 @@ func docsNewCmd(args Args) error {
 // the old document, its rewritten bytes, and the body link for the new doc.
 type docsSupersession struct {
 	doc     docgraph.Document
+	raw     []byte
 	updated docgraph.Document
 	content string
 	link    string
@@ -571,7 +586,7 @@ func docsPrepareSupersession(repoRoot string, corpus docgraph.Corpus, oldSubject
 	if docsKindFamily(old.Kind) != docsKindFamily(kind) {
 		return nil, tuskerError(errorInvalidArg, fmt.Sprintf("docs new --supersedes: %q is a %s, which a %s cannot supersede; use a matching --kind", old.Subject, docsKindFamily(old.Kind), docsKindFamily(kind)), withPath(old.Path))
 	}
-	if err := docsAdoptRefuseDirtyInputs(repoRoot, []string{old.Path}); err != nil {
+	if docsPathDirty(repoRoot, old.Path) {
 		return nil, tuskerError(errorInvalidTransition, fmt.Sprintf("docs new --supersedes: %s has uncommitted changes; commit, stash, or restore it first", old.Path), withPath(old.Path))
 	}
 	raw, err := docgraph.ReadDocumentFile(repoRoot, old.Path)
@@ -595,10 +610,27 @@ func docsPrepareSupersession(repoRoot string, corpus docgraph.Corpus, oldSubject
 	}
 	return &docsSupersession{
 		doc:     *old,
+		raw:     raw,
 		updated: updated,
 		content: content,
 		link:    fmt.Sprintf("Supersedes [%s](%s).", old.Subject, filepath.ToSlash(target)),
 	}, nil
+}
+
+// docsSupersedeBeforeCommit is a test hook run after the predecessor update
+// is prepared and before the guarded commit.
+var docsSupersedeBeforeCommit func()
+
+// docsPathDirty reports whether git shows any change (including untracked)
+// for relative. Outside a git work tree (linked worktrees included) it
+// reports clean; a git failure inside a work tree counts as dirty.
+func docsPathDirty(repoRoot, relative string) bool {
+	inside, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--is-inside-work-tree").Output()
+	if err != nil || strings.TrimSpace(string(inside)) != "true" {
+		return false
+	}
+	out, err := exec.Command("git", "-C", repoRoot, "status", "--porcelain", "--", relative).Output()
+	return err != nil || strings.TrimSpace(string(out)) != ""
 }
 
 // docsKindFamily groups kinds that may supersede each other: docs (including
