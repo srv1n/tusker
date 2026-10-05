@@ -4,7 +4,8 @@ subject: task-states
 keywords: [status, state, run state, labels, needs you, blocked, linear]
 part_of: real-testing-campaign
 status: accepted
-code_conformance: matches
+describes: [cmd/tusker/task_state.go, internal/serve/ui/src/components/ui/chips.tsx]
+code_conformance: unverified
 last_verified: 2026-09-27
 created: 2026-09-27
 read_when: "Showing, computing or acting on where a task stands, in the UI, CLI or API."

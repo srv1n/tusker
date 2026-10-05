@@ -10,8 +10,8 @@ import (
 func TestS46DocumentRouting(t *testing.T) {
 	t.Run("portable roots share one corpus", func(t *testing.T) {
 		root := t.TempDir()
-		writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
-		writeDoc(t, root, "docs/system/domains/billing/00-index.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: billing-index\npart_of: overview\nstatus: current\n---\n# Billing\n")
+		writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\ncode_conformance: not_applicable\n---\n# Overview\n")
+		writeDoc(t, root, "docs/system/domains/billing/00-index.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: billing-index\npart_of: overview\nstatus: current\ncode_conformance: not_applicable\n---\n# Billing\n")
 		writeDoc(t, root, ".tusker/specs/change.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: proposal\nsubject: change\npart_of: overview\nstatus: proposed\n---\n# Change\n")
 		corpus, issues, err := LoadRepository(root)
 		if err != nil {

@@ -95,7 +95,7 @@ subject: overview
 keywords: [system, documentation, architecture]
 kind: doc
 status: current
-code_conformance: unverified
+code_conformance: not_applicable
 created: %s
 last_verified:
 read_when: "You need the top-level map of how this repository works."

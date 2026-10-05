@@ -27,7 +27,7 @@ func TestS46PortableDocsJourney(t *testing.T) {
 		vault := filepath.Join(repo, ".tusker")
 		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true"}, bootstrap)
 		mustV7Proof(t, Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Journey policy.", "v7": "true"}, newV7Epic)
-		writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\n---\n# Overview\n")
+		writeTestDoc(t, repo, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nkind: doc\nsubject: overview\nstatus: current\ncode_conformance: not_applicable\n---\n# Overview\n")
 
 		newDoc := func(subject, kind, domain string, extra Args) string {
 			t.Helper()

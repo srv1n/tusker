@@ -124,6 +124,38 @@ func TestTombstoneSuccessorRequired(t *testing.T) {
 	}
 }
 
+func TestDescribesRequired(t *testing.T) {
+	const head = "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\npart_of: overview\n"
+	root := t.TempDir()
+	writeDoc(t, root, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\ncode_conformance: not_applicable\n---\n# Overview\n")
+	writeDoc(t, root, "docs/system/target.md", head+"subject: target\nstatus: current\ncode_conformance: not_applicable\n---\n")
+	docs := map[string]string{
+		"docs/system/current.md":           head + "subject: current-chapter\nkind: doc\nstatus: current\n---\n",
+		"docs/system/legacy.md":            head + "subject: legacy-chapter\nstatus: canonical\n---\n",
+		"docs/system/decision.md":          head + "subject: accepted-decision\nkind: decision\ndecides_for: docs/system/target.md\nstatus: accepted\n---\n",
+		"docs/system/accepted-proposal.md": head + "subject: accepted-proposal\nkind: proposal\nstatus: accepted\n---\n",
+		"docs/system/matches.md":           head + "subject: matches-chapter\nkind: doc\nstatus: current\ncode_conformance: matches\nlast_verified: \"2026-10-05 @ abc1234\"\n---\n",
+		"docs/system/proposed.md":          head + "subject: proposed-proposal\nkind: proposal\nstatus: proposed\n---\n",
+		"docs/system/superseded.md":        head + "subject: superseded-chapter\nkind: doc\nstatus: superseded\nsuperseded_by: target\n---\n",
+		"docs/system/exempt.md":            head + "subject: exempt-chapter\nkind: doc\nstatus: current\ncode_conformance: not_applicable\n---\n",
+		"docs/system/described.md":         head + "subject: described-chapter\nkind: doc\nstatus: current\ndescribes: [internal/docgraph]\n---\n",
+	}
+	for path, body := range docs {
+		writeDoc(t, root, path, body)
+	}
+	issues, err := ValidateRepository(root)
+	if err != nil {
+		t.Fatalf("ValidateRepository() error = %v", err)
+	}
+	for _, path := range []string{"docs/system/current.md", "docs/system/legacy.md", "docs/system/decision.md", "docs/system/accepted-proposal.md"} {
+		assertIssue(t, issues, "DOC_DESCRIBES_REQUIRED", path, "describes")
+	}
+	assertIssue(t, issues, "DOC_CONFORMANCE_INVALID", "docs/system/matches.md", `code_conformance "matches" requires a stated verification scope in describes`)
+	for _, path := range []string{"docs/system/proposed.md", "docs/system/superseded.md", "docs/system/exempt.md", "docs/system/described.md", "docs/system/00-overview.md"} {
+		assertNoIssue(t, issues, "DOC_DESCRIBES_REQUIRED", path, "")
+	}
+}
+
 func TestDocTouchIntersectsCoarsePathsAndHonorsWaivers(t *testing.T) {
 	corpus := Corpus{Documents: []Document{
 		{Path: "docs/system/graph.md", Kind: KindCanonical, Subject: "graph", Describes: []string{"internal/docgraph"}},

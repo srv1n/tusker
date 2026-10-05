@@ -3,7 +3,7 @@ title: Trustworthy Tusker with efficient agent workflows
 subject: tusker-trust-and-efficiency
 keywords: [trust, efficiency, agent workflows, delivery waves, documentation lifecycle]
 part_of: overview
-status: planned
+status: proposed
 capsule:
   what: "Seven inert waves make trust, usability and downstream agent cost measurable before release."
   use_when: "Planning or executing the trust and efficiency backlog."

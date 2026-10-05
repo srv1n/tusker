@@ -15,8 +15,8 @@ func TestDocsCheck(t *testing.T) {
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nstatus: canonical\n---\n# Overview\n")
-	writeDocsFixture(t, repoRoot, "docs/system/guide.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\npart_of: overview\nstatus: canonical\n---\n# Guide\nSee [[missing]].\n")
+	writeDocsFixture(t, repoRoot, "docs/system/00-overview.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\nstatus: canonical\ncode_conformance: not_applicable\n---\n# Overview\n")
+	writeDocsFixture(t, repoRoot, "docs/system/guide.md", "---\nread_when: \"Reading fixture.\"\nskip_when: \"Reading elsewhere.\"\nsubject: overview\npart_of: overview\nstatus: canonical\ncode_conformance: not_applicable\n---\n# Guide\nSee [[missing]].\n")
 	output := captureStdout(t, func() {
 		err := docsCheckCmd(Args{"read-when": "Reading fixture.", "skip-when": "Reading elsewhere.", "vault": vault, "json": "true"})
 		var checkFailure *docsCheckFailure

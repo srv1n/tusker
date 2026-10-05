@@ -5,7 +5,13 @@ part_of: overview
 status: canonical
 read_when: "Looking up an exact command, document route, or machine-readable output."
 skip_when: "You need the rationale or lifecycle rule behind a command."
+describes:
+  - cmd/tusker/commands_table.go
+  - cmd/tusker/cli.go
+  - cmd/tusker/docs_cmd.go
+  - cmd/tusker/docs_touch_cmd.go
 ---
+<!-- docs-check: ignore-path docs/system/decisions/ -->
 
 # CLI reference
 
@@ -253,6 +259,7 @@ routine routing so unused profiles do not consume context.
   `--kind spec` stays accepted as the spelling for proposal. `tusker docs
   check` reports any managed document other than a forwarding stub that lacks
   `read_when` or `skip_when` as `DOC_REQUIRED_FIELD_MISSING`.
+  `--supersedes <old-subject>` also sets the old document (same kind family, no uncommitted changes) to `status: superseded` with `superseded_by`, in one transaction.
 - `.tusker/` holds tracker state and thin pointers only; product decisions
   move to documentation while work and lifecycle decisions stay with the
   tracker.
@@ -275,7 +282,24 @@ routine routing so unused profiles do not consume context.
 - `tusker docs map` rebuilds the index and graph from the same resolver. It
   includes metadata relationships, Markdown/Obsidian links, backlinks, and
   supersession edges; broken managed routes fail validation.
-- `tusker docs status --json` reports freshness.
+- `tusker docs status [--stale [--strict]] [--json]` reports freshness. A doc
+  is `stale` when commits touched its `describes` paths after its
+  `last_verified` commit; `--stale` lists only those, and `--stale --strict`
+  exits nonzero with `DOCS_STALE` when any exist.
+- `tusker docs touch --since <ref> [--waive <subject>]... [--json]` runs the
+  close-time doc-touch check without a task. It diffs `<ref>...HEAD` plus
+  staged, unstaged, and untracked changes, and lists every document whose
+  `describes` paths changed while the document did not. `docs.touch_rule`
+  decides the outcome: `warn` (default) prints drift and exits 0, `block`
+  exits nonzero with `DOC_TOUCH_DRIFT`, `off` skips the check. Repeat
+  `--waive <subject>` to accept drift for a document. An unresolvable ref
+  or a non-git directory is an error. Pre-merge hook example:
+
+  ```sh
+  #!/bin/sh
+  # .git/hooks/pre-merge-commit
+  exec tusker docs touch --since "$(git merge-base HEAD MERGE_HEAD)"
+  ```
 - `tusker skill doctor --strict --json` checks the skill routes.
 
 ## Output contract

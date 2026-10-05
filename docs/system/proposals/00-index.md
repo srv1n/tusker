@@ -4,6 +4,7 @@ subject: proposals-index
 keywords: [proposals, index, change specifications]
 part_of: overview
 status: current
+code_conformance: not_applicable
 created: 2026-09-27
 read_when: "Finding which change proposal covers a topic, or where new change specifications live."
 skip_when: "You need current shipped behavior; read the system chapters instead."

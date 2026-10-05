@@ -3,9 +3,11 @@ title: "Platform support"
 subject: platform-support
 part_of: overview
 status: canonical
+describes: [Makefile, scripts/release-build.sh, scripts/release-validate.sh, .github/workflows, cmd/tusker/daemon_service.go]
 read_when: "Building, signing, installing, or releasing Tusker on a particular operating system."
 skip_when: "You need command usage or product behavior rather than build and release mechanics."
 ---
+<!-- docs-check: ignore-path windows/amd64 -->
 
 # Platform support
 

@@ -4,6 +4,7 @@ subject: kill-switch-and-access
 keywords: [kill switch, automation off, access, deny list, protected folders, sandbox-exec, yolo]
 part_of: real-testing-campaign
 status: accepted
+describes: [cmd/tusker/automation_switch.go, cmd/tusker/agent_access.go, cmd/tusker/agent_access_policy.go]
 code_conformance: unverified
 created: 2026-09-27
 read_when: "Building the global automation switch, or changing what folders and commands an agent may touch."

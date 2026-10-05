@@ -3,9 +3,11 @@ title: "Skills"
 subject: skills
 part_of: overview
 status: canonical
+describes: [skills, cmd/tusker/install.go, cmd/tusker/skill_provenance.go, cmd/tusker/skill_install_safety.go, cmd/tusker/skill_compatibility.go]
 read_when: "Choosing the operator skill source, installed provenance, or project canon route."
 skip_when: "You need product behavior, task proof, or runtime storage details."
 ---
+<!-- docs-check: ignore-path docs/system/decisions/ -->
 
 # Skills
 

@@ -17,8 +17,8 @@ canonical_files:
   - "knowledge/domains/*/INDEX.md"
   - "knowledge/domains/*/CANON.md"
 created_at: "2026-09-05T08:36:27Z"
-updated_at: "2026-09-05T08:36:27Z"
-state_rev: "sha256:b1973e133c977c6ce44cf3bf6935d32a6d90efaaefd714b2a4ad2fd1c1c5dde0"
+updated_at: "2026-10-05T05:29:59Z"
+state_rev: "sha256:f9df1c5515d3c0b6bab88ac031645258974dc9c9979fdee3256ee80225537523"
 ---
 
 # Project Knowledge Skill
@@ -62,9 +62,10 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 
 ## Updating Canon
 
-- Update the narrowest owning domain `CANON.md` when durable truth changes.
-- Create or update a leaf node only when the canon needs a stable runbook, interface, invariant, decision, glossary entry, or source attribution.
-- Run `tusker validate --json` after changing project knowledge.
+- Project canon lives in `docs/system/` (chapters, `proposals/`, `decisions/`, and `domains/<domain>/`). Update the narrowest owning doc when durable truth changes.
+- Find and open canon with `tusker docs find <query>` and `tusker docs read <subject>`; create new docs, proposals, or decisions with `tusker docs new` instead of hand-writing files.
+- Run `tusker docs check` after editing canon.
+- Legacy `knowledge/domains/<domain>/CANON.md` records remain compatibility pointers; run `tusker validate --json` after changing them.
 - Do not put proof logs, task history, attempts, event streams, generated packets, or raw terminal output in canon.
 
 ## Forbidden Source Truth
@@ -72,9 +73,10 @@ Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the r
 - Do not publish task records, evidence logs, attempts, event files, generated output, runtime state, or raw logs as project skill source.
 - Forbidden paths include `work/**`, `epics/**`, `evidence/**`, `attempts/**`, `events/**`, `_generated/**`, `_system/**`, `dashboards/**`, packet caches, `.tusker-*`, raw logs, and local absolute paths.
 - Raw external input belongs in `knowledge/domains/<domain>/sources/`.
-- Root `docs/` may contain repository guides; it is not domain canon.
+- `docs/system/` is the project canon (chapters, `proposals/`, `decisions/`); other files under root `docs/` are repository guides.
 
 ## Validation
 
 - `tusker skill doctor --strict --json` checks project skill routes and package hygiene.
+- `tusker docs check` checks canon front matter, links, and placement under `docs/system/`.
 - `tusker validate --json` checks domain layout and task-domain coverage.

@@ -295,6 +295,14 @@ func describesChanged(describes, changed []string) bool {
 		if described == "." && len(changed) > 0 {
 			return true
 		}
+		if hasGlobMeta(described) {
+			for _, path := range changed {
+				if globCovers(described, path) {
+					return true
+				}
+			}
+			continue
+		}
 		for _, path := range changed {
 			if path == described || strings.HasPrefix(path, described+"/") {
 				return true
@@ -381,6 +389,7 @@ func ValidateRepository(repoRoot string) ([]Issue, error) {
 		}
 	}
 	issues = append(issues, brokenLinkIssues(corpus)...)
+	issues = append(issues, deadRefIssues(repoRoot, corpus)...)
 
 	sortIssues(issues)
 	return issues, nil
@@ -562,7 +571,28 @@ func validateHeader(doc Document) []Issue {
 	if code, message := checkConformance(doc); code != "" {
 		issues = append(issues, Issue{Code: code, Path: doc.Path, Message: message})
 	}
+	if describesRequired(doc) {
+		issues = append(issues, Issue{Code: "DOC_DESCRIBES_REQUIRED", Path: doc.Path, Message: fmt.Sprintf("%s document with status %s must list the code it governs in describes, or declare code_conformance: not_applicable", doc.Kind, strings.ToLower(strings.TrimSpace(doc.Status)))})
+	}
 	return issues
+}
+
+// describesRequired reports whether a current chapter (or legacy canonical)
+// or an accepted decision/proposal omits describes. Without describes no
+// drift check can see the doc. not_applicable exempts docs that govern no
+// code; the matches case is reported by checkConformance.
+func describesRequired(doc Document) bool {
+	if len(doc.Describes) > 0 || doc.CodeConformance == "not_applicable" || doc.CodeConformance == "matches" {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(doc.Status))
+	switch doc.Kind {
+	case KindDoc, KindCanonical:
+		return status == "current" || status == "canonical"
+	case KindDecision, KindProposal, KindSpec:
+		return status == "accepted"
+	}
+	return false
 }
 
 // LifecycleValues returns the valid lifecycle values for a document kind.

@@ -3,6 +3,7 @@ title: "Tasks and proof"
 subject: tasks-and-proof
 part_of: overview
 status: canonical
+describes: [cmd/tusker/task_state.go, cmd/tusker/commands_v7.go, cmd/tusker/v7_control_cmd.go, internal/v7schema/schema.go]
 read_when: "Writing task contracts or handing work to another worker or reviewer."
 skip_when: "Configuring provider adapters or investigating a daemon process."
 ---

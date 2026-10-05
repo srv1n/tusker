@@ -36,6 +36,12 @@ Expand to `docs browse` or `docs backlinks` only if that leaves a specific gap;
 check targeted help when syntax is uncertain. A documented answer comes from a
 current doc read now, or is **not in canon**.
 
+Before quoting a doc about code, check its `code_conformance` and `tusker docs
+status --stale`; label a stale, drift, or unverified doc as such.
+
+When the user rules, update the decision doc in the same session, or run
+`tusker docs new <subject> --kind decision [--supersedes <old>]`.
+
 ## Truth labels
 
 | Label | Authority |

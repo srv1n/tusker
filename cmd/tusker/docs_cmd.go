@@ -29,6 +29,7 @@ func docsCmd(subcommand string, args Args) error {
 		"read":      docsReadCmd,
 		"backlinks": docsBacklinksCmd,
 		"check":     docsCheckCmd,
+		"touch":     docsTouchCmd,
 	}
 	handler, ok := handlers[subcommand]
 	if !ok {
@@ -50,30 +51,53 @@ func docsStatusCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	staleOnly := args.Bool("stale")
+	staleCount := 0
+	filtered := result[:0]
+	for _, item := range result {
+		if item.Stale {
+			staleCount++
+		}
+		if !staleOnly || item.Stale {
+			filtered = append(filtered, item)
+		}
+	}
+	result = filtered
 	if args.Bool("json") {
 		rows := make([]map[string]any, 0, len(result))
 		for _, item := range result {
 			rows = append(rows, map[string]any{
 				"subject": item.Document.Subject, "path": item.Document.Path,
 				"last_verified": item.Document.LastVerified, "touching_commits": item.TouchingCommits,
-				"never_verified": item.NeverVerified,
+				"never_verified": item.NeverVerified, "stale": item.Stale,
 			})
 		}
 		emitJSON(map[string]any{"documents": rows, "coverage_gaps": gaps})
-		return nil
-	}
-	for _, item := range result {
-		freshness := fmt.Sprintf("%d commits since %s", item.TouchingCommits, item.Document.LastVerified)
-		if item.NeverVerified {
-			freshness = "never verified"
+	} else {
+		for _, item := range result {
+			lastVerified := strings.TrimSpace(item.Document.LastVerified)
+			freshness := fmt.Sprintf("%d commits since %s", item.TouchingCommits, lastVerified)
+			switch {
+			case len(item.Document.Describes) == 0:
+				freshness = "no describes"
+			case item.NeverVerified && lastVerified != "" && !strings.Contains(lastVerified, " @ "):
+				freshness = "date-only stamp, run tusker docs verify " + item.Document.Subject
+			case item.NeverVerified:
+				freshness = "never verified"
+			case item.Stale:
+				freshness = "STALE — " + freshness
+			}
+			fmt.Printf("%s — %s — %s\n", item.Document.Path, item.Document.Subject, freshness)
 		}
-		fmt.Printf("%s — %s — %s\n", item.Document.Path, item.Document.Subject, freshness)
-	}
-	if len(gaps) > 0 {
-		fmt.Println("\nCoverage gaps:")
-		for _, gap := range gaps {
-			fmt.Printf("  %s\n", gap)
+		if len(gaps) > 0 && !staleOnly {
+			fmt.Println("\nCoverage gaps:")
+			for _, gap := range gaps {
+				fmt.Printf("  %s\n", gap)
+			}
 		}
+	}
+	if staleOnly && args.Bool("strict") && staleCount > 0 {
+		return tuskerError("DOCS_STALE", fmt.Sprintf("%d stale document(s): described code changed since last_verified", staleCount))
 	}
 	return nil
 }
@@ -440,6 +464,22 @@ func docsNewCmd(args Args) error {
 		return tuskerError(errorAlreadyExists, "a file already exists at "+relative+"; pick a different subject or update that file")
 	}
 	scaffold := docsScaffoldPortable(subject, kind, parent, decidesFor, readWhen, skipWhen)
+	var predecessor *docsSupersession
+	if old := strings.TrimSpace(args.String("supersedes")); old != "" {
+		if predecessor, err = docsPrepareSupersession(repoRoot, corpus, old, kind, subject, relative); err != nil {
+			return err
+		}
+		if scaffold, err = docsSetFrontmatterLine(scaffold, "supersedes", old); err != nil {
+			return err
+		}
+		scaffold += "\n" + predecessor.link + "\n"
+		// Validate against the corpus as it will be after both writes.
+		for i := range corpus.Documents {
+			if corpus.Documents[i].Path == predecessor.doc.Path {
+				corpus.Documents[i] = predecessor.updated
+			}
+		}
+	}
 	candidate, parseErr := docgraph.ParseDocHeaders(relative, []byte(scaffold))
 	if parseErr != nil {
 		return tuskerError(errorInvalidField, "generated document scaffold is invalid: "+parseErr.Error(), withPath(relative))
@@ -457,22 +497,140 @@ func docsNewCmd(args Args) error {
 		return tuskerError(errorInvalidField, "generated document scaffold failed documentation validation", withPath(relative), withContext(candidateIssues))
 	}
 	if args.Bool("print") {
+		result := map[string]any{"ok": true, "path": relative, "subject": subject, "kind": string(kind), "content": scaffold, "written": false}
+		if predecessor != nil {
+			result["superseded"] = map[string]any{"path": predecessor.doc.Path, "subject": predecessor.doc.Subject, "content": predecessor.content}
+		}
 		if args.Bool("json") {
-			emitJSON(map[string]any{"ok": true, "path": relative, "subject": subject, "kind": string(kind), "content": scaffold, "written": false})
+			emitJSON(result)
+		} else if predecessor != nil {
+			fmt.Printf("# %s (new)\n%s\n# %s (superseded)\n%s", relative, scaffold, predecessor.doc.Path, predecessor.content)
 		} else {
 			fmt.Print(scaffold)
 		}
 		return nil
 	}
-	if err := docsAdoptWriteText(repoRoot, relative, scaffold); err != nil {
-		return err
+	if predecessor == nil {
+		if err := docsAdoptWriteText(repoRoot, relative, scaffold); err != nil {
+			return err
+		}
+	} else {
+		// Both documents land together or neither does.
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+			return err
+		}
+		writes := map[string]string{
+			absolute: scaffold,
+			filepath.Join(repoRoot, filepath.FromSlash(predecessor.doc.Path)): predecessor.content,
+		}
+		if err := commitV7DocumentWrites(writes, 0); err != nil {
+			return err
+		}
 	}
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "path": relative, "subject": subject, "kind": string(kind)})
+		result := map[string]any{"ok": true, "path": relative, "subject": subject, "kind": string(kind)}
+		if predecessor != nil {
+			result["superseded"] = predecessor.doc.Path
+		}
+		emitJSON(result)
 		return nil
 	}
 	fmt.Printf("Created %s\n", relative)
+	if predecessor != nil {
+		fmt.Printf("Superseded %s\n", predecessor.doc.Path)
+	}
 	return nil
+}
+
+// docsSupersession is the prepared predecessor side of docs new --supersedes:
+// the old document, its rewritten bytes, and the body link for the new doc.
+type docsSupersession struct {
+	doc     docgraph.Document
+	updated docgraph.Document
+	content string
+	link    string
+}
+
+// docsPrepareSupersession checks every refusal case before anything is
+// written: missing subject, already superseded, kind family mismatch, and
+// uncommitted changes to the old document.
+func docsPrepareSupersession(repoRoot string, corpus docgraph.Corpus, oldSubject string, kind docgraph.Kind, newSubject, newRelative string) (*docsSupersession, error) {
+	var old *docgraph.Document
+	for i := range corpus.Documents {
+		if strings.EqualFold(strings.TrimSpace(corpus.Documents[i].Subject), oldSubject) {
+			old = &corpus.Documents[i]
+			break
+		}
+	}
+	if old == nil {
+		return nil, tuskerError(errorNotFound, fmt.Sprintf("docs new --supersedes: no document has subject %q", oldSubject))
+	}
+	if strings.EqualFold(strings.TrimSpace(old.Status), "superseded") {
+		return nil, tuskerError(errorInvalidTransition, fmt.Sprintf("docs new --supersedes: %q is already superseded by %q; supersede that document instead", old.Subject, old.SupersededBy), withPath(old.Path))
+	}
+	if docsKindFamily(old.Kind) != docsKindFamily(kind) {
+		return nil, tuskerError(errorInvalidArg, fmt.Sprintf("docs new --supersedes: %q is a %s, which a %s cannot supersede; use a matching --kind", old.Subject, docsKindFamily(old.Kind), docsKindFamily(kind)), withPath(old.Path))
+	}
+	if err := docsAdoptRefuseDirtyInputs(repoRoot, []string{old.Path}); err != nil {
+		return nil, tuskerError(errorInvalidTransition, fmt.Sprintf("docs new --supersedes: %s has uncommitted changes; commit, stash, or restore it first", old.Path), withPath(old.Path))
+	}
+	raw, err := docgraph.ReadDocumentFile(repoRoot, old.Path)
+	if err != nil {
+		return nil, err
+	}
+	content, err := docsSetFrontmatterLine(string(raw), "status", "superseded")
+	if err == nil {
+		content, err = docsSetFrontmatterLine(content, "superseded_by", newSubject)
+	}
+	if err != nil {
+		return nil, tuskerError(errorInvalidField, "docs new --supersedes cannot rewrite "+old.Path+": "+err.Error(), withPath(old.Path))
+	}
+	updated, err := docgraph.ParseDocHeaders(old.Path, []byte(content))
+	if err != nil {
+		return nil, tuskerError(errorInvalidField, "docs new --supersedes produced an invalid header for "+old.Path+": "+err.Error(), withPath(old.Path))
+	}
+	target, err := filepath.Rel(filepath.Dir(filepath.FromSlash(newRelative)), filepath.FromSlash(old.Path))
+	if err != nil {
+		return nil, err
+	}
+	return &docsSupersession{
+		doc:     *old,
+		updated: updated,
+		content: content,
+		link:    fmt.Sprintf("Supersedes [%s](%s).", old.Subject, filepath.ToSlash(target)),
+	}, nil
+}
+
+// docsKindFamily groups kinds that may supersede each other: docs (including
+// legacy canonical), proposals (spec is a proposal), and decisions.
+func docsKindFamily(kind docgraph.Kind) docgraph.Kind {
+	if kind.IsCanonicalFamily() {
+		return docgraph.KindDoc
+	}
+	return kind
+}
+
+// docsSetFrontmatterLine replaces the top-level `key:` line in the front
+// matter, or appends one before the closing fence. The body is untouched.
+func docsSetFrontmatterLine(content, key, value string) (string, error) {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	if !strings.HasPrefix(content, "---\n") {
+		return "", fmt.Errorf("missing YAML front matter")
+	}
+	lines := strings.SplitAfter(content, "\n")
+	entry := key + ": " + value + "\n"
+	for i := 1; i < len(lines); i++ {
+		line := strings.TrimSuffix(lines[i], "\n")
+		if strings.TrimSpace(line) == "---" {
+			lines = append(lines[:i], append([]string{entry}, lines[i:]...)...)
+			return strings.Join(lines, ""), nil
+		}
+		if strings.HasPrefix(line, key+":") {
+			lines[i] = entry
+			return strings.Join(lines, ""), nil
+		}
+	}
+	return "", fmt.Errorf("front matter has no closing --- line")
 }
 
 func positionalPhrase(args Args) string {
@@ -511,7 +669,13 @@ func docsScaffoldPortable(subject string, kind docgraph.Kind, parent, decidesFor
 	default:
 		builder.WriteString("status: current         # current, or superseded (then set superseded_by)\n")
 	}
-	builder.WriteString("code_conformance: unverified # unverified, matches, drift, or not_applicable; matches needs last_verified scope and stamp\n")
+	if kind == docgraph.KindDoc {
+		// A fresh chapter governs no code until its author lists describes;
+		// claiming unverified with empty describes would fail DOC_DESCRIBES_REQUIRED.
+		builder.WriteString("code_conformance: not_applicable # once describes lists code, set unverified (or matches with a last_verified stamp)\n")
+	} else {
+		builder.WriteString("code_conformance: unverified # unverified, matches, drift, or not_applicable; matches needs last_verified scope and stamp\n")
+	}
 	fmt.Fprintf(&builder, "created: %s      # date this document was first written\n", created)
 	builder.WriteString("last_verified:          # date @ commit this document was last checked against code\n")
 	fmt.Fprintf(&builder, "read_when: %s # one line: when a reader should open this\n", strconv.Quote(readWhen))

@@ -3,6 +3,7 @@ title: "Tasks and waves"
 subject: delivery-and-waves
 part_of: overview
 status: canonical
+describes: [cmd/tusker/direct_wave_authority.go, cmd/tusker/direct_authoring_cmd.go, cmd/tusker/v7_wave_cmd.go, internal/v7schema/schema.go]
 read_when: "Creating, updating, reviewing, or starting tasks and waves, or checking what Start authorizes."
 skip_when: "You need gate meaning, landing checks, or runner routes covered by other chapters."
 ---

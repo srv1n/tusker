@@ -95,7 +95,7 @@ func parseArgs(argv []string) Args {
 			continue
 		}
 		value := argv[i+1]
-		if key == "task" && args[key] != "" {
+		if (key == "task" || key == "waive") && args[key] != "" {
 			args[key] += "\n" + value
 		} else {
 			args[key] = value
@@ -570,10 +570,11 @@ func printDocsHelp() {
   tusker docs read <subject-or-path> [--section <heading>] [--current] [--json]
   tusker docs backlinks <subject-or-path> [--limit <n>] [--json]
   tusker docs check [<subject-or-path>] [--json]
-  tusker docs new <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] [--domain <name>] [--index] [--decides-for <subject>]
+  tusker docs touch --since <ref> [--waive <subject>]... [--json]
+  tusker docs new <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] [--domain <name>] [--index] [--decides-for <subject>] [--supersedes <subject>]
   tusker docs new <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] --print [--json]
   tusker docs map
-  tusker docs status
+  tusker docs status [--stale [--strict]] [--json]
   tusker docs verify <subject>
   tusker docs adopt [--dry-run] [--json]
   tusker docs adopt --migration [--dry-run] [--json]

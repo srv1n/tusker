@@ -3,7 +3,7 @@ title: "From product intent to proven work"
 subject: spec-to-proof
 keywords: [product contract, spec to proof, task handoff, evidence, documentation]
 part_of: overview
-status: draft
+status: proposed
 summary: "The product contract for Tusker's core workflow."
 capsule:
   what: "Product contract from intent and constraints through task execution and reviewed proof."

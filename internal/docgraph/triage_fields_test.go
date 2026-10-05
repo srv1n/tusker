@@ -15,7 +15,7 @@ func TestTriageFieldsRequired(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			doc, err := ParseDocHeaders("docs/system/gates.md", []byte("---\nsubject: gates\npart_of: overview\nstatus: current\n"+tc.header+"---\n# Gates\n"))
+			doc, err := ParseDocHeaders("docs/system/gates.md", []byte("---\nsubject: gates\npart_of: overview\nstatus: current\ndescribes: [internal/gates]\n"+tc.header+"---\n# Gates\n"))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -3,9 +3,11 @@ title: "Orchestration"
 subject: orchestration
 part_of: overview
 status: canonical
+describes: [cmd/tusker/daemon.go, cmd/tusker/daemon_scheduler.go, cmd/tusker/workspace_manager.go, cmd/tusker/work_session_cmd.go, cmd/tusker/run_ownership.go]
 read_when: "Understanding scheduling, workspace preparation, or worker ownership."
 skip_when: "Authoring acceptance criteria or inspecting visual evidence."
 ---
+<!-- docs-check: ignore-path .claude/settings.json -->
 
 # Orchestration
 

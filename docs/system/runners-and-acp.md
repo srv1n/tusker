@@ -3,9 +3,13 @@ title: "Runners and ACP"
 subject: runners-and-acp
 part_of: overview
 status: canonical
+describes: [internal/runner, internal/acp, cmd/tusker/runner_conformance.go, cmd/tusker/runner_acp.go, cmd/tusker/runner_profiles.go]
 read_when: "Adding or testing an agent harness, checking launch routes, or working on ACP transports."
 skip_when: "You need task contracts or UI behavior rather than how an installed agent launches."
 ---
+<!-- docs-check: ignore-path model/list -->
+<!-- docs-check: ignore-path session/new -->
+<!-- docs-check: ignore-path .tusker/demo/profiles.yaml -->
 
 # Runners and ACP
 

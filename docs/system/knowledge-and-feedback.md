@@ -3,9 +3,11 @@ title: "Knowledge and feedback"
 subject: knowledge-and-feedback
 part_of: overview
 status: canonical
+describes: [internal/docgraph, cmd/tusker/docs_cmd.go, cmd/tusker/v7_feedback_cmd.go, cmd/tusker/v7_domain_cmd.go]
 read_when: "Finding current documentation or recording product friction."
 skip_when: "Reading task execution logs or checking a worker lease."
 ---
+<!-- docs-check: ignore-path docs/system/decisions/ -->
 
 # Knowledge and feedback
 

@@ -3,6 +3,7 @@ title: "Session recovery acceptance"
 subject: session-testing
 part_of: overview
 status: canonical
+describes: [scripts/test-real-work-project.sh]
 read_when: "Checking run steering and session recovery against a real harness in a seeded repository."
 skip_when: "Running the fixture-only test suite or changing runner code."
 ---

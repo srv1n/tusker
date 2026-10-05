@@ -17,6 +17,10 @@ type FreshnessRecord struct {
 	Document        Document
 	TouchingCommits int
 	NeverVerified   bool
+	// Stale is true when commits touched the described paths after the
+	// last_verified commit. Unverified docs and docs without describes are
+	// never stale: there is no anchor or nothing to drift from.
+	Stale bool
 }
 
 // CurrentCommit returns the repository commit used as the immutable anchor
@@ -48,12 +52,13 @@ func DocsFreshness(repoRoot string) ([]FreshnessRecord, error) {
 	result := make([]FreshnessRecord, 0, len(corpus.Documents))
 	for _, doc := range corpus.Documents {
 		stamp, ok := verifiedStamp(doc.LastVerified)
-		if ok && !verifiedCommitExists(repoRoot, stamp.Commit) {
+		if ok && !verifiedCommitIsAncestor(repoRoot, stamp.Commit) {
 			ok = false
 		}
 		record := FreshnessRecord{Document: doc, NeverVerified: !ok}
 		if ok {
 			record.TouchingCommits = countTouchingCommits(repoRoot, doc.Describes, stamp.Commit)
+			record.Stale = record.TouchingCommits > 0
 		}
 		result = append(result, record)
 	}
@@ -225,6 +230,16 @@ func verifiedCommitExists(repoRoot, commit string) bool {
 	}
 	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--verify", commit+"^{commit}").Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
+// verifiedCommitIsAncestor reports whether the stamp commit is reachable from
+// HEAD. A rebased-away commit may still exist as an object but no longer
+// anchors the current history, so it counts as never verified.
+func verifiedCommitIsAncestor(repoRoot, commit string) bool {
+	if !verifiedCommitExists(repoRoot, commit) {
+		return false
+	}
+	return exec.Command("git", "-C", repoRoot, "merge-base", "--is-ancestor", strings.TrimSpace(commit), "HEAD").Run() == nil
 }
 
 func countTouchingCommits(repoRoot string, describes []string, commit string) int {

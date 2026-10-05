@@ -3,6 +3,7 @@ title: "Landing and completion"
 subject: landing-and-completion
 part_of: overview
 status: canonical
+describes: [cmd/tusker/v7_land_cmd.go, cmd/tusker/v7_completion_receipt.go, cmd/tusker/v7_close_authority.go, cmd/tusker/completion_reactor.go]
 read_when: "Changing how reviewed work lands, how a task closes, or what receipts record."
 skip_when: "You need authoring or review rules rather than the final merge and close transaction."
 ---

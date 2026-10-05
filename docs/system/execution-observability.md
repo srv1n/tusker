@@ -3,6 +3,7 @@ title: "Execution observability"
 subject: execution-observability-system
 part_of: overview
 status: canonical
+describes: [cmd/tusker/execution_graph.go, cmd/tusker/execution_ledger.go, cmd/tusker/execution_diagnostics.go, cmd/tusker/execution_doctor.go, cmd/tusker/provider_execution_events.go, cmd/tusker/serve_execution_graph.go, cmd/tusker/serve_execution_timeline.go]
 read_when: "Working on execution identity, parent-child graphs, run timelines, or provider status readers."
 skip_when: "You need task lifecycle or dispatch rules rather than how running work is named and watched."
 ---

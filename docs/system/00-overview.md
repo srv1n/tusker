@@ -2,9 +2,11 @@
 title: "System overview"
 subject: overview
 status: canonical
+code_conformance: not_applicable
 read_when: "Starting work or locating the current authority for a repository fact."
 skip_when: "You already know the owning subsystem and need its detailed runbook."
 ---
+<!-- docs-check: ignore-path docs/system/decisions/ -->
 
 # System overview
 

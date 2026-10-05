@@ -3,6 +3,7 @@ title: "Serve UI"
 subject: serve-ui
 part_of: overview
 status: canonical
+describes: [internal/serve, cmd/tusker/serve_command.go, cmd/tusker/serve_actions.go]
 read_when: "Changing the local HTTP service, web routes, or the embedded browser app."
 skip_when: "You need CLI commands or durable record rules rather than the served interface."
 ---

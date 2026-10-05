@@ -3,6 +3,7 @@ title: "Proof and closeout"
 subject: proof-and-closeout
 part_of: overview
 status: canonical
+describes: [cmd/tusker/v7_proof_cmd.go, cmd/tusker/v7_closeout_cmd.go, cmd/tusker/v7_close_authority.go, cmd/tusker/review_result.go, internal/v7policy/close.go]
 read_when: "Choosing evidence, checking acceptance coverage, or closing a task."
 skip_when: "Planning dependencies or choosing a provider."
 ---

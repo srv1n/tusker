@@ -3,9 +3,11 @@ title: "Storage and runtime"
 subject: storage-and-runtime
 part_of: overview
 status: canonical
+describes: [cmd/tusker/runtime_store.go, cmd/tusker/v7_document_write.go, cmd/tusker/scratch_retention.go, cmd/tusker/purge.go, cmd/tusker/global_uninstall.go]
 read_when: "Checking repository, tracker, or machine runtime storage boundaries."
 skip_when: "You need task proof, scheduling, or document search behavior."
 ---
+<!-- docs-check: ignore-path runs/ -->
 
 # Storage and runtime
 
@@ -20,13 +22,13 @@ The `.tusker/` directory travels with the repository.
 | `config.yaml` | Current project configuration and policy. |
 | `WORKFLOW.md` | Project work and runner policy. |
 | `SKILL.md` | Project knowledge route. |
-| `work/` | Epics, tasks, gates, waves, decisions, and proposals. |
-| `knowledge/` | Durable project facts. |
-| `specs/` | Current approved change contracts and their source links. |
-| `specs/decisions/` | Durable decisions attached to a governing spec. |
-| `evidence/` | Durable evidence cards. |
-| `scratch/` | Temporary task files. |
-| `_generated/` | Disposable indexes and views. |
+| `.tusker/work/` | Epics, tasks, gates, waves, decisions, and proposals. |
+| `.tusker/knowledge/` | Durable project facts. |
+| `.tusker/specs/` | Current approved change contracts and their source links. |
+| `.tusker/specs/decisions/` | Durable decisions attached to a governing spec. |
+| `.tusker/evidence/` | Durable evidence cards. |
+| `.tusker/scratch/` | Temporary task files. |
+| `.tusker/_generated/` | Disposable indexes and views. |
 
 The CLI owns tracker mutations and state revisions.
 

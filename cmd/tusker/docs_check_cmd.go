@@ -119,6 +119,10 @@ func docsRepairHint(code string) string {
 		return "set superseded_by to an existing current document subject"
 	case "DOC_LINK_DANGLING":
 		return "fix the managed link or remove the reference; use a source/report path for non-document material"
+	case "DOC_DESCRIBES_DEAD":
+		return "point describes at an existing path or glob, or remove the stale entry"
+	case "DOC_CODE_PATH_DEAD":
+		return "fix the path to an existing file, or add `<!-- docs-check: ignore-path <path> -->` if it is not a repository path"
 	case "DOC_VERSIONED_FILENAME":
 		return "update the existing subject in place or create an explicit superseded signpost"
 	case "DOC_HEADER_MISSING", "DOC_HEADER_PARSE_ERROR":
