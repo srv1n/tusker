@@ -63,6 +63,13 @@ func packetV7Cmd(args Args) error {
 	}
 	contracts := dependencyContractReviewForTask(idx, dispatchTask)
 	audience := fallback(args.String("for"), "agent")
+	if audience == "worker" {
+		content, err := coordinatorPacket(vaultPath, task, args.Bool("routing"))
+		if err != nil {
+			return err
+		}
+		return emitV7PacketStatus(args, vaultPath, id, audience, content, contracts)
+	}
 	if audience == "integrator" {
 		if stringField(task.Data, "work_kind") != "integrator" {
 			return tuskerError(errorInvalidArg, id+": integrator packet requires work_kind: integrator")

@@ -1,5 +1,8 @@
 # Complete task handoff
 
+For explicitly requested coordinator batches, follow `BATCH.md`; its explicit
+profile pin and foreground execution rules replace the routing steps below.
+
 One bounded outcome is one task; one atomic wave request is one batch. The
 author owns discovery, settled design, and the handoff text; the implementer
 owns execution inside it. Every new agent task explicitly selects

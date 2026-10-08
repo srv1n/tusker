@@ -10,6 +10,21 @@ import (
 // table (capabilities, install), so it is built in init, not as a var literal.
 func commandRows() []cliCommand {
 	return []cliCommand{
+		{Name: "batch create", Use: "Use when existing scoped tasks should run together under explicit profiles and resource locks.", Avoid: "For executing an existing batch, use batch run.", Group: "author", Summary: "Group existing tasks into an inert coordinator batch.", Usage: "tusker batch create --tasks <ids> [--epic <ACR>] [--name <name>] [--max-parallel N] [--resource-capacity cargo:mac=1] [--json]", Run: run0(coordinatorBatchCreateCmd), Mutates: true},
+		{Name: "batch run", Use: "Use when authorized batch work should execute or resume until finished or blocked.", Avoid: "For the resident daemon workflow, use task or wave start.", Group: "start", Summary: "Run or resume a foreground coordinator batch without the daemon.", Usage: "tusker batch run <batch> [--max-parallel N] [--notify <command>] [--wake-on parked] [--usage-wait 60m] [--json]", Run: run0(func(a Args) error { return coordinatorBatchCmd(a, "run") }), Mutates: true},
+		{Name: "batch status", Use: "Use when inspecting batch states, blockers, commits, or retained evidence.", Avoid: "For launching or resuming work, use batch run.", Group: "find", Summary: "Inspect a coordinator batch and its durable run evidence.", Usage: "tusker batch status <batch> [--json]", Run: run0(func(a Args) error { return coordinatorBatchCmd(a, "status") })},
+		{Name: "batch stop", Use: "Use when admission must stop or active batch workers must be terminated.", Avoid: "For stopping admission while workers finish, add --drain.", Group: "runs", Summary: "Stop admission and stop workers, or let them drain.", Usage: "tusker batch stop <batch> [--drain] [--json]", Run: run0(func(a Args) error { return coordinatorBatchCmd(a, "stop") }), Mutates: true},
+		{Name: "batch execute", Use: "Use only from the batch controller with inherited resource locks and a compiled launch.", Avoid: "Never invoke this internal helper by hand.", Group: "internal", Hidden: true, Summary: "Execute one compiled batch launch with inherited resource locks.", Run: run0(coordinatorBatchExecuteCmd)},
+		{Name: "fork add", Use: "Use when an agreed ruling should reach every later task in an epic.", Avoid: "For an unresolved product choice, obtain the ruling first.", Group: "author", Summary: "Record an epic ruling for every later worker packet.", Usage: "tusker fork add --epic <ACR> --id <slug> --question <text> --ruling <text> --by sarav|coordinator [--doc <reference>]", Run: run0(func(a Args) error { return coordinatorForkCmd(a, "add") }), Mutates: true},
+		{Name: "fork list", Use: "Use when inspecting current and superseded epic rulings.", Avoid: "For recording a ruling, use fork add.", Group: "find", Summary: "List an epic's decided and superseded forks.", Usage: "tusker fork list --epic <ACR> [--json]", Run: run0(func(a Args) error { return coordinatorForkCmd(a, "list") })},
+		{Name: "fork supersede", Use: "Use when an existing ruling is replaced by another recorded active ruling.", Avoid: "For editing historical rulings in place, record a replacement instead.", Group: "author", Summary: "Replace an epic ruling with another active ruling.", Usage: "tusker fork supersede <slug> --epic <ACR> --by <new-slug>", Run: run0(func(a Args) error { return coordinatorForkCmd(a, "supersede") }), Mutates: true},
+		{Name: "flaky add", Use: "Use when a known flaky test needs an explicit expiring exception.", Avoid: "For unclassified failures, preserve the normal repair policy.", Group: "author", Summary: "Register an exact flaky test with an expiring exception.", Usage: "tusker flaky add <test> --reason <text> --until <date|task-id>", Run: run0(func(a Args) error { return coordinatorFlakyCmd(a, "add") }), Mutates: true},
+		{Name: "flaky list", Use: "Use when inspecting registered flaky tests and expiry.", Avoid: "For adding an exception, use flaky add.", Group: "find", Summary: "List flaky test exceptions and their expiry state.", Usage: "tusker flaky list [--json]", Run: run0(func(a Args) error { return coordinatorFlakyCmd(a, "list") })},
+		{Name: "audit", Use: "Use when checking report coverage, commits, ownership, attribution, or repository audit hooks.", Avoid: "For human acceptance, review the changes and use close with a verdict.", Group: "maintain", Summary: "Check batch reports, commits, ownership, gates and repo audit hooks.", Usage: "tusker audit <task|batch> [--json]", Run: run0(coordinatorAuditCmd)},
+		{Name: "ledger", Use: "Use when inspecting box costs or recording creation and deletion facts.", Avoid: "This command does not provision or delete cloud machines.", Group: "find", Summary: "Inspect box costs or record box creation and deletion.", Usage: "tusker ledger [--json]\ntusker ledger box add --id <id> --type <type> --eur-per-hour <rate> --expires <RFC3339> [--batch <batch>] [--epic <ACR>]\ntusker ledger box delete --id <id>", Run: run0(coordinatorLedgerCmd)},
+		{Name: "triage", Use: "Use when previewing open tasks with staleness, dead references, or duplicate titles.", Avoid: "For applying reviewed actions, use triage apply.", Group: "maintain", Summary: "Preview stale open tasks; never discards automatically.", Usage: "tusker triage [--epic <ACR>] [--older-than 14d] [--output <new-path>] [--json]", Run: run0(coordinatorTriageCmd)},
+		{Name: "triage apply", Use: "Use when a reviewed triage table should update tasks without deleting their history.", Avoid: "For automatic age-based deletion, no such action is provided.", Group: "maintain", Summary: "Apply a reviewed task/revision/action/reason JSON table.", Usage: "tusker triage apply <file> [--by <actor>] [--json]", Run: run0(coordinatorTriageApplyCmd), Mutates: true},
+
 		// setup
 		{Name: "init", Group: "setup",
 			Summary: "Create or refresh the repo-local .tusker vault and register the project.",
@@ -137,13 +152,13 @@ func commandRows() []cliCommand {
 			Summary: "Render the work packet for a task and audience.",
 			Use:     "Use when an agent, reviewer, integrator, or explainer needs the full task brief with dependency contracts and pending agent messages; refuses non-dispatchable tasks unless --force.",
 			Avoid:   "Not for a quick status summary — use `tusker brief <TASK-ID>`. Not for reading the note — use `tusker show <TASK-ID>`.",
-			Usage:   "tusker packet <TASK-ID> [--for agent|reviewer|integrator|explainer] [--force] [--write] [--json]",
+			Usage:   "tusker packet <TASK-ID> [--for worker|agent|reviewer|integrator|explainer] [--routing] [--force] [--write] [--json]",
 			Run:     run0(packetV7Cmd)},
 		{Name: "digest", Group: "find",
 			Summary: "Print operator digest: escalations, landings, parked runs, pending gates.",
 			Use:     "Use when an operator wants what changed recently: open escalations, landed tasks, red-parked runs, pending hard gates, armed waves; default window is the last 24 hours.",
 			Avoid:   "Not for one task's state — use `tusker brief <TASK-ID>`. Not for feedback notes — use `tusker feedback digest`. Note: it updates the digest watermark and stale escalation severity.",
-			Usage:   "tusker digest [--since <RFC3339|YYYY-MM-DD> | --all] [--json]",
+			Usage:   "tusker digest [--since last|<RFC3339|YYYY-MM-DD> | --all] [--epic <ACR>] [--coordinator] [--json]",
 			Run:     run0(digestCmd)},
 		{Name: "brief", Group: "find",
 			Summary: "Print a short status block for one task or all tasks.",
@@ -587,7 +602,12 @@ func commandRows() []cliCommand {
 			Summary: "Move a reviewed task to done after policy checks pass.",
 			Use:     "Use when a task in review has required evidence, passing close policy, and no open blocking gates, and should be marked done; scratch for the task is removed.",
 			Avoid:   "Not for one-step review plus close with green proof — use `tusker accept <TASK-ID> --by reviewer:<name>`. Not for abandoning — use `tusker discard <TASK-ID>`.",
-			Ref:     printCloseHelp, Run: runID(closeV7Cmd), Mutates: true},
+			Ref:     printCloseHelp, Run: runID(func(a Args) error {
+				if a.String("verdict") != "" {
+					return coordinatorCloseCmd(a)
+				}
+				return closeV7Cmd(a)
+			}), Mutates: true},
 		{Name: "accept", Group: "deliver",
 			Summary: "Confirm green proof, move to review, and close in one step.",
 			Use:     "Use when a reviewer or human signs off on a task whose proof is already green and wants it reviewed and closed with their identity recorded as acceptor.",

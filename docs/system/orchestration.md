@@ -11,6 +11,10 @@ skip_when: "Authoring acceptance criteria or inspecting visual evidence."
 
 # Orchestration
 
+For an explicitly authorized coordinator campaign, use
+[Coordinator batches](coordinator-batches.md): a foreground runner with durable
+recovery, reports and a single end-of-batch digest.
+
 The resident daemon polls registered projects. It can dispatch work only when
 the project and automation policy allow it.
 

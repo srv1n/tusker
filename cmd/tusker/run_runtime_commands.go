@@ -753,6 +753,9 @@ func runsLogsCmd(args Args) error {
 }
 
 func runsEventsCmd(args Args) error {
+	if handled, err := coordinatorRunsEvents(args); handled || err != nil {
+		return err
+	}
 	identity, err := requireArg(args, "id")
 	if err != nil {
 		return err

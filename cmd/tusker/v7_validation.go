@@ -95,6 +95,15 @@ func validateV7FrontmatterSize(note Note, ctx validationContext, where string, w
 }
 
 func validateV7Task(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
+	for _, failure := range coordinatorBodyRefErrors(ctx.VaultPath, note.Body) {
+		*errors = append(*errors, issue(errorInvalidField, failure, where, "repair the dead reference", nil))
+	}
+	if _, err := coordinatorResources(normalizeList(note.Data["resources"])); err != nil {
+		*errors = append(*errors, issue(errorInvalidField, err.Error(), where, "", nil))
+	}
+	if _, err := coordinatorDuration(stringField(note.Data, "budget"), time.Hour); err != nil {
+		*errors = append(*errors, issue(errorInvalidField, err.Error(), where, "", nil))
+	}
 	if raw, ok := note.Data["weight"]; ok && !validTaskWeight(raw) {
 		*errors = append(*errors, issue(errorInvalidField, "task weight must be an integer from 1 to 8", where, "", nil))
 	}

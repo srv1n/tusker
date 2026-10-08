@@ -245,6 +245,23 @@ func aggregateWaveState(members []taskState) taskState {
 // serveTaskStateFor gathers facts from a Serve snapshot. The CLI builds the
 // same snapshot shape, so both surfaces share this adapter.
 func serveTaskStateFor(snap serveSnapshot, task Note) taskState {
+	if state := stringField(task.Data, "batch_state"); state != "" {
+		switch stringField(task.Data, "status") {
+		case "done", "closed":
+			state = "done"
+		case "cancelled", "canceled", "superseded":
+			state = "discarded"
+		}
+		mapped := map[string]string{"ready": "planned", "running": "working", "review": "in_review", "parked": "needs_input", "stalled": "blocked", "failed": "blocked", "done": "done", "discarded": "canceled"}[state]
+		if mapped != "" {
+			result := newTaskState(mapped, "coordinator_batch", stringField(task.Data, "batch_blocker"), "tusker batch status "+stringField(task.Data, "batch_id"))
+			result.NextActor = "coordinator"
+			if state == "running" {
+				result.NextActor = "worker"
+			}
+			return result
+		}
+	}
 	id := stringField(task.Data, "id")
 	f := taskStateFacts{
 		ID: id, Status: stringField(task.Data, "status"), Readiness: stringField(task.Data, "readiness"),

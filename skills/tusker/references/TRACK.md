@@ -1,5 +1,8 @@
 # Track
 
+Explicit coordinator batches use `BATCH.md`; the task/wave daemon workflow
+below applies to ordinary tracked work.
+
 Inspect work with `tusker show <TASK-ID> --capsule`; implement from
 `tusker packet <TASK-ID> --for agent`. Read its contract, then only required
 source and documentation.

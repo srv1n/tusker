@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -42,6 +43,17 @@ func (b *cappedBuffer) snapshot() (string, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.b.String(), b.truncated
+}
+
+type synchronizedOutput struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *synchronizedOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
 }
 
 func Execute(ctx context.Context, prepared PreparedLaunch, sink EventSink) (ExecutionReceipt, error) {
@@ -81,6 +93,12 @@ func Execute(ctx context.Context, prepared PreparedLaunch, sink EventSink) (Exec
 	}
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.ExtraFiles = prepared.ExtraFiles
+	if prepared.Output != nil {
+		output := &synchronizedOutput{writer: prepared.Output}
+		cmd.Stdout = io.MultiWriter(stdout, output)
+		cmd.Stderr = io.MultiWriter(stderr, output)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -102,6 +120,13 @@ func Execute(ctx context.Context, prepared PreparedLaunch, sink EventSink) (Exec
 		receipt.FinishedAt, receipt.Outcome, receipt.Reason = time.Now().UTC(), EventFailed, err.Error()
 		return receipt, err
 	}
+	if prepared.ProcessStarted != nil {
+		if err := prepared.ProcessStarted(cmd.Process.Pid); err != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
+			return receipt, err
+		}
+	}
 	emit := func(kind EventType, reason string, data json.RawMessage) {
 		event := Event{AttemptID: receipt.AttemptID, Sequence: uint64(len(receipt.Events) + 1), ObservedAt: time.Now().UTC(), Type: kind, Reason: reason, Data: data}
 		receipt.Events = append(receipt.Events, event)
@@ -111,6 +136,10 @@ func Execute(ctx context.Context, prepared PreparedLaunch, sink EventSink) (Exec
 	}
 	emit(EventStarted, "", nil)
 	waitErr := cmd.Wait()
+	if len(prepared.ExtraFiles) > 0 {
+		// A batch owns the whole group: no orphan build may outlive its resource locks.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	receipt.FinishedAt = time.Now().UTC()
 	receipt.Stdout, receipt.StdoutTruncated = stdout.snapshot()
 	receipt.Stderr, receipt.StderrTruncated = stderr.snapshot()

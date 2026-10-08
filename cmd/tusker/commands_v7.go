@@ -746,6 +746,9 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	if err := CaptureTaskAuthoringProvenanceFromEnvironment(data); err != nil {
 		return tuskerError(errorInvalidField, err.Error())
 	}
+	if err := coordinatorTaskMetadata(data, args); err != nil {
+		return err
+	}
 	omitEmptyV7TaskAuthoringFields(data)
 	body := v7TaskBody(id, title)
 	if bodyFile := strings.TrimSpace(args.String("body-file")); bodyFile != "" {
@@ -753,6 +756,9 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 		if err != nil {
 			return err
 		}
+	}
+	if failures := coordinatorBodyRefErrors(vaultPath, body); len(failures) > 0 {
+		return tuskerError(errorInvalidArg, strings.Join(failures, "; "))
 	}
 	// --force-ready may bypass proof/dispatchability checks, never the strict
 	// governing-spec requirement for a demanding task. Report every applicable
@@ -4093,6 +4099,9 @@ func v7TaskDispatchBlockersWithStates(vaultPath string, task Note, includeAuthor
 // task's wave lives in its own vault and can never resolve from the local
 // index, so wave-scope blockers there are noise, not contract defects.
 func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string) []string {
+	if stringField(task.Data, "execution_mode") == "batch" {
+		return []string{"coordinator batch task; use tusker batch run " + stringField(task.Data, "batch_id")}
+	}
 	reasons := append([]string{}, v7DispatchStateBlockers(task, triggerStates)...)
 	// Contract-pin drift is an admission blocker: queued or stored
 	// authorizations must never execute bytes that were edited out of band. It

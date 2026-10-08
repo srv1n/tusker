@@ -408,6 +408,18 @@ func updateV7TaskCmd(args Args) error {
 			body = next
 		}
 	}
+	metadata := map[string]any{}
+	if err := coordinatorTaskMetadata(metadata, args); err != nil {
+		return err
+	}
+	for key, value := range metadata {
+		mutate(key, value)
+	}
+	if _, set := args["body-file"]; set {
+		if failures := coordinatorBodyRefErrors(vaultPath, body); len(failures) > 0 {
+			return tuskerError(errorInvalidArg, strings.Join(failures, "; "))
+		}
+	}
 	if value, ok := args["title"]; ok {
 		title := strings.TrimSpace(value)
 		if title == "" {

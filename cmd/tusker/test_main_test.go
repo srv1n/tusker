@@ -22,6 +22,9 @@ const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 var validationTestLockRetireHook func(string) error
 
 func TestMain(m *testing.M) {
+	if os.Getenv("TUSKER_COORDINATOR_TEST_HELPER") == "1" {
+		os.Exit(m.Run())
+	}
 	// Keep ordinary daemon fixtures independent of the developer machine's
 	// free-space budget. Dedicated disk-pressure tests inject d.diskStat and
 	// therefore still exercise the real refusal/recovery paths.
@@ -71,6 +74,11 @@ func TestMain(m *testing.M) {
 	// Do not let the host Codex/Claude session impersonate a human in fixture
 	// mutations. Tests that exercise agent-session policy set these variables
 	// explicitly with t.Setenv.
+	for _, key := range []string{"TUSKER_BATCH_ID", "TUSKER_TASK_ID", "TUSKER_VAULT"} {
+		if err := os.Unsetenv(key); err != nil {
+			panic(err)
+		}
+	}
 	for _, key := range []string{"TUSKER_ATTEMPT_ID", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_HOST_ID", "TUSKER_HOST_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CHISEL_SESSION_DB"} {
 		if err := os.Setenv(key, ""); err != nil {
 			fmt.Fprintf(os.Stderr, "cmd/tusker test suite: isolate agent session %s: %v\n", key, err)

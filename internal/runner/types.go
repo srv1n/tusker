@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"time"
 )
 
@@ -264,6 +266,10 @@ type EffectivePolicy struct {
 }
 
 type PreparedLaunch struct {
+	// Batch supervisors preserve resource locks and stream evidence across restarts.
+	ExtraFiles         []*os.File       `json:"-"`
+	Output             io.Writer        `json:"-"`
+	ProcessStarted     func(int) error  `json:"-"`
 	HarnessID          string           `json:"harness_id"`
 	Provider           string           `json:"provider"`
 	Transport          Transport        `json:"transport"`

@@ -129,6 +129,23 @@ func resolveVaultPath(args Args, allowCreate bool) (string, error) {
 		return filepath.Abs(explicit)
 	}
 	startDir := mustGetwd()
+	if batchID := strings.TrimSpace(os.Getenv("TUSKER_BATCH_ID")); batchID != "" {
+		vault := strings.TrimSpace(os.Getenv("TUSKER_VAULT"))
+		taskID := strings.TrimSpace(os.Getenv("TUSKER_TASK_ID"))
+		if !filepath.IsAbs(vault) {
+			return "", tuskerError(errorInvalidArg, "batch worker requires its canonical TUSKER_VAULT")
+		}
+		batch, err := coordinatorLoadBatch(vault, batchID)
+		if err != nil {
+			return "", err
+		}
+		for _, task := range batch.Tasks {
+			if task.ID == taskID && pathWithin(task.Workspace, startDir) {
+				return vault, nil
+			}
+		}
+		return "", tuskerError(errorInvalidArg, "batch worker identity/workspace does not match its reservation")
+	}
 	project, registered, discoveryErr := discoverRegisteredProjectVault(startDir)
 	if args.Bool("use-project-vault") {
 		if discoveryErr != nil {

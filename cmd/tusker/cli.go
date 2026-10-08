@@ -614,6 +614,7 @@ not implementation proof.`)
 }
 
 func printNewHelp() {
+	fmt.Println("Batch task options: --runner-profile <name> --resources <cargo:mac=1,box:host=1> --budget <2h> [--workspace-path <absolute-path>]")
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
   tusker new task [--vault <path>] --title <title> --work-level light|standard|demanding --body-file <path|-> [--epic <ACR>] [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--review-level light|standard|demanding] [--review-reason <reason>] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--weight <1-8>] [--generated-outputs <csv>] [--evidence-required automated_test] [--architect <address>] [--origin <address>] [--peers <name=address,...>]
@@ -759,6 +760,7 @@ Options:
 
 func printCloseHelp() {
 	fmt.Println(`Usage:
+  tusker close <id> --verdict accept|accept-with-followups|reject [--note <text>] [--override-audit <reason>]
   tusker close <id> [--vault <path>] [--by <name>] [--reason <text>]
   tusker close --id <id> [--vault <path>] [--by <name>] [--reason <text>]
 

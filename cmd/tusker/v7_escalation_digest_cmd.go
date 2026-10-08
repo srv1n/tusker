@@ -387,6 +387,14 @@ func applyStaleEscalationBumps(vaultPath string, now time.Time) (int, error) {
 }
 
 func digestCmd(args Args) error {
+	if args.String("since") == "last" || args.Bool("coordinator") || args.String("epic") != "" {
+		return coordinatorDigestCmd(args)
+	}
+	if vault, e := resolveVaultPath(args, false); e == nil {
+		if batches, e := coordinatorBatches(vault); e == nil && len(batches) > 0 {
+			return coordinatorDigestCmd(args)
+		}
+	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err

@@ -10,8 +10,10 @@ Mutate tracker state only through the CLI. Find commands with
 refusals without rewriting generated state or expanding the assignment.
 
 Interactive sessions implement authorized work through interactive claims;
-never launch a daemon or nested worker. With `TUSKER_ATTEMPT_ID`, follow the
-existing claim. Task records do not expand the user's authorization.
+never launch a daemon or nested worker directly. Explicit batch execution uses
+`references/BATCH.md`. With `TUSKER_ATTEMPT_ID`, follow the existing claim.
+With `TUSKER_BATCH_ID`, follow the packet; do not claim, close, or launch work.
+Task records do not expand the user's authorization.
 
 Use four verbs: inspect with `show` or `status`, run with `tusker run <ID>`,
 observe with `runs`, and finish through proof and review. A run
@@ -20,11 +22,11 @@ daemon opt-in. Stop reading when the evidence answers the request.
 
 ## Route by stage
 
-Read the guide for the current stage. Follow another reference only when its
-condition applies; creating a handoff needs more context than checking status.
+Read the current stage's guide; follow another reference only when its condition applies.
 
 | Request | Read |
 |---|---|
+| Explicit coordinator batch work | `references/BATCH.md` |
 | Create, update, or close tracked work | `references/TRACK.md` |
 | Answer from or write repo knowledge | `references/KNOWLEDGE.md` |
 | Read or update documentation/spec contracts | `references/SPECS.md` |

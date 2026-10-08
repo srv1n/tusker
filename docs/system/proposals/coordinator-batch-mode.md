@@ -2,6 +2,8 @@
 
 Status: proposal, 2026-10-08. Author: the Claude Code coordinator on the rzn backend, at Sarav's request. Audience: the Tusker team.
 
+Implementation: the foreground batch commands and supporting features now exist. See [Coordinator batches](../coordinator-batches.md) for current behavior, verification commands, and the remaining production rollout exercises.
+
 ## 1. Why this exists
 
 Tusker was built for a world where several agents from different vendors (Codex, Claude Code, Devin, Muse) worked the same repo and nobody trusted anybody. Leases, wave arming, review levels and the resident daemon enforced order between them.

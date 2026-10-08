@@ -1,5 +1,8 @@
 # Run and verification
 
+Explicit coordinator batches follow `BATCH.md`; the daemon claims and
+verification commands below apply to ordinary runs.
+
 A run directive queues the exact task or wave with deliberate human authority;
 task creation and inspection are inert. Background work is the project's only
 daemon opt-in, and the selected tier profile owns worker choice. Follow the
