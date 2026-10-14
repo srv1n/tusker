@@ -31,9 +31,10 @@ func TestACPAdapterInstallIsLocalOnlyAndCLIIsRetired(t *testing.T) {
 			t.Fatalf("installer unexpectedly contains %q", forbidden)
 		}
 	}
-	command, args := parseCLI([]string{"tusker", "acp", "doctor", "--bundle-digest", "sha256:" + strings.Repeat("b", 64), "--json"})
-	if command != "acp doctor" || !args.Bool("json") {
-		t.Fatalf("parseCLI = %q %#v", command, args)
+	for _, name := range []string{"acp", "acp install", "acp doctor"} {
+		if lookupCommand(name) != nil {
+			t.Fatalf("retired ACP command %q is still dispatchable", name)
+		}
 	}
 	manifest, err := buildCapabilitiesManifest(nil, "")
 	if err != nil {

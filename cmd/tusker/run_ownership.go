@@ -695,7 +695,7 @@ func (s *runOwnershipService) ownedRun(identity, owner string) (*RunStatus, erro
 		return nil, tuskerError(errorNotFound, "run not found: "+identity)
 	}
 	if run.LeaseOwner != owner || (LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) {
-		return nil, tuskerError("CAS_CONFLICT", fmt.Sprintf("run is owned by %s", firstNonEmpty(run.LeaseOwner, "nobody")), withHint("if the work is already committed, record it without a claim: tusker adopt <TASK-ID> --by <actor>"))
+		return nil, tuskerError("CAS_CONFLICT", fmt.Sprintf("run is owned by %s", firstNonEmpty(run.LeaseOwner, "nobody")), withHint("if the work is already committed, record it without a claim: tusker done <TASK-ID> --by <actor>"))
 	}
 	return run, nil
 }

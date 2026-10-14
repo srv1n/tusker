@@ -48,7 +48,7 @@ func TestValidateFlagsStaleDocsMap(t *testing.T) {
 	}
 	var flagged bool
 	for _, issue := range issues {
-		if issue.Code == "DOCS_MAP_STALE" && strings.Contains(issue.Message, "tusker docs map") {
+		if issue.Code == "DOCS_MAP_STALE" && strings.Contains(issue.Message, "tusker check --fix") {
 			flagged = true
 		}
 	}

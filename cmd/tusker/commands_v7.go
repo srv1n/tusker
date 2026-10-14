@@ -1300,7 +1300,7 @@ func attemptV7Cmd(args Args) error {
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
 		return attemptV7HandoffCmd(args)
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker work start <task-id> --by <agent>; hand back with tusker finish <task-id> --request-review")
+		return tuskerError(errorMissingArg, "Usage: tusker start <task-id> --by <agent>; hand back with tusker done <task-id>")
 	}
 }
 
@@ -1535,7 +1535,7 @@ func requireAgentWorkSessionWithDaemonOrigin(vaultPath, taskID, actor string, ar
 	if run == nil || run.LeaseOwner != actor ||
 		(LeaseState(run.LeaseState) != LeaseStateClaimed && LeaseState(run.LeaseState) != LeaseStateRunning) ||
 		runFreshness(run, time.Now().UTC()) != "fresh" {
-		return tuskerError("WORK_SESSION_REQUIRED", "agent mutation requires a live work session owned by "+actor, withHint("run `tusker work start "+taskID+" --by "+actor+" --vault "+strconv.Quote(vaultPath)+"` or use explicit human --break-glass"))
+		return tuskerError("WORK_SESSION_REQUIRED", "agent mutation requires a live work session owned by "+actor, withHint("run `tusker start "+taskID+" --by "+actor+" --vault "+strconv.Quote(vaultPath)+"` or use explicit human --break-glass"))
 	}
 	if data, _, readErr := parseFrontmatterMustRead(note.AbsolutePath); readErr != nil {
 		return readErr
@@ -1657,7 +1657,7 @@ func ensureV7FinishProofReady(vaultPath, taskID string) error {
 		if len(report.OpenGates) > 0 {
 			return nil
 		}
-		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("remaining proof gaps: "+v7ProofRemainingGapSummary(report)+"; use `tusker verify add` for inline proof, add required evidence, or create a blocking gate for human/device/env/CI proof"))
+		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("remaining proof gaps: "+v7ProofRemainingGapSummary(report)+"; use `tusker edit` for inline proof, add required evidence, or create a blocking gate for human/device/env/CI proof"))
 	}
 	return nil
 }
@@ -1693,7 +1693,7 @@ func requestV7ReviewAfterHandoff(vaultPath, taskID string, args Args) error {
 	}
 	missing := v7PendingCommandProofGaps(task, report)
 	if len(missing) > 0 {
-		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("remaining proof gaps: "+v7ProofRemainingGapSummary(report)+"; use `tusker verify add` for inline proof, add required evidence, or create a blocking gate"))
+		return tuskerError(errorEvidenceGate, taskID+": finish proof incomplete: "+strings.Join(missing, ", "), withHint("remaining proof gaps: "+v7ProofRemainingGapSummary(report)+"; use `tusker edit` for inline proof, add required evidence, or create a blocking gate"))
 	}
 	actor := fallback(fallback(args.String("actor"), args.String("by")), "agent:"+defaultActorName())
 	reason := firstNonEmpty(args.String("reason"), "Ready for independent review after attempt handoff.")
@@ -3074,11 +3074,11 @@ func writeV7PacketExecutionEntry(b *strings.Builder, task Note) {
 	id := stringField(task.Data, "id")
 	fmt.Fprintf(b, "## Execution entry\n\n")
 	fmt.Fprintf(b, "Task and wave creation are inert: nothing runs until an explicit Start. Eligibility is computed from current dependencies, gates, routes, and proof.\n\n")
-	fmt.Fprintf(b, "- One task, interactive in this workspace: `tusker task start %s --mode interactive --by <agent> --current-workspace --json`\n", id)
-	fmt.Fprintf(b, "- One task, background through the configured runtime: `tusker task start %s --mode background --by <actor> --json`\n", id)
+	fmt.Fprintf(b, "- One task, interactive in this workspace: `tusker start %s --by <agent> --current-workspace --json`\n", id)
+	fmt.Fprintf(b, "- One task, background through the configured runtime: `tusker start %s --background --by <actor> --json`\n", id)
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
-		fmt.Fprintf(b, "- Whole wave: `tusker wave start %s --mode background --by human:<name>|operator:<name> --json`. One Start authorizes the exact current material and the daemon advances each dependency frontier automatically.\n", waveID)
-		fmt.Fprintf(b, "- `tusker wave pause %s --by human:<name>|operator:<name>` blocks new wave admissions while admitted attempts finish; `tusker wave resume %s --by human:<name>|operator:<name>` restores the same authorization. An explicit task Start inside a paused wave stays task-scoped and leaves the wave paused.\n", waveID, waveID)
+		fmt.Fprintf(b, "- Whole wave: `tusker start %s --mode background --by human:<name>|operator:<name> --json`. One Start authorizes the exact current material and the daemon advances each dependency frontier automatically.\n", waveID)
+		fmt.Fprintf(b, "- `tusker stop %s --by human:<name>|operator:<name>` blocks new wave admissions while admitted attempts finish; `tusker start %s --by human:<name>|operator:<name>` restores the same authorization. An explicit task Start inside a paused wave stays task-scoped and leaves the wave paused.\n", waveID, waveID)
 	}
 	fmt.Fprintf(b, "\n")
 }
@@ -4100,7 +4100,7 @@ func v7TaskDispatchBlockersWithStates(vaultPath string, task Note, includeAuthor
 // index, so wave-scope blockers there are noise, not contract defects.
 func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string) []string {
 	if stringField(task.Data, "execution_mode") == "batch" {
-		return []string{"coordinator batch task; use tusker batch run " + stringField(task.Data, "batch_id")}
+		return []string{"coordinator batch task; use tusker start " + stringField(task.Data, "batch_id")}
 	}
 	reasons := append([]string{}, v7DispatchStateBlockers(task, triggerStates)...)
 	// Contract-pin drift is an admission blocker: queued or stored
@@ -4596,7 +4596,7 @@ func saveV7DocumentCASUnderMaterialLock(filePath string, data map[string]any, bo
 	if strings.TrimSpace(currentRev) != "" {
 		actualRev := v7StateRev(currentData, currentBody)
 		if !v7StateRevMatches(currentData, currentBody, currentRev) {
-			return "", tuskerError("CAS_CONFLICT", "V7 object content changed without a refreshed state_rev: "+filepath.Base(filePath), withPath(filePath), withHint("run `tusker reconcile` to repair the object metadata before retrying the control operation"), withContext(map[string]any{"current_rev": currentRev, "actual_rev": actualRev}))
+			return "", tuskerError("CAS_CONFLICT", "V7 object content changed without a refreshed state_rev: "+filepath.Base(filePath), withPath(filePath), withHint("run `tusker check --fix` to repair the object metadata before retrying the control operation"), withContext(map[string]any{"current_rev": currentRev, "actual_rev": actualRev}))
 		}
 	}
 	if strings.TrimSpace(currentRev) != strings.TrimSpace(baseRev) {
@@ -4752,9 +4752,9 @@ func v7ReviewerControlMutationAllowed(vaultPath string, args Args, branch string
 func v7ProtectedImplementationFlowHint(args Args) string {
 	taskID := firstNonEmpty(args.String("id"), args.String("_pos0"), "<TASK-ID>")
 	if strings.EqualFold(args.String("status"), "active") || strings.EqualFold(args.String("_pos1"), "active") {
-		return "no durable `active` status; use `tusker work start " + taskID + " --by <agent>` → `tusker verify add " + taskID + " …` → `tusker work submit " + taskID + " --by <agent> …`, or `tusker finish " + taskID + " --request-review` (auto-proposes on protected branches)."
+		return "no durable `active` status; use `tusker start " + taskID + " --by <agent>` → `tusker edit " + taskID + " …` → `tusker done " + taskID + " --by <agent> …`, or `tusker done " + taskID + "` (auto-proposes on protected branches)."
 	}
-	return "durable state changes on this branch go through `tusker finish " + taskID + " --request-review` (auto-proposes on implementation branches)."
+	return "durable state changes on this branch go through `tusker done " + taskID + "` (auto-proposes on implementation branches)."
 }
 
 func v7SingleUserLocalMutationMode(vaultPath string) bool {

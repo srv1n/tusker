@@ -27,7 +27,7 @@ with `wrong kind`. Set the kind in the adoption table.
 
 1. Inventory. Run `git status --short` and stop if files outside `.tusker/`
    are dirty. List every Markdown tree holding product knowledge. Record
-   which documents active tasks reference: `tusker list --type task --json`
+   which documents active tasks reference: `tusker list tasks --all --json`
    and each task's `spec_refs`.
 2. Preview. Run `tusker docs adopt --migration --dry-run --json > adopt.json`.
    Nothing is written.
@@ -52,7 +52,7 @@ with `wrong kind`. Set the kind in the adoption table.
    preflighted before any write; conflicts are refused with exact paths.
 5. Repoint work. For each task whose `spec_refs` name an old path, run
    `tusker show <TASK-ID> --json` to read `state_rev`, then
-   `tusker task update <TASK-ID> --if-revision <state_rev> --spec-refs <new-paths> --by <actor>`.
+   `tusker edit <TASK-ID> --if-revision <state_rev> --spec-refs <new-paths> --by <actor>`.
    Repoint epic `spec_refs` the same way.
 6. Retire the old tree. After review, tombstone or delete the originals in
    a separate commit. Promote keeps sources, so skipping this step leaves
@@ -60,9 +60,9 @@ with `wrong kind`. Set the kind in the adoption table.
 7. Verify:
 
    ```sh
-   tusker docs check
-   tusker docs map
-   tusker validate --json
+   tusker check --only docs
+   tusker check --fix
+   tusker check --only validate --json
    ```
 
    Every `spec_ref` resolves, no `DOC_LINK_DANGLING` or
@@ -91,5 +91,5 @@ Paste this into a session in the repository being migrated:
 > `kind`, `lifecycle`, and `disposition` for every row, and show me the
 > table for approval before applying. After I approve, apply it, repoint
 > every task and epic `spec_refs` to the new paths, and run
-> `tusker docs check` and `tusker validate`. Do not create pointer
+> `tusker check --only docs` and `tusker check --only validate`. Do not create pointer
 > documents and do not delete originals without asking.

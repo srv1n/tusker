@@ -381,7 +381,7 @@ func defaultWorkflow() Workflow {
 func defaultReviewerPrompt() string {
 	return strings.TrimSpace(`You are the independent Tusker reviewer for {{ note.id }}.
 
-Review the task acceptance, proof, and gates. Tusker does not control repository operations. Your only Tusker lifecycle output is one typed result submitted with ` + "`tusker review submit`" + `.
+Review the task acceptance, proof, and gates. Tusker does not control repository operations. Your only Tusker lifecycle output is one typed result submitted with ` + "`tusker review`" + `.
 
 Task:
 - ID: {{ note.id }}
@@ -402,7 +402,7 @@ Checklist:
 3. Risk alone does not justify a human gate. Create or honor one only for a named capability, external authority, unresolved product fact, or contractually subjective acceptance; do not re-approve choices already settled by the task/spec.
 4. Record every acceptance gap as a typed finding. Put all findings in one JSON array; never repeat ` + "`--finding`" + `.
 
-Submit exactly one result for the injected review attempt: ` + "`tusker review submit {{ note.id }} --attempt {{ attempt.id }} --task-rev {{ review.task_rev }} --source-sha {{ review.source_sha }} --work-rev {{ review.work_rev }} --proof-fingerprint {{ review.proof_fingerprint }} --gate-fingerprint {{ review.gate_fingerprint }} --material-fingerprint {{ review.material_fingerprint }} --confirm-verification {{ review.verification_manifest }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
+Submit exactly one result for the injected review attempt: ` + "`tusker review {{ note.id }} --attempt {{ attempt.id }} --task-rev {{ review.task_rev }} --source-sha {{ review.source_sha }} --work-rev {{ review.work_rev }} --proof-fingerprint {{ review.proof_fingerprint }} --gate-fingerprint {{ review.gate_fingerprint }} --material-fingerprint {{ review.material_fingerprint }} --confirm-verification {{ review.verification_manifest }} --verdict pass|changes_requested|blocked --covers <acceptance-ids> --summary \"<bounded summary>\"`" + `. A pass requires complete objective proof and satisfied gates; changes_requested needs an actionable finding; blocked needs a machine, infrastructure, or genuine-human blocker.
 
 For changes_requested, append ` + "`" + reviewerFindingFlagExample("{{ review.material_fingerprint }}") + "`" + `. Keep every blocking and advisory record in that one array. A blocking record requires stable id, acceptance, evidence, consequence, closure_condition, repair_scope, and the injected material fingerprint. Set repair_scope to material when source/implementation/artifact repair is required; set it to proof when only the verification or task ledger must be rerun. Omitted or unknown scope is treated as material.
 

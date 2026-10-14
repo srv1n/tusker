@@ -22,7 +22,7 @@ Do not put task progress, proof logs, attempts, or generated output in canon.
 ## System documents
 
 `docs/system/` explains current product behavior. Use
-`tusker docs find <query>` before you add a page. Update the existing subject
+`tusker list docs --grep <query>` before you add a page. Update the existing subject
 when it already owns the answer.
 
 The managed document corpus has one placement rule. Current chapters live
@@ -43,25 +43,25 @@ governing spec.
 Search includes `read_when` metadata. Results expose both `read_when` and
 `skip_when` so readers can choose the right page without opening every body.
 Every managed document except a forwarding stub must carry both lines;
-`tusker docs check` fails without them and `tusker docs new` requires
+`tusker check --only docs` fails without them and `tusker new doc` requires
 `--read-when` and `--skip-when`.
 Skip guidance does not count as a positive search match.
 
 Search resolves superseded subjects forward and reports the historical subject
-that led there. It does not list the entire corpus. `tusker docs map` and the
+that led there. It does not list the entire corpus. `tusker check --fix` and the
 document detail route use the same subject/path resolver, so semantic links and
 backlinks point at the files that actually exist. A spec's `sources` may point
 to a managed document and appears as a `source` edge; external source records
 remain provenance without becoming governing documents.
 
-Agents can use `tusker docs browse` for one bounded folder level, `tusker docs
+Agents can use `tusker list docs --dir` for one bounded folder level, `tusker docs
 read` for one document or exact Markdown section, and `tusker docs backlinks`
-for incoming relationships. `tusker docs check` reports metadata and managed
+for incoming relationships. `tusker check --only docs` reports metadata and managed
 link defects with repair guidance. These reads do not write the corpus; use
-`tusker docs new --print` to inspect a validated scaffold before creating a
+`tusker new doc --print` to inspect a validated scaffold before creating a
 file.
 
-`tusker docs map` builds `docs/system/INDEX.md`, `docs/system/graph.json`, and
+`tusker check --fix` builds `docs/system/INDEX.md`, `docs/system/graph.json`, and
 the graph block in the overview. Do not edit those outputs by hand.
 
 Use `aliases` in front matter when a preserved document has older wiki-link

@@ -25,7 +25,7 @@ func searchCmd(args Args) error {
 	}
 	query := strings.TrimSpace(firstNonEmpty(args.String("query"), strings.ReplaceAll(args.String("_pos"), "\n", " "), args.String("_pos0")))
 	if query == "" {
-		return tuskerError(errorMissingArg, "search requires a query", withHint("use `tusker search <text>` or `tusker search --query <text>`"))
+		return tuskerError(errorMissingArg, "search requires a query", withHint("use `tusker list --grep <text>` or `tusker list --grep --query <text>`"))
 	}
 	limit := atoiSafe(args.String("limit"))
 	if limit <= 0 {

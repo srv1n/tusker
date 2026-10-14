@@ -44,13 +44,13 @@ func TestTrustFreshAgent(t *testing.T) {
 	if fixtureRequest.Schema != "tusker.wave-authoring/v1" || len(fixtureRequest.Tasks) != 2 || strings.Join(fixtureRequest.SpecRefs, ",") != ".tusker/specs/fresh-agent.md" || strings.Join(fixtureRequest.Tasks[0].OwnedPaths, ",") != "owned/greeting.txt" || strings.Join(fixtureRequest.Tasks[1].OwnedPaths, ",") != "owned/sibling.txt" {
 		t.Fatalf("fresh fixture does not declare two isolated authored task contracts: %#v", fixtureRequest)
 	}
-	for _, promptName := range []string{"IMPLEMENTER_PROMPT.md", "REVIEWER_PROMPT.md"} {
+	for promptName, shippedCommand := range map[string]string{"IMPLEMENTER_PROMPT.md": "tusker start", "REVIEWER_PROMPT.md": "tusker review"} {
 		prompt, readErr := os.ReadFile(filepath.Join(fixture, promptName))
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
 		text := string(prompt)
-		if !strings.Contains(text, "tusker work") || !strings.Contains(text, "daemon") || !strings.Contains(text, "dispatch") {
+		if !strings.Contains(text, shippedCommand) || !strings.Contains(text, "daemon") || !strings.Contains(text, "dispatch") {
 			t.Fatalf("%s does not state the shipped-command and resident-process boundary", promptName)
 		}
 	}
@@ -84,11 +84,11 @@ func TestTrustFreshAgent(t *testing.T) {
 	if err := os.WriteFile(canonicalSpec, specBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	trustJourneyCLI(t, vault, "wave", "create", "--file", fixturePath, "--by", "agent:fixture")
+	trustJourneyCLI(t, vault, "new", "wave", "--file", fixturePath, "--by", "agent:fixture")
 	trustJourneyCLI(t, vault, "projects", "add", "--repo", repo, "--vault", vault)
 
 	const taskID = "TSK-T-0001"
-	refusal := trustJourneyCLIRefusal(t, vault, "work", "start", taskID, "--by", "agent:fresh-muse", "--source", "codex")
+	refusal := trustJourneyCLIRefusal(t, vault, "start", taskID, "--by", "agent:fresh-muse", "--source", "codex")
 	if workSessionErrorCode(refusal) != "WORK_SESSION_NOT_READY" {
 		t.Fatalf("held authored fixture returned the wrong start refusal: %v", refusal)
 	}

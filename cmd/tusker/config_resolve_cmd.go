@@ -10,7 +10,7 @@ import (
 func configResolveCmd(args Args) error {
 	key := firstNonEmpty(strings.TrimSpace(args.String("key")), strings.TrimSpace(args.String("_pos0")))
 	if key == "" {
-		return tuskerError(errorInvalidArg, "config resolve requires a key", withHint("example: tusker config resolve runtime.max_active_runs_per_project"))
+		return tuskerError(errorInvalidArg, "config requires a key", withHint("example: tusker config runtime.max_active_runs_per_project"))
 	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {

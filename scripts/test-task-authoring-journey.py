@@ -44,11 +44,11 @@ SOURCE_PARITY_FILES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "skills/tusker/SKILL.md",
-        ("tusker capabilities --json", "manufacture proof"),
+        ("tusker version --json --json", "manufacture proof"),
     ),
     (
         "docs/system/cli.md",
-        ("tusker wave start", "tusker runner route", "tusker verify add"),
+        ("tusker start", "tusker runner route", "tusker edit"),
     ),
     (
         "e2e/agent_journey/prepare-v2.sh",

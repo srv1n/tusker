@@ -20,7 +20,9 @@ type showTaskStatusProjection struct {
 	State               *taskState                         `json:"state,omitempty"`
 }
 
-func showCmd(args Args) error {
+// showNoteCmd prints a slice of a vault note. `tusker show` routes here for
+// task, epic, and other vault records; see showRun in show_list_cmd.go.
+func showNoteCmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -248,7 +250,7 @@ func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 				lines = append(lines, specRefs)
 			}
 			if id := stringField(note.Data, "id"); id != "" {
-				lines = append(lines, "- Packet: `tusker packet "+id+" --for agent`")
+				lines = append(lines, "- Packet: `tusker show "+id+" --packet agent`")
 			}
 			lines = append(lines, "- Forbidden paths: task history, evidence, attempts, events, generated indexes, packet caches, raw logs, and local absolute paths.")
 			lines = append(lines, v7TaskAttemptRuntimeLines(vaultPath, note)...)

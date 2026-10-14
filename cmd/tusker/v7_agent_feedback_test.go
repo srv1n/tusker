@@ -158,7 +158,7 @@ func TestV7ProtectedActiveStatusExplainsAttemptFlowAndCapsuleRuntime(t *testing.
 	if !ok {
 		t.Fatalf("expected TuskerError, got %T", err)
 	}
-	for _, expected := range []string{"work start APP-T-0001", "verify add APP-T-0001", "work submit APP-T-0001", "finish APP-T-0001 --request-review"} {
+	for _, expected := range []string{"tusker start APP-T-0001", "tusker edit APP-T-0001", "tusker done APP-T-0001"} {
 		assertContainsIndexTest(t, typed.Hint, expected)
 	}
 	assertNotContainsIndexTest(t, typed.Hint, "status APP-T-0001 active")

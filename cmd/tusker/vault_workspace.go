@@ -118,7 +118,7 @@ func vaultStatusCmd(args Args) error {
 		return nil
 	}
 	if strings.TrimSpace(cfg.ObsidianVault) == "" {
-		fmt.Println("No Obsidian vault configured. Run `tusker vault set --path <obsidian-vault>`.")
+		fmt.Println("No Obsidian vault configured. Run `tusker vault --path <obsidian-vault>`.")
 		return nil
 	}
 	fmt.Printf("Obsidian vault: %s\n", cfg.ObsidianVault)
@@ -130,6 +130,52 @@ func vaultStatusCmd(args Args) error {
 		fmt.Printf("%-24s %-12s %s -> %s\n", status.MountName, status.State, status.MountPath, status.TrackerRoot)
 	}
 	return nil
+}
+
+// vaultCmd is `tusker vault`: bare shows mounts; --path sets or moves the
+// shared Obsidian vault (an existing old folder is renamed only when the new
+// path does not exist yet); --mount links this repo; --unmount <name> unlinks.
+func vaultCmd(args Args) error {
+	switch {
+	case args.String("unmount") != "":
+		a := copyArgsForInternalMutation(args)
+		if name := args.String("unmount"); name != "true" {
+			a["name"] = name
+		}
+		return vaultUnmountCmd(a)
+	case args.Bool("mount"):
+		return vaultMountCmd(args)
+	case strings.TrimSpace(args.String("path")) != "":
+		a := copyArgsForInternalMutation(args)
+		a["to"] = args.String("path")
+		return vaultMoveCmd(a)
+	default:
+		return vaultStatusCmd(args)
+	}
+}
+
+// vaultMountsCheck is the Obsidian-mount slice of `tusker check`: it prints
+// vault status (or repairs mounts under fix) and returns 1 when any saved
+// mount is not a healthy symlink.
+func vaultMountsCheck(args Args, fix bool) (int, error) {
+	cfg, err := loadWorkspaceVaultConfig()
+	if err != nil {
+		return 0, err
+	}
+	if fix && strings.TrimSpace(cfg.ObsidianVault) != "" {
+		err = vaultRepairCmd(args)
+	} else {
+		err = vaultStatusCmd(args)
+	}
+	if err != nil {
+		return 0, err
+	}
+	for _, status := range workspaceMountStatuses(cfg) {
+		if status.State != "mounted" {
+			return 1, nil
+		}
+	}
+	return 0, nil
 }
 
 func vaultMoveCmd(args Args) error {

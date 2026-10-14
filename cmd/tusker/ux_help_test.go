@@ -56,7 +56,7 @@ func TestMissingVaultGuidancePreservesStructuredContext(t *testing.T) {
 func TestUpdateHelpExplainsSkillRefresh(t *testing.T) {
 	output := captureStdout(t, printUpdateHelp)
 	for _, expected := range []string{
-		"tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]",
+		"tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skills-only] [--mode copy|symlink] [--source <checkout>] [--json]",
 		"refreshes existing user skills in ~/.agents, ~/.codex, and ~/.claude only",
 		"with --all-user-skills",
 		"with --repo, refreshes the repo-local .agents skill install",
@@ -74,8 +74,8 @@ func TestUpdateHelpExplainsSkillRefresh(t *testing.T) {
 func TestVaultHelpExplainsSharedObsidianMounts(t *testing.T) {
 	output := captureStdout(t, printVaultHelp)
 	for _, expected := range []string{
-		"tusker vault set --path <obsidian-vault>",
-		"tusker vault mount [--repo <path>] [--vault <path>] [--name <folder>]",
+		"tusker vault --path <obsidian-vault>",
+		"tusker vault --mount [--repo <path>] [--vault <path>] [--name <folder>]",
 		"Link repo-local Tusker trackers into one shared Obsidian vault",
 		"vault mount creates a symlink",
 	} {
@@ -86,10 +86,10 @@ func TestVaultHelpExplainsSharedObsidianMounts(t *testing.T) {
 }
 
 func TestWaveCreateHelpShowsAuthoringSchema(t *testing.T) {
-	output := captureStdout(t, func() { printCommandHelp("wave create") })
+	output := captureStdout(t, func() { printCommandHelp("new") })
 	for _, expected := range []string{"tusker.wave-authoring/v1", "human_actions:", "owned_paths:", "kind:", "command:", "ledger:"} {
 		if !strings.Contains(output, expected) {
-			t.Fatalf("wave create help missing %q:\n%s", expected, output)
+			t.Fatalf("new help missing %q:\n%s", expected, output)
 		}
 	}
 }
@@ -130,7 +130,7 @@ func TestRuntimeHelpExplainsOperatorSurface(t *testing.T) {
 func TestSearchHelpExplainsBoundedTrackerLookup(t *testing.T) {
 	output := captureStdout(t, printSearchHelp)
 	for _, expected := range []string{
-		"tusker search <text>",
+		"tusker list --grep <text>",
 		"generated indexes",
 		"Attachments",
 		"--limit <n>",
@@ -222,10 +222,12 @@ func TestParseCLIJoinsOnlyTableSubcommands(t *testing.T) {
 		command string
 		pos0    string
 	}{
-		{[]string{"tusker", "daemon", "status"}, "daemon status", ""},
-		{[]string{"tusker", "runs", "inspect", "ORC-T-0018"}, "runs inspect", "ORC-T-0018"},
-		{[]string{"tusker", "work", "start", "ORC-T-0018", "--by", "agent:codex"}, "work start", "ORC-T-0018"},
-		{[]string{"tusker", "config", "resolve", "automation.profiles", "--json"}, "config resolve", "automation.profiles"},
+		{[]string{"tusker", "daemon", "run"}, "daemon run", ""},
+		{[]string{"tusker", "daemon", "status"}, "daemon", "status"},
+		{[]string{"tusker", "runs", "say", "ORC-T-0018"}, "runs say", "ORC-T-0018"},
+		{[]string{"tusker", "start", "ORC-T-0018", "--by", "agent:codex"}, "start", "ORC-T-0018"},
+		{[]string{"tusker", "config", "automation.profiles", "--json"}, "config", "automation.profiles"},
+		{[]string{"tusker", "new", "epic"}, "new", "epic"},
 		{[]string{"tusker", "gate", "satisfy", "G-0001"}, "gate", "satisfy"},
 		{[]string{"tusker", "hook", "install"}, "hook", "install"},
 		{[]string{"tusker", "help", "runs", "events"}, "help", "runs"},
@@ -276,10 +278,10 @@ func TestMainHelpListsEveryVisibleCommandOnOneGreppableLine(t *testing.T) {
 }
 
 func TestUnknownAndRemovedCommandsPointToReplacements(t *testing.T) {
-	if _, err := runInner("claim", Args{"json": "true"}); err == nil || !strings.Contains(errorToIssue(err).Hint, "tusker work start") {
+	if _, err := runInner("claim", Args{"json": "true"}); err == nil || !strings.Contains(errorToIssue(err).Hint, "tusker start") {
 		t.Fatalf("removed claim did not name its replacement: %v", err)
 	}
-	if got := suggestCommands("runs inspct"); len(got) == 0 || got[0] != "runs inspect" {
+	if got := suggestCommands("runs stp"); len(got) == 0 || got[0] != "runs stop" {
 		t.Fatalf("suggestions for a typo = %v", got)
 	}
 	if code, _ := runInner("runs bogus", Args{}); code == 0 {

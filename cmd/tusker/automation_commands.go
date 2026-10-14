@@ -1022,10 +1022,10 @@ func automationRunBlocker(run RunStatus, now time.Time) string {
 		return "existing run is interrupted"
 	case LeaseStateParkedNoProgress:
 		if strings.Contains(strings.ToLower(run.LastError), "runner preflight blocked") {
-			return "existing run is parked_no_progress by runner preflight; fix the runner command/PATH, then run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"
+			return "existing run is parked_no_progress by runner preflight; fix the runner command/PATH, then run `tusker runs restart " + firstNonEmpty(run.ItemID, run.RecordID) + " --requeue --reason <why>` before redispatch"
 		}
 		if strings.Contains(strings.ToLower(run.LastError), "cap reached") {
-			return "existing run is parked_no_progress at attempt cap; run `tusker redrive " + firstNonEmpty(run.ItemID, run.RecordID) + " --reason <why>` before redispatch"
+			return "existing run is parked_no_progress at attempt cap; run `tusker runs restart " + firstNonEmpty(run.ItemID, run.RecordID) + " --requeue --reason <why>` before redispatch"
 		}
 		return "existing run is parked_no_progress; update the task revision before redispatch"
 	case LeaseStateParkedBudget:

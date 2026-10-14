@@ -100,7 +100,7 @@ For Settings integration, the stable read/test examples are:
 
 ```sh
 tusker runner catalog --json
-tusker models profile-set --scope global --name muse-review --harness muse --model <exact-id> --effort high --preset read-only
+tusker models profile --scope global --name muse-review --harness muse --model <exact-id> --effort high --preset read-only
 tusker runner test muse-review --json       # Check setup: no model turn
 tusker runner test muse-review --live --json # Run test: one explicit turn
 ```

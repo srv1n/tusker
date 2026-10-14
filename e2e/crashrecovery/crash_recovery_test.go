@@ -1147,7 +1147,7 @@ func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 
 // rebindTaskContract rebinds a task's stored contract_fingerprint after the
 // fixture rewrote authored contract bytes out of band. The drift guard refuses
-// dispatch until an explicit `tusker task update --rebind-contract` re-pins the
+// dispatch until an explicit `tusker edit --rebind-contract` re-pins the
 // contract; reconcile only repairs state_rev.
 func (h *harness) rebindTaskContract(taskID string) {
 	h.t.Helper()

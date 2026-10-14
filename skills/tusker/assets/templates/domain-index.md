@@ -53,5 +53,5 @@ change in `docs/system/proposals/`, and record settled product decisions in
 ## Current work
 
 <!-- tusker:current-work:begin -->
-_Run `tusker reindex` to refresh current work._
+_Run `tusker check --fix` to refresh current work._
 <!-- tusker:current-work:end -->

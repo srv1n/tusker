@@ -130,7 +130,7 @@ func workSessionReviewCmd(args Args) error {
 
 func workSessionStartCmd(args Args) error {
 	if attemptID := strings.TrimSpace(os.Getenv("TUSKER_ATTEMPT_ID")); attemptID != "" {
-		return tuskerError(errorInvalidTransition, "dispatched worker already holds daemon attempt "+attemptID, withHint("do not claim again; finish with `tusker work submit <task-id> --by "+attemptID+" ...`"))
+		return tuskerError(errorInvalidTransition, "dispatched worker already holds daemon attempt "+attemptID, withHint("do not claim again; finish with `tusker done <task-id> --by "+attemptID+" ...`"))
 	}
 	// This entry point is for a user-directed owner.  The daemon has its own
 	// snapshot-bound claim path; accepting daemon_auto here would let an
@@ -615,7 +615,7 @@ func verifiedImplementationWorkspaceMaterial(parent RunAttempt) (string, error) 
 }
 
 func workSessionReviewNext(run RunStatus, note Note, packet workSessionPacket) string {
-	next := "tusker review submit " + run.ItemID + " --attempt " + run.ActiveAttemptID + " --by " + run.LeaseOwner + " --task-rev " + stringField(note.Data, "state_rev") + " --source-sha " + firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) + " --work-rev " + strconv.Itoa(run.WorkRevision) + " --proof-fingerprint " + packet.ProofFingerprint + " --gate-fingerprint " + packet.GateFingerprint + " --material-fingerprint " + packet.MaterialFingerprint
+	next := "tusker review " + run.ItemID + " --attempt " + run.ActiveAttemptID + " --by " + run.LeaseOwner + " --task-rev " + stringField(note.Data, "state_rev") + " --source-sha " + firstNonEmpty(stringField(note.Data, "source_sha"), stringField(note.Data, "source_commit")) + " --work-rev " + strconv.Itoa(run.WorkRevision) + " --proof-fingerprint " + packet.ProofFingerprint + " --gate-fingerprint " + packet.GateFingerprint + " --material-fingerprint " + packet.MaterialFingerprint
 	if packet.VerificationManifest != "" {
 		next += " --confirm-verification " + packet.VerificationManifest
 	}
@@ -686,9 +686,9 @@ func workSessionStatusCmd(args Args) error {
 
 func workSessionNext(run RunStatus) string {
 	if LeaseState(run.LeaseState) == LeaseStateClaimed || LeaseState(run.LeaseState) == LeaseStateRunning {
-		return "tusker work heartbeat " + run.ItemID + " --by " + run.LeaseOwner
+		return "tusker start " + run.ItemID + " --by " + run.LeaseOwner
 	}
-	return "tusker work start " + run.ItemID + " --by <agent>"
+	return "tusker start " + run.ItemID + " --by <agent>"
 }
 
 func workSessionLifecycleCmd(args Args, action string) error {

@@ -30,7 +30,17 @@ type VersionProjection struct {
 func versionCmd(args Args) error {
 	projection := installedVersionProjection()
 	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "version": projection})
+		// The capability manifest rides along so agents need one call to learn
+		// which binary they have and what it supports.
+		out := map[string]any{"ok": true, "version": projection}
+		info, _ := debugReadBuildInfo()
+		executable, _ := executablePath()
+		if manifest, err := buildCapabilitiesManifest(info, executable); err != nil {
+			out["capabilities_error"] = err.Error()
+		} else {
+			out["capabilities"] = manifest
+		}
+		emitJSON(out)
 		return nil
 	}
 	revision := shortCommit(projection.Revision)

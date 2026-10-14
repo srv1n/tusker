@@ -31,9 +31,7 @@ func TestV7CapsuleValidateCommandWarnsAndFailsByBudget(t *testing.T) {
 	if err := writeText(managedTuskerConfigPath(vault), "validation:\n  capsule_token_budget: 40\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := knowledgeV7NewCmd(Args{"vault": vault, "quiet": "true", "node": "project/runbooks/capsule-route", "kind": "runbook", "title": "Capsule Route", "summary": "Route by capsule.", "v7": "true"}); err != nil {
-		t.Fatal(err)
-	}
+	writeKnowledgeRunbookForTest(t, vault, "project", "capsule-route", "Capsule Route", "Route by capsule.")
 
 	setCapsuleFixture(t, vault, nil)
 	code, payload := validateCapsuleFixture(t, vault)
@@ -81,9 +79,7 @@ func TestV7CapsuleTemplatesAndGeneratedRecords(t *testing.T) {
 	if err := newV7Epic(Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App V7", "summary": "V7 tracker smoke.", "v7": "true"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := knowledgeV7NewCmd(Args{"vault": vault, "quiet": "true", "node": "project/runbooks/capsule-route", "kind": "runbook", "title": "Capsule Route", "summary": "Route by capsule.", "v7": "true"}); err != nil {
-		t.Fatal(err)
-	}
+	writeKnowledgeRunbookForTest(t, vault, "project", "capsule-route", "Capsule Route", "Route by capsule.")
 
 	for _, rel := range []string{
 		"SKILL.md",
@@ -296,4 +292,27 @@ func decodeJSONMap(t *testing.T, raw string) map[string]any {
 		t.Fatalf("invalid JSON %v:\n%s", err, raw)
 	}
 	return payload
+}
+
+// writeKnowledgeRunbookForTest writes the runbook leaf the retired
+// `knowledge new` command used to scaffold.
+func writeKnowledgeRunbookForTest(t *testing.T, vault, domain, slug, title, summary string) {
+	t.Helper()
+	canon := "knowledge/domains/" + domain + "/CANON.md"
+	data := map[string]any{
+		"schema": "tusker.knowledge/v7", "kind": "runbook", "id": domain + "/runbooks/" + slug,
+		"project": v7ProjectID(vault), "domain": domain, "title": title, "status": "current", "summary": summary,
+		"capsule":         v7CapsuleOrdered(title+" runbook for "+domain+".", "Use when this is the narrowest matching runbook for the task.", "Skip when the domain INDEX or CANON already answers the question."),
+		"source_of_truth": []string{canon}, "related": []string{domain + "/canon"},
+		"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+	}
+	body := "# " + title + "\n\n## Summary\n\n" + summary + "\n\n## Source Truth\n\n- " + canon + "\n\n## Related\n\n- [[" + domain + "/CANON]]\n\n## Procedure\n\n1. State the precondition.\n"
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["knowledge"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(filepath.Join(vault, "knowledge", "domains", domain, "runbooks", slug+".md"), content); err != nil {
+		t.Fatal(err)
+	}
 }

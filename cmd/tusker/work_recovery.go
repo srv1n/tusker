@@ -592,7 +592,7 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 				return result, nil
 			}
 			if !personal {
-				result.OK, result.Lane, result.Reason = true, runLaneReview, "Checks passed. Waiting for acceptance: `tusker adopt "+taskID+" --by human:<name>` or an independent review."
+				result.OK, result.Lane, result.Reason = true, runLaneReview, "Checks passed. Waiting for acceptance: `tusker done "+taskID+" --by human:<name>` or an independent review."
 				return result, nil
 			}
 		}
@@ -870,11 +870,11 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	result.OK, result.Admitted, result.Lane = true, true, runLaneReview
 	result.Reason = "Checks passed. Independent review is next."
 	if reviewOnly {
-		result.Reason = "Checks passed. Waiting for acceptance: `tusker adopt " + taskID + " --by human:<name>` or an independent review."
+		result.Reason = "Checks passed. Waiting for acceptance: `tusker done " + taskID + " --by human:<name>` or an independent review."
 	}
 	// Queue the review lane only through durable runtime state: a wave member
 	// with a stored run gets the bound one-shot directive; without a run the
-	// review status itself is the claimable queue for `tusker work review`.
+	// review status itself is the claimable queue for `tusker review`.
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" && run != nil {
 		if wave, waveErr := resolveV7Note(vault, waveID, "wave"); waveErr == nil {
 			queued, queueErr := queueReviewRecovery(store, task, wave, *run, actor, maxAttempts, now, true)

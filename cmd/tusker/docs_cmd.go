@@ -294,7 +294,7 @@ func splitGitPaths(output string) []string {
 func docsFindCmd(args Args) error {
 	query := positionalPhrase(args)
 	if query == "" {
-		return tuskerError(errorMissingArg, "docs find needs a query, for example: tusker docs find worktree")
+		return tuskerError(errorMissingArg, "docs find needs a query, for example: tusker list docs --grep worktree")
 	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -384,7 +384,7 @@ func docsPortableKind(raw string) (docgraph.Kind, bool) {
 func docsNewCmd(args Args) error {
 	subject := positionalPhrase(args)
 	if subject == "" {
-		return tuskerError(errorMissingArg, "docs new needs a subject, for example: tusker docs new worktree-lifecycle")
+		return tuskerError(errorMissingArg, "docs new needs a subject, for example: tusker new doc worktree-lifecycle")
 	}
 	kind, ok := docsPortableKind(args.String("kind"))
 	if !ok {
@@ -736,7 +736,7 @@ func docsDomainIndexSubject(corpus docgraph.Corpus, domain string) (string, erro
 		}
 		break
 	}
-	return "", tuskerError(errorInvalidField, fmt.Sprintf("docs new cannot select a parent: %s is missing or declares no subject; create it with: tusker docs new <subject> --domain %s --index", want, domain))
+	return "", tuskerError(errorInvalidField, fmt.Sprintf("docs new cannot select a parent: %s is missing or declares no subject; create it with: tusker new doc <subject> --domain %s --index", want, domain))
 }
 
 func docsScaffoldParent(corpus docgraph.Corpus) (string, error) {

@@ -135,7 +135,7 @@ class JourneyTest(unittest.TestCase):
 	}
 	runGitDir(t, repo, "add", ".")
 	runGitDir(t, repo, "commit", "-m", "seed journey contract")
-	trustJourneyCLI(t, vault, "wave", "create", "--file", requestPath, "--by", "agent:fixture")
+	trustJourneyCLI(t, vault, "new", "wave", "--file", requestPath, "--by", "agent:fixture")
 
 	const taskID = "JNY-T-0001"
 	task, err := resolveV7Note(vault, taskID, "task")
@@ -156,11 +156,11 @@ class JourneyTest(unittest.TestCase):
 	trustJourneyReadyTask(t, vault, taskID)
 	registerAutomationTestProject(t, vault)
 
-	first := trustJourneyPacket(t, trustJourneyCLI(t, vault, "work", "start", taskID, "--by", "agent:implementer", "--source", "codex"))
+	first := trustJourneyPacket(t, trustJourneyCLI(t, vault, "start", taskID, "--by", "agent:implementer", "--source", "codex"))
 	if first.Run == nil || first.Run.ActiveAttemptID == "" || first.Workspace == "" {
 		t.Fatalf("first interactive session lacks durable identity: %#v", first)
 	}
-	trustJourneyCLI(t, vault, "work", "fail", taskID, "--by", "agent:implementer", "--reason", "injected provider interruption")
+	trustJourneyCLI(t, vault, "stop", taskID, "--failed", "--by", "agent:implementer", "--reason", "injected provider interruption")
 
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -173,7 +173,7 @@ class JourneyTest(unittest.TestCase):
 	}
 	_ = store.Close()
 
-	recovered := trustJourneyPacket(t, trustJourneyCLI(t, vault, "work", "start", taskID, "--by", "agent:implementer", "--source", "codex"))
+	recovered := trustJourneyPacket(t, trustJourneyCLI(t, vault, "start", taskID, "--by", "agent:implementer", "--source", "codex"))
 	if recovered.Run == nil || recovered.Run.ActiveAttemptID == first.Run.ActiveAttemptID || recovered.Workspace != first.Workspace {
 		t.Fatalf("recovery did not create a new attempt in the retained workspace: first=%#v recovered=%#v", first, recovered)
 	}
@@ -288,11 +288,11 @@ class JourneyTest(unittest.TestCase):
 	}
 	trustJourneyCLI(t, vault, "evidence", "add", taskID, "--by", "agent:implementer", "--kind", "verification_summary", "--path", diffPath, "--covers", "A1", "--summary", "Source delta for the recovered implementation; command verification remains pending.")
 
-	review := trustJourneyPacket(t, trustJourneyCLI(t, vault, "work", "review", taskID, "--by", "reviewer:agent", "--source", "codex"))
+	review := trustJourneyPacket(t, trustJourneyCLI(t, vault, "review", taskID, "--by", "reviewer:agent", "--source", "codex"))
 	if review.Action != "review" || review.Run == nil || review.Run.Lane != runLaneReview || review.ImplementationAttempt != succeeded.AttemptID || review.ImplementationActor != "agent:implementer" || review.MaterialFingerprint == "" || review.VerificationManifest == "" || !strings.Contains(review.Next, "--confirm-verification "+review.VerificationManifest) || !strings.Contains(review.Next, "--material-fingerprint "+review.MaterialFingerprint) {
 		t.Fatalf("review packet omitted independent immutable provenance: %#v", review)
 	}
-	submit := []string{"review", "submit", taskID, "--attempt", review.Run.ActiveAttemptID, "--by", "reviewer:agent", "--task-rev", stringField(closedTaskData(t, vault, taskID), "state_rev"), "--source-sha", succeeded.EndState.HeadSHA, "--work-rev", strconv.Itoa(review.Revision), "--proof-fingerprint", review.ProofFingerprint, "--gate-fingerprint", review.GateFingerprint, "--material-fingerprint", review.MaterialFingerprint, "--confirm-verification", review.VerificationManifest, "--verdict", "pass", "--covers", "A1", "--summary", "independent review passed"}
+	submit := []string{"review", taskID, "--attempt", review.Run.ActiveAttemptID, "--by", "reviewer:agent", "--task-rev", stringField(closedTaskData(t, vault, taskID), "state_rev"), "--source-sha", succeeded.EndState.HeadSHA, "--work-rev", strconv.Itoa(review.Revision), "--proof-fingerprint", review.ProofFingerprint, "--gate-fingerprint", review.GateFingerprint, "--material-fingerprint", review.MaterialFingerprint, "--confirm-verification", review.VerificationManifest, "--verdict", "pass", "--covers", "A1", "--summary", "independent review passed"}
 	if scenario == "stale verification confirmation" {
 		for i, arg := range submit {
 			if arg == "--confirm-verification" {
@@ -342,7 +342,7 @@ class JourneyTest(unittest.TestCase):
 	}
 
 	trustJourneyCLI(t, vault, "land", taskID)
-	trustJourneyCLI(t, vault, "close", taskID, "--by", "reviewer:agent", "--reason", "independent review and command proof passed")
+	trustJourneyCLI(t, vault, "done", taskID, "--by", "reviewer:agent", "--reason", "independent review and command proof passed")
 
 	closed, err := resolveV7Note(vault, taskID, "task")
 	if err != nil || stringField(closed.Data, "status") != "done" {

@@ -421,7 +421,7 @@ func TestWaveAuthorizationProjection(t *testing.T) {
 	payload := v7WavePayload(vault, idx, wave)
 	auth := payload["authorization"].(map[string]any)
 	assertEqual(t, "disarmed", stringField(auth, "state"), "CLI projection")
-	if !strings.Contains(stringField(auth, "action"), "wave start") {
+	if !strings.Contains(stringField(auth, "action"), "tusker start ") {
 		t.Fatal("projection omitted action")
 	}
 	snap := serveSnapshot{project: RegisteredProject{VaultRoot: vault}, tasks: sortedV7Tasks(idx), waves: sortedV7Waves(idx), notesByID: map[string]Note{}}

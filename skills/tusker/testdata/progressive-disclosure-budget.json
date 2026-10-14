@@ -11,11 +11,11 @@
       "prompt": "Turn this request into the smallest useful tracked task.",
       "route": "Create, update, or close tracked work",
       "guide": "references/TRACK.md",
-      "loaded_words": 845,
+      "loaded_words": 900,
       "max_loaded_words": 913,
       "required": [
         "One bounded outcome is one task",
-        "tusker verify add"
+        "tusker edit"
       ]
     },
     {
@@ -23,10 +23,10 @@
       "prompt": "Answer this repository question from its durable canon.",
       "route": "Answer from or write repo knowledge",
       "guide": "references/KNOWLEDGE.md",
-      "loaded_words": 855,
+      "loaded_words": 904,
       "max_loaded_words": 924,
       "required": [
-        "tusker docs find",
+        "tusker list docs --grep",
         "not in canon"
       ]
     },
@@ -35,10 +35,10 @@
       "prompt": "Read or update a documentation or spec contract without loading unrelated tracker guidance.",
       "route": "Read or update documentation/spec contracts",
       "guide": "references/SPECS.md",
-      "loaded_words": 786,
+      "loaded_words": 792,
       "max_loaded_words": 849,
       "required": [
-        "tusker docs find",
+        "tusker list docs --grep",
         "tusker docs adopt"
       ]
     },
@@ -47,11 +47,11 @@
       "prompt": "Run this ready task once and watch it finish.",
       "route": "Run a task, resolve gates, watch runs",
       "guide": "references/RUN.md",
-      "loaded_words": 1010,
+      "loaded_words": 1045,
       "max_loaded_words": 1091,
       "required": [
         "deliberate human authority",
-        "tusker runs inspect"
+        "tusker show <TASK-ID> --run"
       ]
     },
     {
@@ -59,11 +59,11 @@
       "prompt": "Diagnose why this task is stuck without changing tracker state.",
       "route": "Tracker diagnosis or stuck task state",
       "guide": "references/OPERATE.md",
-      "loaded_words": 997,
+      "loaded_words": 1008,
       "max_loaded_words": 1077,
       "required": [
         "Diagnose tracker state read-only",
-        "tusker closeout status"
+        "tusker show <TASK-ID> --closeout"
       ]
     },
     {
@@ -71,7 +71,7 @@
       "prompt": "Wire this existing repository into Tusker without losing project knowledge.",
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
-      "loaded_words": 812,
+      "loaded_words": 832,
       "max_loaded_words": 877,
       "required": [
         "Existing Repository Onboarding",

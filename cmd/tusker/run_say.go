@@ -257,7 +257,7 @@ func runSayHardStored(store *RuntimeStore, stateRoot string, project RegisteredP
 	case "waiting_on_you":
 		return result, tuskerError(errorInvalidTransition, "run is waiting on you; use tusker message reply")
 	case "blocked", "failed", "lost":
-		return result, tuskerError(errorInvalidTransition, "run is "+state.State+"; use tusker runs continue --message")
+		return result, tuskerError(errorInvalidTransition, "run is "+state.State+"; use tusker runs restart --message")
 	default:
 		return result, tuskerError(errorInvalidTransition, "runs say requires a working or quiet run; current state is "+state.State)
 	}

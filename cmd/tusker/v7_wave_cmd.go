@@ -35,7 +35,7 @@ func waveV7Cmd(args Args) error {
 	case "resume":
 		return waveV7ResumeCmd(shiftV7WaveArgs(args, 1))
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker wave create|add|remove|show|brief|preflight|arm|pause|resume|disarm|refingerprint ...")
+		return tuskerError(errorMissingArg, "Usage: tusker new wave|add|remove|show|brief|preflight|arm|pause|resume|disarm|refingerprint ...")
 	}
 }
 
@@ -70,7 +70,7 @@ func waveV7CreateCmd(args Args) error {
 	}
 	title := strings.TrimSpace(firstNonEmpty(args.String("title"), args.String("_pos0")))
 	if title == "" {
-		return tuskerError(errorMissingArg, `Usage: tusker wave create "<title>" <TASK-ID>...`)
+		return tuskerError(errorMissingArg, `Usage: tusker new wave "<title>" <TASK-ID>...`)
 	}
 	expectedOutcome, err := validateWaveExpectedOutcome(args.String("summary"), false)
 	if err != nil {
@@ -126,7 +126,7 @@ func waveV7CreateCmd(args Args) error {
 
 ## Members
 
-Membership is stored in frontmatter. Run `+"`tusker wave show %s`"+` for the boundary view.
+Membership is stored in frontmatter. Run `+"`tusker show %s`"+` for the boundary view.
 `, id, title, id)
 	data["state_rev"] = v7StateRev(data, body)
 	content, err := serializeDocument(data, body, v7FrontmatterOrder["wave"])
@@ -174,7 +174,7 @@ func waveV7OutcomeCmd(args Args) error {
 	}
 	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if id == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker wave outcome <W-0001> --summary <promise>")
+		return tuskerError(errorMissingArg, "Usage: tusker edit <W-0001> --outcome <promise>")
 	}
 	expected, err := validateWaveExpectedOutcome(args.String("summary"), true)
 	if err != nil {
@@ -313,7 +313,7 @@ func waveV7ShowCmd(args Args) error {
 	}
 	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if id == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker wave show <W-0001>")
+		return tuskerError(errorMissingArg, "Usage: tusker show <W-0001>")
 	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {

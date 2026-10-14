@@ -644,7 +644,7 @@ func validateCmd(args Args) (int, error) {
 			label := firstNonEmpty(idCollisionLabels[id], id)
 			hint := "rename one file or change one id; ids must be unique"
 			if v7MixedLayoutTaskIDCollision(paths) {
-				hint = fmt.Sprintf("mixed V5/V7 task collision: keep exactly one %s; move or rename the legacy tusker/epics/** task, or rename .tusker/work/tasks/%s.md and update links before rerunning `tusker validate`", label, label)
+				hint = fmt.Sprintf("mixed V5/V7 task collision: keep exactly one %s; move or rename the legacy tusker/epics/** task, or rename .tusker/work/tasks/%s.md and update links before rerunning `tusker check --only validate`", label, label)
 			}
 			errs = append(errs, issue(errorIDCollision, fmt.Sprintf(`id "%s" declared in %d files: %s`, label, len(paths), strings.Join(paths, ", ")), paths[0], hint, map[string]any{"id": label, "paths": paths}))
 		}
@@ -825,7 +825,9 @@ type listRecord struct {
 	ActiveLease *v7LeaseRecord
 }
 
-func listCmd(args Args) error {
+// listNotesCmd lists vault notes (tasks, epics, waves, docs). `tusker list`
+// routes here for the tasks and epics kinds; see listCmd in show_list_cmd.go.
+func listNotesCmd(args Args) error {
 	if args.String("project") != "" {
 		args["all-projects"] = "true"
 	}
@@ -861,6 +863,7 @@ func listCmd(args Args) error {
 		return tuskerError(errorInvalidArg, "invalid V7 wave id: "+waveID)
 	}
 	assignee := args.String("assignee")
+	owner := strings.TrimSpace(args.String("owner"))
 	openOnly := args.Bool("open")
 	closedOnly := args.Bool("closed")
 	runnableOnly := args.Bool("runnable") || readyOnly
@@ -880,9 +883,11 @@ func listCmd(args Args) error {
 		}
 	}
 	if noteType == "" {
-		if readyOnly || runningOnly || reviewOnly || mineOnly || runnableOnly || openOnly || closedOnly || status != "" || assignee != "" || waveID != "" {
+		if readyOnly || runningOnly || reviewOnly || mineOnly || runnableOnly || openOnly || closedOnly || status != "" || assignee != "" || owner != "" || waveID != "" {
 			noteType = "task"
 		} else if !args.Bool("json") && format == "table" {
+			// Bare `tusker list` (and bare `tusker status`) is the epic table;
+			// `tusker list tasks` is the open-task view.
 			noteType = "epic"
 		}
 	}
@@ -950,6 +955,9 @@ func listCmd(args Args) error {
 			continue
 		}
 		if assignee != "" && stringField(note.Data, "assignee") != assignee {
+			continue
+		}
+		if owner != "" && stringField(note.Data, "next_owner") != owner && stringField(note.Data, "assignee") != owner {
 			continue
 		}
 		rows = append(rows, record)

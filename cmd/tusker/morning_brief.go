@@ -1,10 +1,8 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -84,47 +82,6 @@ type scheduledPromotionMorningBriefFacts struct {
 	Logbook    tuskerLogbook
 	Departures []DepartureRun
 	WaveBriefs []waveBrief
-}
-
-func scheduledPromotionMorningBriefCmd(args Args) error {
-	if args.Bool("write") {
-		return tuskerError(errorInvalidArg, "the scheduled-promotion morning brief is a read-only projection; --write is not supported")
-	}
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	night, err := scheduledPromotionMorningBriefNight(args.String("date"), now)
-	if err != nil {
-		return err
-	}
-	wfFile, err := loadWorkflow(vaultPath)
-	if err != nil {
-		return err
-	}
-	projectID := firstNonEmpty(strings.TrimSpace(args.String("project")), v7ProjectID(vaultPath))
-
-	var store *RuntimeStore
-	if wfFile.Data.ScheduledPromotion.Effective.Observe {
-		store, err = OpenRuntimeStoreReadOnly(firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot()))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if store != nil {
-			defer store.Close()
-		}
-	}
-	brief, err := buildScheduledPromotionMorningBrief(vaultPath, projectID, wfFile.Data, store, night, now)
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(brief)
-		return nil
-	}
-	fmt.Print(renderScheduledPromotionMorningBrief(brief))
-	return nil
 }
 
 func scheduledPromotionMorningBriefNight(raw string, now time.Time) (time.Time, error) {
@@ -579,49 +536,4 @@ func nonEmptyStrings(values ...string) []string {
 
 func scheduledPromotionDepartureHref(projectID, departureID string) string {
 	return projectOpsDeepLink(projectID) + "?brief=morning&departure=" + url.QueryEscape(departureID)
-}
-
-func renderScheduledPromotionMorningBrief(brief scheduledPromotionMorningBrief) string {
-	var b strings.Builder
-	b.WriteString("# Scheduled promotion morning brief — " + brief.Night + "\n\n")
-	b.WriteString(brief.Feature.Summary + "\n\n")
-
-	b.WriteString("## Landed last night\n\n")
-	if len(brief.LandedLastNight) == 0 {
-		b.WriteString(brief.EmptyStates.LandedLastNight + "\n\n")
-	} else {
-		for _, item := range brief.LandedLastNight {
-			b.WriteString(fmt.Sprintf("- Promoted `%s` to `%s`", item.PromotedSHA, item.PromotedRef))
-			if item.ReleasedRevision != "" {
-				b.WriteString(fmt.Sprintf("; released revision `%s`", item.ReleasedRevision))
-			}
-			if item.Summary != "" {
-				b.WriteString(". " + item.Summary)
-			}
-			b.WriteString(fmt.Sprintf(" ([open departure](%s))\n", item.Href))
-		}
-		b.WriteString("\n")
-	}
-
-	b.WriteString("## Blocked or repairing\n\n")
-	if len(brief.BlockedOrRepairing) == 0 {
-		b.WriteString(brief.EmptyStates.BlockedOrRepairing + "\n\n")
-	} else {
-		for _, item := range brief.BlockedOrRepairing {
-			b.WriteString(fmt.Sprintf("- %s — %s Scope: %s. Tusker: %s ([open](%s))\n",
-				item.ID, item.FirstActionableCause, strings.Join(item.AffectedScope, ", "), item.AutomaticAction, item.Href))
-		}
-		b.WriteString("\n")
-	}
-
-	b.WriteString("## Needs your decision\n\n")
-	if len(brief.NeedsYourDecision) == 0 {
-		b.WriteString(brief.EmptyStates.NeedsYourDecision + "\n\n")
-	} else {
-		for _, item := range brief.NeedsYourDecision {
-			b.WriteString(fmt.Sprintf("- %s — %s Verify: %s. ([open gate](%s))\n", item.GateID, item.Action, item.Verification, item.Href))
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
 }

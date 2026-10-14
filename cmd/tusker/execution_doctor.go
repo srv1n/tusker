@@ -283,11 +283,11 @@ func doctorContractBlockerFinding(scope DiagnosticScope, taskID, blocker, observ
 		finding.NextActor = DiagnosticAuthorityHuman
 		finding.Action = &RecoveryAction{
 			ID: "doctor-authority-missing", Type: RecoveryActionWaveStart,
-			Argv:              []string{"tusker", "wave", "start", scope.Wave, "--mode", "background"},
+			Argv:              []string{"tusker", "start", scope.Wave, "--mode", "background"},
 			Preconditions:     []string{"a human operator supplies --by human:<name> for the exact current material"},
 			RequiredAuthority: DiagnosticAuthorityHuman,
 			ExpectedEffect:    "The wave is armed for the exact current material and eligible roots queue.",
-			Postcondition:     "tusker wave review " + scope.Wave + " --check reports Start enabled.",
+			Postcondition:     "tusker show " + scope.Wave + " --check reports Start enabled.",
 		}
 	case strings.Contains(lowered, "paused"):
 		finding.Code = "doctor-wave-paused"
@@ -295,7 +295,7 @@ func doctorContractBlockerFinding(scope DiagnosticScope, taskID, blocker, observ
 		finding.NextActor = DiagnosticAuthorityOperator
 		finding.Action = &RecoveryAction{
 			ID: "doctor-wave-paused", Type: RecoveryActionWaveResume,
-			Argv:              []string{"tusker", "wave", "resume", scope.Wave, "--by", "human:<name>"},
+			Argv:              []string{"tusker", "start", scope.Wave, "--by", "human:<name>"},
 			Preconditions:     []string{"wave material matches the stored authorization fingerprint"},
 			RequiredAuthority: DiagnosticAuthorityHuman,
 			ExpectedEffect:    "The wave resumes without renewing drifted authority.",
@@ -374,7 +374,7 @@ func doctorReviewMemberFinding(member directWaveReviewMember, scope DiagnosticSc
 			base.NextActor = DiagnosticAuthorityOperator
 			base.Action = &RecoveryAction{
 				ID: "doctor-wave-paused", Type: RecoveryActionWaveResume,
-				Argv:              []string{"tusker", "wave", "resume", scope.Wave, "--by", "human:<name>"},
+				Argv:              []string{"tusker", "start", scope.Wave, "--by", "human:<name>"},
 				Preconditions:     []string{"wave material matches the stored authorization fingerprint"},
 				RequiredAuthority: DiagnosticAuthorityHuman,
 				ExpectedEffect:    "The wave resumes without renewing drifted authority.",
@@ -422,7 +422,7 @@ func doctorAuthorizationFindings(wave Note, scope DiagnosticScope, observed, rev
 	case "paused":
 		action := &RecoveryAction{
 			ID: "doctor-wave-paused", Type: RecoveryActionWaveResume,
-			Argv:              []string{"tusker", "wave", "resume", waveID, "--by", firstNonEmpty(authorizedBy, "human:<name>")},
+			Argv:              []string{"tusker", "start", waveID, "--by", firstNonEmpty(authorizedBy, "human:<name>")},
 			Preconditions:     []string{"wave material matches the stored authorization fingerprint"},
 			RequiredAuthority: DiagnosticAuthorityHuman,
 			ExpectedEffect:    "The wave resumes without renewing drifted authority.",
@@ -441,11 +441,11 @@ func doctorAuthorizationFindings(wave Note, scope DiagnosticScope, observed, rev
 			Evidence:  DiagnosticEvidence{Source: "wave", Revision: revision, ObservedAt: observed, Detail: "Wave authorization is " + state + "; nothing runs until an explicit Start."},
 			Action: &RecoveryAction{
 				ID: "doctor-authority-missing", Type: RecoveryActionWaveStart,
-				Argv:              []string{"tusker", "wave", "start", waveID, "--mode", "background"},
+				Argv:              []string{"tusker", "start", waveID, "--mode", "background"},
 				Preconditions:     []string{"a human operator supplies --by human:<name> for the exact current material"},
 				RequiredAuthority: DiagnosticAuthorityHuman,
 				ExpectedEffect:    "The wave is armed for the exact current material and eligible roots queue.",
-				Postcondition:     "tusker wave review " + waveID + " --check reports Start enabled.",
+				Postcondition:     "tusker show " + waveID + " --check reports Start enabled.",
 			},
 		}}
 	}
@@ -466,7 +466,7 @@ func doctorReviewBlockerFinding(blocker directStartBlocker, scope DiagnosticScop
 		finding.NextActor = DiagnosticAuthorityHuman
 		finding.Action = &RecoveryAction{
 			ID: "doctor-human-gate-open", Type: RecoveryActionGateSatisfy,
-			Argv:              []string{"tusker", "gate", "satisfy", blocker.GateID},
+			Argv:              []string{"tusker", "edit", blocker.GateID, "--status", "satisfied", "--evidence", "<summary>"},
 			Preconditions:     []string{"the named human owns gate " + blocker.GateID},
 			RequiredAuthority: DiagnosticAuthorityHuman,
 			ExpectedEffect:    "Human gate " + blocker.GateID + " is satisfied.",
@@ -530,7 +530,7 @@ func doctorHumanGateFindings(idx v7Index, task Note, scope DiagnosticScope, obse
 			Evidence: DiagnosticEvidence{Source: "gate", Revision: revision, ObservedAt: observed, Detail: "Human gate " + gateID + " is open on " + taskID + "."},
 			Action: &RecoveryAction{
 				ID: "doctor-human-gate-" + gateID, Type: RecoveryActionGateSatisfy,
-				Argv:              []string{"tusker", "gate", "satisfy", gateID},
+				Argv:              []string{"tusker", "edit", gateID, "--status", "satisfied", "--evidence", "<summary>"},
 				Preconditions:     []string{"the named human owns gate " + gateID},
 				RequiredAuthority: DiagnosticAuthorityHuman,
 				ExpectedEffect:    "Human gate " + gateID + " is satisfied.",
@@ -564,7 +564,7 @@ func doctorDirectiveFinding(vault string, idx v7Index, task Note, directive *Run
 					Evidence: DiagnosticEvidence{Source: "runtime", Revision: revision, ObservedAt: observed, Detail: "Queued reservation for " + recordID + " is bound to superseded wave authorization and can never match again."},
 					Action: &RecoveryAction{
 						ID: "doctor-stale-reservation", Type: RecoveryActionWaveStart,
-						Argv:              []string{"tusker", "wave", "start", directive.WaveID, "--mode", "background"},
+						Argv:              []string{"tusker", "start", directive.WaveID, "--mode", "background"},
 						Preconditions:     []string{"a human operator supplies --by human:<name> for the exact current material"},
 						RequiredAuthority: DiagnosticAuthorityHuman,
 						ExpectedEffect:    "The wave re-arms on current material and re-binds the eligible frontier.",
@@ -742,7 +742,7 @@ func renderDoctorHuman(report doctorReport) string {
 func executionDoctorCmd(args Args) (int, error) {
 	target := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if target == "" {
-		return 2, tuskerError(errorMissingArg, "Usage: tusker doctor <TASK-ID|WAVE-ID> [--json] [--output <new-path>]")
+		return 2, tuskerError(errorMissingArg, "Usage: tusker show <TASK-ID|WAVE-ID> --why [--json] [--output <new-path>]")
 	}
 	vault, err := resolveVaultPath(args, false)
 	if err != nil {

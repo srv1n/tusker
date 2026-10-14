@@ -130,7 +130,7 @@ func TestSearchHelpExplainsBoundedScope(t *testing.T) {
 	t.Parallel()
 	output := captureStdout(t, printSearchHelp)
 	for _, expected := range []string{
-		"tusker search <text>",
+		"tusker list --grep <text>",
 		"without reading generated indexes",
 		"Attachments",
 		"--limit <n>",

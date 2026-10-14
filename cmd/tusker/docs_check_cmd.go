@@ -112,7 +112,7 @@ func docsCheckCmd(args Args) error {
 func docsRepairHint(code string) string {
 	switch code {
 	case "DOC_REQUIRED_FIELD_MISSING":
-		return "add the required front-matter field, then run `tusker docs check <path>`"
+		return "add the required front-matter field, then run `tusker check --only docs <path>`"
 	case "DOC_DUPLICATE_SUBJECT":
 		return "keep one subject as the current document and supersede or rename the duplicate"
 	case "DOC_TOMBSTONE_SUCCESSOR_MISSING", "DOC_TOMBSTONE_SUCCESSOR_NOT_FOUND":
@@ -130,6 +130,6 @@ func docsRepairHint(code string) string {
 	case "DOC_HEADER_TYPE_INVALID":
 		return "use strings or lists of strings for the declared header field, then rerun this check"
 	default:
-		return "inspect the document and rerun `tusker docs check` after the repair"
+		return "inspect the document and rerun `tusker check --only docs` after the repair"
 	}
 }

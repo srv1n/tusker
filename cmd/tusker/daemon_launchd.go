@@ -236,7 +236,7 @@ func (s *RuntimeStore) beginManagedDaemonStart(stalePID bool, now time.Time) (da
 		if strings.TrimSpace(status.OpenedAt) == "" {
 			status.OpenedAt = now.UTC().Format(time.RFC3339Nano)
 		}
-		status.Summary = fmt.Sprintf("%s: %d abnormal daemon starts within %s; run `tusker daemon resume` after repair", daemonCrashLoopReason, len(restarts), (time.Duration(daemonCrashLoopWindowSeconds) * time.Second).String())
+		status.Summary = fmt.Sprintf("%s: %d abnormal daemon starts within %s; run `tusker daemon status --resume` after repair", daemonCrashLoopReason, len(restarts), (time.Duration(daemonCrashLoopWindowSeconds) * time.Second).String())
 	}
 	restartsJSON, err := json.Marshal(restarts)
 	if err != nil {

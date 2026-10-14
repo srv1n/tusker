@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -65,54 +64,6 @@ type tuskerLogbook struct {
 	Meaning     logbookMeaning     `json:"meaning"`
 	NeedsHuman  []logbookNeed      `json:"needsHuman"`
 	References  []logbookReference `json:"references"`
-}
-
-func logbookCmd(args Args) error {
-	if args.Bool("scheduled-promotion") || args.Bool("morning-brief") {
-		return scheduledPromotionMorningBriefCmd(args)
-	}
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	day, err := logbookDateFromArgs(args)
-	if err != nil {
-		return err
-	}
-	logbook, err := buildTuskerLogbook(vaultPath, day, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(logbook)
-		return nil
-	}
-	markdown := renderTuskerLogbookMarkdown(logbook)
-	if args.Bool("write") {
-		path := filepath.Join(vaultPath, "logbook", logbook.Date+".md")
-		if err := writeText(path, markdown); err != nil {
-			return err
-		}
-		if !args.Bool("quiet") {
-			fmt.Print(markdown)
-		}
-		return nil
-	}
-	fmt.Print(markdown)
-	return nil
-}
-
-func logbookDateFromArgs(args Args) (time.Time, error) {
-	raw := strings.TrimSpace(args.String("date"))
-	if raw == "" {
-		now := time.Now().Local()
-		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local), nil
-	}
-	parsed, err := time.ParseInLocation("2006-01-02", raw, time.Local)
-	if err != nil {
-		return time.Time{}, tuskerError(errorInvalidArg, "logbook --date must be YYYY-MM-DD: "+raw)
-	}
-	return parsed, nil
 }
 
 func buildTuskerLogbook(vaultPath string, day, now time.Time) (tuskerLogbook, error) {
@@ -357,123 +308,4 @@ func logbookEvidenceLinks(idx v7Index, touched map[string]bool) []logbookEvidenc
 		}
 	}
 	return out
-}
-
-func renderTuskerLogbookMarkdown(l tuskerLogbook) string {
-	var b strings.Builder
-	b.WriteString("# Morning Logbook — " + l.Date + "\n\n")
-	b.WriteString("_A plain-language read on the day's work: what shipped, what it means, and what needs you._\n\n")
-
-	quiet := len(l.Shipped) == 0 &&
-		l.Meaning.ChecksTotal == 0 &&
-		len(l.Meaning.Repairs) == 0 &&
-		len(l.Meaning.Evidence) == 0 &&
-		len(l.NeedsHuman) == 0
-	if quiet {
-		b.WriteString("It was a quiet day — nothing was recorded against this date. Enjoy the calm.\n\n")
-	}
-
-	b.WriteString("## What shipped\n\n")
-	if len(l.Shipped) == 0 {
-		b.WriteString("Nothing crossed the finish line today.\n\n")
-	} else {
-		for _, item := range l.Shipped {
-			verb := logbookShippedVerb(item.Milestone)
-			line := "- " + logbookLink(item.Title, item.Link) + " " + verb + "."
-			if item.Outcome != "" {
-				line += " " + logbookEnsureSentence(item.Outcome)
-			}
-			b.WriteString(line + "\n")
-		}
-		b.WriteString("\n")
-	}
-
-	b.WriteString("## What it means\n\n")
-	b.WriteString(logbookMeaningProse(l.Meaning))
-	b.WriteString("\n")
-
-	b.WriteString("## What needs your attention\n\n")
-	if len(l.NeedsHuman) == 0 {
-		b.WriteString("Nothing needs you right now — enjoy your coffee.\n\n")
-	} else {
-		for _, need := range l.NeedsHuman {
-			label := need.Label
-			if need.Link != "" {
-				label = logbookLink(need.Label, need.Link)
-			}
-			b.WriteString("- " + label + " " + need.Detail + ".\n")
-		}
-		b.WriteString("\n")
-	}
-
-	if len(l.References) > 0 {
-		b.WriteString("## References\n\n")
-		for _, ref := range l.References {
-			title := ref.Title
-			if title == "" {
-				title = ref.ID
-			}
-			b.WriteString("- " + logbookLink(ref.ID, ref.Link) + " — " + title + "\n")
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-func logbookMeaningProse(m logbookMeaning) string {
-	var b strings.Builder
-	switch {
-	case m.ChecksTotal == 0:
-		b.WriteString("No new proof or quality checks were recorded today.\n")
-	case m.Defects == 0:
-		b.WriteString(fmt.Sprintf("Every quality check held: %d verification%s ran and all passed, so nothing regressed.\n", m.ChecksTotal, plural(m.ChecksTotal)))
-	default:
-		b.WriteString(fmt.Sprintf("%d of %d checks surfaced a problem, so %d defect%s need follow-up.\n", m.Defects, m.ChecksTotal, m.Defects, plural(m.Defects)))
-	}
-	if len(m.Repairs) > 0 {
-		b.WriteString("\nRepair work was opened to close the gaps:\n")
-		for _, repair := range m.Repairs {
-			b.WriteString("- " + logbookLink(repair.Title, repair.Link) + "\n")
-		}
-	}
-	if len(m.Evidence) > 0 {
-		b.WriteString("\nSupporting evidence:\n")
-		for _, evidence := range m.Evidence {
-			b.WriteString("- " + logbookLink(evidence.Label, evidence.Link) + "\n")
-		}
-	}
-	return b.String()
-}
-
-func logbookShippedVerb(milestone string) string {
-	switch strings.ToLower(strings.TrimSpace(milestone)) {
-	case "done", "landed", "integrated":
-		return "shipped"
-	case "review":
-		return "was finished and handed off for review"
-	default:
-		return "made progress"
-	}
-}
-
-func logbookLink(text, link string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		text = "this work"
-	}
-	if strings.TrimSpace(link) == "" {
-		return text
-	}
-	return "[" + text + "](" + link + ")"
-}
-
-func logbookEnsureSentence(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	if !strings.HasSuffix(text, ".") && !strings.HasSuffix(text, "!") && !strings.HasSuffix(text, "?") {
-		text += "."
-	}
-	return text
 }

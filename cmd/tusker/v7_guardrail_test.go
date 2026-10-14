@@ -160,7 +160,7 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 	required := map[string][]string{
 		"skills/tusker/SKILL.md": {
 			"## Hard stop",
-			"tusker closeout status <TASK-ID> --json",
+			"tusker show <TASK-ID> --closeout --json",
 			"agent_action: stop_until_human_response",
 			"readiness: waiting_on_human",
 			"Never manufacture proof",
@@ -168,7 +168,7 @@ func TestV7GuardrailSkillPackageEnforcesHardStopCloseoutContract(t *testing.T) {
 			"without rewriting generated state",
 		},
 		"skills/tusker/references/OPERATE.md": {
-			"tusker proof status <TASK-ID>",
+			"tusker show <TASK-ID> --proof",
 			"Tracker failure stays separate from implementation results",
 		},
 		"skills/tusker/references/TRACK.md": {

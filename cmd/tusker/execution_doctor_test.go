@@ -66,8 +66,8 @@ func TestSelfServiceDoctor(t *testing.T) {
 		if paused.Action == nil || len(paused.Action.Argv) == 0 || paused.Action.Argv[0] != "tusker" {
 			t.Fatalf("paused wave has no executable repair argv: %#v", paused.Action)
 		}
-		if !strings.Contains(strings.Join(paused.Action.Argv, " "), "wave resume W-0001") {
-			t.Fatalf("paused repair is not wave resume: %q", paused.Action.Argv)
+		if !strings.Contains(strings.Join(paused.Action.Argv, " "), "start W-0001") {
+			t.Fatalf("paused repair is not start <W-ID>: %q", paused.Action.Argv)
 		}
 		for _, finding := range report.Diagnosis.Findings {
 			if strings.Contains(finding.Code, "capacity") {
@@ -87,7 +87,7 @@ func TestSelfServiceDoctor(t *testing.T) {
 				t.Fatalf("doctor human exit = %d, want 1", humanCode)
 			}
 		})
-		if !strings.Contains(human, "doctor-wave-paused") || !strings.Contains(human, "tusker wave resume W-0001") {
+		if !strings.Contains(human, "doctor-wave-paused") || !strings.Contains(human, "tusker start W-0001") {
 			t.Fatalf("human output misses cause and repair: %q", human)
 		}
 		if strings.Contains(strings.ToLower(human), "capacity") {
@@ -215,22 +215,22 @@ func TestSelfServiceDoctor(t *testing.T) {
 		vault, store, project, _, _ := selfServiceArmedABFixture(t)
 
 		help := captureStdout(t, func() {
-			if code, err := run("doctor", Args{"help": "true"}); err != nil || code != 0 {
+			if code, err := run("show", Args{"help": "true"}); err != nil || code != 0 {
 				t.Fatalf("doctor help: code=%d err=%v", code, err)
 			}
 		})
-		if !strings.Contains(help, "tusker doctor <TASK-ID|WAVE-ID>") || !strings.Contains(help, "--output") {
+		if !strings.Contains(help, "--why") || !strings.Contains(help, "--output") {
 			t.Fatalf("doctor help is missing usage: %q", help)
 		}
 		foundDoctor := false
 		for _, entry := range installedCapabilityCommands() {
-			if entry.Command != "doctor" {
+			if entry.Command != "show" || !strings.Contains(entry.UseWhen, "--why") {
 				continue
 			}
 			foundDoctor = true
 		}
 		if !foundDoctor {
-			t.Fatal("capabilities manifest has no doctor entry")
+			t.Fatal("capabilities manifest has no show --why entry")
 		}
 
 		beforeTask, err := os.ReadFile(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))

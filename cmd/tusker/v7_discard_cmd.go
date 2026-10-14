@@ -61,7 +61,7 @@ func discardV7Cmd(args Args) error {
 		return tuskerError(
 			errorInvalidTransition,
 			id+": discard requires an explicit downstream dependency resolution",
-			withHint("run `tusker discard "+id+" --dry-run`, then choose --dependents detach or --dependents discard"),
+			withHint("run `tusker stop "+id+" --cancel --dry-run`, then choose --dependents detach or --dependents discard"),
 			withContext(map[string]any{"impact": impact}),
 		)
 	}

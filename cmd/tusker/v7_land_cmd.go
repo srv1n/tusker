@@ -672,7 +672,7 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 // v7NoWaveRefusal renders the actionable A1 refusal for a task with no wave.
 func v7NoWaveRefusal(taskID string) string {
 	return taskID + " is not in a wave; merge-lane land requires wave membership. " +
-		"Create one and retry: tusker wave create \"<title>\" " + taskID +
+		"Create one and retry: tusker new wave \"<title>\" " + taskID +
 		"  (then: tusker land " + taskID + ")"
 }
 
@@ -3726,7 +3726,7 @@ func ensureV7WaveIntegrationBranch(vaultPath string, wave Note) error {
 	}
 	current, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+v7DefaultBranch(vaultPath))
 	if err != nil || current != frozen {
-		return tuskerError(errorInvalidTransition, "integration base drifted before first completion; rerun wave review and re-authorize with `tusker wave start`")
+		return tuskerError(errorInvalidTransition, "integration base drifted before first completion; rerun wave review and re-authorize with `tusker start`")
 	}
 	// Supplying the all-zero old value makes this a create-only CAS. A racing
 	// completion cannot silently overwrite another integration lane.

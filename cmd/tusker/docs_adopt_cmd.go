@@ -682,7 +682,7 @@ func docsAdoptCmd(args Args) error {
 			"approved":    approved,
 			"applied":     applied,
 			"migration":   migrationMode,
-			"map":         "not regenerated; run `tusker docs map` after review",
+			"map":         "not regenerated; run `tusker check --fix` after review",
 			"proposals":   proposals,
 			"scope":       scope,
 		})
@@ -710,7 +710,7 @@ func docsAdoptCmd(args Args) error {
 	if !approved {
 		fmt.Printf("Review this table, set approved_by, then run `tusker docs adopt --table <file> --approve --by human:<name>` (or an explicit user-session approval in an interactive agent session; fingerprint %s); no file is changed by this run.\n", table.Fingerprint)
 	} else if applied {
-		fmt.Println("Generated map artifacts were not changed; run `tusker docs map` after reviewing the adopted canonical docs.")
+		fmt.Println("Generated map artifacts were not changed; run `tusker check --fix` after reviewing the adopted canonical docs.")
 	}
 	return nil
 }

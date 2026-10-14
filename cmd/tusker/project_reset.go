@@ -12,6 +12,17 @@ func resetCmd(args Args) error {
 		printResetHelp()
 		return nil
 	}
+	if args.Bool("no-init") {
+		// Delete without re-creating: the purge plan, dry-run unless --yes.
+		purgeArgs := copyArgsForInternalMutation(args)
+		purgeArgs["only-tusker-state"] = "true"
+		if args.Bool("dry-run") {
+			delete(purgeArgs, "yes")
+			delete(purgeArgs, "write")
+			delete(purgeArgs, "apply")
+		}
+		return tuskerPurgeCmd(purgeArgs)
+	}
 	repo := strings.TrimSpace(args.String("repo"))
 	if repo == "" {
 		repo = "."
@@ -87,6 +98,7 @@ func printResetHelp() {
 	fmt.Println(`Usage:
   tusker reset --yes [--repo <path>]
   tusker reset --dry-run [--repo <path>] [--json]
+  tusker reset --no-init [--repo <path>] [--yes] [--json]
 
 Purpose:
   Delete known repo-local Tusker state and initialize a clean V7 vault.
@@ -98,5 +110,8 @@ Purpose:
 Behavior:
   - --dry-run previews the deletion plan without changing anything
   - without --yes, the command refuses to delete anything
-  - repo pointers, repo-contract files, and Obsidian mounts are not recreated`)
+  - repo pointers, repo-contract files, and Obsidian mounts are not recreated
+  - --no-init deletes without re-initializing: .tusker (specs included),
+    nested vaults, repo skill installs, managed AGENTS.md/CLAUDE.md blocks and
+    vault mounts. It previews by default; --yes applies.`)
 }

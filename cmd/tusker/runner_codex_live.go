@@ -1493,7 +1493,7 @@ Current item:
 - Attempt: %s
 - Completed turns in this attempt: %d
 
-Re-read the note and workspace, satisfy the task proof mode, and continue until the item is ready for review or blocked. When it is ready, use tusker finish or move/propose the task to review; attempt handoff alone is not the review queue.`, h.itemID, h.recordID, h.attemptID, turnIndex+1)) + "\n"
+Re-read the note and workspace, satisfy the task proof mode, and continue until the item is ready for review or blocked. When it is ready, use tusker done or move/propose the task to review; attempt handoff alone is not the review queue.`, h.itemID, h.recordID, h.attemptID, turnIndex+1)) + "\n"
 }
 
 func (h *codexLiveHandle) recordTurnStarted(turnID, at string, payload map[string]any) {

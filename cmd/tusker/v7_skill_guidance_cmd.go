@@ -180,7 +180,7 @@ func auditV7TuskerBootstrapWarnings(repoRoot, vaultPath string) []Issue {
 	if hasCurrent {
 		return nil
 	}
-	action := fmt.Sprintf("run `tusker skill audit-agent-guidance --repo %s --write` or `tusker install --repo %s --no-bin`", repoRoot, repoRoot)
+	action := fmt.Sprintf("run `tusker check --only skills --repo %s --write` or `tusker install --repo %s --no-bin`", repoRoot, repoRoot)
 	if hasManaged {
 		return []Issue{issue(
 			"TUSKER_BOOTSTRAP_STALE",

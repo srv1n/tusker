@@ -182,7 +182,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 	}
 	if stringField(data, "status") == "cancelled" && stringField(data, "discarded_at") != "" {
 		if stringField(data, "discarded_by") == "" || stringField(data, "discard_reason") == "" {
-			*errors = append(*errors, issue("DISCARDED_TASK_METADATA_MISSING", "discarded V7 task requires discarded_by, discarded_at, and discard_reason", where, "use `tusker discard` instead of editing cancelled status directly", nil))
+			*errors = append(*errors, issue("DISCARDED_TASK_METADATA_MISSING", "discarded V7 task requires discarded_by, discarded_at, and discard_reason", where, "use `tusker stop --cancel` instead of editing cancelled status directly", nil))
 		}
 		for _, gate := range findV7BlockingGates(ctx.VaultPath, id, normalizeList(data["gates"])) {
 			if stringField(gate.Data, "status") == "open" {
@@ -324,7 +324,7 @@ func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, e
 	if proofStatus == "satisfied" && (len(report.Missing) > 0 || len(report.ModeMissing) > 0) {
 		missing := append([]string{}, report.Missing...)
 		missing = append(missing, report.ModeMissing...)
-		*errors = append(*errors, issue("TASK_PROOF_STATUS_STALE", "proof_status=satisfied but proof is incomplete: "+strings.Join(missing, ", "), where, "run `tusker proof status "+stringField(data, "id")+"` and satisfy missing proof", map[string]any{"missing": missing}))
+		*errors = append(*errors, issue("TASK_PROOF_STATUS_STALE", "proof_status=satisfied but proof is incomplete: "+strings.Join(missing, ", "), where, "run `tusker show "+stringField(data, "id")+" --proof` and satisfy missing proof", map[string]any{"missing": missing}))
 	}
 	if status == "done" && proofStatus != "satisfied" && proofStatus != "waived" {
 		*errors = append(*errors, issue("DONE_TASK_PROOF_STATUS_INCOMPLETE", "done V7 task requires proof_status satisfied or waived", where, "", map[string]any{"proof_status": proofStatus}))
@@ -355,7 +355,7 @@ func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, e
 		case "blocked_by_gate", "blocked_by_dependency", "waiting_on_human", "waiting_on_ci", "held":
 			return
 		}
-		*errors = append(*errors, issue("COMPLETED_ATTEMPT_WITHOUT_REVIEW_OR_GATE", "completed attempt has satisfied proof but task is not in review and has no blocking gate", where, "run `tusker finish <task-id> --request-review` or create a blocking gate", nil))
+		*errors = append(*errors, issue("COMPLETED_ATTEMPT_WITHOUT_REVIEW_OR_GATE", "completed attempt has satisfied proof but task is not in review and has no blocking gate", where, "run `tusker done <task-id>` or create a blocking gate", nil))
 	}
 }
 
@@ -446,10 +446,10 @@ func validateV7TaskReadiness(note Note, ctx validationContext, where string, err
 		}
 	case "ready":
 		if hasOpenGate {
-			*errors = append(*errors, issue("READINESS_STALE", "readiness ready conflicts with an open blocking gate", where, "run `tusker reconcile`", nil))
+			*errors = append(*errors, issue("READINESS_STALE", "readiness ready conflicts with an open blocking gate", where, "run `tusker check --fix`", nil))
 		}
 		if hasUnresolvedDep {
-			*errors = append(*errors, issue("READINESS_STALE", "readiness ready conflicts with an unresolved dependency", where, "run `tusker reconcile`", nil))
+			*errors = append(*errors, issue("READINESS_STALE", "readiness ready conflicts with an unresolved dependency", where, "run `tusker check --fix`", nil))
 		}
 	}
 }
@@ -528,7 +528,7 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_branch must be "+v7IntegrationBranchName(id), where, "", map[string]any{"field": "integration_branch"}))
 	}
 	if base := stringField(data, "integration_base_sha"); base != "" && !v7GitObjectID(base) {
-		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_base_sha must be a Git object ID", where, "recreate the wave with `tusker wave create` from the configured default branch", map[string]any{"field": "integration_base_sha"}))
+		*errors = append(*errors, issue(errorInvalidField, "V7 wave integration_base_sha must be a Git object ID", where, "recreate the wave with `tusker new wave` from the configured default branch", map[string]any{"field": "integration_base_sha"}))
 	}
 	if !strings.HasSuffix(filepath.ToSlash(where), "work/waves/"+id+".md") {
 		*errors = append(*errors, issue(errorPathMismatch, "V7 wave path must be .tusker/work/waves/"+id+".md", where, "", nil))
@@ -538,17 +538,17 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 		*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave status: "+status, where, "", map[string]any{"field": "status"}))
 	}
 	if status == "landed" && stringField(data, "landed_at") == "" {
-		*errors = append(*errors, issue(errorInvalidField, "landed V7 wave requires landed_at", where, "run `tusker reconcile`", map[string]any{"field": "landed_at"}))
+		*errors = append(*errors, issue(errorInvalidField, "landed V7 wave requires landed_at", where, "run `tusker check --fix`", map[string]any{"field": "landed_at"}))
 	}
 	if status == "open" && stringField(data, "landed_at") != "" {
-		*warnings = append(*warnings, issue("WAVE_OPEN_LANDED_AT_STALE", "open V7 wave should not have landed_at", where, "run `tusker reconcile`", map[string]any{"field": "landed_at"}))
+		*warnings = append(*warnings, issue("WAVE_OPEN_LANDED_AT_STALE", "open V7 wave should not have landed_at", where, "run `tusker check --fix`", map[string]any{"field": "landed_at"}))
 	}
 	authorization := fallback(stringField(data, "authorization"), "disarmed")
 	if authorization != "disarmed" && authorization != "armed" && authorization != "paused" {
-		*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave authorization: "+authorization, where, "use `tusker wave start|pause|resume`", map[string]any{"field": "authorization"}))
+		*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave authorization: "+authorization, where, "use `tusker start|pause|resume`", map[string]any{"field": "authorization"}))
 	}
 	if (authorization == "armed" || authorization == "paused") && stringField(data, "authorization_fingerprint") == "" {
-		*errors = append(*errors, issue(errorMissingField, authorization+" V7 wave requires authorization_fingerprint", where, "re-authorize current material with `tusker wave start "+id+" --mode background --by <actor>`", map[string]any{"field": "authorization_fingerprint"}))
+		*errors = append(*errors, issue(errorMissingField, authorization+" V7 wave requires authorization_fingerprint", where, "re-authorize current material with `tusker start "+id+" --mode background --by <actor>`", map[string]any{"field": "authorization_fingerprint"}))
 	}
 	members := normalizeList(data["members"])
 	seen := map[string]bool{}

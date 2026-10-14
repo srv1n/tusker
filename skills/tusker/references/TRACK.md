@@ -1,7 +1,7 @@
 # Track
 
 Inspect work with `tusker show <TASK-ID> --capsule`; implement from
-`tusker packet <TASK-ID> --for agent`. Read its contract, then only required
+`tusker show <TASK-ID> --packet agent`. Read its contract, then only required
 source and documentation.
 
 ## Author tasks and waves
@@ -17,62 +17,62 @@ The task body is the implementation contract. Author it directly:
 
 ```sh
 tusker new task --title <title> --work-level <level> --body-file <path|->
-tusker task update <TASK-ID> --if-revision <state_rev> [--body-file ...] --by <actor> --json
-tusker wave create --file <request.yaml> --request-key <stable-key> --json
-tusker wave review <WAVE-ID> --check --json
-tusker runner route <TASK-ID> --lane execute --json
-tusker runner route <TASK-ID> --lane review --json
+tusker edit <TASK-ID> --if-revision <state_rev> [--body-file ...] --by <actor> --json
+tusker new wave --file <request.yaml> --request-key <stable-key> --json
+tusker show <WAVE-ID> --check --json
+tusker show <TASK-ID> --route execute --json
 ```
 
 `--epic`, `--spec-refs`, `--dependencies`, `--owned-paths`,
 `--generated-outputs`, and contact fields are optional; every supplied
 spec ref must resolve. Normal authoring omits priority, size, and risk
-metadata. `task update` mutates only mutable authoring fields under the
+metadata. `tusker edit` changes only mutable authoring fields under the
 material lock and preserves identity, history, and proof lineage; a material
 change on a done or review task reopens it as rework.
 
 Creation is inert. Execution starts only on explicit authority:
 
 ```sh
-tusker task start <TASK-ID> --mode interactive --by <agent> --current-workspace --json
-tusker task start <TASK-ID> --mode background --by <actor> --json
-tusker wave start <WAVE-ID> --mode background --by human:<name>|operator:<name> --json
-tusker wave pause <WAVE-ID> --by human:<name>|operator:<name> --json
-tusker wave resume <WAVE-ID> --by human:<name>|operator:<name> --json
+tusker start <TASK-ID> --by <agent> --current-workspace --json
+tusker start <TASK-ID> --background --by <actor> --json
+tusker start <WAVE-ID> --by human:<name>|operator:<name> --json
+tusker stop <WAVE-ID> --by human:<name>|operator:<name> --json
 ```
 
-One wave Start authorizes the exact current material; daemon polling advances
-each dependency frontier automatically. Pause blocks new wave admissions while
-admitted attempts finish; resume restores the unchanged authorization and
-refuses drifted material. An explicit task Start inside a paused wave stays
-task-scoped and leaves the wave paused.
+Starting a wave authorizes its exact current material; daemon polling advances
+each dependency frontier automatically. Stopping a wave pauses new admissions
+while admitted attempts finish. Starting a paused wave resumes the unchanged
+authorization and refuses drifted material. An explicit task start inside a
+paused wave stays task-scoped and leaves the wave paused.
 
-The author runs `wave review --check` before handoff: it checks the whole DAG
-and every member contract, and exits nonzero unless wave Start is enabled.
-Inspect its JSON blockers and generated packets for semantic proof quality,
-classification, ownership, and contacts. For a standalone task, use
-`tusker validate --path work/tasks/<ID>.md --json` and inspect warnings too;
-`ok:true` is not a dispatchability verdict. Held drafts may retain setup gaps;
-never describe them as execution-ready.
+The author runs `tusker show <WAVE-ID> --check` before handoff: it checks the
+whole DAG and every member contract, and exits nonzero unless the wave can
+start. Inspect its JSON blockers and generated packets for semantic proof
+quality, classification, ownership, and contacts. For a standalone task, use
+`tusker check --only validate --path work/tasks/<ID>.md --json` and inspect
+warnings too; `ok:true` is not a dispatchability verdict. Held drafts may
+retain setup gaps; never describe them as execution-ready.
 
-## Implement and close
+## Implement and finish
 
-Use `tusker work start`, `status`, `submit`, `review`, and `release`; inspect
-`tusker work --help` and obey its claim. For current-conversation self
-implementation, use `tusker work start <TASK-ID> --by <agent> --source codex
---current-workspace --json` (use `--source claude` for Claude); this is
-execute-only and same-native review is refused. Dispatched workers retain
-their claim. Self implementation requires an explicit authorized claim and
-independent review. Submission is not completion; follow
-`tusker closeout status <TASK-ID> --json`.
+Four verbs carry the lifecycle: `start`, `done`, `review`, `stop`. For
+current-conversation self implementation, run `tusker start <TASK-ID> --by
+<agent> --source codex --current-workspace --json` (`--source claude` for
+Claude); rerunning it renews your lease. This is execute-only and same-native
+review is refused. Dispatched workers keep their claim. Self implementation
+needs an explicit authorized claim and independent review.
 
-Committed work that no claim recorded: `tusker adopt <IDs>|--wave <W>|--since <ref> --by <you>`;
-never claim it afterwards.
+When the work is committed, run `tusker done <TASK-ID> --by <agent>`. It
+submits your live session, or reruns the task's proof when no claim exists.
+`tusker done --since <ref>` or `--wave <W>` records many tasks at once. Never
+claim a task afterwards just to record it. Submission is not completion; follow
+`tusker show <TASK-ID> --closeout --json`.
 
-Add planned checks with `tusker verify add <TASK-ID> --covers A1 --check
-"command: go test ./..." --result pending`. Only the executor records PASS/FAIL.
-Choose the smallest checks covering acceptance, attach required evidence, and reserve human
-review for explicit gates. Use CLI-managed scratch for transient logs and summaries. Keep
-large build or test output (result bundles, device diagnostics) in the system temp directory:
-scratch has a 200MiB budget and idle entries are evicted. Never manufacture proof or rewrite
+Add planned checks with `tusker edit <TASK-ID> --covers A1 --check
+"command: go test ./..." --result pending`. Escape `|` as `\|` inside a check
+command. Only the executor records PASS/FAIL. Choose the smallest checks
+covering acceptance, attach required evidence, and reserve human review for
+explicit gates. Use CLI-managed scratch for transient logs and summaries. Keep
+large build or test output in the system temp directory: scratch has a 200MiB
+budget and idle entries are evicted. Never manufacture proof or rewrite
 lifecycle fields to clear a refusal.

@@ -18,9 +18,7 @@ func TestCapsuleTemplatesCreateScaffolds(t *testing.T) {
 	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
 		t.Fatal(err)
 	}
-	if err := knowledgeV7NewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/runbooks/oauth-refresh", "kind": "runbook", "title": "OAuth refresh"}); err != nil {
-		t.Fatal(err)
-	}
+	writeKnowledgeRunbookForTest(t, vault, "providers", "oauth-refresh", "OAuth refresh", "OAuth refresh.")
 	for _, rel := range []string{
 		"work/epics/APP.md",
 		"knowledge/domains/providers/INDEX.md",

@@ -118,7 +118,7 @@ func TestSkillContractCompatibility(t *testing.T) {
 	if got := inspectSkillMaterialization(modified); got.Status != "locally_modified" {
 		t.Fatalf("locally modified materialization = %#v", got)
 	}
-	if repair := skillSyncRepairAction(); !strings.Contains(repair, "tusker skill sync --repo .") {
+	if repair := skillSyncRepairAction(); !strings.Contains(repair, "tusker install --repo-only --skills-only --repo .") {
 		t.Fatalf("repair action = %q", repair)
 	}
 }

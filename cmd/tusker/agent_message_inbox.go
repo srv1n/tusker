@@ -166,7 +166,7 @@ func runAgentMessageInbox(args Args, in io.Reader, out io.Writer) error {
 	omitted := 0
 	for _, message := range pending {
 		if len(message.Body) > messageInboxLimit/2 {
-			message.Body = message.Body[:messageInboxLimit/2] + "\n[truncated; full text: tusker message show --project " + fmt.Sprintf("%q %s", project, message.ID) + "]"
+			message.Body = message.Body[:messageInboxLimit/2] + "\n[truncated; full text: tusker show --project " + fmt.Sprintf("%q %s", project, message.ID) + "]"
 		}
 		line := renderInboxMessage(project, message)
 		if size+len(line)+100 > messageInboxLimit {

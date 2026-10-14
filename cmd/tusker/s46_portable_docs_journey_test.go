@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yuin/goldmark"
 	"tusker/internal/docgraph"
+
+	"github.com/yuin/goldmark"
 )
 
 // TestS46PortableDocsJourney covers TSK-T-0062 A1/A3 for the fresh and

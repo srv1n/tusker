@@ -16,7 +16,7 @@ Start with the route for the current stage:
 
 Follow conditional references when the task needs them: task authoring reads
 `HANDOFF.md`, while a status lookup can finish in the entrypoint. Current
-command support comes from `tusker capabilities --json`, not skill frontmatter.
+command support comes from `tusker version --json`, not skill frontmatter.
 
 Edit canonical skill text in this package. Repository and user installations
 are materializations, refreshed through the normal install/sync flow.

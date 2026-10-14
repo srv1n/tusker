@@ -42,7 +42,7 @@ func TestEventLogPersistenceFailureOpensInvariantCircuit(t *testing.T) {
 	if !strings.Contains(blocker, "event_log_persistence_failure") && !strings.Contains(blocker, "cannot persist supervisor_decision") {
 		t.Fatalf("event failure is not exposed to dispatch/status: %q", blocker)
 	}
-	if !strings.Contains(blocker, "repair event-log storage") || !strings.Contains(blocker, "tusker daemon resume") {
+	if !strings.Contains(blocker, "repair event-log storage") || !strings.Contains(blocker, "tusker daemon status --resume") {
 		t.Fatalf("event failure repair hint is not actionable: %q", blocker)
 	}
 	failures, err := store.ReadEventLogPersistenceFailures()

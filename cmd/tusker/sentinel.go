@@ -582,7 +582,7 @@ func invariantCircuitSummary(status invariantCircuitStatus) string {
 		if summary == "" {
 			summary = status.Reason
 		}
-		return summary + "; repair event-log storage, then run `tusker daemon resume`"
+		return summary + "; repair event-log storage, then run `tusker daemon status --resume`"
 	}
 	if strings.TrimSpace(status.Summary) != "" {
 		if !status.Open && len(status.Violations) == 0 {

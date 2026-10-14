@@ -774,7 +774,7 @@ func (s *serveServer) handleProjectRebindAction(w http.ResponseWriter, projectID
 	if vaultRoot == "" {
 		absRepo, err := filepath.Abs(repoRoot)
 		if err != nil {
-			result := serveCommandResult("tusker projects rebind "+projectID, "", err)
+			result := serveCommandResult("tusker projects add --rebind "+projectID, "", err)
 			result.ProjectID = projectID
 			serveJSON(w, http.StatusOK, result)
 			return
@@ -794,7 +794,7 @@ func (s *serveServer) handleProjectRebindAction(w http.ResponseWriter, projectID
 	if allowDirty {
 		if strings.TrimSpace(body.string("confirm", "confirmation")) != "ALLOW DIRTY" {
 			err := tuskerError(errorInvalidArg, "allowDirty requires the exact confirmation token ALLOW DIRTY", withHint("send {\"allowDirty\":true,\"confirm\":\"ALLOW DIRTY\"} only after reviewing the dirty target"))
-			result := serveCommandResult("tusker projects rebind "+strings.TrimSpace(projectID), "", err)
+			result := serveCommandResult("tusker projects add --rebind "+strings.TrimSpace(projectID), "", err)
 			result.ProjectID = strings.TrimSpace(projectID)
 			serveJSON(w, http.StatusOK, result)
 			return
@@ -802,7 +802,7 @@ func (s *serveServer) handleProjectRebindAction(w http.ResponseWriter, projectID
 		args["allow-dirty"] = "true"
 	}
 	output, err := serveInvokeCommand(args, projectsRebindCmd)
-	result := serveCommandResult("tusker projects rebind "+args["id"], output, err)
+	result := serveCommandResult("tusker projects add --rebind "+args["id"], output, err)
 	result.ProjectID = args["id"]
 	if err == nil {
 		s.dropProjectSnapshot(args["id"])
@@ -815,7 +815,7 @@ func (s *serveServer) handleProjectRebindAction(w http.ResponseWriter, projectID
 			if decodeErr == nil {
 				decodeErr = fmt.Errorf("missing rebind report")
 			}
-			result = serveCommandResult("tusker projects rebind "+args["id"], output, fmt.Errorf("decode rebind response: %w", decodeErr))
+			result = serveCommandResult("tusker projects add --rebind "+args["id"], output, fmt.Errorf("decode rebind response: %w", decodeErr))
 			result.ProjectID = args["id"]
 		}
 	}
@@ -834,9 +834,9 @@ func (s *serveServer) handleSetupDoctorAction(w http.ResponseWriter, body serveA
 	args := serveBaseArgs(s)
 	args["repo"] = project.RepoRoot
 	args["json"] = "true"
-	command := "tusker setup doctor"
+	command := "tusker check --only setup"
 	if apply {
-		command = "tusker setup repair"
+		command = "tusker check --only setup --fix"
 	}
 	output, err := serveInvokeCommand(args, func(args Args) error {
 		return setupDoctorCmd(args, apply)
@@ -1335,13 +1335,13 @@ func (s *serveServer) handleTaskRouteAction(w http.ResponseWriter, taskID string
 func (s *serveServer) handleTaskDiscardAction(w http.ResponseWriter, taskID string, body serveActionBody) {
 	args, project, projectErr := serveBaseArgsForBody(s, body)
 	if projectErr != nil {
-		serveJSON(w, http.StatusOK, serveCommandResult("tusker discard", "", projectErr))
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker stop --cancel", "", projectErr))
 		return
 	}
 	args["id"] = strings.ToUpper(strings.TrimSpace(taskID))
 	impact, err := v7DiscardImpactForTask(project.VaultRoot, args["id"])
 	if err != nil {
-		serveJSON(w, http.StatusOK, serveCommandResult("tusker discard "+args["id"]+" --dry-run", "", err))
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker stop "+args["id"]+" --cancel --dry-run", "", err))
 		return
 	}
 	servedImpact := serveDiscardImpactFromV7(impact)
@@ -1353,7 +1353,7 @@ func (s *serveServer) handleTaskDiscardAction(w http.ResponseWriter, taskID stri
 	}
 	actor, actorErr := s.serveOperatorActor(body, "serve discard")
 	if actorErr != nil {
-		statusCode, result := serveOperatorActorResult("tusker discard", actorErr)
+		statusCode, result := serveOperatorActorResult("tusker stop --cancel", actorErr)
 		serveJSON(w, statusCode, result)
 		return
 	}
@@ -1361,7 +1361,7 @@ func (s *serveServer) handleTaskDiscardAction(w http.ResponseWriter, taskID stri
 	args["dependents"] = body.string("dependents")
 	args["by"] = actor
 	output, err := serveInvokeCommand(args, discardV7Cmd)
-	result := serveCommandResult("tusker discard "+args["id"], output, err)
+	result := serveCommandResult("tusker stop "+args["id"]+" --cancel", output, err)
 	result.TaskID = args["id"]
 	result.Discard = &servedImpact
 	s.invalidateProjectSnapshot(project.ProjectID)
@@ -1388,12 +1388,12 @@ func serveDiscardImpactFromV7(impact v7DiscardImpact) serveDiscardImpact {
 func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string, body serveActionBody) {
 	args, project, projectErr := serveBaseArgsForBody(s, body)
 	if projectErr != nil {
-		serveJSON(w, http.StatusOK, serveCommandResult("tusker close", "", projectErr))
+		serveJSON(w, http.StatusOK, serveCommandResult("tusker done", "", projectErr))
 		return
 	}
 	actor, actorErr := s.serveOperatorActor(body, "serve close")
 	if actorErr != nil {
-		status, result := serveOperatorActorResult("tusker close", actorErr)
+		status, result := serveOperatorActorResult("tusker done", actorErr)
 		serveJSON(w, status, result)
 		return
 	}
@@ -1404,7 +1404,7 @@ func (s *serveServer) handleTaskCloseAction(w http.ResponseWriter, taskID string
 		args["force"] = "true"
 	}
 	output, err := serveInvokeCommand(args, closeV7Cmd)
-	result := serveCommandResult("tusker close "+args["id"], output, err)
+	result := serveCommandResult("tusker done "+args["id"], output, err)
 	result.TaskID = args["id"]
 	s.invalidateProjectSnapshot(project.ProjectID)
 	s.decorateTaskActionResultForProject(&result, args["id"], project.ProjectID)
@@ -1610,9 +1610,9 @@ func (s *serveServer) handleDaemonAction(w http.ResponseWriter, action string, b
 			args["drain"] = "true"
 		}
 	case "resume":
-		command, fn = "tusker daemon resume", daemonResumeCmd
+		command, fn = "tusker daemon status --resume", daemonResumeCmd
 	case "limits":
-		command, fn = "tusker daemon limits", daemonLimitsCmd
+		command, fn = "tusker daemon status --limit", daemonLimitsCmd
 		if limit := firstNonEmpty(body.string("maxActiveRuns", "max_active_runs"), body.string("limit")); limit != "" {
 			args["max-active-runs"] = limit
 		}

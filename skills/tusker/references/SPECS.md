@@ -1,6 +1,6 @@
 # Documentation authoring
 
-Use a supplied canonical document directly, or `tusker docs find <query>` to
+Use a supplied canonical document directly, or `tusker list docs --grep <query>` to
 locate its owner. Update the existing subject in place.
 The corpus serves humans and agents under one placement rule: current
 chapters in `docs/system/` (per domain under `docs/system/domains/<domain>/`),
@@ -23,7 +23,7 @@ Settle shared interfaces, ownership, proof scenarios, and architect/origin
 contacts before handing off. A documentation edit alone needs no task batch,
 runner selection, or design interview.
 
-Create through `tusker docs new <subject> --kind doc|proposal|decision`
+Create through `tusker new doc <subject> --kind doc|proposal|decision`
 (`--kind spec` stays accepted as the spelling for proposal). Its template is
 front-matter authority; fill subject, discovery keywords, parent (`part_of`),
 read/skip conditions, described paths, `updates` targets for proposals, and
@@ -47,9 +47,9 @@ Keep executable details near their owning subject. Specs identify `updates:`
 targets; changed behavior lands with its documentation or an explicit follow-up
 task. Preserve decision links instead of copying their contents.
 
-Check changed docs with `tusker docs check <subject-or-path>`. Refresh
-`tusker docs map` when graph metadata, paths, or links change; generated maps
-are outputs. Run `tusker validate` for project-canon or task-contract changes.
+Check changed docs with `tusker check --only docs`. Refresh
+`tusker check --fix` when graph metadata, paths, or links change; generated maps
+are outputs. Run `tusker check --only validate` for project-canon or task-contract changes.
 Use `tusker docs adopt` for requested brownfield adoption: review the proposal
 and preserve its approval boundary. Supersede explicitly so old links resolve
 forward. Raw logs belong in scratch under configured retention.

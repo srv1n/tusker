@@ -262,7 +262,7 @@ func printACPAdapterHelp() {
 	fmt.Println(`Usage:
   tusker acp setup --npm-prefix /absolute/npm-prefix [--node /absolute/node] [--auth-source chatgpt_session|codex_api_key|openai_api_key] [--auth-principal NON_SECRET_LABEL] [--vault /absolute/.tusker] --json
   tusker acp install --provider codex --artifact /absolute/local/codex-acp --version VERSION --artifact-sha256 sha256:... --source-url https://... --publisher agentclientprotocol --json
-  tusker acp doctor --bundle-digest sha256:... [--auth-source chatgpt_session|codex_api_key|openai_api_key] --json
+  tusker check --only acp --bundle-digest sha256:... [--auth-source chatgpt_session|codex_api_key|openai_api_key] --json
 
 Purpose:
   Setup packages an exact already-installed npm prefix into Tusker's sealed

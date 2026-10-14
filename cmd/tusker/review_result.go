@@ -167,7 +167,7 @@ func reviewSubmitCmd(args Args) error {
 	attemptID := strings.TrimSpace(args.String("attempt"))
 	verdict := strings.TrimSpace(args.String("verdict"))
 	if id == "" || attemptID == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker review submit <TASK-ID> --attempt <ATTEMPT-ID> --verdict pass|changes_requested|blocked --covers A1")
+		return tuskerError(errorMissingArg, "Usage: tusker review <TASK-ID> --attempt <ATTEMPT-ID> --verdict pass|changes_requested|blocked --covers A1")
 	}
 	note, err := resolveV7Note(vault, id, "task")
 	if err != nil {

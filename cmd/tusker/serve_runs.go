@@ -240,7 +240,7 @@ type serveInterruptResult struct {
 }
 
 // handleRunInterrupt shares the exact runtime transition used by
-// `tusker runs interrupt`, then returns canonical store readback so the UI does
+// `tusker runs stop --soft`, then returns canonical store readback so the UI does
 // not enable Redrive based only on a successful HTTP response.
 func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request, taskID string) {
 	taskID = strings.ToUpper(strings.TrimSpace(taskID))
@@ -811,7 +811,7 @@ func reviewRecoveryOperationalBlocker(wave Note, run RunStatus, maxAttempts int)
 			return "cannot verify wave material before retrying review: " + err.Error()
 		}
 		if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
-			return "wave material changed since authorization; re-authorize with `tusker wave start` before retrying review"
+			return "wave material changed since authorization; re-authorize with `tusker start` before retrying review"
 		}
 	}
 	return ""
@@ -837,12 +837,12 @@ func serveRedriveRefusal(rawStatus string, run RunStatus) (bool, string) {
 		return true, "redrive is already queued; wait for the daemon to claim it or interrupt the queued run first"
 	}
 	if runProcessGroupAlive(run) {
-		return true, "run is still executing; use tusker runs interrupt " + firstNonEmpty(run.ItemID, run.RecordID) + " before redrive"
+		return true, "run is still executing; use tusker runs stop " + firstNonEmpty(run.ItemID, run.RecordID) + " --soft before redrive"
 	}
 	return false, ""
 }
 
-// serveRedriveRun mirrors the state transition of `tusker redrive` (redriveCmd)
+// serveRedriveRun mirrors the state transition of `tusker runs restart --requeue` (redriveCmd)
 // using the shared runtime store: it resets the budget/attempt window and
 // requeues the run so the daemon spawns a fresh codex-exec attempt. The
 // attempt-window rules themselves are owned by RUN-T-0028; keep this in sync

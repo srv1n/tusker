@@ -7,7 +7,7 @@ import (
 )
 
 func TestTrustCliGuideUsesExecutorRecordedCommandProof(t *testing.T) {
-	help := captureStdout(t, func() { printCommandHelp("verify") })
+	help := captureStdout(t, printVerifyHelp)
 	newHelp := captureStdout(t, printNewHelp)
 	if strings.Contains(help, `--check "go test`) || !strings.Contains(help, `--check "command: <cmd>"`) || !strings.Contains(help, "Command rows must be pending") {
 		t.Fatalf("v7 help advertises a forgeable command-proof route:\n%s", help)
@@ -32,9 +32,9 @@ func TestTrustCliGuideUsesExecutorRecordedCommandProof(t *testing.T) {
 		`export TUSKER_STATE_ROOT="$PWD/.tusker/runtime-state"`,
 		"automation.workspace.strategy --vault ./.tusker --json",
 		"strategy: shared",
-		"tusker config resolve automation.profiles --vault ./.tusker --json",
-		"tusker docs new auth --kind proposal --vault ./.tusker",
-		"tusker wave create --file <request.yaml> --request-key <stable-key> --vault ./.tusker",
+		"tusker config automation.profiles --vault ./.tusker --json",
+		"tusker new doc auth --kind proposal --vault ./.tusker",
+		"tusker new wave --file <request.yaml> --request-key <stable-key> --vault ./.tusker",
 	} {
 		if !strings.Contains(string(onboarding), want) {
 			t.Fatalf("onboarding omits actionable downstream remedy %q", want)

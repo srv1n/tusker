@@ -45,13 +45,13 @@ Agents do no more tool work in this state.
 
 ```bash
 tusker list
-tusker search "<term>" --type task
+tusker list tasks --grep "<term>"
 tusker show <TASK-ID> --capsule
-tusker proof status <TASK-ID> --json
-tusker verify add <TASK-ID> --covers A1 --check "<check>" --result pass
-tusker finish <TASK-ID> --request-review --summary "<proof map>"
-tusker validate --json
-tusker closeout status <TASK-ID> --json  # when supported
+tusker show <TASK-ID> --proof --json
+tusker edit <TASK-ID> --covers A1 --check "command: <check>" --result pending
+tusker done <TASK-ID> --by <you>
+tusker check --only validate --json
+tusker show <TASK-ID> --closeout --json
 ```
 
 ## What to read

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -274,69 +273,6 @@ func firstMarkdownHeading(body string) string {
 		}
 	}
 	return ""
-}
-
-func sectionPreview(body, heading string, limit int) string {
-	idx := strings.Index(body, heading)
-	if idx < 0 {
-		return feedbackShort(body, limit)
-	}
-	section := body[idx+len(heading):]
-	if next := strings.Index(section, "\n## "); next >= 0 {
-		section = section[:next]
-	}
-	return feedbackShort(strings.TrimSpace(section), limit)
-}
-
-func frontmatterDateOnly(data map[string]any, key string) string {
-	value := strings.TrimSpace(toString(data[key]))
-	if value == "" {
-		return ""
-	}
-	if len(value) >= 10 {
-		return value[:10]
-	}
-	return value
-}
-
-func includeImproveDate(value string, sinceDate time.Time) bool {
-	if sinceDate.IsZero() || value == "" || value == "undated" {
-		return true
-	}
-	parsed, err := time.Parse("2006-01-02", value)
-	if err != nil {
-		return true
-	}
-	return !parsed.Before(sinceDate)
-}
-
-func markdownCell(value string) string {
-	value = strings.ReplaceAll(value, "\n", " ")
-	value = strings.ReplaceAll(value, "|", "\\|")
-	return strings.TrimSpace(value)
-}
-
-var improveStopwords = map[string]bool{
-	"a": true, "add": true, "after": true, "and": true, "as": true, "by": true, "for": true, "from": true,
-	"implement": true, "in": true, "into": true, "make": true, "of": true, "on": true, "or": true, "the": true,
-	"to": true, "update": true, "with": true,
-}
-
-func improveSignificantTokens(text string) []string {
-	text = strings.ReplaceAll(text, "-", " ")
-	words := regexp.MustCompile(`[a-z0-9][a-z0-9-]*`).FindAllString(strings.ToLower(text), -1)
-	var out []string
-	for _, word := range words {
-		word = strings.Trim(word, "-")
-		if len(word) < 3 || improveStopwords[word] || strings.HasPrefix(word, "2026") {
-			continue
-		}
-		if matched, _ := regexp.MatchString(`^[a-z]+-[tgd]-[0-9]+$`, word); matched {
-			continue
-		}
-		out = append(out, word)
-	}
-	return uniqueStringsPreserveOrder(out)
 }
 
 func uniqueStringsPreserveOrder(values []string) []string {

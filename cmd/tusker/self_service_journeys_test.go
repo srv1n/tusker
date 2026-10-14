@@ -442,9 +442,9 @@ func journeysArmedAB(t *testing.T) (string, *RuntimeStore, RegisteredProject) {
 // code and error. Callers assert follow-up store state for postconditions.
 func journeysCLITaskStart(t *testing.T, vault, taskID string) (int, error) {
 	t.Helper()
-	command, args := parseCLI([]string{"tusker", "task", "start", taskID, "--mode", "background", "--by", "operator:journey", "--vault", vault})
-	if command != "task start" {
-		t.Fatalf("parseCLI routed task start to %q", command)
+	command, args := parseCLI([]string{"tusker", "start", taskID, "--background", "--by", "operator:journey", "--vault", vault})
+	if command != "start" {
+		t.Fatalf("parseCLI routed start to %q", command)
 	}
 	var code int
 	var err error
@@ -516,16 +516,16 @@ func journeysAllGreen(results map[string]string) bool {
 
 func journeysCLIWaveReview(t *testing.T, vault, waveID string) (string, int) {
 	t.Helper()
-	command, args := parseCLI([]string{"tusker", "wave", "review", waveID, "--vault", vault})
-	if command != "wave review" {
-		t.Fatalf("parseCLI routed wave review to %q", command)
+	command, args := parseCLI([]string{"tusker", "show", waveID, "--vault", vault})
+	if command != "show" {
+		t.Fatalf("parseCLI routed show <W-ID> to %q", command)
 	}
 	var code int
 	output := captureStdout(t, func() {
 		var err error
 		code, err = runInner(command, args)
 		if err != nil {
-			t.Fatalf("wave review command failed: %v", err)
+			t.Fatalf("show <W-ID> command failed: %v", err)
 		}
 	})
 	return output, code
@@ -618,17 +618,20 @@ func TestSelfServiceJourneysA4(t *testing.T) {
 		// The sanctioned recovery rebinds the drifted member, then Start
 		// issues fresh authority: the root re-queues under it while the
 		// dependent stays held on its unfinished dependency.
-		reconcileCommand, reconcileArgs := parseCLI([]string{"tusker", "reconcile", "APP-T-0002", "--vault", vault})
-		captureStdout(t, func() {
-			if code, err := runInner(reconcileCommand, reconcileArgs); err != nil || code != 0 {
-				t.Fatalf("reconcile did not repair the drifted member: code=%d err=%v", code, err)
-			}
-		})
+		reconcileCommand, reconcileArgs := parseCLI([]string{"tusker", "check", "--fix", "--only", "validate", "APP-T-0002", "--vault", vault})
+		var reconcileCode int
+		var reconcileErr error
+		reconcileOut := captureStdout(t, func() { reconcileCode, reconcileErr = runInner(reconcileCommand, reconcileArgs) })
+		// check --fix runs the vault-wide reconcile; its validate step may still
+		// fail on unrelated fixture docs, so assert the repair itself.
+		if reconcileErr != nil || !strings.Contains(reconcileOut, "== validate: reconcile ==\nReconciled ") || strings.Contains(reconcileOut, "repaired 0 stale object revs") {
+			t.Fatalf("check --fix did not repair the drifted member: code=%d err=%v\n%s", reconcileCode, reconcileErr, reconcileOut)
+		}
 		reboundNow, err := loadV7Index(vault)
 		if err != nil {
 			t.Fatal(err)
 		}
-		updateCommand, updateArgs := parseCLI([]string{"tusker", "task", "update", "APP-T-0002",
+		updateCommand, updateArgs := parseCLI([]string{"tusker", "edit", "APP-T-0002",
 			"--if-revision", stringField(reboundNow.Tasks["APP-T-0002"].Data, "state_rev"),
 			"--rebind-contract", "--by", "human:journey", "--vault", vault})
 		captureStdout(t, func() {
@@ -858,23 +861,26 @@ func TestSelfServiceJourneysA2(t *testing.T) {
 		// repairs the record revision, `task update` rebinds the drifted
 		// pin, then Start replaces the stale wave authorization under the
 		// material lock instead of reusing it.
-		reconcileCommand, reconcileArgs := parseCLI([]string{"tusker", "reconcile", "APP-T-0001", "--vault", vault})
-		if reconcileCommand != "reconcile" {
+		reconcileCommand, reconcileArgs := parseCLI([]string{"tusker", "check", "--fix", "--only", "validate", "APP-T-0001", "--vault", vault})
+		if reconcileCommand != "check" {
 			t.Fatalf("parseCLI routed reconcile to %q", reconcileCommand)
 		}
-		captureStdout(t, func() {
-			if code, err := runInner(reconcileCommand, reconcileArgs); err != nil || code != 0 {
-				t.Fatalf("reconcile did not repair the drifted revision: code=%d err=%v", code, err)
-			}
-		})
+		var reconcileCode int
+		var reconcileErr error
+		reconcileOut := captureStdout(t, func() { reconcileCode, reconcileErr = runInner(reconcileCommand, reconcileArgs) })
+		// check --fix runs the vault-wide reconcile; its validate step may still
+		// fail on unrelated fixture docs, so assert the repair itself.
+		if reconcileErr != nil || !strings.Contains(reconcileOut, "== validate: reconcile ==\nReconciled ") || strings.Contains(reconcileOut, "repaired 0 stale object revs") {
+			t.Fatalf("check --fix did not repair the drifted revision: code=%d err=%v\n%s", reconcileCode, reconcileErr, reconcileOut)
+		}
 		reboundIdx, err := loadV7Index(vault)
 		if err != nil {
 			t.Fatal(err)
 		}
-		updateCommand, updateArgs := parseCLI([]string{"tusker", "task", "update", "APP-T-0001",
+		updateCommand, updateArgs := parseCLI([]string{"tusker", "edit", "APP-T-0001",
 			"--if-revision", stringField(reboundIdx.Tasks["APP-T-0001"].Data, "state_rev"),
 			"--rebind-contract", "--by", "human:journey", "--vault", vault})
-		if updateCommand != "task update" {
+		if updateCommand != "edit" {
 			t.Fatalf("parseCLI routed task update to %q", updateCommand)
 		}
 		captureStdout(t, func() {

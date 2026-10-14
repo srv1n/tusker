@@ -219,7 +219,7 @@ func TestWorkSessionInteractiveStartWithAutomationDisabled(t *testing.T) {
 	if err := json.Unmarshal([]byte(statusOutput), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.Branch != identity.Branch || status.Head != identity.Head || status.Authorization == nil || status.Authorization.Source != "codex" || !strings.Contains(status.Next, "heartbeat") {
+	if status.Branch != identity.Branch || status.Head != identity.Head || status.Authorization == nil || status.Authorization.Source != "codex" || !strings.Contains(status.Next, "tusker start APP-T-0001") {
 		t.Fatalf("status lost session identity or next action: %#v", status)
 	}
 	attempts, err := store.ListAttemptsForRun(project.ProjectID, "APP-T-0001")

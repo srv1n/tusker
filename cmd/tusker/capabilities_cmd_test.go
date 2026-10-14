@@ -42,7 +42,7 @@ func TestInstalledCapabilityManifest(t *testing.T) {
 		t.Fatalf("binary provenance = %#v", manifest.Binary)
 	}
 	assertSortedCapabilities(t, manifest)
-	for _, command := range []string{"automation plan", "capabilities", "daemon status", "docs find", "projects add", "reindex", "runs inspect", "verify", "wave start", "work start"} {
+	for _, command := range []string{"automation", "check", "daemon", "edit", "list", "new", "projects add", "runs say", "show", "start", "version"} {
 		if !capabilitiesContainCommand(manifest.Commands, command) {
 			t.Fatalf("manifest omitted command family %q", command)
 		}
@@ -112,8 +112,8 @@ func capabilitiesContainCommand(commands []capabilityCommand, name string) bool 
 }
 
 func TestCapabilitiesCommandRoutesJSON(t *testing.T) {
-	command, args := parseCLI([]string{"tusker", "capabilities", "--json"})
-	if command != "capabilities" || !args.Bool("json") {
+	command, args := parseCLI([]string{"tusker", "version", "--json"})
+	if command != "version" || !args.Bool("json") {
 		t.Fatalf("parseCLI = %q %#v", command, args)
 	}
 	output := captureStdout(t, func() {
@@ -121,16 +121,11 @@ func TestCapabilitiesCommandRoutesJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(output, `"schema":"`+capabilitiesSchema+`"`) || strings.Contains(output, `"read_only"`) {
-		t.Fatalf("capabilities output = %s", output)
+	if !strings.Contains(output, `"schema":"`+capabilitiesSchema+`"`) || strings.Contains(output, `"capabilities_error"`) {
+		t.Fatalf("version --json output lacks the capability manifest: %s", output)
 	}
-	if cliCommandMutatesVault("capabilities") {
-		t.Fatal("capabilities was accidentally classified as mutating")
-	}
-	for _, invalid := range []Args{{}, {"vault": ".tusker", "json": "true"}, {"json": "false"}, {"write": "true", "json": "true"}} {
-		if err := capabilitiesCmd(invalid); err == nil || errorToIssue(err).Code != errorInvalidArg {
-			t.Fatalf("args %#v did not refuse as read-only: %v", invalid, err)
-		}
+	if cliCommandMutatesVault("version") {
+		t.Fatal("version was accidentally classified as mutating")
 	}
 }
 

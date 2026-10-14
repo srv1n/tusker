@@ -3846,7 +3846,7 @@ const runnerReviewCompleteAwaitingLandReason = "runner requested review; work co
 // completedRunnerReviewRequest reports whether a clean-exited runner flipped its
 // worktree-local tracker into a review/terminal state during this attempt — the
 // review-request signal the runner itself controls at exit via
-// `tusker finish --request-review`. This is the write-side mirror of RUN-T-0037:
+// `tusker done`. This is the write-side mirror of RUN-T-0037:
 // the worktree tracker is attempt-local scratch that has not yet reached the
 // canonical vault, so the daemon must read the runner's own worktree copy to see
 // the completion signal instead of requiring the flip to land in canonical
@@ -6292,7 +6292,7 @@ func validationSummariesFromEvents(events []map[string]any) []string {
 			stringValue(payload["cmd"]),
 		)
 		result := firstNonEmpty(stringValue(payload["validation_result"]), stringValue(payload["result"]), stringValue(payload["status"]), stringValue(payload["outcome"]))
-		if !strings.Contains(kind, "validation") && !strings.Contains(strings.ToLower(command), "tusker validate") && payload["validation_result"] == nil {
+		if !strings.Contains(kind, "validation") && !strings.Contains(strings.ToLower(command), "tusker check --only validate") && !strings.Contains(strings.ToLower(command), "tusker check") && payload["validation_result"] == nil {
 			continue
 		}
 		command = safePacketText(command, 260)
@@ -7469,7 +7469,7 @@ func (d *Daemon) priorResumeContextMismatch(run RunStatus, session *RunnerSessio
 	}
 	priorVersion, priorFingerprint := resumeContextMarkerFromPrompt(priorPrompt)
 	if priorFingerprint != "" && priorVersion != resumeContextVersion {
-		return fmt.Sprintf("stored native session was started under an older resume context format (%s); start a fresh session with `tusker runs fresh %s`",
+		return fmt.Sprintf("stored native session was started under an older resume context format (%s); start a fresh session with `tusker runs restart %s --fresh`",
 			fallback(priorVersion, "v1 or v2, no version line"), firstNonEmpty(run.ItemID, run.RecordID))
 	}
 	if currentFingerprint == "" || priorFingerprint == "" {
@@ -7665,7 +7665,7 @@ func renderRalphAttemptPromptContext(project RegisteredProject, wfFile WorkflowF
 	fmt.Fprintf(&b, "- Fresh context rule: this attempt is a new runner session/thread. Do not query or append to predecessor transcripts.\n")
 	fmt.Fprintf(&b, "- Resume state rule: the task packet, claim/workspace identity, prior structured outcome, blockers, and evidence pointers are authoritative. Harness scratch is optional.\n\n")
 	if lane == runLaneExecute {
-		fmt.Fprintf(&b, "- Lifecycle rule: this task is already claimed by attempt `%s`; do not run `tusker work start`. Finish with `tusker work submit %s --by %s --deliverable \"Result: <what changed and works>; Handoff: <optional dependent context>; Limitations: <remaining constraints>\" --verification \"<checks run>\" --gate-verdicts \"<acceptance-id>=pass\"`. The resident daemon owns global runtime writes.\n\n", attemptID, taskID, attemptID)
+		fmt.Fprintf(&b, "- Lifecycle rule: this task is already claimed by attempt `%s`; do not run `tusker start`. Finish with `tusker done %s --by %s --deliverable \"Result: <what changed and works>; Handoff: <optional dependent context>; Limitations: <remaining constraints>\" --verification \"<checks run>\" --gate-verdicts \"<acceptance-id>=pass\"`. The resident daemon owns global runtime writes.\n\n", attemptID, taskID, attemptID)
 	}
 	fmt.Fprintf(&b, "### Task Packet\n\n%s\n", strings.TrimSpace(v7Packet(project.VaultRoot, note, idx, audience)))
 	if lane == runLaneExecute {
@@ -8262,7 +8262,7 @@ func daemonStopCmd(args Args) error {
 	}
 	resp, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "stop"})
 	if err != nil {
-		return tuskerError(errorInvalidTransition, "daemon stop failed: "+err.Error(), withHint("check `tusker daemon status`; if the control socket is stale, stop pid "+strconv.Itoa(before.PID)+" manually"))
+		return tuskerError(errorInvalidTransition, "daemon stop failed: "+err.Error(), withHint("check `tusker daemon`; if the control socket is stale, stop pid "+strconv.Itoa(before.PID)+" manually"))
 	}
 	if !resp.OK {
 		return tuskerError(errorInvalidTransition, "daemon stop refused: "+firstNonEmpty(resp.Message, "unknown error"))
@@ -8849,7 +8849,7 @@ func refreshCmd(args Args) error {
 		return err
 	}
 	defer daemon.Close()
-	daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker refresh")
+	daemon.dispatchRefusalReason = oneShotDispatchRefusal("tusker daemon run --once")
 	if err := daemon.PollOnce(context.Background()); err != nil {
 		return err
 	}

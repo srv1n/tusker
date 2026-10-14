@@ -74,7 +74,7 @@ func directRouteBlockersWithInspector(idx v7Index, taskIDs []string, inspector d
 // A task whose stored contract pin no longer matches its current bytes (or
 // whose record was rewritten outside the CAS ledger) is never treated as
 // authorized, regardless of what a queued directive or stored run
-// authorization claims. Rebinding the pin with `tusker task update` restores
+// authorization claims. Rebinding the pin with `tusker edit` restores
 // admission under the new contract.
 func runDirectiveMatchesTaskAuthority(vaultPath string, task Note, directive *RunDirective, now time.Time) bool {
 	if !runDirectiveActive(directive, now) || directWaveTaskContractStaleReason(task) != "" {

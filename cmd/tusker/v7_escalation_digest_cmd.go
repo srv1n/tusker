@@ -179,7 +179,7 @@ func escalationV7AckCmd(args Args) error {
 	}
 	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if id == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker escalate ack <ESC-0001>")
+		return tuskerError(errorMissingArg, "Usage: tusker message mark <ESC-0001> --applied")
 	}
 	note, err := resolveV7Note(vaultPath, id, "escalation")
 	if err != nil {
@@ -705,7 +705,7 @@ func digestRedParkedItems(idx v7Index, runs []RunStatus, projectID string) []dig
 			LeaseState:  run.LeaseState,
 			Outcome:     firstNonEmpty(run.AttemptOutcome, serveRunOutcome(run, time.Now().UTC())),
 			FailingGate: oneLine(failingGate),
-			RedriveHint: "run `tusker redrive " + taskID + " --reason <why>`",
+			RedriveHint: "run `tusker runs restart " + taskID + " --requeue --reason <why>`",
 			UpdatedAt:   run.UpdatedAt,
 		})
 	}

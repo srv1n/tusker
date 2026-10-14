@@ -452,7 +452,7 @@ func TestRedriveRefusesLiveOwnerWithInterruptHint(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = redriveCmd(Args{"id": run.ItemID, "reason": "retry crashed task"})
-	if err == nil || !strings.Contains(err.Error(), "tusker runs interrupt APP-T-0001") {
+	if err == nil || !strings.Contains(err.Error(), "tusker runs stop APP-T-0001 --soft") {
 		t.Fatalf("expected interrupt refusal, got %v", err)
 	}
 	store, err = OpenRuntimeStore(stateRoot)

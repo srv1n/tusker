@@ -133,10 +133,10 @@ func TestExternalDesignSkillRouting(t *testing.T) {
 		if !strings.Contains(text, "available writing skill") || !strings.Contains(text, "otherwise") {
 			t.Fatalf("%s does not provide the missing optional-writing route", relative)
 		}
-		if !strings.Contains(text, "tusker docs find <query>") {
+		if !strings.Contains(text, "tusker list docs --grep <query>") {
 			t.Fatalf("%s omits the search-first rule", relative)
 		}
-		if !strings.Contains(text, "tusker docs new") {
+		if !strings.Contains(text, "tusker new doc") {
 			t.Fatalf("%s omits the create-through-command rule", relative)
 		}
 	}

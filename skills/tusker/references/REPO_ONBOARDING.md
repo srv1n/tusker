@@ -10,7 +10,7 @@ unresolved facts. Old plans are not evidence of current behavior.
 product knowledge lives under `docs/system/` and product source stays
 outside `.tusker/`.
 Never reset an existing tracker without explicit authorization and a verified
-export. `tusker purge --repo . --only-tusker-state` only previews deletion
+export. `tusker reset --no-init --repo . --only-tusker-state` only previews deletion
 until `--yes`; inspect every proposed path.
 
 ## Initialize without global side effects
@@ -47,11 +47,11 @@ automation:
 ```
 
 ```sh
-tusker config resolve automation.workspace.strategy --vault ./.tusker --json
+tusker config automation.workspace.strategy --vault ./.tusker --json
 ```
 
 Keep fixture artifacts in their owned disposable location. Inspect
-`tusker config resolve automation.profiles --vault ./.tusker --json` for the
+`tusker config automation.profiles --vault ./.tusker --json` for the
 configured runner; do not assume a default or substitute a transport. Profiles
 are defined only in the global config (`~/.config/tusker/config.yaml`); the project
 config selects them through `automation.model_levels` and never defines them.
@@ -64,13 +64,13 @@ specifications in `docs/system/proposals/`, and product decisions in
 `docs/system/decisions/`:
 
 ```sh
-tusker docs new auth --kind proposal --vault ./.tusker
-tusker docs new auth-scope --kind decision --decides-for auth --vault ./.tusker
-tusker docs find auth --vault ./.tusker
+tusker new doc auth --kind proposal --vault ./.tusker
+tusker new doc auth-scope --kind decision --decides-for auth --vault ./.tusker
+tusker list docs --grep auth --vault ./.tusker
 ```
 
 Cold-reader answers: document current behavior in `docs/system/` (new domain
-chapter via `tusker docs new <subject> --kind doc --domain <name>`); propose
+chapter via `tusker new doc <subject> --kind doc --domain <name>`); propose
 a change in `docs/system/proposals/`; record a settled product decision in
 `docs/system/decisions/`; migrate old knowledge with
 `tusker docs adopt --migration` (preview first, apply only an approved table).
@@ -85,20 +85,17 @@ authoring request:
 
 ```sh
 tusker new task --title "Fix billing" --work-level standard --vault ./.tusker
-tusker wave create --file <request.yaml> --request-key <stable-key> --vault ./.tusker
+tusker new wave --file <request.yaml> --request-key <stable-key> --vault ./.tusker
 ```
 
-Creation is inert. `tusker wave start`/`tusker task start` are the only
-authorization actions; started waves need explicit control, not re-authoring.
+Creation is inert. `tusker start` is the only
+authorization action; started waves need explicit control, not re-authoring.
 
 ## Validate
 
 ```sh
-tusker reconcile --vault ./.tusker
-tusker validate --vault ./.tusker --json
-tusker skill doctor --strict --json
-tusker docs map --vault ./.tusker
-tusker docs status --vault ./.tusker --json
+tusker check --fix --vault ./.tusker
+tusker check --strict --vault ./.tusker --json
 ```
 
 Registration, when requested, is machine state: `tusker projects add --repo .

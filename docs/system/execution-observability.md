@@ -65,7 +65,7 @@ and provider settlement without changing task claim authority.
 
 ## Doctor
 
-`tusker doctor <TASK-ID|WAVE-ID> [--json] [--output <new-path>]` diagnoses
+`tusker show <TASK-ID|WAVE-ID> --why [--json] [--output <new-path>]` diagnoses
 one task or wave across contracts, the dependency graph, authorization,
 queued reservations, capacity, proof, review, and daemon freshness. It is
 read-only: nothing is queued, claimed, spawned, or signaled. Human output

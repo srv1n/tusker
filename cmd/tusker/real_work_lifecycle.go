@@ -8,16 +8,16 @@ package main
 //	independent review -> accepted completion (close)
 //
 // Canonical commands:
-//   tusker work start <id> --by <agent>      claim ownership (runtime lease)
-//   tusker work readiness <id>                same admission validators, read-only
-//   tusker work progress <id>                 same run/task projection as status
+//   tusker start <id> --by <agent>      claim ownership (runtime lease)
+//   tusker show <id> --why                same admission validators, read-only
+//   tusker show <id> --progress                 same run/task projection as status
 //   tusker work wait <id> [--timeout 60]      bounded wait on the same run row
-//   tusker work reconcile <id> --by <agent>   verify shared-checkout binding, read-only
-//   tusker work submit <id> --by <agent> ...  bind material + move task to review
-//   tusker work review <id> --by reviewer:... claim the independent review session
-//   tusker review submit <id> --attempt ...   reviewer verdict (shared validators)
-//   tusker close <id> --by reviewer|human ... accepted completion (requires review)
-//   tusker work retry <id> --by <agent>       truthful new attempt after terminal state
+//   tusker show <id> --by <agent>   verify shared-checkout binding, read-only
+//   tusker done <id> --by <agent> ...  bind material + move task to review
+//   tusker review <id> --by reviewer:... claim the independent review session
+//   tusker review <id> --attempt ...   reviewer verdict (shared validators)
+//   tusker done <id> --by reviewer|human ... accepted completion (requires review)
+//   tusker start <id> --by <agent>       truthful new attempt after terminal state
 //
 // Legacy aliases `attempt start`, `attempt handoff`, and `finish` participate
 // in the same contract: `attempt start` on a workflow vault claims a runtime
@@ -49,7 +49,7 @@ const realWorkLifecycleSchema = "tusker.work-lifecycle/v1"
 // the file-attempt lookup and the runtime bridge, so every path teaches the
 // same recognized replacement.
 func v7MissingAttemptError(taskID string) error {
-	return tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state; run `tusker work start "+taskID+" --by <agent>`, then retry `tusker finish "+taskID+" --request-review`"))
+	return tuskerError(errorNotFound, "No attempt exists for "+taskID, withHint("attempts are runtime/session state; run `tusker start "+taskID+" --by <agent>`, then retry `tusker done "+taskID+"`"))
 }
 
 // realWorkStage derives the operator-visible stage from the run row and task
@@ -156,7 +156,7 @@ func workReadinessCmd(args Args) error {
 	out := map[string]any{
 		"ok": len(blockers) == 0, "schema": realWorkLifecycleSchema,
 		"task_id": id, "lane": lane, "blockers": blockers,
-		"next": firstNonEmpty(workSessionNextHintForReadiness(blockers, id), "tusker work start "+id+" --by <agent>"),
+		"next": firstNonEmpty(workSessionNextHintForReadiness(blockers, id), "tusker start "+id+" --by <agent>"),
 	}
 	if args.Bool("json") {
 		emitJSON(out)
@@ -171,7 +171,7 @@ func workReadinessCmd(args Args) error {
 
 func workSessionNextHintForReadiness(blockers []ReadinessBlocker, id string) string {
 	if len(blockers) == 0 {
-		return "tusker work start " + id + " --by <agent>"
+		return "tusker start " + id + " --by <agent>"
 	}
 	return ""
 }
@@ -221,7 +221,7 @@ func workProgressCmd(args Args) error {
 				blockers = workSessionAdmissionBlockersForLane(note, idx, byID, byRecord, runLaneExecute)
 			}
 		}
-		next = "tusker work start " + id + " --by <agent>"
+		next = "tusker start " + id + " --by <agent>"
 	} else {
 		next = workSessionNext(*run)
 	}
@@ -278,7 +278,7 @@ func workWaitCmd(args Args) error {
 			emitJSON(map[string]any{
 				"ok": true, "schema": realWorkLifecycleSchema, "task_id": id,
 				"stage": realWorkStage(run, ""), "run": run,
-				"next": "tusker work progress " + id,
+				"next": "tusker show " + id + " --progress",
 			})
 			return nil
 		}
@@ -286,9 +286,9 @@ func workWaitCmd(args Args) error {
 			emitJSON(map[string]any{
 				"ok": false, "schema": realWorkLifecycleSchema, "task_id": id,
 				"error": "wait timeout: run did not release within bound",
-				"next":  "tusker work progress " + id,
+				"next":  "tusker show " + id + " --progress",
 			})
-			return afterResultEmitted(tuskerError("WAIT_TIMEOUT", "work wait timed out for "+id+" after "+fmt.Sprintf("%d", timeoutSecs)+"s", withHint("inspect with `tusker work progress "+id+"`; rerun wait with a larger --timeout")))
+			return afterResultEmitted(tuskerError("WAIT_TIMEOUT", "work wait timed out for "+id+" after "+fmt.Sprintf("%d", timeoutSecs)+"s", withHint("inspect with `tusker show "+id+" --progress`; rerun wait with a larger --timeout")))
 		}
 		time.Sleep(interval)
 	}
@@ -334,7 +334,7 @@ func workRetryCmd(args Args) error {
 		return err
 	}
 	if run != nil && (LeaseState(run.LeaseState) == LeaseStateClaimed || LeaseState(run.LeaseState) == LeaseStateRunning) {
-		return tuskerError(errorInvalidTransition, "work retry refused: session still live for "+id, withHint("cancel first with `tusker work release "+id+" --by "+run.LeaseOwner+" --reason <text>`"))
+		return tuskerError(errorInvalidTransition, "work retry refused: session still live for "+id, withHint("cancel first with `tusker stop "+id+" --by "+run.LeaseOwner+" --reason <text>`"))
 	}
 	if args.String("owner") == "" {
 		args["owner"] = firstNonEmpty(args.String("by"), args.String("actor"))
@@ -372,8 +372,8 @@ func workReconcileCmd(args Args) error {
 		return err
 	}
 	if run == nil {
-		emitJSON(reconcilePayload(id, "", "", "", nil, "", "run `tusker work start "+id+" --by <agent>` from the checkout holding the implementation"))
-		return afterResultEmitted(tuskerError(errorNotFound, "work reconcile found no live work session for "+id, withHint("run `tusker work start "+id+" --by <agent>` from the checkout holding the implementation")))
+		emitJSON(reconcilePayload(id, "", "", "", nil, "", "run `tusker start "+id+" --by <agent>` from the checkout holding the implementation"))
+		return afterResultEmitted(tuskerError(errorNotFound, "work reconcile found no live work session for "+id, withHint("run `tusker start "+id+" --by <agent>` from the checkout holding the implementation")))
 	}
 	if owner != "" && run.LeaseOwner != "" && owner != run.LeaseOwner &&
 		LeaseState(run.LeaseState) != LeaseStateReleased {
@@ -382,8 +382,8 @@ func workReconcileCmd(args Args) error {
 	}
 	workRevision := intField(note.Data, "work_revision")
 	if workRevision != 0 && run.WorkRevision != workRevision {
-		emitJSON(reconcilePayload(id, run.WorkspacePath, "", "", nil, "", "reload with `tusker work progress "+id+"`"))
-		return afterResultEmitted(tuskerError("WORK_SESSION_STALE", "work reconcile refused: session revision is stale (task revision "+fmt.Sprintf("%d", workRevision)+", run revision "+fmt.Sprintf("%d", run.WorkRevision)+")", withHint("reload with `tusker work progress "+id+"`; submit from the bound workspace only")))
+		emitJSON(reconcilePayload(id, run.WorkspacePath, "", "", nil, "", "reload with `tusker show "+id+" --progress`"))
+		return afterResultEmitted(tuskerError("WORK_SESSION_STALE", "work reconcile refused: session revision is stale (task revision "+fmt.Sprintf("%d", workRevision)+", run revision "+fmt.Sprintf("%d", run.WorkRevision)+")", withHint("reload with `tusker show "+id+" --progress`; submit from the bound workspace only")))
 	}
 	checkout := v7RepoRoot(vault)
 	scope, scopeErr := canonicalTaskMaterialScope(vault, note)
@@ -406,14 +406,14 @@ func workReconcileCmd(args Args) error {
 		currentMaterial, hashErr := workspaceTreeStateHashForPaths(checkout, scope, generatedOutputScope)
 		if hashErr != nil || currentMaterial != boundMaterial {
 			emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, boundMaterial, scope, "", "release the stray claim and start where the implementation lives"))
-			return afterResultEmitted(tuskerError("WORKSPACE_MISMATCH", "work reconcile refused: current checkout does not match the bound implementation workspace", withHint("run `tusker work submit "+id+"` from the bound workspace, or `tusker work release "+id+" --by "+run.LeaseOwner+" --reason <text>` then `tusker work start "+id+"` where the implementation lives")))
+			return afterResultEmitted(tuskerError("WORKSPACE_MISMATCH", "work reconcile refused: current checkout does not match the bound implementation workspace", withHint("run `tusker done "+id+"` from the bound workspace, or `tusker stop "+id+" --by "+run.LeaseOwner+" --reason <text>` then `tusker start "+id+"` where the implementation lives")))
 		}
 	}
 	head := ""
 	if identity, identityErr := store.RunIdentity(run.ProjectID, run.RecordID); identityErr == nil && identity != nil {
 		head = identity.Head
 	}
-	emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, boundMaterial, scope, head, "tusker work submit "+id+" --by "+run.LeaseOwner+" --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass>"))
+	emitJSON(reconcilePayload(id, run.WorkspacePath, checkout, boundMaterial, scope, head, "tusker done "+id+" --by "+run.LeaseOwner+" --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass>"))
 	return nil
 }
 
@@ -467,7 +467,7 @@ func workProfileCmd(args Args) error {
 		"configured_profile": profileName, "profile_source": source,
 		"profile_defined": defined,
 		"recorded":        recorded,
-		"next":            "tusker work start " + id + " --by <agent>",
+		"next":            "tusker start " + id + " --by <agent>",
 	}
 	if defined {
 		out["harness"] = string(RunnerName(definition.Harness))
@@ -576,7 +576,7 @@ func ensureFileAttemptForHandoff(vault, taskID, actor string) (string, error) {
 	}
 	if actor != "" && strings.HasPrefix(actor, "agent:") && run.LeaseOwner != "" && run.LeaseOwner != actor &&
 		LeaseState(run.LeaseState) != LeaseStateReleased {
-		return "", tuskerError("WORK_SESSION_REQUIRED", "agent mutation requires a live work session owned by "+actor, withHint("run `tusker work start "+taskID+" --by "+actor+"` or use explicit human --break-glass"))
+		return "", tuskerError("WORK_SESSION_REQUIRED", "agent mutation requires a live work session owned by "+actor, withHint("run `tusker start "+taskID+" --by "+actor+"` or use explicit human --break-glass"))
 	}
 	attemptID, err := ensureFileAttemptForWorkSession(vault, taskID)
 	if err != nil {
@@ -623,5 +623,5 @@ func refuseUnrelatedFileAttempt(vault, taskID string, idx v7Index) (string, erro
 		// workspace check deferred to submit/review material verification.
 		return latest, nil
 	}
-	return "", tuskerError("WORKSPACE_MISMATCH", "handoff refused: file attempt "+latest+" is not bound to the live work session workspace", withHint("submit from the bound workspace with `tusker work submit "+taskID+"`, or cancel the stray session and reconcile with `tusker work reconcile "+taskID+" --by "+run.LeaseOwner+"`"))
+	return "", tuskerError("WORKSPACE_MISMATCH", "handoff refused: file attempt "+latest+" is not bound to the live work session workspace", withHint("submit from the bound workspace with `tusker done "+taskID+"`, or cancel the stray session and reconcile with `tusker show "+taskID+" --by "+run.LeaseOwner+"`"))
 }

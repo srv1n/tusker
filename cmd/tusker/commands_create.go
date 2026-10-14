@@ -85,7 +85,7 @@ automation:
   # Automation is opt-in. Registration keeps status projections fresh; only
   # an explicit operator change may authorize daemon dispatch.
   enabled: false
-  # Runner profiles live only in the global config (tusker runner profiles
+  # Runner profiles live only in the global config (tusker models profile --defaults
   # --write); this project selects them by name via automation.model_levels.
   dispatch_scope: armed_waves
   # After a passing review the daemon lands and closes the task

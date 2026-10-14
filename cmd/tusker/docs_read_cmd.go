@@ -53,7 +53,7 @@ type docsReadResult struct {
 func docsReadCmd(args Args) error {
 	ref := strings.TrimSpace(positionalPhrase(args))
 	if ref == "" {
-		return tuskerError(errorMissingArg, "docs read needs a subject or managed path, for example: tusker docs read orchestration")
+		return tuskerError(errorMissingArg, "docs read needs a subject or managed path, for example: tusker show orchestration")
 	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -104,7 +104,7 @@ func docsReadCmd(args Args) error {
 func docsBacklinksCmd(args Args) error {
 	ref := strings.TrimSpace(positionalPhrase(args))
 	if ref == "" {
-		return tuskerError(errorMissingArg, "docs backlinks needs a subject or managed path, for example: tusker docs backlinks overview")
+		return tuskerError(errorMissingArg, "docs backlinks needs a subject or managed path, for example: tusker show overview --backlinks")
 	}
 	limit, err := docsDiscoveryLimit(args)
 	if err != nil {
@@ -290,7 +290,7 @@ func docsDiscoveryLimit(args Args) (int, error) {
 func docsSectionError(err error) error {
 	var missing *docgraph.SectionNotFoundError
 	if errors.As(err, &missing) {
-		return tuskerError("DOC_SECTION_NOT_FOUND", missing.Error(), withHint("use `tusker docs read <subject> --json` to inspect the document headings"), withContext(map[string]any{"available_headings": missing.Available}))
+		return tuskerError("DOC_SECTION_NOT_FOUND", missing.Error(), withHint("use `tusker show <subject> --json` to inspect the document headings"), withContext(map[string]any{"available_headings": missing.Available}))
 	}
 	return err
 }
@@ -306,9 +306,9 @@ func browseParseErrorForCommand(path string, err error) error {
 func docsDiscoveryError(err error) error {
 	var pathErr *docgraph.PathError
 	if errors.As(err, &pathErr) {
-		hint := "run `tusker docs find <query>` to locate a managed document"
+		hint := "run `tusker list docs --grep <query>` to locate a managed document"
 		if pathErr.Code == "DOC_HEADER_PARSE_ERROR" || pathErr.Code == "DOC_HEADER_MISSING" || pathErr.Code == "DOC_HEADER_TYPE_INVALID" {
-			hint = "run `tusker docs check " + pathErr.Path + "` to inspect the document header"
+			hint = "run `tusker check --only docs " + pathErr.Path + "` to inspect the document header"
 		}
 		return tuskerError(pathErr.Code, pathErr.Message, withPath(pathErr.Path), withHint(hint))
 	}

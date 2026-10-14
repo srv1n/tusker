@@ -79,7 +79,7 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 	var fresh Note
 	var report v7ProofReport
 	var failures []v7VerificationExecutionFailure
-	retry := "tusker accept " + taskID
+	retry := "tusker done " + taskID
 	err := withV7ProofWriteLock(vaultPath, taskID, args, retry, func() error {
 		current, err := resolveV7Note(vaultPath, taskID, "task")
 		if err != nil {

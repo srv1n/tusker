@@ -1,7 +1,7 @@
 import { ActionRefusalError } from "@/lib/api";
 import type { TaskDetail } from "@/types/domain";
 
-/** Body for POST /api/tasks/:id/edit (`tusker task update`). Omitted keys stay unchanged; a null pin clears it. */
+/** Body for POST /api/tasks/:id/edit (`tusker edit`). Omitted keys stay unchanged; a null pin clears it. */
 export interface TaskEditBody {
   revision: string;
   title?: string;

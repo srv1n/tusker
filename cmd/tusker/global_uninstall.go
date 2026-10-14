@@ -524,7 +524,7 @@ func printGlobalUninstallOutcomes(outcomes []globalUninstallOutcome) {
 }
 
 func printGlobalProjectReminder(projects []RegisteredProject) {
-	fmt.Println("Registered projects (read-only); repo-level cleanup remains `tusker purge --repo <r>`:")
+	fmt.Println("Registered projects (read-only); repo-level cleanup remains `tusker reset --no-init --repo <r>`:")
 	if len(projects) == 0 {
 		fmt.Println("- none")
 		return
@@ -544,7 +544,7 @@ func printGlobalUninstallHelp() {
 
 Purpose:
   Show or apply machine-level Tusker cleanup. Repo source and repo-scoped
-  state are not removed; use ` + "`tusker purge --repo <r>`" + ` ` + `for that cleanup.
+  state are not removed; use ` + "`tusker reset --no-init --repo <r>`" + ` ` + `for that cleanup.
 
 Behavior:
   - default is a dry-run

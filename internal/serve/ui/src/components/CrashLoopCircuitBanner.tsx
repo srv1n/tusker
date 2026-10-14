@@ -19,7 +19,7 @@ export function CrashLoopCircuitBanner({
       <AlertTriangle size={15} aria-hidden="true" />
       <span>Daemon crash loop</span>
       <span className="min-w-0 truncate font-medium text-white/90">{detail}</span>
-      <span className="ml-auto whitespace-nowrap font-mono text-[11px]">tusker daemon resume</span>
+      <span className="ml-auto whitespace-nowrap font-mono text-[11px]">tusker daemon status --resume</span>
     </div>
   );
 }

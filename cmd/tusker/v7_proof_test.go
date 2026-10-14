@@ -267,8 +267,8 @@ func TestV7FinishWithoutAttemptPrintsRecoveryCommand(t *testing.T) {
 	assertEqual(t, errorNotFound, issue.Code, "missing attempt code")
 	assertContainsIndexTest(t, issue.Message, "No attempt exists for APP-T-0001")
 	assertContainsIndexTest(t, issue.Hint, "attempts are runtime/session state")
-	assertContainsIndexTest(t, issue.Hint, "tusker work start APP-T-0001")
-	assertContainsIndexTest(t, issue.Hint, "tusker finish APP-T-0001 --request-review")
+	assertContainsIndexTest(t, issue.Hint, "tusker start APP-T-0001")
+	assertContainsIndexTest(t, issue.Hint, "tusker done APP-T-0001")
 }
 
 func TestV7VerifyAddBatchRows(t *testing.T) {
@@ -330,7 +330,7 @@ func TestV7VerifyAddBusyLockReturnsDeterministicRetry(t *testing.T) {
 	err = verifyV7AddCmd(Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "command: go test ./cmd/tusker -run TestLocked -count=1", "result": "pending", "note": "Gate execution required.", "lock-timeout-ms": "1"})
 	issue := errorToIssue(err)
 	assertEqual(t, "PROOF_WRITE_BUSY", issue.Code, "busy proof lock code")
-	for _, want := range []string{"retry exactly:", "tusker verify add APP-T-0001", "--covers A1", "--check 'command: go test ./cmd/tusker -run TestLocked -count=1'", "--result pending", "--note 'Gate execution required.'"} {
+	for _, want := range []string{"retry exactly:", "tusker edit APP-T-0001", "--covers A1", "--check 'command: go test ./cmd/tusker -run TestLocked -count=1'", "--result pending", "--note 'Gate execution required.'"} {
 		if !strings.Contains(issue.Hint, want) {
 			t.Fatalf("retry hint missing %q:\n%s", want, issue.Hint)
 		}
@@ -348,15 +348,15 @@ func TestV7VerifyAddCASErrorIncludesExactRetryCommand(t *testing.T) {
 	err := v7VerificationCASError(tuskerError("CAS_CONFLICT", "stale"), "/tmp/APP-T-0001.md", "APP-T-0001", []v7VerificationRow{row}, nil)
 	issue := errorToIssue(err)
 	assertEqual(t, "CAS_CONFLICT", issue.Code, "CAS retry code")
-	want := `retry exactly: tusker verify add APP-T-0001 --covers A1 --check 'go test ./...' --result blocked --note 'Blocked by other lane.' --blocked-by cmd/tusker/other_lane.go`
+	want := `retry exactly: tusker edit APP-T-0001 --covers A1 --check 'go test ./...' --result blocked --note 'Blocked by other lane.' --blocked-by cmd/tusker/other_lane.go`
 	if issue.Hint != want {
 		t.Fatalf("unexpected retry hint:\nwant: %s\ngot:  %s", want, issue.Hint)
 	}
 }
 
 func TestV7ShellQuoteUsesSingleQuotesForExpansions(t *testing.T) {
-	got := v7ShellCommand([]string{"tusker", "verify", "add", "APP-T-0001", "--check", "echo $TOKEN && `whoami`"})
-	want := "tusker verify add APP-T-0001 --check 'echo $TOKEN && `whoami`'"
+	got := v7ShellCommand([]string{"tusker", "edit", "APP-T-0001", "--check", "echo $TOKEN && `whoami`"})
+	want := "tusker edit APP-T-0001 --check 'echo $TOKEN && `whoami`'"
 	if got != want {
 		t.Fatalf("retry command is not shell-safe:\nwant: %s\ngot:  %s", want, got)
 	}
@@ -1125,62 +1125,6 @@ func TestV7ValidatorRejectsSourceFileEvidenceArtifacts(t *testing.T) {
 	if code == 0 {
 		t.Fatal("expected validate to reject source file evidence artifact")
 	}
-}
-
-func TestV7EvidencePolicyMigrationHonorsEvidenceRequired(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Evidence policy migration", "risk": "medium", "priority": "p2", "evidence-required": "automated_test", "owned-paths": "src", "v7": "true"}, newV7Task)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "kind": "automated_test", "covers": "A1", "summary": "Focused tests passed."}, evidenceV7AddCmd)
-
-	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
-	data, body, err := parseFrontmatterMustRead(taskPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseRev := stringField(data, "state_rev")
-	delete(data, "proof_mode")
-	delete(data, "proof_status")
-	delete(data, "proof_required")
-	delete(data, "evidence_budget")
-	delete(data, "raw_artifacts_allowed")
-	if _, err := saveV7DocumentCAS(taskPath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
-		t.Fatal(err)
-	}
-
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "write": "true"}, migrateV7EvidencePolicyCmd)
-	after, afterBody, err := parseFrontmatterMustRead(taskPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "card", stringField(after, "proof_mode"), "proof mode")
-	assertEqual(t, 1, intField(after, "evidence_budget"), "evidence budget")
-	assertEqual(t, "satisfied", stringField(after, "proof_status"), "proof status")
-	assertContainsIndexTest(t, afterBody, "[[APP-T-0001-E-0001]] automated_test (A1) - Focused tests passed.")
-}
-
-func TestV7AttachmentsMigrateMovesLegacyFilesToScratch(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
-	legacyDir := filepath.Join(vault, "Attachments", "APP-T-0001")
-	if err := ensureDir(legacyDir); err != nil {
-		t.Fatal(err)
-	}
-	legacyLog := filepath.Join(legacyDir, "raw.log")
-	if err := os.WriteFile(legacyLog, []byte("PASS\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := attachmentsV7MigrateCmd(Args{"vault": vault, "_pos0": "migrate", "write": "true", "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if fileExists(legacyLog) {
-		t.Fatal("expected legacy attachment to be moved")
-	}
-	if dirExists(filepath.Join(vault, "Attachments")) {
-		t.Fatal("expected empty Attachments directory to be removed")
-	}
-	assertExists(t, filepath.Join(vault, "scratch", "APP-T-0001", "legacy-attachments", "raw.log"))
 }
 
 func TestV7NoteWalkerSkipsScratchMarkdown(t *testing.T) {

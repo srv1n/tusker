@@ -65,7 +65,7 @@ func TestSelfServiceDiagnosticContract(t *testing.T) {
 						Preconditions:     []string{"wave material matches the stored authorization fingerprint"},
 						RequiredAuthority: DiagnosticAuthorityHuman,
 						ExpectedEffect:    "Wave authorization is armed for the exact current material.",
-						Postcondition:     "tusker wave review W-0035 --check reports Start enabled.",
+						Postcondition:     "tusker show W-0035 --check reports Start enabled.",
 					},
 				},
 				{

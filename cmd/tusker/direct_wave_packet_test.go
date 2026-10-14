@@ -182,12 +182,12 @@ func TestDirectWavePacketExecutionEntryCommands(t *testing.T) {
 	for _, want := range []string{
 		"## Execution entry",
 		"Task and wave creation are inert",
-		"tusker task start APP-T-0001 --mode interactive --by <agent> --current-workspace --json",
-		"tusker task start APP-T-0001 --mode background --by <actor> --json",
-		"tusker wave start W-0001 --mode background --by human:<name>|operator:<name> --json",
+		"tusker start APP-T-0001 --by <agent> --current-workspace --json",
+		"tusker start APP-T-0001 --background --by <actor> --json",
+		"tusker start W-0001 --mode background --by human:<name>|operator:<name> --json",
 		"advances each dependency frontier automatically",
-		"tusker wave pause W-0001 --by human:<name>|operator:<name>",
-		"tusker wave resume W-0001 --by human:<name>|operator:<name>",
+		"tusker stop W-0001 --by human:<name>|operator:<name>",
+		"tusker start W-0001 --by human:<name>|operator:<name>",
 		"task Start inside a paused wave stays task-scoped and leaves the wave paused",
 	} {
 		if !strings.Contains(packet, want) {
@@ -205,10 +205,10 @@ func TestDirectWavePacketExecutionEntryCommands(t *testing.T) {
 		}
 	}
 	standalone := v7Packet(vault, packetTaskByID(t, idx, "APP-T-0002"), idx, "agent")
-	if strings.Contains(standalone, "tusker wave start") || strings.Contains(standalone, "## Wave context") {
+	if strings.Contains(standalone, "tusker start W-") || strings.Contains(standalone, "tusker stop W-") || strings.Contains(standalone, "## Wave context") {
 		t.Fatal("standalone packet gained wave instructions")
 	}
-	if !strings.Contains(standalone, "tusker task start APP-T-0002 --mode interactive --by <agent> --current-workspace --json") {
+	if !strings.Contains(standalone, "tusker start APP-T-0002 --by <agent> --current-workspace --json") {
 		t.Fatal("standalone packet lost its task start entry")
 	}
 }
@@ -311,8 +311,8 @@ func TestDirectWavePacketShippedDagExampleValid(t *testing.T) {
 	writeDirectTaskBody(t, vault, "APP-T-0001", "W-0001", nil, directTaskBody("APP-T-0001", "Do scoped work."))
 	packet := v7Packet(vault, packetTaskByID(t, mustIndex(t, vault), "APP-T-0001"), mustIndex(t, vault), "agent")
 	for _, want := range []string{
-		"tusker wave pause W-0001 --by human:<name>|operator:<name>",
-		"tusker wave resume W-0001 --by human:<name>|operator:<name>",
+		"tusker stop W-0001 --by human:<name>|operator:<name>",
+		"tusker start W-0001 --by human:<name>|operator:<name>",
 	} {
 		if !strings.Contains(packet, want) {
 			t.Fatalf("agent packet wave control lost the human|operator actor contract %q", want)
@@ -326,7 +326,7 @@ func TestDirectWavePacketHelpAndCapabilitiesMatchDispatch(t *testing.T) {
 	for _, c := range commands {
 		byName[c.Command] = c
 	}
-	for _, name := range []string{"new task", "task start", "task update", "wave create", "wave start", "wave pause", "wave resume", "wave review"} {
+	for _, name := range []string{"new", "edit", "start", "stop", "show"} {
 		c, ok := byName[name]
 		if !ok {
 			t.Fatalf("capabilities manifest is missing %q", name)
@@ -598,14 +598,14 @@ func testSoftwareFactoryPacketColdReaderSemanticSpecimen(t *testing.T) {
 
 func testSoftwareFactoryPacketCLIHelpDispatchCapabilityParity(t *testing.T) {
 	help := captureStdout(t, func() {
-		if !printCommandHelp("wave create") {
-			t.Fatal("wave create help is not registered")
+		if !printCommandHelp("new") {
+			t.Fatal("new help is not registered")
 		}
 	})
 	normalizedHelp := strings.Join(strings.Fields(help), " ")
 	for _, want := range []string{
-		`tusker wave create "<title>" <TASK-ID>...`,
-		`tusker wave create --file <path|-> --request-key <stable-key> [--json]`,
+		`tusker new wave "<title>" <TASK-ID>...`,
+		`tusker new wave --file <path|-> --request-key <stable-key> [--json]`,
 		`atomically authors`,
 		`changed request`,
 	} {
@@ -613,27 +613,29 @@ func testSoftwareFactoryPacketCLIHelpDispatchCapabilityParity(t *testing.T) {
 			t.Fatalf("wave create help lost exact contract %q:\n%s", want, help)
 		}
 	}
-	processHelp := strings.Join(strings.Fields(runSoftwareFactoryPacketCLI(t, "wave", "create", "--help")), " ")
-	if !strings.Contains(processHelp, `tusker wave create --file <path|-> --request-key <stable-key> [--json]`) {
+	processHelp := strings.Join(strings.Fields(runSoftwareFactoryPacketCLI(t, "new", "--help")), " ")
+	if !strings.Contains(processHelp, `tusker new wave --file <path|-> --request-key <stable-key> [--json]`) {
 		t.Fatalf("compiled wave create help lost file-input contract: %s", processHelp)
 	}
-	command, args := parseCLI([]string{"tusker", "wave", "create", "--file", "-", "--request-key", "packet-v1"})
-	if command != "wave create" || args.String("file") != "-" || args.String("request-key") != "packet-v1" {
+	command, args := parseCLI([]string{"tusker", "new", "wave", "--file", "-", "--request-key", "packet-v1"})
+	if command != "new" || args.String("_pos0") != "wave" || args.String("file") != "-" || args.String("request-key") != "packet-v1" {
 		t.Fatalf("wave create parser/dispatch drifted: command=%q args=%#v", command, args)
 	}
-	capabilityOutput := runSoftwareFactoryPacketCLI(t, "capabilities", "--json")
-	var manifest capabilitiesManifest
-	if err := json.Unmarshal([]byte(capabilityOutput), &manifest); err != nil {
-		t.Fatalf("capabilities output is not JSON: %v\n%s", err, capabilityOutput)
+	capabilityOutput := runSoftwareFactoryPacketCLI(t, "version", "--json")
+	var version struct {
+		Capabilities capabilitiesManifest `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(capabilityOutput), &version); err != nil {
+		t.Fatalf("version output is not JSON: %v\n%s", err, capabilityOutput)
 	}
 	var waveCreate capabilityCommand
-	for _, candidate := range manifest.Commands {
-		if candidate.Command == "wave create" {
+	for _, candidate := range version.Capabilities.Commands {
+		if candidate.Command == "new" {
 			waveCreate = candidate
 			break
 		}
 	}
-	if waveCreate.Command != "wave create" || !strings.Contains(waveCreate.UseWhen, "atomically") {
+	if waveCreate.Command != "new" || !strings.Contains(waveCreate.Purpose, "wave") {
 		t.Fatalf("capability manifest lost wave-create parity: %#v", waveCreate)
 	}
 }

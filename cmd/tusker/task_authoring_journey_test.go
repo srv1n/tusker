@@ -36,7 +36,7 @@ func TestTaskAuthoringJourney(t *testing.T) {
 	runGitDir(t, repo, "add", ".")
 	runGitDir(t, repo, "commit", "-m", "seed task authoring journey")
 
-	createOutput := trustJourneyCLI(t, vault, "wave", "create", "--file", requestPath, "--request-key", "journey", "--by", "agent:architect-origin", "--json")
+	createOutput := trustJourneyCLI(t, vault, "new", "wave", "--file", requestPath, "--request-key", "journey", "--by", "agent:architect-origin", "--json")
 	var envelope struct {
 		OK    bool `json:"ok"`
 		Inert bool `json:"inert"`
@@ -89,11 +89,11 @@ func TestTaskAuthoringJourney(t *testing.T) {
 	// must agree for both lanes while the task itself remains model-neutral.
 	boundedID := envelope.Wave.TaskMapping["bounded"]
 	var execute runnerRoutePreview
-	if err := json.Unmarshal([]byte(trustJourneyCLI(t, vault, "runner", "route", boundedID, "--lane", runLaneExecute, "--json")), &execute); err != nil {
+	if err := json.Unmarshal([]byte(trustJourneyCLI(t, vault, "show", boundedID, "--route", runLaneExecute, "--json")), &execute); err != nil {
 		t.Fatal(err)
 	}
 	var review runnerRoutePreview
-	if err := json.Unmarshal([]byte(trustJourneyCLI(t, vault, "runner", "route", boundedID, "--lane", runLaneReview, "--json")), &review); err != nil {
+	if err := json.Unmarshal([]byte(trustJourneyCLI(t, vault, "show", boundedID, "--route", runLaneReview, "--json")), &review); err != nil {
 		t.Fatal(err)
 	}
 	if execute.Profile != "journey-light-worker" || execute.Model != "fixture-light-worker" || len(execute.Blockers) != 0 {
@@ -118,7 +118,7 @@ func TestTaskAuthoringJourney(t *testing.T) {
 	if stringField(standalone.Data, "wave") != "" || stringField(standalone.Data, "work_level") != "light" {
 		t.Fatalf("standalone task was silently wrapped or lost classification: %#v", standalone.Data)
 	}
-	standaloneRoute := trustJourneyCLI(t, vault, "runner", "route", standaloneID, "--lane", runLaneExecute, "--json")
+	standaloneRoute := trustJourneyCLI(t, vault, "show", standaloneID, "--route", runLaneExecute, "--json")
 	var standalonePreview runnerRoutePreview
 	if err := json.Unmarshal([]byte(standaloneRoute), &standalonePreview); err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestTaskAuthoringJourney(t *testing.T) {
 	}
 	registerAutomationTestProject(t, vault)
 	if err := func() error {
-		full := []string{"tusker", "work", "start", crossID, "--by", "agent:worker", "--source", "codex"}
+		full := []string{"tusker", "start", crossID, "--by", "agent:worker", "--source", "codex"}
 		var runErr error
 		captureStdout(t, func() {
 			command, args := parseCLI(full)

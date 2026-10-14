@@ -394,7 +394,7 @@ func TestUpdateCommandRefreshesRepoSkills(t *testing.T) {
 	assertContainsIndexTest(t, agents, "Use Tusker for tracked repo work.")
 	assertContainsIndexTest(t, agents, "Task mechanics live in the installed `tusker` skill.")
 	assertContainsIndexTest(t, agents, "Project knowledge starts at `.tusker/SKILL.md`.")
-	assertContainsIndexTest(t, agents, "`tusker next`")
+	assertContainsIndexTest(t, agents, "`tusker list --next`")
 	assertContainsIndexTest(t, agents, "`tusker show <TASK-ID> --capsule`")
 	assertContainsIndexTest(t, agents, "Do not read `.tusker/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files")
 	assertContainsIndexTest(t, agents, "Keep proof compact")
@@ -752,7 +752,7 @@ func TestInitDaemonUndoUsesProjectIDStateRegistryAndCustomVaultNote(t *testing.T
 	if !strings.Contains(output, runtimeStoreDBPath(stateRoot)) {
 		t.Fatalf("init did not record state-root registry path:\n%s", output)
 	}
-	if !strings.Contains(output, "remove the generated Tusker vault manually at "+customVault) || strings.Contains(output, "tusker purge --repo . --only-tusker-state --yes") {
+	if !strings.Contains(output, "remove the generated Tusker vault manually at "+customVault) || strings.Contains(output, "tusker reset --no-init --repo . --only-tusker-state --yes") {
 		t.Fatalf("init printed inaccurate custom-vault purge undo:\n%s", output)
 	}
 }

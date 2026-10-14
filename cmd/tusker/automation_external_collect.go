@@ -75,41 +75,6 @@ type externalFetchRequest struct {
 
 var runExternalCollectFetch externalCollectFetcher = defaultExternalCollectFetch
 
-func automationCollectExternalCmd(args Args) error {
-	taskID, err := requireArg(args, "id")
-	if err != nil {
-		return err
-	}
-	ctx, err := loadAutomationCommandContext(args)
-	if err != nil {
-		return err
-	}
-	defer ctx.Close()
-	note, err := ctx.findTask(taskID)
-	if err != nil {
-		return err
-	}
-	runner := firstNonEmpty(strings.TrimSpace(args.String("runner")), "chatgpt-browser")
-	run := ctx.effectiveRunForTask(note, runner)
-	jobID := firstNonEmpty(strings.TrimSpace(args.String("job")), strings.TrimSpace(args.String("cloud-task-id")), run.CloudTaskID)
-	if jobID == "" {
-		return tuskerError(errorMissingArg, "collect-external requires --job when the task runtime has no cloud_task_id", withContext(map[string]any{"task_id": stringField(note.Data, "id")}))
-	}
-	report, err := ctx.collectExternal(note, run, runner, jobID, args)
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": len(report.Blockers) == 0 || report.NextAction != "escalate_human", "collection": report})
-		return nil
-	}
-	printExternalCollectReport(report)
-	if report.NextAction == "escalate_human" {
-		return tuskerError(errorInvalidTransition, stringField(note.Data, "id")+": external collection needs human escalation: "+strings.Join(report.Blockers, "; "), withContext(report))
-	}
-	return nil
-}
-
 func (ctx *automationCommandContext) collectExternal(note Note, run RunStatus, runner, jobID string, args Args) (externalCollectReport, error) {
 	taskID := stringField(note.Data, "id")
 	recordID := trackerRecordID(note)
@@ -825,35 +790,6 @@ func sha256Path(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func printExternalCollectReport(report externalCollectReport) {
-	fmt.Printf("%s external collection: %s\n", report.TaskID, report.NextAction)
-	fmt.Printf("  runner=%s job=%s artifacts=%s\n", report.Runner, report.JobID, report.ArtifactDir)
-	if len(report.Patches) > 0 {
-		fmt.Printf("  patches=%s\n", strings.Join(report.Patches, ", "))
-	}
-	if len(report.ReviewPackets) > 0 {
-		fmt.Printf("  review_packets=%s\n", strings.Join(report.ReviewPackets, ", "))
-	}
-	if len(report.Bundles) > 0 {
-		fmt.Printf("  bundles=%s\n", strings.Join(report.Bundles, ", "))
-	}
-	if len(report.EvidenceAdded) > 0 {
-		fmt.Printf("  evidence_added=%s\n", strings.Join(report.EvidenceAdded, ", "))
-	}
-	if len(report.EvidenceExisting) > 0 {
-		fmt.Printf("  evidence_existing=%s\n", strings.Join(report.EvidenceExisting, ", "))
-	}
-	fmt.Printf("  dispatchable=%t\n", report.Dispatchable)
-	if len(report.Blockers) == 0 {
-		fmt.Println("  blockers=none")
-		return
-	}
-	fmt.Println("  blockers:")
-	for _, blocker := range report.Blockers {
-		fmt.Println("    - " + blocker)
-	}
 }
 
 func mirrorApplyInputsIntoWorkspace(store *RuntimeStore, project RegisteredProject, run RunStatus, workspacePath string) error {

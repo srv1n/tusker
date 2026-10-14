@@ -7,7 +7,7 @@ Point contributors and agents to:
 - the PR template for evidence
 - the project repo docs for architecture or policy
 
-For Tusker lookup, start with `tusker search`, `tusker list`, and exact task
+For Tusker lookup, start with `tusker list --grep`, `tusker list`, and exact task
 paths. Do not search or read generated indexes, raw runner logs, scratch artifacts, or build logs unless the task is explicitly about evidence
 forensics.
 

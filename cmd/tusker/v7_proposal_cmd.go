@@ -64,7 +64,7 @@ func proposalV7Cmd(args Args) error {
 		args["target"] = firstNonEmpty(args.String("target"), args.String("_pos1"))
 		return proposalV7NewCmd(args)
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker proposal close <task-id> | tusker proposal status <task-id> --status review | tusker proposal accept|reject|apply <proposal-id> | tusker proposal list")
+		return tuskerError(errorMissingArg, "Usage: tusker done")
 	}
 }
 

@@ -12,9 +12,9 @@ func TestV7ProjectSkillBodyNamesDocsSystemCanon(t *testing.T) {
 	}
 	for _, want := range []string{
 		"`docs/system/` is the project canon",
-		"tusker docs new",
-		"tusker docs read",
-		"tusker docs check",
+		"tusker new doc",
+		"tusker list docs --grep",
+		"tusker check --only docs",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("project skill body missing %q", want)

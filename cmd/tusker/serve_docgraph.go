@@ -508,7 +508,7 @@ func saveDocgraphDoc(repoRoot, subject string, req serveDocgraphSaveRequest) (in
 	}
 	warnings := []string{}
 	if stale, err := docgraph.CheckDocsMapFresh(repoRoot); err == nil && len(stale) > 0 {
-		warnings = append(warnings, "docs map is stale; run tusker docs map")
+		warnings = append(warnings, "docs map is stale; run tusker check --fix")
 	}
 	return http.StatusOK, serveDocgraphSaveResponse{serveDocgraphDetail: detail, Warnings: warnings}
 }

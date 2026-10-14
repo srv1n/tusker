@@ -74,7 +74,7 @@ func TestSelfServiceProcess(t *testing.T) {
 
 	// A1: the verify planning consumer runs through the CLI parser BEFORE
 	// arming, so the authorization covers the exact planned material.
-	out, code := harness.cli(t, "verify", "add", "APP-T-0002", "--covers", "A1",
+	out, code := harness.cli(t, "edit", "APP-T-0002", "--covers", "A1",
 		"--check", "command: go test ./cmd/tusker -run '^TestSelfServiceProcess$' -count=1",
 		"--result", "pending", "--note", "Process-boundary qualification row.", "--by", "human:proc", "--vault", vault)
 	if code != 0 || !strings.Contains(out, "Added") {
@@ -82,7 +82,7 @@ func TestSelfServiceProcess(t *testing.T) {
 	}
 
 	// A1: disposable CLI Start authorizes the wave and queues the root.
-	out, code = harness.cli(t, "wave", "start", "W-0001", "--mode", "background", "--by", "human:proc", "--vault", vault)
+	out, code = harness.cli(t, "start", "W-0001", "--mode", "background", "--by", "human:proc", "--vault", vault)
 	if code != 0 {
 		t.Fatalf("helper wave start failed: code=%d output:\n%s", code, out)
 	}
@@ -98,7 +98,7 @@ func TestSelfServiceProcess(t *testing.T) {
 
 	// A1: a fresh helper process reads back the queued frontier (durable
 	// reopen across the process boundary).
-	out, code = harness.cli(t, "wave", "review", "W-0001", "--vault", vault)
+	out, code = harness.cli(t, "show", "W-0001", "--vault", vault)
 	if code != 0 {
 		t.Fatalf("helper wave review failed: code=%d output:\n%s", code, out)
 	}
@@ -108,7 +108,7 @@ func TestSelfServiceProcess(t *testing.T) {
 
 	// A1: the receiving CLI enforces the DAG — the dependent is refused
 	// with the stable dependency code, not silently queued.
-	out, code = harness.cli(t, "task", "start", "APP-T-0002", "--mode", "background", "--by", "operator:proc", "--vault", vault)
+	out, code = harness.cli(t, "start", "APP-T-0002", "--background", "--by", "operator:proc", "--vault", vault)
 	if code == 0 || !strings.Contains(out, "DEPENDENCY_WAITING") || !strings.Contains(out, "APP-T-0001") {
 		t.Fatalf("helper task start did not refuse with the dependency code: code=%d output:\n%s", code, out)
 	}
@@ -117,7 +117,7 @@ func TestSelfServiceProcess(t *testing.T) {
 	// and exits. The queued wave with no daemon poll is an actionable
 	// fault: exit 1 with the stable code, the next actor, and typed
 	// recovery guidance — never a healthy zero or a false pass.
-	out, code = harness.cli(t, "doctor", "W-0001", "--vault", vault)
+	out, code = harness.cli(t, "show", "W-0001", "--why", "--vault", vault)
 	if code != 1 {
 		t.Fatalf("doctor did not exit 1 on the actionable fault: code=%d output:\n%s", code, out)
 	}
@@ -126,7 +126,7 @@ func TestSelfServiceProcess(t *testing.T) {
 			t.Fatalf("doctor hid %q:\n%s", want, out)
 		}
 	}
-	out, code = harness.cli(t, "doctor", "W-0001", "--json", "--vault", vault)
+	out, code = harness.cli(t, "show", "W-0001", "--why", "--json", "--vault", vault)
 	if code != 1 {
 		t.Fatalf("doctor --json did not exit 1: code=%d output:\n%s", code, out)
 	}
@@ -149,15 +149,15 @@ func TestSelfServiceProcess(t *testing.T) {
 	}
 	// A normal DAG wait is exit 0, not dispatchability — and invalid
 	// invocations are exit 2, distinct from both.
-	out, code = harness.cli(t, "doctor", "APP-T-0002", "--vault", vault)
+	out, code = harness.cli(t, "show", "APP-T-0002", "--why", "--vault", vault)
 	if code != 0 || !strings.Contains(out, "APP-T-0001") {
 		t.Fatalf("doctor did not report the dependency wait as exit 0: code=%d output:\n%s", code, out)
 	}
-	out, code = harness.cli(t, "doctor", "--vault", vault)
-	if code != 2 || !strings.Contains(out, "Usage: tusker doctor") {
+	out, code = harness.cli(t, "show", "--why", "--vault", vault)
+	if code != 2 || !strings.Contains(out, "show requires an id") {
 		t.Fatalf("bare doctor did not refuse as invalid invocation: code=%d output:\n%s", code, out)
 	}
-	out, code = harness.cli(t, "doctor", "NOPE-0000", "--vault", vault)
+	out, code = harness.cli(t, "show", "NOPE-0000", "--why", "--vault", vault)
 	if code != 2 || !strings.Contains(out, "missing") {
 		t.Fatalf("doctor did not refuse the missing target: code=%d output:\n%s", code, out)
 	}
@@ -183,7 +183,7 @@ func TestSelfServiceProcess(t *testing.T) {
 	// A2: restart during the claim/accept repair window — a fresh helper
 	// reads the accepted root as completed and the dispatched dependent as
 	// queued, with no duplicate attempt.
-	out, code = harness.cli(t, "wave", "review", "W-0001", "--vault", vault)
+	out, code = harness.cli(t, "show", "W-0001", "--vault", vault)
 	if code != 0 {
 		t.Fatalf("post-acceptance helper review failed: code=%d output:\n%s", code, out)
 	}
@@ -231,13 +231,13 @@ func TestSelfServiceProcess(t *testing.T) {
 	// boundary too — planning a further check on the dispatched dependent
 	// changes its contract, so the stored authorization stops covering the
 	// material and the frontier admits nothing new until re-armed.
-	out, code = harness.cli(t, "verify", "add", "APP-T-0002", "--covers", "A1",
+	out, code = harness.cli(t, "edit", "APP-T-0002", "--covers", "A1",
 		"--check", "command: go test ./cmd/tusker -run '^TestSelfServiceProcessHelper$' -count=1",
 		"--result", "pending", "--note", "Post-arming contract edit.", "--by", "human:proc", "--vault", vault)
 	if code != 0 {
 		t.Fatalf("post-arming verify add failed: code=%d output:\n%s", code, out)
 	}
-	out, code = harness.cli(t, "wave", "review", "W-0001", "--vault", vault)
+	out, code = harness.cli(t, "show", "W-0001", "--vault", vault)
 	if code != 0 || !strings.Contains(out, "authorization stale") {
 		t.Fatalf("post-arming contract edit did not stale the wave: code=%d output:\n%s", code, out)
 	}

@@ -138,7 +138,9 @@ func updateCmdWithBinaryPreflight(args Args, preflight func(Args) error) error {
 	pointerUpdates := []repoPointerUpdate{}
 	feedbackReadme := ""
 	guidanceWarning := ""
-	if repoRoot != "" {
+	// --skills-only regenerates the repo packages and nothing else: no
+	// AGENTS.md/CLAUDE.md pointer edits and no feedback README.
+	if repoRoot != "" && !args.Bool("skills-only") {
 		var err error
 		pointerUpdates, err = upsertRepoTuskerPointers(repoRoot, "")
 		if err != nil {
@@ -799,7 +801,7 @@ func findRepoRoot(start string) (string, error) {
 
 func printUpdateHelp() {
 	fmt.Println(`Usage:
-  tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skill-mode copy|symlink] [--source <checkout>] [--json]
+  tusker install [--bin-dir <path>] [--bin] [--no-bin] [--all-user-skills] [--codex-user] [--claude-user] [--repo <path>] [--repo-only] [--skills-only] [--mode copy|symlink] [--source <checkout>] [--json]
 
 Purpose:
   Refresh selected skill installs from the currently running binary. Use --bin
@@ -817,19 +819,23 @@ Behavior:
     with compact proof/context guidance
   - --source points symlink mode at a canonical Tusker checkout or skill dir
   - with --repo-only, skips user skill installs and touches only the repo
+  - with --skills-only, regenerates only the repo .agents/.claude skill
+    packages and leaves AGENTS.md/CLAUDE.md untouched (the old skill sync)
+  - --mode (alias --skill-mode) picks copy or symlink for every destination
 
 Examples:
-  tusker update
-  tusker update --bin --bin-dir ~/.local/bin
-  tusker update --all-user-skills
-  tusker update --repo . --repo-only --no-bin
-  tusker update --repo . --repo-only --no-bin --skill-mode copy
-  tusker update --repo . --repo-only --no-bin --skill-mode symlink --source ~/src/tusker`)
+  tusker install
+  tusker install --bin --bin-dir ~/.local/bin
+  tusker install --all-user-skills
+  tusker install --repo . --repo-only
+  tusker install --repo . --repo-only --mode copy
+  tusker install --repo . --repo-only --mode symlink --source ~/src/tusker
+  tusker install --repo . --repo-only --skills-only --mode copy`)
 }
 
 func printSkillSyncHelp() {
 	fmt.Println(`Usage:
-  tusker skill sync [--repo <path>] [--mode symlink|copy] [--source <checkout>] [--json]
+  tusker install --repo-only --skills-only [--repo <path>] [--mode symlink|copy] [--source <checkout>] [--json]
 
 Purpose:
   Refresh repo-local generated skill installs for local agents. Local sync
@@ -842,9 +848,9 @@ Purpose:
   knowledge, repo instructions, secrets, unrelated skills, or plugins.
 
 Examples:
-  tusker skill sync --repo .
-  tusker skill sync --repo . --source ~/src/tusker
-  tusker skill sync --repo . --mode copy`)
+  tusker install --repo-only --skills-only --repo .
+  tusker install --repo-only --skills-only --repo . --source ~/src/tusker
+  tusker install --repo-only --skills-only --repo . --mode copy`)
 }
 
 func printSkillBundleHelp() {
@@ -863,7 +869,7 @@ Examples:
 
 func printSyncRepoContractHelp() {
 	fmt.Println(`Usage:
-  tusker sync-repo-contract --repo <path> [--vault <path>] [--force]
+  tusker init --yes --with-contract --repo <path> [--vault <path>] [--force]
 
 Purpose:
   Install or refresh repo-local agent workflow files and Tusker pointers.`)
@@ -1028,7 +1034,7 @@ func initCmd(args Args) error {
 	}
 	purgeUndo := fmt.Sprintf("remove the generated Tusker vault manually at %s", effectiveVault)
 	if sameCanonicalProjectPath(effectiveVault, filepath.Join(cwd, defaultRepoVaultDir)) {
-		purgeUndo = "tusker purge --repo . --only-tusker-state --yes"
+		purgeUndo = "tusker reset --no-init --repo . --only-tusker-state --yes"
 	}
 	recordWrite(effectiveVault, purgeUndo)
 	vaultRelative := relativeFromRepo(cwd, effectiveVault)
@@ -1074,7 +1080,11 @@ func initCmd(args Args) error {
 			}
 		}
 		if doContract {
-			report, err := syncRepoContractWithReport(Args{"repo": cwd, "vault": effectiveVault, "skip-pointers": "true"})
+			contractArgs := Args{"repo": cwd, "vault": effectiveVault, "skip-pointers": "true"}
+			if args.Bool("force") {
+				contractArgs["force"] = "true" // overwrite existing contract files
+			}
+			report, err := syncRepoContractWithReport(contractArgs)
 			if err != nil {
 				return err
 			}
@@ -1112,7 +1122,7 @@ func initCmd(args Args) error {
 		if mountName == "" {
 			mountName = defaultMountName(cwd)
 		}
-		recordWrite(filepath.Join(mountRoot, sanitizeMountName(mountName)), "tusker vault unmount --repo .")
+		recordWrite(filepath.Join(mountRoot, sanitizeMountName(mountName)), "tusker vault --unmount --repo .")
 	}
 	if registerDaemon {
 		if err := projectsAddCmd(Args{"repo": cwd, "vault": effectiveVault}); err != nil {
@@ -1147,7 +1157,7 @@ func initCmd(args Args) error {
 	fmt.Println("Machine-level state is reversed by `tusker uninstall`.")
 	fmt.Println()
 	fmt.Println("Done. Next steps:")
-	fmt.Println("  tusker validate --vault " + effectiveVault)
+	fmt.Println("  tusker check --only validate --vault " + effectiveVault)
 	fmt.Println("  tusker domain list --vault " + effectiveVault)
 	fmt.Println("  tusker publish skill --vault " + effectiveVault)
 	return nil
@@ -1189,7 +1199,7 @@ func renderTuskerPointerBlock(readmeLink string) string {
 		"",
 		"- Task mechanics live in the installed `tusker` skill.",
 		fmt.Sprintf("- Project knowledge starts at `%s`.", skillLink),
-		"- Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.",
+		"- Start runnable work with `tusker list --next`; inspect named work with `tusker show <TASK-ID> --capsule`.",
 		fmt.Sprintf("- Do not read `%s/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.", vaultRoot),
 		"- Keep proof compact: use capsules, path-scoped status/search, and command + PASS/FAIL summaries; put noisy logs in `.tusker/scratch/<TASK-ID>/`.",
 		"- Scratch is not durable: it is deleted when the task closes and swept after 14 days regardless. Promote anything worth keeping to evidence before close.",
@@ -1284,7 +1294,7 @@ func repoAgentGuidanceFlatteningWarning(repoPath, vaultArg string, updates []rep
 	if err != nil || len(audit.Findings) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("non-managed AGENTS/CLAUDE guidance exists but %s is missing; run `tusker skill audit-agent-guidance --repo %s --write` before flattening root guidance", filepath.ToSlash(filepath.Join(relativeFromRepo(repoPath, vaultPath), "SKILL.md")), repoPath)
+	return fmt.Sprintf("non-managed AGENTS/CLAUDE guidance exists but %s is missing; run `tusker check --only skills --repo %s --write` before flattening root guidance", filepath.ToSlash(filepath.Join(relativeFromRepo(repoPath, vaultPath), "SKILL.md")), repoPath)
 }
 
 func upsertTuskerPointer(filePath, readmeLink string) (string, error) {

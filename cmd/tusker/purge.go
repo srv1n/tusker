@@ -245,7 +245,7 @@ func dedupePurgeActions(actions []tuskerPurgeAction) []tuskerPurgeAction {
 
 func printPurgeHelp() {
 	fmt.Println(`Usage:
-  tusker purge --repo <path> --only-tusker-state [--yes] [--json]
+  tusker reset --no-init [--repo <path>] [--yes] [--json]
 
 Purpose:
   Show or apply a safe deletion plan for Tusker-generated repo state. The
@@ -259,6 +259,6 @@ Behavior:
   - product source files are never removed
 
 Examples:
-  tusker purge --repo . --only-tusker-state
-  tusker purge --repo . --only-tusker-state --yes`)
+  tusker reset --no-init --repo .
+  tusker reset --no-init --repo . --yes`)
 }

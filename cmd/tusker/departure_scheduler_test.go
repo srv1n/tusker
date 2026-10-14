@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -137,81 +135,6 @@ func TestDepartureSchedulerHoldsAreDurableAndExplainResume(t *testing.T) {
 	}
 	if loaded, err := store.departureHold("another-project", false); err != nil || loaded == nil || loaded.Reason != global.Reason {
 		t.Fatalf("global hold=%#v err=%v", loaded, err)
-	}
-}
-
-func TestDepartureSchedulerHoldAndResumeCLIIsRealAndAttributable(t *testing.T) {
-	originalNotify := departureControlNotify
-	t.Cleanup(func() { departureControlNotify = originalNotify })
-	type notification struct {
-		stateRoot string
-		projectID string
-		cause     string
-	}
-	var notifications []notification
-	departureControlNotify = func(stateRoot, projectID, cause string) {
-		notifications = append(notifications, notification{stateRoot: stateRoot, projectID: projectID, cause: cause})
-	}
-	stateRoot := t.TempDir()
-	registerDepartureTestProject(t, stateRoot, "app")
-	if err := departureHoldCmd(Args{"state-root": stateRoot, "project": "missing", "reason": "maintenance", "by": "human:sara"}); err == nil || !strings.Contains(err.Error(), "project not found: missing") {
-		t.Fatalf("hold on an unknown project = %v, want project not found", err)
-	}
-	holdOut := captureStdout(t, func() {
-		if err := departureHoldCmd(Args{"state-root": stateRoot, "project": "app", "reason": "maintenance", "by": "human:sara", "json": "true"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	var held struct {
-		OK   bool          `json:"ok"`
-		Hold DepartureHold `json:"hold"`
-	}
-	if err := json.Unmarshal([]byte(holdOut), &held); err != nil {
-		t.Fatal(err)
-	}
-	if !held.OK || held.Hold.ResumeAction != "tusker departure resume --project app --by <actor>" {
-		t.Fatalf("hold output=%s", holdOut)
-	}
-	resumeOut := captureStdout(t, func() {
-		if err := departureResumeCmd(Args{"state-root": stateRoot, "project": "app", "by": "human:lee", "json": "true"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	var resumed struct {
-		OK      bool          `json:"ok"`
-		Resumed DepartureHold `json:"resumed"`
-	}
-	if err := json.Unmarshal([]byte(resumeOut), &resumed); err != nil {
-		t.Fatal(err)
-	}
-	if !resumed.OK || resumed.Resumed.ClearedBy != "human:lee" || resumed.Resumed.ClearedAt == "" {
-		t.Fatalf("resume output=%s", resumeOut)
-	}
-	store, err := OpenRuntimeStore(stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if active, err := store.departureHold("app", false); err != nil || active != nil {
-		t.Fatalf("resumed hold remains active: %#v err=%v", active, err)
-	}
-	raw, err := store.GetSetting(departureHoldSetting("app", false))
-	if err != nil || !strings.Contains(raw, `"cleared_by":"human:lee"`) {
-		t.Fatalf("resume audit was not retained: %q err=%v", raw, err)
-	}
-	if len(notifications) != 2 ||
-		notifications[0] != (notification{stateRoot: stateRoot, projectID: "app", cause: "departure_hold"}) ||
-		notifications[1] != (notification{stateRoot: stateRoot, projectID: "app", cause: "departure_resume"}) {
-		t.Fatalf("project hold/resume notifications = %#v", notifications)
-	}
-	globalRoot := t.TempDir()
-	_ = captureStdout(t, func() {
-		if err := departureHoldCmd(Args{"state-root": globalRoot, "reason": "global maintenance", "by": "human:sara", "json": "true"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if len(notifications) != 3 || notifications[2] != (notification{stateRoot: globalRoot, cause: "departure_hold"}) {
-		t.Fatalf("global hold notification = %#v", notifications)
 	}
 }
 

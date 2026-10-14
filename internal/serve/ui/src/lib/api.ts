@@ -365,7 +365,7 @@ export const api = {
   continueRun: (taskId: string, message: string, projectId: string): Promise<{ ok: boolean; refused?: boolean; reason?: string }> =>
     serveOperatorActor().then((actor) => post(withProject(`/runs/${encodeURIComponent(taskId)}/continue`, projectId), { actor, message }, false)),
 
-  // POST /api/runs/:taskId/redrive — maps the Retry control to `tusker redrive`.
+  // POST /api/runs/:taskId/redrive — maps the Retry control to `tusker runs restart --requeue`.
   // The result (requeue or refusal reason) is always returned so the UI can
   // surface it; the daemon must never retire a run behind a stale badge.
   redrive: (taskId: string, projectId?: string): Promise<RedriveResult> =>
@@ -384,7 +384,7 @@ export const api = {
     return post<ActionResult>(path, { actor });
   },
 
-  // POST /api/runs/:taskId/interrupt — shares `tusker runs interrupt` and
+  // POST /api/runs/:taskId/interrupt — shares `tusker runs stop --soft` and
   // returns canonical lease/process readback rather than optimistic UI state.
   interrupt: (taskId: string, projectId?: string): Promise<InterruptResult> =>
     post(withProject(`/runs/${taskId}/interrupt`, projectId)),
@@ -489,7 +489,7 @@ export const api = {
   task: (id: string, projectId?: string): Promise<TaskDetail> => real(withProject(`/tasks/${id}`, projectId)),
   taskRoute: (id: string, body: { revision: string; workLevel?: string | null; reviewLevel?: string | null; reviewReason?: string | null; executeProfile?: string | null; reviewProfile?: string | null }, projectId?: string): Promise<ActionResult> =>
     post<ActionResult>(withProject(`/tasks/${encodeURIComponent(id)}/route`, projectId), body),
-  // POST /api/tasks/:id/edit — same semantics as `tusker task update --if-revision`.
+  // POST /api/tasks/:id/edit — same semantics as `tusker edit --if-revision`.
   editTask: (id: string, body: TaskEditBody, projectId?: string): Promise<ActionResult> =>
     post<ActionResult>(withProject(`/tasks/${encodeURIComponent(id)}/edit`, projectId), body),
   // POST /api/tasks — same semantics as `tusker new task` (+ `wave add`).

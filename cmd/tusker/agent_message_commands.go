@@ -151,18 +151,19 @@ func agentMessageCmd(command string, args Args) error {
 func printMessageHelp() {
 	fmt.Println(`Usage:
   tusker message ask     --project <id> --sender task:<id> --recipient <address> --key <stable-key> (--body <text> | --body-file <path|->) [--yield] [--json]
-  tusker message send    --project <id> --sender <address> --recipient <address> --key <stable-key> (--body <text> | --body-file <path|->) [--kind notice|instruction] [--reply-required]
+  tusker message ask     --notify --project <id> --sender <address> --recipient <address> --key <stable-key> (--body <text> | --body-file <path|->) [--kind notice|instruction] [--reply-required]
+  tusker message ask     --severity P0|P1|P2 --task <TASK-ID> [--reason system_error|security_concern|unresolvable_conflict|stuck_loop] --body <text> [--by <actor>] [--json]
   tusker message reply   --project <id> --sender <address> --reply-to <message-id> --key <stable-key> (--body <text> | --body-file <path|->) [--to <address>]
-  tusker message list    --project <id> [--recipient-kind task|execution|operator] [--recipient <id>]
-  tusker message show    --project <id> <message-id>
-  tusker message consume --project <id> <message-id>
-  tusker message apply   --project <id> <message-id>
+  tusker message mark    <message-id> --consumed|--applied --project <id>
+  tusker message mark    <ESC-ID> --applied [--by <actor>]
   tusker message inbox   --project <id> (--run <attempt-id> | --for task:<id>|execution:<id>|operator) [--format hook|text|json]
   tusker message hook print --harness claude|codex [--project <id>] [--json]
 
 Addresses: operator, task:<TASK-ID>, execution:<EXECUTION-ID>. Instead of
---recipient, --contact architect|peer:<name> --task <TASK-ID> resolves the
-task's current contact.
+--recipient (or --to), --contact architect|peer:<name> --task <TASK-ID>
+resolves the task's current contact. --notify sends a notice that needs no
+reply. --severity writes an operator escalation record (ESC-) instead of a
+mailbox message; acknowledge it with message mark <ESC-ID> --applied.
 
 A dispatched worker (TUSKER_ATTEMPT_ID set) must send as task:<its task>. With
 --yield, the worker should end its turn after asking; the answer returns by

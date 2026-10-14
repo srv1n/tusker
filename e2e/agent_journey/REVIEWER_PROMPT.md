@@ -8,7 +8,7 @@ permissions, or security configuration. Stop and return any sandbox or
 registry write refusal exactly.
 
 1. Read `.tusker/specs/fresh-agent.md`. Obtain the implementer's task ID.
-2. Run `tusker work review <TASK-ID> --by reviewer:fresh-muse --source codex`.
+2. Run `tusker review <TASK-ID> --by reviewer:fresh-muse --source codex`.
    Refuse to proceed if it names the same actor as the implementer or if its
    immutable workspace material is stale.
 3. Inspect only the returned implementation workspace and the declared owned

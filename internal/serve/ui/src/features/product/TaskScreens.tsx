@@ -109,7 +109,7 @@ function useProfileOptions(projectId: string) {
 
 const fieldClass = "w-full min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-ink";
 
-/** Edit the authored contract through `tusker task update` semantics, with CAS on the revision loaded when editing began. */
+/** Edit the authored contract through `tusker edit` semantics, with CAS on the revision loaded when editing began. */
 export function TaskContractEditor({ detail, projectId }: { detail: TaskDetail; projectId: string }) {
   const edit = useTaskEdit(detail.id, projectId);
   const profileOptions = useProfileOptions(projectId);
@@ -197,7 +197,7 @@ export function AgentCoordinationSummary({ task, run }: { task: TaskDetail; run?
   const bindings = task.contactBindings ?? [];
   const humanActions = [...(task.humanActions ?? []), ...(task.humanAction ? [task.humanAction] : [])].filter((action, index, all) => all.findIndex((candidate) => candidate.gateId === action.gateId) === index);
   const [claimCopied, setClaimCopied] = useState(false);
-  const claimCommand = `tusker work start ${task.id} --by current-conversation --current-workspace`;
+  const claimCommand = `tusker start ${task.id} --by current-conversation --current-workspace`;
   const binding = run?.identity
     ? [run.identity.workspace_mode, run.identity.workspace_path, run.identity.branch ? `branch ${run.identity.branch}` : ""].filter(Boolean).join(" · ")
     : "No attempt binding observed";

@@ -37,7 +37,7 @@ func TestGlobalUninstallDryRunListsItemsWithoutDeleting(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	for _, expected := range []string{"global uninstall dry-run", skill, config, "[exists]", "Registered projects", "tusker purge --repo <r>"} {
+	for _, expected := range []string{"global uninstall dry-run", skill, config, "[exists]", "Registered projects", "tusker reset --no-init --repo <r>"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("dry-run output missing %q:\n%s", expected, output)
 		}

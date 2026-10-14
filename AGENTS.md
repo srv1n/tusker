@@ -8,7 +8,7 @@ needed for the task; a small edit does not require a repository-wide audit.
 
 - Skill authoring: edit `skills/tusker/`, the canonical shipped package.
   `.agents/skills/tusker` and `.claude/skills/tusker` point to it.
-- Repo knowledge: use an exact governing reference, or `tusker docs find <query>`
+- Repo knowledge: use an exact governing reference, or `tusker list docs --grep <query>`
   to locate the relevant section. Current behavior lives in `docs/system/`;
   proposals and decisions live in `.tusker/specs/`.
 - Tracked work: use the Tusker skill for contracts, dependencies, proof, gates,

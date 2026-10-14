@@ -470,12 +470,12 @@ func TestArmedWaveDelivery(t *testing.T) {
 	// the reviewer to close. The fixed typed-result contract is authoritative.
 	wfFile.Data.Reviewer.Prompt = "Legacy reviewer closes with {{ reviewer.close_command }}"
 	prompt := defaultReviewerPrompt()
-	for _, forbidden := range []string{"tusker land", "tusker close", "tusker status", "rework"} {
+	for _, forbidden := range []string{"tusker land", "tusker done", "tusker status", "rework"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("reviewer prompt retained authority %q: %q", forbidden, prompt)
 		}
 	}
-	if !strings.Contains(prompt, "tusker review submit") {
+	if !strings.Contains(prompt, "tusker review") {
 		t.Fatalf("reviewer prompt lacks typed submit contract: %q", prompt)
 	}
 	for _, flag := range []string{"--task-rev", "--source-sha", "--work-rev", "--proof-fingerprint", "--gate-fingerprint"} {

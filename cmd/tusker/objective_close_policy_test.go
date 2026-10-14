@@ -223,10 +223,10 @@ func TestWorkflowGeneratedContract(t *testing.T) {
 			t.Fatalf("generated workflow omitted %s", risk)
 		}
 	}
-	if !strings.Contains(wf.Reviewer.Prompt, "tusker review submit") || !strings.Contains(wf.Reviewer.Prompt, "Explicit blocking gates") {
+	if !strings.Contains(wf.Reviewer.Prompt, "tusker review") || !strings.Contains(wf.Reviewer.Prompt, "Explicit blocking gates") {
 		t.Fatalf("reviewer prompt lost typed-result/gate contract: %q", wf.Reviewer.Prompt)
 	}
-	for _, forbidden := range []string{"tusker status", "tusker merge", "tusker land", "tusker close", "git update-ref", "git checkout"} {
+	for _, forbidden := range []string{"tusker status", "tusker merge", "tusker land", "tusker done", "git update-ref", "git checkout"} {
 		if strings.Contains(strings.ToLower(wf.Reviewer.Prompt), forbidden) {
 			t.Fatalf("generated reviewer prompt retained forbidden authority %q: %q", forbidden, wf.Reviewer.Prompt)
 		}

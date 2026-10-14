@@ -60,7 +60,7 @@ Blocked always carries one reason kind. Each kind names a fix.
    internal values on its own.
 2. The state record has these fields: `state`, `category`, `next_actor`,
    `reason_code`, `reason` (one line for a person) and `next_action`.
-   `tusker show --json`, `tusker next --json` and every Serve task response
+   `tusker show --json`, `tusker list --next --json` and every Serve task response
    return them.
 3. Leases, attempts, retry counts and runner outcomes stay internal. The run
    page shows them for debugging only.
@@ -95,7 +95,7 @@ Blocked always carries one reason kind. Each kind names a fix.
 | ID | Outcome | Proof |
 | --- | --- | --- |
 | S1 | One Go function returns the state record for every task, with table tests covering each state and each Blocked reason. | `go test ./cmd/tusker -run TestTaskState -count=1` |
-| S2 | `tusker show --json` and `tusker next --json` include the state record. | same suite |
+| S2 | `tusker show --json` and `tusker list --next --json` include the state record. | same suite |
 | S3 | Serve task, wave and inbox views show only the state label and reason from the record. No UI file maps lease, outcome or readiness values to labels. | `cd internal/serve/ui && bun test` plus a screenshot of a wave with a Needs input task |
 | S4 | A paused worker question shows the question and a reply box on the task, not a disabled Queued button. | screenshot |
 | S5 | Crash retries stop after 6 attempts and show Blocked `crashed`. | focused Go test |

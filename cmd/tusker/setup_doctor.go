@@ -56,14 +56,21 @@ func (input setupDoctorInput) repairs(scope string) bool {
 }
 
 func setupDoctorCmd(args Args, apply bool) error {
+	_, err := setupDoctorCheck(args, apply)
+	return err
+}
+
+// setupDoctorCheck is setupDoctorCmd with an exit code: 1 when unrepaired
+// error findings remain. tusker check uses it as the setup part.
+func setupDoctorCheck(args Args, apply bool) (int, error) {
 	if args.Bool("help") {
 		printSetupHelp()
-		return nil
+		return 0, nil
 	}
 	repo := firstNonEmpty(strings.TrimSpace(args.String("repo")), ".")
 	absRepo, err := filepath.Abs(repo)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	stateRoot := firstNonEmpty(strings.TrimSpace(args.String("state-root")), DefaultStateRoot())
 	var store *RuntimeStore
@@ -74,17 +81,21 @@ func setupDoctorCmd(args Args, apply bool) error {
 			store, err = OpenRuntimeStoreReadOnly(stateRoot)
 		}
 		if err != nil {
-			return err
+			return 0, err
 		}
 		defer store.Close()
 	}
 	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: absRepo, Store: store, Source: args.String("source"), WorkflowInspect: inspectRZNWorkflow}, apply && !args.Bool("dry-run"))
 	if err != nil {
-		return err
+		return 0, err
+	}
+	code := 0
+	if !report.OK {
+		code = 1
 	}
 	if args.Bool("json") {
 		emitJSON(report)
-		return nil
+		return code, nil
 	}
 	verb := "Setup doctor"
 	if !report.DryRun {
@@ -101,7 +112,7 @@ func setupDoctorCmd(args Args, apply bool) error {
 			fmt.Printf("    action: %s\n", finding.Action)
 		}
 	}
-	return nil
+	return code, nil
 }
 
 func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, error) {
@@ -195,7 +206,7 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 	if info, err := os.Lstat(localVault); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		_, resolveErr := filepath.EvalSymlinks(localVault)
 		if resolveErr != nil {
-			add(setupFinding{Code: "broken_vault_symlink", Status: "error", Path: localVault, Message: "repo-local .tusker symlink is broken", Action: "recreate the vault link with tusker vault mount", Repairable: false})
+			add(setupFinding{Code: "broken_vault_symlink", Status: "error", Path: localVault, Message: "repo-local .tusker symlink is broken", Action: "recreate the vault link with tusker vault --mount", Repairable: false})
 		}
 	}
 
@@ -679,8 +690,8 @@ func mapString(values map[string]any, key string) string {
 
 func printSetupHelp() {
 	fmt.Println(`Usage:
-  tusker setup doctor [--repo <path>] [--state-root <path>] [--source <canonical-tusker-checkout>] [--json]
-  tusker setup repair [--repo <path>] [--state-root <path>] [--source <canonical-tusker-checkout>] [--dry-run] [--json]
+  tusker check --only setup [--repo <path>] [--state-root <path>] [--source <canonical-tusker-checkout>] [--json]
+  tusker check --only setup --fix [--repo <path>] [--state-root <path>] [--source <canonical-tusker-checkout>] [--dry-run] [--json]
 
 Purpose:
   Diagnose onboarding drift across registered vault roots, WORKFLOW.md paths,

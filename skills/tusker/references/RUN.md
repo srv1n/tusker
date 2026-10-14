@@ -12,10 +12,10 @@ owned paths before editing.
 Never hard-code a model or silently replace a failed transport. Inspect with:
 
 ```sh
-tusker work readiness <TASK-ID> --lane execute --json
-tusker runs inspect <TASK-ID> --json
-tusker runs logs <TASK-ID> --lines 50
-tusker closeout status <TASK-ID> --json
+tusker show <TASK-ID> --why --json
+tusker show <TASK-ID> --run --json
+tusker show <TASK-ID> --logs --lines 50
+tusker show <TASK-ID> --closeout --json
 ```
 
 Runtime activity is separate from durable task status. A heartbeat and lease
@@ -32,15 +32,16 @@ canonical contract. A contact address alone does not prove message delivery.
 ## Verify the outcome
 
 Choose checks that exercise the acceptance outcomes and relevant failure paths.
-Prefer existing tests; `tusker verify recipe <TASK-ID> --files <CHANGED-PATHS>`
-can help when the right check is unclear. Run local disposable checks within
+Prefer existing tests; `tusker show <TASK-ID> --proof` lists acceptance
+without proof. Run local disposable checks within
 the authorized scope, fix failures introduced by the change, and rerun affected
-checks without a new approval at each step. For checks touching shared state
+checks without a new approval at each step. Record finished work with
+`tusker done <TASK-ID> --by <you>`; Tusker reruns the command proof itself. For checks touching shared state
 or external services, establish prerequisites, permitted mutations, and cleanup
 first; the task does not grant missing access or spending authority.
 
 Preserve the command, result, first failure, and artifact path. Register command
-checks as pending with `tusker verify add`; the verification executor records
+checks as pending with `tusker edit`; the verification executor records
 PASS or FAIL through the supported lifecycle. A skip, zero-match test, source
 read, or old log is not a pass. Finish when acceptance is covered or name the
 specific blocker and unverified outcomes.
@@ -70,7 +71,8 @@ worker's summary. For critical acceptance, identify a plausible wrong
 implementation the check rejects. Admission, receiver execution, product
 output, recovery, quality and performance are distinct claims. Record a
 blocking acceptance gap when the observed boundary falls short; advisory
-cleanup is separate. Use the injected typed review submission and identities.
+cleanup is separate. Claim with `tusker review <TASK-ID>`; record the verdict with
+`tusker review <TASK-ID> --verdict ...` using the injected identities.
 
 Repair against durable finding IDs and verify each closure on the repaired
 material, including affected neighboring behavior. Use an inexpensive

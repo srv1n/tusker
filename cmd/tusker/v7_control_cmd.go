@@ -53,7 +53,7 @@ func gateV7Cmd(args Args) error {
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
 		return gateV7Transition(args, "obsolete")
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker gate list|satisfy|waive|obsolete ...")
+		return tuskerError(errorMissingArg, "Usage: tusker list gates|satisfy|waive|obsolete ...")
 	}
 }
 
@@ -324,10 +324,10 @@ func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor, daemonLi
 	}
 	directDone := nextStatus == "done"
 	if directDone && tuskerTier(vaultPath) >= 2 {
-		return tuskerError(errorInvalidTransition, "status cannot set done directly; use tusker close so close policy, gates, evidence, and acceptance metadata are enforced")
+		return tuskerError(errorInvalidTransition, "status cannot set done directly; use tusker done so close policy, gates, evidence, and acceptance metadata are enforced")
 	}
 	if nextStatus == "cancelled" {
-		return tuskerError(errorInvalidTransition, "status cannot set cancelled directly; use tusker discard so dependencies, gates, runtime rows, and discard history are handled together")
+		return tuskerError(errorInvalidTransition, "status cannot set cancelled directly; use tusker stop <ID> --cancel so dependencies, gates, runtime rows, and discard history are handled together")
 	}
 	if canonicalStatusRetiresRuntimeRows(defaultWorkflow(), nextStatus) {
 		if err := preflightCanonicalRuntimeRetirement(vaultPath, id); err != nil {
@@ -465,7 +465,7 @@ func closeV7Cmd(args Args) error {
 	return nil
 }
 
-// closeV7Task is the close ceremony shared by `tusker close` and the daemon's
+// closeV7Task is the close ceremony shared by `tusker done` and the daemon's
 // review pass handler. The pass handler has already run the task's
 // Verification commands in the task worktree, so it skips re-running them in
 // the canonical checkout, which does not hold the change yet.

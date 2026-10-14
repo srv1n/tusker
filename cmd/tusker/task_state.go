@@ -120,11 +120,11 @@ func deriveTaskState(f taskStateFacts) taskState {
 	}
 	switch strings.ToLower(f.WaveAuth) {
 	case "paused":
-		return newTaskState("blocked", "paused", "wave paused", "tusker wave resume "+f.WaveID)
+		return newTaskState("blocked", "paused", "wave paused", "tusker start "+f.WaveID)
 	case "armed", "authorized":
 	default:
 		if f.WaveID != "" {
-			return newTaskState("backlog", "not_armed", "not armed", "tusker wave start "+f.WaveID)
+			return newTaskState("backlog", "not_armed", "not armed", "tusker start "+f.WaveID)
 		}
 	}
 	armedReady := f.WaveID != "" && (readiness == "ready" || strings.HasPrefix(readiness, "blocked_by_dep"))
@@ -135,7 +135,7 @@ func deriveTaskState(f taskStateFacts) taskState {
 		return newTaskState("planned", "waiting_on", f.WaitingOn, "")
 	}
 	if f.AutomationOff {
-		state := newTaskState("planned", "automation_off", "background work is off", "tusker projects enable")
+		state := newTaskState("planned", "automation_off", "background work is off", "tusker projects set --on")
 		state.NextActor = "you"
 		return state
 	}
@@ -254,7 +254,7 @@ func serveTaskStateFor(snap serveSnapshot, task Note) taskState {
 		}
 		mapped := map[string]string{"ready": "planned", "running": "working", "review": "in_review", "parked": "needs_input", "stalled": "blocked", "failed": "blocked", "done": "done", "discarded": "canceled"}[state]
 		if mapped != "" {
-			result := newTaskState(mapped, "coordinator_batch", stringField(task.Data, "batch_blocker"), "tusker batch status "+stringField(task.Data, "batch_id"))
+			result := newTaskState(mapped, "coordinator_batch", stringField(task.Data, "batch_blocker"), "tusker show "+stringField(task.Data, "batch_id"))
 			result.NextActor = "coordinator"
 			if state == "running" {
 				result.NextActor = "worker"

@@ -117,7 +117,7 @@ func demoSampleReadme() string {
 		"\n" +
 		"Fictional product knowledge lives in " + bt + ".tusker/specs/fixture-cafe/" + bt + " and validates with:\n" +
 		"\n" +
-		"    tusker docs check --vault <dir>/.tusker --json\n"
+		"    tusker check --only docs --vault <dir>/.tusker --json\n"
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ func demoSampleReadme() string {
 // the demo-parallel-waves governing spec, uses only [[subject]] backlinks
 // that resolve inside the corpus, and keeps invalid metadata and broken
 // links out of the default seed (those live only in explicit negative-test
-// variants). The result must pass `tusker docs check` in the seeded repo.
+// variants). The result must pass `tusker check --only docs` in the seeded repo.
 func demoKnowledgeDocs() map[string]string {
 	return map[string]string{
 		".tusker/specs/fixture-cafe/overview.md":             demoDocOverview(),
@@ -507,7 +507,7 @@ func demoRegisterRuntimeProject(repoRoot string, exec *demoExec, vaultPath, scop
 	if _, err := scoped.run(repoRoot, "projects", "add", "--repo", repoRoot, "--vault", vaultPath); err != nil {
 		return "", err
 	}
-	listed, err := scoped.run(repoRoot, "projects", "list", "--vault", vaultPath)
+	listed, err := scoped.run(repoRoot, "list", "projects", "--vault", vaultPath)
 	if err != nil {
 		return "", err
 	}
@@ -523,7 +523,7 @@ func demoRegisterRuntimeProject(repoRoot string, exec *demoExec, vaultPath, scop
 // stay retryable and must not fail when scopes differ between seed and reset.
 func demoRemoveRuntimeProject(repoRoot string, exec *demoExec, vaultPath, scope string, strip bool, projectID string) error {
 	scoped := demoExecForScope(exec, scope, strip)
-	listed, err := scoped.run(repoRoot, "projects", "list", "--vault", vaultPath)
+	listed, err := scoped.run(repoRoot, "list", "projects", "--vault", vaultPath)
 	if err != nil {
 		return err
 	}
@@ -628,7 +628,7 @@ func demoLoadCatalog(exec *demoExec, repoRoot, vaultPath string) ([]demoCatalogH
 // demoResolveTaskRoute returns the effective execute-lane routing for one
 // task through the same route preview the UI explains with.
 func demoResolveTaskRoute(exec *demoExec, repoRoot, vaultPath, taskID string) (demoRealTaskProfile, []string, error) {
-	envelope, err := exec.run(repoRoot, "runner", "route", taskID, "--lane", "execute", "--vault", vaultPath)
+	envelope, err := exec.run(repoRoot, "show", taskID, "--route", "execute", "--vault", vaultPath)
 	if err != nil {
 		return demoRealTaskProfile{}, nil, err
 	}
@@ -736,7 +736,7 @@ func demoRunReal(ctx context.Context, args Args, repoRoot string, manifest *demo
 	// Reconcile projections before authorization. Execute Wave and the resident
 	// daemon own frontier release; forcing every selected dependency to ready
 	// would bypass (and is correctly refused by) the lifecycle boundary.
-	if _, err := exec.run(repoRoot, "reconcile", "--vault", vaultPath); err != nil {
+	if _, err := exec.run(repoRoot, "check", "--fix", "--only", "validate", "--vault", vaultPath); err != nil {
 		return nil, 0, err
 	}
 	for _, name := range waves {
@@ -1001,7 +1001,7 @@ type demoRuntimeAttempt struct {
 
 func demoRuntimeAttempts(exec *demoExec, repoRoot, projectID, taskID string) []demoRuntimeAttempt {
 	var out []demoRuntimeAttempt
-	args := []string{"runs", "inspect", taskID}
+	args := []string{"show", taskID, "--run"}
 	if strings.TrimSpace(projectID) != "" {
 		args = append(args, "--project", projectID)
 	}
@@ -1042,7 +1042,7 @@ func demoRealInstructions(manifest *demoManifest, selected []string, profiles ma
 	for _, key := range selected {
 		rec := manifest.Tasks[key]
 		profile := profiles[key]
-		lines = append(lines, fmt.Sprintf("task %s (%s): profile %q harness %q model %q; work in %s, run `python3 sample/tools/wait_progress.py` for visible progress, then `tusker work start/submit` and review/close through the ordinary CLI",
+		lines = append(lines, fmt.Sprintf("task %s (%s): profile %q harness %q model %q; work in %s, run `python3 sample/tools/wait_progress.py` for visible progress, then `tusker start` and `tusker done` through the ordinary CLI",
 			key, rec.TaskID, profile.Profile, profile.Harness, profile.Model, demoTaskDir(rec.Artifact)))
 	}
 	return lines

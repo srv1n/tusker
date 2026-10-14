@@ -10,25 +10,25 @@ that exact refusal.
 
 1. Read `.tusker/specs/fresh-agent.md` and `wave-authoring.yaml`.
 2. The release operator has already initialized the vault and authored the
-   pinned wave through `tusker wave create --file wave-authoring.yaml`. Read
-   its review (`tusker wave review <WAVE-ID>`) and use the exact task ID it
+   pinned wave through `tusker new wave --file wave-authoring.yaml`. Read
+   its review (`tusker show <WAVE-ID>`) and use the exact task ID it
    reports. Register this temporary project with `tusker projects add --repo .
    --vault ./.tusker` only if it is not already registered; do not enable
    automation.
 3. Report the authored task graph and the exact task ID for `greeting`. Ensure
    the task declares `owned/greeting.txt`; do not edit the sibling task. Make
-   the ordinary direct task ready with `tusker status <TASK-ID> ready --by
+   the ordinary direct task ready with `tusker edit <TASK-ID> --status ready --by
    agent:fresh-muse --reason "Ready for direct interactive work"`. This does
    not start the wave or authorize a daemon.
-4. Start the greeting through `tusker work start <TASK-ID> --by
+4. Start the greeting through `tusker start <TASK-ID> --by
    agent:fresh-muse --source codex`. Record its JSON packet. Deliberately fail
-   that first session with `tusker work fail <TASK-ID> --by agent:fresh-muse
+   that first session with `tusker stop <TASK-ID> --failed --by agent:fresh-muse
    --reason "fixture interruption"` before writing any implementation.
 5. Recover only by starting a fresh work session for the same task. In the
    returned workspace write `owned/greeting.txt` with exactly `hello from a
    fresh agent` and a newline. This fixture uses its checked-out shared
    workspace; keep the scoped material there and do not create a branch or
-   commit just for this exercise. Submit with `tusker work submit` and the task ID, owner, concise
+   commit just for this exercise. Submit with `tusker done` and the task ID, owner, concise
    deliverable, verification, and `A1=pass` gate verdict.
 6. Return the task ID, recovered submit packet/output, workspace path, current
    Git head, and a concise account of the failed and recovered attempts. Stop

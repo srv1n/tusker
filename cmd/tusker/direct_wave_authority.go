@@ -167,7 +167,7 @@ func directWaveTaskContract(task Note) string {
 func directWaveTaskContractStaleReason(task Note) string {
 	id := stringField(task.Data, "id")
 	if stored := strings.TrimSpace(stringField(task.Data, "contract_fingerprint")); stored != "" && stored != directWaveTaskContractFingerprint(task.Data, task.Body) {
-		return "task " + id + " contract drifted from its stored contract_fingerprint; rebind with `tusker task update` or restore the authored bytes"
+		return "task " + id + " contract drifted from its stored contract_fingerprint; rebind with `tusker edit` or restore the authored bytes"
 	}
 	if !v7StateRevMatches(task.Data, task.Body, stringField(task.Data, "state_rev")) {
 		return "task " + id + " state_rev does not match current bytes; reconcile the record before dispatch"
@@ -663,7 +663,7 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		}
 		taskStale := directWaveTaskContractStaleReason(task)
 		if taskStale != "" {
-			review.Blockers = append(review.Blockers, directStartBlocker{Code: "CONTRACT_FINGERPRINT_STALE", TaskID: id, Reason: taskStale, Action: "rebind the task contract fingerprint with tusker task update"})
+			review.Blockers = append(review.Blockers, directStartBlocker{Code: "CONTRACT_FINGERPRINT_STALE", TaskID: id, Reason: taskStale, Action: "rebind the task contract fingerprint with tusker edit"})
 		}
 		if reason := directWaveDependencyContractBlocker(task, idx); reason != "" {
 			review.Blockers = append(review.Blockers, directStartBlocker{Code: "DEPENDENCY_CONTRACT_INVALID", TaskID: id, Reason: reason, Action: "rebind the dependency contract for " + id})
@@ -1076,7 +1076,7 @@ func directWaveExternalDependencyFact(idx v7Index, depID string, producer Note) 
 // directWaveMemberRecoveryFor names the one supported recovery action for a
 // failed or proof-blocked member and mirrors the same eligibility the recovery
 // endpoints enforce, so a projected enabled action actually admits. Actions
-// map to existing operator surfaces: retry_task is `tusker redrive` (or the
+// map to existing operator surfaces: retry_task is `tusker runs restart --requeue` (or the
 // serve redrive endpoint), rerun_checks is verification recovery, and
 // retry_review is the review-lane recovery queue.
 func directWaveMemberRecoveryFor(task Note, wave Note, run RunStatus, hasRun bool, workspaceErr error, member directWaveReviewMember, maxAttempts int) *directWaveMemberRecovery {
@@ -1172,7 +1172,7 @@ func waveReviewCmd(args Args) error {
 	}
 	waveID := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if waveID == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker wave review <WAVE-ID> [--check] [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker show <WAVE-ID> [--check] [--json]")
 	}
 	store, runtimeErr := directWaveReviewRuntimeStore()
 	if store != nil {
@@ -1252,7 +1252,7 @@ func waveStartCmd(args Args) error {
 	}
 	waveID := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if waveID == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker wave start <WAVE-ID> --by human:<name>|operator:<name>|agent:<name> [--mode background] [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker start <WAVE-ID> --by human:<name>|operator:<name>|agent:<name> [--mode background] [--json]")
 	}
 	store, err := OpenRuntimeStore(DefaultStateRoot())
 	if err != nil {
@@ -1274,7 +1274,7 @@ func waveStartCmd(args Args) error {
 func directRunCmd(args Args) error {
 	target := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if target == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker run <TASK-ID|WAVE-ID> [--by human:<name>|operator:<name>] [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker start <TASK-ID|WAVE-ID> --background [--by human:<name>|operator:<name>] [--json]")
 	}
 	vault, err := resolveVaultPath(args, false)
 	if err != nil {
@@ -1296,7 +1296,7 @@ func directRunCmd(args Args) error {
 	case "wave":
 		return waveStartCmd(forward)
 	default:
-		return tuskerError(errorInvalidArg, "tusker run accepts a task or wave")
+		return tuskerError(errorInvalidArg, "tusker start --background accepts a task or wave")
 	}
 }
 
@@ -1336,7 +1336,7 @@ func directWaveArmContractError(blockers []directStartBlocker) error {
 	if len(contracts) == 0 {
 		return nil
 	}
-	return tuskerError(errorInvalidTransition, "wave start refused: member contracts are not dispatchable: "+strings.Join(contracts, "; "), withHint("repair the listed task contracts, run tusker validate, then start the wave again"))
+	return tuskerError(errorInvalidTransition, "wave start refused: member contracts are not dispatchable: "+strings.Join(contracts, "; "), withHint("repair the listed task contracts, run tusker check --only validate, then start the wave again"))
 }
 
 func directWaveArmContractBlockers(vault string, idx v7Index, wave Note) []directStartBlocker {
@@ -1569,7 +1569,7 @@ func taskStartCmd(args Args) error {
 		}
 		taskID := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 		if taskID == "" {
-			return tuskerError(errorMissingArg, "Usage: tusker task start <TASK-ID> --mode interactive|background --by <actor> [--current-workspace] [--json]")
+			return tuskerError(errorMissingArg, "Usage: tusker start <TASK-ID>|background --by <actor> [--current-workspace] [--json]")
 		}
 		store, err := OpenRuntimeStore(DefaultStateRoot())
 		if err != nil {

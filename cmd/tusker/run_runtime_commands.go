@@ -966,7 +966,7 @@ func runsReleaseCmd(args Args) error {
 				return actorErr
 			}
 			if runProcessGroupAlive(*run) {
-				return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
+				return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs stop before --soft release", withContext(map[string]any{"pid": run.ProcessPID}))
 			}
 			// LastError is the durable, structured operator audit field shared by
 			// runs and their terminal attempt projection. Keep the actor adjacent
@@ -978,7 +978,7 @@ func runsReleaseCmd(args Args) error {
 			return emitRunsReleaseResult(args, run, actor)
 		}
 		if strings.TrimSpace(firstNonEmpty(args.String("by"), args.String("owner"), args.String("actor"))) == "" {
-			return tuskerError(errorMissingArg, "interactive work release requires --by <owner> and --revision <work-revision>", withHint("use `tusker work release "+run.ItemID+" --by "+run.LeaseOwner+" --revision "+fmt.Sprint(run.WorkRevision)+" --reason <text>`"))
+			return tuskerError(errorMissingArg, "interactive work release requires --by <owner> and --revision <work-revision>", withHint("use `tusker stop "+run.ItemID+" --by "+run.LeaseOwner+" --revision "+fmt.Sprint(run.WorkRevision)+" --reason <text>`"))
 		}
 		if strings.TrimSpace(args.String("revision")) == "" {
 			return tuskerError(errorMissingArg, "interactive work release requires --revision <work-revision>")
@@ -988,7 +988,7 @@ func runsReleaseCmd(args Args) error {
 		return workSessionLifecycleCmd(args, "release")
 	}
 	if runProcessGroupAlive(*run) {
-		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt before release", withContext(map[string]any{"pid": run.ProcessPID}))
+		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs stop before --soft release", withContext(map[string]any{"pid": run.ProcessPID}))
 	}
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "released dead run by operator")
 	if err := finishRuntimeRun(store, run, LeaseStateReleased, AttemptOutcomeAbandoned, 0, reason, false); err != nil {
@@ -1033,7 +1033,7 @@ func runsRetireCmd(args Args) error {
 	}
 	now := time.Now().UTC()
 	if !args.Bool("force") && runHasFreshLiveHeartbeat(*run, now) {
-		return tuskerError(errorInvalidTransition, "run has a fresh heartbeat and verified-live pid; use tusker runs interrupt before retire, or pass --force for an explicit operator retirement", withContext(map[string]any{"pid": run.ProcessPID, "last_heartbeat_at": run.LastHeartbeatAt}))
+		return tuskerError(errorInvalidTransition, "run has a fresh heartbeat and verified-live pid; use `tusker runs stop <task> --soft` first, or pass --force for an explicit operator retirement", withContext(map[string]any{"pid": run.ProcessPID, "last_heartbeat_at": run.LastHeartbeatAt}))
 	}
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	previousLease := run.LeaseState
@@ -1175,7 +1175,7 @@ func redriveCmd(args Args) error {
 	actor := firstNonEmpty(strings.TrimSpace(args.String("by")), strings.TrimSpace(args.String("actor")), defaultActorName())
 	reason := firstNonEmpty(strings.TrimSpace(args.String("reason")), "operator redrive")
 	if classifyRunLiveness(*run) == runLivenessAlive {
-		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
+		return tuskerError(errorInvalidTransition, "run process is still running; use tusker runs stop "+firstNonEmpty(run.ItemID, run.RecordID)+" --soft before redrive")
 	}
 	// Route through the idempotent retry primitive so a second redrive of a
 	// queued run reports honestly instead of double-dispatching. The retry primitive
@@ -1237,7 +1237,7 @@ func redriveRuntimeRunWithHook(store *RuntimeStore, run *RunStatus, actor, reaso
 	reason = firstNonEmpty(strings.TrimSpace(reason), "operator redrive")
 	expected := *run
 	if classifyRunLiveness(expected) == runLivenessAlive {
-		return BudgetRedriveRecord{}, tuskerError(errorInvalidTransition, "run process is still running; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
+		return BudgetRedriveRecord{}, tuskerError(errorInvalidTransition, "run process is still running; use tusker runs stop "+firstNonEmpty(run.ItemID, run.RecordID)+" --soft before redrive")
 	}
 	if expected.Terminal && (LeaseState(expected.LeaseState) == LeaseStateClaimed || LeaseState(expected.LeaseState) == LeaseStateRunning) {
 		attempts, err := store.ListAttemptsForRun(expected.ProjectID, expected.RecordID)
@@ -1246,7 +1246,7 @@ func redriveRuntimeRunWithHook(store *RuntimeStore, run *RunStatus, actor, reaso
 		}
 		for _, attempt := range attempts {
 			if attempt.Outcome == "" || attempt.Outcome == string(AttemptOutcomeNone) {
-				return BudgetRedriveRecord{}, tuskerError(errorInvalidTransition, "run has a non-terminal attempt; use tusker runs interrupt "+firstNonEmpty(run.ItemID, run.RecordID)+" before redrive")
+				return BudgetRedriveRecord{}, tuskerError(errorInvalidTransition, "run has a non-terminal attempt; use tusker runs stop "+firstNonEmpty(run.ItemID, run.RecordID)+" --soft before redrive")
 			}
 		}
 	}

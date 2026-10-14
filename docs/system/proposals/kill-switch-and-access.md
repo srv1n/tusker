@@ -26,8 +26,8 @@ Automation has three levels. Each one can be off.
 | Level | Command | Off means |
 | --- | --- | --- |
 | Global | `tusker automation off` / `on` | Nothing dispatches in any project. |
-| Project | `tusker projects disable` / `enable` | Nothing dispatches in that project. |
-| Wave | `tusker wave pause` / `resume` | Nothing dispatches in that wave. |
+| Project | `tusker projects set --off` / `enable` | Nothing dispatches in that project. |
+| Wave | `tusker stop` / `resume` | Nothing dispatches in that wave. |
 
 Rules:
 

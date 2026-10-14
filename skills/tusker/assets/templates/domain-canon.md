@@ -59,5 +59,5 @@ Current model goes here.
 ## Recent changes
 
 <!-- tusker:backrefs:begin -->
-_Run `tusker reindex` to refresh recent task proof._
+_Run `tusker check --fix` to refresh recent task proof._
 <!-- tusker:backrefs:end -->

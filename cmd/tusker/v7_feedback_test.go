@@ -112,7 +112,7 @@ func TestFeedbackAddRejectsRecentDuplicateDedupeKeyUnlessAllowed(t *testing.T) {
 		"- friction: Agents spend time sorting output they cannot act on.",
 		"- product-idea: Scope validation feedback to owned changes.",
 		"- impact: Reduces wasted handoff time.",
-		"- related: tusker validate",
+		"- related: tusker check --only validate",
 		"- dedupe-key: validation-owned-scope",
 		"",
 	}, "\n")); err != nil {
@@ -127,7 +127,7 @@ func TestFeedbackAddRejectsRecentDuplicateDedupeKeyUnlessAllowed(t *testing.T) {
 		"friction":      "The CLI still surfaces unrelated workspace churn as actionable.",
 		"product-idea":  "Keep validation feedback grouped by stable dedupe key.",
 		"impact":        "Repeated reports collapse into one useful product signal.",
-		"related":       "tusker validate",
+		"related":       "tusker check --only validate",
 		"dedupe-key":    "Validation-Owned-Scope",
 		"priority-hint": "P2",
 		"quiet":         "true",
@@ -167,11 +167,11 @@ func TestFeedbackDigestGroupsAndFlagsNotes(t *testing.T) {
 	if err := writeText(filepath.Join(alpha, "tusker", "feedback", "agents", "2026-05-21-codex-validation-noise.md"), strings.Join([]string{
 		"# Validation Feedback",
 		"",
-		"- Context: `tusker validate` was run after a focused change.",
+		"- Context: `tusker check --only validate` was run after a focused change.",
 		"- Friction: unrelated shared-workspace edits made validation noisy and blocked handoff.",
 		"- Product idea: digest scoped feedback by command so repeated validation pain is visible.",
 		"- Impact: blocked agents waste turns debugging work they do not own.",
-		"- Related task or command: tusker validate",
+		"- Related task or command: tusker check --only validate",
 		"",
 	}, "\n")); err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestFeedbackDigestGroupsAndFlagsNotes(t *testing.T) {
 			"## By Priority Hint",
 			"P1",
 			"## By Affected Command",
-			"`tusker validate`",
+			"`tusker check`",
 			"## Malformed Or Over Budget",
 			"FEEDBACK_MISSING_FIELD",
 			"FEEDBACK_PROGRESS_REPORT",
@@ -339,23 +339,4 @@ func feedbackIssuesContainCode(issues []Issue, code string) bool {
 		}
 	}
 	return false
-}
-
-func writeFeedbackNoteForIngestTest(t *testing.T, repo, basename, dedupeKey, friction string) {
-	t.Helper()
-	if err := writeText(filepath.Join(repo, "tusker", "feedback", "agents", basename), strings.Join([]string{
-		"# Agent Feedback",
-		"",
-		"- context: Agents finished a Tusker turn with reusable product feedback.",
-		"- friction: " + friction,
-		"- product-idea: Add structured feedback intake and review.",
-		"- impact: Feedback can be promoted without markdown-only digests.",
-		"- related: tusker feedback ingest",
-		"- affected-command: tusker feedback ingest",
-		"- priority-hint: P1",
-		"- dedupe-key: " + dedupeKey,
-		"",
-	}, "\n")); err != nil {
-		t.Fatal(err)
-	}
 }

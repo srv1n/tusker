@@ -17,7 +17,7 @@ task lifecycle, proof, gates, and CLI procedures.
 
 ## Find the relevant canon
 
-For tracked implementation, read `tusker packet <TASK-ID> --for agent` and its
+For tracked implementation, read `tusker show <TASK-ID> --packet agent` and its
 governing sections; retain the complete acceptance and ownership contract.
 An exact document reference can be read directly. Otherwise choose the
 narrowest domain below: its `INDEX.md` locates the owning `CANON.md` section
@@ -58,5 +58,5 @@ and lifecycle decisions stay with the tracker; product decisions move to
 
 ## Validation
 
-- `tusker skill doctor --strict --json` checks project skill routes and package hygiene.
-- `tusker validate --json` checks the domain layout and task-domain coverage.
+- `tusker check --only skills --strict --json` checks project skill routes and package hygiene.
+- `tusker check --only validate --json` checks the domain layout and task-domain coverage.

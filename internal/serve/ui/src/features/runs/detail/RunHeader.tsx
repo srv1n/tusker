@@ -114,7 +114,7 @@ export function RunHeader({
             disabled={redriveDisabled}
             title={
               disabledReason ??
-              "Redrive: reset the attempt window and requeue (tusker redrive)"
+              "Redrive: reset the attempt window and requeue (tusker runs restart --requeue)"
             }
           >
             {retry.pending ? "Redriving…" : "Redrive"}

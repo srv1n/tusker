@@ -31,18 +31,18 @@ Registration does not enable automation. An operator must enable the project.
 2. Create one task for one bounded result.
 3. Make the contract ready.
 4. Change the repository.
-5. Record each check with `tusker verify add`.
+5. Record each check with `tusker edit <TASK-ID> --verify`.
 6. Send the task to review.
 7. Close the task only after the close checks pass.
 
-Use `tusker next` to find runnable work. Use
+Use `tusker list --next` to find runnable work. Use
 `tusker show <TASK-ID> --capsule` to read one task.
 
 ## Current authority
 
 | Subject | Authority |
 | --- | --- |
-| Commands and flags | `cmd/tusker/cli.go` and `tusker capabilities --json` |
+| Commands and flags | `cmd/tusker/cli.go` and `tusker version --json` |
 | Record fields and states | `internal/v7schema/schema.go` |
 | Proof and close policy | `internal/v7policy/` and `cmd/tusker/v7_closeout_cmd.go` |
 | Repository tracker state | `.tusker/` |
@@ -69,7 +69,7 @@ only. Prefer ordinary relative Markdown links; a subject is the stable
 identity across moves.
 
 Use short sentences. Use active voice. Use one term for one idea. Keep paths,
-states, and commands exact. Run `tusker docs map` after a system page changes.
+states, and commands exact. Run `tusker check --fix` after a system page changes.
 
 ## Build and test
 
@@ -110,17 +110,17 @@ Run `make mac-uninstall` to remove the installed app.
 Preview the repository cleanup:
 
 ```sh
-tusker purge --repo . --only-tusker-state
+tusker reset --no-init --repo . --only-tusker-state
 ```
 
 Apply it only after the plan names this repository:
 
 ```sh
-tusker purge --repo . --only-tusker-state --yes
+tusker reset --no-init --repo . --only-tusker-state --yes
 tusker init --vault ./.tusker --yes --fresh --with-pointers --with-contract --no-mount
 ```
 
 This cleanup removes repository tracker state. It does not remove source code.
 It also does not clear all project-keyed rows from the shared runtime database.
-Inspect `tusker projects list --json` and the runtime store before and after a
+Inspect `tusker list projects --json` and the runtime store before and after a
 full project reset.

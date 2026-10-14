@@ -31,13 +31,13 @@ this skill.
 ## Ordered steps
 
 1. **Inspect before authoring.** Read the current source flow and callers,
-   the task's existing packet (`tusker packet <ID> --for agent` for held
+   the task's existing packet (`tusker show <ID> --packet agent` for held
    work), and any governing spec section the change touches. Verify that
    named paths, functions, and types exist today; label anything proposed
    rather than verified.
 2. **Write one complete contract.** For a single task use
    `tusker new task --title <title> --work-level <level> --body-file <path|->`.
-   For a batch use `tusker wave create --file <request.yaml> --request-key
+   For a batch use `tusker new wave --file <request.yaml> --request-key
    <stable-key> --json` with one `tusker.wave-authoring/v1` request. The task
    body is the implementation contract: current problem, intended change and
    why, verified source/type seams, locked decisions versus proposals, edge
@@ -52,24 +52,23 @@ this skill.
    resolve. Normal authoring omits priority, size, risk, factory, and
    context metadata.
 4. **Preflight before handoff.** Re-read each fresh packet with
-   `tusker packet <ID> --for agent` and `tusker show <ID> --capsule` as a
-   cold reader. For a wave, run `tusker wave review <WAVE-ID> --check --json`;
+   `tusker show <ID> --packet agent` and `tusker show <ID> --capsule` as a
+   cold reader. For a wave, run `tusker show <WAVE-ID> --check --json`;
    repair every member contract or DAG blocker and repeat until it exits zero
    with wave Start enabled. For a standalone task, run
-   `tusker validate --path work/tasks/<ID>.md --json` and inspect warnings;
+   `tusker check --only validate --path work/tasks/<ID>.md --json` and inspect warnings;
    `ok:true` alone does not prove dispatchability. Creation stays inert —
    preflight never arms or schedules work.
-5. **Start only on explicit authority.** `tusker task start <ID> --mode
-   interactive --by <agent> --current-workspace --json` claims one task in
-   this workspace; `--mode background` leaves a task-scoped run directive
-   for the configured runtime. `tusker wave start <WAVE-ID> --mode
-   background --by human:<name>|operator:<name> --json` authorizes the exact
-   current material once; daemon polling then advances each dependency
-   frontier automatically. `tusker wave pause|resume <WAVE-ID> --by
-   human:<name>|operator:<name>` control admission; an explicit task Start
+5. **Start only on explicit authority.** `tusker start <ID> --by <agent>
+   --current-workspace --json` claims one task in this workspace;
+   `--background` leaves a task-scoped run directive for the configured
+   runtime. `tusker start <WAVE-ID> --by human:<name>|operator:<name> --json`
+   authorizes the exact current material once; daemon polling then advances
+   each dependency frontier automatically. `tusker stop <WAVE-ID>` pauses
+   admission and `tusker start <WAVE-ID>` resumes it; an explicit task start
    inside a paused wave stays task-scoped and leaves the wave paused.
-   Independent review and closeout remain required: a
-   self-implementation claim never substitutes for the review lane.
+   Independent review and closeout remain required: a self-implementation
+   claim never substitutes for the review lane.
 
 ## Ad hoc example
 
@@ -128,7 +127,7 @@ tasks:
         `DEPENDENCY_DANGLING`; the edge is never silently dropped.
       - A member is ready only while every required dependency is done.
       - A failed member leaves dependents blocked and the wave Waiting.
-      - `task update` on a done member reopens it as rework; stale proof
+      - `tusker edit` on a done member reopens it as rework; stale proof
         never certifies new material.
       ## Decisions
       Locked: edge direction is dependency -> dependent. Proposed but
@@ -164,7 +163,7 @@ Cycles and missing keys
 are refused at authoring, not discovered at dispatch. Readiness is computed
 from durable task state; creation never marks anything ready. A failed or
 reworked member blocks its dependents without aborting unrelated waves.
-`task update --if-revision` amends mutable fields under the material lock and
+`tusker edit <ID> --if-revision` amends mutable fields under the material lock and
 preserves identity, history, and proof lineage. A spec link
 (`--spec-refs`/`spec_refs`) supplements task-specific guidance; it never
 replaces it.

@@ -25,11 +25,11 @@ for card, three for artifact, and five for audit.
 
 ## Author command proof as pending
 
-Use `tusker verify add` to store the exact command and link it to acceptance
+Use `tusker edit` to store the exact command and link it to acceptance
 row IDs. A command row starts as `pending`:
 
 ```sh
-tusker verify add APP-T-0001 \
+tusker edit APP-T-0001 \
   --covers A1,A2 \
   --check "command: go test ./cmd/tusker -run TestFocused -count=1" \
   --result pending \
@@ -40,7 +40,7 @@ Expected result: Tusker records the row without running the command. During a
 valid pass review, the verification executor runs pending command rows in the
 bound implementation workspace and records `pass` or `fail`.
 
-`verify add` also accepts `blocked`, `skipped`, and `waived` when those states
+`tusker edit --verify` also accepts `blocked`, `skipped`, and `waived` when those states
 are true. A blocked row requires `--blocked-by`. None of these states counts as
 a passing command. A public caller cannot author `pass` or `fail`; Tusker
 refuses the row instead of trusting a claimed result.
@@ -83,7 +83,7 @@ and reviewer attempt remain separate authorities.
 For a live interactive review, start the review lane:
 
 ```sh
-tusker work review APP-T-0001 --by reviewer:agent
+tusker review APP-T-0001 --by reviewer:agent
 ```
 
 Expected result: the returned packet carries the review attempt, the
@@ -112,16 +112,17 @@ proof with no open gates. `changes_requested` needs an actionable finding.
 also needs an open human-owned gate. Recording any verdict does not merge,
 land, move a ref, or close the task.
 
-## Adopting finished work
+## Recording finished work
 
-A claim records one agent working in one session. Work done any other way
+`tusker done` is the one way to record finished work. When the caller holds the
+task's live work session, `done` submits it. Work done any other way
 (parallel agents with one central gate, a different harness, a teammate, or
 hand edits) is recorded after it is committed, without a claim:
 
 ```sh
-tusker adopt APP-T-0001 APP-T-0002 --by agent:<name>
-tusker adopt --wave W-0001 --by agent:<name>
-tusker adopt --since <git-ref> --by agent:<name>
+tusker done APP-T-0001 APP-T-0002 --by agent:<name>
+tusker done --wave W-0001 --by agent:<name>
+tusker done --since <git-ref> --by agent:<name>
 ```
 
 `--since` selects open tasks whose `owned_paths` changed between the ref and
@@ -139,13 +140,14 @@ The actor decides how far a task moves:
 | Agent inside an armed wave | `done`, unless the contract requires `independent_review` |
 | Any other agent | `review`; a person or an independent review closes it |
 
-An agent never closes through adoption, because Tusker observed the checks
+An agent never closes through `done`, because Tusker observed the checks
 but no one accepted the result. A dependency in `review` lets a dependent
 reach `review`; close still requires every dependency to be `done`. Human
-gates and open blocking gates still refuse.
+gates and open blocking gates still refuse. A person running `tusker done` on
+a task already in review closes it after the close checks below.
 
 Each refusal names one fix. The usual causes are a failing check, a drifted
-contract (`tusker task update <ID> --body-file <path> --by <actor>`), a live
+contract (`tusker edit <ID> --body-file <path> --by <actor>`), a live
 claim on the task, or a malformed Verification row. A `|` inside a Check cell
 must be written `\|`; otherwise the table splits the command. Readiness also
 reports such rows as blockers.
@@ -158,7 +160,7 @@ default close policy needs a reviewer or a person. Risk alone does not add a
 gate or evidence kind. Project configuration can add exact evidence or gate
 rules.
 
-Expected result: `tusker close APP-T-0001` marks the current reviewed result
+Expected result: `tusker done APP-T-0001` marks the current reviewed result
 done. If any required fact is missing or stale, close refuses and names the
 remaining action. Fix that fact and retry. Do not treat a successful command,
 an old review, or a submitted work session as completion.

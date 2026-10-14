@@ -87,9 +87,9 @@ func TestWorkRecoverContinuesFromValidChecksInVaultProjectOnly(t *testing.T) {
 		t.Fatalf("record valid checks before resumed recovery: report=%#v failures=%#v err=%v", report, failures, err)
 	}
 
-	command, args := parseCLI([]string{"tusker", "work", "recover", "APP-T-0001", "--action", "rerun_checks", "--by", "operator:sarav", "--vault", vault, "--json"})
+	command, args := parseCLI([]string{"tusker", "done", "APP-T-0001", "--action", "rerun_checks", "--by", "operator:sarav", "--vault", vault, "--json"})
 	if code, err := runInner(command, args); err != nil || code != 0 {
-		t.Fatalf("work recover CLI = code %d, err %v", code, err)
+		t.Fatalf("done CLI = code %d, err %v", code, err)
 	}
 	task := walkthroughNote(t, vault, "APP-T-0001")
 	if stringField(task.Data, "status") != "review" || parseV7VerificationRows(task.Body)[0].Result != "pass" {

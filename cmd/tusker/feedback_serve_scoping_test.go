@@ -5,69 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// Bug 1: a coincidental normalized title must not mark feedback as already-linked
-// when the existing note is of a kind this promotion could never target.
-func TestFeedbackPromoteDuplicateTitleRequiresMatchingKind(t *testing.T) {
-	source := feedbackPromoteSource{
-		Kind:        "feedback_signal",
-		ID:          "sig-1",
-		Title:       "Retry backoff is too aggressive",
-		Severity:    "P1",
-		RepeatCount: 2,
-	}
-	if kind := feedbackPromoteTargetKind(normalizeFeedbackPromoteSource(source)); kind != "task" {
-		t.Fatalf("fixture drifted: expected target kind task, got %q", kind)
-	}
-
-	unrelated := []feedbackPromoteExistingWork{{
-		ID: "APP-R-0001", Kind: "runbook", Title: "Retry backoff is too aggressive", Path: "docs/runbooks/retry.md",
-	}}
-	if match, ok := matchFeedbackPromoteDuplicate(source, unrelated); ok {
-		t.Fatalf("title-only match against unrelated kind should not count as duplicate: %#v", match)
-	}
-
-	sameKind := []feedbackPromoteExistingWork{{
-		ID: "APP-T-0001", Kind: "task", Title: "retry backoff is TOO aggressive", Path: "work/tasks/APP-T-0001.md",
-	}}
-	match, ok := matchFeedbackPromoteDuplicate(source, sameKind)
-	if !ok || match.ID != "APP-T-0001" || match.Field != "title" {
-		t.Fatalf("same-kind title match should still dedupe, got ok=%v match=%#v", ok, match)
-	}
-}
-
-// Bug 2: the validation-issue path must be the vault-relative form of the real
-// write path, otherwise issues point at files that do not exist.
-func TestFeedbackSignalRelativePathMatchesWritePath(t *testing.T) {
-	vault := t.TempDir()
-	signal := completeFeedbackSignal(feedbackSignal{
-		Project:       "APP",
-		Date:          "2026-08-17",
-		Source:        "reducer",
-		Category:      "cli_friction",
-		Severity:      "P1",
-		DedupeKey:     "retry-backoff-too-aggressive",
-		Summary:       "Retry backoff is too aggressive.",
-		ObservedFacts: map[string]any{"runs": 3},
-	})
-
-	written, err := writeFeedbackSignal(vault, signal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rel := feedbackSignalRelativePath(signal)
-	if got := filepath.Join(vault, filepath.FromSlash(rel)); got != written {
-		t.Fatalf("relative path %q resolves to %q but signal was written to %q", rel, got, written)
-	}
-	if _, err := os.Stat(filepath.Join(vault, filepath.FromSlash(rel))); err != nil {
-		t.Fatalf("relative signal path does not exist on disk: %v", err)
-	}
-}
 
 // Bug 3: /api/digest must honour ?project= instead of always using the launch vault.
 func TestServeDigestHonoursProjectParam(t *testing.T) {

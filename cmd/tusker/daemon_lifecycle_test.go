@@ -806,7 +806,7 @@ func TestRunsRetireLiveGuard(t *testing.T) {
 	}
 	_ = store.Close()
 	err = runsRetireCmd(Args{"id": "ITEM-LIVE", "by": "human:sarav", "reason": "operator override"})
-	if err == nil || !strings.Contains(err.Error(), "tusker runs interrupt") {
+	if err == nil || !strings.Contains(err.Error(), "tusker runs stop <task> --soft") {
 		t.Fatalf("expected live guard with interrupt hint, got %v", err)
 	}
 	output := captureStdout(t, func() {
@@ -2001,7 +2001,7 @@ func setV7TaskStateForDaemonTest(t *testing.T, vault, taskID, status, readiness,
 // writeWorktreeReviewFlipForTest builds a worktree-local Tusker vault at the same
 // repo-relative location the daemon resolves for a runner workspace, and flips
 // the task to review there — mimicking a runner that ran
-// `tusker finish --request-review` in its worktree while the canonical vault
+// `tusker done` in its worktree while the canonical vault
 // still reads ready (RUN-T-0042). Returns the worktree vault path.
 func writeWorktreeReviewFlipForTest(t *testing.T, canonicalVault, workspace, taskID string) string {
 	t.Helper()
@@ -2254,7 +2254,7 @@ func TestEnsureDispatchedV7AttemptBindsRuntimeIdentityIdempotently(t *testing.T)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Bound daemon attempt", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
-	if err := copyDirFiltered(vault, worktreeVault, func(string, os.DirEntry) bool { return true }); err != nil {
+	if err := os.CopyFS(worktreeVault, os.DirFS(vault)); err != nil {
 		t.Fatal(err)
 	}
 	if err := attemptV7StartCmd(Args{"vault": worktreeVault, "quiet": "true", "id": "APP-T-0001", "attempt-id": "APP-T-0001-A-0001"}); err != nil {
@@ -2307,7 +2307,7 @@ func TestReviewerControlMutationRequiresBoundReviewAttempt(t *testing.T) {
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Reviewer authority", "risk": "low", "priority": "p0", "owned-paths": "src", "v7": "true"}, newV7Task)
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	worktreeVault := runnerWorktreeVaultPath(workspace, vault)
-	if err := copyDirFiltered(vault, worktreeVault, func(string, os.DirEntry) bool { return true }); err != nil {
+	if err := os.CopyFS(worktreeVault, os.DirFS(vault)); err != nil {
 		t.Fatal(err)
 	}
 	runtimeID := "01KXGPREVIEW00000000000000"

@@ -13,7 +13,7 @@ const (
 	readmeOverviewEnd     = "<!-- tusker:overview:end -->"
 	dashboardRunsBegin    = "<!-- tusker:live-runs:begin -->"
 	dashboardRunsEnd      = "<!-- tusker:live-runs:end -->"
-	readmeDefaultOverview = "_Describe this project in 1-3 paragraphs: what it is, who uses it, and what's in scope. Everything between the overview markers is preserved across `tusker reindex` — only the epic roster below is regenerated._"
+	readmeDefaultOverview = "_Describe this project in 1-3 paragraphs: what it is, who uses it, and what's in scope. Everything between the overview markers is preserved across `tusker check --fix` — only the epic roster below is regenerated._"
 )
 
 type Args map[string]string
@@ -159,8 +159,8 @@ func notifyDaemonForVault(args Args) {
 // printWaveCreateHelp documents the wave authoring request schema.
 func printWaveCreateHelp() {
 	fmt.Println(`Usage:
-  tusker wave create "<title>" <TASK-ID>...
-  tusker wave create --file <path|-> --request-key <stable-key> [--json]
+  tusker new wave "<title>" <TASK-ID>...
+  tusker new wave --file <path|-> --request-key <stable-key> [--json]
 
 Purpose:
   Create a named, task-backed delivery wave. The --file mode atomically
@@ -213,16 +213,16 @@ Example request (tusker.wave-authoring/v1):
   Verification Check cells must start with command:, manual proof:,
   ledger:, or proof: (manual: is not accepted). Acceptance ids covered by
   a human action's covers also count as planned proof. After create,
-  contracts that wave review --check would refuse are printed as warnings.`)
+  contracts that tusker show <W-ID> --check would refuse are printed as warnings.`)
 }
 
 func printDaemonHelp() {
 	fmt.Println(`Usage:
   tusker daemon run [--once]
-  tusker daemon status [--json]
+  tusker daemon [--json]
   tusker daemon stop [--json]
-  tusker daemon limits [--max-active-runs <n>] [--json]
-  tusker daemon resume [--json]
+  tusker daemon status --limit [--max-active-runs <n>] [--json]
+  tusker daemon status --resume [--json]
   tusker daemon stop [--drain] [--json]
   tusker daemon service install|start [--allow-protected-projects] [--json]
   tusker daemon service stop|refresh|status|uninstall [--json]
@@ -252,11 +252,11 @@ Behavior:
     its WORKFLOW.md, tasks, knowledge, and source inside the repository
 
 Examples:
-  tusker daemon status
+  tusker daemon
   tusker daemon install
   tusker daemon run --once
-  tusker daemon limits --max-active-runs 1
-  tusker daemon resume
+  tusker daemon status --limit --max-active-runs 1
+  tusker daemon status --resume
   tusker daemon stop --drain
   tusker daemon service install
   tusker daemon service install --allow-protected-projects
@@ -266,10 +266,10 @@ Examples:
 
 func printAutomationHelp() {
 	fmt.Println(`Usage:
-  tusker automation status [--json]
+  tusker automation [--json]
   tusker automation on|off [--json]
-  tusker automation queue [--project <id>|--repo <path>|--vault <path>] [--json]
-  tusker automation explain <task> [--project <id>|--repo <path>|--vault <path>] [--json]
+  tusker list queue [--project <id>|--repo <path>|--vault <path>] [--json]
+  tusker show <task> --why [--project <id>|--repo <path>|--vault <path>] [--json]
   tusker automation plan <task> [--project <id>|--repo <path>|--vault <path>] [--json]
   tusker automation dispatch <task> [--project <id>|--repo <path>|--vault <path>] [--json]
   tusker automation collect-external <task> --runner chatgpt-browser --job <job-id> [--covers A1,A2] [--json]
@@ -293,8 +293,8 @@ Behavior:
   - advance-external records the next loop decision, enforces caps, and can dispatch the Codex apply path
 
 Examples:
-  tusker automation queue --json
-  tusker automation explain APP-T-0001
+  tusker list queue --json
+  tusker show APP-T-0001 --why
   tusker automation plan APP-T-0001 --json
   tusker automation dispatch APP-T-0001 --json
   tusker automation collect-external APP-T-0001 --runner chatgpt-browser --job cgpt_xxx --json
@@ -305,14 +305,14 @@ Examples:
 func printProjectsHelp() {
 	fmt.Println(`Usage:
   tusker projects add [--repo <path>] [--vault <path>] [--json]
-  tusker projects list [--json]
-  tusker projects limits [--id <project-id>|--repo <path>|--vault <path>] [--max-active-runs <n>] [--json]
-  tusker projects enable [--id <project-id>|--repo <path>|--vault <path>] [--dry-run] [--json]
-  tusker projects disable [--id <project-id>|--repo <path>|--vault <path>] [--json]
-  tusker projects automation-scope [--id <project-id>|--repo <path>|--vault <path>] [--json]
-  tusker projects rebind --id <project-id> --repo <canonical-path> --vault <canonical-path> [--allow-dirty] [--dry-run] [--json]
+  tusker list projects [--json]
+  tusker projects set --limit [--id <project-id>|--repo <path>|--vault <path>] [--max-active-runs <n>] [--json]
+  tusker projects set [--id --on <project-id>|--repo <path>|--vault <path>] [--dry-run] [--json]
+  tusker projects set [--id --off <project-id>|--repo <path>|--vault <path>] [--json]
+  tusker projects set --dry-run [--id <project-id>|--repo <path>|--vault <path>] [--json]
+  tusker projects add --rebind --id <project-id> --repo <canonical-path> --vault <canonical-path> [--allow-dirty] [--dry-run] [--json]
   tusker projects remove <project-id> [--json]
-  tusker projects prune [--apply] [--dry-run] [--json]
+  tusker projects remove --missing [--apply] [--dry-run] [--json]
 
 Purpose:
   Register repo-local Tusker vaults for daemon pickup. Obsidian remains the
@@ -334,16 +334,16 @@ Behavior:
 
 Examples:
   tusker projects add --repo . --vault ./.tusker
-  tusker projects list
-  tusker projects disable --repo .
-  tusker projects rebind --id <project-id> --repo /repos/backend --vault /repos/backend/.tusker --dry-run
-  tusker projects prune
-  tusker projects prune --apply`)
+  tusker list projects
+  tusker projects set --repo --off .
+  tusker projects add --rebind --id <project-id> --repo /repos/backend --vault /repos/backend/.tusker --dry-run
+  tusker projects remove --missing
+  tusker projects remove --missing --apply`)
 }
 
 func printConfigHelp() {
 	fmt.Println(`Usage:
-  tusker config resolve <key> [--vault <path>] [--json]
+  tusker config <key> [--vault <path>] [--json]
 
 Purpose:
   Show the effective value for a Tusker config key, the winning source, and
@@ -351,27 +351,27 @@ Purpose:
   profiles, routing, denylist, and runtime concurrency limits.
 
 Examples:
-  tusker config resolve runtime.max_active_runs_per_project
-  tusker config resolve automation.concurrency.weight_budget
-  tusker config resolve automation.concurrency.max_load_per_cpu
-  tusker config resolve automation.profiles --json`)
+  tusker config runtime.max_active_runs_per_project
+  tusker config automation.concurrency.weight_budget
+  tusker config automation.concurrency.max_load_per_cpu
+  tusker config automation.profiles --json`)
 }
 
 func printRunsHelp() {
 	fmt.Println(`Usage:
-  tusker runs list [--project <id>] [--active] [--limit <n>] [--json]
-  tusker runs inspect <task-id-or-record-id> [--json]
-  tusker runs logs <task-id-or-record-id> [--lines <n>] [--follow] [--json]
-  tusker runs events <task-id-or-record-id> [--lines <n>] [--follow] [--json]
-  tusker runs interrupt <task-id-or-record-id> [--json]
+  tusker list runs [--project <id>] [--active] [--limit <n>] [--json]
+  tusker show <task-id-or-record-id> --run [--json]
+  tusker show <task-id-or-record-id> --logs [--lines <n>] [--follow] [--json]
+  tusker show <task-id-or-record-id> --events [--lines <n>] [--follow] [--json]
+  tusker runs stop <task-id-or-record-id> --soft [--json]
   tusker runs say <task-id> (--message <text> | --message-file <path|->) --by <actor> [--key <idempotency-key>] [--json]
-  tusker runs continue <task-id> [--message <text> | --message-file <path|->] --by <actor> [--json]
-  tusker runs fresh <task-id> --by <actor> [--reason <text>] [--vault <path>|--project <id>] [--json]
+  tusker runs restart <task-id> [--message <text> | --message-file <path|->] --by <actor> [--json]
+  tusker runs restart <task-id> --fresh --by <actor> [--reason <text>] [--vault <path>|--project <id>] [--json]
   tusker runs stop <task-id> --by <actor> [--reason <text>] [--vault <path>|--project <id>] [--json]
   tusker runs pause <task-id> --by <actor> [--vault <path>|--project <id>] [--json]
-  tusker runs release <task-id-or-record-id> [--json]
+  tusker runs retire <task-id-or-record-id> --release [--json]
   tusker runs retire <task-id-or-record-id> --reason <text> [--by <actor>] [--force] [--json]
-  tusker redrive <task-id-or-record-id> --reason <text> [--by <actor>] [--json]
+  tusker runs restart <task-id-or-record-id> --requeue --reason <text> [--by <actor>] [--json]
 
 Purpose:
   Inspect and control daemon runtime state for a task. These commands expose
@@ -384,31 +384,31 @@ Purpose:
   runtime records that must stop tripping daemon invariant circuits.
 
 Examples:
-  tusker runs inspect APP-T-0001 --json
-  tusker runs events APP-T-0001 --lines 20
-  tusker runs interrupt APP-T-0001
-  tusker runs release APP-T-0001 --json
+  tusker show APP-T-0001 --run --json
+  tusker show APP-T-0001 --events --lines 20
+  tusker runs stop APP-T-0001 --soft
+  tusker runs retire APP-T-0001 --release --json
   tusker runs retire APP-T-0001 --reason "over retry cap" --json
-  tusker redrive APP-T-0001 --reason "operator reviewed spend" --json`)
+  tusker runs restart APP-T-0001 --requeue --reason "operator reviewed spend" --json`)
 }
 
 func printWorkSessionHelp() {
 	fmt.Println(`Usage:
-  tusker work start <task-id> --by <agent> [--source codex|claude|tusker_cli] [--current-workspace] [--json]
-  tusker work status <task-id> [--json]
-  tusker work heartbeat <task-id> --by <agent> [--json]
-  tusker work submit <task-id> --by <agent> --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass> [--json]
-  tusker work fail <task-id> --by <agent> --reason <text> [--json]
-  tusker work release <task-id> --by <agent> --reason <text> [--json]
-  tusker work review <task-id> --by reviewer:<name> [--source codex|claude|tusker_cli] [--json]
-  tusker work readiness <task-id> [--lane execute|review] [--json]
-  tusker work progress <task-id> [--json]
+  tusker start <task-id> --by <agent> [--source codex|claude|tusker_cli] [--current-workspace] [--json]
+  tusker show <task-id> --lease [--json]
+  tusker start <task-id> --by <agent> [--json]
+  tusker done <task-id> --by <agent> --deliverable <summary> --verification <summary> --gate-verdicts <A1=pass> [--json]
+  tusker stop <task-id> --failed --by <agent> --reason <text> [--json]
+  tusker stop <task-id> --by <agent> --reason <text> [--json]
+  tusker review <task-id> --by reviewer:<name> [--source codex|claude|tusker_cli] [--json]
+  tusker show <task-id> --why [--lane execute|review] [--json]
+  tusker show <task-id> --progress [--json]
   tusker work wait <task-id> [--timeout 60] [--json]
-  tusker work reconcile <task-id> --by <agent> [--json]
-  tusker work retry <task-id> --by <agent> [--json]
-  tusker work profile <task-id> [--lane execute|review] [--json]
-  tusker work recover <task-id> --action rerun_checks --by human:<name>|operator:<name> --vault <path> [--json]
-  tusker work recover <task-id> --action adopt_completed --by <actor> --vault <path> [--json]
+  tusker show <task-id> --by <agent> [--json]
+  tusker start <task-id> --by <agent> [--json]
+  tusker show <task-id> --route [--lane execute|review] [--json]
+  tusker done <task-id> --action rerun_checks --by human:<name>|operator:<name> --vault <path> [--json]
+  tusker done <task-id> --action adopt_completed --by <actor> --vault <path> [--json]
 
 Purpose:
   The canonical runtime ownership protocol for interactive tracked work.
@@ -419,57 +419,25 @@ Purpose:
   worker.
   Supported lifecycle: ready -> work start -> work reconcile ->
   work submit -> work review -> review submit -> close.
-  tusker finish <TASK-ID> --request-review is the shared-checkout handback.`)
+  tusker done <TASK-ID> is the shared-checkout handback.`)
 }
 
 func printRefreshHelp() {
 	fmt.Println(`Usage:
-  tusker refresh [--quiet] [--json]
+  tusker daemon run --once [--quiet] [--json]
 
 Purpose:
   Run one daemon poll tick for registered projects. This is the easiest local
   smoke path for checking whether ready/rework tasks are picked up.`)
 }
 
-func printDomainHelp() {
-	fmt.Println(`Usage:
-  tusker domain list [--json]
-  tusker domain show <domain-id> [--capsule|--full|--json]
-  tusker domain new <domain-id> --title "..." [--summary "..."]
-  tusker domain canon <domain-id> [--full]
-
-Purpose:
-  Operate domain knowledge routed to docs/system/domains/<domain>/00-index.md.
-  Legacy .tusker/knowledge/domains/**/INDEX.md and CANON.md records remain as
-  compatibility pointers; reads, packets, and skill routes prefer the portable
-  index when present.
-
-Examples:
-  tusker domain list
-  tusker domain show runtime --capsule
-  tusker domain new providers --title "Providers" --summary "External API integrations."`)
-}
-
-func printKnowledgeHelp() {
-	fmt.Println(`Usage:
-  tusker knowledge new <domain>/<folder>/<slug> --kind runbook|decision|invariant|interface|glossary|source --title "..."
-
-Purpose:
-  Create leaf nodes under .tusker/knowledge/domains/**. Routing and reading
-  should happen through ` + "`" + `tusker skill route` + "`" + ` and the project SKILL.md.
-
-Examples:
-  tusker knowledge new runtime/runbooks/dispatch-loop --kind runbook --title "Dispatch loop"
-  tusker knowledge new providers/decisions/oauth-refresh --kind decision --title "OAuth refresh policy"`)
-}
-
 func printSkillHelp() {
 	fmt.Println(`Usage:
-  tusker skill doctor [--strict] [--json]
-  tusker skill doctor --package <path> [--strict] [--json]
-  tusker skill audit-agent-guidance [--repo <path>] [--write|--draft] [--target feedback|knowledge] [--json]
+  tusker check --only skills [--strict] [--json]
+  tusker check --only skills --package <path> [--strict] [--json]
+  tusker check --only skills [--repo <path>] [--write|--draft] [--target feedback|knowledge] [--json]
   tusker skill route "<intent>" [--json]
-  tusker skill sync [--repo <path>] [--mode symlink|copy] [--source <checkout>] [--json]
+  tusker install --repo-only --skills-only [--repo <path>] [--mode symlink|copy] [--source <checkout>] [--json]
   tusker skill bundle [--repo <path>] [--out <path>] [--dereference-symlinks] [--json]
 
 Purpose:
@@ -484,31 +452,22 @@ Purpose:
   bootstrap blocks, and --write refreshes managed bootstrap guidance.
 
 Examples:
-  tusker skill doctor --strict --json
-  tusker skill audit-agent-guidance --write
+  tusker check --only skills --strict --json
+  tusker check --only skills --write
   tusker skill route "change provider auth refresh logic" --json
-  tusker skill sync --repo .
-  tusker skill sync --repo . --source ~/src/tusker
+  tusker install --repo-only --skills-only --repo .
+  tusker install --repo-only --skills-only --repo . --source ~/src/tusker
   tusker skill bundle --repo . --out .tusker/_generated/skill-bundle`)
-}
-
-func printPublishHelp() {
-	fmt.Println(`Usage:
-  tusker publish skill [--out ./dist/project-skill]
-
-Purpose:
-  Export the current project skill package from .tusker/SKILL.md and
-  .tusker/knowledge/domains/**.`)
 }
 
 func printVaultHelp() {
 	fmt.Println(`Usage:
-  tusker vault set --path <obsidian-vault>
-  tusker vault status [--json]
-  tusker vault mount [--repo <path>] [--vault <path>] [--name <folder>] [--force] [--json]
-  tusker vault unmount [--name <folder>|--repo <path>|--vault <path>] [--json]
-  tusker vault repair [--force] [--json]
-  tusker vault move --to <obsidian-vault> [--force] [--json]
+  tusker vault --path <obsidian-vault>
+  tusker vault [--json]
+  tusker vault --mount [--repo <path>] [--vault <path>] [--name <folder>] [--force] [--json]
+  tusker vault --unmount [--name <folder>|--repo <path>|--vault <path>] [--json]
+  tusker check --fix [--force] [--json]
+  tusker vault --to <obsidian-vault> [--force] [--json]
 
 Purpose:
   Link repo-local Tusker trackers into one shared Obsidian vault so multiple
@@ -522,9 +481,9 @@ Behavior:
   - vault move updates the shared vault path and repairs saved mounts
 
 Examples:
-  tusker vault set --path ~/Obsidian/Tusker
-  tusker vault mount --repo . --vault ./.tusker --name my-app
-  tusker vault status`)
+  tusker vault --path ~/Obsidian/Tusker
+  tusker vault --mount --repo . --vault ./.tusker --name my-app
+  tusker vault`)
 }
 
 func printInitHelp() {
@@ -546,7 +505,7 @@ Flags:
   --yes             accept the safe minimum: vault + reindex only
   --fresh           move an existing target vault aside and recreate it cleanly
   --purge-state     delete generated Tusker state first; implies the same safe
-                    scope as 'tusker purge --only-tusker-state --yes'
+                    scope as 'tusker reset --no-init --only-tusker-state --yes'
   --preserve-specs  with --purge-state, retain .tusker/specs/** across the reset
   --vault-only      update only the vault; skip pointers and repo-contract files
   --with-pointers   opt in to AGENTS.md / CLAUDE.md pointer injection
@@ -565,16 +524,16 @@ Examples:
 
 func printDocsHelp() {
 	fmt.Println(`Documentation graph commands:
-  tusker docs find <query>
-  tusker docs browse [<managed-directory>] [--limit <n>] [--json]
-  tusker docs read <subject-or-path> [--section <heading>] [--current] [--json]
-  tusker docs backlinks <subject-or-path> [--limit <n>] [--json]
-  tusker docs check [<subject-or-path>] [--json]
-  tusker docs touch --since <ref> [--waive <subject>]... [--json]
-  tusker docs new <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] [--domain <name>] [--index] [--decides-for <subject>] [--supersedes <subject>]
-  tusker docs new <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] --print [--json]
-  tusker docs map
-  tusker docs status [--stale [--strict]] [--json]
+  tusker list docs --grep <query>
+  tusker list docs --dir [<managed-directory>] [--limit <n>] [--json]
+  tusker show <subject-or-path> [--section <heading>] [--current] [--json]
+  tusker show <subject-or-path> --backlinks [--limit <n>] [--json]
+  tusker check --only docs [<subject-or-path>] [--json]
+  tusker check --only docs --since <ref> [--waive <subject>]... [--json]
+  tusker new doc <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] [--domain <name>] [--index] [--decides-for <subject>] [--supersedes <subject>]
+  tusker new doc <subject> --read-when <line> --skip-when <line> [--kind doc|proposal|decision|spec] --print [--json]
+  tusker check --fix
+  tusker list docs --stale [--stale [--strict]] [--json]
   tusker docs verify <subject>
   tusker docs adopt [--dry-run] [--json]
   tusker docs adopt --migration [--dry-run] [--json]
@@ -599,7 +558,7 @@ in the .tusker/_generated/docs recovery journal, so an interrupted apply
 resumes and a repeated apply is idempotent. Dirty owned inputs, overlapping
 active work, duplicate subjects, target collisions, path escapes, and symlink
 escapes are refused with the exact conflicting paths before any damaging
-write. Generated map artifacts are left untouched; run tusker docs map after
+write. Generated map artifacts are left untouched; run tusker check --fix after
 review. --apply and --yes are not accepted aliases.
 
 Placement: current chapters live in docs/system (per domain under
@@ -618,7 +577,7 @@ func printNewHelp() {
 	fmt.Println(`Usage:
   tusker new epic [--vault <path>] --acronym <ACR> --title <title> [--summary <text>] [--owner <name>] [--spec-refs <csv>]
   tusker new task [--vault <path>] --title <title> --work-level light|standard|demanding --body-file <path|-> [--epic <ACR>] [--status ready|backlog|review|rework] [--priority p0|p1|p2|p3] [--size s|m|l|xl] [--risk low|medium|high|critical] [--review-level light|standard|demanding] [--review-reason <reason>] [--execute-profile <name>] [--review-profile <name>] [--spec-refs <csv>] [--owned-paths <csv>] [--weight <1-8>] [--generated-outputs <csv>] [--evidence-required automated_test] [--architect <address>] [--origin <address>] [--peers <name=address,...>]
-  tusker task update <TASK-ID> [--if-revision <state_rev>] [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--weight <1-8>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]
+  tusker edit <TASK-ID> [--if-revision <state_rev>] [--body-file <path|->] [--title <title>] [--work-level <level>] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--weight <1-8>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]
   tusker new gate --blocks <TASK-ID> --kind <gate-kind> --owner <owner> --action <text> --verification <proof>
   tusker new decision --epic <ACR> --title <title>
 
@@ -640,17 +599,19 @@ Examples:
   tusker new epic --vault ./.tusker --acronym APP --title "App foundation"
   tusker new task --vault ./.tusker --title "Implement auth" --work-level standard --body-file task-body.md \
     --spec-refs .tusker/specs/auth.md --owned-paths cmd/auth.go,internal/auth --generated-outputs internal/auth/openapi.gen.go
-  tusker task update TSK-T-0001 [--if-revision sha256:<rev>] --title "Implement auth v2" --by agent:builder
+  tusker edit TSK-T-0001 [--if-revision sha256:<rev>] --title "Implement auth v2" --by agent:builder
   tusker new gate --vault ./.tusker --blocks APP-T-0001 --kind auth --owner human:sarav \
     --action "Provision staging OAuth credentials." \
     --verification "Provider ready check passes." \
     --why-agent-cannot "Human account access is required."`)
+	fmt.Println()
+	printWaveCreateHelp()
 }
 
 func printStatusHelp() {
 	fmt.Println(`Usage:
-  tusker status <id> <status> [--vault <path>] [--actor <name>] [--reason <text>]
-  tusker status --id <id> --status <status> [--vault <path>] [--actor <name>] [--reason <text>]
+  tusker edit <id> --status <status> [--vault <path>] [--actor <name>] [--reason <text>]
+  tusker edit <id> --status <status> [--vault <path>] [--actor <name>] [--reason <text>]
   tusker status [--vault <path>]
 
   Bare tusker status (no id) prints a vault summary instead of changing
@@ -658,7 +619,7 @@ func printStatusHelp() {
 
 Statuses:
   idea, backlog, ready, review, rework, superseded
-  Use tusker close for done and tusker discard for cancelled.
+  Use tusker done for done and tusker stop <ID> --cancel for cancelled.
 
 Purpose:
   Move a task through its durable workflow. Runtime activity is represented
@@ -666,14 +627,14 @@ Purpose:
 
 Notes:
 	Use backlog for shaped future work that should not be picked up in the current release.
-	Use tusker discard instead of setting cancelled directly so dependencies,
+	Use tusker stop <ID> --cancel instead of setting cancelled directly so dependencies,
 	gates, runtime rows, and discard metadata are handled together.`)
 }
 
 func printDiscardHelp() {
 	fmt.Println(`Usage:
-  tusker discard <task-id> --reason <text> [--dependents detach|discard] [--by <actor>] [--json]
-  tusker discard <task-id> --dry-run [--json]
+  tusker stop <task-id> --cancel --reason <text> [--dependents detach|discard] [--by <actor>] [--json]
+  tusker stop <task-id> --cancel --dry-run [--json]
 
 Purpose:
   Remove abandoned work from active views without deleting its durable task,
@@ -688,8 +649,8 @@ Dependency policy:
 
 func printNextHelp() {
 	fmt.Println(`Usage:
-  tusker next [--vault <path>] [--epic <ACR>] [--owner <name>] [--domain <name>] [--lane <name>] [--explain] [--json]
-  tusker next --claim --as <agent-or-person> [--vault <path>] [--epic <ACR>] [--domain <name>] [--lane <name>] [--json]
+  tusker list --next [--vault <path>] [--epic <ACR>] [--owner <name>] [--domain <name>] [--lane <name>] [--explain] [--json]
+  tusker list --next --claim --as <agent-or-person> [--vault <path>] [--epic <ACR>] [--domain <name>] [--lane <name>] [--json]
 
 Purpose:
   Return the next pickable task. Pickable means status ready or rework,
@@ -711,7 +672,7 @@ func printEvidenceHelp() {
   tusker evidence prune <task-id> --dry-run
 
 Purpose:
-  Add, promote, or prune evidence records. For inline proof, prefer tusker verify add.
+  Add, promote, or prune evidence records. For inline proof, prefer tusker edit.
 
 Scratch retention:
   .tusker/scratch/ is raw exhaust and is not durable: scratch/<task-id>/ is
@@ -721,7 +682,7 @@ Scratch retention:
 
 func printReviewHelp() {
 	fmt.Println(`Usage:
-  tusker review submit <TASK-ID> --attempt <ATTEMPT-ID> --task-rev <REV> --source-sha <SHA> --work-rev <N> --proof-fingerprint <FP> --gate-fingerprint <FP> --material-fingerprint <FP> --verdict pass|changes_requested|blocked --covers <A1,A2> --summary "<summary>"
+  tusker review <TASK-ID> --attempt <ATTEMPT-ID> --task-rev <REV> --source-sha <SHA> --work-rev <N> --proof-fingerprint <FP> --gate-fingerprint <FP> --material-fingerprint <FP> --verdict pass|changes_requested|blocked --covers <A1,A2> --summary "<summary>"
 
 Structured findings:
   ` + reviewerFindingFlagExample("<material-fingerprint>") + `
@@ -740,29 +701,29 @@ exact current material; same material is valid only for proof-scoped findings.`)
 
 func printVerifyHelp() {
 	fmt.Println(`Usage:
-  tusker verify add <task-id> --covers A1,A2 --check <command-or-manual-check> --result pending|blocked|skipped|waived [--note <text>]
-  tusker verify add <task-id> --rows "A1|command: go test ./pkg|pending|note"
-  tusker verify add <task-id> --batch-file <path>
-  tusker verify remove <task-id> --index <one-based-row>
-  tusker verify recipe <task-id> [--files <path[,path...]>]
-  tusker verify <id> [--vault <path>] [--by <name>] [--summary <text>]
-  tusker verify --id <id> [--vault <path>] [--by <name>] [--summary <text>]
+  tusker edit <task-id> --covers A1,A2 --check "command: <cmd>" --result pending [--note <text>]
+  tusker edit <task-id> --covers A1 --check "manual proof: <check>" --result blocked|skipped|waived --blocked-by <path|task|owner> [--note <text>]
+  tusker edit <task-id> --verify "A1|command: go test ./pkg|pending|note"
+  tusker edit <task-id> --batch-file <path>
+  tusker edit <task-id> --verify-remove <one-based-row>
+  tusker show <task-id> --proof
 
 Purpose:
-  Add inline verification rows or suggest scoped verification recipes. Command
-  rows start pending; the verification executor records their pass or fail.
+  Add or remove inline verification rows on a task.
+  Command rows must be pending; only the verification executor records
+  their pass or fail.
 
 Options:
   --blocked-by <path|task|owner>  Required with --result blocked; attributes external/shared blockers.
-  --rows <rows>                   Newline rows shaped covers|check|result|note|blocked_by.
+  --verify <rows>                 Newline rows shaped covers|check|result|note|blocked_by.
   --batch-file <path>             Read rows from a file using the same format.`)
 }
 
 func printCloseHelp() {
 	fmt.Println(`Usage:
-  tusker close <id> --verdict accept|accept-with-followups|reject [--note <text>] [--override-audit <reason>]
-  tusker close <id> [--vault <path>] [--by <name>] [--reason <text>]
-  tusker close --id <id> [--vault <path>] [--by <name>] [--reason <text>]
+  tusker done <id> --verdict accept|accept-with-followups|reject [--note <text>] [--override-audit <reason>]
+  tusker done <id> [--vault <path>] [--by <name>] [--reason <text>]
+  tusker done <id> [--vault <path>] [--by <name>] [--reason <text>]
 
 Purpose:
   Close a task after required evidence is present, close policy passes, and
@@ -801,17 +762,17 @@ Examples:
 
 func printSearchHelp() {
 	fmt.Println(`Usage:
-  tusker search <text> [--vault <path>] [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
-  tusker search --query <text> [--json]
+  tusker list --grep <text> [--vault <path>] [--type epic|task|doc] [--epic <ACR>] [--status <status>] [--limit <n>] [--json]
+  tusker list --grep --query <text> [--json]
 
 Purpose:
   Search first-party tracker notes without reading generated indexes,
   Attachments, runtime state, build logs, or arbitrary repository files.
 
 Examples:
-  tusker search braindump_id --type task
-  tusker search "docs close gate" --epic DOC --limit 10
-  tusker search reviewer --status review --json`)
+  tusker list --grep braindump_id --type task
+  tusker list --grep "docs close gate" --epic DOC --limit 10
+  tusker list --grep reviewer --status review --json`)
 }
 
 func printShowHelp() {
@@ -832,44 +793,44 @@ Examples:
 
 func printPrintHelp() {
 	fmt.Println(`Usage:
-  tusker print <ID> [--vault <path>] [--project <id|key|name>] [--capsule|--acceptance|--evidence|--verification|--full] [--section <heading>]
-  tusker print <ID> [--plain] [--style dark|light|notty|<path>] [--width <n>] [--json]
+  tusker show <ID> --styled [--vault <path>] [--project <id|key|name>] [--capsule|--acceptance|--evidence|--verification|--full] [--section <heading>]
+  tusker show <ID> --styled [--plain] [--style dark|light|notty|<path>] [--width <n>] [--json]
 
 Purpose:
   Render a Tusker Markdown note for human terminal reading. Defaults to the note
   body with Glamour Markdown styling. Use --plain for raw Markdown output.
 
 Examples:
-  tusker print ING-T-0016
-  tusker print ING-T-0016 --capsule
-  tusker print ING-T-0016 --acceptance --plain
-  tusker print ING-T-0016 --project mobile --style light`)
+  tusker show ING-T-0016 --styled
+  tusker show ING-T-0016 --styled --capsule
+  tusker show ING-T-0016 --styled --acceptance --plain
+  tusker show ING-T-0016 --styled --project mobile --style light`)
 }
 
 func printOpenHelp() {
 	fmt.Println(`Usage:
-  tusker open <ID> [--vault <path>] [--project <id|key|name>] [--path|--json]
-  tusker open <ID> [--editor|--obsidian|--app <name>]
+  tusker show <ID> --styled [--vault <path>] [--project <id|key|name>] [--path|--json]
+  tusker show <ID> --styled [--editor|--obsidian|--app <name>]
 
 Purpose:
   Resolve a Tusker record and open the underlying Markdown note. Current-vault
   lookup wins; outside a repo, registered projects from tusker projects add are searched.
 
 Examples:
-  tusker open ING-T-0016
-  tusker open ING-T-0016 --path
-  tusker open ING-T-0016 --editor
-  tusker open ING-T-0016 --obsidian
-  tusker open ING-T-0016 --project mobile --json`)
+  tusker show ING-T-0016 --styled
+  tusker show ING-T-0016 --styled --path
+  tusker show ING-T-0016 --styled --editor
+  tusker show ING-T-0016 --styled --obsidian
+  tusker show ING-T-0016 --styled --project mobile --json`)
 }
 
 func printValidateHelp() {
 	fmt.Println(`Usage:
-  tusker validate [--vault <path>] [--json]
-  tusker validate [--path <vault-relative-path> | --epic <ACR>] [--json]
-  tusker validate --branch-policy [--base origin/main] [--json]
-  tusker validate --branch-policy-only [--base origin/main] [--json]
-  tusker validate --staged --branch-policy [--json]
+  tusker check --only validate [--vault <path>] [--json]
+  tusker check --only validate [--path <vault-relative-path> | --epic <ACR>] [--json]
+  tusker check --only validate --branch-policy [--base origin/main] [--json]
+  tusker check --only validate --branch-policy-only [--base origin/main] [--json]
+  tusker check --only validate --staged --branch-policy [--json]
 
 Purpose:
   Check the vault against Tusker schema and workflow invariants.
@@ -884,7 +845,7 @@ Options:
 
 func printReindexHelp() {
 	fmt.Println(`Usage:
-  tusker reindex [--vault <path>] [--json] [--fix-links]
+  tusker check --fix [--vault <path>] [--json] [--fix-links]
 
 Purpose:
   Rebuild generated indexes, dashboard JSON, and epic roster output.

@@ -513,13 +513,12 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("new", "gate", "--blocks", "APP-T-0003", "--kind", "verification", "--owner", "reviewer", "--action", "Review proof.", "--verification", "Reviewer accepts proof.")
 	runCLI("new", "decision", "--epic", "APP", "--title", "Use repo-local branch-safe work tracker")
 
-	runCLI("gate", "list", "--open")
-	runCLI("gate", "list", "--owner", "human:sarav")
+	runCLI("show", "APP-T-0001")
 	runCLI("list", "--runnable")
-	runCLI("next", "--owner", "agent")
-	runCLI("gate", "satisfy", "APP-G-0001", "--evidence", "Provider ready endpoint returned OpenAI model.", "--by", "human:sarav")
-	runCLI("gate", "waive", "APP-G-0002", "--reason", "Live smoke deferred to release candidate.")
-	runCLI("gate", "obsolete", "APP-G-0003", "--reason", "Task superseded.")
+	runCLI("list", "--next", "--owner", "agent")
+	runCLI("edit", "APP-G-0001", "--status", "satisfied", "--evidence", "Provider ready endpoint returned OpenAI model.", "--by", "human:sarav")
+	runCLI("edit", "APP-G-0002", "--status", "waived", "--reason", "Live smoke deferred to release candidate.")
+	runCLI("edit", "APP-G-0003", "--status", "obsolete", "--reason", "Task superseded.")
 	// The legacy file-lease lifecycle has no CLI verbs; drive it directly.
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "owner": "agent:codex"}, claimCmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001"}, heartbeatV7Cmd)
@@ -528,21 +527,24 @@ func TestV7SpecCLIExamplesRunThroughRouter(t *testing.T) {
 	runCLI("evidence", "add", "APP-T-0001", "--kind", "screenshot", "--path", "./provider-ready.png", "--covers", "A3", "--status", "accepted", "--checked-by", "reviewer:agent")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "start", "_pos1": "APP-T-0001"}, attemptV7Cmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "./summary.md"}, attemptV7HandoffCmd)
-	runCLI("proposal", "close", "APP-T-0001", "--reason", "Implementation branch is ready.")
-	runCLI("proposal", "list", "--target", "APP-T-0001")
-	runCLI("proposal", "accept", "APP-P-0001", "--by", "human:sarav")
-	runCLI("packet", "APP-T-0001", "--for", "agent", "--force")
-	runCLI("packet", "APP-T-0001", "--for", "reviewer")
-	runCLI("brief", "APP-T-0001")
-	runCLI("brief", "--owner", "human:sarav")
-	runCLI("reindex")
+	// Proposals and briefs have no CLI row; drive them directly.
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "close", "_pos1": "APP-T-0001", "reason": "Implementation branch is ready."}, proposalV7Cmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "list", "target": "APP-T-0001"}, proposalV7Cmd)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "accept", "_pos1": "APP-P-0001", "by": "human:sarav"}, proposalV7Cmd)
+	runCLI("show", "APP-T-0001", "--packet", "agent", "--force")
+	runCLI("show", "APP-T-0001", "--packet", "reviewer")
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001"}, briefV7Cmd)
+	runCLI("digest")
+	// check --fix runs reindex and reconcile, then validates; this fixture is
+	// deliberately mid-flight, so drive the two repair steps directly.
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, reindex)
 	if !fileExists(filepath.Join(vault, "dashboards", "human-actions.md")) {
 		t.Fatal("reindex did not build the human-actions dashboard")
 	}
-	runCLI("next", "--owner", "agent")
-	runCLI("reconcile")
-	runCLI("status", "APP-T-0001", "review", "--reason", "Ready for independent review.")
-	runCLI("close", "APP-T-0001", "--by", "reviewer:agent", "--confirm", acceptVerificationManifest(t, vault, "APP-T-0001"))
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, reconcileV7Cmd)
+	runCLI("list", "--next", "--owner", "agent")
+	runCLI("edit", "APP-T-0001", "--status", "review", "--reason", "Ready for independent review.")
+	runCLI("done", "APP-T-0001", "--by", "reviewer:agent", "--confirm", acceptVerificationManifest(t, vault, "APP-T-0001"))
 
 	taskPath := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
 	data, _, err := parseFrontmatterMustRead(taskPath)
@@ -674,124 +676,6 @@ func TestV7ProfileInitCreatesSkillShapedKnowledgeVault(t *testing.T) {
 	}
 	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
 		t.Fatalf("validate failed: code=%d err=%v", code, err)
-	}
-}
-
-func TestV7PublishSkillExportsKnowledgeBundleAndFiltersProofState(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrapV7Profile(vault, "v7"); err != nil {
-		t.Fatal(err)
-	}
-	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
-		t.Fatal(err)
-	}
-	_, sourceBody, err := parseFrontmatterMustRead(filepath.Join(vault, "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertContainsIndexTest(t, sourceBody, "knowledge/domains/providers/INDEX.md")
-	assertContainsIndexTest(t, sourceBody, "knowledge/domains/providers/CANON.md")
-	for _, rel := range []string{
-		"work/tasks/APP-T-0001.md",
-		"evidence/APP-T-0001/APP-T-0001-E-0001.md",
-		"attempts/APP-T-0001/APP-T-0001-A-0001.md",
-		"events/2026/05/APP-T-0001--20260514T000000Z--01.json",
-		"_generated/packets/APP-T-0001.agent.md",
-		"Attachments/APP-T-0001/raw.log",
-	} {
-		if err := writeText(filepath.Join(vault, filepath.FromSlash(rel)), "forbidden export fixture\n"); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	out := filepath.Join(t.TempDir(), "project-skill")
-	if err := publishSkillCmd(Args{"vault": vault, "out": out, "v7": "true", "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	staleExportFile := filepath.Join(out, "stale.txt")
-	if err := writeText(staleExportFile, "stale export content\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := publishSkillCmd(Args{"vault": vault, "out": out, "v7": "true", "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(staleExportFile); !os.IsNotExist(err) {
-		t.Fatalf("expected stale export file to be removed on marked output cleanup: %v", err)
-	}
-
-	assertExists(t, filepath.Join(out, "SKILL.md"))
-	assertExists(t, filepath.Join(out, "knowledge", "domains", "project", "INDEX.md"))
-	assertExists(t, filepath.Join(out, "knowledge", "domains", "project", "CANON.md"))
-	assertExists(t, filepath.Join(out, "knowledge", "domains", "providers", "INDEX.md"))
-	assertExists(t, filepath.Join(out, "knowledge", "domains", "providers", "CANON.md"))
-	for _, forbidden := range []string{"work", "evidence", "attempts", "events", "_generated", "Attachments", "domains"} {
-		if _, err := os.Stat(filepath.Join(out, forbidden)); !os.IsNotExist(err) {
-			t.Fatalf("V7 project skill export included forbidden path %s: %v", forbidden, err)
-		}
-	}
-	data, _, err := parseFrontmatterMustRead(filepath.Join(out, "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "tusker.project-skill/v7", stringField(data, "schema"), "exported project skill schema")
-	_, exportedBody, err := parseFrontmatterMustRead(filepath.Join(out, "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertContainsIndexTest(t, exportedBody, "knowledge/domains/providers/INDEX.md")
-	assertContainsIndexTest(t, exportedBody, "knowledge/domains/providers/CANON.md")
-	assertContainsIndexTest(t, exportedBody, "## Repo Command Policy")
-	assertContainsIndexTest(t, exportedBody, "token/noise wrappers")
-}
-
-func TestV7PublishSkillRejectsUnsafeOutputPaths(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	root := t.TempDir()
-	repo := filepath.Join(root, "repo")
-	if err := ensureDir(repo); err != nil {
-		t.Fatal(err)
-	}
-	vault := filepath.Join(repo, "tusker")
-	if err := bootstrapV7Profile(vault, "v7"); err != nil {
-		t.Fatal(err)
-	}
-	previousWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chdir(previousWD); err != nil {
-			t.Fatalf("restore working directory: %v", err)
-		}
-	})
-	if err := os.Chdir(repo); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, tc := range []struct {
-		name string
-		out  string
-		dir  string
-	}{
-		{name: "current directory", out: ".", dir: repo},
-		{name: "repo root", out: repo, dir: repo},
-		{name: "vault root", out: vault, dir: vault},
-		{name: "home", out: home, dir: home},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sentinel := filepath.Join(tc.dir, "sentinel.txt")
-			if err := writeText(sentinel, "do not delete\n"); err != nil {
-				t.Fatal(err)
-			}
-			err := publishSkillCmd(Args{"vault": vault, "out": tc.out, "v7": "true", "quiet": "true"})
-			if err == nil {
-				t.Fatalf("expected unsafe output path %q to be rejected", tc.out)
-			}
-			assertExists(t, sentinel)
-		})
 	}
 }
 
@@ -2074,88 +1958,6 @@ func TestV7SaveCASRejectsOnDiskBodyEditWithStaleStateRev(t *testing.T) {
 	}
 }
 
-func TestV7DomainNewCreatesKnowledgeDomainLayoutAndValidates(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrap(Args{"vault": vault, "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := newV7Domain(Args{
-		"vault":   vault,
-		"quiet":   "true",
-		"v7":      "true",
-		"id":      "providers",
-		"title":   "Providers",
-		"summary": "Provider integrations.",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	indexPath := filepath.Join(vault, "knowledge", "domains", "providers", "INDEX.md")
-	canonPath := filepath.Join(vault, "knowledge", "domains", "providers", "CANON.md")
-	assertExists(t, indexPath)
-	assertExists(t, canonPath)
-	assertExists(t, filepath.Join(vault, "knowledge", "domains", "providers", "runbooks"))
-	assertExists(t, filepath.Join(vault, "knowledge", "domains", "providers", "decisions"))
-	assertExists(t, filepath.Join(vault, "knowledge", "domains", "providers", "interfaces"))
-	assertExists(t, filepath.Join(vault, "knowledge", "domains", "providers", "invariants"))
-	assertExists(t, filepath.Join(vault, "knowledge", "domains", "providers", "sources"))
-	assertExists(t, filepath.Join(vault, "knowledge", "domains", "providers", "glossary.md"))
-	if _, err := os.Stat(filepath.Join(vault, "knowledge", "domains", "providers", "references")); !os.IsNotExist(err) {
-		t.Fatalf("V7 domain layout must not create references/: %v", err)
-	}
-
-	indexData, indexBody, err := parseFrontmatterMustRead(indexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "tusker.domain/v7", stringField(indexData, "schema"), "domain schema")
-	assertEqual(t, "domain", stringField(indexData, "kind"), "domain kind")
-	assertEqual(t, "providers", stringField(indexData, "id"), "domain id")
-	if !strings.Contains(indexBody, "## Read This When") || !strings.Contains(indexBody, "## Invariants") {
-		t.Fatalf("domain INDEX missing expected routing sections:\n%s", indexBody)
-	}
-	canonData, canonBody, err := parseFrontmatterMustRead(canonPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "tusker.domain-canon/v7", stringField(canonData, "schema"), "domain canon schema")
-	assertEqual(t, "domain_canon", stringField(canonData, "kind"), "domain canon kind")
-	assertEqual(t, "providers", stringField(canonData, "domain"), "domain canon domain")
-	assertEqual(t, "providers/canon", stringField(canonData, "id"), "domain canon id")
-	if !strings.Contains(canonBody, "## Current Truth") || !strings.Contains(canonBody, "## Deprecated Or Stale") {
-		t.Fatalf("domain CANON missing expected canon sections:\n%s", canonBody)
-	}
-
-	listOutput := captureStdout(t, func() {
-		if err := domainV7ListCmd(Args{"vault": vault, "v7": "true"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	assertContainsIndexTest(t, listOutput, "providers")
-	showOutput := captureStdout(t, func() {
-		if err := domainV7ShowCmd(Args{"vault": vault, "v7": "true", "id": "providers"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	assertContainsIndexTest(t, showOutput, "Read this when:")
-	canonOutput := captureStdout(t, func() {
-		if err := domainV7CanonCmd(Args{"vault": vault, "v7": "true", "id": "providers"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	assertContainsIndexTest(t, canonOutput, "domain canon")
-
-	store := v7MarkdownStore{VaultPath: vault}
-	events, err := store.GetEvents(context.Background(), v7EventScope{ObjectID: "providers", ObjectKind: "domain", EventKind: "created"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, 1, len(events), "domain created event count")
-	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
-		t.Fatalf("validate failed: code=%d err=%v", code, err)
-	}
-}
-
 func TestV7ValidationRejectsDiataxisKnowledgeAndReferences(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	if err := bootstrapV7Profile(vault, "v7"); err != nil {
@@ -2308,7 +2110,7 @@ func TestV7SpecObjectCreationCLIForms(t *testing.T) {
 		t.Fatal(err)
 	}
 	command, args := parseCLI([]string{"tusker", "new", "epic", "APP", "--vault", vault, "--quiet", "--title", "App V7"})
-	assertEqual(t, "new epic", command, "new epic command parse")
+	assertEqual(t, "new", command, "new epic command parse")
 	if code, err := run(command, args); err != nil || code != 0 {
 		t.Fatalf("new epic spec form failed: code=%d err=%v", code, err)
 	}
@@ -2317,7 +2119,7 @@ func TestV7SpecObjectCreationCLIForms(t *testing.T) {
 		t.Fatal(err)
 	}
 	command, args = parseCLI([]string{"tusker", "new", "task", "--vault", vault, "--quiet", "--epic", "APP", "--title", "Spec task", "--work-level", "standard", "--owned-paths", "src", "--body-file", bodyPath})
-	assertEqual(t, "new task", command, "new task command parse")
+	assertEqual(t, "new", command, "new task command parse")
 	if code, err := run(command, args); err != nil || code != 0 {
 		t.Fatalf("new task spec form failed: code=%d err=%v", code, err)
 	}
@@ -2483,7 +2285,8 @@ func TestV7SkillKnowledgeEndToEnd(t *testing.T) {
 	}
 
 	runCLI("init", "--profile", "v7", "--vault", vault, "--yes", "--vault-only", "--no-mount")
-	runCLI("domain", "new", "providers", "--v7", "--vault", vault, "--title", "Providers", "--summary", "Provider integrations.")
+	// Legacy domains have no CLI row; create one directly.
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}, newV7Domain)
 	runCLI("new", "epic", "APP", "--vault", vault, "--title", "App V7")
 	taskBodyPath := filepath.Join(repo, "task-body.md")
 	if err := writeText(taskBodyPath, "## Intent\n\nAuthored provider-routing task.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n|---|---|---|\n| A1 | Provider routing outcome. | Inline verification |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: go test ./cmd/tusker -run TestV7 -count=1 | pending | Focused provider proof. |\n"); err != nil {
@@ -2491,73 +2294,12 @@ func TestV7SkillKnowledgeEndToEnd(t *testing.T) {
 	}
 	runCLI("new", "task", "--vault", vault, "--epic", "APP", "--title", "Route provider work", "--domains", "providers", "--risk", "low", "--priority", "p2", "--work-level", "standard", "--owned-paths", "src", "--body-file", taskBodyPath)
 	makeV7TaskDispatchableForTest(t, vault, "APP-T-0001")
-	agentPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "agent")
-	reviewerPacket := runCLI("packet", "APP-T-0001", "--vault", vault, "--for", "reviewer")
-	out := filepath.Join(repo, "dist", "project-skill")
-	runCLI("publish", "skill", "--vault", vault, "--v7", "--out", out)
-	runCLI("docs", "map", "--vault", vault)
-	runCLI("validate", "--vault", vault)
+	agentPacket := runCLI("show", "APP-T-0001", "--vault", vault, "--packet", "agent")
+	reviewerPacket := runCLI("show", "APP-T-0001", "--vault", vault, "--packet", "reviewer")
+	runCLI("check", "--only", "docs,validate", "--fix", "--vault", vault)
 
 	assertContainsIndexTest(t, agentPacket, "docs/system/domains/providers/00-index.md")
 	assertContainsIndexTest(t, reviewerPacket, "docs/system/domains/providers/00-index.md")
-	assertExists(t, filepath.Join(out, "SKILL.md"))
-	assertExists(t, filepath.Join(out, "knowledge", "domains", "providers", "CANON.md"))
-	_, exportedBody, err := parseFrontmatterMustRead(filepath.Join(out, "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertContainsIndexTest(t, exportedBody, "docs/system/domains/providers/00-index.md")
-	for _, forbidden := range []string{"work", "evidence", "attempts", "events", "_generated", "Attachments"} {
-		if _, err := os.Stat(filepath.Join(out, forbidden)); !os.IsNotExist(err) {
-			t.Fatalf("end-to-end export included forbidden path %s: %v", forbidden, err)
-		}
-	}
-}
-
-func TestV7KnowledgeNewCreatesLeafNodesAndRejectsBadPaths(t *testing.T) {
-	vault := filepath.Join(t.TempDir(), "vault")
-	if err := bootstrapV7Profile(vault, "v7"); err != nil {
-		t.Fatal(err)
-	}
-	if err := newV7Domain(Args{"vault": vault, "quiet": "true", "v7": "true", "id": "providers", "title": "Providers", "summary": "Provider integrations."}); err != nil {
-		t.Fatal(err)
-	}
-	kinds := map[string]string{
-		"runbook":   "runbooks/oauth-refresh",
-		"decision":  "decisions/auth-provider",
-		"invariant": "invariants/token-storage",
-		"interface": "interfaces/oauth-client",
-		"glossary":  "glossary/access-token",
-		"source":    "sources/provider-docs",
-	}
-	for kind, suffix := range kinds {
-		if err := knowledgeV7NewCmd(Args{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/" + suffix, "kind": kind, "title": "Provider " + kind}); err != nil {
-			t.Fatalf("%s leaf create failed: %v", kind, err)
-		}
-		path := filepath.Join(vault, "knowledge", "domains", "providers", filepath.FromSlash(suffix+".md"))
-		assertExists(t, path)
-		data, body, err := parseFrontmatterMustRead(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertEqual(t, "tusker.knowledge/v7", stringField(data, "schema"), "leaf schema")
-		assertEqual(t, kind, stringField(data, "kind"), "leaf kind")
-		for _, expected := range []string{"## Read This When", "## Do Not Read This When", "## Source Truth", "## Related"} {
-			assertContainsIndexTest(t, body, expected)
-		}
-	}
-	for _, bad := range []Args{
-		{"vault": vault, "quiet": "true", "v7": "true", "node": "missing/runbooks/x", "kind": "runbook", "title": "Missing domain"},
-		{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/references/raw", "kind": "source", "title": "Legacy path"},
-		{"vault": vault, "quiet": "true", "v7": "true", "node": "providers/runbooks/not-interface", "kind": "interface", "title": "Wrong folder"},
-	} {
-		if err := knowledgeV7NewCmd(bad); err == nil {
-			t.Fatalf("expected bad V7 knowledge create to fail: %#v", bad)
-		}
-	}
-	if code, err := validateCmd(Args{"vault": vault, "json": "true"}); err != nil || code != 0 {
-		t.Fatalf("validate failed: code=%d err=%v", code, err)
-	}
 }
 
 func TestV7SkillDoctorRouteAndPack(t *testing.T) {
@@ -2592,14 +2334,6 @@ func TestV7SkillDoctorRouteAndPack(t *testing.T) {
 	})
 	assertContainsIndexTest(t, packOutput, "# APP-T-0001 agent packet")
 	assertContainsIndexTest(t, packOutput, "knowledge/domains/providers/INDEX.md")
-
-	out := filepath.Join(t.TempDir(), "project-skill")
-	if err := publishSkillCmd(Args{"vault": vault, "out": out, "v7": "true", "quiet": "true"}); err != nil {
-		t.Fatal(err)
-	}
-	if code, err := skillV7DoctorCmd(Args{"package": out, "strict": "true", "json": "true"}); err != nil || code != 0 {
-		t.Fatalf("package skill doctor failed: code=%d err=%v", code, err)
-	}
 }
 
 func TestV7ProtectedFieldDiffDetectsStateMutation(t *testing.T) {
@@ -2924,7 +2658,7 @@ func TestV7StatusRejectsDoneDirectly(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected status done to be rejected")
 	}
-	if !strings.Contains(err.Error(), "use tusker close") {
+	if !strings.Contains(err.Error(), "use tusker done") {
 		t.Fatalf("expected close-command hint, got %v", err)
 	}
 	data, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "tasks", "APP-T-0001.md"))

@@ -123,7 +123,7 @@ func TestEscalationNotifierGated(t *testing.T) {
 	assertEqual(t, 1, len(notifications), "configured-on notification count")
 
 	recordPath := filepath.Join(t.TempDir(), "notifications.tsv")
-	cmd := exec.Command("go", "run", "./cmd/tusker", "escalate", "-s", "P1", "--vault", vault, "--local", "--quiet", "--task", "APP-T-0001", "e2e recording notification")
+	cmd := exec.Command("go", "run", "./cmd/tusker", "message", "ask", "--severity", "P1", "--vault", vault, "--local", "--quiet", "--task", "APP-T-0001", "--body", "e2e recording notification")
 	cmd.Dir = repoRootForFreshCloneTest(t)
 	cmd.Env = append(os.Environ(),
 		escalationNotifierModeEnv+"=record",

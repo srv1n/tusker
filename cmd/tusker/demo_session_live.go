@@ -19,7 +19,7 @@ func demoRunSessionLive(repo string, manifest *demoManifest, harness, scenario s
 		"restart": "no scoped daemon-restart fault injection; stopping the shared daemon would affect other projects",
 		// Runner profiles are global-only, so forcing a denial would mean
 		// editing the operator's global config; the demo never does that.
-		"permission-deny": "runner profiles are global-only and the demo never edits the operator's global config; pin a read-only global profile with `tusker task update <s1> --execute-profile <name>` and follow the checklist",
+		"permission-deny": "runner profiles are global-only and the demo never edits the operator's global config; pin a read-only global profile with `tusker edit <s1> --execute-profile <name>` and follow the checklist",
 	}
 	if reason := missing[scenario]; reason != "" {
 		proof.Status, proof.Reason = "unsupported", reason

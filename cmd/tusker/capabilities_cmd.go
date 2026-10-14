@@ -199,5 +199,5 @@ func sortCapabilitiesManifest(manifest *capabilitiesManifest) {
 }
 
 func printCapabilitiesHelp() {
-	fmt.Println("Usage: tusker capabilities --json\n\nPrint the versioned installed-binary capability manifest. This query does not mutate state.")
+	fmt.Println("Usage: tusker version --json\n\nPrint the version plus the versioned installed-binary capability manifest under \"capabilities\". This query does not mutate state.")
 }

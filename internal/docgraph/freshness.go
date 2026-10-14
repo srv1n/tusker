@@ -12,7 +12,7 @@ import (
 
 var ErrDocumentNotFound = errors.New("document subject not found")
 
-// FreshnessRecord is the compact status view used by `tusker docs status`.
+// FreshnessRecord is the compact status view used by `tusker list docs --stale`.
 type FreshnessRecord struct {
 	Document        Document
 	TouchingCommits int

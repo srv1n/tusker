@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-const feedbackNoteImportSchema = "tusker.feedback_note_import/v1"
-
 type feedbackTargetWarning struct {
 	Code       string `json:"code"`
 	Message    string `json:"message"`
@@ -21,46 +19,6 @@ type feedbackTargetWarning struct {
 type feedbackTargetResolution struct {
 	Targets  []feedbackTarget
 	Warnings []feedbackTargetWarning
-}
-
-type feedbackNoteImportRecord struct {
-	Schema           string            `json:"schema"`
-	ImportRunID      string            `json:"import_run_id"`
-	ImportedAt       string            `json:"imported_at"`
-	SourceRef        string            `json:"source_ref"`
-	SourceProjectKey string            `json:"source_project_key"`
-	SourceRepoRoot   string            `json:"source_repo_root"`
-	SourceVaultRoot  string            `json:"source_vault_root"`
-	SourceNotePath   string            `json:"source_note_path"`
-	SourceRelative   string            `json:"source_relative_path"`
-	DedupeKey        string            `json:"dedupe_key"`
-	SignalID         string            `json:"signal_id"`
-	SignalPath       string            `json:"signal_path"`
-	Fields           map[string]string `json:"fields"`
-}
-
-type feedbackIngestItem struct {
-	SourceRef        string `json:"source_ref"`
-	SourceProjectKey string `json:"source_project_key"`
-	SourceRepoRoot   string `json:"source_repo_root"`
-	SourceVaultRoot  string `json:"source_vault_root"`
-	SourcePath       string `json:"source_path"`
-	ImportPath       string `json:"import_path,omitempty"`
-	SignalPath       string `json:"signal_path,omitempty"`
-	DedupeKey        string `json:"dedupe_key"`
-	SignalID         string `json:"signal_id"`
-}
-
-type feedbackIngestResult struct {
-	Date           string
-	Since          string
-	ImportRunID    string
-	OutputVault    string
-	Targets        []feedbackTarget
-	Warnings       []feedbackTargetWarning
-	Items          []feedbackIngestItem
-	WrittenImports []string
-	WrittenSignals []string
 }
 
 func feedbackResolveTargets(args Args, includeDefault bool) (feedbackTargetResolution, error) {
@@ -224,79 +182,6 @@ func feedbackTargetBlockingWarning(target feedbackTarget) (feedbackTargetWarning
 		return base, true
 	}
 	return feedbackTargetWarning{}, false
-}
-
-func feedbackSignalFromFeedbackRecord(target feedbackTarget, record feedbackRecord, importDate, importRunID string) feedbackSignal {
-	sourceRef := feedbackNoteSourceRef(target, record)
-	dedupeKey := normalizedFeedbackDedupeKey(record.Fields["dedupe-key"])
-	if dedupeKey == "" {
-		dedupeKey = feedbackSignalDedupeKey(target.projectKey, record.RelativePath)
-	}
-	return completeFeedbackSignal(feedbackSignal{
-		Date:       firstNonEmpty(record.Date, importDate),
-		Project:    target.projectKey,
-		TaskID:     firstTaskID(record.Fields["related"]),
-		Source:     "feedback_note",
-		Category:   feedbackSignalCategoryFromFeedbackRecord(record),
-		Severity:   record.PriorityHint,
-		Confidence: "medium",
-		DedupeKey:  dedupeKey,
-		Summary:    feedbackShort(firstNonEmpty(record.Fields["friction"], record.Fields["product-idea"], record.Theme), feedbackSignalMaxSummaryChars),
-		ObservedFacts: map[string]any{
-			"source_ref":         sourceRef,
-			"source_project_key": target.projectKey,
-			"source_repo_root":   feedbackSignalBoundedFact(target.repoRoot),
-			"source_vault_root":  feedbackSignalBoundedFact(target.vaultPath),
-			"source_note":        record.RelativePath,
-			"import_run_id":      importRunID,
-			"dedupe_key":         dedupeKey,
-			"affected_command":   record.AffectedCommand,
-			"impact":             feedbackShort(record.Fields["impact"], feedbackSignalMaxFactStringChars),
-		},
-		Recommendation: feedbackShort(record.Fields["product-idea"], feedbackSignalMaxSummaryChars),
-	})
-}
-
-func feedbackSignalCategoryFromFeedbackRecord(record feedbackRecord) string {
-	text := strings.ToLower(strings.Join([]string{record.Theme, record.AffectedCommand, record.Fields["context"], record.Fields["friction"], record.Fields["product-idea"], record.Fields["related"]}, " "))
-	switch {
-	case record.AffectedCommand != "" && record.AffectedCommand != "n/a" || strings.Contains(text, " cli ") || strings.Contains(text, " command ") || strings.Contains(text, " flag "):
-		return "cli_friction"
-	case strings.Contains(text, "acceptance") || strings.Contains(text, "proof") || strings.Contains(text, "verification"):
-		return "acceptance_quality"
-	case strings.Contains(text, "closeout") || strings.Contains(text, "gate") || strings.Contains(text, "human"):
-		return "closeout_churn"
-	case strings.Contains(text, "install") || strings.Contains(text, "bootstrap") || strings.Contains(text, "xcode") || strings.Contains(text, "environment"):
-		return "environment_setup"
-	case strings.Contains(text, "review") || strings.Contains(text, "rework"):
-		return "review_loop"
-	default:
-		return "workflow_repeat"
-	}
-}
-
-func feedbackNoteSourceRef(target feedbackTarget, record feedbackRecord) string {
-	return "feedback-note:" + firstNonEmpty(target.projectKey, projectKeyFromPath(target.repoRoot)) + ":" + record.RelativePath
-}
-
-func feedbackSignalBoundedFact(value string) string {
-	return feedbackShort(value, feedbackSignalMaxFactStringChars)
-}
-
-func feedbackTargetsJSON(targets []feedbackTarget) []map[string]any {
-	out := make([]map[string]any, 0, len(targets))
-	for _, target := range targets {
-		out = append(out, map[string]any{
-			"project_key": target.projectKey,
-			"project_id":  nullIfEmptyString(target.projectID),
-			"name":        nullIfEmptyString(target.name),
-			"repo_root":   target.repoRoot,
-			"vault_root":  target.vaultPath,
-			"registered":  target.registered,
-			"health":      string(target.health),
-		})
-	}
-	return out
 }
 
 func feedbackTargetWarningsJSON(warnings []feedbackTargetWarning) []feedbackTargetWarning {

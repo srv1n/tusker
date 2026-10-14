@@ -52,7 +52,7 @@ flowchart TD
   S[Sarav + coordinator agree on work] --> D[Decision/spec in docs/system]
   D --> F[Rulings recorded as epic forks]
   F --> T[Tasks: rich body, owned paths, resources, deps]
-  T --> B["tusker batch run (background process)"]
+  T --> B["tusker start (background process)"]
   B --> W[Workers: codex / claude -p per runner profile]
   W --> P{Policy engine}
   P -->|crash, usage limit, flaky, answered fork| W
@@ -66,7 +66,7 @@ flowchart TD
   X --> C[Coordinator wakes once: review, rule, close, next batch]
 ```
 
-The coordinator runs `tusker batch run <batch>` with its harness's background facility (Claude Code `run_in_background`). That produces exactly one notification when the process exits. The process prints the digest as its last output, so the coordinator reads one screen instead of N reports.
+The coordinator runs `tusker start <batch>` with its harness's background facility (Claude Code `run_in_background`). That produces exactly one notification when the process exits. The process prints the digest as its last output, so the coordinator reads one screen instead of N reports.
 
 ## 4. Features
 
@@ -75,9 +75,9 @@ Each feature lists the command surface, the behavior, the data it needs, and its
 ### F1. Batch runner (no daemon)
 
 **Commands**
-- `tusker batch create --epic <ACR> --tasks <ids> [--name <n>]` (or reuse `wave create`; a batch can simply be a wave run in batch mode).
-- `tusker batch run <batch> [--max-parallel N] [--notify <cmd>]` — runs until terminal, then exits.
-- `tusker batch status <batch>`, `tusker batch stop <batch> [--drain]`.
+- `tusker new batch --epic <ACR> --tasks <ids> [--name <n>]` (or reuse `wave create`; a batch can simply be a wave run in batch mode).
+- `tusker start <batch> [--max-parallel N] [--notify <cmd>]` — runs until terminal, then exits.
+- `tusker show <batch>`, `tusker stop <batch> [--drain]`.
 
 **Behavior**
 - Builds a DAG from task dependencies. Starts a task when its dependencies are done and its resources are free.
@@ -87,7 +87,7 @@ Each feature lists the command surface, the behavior, the data it needs, and its
 - Per-task run directory with `run.log`, `last.md` (harness final message), `pid`, `REPORT.json`, `REPORT.md`. Default under `.tusker/scratch/<batch>/<task>/`.
 - Detached from the coordinator session. If the coordinator session restarts, `batch status` and the digest still work, and `batch run` on an existing batch resumes it without restarting finished tasks.
 - Usage-limit handling as `sol-lane2.sh` does today: detect the limit message, wait (default 60 min), resume with the resume prompt, up to a cap (default 12).
-- Records every start, exit, policy action and resource wait as run events (reuse `runs events`).
+- Records every start, exit, policy action and resource wait as run events (reuse `tusker show <TASK-ID> --events`).
 
 **Acceptance**
 - A 3-task batch with one dependency and one shared `cargo:mac` resource runs two tasks in parallel and the third after its dependency, never two Cargo tasks at once.
@@ -109,7 +109,7 @@ Each feature lists the command surface, the behavior, the data it needs, and its
 | Real question | question with no matching fork | Park the task (`waiting_on_coordinator`), continue independent tasks | — |
 | Timeout | wall clock over the task's budget | Stop the worker (by PID), mark `stalled`, keep evidence | — |
 
-**Flaky registry.** `tusker flaky add <test-path-or-name> --reason <text> --until <date|task-id>`; `tusker flaky list`. Entries expire or link to the task that will fix them, so the registry cannot grow silently. The packet tells workers the rule: "a failure only in a registered flaky test is not your blocker; record it and continue".
+**Flaky registry.** `tusker new flaky <test-path-or-name> --reason <text> --until <date|task-id>`; `tusker list flaky`. Entries expire or link to the task that will fix them, so the registry cannot grow silently. The packet tells workers the rule: "a failure only in a registered flaky test is not your blocker; record it and continue".
 
 **Acceptance**
 - A worker that crashes once is resumed automatically and the coordinator is not woken.
@@ -119,8 +119,8 @@ Each feature lists the command surface, the behavior, the data it needs, and its
 ### F3. Decided forks (rulings that reach every task)
 
 **Commands**
-- `tusker fork add --epic <ACR> --id <slug> --question <text> --ruling <text> --by sarav|coordinator [--doc <decision-ref>]`
-- `tusker fork list --epic <ACR>`; `tusker fork supersede <id> --by <new-id>`.
+- `tusker new fork --epic <ACR> --id <slug> --question <text> --ruling <text> --by sarav|coordinator [--doc <decision-ref>]`
+- `tusker list forks --epic <ACR>`; `tusker fork supersede <id> --by <new-id>`.
 
 **Behavior**
 - Forks are short (one question, one ruling, who, date, link). They live with the epic.
@@ -237,9 +237,9 @@ The packet tells workers to write it, with the schema inline. `REPORT.md` stays 
 ### F9. Slim packet and validated creation
 
 **Behavior**
-- `tusker packet <task> --for worker` prints: task body (intent, evidence, steps, acceptance, owned/off-limits paths, gates), active forks, flaky-registry rule, the REPORT.json schema, and a one-line pointer to the repo's `AGENTS.md`. Nothing else by default.
+- `tusker show <task> --packet worker` prints: task body (intent, evidence, steps, acceptance, owned/off-limits paths, gates), active forks, flaky-registry rule, the REPORT.json schema, and a one-line pointer to the repo's `AGENTS.md`. Nothing else by default.
 - Routing boilerplate (skill routing, domain capsules) only with `--routing`.
-- `tusker new task` refuses a body or `spec_refs` that point at missing files or sections (today's sample packet pointed at two deleted specs). `tusker validate` reports dead references in existing tasks.
+- `tusker new task` refuses a body or `spec_refs` that point at missing files or sections (today's sample packet pointed at two deleted specs). `tusker check --only validate` reports dead references in existing tasks.
 - A task body template for this mode, matching the brief format that worked: Problem with evidence; Prior work to read; Steps; Acceptance with gates; Owned and off-limits paths; Rules.
 
 **Acceptance**
@@ -250,12 +250,12 @@ The packet tells workers to write it, with the schema inline. `REPORT.md` stays 
 
 **Behavior**
 - States: `backlog → ready → running → review → done | discarded`, plus `parked` and `stalled`.
-- The batch runner holds whatever internal claim it needs; the coordinator never runs `work start`, `heartbeat` or `release`.
-- Closing: `tusker close <task> --verdict accept|accept-with-followups|reject [--note]`. Allowed when audit passes, or with `--override-audit <reason>`.
+- The batch runner holds whatever internal claim it needs; the coordinator never runs `tusker start` or `tusker stop` for those tasks.
+- Closing: `tusker done <task> --verdict accept|accept-with-followups|reject [--note]`. Allowed when audit passes, or with `--override-audit <reason>`.
 - Review by a second model stays possible (the worker can call `claude -p` itself, as today), recorded as a gate row, not as a separate lifecycle stage.
 
 **Acceptance**
-- A task goes from `ready` to `done` with exactly two coordinator commands: `batch run` and `close`.
+- A task goes from `ready` to `done` with exactly two coordinator commands: `tusker start <batch>` and `tusker review <TASK-ID> --verdict accept`.
 
 ### F11. Vault triage
 
@@ -285,7 +285,7 @@ Keep them small; most of this is new commands over existing records.
 
 1. **Spec.** Agree on work with Sarav. Write or update the decision in `docs/system`. Add forks for every ruling.
 2. **Tasks.** Create the tasks from the template with evidence, owned paths, resources, runner profile and dependencies. Group them into a batch.
-3. **Run.** `tusker batch run <batch>` with `run_in_background: true`. Do other work or end the turn.
+3. **Run.** `tusker start <batch>` with `run_in_background: true`. Do other work or end the turn.
 4. **Wake once.** Read the digest. For each task: close, or create a fix task, or answer the parked question (add a fork, then `batch run` again, which resumes only the parked work).
 5. **Session start.** `tusker digest --since last`.
 6. **Never** hand-write chain scripts, PID waiters or relaunch prompts again.
@@ -329,7 +329,7 @@ Track these on the rzn backend for two weeks after Phase B.
 
 ## 9. What to stop building
 
-- Leases, heartbeats and `work start`/`release` for coordinator-driven work.
+- Leases, heartbeats and `tusker start`/`tusker stop` for coordinator-driven work.
 - Wave authorization and arming for batch mode.
 - Review levels as lifecycle stages; a second-model review is a gate row.
 - Packet routing boilerplate by default.

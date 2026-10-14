@@ -63,7 +63,7 @@ func TestSkillTaskManagementProtocol(t *testing.T) {
 	text := normalizedSkillGuidance(t, root, "SKILL.md", filepath.Join("references", "TRACK.md"), filepath.Join("references", "OPERATE.md"))
 	for _, required := range []string{
 		"Mutate tracker state only through the CLI", "without rewriting generated state",
-		"tusker new task", "tusker work start", "tusker verify add",
+		"tusker new task", "tusker start", "tusker edit",
 		"Tracker failure stays separate from implementation results",
 	} {
 		if !strings.Contains(text, required) {
@@ -109,7 +109,7 @@ func TestFactorySkillContractIsTaskScoped(t *testing.T) {
 	for _, required := range []string{
 		"--covers A1", "One bounded outcome is one task",
 		"Never manufacture proof",
-		"tusker show <TASK-ID> --capsule", "tusker proof status <TASK-ID>",
+		"tusker show <TASK-ID> --capsule", "tusker show <TASK-ID> --proof",
 	} {
 		if !strings.Contains(normalizedText, required) {
 			t.Fatalf("canonical task-management skill missing %q", required)

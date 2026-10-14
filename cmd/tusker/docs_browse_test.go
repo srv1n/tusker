@@ -20,16 +20,16 @@ func TestDocsBrowse(t *testing.T) {
 	writeDocsFixture(t, repoRoot, "docs/system/architecture/guide.md", "---\nsubject: guide\npart_of: architecture\nread_when: changing the guide\nstatus: canonical\n---\n# Guide\n")
 	writeDocsFixture(t, repoRoot, "docs/system/zeta.md", "---\nsubject: zeta\npart_of: overview\nstatus: canonical\n---\n# Zeta\n")
 
-	command, parsed := parseCLI([]string{"tusker", "docs", "browse", "docs/system", "--limit", "2", "--json"})
-	if command != "docs browse" || parsed.String("_pos") != "docs/system" {
-		t.Fatalf("docs browse parse = %q %#v", command, parsed)
+	command, parsed := parseCLI([]string{"tusker", "list", "docs", "--dir", "docs/system", "--limit", "2", "--json"})
+	if command != "list" || parsed.String("_pos0") != "docs" || parsed.String("dir") != "docs/system" {
+		t.Fatalf("list docs --dir parse = %q %#v", command, parsed)
 	}
 	before, err := os.ReadFile(filepath.Join(repoRoot, "docs/system/zeta.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	output := captureStdout(t, func() {
-		if err := docsBrowseCmd(Args{"vault": vault, "_pos": "docs/system", "limit": "2", "json": "true"}); err != nil {
+		if err := listCmd(Args{"vault": vault, "_pos": "docs", "_pos0": "docs", "dir": "docs/system", "limit": "2", "json": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -112,10 +112,11 @@ func TestDocsCommandRoutes(t *testing.T) {
 		argv []string
 		want string
 	}{
-		{[]string{"tusker", "docs", "browse", "docs/system"}, "docs browse"},
-		{[]string{"tusker", "docs", "read", "overview", "--section", "Intro"}, "docs read"},
-		{[]string{"tusker", "docs", "backlinks", "overview", "--limit", "4"}, "docs backlinks"},
-		{[]string{"tusker", "docs", "check", "--json"}, "docs check"},
+		{[]string{"tusker", "list", "docs", "--dir", "docs/system"}, "list"},
+		{[]string{"tusker", "show", "overview", "--section", "Intro"}, "show"},
+		{[]string{"tusker", "show", "overview", "--backlinks", "--limit", "4"}, "show"},
+		{[]string{"tusker", "check", "--only", "docs", "--json"}, "check"},
+		{[]string{"tusker", "docs", "verify", "overview"}, "docs verify"},
 	} {
 		command, _ := parseCLI(test.argv)
 		if command != test.want {
@@ -124,10 +125,10 @@ func TestDocsCommandRoutes(t *testing.T) {
 	}
 	help := captureStdout(t, printDocsHelp)
 	for _, want := range []string{
-		"tusker docs browse [<managed-directory>] [--limit <n>] [--json]",
-		"tusker docs read <subject-or-path> [--section <heading>] [--current] [--json]",
-		"tusker docs backlinks <subject-or-path> [--limit <n>] [--json]",
-		"tusker docs check [<subject-or-path>] [--json]",
+		"tusker list docs --dir [<managed-directory>] [--limit <n>] [--json]",
+		"tusker show <subject-or-path> [--section <heading>] [--current] [--json]",
+		"tusker show <subject-or-path> --backlinks [--limit <n>] [--json]",
+		"tusker check --only docs [<subject-or-path>] [--json]",
 	} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("docs help omitted %q:\n%s", want, help)

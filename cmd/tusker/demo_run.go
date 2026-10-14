@@ -176,7 +176,7 @@ func waveNameForScope(manifest *demoManifest, scope string) string {
 }
 
 func demoActiveLease(exec *demoExec, repoRoot, taskID string) string {
-	inspected, err := exec.run(repoRoot, "runs", "inspect", taskID)
+	inspected, err := exec.run(repoRoot, "show", taskID, "--run")
 	if err != nil {
 		return "none"
 	}
@@ -628,7 +628,7 @@ func demoIsCASConflict(err error) bool {
 }
 
 func (s *demoScheduler) reconcile() {
-	_, _ = s.exec.run(s.repoRoot, "reconcile", "--vault", s.vault)
+	_, _ = s.exec.run(s.repoRoot, "check", "--fix", "--only", "validate", "--vault", s.vault)
 }
 
 func (s *demoScheduler) taskDelay(rec demoTaskRecord) time.Duration {
@@ -660,7 +660,7 @@ func (s *demoScheduler) executeTask(ctx context.Context, key string, rec demoTas
 		// recomputes next_owner until reconcile runs.
 		s.reconcile()
 		err := s.runRetrying(ctx, "task "+key+" move to ready", 8, func() error {
-			_, err := s.exec.run(s.repoRoot, "status", rec.TaskID, "ready", "--reason", "demo run: dependencies satisfied", "--vault", s.vault)
+			_, err := s.exec.run(s.repoRoot, "edit", rec.TaskID, "--status", "ready", "--reason", "demo run: dependencies satisfied", "--vault", s.vault)
 			return err
 		})
 		if err != nil {
@@ -679,7 +679,7 @@ func (s *demoScheduler) executeTask(ctx context.Context, key string, rec demoTas
 		s.note(fmt.Sprintf("task %s (%s) blocked on open gate %s: only the owning human can release it with a native confirmation in the UI (`tusker serve`); the CLI never bypasses human authority, then rerun", key, rec.TaskID, gateID))
 		return
 	}
-	claimed, err := s.exec.run(s.repoRoot, "work", "start", rec.TaskID, "--by", demoImplementActor, "--vault", s.vault)
+	claimed, err := s.exec.run(s.repoRoot, "start", rec.TaskID, "--by", demoImplementActor, "--vault", s.vault)
 	if err != nil {
 		s.recordOutcome(key, "failed", "", "", "")
 		s.note(fmt.Sprintf("task %s (%s) claim failed: %s", key, rec.TaskID, err.Error()))
@@ -701,7 +701,7 @@ func (s *demoScheduler) executeTask(ctx context.Context, key string, rec demoTas
 	corrupt := strings.EqualFold(s.options.FailOnce, key) && !s.alreadyInjected(key)
 	if corrupt {
 		s.markInjected(key)
-		if _, err := s.exec.run(s.repoRoot, "work", "fail", rec.TaskID, "--by", demoImplementActor, "--reason", "demo fault injection: deterministic branch failure"); err != nil {
+		if _, err := s.exec.run(s.repoRoot, "stop", rec.TaskID, "--failed", "--by", demoImplementActor, "--reason", "demo fault injection: deterministic branch failure"); err != nil {
 			s.note(fmt.Sprintf("task %s (%s) fault injection failed to record: %s", key, rec.TaskID, err.Error()))
 		}
 		s.recordOutcome(key, "failed", attempt, started, time.Now().UTC().Format(time.RFC3339Nano))
@@ -731,7 +731,7 @@ func (s *demoScheduler) executeTask(ctx context.Context, key string, rec demoTas
 		return
 	}
 	submitErr := s.runRetrying(ctx, "task "+key+" submit", 5, func() error {
-		_, err := s.exec.run(s.repoRoot, "work", "submit", rec.TaskID, "--by", demoImplementActor, "--gate-verdicts", "A1=pass", "--deliverable", "demo-timer: wrote "+rec.Artifact, "--verification", "command check passes on fixture bytes", "--vault", s.vault)
+		_, err := s.exec.run(s.repoRoot, "done", rec.TaskID, "--by", demoImplementActor, "--gate-verdicts", "A1=pass", "--deliverable", "demo-timer: wrote "+rec.Artifact, "--verification", "command check passes on fixture bytes", "--vault", s.vault)
 		return err
 	})
 	if submitErr != nil {
@@ -759,7 +759,7 @@ func (s *demoScheduler) finishTask(ctx context.Context, key string, rec demoTask
 	}
 	if !s.reviewerAccepts(key, rec) {
 		s.note(fmt.Sprintf("task %s (%s) reviewer rejected the artifact: content mismatch, requesting rework", key, rec.TaskID))
-		if _, err := s.exec.run(s.repoRoot, "status", rec.TaskID, "rework", "--reason", "demo reviewer: artifact does not match the declared fixture bytes", "--vault", s.vault); err != nil {
+		if _, err := s.exec.run(s.repoRoot, "edit", rec.TaskID, "--status", "rework", "--reason", "demo reviewer: artifact does not match the declared fixture bytes", "--vault", s.vault); err != nil {
 			s.recordOutcome(key, "failed", attempt, started, time.Now().UTC().Format(time.RFC3339Nano))
 			return
 		}
@@ -772,7 +772,7 @@ func (s *demoScheduler) finishTask(ctx context.Context, key string, rec demoTask
 			return
 		}
 		s.note(fmt.Sprintf("task %s (%s) corrected after rejection; resubmitting as a new attempt", key, rec.TaskID))
-		if _, err := s.exec.run(s.repoRoot, "status", rec.TaskID, "ready", "--reason", "demo run: corrected after reviewer rejection", "--vault", s.vault); err != nil {
+		if _, err := s.exec.run(s.repoRoot, "edit", rec.TaskID, "--status", "ready", "--reason", "demo run: corrected after reviewer rejection", "--vault", s.vault); err != nil {
 			s.recordOutcome(key, "failed", attempt, started, time.Now().UTC().Format(time.RFC3339Nano))
 			return
 		}
@@ -815,7 +815,7 @@ func (s *demoScheduler) markInjected(key string) {
 }
 
 func (s *demoScheduler) activeAttempt(taskID string) string {
-	inspected, err := s.exec.run(s.repoRoot, "runs", "inspect", taskID, "--vault", s.vault)
+	inspected, err := s.exec.run(s.repoRoot, "show", taskID, "--run", "--vault", s.vault)
 	if err != nil {
 		return ""
 	}
@@ -837,7 +837,7 @@ func (s *demoScheduler) activeAttempt(taskID string) string {
 }
 
 func (s *demoScheduler) releaseLease(taskID, reason string) {
-	_, _ = s.exec.run(s.repoRoot, "work", "release", taskID, "--by", demoImplementActor, "--reason", reason, "--vault", s.vault)
+	_, _ = s.exec.run(s.repoRoot, "stop", taskID, "--by", demoImplementActor, "--reason", reason, "--vault", s.vault)
 }
 
 func (s *demoScheduler) writeArtifact(rec demoTaskRecord, workspace, content string) error {
@@ -873,7 +873,7 @@ var demoConfirmPattern = regexp.MustCompile(`sha256:[0-9a-f]{64}`)
 
 func (s *demoScheduler) closeTask(ctx context.Context, rec demoTaskRecord) error {
 	err := s.runRetrying(ctx, "task "+rec.TaskID+" close", 5, func() error {
-		_, err := s.exec.run(s.repoRoot, "close", rec.TaskID, "--by", demoReviewerActor, "--reason", "demo reviewer: fixture bytes verified, proof satisfied", "--vault", s.vault)
+		_, err := s.exec.run(s.repoRoot, "done", rec.TaskID, "--by", demoReviewerActor, "--reason", "demo reviewer: fixture bytes verified, proof satisfied", "--vault", s.vault)
 		return err
 	})
 	if err == nil {
@@ -891,7 +891,7 @@ func (s *demoScheduler) closeTask(ctx context.Context, rec demoTaskRecord) error
 		return err
 	}
 	return s.runRetrying(ctx, "task "+rec.TaskID+" confirmed close", 5, func() error {
-		_, err := s.exec.run(s.repoRoot, "close", rec.TaskID, "--by", demoReviewerActor, "--reason", "demo reviewer: fixture bytes verified, proof satisfied", "--confirm", manifest, "--vault", s.vault)
+		_, err := s.exec.run(s.repoRoot, "done", rec.TaskID, "--by", demoReviewerActor, "--reason", "demo reviewer: fixture bytes verified, proof satisfied", "--confirm", manifest, "--vault", s.vault)
 		return err
 	})
 }

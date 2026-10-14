@@ -17,7 +17,7 @@ result, the checks, and the proof.
 
 | Fact | Current authority |
 | --- | --- |
-| Command behavior | `cmd/tusker/` and `tusker capabilities --json` |
+| Command behavior | `cmd/tusker/` and `tusker version --json` |
 | Record fields and allowed values | `internal/v7schema/schema.go` |
 | Close policy | `internal/v7policy/` and the close commands in `cmd/tusker/` |
 | Repository tracker state | `.tusker/` |
@@ -56,7 +56,7 @@ dispatch work. Project registration does not enable automation.
 
 ## Read next
 
-- Change specifications and product decisions: `docs/system/proposals/` and `docs/system/decisions/` (find a subject with `tusker docs find`; legacy `.tusker/specs/` paths still resolve)
+- Change specifications and product decisions: `docs/system/proposals/` and `docs/system/decisions/` (find a subject with `tusker list docs --grep`; legacy `.tusker/specs/` paths still resolve)
 - [Workflow audit and remaining repairs](../reports/spec-to-proof-audit.md)
 - [Tasks and proof](tasks-and-proof.md)
 - [Proof and closeout](proof-and-closeout.md)
@@ -78,12 +78,12 @@ specifications in `docs/system/proposals/`, and product decisions in
 `docs/system/decisions/`. `docs/system/00-overview.md` is the entry point; a
 domain `00-index.md` names its reading order. `.tusker/` holds tracker state
 and thin pointers only. Legacy `.tusker/specs/` paths still resolve during
-transition; all new knowledge writes use `docs/system/`. Use `tusker docs find`
+transition; all new knowledge writes use `docs/system/`. Use `tusker list docs --grep`
 to route by subject before reading a full document; superseded subjects point
 to their current replacement. A subject is the stable identity across moves;
 prefer ordinary relative Markdown links.
 
-Run `tusker docs map --vault ./.tusker` after a system page changes.
+Run `tusker check --fix --vault ./.tusker` after a system page changes.
 
 ## Code sources
 

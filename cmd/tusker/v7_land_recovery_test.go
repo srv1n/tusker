@@ -200,7 +200,7 @@ func TestLandNoWaveRefusal(t *testing.T) {
 		t.Fatal("expected a refusal when landing a task with no wave")
 	}
 	msg := err.Error()
-	for _, want := range []string{"not in a wave", "tusker wave create", "APP-T-0002"} {
+	for _, want := range []string{"not in a wave", "tusker new wave", "APP-T-0002"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("no-wave refusal must be actionable; missing %q in %q", want, msg)
 		}

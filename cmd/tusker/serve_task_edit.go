@@ -8,7 +8,7 @@ import (
 
 // handleTaskAuthoringMutation serves task contract authoring from the UI.
 // Both routes are thin adapters over the CLI command functions, so the UI and
-// `tusker task update` / `tusker new task` share validation, CAS and events:
+// `tusker edit` / `tusker new task` share validation, CAS and events:
 //
 //	POST /api/tasks            -> newAuthoredV7Task (+ waveV7AddCmd when wave is set)
 //	POST /api/tasks/<id>/edit  -> updateV7TaskCmd
@@ -41,7 +41,7 @@ func (s *serveServer) handleTaskAuthoringMutation(w http.ResponseWriter, r *http
 }
 
 func (s *serveServer) handleTaskEditAction(w http.ResponseWriter, taskID string, body serveActionBody) {
-	const command = "tusker task update"
+	const command = "tusker edit"
 	args, project, err := serveBaseArgsForBody(s, body)
 	if err != nil {
 		serveJSON(w, http.StatusOK, serveCommandResult(command, "", err))
@@ -135,7 +135,7 @@ func (s *serveServer) handleTaskCreateAction(w http.ResponseWriter, body serveAc
 			waveArgs := Args{"vault": args["vault"], "repo": args["repo"], "id": wave, "tasks": taskID, "by": actor, "quiet": "true"}
 			waveOutput, waveErr := serveInvokeCommand(waveArgs, waveV7AddCmd)
 			if waveErr != nil {
-				result = serveCommandResult("tusker wave add "+wave+" "+taskID, waveOutput, waveErr)
+				result = serveCommandResult("tusker edit "+wave+" --add "+taskID, waveOutput, waveErr)
 				result.TaskID = taskID
 				result.Reason = "created task " + taskID + " but could not add it to " + wave + ": " + result.Reason
 			} else {

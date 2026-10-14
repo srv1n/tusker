@@ -423,7 +423,7 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 			item.State = "stale_run"
 			item.Cause = factoryOperationsStaleRunCause(run)
 			item.AutomaticNextAction = "Tusker will reconcile the expired lease and permit a safely fenced reclaim according to run ownership policy."
-			item.SafeAction = "tusker runs inspect " + taskID + " --json"
+			item.SafeAction = "tusker show " + taskID + " --run --json"
 			projection.Blocked = append(projection.Blocked, item)
 		case status == "done" || status == "closed":
 			item.State = factoryOperationsDeliveredState(facts, taskID)
@@ -431,7 +431,7 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 			item.SafeAction = "tusker show " + taskID + " --capsule"
 			projection.Delivered = append(projection.Delivered, item)
 		case runConsumesDispatchCapacity(run) && runFreshness(&run, facts.Now) == "fresh":
-			item.SafeAction = "tusker runs inspect " + taskID + " --json"
+			item.SafeAction = "tusker show " + taskID + " --run --json"
 			if strings.Contains(strings.ToLower(run.Lane), "review") || status == "review" {
 				item.State = "in_review"
 				item.Cause = "An objective review lease is active for this work revision."
@@ -447,11 +447,11 @@ func composeFactoryOperations(facts factoryOperationsFacts) factoryOperationsPro
 			item.State = "parked"
 			item.Cause = safePacketText(firstNonEmpty(run.LastError, "The run is parked by machine policy."), 320)
 			item.AutomaticNextAction = "Tusker will keep this task out of dispatch until its recorded machine blocker is repaired."
-			item.SafeAction = "tusker runs inspect " + taskID + " --json"
+			item.SafeAction = "tusker show " + taskID + " --run --json"
 			projection.Blocked = append(projection.Blocked, item)
 		case LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateRetryQueued:
 			item.Cause = safePacketText(firstNonEmpty(run.LastError, "The existing run is queued for a bounded retry."), 320)
-			item.SafeAction = "tusker runs inspect " + taskID + " --json"
+			item.SafeAction = "tusker show " + taskID + " --run --json"
 			if !facts.Project.Enabled {
 				item.State = "idle"
 				item.Cause = "The existing retry is durable, but background pickup is disabled."
@@ -718,11 +718,11 @@ func factoryOperationsFrontierState(facts factoryOperationsFacts, task Note, hel
 	}
 	if !facts.Project.Enabled {
 		return "idle", "The project is not registered and enabled for background pickup.",
-			"No background claim will occur; interactive task work remains available.", "tusker projects list --json", false
+			"No background claim will occur; interactive task work remains available.", "tusker list projects --json", false
 	}
 	if facts.Project.Health != "" && facts.Project.Health != projectHealthHealthy {
 		return "blocked", "Registered project health is " + string(facts.Project.Health) + ".",
-			"Tusker will keep background pickup stopped until the project registry is healthy.", "tusker projects list --json", true
+			"Tusker will keep background pickup stopped until the project registry is healthy.", "tusker list projects --json", true
 	}
 	if strings.EqualFold(stringField(task.Data, "risk"), "critical") && !factoryOperationsCriticalRiskAuthorized(facts, task) {
 		action := "tusker show " + taskID + " --capsule"
@@ -754,16 +754,16 @@ func factoryOperationsFrontierState(facts factoryOperationsFacts, task Note, hel
 			holder, taskLease := fairDispatchResourceRecordID(lease)
 			if !taskLease || holder != taskID {
 				return "waiting_resource", "Named resource " + name + " is currently held.",
-					"Tusker will reconsider this task automatically when the resource is released.", "tusker runs inspect " + taskID + " --json", true
+					"Tusker will reconsider this task automatically when the resource is released.", "tusker show " + taskID + " --run --json", true
 			}
 		}
 	}
 	if capacity.Global.Available == 0 || capacity.Project.Available == 0 {
 		return "waiting_capacity", "The configured active-run capacity is full.",
-			"Tusker will reconsider this ready task automatically when a live run releases capacity.", "tusker runs inspect " + taskID + " --json", false
+			"Tusker will reconsider this ready task automatically when a live run releases capacity.", "tusker show " + taskID + " --run --json", false
 	}
 	return "ready", "Canonical dependencies, gates, authorization, capacity, and resource checks are green.",
-		"Tusker will claim this frontier task on a later daemon reconciliation tick.", "tusker automation explain " + taskID + " --json", false
+		"Tusker will claim this frontier task on a later daemon reconciliation tick.", "tusker show " + taskID + " --why --json", false
 }
 
 func factoryOperationsCriticalRiskAuthorized(facts factoryOperationsFacts, task Note) bool {
@@ -796,13 +796,13 @@ func factoryOperationsBlockingGate(idx v7Index, task Note) (string, Note, bool) 
 func factoryOperationsWaveSafeAction(waveID, state string) string {
 	switch state {
 	case "armed":
-		return "tusker wave pause " + waveID + " --reason \"operator requested pause\""
+		return "tusker stop " + waveID + " --reason \"operator requested pause\""
 	case "paused":
-		return "tusker wave resume " + waveID + " --by human:$USER"
+		return "tusker start " + waveID + " --by human:$USER"
 	case "stale":
-		return "tusker wave start " + waveID + " --mode background --by human:$USER --json"
+		return "tusker start " + waveID + " --mode background --by human:$USER --json"
 	default:
-		return "tusker wave start " + waveID + " --mode background --by human:$USER --json"
+		return "tusker start " + waveID + " --mode background --by human:$USER --json"
 	}
 }
 

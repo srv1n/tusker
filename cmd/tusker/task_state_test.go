@@ -88,7 +88,7 @@ func TestTaskStateCrashCapSixAttempts(t *testing.T) {
 	}
 }
 
-// S2: tusker show --json and tusker next --json carry the state record.
+// S2: tusker show --json and tusker list --next --json carry the state record.
 func TestTaskStateShowAndNextJSON(t *testing.T) {
 	vault := automationTestVault(t)
 	mustRunPickupTest(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "State task", "risk": "low", "priority": "p1", "owned-paths": "src", "v7": "true"}, newV7Task)

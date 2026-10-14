@@ -488,7 +488,7 @@ func traceV7Cmd(args Args) error {
 		shiftPositionalArgs(args)
 		return traceReplayCmd(args)
 	default:
-		return tuskerError(errorMissingArg, "trace requires a subcommand", withHint("use `tusker trace list <TASK-ID>`, `tusker trace show <trace-id>`, or `tusker trace replay <trace-id>`"))
+		return tuskerError(errorMissingArg, "trace requires a subcommand", withHint("use `tusker show <TASK-ID> --traces`, `tusker trace show <trace-id>`, or `tusker trace replay <trace-id>`"))
 	}
 }
 

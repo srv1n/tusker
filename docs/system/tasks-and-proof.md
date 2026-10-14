@@ -49,14 +49,14 @@ The exact record identifier is `tusker.task/v7`. This is a file-format name.
 Add command checks as pending work:
 
 ```sh
-tusker verify add APP-T-0001 \
+tusker edit APP-T-0001 \
   --covers A1 \
   --check "command: go test ./cmd/tusker -run TestFocused -count=1" \
   --result pending
 ```
 
 Expected result: the task contains a pending row linked to `A1`. The command
-does not run while the row is added. A public `verify add` call refuses
+does not run while the row is added. A public `tusker edit --verify` call refuses
 `--result pass` or `--result fail`; only the verification executor records a
 command result. If the row is wrong, remove or replace it while the work
 session has authority. Do not edit proof fields by hand.
@@ -78,7 +78,7 @@ project checks also pass. `done`, `cancelled`, and `superseded` are terminal.
 For user-directed work, start an interactive work session:
 
 ```sh
-tusker work start APP-T-0001 --by agent:worker
+tusker start APP-T-0001 --by agent:worker
 ```
 
 Expected result: Tusker claims one execution session and returns its packet and
@@ -86,17 +86,17 @@ next action. This command does not enable automation, arm a wave, start a
 daemon, or launch another worker.
 
 If the task is held, blocked, terminal, already owned, or overlaps another
-task's owned paths, `work start` refuses the claim and reports the blocker.
+task's owned paths, `tusker start` refuses the claim and reports the blocker.
 Follow the reported remedy. Do not force a claim or edit readiness by hand.
 
 To inspect an existing session, use:
 
 ```sh
-tusker work status APP-T-0001 --json
+tusker show APP-T-0001 --lease --json
 tusker work wait APP-T-0001 --timeout 60 --json
 ```
 
-`work status` reports the current owner and state. `work wait` waits for a
+`tusker show <TASK-ID> --lease` reports the current owner and state. `work wait` waits for a
 state change or the timeout; a timeout is not completion.
 
 ## Submit the result for review
@@ -105,7 +105,7 @@ After the implementation and its checks are complete, submit the session with
 the result, verification summary, and one verdict for each acceptance row:
 
 ```sh
-tusker work submit APP-T-0001 \
+tusker done APP-T-0001 \
   --by agent:worker \
   --deliverable "Implemented the accepted task scope." \
   --verification "Focused checks passed." \
@@ -156,7 +156,7 @@ permission requests, human gates and the wave's authorization. It returns a
 record with `state`, `label`, `category`, `next_actor`, `reason_code`,
 `reason` and `next_action`.
 
-`tusker show <TASK-ID> --json` and `tusker next --json` return the record as
+`tusker show <TASK-ID> --json` and `tusker list --next --json` return the record as
 `state`. Blocked always names a reason kind: `crashed`, `outside_problem`,
 `not_allowed` or `paused`. A run that fails 6 attempts parks and shows Blocked
 `crashed`. There is no Failed state. See

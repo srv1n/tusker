@@ -10,7 +10,7 @@ export interface RunnerStatus {
 export function runnerStatus(daemon: DaemonStatus | undefined, project?: ProjectSummary): RunnerStatus {
   if (daemon?.crashLoop?.open) {
     const detail = daemon.crashLoop.summary ?? daemon.crashLoop.reason ?? "crash_loop";
-    return { label: "Auto-run stopped", tone: "fail", reason: `Daemon crash loop: ${detail}. Run tusker daemon resume.` };
+    return { label: "Auto-run stopped", tone: "fail", reason: `Daemon crash loop: ${detail}. Run tusker daemon status --resume.` };
   }
   if (daemon?.invariantCircuit?.open) {
     const circuit = daemon.invariantCircuit;

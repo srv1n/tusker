@@ -116,30 +116,6 @@ func capsuleContinuationTarget(note Note) string {
 	return "the full note"
 }
 
-func renderFrontmatterCapsule(note Note) string {
-	capsule := frontmatterCapsuleFor(note)
-	if !capsuleHasContent(capsule) {
-		return ""
-	}
-	var lines []string
-	if capsule.What != "" {
-		lines = append(lines, "- What: "+capsule.What)
-	}
-	if len(capsule.UseWhen) > 0 {
-		lines = append(lines, "- Use when:")
-		for _, item := range capsule.UseWhen {
-			lines = append(lines, "  - "+item)
-		}
-	}
-	if len(capsule.SkipWhen) > 0 {
-		lines = append(lines, "- Skip when:")
-		for _, item := range capsule.SkipWhen {
-			lines = append(lines, "  - "+item)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
 func capsuleTokenCount(capsule frontmatterCapsule) int {
 	text := strings.Join(append(append([]string{capsule.What}, capsule.UseWhen...), capsule.SkipWhen...), " ")
 	return len(strings.Fields(text))

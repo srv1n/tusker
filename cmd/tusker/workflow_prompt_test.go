@@ -106,7 +106,7 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 		"independent Tusker reviewer",
 		"ID: APP-T-0001",
 		"Risk alone does not justify a human gate",
-		"tusker review submit APP-T-0001 --attempt attempt-review --task-rev",
+		"tusker review APP-T-0001 --attempt attempt-review --task-rev",
 		"--source-sha",
 		"--work-rev",
 		"--proof-fingerprint",
@@ -121,7 +121,7 @@ func TestRenderAttemptPromptUsesReviewerTemplateForReviewLane(t *testing.T) {
 			t.Fatalf("expected reviewer prompt to contain %q, got:\n%s", expected, prompt)
 		}
 	}
-	for _, forbidden := range []string{"auto-close", "tusker status", "tusker merge", "tusker land", "tusker close", "tusker rework", "git update-ref", "git checkout"} {
+	for _, forbidden := range []string{"auto-close", "tusker status", "tusker merge", "tusker land", "tusker done", "tusker rework", "git update-ref", "git checkout"} {
 		if strings.Contains(strings.ToLower(prompt), forbidden) {
 			t.Fatalf("reviewer prompt retained forbidden authority %q:\n%s", forbidden, prompt)
 		}
@@ -190,10 +190,10 @@ func TestRenderAttemptPromptUsesV7ReviewerActorShape(t *testing.T) {
 	if !strings.Contains(prompt, "Reviewer actor: reviewer:agent") {
 		t.Fatalf("expected V7 reviewer actor, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "tusker review submit APP-T-0001 --attempt attempt-review") {
+	if !strings.Contains(prompt, "tusker review APP-T-0001 --attempt attempt-review") {
 		t.Fatalf("expected V7 reviewer prompt to use typed result submission, got:\n%s", prompt)
 	}
-	for _, forbidden := range []string{"tusker status", "tusker merge", "tusker land", "tusker close", "tusker rework", "git update-ref", "git checkout"} {
+	for _, forbidden := range []string{"tusker status", "tusker merge", "tusker land", "tusker done", "tusker rework", "git update-ref", "git checkout"} {
 		if strings.Contains(strings.ToLower(prompt), forbidden) {
 			t.Fatalf("V7 reviewer prompt retained forbidden authority %q:\n%s", forbidden, prompt)
 		}

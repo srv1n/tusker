@@ -23,14 +23,14 @@ intermediate plan document in the canonical path.
   override. `--epic`, `--spec-refs`, `--dependencies`, `--owned-paths`,
   `--generated-outputs`, and contact fields are optional; every supplied
   spec ref must resolve.
-- `tusker wave create --file <request.yaml> --request-key <stable-key>`
+- `tusker new wave --file <request.yaml> --request-key <stable-key>`
   atomically authors a complete `tusker.wave-authoring/v1` request —
   temporary keys, bodies, dependencies, and human gates — into durable task
   records, gates, and one disarmed wave. An identical request key and
   fingerprint replay to the original durable IDs recorded in the wave's
   immutable authoring receipt; a changed request under the same key
   conflicts.
-- `tusker task update <TASK-ID> --if-revision <state_rev> ... --by <actor>`
+- `tusker edit <TASK-ID> --if-revision <state_rev> ... --by <actor>`
   mutates mutable authoring fields under the material lock and preserves
   identity, history, and proof lineage; a material change on a done or
   review task reopens it as rework.
@@ -46,10 +46,10 @@ fields are never projected into packets.
 
 ## Review and start authority
 
-`tusker wave review <WAVE-ID> --json` projects state, authorization, the
+`tusker show <WAVE-ID> --json` projects state, authorization, the
 material fingerprint, member eligibility, dependency frontiers, blockers
 with repair actions, and the state-appropriate controls.
-Authors use `tusker wave review <WAVE-ID> --check --json` before handoff;
+Authors use `tusker show <WAVE-ID> --check --json` before handoff;
 `--check` keeps the review read-only but exits nonzero unless wave Start is
 enabled. It checks every member contract, including later DAG frontiers,
 missing member references, cross-wave dependency cycles on the full task
@@ -57,12 +57,12 @@ graph, colliding owned paths on the same frontier, invalid routes, stale
 contract and dependency pins, and live ownership. Contract defects fail the
 check; well-formed dependency waits, inert authorization, a disabled
 project, and unavailable runtime stay separate runtime dimensions with
-their own codes, and `tusker doctor` classifies those. Facts can change
+their own codes, and `tusker show <ID> --why` classifies those. Facts can change
 between preflight and Play, so Start and the final claim recheck routes,
 contracts, and ownership under the material lock and refuse drifted
 material rather than partially authorizing it.
 
-`tusker wave start <WAVE-ID> --mode background --by
+`tusker start <WAVE-ID> --mode background --by
 human:<name>|operator:<name>` validates durable material, routes, gates, and
 ownership, arms `authorization: armed` bound to the exact current
 fingerprint, and queues eligible roots as durable `run_directives`. One
@@ -72,14 +72,14 @@ wave's `concurrency`. An offline daemon leaves the wave authorized and
 Waiting — never falsely Running — and recovers the frontier on its next
 poll.
 
-`tusker wave pause <WAVE-ID> --by human:<name>|operator:<name>` blocks new
+`tusker stop <WAVE-ID> --by human:<name>|operator:<name>` blocks new
 wave-owned admissions while admitted attempts
 finish, preserving the authorization fingerprint, actor, and timestamp.
-`tusker wave resume <WAVE-ID> --by human:<name>|operator:<name>` restores `armed` only while the current material still
+`tusker start <WAVE-ID> --by human:<name>|operator:<name>` restores `armed` only while the current material still
 matches the stored fingerprint; drifted material is refused rather than
-silently reauthorized. An explicit `tusker task start` inside a paused wave
+silently reauthorized. An explicit `tusker start` inside a paused wave
 converts that task's queued directive to task scope and leaves the wave
-paused. `tusker task start <TASK-ID> --mode interactive --by <agent>
+paused. `tusker start <TASK-ID> --by <agent>
 --current-workspace` claims one task in the current workspace.
 An interactive Start may leave the task in backlog: the fresh, exact
 interactive authorization, not background eligibility, owns that attempt.
@@ -89,7 +89,7 @@ satisfied. Claiming binds the validated workspace in the same transaction as
 the lease and attempt; a refused claim cannot replace its historical path.
 
 Background work is the project's only daemon opt-in.
-`tusker projects enable --dry-run` and `tusker projects automation-scope
+`tusker projects set --dry-run --on` and `tusker projects set --dry-run
 [--id <project-id>]` show the exact resume scope first: still-valid armed
 waves with eligible frontiers, active task-scoped directives, and the
 stale/paused/disarmed waves an enable does not resume, plus the toggle

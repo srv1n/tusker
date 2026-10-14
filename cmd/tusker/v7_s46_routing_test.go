@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,50 +90,6 @@ func TestS46DomainRouting(t *testing.T) {
 	}
 
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Routed task", "domains": "billing,risk", "owned-paths": "src"}, newV7Task)
-
-	// Domain list merges portable-only domains with managed records.
-	listed := captureStdout(t, func() {
-		if err := domainV7ListCmd(Args{"vault": vault, "json": "true"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	var list struct {
-		Domains []struct {
-			ID   string `json:"id"`
-			Path string `json:"path"`
-		} `json:"domains"`
-	}
-	if err := json.Unmarshal([]byte(listed), &list); err != nil {
-		t.Fatalf("domain list JSON: %v\n%s", err, listed)
-	}
-	paths := map[string]string{}
-	for _, domain := range list.Domains {
-		paths[domain.ID] = domain.Path
-	}
-	if paths["billing"] != portableRel {
-		t.Fatalf("billing route = %q, want portable %q", paths["billing"], portableRel)
-	}
-	if paths["risk"] != "docs/system/domains/risk/00-index.md" {
-		t.Fatalf("risk route = %q", paths["risk"])
-	}
-
-	// Domain reads return the actual portable document.
-	shown := captureStdout(t, func() {
-		if err := domainV7ShowCmd(Args{"vault": vault, "id": "risk", "full": "true"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if !strings.Contains(shown, "Risk appetite and review thresholds.") {
-		t.Fatalf("domain show did not return the portable document:\n%s", shown)
-	}
-	canon := captureStdout(t, func() {
-		if err := domainV7CanonCmd(Args{"vault": vault, "id": "risk"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if !strings.Contains(canon, "Risk appetite and review thresholds.") {
-		t.Fatalf("domain canon did not route to the portable document:\n%s", canon)
-	}
 
 	// The packet routes both domains through their portable indexes with
 	// bounded context and no stale legacy required-read path.

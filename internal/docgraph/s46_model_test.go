@@ -149,7 +149,7 @@ func TestS46GeneratedFreshness(t *testing.T) {
 	}
 	var legacy int
 	for _, issue := range issues {
-		if issue.Code == "DOCS_MAP_LEGACY_LOCATION" && strings.Contains(issue.Message, "tusker docs map") {
+		if issue.Code == "DOCS_MAP_LEGACY_LOCATION" && strings.Contains(issue.Message, "tusker check --fix") {
 			legacy++
 		}
 		if issue.Code == "DOCS_MAP_STALE" {

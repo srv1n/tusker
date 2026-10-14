@@ -31,16 +31,16 @@ implementation proof. Product decisions live in `docs/system/decisions/`;
 work and lifecycle decisions stay with the tracker.
 
 For a known document or packet reference, read its governing section directly.
-Otherwise use `tusker docs find <query>` and the matching `read_when` section.
+Otherwise use `tusker list docs --grep <query>` and the matching `read_when` section.
 Expand to `docs browse` or `docs backlinks` only if that leaves a specific gap;
 check targeted help when syntax is uncertain. A documented answer comes from a
 current doc read now, or is **not in canon**.
 
-Before quoting a doc about code, check its `code_conformance` and `tusker docs
-status --stale`; label a stale, drift, or unverified doc as such.
+Before quoting a doc about code, check its `code_conformance` and `tusker list docs
+--stale`; label a stale, drift, or unverified doc as such.
 
 When the user rules, update the decision doc in the same session, or run
-`tusker docs new <subject> --kind decision [--supersedes <old>]`.
+`tusker new doc <subject> --kind decision [--supersedes <old>]`.
 
 ## Truth labels
 

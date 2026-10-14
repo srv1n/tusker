@@ -100,7 +100,7 @@ func proofV7Cmd(args Args) error {
 		args["id"] = firstNonEmpty(args.String("id"), args.String("_pos1"))
 		return proofV7RecipeCmd(args)
 	default:
-		return tuskerError(errorMissingArg, "Usage: tusker proof status <task-id> | tusker proof set-mode <task-id> none|inline|card|artifact|audit | tusker proof recipe <task-id>")
+		return tuskerError(errorMissingArg, "Usage: tusker show <task-id> --proof | tusker edit <task-id> --proof-mode none|inline|card|artifact|audit | tusker show <task-id> --proof")
 	}
 }
 
@@ -418,7 +418,7 @@ func verifyV7RemoveCmd(args Args) error {
 	if rawIndex == "" || index < 1 {
 		return tuskerError(errorMissingArg, "verify remove requires --index <one-based-row>")
 	}
-	retryCommand := fmt.Sprintf("tusker verify remove %s --index %d", taskID, index)
+	retryCommand := fmt.Sprintf("tusker edit %s --verify-remove %d", taskID, index)
 	if vault := strings.TrimSpace(args.String("vault")); vault != "" {
 		retryCommand += " --vault " + v7ShellQuote(vault)
 	}
@@ -746,7 +746,7 @@ func v7VerificationCASError(err error, path, taskID string, rows []v7Verificatio
 }
 
 func v7VerificationRetryCommand(taskID string, rows []v7VerificationRow, args Args) string {
-	parts := []string{"tusker", "verify", "add", taskID}
+	parts := []string{"tusker", "edit", taskID}
 	if args != nil {
 		if vault := strings.TrimSpace(args.String("vault")); vault != "" {
 			parts = append(parts, "--vault", vault)
@@ -756,7 +756,7 @@ func v7VerificationRetryCommand(taskID string, rows []v7VerificationRow, args Ar
 			return v7ShellCommand(parts)
 		}
 		if rowsText := strings.TrimSpace(args.String("rows")); rowsText != "" && len(rows) != 1 {
-			parts = append(parts, "--rows", rowsText)
+			parts = append(parts, "--verify", rowsText)
 			return v7ShellCommand(parts)
 		}
 	}
@@ -771,7 +771,7 @@ func v7VerificationRetryCommand(taskID string, rows []v7VerificationRow, args Ar
 		}
 		return v7ShellCommand(parts)
 	}
-	parts = append(parts, "--rows", renderV7VerificationRowsArg(rows))
+	parts = append(parts, "--verify", renderV7VerificationRowsArg(rows))
 	return v7ShellCommand(parts)
 }
 
@@ -2557,248 +2557,6 @@ func classifyV7AttachmentPath(path string) string {
 	default:
 		return "delete_candidate"
 	}
-}
-
-func attachmentsV7Cmd(args Args) error {
-	if strings.ToLower(args.String("_pos0")) != "migrate" {
-		return tuskerError(errorMissingArg, "Usage: tusker attachments migrate --dry-run|--write")
-	}
-	return attachmentsV7MigrateCmd(args)
-}
-
-func attachmentsV7MigrateCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	attachments := filepath.Join(vaultPath, "Attachments")
-	report := map[string]any{
-		"mode":             "dry-run",
-		"move_to_scratch":  []string{},
-		"move_to_attempt":  []string{},
-		"forbidden":        []string{},
-		"delete_candidate": []string{},
-		"dirs_removed":     []string{},
-	}
-	if !dirExists(attachments) {
-		if args.Bool("json") {
-			emitJSON(report)
-		} else {
-			fmt.Println("No Attachments/ directory found.")
-		}
-		return nil
-	}
-	write := args.Bool("write")
-	if write {
-		report["mode"] = "write"
-		// Un-strand attachments an older build moved under .tusker/.tusker/scratch/.
-		reclaimLegacyDoubleTuskerPath(vaultPath, "scratch")
-	}
-	err = filepath.WalkDir(attachments, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		rel, _ := filepath.Rel(vaultPath, path)
-		taskID := v7TaskIDFromAttachmentPath(vaultPath, path)
-		class := classifyV7AttachmentPath(path)
-		report[class] = appendStringAny(report[class], filepath.ToSlash(rel))
-		if !write {
-			return nil
-		}
-		targetTask := fallback(taskID, "_unmapped")
-		target := filepath.Join(scratchRootPath(vaultPath), targetTask, "legacy-attachments", filepath.Base(path))
-		if err := secureScratchMove(vaultPath, path, target); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if write {
-		removed, err := removeEmptyDirsUnder(vaultPath, attachments)
-		if err != nil {
-			return err
-		}
-		for _, rel := range removed {
-			report["dirs_removed"] = appendStringAny(report["dirs_removed"], rel)
-		}
-	}
-	if args.Bool("json") {
-		emitJSON(report)
-		return nil
-	}
-	fmt.Printf("Attachments migration %s\n", report["mode"])
-	for _, category := range []string{"move_to_scratch", "move_to_attempt", "forbidden", "delete_candidate", "dirs_removed"} {
-		items := normalizeList(report[category])
-		if len(items) == 0 {
-			continue
-		}
-		fmt.Printf("\n%s:\n", category)
-		for _, item := range items {
-			fmt.Printf("  - %s\n", item)
-		}
-	}
-	if !write {
-		fmt.Println("\nDry run only. Use --write to move files under .tusker/scratch/<task>/legacy-attachments/.")
-	}
-	return nil
-}
-
-func removeEmptyDirsUnder(vaultPath, root string) ([]string, error) {
-	var dirs []string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if d.IsDir() {
-			dirs = append(dirs, path)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(dirs, func(i, j int) bool {
-		return len(dirs[i]) > len(dirs[j])
-	})
-	var removed []string
-	for _, dir := range dirs {
-		if err := os.Remove(dir); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			if entries, readErr := os.ReadDir(dir); readErr == nil && len(entries) > 0 {
-				continue
-			}
-			return nil, err
-		}
-		rel, _ := filepath.Rel(vaultPath, dir)
-		removed = append(removed, filepath.ToSlash(rel))
-	}
-	sort.Strings(removed)
-	return removed, nil
-}
-
-func migrateV7EvidencePolicyCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return err
-	}
-	write := args.Bool("write")
-	report := map[string]any{
-		"mode":                 "dry-run",
-		"tasks_seen":           len(idx.Tasks),
-		"tasks_updated":        0,
-		"proof_mode_added":     0,
-		"proof_status_fixed":   0,
-		"evidence_over_budget": []string{},
-	}
-	if write {
-		report["mode"] = "write"
-	}
-	for _, task := range sortedV7Tasks(idx) {
-		data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
-		if err != nil {
-			return err
-		}
-		changed := false
-		baseRev := stringField(data, "state_rev")
-		mode := strings.ToLower(strings.TrimSpace(stringField(data, "proof_mode")))
-		if mode == "" {
-			mode = defaultV7ProofModeForTask(data)
-			data["proof_mode"] = mode
-			data["proof_required"] = defaultV7ProofRequired(mode)
-			data["evidence_budget"] = defaultV7EvidenceBudget(mode)
-			data["raw_artifacts_allowed"] = false
-			report["proof_mode_added"] = intValue(report["proof_mode_added"]) + 1
-			changed = true
-		}
-		if mode != "none" && len(normalizeList(data["proof_required"])) == 0 {
-			data["proof_required"] = defaultV7ProofRequired(mode)
-			changed = true
-		}
-		if _, ok := data["evidence_budget"]; !ok {
-			data["evidence_budget"] = defaultV7EvidenceBudget(mode)
-			changed = true
-		}
-		if _, ok := data["raw_artifacts_allowed"]; !ok {
-			data["raw_artifacts_allowed"] = false
-			changed = true
-		}
-		nextBody := syncV7TaskEvidenceSection(body, idx.Evidence[stringField(data, "id")])
-		if nextBody != body {
-			body = nextBody
-			changed = true
-		}
-		current := task
-		current.Data = data
-		current.Body = body
-		proofStatus := computeV7ProofReport(vaultPath, current, idx).Status
-		if stringField(data, "proof_status") != proofStatus {
-			data["proof_status"] = proofStatus
-			report["proof_status_fixed"] = intValue(report["proof_status_fixed"]) + 1
-			changed = true
-		}
-		budget := intField(data, "evidence_budget")
-		if budget >= 0 && len(idx.Evidence[stringField(data, "id")]) > budget {
-			report["evidence_over_budget"] = appendStringAny(report["evidence_over_budget"], stringField(data, "id"))
-		}
-		if !write || !changed {
-			continue
-		}
-		data["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-		data["updated_by"] = "tusker:migrate-evidence-policy"
-		if _, err := saveV7DocumentCAS(task.AbsolutePath, data, body, v7FrontmatterOrder["task"], baseRev); err != nil {
-			return err
-		}
-		report["tasks_updated"] = intValue(report["tasks_updated"]) + 1
-	}
-	if args.Bool("json") {
-		emitJSON(report)
-		return nil
-	}
-	tasksSeen := intValue(report["tasks_seen"])
-	tasksUpdated := intValue(report["tasks_updated"])
-	fmt.Printf("Evidence policy migration %s: %d task%s seen, %d updated.\n", report["mode"], tasksSeen, plural(tasksSeen), tasksUpdated)
-	if !write {
-		fmt.Println("Dry run only. Use --write to add proof_mode/proof_status defaults.")
-	}
-	if over := normalizeList(report["evidence_over_budget"]); len(over) > 0 {
-		fmt.Printf("Evidence over budget: %s\n", strings.Join(over, ", "))
-	}
-	return nil
-}
-
-func defaultV7ProofModeForTask(data map[string]any) string {
-	mode := defaultV7ProofMode(stringField(data, "risk"))
-	if mode == "inline" && len(normalizeList(data["evidence_required"])) > 0 {
-		return "card"
-	}
-	return mode
-}
-
-func v7TaskIDFromAttachmentPath(vaultPath, path string) string {
-	rel, err := filepath.Rel(filepath.Join(vaultPath, "Attachments"), path)
-	if err != nil {
-		return ""
-	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	if len(parts) == 0 {
-		return ""
-	}
-	candidate := strings.ToUpper(parts[0])
-	if v7TaskIDPattern.MatchString(candidate) {
-		return candidate
-	}
-	return ""
 }
 
 func v7ForbiddenEvidenceArtifactPath(path string) bool {

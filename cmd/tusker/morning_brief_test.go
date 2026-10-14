@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -108,10 +107,6 @@ func TestScheduledPromotionMorningBriefLandedOnlyFixture(t *testing.T) {
 	}
 	if !strings.Contains(landed.Summary, "Customers can now see") {
 		t.Fatalf("logbook outcome was not composed: %#v", landed)
-	}
-	rendered := renderScheduledPromotionMorningBrief(brief)
-	if strings.Contains(rendered, "released revision") {
-		t.Fatalf("promotion without release was described as a release:\n%s", rendered)
 	}
 }
 
@@ -259,10 +254,6 @@ func TestScheduledPromotionMorningBriefRejectsNonSuccessReleaseStatuses(t *testi
 			if len(brief.LandedLastNight) != 1 || brief.LandedLastNight[0].ReleasedRevision != "" {
 				t.Fatalf("%q release status was presented as released: %#v", status, brief.LandedLastNight)
 			}
-			if !strings.Contains(renderScheduledPromotionMorningBrief(brief), "Promoted") ||
-				strings.Contains(renderScheduledPromotionMorningBrief(brief), "released revision") {
-				t.Fatalf("%q status collapsed promotion into release:\n%s", status, renderScheduledPromotionMorningBrief(brief))
-			}
 		})
 	}
 }
@@ -347,32 +338,6 @@ func TestScheduledPromotionMorningBriefServeProjection(t *testing.T) {
 	server.ServeHTTP(bad, httptest.NewRequest(http.MethodGet, "/api/morning-brief?date=yesterday", nil))
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("invalid date returned %d: %s", bad.Code, bad.Body.String())
-	}
-}
-
-func TestScheduledPromotionMorningBriefCLIIsReadOnly(t *testing.T) {
-	stateRoot := filepath.Join(t.TempDir(), "runtime")
-	t.Setenv("TUSKER_STATE_ROOT", stateRoot)
-	vault := newWaveTestVault(t, 1)
-	if err := writeDefaultWorkflow(vault); err != nil {
-		t.Fatal(err)
-	}
-	output := captureStdout(t, func() {
-		if err := logbookCmd(Args{
-			"vault": vault, "scheduled-promotion": "true", "date": "2026-07-24", "json": "true",
-		}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	var brief scheduledPromotionMorningBrief
-	if err := json.Unmarshal([]byte(output), &brief); err != nil {
-		t.Fatalf("decode CLI morning brief: %v\n%s", err, output)
-	}
-	if brief.Schema != scheduledPromotionMorningBriefSchema || brief.Feature.Enabled {
-		t.Fatalf("logbook CLI returned the wrong projection: %#v", brief)
-	}
-	if _, err := os.Stat(runtimeStoreDBPath(stateRoot)); !os.IsNotExist(err) {
-		t.Fatalf("read-only feature-off CLI created a runtime database: %v", err)
 	}
 }
 

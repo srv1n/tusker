@@ -21,27 +21,27 @@ arming, coordinator heartbeat, or orchestration model is involved.
 ## Coordinator workflow
 
 1. Agree on the work and record the governing decision. Add each already-settled
-   question with `tusker fork add --epic APP --id format --question "Which format?"
+   question with `tusker new fork --epic APP --id format --question "Which format?"
    --ruling "Use the current format" --by coordinator --doc <reference>`.
 2. Create tasks with the normal task body, acceptance IDs and owned paths.
    Batch tasks additionally pin `--runner-profile <global-profile>`,
    `--resources cargo:mac=1,box:lab=1`, and `--budget 2h`. The existing
    `--execute-profile` pin also qualifies. The profile must name both model
    and effort; no implicit model-level or harness default qualifies.
-3. Inspect `tusker packet APP-T-0001 --for worker`. It contains the body,
+3. Inspect `tusker show APP-T-0001 --packet worker`. It contains the body,
    ownership, governing references, active epic rulings, active flaky entries,
    report contract, and the AGENTS.md pointer. `--routing` includes the older
    routing packet explicitly. Local Markdown links and backticked documentation
    references must name existing files and sections. Task creation/update and
-   `tusker validate` also check them.
-4. Create an inert batch: `tusker batch create --name fixes --epic APP
+   `tusker check --only validate` also check them.
+4. Create an inert batch: `tusker new batch --name fixes --epic APP
    --tasks APP-T-0001,APP-T-0002 --max-parallel 2`.
-5. Run `tusker batch run fixes` through the coordinator harness's background
+5. Run `tusker start fixes` through the coordinator harness's background
    facility. Process completion supplies the wakeup. An optional `--notify
    '<command>'` receives the digest on stdin and `TUSKER_BATCH_ID` in its
    environment. Do not configure both mechanisms if you want one notification.
 6. On completion, inspect the digest and review the changes in the named
-   worktrees/branches. Close each task with `tusker close APP-T-0001 --verdict
+   worktrees/branches. Close each task with `tusker done APP-T-0001 --verdict
    accept|accept-with-followups|reject --note <review>`. Audit exceptions require
    `--override-audit <reason>`. Explicit human gates still block close.
 7. A new session starts with `tusker digest --since last`. Add a ruling for a
@@ -80,11 +80,11 @@ it does not relaunch a surviving worker. PID/start-time/process-group identity
 is checked before timeout or stop signals. All workers have a total wall-clock
 budget, including retries and waiting after the first start.
 
-`tusker batch stop fixes --drain` stops admission and lets existing attempts
+`tusker stop fixes --drain` stops admission and lets existing attempts
 finish. Without `--drain`, it stops running workers too. `--wake-on parked`
 returns as soon as a novel question parks; other admitted workers remain
 supervised and the batch can be resumed. Default behavior waits for independent
-work to finish. `tusker batch status fixes --json` retains complete state.
+work to finish. `tusker show fixes --json` retains complete state.
 
 | Outcome | Automatic action | Cap per task |
 | --- | --- | --- |
@@ -96,7 +96,7 @@ work to finish. `tusker batch status fixes --json` retains complete state.
 | Novel question or checkpoint | Park, retain evidence, continue independent work | No automatic answer |
 | Budget exhausted | Stop the worker group, mark stalled, retain evidence | No automatic budget increase |
 
-Register a flaky test with `tusker flaky add <exact-test-id> --reason <text>
+Register a flaky test with `tusker new flaky <exact-test-id> --reason <text>
 --until <YYYY-MM-DD|RFC3339|fix-task-id>`. A date expires at the end of that UTC
 date. A linked task expires on done/cancelled/superseded. Matching is exact;
 expired or missing fix-task references never authorize an exception. Failed

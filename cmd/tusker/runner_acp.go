@@ -999,7 +999,7 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 			continue
 		}
 	}
-	// A dispatched worker finishes with `tusker work submit`, which reads its
+	// A dispatched worker finishes with `tusker done`, which reads its
 	// attempt identity from the environment. Pass this attempt's own identity
 	// (never inherited TUSKER_* values) and put the tusker binary on PATH.
 	path := []string{"/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
@@ -1010,7 +1010,7 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 			"TUSKER_WORK_REVISION="+fmt.Sprint(req.WorkRevision), "TUSKER_LEASE_GENERATION="+fmt.Sprint(req.LeaseGeneration),
 			"TUSKER_WORKSPACE="+req.WorkspacePath, "TUSKER_STATUS_PATH="+req.StatusPath, "TUSKER_EVENT_SINK="+req.EventSinkPath)
 		// Review worktrees carry no vault; point tusker at the one the CLI
-		// runner would use, so `tusker review submit` works without --vault.
+		// runner would use, so `tusker review` works without --vault.
 		if vault := strings.TrimSpace(req.VaultPath); vault != "" {
 			out = append(out, "TUSKER_VAULT="+runnerWorkspaceVaultPath(req.WorkspacePath, vault), "TUSKER_CANONICAL_VAULT="+vault)
 		}
@@ -1032,7 +1032,7 @@ func acpRunnerEnvironment(req StartRequest, workspace string, policy CodexPolicy
 
 // devinReviewerPreamble keeps a plan-mode Devin reviewer from stopping at
 // "exit plan mode" (Tusker refuses that request) instead of submitting.
-const devinReviewerPreamble = "Tusker note for this review: the session runs in plan mode. Plan mode does not block `tusker review submit`; run it directly as a shell command when the review is done. Do not ask to exit plan mode: Tusker refuses that request. Put the --summary text in single quotes. Outside quotes, do not use ; & | ` $ < > or line breaks: the permission check refuses them.\n\n"
+const devinReviewerPreamble = "Tusker note for this review: the session runs in plan mode. Plan mode does not block `tusker review`; run it directly as a shell command when the review is done. Do not ask to exit plan mode: Tusker refuses that request. Put the --summary text in single quotes. Outside quotes, do not use ; & | ` $ < > or line breaks: the permission check refuses them.\n\n"
 
 func acpDurationMS(value int) time.Duration {
 	if value <= 0 {
@@ -1066,7 +1066,7 @@ func configureDevinSession(ctx context.Context, client *acp.Client, session acp.
 // devinACPModeForPolicy maps the resolved Tusker sandbox policy onto Devin's
 // session "mode" config option. The sandbox-exec deny wrapper contains full
 // access; review runs in Devin's plan mode. Ask mode is no substitute: it
-// prints commands instead of running them, so `tusker review submit` never ran.
+// prints commands instead of running them, so `tusker review` never ran.
 func devinACPModeForPolicy(policy CodexPolicy) (string, error) {
 	switch sandbox := strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox)); sandbox {
 	case "read-only":

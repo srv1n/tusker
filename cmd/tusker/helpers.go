@@ -314,7 +314,7 @@ func discoverRegisteredProjectVault(startDir string) (RegisteredProject, bool, e
 		return RegisteredProject{}, false, tuskerError(
 			errorConfigInvalid,
 			fmt.Sprintf("multiple registered Tusker vaults match project %s in this Git repository", projectID),
-			withHint("run `tusker projects list` and reconcile duplicate registrations before initializing a vault"),
+			withHint("run `tusker list projects` and reconcile duplicate registrations before initializing a vault"),
 			withContext(map[string]any{"project_id": projectID, "git_common_dir": commonDir, "matching_vaults": vaults}),
 		)
 	}
@@ -361,7 +361,7 @@ func missingRegisteredVaultError(startDir string, project RegisteredProject) err
 	return tuskerError(
 		errorMissingArg,
 		fmt.Sprintf("Project %s (%s) was registered here with vault %s; that vault is missing.", identity, project.ProjectID, project.VaultRoot),
-		withHint(fmt.Sprintf("Run `tusker init --yes` to recreate an empty vault and reuse the %s registration, or repair the registration with `tusker projects rebind` / `tusker projects prune`.", identity)),
+		withHint(fmt.Sprintf("Run `tusker init --yes` to recreate an empty vault and reuse the %s registration, or repair the registration with `tusker projects add --rebind` / `tusker projects remove --missing`.", identity)),
 		withContext(map[string]any{
 			"arg":           "--vault",
 			"cwd":           startDir,
@@ -473,7 +473,7 @@ func staleRegisteredProjectVaultError(startDir, projectID, commonDir string, pro
 	return tuskerError(
 		errorConfigInvalid,
 		fmt.Sprintf("registered Tusker project identity %s has no usable canonical vault for this Git worktree", projectID),
-		withHint("repair the matching registration with `tusker projects rebind` or `tusker projects prune`; Tusker will not initialize a second vault implicitly"),
+		withHint("repair the matching registration with `tusker projects add --rebind` or `tusker projects remove --missing`; Tusker will not initialize a second vault implicitly"),
 		withContext(map[string]any{
 			"cwd":                 startDir,
 			"project_id":          projectID,

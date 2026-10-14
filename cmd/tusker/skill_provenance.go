@@ -307,7 +307,7 @@ func inspectTuskerSkillPackage(root string) skillProvenanceReport {
 }
 
 func skillSyncRepairAction() string {
-	return "run tusker skill sync --repo . --source <canonical-tusker-checkout>"
+	return "run tusker install --repo-only --skills-only --repo . --source <canonical-tusker-checkout>"
 }
 
 func portableSkillSourceIdentity(kind string) string {

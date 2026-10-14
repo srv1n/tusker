@@ -31,21 +31,21 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					f.Project.Enabled = false
 					f.Workflow.DispatchScope = automationDispatchScopeProjection{Configured: "all_eligible", Effective: "all_eligible", Provenance: configSourceProject}
 				},
-				section: "next", wantState: "idle", wantAction: "tusker projects list --json",
+				section: "next", wantState: "idle", wantAction: "tusker list projects --json",
 			},
 			{
 				name: "disarmed",
 				mutate: func(f *factoryOperationsFacts) {
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "disarmed", IntegrationRef: "integration/W-0001"}
 				},
-				section: "blocked", wantState: "disarmed", wantAction: "tusker wave start W-0001 --mode background --by human:$USER --json",
+				section: "blocked", wantState: "disarmed", wantAction: "tusker start W-0001 --mode background --by human:$USER --json",
 			},
 			{
 				name: "stale authorization",
 				mutate: func(f *factoryOperationsFacts) {
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "stale", Stale: true, CurrentFingerprint: "sha256:new", AuthorizedFingerprint: "sha256:old", IntegrationRef: "integration/W-0001"}
 				},
-				section: "blocked", wantState: "stale_authorization", wantAction: "tusker wave start W-0001 --mode background --by human:$USER --json",
+				section: "blocked", wantState: "stale_authorization", wantAction: "tusker start W-0001 --mode background --by human:$USER --json",
 			},
 			{
 				name: "legacy broad scope preserves named wave authorization",
@@ -56,7 +56,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					}
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "stale", Stale: true, IntegrationRef: "integration/W-0001"}
 				},
-				section: "blocked", wantState: "stale_authorization", wantAction: "tusker wave start W-0001 --mode background --by human:$USER --json",
+				section: "blocked", wantState: "stale_authorization", wantAction: "tusker start W-0001 --mode background --by human:$USER --json",
 			},
 			{
 				name: "live run wins over stale authorization",
@@ -68,7 +68,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					f.Runs["APP-T-0001"], f.AllRuns = run, []RunStatus{run}
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "stale", Stale: true, IntegrationRef: "integration/W-0001"}
 				},
-				section: "working", wantState: "running", wantAction: "tusker runs inspect APP-T-0001 --json",
+				section: "working", wantState: "running", wantAction: "tusker show APP-T-0001 --run --json",
 			},
 			{
 				name: "expired run is stale not live",
@@ -79,7 +79,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					}
 					f.Runs["APP-T-0001"], f.AllRuns = run, []RunStatus{run}
 				},
-				section: "blocked", wantState: "stale_run", wantAction: "tusker runs inspect APP-T-0001 --json",
+				section: "blocked", wantState: "stale_run", wantAction: "tusker show APP-T-0001 --run --json",
 			},
 			{
 				name: "durable retry continuation wins over later authorization drift",
@@ -88,7 +88,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					f.Runs["APP-T-0001"], f.AllRuns = run, []RunStatus{run}
 					f.WaveFacts["W-0001"] = factoryOperationsWaveFact{State: "stale", Stale: true, IntegrationRef: "integration/W-0001"}
 				},
-				section: "next", wantState: "retry_queued", wantAction: "tusker runs inspect APP-T-0001 --json",
+				section: "next", wantState: "retry_queued", wantAction: "tusker show APP-T-0001 --run --json",
 			},
 			{
 				name: "objective review",
@@ -123,7 +123,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 					run := RunStatus{ProjectID: "app", RecordID: "APP-T-0001", ItemID: "APP-T-0001", LeaseState: string(LeaseStateParkedNoProgress), LastError: "attempt policy exhausted"}
 					f.Runs["APP-T-0001"], f.AllRuns = run, []RunStatus{run}
 				},
-				section: "blocked", wantState: "parked", wantAction: "tusker runs inspect APP-T-0001 --json",
+				section: "blocked", wantState: "parked", wantAction: "tusker show APP-T-0001 --run --json",
 			},
 			{
 				name: "integrated",
@@ -158,7 +158,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 						LeaseExpiresAt: f.Now.Add(time.Minute).Format(time.RFC3339),
 					}}
 				},
-				section: "next", wantState: "waiting_capacity", wantAction: "tusker runs inspect APP-T-0001 --json",
+				section: "next", wantState: "waiting_capacity", wantAction: "tusker show APP-T-0001 --run --json",
 			},
 			{
 				name: "resource wait",
@@ -172,14 +172,14 @@ func TestFactoryOperationsProjection(t *testing.T) {
 						ExpiresAt: f.Now.Add(time.Minute).Format(time.RFC3339),
 					}}
 				},
-				section: "blocked", wantState: "waiting_resource", wantAction: "tusker runs inspect APP-T-0001 --json",
+				section: "blocked", wantState: "waiting_resource", wantAction: "tusker show APP-T-0001 --run --json",
 			},
 			{
 				name: "ready frontier",
 				mutate: func(f *factoryOperationsFacts) {
 					f.Workflow.DispatchScope = automationDispatchScopeProjection{Configured: "all_eligible", Effective: "all_eligible", Provenance: configSourceProject}
 				},
-				section: "next", wantState: "ready", wantAction: "tusker automation explain APP-T-0001 --json",
+				section: "next", wantState: "ready", wantAction: "tusker show APP-T-0001 --why --json",
 			},
 		}
 		for _, tc := range tests {
@@ -332,7 +332,7 @@ func TestFactoryOperationsProjection(t *testing.T) {
 			"Fingerprints: current=sha256:current authorized=sha256:current",
 			"Artifact: diff_summary · APP-T-0001-E-0001",
 			"Revisions: state=sha256:state",
-			"Safe action: tusker automation explain APP-T-0001 --json",
+			"Safe action: tusker show APP-T-0001 --why --json",
 		} {
 			if !strings.Contains(rendered, expected) {
 				t.Fatalf("plain CLI projection missing %q:\n%s", expected, rendered)

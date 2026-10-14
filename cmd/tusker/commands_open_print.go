@@ -201,7 +201,7 @@ func renderTerminalMarkdown(markdown string, args Args) (string, error) {
 func resolveRecordForCLI(args Args, id string) (resolvedRecord, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return resolvedRecord{}, tuskerError(errorMissingArg, "record id is required", withHint("use `tusker print <ID>` or `tusker open <ID>`"))
+		return resolvedRecord{}, tuskerError(errorMissingArg, "record id is required", withHint("use `tusker show <ID> --styled` or `tusker show <ID> --styled`"))
 	}
 	var currentVaultErr error
 	if args.String("project") == "" {
@@ -288,7 +288,7 @@ func registeredProjectLoads(selector string, opts registeredProjectLoadOptions) 
 			}
 		}
 		if len(loadable) == 0 {
-			return nil, tuskerError(errorNotFound, "no loadable registered projects", withHint("run `tusker projects list` to inspect quarantined registrations"))
+			return nil, tuskerError(errorNotFound, "no loadable registered projects", withHint("run `tusker list projects` to inspect quarantined registrations"))
 		}
 		return loadable, nil
 	}
@@ -353,7 +353,7 @@ func openWithApp(target, app string) error {
 func openWithEditor(target string) error {
 	editor := strings.TrimSpace(firstNonEmpty(os.Getenv("VISUAL"), os.Getenv("EDITOR")))
 	if editor == "" {
-		return tuskerError(errorMissingArg, "no editor configured", withHint("set VISUAL or EDITOR, or use `tusker open <ID> --path`"))
+		return tuskerError(errorMissingArg, "no editor configured", withHint("set VISUAL or EDITOR, or use `tusker show <ID> --styled --path`"))
 	}
 	if runtime.GOOS == "windows" {
 		return runEditorCommand(exec.Command("cmd", "/c", editor, target))

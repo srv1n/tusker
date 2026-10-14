@@ -46,24 +46,43 @@ func executionCmd(args Args, action string) error {
 		if strings.TrimSpace(args.String("contact-role")) != "" {
 			return executionRegisterContact(args, store, projectID, vaultPath, actor)
 		}
-		source := strings.TrimSpace(args.String("source"))
-		if source == "" {
-			source = "direct"
+		// `register <EXECUTION-ID>` reuses an existing execution, so a later
+		// --attach (provider session known) or --bind <TASK> needs no new ID.
+		id, created := strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))), false
+		if id == "" {
+			source := strings.TrimSpace(args.String("source"))
+			if source == "" {
+				source = "direct"
+			}
+			if !validDirectExecutionSource(source) {
+				return tuskerError(errorInvalidArg, "execution register source must be direct_codex, direct_claude, codex_cloud, or direct")
+			}
+			record, err := store.CreateDirectExecution(DirectExecutionInput{ProjectID: projectID, DisplayName: args.String("name"), Source: source, Provider: args.String("provider"), AgentType: args.String("agent-type"), Creator: actor})
+			if err != nil {
+				return err
+			}
+			id, created = record.ExecutionID, true
 		}
-		if !validDirectExecutionSource(source) {
-			return tuskerError(errorInvalidArg, "execution register source must be direct_codex, direct_claude, codex_cloud, or direct")
+		if args.Bool("attach") || args.String("provider-session-id") != "" || args.String("cloud-task-id") != "" {
+			if _, _, err := store.AttachExecution(executionAttachInput(args, projectID, id, actor)); err != nil {
+				return err
+			}
 		}
-		record, err := store.CreateDirectExecution(DirectExecutionInput{ProjectID: projectID, DisplayName: args.String("name"), Source: source, Provider: args.String("provider"), AgentType: args.String("agent-type"), Creator: actor})
-		if err != nil {
-			return err
+		if task := strings.TrimSpace(args.String("bind")); task != "" {
+			if task == "true" {
+				return tuskerError(errorMissingArg, "execution register --bind requires a task ID")
+			}
+			if _, err := bindExecutionToTask(store, projectID, vaultPath, id, task, args.String("wave"), actor); err != nil {
+				return err
+			}
 		}
-		return emitExecutionResult(args, store, projectID, record.ExecutionID, true)
+		return emitExecutionResult(args, store, projectID, id, created)
 	case "attach":
 		id, err := executionIDArg(args)
 		if err != nil {
 			return err
 		}
-		view, created, err := store.AttachExecution(ExecutionAttachmentInput{ProjectID: projectID, ExecutionID: id, Provider: args.String("provider"), ProviderSessionID: firstNonEmpty(args.String("provider-session-id"), args.String("cloud-task-id")), SessionRef: args.String("session-ref"), Source: args.String("source"), Actor: actor})
+		view, created, err := store.AttachExecution(executionAttachInput(args, projectID, id, actor))
 		if err != nil {
 			return err
 		}
@@ -83,15 +102,15 @@ func executionCmd(args Args, action string) error {
 		if err != nil {
 			return err
 		}
-		taskID := strings.TrimSpace(firstNonEmpty(args.String("task"), args.String("task-id")))
-		waveID, err := executionCanonicalWave(vaultPath, taskID)
-		if err != nil {
-			return err
+		if args.Bool("none") {
+			view, err := store.BindExecution(ExecutionBindingInput{ProjectID: projectID, ExecutionID: id, Actor: actor}, "detach")
+			if err != nil {
+				return err
+			}
+			return emitExecutionView(args, view, true)
 		}
-		if explicit := strings.TrimSpace(args.String("wave")); explicit != "" && explicit != waveID {
-			return tuskerError(errorInvalidArg, "execution binding task and wave disagree")
-		}
-		view, err := store.BindExecution(ExecutionBindingInput{ProjectID: projectID, ExecutionID: id, TaskID: taskID, WaveID: waveID, Actor: actor}, action)
+		taskID := strings.TrimSpace(firstNonEmpty(args.String("task"), args.String("task-id"), args.String("_pos1")))
+		view, err := bindExecutionToTask(store, projectID, vaultPath, id, taskID, args.String("wave"), actor)
 		if err != nil {
 			return err
 		}
@@ -176,6 +195,28 @@ func executionCmd(args Args, action string) error {
 	default:
 		return tuskerError(errorInvalidArg, "unknown execution action: "+action)
 	}
+}
+
+func executionAttachInput(args Args, projectID, id, actor string) ExecutionAttachmentInput {
+	return ExecutionAttachmentInput{ProjectID: projectID, ExecutionID: id, Provider: args.String("provider"), ProviderSessionID: firstNonEmpty(args.String("provider-session-id"), args.String("cloud-task-id")), SessionRef: args.String("session-ref"), Source: args.String("source"), Actor: actor}
+}
+
+// bindExecutionToTask binds to the task's canonical wave, recording a rebind
+// when the execution is already bound elsewhere.
+func bindExecutionToTask(store *RuntimeStore, projectID, vaultPath, id, taskID, wave, actor string) (*ExecutionView, error) {
+	taskID = strings.TrimSpace(taskID)
+	waveID, err := executionCanonicalWave(vaultPath, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if explicit := strings.TrimSpace(wave); explicit != "" && explicit != waveID {
+		return nil, tuskerError(errorInvalidArg, "execution binding task and wave disagree")
+	}
+	action := "bind"
+	if current, err := store.ExecutionView(id); err == nil && current != nil && current.BoundTaskID != "" {
+		action = "rebind"
+	}
+	return store.BindExecution(ExecutionBindingInput{ProjectID: projectID, ExecutionID: id, TaskID: taskID, WaveID: waveID, Actor: actor}, action)
 }
 
 func executionGraphFilterArgs(args Args) ExecutionGraphFilter {
@@ -353,19 +394,15 @@ func printExecutionHelp() {
 	fmt.Println(`Usage: tusker execution <action> [flags]
 
 Actions:
-  register  Allocate an immutable direct-execution ID before provider launch;
-            with --contact-role, register a pre-existing external conversation
+  register  Allocate a direct-execution ID before provider launch. With an
+            existing <EXECUTION-ID>, --attach --provider <p>
+            (--provider-session-id <id>|--cloud-task-id <id>) records the
+            provider session, and --bind <TASK-ID> binds it. With
+            --contact-role, register a pre-existing external conversation
             as an architect/origin/peer contact on a durable task or wave
-  attach    Idempotently correlate a provider session or cloud task
-  rename    Add an audited display-name change
-  bind      Bind an execution to a task's canonical wave
-  detach    Remove the current binding with a new generation boundary
-  rebind    Move binding with a new generation boundary
-  inbox     List unbound direct executions
-	  list      Search the versioned relationship-complete graph
-  show      Inspect the effective execution projection
-	  cancel    Request only a capability-proved cancellation; records settlement evidence
-  launch    Report local launch process facts; refuses nested agent sessions
+  bind      bind <EXECUTION-ID> <TASK-ID>|--task <TASK-ID> binds to the task's
+            canonical wave (a rebind when already bound); --none detaches
+  cancel    Request only a capability-proved cancellation; records settlement evidence
 
 The project is the runtime-registered project whose vault matches --vault or
 the current directory; --project <id|key|name> selects a registered project

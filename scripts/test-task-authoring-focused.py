@@ -39,7 +39,7 @@ SOURCE_PARITY_FILES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "skills/tusker/SKILL.md",
-        ("tusker capabilities --json", "manufacture proof"),
+        ("tusker version --json", "manufacture proof"),
     ),
     (
         "docs/reports/task-authoring/first-trial.md",
@@ -444,6 +444,7 @@ def read_live_receipt() -> tuple[str, dict[str, Any]]:
     version, error = tusker_json("version", "--json")
     if error or version is None:
         return "NOT RUN", {"path": str(path), "blockers": [error or "installed tusker version is unavailable"]}
+    version = version.get("version") or {}
     installed_identity = receipt["installed_identity"]
     if version.get("revision") != installed_identity["revision"] or version.get("binary_sha256") != installed_identity["binary_sha256"]:
         return "FAIL", {"path": str(path), "blockers": ["installed tusker revision/hash does not match the exact installed_identity receipt"]}

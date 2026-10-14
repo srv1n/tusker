@@ -10,6 +10,11 @@ describes:
   - cmd/tusker/cli.go
   - cmd/tusker/docs_cmd.go
   - cmd/tusker/docs_touch_cmd.go
+  - cmd/tusker/lifecycle_cmd.go
+  - cmd/tusker/author_cmd.go
+  - cmd/tusker/show_list_cmd.go
+  - cmd/tusker/check_cmd.go
+  - cmd/tusker/operator_commands.go
 ---
 <!-- docs-check: ignore-path docs/system/decisions/ -->
 
@@ -19,89 +24,102 @@ The installed program help is the command authority. It shows the commands
 that this build can run. A machine-readable command list is also available.
 
 One command table (`cmd/tusker/commands_table.go`) drives dispatch, help,
-`capabilities --json`, and daemon notification. Every command belongs to one
-group (setup, find, author, start, work, runs, deliver, docs, models, daemon,
-maintain) and carries a summary, a "Use when" line, and a "Not for" line that
-names the neighbouring command to use instead.
+`version --json`, and daemon notification. The surface is deliberately small:
+a new capability becomes a flag or a routed case on an existing verb, not a
+new command. Each row carries a summary, a "Use when" line, and a "Not for"
+line naming the neighbouring command.
 
 | Need | Command |
 | --- | --- |
 | Find a command by word | `tusker help \| grep <word>` |
-| List one group | `tusker help \| grep '^runs '` |
 | Search use/avoid guidance | `tusker help --full \| grep -B3 <word>` |
-| Read one command or family | `tusker help <command>` or `tusker <command> --help` |
-| Include internal and retiring commands | `tusker help --all` |
+| Read one command | `tusker help <command>` or `tusker <command> --help` |
+| Include hidden plumbing | `tusker help --all` |
 
 A failing command prints `help: tusker <command> --help`. A removed command
 name fails with the replacement command in its hint.
 
-## Common work commands
+## Working surface
 
-`tusker wave create ... --summary "<expected outcome>"` records the capability promised by a wave. `tusker wave outcome <WAVE-ID> --summary "<expected outcome>"` updates it. `wave show` and `wave brief` keep that promise separate from the derived completion result.
+| Intent | Command |
+| --- | --- |
+| Inspect one record (task, wave, batch, execution, message, escalation, doc) | `tusker show <ID>` |
+| Diagnose why work is not moving (exit 0 healthy, 1 fault, 2 unavailable) | `tusker show <ID> --why` |
+| Worker or reviewer packet | `tusker show <TASK-ID> --packet [agent\|worker\|reviewer]` |
+| Proof coverage, progress, lease, route, closeout | `tusker show <TASK-ID> --proof\|--progress\|--lease\|--route [lane]\|--closeout` |
+| A run's attempts, logs, events, traces | `tusker show <TASK-ID> --run\|--logs [--follow]\|--events [--follow]\|--traces` |
+| Whether a wave can start | `tusker show <WAVE-ID> --check` |
+| List or search records | `tusker list [tasks\|epics\|waves\|docs\|runs\|executions\|messages\|approvals\|forks\|flaky\|projects\|queue\|escalations] [--grep <text>]` |
+| Next pickable task | `tusker list --next` |
+| Create a record | `tusker new epic\|task\|gate\|decision\|wave\|batch\|fork\|flaky\|doc ...` |
+| Change a record | `tusker edit <ID> ...` |
+| Begin work | `tusker start <TASK-ID\|WAVE-ID\|batch> --by <actor> [--background]` |
+| Record finished work | `tusker done <TASK-ID>... \| --wave <WAVE-ID> \| --since <git-ref> --by <actor>` |
+| Review | `tusker review <TASK-ID> [--verdict ...]` |
+| Stop without finishing | `tusker stop <TASK-ID\|WAVE-ID\|batch> [--failed\|--cancel] --reason <text>` |
+| Health and repair | `tusker check [--only setup,validate,skills,docs,acp] [--fix] [--strict]` |
 
 Direct authoring is canonical: `tusker new task ... --body-file` writes one
-task whose body is the implementation contract, and `tusker wave create
+task whose body is the implementation contract, and `tusker new wave
 --file <request.yaml> --request-key <key>` atomically authors a complete
 `tusker.wave-authoring/v1` request. `--epic` and `--spec-refs` are optional;
-every supplied spec ref must resolve. Creation is inert — execution begins
-only at `task start` or `wave start`.
+every supplied spec ref must resolve. Creation is inert; execution begins only
+at `tusker start`.
 
-| Need | Command |
-| --- | --- |
-| Find runnable work | `tusker next` |
-| Read one task | `tusker show <TASK-ID> --capsule` |
-| List work | `tusker list` |
-| List project waves | `tusker wave list [--project <id>\|--vault <path>] [--json]` |
-| Search tracker text | `tusker search <text>` |
-| Create a task | `tusker new task --vault ./.tusker --title "..." --work-level standard --body-file task-body.md` |
-| Update a task | `tusker task update <TASK-ID> --title "..." --by <actor> [--if-revision <state_rev>] [--json]` |
-| Author a task batch | `tusker wave create --file wave.yaml --request-key <key> --json` |
-| Start one task | `tusker task start <TASK-ID> --mode interactive\|background --by <actor> [--current-workspace] --json` |
-| Start a wave | `tusker wave start <WAVE-ID> --by human:<name>\|operator:<name> --json` |
-| Pause / resume a wave | `tusker wave pause\|resume <WAVE-ID> --by human:<name>\|operator:<name> --json` |
-| Change task state | `tusker status <TASK-ID> <STATE> --reason "..."` |
-| Add a check result | `tusker verify add <TASK-ID> ...` |
-| Record committed work done without a claim | `tusker adopt <TASK-ID>... \| --wave <WAVE-ID> \| --since <git-ref> --by <actor>` |
-| Submit review | `tusker review submit <TASK-ID> ...` |
-| Close a task | `tusker close <TASK-ID>` |
-| Check the tracker | `tusker validate --vault ./.tusker --json` |
+`tusker edit` routes on the record. A task takes contract flags (`--title`,
+`--body-file`, `--owned-paths`, `--dependencies`, `--work-level`, ...), planned
+checks (`--verify "A1|command: <cmd>|pending|note"` or `--covers A1 --check
+"command: <cmd>"`), `--verify-remove <row>`, `--proof-mode <mode>`, and
+`--status <state>`; content changes apply before the status change. A wave
+takes `--add`, `--remove`, and `--outcome`. A gate takes `--status
+satisfied --evidence <summary>` or `--status waived|obsolete --reason <text>`.
 
-One `wave start` durably authorizes the exact current wave material; daemon
-polling then releases each dependency frontier automatically — no second
-start. `wave pause` blocks new wave-owned admissions while admitted attempts
-finish; `wave resume` restores the same authorization and refuses when the
-material drifted. A task `start` inside a paused wave stays task-scoped and
-leaves the wave paused. `--mode background` persists a durable run directive
-for the configured runtime; it does not itself launch a runner.
+`tusker start` on a task claims it for your own session; rerunning renews the
+lease, and a task whose last attempt ended gets a new attempt. `--background`
+leaves a durable run directive for the configured runtime; it does not itself
+launch a runner. `tusker start <WAVE-ID>` durably authorizes the exact current
+wave material; daemon polling then releases each dependency frontier
+automatically. `tusker stop <WAVE-ID>` blocks new wave-owned admissions while
+admitted attempts finish, and starting it again restores the same
+authorization, refusing when the material drifted. A task start inside a
+paused wave stays task-scoped and leaves the wave paused. Any other ID is a
+coordinator batch: start runs it in the foreground, stop halts it (`--drain`
+lets workers finish).
+
+`tusker done` submits the caller's live work session. Without one, it reruns
+each selected task's command proof in the checkout (see
+[Proof and closeout](proof-and-closeout.md)); an agent lands tasks in review
+and a person closes them. A person running `done` on a task already in review
+closes it.
 
 Actors supplied with `--by human:<name>` may be used from an agent session by default. Set `agents.act_as_owner: false` in the project's `.tusker/config.yaml` (or `config.local.yaml`) to require an owner session for human attribution; agent sessions can still use `--by agent:<name>`.
 
-## Project and runtime commands
+## Operator commands
 
 | Need | Command |
 | --- | --- |
-| Add a project | `tusker projects add --repo . --vault ./.tusker` |
-| List projects | `tusker projects list --json` |
-| Set or remove a project icon | `tusker projects icon set <path> --id <PROJECT-ID>` or `tusker projects icon set --remove --id <PROJECT-ID>` |
-| Enable automation | `tusker projects enable --id <PROJECT-ID>` |
-| Check the daemon | `tusker daemon status --json` |
-| Check one run | `tusker runs inspect <RUN-ID> --json` |
-| List runtime runs | `tusker runs list [--project <id>] [--active] [--limit <n>] [--json]` |
-| List agent access requests | `tusker approvals list [--project <id>] [--json]` |
+| Add or move a project | `tusker projects add --repo . --vault ./.tusker` / `tusker projects add --rebind <PROJECT-ID> ...` |
+| Turn background work on or off, cap runs | `tusker projects set <PROJECT-ID> --on\|--off\|--limit <n> [--dry-run]` |
+| Remove a project | `tusker projects remove <PROJECT-ID>\|--missing` |
+| Global automation switch | `tusker automation [on\|off]` |
+| Daemon status, cap, circuit reset | `tusker daemon [--limit <n>] [--resume]` |
+| One poll without dispatch | `tusker daemon run --once` |
+| launchd service | `tusker daemon install [--remove]` |
+| Steer a daemon run | `tusker runs say\|restart [--fresh\|--requeue]\|stop [--soft]\|retire [--release] <TASK-ID>` |
 | Decide one access request | `tusker approvals respond <id> --allow-once\|--block [--by human:<actor>]` |
+| Messages | `tusker message ask [--notify\|--severity P0-P2]`, `tusker message reply`, `tusker message mark <ID> --consumed\|--applied` |
 | Start the local service | `tusker serve` |
 
-`wave list` prints one line per wave with ID, title, status, effective
-authorization, total task count, and done count. Its JSON output uses the
-Serve wave list projection. `runs list` reads the runtime database, newest
-start first (default limit 100), with run ID, task ID, profile, lease state,
-start time, and attempt count. `--active` selects claimed and running leases.
+`tusker list waves` prints one line per wave with ID, title, status, effective
+authorization, total task count, and done count. `tusker list runs` reads the
+runtime database, newest start first (default limit 100); `--active` selects
+claimed and running leases.
 
 ## Executions
 
 `tusker execution register` records a direct execution.
-`tusker execution inbox` lists unbound executions. Use `execution show`,
-`execution bind`, `execution rename`, and `execution cancel` for one execution.
+`tusker list executions --unbound` lists unbound executions. Use `tusker show <EXECUTION-ID>`,
+`tusker execution bind <EXECUTION-ID> <TASK-ID>|--none`, and `tusker execution cancel` for one execution.
 These commands do not grant a task claim.
 
 Register an interactive architect after obtaining the session's native ID.
@@ -148,7 +166,7 @@ offline lane authorizes only the named waves, executes fixed delays with
 exact fixture bytes, promotes evidence while each run is active, checks
 results deterministically, and closes under reviewer authority. The real
 lane (`--mode real`) instead resolves each task through `tusker runner
-route`, requires the named harness/profile with no silent substitution, and
+`tusker show <TASK-ID> --route`, requires the named harness/profile with no silent substitution, and
 waits for the configured runtime to perform the real file, test, submit,
 review, and close work; attempt IDs and profiles are recorded from runtime
 inspection. Variants:
@@ -165,15 +183,15 @@ assertion or partial wave, 5 wait timeout, 1 internal error.
 | Need | Command |
 | --- | --- |
 | Discover installed models and reasoning choices | `tusker runner catalog --json` |
-| Read effective mappings with only referenced profiles | `tusker models show --json --compact` |
-| Read every profile for administration | `tusker models show --json` |
-| Create or update a profile (global config only) | `tusker models profile-set [--scope global] --name <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> [--if-revision <sha256>]` |
-| Disable or enable future use | `tusker models profile-disable\|profile-enable [--scope global] --name <name> [--if-revision <sha256>]` |
-| Remove an unreferenced profile | `tusker models profile-remove [--scope global] --name <name> [--if-revision <sha256>]` |
-| Set an ordered primary/fallback list | `tusker models set --scope global\|project --level <level> --lane execute\|review --profiles primary,fallback [--if-revision <sha256>]` |
-| Reset a project field to inheritance | `tusker models reset --scope project --level <level> --lane execute\|review [--if-revision <sha256>]` |
+| Read effective mappings with only referenced profiles | `tusker models --json --compact` |
+| Read every profile for administration | `tusker models --json` |
+| Create or update a profile (global config only) | `tusker models profile <stable-id> --display-name <name> --eligible-tiers light,standard --harness <harness> --model <id> [--effort <effort>] --preset <preset> [--if-revision <sha256>]` |
+| Disable or enable future use | `tusker models profile <name> --disable\|--enable [--if-revision <sha256>]` |
+| Remove an unreferenced profile | `tusker models profile <name> --remove [--if-revision <sha256>]` |
+| Set an ordered primary/fallback list | `tusker models set <level> execute\|review primary,fallback [--scope global\|project] [--if-revision <sha256>]` |
+| Reset a project field to inheritance | `tusker models set <level> execute\|review --clear [--if-revision <sha256>]` |
 | Author task-level choices | `tusker new task ... --work-level standard --review-level demanding --review-reason "Security-sensitive review"` |
-| Explain one task's effective route | `tusker runner route <TASK-ID> --lane execute\|review --json` |
+| Explain one task's effective route | `tusker show <TASK-ID> --route execute\|review --json` |
 
 Runner profiles are defined only in the global config
 (`~/.config/tusker/config.yaml`, or `$TUSKER_CONFIG`) plus built-ins. A project's
@@ -183,7 +201,7 @@ task `runner_profile`/`execute_profile`/`review_profile`. A project layer that
 contains `automation.profiles` or `automation.removed_profiles` fails validation
 with an error naming the file, the profiles, and the global path; a project
 reference to an unknown profile fails naming the missing profile.
-`tusker runner profiles --write` adds generated `codex_exec` profiles to the
+`tusker models profile --defaults --write` adds generated `codex_exec` profiles to the
 global config (never Terra, never the project) and proposes nothing once enabled
 global profiles already cover every tier.
 
@@ -239,55 +257,54 @@ turns require a separate explicit check with `tusker runner test <profile> --liv
 
 Agent callers should read once, retain `revision`, make one guarded write, then
 use the returned document as the new state. A stale write fails with an
-actionable refresh error. Reuse `tusker runner route`; there is no duplicate
+actionable refresh error. Reuse `tusker show <TASK-ID> --route`; there is no duplicate
 model-resolution command or client library to learn. Prefer `--compact` for
 routine routing so unused profiles do not consume context.
 
 ## Documentation and skills
 
-- `tusker docs find <query>` searches the managed corpus: current chapters
+- `tusker list docs --grep <query>` searches the managed corpus: current chapters
   in `docs/system/`, change specifications in `docs/system/proposals/`, and
   product decisions in `docs/system/decisions/` (legacy `.tusker/specs/`
   paths still resolve during transition).
 - Search returns a bounded shortlist with `read_when` and `skip_when` guidance.
   JSON also reports `total_matches` and `truncated`; open the returned subject
   or stable path to read the full document.
-- `tusker docs new <subject> --read-when <line> --skip-when <line> --kind
+- `tusker new doc <subject> --read-when <line> --skip-when <line> --kind
   doc|proposal|decision` creates a document in the portable tree. Both triage
   lines are required: a `doc` without `--domain` defaults to the system
   root, `--domain <name>` targets `docs/system/domains/<name>/`, proposals go
   to `docs/system/proposals/`, and decisions to `docs/system/decisions/`.
-  `--kind spec` stays accepted as the spelling for proposal. `tusker docs
-  check` reports any managed document other than a forwarding stub that lacks
+  `--kind spec` stays accepted as the spelling for proposal. `tusker check
+  --only docs` reports any managed document other than a forwarding stub that lacks
   `read_when` or `skip_when` as `DOC_REQUIRED_FIELD_MISSING`.
   `--supersedes <old-subject>` also sets the old document (same kind family, no uncommitted changes) to `status: superseded` with `superseded_by`, in one transaction.
 - `.tusker/` holds tracker state and thin pointers only; product decisions
   move to documentation while work and lifecycle decisions stay with the
   tracker.
-- `tusker docs browse [<managed-directory>] [--limit <n>] [--json]` returns one
+- `tusker list docs --dir [<managed-directory>] [--limit <n>] [--json]` returns one
   bounded directory level. It defaults to `docs/system`, accepts `--limit` up
   to 200, and includes folder summaries plus file discovery metadata.
-- `tusker docs read <subject-or-path> [--section <heading>] [--current]
+- `tusker show <subject-or-path> [--section <heading>] [--current]
   [--json]` reads exactly one managed document. Use `--section <heading>` for
   one Markdown section and `--current` to follow a supersession link. Reads
   are side-effect free.
-- `tusker docs save <subject-or-path> --body-file <file> [--header-file <YAML-or-JSON-file>] [--if-revision <rev>]` saves through the same corpus checks as Serve. Without `--if-revision`, it reads the current revision first.
-- `tusker docs backlinks <subject-or-path> [--limit <n>] [--json]` shows
+- `tusker show <subject-or-path> --backlinks [--limit <n>] [--json]` shows
   incoming metadata and body relationships with a bounded `--limit`; dangling
-  managed routes are listed separately. `tusker docs check
-  [<subject-or-path>] [--json]` reports named defects with repair guidance and
+  managed routes are listed separately. `tusker check --only docs
+  [--json]` reports named defects with repair guidance and
   exits nonzero when the selected corpus is invalid.
-- `tusker docs new <subject> --print` prints a validated scaffold without
-  writing it. It is the non-destructive template path; ordinary `docs new`
+- `tusker new doc <subject> --print` prints a validated scaffold without
+  writing it. It is the non-destructive template path; ordinary `tusker new doc`
   remains the only scaffold writer.
-- `tusker docs map` rebuilds the index and graph from the same resolver. It
+- `tusker check --fix` rebuilds the index and graph from the same resolver. It
   includes metadata relationships, Markdown/Obsidian links, backlinks, and
   supersession edges; broken managed routes fail validation.
-- `tusker docs status [--stale [--strict]] [--json]` reports freshness. A doc
+- `tusker list docs --stale [--strict] [--json]` reports freshness. A doc
   is `stale` when commits touched its `describes` paths after its
-  `last_verified` commit; `--stale` lists only those, and `--stale --strict`
+  `last_verified` commit; `--stale` lists only those, and `--strict`
   exits nonzero with `DOCS_STALE` when any exist.
-- `tusker docs touch --since <ref> [--waive <subject>]... [--json]` runs the
+- `tusker check --only docs --since <ref> [--waive <subject>]... [--json]` runs the
   close-time doc-touch check without a task. It diffs `<ref>...HEAD` plus
   staged, unstaged, and untracked changes, and lists every document whose
   `describes` paths changed while the document did not. `docs.touch_rule`
@@ -299,9 +316,9 @@ routine routing so unused profiles do not consume context.
   ```sh
   #!/bin/sh
   # .git/hooks/pre-merge-commit
-  exec tusker docs touch --since "$(git merge-base HEAD MERGE_HEAD)"
+  exec tusker check --only docs --since "$(git merge-base HEAD MERGE_HEAD)"
   ```
-- `tusker skill doctor --strict --json` checks the skill routes.
+- `tusker check --only skills --strict --json` checks the skill routes.
 
 ## Output contract
 
@@ -312,5 +329,7 @@ typed error. Normal output is for a person and can change its layout.
 
 - `cmd/tusker/cli.go`
 - `cmd/tusker/capabilities_cmd.go`
+- `cmd/tusker/lifecycle_cmd.go`
+- `cmd/tusker/show_list_cmd.go`
 - `cmd/tusker/commands_*.go`
 - `cmd/tusker/install.go`

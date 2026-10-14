@@ -102,7 +102,7 @@ function controlHint(action: string, review: WaveReview): string | undefined {
   return undefined;
 }
 
-/** Raw internals (fingerprints, codes) stay out of this surface entirely; Diagnostics and `tusker wave review --json` carry them. */
+/** Raw internals (fingerprints, codes) stay out of this surface entirely; Diagnostics and `tusker show --json` carry them. */
 
 /** One reading of the wave review for every control surface. */
 function useWaveAuthority(projectId: string, waveId: string) {

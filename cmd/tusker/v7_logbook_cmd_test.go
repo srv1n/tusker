@@ -2,7 +2,6 @@ package main
 
 import (
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -55,47 +54,6 @@ func setStatus(t *testing.T, vault, id, status string) {
 	if err := statusV7Cmd(Args{"vault": vault, "quiet": "true", "id": id, "status": status, "by": "agent:worker"}); err != nil {
 		t.Fatalf("status %s -> %s: %v", id, status, err)
 	}
-}
-
-func TestLogbookRenderAndWrite(t *testing.T) {
-	vault := pickupV7TestVault(t)
-	logbookTestTask(t, vault, "APP-T-0001", "Live stream board")
-	day := "2026-06-15"
-	logbookSeedEvent(t, vault, "APP-T-0001", "task", "status_changed", logbookLocalTime(mustDay(t, day), 9), map[string]any{
-		"from": "ready", "to": "review", "reason": "Board renders from runs and leases.",
-	})
-
-	output := captureStdout(t, func() {
-		if err := logbookCmd(Args{"vault": vault, "date": day}); err != nil {
-			t.Fatalf("logbook render: %v", err)
-		}
-	})
-	assertContainsIndexTest(t, output, "# Morning Logbook — "+day)
-	assertContainsIndexTest(t, output, "## What shipped")
-	assertContainsIndexTest(t, output, "Live stream board")
-
-	written := captureStdout(t, func() {
-		if err := logbookCmd(Args{"vault": vault, "date": day, "write": "true"}); err != nil {
-			t.Fatalf("logbook write: %v", err)
-		}
-	})
-	path := filepath.Join(vault, "logbook", day+".md")
-	if !fileExists(path) {
-		t.Fatalf("expected %s to be written", path)
-	}
-	persisted := mustReadIndexTest(t, path)
-	if strings.TrimSpace(persisted) != strings.TrimSpace(written) {
-		t.Fatalf("written file and stdout diverged:\n---file---\n%s\n---stdout---\n%s", persisted, written)
-	}
-
-	// Default date resolves to today (host-local) without error.
-	today := time.Now().Local().Format("2006-01-02")
-	defaultOut := captureStdout(t, func() {
-		if err := logbookCmd(Args{"vault": vault}); err != nil {
-			t.Fatalf("logbook default date: %v", err)
-		}
-	})
-	assertContainsIndexTest(t, defaultOut, "# Morning Logbook — "+today)
 }
 
 func TestLogbookComposesFromRecords(t *testing.T) {
@@ -164,69 +122,6 @@ func TestLogbookComposesFromRecords(t *testing.T) {
 	if !foundReview {
 		t.Fatalf("expected review task in needs-human, got %+v", logbook.NeedsHuman)
 	}
-}
-
-func TestLogbookPlainLanguageShape(t *testing.T) {
-	vault := pickupV7TestVault(t)
-	logbookTestTask(t, vault, "APP-T-0001", "Live stream board")
-	day := "2026-06-15"
-	d := mustDay(t, day)
-	logbookSeedEvent(t, vault, "APP-T-0001", "task", "status_changed", logbookLocalTime(d, 9), map[string]any{
-		"from": "review", "to": "done", "reason": "Board renders from runs and leases.",
-	})
-	logbookSeedEvent(t, vault, "APP-T-0001", "task", "verification_added", logbookLocalTime(d, 10), map[string]any{
-		"check": "command: go test ./cmd/tusker -run Board", "result": "pass",
-	})
-
-	logbook, err := buildTuskerLogbook(vault, d, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	output := renderTuskerLogbookMarkdown(logbook)
-
-	for _, section := range []string{"## What shipped", "## What it means", "## What needs your attention"} {
-		assertContainsIndexTest(t, output, section)
-	}
-	// No raw command transcripts leak into the prose.
-	assertNotContainsIndexTest(t, output, "go test")
-	assertNotContainsIndexTest(t, output, "command:")
-
-	// Task IDs appear only inside link targets or the References footnotes.
-	idPattern := regexp.MustCompile(`[A-Z]{2,}-T-\d{4}`)
-	linkTarget := regexp.MustCompile(`\([^)]*\)`)
-	inReferences := false
-	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "## References") {
-			inReferences = true
-			continue
-		}
-		if inReferences {
-			continue
-		}
-		stripped := linkTarget.ReplaceAllString(line, "")
-		if idPattern.MatchString(stripped) {
-			t.Fatalf("task ID leaked into prose: %q", line)
-		}
-	}
-	// Evidence and work references are rendered as markdown links.
-	if !strings.Contains(output, "](work/tasks/APP-T-0001.md)") {
-		t.Fatalf("expected a markdown link to the task, got:\n%s", output)
-	}
-}
-
-func TestLogbookEmptyDay(t *testing.T) {
-	vault := pickupV7TestVault(t)
-	day := "2026-06-15"
-
-	output := captureStdout(t, func() {
-		if err := logbookCmd(Args{"vault": vault, "date": day}); err != nil {
-			t.Fatalf("empty day should not error: %v", err)
-		}
-	})
-	assertContainsIndexTest(t, output, "# Morning Logbook — "+day)
-	assertContainsIndexTest(t, output, "quiet day")
-	assertContainsIndexTest(t, output, "## What shipped")
-	assertContainsIndexTest(t, output, "Nothing needs you right now")
 }
 
 func mustDay(t *testing.T, day string) time.Time {

@@ -10,7 +10,7 @@
 A Claude Code or Codex session opened directly by the user implements the
 requested work itself. Use Tusker for task contracts, packets, proof, gates,
 review, and lifecycle state; `tusker show <TASK-ID> --capsule` and
-`tusker packet <TASK-ID> --for agent` are available for context.
+`tusker show <TASK-ID> --packet agent` are available for context.
 
 Never start `tusker daemon run`, invoke `tusker automation dispatch`, or launch
 nested `claude -p`/`codex exec` workers from an interactive agent session.

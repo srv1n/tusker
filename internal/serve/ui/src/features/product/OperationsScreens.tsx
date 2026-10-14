@@ -429,7 +429,7 @@ function SettingsAdvanced({ project, operations }: { project: ProjectSummary; op
             />
           ))}
           <div className="space-y-1 px-4 py-3">
-            <p className="text-[11px] leading-4 text-faint">Grouping is navigation-only. Cleanup preview: <span className="font-mono">tusker projects prune</span>.</p>
+            <p className="text-[11px] leading-4 text-faint">Grouping is navigation-only. Cleanup preview: <span className="font-mono">tusker projects remove --missing</span>.</p>
             {project.registryPreview?.missingRegistrations.length ? <p className="text-[11px] leading-4 text-warn">Missing registrations: {project.registryPreview.missingRegistrations.join(", ")}</p> : null}
           </div>
         </SettingGroup>

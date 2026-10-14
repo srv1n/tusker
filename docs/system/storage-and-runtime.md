@@ -64,8 +64,8 @@ Every Background-work toggle persists actor, source, before/after state, and
 time in `project_automation_audit` in the same transaction as the flip, so a
 failed write changes nothing and never reports success. Changes made before
 this audit existed keep an empty actor: unaudited history stays
-unattributed, never guessed. `tusker projects enable --dry-run` and
-`tusker projects automation-scope` preview the exact resume scope — armed
+unattributed, never guessed. `tusker projects set --dry-run --on` and
+`tusker projects set --dry-run` preview the exact resume scope — armed
 waves with eligible frontiers, active task-scoped directives, and excluded
 waves with reasons — without arming or enabling anything; enabling resumes
 that scope only. Disabling blocks new claims while admitted runs finish, and
@@ -76,7 +76,7 @@ and survive restart.
 
 ## Reset boundary
 
-`tusker purge --repo . --only-tusker-state` removes the known repository
+`tusker reset --no-init --repo . --only-tusker-state` removes the known repository
 tracker paths for one checkout. It does not clear `daemon.db`.
 
 `tusker projects remove --id <PROJECT-ID>` deletes the project row and the

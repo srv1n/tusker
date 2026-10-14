@@ -136,7 +136,7 @@ func TestMessageInboxOversized(t *testing.T) {
 			t.Fatalf("missing %s: %s", id, out.String())
 		}
 	}
-	if !strings.Contains(out.String(), "full text: tusker message show --project") {
+	if !strings.Contains(out.String(), "full text: tusker show --project") {
 		t.Fatal(out.String())
 	}
 	for _, id := range ids {

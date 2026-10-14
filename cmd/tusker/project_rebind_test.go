@@ -387,7 +387,7 @@ func TestProjectRebindReportsScopedStableNonTerminalRunIdentities(t *testing.T) 
 		t.Fatal("dry-run must remain fenced by active runs")
 	}
 	issue := errorToIssue(err)
-	if issue.Code != errorInvalidTransition || !strings.Contains(issue.Hint, "runs inspect <run-id>") || !strings.Contains(issue.Hint, "runs retire <run-id>") {
+	if issue.Code != errorInvalidTransition || !strings.Contains(issue.Hint, "show <run-id> --run") || !strings.Contains(issue.Hint, "runs retire <run-id>") {
 		t.Fatalf("issue=%#v", issue)
 	}
 	context, ok := issue.Context.(map[string]any)

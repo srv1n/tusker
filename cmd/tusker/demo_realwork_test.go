@@ -239,26 +239,23 @@ func TestRealWorkFixtureSeedE2E(t *testing.T) {
 	if got := backpressureCommands(vaultPath); len(got) != 1 || got[0] != "git diff --check" {
 		t.Fatalf("demo landing gate must be repository-neutral, got %v", got)
 	}
-	checked, err := exec.run(repo, "docs", "check", "--vault", vaultPath)
+	checked, err := exec.run(repo, "check", "--only", "docs", "--vault", vaultPath)
 	if err != nil {
-		t.Fatalf("docs check failed: %s", err.Error())
+		raw, _ := json.Marshal(checked)
+		t.Fatalf("seeded corpus does not validate: %s: %s", err.Error(), string(raw))
 	}
-	if valid, _ := checked["valid"].(bool); !valid {
-		raw, _ := json.Marshal(checked["issues"])
-		t.Fatalf("seeded corpus does not validate: %s", string(raw))
-	}
-	route, err := exec.run(repo, "runner", "route", manifest.Tasks["s1"].TaskID, "--lane", "execute", "--vault", vaultPath)
+	route, err := exec.run(repo, "show", manifest.Tasks["s1"].TaskID, "--route", "execute", "--vault", vaultPath)
 	if err != nil || demoStringField(route, "profile") != "g-execute" || demoStringField(route, "model") != "gpt-6-luna" {
 		t.Fatalf("standalone route is not the global profile: route=%v err=%v", route, err)
 	}
-	reviewRoute, err := exec.run(repo, "runner", "route", manifest.Tasks["s1"].TaskID, "--lane", "review", "--vault", vaultPath)
+	reviewRoute, err := exec.run(repo, "show", manifest.Tasks["s1"].TaskID, "--route", "review", "--vault", vaultPath)
 	reviewDefinition, _ := reviewRoute["profile_definition"].(map[string]any)
 	reviewSandbox, _ := reviewDefinition["sandbox"].(map[string]any)
 	if err != nil || demoStringField(reviewRoute, "profile") != "g-review" || demoStringField(reviewDefinition, "permission_preset") != "read-only" || demoStringField(reviewSandbox, "mode") != "read-only" {
 		t.Fatalf("standalone review route is not independent: route=%v err=%v", reviewRoute, err)
 	}
 	for _, key := range []string{"a1", "a4"} {
-		route, routeErr := exec.run(repo, "runner", "route", manifest.Tasks[key].TaskID, "--lane", "execute", "--vault", vaultPath)
+		route, routeErr := exec.run(repo, "show", manifest.Tasks[key].TaskID, "--route", "execute", "--vault", vaultPath)
 		if routeErr != nil || demoStringField(route, "profile") != "g-execute" {
 			t.Fatalf("%s execute route escaped the demo profile: route=%v err=%v", key, route, routeErr)
 		}
@@ -345,8 +342,8 @@ func TestRealWorkFixtureActiveResetRefused(t *testing.T) {
 	manifest := realWorkSeedForTest(t, repo)
 	vaultPath := demoVaultPath(repo)
 	s1 := manifest.Tasks["s1"].TaskID
-	if code, _ := runInner("work start", Args{"id": s1, "by": "agent:test-guard", "vault": vaultPath}); code != 0 {
-		t.Fatalf("work start exit %d", code)
+	if code, _ := runInner("start", Args{"id": s1, "by": "agent:test-guard", "vault": vaultPath}); code != 0 {
+		t.Fatalf("start exit %d", code)
 	}
 	if code, _ := runInner("demo reset", Args{"repo": repo, "yes": "true"}); code != demoExitPrecondition {
 		t.Fatalf("reset with active run exit %d, want %d", code, demoExitPrecondition)
@@ -355,8 +352,8 @@ func TestRealWorkFixtureActiveResetRefused(t *testing.T) {
 	if still.Tasks["s1"].TaskID != manifest.Tasks["s1"].TaskID {
 		t.Fatal("refused reset mutated the mapping")
 	}
-	if code, _ := runInner("work release", Args{"id": s1, "by": "agent:test-guard", "reason": "test done", "vault": vaultPath}); code != 0 {
-		t.Fatalf("work release exit %d", code)
+	if code, _ := runInner("stop", Args{"id": s1, "by": "agent:test-guard", "reason": "test done", "vault": vaultPath}); code != 0 {
+		t.Fatalf("stop exit %d", code)
 	}
 	if code := demoRunInner(t, "demo reset", Args{"repo": repo, "yes": "true"}); code != demoExitOK {
 		t.Fatalf("reset after release exit %d", code)

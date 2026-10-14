@@ -123,7 +123,7 @@ func TestLaunchdInstallUninstallIdempotentPublicCommands(t *testing.T) {
 		t.Fatalf("managed marker missing from plist:\n%s", plist)
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := run("daemon uninstall", Args{"json": "true"}); err != nil {
+		if _, err := run("daemon install", Args{"remove": "true", "json": "true"}); err != nil {
 			t.Fatal(err)
 		}
 	}

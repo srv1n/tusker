@@ -62,7 +62,7 @@ func preflightCanonicalRuntimeRetirement(vaultPath, taskID string) error {
 		return err
 	}
 	if runtimeRunNeedsTerminalRetirement(*run) && runProcessGroupAlive(*run) {
-		return tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner is still live; stop it before changing terminal task state", withHint(fmt.Sprintf("tusker runs interrupt --project %s --id %s", projectID, run.RecordID)), withContext(map[string]any{"project_id": projectID, "record_id": run.RecordID, "pid": run.ProcessPID, "pgid": run.ProcessPGID}))
+		return tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner is still live; stop it before changing terminal task state", withHint(fmt.Sprintf("tusker runs stop --project --soft %s --id %s", projectID, run.RecordID)), withContext(map[string]any{"project_id": projectID, "record_id": run.RecordID, "pid": run.ProcessPID, "pgid": run.ProcessPGID}))
 	}
 	return nil
 }
@@ -104,7 +104,7 @@ func retireCanonicalRuntimeRows(store *RuntimeStore, stateRoot, projectID, taskI
 			continue
 		}
 		if runProcessGroupAlive(run) {
-			return changed, tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner is still live; stop it before terminal retirement", withHint(fmt.Sprintf("tusker runs interrupt --project %s --id %s", projectID, run.RecordID)))
+			return changed, tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner is still live; stop it before terminal retirement", withHint(fmt.Sprintf("tusker runs stop --project --soft %s --id %s", projectID, run.RecordID)))
 		}
 		if _, err := retireRuntimeRun(store, stateRoot, run, actor, reason, now, true); err != nil {
 			return changed, err
@@ -132,11 +132,11 @@ func (d *Daemon) retireCanonicalRuntimeRun(ctx context.Context, project Register
 			reason += "; daemon stopped active execution"
 		}
 		if runProcessGroupAlive(run) {
-			return run, false, tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner remained live after stop; runtime identity was preserved", withHint(fmt.Sprintf("tusker runs interrupt --project %s --id %s", project.ProjectID, run.RecordID)))
+			return run, false, tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner remained live after stop; runtime identity was preserved", withHint(fmt.Sprintf("tusker runs stop --project --soft %s --id %s", project.ProjectID, run.RecordID)))
 		}
 	}
 	if runProcessGroupAlive(run) {
-		return run, false, tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner is live; runtime identity was preserved", withHint(fmt.Sprintf("tusker runs interrupt --project %s --id %s", project.ProjectID, run.RecordID)))
+		return run, false, tuskerError("LIVE_RUNNER_RETIREMENT_REFUSED", "runner is live; runtime identity was preserved", withHint(fmt.Sprintf("tusker runs stop --project --soft %s --id %s", project.ProjectID, run.RecordID)))
 	}
 	retired, err := retireRuntimeRun(d.store, d.stateRoot, run, actor, reason, time.Now().UTC(), true)
 	if err != nil {

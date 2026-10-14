@@ -1262,8 +1262,8 @@ func catalogContainsString(values []string, want string) bool {
 func printRunnerHelp() {
 	fmt.Println(`Usage:
   tusker runner catalog [--bundled] [--refresh] [--json]
-  tusker runner profiles [--bundled] [--write] [--json]
-  tusker runner route <TASK-ID> --lane execute|review --json
+  tusker models profile --defaults [--bundled] [--write] [--json]
+  tusker show <TASK-ID> --route execute|review --json
   tusker runner test <id-or-profile> [--preset <preset>] [--live] [--exercise print|timer] [--script <executable>] [--json|--quiet]
 
 Catalog observes installed harnesses without authentication or model launch. --bundled

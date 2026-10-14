@@ -629,7 +629,7 @@ func validateProjectLayerDefinesNoProfiles(layer tuskerConfigLayer) error {
 			return tuskerError(errorConfigInvalid,
 				fmt.Sprintf("%s sets %s; a project cannot remove global runner profiles. To stop using them here, select other profiles in this project's automation.model_levels; to delete them for every project, remove them from the global config %s", layer.Path, what, userGlobalTuskerConfigPath()),
 				withPath(layer.Path),
-				withHint("delete automation.removed_profiles from "+layer.Path+"; use `tusker models profile-remove --scope global --name <profile>` to remove a profile globally"))
+				withHint("delete automation.removed_profiles from "+layer.Path+"; use `tusker models profile --remove --scope global --name <profile>` to remove a profile globally"))
 		}
 		return tuskerError(errorConfigInvalid,
 			fmt.Sprintf("%s defines %s; runner profiles may only be defined in the global config %s. Move the profile definitions there and reference them by name from this project (automation.model_levels, automation.default_profile, or task runner_profile/execute_profile/review_profile)", layer.Path, what, userGlobalTuskerConfigPath()),

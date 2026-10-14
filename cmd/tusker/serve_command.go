@@ -1658,7 +1658,7 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 	serveJSON(w, http.StatusOK, detail)
 }
 
-// handleRunRedrive maps the run-detail Retry control to `tusker redrive`. It
+// handleRunRedrive maps the run-detail Retry control to `tusker runs restart --requeue`. It
 // guards on canonical task status first: a review/done task has no execution to
 // redrive, so it returns a visible refusal instead of requeuing into the
 // daemon's silent retire. A redrivable task is requeued and reported as such.
@@ -1666,7 +1666,7 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, taskID string, body serveActionBody) {
 	actor, actorErr := s.serveOperatorActor(body, "serve run redrive")
 	if actorErr != nil {
-		status, result := serveOperatorActorResult("tusker redrive", actorErr)
+		status, result := serveOperatorActorResult("tusker runs restart --requeue", actorErr)
 		serveJSON(w, status, serveRedriveResult{Refused: true, TaskID: strings.TrimSpace(taskID), Reason: result.Reason, Issue: result.Issue})
 		return
 	}
@@ -2313,13 +2313,13 @@ func (s *serveServer) recoveryForWave(wave Note, snap serveSnapshot, idx v7Index
 	}
 	switch {
 	case !snap.project.Enabled:
-		setCause("project_disabled", "Background work is off for this project.", string(DiagnosticAuthorityOperator), "tusker projects enable "+snap.projectID)
+		setCause("project_disabled", "Background work is off for this project.", string(DiagnosticAuthorityOperator), "tusker projects set "+snap.projectID+" --on")
 	case authState == "stale":
-		setCause("stale", "Wave authorization is stale.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker wave start "+waveID))
+		setCause("stale", "Wave authorization is stale.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker start "+waveID))
 	case authState == "paused":
-		setCause("paused", "Wave is paused.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker wave resume "+waveID))
+		setCause("paused", "Wave is paused.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker start "+waveID))
 	case authState == "disarmed":
-		setCause("disarmed", "Wave authorization is disarmed.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker wave start "+waveID))
+		setCause("disarmed", "Wave authorization is disarmed.", string(DiagnosticAuthorityOperator), firstNonEmpty(authAction, "tusker start "+waveID))
 	case len(waiting) > 0 && rctx.daemonAbsent:
 		setCause("doctor-daemon-absent", "Work waits on daemon reconciliation but no daemon poll was recorded.", string(DiagnosticAuthorityOperator), "start the resident daemon or enable Background work")
 	case len(waiting) > 0 && rctx.daemonStale:
@@ -2378,12 +2378,12 @@ func (s *serveServer) recoveryForTask(task Note, snap serveSnapshot, idx v7Index
 	recovery.Queued = hasDirective || (waiting && hasRun && !run.Terminal && strings.TrimSpace(run.LeaseState) == string(LeaseStateUnclaimed))
 	switch {
 	case !snap.project.Enabled:
-		setCause("project_disabled", "Background work is off for this project.", string(DiagnosticAuthorityOperator), "tusker projects enable "+snap.projectID)
+		setCause("project_disabled", "Background work is off for this project.", string(DiagnosticAuthorityOperator), "tusker projects set "+snap.projectID+" --on")
 	case !waiting:
 	case recovery.Authorization == "paused":
-		setCause("paused", "Wave is paused.", string(DiagnosticAuthorityOperator), "tusker wave resume "+stringField(task.Data, "wave"))
+		setCause("paused", "Wave is paused.", string(DiagnosticAuthorityOperator), "tusker start "+stringField(task.Data, "wave"))
 	case recovery.Authorization == "stale" || recovery.Authorization == "disarmed":
-		setCause(recovery.Authorization, "Wave authorization is "+recovery.Authorization+".", string(DiagnosticAuthorityOperator), "tusker wave start "+stringField(task.Data, "wave"))
+		setCause(recovery.Authorization, "Wave authorization is "+recovery.Authorization+".", string(DiagnosticAuthorityOperator), "tusker start "+stringField(task.Data, "wave"))
 	default:
 		if gates := serveOpenHumanGatesForTask(snap, taskID); len(gates) > 0 {
 			gate := gates[0]

@@ -99,7 +99,7 @@ func waveV7BriefCmd(args Args) error {
 	}
 	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if id == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker wave brief W-0001 [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker show W-0001 [--json]")
 	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {

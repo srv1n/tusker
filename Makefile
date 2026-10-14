@@ -117,10 +117,10 @@ validate: ## Run Tusker validation with branch-policy checks
 	$(VALIDATION_GATE) $(MAKE) validate-unlocked
 
 validate-unlocked:
-	GOMAXPROCS=$(GO_MAX_PROCS) go run -p=$(GO_PACKAGE_PARALLELISM) ./cmd/tusker validate --branch-policy --json
+	GOMAXPROCS=$(GO_MAX_PROCS) go run -p=$(GO_PACKAGE_PARALLELISM) ./cmd/tusker check --only validate --branch-policy --json
 
 skill-doctor: ## Run the strict project skill doctor
-	go run ./cmd/tusker skill doctor --strict --json
+	go run ./cmd/tusker check --only skills --strict --json
 
 check: ## Run the serialized UI + Go release-candidate gate
 	$(VALIDATION_GATE) $(MAKE) check-unlocked
@@ -160,9 +160,9 @@ install-repo: build ## Install repo-local skills into REPO=/abs/path
 	./"$(DIST_BIN)" install --repo "$(REPO)" --bin-dir "$(BIN_DIR)" --force
 	@printf "$(GREEN)OK install-repo complete$(RESET)\n"
 
-sync-repo-contract: build ## Sync repo helper docs into REPO=/abs/path
+sync-repo-contract: build ## Sync repo helper docs into REPO=/abs/path (runs init --with-contract there)
 	@test -n "$(REPO)" || (echo "REPO is required: make sync-repo-contract REPO=/abs/path/to/repo" >&2; exit 1)
-	./"$(DIST_BIN)" sync-repo-contract --repo "$(REPO)"
+	cd "$(REPO)" && "$(abspath $(DIST_BIN))" init --yes --with-contract
 
 setup-demo: ## Replace the owned manual demo using the installed CLI; override DEMO_REPO=/abs/path
 	@set -eu; \

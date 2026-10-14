@@ -54,13 +54,13 @@ specifications in `docs/system/proposals/`, and product decisions in
 `docs/system/decisions/`. `.tusker/` holds tracker state and thin pointers
 only; legacy `.tusker/specs/` paths still resolve during transition.
 `docs/system/INDEX.md` and `docs/system/graph.json` are generated views;
-update their source documents and run `tusker docs map` rather than editing
+update their source documents and run `tusker check --fix` rather than editing
 those files.
 
 ## Install and refresh
 
 `make install-user` installs the binary and the Codex and Claude user skills.
-`tusker skill sync --repo . --mode symlink --source .` refreshes a repository
+`tusker install --repo-only --skills-only --repo . --mode symlink --source .` refreshes a repository
 skill link. Use copy mode or a bundle when the target cannot follow a symlink.
 
 ## Agent reading rule
@@ -75,10 +75,10 @@ unless the task requires them.
 
 ## Validation
 
-Run `tusker skill doctor --strict --json` after a skill change. Run
-`tusker validate --json` after a project-skill or canon change.
+Run `tusker check --only skills --strict --json` after a skill change. Run
+`tusker check --only validate --json` after a project-skill or canon change.
 
-The source package is authoritative. `tusker skill sync --repo . --source
+The source package is authoritative. `tusker install --repo-only --skills-only --repo . --source
 <canonical-tusker-checkout>` refreshes managed repository copies only when the
 operator asks; user-modified installed copies are preserved, never overwritten
 by a refresh. `tusker init` preserves existing user-managed external skills;

@@ -66,12 +66,6 @@ func feedbackV7Cmd(args Args) error {
 		return feedbackDigestCmd(args)
 	case "candidates":
 		return feedbackCandidatesCmd(args)
-	case "signals":
-		return feedbackSignalsCmd(args)
-	case "review":
-		return feedbackReviewCmd(args)
-	case "promote":
-		return feedbackPromoteCmd(args)
 	case "", "help":
 		printFeedbackHelp()
 		return nil

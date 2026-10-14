@@ -146,7 +146,7 @@ func demoSpecDoc() string {
 subject: demo-parallel-waves
 title: Demo parallel waves fixture
 # Corpus root of this disposable repo: every fictional note below parents to
-# this governing spec, which parents to itself so ` + "`tusker docs check`" + ` validates.
+# this governing spec, which parents to itself so ` + "`tusker check --only docs`" + ` validates.
 part_of: demo-parallel-waves
 status: canonical
 read_when: "Running or changing the disposable repeatable-work demo."

@@ -5,12 +5,14 @@ Load the guide for the current task stage; a status question needs no closeout
 procedure.
 
 - Inspect with `tusker show <TASK-ID> --capsule`, `tusker list`, or
-  `tusker search`.
+  `tusker list --grep`.
 - Create records with `tusker new epic|task|gate|decision`.
 - Use the CLI before direct markdown edits to tracker records. Lifecycle,
   proof, gates, and generated fields are CLI-managed.
-- Interactive implementation uses `tusker work start`; dispatched workers
+- Interactive implementation uses `tusker start`; dispatched workers
   follow their existing claim. Neither path authorizes another worker or daemon.
+- Record finished work with `tusker done <IDs>|--wave <W>|--since <ref> --by <you>`;
+  Tusker reruns the proof. Never claim a task afterwards just to record it.
 
 Tusker task records do not grant authority beyond the user's request and
 repository rules. Complete authorized work and affected checks; report tracker

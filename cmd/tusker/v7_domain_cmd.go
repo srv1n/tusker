@@ -123,111 +123,6 @@ func newV7Domain(args Args) error {
 	return emitV7Event(vaultPath, id, "domain", "created", actor, map[string]any{"path": filepath.ToSlash(filepath.Join("knowledge", "domains", id, "INDEX.md"))})
 }
 
-func domainV7ListCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	domains, err := v7ListDomainNotes(vaultPath)
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "domains": v7DomainPayload(domains)})
-		return nil
-	}
-	for _, domain := range domains {
-		fmt.Printf("- %s — %s\n", stringField(domain.Data, "id"), stringField(domain.Data, "title"))
-		if summary := stringField(domain.Data, "summary"); summary != "" {
-			fmt.Printf("  %s\n", summary)
-		}
-	}
-	return nil
-}
-
-func domainV7ShowCmd(args Args) error {
-	args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	id, err := requireArg(args, "id")
-	if err != nil {
-		return err
-	}
-	note, err := readV7DomainIndex(vaultPath, id)
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		emitJSON(map[string]any{"ok": true, "domain": v7DomainPayload([]Note{note})[0]})
-		return nil
-	}
-	if args.Bool("full") {
-		content, err := readText(note.AbsolutePath)
-		if err != nil {
-			return err
-		}
-		fmt.Print(content)
-		if !strings.HasSuffix(content, "\n") {
-			fmt.Println()
-		}
-		return nil
-	}
-	fmt.Print(v7DomainCapsule(note))
-	return nil
-}
-
-func domainV7CanonCmd(args Args) error {
-	args["id"] = firstNonEmpty(args.String("id"), args.String("_pos0"))
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	id, err := requireArg(args, "id")
-	if err != nil {
-		return err
-	}
-	note, err := readV7DomainCanon(vaultPath, id)
-	if err != nil {
-		return err
-	}
-	if args.Bool("json") {
-		item := map[string]any{
-			"id":      stringField(note.Data, "id"),
-			"domain":  stringField(note.Data, "domain"),
-			"title":   stringField(note.Data, "title"),
-			"status":  stringField(note.Data, "status"),
-			"summary": stringField(note.Data, "summary"),
-			"path":    note.RelativePath,
-		}
-		if capsule := v7CapsuleMap(note); len(capsule) > 0 {
-			item["capsule"] = capsule
-		}
-		emitJSON(map[string]any{"ok": true, "canon": item})
-		return nil
-	}
-	if args.Bool("full") {
-		content, err := readText(note.AbsolutePath)
-		if err != nil {
-			return err
-		}
-		fmt.Print(content)
-		if !strings.HasSuffix(content, "\n") {
-			fmt.Println()
-		}
-		return nil
-	}
-	// Portable canon views carry the live index body, which names Purpose
-	// instead of Current Truth. Keep every capsule read bounded.
-	truth := sectionContent(note.Body, "## Current Truth")
-	if strings.TrimSpace(truth) == "" {
-		truth = v7PacketSnippet(note.Body, 8)
-	}
-	fmt.Printf("%s  domain canon  %s\n\n%s\n", stringField(note.Data, "domain"), stringField(note.Data, "title"), truth)
-	return nil
-}
-
 // v7PortableDomainIndexRel is the stable portable route for one domain's
 // human-readable index. Product domain knowledge lives under docs/system;
 // the legacy knowledge/domains records remain as compatibility pointers.
@@ -309,49 +204,6 @@ func v7PortableDomainNote(repoRoot, id string) (Note, error) {
 		},
 		Body: body,
 	}, nil
-}
-
-// v7ListDomainNotes merges managed domain records with portable domain
-// indexes so `domain list` routes agents to the same chapters humans read.
-// The portable index is the authority wherever it exists: a migrated domain
-// lists its portable route, not the legacy compatibility record.
-func v7ListDomainNotes(vaultPath string) ([]Note, error) {
-	notes, err := listAllNotes(vaultPath)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	var domains []Note
-	for _, note := range notes {
-		if effectiveV7Kind(note.Data) == "domain" && stringField(note.Data, "schema") == "tusker.domain/v7" {
-			seen[stringField(note.Data, "id")] = true
-			domains = append(domains, note)
-		}
-	}
-	repoRoot := v7RepoRoot(vaultPath)
-	for _, id := range v7PortableDomainIDs(repoRoot) {
-		if seen[id] {
-			continue
-		}
-		note, err := v7PortableDomainNote(repoRoot, id)
-		if err != nil {
-			continue
-		}
-		domains = append(domains, note)
-	}
-	for i, note := range domains {
-		id := stringField(note.Data, "id")
-		if id == "" || !v7HasPortableDomain(repoRoot, id) {
-			continue
-		}
-		if portable, err := v7PortableDomainNote(repoRoot, id); err == nil {
-			domains[i] = portable
-		}
-	}
-	sort.Slice(domains, func(i, j int) bool {
-		return stringField(domains[i].Data, "id") < stringField(domains[j].Data, "id")
-	})
-	return domains, nil
 }
 
 // v7FirstMarkdownHeading returns the first "# Heading" line without its
@@ -465,50 +317,6 @@ func readV7DomainCanon(vaultPath, id string) (Note, error) {
 		return Note{}, err
 	}
 	return Note{AbsolutePath: path, RelativePath: filepath.ToSlash(filepath.Join("knowledge", "domains", id, "CANON.md")), Data: data, Body: body}, nil
-}
-
-func v7DomainPayload(notes []Note) []map[string]any {
-	payload := make([]map[string]any, 0, len(notes))
-	for _, note := range notes {
-		item := map[string]any{
-			"id":              stringField(note.Data, "id"),
-			"title":           stringField(note.Data, "title"),
-			"status":          stringField(note.Data, "status"),
-			"summary":         stringField(note.Data, "summary"),
-			"source_of_truth": normalizeList(note.Data["source_of_truth"]),
-			"canonical_files": normalizeList(note.Data["canonical_files"]),
-			"path":            note.RelativePath,
-		}
-		if capsule := v7CapsuleMap(note); len(capsule) > 0 {
-			item["capsule"] = capsule
-		}
-		payload = append(payload, item)
-	}
-	return payload
-}
-
-func v7DomainCapsule(note Note) string {
-	if capsule := strings.TrimSpace(renderFrontmatterCapsule(note)); capsule != "" {
-		return fmt.Sprintf(`%s  domain  %s
-
-%s
-Status: %s
-Summary: %s
-Path: %s
-
-Read this when:
-%s
-`, stringField(note.Data, "id"), stringField(note.Data, "title"), capsule, stringField(note.Data, "status"), stringField(note.Data, "summary"), note.RelativePath, sectionContent(note.Body, "## Read This When"))
-	}
-	return fmt.Sprintf(`%s  domain  %s
-
-Status: %s
-Summary: %s
-Path: %s
-
-Read this when:
-%s
-`, stringField(note.Data, "id"), stringField(note.Data, "title"), stringField(note.Data, "status"), stringField(note.Data, "summary"), note.RelativePath, sectionContent(note.Body, "## Read This When"))
 }
 
 func v7DefaultDomainTitle(id string) string {
@@ -660,88 +468,6 @@ func ensureV7DomainLayout(domainDir string) error {
 	return nil
 }
 
-func knowledgeV7NewCmd(args Args) error {
-	args["node"] = firstNonEmpty(args.String("node"), args.String("_pos0"))
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	node, err := requireArg(args, "node")
-	if err != nil {
-		return err
-	}
-	node = strings.Trim(strings.ToLower(strings.TrimSpace(node)), "/")
-	if reason := validateKnowledgeNodePath(node); reason != "" {
-		return tuskerError(errorInvalidArg, fmt.Sprintf(`invalid knowledge node "%s": %s`, node, reason))
-	}
-	if strings.Contains(node, "/references/") || strings.HasPrefix(node, "references/") || strings.HasSuffix(node, "/references") {
-		return tuskerError(errorInvalidArg, "knowledge uses sources/ for raw external input, not references/")
-	}
-	parts := strings.Split(node, "/")
-	if len(parts) != 3 {
-		return tuskerError(errorInvalidArg, "knowledge node must be <domain>/<folder>/<slug>", withHint("example: tusker knowledge new providers/runbooks/oauth-refresh --kind runbook --title \"OAuth refresh\""))
-	}
-	domain, folder, slug := parts[0], parts[1], parts[2]
-	if _, err := readV7DomainIndex(vaultPath, domain); err != nil {
-		return err
-	}
-	kind := strings.ToLower(strings.TrimSpace(firstNonEmpty(args.String("kind"), v7KnowledgeKindForFolder(folder))))
-	if _, ok := v7KnowledgeKinds[kind]; !ok {
-		return tuskerError(errorInvalidField, "invalid knowledge kind: "+kind)
-	}
-	expectedFolder := v7KnowledgeFolderForKind(kind)
-	if folder != expectedFolder {
-		return tuskerError(errorInvalidArg, fmt.Sprintf("%s nodes must live under %s/", kind, expectedFolder), withContext(map[string]any{"kind": kind, "folder": folder, "expected_folder": expectedFolder}))
-	}
-	title := firstNonEmpty(args.String("title"), v7DefaultDomainTitle(slug))
-	summary := firstNonEmpty(args.String("summary"), title+".")
-	rel := filepath.ToSlash(filepath.Join("knowledge", "domains", domain, folder, slug+".md"))
-	path := filepath.Join(vaultPath, filepath.FromSlash(rel))
-	if fileExists(path) {
-		return tuskerError(errorAlreadyExists, "knowledge node already exists: "+node, withPath(rel))
-	}
-	if err := ensureV7DomainLayout(filepath.Join(vaultPath, "knowledge", "domains", domain)); err != nil {
-		return err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	sourceOfTruth := splitCSV(args.String("source-of-truth"))
-	if len(sourceOfTruth) == 0 {
-		sourceOfTruth = []string{filepath.ToSlash(filepath.Join("knowledge", "domains", domain, "CANON.md"))}
-	}
-	data := map[string]any{
-		"schema":  "tusker.knowledge/v7",
-		"kind":    kind,
-		"id":      node,
-		"project": v7ProjectID(vaultPath),
-		"domain":  domain,
-		"title":   title,
-		"status":  "current",
-		"summary": summary,
-		"capsule": v7CapsuleOrdered(
-			title+" "+kind+" for "+domain+".",
-			"Use when this is the narrowest matching "+kind+" for the task.",
-			"Skip when the domain INDEX or CANON already answers the question.",
-		),
-		"source_of_truth": sourceOfTruth,
-		"related":         []string{domain + "/canon"},
-		"created_at":      now,
-		"updated_at":      now,
-	}
-	body := v7KnowledgeLeafBody(kind, title, summary, domain, sourceOfTruth)
-	data["state_rev"] = v7StateRev(data, body)
-	content, err := serializeDocument(data, body, v7FrontmatterOrder["knowledge"])
-	if err != nil {
-		return err
-	}
-	if err := writeText(path, content); err != nil {
-		return err
-	}
-	if !args.Bool("quiet") {
-		fmt.Printf("Created %s knowledge node %s at %s\n", kind, node, rel)
-	}
-	return nil
-}
-
 func v7KnowledgeFolderForKind(kind string) string {
 	switch kind {
 	case "runbook":
@@ -759,68 +485,6 @@ func v7KnowledgeFolderForKind(kind string) string {
 	default:
 		return ""
 	}
-}
-
-func v7KnowledgeKindForFolder(folder string) string {
-	switch folder {
-	case "runbooks":
-		return "runbook"
-	case "decisions":
-		return "decision"
-	case "invariants":
-		return "invariant"
-	case "interfaces":
-		return "interface"
-	case "sources":
-		return "source"
-	case "glossary":
-		return "glossary"
-	default:
-		return ""
-	}
-}
-
-func v7KnowledgeLeafBody(kind, title, summary, domain string, sourceOfTruth []string) string {
-	sections := []string{
-		"# " + title,
-		"",
-		"## Summary",
-		"",
-		summary,
-		"",
-		"## Read This When",
-		"",
-		"- This is the narrowest matching " + kind + " for `" + domain + "` work.",
-		"",
-		"## Do Not Read This When",
-		"",
-		"- The domain `INDEX.md` or `CANON.md` already answers the question.",
-		"- You are looking for task proof, attempts, events, generated packets, or raw logs.",
-		"",
-		"## Source Truth",
-		"",
-		renderMarkdownBulletList(sourceOfTruth),
-		"",
-		"## Related",
-		"",
-		"- [[" + domain + "/CANON]]",
-		"",
-	}
-	switch kind {
-	case "runbook":
-		sections = append(sections, "## Procedure", "", "1. State the precondition.", "2. Apply the smallest safe change.", "3. Run the validation named by the owning task.", "")
-	case "interface":
-		sections = append(sections, "## Contract", "", "- Caller responsibility: _to fill._", "- Callee responsibility: _to fill._", "- Failure mode: _to fill._", "")
-	case "invariant":
-		sections = append(sections, "## Rule", "", "- This invariant is not yet specified.", "", "## Enforcement", "", "- Name the validator, test, or review check that enforces it.", "")
-	case "decision":
-		sections = append(sections, "## Decision", "", "- Pending durable decision text.", "", "## Rationale", "", "- Capture the tradeoff that made this decision true.", "")
-	case "source":
-		sections = append(sections, "## Raw Attribution", "", "- Source: _link or file path._", "- Captured at: _timestamp or version._", "- Use: summarize into CANON.md before treating as durable truth.", "")
-	case "glossary":
-		sections = append(sections, "## Terms", "", "| Term | Meaning |", "|---|---|", "| _term_ | _meaning_ |", "")
-	}
-	return strings.Join(sections, "\n")
 }
 
 func writeDefaultV7ProjectSkillIfMissing(vaultPath string) error {
@@ -952,7 +616,7 @@ func renderV7ProjectSkillBody(domains []Note) string {
 		"",
 		"## First Action",
 		"",
-		"Task agents must run `tusker packet <TASK-ID> --for agent`, then read only the routed domains from that packet unless the task contract names a narrower file.",
+		"Task agents must run `tusker show <TASK-ID> --packet agent`, then read only the routed domains from that packet unless the task contract names a narrower file.",
 		"",
 		"## Routing Algorithm",
 		"",
@@ -975,9 +639,9 @@ func renderV7ProjectSkillBody(domains []Note) string {
 		"## Updating Canon",
 		"",
 		"- Project canon lives in `docs/system/` (chapters, `proposals/`, `decisions/`, and `domains/<domain>/`). Update the narrowest owning doc when durable truth changes.",
-		"- Find and open canon with `tusker docs find <query>` and `tusker docs read <subject>`; create new docs, proposals, or decisions with `tusker docs new` instead of hand-writing files.",
-		"- Run `tusker docs check` after editing canon.",
-		"- Legacy `knowledge/domains/<domain>/CANON.md` records remain compatibility pointers; run `tusker validate --json` after changing them.",
+		"- Find and open canon with `tusker list docs --grep <query>` and `tusker show <subject>`; create new docs, proposals, or decisions with `tusker new doc` instead of hand-writing files.",
+		"- Run `tusker check --only docs` after editing canon.",
+		"- Legacy `knowledge/domains/<domain>/CANON.md` records remain compatibility pointers; run `tusker check --only validate --json` after changing them.",
 		"- Do not put proof logs, task history, attempts, event streams, generated packets, or raw terminal output in canon.",
 		"",
 		"## Forbidden Source Truth",
@@ -989,9 +653,9 @@ func renderV7ProjectSkillBody(domains []Note) string {
 		"",
 		"## Validation",
 		"",
-		"- `tusker skill doctor --strict --json` checks project skill routes and package hygiene.",
-		"- `tusker docs check` checks canon front matter, links, and placement under `docs/system/`.",
-		"- `tusker validate --json` checks domain layout and task-domain coverage.",
+		"- `tusker check --only skills --strict --json` checks project skill routes and package hygiene.",
+		"- `tusker check --only docs` checks canon front matter, links, and placement under `docs/system/`.",
+		"- `tusker check --only validate --json` checks domain layout and task-domain coverage.",
 		"",
 	}, "\n")
 }

@@ -481,7 +481,7 @@ func demoParseStamp(raw string) (time.Time, error) {
 
 func demoAttemptIntervals(exec *demoExec, repoRoot, taskID string) [][2]time.Time {
 	var out [][2]time.Time
-	inspected, err := exec.run(repoRoot, "runs", "inspect", taskID)
+	inspected, err := exec.run(repoRoot, "show", taskID, "--run")
 	if err != nil {
 		return out
 	}
@@ -825,7 +825,7 @@ func demoResetPlan(repoRoot string, manifest *demoManifest, exec *demoExec) (*de
 	}
 	if len(active) > 0 {
 		return nil, tuskerError(demoCodeActiveRuns, "refusing reset with active runs: "+strings.Join(active, ", "),
-			withHint("stop them first with `tusker runs interrupt <task>` or `tusker work release <task> --by <owner>`, then rerun reset"))
+			withHint("stop them first with `tusker runs stop <task> --soft` or `tusker stop <task> --by <owner>`, then rerun reset"))
 	}
 	for _, name := range demoSortedWaveNames(manifest) {
 		plan.waves = append(plan.waves, manifest.Waves[name])
@@ -1028,7 +1028,7 @@ func demoReseed(repoRoot string, manifest *demoManifest, exec *demoExec) (*demoR
 		if len(task.Deps) > 0 {
 			continue
 		}
-		if _, err := exec.run(repoRoot, "status", task.TaskID, "ready", "--reason", "demo reset: wave ready to start", "--vault", vaultPath); err != nil {
+		if _, err := exec.run(repoRoot, "edit", task.TaskID, "--status", "ready", "--reason", "demo reset: wave ready to start", "--vault", vaultPath); err != nil {
 			return nil, err
 		}
 	}

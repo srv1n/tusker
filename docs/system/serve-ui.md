@@ -81,7 +81,7 @@ for this surface is recorded in
 ## Model settings
 
 `GET /api/models` returns the same versioned effective configuration as
-`tusker models show`: profile definitions, three level/lane mappings, field
+`tusker models`: profile definitions, three level/lane mappings, field
 provenance, override state and a revision. `POST /api/models` accepts `set`,
 `reset`, `profile-set`, `profile-disable`, `profile-enable`, or `profile-remove`;
 every write uses the shared validator and rejects a stale revision. Profile

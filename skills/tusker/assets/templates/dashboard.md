@@ -8,7 +8,7 @@ tags: [dashboard]
 
 # Tusker Dashboard
 
-Plain markdown dashboard seed. Generated sections may be refreshed by `tusker reindex`.
+Plain markdown dashboard seed. Generated sections may be refreshed by `tusker check --fix`.
 
 ## Workflow status
 
@@ -23,29 +23,29 @@ Plain markdown dashboard seed. Generated sections may be refreshed by `tusker re
 ## Ready for agent
 
 <!-- tusker:agent-ready:begin -->
-_Run `tusker reindex` to refresh._
+_Run `tusker check --fix` to refresh._
 <!-- tusker:agent-ready:end -->
 
 ## Waiting on review
 
 <!-- tusker:review:begin -->
-_Run `tusker reindex` to refresh._
+_Run `tusker check --fix` to refresh._
 <!-- tusker:review:end -->
 
 ## Waiting on human/external
 
 <!-- tusker:human-wait:begin -->
-_Run `tusker reindex` to refresh._
+_Run `tusker check --fix` to refresh._
 <!-- tusker:human-wait:end -->
 
 ## Live runs
 
 <!-- tusker:live-runs:begin -->
-_Run `tusker reindex` to refresh._
+_Run `tusker check --fix` to refresh._
 <!-- tusker:live-runs:end -->
 
 ## Backlog
 
 <!-- tusker:backlog:begin -->
-_Run `tusker reindex` to refresh._
+_Run `tusker check --fix` to refresh._
 <!-- tusker:backlog:end -->

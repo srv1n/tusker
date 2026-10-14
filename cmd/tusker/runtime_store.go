@@ -2447,7 +2447,7 @@ func projectRebindNonTerminalRunsError(projectID string, runs []ProjectNonTermin
 	return tuskerError(
 		errorInvalidTransition,
 		fmt.Sprintf("project rebind requires zero active runs (non-terminal claimed/running or with active attempts); found %d", len(runs)),
-		withHint("inspect each blocking run with `tusker runs inspect <run-id> --json`; retire only settled legacy runs with `tusker runs retire <run-id> --reason <text> --json`"),
+		withHint("inspect each blocking run with `tusker show <run-id> --run --json`; retire only settled legacy runs with `tusker runs retire <run-id> --reason <text> --json`"),
 		withContext(map[string]any{
 			"project_id":       projectID,
 			"active_run_count": len(runs),

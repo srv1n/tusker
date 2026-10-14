@@ -14,7 +14,7 @@ import (
 func docsTouchCmd(args Args) error {
 	ref := strings.TrimSpace(args.String("since"))
 	if ref == "" || ref == "true" {
-		return tuskerError(errorMissingArg, "docs touch needs --since <ref>, for example: tusker docs touch --since origin/main")
+		return tuskerError(errorMissingArg, "docs touch needs --since <ref>, for example: tusker check --only docs --since origin/main")
 	}
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {

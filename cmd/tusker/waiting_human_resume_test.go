@@ -360,7 +360,7 @@ func TestContinueRefusesOlderResumeMarkerWithRecovery(t *testing.T) {
 		return "body\n\n" + resumePromptContextHeader + "\n\n" + resumePromptContextMarkerPrefix + "sha256:" + strings.Repeat("ab", 32) + "`\n"
 	})
 	_, _, reason := nativeContinuationPreflight(store, project, resumeTestWave(), interrupted)
-	if !strings.Contains(reason, "older resume context format") || !strings.Contains(reason, "tusker runs fresh APP-T-0001") {
+	if !strings.Contains(reason, "older resume context format") || !strings.Contains(reason, "tusker runs restart APP-T-0001 --fresh") {
 		t.Fatalf("v1 marker refusal = %q", reason)
 	}
 }

@@ -204,7 +204,7 @@ func demoSeed(args Args) (map[string]any, error) {
 		if len(fixtureDeps(key)) > 0 {
 			continue
 		}
-		if _, err := exec.run(repoRoot, "status", task.TaskID, "ready", "--reason", "demo seed: wave ready to start", "--vault", vaultPath); err != nil {
+		if _, err := exec.run(repoRoot, "edit", task.TaskID, "--status", "ready", "--reason", "demo seed: wave ready to start", "--vault", vaultPath); err != nil {
 			return nil, err
 		}
 	}
@@ -380,7 +380,7 @@ func demoAuthorWave(exec *demoExec, repoRoot, vaultPath string, wave demoWaveDef
 	if err != nil {
 		return nil, "", err
 	}
-	report, err := exec.run(repoRoot, "wave", "create", "--file", path, "--request-key", "demo-"+wave.Name, "--by", actor, "--vault", vaultPath)
+	report, err := exec.run(repoRoot, "new", "wave", "--file", path, "--request-key", "demo-"+wave.Name, "--by", actor, "--vault", vaultPath)
 	if err != nil {
 		return nil, "", err
 	}
@@ -482,7 +482,7 @@ func demoApplyCrossScopeDeps(exec *demoExec, repoRoot, vaultPath string, mapping
 		if err != nil {
 			return err
 		}
-		if _, err := exec.run(repoRoot, "task", "update", taskID, "--if-revision", stringField(taskData, "state_rev"), "--dependencies", strings.Join(edges, ","), "--rebind-dependency-contracts", "--by", actor, "--vault", vaultPath); err != nil {
+		if _, err := exec.run(repoRoot, "edit", taskID, "--if-revision", stringField(taskData, "state_rev"), "--dependencies", strings.Join(edges, ","), "--rebind-dependency-contracts", "--by", actor, "--vault", vaultPath); err != nil {
 			return err
 		}
 	}
@@ -490,7 +490,7 @@ func demoApplyCrossScopeDeps(exec *demoExec, repoRoot, vaultPath string, mapping
 }
 
 func demoRegisterProject(repoRoot string, exec *demoExec, vaultPath string) (string, error) {
-	listed, err := exec.run(repoRoot, "projects", "list", "--vault", vaultPath)
+	listed, err := exec.run(repoRoot, "list", "projects", "--vault", vaultPath)
 	if err != nil {
 		return "", err
 	}
@@ -500,7 +500,7 @@ func demoRegisterProject(repoRoot string, exec *demoExec, vaultPath string) (str
 	if _, err = exec.run(repoRoot, "projects", "add", "--repo", repoRoot, "--vault", vaultPath); err != nil {
 		return "", err
 	}
-	listed, err = exec.run(repoRoot, "projects", "list", "--vault", vaultPath)
+	listed, err = exec.run(repoRoot, "list", "projects", "--vault", vaultPath)
 	if err != nil {
 		return "", err
 	}

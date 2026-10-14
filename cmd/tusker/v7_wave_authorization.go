@@ -293,11 +293,11 @@ func waveAuthorizationProjectionAction(state string) string {
 	case "armed":
 		return "none"
 	case "paused":
-		return "tusker wave resume <wave-id>"
+		return "tusker start <wave-id>"
 	case "stale":
-		return "tusker wave start <wave-id> --by <actor>"
+		return "tusker start <wave-id> --by <actor>"
 	default:
-		return "tusker wave start <wave-id> --by <actor>"
+		return "tusker start <wave-id> --by <actor>"
 	}
 }
 

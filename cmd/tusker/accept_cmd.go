@@ -25,7 +25,7 @@ func acceptV7Cmd(args Args) error {
 	}
 	id := firstNonEmpty(args.String("id"), args.String("_pos0"))
 	if strings.TrimSpace(id) == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker accept <task-id> [--by reviewer:name]")
+		return tuskerError(errorMissingArg, "Usage: tusker done <task-id> [--by reviewer:name]")
 	}
 	args["id"] = id
 
@@ -81,7 +81,7 @@ func acceptV7Cmd(args Args) error {
 		return tuskerError(
 			errorInvalidTransition,
 			id+": accept moved the task to review but close then failed: "+err.Error()+
-				" — the task is stranded in review; resolve the reported cause and re-run `tusker close "+id+"`",
+				" — the task is stranded in review; resolve the reported cause and re-run `tusker done "+id+"`",
 		)
 	}
 

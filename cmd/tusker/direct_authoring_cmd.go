@@ -326,7 +326,7 @@ func updateV7TaskCmd(args Args) error {
 	}
 	id := strings.ToUpper(strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0"))))
 	if id == "" {
-		return tuskerError(errorMissingArg, "Usage: tusker task update <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level light|standard|demanding] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]")
+		return tuskerError(errorMissingArg, "Usage: tusker edit <TASK-ID> --if-revision <state_rev> [--body-file <path|->] [--title <title>] [--work-level light|standard|demanding] [--review-level <level> --review-reason <reason>] [--spec-refs <csv>] [--dependencies <csv>] [--rebind-contract] [--rebind-dependency-contracts] [--owned-paths <csv>] [--generated-outputs <csv>] [--execute-profile <name>|--clear-execute-profile] [--review-profile <name>|--clear-review-profile] --by <actor> [--json]")
 	}
 	if !v7TaskIDPattern.MatchString(id) {
 		return tuskerError(errorInvalidArg, "invalid task id: "+id)
@@ -362,7 +362,7 @@ func updateV7TaskCmd(args Args) error {
 	}
 	currentRev := stringField(data, "state_rev")
 	if strings.TrimSpace(currentRev) != "" && !v7StateRevMatches(data, body, currentRev) {
-		return tuskerError("CAS_CONFLICT", "V7 object content changed without a refreshed state_rev: "+filepath.Base(note.AbsolutePath), withPath(note.AbsolutePath), withHint("run `tusker reconcile` to repair the object metadata before retrying the control operation"), withContext(map[string]any{"current_rev": currentRev, "actual_rev": v7StateRev(data, body)}))
+		return tuskerError("CAS_CONFLICT", "V7 object content changed without a refreshed state_rev: "+filepath.Base(note.AbsolutePath), withPath(note.AbsolutePath), withHint("run `tusker check --fix` to repair the object metadata before retrying the control operation"), withContext(map[string]any{"current_rev": currentRev, "actual_rev": v7StateRev(data, body)}))
 	}
 	if strings.TrimSpace(currentRev) != baseRev {
 		return tuskerError("CAS_CONFLICT", "V7 object changed since it was loaded: "+filepath.Base(note.AbsolutePath), withPath(note.AbsolutePath), withHint("reload the object and retry the Tusker control operation"), withContext(map[string]any{"base_rev": baseRev, "current_rev": currentRev}))
@@ -554,7 +554,7 @@ func updateV7TaskCmd(args Args) error {
 		contractRebound = true
 	}
 	if len(changes) == 0 {
-		return tuskerError(errorMissingArg, "task update requires at least one mutable field: --body-file, --title, --work-level, --review-level, --spec-refs, --dependencies, --rebind-contract, --rebind-dependency-contracts, --owned-paths, --generated-outputs, --execute-profile, --review-profile, --clear-execute-profile, or --clear-review-profile")
+		return tuskerError(errorMissingArg, "edit requires at least one mutable field: --body-file, --title, --work-level, --review-level, --spec-refs, --dependencies, --rebind-contract, --rebind-dependency-contracts, --owned-paths, --generated-outputs, --execute-profile, --review-profile, --clear-execute-profile, or --clear-review-profile")
 	}
 	materialChanged := contractRebound || directWaveTaskContractFingerprint(data, body) != priorFingerprint
 	if materialChanged {
@@ -1059,7 +1059,7 @@ func renderDirectAuthoringWaveBody(req directWaveAuthoringRequest, waveID string
 	}
 	b.WriteString("\n## Closure criteria\n\n")
 	b.WriteString("- Every member task reaches its reviewed terminal state and the wave outcome holds.\n")
-	b.WriteString("\nMembers remain backlog/held and the wave stays inert until `tusker wave start` authorizes it.\n")
+	b.WriteString("\nMembers remain backlog/held and the wave stays inert until `tusker start` authorizes it.\n")
 	return b.String()
 }
 
@@ -1499,6 +1499,6 @@ func emitDirectAuthoringReport(report directWaveAuthoringReport, args Args) {
 		fmt.Printf("warning: %s\n", warning)
 	}
 	if len(report.Warnings) > 0 {
-		fmt.Printf("  `tusker wave review %s --check` will refuse Start until these contracts are fixed.\n", report.WaveID)
+		fmt.Printf("  `tusker show %s --check` will refuse Start until these contracts are fixed.\n", report.WaveID)
 	}
 }

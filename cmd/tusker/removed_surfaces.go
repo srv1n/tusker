@@ -2,139 +2,11 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 )
 
 const docsFreshnessBegin = "<!-- tusker:docs-freshness:begin -->"
-
-func publishSkillCmd(args Args) error {
-	vaultPath, err := resolveVaultPath(args, false)
-	if err != nil {
-		return err
-	}
-	out := strings.TrimSpace(args.String("out"))
-	if out == "" {
-		out = filepath.Join("dist", "project-skill")
-	}
-	out, err = filepath.Abs(out)
-	if err != nil {
-		return err
-	}
-	if err := validateV7PublishSkillOutputPath(vaultPath, out); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(out); err != nil {
-		return err
-	}
-	if err := ensureDir(out); err != nil {
-		return err
-	}
-	if err := writeV7ProjectSkill(vaultPath, filepath.Join(out, "SKILL.md")); err != nil {
-		return err
-	}
-	knowledgeRoot := filepath.Join(vaultPath, "knowledge", "domains")
-	if dirExists(knowledgeRoot) {
-		if err := copyDirFiltered(knowledgeRoot, filepath.Join(out, "knowledge", "domains"), func(path string, d os.DirEntry) bool {
-			name := d.Name()
-			if strings.HasPrefix(name, ".") && name != ".gitkeep" {
-				return false
-			}
-			return true
-		}); err != nil {
-			return err
-		}
-	}
-	if err := writeText(filepath.Join(out, ".tusker-project-skill-export"), "schema: tusker.project-skill-export/v7\n"); err != nil {
-		return err
-	}
-	if !args.Bool("quiet") {
-		fmt.Printf("Wrote project skill package: %s\n", out)
-	}
-	return nil
-}
-
-func validateV7PublishSkillOutputPath(vaultPath, out string) error {
-	if parent := filepath.Dir(out); parent == out {
-		return tuskerError(errorInvalidArg, "unsafe publish skill output path: "+out, withHint("choose a dedicated generated output directory such as dist/project-skill"))
-	}
-	protected := map[string]string{
-		"current directory": mustGetwd(),
-		"repo root":         v7RepoRoot(vaultPath),
-		"vault root":        vaultPath,
-	}
-	for _, env := range []string{"HOME", "USERPROFILE"} {
-		if value := strings.TrimSpace(os.Getenv(env)); value != "" {
-			protected[strings.ToLower(env)] = value
-		}
-	}
-	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
-		protected["home"] = home
-	}
-	for label, path := range protected {
-		if strings.TrimSpace(path) == "" {
-			continue
-		}
-		if samePathOrChild(path, out) {
-			return tuskerError(
-				errorInvalidArg,
-				"unsafe publish skill output path: "+out,
-				withHint("choose a dedicated generated output directory such as dist/project-skill"),
-				withContext(map[string]any{"protected_path": label}),
-			)
-		}
-	}
-	return nil
-}
-
-func copyDirFiltered(src, dst string, include func(path string, d os.DirEntry) bool) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !include(path, d) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return ensureDir(dst)
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return ensureDir(target)
-		}
-		return copyRegularFile(path, target)
-	})
-}
-
-func copyRegularFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	if err := ensureDir(filepath.Dir(dst)); err != nil {
-		return err
-	}
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, in)
-	closeErr := out.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	return closeErr
-}
 
 func statusCmd(args Args) error {
 	if firstNonEmpty(args.String("id"), args.String("_pos0"), args.String("status"), args.String("_pos1")) == "" {
@@ -203,17 +75,6 @@ func validateKnowledgeNodePath(value string) string {
 		}
 	}
 	return ""
-}
-
-func renderMarkdownBulletList(values []string) string {
-	if len(values) == 0 {
-		return "- _None declared._"
-	}
-	var lines []string
-	for _, value := range values {
-		lines = append(lines, "- `"+value+"`")
-	}
-	return strings.Join(lines, "\n")
 }
 
 func mapField(data map[string]any, key string) map[string]any {
