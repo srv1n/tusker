@@ -585,15 +585,25 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 			result.OK, result.Reason = true, "Checks passed. The task is complete."
 			return result, nil
 		case "review":
-			result.OK, result.Lane, result.Reason = true, runLaneReview, "Checks passed. Independent review is next."
-			return result, nil
+			// A person may still close an agent's review-only adoption.
+			personal := strings.HasPrefix(actor, "human:") || strings.HasPrefix(actor, "operator:")
+			if containsString(v7TaskProofRequired(task), "independent_review") {
+				result.OK, result.Lane, result.Reason = true, runLaneReview, "Checks passed. Independent review is next."
+				return result, nil
+			}
+			if !personal {
+				result.OK, result.Lane, result.Reason = true, runLaneReview, "Checks passed. Waiting for acceptance: `tusker adopt "+taskID+" --by human:<name>` or an independent review."
+				return result, nil
+			}
 		}
 	}
 	switch status {
 	case "done", "cancelled", "superseded":
 		return refuse("task " + taskID + " is already " + status)
 	case "review":
-		return refuse("task " + taskID + " is already in review without adopt_completed provenance")
+		if !taskAdoptedExternalImplementation(task) {
+			return refuse("task " + taskID + " is already in review without adopt_completed provenance")
+		}
 	}
 	if reason := directWaveTaskContractStaleReason(task); reason != "" {
 		return refuse(reason)
@@ -602,10 +612,13 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	if err != nil {
 		return result, err
 	}
-	// Authorization: humans and operators may adopt directly; every other
-	// actor needs a current durable authorization bound to this material.
-	if reason := adoptCompletedAuthorizationRefusal(vault, store, projectID, task, idx, actor, now); reason != "" {
-		return refuse(reason)
+	// Authorization: humans, operators and authorized agents may close. Any
+	// other agent may still adopt, but only up to review: Tusker runs the
+	// proof itself, so the agent attests nothing and a person or reviewer
+	// still closes.
+	reviewOnly := adoptCompletedAuthorizationRefusal(vault, store, projectID, task, idx, actor, now) != ""
+	if bad := v7MalformedVerificationRows(task.Body); len(bad) > 0 {
+		return refuse(v7MalformedVerificationReason(bad))
 	}
 	// Workspace safety: the registered checkout must be the canonical repo
 	// root, the declared material scope must be non-empty and readable, and
@@ -676,7 +689,7 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 		return result, err
 	}
 	if len(failures) > 0 {
-		return refuse("verification did not pass: " + firstNonEmpty(failures[0].Message, "command failed"))
+		return refuse("verification " + failures[0].Row.CoverText + " did not pass (" + firstNonEmpty(failures[0].Message, "command failed") + "): " + failures[0].Row.Check)
 	}
 	task = fresh
 	snapshot.stateRev = stringField(task.Data, "state_rev")
@@ -686,7 +699,7 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	}
 	// Proof gate: machine-class requirements must be satisfied by the fresh
 	// receipts; human/external-owned gaps and open blocking gates refuse.
-	needsReview := false
+	needsReview := reviewOnly
 	for _, required := range v7TaskProofRequired(task) {
 		if required == "independent_review" {
 			needsReview = true
@@ -817,8 +830,12 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 			return result, tuskerError(errorInvalidTransition, taskID+": adopt_completed blocked by open gate "+stringField(gate.Data, "id"))
 		}
 	}
-	if dep, blocked := v7UnclosedDependency(task, idx); blocked {
-		return result, tuskerError(errorInvalidTransition, taskID+": adopt_completed blocked by unfinished dependency "+dep.ID)
+	// Review is not acceptance, so a dependency already in review is enough
+	// here; close still requires every dependency done.
+	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		if status := strings.ToLower(stringField(idx.Tasks[edge.ID].Data, "status")); status != "done" && status != "review" {
+			return result, tuskerError(errorInvalidTransition, taskID+": adopt_completed blocked by unfinished dependency "+edge.ID)
+		}
 	}
 	data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
 	if err != nil {
@@ -852,6 +869,9 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	}
 	result.OK, result.Admitted, result.Lane = true, true, runLaneReview
 	result.Reason = "Checks passed. Independent review is next."
+	if reviewOnly {
+		result.Reason = "Checks passed. Waiting for acceptance: `tusker adopt " + taskID + " --by human:<name>` or an independent review."
+	}
 	// Queue the review lane only through durable runtime state: a wave member
 	// with a stored run gets the bound one-shot directive; without a run the
 	// review status itself is the claimable queue for `tusker work review`.

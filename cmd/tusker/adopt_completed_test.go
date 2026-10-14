@@ -159,14 +159,33 @@ func TestAdoptCompletedWorkIdempotentReplay(t *testing.T) {
 }
 
 func TestAdoptCompletedWorkAuthorization(t *testing.T) {
-	t.Run("inert agent refused", func(t *testing.T) {
+	t.Run("inert agent stops at review, a person closes", func(t *testing.T) {
 		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
 		result := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "agent:devin")
-		if !result.Refused || result.OK {
-			t.Fatalf("expected refusal, got %+v", result)
+		if !result.OK || result.Lane != runLaneReview {
+			t.Fatalf("expected review-only adoption, got %+v", result)
 		}
-		if stringField(adoptStatus(t, vault, "APP-T-0001"), "status") != "ready" {
-			t.Fatal("refused adoption mutated status")
+		if stringField(adoptStatus(t, vault, "APP-T-0001"), "status") != "review" {
+			t.Fatal("agent adoption must stop at review")
+		}
+		if again := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "agent:devin"); !again.OK || again.Lane != runLaneReview {
+			t.Fatalf("agent replay must stay in review, got %+v", again)
+		}
+		if closed := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav"); !closed.OK || closed.Lane != "" {
+			t.Fatalf("human adoption must close, got %+v", closed)
+		}
+		if stringField(adoptStatus(t, vault, "APP-T-0001"), "status") != "done" {
+			t.Fatal("human adoption did not close the task")
+		}
+	})
+	t.Run("malformed verification row refuses before checks", func(t *testing.T) {
+		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+		rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
+			return data, replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: grep -E 'a|b' submitted.txt | pending | |\n")
+		})
+		result := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav")
+		if !result.Refused || !strings.Contains(result.Reason, `\|`) {
+			t.Fatalf("expected escaped-pipe refusal, got %+v", result)
 		}
 	})
 	t.Run("human allowed", func(t *testing.T) {
@@ -615,5 +634,19 @@ func TestAdoptCompletedWorkClaimedLifecycleUnchanged(t *testing.T) {
 	result := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav")
 	if !result.Refused {
 		t.Fatalf("expected refusal on foreign review task, got %+v", result)
+	}
+}
+
+func TestAdoptOwnedPathsTouched(t *testing.T) {
+	files := []string{"crates/a/src/cdc.rs", "Cargo.toml"}
+	for _, owned := range [][]string{{"crates/a/src/cdc.rs"}, {"crates/a"}, {"crates/a/"}, {"./Cargo.toml"}, {"crates/*/src/cdc.rs"}} {
+		if !adoptOwnedPathsTouched(owned, files) {
+			t.Fatalf("%v should match %v", owned, files)
+		}
+	}
+	for _, owned := range [][]string{{"crates/ab"}, {"crates/b"}, {}} {
+		if adoptOwnedPathsTouched(owned, files) {
+			t.Fatalf("%v should not match %v", owned, files)
+		}
 	}
 }

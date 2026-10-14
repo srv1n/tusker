@@ -1,8 +1,5 @@
 # Track
 
-Explicit coordinator batches use `BATCH.md`; the task/wave daemon workflow
-below applies to ordinary tracked work.
-
 Inspect work with `tusker show <TASK-ID> --capsule`; implement from
 `tusker packet <TASK-ID> --for agent`. Read its contract, then only required
 source and documentation.
@@ -68,6 +65,9 @@ execute-only and same-native review is refused. Dispatched workers retain
 their claim. Self implementation requires an explicit authorized claim and
 independent review. Submission is not completion; follow
 `tusker closeout status <TASK-ID> --json`.
+
+Committed work that no claim recorded: `tusker adopt <IDs>|--wave <W>|--since <ref> --by <you>`;
+never claim it afterwards.
 
 Add planned checks with `tusker verify add <TASK-ID> --covers A1 --check
 "command: go test ./..." --result pending`. Only the executor records PASS/FAIL.

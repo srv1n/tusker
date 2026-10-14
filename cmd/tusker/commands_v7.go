@@ -4150,6 +4150,9 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 	} else if !v7TextHasExactVerificationProof(verification) {
 		reasons = append(reasons, "verification missing exact command or manual proof ("+v7VerificationGrammarHint+")")
 	}
+	if bad := v7MalformedVerificationRows(task.Body); len(bad) > 0 {
+		reasons = append(reasons, v7MalformedVerificationReason(bad))
+	}
 	mode := strings.ToLower(strings.TrimSpace(stringField(task.Data, "proof_mode")))
 	if mode == "" {
 		reasons = append(reasons, "proof_mode missing")

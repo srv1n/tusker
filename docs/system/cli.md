@@ -61,6 +61,7 @@ only at `task start` or `wave start`.
 | Pause / resume a wave | `tusker wave pause\|resume <WAVE-ID> --by human:<name>\|operator:<name> --json` |
 | Change task state | `tusker status <TASK-ID> <STATE> --reason "..."` |
 | Add a check result | `tusker verify add <TASK-ID> ...` |
+| Record committed work done without a claim | `tusker adopt <TASK-ID>... \| --wave <WAVE-ID> \| --since <git-ref> --by <actor>` |
 | Submit review | `tusker review submit <TASK-ID> ...` |
 | Close a task | `tusker close <TASK-ID>` |
 | Check the tracker | `tusker validate --vault ./.tusker --json` |

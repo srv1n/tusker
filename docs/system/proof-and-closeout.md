@@ -3,7 +3,7 @@ title: "Proof and closeout"
 subject: proof-and-closeout
 part_of: overview
 status: canonical
-describes: [cmd/tusker/v7_proof_cmd.go, cmd/tusker/v7_closeout_cmd.go, cmd/tusker/v7_close_authority.go, cmd/tusker/review_result.go, internal/v7policy/close.go]
+describes: [cmd/tusker/v7_proof_cmd.go, cmd/tusker/adopt_cmd.go, cmd/tusker/work_recovery.go, cmd/tusker/v7_closeout_cmd.go, cmd/tusker/v7_close_authority.go, cmd/tusker/review_result.go, internal/v7policy/close.go]
 read_when: "Choosing evidence, checking acceptance coverage, or closing a task."
 skip_when: "Planning dependencies or choosing a provider."
 ---
@@ -111,6 +111,44 @@ proof with no open gates. `changes_requested` needs an actionable finding.
 `blocked` needs a machine, infrastructure, or human blocker; a human blocker
 also needs an open human-owned gate. Recording any verdict does not merge,
 land, move a ref, or close the task.
+
+## Adopting finished work
+
+A claim records one agent working in one session. Work done any other way
+(parallel agents with one central gate, a different harness, a teammate, or
+hand edits) is recorded after it is committed, without a claim:
+
+```sh
+tusker adopt APP-T-0001 APP-T-0002 --by agent:<name>
+tusker adopt --wave W-0001 --by agent:<name>
+tusker adopt --since <git-ref> --by agent:<name>
+```
+
+`--since` selects open tasks whose `owned_paths` changed between the ref and
+`HEAD`, so the agent that did the work needs no trailer or Tusker integration.
+For each task, Tusker reruns the command rows in the registered checkout. It
+reuses receipts that still match the material. It then runs the
+`adopt_completed` transition, which records the implementation as
+`external/unknown`. Dependencies are adopted before their dependents.
+
+The actor decides how far a task moves:
+
+| Actor | Passing task moves to |
+| --- | --- |
+| `human:` or `operator:` | `done`, unless the contract requires `independent_review` |
+| Agent inside an armed wave | `done`, unless the contract requires `independent_review` |
+| Any other agent | `review`; a person or an independent review closes it |
+
+An agent never closes through adoption, because Tusker observed the checks
+but no one accepted the result. A dependency in `review` lets a dependent
+reach `review`; close still requires every dependency to be `done`. Human
+gates and open blocking gates still refuse.
+
+Each refusal names one fix. The usual causes are a failing check, a drifted
+contract (`tusker task update <ID> --body-file <path> --by <actor>`), a live
+claim on the task, or a malformed Verification row. A `|` inside a Check cell
+must be written `\|`; otherwise the table splits the command. Readiness also
+reports such rows as blockers.
 
 ## Close checks
 

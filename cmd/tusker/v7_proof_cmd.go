@@ -988,6 +988,23 @@ func parseV7VerificationRows(body string) []v7VerificationRow {
 	return rows
 }
 
+// v7MalformedVerificationRows names rows whose Result cell is not a known
+// result. The usual cause is an unescaped | inside the Check cell, which
+// splits the command and shifts every later cell.
+func v7MalformedVerificationRows(body string) []string {
+	var bad []string
+	for _, row := range parseV7VerificationRows(body) {
+		if _, ok := v7VerificationResults[row.Result]; !ok {
+			bad = append(bad, row.CoverText)
+		}
+	}
+	return bad
+}
+
+func v7MalformedVerificationReason(covers []string) string {
+	return "verification row(s) " + strings.Join(covers, ", ") + " have no valid Result cell; escape | as \\| inside the Check command"
+}
+
 func v7MarkdownTableCells(line string) []string {
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "|") {
