@@ -3,7 +3,7 @@ title: "Proof and closeout"
 subject: proof-and-closeout
 part_of: overview
 status: canonical
-describes: [cmd/tusker/v7_proof_cmd.go, cmd/tusker/adopt_cmd.go, cmd/tusker/work_recovery.go, cmd/tusker/v7_closeout_cmd.go, cmd/tusker/v7_close_authority.go, cmd/tusker/review_result.go, internal/v7policy/close.go]
+describes: [cmd/tusker/v7_proof_cmd.go, cmd/tusker/lifecycle_cmd.go, cmd/tusker/work_recovery.go, cmd/tusker/v7_closeout_cmd.go, cmd/tusker/v7_close_authority.go, cmd/tusker/review_result.go, internal/v7policy/close.go]
 read_when: "Choosing evidence, checking acceptance coverage, or closing a task."
 skip_when: "Planning dependencies or choosing a provider."
 ---
@@ -130,7 +130,7 @@ tusker done --since <git-ref> --by agent:<name>
 For each task, Tusker reruns the command rows in the registered checkout. It
 reuses receipts that still match the material. It then runs the
 `adopt_completed` transition, which records the implementation as
-`external/unknown`. Dependencies are adopted before their dependents.
+"external/unknown". Dependencies are adopted before their dependents.
 
 The actor decides how far a task moves:
 
