@@ -18,9 +18,12 @@ final class TuskerBarTests: XCTestCase {
         var cursor = SSECursor()
         XCTAssertEqual(cursor.classify(event), .accepted)
         XCTAssertEqual(cursor.classify(event), .duplicate)
-        XCTAssertEqual(cursor.classify(miss), .replayMiss)
-        XCTAssertEqual(cursor.lastEventID, 7, "replay miss must not move the authoritative cursor")
         XCTAssertEqual(SSEClient.request(url: URL(string: "http://127.0.0.1:7420/api/stream")!, lastEventID: cursor.lastEventID).value(forHTTPHeaderField: "Last-Event-ID"), "7")
+        XCTAssertEqual(cursor.classify(miss), .replayMiss)
+        XCTAssertEqual(cursor.lastEventID, 0, "a replay miss may indicate a restarted broker with lower IDs")
+        let restarted = TuskerStreamEvent(id: 1, kind: "task_review", project: "tusker", taskID: "MAC-T-0001", title: nil, status: nil, urgency: nil, deepLinkPath: nil, occurredAt: nil, keys: ["tasks"])
+        XCTAssertEqual(cursor.classify(restarted), .accepted)
+        XCTAssertEqual(SSEClient.request(url: URL(string: "http://127.0.0.1:7420/api/stream")!, lastEventID: cursor.lastEventID).value(forHTTPHeaderField: "Last-Event-ID"), "1")
     }
 
     func testDeepLinksAcceptKnownRoutesOnly() {

@@ -88,6 +88,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             panel.setFrameTopLeftPoint(NSPoint(x: point.x, y: point.y))
         }
         panel.orderFrontRegardless()
+        publishVisibility()
         if !loaded {
             load(path: path, kind: .optimistic)
         } else if path != "/panel?shell=1" {
@@ -95,7 +96,18 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         }
     }
 
-    func hide() { retryWorkItem?.cancel(); panel.orderOut(nil) }
+    func hide() {
+        retryWorkItem?.cancel()
+        panel.orderOut(nil)
+        publishVisibility()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool { hide(); return false }
+
+    private func publishVisibility() {
+        guard isConfiguredOrigin(webView.url) else { return }
+        webView.evaluateJavaScript(Self.visibilityScript(visible: panel.isVisible))
+    }
 
     func windowDidResize(_ notification: Notification) {
         let size = panel.frame.size
@@ -150,6 +162,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         hasCommittedContent = true
         loaded = true
         if !isConfiguredOrigin(webView.url) { webView.evaluateJavaScript("delete window.tuskerShell") }
+        publishVisibility()
         hideUnavailable()
         retryDelay = 1
     }
@@ -266,7 +279,12 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         let picker = NSOpenPanel()
         Self.configureImagePicker(picker)
         picker.beginSheetModal(for: panel) { [weak self] response in
-            self?.webView.evaluateJavaScript(Self.imagePickerResponseScript(requestID: requestID, url: response == .OK ? picker.url : nil))
+            let url = response == .OK ? picker.url : nil
+            Task { [weak self] in
+                let script = await Self.loadImagePickerResponseScript(requestID: requestID, url: url)
+                guard let self, self.isConfiguredOrigin(self.webView.url) else { return }
+                self.webView.evaluateJavaScript(script, completionHandler: nil)
+            }
         }
     }
 
@@ -302,10 +320,18 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         picker.prompt = "Choose"
     }
 
-    static func imagePickerResponseScript(requestID: String, url: URL?) -> String {
+    nonisolated static let imageSizeLimit = 8 * 1024 * 1024
+
+    nonisolated static func loadImagePickerResponseScript(requestID: String, url: URL?) async -> String {
+        await Task.detached(priority: .userInitiated) {
+            imagePickerResponseScript(requestID: requestID, url: url)
+        }.value
+    }
+
+    nonisolated static func imagePickerResponseScript(requestID: String, url: URL?) -> String {
         var payload: [String: Any] = ["requestId": requestID]
         if let url {
-            if let data = try? Data(contentsOf: url), !data.isEmpty, data.count <= 8 * 1024 * 1024 {
+            if let data = try? readImage(url: url) {
                 let mime = UTType(filenameExtension: url.pathExtension.lowercased())?.preferredMIMEType ?? "application/octet-stream"
                 payload["file"] = ["name": url.lastPathComponent, "mime": mime, "data": data.base64EncodedString()]
             } else {
@@ -314,6 +340,36 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
         }
         guard let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) else { return "" }
         return "window.tuskerShell?.receiveImagePick(\(json));"
+    }
+
+    nonisolated static func readImage(url: URL) throws -> Data {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true, let size = values.fileSize, size > 0, size <= imageSizeLimit else {
+            throw CocoaError(.fileReadTooLarge)
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var data = Data()
+        // The preflight is cheap; this bound also covers a file that grows or
+        // is replaced before the read, without allocating the entire file.
+        while data.count <= imageSizeLimit {
+            let chunk = try handle.read(upToCount: min(64 * 1024, imageSizeLimit + 1 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
+        guard !data.isEmpty, data.count <= imageSizeLimit else { throw CocoaError(.fileReadTooLarge) }
+        return data
+    }
+
+    static func visibilityScript(visible: Bool) -> String {
+        """
+        (() => {
+          const shell = window.tuskerShell;
+          if (!shell) return;
+          shell.isVisible = \(visible ? "true" : "false");
+          window.dispatchEvent(new CustomEvent('tusker-shell-visibility', {detail: {visible: shell.isVisible}}));
+        })();
+        """
     }
 
     static func imagePickerScript(origin: String) -> String {
@@ -354,6 +410,7 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
           shell.closePanel = () => window.webkit.messageHandlers.tuskerShell.postMessage({method:'closePanel'});
           shell.notify = (payload) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'notify', ...payload});
           shell.setBadge = (count) => window.webkit.messageHandlers.tuskerShell.postMessage({method:'setBadge', count});
+          shell.isVisible = false;
           shell.version = config.appVersion;
         })();
         """

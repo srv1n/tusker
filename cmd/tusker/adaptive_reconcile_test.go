@@ -10,19 +10,19 @@ func TestAdaptiveReconcileCadenceBacksOffAndActivityResetsHot(t *testing.T) {
 	now := time.Date(2026, 7, 15, 6, 0, 0, 0, time.UTC)
 	d := &Daemon{}
 	d.recordProjectPoll("app", now, false)
-	assertAdaptiveState(t, d, "app", "hot", reconcileHotCadence, now.Add(reconcileHotCadence))
+	assertAdaptiveState(t, d, "app", "hot", reconcileFullCadence, now.Add(reconcileFullCadence))
 
 	d.recordProjectPoll("app", now.Add(time.Minute), false)
 	assertAdaptiveState(t, d, "app", "warm", reconcileWarmCadence, now.Add(time.Minute+reconcileWarmCadence))
 
 	d.recordProjectPoll("app", now.Add(6*time.Minute), false)
-	assertAdaptiveState(t, d, "app", "cool", reconcileCoolCadence, now.Add(6*time.Minute+reconcileCoolCadence))
+	assertAdaptiveState(t, d, "app", "cool", reconcileFullCadence, now.Add(6*time.Minute+reconcileFullCadence))
 
 	d.recordProjectPoll("app", now.Add(16*time.Minute), false)
-	assertAdaptiveState(t, d, "app", "cold", reconcileColdCadence, now.Add(16*time.Minute+reconcileColdCadence))
+	assertAdaptiveState(t, d, "app", "cold", reconcileFullCadence, now.Add(16*time.Minute+reconcileFullCadence))
 
 	d.noteProjectActivity("app", "cli_mutation", now.Add(20*time.Minute))
-	assertAdaptiveState(t, d, "app", "hot", reconcileHotCadence, now.Add(21*time.Minute))
+	assertAdaptiveState(t, d, "app", "hot", reconcileFullCadence, now.Add(25*time.Minute))
 }
 
 func TestAdaptiveReconcileLiveRuntimeNeverGoesCold(t *testing.T) {
@@ -73,6 +73,28 @@ func TestAdaptiveReconcilePreservesGlobalHotIntervalOverride(t *testing.T) {
 	assertAdaptiveState(t, d, "app", "hot", 45*time.Second, now.Add(45*time.Second))
 }
 
+func TestHintedPollKeepsFullScanDeadlineAndOverdueReadsBackOff(t *testing.T) {
+	now := time.Date(2026, 7, 15, 6, 0, 0, 0, time.UTC)
+	d := &Daemon{frontierScannedAt: map[string]time.Time{"app": now}}
+	d.recordProjectPoll("app", now, false)
+	hintedAt := now.Add(4 * time.Minute)
+	d.noteProjectActivity("app", "cli_mutation", hintedAt)
+	assertAdaptiveState(t, d, "app", "hot", reconcileFullCadence, now.Add(reconcileFullCadence))
+	d.recordProjectPoll("app", hintedAt, false)
+	assertAdaptiveState(t, d, "app", "hot", reconcileFullCadence, now.Add(reconcileFullCadence))
+	d.recordProjectPoll("app", hintedAt, true)
+	assertAdaptiveState(t, d, "app", "live", reconcileLiveCadence, hintedAt.Add(reconcileLiveCadence))
+
+	// A failed/skipped full read leaves its old scan timestamp intact. It must
+	// retain bounded retries rather than repeatedly return an already-due time.
+	overdueAt := now.Add(reconcileFullCadence + time.Second)
+	d.noteProjectActivity("app", "cli_mutation", overdueAt)
+	d.recordProjectPoll("app", overdueAt, false)
+	assertAdaptiveState(t, d, "app", "hot", reconcileFullCadence, overdueAt.Add(reconcileFullCadence))
+	d.recordProjectPoll("app", overdueAt, true)
+	assertAdaptiveState(t, d, "app", "live", reconcileLiveCadence, overdueAt.Add(reconcileLiveCadence))
+}
+
 func TestAdaptiveProjectsDueIsIndependentPerProjectAndRestartStartsHot(t *testing.T) {
 	stateRoot := t.TempDir()
 	store, err := OpenRuntimeStore(stateRoot)
@@ -91,7 +113,7 @@ func TestAdaptiveProjectsDueIsIndependentPerProjectAndRestartStartsHot(t *testin
 	d.recordProjectPoll("beta", now, false)
 	d.noteProjectActivity("beta", "serve_attention", now.Add(30*time.Second))
 
-	due, wait, err := d.adaptiveProjectsDue(now.Add(time.Minute))
+	due, wait, err := d.adaptiveProjectsDue(now.Add(reconcileFullCadence))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +129,7 @@ func TestAdaptiveProjectsDueIsIndependentPerProjectAndRestartStartsHot(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(due) != 0 || wait != reconcileHotCadence {
+	if len(due) != 0 || wait != reconcileFullCadence {
 		t.Fatalf("restart must initialize projects hot, due=%#v wait=%s", due, wait)
 	}
 }

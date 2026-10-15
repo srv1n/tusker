@@ -31,10 +31,15 @@ func showNoteCmd(args Args) error {
 	if strings.TrimSpace(id) == "" {
 		return tuskerError(errorMissingArg, "show requires an id", withHint("use `tusker show <ID> --capsule`"))
 	}
-	note, err := resolveNote(vaultPath, id)
+	notes, err := listAllNotes(vaultPath)
 	if err != nil {
 		return err
 	}
+	note, err := resolveNoteFromNotes(notes, id)
+	if err != nil {
+		return err
+	}
+	idx := v7IndexFromNotes(notes)
 	mode := "capsule"
 	for _, candidate := range []string{"full", "acceptance", "evidence", "verification", "capsule"} {
 		if args.Bool(candidate) {
@@ -47,22 +52,19 @@ func showNoteCmd(args Args) error {
 	}
 	contracts := newDependencyContractReviewProjection()
 	if noteDisplayKind(note.Data) == "task" && (mode == "capsule" || args.Bool("json")) {
-		contracts, err = dependencyContractReviewForTaskAtVault(vaultPath, note)
-		if err != nil {
-			return err
-		}
+		contracts = dependencyContractReviewForTask(idx, note)
 	}
 	if args.Bool("json") {
 		var state *taskState
 		if noteDisplayKind(note.Data) == "task" {
-			computed := cliTaskState(vaultPath, note)
+			computed := cliTaskStateWithIndex(vaultPath, note, idx)
 			state = &computed
 		}
 		emitJSON(showTaskStatusProjection{
 			Schema: "tusker.task-status/v1", ReadOnly: true,
 			ID: stringField(note.Data, "id"), Kind: noteDisplayKind(note.Data),
 			Title: stringField(note.Data, "title"), Status: stringField(note.Data, "status"),
-			Readiness: stringField(note.Data, "readiness"), StateRev: stringField(note.Data, "state_rev"), Capsule: strings.TrimSpace(renderCapsuleWithVault(note, vaultPath)),
+			Readiness: stringField(note.Data, "readiness"), StateRev: stringField(note.Data, "state_rev"), Capsule: strings.TrimSpace(renderCapsuleWithIndex(note, vaultPath, idx)),
 			DependencyContracts: contracts, State: state,
 		})
 		return nil
@@ -94,7 +96,7 @@ func showNoteCmd(args Args) error {
 		}
 		printSectionOrFallback(note, heading)
 	default:
-		content := renderCapsuleWithVault(note, vaultPath)
+		content := renderCapsuleWithIndex(note, vaultPath, idx)
 		if projected := renderDependencyContractReview(contracts.Dependencies); projected != "" {
 			content += "\n" + projected
 		}
@@ -166,18 +168,26 @@ func printSectionOrFallback(note Note, heading string) {
 }
 
 func renderCapsuleWithVault(note Note, vaultPath string) string {
+	var idx v7Index
+	if vaultPath != "" && noteDisplayKind(note.Data) == "task" {
+		idx, _ = loadV7Index(vaultPath)
+	}
+	return renderCapsuleWithIndex(note, vaultPath, idx)
+}
+
+func renderCapsuleWithIndex(note Note, vaultPath string, idx v7Index) string {
 	content, hasFrontmatterCapsule := renderV7FrontmatterCapsule(note)
 	if !hasFrontmatterCapsule {
 		content = strings.TrimSpace(sectionContent(note.Body, "## Agent capsule"))
 		if content == "" {
-			content = synthesizeCapsuleWithVault(note, vaultPath)
+			content = synthesizeCapsuleWithIndex(note, vaultPath, idx)
 		} else if extra := capsuleFrontmatterFacts(note); extra != "" {
 			content = content + "\n" + extra
 		}
 	} else if extra := capsuleFrontmatterFacts(note); extra != "" {
 		content = content + "\n" + extra
 	}
-	if attempts := strings.Join(v7TaskAttemptRuntimeLines(vaultPath, note), "\n"); attempts != "" && !strings.Contains(content, "- Attempt:") {
+	if attempts := strings.Join(v7TaskAttemptRuntimeLinesFromIndex(idx, note), "\n"); attempts != "" && !strings.Contains(content, "- Attempt:") {
 		content = content + "\n" + attempts
 	}
 	return noteHeaderLine(note) + "\n\n" + content + "\n"
@@ -222,6 +232,14 @@ func capsuleFrontmatterFacts(note Note) string {
 }
 
 func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
+	var idx v7Index
+	if vaultPath != "" && noteDisplayKind(note.Data) == "task" {
+		idx, _ = loadV7Index(vaultPath)
+	}
+	return synthesizeCapsuleWithIndex(note, vaultPath, idx)
+}
+
+func synthesizeCapsuleWithIndex(note Note, vaultPath string, idx v7Index) string {
 	var lines []string
 	noteType := noteDisplayKind(note.Data)
 	switch noteType {
@@ -253,7 +271,7 @@ func synthesizeCapsuleWithVault(note Note, vaultPath string) string {
 				lines = append(lines, "- Packet: `tusker show "+id+" --packet agent`")
 			}
 			lines = append(lines, "- Forbidden paths: task history, evidence, attempts, events, generated indexes, packet caches, raw logs, and local absolute paths.")
-			lines = append(lines, v7TaskAttemptRuntimeLines(vaultPath, note)...)
+			lines = append(lines, v7TaskAttemptRuntimeLinesFromIndex(idx, note)...)
 		}
 		if intent := firstParagraph(sectionContent(note.Body, "## Intent")); intent != "" {
 			lines = append(lines, "- Intent: "+intent)

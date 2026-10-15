@@ -70,7 +70,7 @@ describe("walkthrough status", () => {
     const loadingGraph = buildFlowGraph({ memberIds: ["T-proof"], tasks: [], runs: [], members: [{ id: "T-proof", title: "Proof", group: "", status: "review", state: sampleState("in_review", "reviewing"), proof: "" }] });
     expect(loadingGraph.nodes[0]).toMatchObject({ title: "Proof", missingDetail: true });
     expect(loadingGraph.nodes[0]?.state?.state).toBe("in_review");
-    expect(readFileSync("src/features/workbench/integration/WorkExperience.tsx", "utf8")).toContain("loading={review.isPending || details.some((query) => query.isPending)}");
+    expect(readFileSync("src/features/workbench/integration/WorkExperience.tsx", "utf8")).toContain("loading={review.isPending || details.loading}");
   });
 
   test("one authoritative observation overrides stale task and run data on every wave surface", () => {

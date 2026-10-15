@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,13 +27,13 @@ func executeACP(ctx context.Context, prepared PreparedLaunch, sink EventSink) (E
 	}
 	runCtx, cancel := context.WithTimeout(ctx, prepared.Deadline)
 	defer cancel()
-	var stderr bytes.Buffer
+	stderr := &cappedBuffer{limit: prepared.OutputLimit}
 	launchArgv := prepared.Argv
 	if len(prepared.LaunchArgv) > 0 {
 		launchArgv = prepared.LaunchArgv
 	}
 	client, err := acp.Start(runCtx, acp.Config{
-		Argv: launchArgv, CWD: prepared.CWD, Env: prepared.Environment, Stderr: &stderr,
+		Argv: launchArgv, CWD: prepared.CWD, Env: prepared.Environment, Stderr: stderr,
 		Limits:   acp.Limits{MaxFrameBytes: maxProtocolFrame, MaxUpdateBytes: prepared.OutputLimit},
 		Timeouts: acp.Timeouts{Prompt: prepared.Deadline},
 		PermissionHandler: func(context.Context, acp.PermissionRequest) (acp.PermissionDecision, error) {
@@ -43,6 +42,7 @@ func executeACP(ctx context.Context, prepared PreparedLaunch, sink EventSink) (E
 		},
 	})
 	if err != nil {
+		receipt.Stderr, receipt.StderrTruncated = stderr.snapshot()
 		receipt.FinishedAt, receipt.Outcome, receipt.Reason = time.Now().UTC(), EventFailed, bounded(err.Error(), 500)
 		emit(EventFailed, receipt.Reason, nil)
 		return receipt, err
@@ -66,16 +66,21 @@ func executeACP(ctx context.Context, prepared PreparedLaunch, sink EventSink) (E
 	if err == nil {
 		result, err = client.Prompt(runCtx, prepared.prompt)
 	}
+	_ = client.Close()
 	for {
 		select {
-		case update := <-client.Updates():
+		case update, ok := <-client.Updates():
+			if !ok {
+				goto updatesDrained
+			}
 			emit(EventProgress, update.Method, nil)
 		default:
 			goto updatesDrained
 		}
 	}
 updatesDrained:
-	receipt.FinishedAt, receipt.Stderr = time.Now().UTC(), bounded(stderr.String(), prepared.OutputLimit)
+	receipt.FinishedAt = time.Now().UTC()
+	receipt.Stderr, receipt.StderrTruncated = stderr.snapshot()
 	if err != nil {
 		if runCtx.Err() != nil {
 			receipt.Reason = "timeout"

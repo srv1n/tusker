@@ -377,10 +377,11 @@ export function Tasks() {
   }, [projectId]);
 
   const all = useMemo(() => tasks.data ?? [], [tasks.data]);
+  const tasksById = useMemo(() => new Map(all.map((task) => [task.id, task])), [all]);
   const epics = useMemo(() => [...new Set(all.map((task) => task.epicId))].sort(), [all]);
   const filtered = epic === "all" ? all : all.filter((task) => task.epicId === epic);
   const selectedTasks = [...selectedIds]
-    .map((id) => all.find((task) => task.id === id))
+    .map((id) => tasksById.get(id))
     .filter((task): task is TaskCapsule => task !== undefined && isBatchSelectable(task));
   const activeIds = selectedTasks.map((task) => task.id);
   const closeIds = selectedTasks.filter((task) => task.status === "review").map((task) => task.id);

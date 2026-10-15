@@ -834,7 +834,7 @@ var (
 const (
 	defaultRunHeartbeatInterval = 15 * time.Second
 	defaultRunLeaseTTL          = 60 * time.Second
-	defaultReconcileTick        = 60 * time.Second
+	defaultReconcileTick        = 5 * time.Minute
 )
 
 func runtimeStoreDBPath(stateRoot string) string {
@@ -1043,6 +1043,9 @@ func (s *RuntimeStore) Migrate() error {
 			PRIMARY KEY(project_id, record_id)
 		);`,
 		`CREATE INDEX IF NOT EXISTS runs_attempt ON runs(project_id, active_attempt_id, lease_generation);`,
+		`CREATE INDEX IF NOT EXISTS runs_poll_project ON runs(project_id, updated_at DESC, item_id);`,
+		`CREATE INDEX IF NOT EXISTS runs_reconcile ON runs(project_id, updated_at DESC, item_id)
+			WHERE terminal = 0 OR lease_state = 'live';`,
 		`CREATE TABLE IF NOT EXISTS run_authorizations (
 			project_id TEXT NOT NULL,
 			record_id TEXT NOT NULL,
@@ -1198,6 +1201,7 @@ func (s *RuntimeStore) Migrate() error {
 			last_error TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(project_id, session_ref)
 		);`,
+		`CREATE INDEX IF NOT EXISTS sessions_latest ON sessions(project_id, record_id, runner, last_seen_at DESC, started_at DESC);`,
 		`CREATE TABLE IF NOT EXISTS apply_inputs (
 			project_id TEXT NOT NULL,
 			record_id TEXT NOT NULL,
@@ -1239,6 +1243,8 @@ func (s *RuntimeStore) Migrate() error {
 			UNIQUE(project_id, sender, idempotency_key)
 		);`,
 		`CREATE INDEX IF NOT EXISTS agent_messages_recipient ON agent_messages(project_id, recipient_kind, recipient_id, state, created_at);`,
+		`CREATE INDEX IF NOT EXISTS agent_messages_open_questions ON agent_messages(project_id, created_at, id)
+			WHERE kind = 'question' AND answered_at = '';`,
 		`CREATE TABLE IF NOT EXISTS agent_wakeups (
 			id TEXT PRIMARY KEY, project_id TEXT NOT NULL, recipient_kind TEXT NOT NULL,
 			recipient_id TEXT NOT NULL, reason TEXT NOT NULL, message_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -1247,6 +1253,7 @@ func (s *RuntimeStore) Migrate() error {
 			idempotency_key TEXT NOT NULL, created_at TEXT NOT NULL,
 			UNIQUE(project_id,idempotency_key)
 		);`,
+		`CREATE INDEX IF NOT EXISTS agent_wakeups_pending ON agent_wakeups(state, claimed_at, project_id);`,
 		`CREATE TABLE IF NOT EXISTS architect_continuations (
 			id TEXT PRIMARY KEY, project_id TEXT NOT NULL, objective_id TEXT NOT NULL,
 			trigger_key TEXT NOT NULL, report_json TEXT NOT NULL, proposal_json TEXT NOT NULL DEFAULT '{}',
@@ -1413,6 +1420,9 @@ func (s *RuntimeStore) Migrate() error {
 		if _, err := s.exec(stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.migrateExternalApplyScopes(); err != nil {
+		return err
 	}
 	if err := s.ensureColumn("projects", "visible", `ALTER TABLE projects ADD COLUMN visible INTEGER NOT NULL DEFAULT 1`); err != nil {
 		return err
@@ -1875,6 +1885,72 @@ func (s *RuntimeStore) migrateGateLedgerToolchain() error {
 		}
 		if _, err := tx.Exec(`DROP TABLE gate_ledger_legacy_toolchain`); err != nil {
 			return err
+		}
+		return tx.Commit()
+	})
+}
+
+// migrateExternalApplyScopes adds a lookup projection without changing the
+// immutable event payloads. Backfill and column creation share a transaction,
+// so an interrupted migration cannot expose partially projected history.
+func (s *RuntimeStore) migrateExternalApplyScopes() error {
+	return s.withBusyRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		needsBackfill := false
+		for _, column := range []string{"apply_work_revision", "apply_job_id"} {
+			var found int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('external_loop_events') WHERE name = ?`, column).Scan(&found); err != nil {
+				return err
+			}
+			if found == 0 {
+				if _, err := tx.Exec(`ALTER TABLE external_loop_events ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+					return err
+				}
+				needsBackfill = true
+			}
+		}
+		if needsBackfill {
+			rows, err := tx.Query(`SELECT event_id, stage, action, status, payload_json, job_id FROM external_loop_events`)
+			if err != nil {
+				return err
+			}
+			type scope struct{ id, revision, jobID string }
+			var scopes []scope
+			for rows.Next() {
+				var event ExternalLoopEvent
+				if err := rows.Scan(&event.EventID, &event.Stage, &event.Action, &event.Status, &event.PayloadJSON, &event.JobID); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				revision, jobID := externalApplyScope(event)
+				if revision != "" {
+					scopes = append(scopes, scope{event.EventID, revision, jobID})
+				}
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			for _, scope := range scopes {
+				if _, err := tx.Exec(`UPDATE external_loop_events SET apply_work_revision = ?, apply_job_id = ? WHERE event_id = ?`, scope.revision, scope.jobID, scope.id); err != nil {
+					return err
+				}
+			}
+		}
+		for _, statement := range []string{
+			`CREATE INDEX IF NOT EXISTS external_loop_events_apply_revision ON external_loop_events(project_id, record_id, apply_work_revision, created_at DESC, event_id DESC) WHERE apply_work_revision <> ''`,
+			`CREATE INDEX IF NOT EXISTS external_loop_events_apply_job ON external_loop_events(project_id, record_id, apply_work_revision, apply_job_id, created_at DESC, event_id DESC) WHERE apply_work_revision <> ''`,
+		} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
 		}
 		return tx.Commit()
 	})
@@ -2480,6 +2556,34 @@ func (s *RuntimeStore) ListProjects() ([]RegisteredProject, error) {
 
 func (s *RuntimeStore) ListRuns() ([]RunStatus, error) {
 	return s.listRunsQuery(`SELECT ` + runtimeRunColumns + ` FROM runs ORDER BY updated_at DESC, project_id, item_id`)
+}
+
+func (s *RuntimeStore) ListRunsForProject(projectID string) ([]RunStatus, error) {
+	return s.listRunsQuery(`SELECT `+runtimeRunColumns+` FROM runs WHERE project_id = ? ORDER BY updated_at DESC, project_id, item_id`, projectID)
+}
+
+// ListRunsForPoll retains the selected project's history for completion and
+// cleanup, plus other projects' active rows for global dispatch capacity.
+// An unfiltered full sweep still needs every project's rows.
+func (s *RuntimeStore) ListRunsForPoll(projectID string) ([]RunStatus, error) {
+	if projectID == "" {
+		return s.ListRuns()
+	}
+	return s.listRunsQuery(`SELECT `+runtimeRunColumns+` FROM runs WHERE project_id = ?
+		UNION ALL SELECT `+runtimeRunColumns+` FROM runs WHERE project_id <> ? AND (terminal = 0 OR lease_state = 'live')
+		ORDER BY updated_at DESC, project_id, item_id`, projectID, projectID)
+}
+
+// ListReconcileRuns excludes completed history while retaining legacy live
+// leases, which can still consume capacity even when marked terminal.
+func (s *RuntimeStore) ListReconcileRuns(projectID string) ([]RunStatus, error) {
+	query := `SELECT ` + runtimeRunColumns + ` FROM runs WHERE (terminal = 0 OR lease_state = 'live')`
+	args := []any{}
+	if projectID != "" {
+		query += ` AND project_id = ?`
+		args = append(args, projectID)
+	}
+	return s.listRunsQuery(query+` ORDER BY updated_at DESC, project_id, item_id`, args...)
 }
 
 // LookupRunForAttempt returns the live runtime row for one immutable execution
@@ -4059,9 +4163,9 @@ func (s *RuntimeStore) ReclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now 
 }
 
 func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now time.Time, ttl time.Duration, reason string) (bool, error) {
-	// An interactive owner can be quiet for longer than a lease. Only its
-	// explicit work-session lifecycle or an attributed operator release ends it.
-	if expected.HandRun && !expected.Terminal {
+	// Interactive sessions get a full day of quiet grace and retain the fence
+	// whenever their process identity is alive or uncertain.
+	if expected.HandRun && !expected.Terminal && !quietInteractiveLeaseExpired(expected, now) {
 		return false, nil
 	}
 	if ttl <= 0 {
@@ -4084,8 +4188,8 @@ func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now 
 		return false, nil
 	}
 	result, err := s.exec(`UPDATE runs
-		SET lease_state = 'interrupted',
-			attempt_outcome = 'interrupted',
+		SET lease_state = CASE WHEN hand_run = 1 THEN 'released' ELSE 'interrupted' END,
+			attempt_outcome = CASE WHEN hand_run = 1 THEN 'abandoned' ELSE 'interrupted' END,
 			next_retry_at = '',
 			last_error = ?,
 			process_pid = 0,
@@ -4095,7 +4199,7 @@ func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now 
 			lease_expires_at = '',
 			updated_at = ?
 		WHERE project_id = ? AND record_id = ?
-			AND (hand_run IS NULL OR hand_run = 0)
+			AND (hand_run IS NULL OR hand_run = 0 OR lease_expires_at < ?)
 			AND lease_state IN ('claimed', 'running')
 			AND lease_expires_at != ''
 			AND lease_expires_at < ?
@@ -4106,7 +4210,7 @@ func (s *RuntimeStore) reclaimExpiredRunLeaseIfSnapshot(expected RunStatus, now 
 			AND process_pid = ?
 			AND process_pgid = ?
 			AND process_started_at = ?`,
-		reason, now.Format(time.RFC3339), expected.ProjectID, expected.RecordID, cutoff,
+		reason, now.Format(time.RFC3339), expected.ProjectID, expected.RecordID, now.Add(-quietInteractiveLeaseTTL).Format(time.RFC3339), cutoff,
 		expected.LeaseOwner, expected.LeaseGeneration, expected.ActiveAttemptID, expected.WorkRevision,
 		expected.ProcessPID, expected.ProcessPGID, expected.ProcessStartedAt)
 	if err != nil {
@@ -4845,6 +4949,16 @@ func scanExternalLoopEvent(scan func(...any) error) (ExternalLoopEvent, error) {
 	return event, err
 }
 
+func externalApplyScope(event ExternalLoopEvent) (revision, jobID string) {
+	if strings.TrimSpace(event.Status) == "blocked" ||
+		normalizeExternalLoopStage(event.Stage) != externalLoopStageCollected ||
+		normalizeExternalLoopAction(event.Action) != externalLoopActionApplyPatch {
+		return "", ""
+	}
+	revision, _ = externalLoopEventRevisionMaterial(event)
+	return revision, strings.TrimSpace(event.JobID)
+}
+
 func listExternalLoopEventsTx(tx *sql.Tx, projectID, recordID string) ([]ExternalLoopEvent, error) {
 	rows, err := tx.Query(`SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
 		FROM external_loop_events
@@ -5058,10 +5172,11 @@ func (s *RuntimeStore) AdmitExternalLoopEventWithOverrides(event ExternalLoopEve
 				event.Status = "blocked"
 			}
 		}
+		applyRevision, applyJobID := externalApplyScope(event)
 		if _, err := tx.Exec(`INSERT INTO external_loop_events (
-			event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt); err != nil {
+			event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at, apply_work_revision, apply_job_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt, applyRevision, applyJobID); err != nil {
 			return err
 		}
 		admission.Event = event
@@ -5192,11 +5307,12 @@ func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalL
 			return err
 		}
 		defer func() { _ = tx.Rollback() }()
+		applyRevision, applyJobID := externalApplyScope(event)
 		result, err := tx.Exec(`INSERT INTO external_loop_events (
-			event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at, apply_work_revision, apply_job_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(project_id, record_id, idempotency_key) DO NOTHING`,
-			event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt)
+			event.EventID, event.ProjectID, event.RecordID, event.ItemID, event.Runner, event.JobID, event.AttemptID, event.Stage, event.Action, event.Status, event.Reason, event.PayloadJSON, event.IdempotencyKey, event.CreatedAt, applyRevision, applyJobID)
 		if err != nil {
 			return err
 		}
@@ -5221,6 +5337,30 @@ func (s *RuntimeStore) SaveExternalLoopEvent(event ExternalLoopEvent) (ExternalL
 
 func (s *RuntimeStore) ListExternalLoopEvents(projectID, recordID string) ([]ExternalLoopEvent, error) {
 	return s.listExternalLoopEvents(projectID, recordID, 0)
+}
+
+// LatestExternalApplyEvent reads one admitted collection for the current work
+// revision and optional provider job. Polling does not load audit history or
+// parse historical payloads.
+func (s *RuntimeStore) LatestExternalApplyEvent(projectID, recordID string, workRevision int, jobID string) (*ExternalLoopEvent, error) {
+	query := `SELECT event_id, project_id, record_id, item_id, runner, job_id, attempt_id, stage, action, status, reason, payload_json, idempotency_key, created_at
+		FROM external_loop_events WHERE project_id = ? AND record_id = ? AND apply_work_revision = ? AND apply_work_revision <> ''`
+	args := []any{projectID, recordID, strconv.Itoa(workRevision)}
+	if jobID = strings.TrimSpace(jobID); jobID != "" {
+		query += ` AND apply_job_id = ?`
+		args = append(args, jobID)
+	}
+	query += ` ORDER BY created_at DESC, event_id DESC LIMIT 1`
+	event, err := scanExternalLoopEvent(func(dest ...any) error {
+		return s.queryRowScan(query, args, dest...)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
 }
 
 func (s *RuntimeStore) ListExternalLoopEventsPage(projectID, recordID string, limit int) ([]ExternalLoopEvent, bool, error) {

@@ -162,11 +162,19 @@ type runSessionControlResult struct {
 }
 
 func (s *serveServer) runActionCapability(action string, project RegisteredProject, wave Note, run RunStatus, prior *runSessionControlIntent) serveRunActionCapability {
-	capability := serveRunActionCapability{Action: action, Available: true}
 	state, stateErr := runOperatorStateForRun(s.store, run, s.now())
 	if stateErr != nil {
 		return serveRunActionCapability{Action: action, Reason: stateErr.Error()}
 	}
+	return s.runActionCapabilityWithState(action, project, wave, run, prior, state)
+}
+
+func (s *serveServer) runActionCapabilityWithState(action string, project RegisteredProject, wave Note, run RunStatus, prior *runSessionControlIntent, state runOperatorState, contexts ...*runRecoveryReadContext) serveRunActionCapability {
+	var context *runRecoveryReadContext
+	if len(contexts) > 0 {
+		context = contexts[0]
+	}
+	capability := serveRunActionCapability{Action: action, Available: true}
 	switch action {
 	case "say":
 		route := serveSayRoute(run, state)
@@ -182,14 +190,14 @@ func (s *serveServer) runActionCapability(action string, project RegisteredProje
 		if state.State != "blocked" && state.State != "failed" && state.State != "lost" && state.State != "stopped" {
 			return serveRunActionCapability{Action: action, Reason: "Continue is available for Blocked, Failed, Lost, or Stopped runs"}
 		}
-		_, err, reason := nativeContinuationPreflight(s.store, project, wave, run)
+		_, err, reason := nativeContinuationPreflightWithContext(s.store, project, wave, run, context)
 		if err != nil {
 			reason = err.Error()
 		}
 		capability.Reason = reason
 		capability.Available = reason == "" || reason == "native continuation is already queued"
 	case "recover_context":
-		_, err, reason := contextRecoveryPreflight(s.store, wave, run)
+		_, err, reason := contextRecoveryPreflightWithContext(s.store, wave, run, context)
 		if err != nil {
 			reason = err.Error()
 		}
@@ -303,6 +311,9 @@ func (s *serveServer) handleRunSessionControl(w http.ResponseWriter, r *http.Req
 
 func (s *serveServer) handleRunStopControl(w http.ResponseWriter, run RunStatus, actor, reason string, prior *runSessionControlIntent, result runSessionControlResult) {
 	out, status := s.applyRunStopControl(run, actor, reason, prior, result)
+	if out.Intent != nil {
+		s.refreshProjectRuntimeSnapshot(run.ProjectID)
+	}
 	serveJSON(w, status, out)
 }
 
@@ -540,7 +551,7 @@ func (s *serveServer) applyRunFreshControl(run RunStatus, actor, reason string, 
 	result.State, result.Reason = "queued", "start_fresh queued a new native session after the prior owner settled"
 	result.LeaseState, result.LeaseStateRaw, result.ProcessRunning, result.SessionRef = serveLeaseState(fresh.LeaseState), fresh.LeaseState, false, ""
 	result.Intent = &intent
-	s.refreshProjectSnapshot(fresh.ProjectID)
+	s.refreshProjectRuntimeSnapshot(fresh.ProjectID)
 	return result, http.StatusOK
 }
 
@@ -752,11 +763,12 @@ func (s *serveServer) handleProjectRemoveAction(w http.ResponseWriter, projectID
 	args := serveBaseArgs(s)
 	args["id"] = strings.TrimSpace(projectID)
 	args["json"] = "true"
+	oldProject, _ := s.projectForSnapshot(args["id"])
 	output, err := serveInvokeCommand(args, projectsRemoveCmd)
 	result := serveCommandResult("tusker projects remove "+args["id"], output, err)
 	result.ProjectID = args["id"]
 	if err == nil {
-		s.invalidateProjectSnapshot(args["id"])
+		s.forgetProjectSnapshot(args["id"], oldProject.VaultRoot)
 	}
 	serveJSON(w, http.StatusOK, result)
 }
@@ -801,11 +813,12 @@ func (s *serveServer) handleProjectRebindAction(w http.ResponseWriter, projectID
 		}
 		args["allow-dirty"] = "true"
 	}
+	oldProject, _ := s.projectForSnapshot(args["id"])
 	output, err := serveInvokeCommand(args, projectsRebindCmd)
 	result := serveCommandResult("tusker projects add --rebind "+args["id"], output, err)
 	result.ProjectID = args["id"]
 	if err == nil {
-		s.dropProjectSnapshot(args["id"])
+		s.forgetProjectSnapshot(args["id"], oldProject.VaultRoot)
 		var payload struct {
 			Rebind projectRebindReport `json:"rebind"`
 		}
@@ -2139,7 +2152,7 @@ func (s *serveServer) handleRunAcknowledge(w http.ResponseWriter, r *http.Reques
 		serveJSON(w, http.StatusConflict, serveActionResult{Refused: true, TaskID: firstNonEmpty(run.ItemID, taskID), ProjectID: snap.projectID, Reason: reason})
 		return
 	}
-	s.refreshProjectSnapshot(snap.projectID)
+	s.refreshProjectRuntimeSnapshot(snap.projectID)
 	serveJSON(w, http.StatusOK, serveActionResult{
 		OK:        true,
 		TaskID:    firstNonEmpty(run.ItemID, taskID),

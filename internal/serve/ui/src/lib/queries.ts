@@ -8,7 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, requireAccepted } from "@/lib/api";
-import { liveRefetchInterval } from "@/lib/stream";
+import { isLiveViewVisible, liveRefetchInterval, useLiveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
 import type { AgentAccessApprovalResponse, DirectStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProjectSummary, RunAction, RunActionResult, RunDetail, WaveReview } from "@/types/domain";
 import type {
@@ -52,30 +52,30 @@ export const qk = {
 };
 
 export const useExecutions = (projectId: string, params: Record<string, string | undefined>) =>
-  useQuery<ExecutionGraph>({ queryKey: qk.executions(projectId, params), queryFn: () => api.executions(params, projectId), refetchInterval: liveRefetchInterval });
+  useQuery<ExecutionGraph>({ queryKey: qk.executions(projectId, params), queryFn: () => api.executions(params, projectId), refetchInterval: useLiveRefetchInterval() });
 export const useExecutionInbox = (projectId: string) =>
-  useQuery<ExecutionInbox>({ queryKey: qk.executionInbox(projectId), queryFn: () => api.executionInbox(projectId), refetchInterval: liveRefetchInterval });
+  useQuery<ExecutionInbox>({ queryKey: qk.executionInbox(projectId), queryFn: () => api.executionInbox(projectId), refetchInterval: useLiveRefetchInterval() });
 export const useExecutionTimeline = (projectId: string, execution: string, params: Record<string, string | undefined>) =>
-  useQuery<ExecutionTimeline>({ enabled: !!execution, queryKey: qk.executionTimeline(projectId, execution, params), queryFn: () => api.executionTimeline(execution, params, projectId), refetchInterval: liveRefetchInterval });
+  useQuery<ExecutionTimeline>({ enabled: !!execution, queryKey: qk.executionTimeline(projectId, execution, params), queryFn: () => api.executionTimeline(execution, params, projectId), refetchInterval: useLiveRefetchInterval() });
 export const useExecutionBindingPreview = (projectId: string, execution: string, taskId: string) =>
   useQuery<ExecutionBindingPreview>({ enabled: !!execution && !!taskId, queryKey: ["executions", "binding-preview", projectId, execution, taskId], queryFn: () => api.executionBindingPreview(execution, taskId, projectId) });
 export const useExecutionRename = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, name }: { execution: string; name: string }) => api.executionRename(execution, name, projectId).then(requireAccepted), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
 export const useExecutionBind = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: ({ execution, taskId }: { execution: string; taskId: string }) => api.executionBind(execution, taskId, projectId).then(requireAccepted), onSettled: () => void qc.invalidateQueries({ queryKey: ["executions"] }) }); };
 
 export const useDaemon = () =>
-  useQuery({ queryKey: qk.daemon, queryFn: api.daemon, refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.daemon, queryFn: api.daemon, refetchInterval: useLiveRefetchInterval() });
 
 export const useServeCapabilities = () =>
   useQuery({ queryKey: ["serve-capabilities"], queryFn: api.capabilities, staleTime: 5 * 60_000 });
 
 export const useProjects = () =>
-  useQuery({ queryKey: qk.projects, queryFn: api.projects, refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.projects, queryFn: api.projects, refetchInterval: useLiveRefetchInterval() });
 
 export const useFactoryOperations = (projectId?: string) =>
   useQuery({
     queryKey: qk.factoryOperations(projectId),
     queryFn: () => api.factoryOperations(projectId),
-    refetchInterval: liveRefetchInterval,
+    refetchInterval: useLiveRefetchInterval(),
   });
 
 export const useRegisterProject = () => {
@@ -117,7 +117,7 @@ export const useProjectAutomationScope = (projectId: string, enabled = true) =>
     queryKey: qk.projectAutomationScope(projectId),
     queryFn: () => api.projectAutomationScope(projectId),
     enabled: enabled && projectId.length > 0,
-    refetchInterval: liveRefetchInterval,
+    refetchInterval: useLiveRefetchInterval(),
   });
 
 /**
@@ -236,7 +236,7 @@ export const useNeeds = (projectId?: string, enabled = true) =>
     queryKey: qk.needs(projectId),
     queryFn: () => api.needs(projectId),
     enabled,
-    refetchInterval: liveRefetchInterval,
+    refetchInterval: useLiveRefetchInterval(),
   });
 
 export const useRuns = (projectId?: string, enabled = true) =>
@@ -244,11 +244,11 @@ export const useRuns = (projectId?: string, enabled = true) =>
     queryKey: qk.runs(projectId),
     queryFn: () => api.runs(projectId),
     enabled,
-    refetchInterval: liveRefetchInterval,
+    refetchInterval: useLiveRefetchInterval(),
   });
 
 export const useReviewBatch = (projectId?: string, enabled = true) =>
-  useQuery({ queryKey: qk.reviewBatch(projectId), queryFn: () => api.reviewBatch(projectId), enabled, refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.reviewBatch(projectId), queryFn: () => api.reviewBatch(projectId), enabled, refetchInterval: useLiveRefetchInterval() });
 
 export function interruptedRunReadbackComplete(run: RunDetail | undefined): boolean {
   return run?.leaseStateRaw === "interrupted" && run.processRunning === false;
@@ -261,19 +261,18 @@ export function runRefetchInterval(
   fallbackInterval: number | false,
   refreshUntilControl = false,
 ): number | false {
-  if (hasQueryError) return false;
-  if (refreshUntilInterrupted && !interruptedRunReadbackComplete(run)) return 400;
+  if (hasQueryError || !isLiveViewVisible() || fallbackInterval === false) return false;
+  if (refreshUntilInterrupted && !interruptedRunReadbackComplete(run)) return 2_000;
   // A legacy server may not expose a controls projection. The action caller
   // still needs canonical polling until its readback settles; a server that
   // does expose a pending projection must keep polling after a page reload.
-  if (refreshUntilControl || run?.controls?.pending) return 400;
-  // Worker messages can arrive between daemon/SSE updates.
-  if (run?.leaseState === "held" && !run.terminal) return 2_000;
+  if (refreshUntilControl || run?.controls?.pending) return 2_000;
   return fallbackInterval;
 }
 
-export const useRun = (taskId: string, refreshUntilInterrupted = false, projectId?: string, refreshUntilControl = false) =>
-  useQuery({
+export const useRun = (taskId: string, refreshUntilInterrupted = false, projectId?: string, refreshUntilControl = false) => {
+  const refetchInterval = useLiveRefetchInterval();
+  return useQuery({
     queryKey: qk.run(taskId, projectId),
     queryFn: () => api.run(taskId, projectId),
     refetchInterval: (query) =>
@@ -281,17 +280,18 @@ export const useRun = (taskId: string, refreshUntilInterrupted = false, projectI
         refreshUntilInterrupted,
         query.state.data,
         query.state.error !== null,
-        liveRefetchInterval(),
+        refetchInterval,
         refreshUntilControl,
       ),
   });
+};
 
 export const useAttempt = (attemptId: string | undefined, projectId?: string) =>
   useQuery({
     queryKey: ["attempt", projectId ?? "all", attemptId ?? "none"],
     queryFn: () => api.attempt(attemptId!, projectId),
     enabled: Boolean(attemptId),
-    refetchInterval: attemptId ? liveRefetchInterval : false,
+    refetchInterval: useLiveRefetchInterval(),
   });
 
 /** A control mutation never updates the run optimistically; readback owns the truth. */
@@ -310,22 +310,22 @@ export const useRunAction = (taskId: string, projectId?: string) => {
 };
 
 export const useEpics = (projectId?: string) =>
-  useQuery({ queryKey: qk.epics(projectId), queryFn: () => api.epics(projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.epics(projectId), queryFn: () => api.epics(projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useWaves = (projectId?: string) =>
-  useQuery({ queryKey: qk.waves(projectId), queryFn: () => api.waves(projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.waves(projectId), queryFn: () => api.waves(projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useWaveList = (projectId: string) =>
-  useQuery({ queryKey: qk.waveList(projectId), queryFn: () => api.waveList(projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.waveList(projectId), queryFn: () => api.waveList(projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useWave = (projectId: string, waveId: string) =>
-  useQuery({ queryKey: qk.wave(projectId, waveId), queryFn: () => api.wave(projectId, waveId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.wave(projectId, waveId), queryFn: () => api.wave(projectId, waveId), refetchInterval: useLiveRefetchInterval() });
 
 export const useGates = (taskId?: string, projectId?: string) =>
-  useQuery({ queryKey: qk.gates(taskId, projectId), queryFn: () => api.gates(taskId, projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.gates(taskId, projectId), queryFn: () => api.gates(taskId, projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useAgentAccessApprovals = (projectId?: string, taskId?: string) =>
-  useQuery({ enabled: Boolean(projectId), queryKey: qk.agentAccessApprovals(projectId, taskId), queryFn: () => api.agentAccessApprovals(projectId!, taskId), refetchInterval: liveRefetchInterval });
+  useQuery({ enabled: Boolean(projectId), queryKey: qk.agentAccessApprovals(projectId, taskId), queryFn: () => api.agentAccessApprovals(projectId!, taskId), refetchInterval: useLiveRefetchInterval() });
 
 export const useAgentAccessApprovalAction = (projectId?: string, taskId?: string) => {
   const qc = useQueryClient();
@@ -340,34 +340,34 @@ export const useAgentAccessApprovalAction = (projectId?: string, taskId?: string
 };
 
 export const useEvidence = (taskId?: string, projectId?: string) =>
-  useQuery({ queryKey: qk.evidence(taskId, projectId), queryFn: () => api.evidence(taskId, projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.evidence(taskId, projectId), queryFn: () => api.evidence(taskId, projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useDecisions = (epicId?: string, projectId?: string) =>
-  useQuery({ queryKey: qk.decisions(epicId, projectId), queryFn: () => api.decisions(epicId, projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.decisions(epicId, projectId), queryFn: () => api.decisions(epicId, projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useFeedback = (projectId?: string) =>
-  useQuery({ queryKey: qk.feedback(projectId), queryFn: () => api.feedback(projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.feedback(projectId), queryFn: () => api.feedback(projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useAttempts = (taskId?: string, projectId?: string) =>
-  useQuery({ queryKey: qk.attempts(taskId, projectId), queryFn: () => api.attempts(taskId, projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.attempts(taskId, projectId), queryFn: () => api.attempts(taskId, projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useTasks = (projectId?: string) =>
-  useQuery({ queryKey: qk.tasks(projectId), queryFn: () => api.tasks(projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.tasks(projectId), queryFn: () => api.tasks(projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useTask = (id: string, projectId?: string) =>
-  useQuery({ queryKey: qk.task(id, projectId), queryFn: () => api.task(id, projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.task(id, projectId), queryFn: () => api.task(id, projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useDocList = (projectId?: string) =>
-  useQuery({ queryKey: qk.docs(projectId), queryFn: () => api.docs(projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.docs(projectId), queryFn: () => api.docs(projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useDoc = (path: string, projectId?: string) =>
-  useQuery({ queryKey: qk.doc(path, projectId), queryFn: () => api.doc(path, projectId), enabled: path.length > 0, refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.doc(path, projectId), queryFn: () => api.doc(path, projectId), enabled: path.length > 0, refetchInterval: useLiveRefetchInterval() });
 
 export const useDocgraph = (projectId?: string) =>
-  useQuery({ queryKey: qk.docgraph(projectId), queryFn: () => api.docgraph(projectId), refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.docgraph(projectId), queryFn: () => api.docgraph(projectId), refetchInterval: useLiveRefetchInterval() });
 
 export const useDocgraphDoc = (projectId: string, subject: string) =>
-  useQuery({ queryKey: qk.docgraphDoc(projectId, subject), queryFn: () => api.docgraphDoc(projectId, subject), enabled: subject.length > 0, refetchInterval: liveRefetchInterval });
+  useQuery({ queryKey: qk.docgraphDoc(projectId, subject), queryFn: () => api.docgraphDoc(projectId, subject), enabled: subject.length > 0, refetchInterval: useLiveRefetchInterval() });
 
 /**
  * Save an edited corpus document. On success the fresh detail (new rev, links,
@@ -399,7 +399,7 @@ export const waveReviewQuery = (waveId: string, projectId?: string) => ({
 });
 
 export const useWaveReview = (waveId: string, projectId?: string) =>
-  useQuery<WaveReview>(waveReviewQuery(waveId, projectId));
+  useQuery<WaveReview>({ ...waveReviewQuery(waveId, projectId), refetchInterval: useLiveRefetchInterval() });
 
 export async function invalidateWaveControlQueries(
   qc: Pick<ReturnType<typeof useQueryClient>, "invalidateQueries">,

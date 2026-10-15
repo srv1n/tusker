@@ -47,6 +47,7 @@ var sharedVaultNoteCaches = struct {
 var (
 	noteCacheReadObserver  func()
 	noteCacheParseObserver func()
+	noteCacheListObserver  func()
 )
 
 func listAllNotes(vaultPath string) ([]Note, error) {
@@ -69,6 +70,11 @@ func listOperationalNotesFrontmatter(vaultPath string) ([]Note, error) {
 // the cache used by fallback scans, so a stale or missing path is harmless: the
 // caller can fall back to a stat-only full operational scan.
 func loadOperationalNotesByPath(vaultPath string, paths []string) ([]Note, error) {
+	absVaultPath, err := filepath.Abs(vaultPath)
+	if err != nil {
+		return nil, err
+	}
+	vaultPath = filepath.Clean(absVaultPath)
 	cache, err := noteCacheForVault(vaultPath)
 	if err != nil {
 		return nil, err
@@ -90,13 +96,24 @@ func loadOperationalNotesByPath(vaultPath string, paths []string) ([]Note, error
 			return nil, err
 		}
 		version := noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
-		if entry, ok := cache.entries[path]; ok && entry.version == version {
-			result = append(result, cloneNoteForLoad(entry.note, true))
-			continue
+		text := ""
+		if entry, ok := cache.entries[path]; ok && entry.version == version && entry.hasBody {
+			if noteCacheNeedsCoarseMtimeHashCheck(info.ModTime()) {
+				text, err = readNoteTextForCache(path)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if text == "" || sha256.Sum256([]byte(text)) == entry.contentHash {
+				result = append(result, cloneNoteForLoad(entry.note, false))
+				continue
+			}
 		}
-		text, err := readNoteTextForCache(path)
-		if err != nil {
-			return nil, err
+		if text == "" {
+			text, err = readNoteTextForCache(path)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if noteCacheParseObserver != nil {
 			noteCacheParseObserver()
@@ -117,6 +134,9 @@ func loadOperationalNotesByPath(vaultPath string, paths []string) ([]Note, error
 }
 
 func listAllNotesWithOptions(vaultPath string, opts noteLoadOptions) ([]Note, error) {
+	if noteCacheListObserver != nil {
+		noteCacheListObserver()
+	}
 	absVaultPath, err := filepath.Abs(vaultPath)
 	if err != nil {
 		return nil, err
@@ -144,6 +164,18 @@ func noteCacheForVault(vaultPath string) (*vaultNoteCache, error) {
 		sharedVaultNoteCaches.vaults[key] = cache
 	}
 	return cache, nil
+}
+
+// disposeCachedNotes releases one removed/rebound project's cache. Active
+// readers may finish using the old cache; later loads create a fresh one.
+func disposeCachedNotes(vaultPath string) {
+	abs, err := filepath.Abs(vaultPath)
+	if err != nil {
+		return
+	}
+	sharedVaultNoteCaches.mu.Lock()
+	delete(sharedVaultNoteCaches.vaults, filepath.Clean(abs))
+	sharedVaultNoteCaches.mu.Unlock()
 }
 
 func invalidateCachedNote(filePath string) {
@@ -419,11 +451,15 @@ func walkDirEntries(current string, visit func(string, fs.DirEntry) error) error
 }
 
 func resolveNote(vaultPath, idOrLink string) (Note, error) {
-	target := wikiTarget(idOrLink)
 	notes, err := listAllNotes(vaultPath)
 	if err != nil {
 		return Note{}, err
 	}
+	return resolveNoteFromNotes(notes, idOrLink)
+}
+
+func resolveNoteFromNotes(notes []Note, idOrLink string) (Note, error) {
+	target := wikiTarget(idOrLink)
 	for _, note := range notes {
 		if stringField(note.Data, "id") == target || stringField(note.Data, "record_id") == target {
 			return note, nil

@@ -346,6 +346,10 @@ func cliTaskState(vaultPath string, task Note) taskState {
 	if err != nil {
 		return serveTaskStateFor(serveSnapshot{notesByID: map[string]Note{}}, task)
 	}
+	return cliTaskStateWithIndex(vaultPath, task, idx)
+}
+
+func cliTaskStateWithIndex(vaultPath string, task Note, idx v7Index) taskState {
 	snap := serveSnapshot{notesByID: map[string]Note{}}
 	snap.projectID, _ = resolveV7ProjectID(vaultPath)
 	if wf, err := loadWorkflow(vaultPath); err == nil {

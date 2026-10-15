@@ -159,6 +159,7 @@ func (s *serveServer) handleRunMessage(w http.ResponseWriter, r *http.Request, t
 		serveJSON(w, http.StatusConflict, serveRunSayResponse{Refused: true, Reason: err.Error()})
 		return
 	}
+	s.refreshProjectRuntimeSnapshot(run.ProjectID)
 	latest, err := findRunScopedOrAmbiguous(s.store, run.ProjectID, run.RecordID)
 	response := serveRunSayResponse{OK: true, Delivery: &result.Delivery, Route: result.Route, State: result.State, Reason: result.Reason, OperatorState: &result.OperatorState, Duplicate: result.Duplicate, Result: &result}
 	if err != nil || latest == nil {

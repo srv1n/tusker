@@ -472,6 +472,62 @@ type validationContext struct {
 	IDToRecordID    map[string]string
 	RecordIDs       map[string]struct{}
 	CompletionStore *RuntimeStore
+	V7Index         *v7Index
+	V7IndexErr      error
+	proof           *validationProofReport
+}
+
+type validationProofReport struct {
+	report v7ProofReport
+	loaded bool
+}
+
+func (ctx validationContext) proofReport(task Note, idx v7Index) v7ProofReport {
+	if ctx.proof == nil {
+		return computeV7ProofReport(ctx.VaultPath, task, idx)
+	}
+	if !ctx.proof.loaded {
+		ctx.proof.report = computeV7ProofReport(ctx.VaultPath, task, idx)
+		ctx.proof.loaded = true
+	}
+	return ctx.proof.report
+}
+
+func (ctx validationContext) withV7Index() validationContext {
+	if ctx.V7Index == nil && ctx.VaultPath != "" {
+		idx, err := loadV7Index(ctx.VaultPath)
+		ctx.V7Index, ctx.V7IndexErr = &idx, err
+	}
+	return ctx
+}
+
+func (ctx validationContext) index() (v7Index, error) {
+	if ctx.V7Index != nil {
+		return *ctx.V7Index, ctx.V7IndexErr
+	}
+	if ctx.VaultPath == "" {
+		return v7Index{}, nil
+	}
+	return loadV7Index(ctx.VaultPath)
+}
+
+func (ctx validationContext) blockingGates(taskID string, gateIDs []string) []Note {
+	idx, err := ctx.index()
+	if err != nil {
+		return nil
+	}
+	return findV7BlockingGatesFromIndex(idx, taskID, gateIDs)
+}
+
+func (ctx validationContext) missingRequiredEvidence(taskID string, required []string) []string {
+	if len(required) == 0 {
+		return nil
+	}
+	idx, err := ctx.index()
+	if err != nil {
+		return required
+	}
+	return missingRequiredEvidenceFromIndex(idx, taskID, required)
 }
 
 func normalizeList(value any) []string {

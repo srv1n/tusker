@@ -279,35 +279,36 @@ func TestCodexLiveEventLogFailureStopsRunner(t *testing.T) {
 	}
 }
 
-func TestCodexLiveOversizedLineSkipped(t *testing.T) {
+func TestCodexLiveOversizedLineFailsBeforeFollowingResult(t *testing.T) {
 	tempRoot := t.TempDir()
 	stdout, writer := io.Pipe()
 	eventPath := filepath.Join(tempRoot, "events.jsonl")
 	rawPath := filepath.Join(tempRoot, "raw.log")
 	handle := &codexLiveHandle{
 		attemptID: "attempt-codex-oversized", rawLogPath: rawPath,
+		statusPath:    filepath.Join(tempRoot, "status.json"),
 		eventSinkPath: eventPath, eventLog: NewEventLog(eventPath),
 		runner: RunnerCodex, stdout: stdout,
 	}
 	handle.ioWG.Add(1)
 	go handle.readStdout()
-	if _, err := writer.Write(bytes.Repeat([]byte{'x'}, 6*1024*1024)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write([]byte("\n" + `{"type":"thread.started","thread_id":"session-after-large-line"}` + "\n")); err != nil {
-		t.Fatal(err)
-	}
+	_, _ = writer.Write(bytes.Repeat([]byte{'x'}, 6*1024*1024))
+	_, _ = writer.Write([]byte("\n" + `{"type":"thread.started","thread_id":"session-after-large-line"}` + "\n"))
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
 	handle.ioWG.Wait()
 	events, err := readText(eventPath)
-	if err != nil || !strings.Contains(events, "stdout_line_oversized") || !strings.Contains(events, "6291457") {
+	if err != nil || !strings.Contains(events, "stdout_line_oversized") {
 		t.Fatalf("oversized diagnostic: %q %v", events, err)
 	}
 	raw, err := readText(rawPath)
-	if err != nil || !strings.Contains(raw, "session-after-large-line") {
-		t.Fatalf("normal following line missing: %q %v", raw, err)
+	if err != nil || strings.Contains(raw, "session-after-large-line") {
+		t.Fatalf("truncated stream accepted following result: %q %v", raw, err)
+	}
+	status, err := readRunnerProcessStatus(handle.statusPath)
+	if err != nil || status.ExitCode != 1 || status.Outcome != string(AttemptOutcomeFailed) {
+		t.Fatalf("oversized stream did not publish failure: %#v err=%v", status, err)
 	}
 }
 

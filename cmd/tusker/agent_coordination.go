@@ -20,7 +20,14 @@ type AgentWakeup struct {
 }
 
 func (s *RuntimeStore) ListQueuedAgentWakeups(project string) ([]AgentWakeup, error) {
-	rows, err := s.query(`SELECT id,project_id,recipient_kind,recipient_id,reason,message_ids_json,state,model_turns,idempotency_key,created_at,claim_id,claimed_at FROM agent_wakeups WHERE (state='queued' OR (state='held' AND (claimed_at='' OR claimed_at<=?)) OR (state='delivering' AND claimed_at<?)) AND (?='' OR project_id=?) ORDER BY created_at,id`, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), project, project)
+	now := time.Now().UTC()
+	query := `SELECT id,project_id,recipient_kind,recipient_id,reason,message_ids_json,state,model_turns,idempotency_key,created_at,claim_id,claimed_at FROM agent_wakeups WHERE (state='queued' OR (state='held' AND (claimed_at='' OR claimed_at<=?)) OR (state='delivering' AND claimed_at<?))`
+	args := []any{now.Format(time.RFC3339Nano), now.Add(-time.Minute).Format(time.RFC3339Nano)}
+	if project != "" {
+		query += ` AND project_id=?`
+		args = append(args, project)
+	}
+	rows, err := s.query(query+` ORDER BY created_at,id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -373,24 +380,35 @@ func (d *Daemon) processArchitectWaveReports(projectFilter string) error {
 	if err != nil {
 		return err
 	}
-	allRuns, err := d.store.ListRuns()
-	if err != nil {
-		return err
-	}
 	for _, loaded := range projects {
 		project := loaded.Project
 		if !project.Enabled || (projectFilter != "" && project.ProjectID != projectFilter) {
 			continue
 		}
-		idx, err := loadV7Index(project.VaultRoot)
+		// Reports read the same operational records as the completed poll.
+		// Canonical writes and the external-edit deadline require fresh bytes.
+		d.frontierMu.Lock()
+		frontier := d.frontiers[project.ProjectID]
+		fresh := frontier != nil && time.Since(d.frontierScannedAt[project.ProjectID]) < reconcileFullCadence &&
+			d.frontierWriteGeneration[project.ProjectID] == v7DocumentWriteGeneration.Load()
+		var idx v7Index
+		if fresh {
+			idx = v7IndexFromNotes(frontier.notes())
+		}
+		d.frontierMu.Unlock()
+		if !fresh {
+			idx, err = loadV7Index(project.VaultRoot)
+			if err != nil {
+				continue
+			}
+		}
+		projectRuns, err := d.store.ListRunsForProject(project.ProjectID)
 		if err != nil {
-			continue
+			return err
 		}
 		runs := map[string]RunStatus{}
-		for _, run := range allRuns {
-			if run.ProjectID == project.ProjectID {
-				runs[firstNonEmpty(run.ItemID, run.RecordID)] = run
-			}
+		for _, run := range projectRuns {
+			runs[firstNonEmpty(run.ItemID, run.RecordID)] = run
 		}
 		messages, err := d.store.ListAgentMessages(project.ProjectID, "", "")
 		if err != nil {

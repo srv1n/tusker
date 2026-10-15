@@ -1060,7 +1060,20 @@ func v7EscapedAt(value string, pos int) bool {
 }
 
 func computeV7ProofReport(vaultPath string, task Note, idx v7Index) v7ProofReport {
-	material, materialErr := v7VerificationCurrentScopedMaterial(vaultPath, task)
+	var material string
+	var materialErr error
+	// Only a passing command with a recorded receipt can depend on current
+	// material. Other results and missing receipts have gaps without reading it.
+	for _, row := range parseV7VerificationRows(task.Body) {
+		if !strings.EqualFold(strings.TrimSpace(row.Result), "pass") {
+			continue
+		}
+		if _, command := v7VerificationCommand(row.Check); !command || v7VerificationReceiptFields(row) == nil {
+			continue
+		}
+		material, materialErr = v7VerificationCurrentScopedMaterial(vaultPath, task)
+		break
+	}
 	return computeV7ProofReportForMaterial(vaultPath, task, idx, material, materialErr)
 }
 

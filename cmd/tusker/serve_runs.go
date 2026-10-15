@@ -28,7 +28,25 @@ func (s *serveServer) runSummaryChecked(snap serveSnapshot, run RunStatus) (serv
 	return s.runSummaryCheckedWithScope(snap, run, false)
 }
 
-func (s *serveServer) runSummaryCheckedWithScope(snap serveSnapshot, run RunStatus, listPage bool) (serveRunSummary, error) {
+type serveRunFacts struct {
+	attempts          []RunAttempt
+	attemptsTruncated bool
+	identity          *RunIdentityMetadata
+	tails             runStateTails
+}
+
+func (s *serveServer) runSummaryCheckedWithScope(snap serveSnapshot, run RunStatus, listPage bool, budget ...*int64) (serveRunSummary, error) {
+	var byteBudget *int64
+	if len(budget) > 0 {
+		byteBudget = budget[0]
+	}
+	summary, _, err := s.runSummaryCheckedWithFacts(snap, run, listPage, byteBudget)
+	return summary, err
+}
+
+func (s *serveServer) runSummaryCheckedWithFacts(snap serveSnapshot, run RunStatus, listPage bool, byteBudget *int64, questions ...[]AgentMessage) (serveRunSummary, serveRunFacts, error) {
+	facts := serveRunFacts{}
+
 	taskID := firstNonEmpty(run.ItemID, run.RecordID)
 	taskTitle := taskID
 	if task, ok := snap.notesByID[taskID]; ok {
@@ -36,11 +54,11 @@ func (s *serveServer) runSummaryCheckedWithScope(snap serveSnapshot, run RunStat
 	}
 	turns, _, err := s.store.ListTurnsForRunPage(run.ProjectID, run.RecordID, 200)
 	if err != nil {
-		return serveRunSummary{}, err
+		return serveRunSummary{}, facts, err
 	}
 	identity, err := s.store.RunIdentity(run.ProjectID, run.RecordID)
 	if err != nil {
-		return serveRunSummary{}, err
+		return serveRunSummary{}, facts, err
 	}
 	workspacePath, workspaceMode := run.WorkspacePath, "shared"
 	if identity != nil {
@@ -48,34 +66,32 @@ func (s *serveServer) runSummaryCheckedWithScope(snap serveSnapshot, run RunStat
 	}
 	attention, err := s.store.WorkerAttentionForRun(run)
 	if err != nil {
-		return serveRunSummary{}, err
+		return serveRunSummary{}, facts, err
 	}
-	attempts, _, err := s.store.ListAttemptsForRunPage(run.ProjectID, run.RecordID, 100)
+	attempts, attemptsTruncated, err := s.store.ListAttemptsForRunPage(run.ProjectID, run.RecordID, 100)
 	if err != nil {
-		return serveRunSummary{}, err
+		return serveRunSummary{}, facts, err
 	}
-	var tails runStateTails
-	if listPage {
-		tails = loadRunStateTails(run, attempts)
-	}
-	var activity serveRunActivityFreshness
-	if listPage {
-		activity = serveRunActivityFromTails(run, attempts, s.now(), tails)
+	facts.attempts, facts.attemptsTruncated, facts.identity = attempts, attemptsTruncated, identity
+	if byteBudget != nil {
+		facts.tails = loadRunStateTailsWithBudget(run, attempts, byteBudget, 50)
 	} else {
-		activity = serveRunActivity(run, attempts, s.now())
+		facts.tails = loadRunStateTails(run, attempts)
 	}
-	var operatorState runOperatorState
-	if listPage {
-		operatorState, err = runOperatorStateFromAttempts(s.store, run, attempts, s.now(), defaultRunQuietAfter, true, tails)
+	activity := serveRunActivityFromTails(run, attempts, s.now(), facts.tails)
+	var messages []AgentMessage
+	if len(questions) > 0 {
+		messages = questions[0]
 	} else {
-		operatorState, err = runOperatorStateForRun(s.store, run, s.now())
+		messages, err = s.store.ListAgentMessagesForTask(run.ProjectID, taskID)
+		if err != nil {
+			return serveRunSummary{}, facts, err
+		}
 	}
-	if err != nil {
-		return serveRunSummary{}, err
-	}
+	operatorState := runOperatorStateFromFacts(run, attempts, snap.notesByID[taskID], messages, s.now(), defaultRunQuietAfter, true, facts.tails)
 	lastSay, err := s.lastRunSayDelivery(run)
 	if err != nil {
-		return serveRunSummary{}, err
+		return serveRunSummary{}, facts, err
 	}
 	return serveRunSummary{
 		OperatorState:         operatorState,
@@ -95,7 +111,7 @@ func (s *serveServer) runSummaryCheckedWithScope(snap serveSnapshot, run RunStat
 		LeaseState:            serveLeaseState(run.LeaseState),
 		LeaseStateRaw:         run.LeaseState,
 		HandRun:               runHandRunOrigin(run, snap.project.VaultRoot),
-		ProcessRunning:        runProcessGroupAlive(run),
+		ProcessRunning:        operatorState.Evidence.OwnerAlive,
 		Outcome:               serveRunOutcome(run, s.now()),
 		ElapsedSec:            serveRunElapsedSec(run, s.now()),
 		SinceLastEventSec:     serveSinceSec(firstNonEmpty(run.LastEventAt, run.UpdatedAt), s.now()),
@@ -120,7 +136,7 @@ func (s *serveServer) runSummaryCheckedWithScope(snap serveSnapshot, run RunStat
 		StartedAt:             run.StartedAt,
 		UpdatedAt:             run.UpdatedAt,
 		Attention:             attention,
-	}, nil
+	}, facts, nil
 }
 
 func serveRunActivity(run RunStatus, attempts []RunAttempt, now time.Time) serveRunActivityFreshness {
@@ -276,9 +292,8 @@ func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request,
 		serveJSON(w, http.StatusOK, serveInterruptResult{Refused: true, Reason: reason, TaskID: taskID})
 		return
 	}
-	// The preflight snapshot load above warms the cache pre-mutation; drop it so
-	// follow-up reads see the interrupted lease instead of the stale snapshot.
-	s.dropProjectSnapshot(projectID)
+	// Refresh runtime facts after the store transition; notes/docs are unchanged.
+	s.invalidateProjectRuntimeSnapshot(projectID)
 	processRunning := runProcessGroupAlive(*run)
 	confirmed := LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateInterrupted && !processRunning
 	result := serveInterruptResult{
@@ -295,7 +310,7 @@ func (s *serveServer) handleRunInterrupt(w http.ResponseWriter, r *http.Request,
 	} else {
 		result.Reason = "interrupt returned before canonical lease/process state confirmed the stop"
 	}
-	s.refreshProjectSnapshot(firstNonEmpty(run.ProjectID, projectID))
+	s.refreshProjectRuntimeSnapshot(firstNonEmpty(run.ProjectID, projectID))
 	serveJSON(w, http.StatusOK, result)
 }
 
@@ -511,7 +526,10 @@ func serveRunEventsFromTails(tails runStateTails) []serveRunEvent {
 }
 
 func serveRunEvents(run RunStatus, attempts []RunAttempt) []serveRunEvent {
-	out := serveRunEventsAll(run, attempts)
+	return serveRunDisplayEvents(serveRunEventsAll(run, attempts))
+}
+
+func serveRunDisplayEvents(out []serveRunEvent) []serveRunEvent {
 	// Keep diagnostics from displacing the recent messages with heartbeat noise.
 	activityCount, diagnosticCount := 0, 0
 	keep := make([]serveRunEvent, 0, 100)

@@ -54,6 +54,11 @@ type runStateTails struct {
 }
 
 func loadRunStateTails(run RunStatus, attempts []RunAttempt) runStateTails {
+	budget := int64(16 << 20)
+	return loadRunStateTailsWithBudget(run, attempts, &budget, 200)
+}
+
+func loadRunStateTailsWithBudget(run RunStatus, attempts []RunAttempt, budget *int64, recordLimit int) runStateTails {
 	var latest RunAttempt
 	for _, attempt := range attempts {
 		if run.ActiveAttemptID != "" {
@@ -66,7 +71,7 @@ func loadRunStateTails(run RunStatus, attempts []RunAttempt) runStateTails {
 		}
 	}
 	attempts = []RunAttempt{latest}
-	return runStateTails{runActivityTail(bestRunEventPath(run, attempts)), runActivityTail(bestRunLogPath(run, attempts))}
+	return runStateTails{runActivityTailWithBudget(bestRunEventPath(run, attempts), budget, recordLimit), runActivityTailWithBudget(bestRunLogPath(run, attempts), budget, recordLimit)}
 }
 
 // deriveRunOperatorState has no store, process or provider reads. Callers
@@ -157,12 +162,18 @@ func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts [
 	if err != nil {
 		return runOperatorState{}, err
 	}
-	facts := runOperatorFactsFromRun(run, attempts)
+	task := Note{}
 	if project, err := projectByID(store, run.ProjectID); err == nil {
-		if task, err := resolveV7Note(project.VaultRoot, run.ItemID, "task"); err == nil {
-			facts.TaskDone = stringField(task.Data, "status") == "done"
-		}
+		task, _ = resolveV7Note(project.VaultRoot, run.ItemID, "task")
 	}
+	return runOperatorStateFromFacts(run, attempts, task, messages, now, quietAfter, bounded, tails), nil
+}
+
+// Serve already has the task and question facts; keep its hot reads out of the
+// vault index while CLI callers retain the authoritative lookup above.
+func runOperatorStateFromFacts(run RunStatus, attempts []RunAttempt, task Note, messages []AgentMessage, now time.Time, quietAfter time.Duration, bounded bool, tails runStateTails) runOperatorState {
+	facts := runOperatorFactsFromRun(run, attempts)
+	facts.TaskDone = stringField(task.Data, "status") == "done"
 	for _, message := range messages {
 		if message.Kind == "question" && message.AnsweredAt == "" && message.OriginTaskID == run.ItemID {
 			for _, attempt := range attempts {
@@ -205,7 +216,7 @@ func runOperatorStateFromAttempts(store *RuntimeStore, run RunStatus, attempts [
 	if !facts.ToolInFlight {
 		facts.ToolInFlight = runToolInFlightFromTails(tails)
 	}
-	return deriveRunOperatorState(facts, now, quietAfter), nil
+	return deriveRunOperatorState(facts, now, quietAfter)
 }
 
 // runOperatorFactsFromRun holds the run-row facts shared by the run page and

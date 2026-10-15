@@ -182,7 +182,9 @@ func runRunnerWrapperWithChildStarter(
 		}
 		// A typed config error (for example an unknown model) keeps its reason
 		// code, so the run shows config_invalid instead of an unclassified failure.
-		_, _ = writeRunnerStatusFileIfAbsentWithOutcome(req.Start.StatusPath, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error(), 0, runnerWrapperStartFailureCode(err))
+		if wrote, _ := writeRunnerStatusFileIfAbsentWithOutcome(req.Start.StatusPath, 1, AttemptOutcomeFailed, "runner wrapper could not start child: "+err.Error(), 0, runnerWrapperStartFailureCode(err)); wrote {
+			notifyDaemonRunStatus(req.Start)
+		}
 		runnerWrapperReapACPContainmentAfterStatus(req)
 		return err
 	}
@@ -279,16 +281,21 @@ func runnerWrapperWait(ctx context.Context, cancelChild context.CancelFunc, req 
 			runnerWrapperReapACPContainmentAfterStatus(req)
 			return nil
 		}
-		// ACP owns its own child wait. If that child has already been reaped
+		// Live adapters own their child wait. If that child has already been reaped
 		// without publishing a terminal status, do not leave this wrapper's
 		// heartbeat renewing the lease forever. Publish one bounded failure and
 		// let the daemon's normal retry/park policy classify it.
-		// The ACP handle closes the child and then drains the final updates
+		// The handle closes the child and then drains the final updates
 		// before it publishes the terminal status, so a reaped child without a
 		// status is only a failure once that drain has had time to finish.
-		if isACPRunner(RunnerName(strings.TrimSpace(req.Runner))) && acpChildExitedWithoutStatus(result, req.Start.StatusPath) && childGoneFor(&childGoneSince) >= acpTerminalStatusGrace {
+		if acpChildExitedWithoutStatus(result, req.Start.StatusPath) && childGoneFor(&childGoneSince) >= acpTerminalStatusGrace {
 			cancelChild()
-			runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, "acp_v1 child exited without terminal status")
+			runner := RunnerName(strings.TrimSpace(req.Runner))
+			reason := string(runner) + " child exited without terminal status"
+			if isACPRunner(runner) {
+				reason = "acp_v1 child exited without terminal status"
+			}
+			runnerWrapperPublishStatusIfAbsent(req.Start, 1, AttemptOutcomeFailed, reason)
 			runnerWrapperRecordDirectOutcome(req.Start)
 			runnerWrapperReapACPContainmentAfterStatus(req)
 			return nil
@@ -430,7 +437,9 @@ func runnerWrapperStartFailureCode(err error) RunFailureReasonCode {
 }
 
 func runnerWrapperPublishStatusIfAbsent(req StartRequest, exitCode int, outcome AttemptOutcome, reason string) {
-	_, _ = writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, exitCode, outcome, reason, 0)
+	if wrote, _ := writeRunnerStatusFileIfAbsentWithOutcome(req.StatusPath, exitCode, outcome, reason, 0); wrote {
+		notifyDaemonRunStatus(req)
+	}
 }
 
 func runnerWrapperInterrupt(req runnerWrapperRequest, result *StartResult, reason string) {

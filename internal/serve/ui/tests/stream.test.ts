@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   LIVE_STREAM_FALLBACK_MS,
   connectLiveStream,
@@ -205,4 +206,103 @@ test("live updates use one shared unfiltered subscription, not a connection per 
   disconnect();
   expect(source.closed).toBe(true);
   expect(FakeEventSource.instances).toHaveLength(1);
+});
+
+test("hidden pages and native panels stop live reads and reconcile on resume without replacing the stream", async () => {
+  const savedDocument = globalThis.document;
+  const savedWindow = globalThis.window;
+  const document = Object.assign(new EventTarget(), { visibilityState: "visible" }) as unknown as Document;
+  const window = Object.assign(new EventTarget(), { tuskerShell: { isVisible: true } }) as unknown as Window;
+  globalThis.document = document;
+  globalThis.window = window;
+  FakeEventSource.instances = [];
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  let reads = 0;
+  const observer = new QueryObserver(client, { queryKey: ["tasks", "app"], queryFn: async () => ++reads });
+  const unsubscribe = observer.subscribe(() => {});
+  const disconnect = connectLiveStream(client, { EventSourceImpl: FakeEventSource, debounceMs: 10 });
+  try {
+    const source = FakeEventSource.instances[0]!;
+    source.open();
+    await Bun.sleep(20);
+    const initialReads = reads;
+    expect(initialReads).toBeGreaterThan(0);
+
+    source.message({ id: 7, kind: "task_status_change", keys: ["tasks:T-1"], project: "app" });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    source.message({ id: 8, kind: "task_status_change", keys: ["tasks:T-2"], project: "app" });
+    source.error();
+    await Bun.sleep(25);
+    expect(reads).toBe(initialReads);
+    expect(liveRefetchInterval()).toBe(false);
+    expect(getStreamStatus().connected).toBe(false);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Bun.sleep(20);
+    expect(reads).toBe(initialReads + 1);
+    expect(liveRefetchInterval()).toBe(LIVE_STREAM_FALLBACK_MS);
+    expect(getStreamStatus().connected).toBe(false);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(source.closed).toBe(false);
+
+    source.open();
+    await Bun.sleep(20);
+    const connectedReads = reads;
+    window.tuskerShell!.isVisible = false;
+    window.dispatchEvent(new Event("tusker-shell-visibility"));
+    source.message({ id: 9, kind: "task_status_change", keys: ["tasks:T-3"], project: "app" });
+    await Bun.sleep(25);
+    expect(reads).toBe(connectedReads);
+    window.tuskerShell!.isVisible = true;
+    window.dispatchEvent(new Event("tusker-shell-visibility"));
+    await Bun.sleep(20);
+    expect(reads).toBe(connectedReads + 1);
+    expect(liveRefetchInterval()).toBe(false);
+    expect(getStreamStatus().connected).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(1);
+  } finally {
+    disconnect();
+    unsubscribe();
+    client.clear();
+    globalThis.document = savedDocument;
+    globalThis.window = savedWindow;
+  }
+});
+
+test("runtime refreshes update state capsules and summary counters without refetching notes", () => {
+  const { client, invalidations } = recorder();
+  invalidateStreamEvent(client, { kind: "runtime_projection_refreshed", keys: ["runs", "needs", "attempts"], project: "app" });
+  expect(invalidations).toContainEqual({ queryKey: ["tasks", "app"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["task", "app"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["waves", "app"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["wave", "app"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["wave-list", "app"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["wave-review", "app"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["projects"], exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["daemon"], exact: false });
+  for (const queryKey of [["epics", "app"], ["attempt", "app"], ["agent-access-approvals", "app"], qk.reviewBatch("app"), qk.factoryOperations("app"), qk.reviewBatch(), qk.factoryOperations(), qk.needs(), qk.runs(), ["executions", "app"], qk.executionInbox("app"), ["executions", "timeline", "app"]]) {
+    expect(invalidations).toContainEqual({ queryKey, exact: false });
+  }
+  expect(invalidations).not.toContainEqual({ queryKey: ["docs", "app"], exact: false });
+  expect(invalidations).not.toContainEqual({ queryKey: ["waves"], exact: false });
+});
+
+test("connection and replay reconciliation refresh runtime detail families", () => {
+  const { client, invalidations } = recorder();
+  FakeEventSource.instances = [];
+  const disconnect = connectLiveStream(client, { EventSourceImpl: FakeEventSource, debounceMs: 0 });
+  try {
+    const source = FakeEventSource.instances[0]!;
+    for (const reconcile of [() => source.open(), () => source.message({ kind: "stream_replay_miss", keys: [] })]) {
+      invalidations.length = 0;
+      reconcile();
+      for (const queryKey of [["attempt"], ["agent-access-approvals"], ["executions"], ["factory-operations"]]) {
+        expect(invalidations).toContainEqual({ queryKey, exact: false });
+      }
+    }
+  } finally {
+    disconnect();
+  }
 });

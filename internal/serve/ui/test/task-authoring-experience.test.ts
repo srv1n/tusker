@@ -35,7 +35,7 @@ describe("task authoring and execution experience", () => {
     expect(html).not.toContain("codex_exec");
     expect(html).toContain("worktree · /repo/.work · branch feature");
     expect(html).toContain("task · ARCH-T-1 · bound · task continuation route");
-    expect(html).toContain("tusker work start");
+    expect(html).toContain(`tusker start ${readyTask.id} --by current-conversation --current-workspace`);
     expect(html).toContain("--current-workspace");
     expect(html).not.toContain("unbound binding");
   });

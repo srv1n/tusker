@@ -1,8 +1,10 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
 import { scopedProjectQueryKey } from "@/lib/queryScope";
 
 export const LIVE_STREAM_FALLBACK_MS = 45_000;
 export const STREAM_INVALIDATION_DEBOUNCE_MS = 75;
+const RECONCILE_TOPICS = ["daemon", "projects", "factory-operations", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch", "agent-access-approvals", "executions"];
 
 export interface StreamEvent {
   id?: number;
@@ -46,7 +48,18 @@ export function subscribeStreamStatus(listener: StreamListener): () => void {
 }
 
 export function liveRefetchInterval(): number | false {
-  return status.connected ? false : LIVE_STREAM_FALLBACK_MS;
+  return status.connected || !isLiveViewVisible() ? false : LIVE_STREAM_FALLBACK_MS;
+}
+
+export function isLiveViewVisible(): boolean {
+  return (typeof document === "undefined" || document.visibilityState !== "hidden") &&
+    (typeof window === "undefined" || window.tuskerShell?.isVisible !== false);
+}
+
+// Interval callbacks alone do not reschedule when connectivity changes. The
+// primitive snapshot rerenders queries only when their fallback changes.
+export function useLiveRefetchInterval(): number | false {
+  return useSyncExternalStore(subscribeStreamStatus, liveRefetchInterval, liveRefetchInterval);
 }
 
 function setStreamStatus(next: StreamStatus) {
@@ -96,8 +109,14 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
       return [scoped("feedback")];
     case "attempts":
       return id && project
-        ? [["attempts", project], panelScoped("runs"), ["run", project, id]]
-        : [scoped("attempts"), panelScoped("runs"), ["run"]];
+        ? [["attempts", project], scoped("attempt"), panelScoped("runs"), ["run", project, id]]
+        : [scoped("attempts"), scoped("attempt"), panelScoped("runs"), ["run"]];
+    case "agent-access-approvals":
+      return [scoped("agent-access-approvals")];
+    case "executions":
+      return project
+        ? [["executions", project], ["executions", "inbox", project], ["executions", "timeline", project], ["executions", "binding-preview", project]]
+        : [["executions"]];
     case "review":
       return id === "batch"
         ? [panelScoped("needs"), scoped("tasks"), panelScoped("runs"), ["projects"], panelScoped("review", "batch"), project ? ["wave-review", project] : ["wave-review"]]
@@ -107,15 +126,29 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
   }
 }
 
+function eventQueryKeys(event: StreamEvent): QueryKey[] {
+  const keys = event.keys.flatMap((key) => streamKeyToQueryKeys(key, event.project));
+  if (event.kind !== "runtime_projection_refreshed") return keys;
+  // Runtime refreshes have narrow server topics: state reads and summary
+  // counters still depend on them, without treating notes/docs as changed.
+  const scope = event.project ? [event.project] : [];
+  return [...keys,
+    ...["epics", "review:batch", "agent-access-approvals", "executions", "factory-operations"].flatMap((key) => streamKeyToQueryKeys(key, event.project)),
+    ...(event.project ? [["factory-operations"], ["needs"], ["runs"], ["review", "batch"]].map((prefix) => scopedProjectQueryKey(prefix)) : []),
+    ["tasks", ...scope],
+    event.task_id && event.project ? ["task", event.project, event.task_id] : ["task", ...scope],
+    ["waves", ...scope], ["wave", ...scope], ["wave-list", ...scope], ["wave-review", ...scope],
+    ["projects"], ["daemon"],
+  ];
+}
+
 export function invalidateStreamEvent(queryClient: QueryInvalidator, event: StreamEvent) {
   const seen = new Set<string>();
-  for (const key of event.keys) {
-    for (const queryKey of streamKeyToQueryKeys(key, event.project)) {
-      const signature = JSON.stringify(queryKey);
-      if (seen.has(signature)) continue;
-      seen.add(signature);
-      void queryClient.invalidateQueries({ queryKey, exact: false });
-    }
+  for (const queryKey of eventQueryKeys(event)) {
+    const signature = JSON.stringify(queryKey);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    void queryClient.invalidateQueries({ queryKey, exact: false });
   }
 }
 
@@ -130,35 +163,55 @@ export function connectLiveStream(
   const now = options.now ?? (() => Date.now());
   const debounceMs = options.debounceMs ?? STREAM_INVALIDATION_DEBOUNCE_MS;
   const pending = new Map<string, QueryKey>();
+  let visible = isLiveViewVisible();
   let invalidationTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearInvalidations = () => {
+    if (invalidationTimer !== null) clearTimeout(invalidationTimer);
+    invalidationTimer = null;
+    pending.clear();
+  };
   const flushInvalidations = () => {
     invalidationTimer = null;
+    if (!isLiveViewVisible()) { pending.clear(); return; }
     for (const queryKey of pending.values()) {
       void queryClient.invalidateQueries({ queryKey, exact: false });
     }
     pending.clear();
   };
   const enqueueInvalidation = (event: StreamEvent) => {
+    if (!isLiveViewVisible()) return;
     if (debounceMs <= 0) {
       invalidateStreamEvent(queryClient, event);
       return;
     }
-    for (const key of event.keys) {
-      for (const queryKey of streamKeyToQueryKeys(key, event.project)) {
-        pending.set(JSON.stringify(queryKey), queryKey);
-      }
+    for (const queryKey of eventQueryKeys(event)) {
+      pending.set(JSON.stringify(queryKey), queryKey);
     }
     if (invalidationTimer === null) {
       invalidationTimer = setTimeout(flushInvalidations, debounceMs);
     }
   };
+  const reconcile = () => {
+    if (!isLiveViewVisible()) return;
+    invalidateStreamEvent(queryClient, {
+      kind: "stream_resume",
+      keys: RECONCILE_TOPICS,
+    });
+  };
+  const onVisibilityChange = () => {
+    const nextVisible = isLiveViewVisible();
+    if (nextVisible === visible) return;
+    visible = nextVisible;
+    clearInvalidations();
+    setStreamStatus({ ...status });
+    if (visible) reconcile();
+  };
+  // Keep the single EventSource alive so its native Last-Event-ID reconnect
+  // cursor survives hidden tabs/panels. Hidden events never trigger reads.
   const source = new EventSourceImpl(options.url ?? "/api/stream");
   source.onopen = () => {
     setStreamStatus({ ...status, connected: true });
-    invalidateStreamEvent(queryClient, {
-      kind: "stream_open",
-      keys: ["daemon", "projects", "factory-operations", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
-    });
+    reconcile();
   };
   source.onmessage = (message) => {
     let event: StreamEvent;
@@ -171,12 +224,12 @@ export function connectLiveStream(
       return;
     }
     setStreamStatus({ connected: true, lastEventAt: now(), lastErrorAt: status.lastErrorAt });
-    if (event.kind === "stream_replay_miss" || event.replay_miss === true) {
+    if (isLiveViewVisible() && (event.kind === "stream_replay_miss" || event.replay_miss === true)) {
       // The broker could not replay the complete cursor window. Invalidate a
       // full summary surface so reconnect converges to authoritative state.
       invalidateStreamEvent(queryClient, {
         kind: "stream_replay_miss",
-        keys: ["daemon", "projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch"],
+        keys: RECONCILE_TOPICS,
         project: event.project,
       });
     }
@@ -184,14 +237,17 @@ export function connectLiveStream(
   };
   source.onerror = () => {
     setStreamStatus({ ...status, connected: false, lastErrorAt: now() });
-    invalidateStreamEvent(queryClient, {
+    if (isLiveViewVisible()) invalidateStreamEvent(queryClient, {
       kind: "stream_error",
       keys: ["daemon", "projects"],
     });
   };
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibilityChange);
+  if (typeof window !== "undefined") window.addEventListener("tusker-shell-visibility", onVisibilityChange);
   return () => {
-    if (invalidationTimer !== null) clearTimeout(invalidationTimer);
-    pending.clear();
+    clearInvalidations();
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibilityChange);
+    if (typeof window !== "undefined") window.removeEventListener("tusker-shell-visibility", onVisibilityChange);
     source.close();
     setStreamStatus({ ...status, connected: false });
   };

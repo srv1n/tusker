@@ -453,6 +453,13 @@ func validateV7GeneratedDashboards(vaultPath string) ([]Issue, []Issue) {
 	if err != nil {
 		return []Issue{issue(errorInvalidField, "failed to load V7 index for generated dashboard validation: "+err.Error(), "", "", nil)}, nil
 	}
+	return validateV7GeneratedDashboardsWithIndex(vaultPath, idx)
+}
+
+func validateV7GeneratedDashboardsWithIndex(vaultPath string, idx v7Index) ([]Issue, []Issue) {
+	if !hasV7DashboardProjection(vaultPath) {
+		return nil, nil
+	}
 	leases, err := loadV7Leases(vaultPath)
 	if err != nil {
 		return []Issue{issue(errorInvalidField, "failed to load V7 leases for generated dashboard validation: "+err.Error(), "", "", nil)}, nil

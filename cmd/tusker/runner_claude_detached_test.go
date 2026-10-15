@@ -326,8 +326,8 @@ for line in sys.stdin:
 		t.Fatal("fake Claude did not start")
 	}
 	status := waitForClaudePublishedStatus(t, req.Start.StatusPath)
-	if status.ExitCode != 0 {
-		t.Fatalf("oversized line killed run: %#v", status)
+	if status.ExitCode != 1 || status.Outcome != string(AttemptOutcomeFailed) {
+		t.Fatalf("oversized line did not fail the attempt: %#v", status)
 	}
 	raw, err := readText(req.Start.RawLogPath)
 	if err != nil || !strings.Contains(raw, "[truncated ") || strings.Contains(raw, strings.Repeat("x", 128*1024)) {

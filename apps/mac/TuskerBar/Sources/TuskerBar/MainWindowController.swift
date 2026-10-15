@@ -225,7 +225,12 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
             let picker = NSOpenPanel()
             PanelController.configureImagePicker(picker)
             picker.beginSheetModal(for: window) { [weak self] response in
-                self?.webView.evaluateJavaScript(PanelController.imagePickerResponseScript(requestID: requestID, url: response == .OK ? picker.url : nil))
+                let url = response == .OK ? picker.url : nil
+                Task { [weak self] in
+                    let script = await PanelController.loadImagePickerResponseScript(requestID: requestID, url: url)
+                    guard let self, self.isConfiguredOrigin(self.webView.url) else { return }
+                    self.webView.evaluateJavaScript(script, completionHandler: nil)
+                }
             }
         default:
             return

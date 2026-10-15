@@ -33,7 +33,48 @@ func waveV7ResumeCmd(args Args) error {
 	return directWaveControlCmd(args, "wave resume", directWaveResume)
 }
 
+type waveMaterialResult struct {
+	fingerprint string
+	issues      []string
+}
+
+type waveMaterialSpecResult struct {
+	hash  string
+	issue string
+}
+
+// Request-local only: mutation authorization always gets a new context.
+// This shares corpus, spec bytes and identical material fingerprints across
+// summary/recovery projections without retaining authority across requests.
+type waveMaterialReadContext struct {
+	corpus          docgraph.Corpus
+	corpusLoaded    bool
+	corpusAttempted bool
+	corpusLoads     int
+	specs           map[string]waveMaterialSpecResult
+	files           map[string]waveMaterialSpecResult
+	fingerprints    map[string]waveMaterialResult
+}
+
+func newWaveMaterialReadContext() *waveMaterialReadContext {
+	return &waveMaterialReadContext{specs: map[string]waveMaterialSpecResult{}, files: map[string]waveMaterialSpecResult{}, fingerprints: map[string]waveMaterialResult{}}
+}
+
+func sharedWaveMaterialReadContext(contexts []*waveMaterialReadContext) *waveMaterialReadContext {
+	if len(contexts) > 0 && contexts[0] != nil {
+		return contexts[0]
+	}
+	return newWaveMaterialReadContext()
+}
+
 func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, []string) {
+	return waveMaterialFingerprintWithContext(vaultPath, idx, wave, newWaveMaterialReadContext())
+}
+
+func waveMaterialFingerprintWithContext(vaultPath string, idx v7Index, wave Note, context *waveMaterialReadContext) (string, []string) {
+	if context == nil {
+		context = newWaveMaterialReadContext()
+	}
 	material := map[string]any{"schema": waveAuthorizationSchema, "wave": stringField(wave.Data, "id"), "outcome": firstNonEmpty(stringField(wave.Data, "outcome"), stringField(wave.Data, "summary")), "integration_base_sha": stringField(wave.Data, "integration_base_sha"), "members": []any{}, "specs": map[string]any{}}
 	var issues []string
 	members := uniqueStrings(normalizeList(wave.Data["members"]))
@@ -73,30 +114,54 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 			allSpecRefs = append(allSpecRefs, normalizeList(task.Data["spec_refs"])...)
 		}
 	}
-	var materialCorpus docgraph.Corpus
-	materialCorpusLoaded := false
-	if len(allSpecRefs) > 0 {
+	refs := sortedStrings(allSpecRefs)
+	base, _ := yaml.Marshal(material)
+	key := vaultPath + "\x00" + string(base) + "\x00" + strings.Join(refs, "\x00") + "\x00" + strings.Join(issues, "\x00")
+	if cached, ok := context.fingerprints[key]; ok {
+		return cached.fingerprint, cached.issues
+	}
+	if len(refs) > 0 && !context.corpusAttempted {
+		context.corpusAttempted = true
+		context.corpusLoads++
 		if corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath)); err == nil {
-			materialCorpus, materialCorpusLoaded = corpus, true
+			context.corpus, context.corpusLoaded = corpus, true
 		}
 	}
-	for _, ref := range sortedStrings(allSpecRefs) {
-		path, issue := waveMaterialSpecFile(vaultPath, ref, materialCorpus, materialCorpusLoaded)
-		if issue != "" {
-			issues = append(issues, issue)
-			continue
+	for _, ref := range refs {
+		cached, ok := context.specs[ref]
+		if !ok {
+			path, issue := waveMaterialSpecFile(vaultPath, ref, context.corpus, context.corpusLoaded)
+			cached.issue = issue
+			if issue == "" {
+				file, read := context.files[path]
+				if !read {
+					raw, err := os.ReadFile(path)
+					if err != nil {
+						file.issue = "unreadable"
+					} else {
+						sum := sha256.Sum256(raw)
+						file.hash = hex.EncodeToString(sum[:])
+					}
+					context.files[path] = file
+				}
+				cached.hash = file.hash
+				if file.issue != "" {
+					cached.issue = "spec_ref cannot be read: " + ref
+				}
+			}
+			context.specs[ref] = cached
 		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			issues = append(issues, "spec_ref cannot be read: "+ref)
-			continue
+		if cached.issue != "" {
+			issues = append(issues, cached.issue)
+		} else {
+			material["specs"].(map[string]any)[ref] = cached.hash
 		}
-		sum := sha256.Sum256(raw)
-		material["specs"].(map[string]any)[ref] = hex.EncodeToString(sum[:])
 	}
 	raw, _ := yaml.Marshal(material)
 	sum := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(sum[:]), uniqueStrings(issues)
+	result := waveMaterialResult{"sha256:" + hex.EncodeToString(sum[:]), uniqueStrings(issues)}
+	context.fingerprints[key] = result
+	return result.fingerprint, result.issues
 }
 
 // waveMaterialSpecFile resolves one material spec_ref to the file whose bytes
@@ -270,7 +335,11 @@ func closeV7AuthorizationLocks(materialLock, waveLock *v7DocumentLock, taskLocks
 }
 
 func waveAuthorizationProjection(vaultPath string, idx v7Index, wave Note) map[string]any {
-	fingerprint, _ := waveMaterialFingerprint(vaultPath, idx, wave)
+	return waveAuthorizationProjectionWithContext(vaultPath, idx, wave, newWaveMaterialReadContext())
+}
+
+func waveAuthorizationProjectionWithContext(vaultPath string, idx v7Index, wave Note, context *waveMaterialReadContext) map[string]any {
+	fingerprint, _ := waveMaterialFingerprintWithContext(vaultPath, idx, wave, context)
 	stored, state := stringField(wave.Data, "authorization_fingerprint"), fallback(stringField(wave.Data, "authorization"), "disarmed")
 	stale := waveAuthorizationFingerprintActive(state) && stored != "" && stored != fingerprint
 	if stale {

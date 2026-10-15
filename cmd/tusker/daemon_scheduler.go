@@ -341,18 +341,12 @@ func (d *Daemon) runFairDispatchCandidate(ctx context.Context, candidate daemonD
 	updated, persisted, err := d.dispatchRunWithAttemptID(ctx, candidate.Project, candidate.Workflow, candidate.Note, run, candidate.Lane, attemptID)
 	claimed := strings.TrimSpace(updated.LeaseOwner) == attemptID && updated.LeaseGeneration > run.LeaseGeneration
 	if !claimed {
-		allRuns, loadErr := d.store.ListRuns()
+		current, loadErr := d.store.FindRunScoped(candidate.Project.ProjectID, candidate.Run.RecordID)
 		if loadErr != nil && err == nil {
 			return updated, persisted, false, loadErr
 		}
-		for _, current := range allRuns {
-			if current.ProjectID != candidate.Project.ProjectID || current.RecordID != candidate.Run.RecordID {
-				continue
-			}
-			if strings.TrimSpace(current.LeaseOwner) == attemptID && current.LeaseGeneration > run.LeaseGeneration {
-				updated, persisted, claimed = current, true, true
-			}
-			break
+		if current != nil && strings.TrimSpace(current.LeaseOwner) == attemptID && current.LeaseGeneration > run.LeaseGeneration {
+			updated, persisted, claimed = *current, true, true
 		}
 	}
 	return updated, persisted, claimed, err
@@ -449,7 +443,7 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 	budget := config.Config.Automation.Concurrency.WeightBudget
 	maxLoad := config.Config.Automation.Concurrency.MaxLoadPerCPU
 	buildStats := readBuildLaneStatsForMachine(time.Now().UTC())
-	allRuns, err := d.store.ListRuns()
+	allRuns, err := d.store.ListReconcileRuns("")
 	if err != nil {
 		return err
 	}
@@ -541,6 +535,18 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 		run := candidate.Run
 		if current, ok := runs[key]; ok {
 			run = current
+		} else {
+			// The shared capacity snapshot excludes terminal history. A stale
+			// candidate may still name a completed row, so read that exact row
+			// before considering admission instead of resurrecting its snapshot.
+			current, err := d.store.FindRunScoped(candidate.Project.ProjectID, candidate.Run.RecordID)
+			if err != nil {
+				return err
+			}
+			if current != nil {
+				run = *current
+				runs[key] = run
+			}
 		}
 		if runConsumesDispatchCapacity(run) || !shouldDispatchRun(run, time.Now().UTC()) {
 			continue

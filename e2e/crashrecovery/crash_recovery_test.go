@@ -248,7 +248,7 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 		body := h.readFile(path)
 		body = replaceSection(body, "## Verification", "| Covers | Check | Result | Notes |\n|---|---|---|---|\n| A1 | command: test -s owned/"+strings.ToLower(taskID)+".txt | pending | Review the submitted file. |")
 		h.writeFile(path, body)
-		h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
+		h.cliOK(h.repoDir, "check", "--fix", "--only", "validate,docs", "--vault", h.vaultDir, "--local", "--quiet")
 		h.rebindTaskContract(taskID)
 	}
 	h.installWaveCompatibleOperatorSkill()
@@ -257,11 +257,11 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 	h.gitOK("config", "user.name", "Crash Recovery")
 	h.gitOK("add", "-A")
 	h.gitOK("commit", "-m", "armed wave fixture")
-	h.cliOK(h.repoDir, "wave", "create", "Durable crash wave", "APP-T-0001", "APP-T-0002", "--vault", h.vaultDir, "--quiet")
+	h.cliOK(h.repoDir, "new", "wave", "Durable crash wave", "APP-T-0001", "APP-T-0002", "--vault", h.vaultDir, "--quiet")
 
 	first := h.startDaemon("armed-daemon-1")
 	h.waitForAutomationStatus(crashRunWait)
-	start := parseJSON(t, h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
+	start := parseJSON(t, h.cliOK(h.repoDir, "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
 	armFingerprint := runString(start, "materialFingerprint")
 	if armFingerprint == "" {
 		t.Fatalf("wave start did not persist a material fingerprint: %s", prettyJSON(start))
@@ -310,7 +310,7 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 		t.Fatalf("restart duplicated the reclaimed claim: %s", prettyJSON(stable))
 	}
 
-	wave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
+	wave := parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	authorization := mapAtPath(t, mapAtPath(t, wave, "wave"), "authorization")
 	if runString(authorization, "state") != "armed" || runString(authorization, "authorizedFingerprint") != armFingerprint || runString(authorization, "actor") != "human:e2e" {
 		t.Fatalf("restart lost or repeated wave authorization: %s", prettyJSON(wave))
@@ -320,7 +320,7 @@ func TestArmedWaveCrashRestartConverges(t *testing.T) {
 		return runString(run, "lane") == "review" && runInt(run, "attempt_count") >= 1
 	})
 	eventually(t, crashRunWait, 100*time.Millisecond, func() (bool, string) {
-		brief := mapAtPath(t, parseJSON(t, h.cliOK(h.repoDir, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")), "brief")
+		brief := mapAtPath(t, parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json")), "brief")
 		return len(sliceAt(brief, "landed")) == 2, prettyJSON(brief)
 	})
 	third.stop()
@@ -330,7 +330,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	h := newHarness(t, "spec-to-wave-delivery")
 	h.configureFakeRunner(fakeRunnerConfig{Delivery: true, RunnerKind: "codex_exec", Reviewer: true, MaxActive: 3, WorkspaceStrategy: "worktree", StallTimeoutMS: 10000, MaxAttempts: 2})
 	h.installWaveCompatibleOperatorSkill()
-	h.writeFile(filepath.Join(h.vaultDir, "specs", "delivery.md"), "---\nsubject: disposable-delivery\npart_of: overview\n---\n\n# Disposable delivery\n\nApproved fixture spec.\n\n## Work streams\n")
+	h.writeFile(filepath.Join(h.vaultDir, "specs", "delivery.md"), "---\nsubject: disposable-delivery\npart_of: overview\nread_when: Testing mixed-DAG delivery and restart recovery.\nskip_when: Testing unrelated fixture behavior.\ncapsule:\n  what: Approved disposable mixed-DAG delivery fixture.\n  use_when: Testing delivery through committed artifacts and proof.\n  skip_when: Testing unrelated fixture behavior.\n---\n\n# Disposable delivery\n\nApproved fixture spec.\n\n## Work streams\n")
 	h.gitOK("init", "-b", "main")
 	h.gitOK("config", "user.email", "delivery@example.com")
 	h.gitOK("config", "user.name", "Delivery Fixture")
@@ -338,7 +338,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	h.gitOK("commit", "-m", "fixture baseline")
 	requestPath := filepath.Join(h.tempRoot, "wave-authoring.yaml")
 	h.writeFile(requestPath, specToWaveAuthoringRequest())
-	authored := parseJSON(t, h.cliOK(h.repoDir, "wave", "create", "--file", requestPath, "--request-key", "spec-to-wave", "--vault", h.vaultDir, "--json"))
+	authored := parseJSON(t, h.cliOK(h.repoDir, "new", "wave", "--file", requestPath, "--request-key", "spec-to-wave", "--vault", h.vaultDir, "--json"))
 	waveReport := mapAtPath(t, authored, "wave")
 	mapping, _ := waveReport["taskMapping"].(map[string]any)
 	if intFromPath(waveReport, "expectedConcurrency") != 3 || len(mapping) != 7 || len(sliceAt(waveReport, "frontiers")) < 3 {
@@ -349,11 +349,11 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "hold-APP-T-0001"))
 	daemon := h.startDaemon("delivery-daemon")
 	h.waitForAutomationStatus(crashRunWait)
-	review := parseJSON(t, h.cliOK(h.repoDir, "wave", "review", "W-0001", "--vault", h.vaultDir, "--json"))
+	review := mapAtPath(t, parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json")), "review")
 	if len(sliceAt(review, "blockers")) != 0 {
 		t.Fatalf("wave review reported blockers: %s", prettyJSON(review))
 	}
-	start := parseJSON(t, h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
+	start := parseJSON(t, h.cliOK(h.repoDir, "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json"))
 	if runString(start, "materialFingerprint") == "" {
 		t.Fatalf("wave start omitted fingerprint: %s", prettyJSON(start))
 	}
@@ -384,7 +384,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	lastQueue := ""
 	eventually(t, 3*time.Minute, time.Second, func() (bool, string) {
 		polls++
-		out, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
+		out, err := h.cli(h.repoDir, 10*time.Second, "show", "W-0001", "--vault", h.vaultDir, "--json")
 		if err != nil {
 			return false, string(out)
 		}
@@ -398,7 +398,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 		}
 		return true, ""
 	})
-	briefPayload := parseJSON(t, h.cliOK(h.repoDir, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json"))
+	briefPayload := parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	brief := mapAtPath(t, briefPayload, "brief")
 	outcome := mapAtPath(t, brief, "outcome")
 	if fully, _ := outcome["fullyDrained"].(bool); !fully {
@@ -423,7 +423,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	if out, err := promotion.CombinedOutput(); err == nil {
 		t.Fatalf("continuous staging promoted main without a scheduled departure: %s", out)
 	}
-	wave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
+	wave := parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	auth := mapAtPath(t, mapAtPath(t, wave, "wave"), "authorization")
 	if runString(auth, "actor") != "human:e2e" || runString(auth, "state") != "armed" {
 		t.Fatalf("one-arm authorization was not preserved: %s", prettyJSON(wave))
@@ -431,7 +431,7 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	daemon.stop()
 	specPath := filepath.Join(h.vaultDir, "specs", "delivery.md")
 	h.writeFile(specPath, h.readFile(specPath)+"\nMaterial post-arm change.\n")
-	staleWave := parseJSON(t, h.cliOK(h.repoDir, "wave", "show", "W-0001", "--vault", h.vaultDir, "--json"))
+	staleWave := parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	if runString(mapAtPath(t, mapAtPath(t, staleWave, "wave"), "authorization"), "state") != "stale" {
 		t.Fatalf("material spec change did not stale authorization: %s", prettyJSON(staleWave))
 	}
@@ -442,10 +442,10 @@ func runSpecToWaveFailureContainment(t *testing.T) {
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "fail-APP-T-0002"))
 	daemon := h.startDaemon("failure-daemon")
 	h.waitForAutomationStatus(crashRunWait)
-	h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
+	h.cliOK(h.repoDir, "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
 	eventually(t, 90*time.Second, 200*time.Millisecond, func() (bool, string) {
 		failed := h.latestRun("APP-T-0002")
-		briefRaw, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
+		briefRaw, err := h.cli(h.repoDir, 10*time.Second, "show", "W-0001", "--vault", h.vaultDir, "--json")
 		if err != nil {
 			return false, string(briefRaw)
 		}
@@ -459,9 +459,9 @@ func runSpecToWaveCredentialContainment(t *testing.T) {
 	h := newSmallDeliveryWave(t, true)
 	daemon := h.startDaemon("credential-daemon")
 	h.waitForAutomationStatus(crashRunWait)
-	h.cliOK(h.repoDir, "wave", "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
+	h.cliOK(h.repoDir, "start", "W-0001", "--mode", "background", "--vault", h.vaultDir, "--by", "human:e2e", "--json")
 	eventually(t, 90*time.Second, 200*time.Millisecond, func() (bool, string) {
-		raw, err := h.cli(h.repoDir, 10*time.Second, "wave", "brief", "W-0001", "--vault", h.vaultDir, "--json")
+		raw, err := h.cli(h.repoDir, 10*time.Second, "show", "W-0001", "--vault", h.vaultDir, "--json")
 		if err != nil {
 			return false, string(raw)
 		}
@@ -494,7 +494,7 @@ func newSmallDeliveryWave(t *testing.T, credentialGate bool) *harness {
 	h.gitOK("config", "user.name", "Delivery Fixture")
 	h.gitOK("add", "-A")
 	h.gitOK("commit", "-m", "small delivery baseline")
-	h.cliOK(h.repoDir, "wave", "create", "Containment wave", "APP-T-0001", "APP-T-0002", "APP-T-0003", "--vault", h.vaultDir, "--quiet")
+	h.cliOK(h.repoDir, "new", "wave", "Containment wave", "APP-T-0001", "APP-T-0002", "APP-T-0003", "--vault", h.vaultDir, "--quiet")
 	h.gitOK("add", "-A")
 	h.gitOK("commit", "-m", "record containment wave")
 	h.gitOK("branch", "-f", "integration/W-0001", "HEAD")
@@ -536,7 +536,7 @@ func (h *harness) setDeliveryFixtureVerificationContracts(taskIDs ...string) {
 		h.writeFile(path, body)
 		rebound = append(rebound, taskID)
 	}
-	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
+	h.cliOK(h.repoDir, "check", "--fix", "--only", "validate,docs", "--vault", h.vaultDir, "--local", "--quiet")
 	for _, taskID := range rebound {
 		h.rebindTaskContract(taskID)
 	}
@@ -1074,12 +1074,8 @@ automation:
 	h.writeFile(filepath.Join(h.vaultDir, "WORKFLOW.md"), workflow)
 
 	h.cliOK(h.repoDir, "projects", "add", "--repo", h.repoDir, "--vault", h.vaultDir, "--json")
-	h.cliOK(h.repoDir, "projects", "enable", "--repo", h.repoDir, "--json")
-	limits := parseJSON(h.t, h.cliOK(h.repoDir, "daemon", "limits", "--json"))
-	if runInt(limits, "max_active_runs") != cfg.MaxActive {
-		h.cliOK(h.repoDir, "daemon", "limits", "--max-active-runs", strconv.Itoa(cfg.MaxActive), "--json")
-	}
-	h.cliOK(h.repoDir, "daemon", "limits", "--disk-pressure-enabled", "false", "--json")
+	h.cliOK(h.repoDir, "projects", "set", "--on", "--repo", h.repoDir, "--json")
+	h.cliOK(h.repoDir, "daemon", "--limit", strconv.Itoa(cfg.MaxActive), "--disk-pressure-enabled", "false", "--json")
 }
 
 func (h *harness) createRunnableTask(title string) {
@@ -1141,7 +1137,7 @@ func (h *harness) createRunnableTaskID(expectedID, title, dependencies string) {
 	end += 4
 	body = body[:end] + "\nowned_paths: [" + ownedPath + "]\nartifact_contract:\n  kind: trace\n  path: " + ownedPath + "\n  summary: Process-boundary crash and convergence timeline.\n  acceptance_ids: [A1]\n" + body[end:]
 	h.writeFile(taskPath, body)
-	h.cliOK(h.repoDir, "reconcile", "--vault", h.vaultDir, "--local", "--quiet")
+	h.cliOK(h.repoDir, "check", "--fix", "--only", "validate,docs", "--vault", h.vaultDir, "--local", "--quiet")
 	h.rebindTaskContract(expectedID)
 }
 
@@ -1156,7 +1152,7 @@ func (h *harness) rebindTaskContract(taskID string) {
 	if rev == "" {
 		h.t.Fatalf("task %s has no state_rev to rebind against", taskID)
 	}
-	h.cliOK(h.repoDir, "task", "update", taskID, "--if-revision", rev, "--rebind-contract", "--by", "human:e2e", "--vault", h.vaultDir, "--local", "--json")
+	h.cliOK(h.repoDir, "edit", taskID, "--if-revision", rev, "--rebind-contract", "--by", "human:e2e", "--vault", h.vaultDir, "--local", "--json")
 }
 
 func (h *harness) gitOK(args ...string) []byte {
@@ -1202,7 +1198,7 @@ func (h *harness) automationStatus() map[string]any {
 
 func (h *harness) automationQueue() map[string]any {
 	h.t.Helper()
-	out := h.cliOK(h.repoDir, "automation", "queue", "--repo", h.repoDir, "--json")
+	out := h.cliOK(h.repoDir, "list", "queue", "--repo", h.repoDir, "--json")
 	return parseJSON(h.t, out)
 }
 

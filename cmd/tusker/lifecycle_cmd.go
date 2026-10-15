@@ -208,7 +208,7 @@ func heldWorkSession(args Args, id, actor string) (bool, error) {
 	if err != nil || run == nil {
 		return false, nil
 	}
-	live := LeaseState(run.LeaseState) == LeaseStateClaimed || LeaseState(run.LeaseState) == LeaseStateRunning
+	_, live := holderLiveness(*run, time.Now().UTC())
 	return live && run.LeaseOwner == actor, nil
 }
 

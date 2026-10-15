@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -834,28 +833,8 @@ func currentExternalApplyEvent(store *RuntimeStore, projectID, recordID string, 
 	if store == nil || strings.TrimSpace(projectID) == "" || strings.TrimSpace(recordID) == "" {
 		return nil, nil
 	}
-	events, err := store.ListExternalLoopEvents(projectID, recordID)
-	if err != nil {
-		return nil, err
-	}
-	wantRevision := strconv.Itoa(run.WorkRevision)
 	liveJobID := firstNonEmpty(strings.TrimSpace(run.CloudTaskID), strings.TrimSpace(run.ApplyRef))
-	for i := len(events) - 1; i >= 0; i-- {
-		event := events[i]
-		if strings.TrimSpace(event.Status) == "blocked" ||
-			normalizeExternalLoopStage(event.Stage) != externalLoopStageCollected ||
-			normalizeExternalLoopAction(event.Action) != externalLoopActionApplyPatch {
-			continue
-		}
-		if revision, _ := externalLoopEventRevisionMaterial(event); revision != wantRevision {
-			continue
-		}
-		if liveJobID != "" && strings.TrimSpace(event.JobID) != liveJobID {
-			continue
-		}
-		return &event, nil
-	}
-	return nil, nil
+	return store.LatestExternalApplyEvent(projectID, recordID, run.WorkRevision, liveJobID)
 }
 
 func listCurrentExternalApplyInputs(store *RuntimeStore, projectID, recordID string, run RunStatus) ([]RuntimeApplyInput, error) {

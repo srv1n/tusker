@@ -234,8 +234,10 @@ func validateV7SpecTraceability(vaultPath string, notes []Note) []Issue {
 	}
 
 	for _, note := range workNotes {
-		if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, note, note.RelativePath); ok && tuskerTier(vaultPath) == 1 {
-			warnings = append(warnings, finding)
+		if tuskerTier(vaultPath) == 1 {
+			if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, note, note.RelativePath); ok {
+				warnings = append(warnings, finding)
+			}
 		}
 		warnings = append(warnings, validateV7SpecRefs(vaultPath, note, decisionIDs)...)
 	}
@@ -268,6 +270,10 @@ func validateV7SpecTraceability(vaultPath string, notes []Note) []Issue {
 // probationary warning-only behavior; the strict tiers require every declared
 // governing spec or decision, including an exact section anchor, to resolve.
 func v7DemandingTaskSpecRefIssue(vaultPath string, note Note, where string) (Issue, bool) {
+	return v7DemandingTaskSpecRefIssueWithIndex(vaultPath, note, where, nil)
+}
+
+func v7DemandingTaskSpecRefIssueWithIndex(vaultPath string, note Note, where string, idx *v7Index) (Issue, bool) {
 	if effectiveV7Kind(note.Data) != "task" || !v7TaskIsDemanding(note.Data) || strings.TrimSpace(stringField(note.Data, "readiness")) != "ready" {
 		return Issue{}, false
 	}
@@ -275,8 +281,14 @@ func v7DemandingTaskSpecRefIssue(vaultPath string, note Note, where string) (Iss
 	if tuskerTier(vaultPath) == 1 && len(refs) > 0 {
 		return Issue{}, false
 	}
-	if tuskerTier(vaultPath) >= 2 && v7TaskHasResolvableSpecRef(vaultPath, refs) {
-		return Issue{}, false
+	if tuskerTier(vaultPath) >= 2 {
+		if idx != nil {
+			if v7TaskHasResolvableSpecRefFromIndex(vaultPath, refs, *idx) {
+				return Issue{}, false
+			}
+		} else if v7TaskHasResolvableSpecRef(vaultPath, refs) {
+			return Issue{}, false
+		}
 	}
 	if tuskerTier(vaultPath) == 1 {
 		return issue(
@@ -302,6 +314,13 @@ func v7TaskHasResolvableSpecRef(vaultPath string, refs []string) bool {
 	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
+		return false
+	}
+	return v7TaskHasResolvableSpecRefFromIndex(vaultPath, refs, idx)
+}
+
+func v7TaskHasResolvableSpecRefFromIndex(vaultPath string, refs []string, idx v7Index) bool {
+	if len(refs) == 0 || strings.TrimSpace(vaultPath) == "" {
 		return false
 	}
 	for _, ref := range refs {

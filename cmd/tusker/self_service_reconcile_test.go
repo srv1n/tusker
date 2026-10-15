@@ -347,7 +347,11 @@ func TestSelfServiceReconcile(t *testing.T) {
 		}
 		// Past next-due the project exposes its next actor and scoped action
 		// instead of a false healthy daemon.
-		overdue, actor, action := selfServiceScheduleOverdue(snapshot, now.Add(2*time.Minute))
+		nextDue, err := time.Parse(time.RFC3339Nano, snapshot.NextDueAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		overdue, actor, action := selfServiceScheduleOverdue(snapshot, nextDue.Add(time.Second))
 		if !overdue || actor != "operator" || !strings.Contains(action, "project-sched") {
 			t.Fatalf("overdue schedule hid its owner: overdue=%v actor=%q action=%q", overdue, actor, action)
 		}

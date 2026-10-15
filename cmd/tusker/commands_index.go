@@ -571,6 +571,7 @@ func validateCmd(args Args) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	idx := v7IndexFromNotes(notes)
 	docGraphIssues, err := docgraph.ValidateRepository(v7RepoRoot(vaultPath))
 	if err != nil {
 		return 0, err
@@ -612,7 +613,7 @@ func validateCmd(args Args) (int, error) {
 	} else {
 		classifyLockedSpecUpdateIssues(specUpdateIssues, &errs, &warns)
 	}
-	v7SkillErrs, v7SkillWarns := validateV7SkillKnowledge(vaultPath)
+	v7SkillErrs, v7SkillWarns := validateV7SkillKnowledgeWithNotes(vaultPath, notes)
 	errs = append(errs, v7SkillErrs...)
 	warns = append(warns, v7SkillWarns...)
 	warns = append(warns, validateV7FeedbackNotes(vaultPath)...)
@@ -663,6 +664,7 @@ func validateCmd(args Args) (int, error) {
 			NoteIDs:      noteIDs,
 			IDToRecordID: idToRecordID,
 			RecordIDs:    recordIDs,
+			V7Index:      &idx,
 		})
 		errs = append(errs, noteErrs...)
 		warns = append(warns, noteWarns...)
@@ -671,7 +673,7 @@ func validateCmd(args Args) (int, error) {
 	eventErrs, eventWarns, eventCount := validateV7Events(vaultPath)
 	errs = append(errs, eventErrs...)
 	warns = append(warns, eventWarns...)
-	generatedErrs, generatedWarns := validateV7GeneratedDashboards(vaultPath)
+	generatedErrs, generatedWarns := validateV7GeneratedDashboardsWithIndex(vaultPath, idx)
 	errs = append(errs, generatedErrs...)
 	warns = append(warns, generatedWarns...)
 	attachmentErrs, attachmentWarns := validateV7AttachmentsPolicy(vaultPath)
@@ -683,7 +685,7 @@ func validateCmd(args Args) (int, error) {
 		warns = append(warns, branchWarns...)
 	}
 	if args.Bool("dispatchable") {
-		errs = append(errs, validateV7DispatchableTasks(vaultPath)...)
+		errs = append(errs, validateV7DispatchableTasksWithIndex(vaultPath, idx)...)
 	}
 	specErrs, specWarns := validateSpecCapsules(vaultPath)
 	errs = append(errs, specErrs...)

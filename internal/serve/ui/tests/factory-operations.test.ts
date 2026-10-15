@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createServer } from "vite";
+import { chromeLaunchOptions } from "./browser-options";
 import { FactoryOperationsSurface } from "../src/features/ops/FactoryOperations";
 import { qk } from "../src/lib/queries";
 import { streamKeyToQueryKeys } from "../src/lib/stream";
@@ -311,7 +312,7 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
     const address = server.httpServer?.address();
     if (!address || typeof address === "string") throw new Error("Vite did not expose a TCP test address");
     const url = `http://127.0.0.1:${address.port}/`;
-    browser = await playwright.chromium.launch({ channel: "chrome", headless: true });
+    browser = await playwright.chromium.launch(chromeLaunchOptions);
     const page = await browser.newPage();
     for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 1600 });

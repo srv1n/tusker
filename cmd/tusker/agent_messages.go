@@ -130,6 +130,25 @@ func (s *RuntimeStore) putAgentMessage(m AgentMessage, operatorOverride bool) (A
 	return m, false, s.queueAgentMessageWakeup(m)
 }
 
+// ListOpenAgentQuestionsForProject batches the unanswered questions used by
+// run state. Callers retain their own recipient and revision rules.
+func (s *RuntimeStore) ListOpenAgentQuestionsForProject(projectID string) ([]AgentMessage, error) {
+	rows, err := s.query(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages WHERE project_id=? AND kind='question' AND answered_at='' ORDER BY created_at,id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentMessage{}
+	for rows.Next() {
+		message, err := scanAgentMessageValue(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, message)
+	}
+	return out, rows.Err()
+}
+
 func (s *RuntimeStore) ListAgentMessagesForTask(projectID, taskID string) ([]AgentMessage, error) {
 	typed := "task:" + taskID
 	rows, err := s.query(`SELECT id,idempotency_key,project_id,sender,recipient_kind,recipient_id,origin_task_id,origin_wave_id,work_revision,route_generation,recipient_generation,kind,body,reply_to,reply_required,yield_sender,state,transport_state,consumed_at,answered_at,applied_at,expires_at,created_at FROM agent_messages m WHERE project_id=? AND (origin_task_id=? OR (recipient_kind='task' AND recipient_id=?) OR sender=? OR EXISTS (SELECT 1 FROM agent_messages p WHERE p.project_id=m.project_id AND p.id=m.reply_to AND p.origin_task_id=?)) ORDER BY created_at,id`, projectID, taskID, taskID, typed, taskID)

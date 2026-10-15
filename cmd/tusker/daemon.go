@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -42,11 +43,16 @@ type Daemon struct {
 	fairDispatchRun            func(context.Context, RegisteredProject, WorkflowFile, Note, RunStatus, string, string) (RunStatus, bool, bool, error)
 	diskStat                   diskStatFunc
 	notifyMu                   sync.Mutex
-	notifyTimers               map[string]*time.Timer
+	notifyPending              map[string]bool
+	notifyClosed               bool
 	notifyWake                 chan string
 	frontierMu                 sync.Mutex
 	frontiers                  map[string]*projectFrontierIndex
 	frontierHints              map[string][]daemonControlChange
+	frontierScannedAt          map[string]time.Time
+	frontierWriteGeneration    map[string]uint64
+	pollPreferFrontier         bool
+	pollFrontierChanged        bool
 	attentionLastPoll          map[string]time.Time
 	departureMu                sync.Mutex
 	departureSchedules         map[string]departureSchedule
@@ -64,6 +70,8 @@ type Daemon struct {
 	pollProcessIdentity        func(RunStatus) bool
 	completionAuthorityMu      sync.Mutex
 	completionAuthorityKey     map[string]ed25519.PrivateKey
+	codexExecIngestMu          sync.Mutex
+	codexExecIngest            map[string]*codexExecIngestState
 }
 
 const (
@@ -188,11 +196,19 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				if err != nil {
 					return daemonControlResponse{OK: false, Message: err.Error()}
 				}
+				if req.Worker != nil {
+					d.recordFrontierHint(req.ProjectID, []daemonControlChange{{ID: req.Worker.RecordID, Kind: "run"}})
+				}
+				if d.serve != nil {
+					d.serve.refreshProjectSnapshot(req.ProjectID)
+				}
+				d.scheduleProjectReconcile(req.ProjectID)
 				return daemonControlResponse{OK: true}
 			case "interrupt":
 				if err := d.InterruptRunScoped(reqCtx, req.ProjectID, req.Identity); err != nil {
 					return daemonControlResponse{OK: false, Message: err.Error()}
 				}
+				d.scheduleProjectReconcile(req.ProjectID)
 				return daemonControlResponse{OK: true}
 			case "stop":
 				cancel()
@@ -202,6 +218,13 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 					return daemonControlResponse{OK: false, Message: "project_id is required"}
 				}
 				d.recordFrontierHint(req.ProjectID, req.Changes)
+				if d.serve != nil {
+					if daemonControlChangesRuntimeOnly(req.Changes) {
+						d.serve.refreshProjectRuntimeSnapshot(req.ProjectID)
+					} else {
+						d.serve.invalidateProjectSnapshot(req.ProjectID)
+					}
+				}
 				d.scheduleProjectReconcile(req.ProjectID)
 				return daemonControlResponse{OK: true}
 			case "reconcile_registry":
@@ -283,6 +306,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			}
 			sweepScratch(now)
 		case projectID := <-d.notifyWake:
+			d.takeProjectReconcile(projectID)
 			if projectID == "*" {
 				if err := d.runPoll(runCtx, ""); err != nil {
 					return err
@@ -313,7 +337,7 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				return err
 			}
 			for _, projectID := range due {
-				if err := d.runPoll(runCtx, projectID); err != nil {
+				if err := d.runScheduledPoll(runCtx, projectID); err != nil {
 					return err
 				}
 			}
@@ -332,6 +356,15 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 			resetTimer(pollTimer, d.nextDepartureWait(time.Now().UTC(), wait))
 		}
 	}
+}
+
+// Scheduled ticks maintain live runs from the existing frontier. Explicit
+// project polls and notifications without precise hints retain a full read.
+func (d *Daemon) runScheduledPoll(ctx context.Context, projectID string) error {
+	previous := d.pollPreferFrontier
+	d.pollPreferFrontier = true
+	defer func() { d.pollPreferFrontier = previous }()
+	return d.runPoll(ctx, projectID)
 }
 
 func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
@@ -872,32 +905,47 @@ func (d *Daemon) scheduleProjectReconcile(projectID string) {
 	}
 	d.notifyMu.Lock()
 	defer d.notifyMu.Unlock()
-	if d.notifyTimers == nil {
-		d.notifyTimers = map[string]*time.Timer{}
+	if d.notifyClosed {
+		return
 	}
-	if timer := d.notifyTimers[projectID]; timer != nil {
-		timer.Stop()
+	if d.notifyPending == nil {
+		d.notifyPending = map[string]bool{}
+	}
+	if _, pending := d.notifyPending[projectID]; pending {
+		return
 	}
 	if d.notifyWake == nil {
 		d.notifyWake = make(chan string, 256)
 	}
-	var timer *time.Timer
-	timer = time.AfterFunc(350*time.Millisecond, func() {
-		d.notifyMu.Lock()
-		if d.notifyTimers[projectID] == timer {
-			delete(d.notifyTimers, projectID)
+	d.notifyPending[projectID] = false
+	d.queueProjectReconcilesLocked()
+}
+
+// Keep a key pending until the loop consumes its signal. Duplicate writes
+// cannot fill the queue, and a full queue leaves its remaining keys pending.
+func (d *Daemon) queueProjectReconcilesLocked() {
+	for projectID, queued := range d.notifyPending {
+		if queued {
+			continue
 		}
-		d.notifyMu.Unlock()
 		select {
 		case d.notifyWake <- projectID:
+			d.notifyPending[projectID] = true
 		default:
+			return
 		}
-	})
-	d.notifyTimers[projectID] = timer
+	}
+}
+
+func (d *Daemon) takeProjectReconcile(projectID string) {
+	d.notifyMu.Lock()
+	defer d.notifyMu.Unlock()
+	delete(d.notifyPending, projectID)
+	d.queueProjectReconcilesLocked()
 }
 
 func (d *Daemon) recordFrontierHint(projectID string, changes []daemonControlChange) {
-	if d == nil || strings.TrimSpace(projectID) == "" || len(changes) == 0 {
+	if d == nil || strings.TrimSpace(projectID) == "" {
 		return
 	}
 	d.frontierMu.Lock()
@@ -905,7 +953,29 @@ func (d *Daemon) recordFrontierHint(projectID string, changes []daemonControlCha
 	if d.frontierHints == nil {
 		d.frontierHints = map[string][]daemonControlChange{}
 	}
-	d.frontierHints[projectID] = append(d.frontierHints[projectID], changes...)
+	if len(changes) == 0 {
+		// A project-only notification carries an unknown mutation and must win
+		// over precise hints already waiting behind the same coalesced wake.
+		d.frontierHints[projectID] = []daemonControlChange{{Kind: "full"}}
+		return
+	}
+	previous := d.frontierHints[projectID]
+	if len(previous) == 1 && previous[0].Kind == "full" && previous[0].ID == "" {
+		return
+	}
+	merged := make(map[string]daemonControlChange, len(previous)+len(changes))
+	for _, change := range append(previous, changes...) {
+		merged[strings.ToLower(change.Kind)+"\x00"+change.ID] = change
+	}
+	if len(merged) > 256 {
+		// A large batch is cheaper and safer as one canonical reload.
+		d.frontierHints[projectID] = []daemonControlChange{{Kind: "full"}}
+		return
+	}
+	d.frontierHints[projectID] = make([]daemonControlChange, 0, len(merged))
+	for _, change := range merged {
+		d.frontierHints[projectID] = append(d.frontierHints[projectID], change)
+	}
 }
 
 func (d *Daemon) takeFrontierHint(projectID string) []daemonControlChange {
@@ -924,9 +994,61 @@ func (d *Daemon) clearFrontiers() {
 		return
 	}
 	d.frontierMu.Lock()
-	defer d.frontierMu.Unlock()
+	var vaults []string
+	for _, index := range d.frontiers {
+		for _, note := range index.Records {
+			if vault := mutationVaultRoot(note.AbsolutePath); vault != "" {
+				vaults = append(vaults, vault)
+				break
+			}
+		}
+	}
 	d.frontiers = map[string]*projectFrontierIndex{}
 	d.frontierHints = map[string][]daemonControlChange{}
+	d.frontierScannedAt = map[string]time.Time{}
+	d.frontierWriteGeneration = map[string]uint64{}
+	d.frontierMu.Unlock()
+	for _, vault := range uniqueStrings(vaults) {
+		disposeCachedNotes(vault)
+	}
+	if d.serve != nil {
+		d.serve.forgetProjectSnapshot("")
+	}
+}
+
+func (d *Daemon) pruneFrontiers(projects []RegisteredProject) {
+	registered := map[string]bool{}
+	for _, project := range projects {
+		registered[project.ProjectID] = true
+	}
+	var retiredVaults []string
+	var retiredProjects []string
+	d.frontierMu.Lock()
+	for projectID, index := range d.frontiers {
+		if registered[projectID] {
+			continue
+		}
+		for _, note := range index.Records {
+			if vault := mutationVaultRoot(note.AbsolutePath); vault != "" {
+				retiredVaults = append(retiredVaults, vault)
+				break
+			}
+		}
+		retiredProjects = append(retiredProjects, projectID)
+		delete(d.frontiers, projectID)
+		delete(d.frontierHints, projectID)
+		delete(d.frontierScannedAt, projectID)
+		delete(d.frontierWriteGeneration, projectID)
+	}
+	d.frontierMu.Unlock()
+	for _, vault := range uniqueStrings(retiredVaults) {
+		disposeCachedNotes(vault)
+	}
+	if d.serve != nil {
+		for _, projectID := range retiredProjects {
+			d.serve.forgetProjectSnapshot(projectID)
+		}
+	}
 }
 
 func (d *Daemon) rebuildFrontier(projectID string, notes []Note) {
@@ -941,6 +1063,14 @@ func (d *Daemon) rebuildFrontier(projectID string, notes []Note) {
 	index := newProjectFrontierIndex(projectID)
 	index.rebuild(notes)
 	d.frontiers[projectID] = index
+	if d.frontierScannedAt == nil {
+		d.frontierScannedAt = map[string]time.Time{}
+	}
+	d.frontierScannedAt[projectID] = time.Now().UTC()
+	if d.frontierWriteGeneration == nil {
+		d.frontierWriteGeneration = map[string]uint64{}
+	}
+	d.frontierWriteGeneration[projectID] = v7DocumentWriteGeneration.Load()
 }
 
 // applyFrontierHint is deliberately all-or-nothing: any unknown path, deleted
@@ -952,9 +1082,11 @@ func (d *Daemon) applyFrontierHint(project RegisteredProject, changes []daemonCo
 	d.frontierMu.Lock()
 	defer d.frontierMu.Unlock()
 	index := d.frontiers[project.ProjectID]
-	if index == nil {
+	if index == nil || d.frontierScannedAt[project.ProjectID].IsZero() ||
+		time.Since(d.frontierScannedAt[project.ProjectID]) >= reconcileFullCadence ||
+		(daemonControlChangesRuntimeOnly(changes) && d.frontierWriteGeneration[project.ProjectID] != v7DocumentWriteGeneration.Load()) {
 		return nil, false
-	} // daemon restart: cold reconstruction
+	} // Restart, external-edit deadline, or unhinted canonical write.
 	recordChanges := make([]daemonControlChange, 0, len(changes))
 	runtimeTaskIDs := make([]string, 0, len(changes))
 	for _, change := range changes {
@@ -993,6 +1125,7 @@ func (d *Daemon) applyFrontierHint(project RegisteredProject, changes []daemonCo
 			return nil, false
 		}
 	}
+	d.frontierWriteGeneration[project.ProjectID] = v7DocumentWriteGeneration.Load()
 	return index.notes(), true
 }
 
@@ -1004,19 +1137,83 @@ func frontierRuntimeOnlyChange(change daemonControlChange) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(change.Revision)), "lease:")
 }
 
+func daemonControlChangesRuntimeOnly(changes []daemonControlChange) bool {
+	if len(changes) == 0 {
+		return false
+	}
+	for _, change := range changes {
+		if !frontierRuntimeOnlyChange(change) {
+			return false
+		}
+	}
+	return true
+}
+
+// Live ticks reload the tasks that can affect a run, rather than walking the
+// entire vault. Unknown/deleted records and the bounded external-edit fallback
+// all force the existing full-read path. Dispatch still refreshes canonical
+// state immediately before claiming a lease.
+func (d *Daemon) frontierMaintenanceNotes(project RegisteredProject, wf Workflow, runs []RunStatus, now time.Time) ([]Note, bool) {
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	index := d.frontiers[project.ProjectID]
+	lastScan := d.frontierScannedAt[project.ProjectID]
+	if index == nil || lastScan.IsZero() || now.Sub(lastScan) >= reconcileFullCadence ||
+		d.frontierWriteGeneration[project.ProjectID] != v7DocumentWriteGeneration.Load() {
+		return nil, false
+	}
+	active := map[string]bool{}
+	for _, run := range runs {
+		if run.ProjectID == project.ProjectID && !run.Terminal {
+			active[run.RecordID] = true
+		}
+	}
+	for id, note := range index.Records {
+		if note.AbsolutePath != "" && !isWithinPath(note.AbsolutePath, project.VaultRoot) {
+			return nil, false
+		}
+		if daemonNoteKind(note) == "task" &&
+			(containsString(wf.Tracker.ActiveStates, stringField(note.Data, "status")) ||
+				containsString(wf.Tracker.ReviewStates, stringField(note.Data, "status"))) {
+			active[id] = true
+		}
+	}
+	paths := make([]string, 0, len(active))
+	for id := range active {
+		note, ok := index.Records[id]
+		if !ok || note.AbsolutePath == "" || !isWithinPath(note.AbsolutePath, project.VaultRoot) {
+			return nil, false
+		}
+		paths = append(paths, note.AbsolutePath)
+	}
+	if len(paths) > 0 {
+		notes, err := loadOperationalNotesByPath(project.VaultRoot, paths)
+		if err != nil || len(notes) != len(paths) {
+			return nil, false
+		}
+		for _, note := range notes {
+			if !reflect.DeepEqual(index.Records[stringField(note.Data, "id")], note) {
+				d.pollFrontierChanged = true
+			}
+		}
+		index.apply(notes)
+	}
+	return index.notes(), true
+}
+
 func (d *Daemon) stopNotifyTimers() {
 	if d == nil {
 		return
 	}
 	d.notifyMu.Lock()
 	defer d.notifyMu.Unlock()
-	for projectID, timer := range d.notifyTimers {
-		timer.Stop()
-		delete(d.notifyTimers, projectID)
-	}
+	d.notifyClosed = true
+	d.notifyPending = nil
 }
 
 func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
+	d.pollFrontierChanged = false
+	writeGeneration := v7DocumentWriteGeneration.Load()
 	restoreProcessIdentity := d.beginPollProcessIdentityCache()
 	defer restoreProcessIdentity()
 	previousPollAt, err := d.store.GetSetting("daemon_last_poll_at")
@@ -1026,16 +1223,41 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err := d.feedWatchdogBeat(time.Now().UTC()); err != nil {
 		return err
 	}
+	allRuns, err := d.store.ListRunsForPoll(projectID)
+	if err != nil {
+		return err
+	}
+	if reclaimed, reclaimErr := d.reclaimExpiredDispatchCapacity(allRuns, time.Now().UTC()); reclaimErr != nil {
+		return reclaimErr
+	} else if reclaimed {
+		allRuns, err = d.store.ListRunsForPoll(projectID)
+		if err != nil {
+			return err
+		}
+	}
 	var projects []loadedRegisteredProject
 	warmProjectID := ""
 	if projectID != "" {
 		if changes := d.takeFrontierHint(projectID); len(changes) > 0 {
+			d.pollFrontierChanged = !daemonControlChangesRuntimeOnly(changes)
 			projects, err = loadRegisteredProjects(d.store, registeredProjectLoadOptions{ProjectID: projectID})
 			if err != nil {
 				return err
 			}
 			if len(projects) == 1 && projects[0].Loadable() {
 				if notes, ok := d.applyFrontierHint(projects[0].Project, changes); ok {
+					projects[0].Notes = notes
+					warmProjectID = projectID
+				}
+			}
+		}
+		if warmProjectID == "" && d.pollPreferFrontier {
+			projects, err = loadRegisteredProjects(d.store, registeredProjectLoadOptions{ProjectID: projectID})
+			if err != nil {
+				return err
+			}
+			if len(projects) == 1 && projects[0].Loadable() {
+				if notes, ok := d.frontierMaintenanceNotes(projects[0].Project, projects[0].Workflow.Data, allRuns, time.Now().UTC()); ok {
 					projects[0].Notes = notes
 					warmProjectID = projectID
 				}
@@ -1048,18 +1270,6 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err != nil {
 		return err
 	}
-	allRuns, err := d.store.ListRuns()
-	if err != nil {
-		return err
-	}
-	if reclaimed, reclaimErr := d.reclaimExpiredDispatchCapacity(allRuns, time.Now().UTC()); reclaimErr != nil {
-		return reclaimErr
-	} else if reclaimed {
-		allRuns, err = d.store.ListRuns()
-		if err != nil {
-			return err
-		}
-	}
 	sentinelProjects := []runtimeSentinelProjectSnapshot{}
 	runsByProject := map[string]map[string]RunStatus{}
 	for _, run := range allRuns {
@@ -1071,6 +1281,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	for i := range projects {
 		loaded := &projects[i]
 		if !loaded.Loadable() {
+			continue
+		}
+		if loaded.Project.ProjectID == warmProjectID {
 			continue
 		}
 		bodiesLoaded := false
@@ -1142,6 +1355,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				d.pollTaskMeta = map[string]serveStreamTaskMeta{}
 			}
 			notesByID, notesByRecordID := daemonNoteMaps(notes)
+			terminalHumanWait := newV7TerminalHumanWaitChecker(project.VaultRoot)
 			keep := map[string]struct{}{}
 			for _, note := range notes {
 				if daemonNoteKind(note) != "task" {
@@ -1289,7 +1503,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					}
 				}
 			}
-			if err := d.advanceAuthorizedWaveFrontiers(project); err != nil {
+			if err := d.advanceAuthorizedWaveFrontiersFromNotes(project, notes); err != nil {
 				return err
 			}
 			stateActiveRuns := countDispatchCapacityProjectRunsByState(projectRuns, noteStatusByRecord)
@@ -1620,7 +1834,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					projectRuns[recordID] = current
 					continue
 				}
-				if !reviewDispatchAllowed(project.VaultRoot, note, wfFile.Data, current, reviewCycles) {
+				if !reviewDispatchAllowedWithHumanWait(note, wfFile.Data, current, reviewCycles, terminalHumanWait) {
 					// Never park a live run here: flipping its lease makes the wrapper
 					// heartbeat cancel the reviewer mid-turn ("completion-authoritative
 					// runner cancelled: context canceled").
@@ -1794,15 +2008,17 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	if err := d.store.SetSetting("daemon_last_poll_at", currentPollAt); err != nil {
 		return err
 	}
-	finalRuns, err := d.store.ListRuns()
+	finalRuns, err := d.store.ListRunsForPoll(projectID)
 	if err != nil {
 		return err
 	}
 	if err := d.evaluateWorkerAttention(finalRuns, visibilityIntervals, time.Now().UTC()); err != nil {
 		return err
 	}
-	if err := refreshRuntimeSentinelProjectNotes(sentinelProjects); err != nil {
-		return err
+	if warmProjectID == "" || writeGeneration != v7DocumentWriteGeneration.Load() {
+		if err := refreshRuntimeSentinelProjectNotes(sentinelProjects); err != nil {
+			return err
+		}
 	}
 	if _, err := d.refreshInvariantCircuitStatus(runtimeSentinelSnapshot{
 		Projects:       sentinelProjects,
@@ -1815,7 +2031,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		return err
 	}
 	if projectID != "" && d.serve != nil {
-		d.serve.refreshProjectSnapshot(projectID)
+		if warmProjectID != "" && !d.pollFrontierChanged && writeGeneration == v7DocumentWriteGeneration.Load() {
+			d.serve.refreshProjectRuntimeSnapshot(projectID)
+		} else {
+			d.serve.refreshProjectSnapshot(projectID)
+		}
 	}
 	return nil
 }
@@ -2377,6 +2597,12 @@ func shouldResumeExecuteFromReleasedReview(run RunStatus) bool {
 }
 
 func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStatus, reviewCycles int) bool {
+	return reviewDispatchAllowedWithHumanWait(note, wf, run, reviewCycles, func(task Note) bool {
+		return v7TerminalHumanWait(vaultPath, task, wf)
+	})
+}
+
+func reviewDispatchAllowedWithHumanWait(note Note, wf Workflow, run RunStatus, reviewCycles int, terminalHumanWait func(Note) bool) bool {
 	if !wf.Reviewer.Enabled {
 		return false
 	}
@@ -2386,7 +2612,7 @@ func reviewDispatchAllowed(vaultPath string, note Note, wf Workflow, run RunStat
 	if stringField(note.Data, "status") != "review" {
 		return false
 	}
-	if v7TerminalHumanWait(vaultPath, note, wf) {
+	if terminalHumanWait(note) {
 		return false
 	}
 	if stringField(note.Data, "closed_at") != "" {
@@ -2491,20 +2717,33 @@ func daemonNoteKind(note Note) string {
 	return firstNonEmpty(stringField(note.Data, "type"), stringField(note.Data, "kind"))
 }
 
+// Ordinary reviews cannot be terminal human waits; only load the full index
+// for a matching closeout, and share it across the project's review tasks.
+func newV7TerminalHumanWaitChecker(vaultPath string) func(Note) bool {
+	var idx v7Index
+	loaded := false
+	return func(note Note) bool {
+		if !isV7TaskNote(note) || stringField(note.Data, "closeout_status") != "machine_complete_waiting_for_human" {
+			return false
+		}
+		if !loaded {
+			var err error
+			idx, err = loadV7Index(vaultPath)
+			loaded = true
+			if err != nil {
+				return false
+			}
+		}
+		if task, ok := idx.Tasks[stringField(note.Data, "id")]; ok {
+			note = task
+		}
+		_, ok := v7LatestValidTerminalCloseout(vaultPath, note, idx)
+		return ok
+	}
+}
+
 func v7TerminalHumanWait(vaultPath string, note Note, wf Workflow) bool {
-	_ = wf
-	if !isV7TaskNote(note) {
-		return false
-	}
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return false
-	}
-	if task, ok := idx.Tasks[stringField(note.Data, "id")]; ok {
-		note = task
-	}
-	_, ok := v7LatestValidTerminalCloseout(vaultPath, note, idx)
-	return ok
+	return newV7TerminalHumanWaitChecker(vaultPath)(note)
 }
 
 func v7MachineCompleteWaitingForHuman(vaultPath string, note Note) (bool, string) {
@@ -2623,10 +2862,17 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 }
 
 func (d *Daemon) advanceAuthorizedWaveFrontiers(project RegisteredProject) error {
-	idx, err := loadV7Index(project.VaultRoot)
+	notes, err := listOperationalNotes(project.VaultRoot)
 	if err != nil {
 		return err
 	}
+	return d.advanceAuthorizedWaveFrontiersFromNotes(project, notes)
+}
+
+func (d *Daemon) advanceAuthorizedWaveFrontiersFromNotes(project RegisteredProject, notes []Note) error {
+	// Wave identities are already in the operational snapshot; each queue
+	// operation independently reloads the canonical authorization it needs.
+	idx := v7IndexFromNotes(notes)
 	waveIDs := make([]string, 0, len(idx.Waves))
 	for id := range idx.Waves {
 		waveIDs = append(waveIDs, id)
@@ -2731,8 +2977,11 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 			return run, false, nil
 		}
 	}
+	rawLogChanged := false
 	if isDispatchCapacityLeaseState(run.LeaseState) {
-		if _, err := d.ingestCodexExecRawLog(run); err != nil {
+		var err error
+		rawLogChanged, err = d.ingestCodexExecRawLog(run)
+		if err != nil {
 			return run, false, err
 		}
 	}
@@ -2743,7 +2992,7 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 		return d.retireCanonicalRuntimeRun(ctx, project, run, trackerState, "daemon:reconcile", "")
 	}
 	if !isDispatchCapacityLeaseState(run.LeaseState) {
-		return d.reconcileRun(ctx, project, wfFile, run)
+		return d.reconcileRunWithIngest(ctx, project, wfFile, run, true, rawLogChanged)
 	}
 	if strings.TrimSpace(note.AbsolutePath) != "" {
 		if turnCapped, changed, err := d.enforceTurnCapForRun(ctx, project, wfFile.Data, run); err != nil || changed {
@@ -2751,13 +3000,13 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 		}
 	}
 	if run.Lane == runLaneReview && containsString(wfFile.Data.Tracker.ReviewStates, trackerState) {
-		return d.reconcileRun(ctx, project, wfFile, run)
+		return d.reconcileRunWithIngest(ctx, project, wfFile, run, true, rawLogChanged)
 	}
 	if completedReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
-		return d.reconcileRun(ctx, project, wfFile, run)
+		return d.reconcileRunWithIngest(ctx, project, wfFile, run, true, rawLogChanged)
 	}
 	if d.activeReviewHandoffCanReconcile(wfFile.Data, run, trackerState) {
-		return d.reconcileRun(ctx, project, wfFile, run)
+		return d.reconcileRunWithIngest(ctx, project, wfFile, run, true, rawLogChanged)
 	}
 	if strings.TrimSpace(note.AbsolutePath) == "" {
 		reason := fmt.Sprintf("tracker state %q is not dispatchable; daemon released run", firstNonEmpty(trackerState, "missing"))
@@ -2770,7 +3019,7 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 	if blockedReason != "" {
 		return d.releaseIneligibleRun(ctx, project, run, blockedReason+"; daemon released run")
 	}
-	return d.reconcileRun(ctx, project, wfFile, run)
+	return d.reconcileRunWithIngest(ctx, project, wfFile, run, true, rawLogChanged)
 }
 
 func projectedNoteMap(notes map[string]Note, idx v7Index) map[string]Note {
@@ -2905,9 +3154,13 @@ func (d *Daemon) runLeaseRenewalDispatchable(project RegisteredProject, wf Workf
 // reconcileRun removes a shared-checkout review worktree once its review
 // attempt has ended, whatever the outcome.
 func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus) (RunStatus, bool, error) {
+	return d.reconcileRunWithIngest(ctx, project, wfFile, run, false, false)
+}
+
+func (d *Daemon) reconcileRunWithIngest(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, alreadyIngested, ingestionChanged bool) (RunStatus, bool, error) {
 	// Resolve the worktree before reconciliation finalizes the attempt.
 	reviewPath, _ := sharedReviewWorkspace(d.store, run)
-	updated, changed, err := d.reconcileRunAttempt(ctx, project, wfFile, run)
+	updated, changed, err := d.reconcileRunAttemptWithIngest(ctx, project, wfFile, run, alreadyIngested, ingestionChanged)
 	if err == nil && reviewPath != "" && isDispatchingLeaseState(run.LeaseState) &&
 		(!isDispatchingLeaseState(updated.LeaseState) || updated.ActiveAttemptID != run.ActiveAttemptID) {
 		_ = cleanupWorkspacePath(reviewPath)
@@ -2916,13 +3169,17 @@ func (d *Daemon) reconcileRun(ctx context.Context, project RegisteredProject, wf
 }
 
 func (d *Daemon) reconcileRunAttempt(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus) (RunStatus, bool, error) {
+	return d.reconcileRunAttemptWithIngest(ctx, project, wfFile, run, false, false)
+}
+
+func (d *Daemon) reconcileRunAttemptWithIngest(ctx context.Context, project RegisteredProject, wfFile WorkflowFile, run RunStatus, alreadyIngested, ingestionChanged bool) (RunStatus, bool, error) {
 	switch LeaseState(run.LeaseState) {
 	case LeaseStateClaimed, LeaseStateRunning:
 	default:
 		return run, false, nil
 	}
 
-	changed := false
+	changed := ingestionChanged
 	nowTime := time.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
 	if reconciled, suppressRetry, stopChanged, err := d.reconcilePersistedStopIntent(run); err != nil {
@@ -2935,13 +3192,22 @@ func (d *Daemon) reconcileRunAttempt(ctx context.Context, project RegisteredProj
 		// schedule a continuation from this run.
 		return reconciled, stopChanged, nil
 	}
-	if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
-		return run, false, err
-	} else if ingested {
-		changed = true
+	if !alreadyIngested {
+		if ingested, err := d.ingestCodexExecRawLog(run); err != nil {
+			return run, false, err
+		} else if ingested {
+			changed = true
+		}
 	}
-	if strings.TrimSpace(run.RawLogPath) != "" {
-		if sessionRef := extractSessionRef(run.RawLogPath); sessionRef != "" && sessionRef != run.SessionRef {
+	observedSession, observedMessage := "", ""
+	if RunnerName(run.Runner) == RunnerCodexExec {
+		observedSession, observedMessage = d.codexExecObservedRefs(run)
+	} else if strings.TrimSpace(run.RawLogPath) != "" {
+		observedSession = extractSessionRef(run.RawLogPath)
+		observedMessage = extractMessageRef(run.RawLogPath)
+	}
+	if observedSession != "" {
+		if sessionRef := observedSession; sessionRef != run.SessionRef {
 			run.SessionRef = sessionRef
 			changed = true
 		}
@@ -2980,10 +3246,7 @@ func (d *Daemon) reconcileRunAttempt(ctx context.Context, project RegisteredProj
 	if err := recordRunBoundaryTraces(project, run); err != nil {
 		return run, changed, err
 	}
-	messageRef := ""
-	if strings.TrimSpace(run.RawLogPath) != "" {
-		messageRef = extractMessageRef(run.RawLogPath)
-	}
+	messageRef := observedMessage
 	if strings.TrimSpace(run.SessionRef) != "" {
 		_ = d.store.SaveSession(RunnerSession{
 			ProjectID:      project.ProjectID,
@@ -6687,21 +6950,13 @@ func latestRunnerEventSinkAt(path string) (time.Time, bool) {
 	if path == "" {
 		return time.Time{}, false
 	}
-	text, err := readText(path)
-	if err != nil {
-		return time.Time{}, false
-	}
+	// Only recent runner activity can advance the persisted heartbeat. Retained
+	// event history must not make each live tick read an ever-growing file.
+	budget := int64(256 << 10)
+	events := runActivityTailWithBudget(path, &budget, 256)
 	var latest time.Time
 	found := false
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(line), &payload); err != nil {
-			continue
-		}
+	for _, payload := range events {
 		kind := strings.TrimSpace(stringValue(payload["kind"]))
 		if daemonOwnedEventKind(kind) {
 			continue

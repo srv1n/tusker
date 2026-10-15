@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -525,12 +526,17 @@ func extractMessageRef(rawLogPath string) string {
 }
 
 func extractFirstRef(rawLogPath string, extractor func(string) string) string {
-	text, err := readText(rawLogPath)
+	file, err := os.Open(rawLogPath)
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	// One delimiter byte of headroom also permits a full-cap final record
+	// without a newline. Stop at the first match without retaining the log.
+	scanner.Buffer(make([]byte, 32<<10), int(completionAuthoritativeRawLogMaxBytes)+1)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}

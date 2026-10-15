@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite";
+import { chromeLaunchOptions } from "../tests/browser-options";
 
 // Vite needs the fixture under the UI root to resolve node_modules; afterAll removes it even when the test times out.
 const fixtures: string[] = [];
@@ -35,7 +36,7 @@ const root = createRoot(document.getElementById("root")!);
     await server.listen();
     const address = server.httpServer?.address();
     if (!address || typeof address === "string") throw new Error("Vite address unavailable");
-    browser = await playwright.chromium.launch({ channel: "chrome", headless: true });
+    browser = await playwright.chromium.launch(chromeLaunchOptions);
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${address.port}/`);
     for (const kind of ["decision", "question", "permission", "decision"]) {

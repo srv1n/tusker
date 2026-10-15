@@ -43,6 +43,26 @@ type runClaimResult struct {
 	Authorization *RunAuthorization `json:"authorization,omitempty"`
 }
 
+const quietInteractiveLeaseTTL = 24 * time.Hour
+
+// Keep live and uncertain process identities fenced even after the quiet TTL.
+func quietInteractiveLeaseExpired(run RunStatus, now time.Time) bool {
+	expires, err := time.Parse(time.RFC3339, run.LeaseExpiresAt)
+	if !run.HandRun || run.Terminal || err != nil || !expires.Before(now.Add(-quietInteractiveLeaseTTL)) {
+		return false
+	}
+	if run.ProcessPID > 0 && processExists(run.ProcessPID) {
+		// A reused PID is not the original owner. Keep missing/unreadable
+		// identities fenced, but let the group classifier reject foreign ones.
+		actual, ok := processStartTime(run.ProcessPID)
+		if expected := strings.TrimSpace(run.ProcessStartedAt); expected == "" || !ok || actual == expected {
+			return false
+		}
+	}
+	liveness := classifyRunLiveness(run)
+	return liveness == runLivenessGone || liveness == runLivenessForeign
+}
+
 // holderLiveness reports the liveness verdict named in a claim refusal and
 // whether that holder still blocks the claim.  Lease age alone is not the
 // verdict: an aged-out lease does not release the files its holder is still
@@ -55,6 +75,9 @@ func holderLiveness(run RunStatus, now time.Time) (string, bool) {
 		return "fresh", true
 	case "stale":
 		if run.HandRun && !run.Terminal {
+			if quietInteractiveLeaseExpired(run, now) {
+				return "quiet_interactive_expired", false
+			}
 			return "quiet_interactive", true
 		}
 		switch classifyRunLiveness(run) {
@@ -122,32 +145,44 @@ func ownedPathConflict(candidate Note, notes map[string]Note, runs []RunStatus, 
 		return nil, false
 	}
 	for _, run := range runs {
-		liveness, blocking := holderLiveness(run, now)
-		// A parked or submitted task still has its files on disk in a shared
-		// checkout, so its scope stays claimed even without a live lease.
-		if !blocking && sharedCheckoutRunHoldsWork(run) && sharedWorkspaceMetadata(run.WorkspacePath) {
-			liveness, blocking = "holds_shared_checkout_work", true
-		}
-		if run.ItemID == stringField(candidate.Data, "id") || !blocking {
+		if run.ItemID == stringField(candidate.Data, "id") {
 			continue
 		}
 		holder, ok := notes[run.ItemID]
 		if !ok {
 			continue
 		}
-		for _, mine := range wanted {
-			for _, theirs := range taskOwnershipClaims(holder) {
-				if taskOwnershipClaimsOverlap(mine, theirs) {
-					age := "unknown"
-					if started, err := time.Parse(time.RFC3339, firstNonEmpty(run.StartedAt, run.UpdatedAt)); err == nil {
-						age = now.Sub(started).Round(time.Second).String()
-					}
-					return map[string]any{"code": taskOwnershipConflictCode(mine.Kind), "holder": run.LeaseOwner, "task_id": run.ItemID, "lease_age": age, "liveness": liveness, "candidate_path": mine.Value, "holder_path": theirs.Value, "ownership_kind": mine.Kind}, true
-				}
+		mine, theirs, overlaps := firstTaskOwnershipOverlap(wanted, taskOwnershipClaims(holder))
+		if !overlaps {
+			continue
+		}
+		liveness, blocking := holderLiveness(run, now)
+		// A parked or submitted task still has its files on disk in a shared
+		// checkout, so its scope stays claimed even without a live lease.
+		if !blocking && !quietInteractiveLeaseExpired(run, now) && sharedCheckoutRunHoldsWork(run) && sharedWorkspaceMetadata(run.WorkspacePath) {
+			liveness, blocking = "holds_shared_checkout_work", true
+		}
+		if !blocking {
+			continue
+		}
+		age := "unknown"
+		if started, err := time.Parse(time.RFC3339, firstNonEmpty(run.StartedAt, run.UpdatedAt)); err == nil {
+			age = now.Sub(started).Round(time.Second).String()
+		}
+		return map[string]any{"code": taskOwnershipConflictCode(mine.Kind), "holder": run.LeaseOwner, "task_id": run.ItemID, "lease_age": age, "liveness": liveness, "candidate_path": mine.Value, "holder_path": theirs.Value, "ownership_kind": mine.Kind}, true
+	}
+	return nil, false
+}
+
+func firstTaskOwnershipOverlap(wanted, held []taskOwnershipClaim) (taskOwnershipClaim, taskOwnershipClaim, bool) {
+	for _, mine := range wanted {
+		for _, theirs := range held {
+			if taskOwnershipClaimsOverlap(mine, theirs) {
+				return mine, theirs, true
 			}
 		}
 	}
-	return nil, false
+	return taskOwnershipClaim{}, taskOwnershipClaim{}, false
 }
 
 func normalizeOwnedPaths(paths []string) []string {
@@ -188,31 +223,28 @@ func reclaimDeadOwnedPathHolders(store *RuntimeStore, vaultPath string, candidat
 		if run.ItemID == stringField(candidate.Data, "id") || runFreshness(&run, now) != "stale" {
 			continue
 		}
-		if run.HandRun && !run.Terminal {
+		holder, ok := notes[run.ItemID]
+		if !ok {
+			continue
+		}
+		mine, theirs, overlaps := firstTaskOwnershipOverlap(wanted, taskOwnershipClaims(holder))
+		if !overlaps {
+			continue
+		}
+		if run.HandRun && !run.Terminal && !quietInteractiveLeaseExpired(run, now) {
 			continue
 		}
 		if runProcessGroupAlive(run) {
 			continue
 		}
-		holder, ok := notes[run.ItemID]
-		if !ok {
-			continue
+		ok, err := store.ReclaimExpiredRunLease(run.ProjectID, run.RecordID, now.Add(2*defaultRunLeaseTTL), defaultRunLeaseTTL, "owned-path takeover after expired heartbeat")
+		if err != nil {
+			return nil, err
 		}
-		for _, mine := range wanted {
-			for _, theirs := range taskOwnershipClaims(holder) {
-				if !taskOwnershipClaimsOverlap(mine, theirs) {
-					continue
-				}
-				ok, err := store.ReclaimExpiredRunLease(run.ProjectID, run.RecordID, now.Add(2*defaultRunLeaseTTL), defaultRunLeaseTTL, "owned-path takeover after expired heartbeat")
-				if err != nil {
-					return nil, err
-				}
-				if ok {
-					taken = append(taken, run.ItemID)
-					if vaultPath != "" {
-						_ = emitV7Event(vaultPath, stringField(candidate.Data, "id"), "task", "claimed", "tusker:claim", map[string]any{"takeover_from": run.ItemID, "dead_holder": run.LeaseOwner, "reason": "expired heartbeat and failed liveness probe", "candidate_path": mine.Value, "holder_path": theirs.Value, "ownership_kind": mine.Kind})
-					}
-				}
+		if ok {
+			taken = append(taken, run.ItemID)
+			if vaultPath != "" {
+				_ = emitV7Event(vaultPath, stringField(candidate.Data, "id"), "task", "claimed", "tusker:claim", map[string]any{"takeover_from": run.ItemID, "dead_holder": run.LeaseOwner, "reason": "expired heartbeat and failed liveness probe", "candidate_path": mine.Value, "holder_path": theirs.Value, "ownership_kind": mine.Kind})
 			}
 		}
 	}

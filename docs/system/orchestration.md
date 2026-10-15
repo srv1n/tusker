@@ -15,8 +15,31 @@ For an explicitly authorized coordinator campaign, use
 [Coordinator batches](coordinator-batches.md): a foreground runner with durable
 recovery, reports and a single end-of-batch digest.
 
-The resident daemon polls registered projects. It can dispatch work only when
-the project and automation policy allow it.
+CLI mutations notify the resident daemon immediately. Notifications coalesce
+per project, and changes arriving during a poll remain queued for a following
+poll. The daemon can dispatch work only when the project and automation policy
+allow it.
+
+## Updates and reconciliation
+
+The normal status path is CLI write → project notification → daemon/Serve
+refresh → client event. Active runs retain lightweight health checks, while
+warm polls reuse the project frontier and refresh active task records. A full
+reconciliation runs at startup and periodically (five minutes by default) to
+recover missed notifications or edits made outside the CLI. Explicit refreshes
+and mutation/dispatch authorization still read current material.
+
+Read operations share note indexes and request-local wave material instead of
+walking the vault for each row. Runner log ingestion advances over complete new
+records and replays safely after replacement, truncation, or restart. File
+hashes stream through a fixed buffer. Log tails share a request byte budget,
+and runner output limits prevent truncated authoritative output from being
+accepted as a successful result.
+
+The web UI suspends refresh work while hidden and refreshes active queries on
+return. The macOS summary has one request in flight with a coalesced follow-up;
+Spotlight updates changed records and removes deleted records. Native panel
+visibility is sent explicitly to the web UI.
 
 ## Authority
 

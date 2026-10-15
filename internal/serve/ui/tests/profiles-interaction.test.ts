@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createServer } from "vite";
+import { chromeLaunchOptions } from "./browser-options";
 import { availableProfileId } from "@/features/settings/app/ProfilesSection";
 
 test("new profiles get distinct stable IDs for the same model", () => {
@@ -265,10 +266,7 @@ createRoot(document.getElementById("root")).render(<AgentsSection />);
     const address = server.httpServer?.address();
     if (!address || typeof address === "string")
       throw new Error("Vite did not expose a TCP address");
-    browser = await playwright.chromium.launch({
-      channel: "chrome",
-      headless: true,
-    });
+    browser = await playwright.chromium.launch(chromeLaunchOptions);
     const page = await browser.newPage({
       viewport: { width: 390, height: 844 },
     });

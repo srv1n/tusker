@@ -15,6 +15,13 @@
       "status": "canonical"
     },
     {
+      "subject": "2026-09-23-harness-sessions-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-09-23-harness-sessions-grill.md",
+      "title": "Harness session decisions — 23 September 2026",
+      "status": "canonical"
+    },
+    {
       "subject": "agent-access",
       "kind": "spec",
       "path": ".tusker/specs/agent-access.md",
@@ -43,6 +50,13 @@
       "status": "canonical"
     },
     {
+      "subject": "coordinator-batches",
+      "kind": "doc",
+      "path": "docs/system/coordinator-batches.md",
+      "title": "Coordinator batches",
+      "status": "current"
+    },
+    {
       "subject": "decisions/2026-09-07-work-area-redesign-grill",
       "kind": "spec",
       "path": ".tusker/specs/decisions-2026-09-07-work-area-redesign-grill.md",
@@ -69,6 +83,13 @@
       "path": ".tusker/specs/documents-experience.md",
       "title": "Documents experience and bounded CLI discovery",
       "status": "canonical"
+    },
+    {
+      "subject": "event-driven-status-refresh",
+      "kind": "decision",
+      "path": "docs/system/decisions/event-driven-status-refresh.md",
+      "title": "",
+      "status": "accepted"
     },
     {
       "subject": "execution-observability",
@@ -104,6 +125,13 @@
       "path": "docs/system/gates.md",
       "title": "Gates",
       "status": "canonical"
+    },
+    {
+      "subject": "kill-switch-and-access",
+      "kind": "proposal",
+      "path": "docs/system/proposals/kill-switch-and-access.md",
+      "title": "",
+      "status": "accepted"
     },
     {
       "subject": "knowledge-and-feedback",
@@ -155,6 +183,13 @@
       "status": "canonical"
     },
     {
+      "subject": "portable-project-documentation",
+      "kind": "spec",
+      "path": ".tusker/specs/portable-project-documentation.md",
+      "title": "S46: Portable project documentation",
+      "status": "canonical"
+    },
+    {
       "subject": "project-registration-and-visibility",
       "kind": "spec",
       "path": ".tusker/specs/project-registration-and-visibility.md",
@@ -174,6 +209,20 @@
       "path": "docs/system/proof-and-closeout.md",
       "title": "Proof and closeout",
       "status": "canonical"
+    },
+    {
+      "subject": "proposals-index",
+      "kind": "doc",
+      "path": "docs/system/proposals/00-index.md",
+      "title": "",
+      "status": "current"
+    },
+    {
+      "subject": "real-testing-campaign",
+      "kind": "proposal",
+      "path": "docs/system/proposals/real-testing-campaign.md",
+      "title": "",
+      "status": "accepted"
     },
     {
       "subject": "real-work-lifecycle-cli",
@@ -260,6 +309,13 @@
       "status": "canonical"
     },
     {
+      "subject": "session-testing",
+      "kind": "canonical",
+      "path": "docs/system/session-testing.md",
+      "title": "Session recovery acceptance",
+      "status": "canonical"
+    },
+    {
       "subject": "skills",
       "kind": "canonical",
       "path": "docs/system/skills.md",
@@ -278,7 +334,7 @@
       "kind": "spec",
       "path": ".tusker/specs/spec-to-proof.md",
       "title": "From product intent to proven work",
-      "status": "draft"
+      "status": "proposed"
     },
     {
       "subject": "storage-and-runtime",
@@ -286,6 +342,13 @@
       "path": "docs/system/storage-and-runtime.md",
       "title": "Storage and runtime",
       "status": "canonical"
+    },
+    {
+      "subject": "task-states",
+      "kind": "proposal",
+      "path": "docs/system/proposals/task-states.md",
+      "title": "",
+      "status": "accepted"
     },
     {
       "subject": "tasks-and-proof",
@@ -299,7 +362,14 @@
       "kind": "spec",
       "path": ".tusker/specs/tusker-trust-and-efficiency.md",
       "title": "Trustworthy Tusker with efficient agent workflows",
-      "status": "planned"
+      "status": "proposed"
+    },
+    {
+      "subject": "ui-reset",
+      "kind": "spec",
+      "path": ".tusker/specs/ui-reset.md",
+      "title": "",
+      "status": "canonical"
     },
     {
       "subject": "work-area-build-packets",
@@ -362,6 +432,21 @@
       "kind": "part_of"
     },
     {
+      "from": "2026-09-23-harness-sessions-grill",
+      "to": "run-session-continuity",
+      "kind": "decides_for"
+    },
+    {
+      "from": "2026-09-23-harness-sessions-grill",
+      "to": "run-session-continuity",
+      "kind": "part_of"
+    },
+    {
+      "from": "agent-access",
+      "to": "2026-09-23-harness-sessions-grill",
+      "kind": "link"
+    },
+    {
       "from": "agent-access",
       "to": "model-level-configuration",
       "kind": "link"
@@ -405,6 +490,11 @@
       "from": "agent-access",
       "to": "serve-ui",
       "kind": "updates"
+    },
+    {
+      "from": "agent-coordination",
+      "to": "2026-09-23-harness-sessions-grill",
+      "kind": "link"
     },
     {
       "from": "agent-coordination",
@@ -468,6 +558,16 @@
     },
     {
       "from": "cli",
+      "to": "orchestration",
+      "kind": "link"
+    },
+    {
+      "from": "cli",
+      "to": "proof-and-closeout",
+      "kind": "link"
+    },
+    {
+      "from": "cli",
       "to": "overview",
       "kind": "part_of"
     },
@@ -495,6 +595,11 @@
       "from": "completion-and-integrated-acceptance",
       "to": "landing-and-completion",
       "kind": "updates"
+    },
+    {
+      "from": "coordinator-batches",
+      "to": "orchestration",
+      "kind": "part_of"
     },
     {
       "from": "decisions/2026-09-07-work-area-redesign-grill",
@@ -597,6 +702,16 @@
       "kind": "source"
     },
     {
+      "from": "event-driven-status-refresh",
+      "to": "orchestration",
+      "kind": "decides_for"
+    },
+    {
+      "from": "event-driven-status-refresh",
+      "to": "orchestration",
+      "kind": "part_of"
+    },
+    {
       "from": "execution-observability",
       "to": "overview",
       "kind": "part_of"
@@ -667,6 +782,26 @@
       "kind": "part_of"
     },
     {
+      "from": "kill-switch-and-access",
+      "to": "real-testing-campaign",
+      "kind": "part_of"
+    },
+    {
+      "from": "kill-switch-and-access",
+      "to": "real-testing-campaign",
+      "kind": "source"
+    },
+    {
+      "from": "kill-switch-and-access",
+      "to": "orchestration",
+      "kind": "updates"
+    },
+    {
+      "from": "kill-switch-and-access",
+      "to": "runners-and-acp",
+      "kind": "updates"
+    },
+    {
       "from": "knowledge-and-feedback",
       "to": "overview",
       "kind": "part_of"
@@ -710,6 +845,11 @@
       "from": "model-level-configuration",
       "to": "serve-ui",
       "kind": "updates"
+    },
+    {
+      "from": "orchestration",
+      "to": "coordinator-batches",
+      "kind": "link"
     },
     {
       "from": "orchestration",
@@ -797,6 +937,31 @@
       "kind": "part_of"
     },
     {
+      "from": "portable-project-documentation",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "portable-project-documentation",
+      "to": "cli",
+      "kind": "updates"
+    },
+    {
+      "from": "portable-project-documentation",
+      "to": "knowledge-and-feedback",
+      "kind": "updates"
+    },
+    {
+      "from": "portable-project-documentation",
+      "to": "overview",
+      "kind": "updates"
+    },
+    {
+      "from": "portable-project-documentation",
+      "to": "skills",
+      "kind": "updates"
+    },
+    {
       "from": "project-registration-and-visibility",
       "to": "overview",
       "kind": "part_of"
@@ -820,6 +985,41 @@
       "from": "proof-and-closeout",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "proposals-index",
+      "to": "real-testing-campaign",
+      "kind": "link"
+    },
+    {
+      "from": "proposals-index",
+      "to": "task-states",
+      "kind": "link"
+    },
+    {
+      "from": "proposals-index",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "real-testing-campaign",
+      "to": "kill-switch-and-access",
+      "kind": "link"
+    },
+    {
+      "from": "real-testing-campaign",
+      "to": "task-states",
+      "kind": "link"
+    },
+    {
+      "from": "real-testing-campaign",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "real-testing-campaign",
+      "to": "overview",
+      "kind": "updates"
     },
     {
       "from": "real-work-lifecycle-cli",
@@ -968,6 +1168,11 @@
     },
     {
       "from": "run-session-continuity",
+      "to": "2026-09-23-harness-sessions-grill",
+      "kind": "link"
+    },
+    {
+      "from": "run-session-continuity",
       "to": "overview",
       "kind": "part_of"
     },
@@ -990,6 +1195,11 @@
       "from": "runner-boundary-decisions",
       "to": "runner-execution-boundary",
       "kind": "source"
+    },
+    {
+      "from": "runner-execution-boundary",
+      "to": "2026-09-23-harness-sessions-grill",
+      "kind": "link"
     },
     {
       "from": "runner-execution-boundary",
@@ -1053,6 +1263,11 @@
     },
     {
       "from": "serve-ui",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "session-testing",
       "to": "overview",
       "kind": "part_of"
     },
@@ -1127,8 +1342,38 @@
       "kind": "part_of"
     },
     {
+      "from": "task-states",
+      "to": "real-testing-campaign",
+      "kind": "part_of"
+    },
+    {
+      "from": "task-states",
+      "to": "real-testing-campaign",
+      "kind": "source"
+    },
+    {
+      "from": "task-states",
+      "to": "orchestration",
+      "kind": "updates"
+    },
+    {
+      "from": "task-states",
+      "to": "serve-ui",
+      "kind": "updates"
+    },
+    {
+      "from": "task-states",
+      "to": "tasks-and-proof",
+      "kind": "updates"
+    },
+    {
       "from": "tasks-and-proof",
       "to": "proof-and-closeout",
+      "kind": "link"
+    },
+    {
+      "from": "tasks-and-proof",
+      "to": "task-states",
       "kind": "link"
     },
     {
@@ -1145,6 +1390,16 @@
       "from": "tusker-trust-and-efficiency",
       "to": "overview",
       "kind": "part_of"
+    },
+    {
+      "from": "ui-reset",
+      "to": "work-area-redesign",
+      "kind": "part_of"
+    },
+    {
+      "from": "ui-reset",
+      "to": "full-height-workspace",
+      "kind": "source"
     },
     {
       "from": "work-area-build-packets",

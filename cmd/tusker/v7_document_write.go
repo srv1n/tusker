@@ -7,9 +7,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+// A poll that writes tracker state must invalidate its full UI projection;
+// pure runtime ticks can retain cached task and document metadata.
+var v7DocumentWriteGeneration atomic.Uint64
 
 const v7DocumentLockTimeout = 5 * time.Second
 
@@ -275,10 +280,11 @@ func atomicReplaceV7DocumentWithOps(filePath, content string, ops v7AtomicWriteO
 		return err
 	}
 	renamed = true
+	invalidateCachedNote(filePath)
+	recordCLIVaultMutation(filePath)
+	v7DocumentWriteGeneration.Add(1)
 	if err := ops.syncDirectory(filepath.Dir(filePath)); err != nil {
 		return fmt.Errorf("sync V7 document parent directory after rename: %w", err)
 	}
-	invalidateCachedNote(filePath)
-	recordCLIVaultMutation(filePath)
 	return nil
 }

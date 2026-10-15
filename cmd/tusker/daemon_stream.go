@@ -47,7 +47,7 @@ func (d *Daemon) emitProjectStreamEvent(projectID, kind string, keys ...string) 
 func (d *Daemon) emitDispatchStreamEvent(run RunStatus) {
 	recordID := firstNonEmpty(run.RecordID, run.ItemID)
 	if d != nil && d.serve != nil {
-		d.serve.refreshProjectSnapshot(run.ProjectID)
+		d.serve.refreshProjectRuntimeSnapshot(run.ProjectID)
 	}
 	meta := d.streamTaskMeta(run.ProjectID, recordID)
 	d.stream.Broadcast(d.streamEvent("run_started", serveStreamRunKeys(recordID), meta, "info"))
@@ -59,7 +59,12 @@ func (d *Daemon) emitLeaseTransitionStreamEvent(before, after RunStatus) {
 	}
 	recordID := firstNonEmpty(after.RecordID, before.RecordID, after.ItemID, before.ItemID)
 	if d != nil && d.serve != nil {
-		d.serve.refreshProjectSnapshot(firstNonEmpty(after.ProjectID, before.ProjectID))
+		d.serve.refreshProjectRuntimeSnapshot(firstNonEmpty(after.ProjectID, before.ProjectID))
+	}
+	if before.LeaseState == after.LeaseState && before.AttemptOutcome == after.AttemptOutcome && before.LastError == after.LastError {
+		// Heartbeats and poll timestamps need current runtime facts, without
+		// announcing another semantic lease event or metadata invalidation.
+		return
 	}
 	meta := d.streamTaskMeta(firstNonEmpty(after.ProjectID, before.ProjectID), recordID)
 	kind, urgency := serveStreamKindLeaseTransition, "info"

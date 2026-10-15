@@ -32,16 +32,19 @@ type serveServer struct {
 }
 
 type serveSnapshotEntry struct {
-	project     RegisteredProject
-	snapshot    serveSnapshot
-	contentHash string
-	err         error
-	ready       bool
-	building    bool
-	invalid     bool
-	done        chan struct{}
-	builtAt     time.Time
-	buildCount  uint64
+	project           RegisteredProject
+	snapshot          serveSnapshot
+	contentHash       string
+	metadataHash      string
+	err               error
+	ready             bool
+	building          bool
+	invalid           bool
+	runtimeInvalid    bool
+	done              chan struct{}
+	builtAt           time.Time
+	buildCount        uint64
+	runtimeBuildCount uint64
 }
 
 type serveSnapshot struct {
@@ -50,6 +53,7 @@ type serveSnapshot struct {
 	project           RegisteredProject
 	projectRegistered bool
 	workflow          Workflow
+	workflowFile      WorkflowFile
 	tasks             []Note
 	epics             []Note
 	gates             []Note

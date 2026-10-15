@@ -96,11 +96,13 @@ test("runs-detail polling stops on query error and otherwise follows readback st
     processRunning: false,
   } satisfies RunDetail;
 
-  expect(runRefetchInterval(true, waitingForReadback, false, 45_000)).toBe(400);
+  expect(runRefetchInterval(true, waitingForReadback, false, 45_000)).toBe(2_000);
   expect(runRefetchInterval(true, readbackComplete, false, 45_000)).toBe(45_000);
   expect(runRefetchInterval(false, waitingForReadback, false, false)).toBe(false);
   expect(runRefetchInterval(true, waitingForReadback, true, 45_000)).toBe(false);
-  expect(runRefetchInterval(false, completedRun, false, 45_000, true)).toBe(400);
+  expect(runRefetchInterval(false, completedRun, false, 45_000, true)).toBe(2_000);
+  expect(runRefetchInterval(true, waitingForReadback, false, false)).toBe(false);
+  expect(runRefetchInterval(false, completedRun, false, false, true)).toBe(false);
 });
 
 test("run action invalidation waits for every canonical query refetch", async () => {
@@ -130,9 +132,10 @@ test("run action invalidation waits for every canonical query refetch", async ()
   expect(settled).toBe(true);
 });
 
-test("running message feed refreshes even with a connected event stream", () => {
+test("running message feed follows stream events with a disconnected fallback", () => {
   const running = { ...completedRun, terminal: false, leaseState: "held" } satisfies RunDetail;
-  expect(runRefetchInterval(false, running, false, false)).toBe(2_000);
+  expect(runRefetchInterval(false, running, false, false)).toBe(false);
+  expect(runRefetchInterval(false, running, false, 45_000)).toBe(45_000);
   expect(runRefetchInterval(false, running, true, false)).toBe(false);
 });
 

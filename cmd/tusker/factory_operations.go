@@ -181,6 +181,15 @@ func buildFactoryOperations(vaultPath string, project RegisteredProject, workflo
 	if err != nil {
 		return factoryOperationsProjection{}, err
 	}
+	return buildFactoryOperationsWithIndex(vaultPath, project, workflow, store, now, idx, newWaveMaterialReadContext())
+}
+
+// Serve already owns the note projection. Reuse it while reading current
+// runtime facts, and share material reads only within this request.
+func buildFactoryOperationsWithIndex(vaultPath string, project RegisteredProject, workflow Workflow, store *RuntimeStore, now time.Time, idx v7Index, material *waveMaterialReadContext) (factoryOperationsProjection, error) {
+	if material == nil {
+		material = newWaveMaterialReadContext()
+	}
 	facts := factoryOperationsFacts{
 		VaultPath: vaultPath, RepoRoot: firstNonEmpty(project.RepoRoot, v7RepoRoot(vaultPath)),
 		Project: project, Workflow: workflow, Index: idx, Runs: map[string]RunStatus{},
@@ -192,6 +201,7 @@ func buildFactoryOperations(vaultPath string, project RegisteredProject, workflo
 		facts.AutomationSource = autoReport.Source
 	}
 	if store != nil {
+		var err error
 		loadedProjects, listErr := loadRegisteredProjects(store, registeredProjectLoadOptions{
 			MetadataOnly: true,
 			LoadDisabled: true,
@@ -270,7 +280,7 @@ func buildFactoryOperations(vaultPath string, project RegisteredProject, workflo
 	facts.DefaultRef = v7DefaultBranch(vaultPath)
 	facts.DefaultSHA, _ = gitOutputTrim(facts.RepoRoot, "rev-parse", "--verify", facts.DefaultRef)
 	for waveID, wave := range idx.Waves {
-		auth := waveAuthorizationProjection(vaultPath, idx, wave)
+		auth := waveAuthorizationProjectionWithContext(vaultPath, idx, wave, material)
 		integrationRef := v7WaveIntegrationBranch(wave)
 		integrationSHA, _ := gitOutputTrim(facts.RepoRoot, "rev-parse", "--verify", integrationRef)
 		facts.WaveFacts[waveID] = factoryOperationsWaveFact{

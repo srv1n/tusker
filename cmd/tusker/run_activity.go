@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"strings"
@@ -66,6 +67,16 @@ func activityContentText(raw json.RawMessage) string {
 
 // Read complete records backwards, within a bounded byte budget.
 func runActivityTail(path string) []map[string]any {
+	budget := int64(8 << 20)
+	return runActivityTailWithBudget(path, &budget, 200)
+}
+
+// The shared budget is reduced by bytes read, so a list of runs can bound its
+// total log IO as well as each tail's record count.
+func runActivityTailWithBudget(path string, byteBudget *int64, recordLimit int) []map[string]any {
+	if byteBudget == nil || *byteBudget <= 0 || recordLimit <= 0 {
+		return nil
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -75,49 +86,83 @@ func runActivityTail(path string) []map[string]any {
 	if err != nil || !info.Mode().IsRegular() {
 		return nil
 	}
-	const budget, chunk, records = 8 << 20, 64 << 10, 200
+	const chunk, recordBytes = 64 << 10, 1 << 20
 	end := info.Size()
-	var lines []string
-	var fragment string
-	newestPartial := false
+	buf := make([]byte, min(int64(chunk), end, *byteBudget))
+	var events []map[string]any
+	var record []byte
+	records := 0
+	oversized, newestPartial := false, false
 	firstChunk := true
-	for end > 0 && info.Size()-end < budget && len(lines) < records {
-		n := min(int64(chunk), end, int64(budget)-(info.Size()-end))
+	truncated := func() {
+		records++
+		events = append(events, map[string]any{"kind": "truncated", "payload": map[string]any{"activity": true, "text": "[oversized raw log record truncated]"}})
+	}
+	finishRecord := func() {
+		if oversized {
+			truncated()
+		} else if len(record) > 0 {
+			records++
+			for i, j := 0, len(record)-1; i < j; i, j = i+1, j-1 {
+				record[i], record[j] = record[j], record[i]
+			}
+			var event map[string]any
+			if json.Unmarshal(bytes.TrimSpace(record), &event) == nil {
+				events = append(events, event)
+			}
+		}
+		record = record[:0]
+		oversized = false
+	}
+	for end > 0 && *byteBudget > 0 && records < recordLimit {
+		n := min(int64(len(buf)), end, *byteBudget)
 		start := end - n
-		buf := make([]byte, n)
-		if _, err := file.ReadAt(buf, start); err != nil {
+		read, err := file.ReadAt(buf[:n], start)
+		*byteBudget -= int64(read)
+		if err != nil {
 			break
 		}
-		parts := strings.Split(string(buf)+fragment, "\n")
 		if firstChunk {
-			newestPartial = len(buf) > 0 && buf[len(buf)-1] != '\n'
+			newestPartial = buf[n-1] != '\n'
 		}
-		fragment = parts[0]
-		for i := len(parts) - 1; i > 0 && len(lines) < records; i-- {
-			if newestPartial {
-				newestPartial = false
-				continue // the writer has not completed its newest record
-			}
-			if parts[i] != "" {
-				if len(parts[i]) > 1<<20 {
-					lines = append(lines, `{"kind":"truncated","payload":{"activity":true,"text":"[oversized raw log record truncated]"}}`)
+		for i := n - 1; i >= 0 && records < recordLimit; i-- {
+			if buf[i] == '\n' {
+				if newestPartial {
+					newestPartial = false // the writer has not completed this record
 				} else {
-					lines = append(lines, parts[i])
+					finishRecord()
 				}
+				continue
 			}
+			if newestPartial || oversized {
+				continue
+			}
+			if len(record) == recordBytes {
+				record = record[:0]
+				oversized = true
+				continue
+			}
+			if len(record) == cap(record) {
+				// Grow geometrically, with an exact cap, rather than repeatedly
+				// prepending chunks or retaining an oversized record.
+				expanded := make([]byte, len(record), min(recordBytes, max(1024, 2*cap(record))))
+				copy(expanded, record)
+				record = expanded
+			}
+			record = append(record, buf[i])
 		}
 		firstChunk = false
 		end = start
 	}
-	if end == 0 && fragment != "" && len(lines) < records {
-		lines = append(lines, fragment)
-	} else if end > 0 && len(lines) == 0 {
-		return []map[string]any{{"kind": "truncated", "payload": map[string]any{"activity": true, "text": "[oversized raw log record truncated]"}}}
+	if end == 0 && !newestPartial && records < recordLimit {
+		finishRecord()
+	} else if end > 0 && records < recordLimit && (oversized || records == 0) {
+		truncated()
 	}
-	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
-		lines[i], lines[j] = lines[j], lines[i]
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
 	}
-	return parseEventTail(strings.Join(lines, "\n"))
+	return events
 }
 
 func appendRunActivity(events []serveRunEvent, event serveRunEvent) []serveRunEvent {

@@ -571,8 +571,9 @@ func (s *serveServer) handleReviewBatch(w http.ResponseWriter, r *http.Request) 
 // Only open waves participate. A task may be shown in a batch when it is
 // reviewable (or already accepted), while readiness requires a real review
 // member and every canonical member to satisfy the review boundary.
-func serveReviewBatchFor(snap serveSnapshot) serveReviewBatch {
+func serveReviewBatchFor(snap serveSnapshot, contexts ...*waveMaterialReadContext) serveReviewBatch {
 	idx := serveSnapshotV7Index(snap)
+	context := sharedWaveMaterialReadContext(contexts)
 	byWave := make(map[string][]serveTaskCapsule)
 	unwaved := make([]serveTaskCapsule, 0)
 	knownWaves := make(map[string]bool, len(snap.waves))
@@ -639,7 +640,7 @@ func serveReviewBatchFor(snap serveSnapshot) serveReviewBatch {
 		sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
 		waves = append(waves, serveReviewWave{
 			WaveID: waveID, Title: firstNonEmpty(stringField(wave.Data, "title"), waveID),
-			Authorization:  waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
+			Authorization:  waveAuthorizationProjectionWithContext(snap.project.VaultRoot, idx, wave, context),
 			ReadyForReview: serveWaveReadyForReview(snap, wave), Members: members,
 		})
 	}
@@ -753,7 +754,7 @@ func (s *serveServer) handleFactoryOperations(w http.ResponseWriter, r *http.Req
 		return
 	}
 	vaultPath := firstNonEmpty(strings.TrimSpace(snap.project.VaultRoot), s.vaultPath)
-	projection, err := buildFactoryOperations(vaultPath, snap.project, snap.workflow, s.store, s.now())
+	projection, err := buildFactoryOperationsWithIndex(vaultPath, snap.project, snap.workflow, s.store, s.now(), serveSnapshotIndex(snap), newWaveMaterialReadContext())
 	if err != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -942,7 +943,7 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 		} else {
 			entry.project = project
 		}
-		if entry.ready && !entry.invalid {
+		if entry.ready && !entry.building && !entry.invalid && !entry.runtimeInvalid {
 			snap, cachedErr := entry.snapshot, entry.err
 			s.snapshotMu.Unlock()
 			return snap, cachedErr
@@ -956,33 +957,74 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 			done := entry.done
 			s.snapshotMu.Unlock()
 			<-done
+			// Removal/rebind may have discarded the entry while this request
+			// waited. Resolve its registration again before reusing old roots.
+			s.snapshotMu.Lock()
+			discarded := s.snapshots[key] != entry || entry.invalid
+			s.snapshotMu.Unlock()
+			if discarded {
+				var err error
+				project, err = s.projectForSnapshot(projectID)
+				if err != nil {
+					return serveSnapshot{}, err
+				}
+				key = serveSnapshotKey(project)
+			}
 			continue
 		}
+		runtimeOnly := entry.ready && !entry.invalid && entry.runtimeInvalid
+		previousSnapshot := entry.snapshot
+		metadataHash := entry.metadataHash
 		entry.building = true
 		// Consume the invalidation that selected this build. A later invalidation
 		// remains visible until after the build and forces a retry below.
 		entry.invalid = false
+		entry.runtimeInvalid = false
 		entry.done = make(chan struct{})
 		wasReady := entry.ready
 		s.snapshotMu.Unlock()
 
-		snap, buildErr := s.buildSnapshotForProject(project, false)
+		var snap serveSnapshot
+		var buildErr error
+		if runtimeOnly {
+			snap, buildErr = s.refreshSnapshotRuntime(previousSnapshot)
+		} else {
+			snap, buildErr = s.buildSnapshotForProject(project, false)
+		}
 		contentHash := ""
 		if buildErr == nil {
-			contentHash = serveSnapshotContentHash(snap)
+			if !runtimeOnly {
+				metadataHash = serveSnapshotMetadataContentHash(snap)
+			}
+			contentHash = metadataHash + ":" + serveSnapshotRuntimeContentHash(snap)
 		}
 		s.snapshotMu.Lock()
-		if entry.invalid {
+		if entry.invalid || entry.runtimeInvalid {
+			if !entry.invalid {
+				// A runtime event must not replace a discarded full rebuild
+				// with the previous metadata snapshot on the retry.
+				if !runtimeOnly {
+					entry.invalid = true
+				}
+				entry.building = false
+				close(entry.done)
+				s.snapshotMu.Unlock()
+				continue
+			}
 			// A mutation (notably project rebind) invalidated this build while it
 			// was reading the old roots. Never publish or return that stale
 			// projection; wake waiters, discard this entry, and reload the
 			// registered project before rebuilding.
 			entry.building = false
 			close(entry.done)
-			if current, ok := s.snapshots[key]; ok && current == entry {
+			current := s.snapshots[key]
+			if current == entry {
 				delete(s.snapshots, key)
 			}
 			s.snapshotMu.Unlock()
+			if current != entry {
+				disposeCachedNotes(project.VaultRoot)
+			}
 			freshProject, freshErr := s.projectForSnapshot(projectID)
 			if freshErr != nil {
 				return serveSnapshot{}, freshErr
@@ -994,19 +1036,25 @@ func (s *serveServer) loadSnapshotForProjectMode(projectID string, waitFresh boo
 		previousHash := entry.contentHash
 		entry.snapshot = snap
 		entry.contentHash = contentHash
+		entry.metadataHash = metadataHash
 		entry.err = buildErr
 		entry.ready = buildErr == nil
 		entry.invalid = false
 		entry.building = false
 		entry.builtAt = s.now()
-		entry.buildCount++
+		if runtimeOnly {
+			entry.runtimeBuildCount++
+		} else {
+			entry.buildCount++
+		}
 		close(entry.done)
 		s.snapshotMu.Unlock()
-		if wasReady && buildErr == nil && contentHash != previousHash && s.stream != nil {
-			s.stream.Broadcast(serveStreamEvent{
-				Kind: "projection_refreshed", Project: snap.projectID,
-				Keys: []string{"projects", "needs", "runs", "tasks", "epics", "docs", "waves", "gates", "evidence", "decisions", "feedback", "attempts", "review:batch", "factory-operations"},
-			})
+		if wasReady && buildErr == nil && contentHash != previousHash {
+			if runtimeOnly {
+				s.broadcastProjectRuntimeSnapshotRefresh(snap.projectID)
+			} else {
+				s.broadcastProjectSnapshotRefresh(snap.projectID)
+			}
 		}
 		return snap, buildErr
 	}
@@ -1018,6 +1066,10 @@ func (s *serveServer) warmSnapshot(projectID string) {
 
 func (s *serveServer) refreshProjectSnapshot(projectID string) {
 	s.invalidateProjectSnapshot(projectID)
+	s.broadcastProjectSnapshotRefresh(projectID)
+}
+
+func (s *serveServer) broadcastProjectSnapshotRefresh(projectID string) {
 	if s.stream != nil {
 		s.stream.Broadcast(serveStreamEvent{
 			Kind: "projection_refreshed", Project: strings.TrimSpace(projectID),
@@ -1051,6 +1103,7 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 		queue:             map[string]automationTaskExplanation{},
 	}
 	snap.workflow = loaded.Workflow.Data
+	snap.workflowFile = loaded.Workflow
 	for _, note := range notes {
 		id := stringField(note.Data, "id")
 		if id != "" {
@@ -1159,7 +1212,7 @@ func (s *serveServer) cachedNeedsCount(projectID string) (int, bool) {
 	s.snapshotMu.Lock()
 	defer s.snapshotMu.Unlock()
 	for _, entry := range s.snapshots {
-		if entry == nil || !entry.ready || entry.err != nil || entry.invalid {
+		if entry == nil || !entry.ready || entry.err != nil || entry.invalid || entry.runtimeInvalid {
 			continue
 		}
 		if projectID == entry.project.ProjectID || projectID == entry.snapshot.projectID {
@@ -1174,7 +1227,7 @@ func (s *serveServer) cachedSnapshotForProject(projectID string) (serveSnapshot,
 	s.snapshotMu.Lock()
 	defer s.snapshotMu.Unlock()
 	for _, entry := range s.snapshots {
-		if entry == nil || !entry.ready || entry.err != nil || entry.invalid {
+		if entry == nil || !entry.ready || entry.err != nil || entry.invalid || entry.runtimeInvalid {
 			continue
 		}
 		if projectID == entry.project.ProjectID || projectID == entry.snapshot.projectID {
@@ -1564,8 +1617,18 @@ func (s *serveServer) handleRuns(w http.ResponseWriter, r *http.Request) {
 		offset = len(filtered)
 	}
 	end := minInt(offset+limit, len(filtered))
+	questions, err := s.store.ListOpenAgentQuestionsForProject(snap.projectID)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	questionsByTask := map[string][]AgentMessage{}
+	for _, question := range questions {
+		questionsByTask[question.OriginTaskID] = append(questionsByTask[question.OriginTaskID], question)
+	}
+	activityBudget := int64(1 << 20)
 	for _, run := range filtered[offset:end] {
-		summary, summaryErr := s.runSummaryCheckedWithScope(snap, run, true)
+		summary, _, summaryErr := s.runSummaryCheckedWithFacts(snap, run, true, &activityBudget, questionsByTask[firstNonEmpty(run.ItemID, run.RecordID)])
 		if summaryErr != nil {
 			serveJSON(w, http.StatusInternalServerError, map[string]any{"error": summaryErr.Error()})
 			return
@@ -1587,39 +1650,41 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 		return
 	}
 	taskID = strings.TrimSpace(taskID)
-	run, ok := serveFindRun(snap.runs, taskID)
-	if !ok {
+	current, err := serveCurrentRun(s.store, snap.projectID, taskID)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if current == nil {
 		serveJSON(w, http.StatusNotFound, map[string]any{"error": "run not found"})
 		return
 	}
-	summary, summaryErr := s.runSummaryChecked(snap, run)
+	run := *current
+	snap, err = serveFreshRunNotes(snap, run)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	summary, facts, summaryErr := s.runSummaryCheckedWithFacts(snap, run, false, nil)
 	if summaryErr != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": summaryErr.Error()})
 		return
 	}
-	attempts, attemptsTruncated, attemptsErr := s.store.ListAttemptsForRunPage(run.ProjectID, run.RecordID, 100)
-	if attemptsErr != nil {
-		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": attemptsErr.Error()})
-		return
-	}
+	attempts, attemptsTruncated := facts.attempts, facts.attemptsTruncated
 	sort.Slice(attempts, func(i, j int) bool { return attempts[i].StartedAt < attempts[j].StartedAt })
 	auth, authErr := s.store.LatestRunAuthorization(run.ProjectID, run.RecordID)
 	if authErr != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": authErr.Error()})
 		return
 	}
-	identity, identityErr := s.store.RunIdentity(run.ProjectID, run.RecordID)
-	if identityErr != nil {
-		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": identityErr.Error()})
-		return
-	}
+	identity := facts.identity
 	session, sessionErr := s.store.LatestSession(run.ProjectID, run.RecordID, run.Runner)
 	if sessionErr != nil {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": sessionErr.Error()})
 		return
 	}
 	delivery := serveRunDelivery{Summary: run.FinalSummary, Verification: run.LogsSummary, ProofStatus: "pending", Artifact: run.ApplyRef}
-	if task, found := snap.notesByID[taskID]; found {
+	if task, found := snap.notesByID[firstNonEmpty(run.ItemID, run.RecordID)]; found {
 		delivery.ProofStatus = firstNonEmpty(stringField(task.Data, "proof_status"), "pending")
 	}
 	detail := serveRunDetail{serveRunSummary: summary, WorkspacePath: summary.WorkspacePath, Attempts: []serveAttempt{}, Authorization: auth, Identity: identity, Session: session, Resume: resumeCapability(&run, session), Delivery: delivery}
@@ -1632,13 +1697,21 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 		detail.Controls.Pending = intent
 	}
 	wave := Note{}
-	if task, found := snap.notesByID[taskID]; found {
+	if task, found := snap.notesByID[firstNonEmpty(run.ItemID, run.RecordID)]; found {
 		wave = snap.notesByID[stringField(task.Data, "wave")]
 	}
-	for _, action := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "interrupt", "start_fresh"} {
-		detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.runActionCapability(action, snap.project, wave, run, intent))
+	recoveryContext := &runRecoveryReadContext{index: serveSnapshotIndex(snap), task: snap.notesByID[firstNonEmpty(run.ItemID, run.RecordID)], workflow: snap.workflowFile, material: newWaveMaterialReadContext()}
+	// Replace the two current lifecycle records in the request's index too.
+	if recoveryContext.task.Data != nil {
+		recoveryContext.index.Tasks[stringField(recoveryContext.task.Data, "id")] = recoveryContext.task
 	}
-	detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.redriveCapability(snap.notesByID[taskID], run))
+	if wave.Data != nil {
+		recoveryContext.index.Waves[stringField(wave.Data, "id")] = wave
+	}
+	for _, action := range []string{"say", "answer", "reconnect", "continue", "recover_context", "pause", "stop", "interrupt", "start_fresh"} {
+		detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.runActionCapabilityWithState(action, snap.project, wave, run, intent, summary.OperatorState, recoveryContext))
+	}
+	detail.Controls.Capabilities = append(detail.Controls.Capabilities, s.redriveCapability(snap.notesByID[firstNonEmpty(run.ItemID, run.RecordID)], run))
 	for i, attempt := range attempts {
 		detail.Attempts = append(detail.Attempts, serveAttempt{
 			ID:          attempt.AttemptID,
@@ -1651,7 +1724,7 @@ func (s *serveServer) handleRun(w http.ResponseWriter, r *http.Request, taskID s
 			FinishedAt:  attempt.FinishedAt,
 		})
 	}
-	detail.Events = serveRunEvents(run, attempts)
+	detail.Events = serveRunDisplayEvents(serveRunEventsFromTails(facts.tails))
 	if attemptsTruncated {
 		w.Header().Set("X-Tusker-Attempts-Truncated", "true")
 	}
@@ -1706,7 +1779,7 @@ func (s *serveServer) handleRunRedrive(w http.ResponseWriter, r *http.Request, t
 	result.Requeued = true
 	result.LeaseState = run.LeaseState
 	result.Reason = "redrive requested — attempt window reset; the daemon will spawn a fresh attempt"
-	s.refreshProjectSnapshot(snap.projectID)
+	s.refreshProjectRuntimeSnapshot(snap.projectID)
 	serveJSON(w, http.StatusOK, result)
 }
 
@@ -1758,7 +1831,7 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 				cause = "run_context_recovery"
 			}
 			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: cause, Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
-			s.refreshProjectSnapshot(snap.projectID)
+			s.refreshProjectRuntimeSnapshot(snap.projectID)
 		}
 		serveJSON(w, http.StatusOK, result)
 		return
@@ -1777,7 +1850,7 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 		}
 		if result.Admitted {
 			_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "outcome_unknown_recovery", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
-			s.refreshProjectSnapshot(snap.projectID)
+			s.refreshProjectRuntimeSnapshot(snap.projectID)
 		}
 		serveJSON(w, http.StatusOK, result)
 		return
@@ -1837,7 +1910,7 @@ func (s *serveServer) handleRunRecovery(w http.ResponseWriter, r *http.Request, 
 	}
 	if result.Admitted {
 		_ = sendDaemonControlOneWay(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: run.ProjectID, Cause: "review_recovery", Changes: []daemonControlChange{{ID: run.RecordID, Kind: "run"}}}, 250*time.Millisecond)
-		s.refreshProjectSnapshot(snap.projectID)
+		s.refreshProjectRuntimeSnapshot(snap.projectID)
 	}
 	serveJSON(w, http.StatusOK, result)
 }
@@ -1862,11 +1935,12 @@ func (s *serveServer) handleWaves(w http.ResponseWriter, r *http.Request) {
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	context := newWaveMaterialReadContext()
 	if view == "list" {
-		serveJSON(w, http.StatusOK, s.attachWaveListRecovery(serveWaveList(snap), snap))
+		serveJSON(w, http.StatusOK, s.attachWaveListRecovery(serveWaveList(snap, context), snap, context))
 		return
 	}
-	serveJSON(w, http.StatusOK, s.attachWaveRecovery(serveWaves(snap), snap))
+	serveJSON(w, http.StatusOK, s.attachWaveRecovery(serveWaves(snap, context), snap, context))
 }
 
 func (s *serveServer) handleWave(w http.ResponseWriter, r *http.Request, id string) {
@@ -1878,8 +1952,9 @@ func (s *serveServer) handleWave(w http.ResponseWriter, r *http.Request, id stri
 	id = strings.TrimSpace(id)
 	for _, wave := range snap.waves {
 		if stringField(wave.Data, "id") == id {
-			summary := serveWaveSummaryFor(snap, wave)
-			serveJSON(w, http.StatusOK, s.attachWaveRecovery([]serveWaveSummary{summary}, snap)[0])
+			context := newWaveMaterialReadContext()
+			summary := serveWaveSummaryFor(snap, wave, context)
+			serveJSON(w, http.StatusOK, s.attachWaveRecovery([]serveWaveSummary{summary}, snap, context)[0])
 			return
 		}
 	}
@@ -1964,7 +2039,7 @@ func (s *serveServer) taskDetailFor(snap serveSnapshot, task Note) serveTaskDeta
 	idx, runs, rctx := s.attachRecoveryInputs(snap)
 	waveAuth := map[string]string{}
 	for _, wave := range snap.waves {
-		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
+		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, rctx.material)
 		waveAuth[stringField(wave.Data, "id")] = state
 	}
 	detail.Recovery = s.recoveryForTask(task, snap, idx, runs, waveAuth, rctx)
@@ -2036,7 +2111,8 @@ func serveEpics(snap serveSnapshot) []serveEpicSummary {
 	return out
 }
 
-func serveWaveList(snap serveSnapshot) []serveWaveListItem {
+func serveWaveList(snap serveSnapshot, contexts ...*waveMaterialReadContext) []serveWaveListItem {
+	context := sharedWaveMaterialReadContext(contexts)
 	out := make([]serveWaveListItem, 0, len(snap.waves))
 	idx := serveSnapshotIndex(snap)
 	runs := serveRunsByTask(snap.runs)
@@ -2062,7 +2138,7 @@ func serveWaveList(snap serveSnapshot) []serveWaveListItem {
 				}
 			}
 		}
-		auth, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
+		auth, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, context)
 		out = append(out, serveWaveListItem{
 			ID: stringField(wave.Data, "id"), Title: stringField(wave.Data, "title"),
 			Summary: stringField(wave.Data, "summary"), Status: stringField(wave.Data, "status"),
@@ -2076,16 +2152,22 @@ func serveWaveList(snap serveSnapshot) []serveWaveListItem {
 	return out
 }
 
-func serveWaves(snap serveSnapshot) []serveWaveSummary {
+func serveWaves(snap serveSnapshot, contexts ...*waveMaterialReadContext) []serveWaveSummary {
+	context := sharedWaveMaterialReadContext(contexts)
+	idx, runs := serveSnapshotIndex(snap), serveRunsByTask(snap.runs)
 	out := []serveWaveSummary{}
 	for _, wave := range snap.waves {
-		out = append(out, serveWaveSummaryFor(snap, wave))
+		out = append(out, serveWaveSummaryForWithInputs(snap, wave, idx, runs, context))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
-func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
+func serveWaveSummaryFor(snap serveSnapshot, wave Note, contexts ...*waveMaterialReadContext) serveWaveSummary {
+	return serveWaveSummaryForWithInputs(snap, wave, serveSnapshotIndex(snap), serveRunsByTask(snap.runs), sharedWaveMaterialReadContext(contexts))
+}
+
+func serveWaveSummaryForWithInputs(snap serveSnapshot, wave Note, idx v7Index, runs map[string]RunStatus, context *waveMaterialReadContext) serveWaveSummary {
 	counts := serveEmptyStatusCounts()
 	members := []serveWaveTaskSummary{}
 	for _, taskID := range normalizeList(wave.Data["members"]) {
@@ -2112,13 +2194,13 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 	for _, member := range members {
 		states = append(states, member.State)
 	}
-	idx := serveSnapshotIndex(snap)
+	evidence := make(map[string][]Note, len(idx.Evidence))
+	for id, notes := range idx.Evidence {
+		evidence[id] = notes
+	}
+	idx.Evidence = evidence
 	if projected, err := armedWaveBriefProjectedIndex(snap.project.VaultRoot, idx, wave); err == nil {
 		idx = projected
-	}
-	runs := map[string]RunStatus{}
-	for _, run := range snap.runs {
-		runs[firstNonEmpty(run.ItemID, run.RecordID)] = run
 	}
 	return serveWaveSummary{
 		ID:              stringField(wave.Data, "id"),
@@ -2130,7 +2212,7 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 		MemberIDs:       normalizeList(wave.Data["members"]),
 		Members:         members,
 		Counts:          counts,
-		Authorization:   waveAuthorizationProjection(snap.project.VaultRoot, idx, wave),
+		Authorization:   waveAuthorizationProjectionWithContext(snap.project.VaultRoot, idx, wave, context),
 		Brief:           buildWaveBriefWithRuns(idx, wave, runs),
 		State:           aggregateWaveState(states),
 	}
@@ -2140,6 +2222,7 @@ func serveWaveSummaryFor(snap serveSnapshot, wave Note) serveWaveSummary {
 // wave/task projection in one response shares one schedule read, one
 // escalation read, one daemon-freshness read, and one directive list.
 type serveRecoveryContext struct {
+	material     *waveMaterialReadContext
 	now          time.Time
 	schedule     SelfServiceReconcileSchedule
 	scheduleOK   bool
@@ -2163,7 +2246,7 @@ func serveEscalationsForRecord(escalations []SelfServiceRepairEscalation, record
 }
 
 func (s *serveServer) newServeRecoveryContext(projectID string, now time.Time) serveRecoveryContext {
-	rctx := serveRecoveryContext{now: now.UTC(), directives: map[string]RunDirective{}}
+	rctx := serveRecoveryContext{now: now.UTC(), directives: map[string]RunDirective{}, material: newWaveMaterialReadContext()}
 	if schedule, ok := loadSelfServiceReconcileSchedule(s.store, projectID); ok {
 		rctx.schedule, rctx.scheduleOK = schedule, true
 		if overdue, _, _ := selfServiceScheduleOverdue(schedule, now); overdue {
@@ -2266,8 +2349,8 @@ func serveWaitingMembers(snap serveSnapshot, wave Note, runs map[string]RunStatu
 	return owners, waiting
 }
 
-func serveWaveAuthorizationState(vaultRoot string, idx v7Index, wave Note) (state, action string) {
-	projection := waveAuthorizationProjection(vaultRoot, idx, wave)
+func serveWaveAuthorizationState(vaultRoot string, idx v7Index, wave Note, contexts ...*waveMaterialReadContext) (state, action string) {
+	projection := waveAuthorizationProjectionWithContext(vaultRoot, idx, wave, sharedWaveMaterialReadContext(contexts))
 	return fallback(stringField(projection, "state"), "disarmed"), stringField(projection, "action")
 }
 
@@ -2277,7 +2360,7 @@ func serveWaveAuthorizationState(vaultRoot string, idx v7Index, wave Note) (stat
 // reported as queued, never as running.
 func (s *serveServer) recoveryForWave(wave Note, snap serveSnapshot, idx v7Index, runs map[string]RunStatus, rctx serveRecoveryContext) *serveRecovery {
 	waveID := stringField(wave.Data, "id")
-	authState, authAction := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
+	authState, authAction := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, rctx.material)
 	recovery := &serveRecovery{
 		Authorization: authState,
 		Capabilities:  serveRecoveryCapabilitiesFor(),
@@ -2418,10 +2501,11 @@ func (s *serveServer) recoveryForTask(task Note, snap serveSnapshot, idx v7Index
 
 // attachRecoveryInputs builds the shared inputs for one response attachment
 // pass: the note index, the runs by task, and the recovery context.
-func (s *serveServer) attachRecoveryInputs(snap serveSnapshot) (v7Index, map[string]RunStatus, serveRecoveryContext) {
+func (s *serveServer) attachRecoveryInputs(snap serveSnapshot, contexts ...*waveMaterialReadContext) (v7Index, map[string]RunStatus, serveRecoveryContext) {
 	now := time.Now().UTC()
 	idx := serveSnapshotIndex(snap)
 	rctx := s.newServeRecoveryContext(snap.projectID, now)
+	rctx.material = sharedWaveMaterialReadContext(contexts)
 	for id, directive := range rctx.directives {
 		if directive.WaveID == "" {
 			continue
@@ -2431,7 +2515,7 @@ func (s *serveServer) attachRecoveryInputs(snap serveSnapshot) (v7Index, map[str
 			delete(rctx.directives, id)
 			continue
 		}
-		auth := waveAuthorizationProjection(snap.project.VaultRoot, idx, wave)
+		auth := waveAuthorizationProjectionWithContext(snap.project.VaultRoot, idx, wave, rctx.material)
 		if directive.AuthorizationFingerprint != stringField(auth, "authorizedFingerprint") || directive.WaveAuthorizedAt != stringField(auth, "at") {
 			delete(rctx.directives, id)
 		}
@@ -2439,8 +2523,8 @@ func (s *serveServer) attachRecoveryInputs(snap serveSnapshot) (v7Index, map[str
 	return idx, serveRunsByTask(snap.runs), rctx
 }
 
-func (s *serveServer) attachWaveRecovery(out []serveWaveSummary, snap serveSnapshot) []serveWaveSummary {
-	idx, runs, rctx := s.attachRecoveryInputs(snap)
+func (s *serveServer) attachWaveRecovery(out []serveWaveSummary, snap serveSnapshot, contexts ...*waveMaterialReadContext) []serveWaveSummary {
+	idx, runs, rctx := s.attachRecoveryInputs(snap, contexts...)
 	for i := range out {
 		if wave, ok := snap.notesByID[out[i].ID]; ok {
 			out[i].Recovery = s.recoveryForWave(wave, snap, idx, runs, rctx)
@@ -2449,8 +2533,8 @@ func (s *serveServer) attachWaveRecovery(out []serveWaveSummary, snap serveSnaps
 	return out
 }
 
-func (s *serveServer) attachWaveListRecovery(out []serveWaveListItem, snap serveSnapshot) []serveWaveListItem {
-	idx, runs, rctx := s.attachRecoveryInputs(snap)
+func (s *serveServer) attachWaveListRecovery(out []serveWaveListItem, snap serveSnapshot, contexts ...*waveMaterialReadContext) []serveWaveListItem {
+	idx, runs, rctx := s.attachRecoveryInputs(snap, contexts...)
 	for i := range out {
 		if wave, ok := snap.notesByID[out[i].ID]; ok {
 			out[i].Recovery = s.recoveryForWave(wave, snap, idx, runs, rctx)
@@ -2463,7 +2547,7 @@ func (s *serveServer) attachTaskRecovery(out []serveTaskCapsule, snap serveSnaps
 	idx, runs, rctx := s.attachRecoveryInputs(snap)
 	waveAuth := map[string]string{}
 	for _, wave := range snap.waves {
-		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave)
+		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, rctx.material)
 		waveAuth[stringField(wave.Data, "id")] = state
 	}
 	for i := range out {

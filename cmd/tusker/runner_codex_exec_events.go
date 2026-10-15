@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +21,7 @@ type codexExecTurnSnapshot struct {
 	inputTokens  int
 	outputTokens int
 	totalTokens  int
+	started      bool
 }
 
 type codexExecCommandSnapshot struct {
@@ -66,217 +72,226 @@ func (d *Daemon) ingestCodexExecRawLog(run RunStatus) (bool, error) {
 	if d == nil || d.store == nil || RunnerName(strings.TrimSpace(run.Runner)) != RunnerCodexExec || strings.TrimSpace(run.RawLogPath) == "" {
 		return false, nil
 	}
-	text, err := readText(run.RawLogPath)
-	if err != nil || strings.TrimSpace(text) == "" {
+	// ponytail: polls already visit attempts serially; split this lock per
+	// attempt if concurrent replay becomes a measured bottleneck.
+	d.codexExecIngestMu.Lock()
+	defer d.codexExecIngestMu.Unlock()
+	info, err := os.Stat(run.RawLogPath)
+	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	turns, _ := d.store.ListTurnsForAttempt(run.ActiveAttemptID)
-	known := map[string]codexExecTurnSnapshot{}
-	nextIndex := 0
-	for _, turn := range turns {
-		known[turn.TurnID] = codexExecTurnSnapshot{
-			index:        turn.TurnIndex,
-			status:       turn.Status,
-			inputTokens:  turn.InputTokens,
-			outputTokens: turn.OutputTokens,
-			totalTokens:  turn.TotalTokens,
-		}
-		if turn.TurnIndex >= nextIndex {
-			nextIndex = turn.TurnIndex + 1
-		}
+	if err != nil {
+		return false, fmt.Errorf("stat codex-exec raw log: %w", err)
 	}
-	var eventLog *EventLog
-	threadStartedRecorded := false
-	if strings.TrimSpace(run.EventSinkPath) != "" {
-		eventLog = NewEventLog(run.EventSinkPath)
-		threadStartedRecorded, err = eventLog.Contains(run.ActiveAttemptID, "thread_started")
+	snapshot, err := snapshotEventLogFileInfo(info, run.RawLogPath)
+	if err != nil {
+		return false, err
+	}
+	state, err := d.codexExecIngestState(run)
+	if err != nil {
+		return false, err
+	}
+	if state.rawInitialized && !state.retry && snapshot == state.rawSnapshot {
+		if state.eventLog == nil {
+			return false, nil
+		}
+		eventInfo, err := os.Stat(state.eventPath)
 		if err != nil {
+			return false, fmt.Errorf("stat codex-exec event log: %w", err)
+		}
+		eventSnapshot, err := snapshotEventLogFileInfo(eventInfo, state.eventPath)
+		if err != nil {
+			return false, err
+		}
+		if eventSnapshot == state.eventSnapshot {
+			return false, nil
+		}
+		if err := state.refreshEvents(run.ActiveAttemptID); err != nil {
+			state.retry = true
 			return false, fmt.Errorf("validate codex-exec event log before replay: %w", err)
 		}
+		return false, nil
 	}
-	appendEvent := func(kind string, payload map[string]any) error {
-		if eventLog == nil {
-			return nil
+	file, err := os.Open(run.RawLogPath)
+	if err != nil {
+		return false, fmt.Errorf("open codex-exec raw log: %w", err)
+	}
+	defer file.Close()
+	opened, err := snapshotEventLogFile(file, run.RawLogPath)
+	if err != nil {
+		return false, err
+	}
+	snapshot = opened
+	reset := state.rawInitialized && (!snapshot.matchesIdentity(state.rawSnapshot) || snapshot.Size < state.rawSnapshot.Size || (snapshot.Size == state.rawSnapshot.Size && snapshot.ModTimeUnixNano != state.rawSnapshot.ModTimeUnixNano))
+	if state.rawInitialized && !reset {
+		matches, err := state.rawBoundaryMatches(file)
+		if err != nil {
+			return false, fmt.Errorf("check codex-exec raw log boundary: %w", err)
 		}
-		return eventLog.Append(kind, run.ActiveAttemptID, RunnerCodexExec, payload)
+		reset = !matches
 	}
-	existingCommands := map[string]bool{}
-	for _, event := range readReviewPacketEvents(run.EventSinkPath) {
-		if reviewPacketEventKind(event) == "command_completed" {
-			existingCommands[stringValue(reviewPacketEventPayload(event)["command_id"])] = true
-		}
+	if reset {
+		state.rawOffset, state.rawLine, state.rawBoundary = 0, 0, nil
 	}
+	state.rawSnapshot, state.rawInitialized = snapshot, true
+	if err := state.refreshEvents(run.ActiveAttemptID); err != nil {
+		state.retry = true
+		return false, fmt.Errorf("validate codex-exec event log before replay: %w", err)
+	}
+	if _, err := file.Seek(state.rawOffset, io.SeekStart); err != nil {
+		state.retry = true
+		return false, err
+	}
+	reader := bufio.NewReader(io.LimitReader(file, snapshot.Size-state.rawOffset))
 	changed := false
-	for lineIndex, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	for {
+		line, readErr := readCodexExecIngestLine(reader)
+		state.stats.rawBytes += int64(len(line))
+		if errors.Is(readErr, io.EOF) {
+			// Keep the cursor before an incomplete trailing JSONL record. A later
+			// append supplies the rest, even if the existing prefix is valid JSON.
+			break
+		}
+		if readErr != nil {
+			state.retry = true
+			return changed, fmt.Errorf("read codex-exec raw log: %w", readErr)
 		}
 		var value any
-		if json.Unmarshal([]byte(line), &value) != nil {
-			continue
+		if json.Unmarshal(bytes.TrimSpace(line), &value) == nil {
+			state.stats.rawRecords++
+			recorded, err := d.ingestCodexExecRecord(run, state, value, line, state.rawLine+1)
+			changed = changed || recorded
+			if err != nil {
+				state.retry = true
+				return changed, err
+			}
 		}
-		payload, _ := value.(map[string]any)
-		if observed, observeErr := (CodexExecutionAdapter{Store: d.store}).ObserveRunPayload(run, value, int64(lineIndex+1), "codex_exec_jsonl"); observeErr != nil {
-			return changed, fmt.Errorf("observe codex-exec execution event: %w", observeErr)
-		} else if observed {
-			changed = true
+		state.advanceRaw(line)
+	}
+	if err := state.refreshEvents(run.ActiveAttemptID); err != nil {
+		state.retry = true
+		return changed, fmt.Errorf("validate codex-exec event log after replay: %w", err)
+	}
+	state.retry = false
+	return changed, nil
+}
+
+func (d *Daemon) ingestCodexExecRecord(run RunStatus, state *codexExecIngestState, value any, line []byte, sequence int64) (bool, error) {
+	state.sessionRef = firstNonEmpty(run.SessionRef, state.sessionRef, findSessionRef(value))
+	state.messageRef = firstNonEmpty(state.messageRef, findMessageRef(value))
+	changed, err := (CodexExecutionAdapter{Store: d.store}).ObserveRunPayload(run, value, sequence, "codex_exec_jsonl")
+	if err != nil {
+		return false, fmt.Errorf("observe codex-exec execution event: %w", err)
+	}
+	payload, _ := value.(map[string]any)
+	kind := normalizeCodexExecEventKind(firstNonEmpty(stringValue(payload["type"]), stringValue(payload["event"]), stringValue(payload["method"])))
+	at := firstNonEmpty(codexExecEventTime(payload), time.Now().UTC().Format(time.RFC3339))
+	// Nested child identifiers must never replace the resumable parent thread.
+	sessionRef := firstNonEmpty(run.SessionRef, findSessionRef(value))
+	turnID := codexExecTurnID(value)
+	usage := extractUsageCounters(json.RawMessage(line))
+	if commandID, command, observation, completed := codexExecCompletedCommand(value); completed {
+		fields := map[string]any{"command_id": commandID}
+		if commandID == "" {
+			digest := sha256.Sum256(append(append([]byte(nil), bytes.TrimSpace(line)...), []byte(":"+strconv.FormatInt(sequence, 10))...))
+			fields["source_event_id"] = hex.EncodeToString(digest[:])
 		}
-		kind := normalizeCodexExecEventKind(stringValue(payload["type"]))
-		if kind == "" {
-			kind = normalizeCodexExecEventKind(stringValue(payload["event"]))
+		found, err := state.hasEvent(run, codexExecIngestEventKey("command_completed", fields))
+		if err != nil {
+			return changed, err
 		}
-		if kind == "" {
-			kind = normalizeCodexExecEventKind(stringValue(payload["method"]))
-		}
-		at := firstNonEmpty(codexExecEventTime(payload), time.Now().UTC().Format(time.RFC3339))
-		// Prefer the already-established parent session. Nested child identifiers
-		// in JSONL must never replace the resumable Codex thread.
-		sessionRef := firstNonEmpty(run.SessionRef, findSessionRef(value))
-		turnID := codexExecTurnID(value)
-		usage := extractUsageCounters(json.RawMessage(line))
-		if commandID, command, observation, completed := codexExecCompletedCommand(value); completed && !existingCommands[commandID] {
-			material := codexExecObservedMaterialFingerprint(d.store, run)
-			if err := appendEvent("command_completed", map[string]any{
-				"command_id": commandID, "command": command, "result": observation.Message,
-				"exit_code": observation.ExitCode, "output_sha256": observation.Digest,
-				"finished_at": observation.FinishedAt.Format(time.RFC3339Nano), "material": material,
-			}); err != nil {
+		if !found {
+			fields["command"], fields["result"] = command, observation.Message
+			fields["exit_code"], fields["output_sha256"] = observation.ExitCode, observation.Digest
+			fields["finished_at"] = observation.FinishedAt.Format(time.RFC3339Nano)
+			fields["material"] = codexExecObservedMaterialFingerprint(d.store, run)
+			recorded, err := state.appendEvent(run, "command_completed", fields)
+			changed = changed || recorded
+			if err != nil {
 				return changed, fmt.Errorf("record codex-exec command event: %w", err)
 			}
-			existingCommands[commandID], changed = true, true
-		}
-		if turnID == "" {
-			turnID = usage.turnID
-		}
-		switch kind {
-		case "threadstarted", "sessionstarted":
-			if !threadStartedRecorded {
-				if err := appendEvent("thread_started", map[string]any{
-					"project_id":  run.ProjectID,
-					"record_id":   run.RecordID,
-					"item_id":     run.ItemID,
-					"attempt_id":  run.ActiveAttemptID,
-					"session_ref": sessionRef,
-				}); err != nil {
-					return changed, fmt.Errorf("record codex-exec thread_started event: %w", err)
-				}
-				threadStartedRecorded = true
-				changed = true
-			}
-		case "turnstarted":
-			if turnID == "" {
-				continue
-			}
-			snapshot, ok := known[turnID]
-			if !ok {
-				snapshot.index = nextIndex
-				nextIndex++
-			}
-			if snapshot.status == "" {
-				if err := appendEvent("turn_started", codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{"source": "codex_exec"})); err != nil {
-					return changed, fmt.Errorf("record codex-exec turn_started event: %w", err)
-				}
-				changed = true
-				_ = d.store.SaveTurn(RunTurn{
-					AttemptID:       run.ActiveAttemptID,
-					ProjectID:       run.ProjectID,
-					RecordID:        run.RecordID,
-					TurnID:          turnID,
-					TurnIndex:       snapshot.index,
-					SessionRef:      sessionRef,
-					Status:          "running",
-					StartedAt:       at,
-					LastEventAt:     at,
-					LeaseGeneration: run.LeaseGeneration,
-				})
-			}
-			snapshot.status = firstNonEmpty(snapshot.status, "running")
-			known[turnID] = snapshot
-		case "turncompleted":
-			if turnID == "" {
-				continue
-			}
-			snapshot, ok := known[turnID]
-			if !ok {
-				snapshot.index = nextIndex
-				nextIndex++
-			}
-			status := firstNonEmpty(codexExecTurnStatus(value), "completed")
-			if usage.hasAny() {
-				snapshot.inputTokens = maxInt(snapshot.inputTokens, usage.inputTokens)
-				snapshot.outputTokens = maxInt(snapshot.outputTokens, usage.outputTokens)
-				snapshot.totalTokens = maxInt(snapshot.totalTokens, usage.totalTokens)
-			}
-			if snapshot.status != status {
-				if err := appendEvent("turn_completed", codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{
-					"status":        status,
-					"input_tokens":  snapshot.inputTokens,
-					"output_tokens": snapshot.outputTokens,
-					"total_tokens":  snapshot.totalTokens,
-				})); err != nil {
-					return changed, fmt.Errorf("record codex-exec turn_completed event: %w", err)
-				}
-				changed = true
-			}
-			_ = d.store.SaveTurn(RunTurn{
-				AttemptID:       run.ActiveAttemptID,
-				ProjectID:       run.ProjectID,
-				RecordID:        run.RecordID,
-				TurnID:          turnID,
-				TurnIndex:       snapshot.index,
-				SessionRef:      sessionRef,
-				Status:          status,
-				InputTokens:     snapshot.inputTokens,
-				OutputTokens:    snapshot.outputTokens,
-				TotalTokens:     snapshot.totalTokens,
-				CompletedAt:     at,
-				LastEventAt:     at,
-				LeaseGeneration: run.LeaseGeneration,
-			})
-			snapshot.status = status
-			known[turnID] = snapshot
-		default:
-			if turnID == "" || !usage.hasAny() {
-				continue
-			}
-			snapshot, ok := known[turnID]
-			if !ok {
-				snapshot.index = nextIndex
-				nextIndex++
-			}
-			if usage.inputTokens > snapshot.inputTokens || usage.outputTokens > snapshot.outputTokens || usage.totalTokens > snapshot.totalTokens {
-				snapshot.inputTokens = maxInt(snapshot.inputTokens, usage.inputTokens)
-				snapshot.outputTokens = maxInt(snapshot.outputTokens, usage.outputTokens)
-				snapshot.totalTokens = maxInt(snapshot.totalTokens, usage.totalTokens)
-				if err := appendEvent("turn_usage_updated", codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, map[string]any{
-					"source":        "codex_exec",
-					"input_tokens":  snapshot.inputTokens,
-					"output_tokens": snapshot.outputTokens,
-					"total_tokens":  snapshot.totalTokens,
-				})); err != nil {
-					return changed, fmt.Errorf("record codex-exec turn_usage_updated event: %w", err)
-				}
-				changed = true
-			}
-			_ = d.store.SaveTurn(RunTurn{
-				AttemptID:       run.ActiveAttemptID,
-				ProjectID:       run.ProjectID,
-				RecordID:        run.RecordID,
-				TurnID:          turnID,
-				TurnIndex:       snapshot.index,
-				SessionRef:      sessionRef,
-				Status:          firstNonEmpty(snapshot.status, "running"),
-				InputTokens:     snapshot.inputTokens,
-				OutputTokens:    snapshot.outputTokens,
-				TotalTokens:     snapshot.totalTokens,
-				LastEventAt:     at,
-				LeaseGeneration: run.LeaseGeneration,
-			})
-			known[turnID] = snapshot
 		}
 	}
+	if turnID == "" {
+		turnID = usage.turnID
+	}
+	if kind == "threadstarted" || kind == "sessionstarted" {
+		recorded, err := state.appendEvent(run, "thread_started", map[string]any{
+			"project_id": run.ProjectID, "record_id": run.RecordID, "item_id": run.ItemID,
+			"attempt_id": run.ActiveAttemptID, "session_ref": sessionRef,
+		})
+		return changed || recorded, wrapCodexExecEventError("thread_started", err)
+	}
+	if turnID == "" || (kind != "turnstarted" && kind != "turncompleted" && !usage.hasAny()) {
+		return changed, nil
+	}
+	prior, err := state.turn(d.store, run, turnID)
+	if err != nil {
+		return changed, fmt.Errorf("load codex-exec turn: %w", err)
+	}
+	snapshot := prior
+	turn := RunTurn{
+		AttemptID: run.ActiveAttemptID, ProjectID: run.ProjectID, RecordID: run.RecordID,
+		TurnID: turnID, TurnIndex: prior.index, SessionRef: sessionRef,
+		LastEventAt: at, LeaseGeneration: run.LeaseGeneration,
+	}
+	var eventKind string
+	var fields map[string]any
+	switch kind {
+	case "turnstarted":
+		eventKind, fields = "turn_started", map[string]any{"source": "codex_exec"}
+		snapshot.status = firstNonEmpty(snapshot.status, "running")
+		snapshot.started = true
+		turn.StartedAt = at
+	case "turncompleted":
+		eventKind = "turn_completed"
+		snapshot.status = firstNonEmpty(codexExecTurnStatus(value), "completed")
+		turn.CompletedAt = at
+	default:
+		eventKind = "turn_usage_updated"
+		snapshot.status = firstNonEmpty(snapshot.status, "running")
+	}
+	if kind != "turnstarted" {
+		snapshot.inputTokens = maxInt(snapshot.inputTokens, usage.inputTokens)
+		snapshot.outputTokens = maxInt(snapshot.outputTokens, usage.outputTokens)
+		snapshot.totalTokens = maxInt(snapshot.totalTokens, usage.totalTokens)
+		fields = map[string]any{
+			"input_tokens": snapshot.inputTokens, "output_tokens": snapshot.outputTokens,
+			"total_tokens": snapshot.totalTokens, "status": snapshot.status,
+		}
+		if kind != "turncompleted" {
+			fields["source"] = "codex_exec"
+		}
+	}
+	if kind == "turnstarted" || kind == "turncompleted" || snapshot != prior {
+		recorded, err := state.appendEvent(run, eventKind, codexExecTurnPayload(run, sessionRef, turnID, snapshot.index, fields))
+		changed = changed || recorded
+		if err != nil {
+			return changed, wrapCodexExecEventError(eventKind, err)
+		}
+	}
+	// Replayed starts and unchanged terminal snapshots leave durable rows alone,
+	// including their original timestamps when provider timestamps are absent.
+	if snapshot != prior {
+		turn.Status, turn.InputTokens, turn.OutputTokens, turn.TotalTokens = snapshot.status, snapshot.inputTokens, snapshot.outputTokens, snapshot.totalTokens
+		if kind == "turnstarted" {
+			// SaveTurn preserves a terminal turn's last-event timestamp when
+			// filling a missing start observed earlier in the raw history.
+			turn.Status = "running"
+		}
+		if err := state.saveTurn(d.store, turn, snapshot); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
 	return changed, nil
+}
+
+func wrapCodexExecEventError(kind string, err error) error {
+	if err != nil {
+		return fmt.Errorf("record codex-exec %s event: %w", kind, err)
+	}
+	return nil
 }
 
 func codexExecObservedMaterialFingerprint(store *RuntimeStore, run RunStatus) string {

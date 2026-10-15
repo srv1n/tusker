@@ -42,7 +42,7 @@ test("Retry maps to server-declared redrive and surfaces the result", () => {
   const src = readFileSync("src/features/runs/detail/RunHeader.tsx", "utf8");
   // Labeled as redrive, not an ambiguous "Retry".
   expect(src).toContain("Redrive");
-  expect(src).toContain("tusker redrive");
+  expect(src).toContain("tusker runs restart --requeue");
   // 834e84a4 introduced client eligibility; W-0044 moves this decision to server capabilities.
   expect(src).toContain('item.action === "redrive"');
   expect(src).toContain("disabled={redriveDisabled}");

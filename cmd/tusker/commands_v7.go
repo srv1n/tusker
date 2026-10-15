@@ -2641,6 +2641,12 @@ func loadV7Index(vaultPath string) (v7Index, error) {
 	if err != nil {
 		return v7Index{}, err
 	}
+	return v7IndexFromNotes(notes), nil
+}
+
+// v7IndexFromNotes reuses an operation's note snapshot without walking the
+// vault again. Its notes belong to the caller, not the shared note cache.
+func v7IndexFromNotes(notes []Note) v7Index {
 	idx := v7Index{
 		Tasks:       map[string]Note{},
 		Gates:       map[string]Note{},
@@ -2687,7 +2693,7 @@ func loadV7Index(vaultPath string) (v7Index, error) {
 			idx.Closeouts[stringField(note.Data, "task")] = append(idx.Closeouts[stringField(note.Data, "task")], note)
 		}
 	}
-	return idx, nil
+	return idx
 }
 
 func resolveV7Note(vaultPath, id, kind string) (Note, error) {
@@ -2695,6 +2701,10 @@ func resolveV7Note(vaultPath, id, kind string) (Note, error) {
 	if err != nil {
 		return Note{}, err
 	}
+	return resolveV7NoteFromIndex(idx, id, kind)
+}
+
+func resolveV7NoteFromIndex(idx v7Index, id, kind string) (Note, error) {
 	switch kind {
 	case "task":
 		if note, ok := idx.Tasks[id]; ok {
@@ -2921,6 +2931,13 @@ func v7TaskAttemptRuntimeLines(vaultPath string, task Note) []string {
 	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
+		return nil
+	}
+	return v7TaskAttemptRuntimeLinesFromIndex(idx, task)
+}
+
+func v7TaskAttemptRuntimeLinesFromIndex(idx v7Index, task Note) []string {
+	if noteDisplayKind(task.Data) != "task" {
 		return nil
 	}
 	summary := v7LatestAttemptRuntimeSummary(idx, stringField(task.Data, "id"))
@@ -4038,10 +4055,12 @@ func v7BasicRunnableBlockers(task Note) []string {
 type v7DispatchContext struct {
 	tier          int
 	triggerStates []string
+	index         *v7Index
+	material      *waveMaterialReadContext
 }
 
 func resolveV7DispatchContext(vaultPath string) v7DispatchContext {
-	return v7DispatchContext{tier: tuskerTier(vaultPath), triggerStates: v7DispatchTriggerStates(vaultPath)}
+	return v7DispatchContext{tier: tuskerTier(vaultPath), triggerStates: v7DispatchTriggerStates(vaultPath), material: newWaveMaterialReadContext()}
 }
 
 func isV7DispatchableAgentTaskWithContext(vaultPath string, task Note, context v7DispatchContext) bool {
@@ -4052,7 +4071,7 @@ func v7NextBlockers(vaultPath string, task Note, context v7DispatchContext) []st
 	if context.tier < 2 {
 		return v7TierOneNextBlockers(task, context.triggerStates)
 	}
-	return v7TaskDispatchBlockersWithStates(vaultPath, task, true, context.triggerStates)
+	return v7TaskDispatchBlockersScopedWithSnapshot(vaultPath, task, true, true, context.triggerStates, context.index, context.material)
 }
 
 func v7TierOneNextBlockers(task Note, triggerStates []string) []string {
@@ -4099,8 +4118,23 @@ func v7TaskDispatchBlockersWithStates(vaultPath string, task Note, includeAuthor
 // task's wave lives in its own vault and can never resolve from the local
 // index, so wave-scope blockers there are noise, not contract defects.
 func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string) []string {
+	return v7TaskDispatchBlockersScopedWithSnapshot(vaultPath, task, includeAuthorizationState, includeWaveScope, triggerStates, nil, nil)
+}
+
+func v7TaskDispatchBlockersScopedWithIndex(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string, idx v7Index) []string {
+	return v7TaskDispatchBlockersScopedWithSnapshot(vaultPath, task, includeAuthorizationState, includeWaveScope, triggerStates, &idx, nil)
+}
+
+func v7TaskDispatchBlockersScopedWithSnapshot(vaultPath string, task Note, includeAuthorizationState, includeWaveScope bool, triggerStates []string, snapshot *v7Index, material *waveMaterialReadContext) []string {
 	if stringField(task.Data, "execution_mode") == "batch" {
 		return []string{"coordinator batch task; use tusker start " + stringField(task.Data, "batch_id")}
+	}
+	var idx v7Index
+	var indexErr error
+	if snapshot != nil {
+		idx = *snapshot
+	} else {
+		idx, indexErr = loadV7Index(vaultPath)
 	}
 	reasons := append([]string{}, v7DispatchStateBlockers(task, triggerStates)...)
 	// Contract-pin drift is an admission blocker: queued or stored
@@ -4114,16 +4148,16 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 	}
 	// Strict tiers require a real governing link even when --force-ready was
 	// supplied. Tier 1 intentionally keeps the warning-only probation path.
-	if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, task, stringField(task.Data, "id")); ok && tuskerTier(vaultPath) >= 2 {
+	if finding, ok := v7DemandingTaskSpecRefIssueWithIndex(vaultPath, task, stringField(task.Data, "id"), &idx); ok && tuskerTier(vaultPath) >= 2 {
 		reasons = append(reasons, finding.Message)
 	}
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
-		if idx, err := loadV7Index(vaultPath); err == nil {
+		if indexErr == nil {
 			if wave, ok := idx.Waves[waveID]; ok {
 				if !containsString(normalizeList(wave.Data["members"]), stringField(task.Data, "id")) {
 					reasons = append(reasons, stringField(task.Data, "id")+" is not an authorized member of wave "+waveID)
 				} else if includeAuthorizationState && includeWaveScope {
-					auth := waveAuthorizationProjection(vaultPath, idx, wave)
+					auth := waveAuthorizationProjectionWithContext(vaultPath, idx, wave, material)
 					if state := stringField(auth, "state"); state != "armed" {
 						reasons = append(reasons, "wave "+waveID+" authorization is "+state+"; "+stringField(auth, "action"))
 					}
@@ -4132,7 +4166,7 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 				reasons = append(reasons, "wave does not resolve: "+waveID)
 			}
 		} else if includeWaveScope {
-			reasons = append(reasons, "wave authorization cannot be verified: "+err.Error())
+			reasons = append(reasons, "wave authorization cannot be verified: "+indexErr.Error())
 		}
 	}
 	if stub := v7PacketStubAcceptanceItems(task.Body); len(stub) > 0 {
@@ -4162,7 +4196,7 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 	for _, warning := range v7PacketDomainRouteWarnings(vaultPath, task) {
 		reasons = append(reasons, warning)
 	}
-	if idx, err := loadV7Index(vaultPath); err == nil {
+	if indexErr == nil {
 		missing, unknown := v7PlannedAcceptanceProofGaps(task, idx)
 		if len(missing) > 0 {
 			reasons = append(reasons, "acceptance missing planned proof: "+strings.Join(missing, ", ")+" ("+v7VerificationGrammarHint+")")
@@ -4177,7 +4211,7 @@ func v7TaskDispatchBlockersScoped(vaultPath string, task Note, includeAuthorizat
 		// Fail closed: if we cannot load the index we cannot rule out an
 		// upstream build failure, so block dispatch rather than silently handing
 		// out work that may be quarantined.
-		reasons = append(reasons, "cannot verify upstream health: "+err.Error())
+		reasons = append(reasons, "cannot verify upstream health: "+indexErr.Error())
 	}
 	return uniqueStrings(reasons)
 }
@@ -4240,6 +4274,7 @@ func pickV7Next(vaultPath, epic, owner string) (Note, bool) {
 		return Note{}, false
 	}
 	context := resolveV7DispatchContext(vaultPath)
+	context.index = &idx
 	for _, task := range sortedV7Tasks(idx) {
 		if epic != "" && strings.ToUpper(stringField(task.Data, "epic")) != epic {
 			continue
@@ -4260,7 +4295,12 @@ func validateV7DispatchableTasks(vaultPath string) []Issue {
 	if err != nil {
 		return []Issue{issue("DISPATCHABLE_INDEX_FAILED", err.Error(), "", "", nil)}
 	}
+	return validateV7DispatchableTasksWithIndex(vaultPath, idx)
+}
+
+func validateV7DispatchableTasksWithIndex(vaultPath string, idx v7Index) []Issue {
 	context := resolveV7DispatchContext(vaultPath)
+	context.index = &idx
 	var errs []Issue
 	for _, task := range sortedV7Tasks(idx) {
 		status := stringField(task.Data, "status")

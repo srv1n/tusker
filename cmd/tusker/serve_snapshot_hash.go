@@ -10,6 +10,11 @@ import (
 // serveSnapshotContentHash excludes poll timestamps and other transport-only
 // metadata. It changes only when a client-visible project projection changes.
 func serveSnapshotContentHash(snap serveSnapshot) string {
+	return serveSnapshotMetadataContentHash(snap) + ":" + serveSnapshotRuntimeContentHash(snap)
+}
+
+func serveSnapshotMetadataContentHash(snap serveSnapshot) string {
+	snap.runs, snap.needs = nil, nil
 	tasks := sortedServeSnapshotNotes(snap.tasks)
 	epics := sortedServeSnapshotNotes(snap.epics)
 	gates := sortedServeSnapshotNotes(snap.gates)
@@ -64,4 +69,20 @@ func sortedServeSnapshotNotes(notes []Note) []Note {
 		return copy[i].AbsolutePath < copy[j].AbsolutePath
 	})
 	return copy
+}
+
+// Runtime ticks hash only dynamic facts; note bodies and docs were hashed when
+// their projection was built and do not need sorting/marshalling each tick.
+func serveSnapshotRuntimeContentHash(snap serveSnapshot) string {
+	runs := append([]RunStatus(nil), snap.runs...)
+	sort.Slice(runs, func(i, j int) bool { return runs[i].RecordID < runs[j].RecordID })
+	raw, err := json.Marshal(struct {
+		Runs  []RunStatus
+		Needs []serveNeedItem
+	}{runs, snap.needs})
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }

@@ -42,6 +42,8 @@ type boundedRawLogWriter struct {
 	overflow        bool
 	terminate       func()
 	terminationSent bool
+	closed          bool
+	closeErr        error
 }
 
 func openBoundedRawLog(path string, max int64, allowExisting bool) (*boundedRawLogWriter, error) {
@@ -115,6 +117,10 @@ func (w *boundedRawLogWriter) Write(p []byte) (int, error) {
 		return 0, os.ErrInvalid
 	}
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return 0, os.ErrClosed
+	}
 	if w.rotate {
 		if w.overflow {
 			w.mu.Unlock()
@@ -323,24 +329,35 @@ func (w *boundedRawLogWriter) overflowed() bool {
 }
 
 func (w *boundedRawLogWriter) close() error {
-	if w == nil || w.file == nil {
+	if w == nil {
 		return nil
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return w.closeErr
+	}
+	w.closed = true
+	if w.file == nil {
+		return nil
+	}
 	if w.rotate && len(w.pendingLine) > 0 {
 		if err := w.writeRotatingLine(w.pendingLine); err != nil {
 			_ = w.file.Close()
+			w.closeErr = err
 			return err
 		}
 		w.pendingLine = nil
 	}
 	if w.rotate && w.written > w.max {
 		if err := w.rotateSegment(); err != nil {
+			_ = w.file.Close()
+			w.closeErr = err
 			return err
 		}
 	}
-	return w.file.Close()
+	w.closeErr = w.file.Close()
+	return w.closeErr
 }
 
 func killRunnerProcessGroup(cmd *exec.Cmd, pgid int) {

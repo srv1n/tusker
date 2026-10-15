@@ -95,6 +95,8 @@ func validateV7FrontmatterSize(note Note, ctx validationContext, where string, w
 }
 
 func validateV7Task(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
+	ctx = ctx.withV7Index()
+	ctx.proof = &validationProofReport{}
 	for _, failure := range coordinatorBodyRefErrors(ctx.VaultPath, note.Body) {
 		*errors = append(*errors, issue(errorInvalidField, failure, where, "repair the dead reference", nil))
 	}
@@ -160,17 +162,17 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 		if policy.RequireAcceptanceProof && (stringField(data, "accepted_by") == "" || stringField(data, "accepted_at") == "") {
 			*errors = append(*errors, issue("DONE_TASK_ACCEPTANCE_MISSING", "done V7 task requires accepted_by and accepted_at", where, "", nil))
 		}
-		for _, gate := range findV7BlockingGates(ctx.VaultPath, id, normalizeList(data["gates"])) {
+		for _, gate := range ctx.blockingGates(id, normalizeList(data["gates"])) {
 			if stringField(gate.Data, "status") == "open" && boolField(gate.Data, "blocking") {
 				*errors = append(*errors, issue("DONE_TASK_OPEN_GATE", "done V7 task has open blocking gate "+stringField(gate.Data, "id"), where, "", nil))
 			}
 		}
-		if missing := missingRequiredEvidence(ctx.VaultPath, id, normalizeList(data["evidence_required"])); len(missing) > 0 {
+		if missing := ctx.missingRequiredEvidence(id, normalizeList(data["evidence_required"])); len(missing) > 0 {
 			*errors = append(*errors, issue("EVIDENCE_REQUIRED_MISSING", "done V7 task missing required evidence: "+strings.Join(missing, ", "), where, "", map[string]any{"missing": missing}))
 		}
-		idx, err := loadV7Index(ctx.VaultPath)
+		idx, err := ctx.index()
 		if err == nil {
-			report := computeV7ProofReport(ctx.VaultPath, note, idx)
+			report := ctx.proofReport(note, idx)
 			for _, acceptance := range report.Missing {
 				*errors = append(*errors, issue("DONE_TASK_ACCEPTANCE_PROOF_MISSING", "done V7 task missing proof for "+acceptance, where, "cover acceptance with inline verification, accepted evidence, satisfied gate, or explicit waiver", map[string]any{"acceptance": acceptance}))
 			}
@@ -184,7 +186,7 @@ func validateV7Task(note Note, ctx validationContext, where string, errors, warn
 		if stringField(data, "discarded_by") == "" || stringField(data, "discard_reason") == "" {
 			*errors = append(*errors, issue("DISCARDED_TASK_METADATA_MISSING", "discarded V7 task requires discarded_by, discarded_at, and discard_reason", where, "use `tusker stop --cancel` instead of editing cancelled status directly", nil))
 		}
-		for _, gate := range findV7BlockingGates(ctx.VaultPath, id, normalizeList(data["gates"])) {
+		for _, gate := range ctx.blockingGates(id, normalizeList(data["gates"])) {
 			if stringField(gate.Data, "status") == "open" {
 				*errors = append(*errors, issue("DISCARDED_TASK_OPEN_GATE", "discarded V7 task has open gate "+stringField(gate.Data, "id"), where, "obsolete the gate through the discard ceremony", nil))
 			}
@@ -233,11 +235,12 @@ func validateV7DoneTaskClosePolicy(note Note, ctx validationContext, where strin
 	if actor != "" && !v7CloseAcceptorAllowed(actor, requiredAcceptor) {
 		*errors = append(*errors, issue("DONE_TASK_ACCEPTOR_INVALID", "done V7 task requires "+requiredAcceptor+" acceptor for "+risk+" risk", where, "", map[string]any{"risk": risk, "actor": actor, "required_acceptor": requiredAcceptor}))
 	}
+	ctx = ctx.withV7Index()
 	requiredEvidence := mergeUniqueStrings(normalizeList(data["evidence_required"]), policy.RequiredEvidence)
-	if missing := missingRequiredEvidence(ctx.VaultPath, id, requiredEvidence); len(missing) > 0 {
+	if missing := ctx.missingRequiredEvidence(id, requiredEvidence); len(missing) > 0 {
 		*errors = append(*errors, issue("CLOSE_POLICY_EVIDENCE_MISSING", "done V7 task missing close-policy evidence: "+strings.Join(missing, ", "), where, "", map[string]any{"risk": risk, "missing": missing}))
 	}
-	idx, err := loadV7Index(ctx.VaultPath)
+	idx, err := ctx.index()
 	if err != nil {
 		return
 	}
@@ -312,12 +315,12 @@ func validateV7TaskProofPolicy(note Note, ctx validationContext, where string, e
 	if ctx.VaultPath == "" || stringField(data, "id") == "" {
 		return
 	}
-	idx, err := loadV7Index(ctx.VaultPath)
+	idx, err := ctx.index()
 	if err != nil {
 		return
 	}
 	task := note
-	report := computeV7ProofReport(ctx.VaultPath, task, idx)
+	report := ctx.proofReport(task, idx)
 	if proofStatus == "satisfied" && len(v7PacketStubAcceptanceItems(task.Body)) > 0 && len(v7AcceptanceWaivers(data)) == 0 {
 		*errors = append(*errors, issue("TASK_PROOF_STATUS_PLACEHOLDER_ACCEPTANCE", "proof_status=satisfied but acceptance is placeholder or vague", where, "replace stub acceptance with observable outcomes and proof mapping, or record an explicit waiver", nil))
 	}
@@ -400,11 +403,13 @@ func validateV7ArtifactContract(note Note, where string, errors *[]Issue) {
 }
 
 func validateV7TaskReadiness(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
+	ctx = ctx.withV7Index()
 	data := note.Data
 	id := stringField(data, "id")
 	status := stringField(data, "status")
 	readiness := stringField(data, "readiness")
-	if finding, ok := v7DemandingTaskSpecRefIssue(ctx.VaultPath, note, where); ok {
+	idx, _ := ctx.index()
+	if finding, ok := v7DemandingTaskSpecRefIssueWithIndex(ctx.VaultPath, note, where, &idx); ok {
 		if tuskerTier(ctx.VaultPath) == 1 {
 			*warnings = append(*warnings, finding)
 		} else {
@@ -418,14 +423,14 @@ func validateV7TaskReadiness(note Note, ctx validationContext, where string, err
 		return
 	}
 	hasOpenGate := false
-	for _, gate := range findV7BlockingGates(ctx.VaultPath, id, normalizeList(data["gates"])) {
+	for _, gate := range ctx.blockingGates(id, normalizeList(data["gates"])) {
 		if stringField(gate.Data, "status") == "open" && boolField(gate.Data, "blocking") {
 			hasOpenGate = true
 			break
 		}
 	}
 	hasUnresolvedDep := false
-	if idx, err := loadV7Index(ctx.VaultPath); err == nil {
+	if idx, err := ctx.index(); err == nil {
 		if _, blocked := v7BlockingDependencyForReadiness(note, idx); blocked {
 			hasUnresolvedDep = true
 		}
@@ -481,6 +486,10 @@ func findV7BlockingGates(vaultPath, taskID string, gateIDs []string) []Note {
 	if err != nil {
 		return nil
 	}
+	return findV7BlockingGatesFromIndex(idx, taskID, gateIDs)
+}
+
+func findV7BlockingGatesFromIndex(idx v7Index, taskID string, gateIDs []string) []Note {
 	seen := map[string]bool{}
 	var gates []Note
 	for _, gateID := range gateIDs {
@@ -552,7 +561,7 @@ func validateV7Wave(note Note, ctx validationContext, where string, errors, warn
 	}
 	members := normalizeList(data["members"])
 	seen := map[string]bool{}
-	idx, _ := loadV7Index(ctx.VaultPath)
+	idx, _ := ctx.index()
 	for _, member := range members {
 		if !v7TaskIDPattern.MatchString(member) {
 			*errors = append(*errors, issue(errorInvalidField, "invalid V7 wave member task id: "+member, where, "", map[string]any{"member": member}))
@@ -619,7 +628,7 @@ func validateV7Escalation(note Note, ctx validationContext, where string, errors
 		return
 	}
 	if ctx.VaultPath != "" {
-		idx, _ := loadV7Index(ctx.VaultPath)
+		idx, _ := ctx.index()
 		if _, ok := idx.Tasks[taskID]; !ok {
 			*errors = append(*errors, issue("ESCALATION_UNKNOWN_TASK", "V7 escalation references unknown task "+taskID, where, "", map[string]any{"task": taskID}))
 		}
@@ -1044,9 +1053,11 @@ func validateV7Evidence(note Note, ctx validationContext, where string, errors, 
 	rawArtifactsAllowed := false
 	rawArtifactsReason := ""
 	if task != "" {
-		if taskNote, err := resolveV7Note(ctx.VaultPath, task, "task"); err == nil {
-			rawArtifactsAllowed = boolField(taskNote.Data, "raw_artifacts_allowed")
-			rawArtifactsReason = stringField(taskNote.Data, "raw_artifacts_reason")
+		if idx, err := ctx.index(); err == nil {
+			if taskNote, err := resolveV7NoteFromIndex(idx, task, "task"); err == nil {
+				rawArtifactsAllowed = boolField(taskNote.Data, "raw_artifacts_allowed")
+				rawArtifactsReason = stringField(taskNote.Data, "raw_artifacts_reason")
+			}
 		}
 	}
 	for _, artifact := range normalizeList(data["artifact_paths"]) {
@@ -1312,7 +1323,7 @@ func validateV7Closeout(note Note, ctx validationContext, where string, errors *
 	if ctx.VaultPath == "" || taskID == "" {
 		return
 	}
-	idx, err := loadV7Index(ctx.VaultPath)
+	idx, err := ctx.index()
 	if err != nil {
 		*errors = append(*errors, issue("CLOSEOUT_INDEX_LOAD_FAILED", "could not load V7 index to validate closeout: "+err.Error(), where, "", nil))
 		return
@@ -1575,6 +1586,10 @@ func v7ProjectSkillForbiddenSourcePath(rel string) bool {
 }
 
 func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
+	return validateV7SkillKnowledgeWithNotes(vaultPath, nil)
+}
+
+func validateV7SkillKnowledgeWithNotes(vaultPath string, notes []Note) ([]Issue, []Issue) {
 	if !hasV7ProjectSkill(vaultPath) && !hasV7KnowledgeDomains(vaultPath) && len(v7PortableDomainIDs(v7RepoRoot(vaultPath))) == 0 {
 		return nil, nil
 	}
@@ -1622,7 +1637,9 @@ func validateV7SkillKnowledge(vaultPath string) ([]Issue, []Issue) {
 		for _, domain := range domains {
 			domainIDs[stringField(domain.Data, "id")] = struct{}{}
 		}
-		notes, err := listAllNotes(vaultPath)
+		if notes == nil {
+			notes, err = listAllNotes(vaultPath)
+		}
 		if err == nil {
 			for _, note := range notes {
 				if effectiveV7Kind(note.Data) != "task" || !strings.HasSuffix(stringField(note.Data, "schema"), "/v7") {
@@ -2212,6 +2229,10 @@ func missingRequiredEvidence(vaultPath, taskID string, required []string) []stri
 	if err != nil {
 		return required
 	}
+	return missingRequiredEvidenceFromIndex(idx, taskID, required)
+}
+
+func missingRequiredEvidenceFromIndex(idx v7Index, taskID string, required []string) []string {
 	found := map[string]bool{}
 	for _, ev := range idx.Evidence[taskID] {
 		if v7EvidenceUsableForClose(ev) {

@@ -16,6 +16,7 @@ const (
 	reconcileCoolCadence = 10 * time.Minute
 	reconcileColdCadence = 30 * time.Minute
 	reconcileLiveCadence = 5 * time.Second
+	reconcileFullCadence = 5 * time.Minute
 )
 
 type adaptiveProjectReconcileState struct {
@@ -41,17 +42,18 @@ func adaptiveReconcileCadenceWithHot(idle time.Duration, runtimeUrgent bool, hot
 		return "live", reconcileLiveCadence
 	}
 	if hotCadence <= 0 {
-		hotCadence = reconcileHotCadence
+		hotCadence = reconcileFullCadence
 	}
+	hotCadence = min(hotCadence, reconcileFullCadence)
 	switch {
 	case idle < reconcileHotCadence:
 		return "hot", hotCadence
 	case idle < reconcileWarmCadence:
 		return "warm", reconcileWarmCadence
 	case idle < reconcileCoolCadence:
-		return "cool", reconcileCoolCadence
+		return "cool", reconcileFullCadence
 	default:
-		return "cold", reconcileColdCadence
+		return "cold", reconcileFullCadence
 	}
 }
 
@@ -113,12 +115,31 @@ func runWaitsForAdmission(run RunStatus) bool {
 			(strings.HasPrefix(run.LastError, "automation plan do_not_dispatch: ") && strings.Contains(run.LastError, "active run limit reached")))
 }
 
+func (d *Daemon) projectFullReconcileDeadline(projectID string) time.Time {
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	if scannedAt := d.frontierScannedAt[projectID]; !scannedAt.IsZero() {
+		return scannedAt.Add(reconcileFullCadence)
+	}
+	return time.Time{}
+}
+
+func boundReconcileDueAt(now, next, fullDeadline time.Time) time.Time {
+	// An overdue full read may have failed. Keep the normal retry cadence
+	// instead of scheduling the same past deadline in a tight loop.
+	if fullDeadline.After(now) && fullDeadline.Before(next) {
+		return fullDeadline
+	}
+	return next
+}
+
 func (d *Daemon) noteProjectActivity(projectID, reason string, now time.Time) {
 	projectID = strings.TrimSpace(projectID)
 	if d == nil || projectID == "" {
 		return
 	}
 	now = now.UTC()
+	fullDeadline := d.projectFullReconcileDeadline(projectID)
 	d.reconcileMu.Lock()
 	defer d.reconcileMu.Unlock()
 	if d.reconcileSchedule == nil {
@@ -128,8 +149,8 @@ func (d *Daemon) noteProjectActivity(projectID, reason string, now time.Time) {
 	state.LastActivityAt = now
 	state.LastActivityReason = strings.TrimSpace(reason)
 	state.Tier = "hot"
-	state.Cadence = reconcileHotCadence
-	state.NextDueAt = now.Add(reconcileHotCadence)
+	state.Cadence = min(d.nextPollInterval(), reconcileFullCadence)
+	state.NextDueAt = boundReconcileDueAt(now, now.Add(state.Cadence), fullDeadline)
 	d.reconcileSchedule[projectID] = state
 }
 
@@ -139,6 +160,7 @@ func (d *Daemon) recordProjectPoll(projectID string, now time.Time, runtimeUrgen
 		return
 	}
 	now = now.UTC()
+	fullDeadline := d.projectFullReconcileDeadline(projectID)
 	d.reconcileMu.Lock()
 	defer d.reconcileMu.Unlock()
 	if d.reconcileSchedule == nil {
@@ -153,7 +175,7 @@ func (d *Daemon) recordProjectPoll(projectID string, now time.Time, runtimeUrgen
 	state.LastPollAt = now
 	state.Tier = tier
 	state.Cadence = cadence
-	state.NextDueAt = now.Add(cadence)
+	state.NextDueAt = boundReconcileDueAt(now, now.Add(cadence), fullDeadline)
 	d.reconcileSchedule[projectID] = state
 }
 
@@ -163,7 +185,8 @@ func (d *Daemon) recordPollSchedule(projectID string, now time.Time) error {
 		return err
 	}
 	projects := loadedRegisteredProjects(loaded)
-	runs, err := d.store.ListRuns()
+	d.pruneFrontiers(projects)
+	runs, err := d.store.ListReconcileRuns(projectID)
 	if err != nil {
 		return err
 	}
@@ -207,7 +230,8 @@ func (d *Daemon) adaptiveProjectsDue(now time.Time) ([]string, time.Duration, er
 		return nil, reconcileHotCadence, err
 	}
 	projects := loadedRegisteredProjects(loaded)
-	runs, err := d.store.ListRuns()
+	d.pruneFrontiers(projects)
+	runs, err := d.store.ListReconcileRuns("")
 	if err != nil {
 		return nil, reconcileHotCadence, err
 	}
@@ -217,6 +241,10 @@ func (d *Daemon) adaptiveProjectsDue(now time.Time) ([]string, time.Duration, er
 			urgent[run.ProjectID] = true
 		}
 	}
+	fullDeadlines := make(map[string]time.Time, len(projects))
+	for _, project := range projects {
+		fullDeadlines[project.ProjectID] = d.projectFullReconcileDeadline(project.ProjectID)
+	}
 	d.reconcileMu.Lock()
 	defer d.reconcileMu.Unlock()
 	if d.reconcileSchedule == nil {
@@ -224,7 +252,7 @@ func (d *Daemon) adaptiveProjectsDue(now time.Time) ([]string, time.Duration, er
 	}
 	enabled := map[string]bool{}
 	due := []string{}
-	nextWait := reconcileColdCadence
+	nextWait := reconcileFullCadence
 	for _, project := range projects {
 		if !project.Enabled {
 			continue
@@ -238,6 +266,7 @@ func (d *Daemon) adaptiveProjectsDue(now time.Time) ([]string, time.Duration, er
 		if state.NextDueAt.IsZero() || (urgent[project.ProjectID] && state.NextDueAt.After(now.Add(cadence))) {
 			state.NextDueAt = now.Add(cadence)
 		}
+		state.NextDueAt = boundReconcileDueAt(now, state.NextDueAt, fullDeadlines[project.ProjectID])
 		state.Tier = tier
 		state.Cadence = cadence
 		d.reconcileSchedule[project.ProjectID] = state
@@ -259,7 +288,7 @@ func (d *Daemon) adaptiveProjectsDue(now time.Time) ([]string, time.Duration, er
 		nextWait = 0
 	}
 	if len(projects) == 0 {
-		nextWait = d.nextPollInterval()
+		nextWait = min(d.nextPollInterval(), reconcileFullCadence)
 	}
 	sort.Strings(due)
 	return due, nextWait, nil
@@ -288,19 +317,16 @@ func (d *Daemon) adaptiveReconcileStatus(projectID string) adaptiveProjectReconc
 func (d *Daemon) adaptiveWatchdogCadence() time.Duration {
 	d.reconcileMu.Lock()
 	defer d.reconcileMu.Unlock()
-	result := reconcileColdCadence
-	found := false
+	// The loop beats every 5s even while vault reconciliation is idle. A longer
+	// external-edit fallback must not lengthen startup/live hang detection.
+	result := reconcileHotCadence
 	for _, state := range d.reconcileSchedule {
 		if state.Cadence <= 0 {
 			continue
 		}
-		if !found || state.Cadence < result {
+		if state.Cadence < result {
 			result = state.Cadence
-			found = true
 		}
-	}
-	if !found {
-		return reconcileHotCadence
 	}
 	return result
 }

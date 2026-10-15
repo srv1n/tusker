@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -68,6 +69,9 @@ func workspaceTreeStateHashForPaths(workspace string, scope []string, generatedO
 	}
 	sort.Strings(ordered)
 	hash := sha256.New()
+	fileHasher := sha256.New()
+	streamBuffer := make([]byte, 32<<10)
+	var fileDigest [sha256.Size]byte
 	if scope != nil {
 		for _, path := range scope {
 			_, _ = hash.Write([]byte("scope\x00" + path + "\x00"))
@@ -102,12 +106,22 @@ func workspaceTreeStateHashForPaths(workspace string, scope []string, generatedO
 			} else {
 				_, _ = hash.Write([]byte("<regular>"))
 			}
-			content, readErr := os.ReadFile(path)
+			file, openErr := os.Open(path)
+			if openErr != nil {
+				return "", openErr
+			}
+			fileHasher.Reset()
+			// Hide File.WriteTo so CopyBuffer uses the same bounded buffer for
+			// every file instead of allocating another one for each copy.
+			_, readErr := io.CopyBuffer(fileHasher, struct{ io.Reader }{file}, streamBuffer)
+			closeErr := file.Close()
 			if readErr != nil {
 				return "", readErr
 			}
-			fileHash := sha256.Sum256(content)
-			_, _ = hash.Write(fileHash[:])
+			if closeErr != nil {
+				return "", closeErr
+			}
+			_, _ = hash.Write(fileHasher.Sum(fileDigest[:0]))
 		} else {
 			_, _ = hash.Write([]byte(fmt.Sprintf("<special:%#o>", info.Mode()&os.ModeType)))
 		}

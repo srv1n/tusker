@@ -1,11 +1,66 @@
 package runner
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"tusker/internal/acp"
 )
+
+func TestACPCappedStderrFixture(t *testing.T) {
+	if os.Getenv("TUSKER_ACP_STDERR_FIXTURE") != "1" {
+		return
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &request) != nil {
+			os.Exit(2)
+		}
+		var result any
+		switch request.Method {
+		case "initialize":
+			result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}
+		case "session/new":
+			result = map[string]any{"sessionId": "bounded-session"}
+		case "session/prompt":
+			_, _ = os.Stderr.WriteString(strings.Repeat("stderr-payload", 32*1024))
+			result = map[string]any{"stopReason": "end_turn"}
+		default:
+			continue
+		}
+		response, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+		_, _ = os.Stdout.Write(append(response, '\n'))
+	}
+	os.Exit(0)
+}
+
+func TestExecuteACPBoundsStderrWhileWriting(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := executeACP(context.Background(), PreparedLaunch{
+		Argv: []string{exe, "-test.run=^TestACPCappedStderrFixture$"}, CWD: t.TempDir(),
+		Environment:  append(os.Environ(), "TUSKER_ACP_STDERR_FIXTURE=1"),
+		Capabilities: map[string]bool{"native_containment": true}, Deadline: 10 * time.Second,
+		OutputLimit: 4096,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Outcome != EventCompleted || len(receipt.Stderr) != 4096 || !receipt.StderrTruncated {
+		t.Fatalf("stderr receipt: outcome=%s bytes=%d truncated=%t", receipt.Outcome, len(receipt.Stderr), receipt.StderrTruncated)
+	}
+}
 
 // The live canary must negotiate the same Devin model mapping as dispatch:
 // swe-2-max is the profile ID but the ACP session advertises swe-2-high plus a

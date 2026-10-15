@@ -177,6 +177,8 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			if remaining <= 0 {
 				return tuskerError(errorEvidenceGate, taskID+": verification command total wall budget exhausted")
 			}
+			// Shell checks may read tracker state, ignored files, or external
+			// inputs. A source-tree hash cannot safely share their observations.
 			observed, execErr := runV7VerificationCommand(repoRoot, command, remaining)
 			rows[i].Result = "pass"
 			if execErr != nil {

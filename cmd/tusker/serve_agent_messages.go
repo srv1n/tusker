@@ -60,7 +60,7 @@ func (s *serveServer) handleAgentMessageSend(w http.ResponseWriter, body serveAc
 		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: err.Error()})
 		return
 	}
-	s.invalidateProjectSnapshot(project)
+	s.refreshProjectRuntimeSnapshot(project)
 	serveJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": duplicate, "message": stored})
 }
 

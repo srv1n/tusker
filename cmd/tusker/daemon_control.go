@@ -232,3 +232,16 @@ func sendDaemonControlOneWay(stateRoot string, req daemonControlRequest, timeout
 	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
 	return json.NewEncoder(conn).Encode(req)
 }
+
+// Terminal runner status is a runtime mutation, so it wakes the same targeted
+// reconciliation path as the CLI. The durable status file remains the fallback
+// if the daemon is unavailable; token/output events do not send these wakes.
+func notifyDaemonRunStatus(req StartRequest) {
+	if strings.TrimSpace(req.ProjectID) == "" || strings.TrimSpace(req.RecordID) == "" {
+		return
+	}
+	_ = daemonControlOneWaySender(DefaultStateRoot(), daemonControlRequest{
+		Command: "reconcile_project", ProjectID: req.ProjectID, Cause: "runner_status",
+		Changes: []daemonControlChange{{ID: req.RecordID, Kind: "run"}},
+	}, 250*time.Millisecond)
+}

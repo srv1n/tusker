@@ -33,6 +33,12 @@ type claudeLiveHandle struct {
 	runner          RunnerName
 	policy          CodexPolicy
 	privateFolders  []string
+	rawLog          *boundedRawLogWriter
+	rawLogMu        sync.Mutex
+	drainClosing    atomic.Bool
+	ioFailure       atomic.Int32
+	requestedExit   atomic.Int32
+	exitObserved    atomic.Bool
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -202,20 +208,29 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	rawLog, err := openNativeRunnerRawLog(req, resume != nil)
 	if err != nil {
+		_ = stdin.Close()
 		return nil, err
 	}
-	stderr, err := cmd.StderrPipe()
+	pipes, err := openNativeRunnerPipes(cmd)
 	if err != nil {
+		_ = stdin.Close()
+		_ = rawLog.close()
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
+		pipes.close()
+		_ = stdin.Close()
+		_ = rawLog.close()
 		return nil, err
 	}
+	pipes.closeWriters()
 	if req.ContainmentPGID > 0 && processGroupID(cmd.Process.Pid) != req.ContainmentPGID {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		pipes.close()
+		_ = rawLog.close()
 		return nil, tuskerError(errorInvalidTransition, "Claude child escaped wrapper containment")
 	}
 	runtimeStore, _ := OpenRuntimeStore(DefaultStateRoot())
@@ -227,6 +242,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		leaseGeneration: req.LeaseGeneration,
 		eventSinkPath:   req.EventSinkPath,
 		rawLogPath:      req.RawLogPath,
+		rawLog:          rawLog,
 		statusPath:      req.StatusPath,
 		runner:          RunnerClaude,
 		policy:          policy,
@@ -236,8 +252,8 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		runtimeStore:    runtimeStore,
 		cmd:             cmd,
 		stdin:           stdin,
-		stdout:          stdout,
-		stderr:          stderr,
+		stdout:          pipes.stdout,
+		stderr:          pipes.stderr,
 	}
 	// Keep stdin open in the wrapper: later soft Say delivery uses this stream-json channel.
 	handle.setRefs(firstNonEmpty(req.NativeSessionID, resumeSessionRef(resume)), "")
@@ -247,6 +263,12 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	go handle.readStdout()
 	go handle.readStderr()
 	go handle.waitForExit()
+	ready := false
+	defer func() {
+		if !ready {
+			killNativeRunnerProcess(cmd)
+		}
+	}()
 
 	if err := handle.initialize(); err != nil {
 		_ = handle.Interrupt(context.Background())
@@ -254,7 +276,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 		return nil, err
 	}
 	if err := handle.setPermissionMode(permissionMode); err != nil {
-		_ = appendRawLogLine(req.RawLogPath, "failed to set claude permission mode: "+err.Error())
+		_ = handle.appendRawLogLine("failed to set claude permission mode: " + err.Error())
 	}
 	prompt, err := readText(req.PromptPath)
 	if err != nil {
@@ -267,6 +289,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 
 	pid := cmd.Process.Pid
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
+	ready = true
 	return &StartResult{
 		SessionRef:   firstNonEmpty(handle.SessionRef(), req.NativeSessionID, resumeSessionRef(resume)),
 		MessageRef:   firstNonEmpty(handle.MessageRef(), resumeMessageRef(resume)),
@@ -442,7 +465,7 @@ func (h *claudeLiveHandle) writeJSON(payload any) error {
 func (h *claudeLiveHandle) readStdout() {
 	defer h.ioWG.Done()
 	defer h.stdout.Close()
-	if err := h.readClaudeLines(h.stdout, "stdout", h.handleStdoutLine); err != nil {
+	if err := h.readClaudeLines(h.stdout, "stdout", h.handleStdoutLine); err != nil && !h.drainClosing.Load() {
 		h.failCriticalRunnerIO("stdout scan failed", err)
 	}
 }
@@ -450,7 +473,7 @@ func (h *claudeLiveHandle) readStdout() {
 func (h *claudeLiveHandle) readStderr() {
 	defer h.ioWG.Done()
 	defer h.stderr.Close()
-	if err := h.readClaudeLines(h.stderr, "stderr", nil); err != nil {
+	if err := h.readClaudeLines(h.stderr, "stderr", nil); err != nil && !h.drainClosing.Load() {
 		h.failCriticalRunnerIO("stderr scan failed", err)
 	}
 }
@@ -475,15 +498,21 @@ func (h *claudeLiveHandle) readClaudeLines(input io.Reader, source string, parse
 		} else if len(line) > prefix {
 			line = line[:prefix]
 		}
+		if total > maxLine {
+			if err := h.appendRawLogLine(string(line) + fmt.Sprintf(" [truncated %d bytes]", total-len(line))); err != nil {
+				return err
+			}
+			if h.eventLog != nil {
+				_ = h.eventLog.Append(source+"_line_oversized", h.attemptID, h.runner, map[string]any{"bytes": total, "truncated_bytes": total - len(line)})
+			}
+			return fmt.Errorf("%s line exceeded %d bytes; output was truncated", source, maxLine)
+		}
 		if ended || errors.Is(err, io.EOF) {
-			if total > maxLine {
-				_ = appendRawLogLine(h.rawLogPath, string(line)+fmt.Sprintf(" [truncated %d bytes]", total-len(line)))
-				if h.eventLog != nil {
-					_ = h.eventLog.Append(source+"_line_oversized", h.attemptID, h.runner, map[string]any{"bytes": total, "truncated_bytes": total - len(line)})
-				}
-			} else if total > 0 {
+			if total > 0 {
 				text := string(bytes.TrimSuffix(line, []byte{'\r'}))
-				_ = appendRawLogLine(h.rawLogPath, text)
+				if err := h.appendRawLogLine(text); err != nil {
+					return err
+				}
 				if parse != nil {
 					parse(text)
 				}
@@ -611,7 +640,7 @@ func (h *claudeLiveHandle) observeExecutionPayload(payload map[string]any) {
 		ProjectID: h.projectID, RecordID: h.recordID, ItemID: h.itemID, ActiveAttemptID: h.attemptID,
 		Runner: string(RunnerClaude), SessionRef: h.SessionRef(),
 	}, payload, 0, "claude_stream_json"); err != nil {
-		_ = appendRawLogLine(h.rawLogPath, "claude execution observation rejected: "+err.Error())
+		_ = h.appendRawLogLine("claude execution observation rejected: " + err.Error())
 	} else if strings.EqualFold(strings.TrimSpace(stringValue(payload["type"])), "result") {
 		// A parsed provider result is stronger than process EOF. Do not append a
 		// second synthetic terminal observation when waitForExit runs afterwards.
@@ -844,7 +873,7 @@ func (h *claudeLiveHandle) recordApprovalDecision(method string, decision codexA
 	if reason != "" {
 		message += " reason=" + reason
 	}
-	_ = appendRawLogLine(h.rawLogPath, message)
+	_ = h.appendRawLogLine(message)
 	if h.eventLog == nil || strings.TrimSpace(h.eventSinkPath) == "" {
 		return
 	}
@@ -1029,10 +1058,22 @@ func (h *claudeLiveHandle) ensureTurnID(payload map[string]any) string {
 }
 
 func (h *claudeLiveHandle) finalize(exitCode int) {
+	if h.cmd != nil && !h.exitObserved.Load() {
+		if h.requestedExit.CompareAndSwap(0, int32(exitCode+1)) {
+			stopNativeRunnerAfterResult(h.cmd, h.stdin)
+		}
+		return
+	}
 	h.doneOnce.Do(func() {
 		now := time.Now().UTC().Format(time.RFC3339)
 		if !h.providerResultObserved.Load() {
 			h.observeProcessExitWithoutResult(exitCode, now)
+		}
+		if closeErr := closeNativeRunnerLog(&h.rawLogMu, h.rawLog); closeErr != nil {
+			h.failCriticalRunnerIO("raw log close failed", closeErr)
+		}
+		if failed := h.ioFailure.Load(); failed != 0 {
+			exitCode = int(failed)
 		}
 		status := "completed"
 		reason := ""
@@ -1045,7 +1086,9 @@ func (h *claudeLiveHandle) finalize(exitCode int) {
 			reason = "runner exited with code " + strconv.Itoa(exitCode)
 		}
 		h.recordTurnCompleted(h.ensureTurnID(nil), status, reason, now)
-		_, _ = writeRunnerStatusFileIfAbsentWithOutcome(h.statusPath, exitCode, AttemptOutcomeNone, reason, 0, h.terminalCode)
+		if wrote, _ := writeRunnerStatusFileIfAbsentWithOutcome(h.statusPath, exitCode, AttemptOutcomeNone, reason, 0, h.terminalCode); wrote {
+			notifyDaemonRunStatus(StartRequest{ProjectID: h.projectID, RecordID: h.recordID})
+		}
 		liveRegistry.Unregister(h.attemptID)
 	})
 }
@@ -1062,7 +1105,7 @@ func (h *claudeLiveHandle) observeProcessExitWithoutResult(exitCode int, at stri
 	parentID, err := (ClaudeExecutionAdapter{Store: h.runtimeStore}).executionForClaudeRun(RunStatus{ProjectID: h.projectID, ActiveAttemptID: h.attemptID}, sessionID)
 	if err != nil || parentID == "" {
 		if err != nil {
-			_ = appendRawLogLine(h.rawLogPath, "claude process-exit observation lookup failed: "+err.Error())
+			_ = h.appendRawLogLine("claude process-exit observation lookup failed: " + err.Error())
 		}
 		return
 	}
@@ -1074,7 +1117,7 @@ func (h *claudeLiveHandle) observeProcessExitWithoutResult(exitCode int, at stri
 		VisibilityDegradedReason: "process_exit_without_result_requires_authoritative_fetch",
 	})
 	if err != nil {
-		_ = appendRawLogLine(h.rawLogPath, "claude process-exit observation rejected: "+err.Error())
+		_ = h.appendRawLogLine("claude process-exit observation rejected: " + err.Error())
 	}
 }
 
@@ -1083,19 +1126,21 @@ func (h *claudeLiveHandle) failCriticalRunnerIO(message string, err error) {
 		return
 	}
 	h.criticalOnce.Do(func() {
-		_ = appendRawLogLine(h.rawLogPath, message+": "+err.Error())
-		if h.cmd != nil && h.cmd.Process != nil {
-			_ = h.cmd.Process.Kill()
+		h.ioFailure.Store(int32(nativeRunnerFailureExitCode(err)))
+		_ = appendNativeRunnerLog(&h.rawLogMu, &h.rawLog, h.rawLogPath, message+": "+err.Error())
+		if wrote, _ := writeRunnerStatusFileIfAbsentWithOutcome(h.statusPath, nativeRunnerFailureExitCode(err), AttemptOutcomeFailed, message+": "+err.Error(), 0); wrote {
+			notifyDaemonRunStatus(StartRequest{ProjectID: h.projectID, RecordID: h.recordID})
 		}
-		h.doneOnce.Do(func() {})
-		_ = writeRunnerStatusFile(h.statusPath, 1)
+		killNativeRunnerProcess(h.cmd)
 		liveRegistry.Unregister(h.attemptID)
 	})
 }
 
 func (h *claudeLiveHandle) waitForExit() {
-	h.ioWG.Wait()
-	err := h.cmd.Wait()
+	err, drained := waitForNativeRunnerExit(h.cmd, &h.ioWG, h.stdout, h.stderr, &h.drainClosing)
+	if !drained && h.requestedExit.Load() == 0 && !fileExists(h.statusPath) {
+		h.failCriticalRunnerIO("output drain timed out after process exit", errors.New("runner descendant kept output pipes open"))
+	}
 	exitCode := 0
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -1107,5 +1152,18 @@ func (h *claudeLiveHandle) waitForExit() {
 	if h.interrupted.Load() && exitCode == 0 {
 		exitCode = 130
 	}
+	if requested := h.requestedExit.Load(); requested != 0 {
+		exitCode = int(requested) - 1
+	}
+	h.exitObserved.Store(true)
 	h.finalize(exitCode)
+	reapNativeRunnerDescendants(h.cmd)
+}
+
+func (h *claudeLiveHandle) appendRawLogLine(line string) error {
+	err := appendNativeRunnerLog(&h.rawLogMu, &h.rawLog, h.rawLogPath, line)
+	if err != nil {
+		h.failCriticalRunnerIO("raw log write failed", err)
+	}
+	return err
 }

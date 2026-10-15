@@ -37,6 +37,16 @@ fi
 shift
 [ "$#" -gt 0 ] || usage
 
+# A recursive make remains inside its parent's serialized validation. Only
+# inherit a token that still belongs to this exact live lock; other jobs wait.
+if [ -n "${TUSKER_VALIDATION_LOCK_HELD:-}" ] &&
+	[ "$(cat "$lock_dir/token" 2>/dev/null || true)" = "$TUSKER_VALIDATION_LOCK_HELD" ]; then
+	owner_pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
+	if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+		exec "$@"
+	fi
+fi
+
 poll_seconds=${TUSKER_VALIDATION_LOCK_POLL_SECONDS:-1}
 timeout_seconds=${TUSKER_VALIDATION_LOCK_TIMEOUT_SECONDS:-1800}
 case "$timeout_seconds" in

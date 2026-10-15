@@ -104,15 +104,18 @@ graph TD
   n_agent_coordination["Agent contacts, clarification and autonomous wave continuation"]
   n_cli["CLI reference"]
   n_completion_and_integrated_acceptance["Completion semantics and integrated acceptance"]
+  n_coordinator_batches["Coordinator batches"]
   n_decisions_2026_09_07_work_area_redesign_grill["Work-area redesign discussion record"]
   n_delivery_and_waves["Tasks and waves"]
   n_direct_wave_authoring["Direct task and wave authoring"]
   n_documents_experience["Documents experience and bounded CLI discovery"]
+  n_event_driven_status_refresh["event-driven-status-refresh"]
   n_execution_observability["Execution observability: names, lineage, and truthful multi-agent tracking"]
   n_execution_observability_grill["Decision log: execution observability and direct-agent identity"]
   n_execution_observability_system["Execution observability"]
   n_full_height_workspace["Full-height workspace with layered side navigation"]
   n_gates["Gates"]
+  n_kill_switch_and_access["kill-switch-and-access"]
   n_knowledge_and_feedback["Knowledge and feedback"]
   n_landing_and_completion["Landing and completion"]
   n_model_level_configuration["Manual model setup and three work levels"]
@@ -124,6 +127,8 @@ graph TD
   n_project_registration_and_visibility["Project registration and visibility"]
   n_project_registration_and_visibility_decisions["Project registration and visibility decisions"]
   n_proof_and_closeout["Proof and closeout"]
+  n_proposals_index["proposals-index"]
+  n_real_testing_campaign["real-testing-campaign"]
   n_real_work_lifecycle_cli["Make real task execution and closeout consistent across CLI and UI"]
   n_real_work_test_packets["Real-product testing — three implementation assignments"]
   n_real_work_test_repository["Build a resettable test repository for actual coding-agent work"]
@@ -136,10 +141,12 @@ graph TD
   n_runners_and_acp["Runners and ACP"]
   n_self_service_execution_recovery["self-service-execution-recovery"]
   n_serve_ui["Serve UI"]
+  n_session_testing["Session recovery acceptance"]
   n_skills["Skills"]
   n_skills_and_documentation["External skills and clear everyday documentation"]
   n_spec_to_proof["From product intent to proven work"]
   n_storage_and_runtime["Storage and runtime"]
+  n_task_states["task-states"]
   n_tasks_and_proof["Tasks and proof"]
   n_tusker_trust_and_efficiency["Trustworthy Tusker with efficient agent workflows"]
   n_ui_reset["ui-reset"]
@@ -155,6 +162,7 @@ graph TD
   n_2026_09_11_agent_access_grill -->|part of| n_agent_access
   n_2026_09_23_harness_sessions_grill -->|decides for| n_run_session_continuity
   n_2026_09_23_harness_sessions_grill -->|part of| n_run_session_continuity
+  n_agent_access -->|link| n_2026_09_23_harness_sessions_grill
   n_agent_access -->|link| n_model_level_configuration
   n_agent_access -->|link| n_runner_execution_boundary
   n_agent_access -->|part of| n_runners_and_acp
@@ -178,12 +186,14 @@ graph TD
   n_agent_coordination -->|updates| n_runners_and_acp
   n_agent_coordination -->|updates| n_serve_ui
   n_cli -->|link| n_orchestration
+  n_cli -->|link| n_proof_and_closeout
   n_cli -->|part of| n_overview
   n_completion_and_integrated_acceptance -->|part of| n_planning_handoff_and_agent_entry
   n_completion_and_integrated_acceptance -->|source| n_planning_handoff_and_agent_entry
   n_completion_and_integrated_acceptance -->|source| n_real_work_test_packets
   n_completion_and_integrated_acceptance -->|source| n_remaining_product_work
   n_completion_and_integrated_acceptance -->|updates| n_landing_and_completion
+  n_coordinator_batches -->|part of| n_orchestration
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_full_height_workspace
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_model_level_configuration
   n_decisions_2026_09_07_work_area_redesign_grill -->|link| n_planning_handoff_and_agent_entry
@@ -204,6 +214,8 @@ graph TD
   n_documents_experience -->|source| n_knowledge_and_feedback
   n_documents_experience -->|source| n_tusker_trust_and_efficiency
   n_documents_experience -->|source| n_work_knowledge_and_retention
+  n_event_driven_status_refresh -->|decides for| n_orchestration
+  n_event_driven_status_refresh -->|part of| n_orchestration
   n_execution_observability -->|part of| n_overview
   n_execution_observability -->|updates| n_cli
   n_execution_observability -->|updates| n_orchestration
@@ -218,6 +230,10 @@ graph TD
   n_full_height_workspace -->|source| n_work_area_redesign
   n_full_height_workspace -->|updates| n_serve_ui
   n_gates -->|part of| n_overview
+  n_kill_switch_and_access -->|part of| n_real_testing_campaign
+  n_kill_switch_and_access -->|source| n_real_testing_campaign
+  n_kill_switch_and_access -->|updates| n_orchestration
+  n_kill_switch_and_access -->|updates| n_runners_and_acp
   n_knowledge_and_feedback -->|part of| n_overview
   n_landing_and_completion -->|part of| n_overview
   n_model_level_configuration -->|part of| n_work_area_redesign
@@ -227,6 +243,7 @@ graph TD
   n_model_level_configuration -->|updates| n_cli
   n_model_level_configuration -->|updates| n_runners_and_acp
   n_model_level_configuration -->|updates| n_serve_ui
+  n_orchestration -->|link| n_coordinator_batches
   n_orchestration -->|part of| n_overview
   n_overview -->|link| n_cli
   n_overview -->|link| n_orchestration
@@ -254,6 +271,13 @@ graph TD
   n_project_registration_and_visibility_decisions -->|decides for| n_project_registration_and_visibility
   n_project_registration_and_visibility_decisions -->|part of| n_project_registration_and_visibility
   n_proof_and_closeout -->|part of| n_overview
+  n_proposals_index -->|link| n_real_testing_campaign
+  n_proposals_index -->|link| n_task_states
+  n_proposals_index -->|part of| n_overview
+  n_real_testing_campaign -->|link| n_kill_switch_and_access
+  n_real_testing_campaign -->|link| n_task_states
+  n_real_testing_campaign -->|part of| n_overview
+  n_real_testing_campaign -->|updates| n_overview
   n_real_work_lifecycle_cli -->|part of| n_real_work_test_packets
   n_real_work_lifecycle_cli -->|source| n_repeatable_work_testing
   n_real_work_lifecycle_cli -->|source| n_work_knowledge_and_retention
@@ -289,6 +313,7 @@ graph TD
   n_runner_boundary_decisions -->|decides for| n_runner_execution_boundary
   n_runner_boundary_decisions -->|part of| n_runner_execution_boundary
   n_runner_boundary_decisions -->|source| n_runner_execution_boundary
+  n_runner_execution_boundary -->|link| n_2026_09_23_harness_sessions_grill
   n_runner_execution_boundary -->|part of| n_spec_to_proof
   n_runner_execution_boundary -->|source| n_runner_boundary_decisions
   n_runner_execution_boundary -->|updates| n_runners_and_acp
@@ -302,6 +327,7 @@ graph TD
   n_self_service_execution_recovery -->|updates| n_execution_observability_system
   n_self_service_execution_recovery -->|updates| n_storage_and_runtime
   n_serve_ui -->|part of| n_overview
+  n_session_testing -->|part of| n_overview
   n_skills -->|part of| n_overview
   n_skills_and_documentation -->|part of| n_planning_handoff_and_agent_entry
   n_skills_and_documentation -->|source| n_planning_handoff_and_agent_entry
@@ -316,7 +342,13 @@ graph TD
   n_spec_to_proof -->|link| n_tasks_and_proof
   n_spec_to_proof -->|part of| n_overview
   n_storage_and_runtime -->|part of| n_overview
+  n_task_states -->|part of| n_real_testing_campaign
+  n_task_states -->|source| n_real_testing_campaign
+  n_task_states -->|updates| n_orchestration
+  n_task_states -->|updates| n_serve_ui
+  n_task_states -->|updates| n_tasks_and_proof
   n_tasks_and_proof -->|link| n_proof_and_closeout
+  n_tasks_and_proof -->|link| n_task_states
   n_tasks_and_proof -->|part of| n_overview
   n_tusker_trust_and_efficiency -->|link| n_spec_to_proof
   n_tusker_trust_and_efficiency -->|part of| n_overview

@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import type { TaskCapsule } from "@/types/domain";
 import { cn } from "@/lib/cn";
 import { TaskStateBadge } from "@/components/ui/chips";
 import { availableTags, boardGroupFor, boardGroups, filterBoardTasks } from "./boardModel";
+
+const TASK_BATCH_SIZE = 50;
 
 export interface TaskBoardProps {
   tasks: TaskCapsule[];
@@ -61,14 +63,21 @@ export function TaskBoard({
   onSelectedTagsChange,
   tagsAvailable,
 }: TaskBoardProps) {
-  const scopedTasks = taskIds ? tasks.filter((task) => taskIds.includes(task.id)) : tasks;
-  const visibleTasks = filterBoardTasks({ tasks: scopedTasks, selectedTags, tagsByTaskId, tagsAvailable });
+  const scopedTasks = useMemo(() => {
+    if (!taskIds) return tasks;
+    const ids = new Set(taskIds);
+    return tasks.filter((task) => ids.has(task.id));
+  }, [tasks, taskIds]);
+  const visibleTasks = useMemo(() => filterBoardTasks({ tasks: scopedTasks, selectedTags, tagsByTaskId, tagsAvailable }), [scopedTasks, selectedTags, tagsByTaskId, tagsAvailable]);
   const tags = availableTags(tagsByTaskId);
   const toggleTag = (tag: string) => {
     onSelectedTagsChange(selectedTags.includes(tag) ? selectedTags.filter((value) => value !== tag) : [...selectedTags, tag]);
   };
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [limits, setLimits] = useState<Record<string, number>>({});
+  const limitFor = (key: string) => limits[key] ?? TASK_BATCH_SIZE;
+  const moreButton = (key: string, total: number) => total > limitFor(key) ? <button type="button" onClick={() => setLimits((current) => ({ ...current, [key]: limitFor(key) + TASK_BATCH_SIZE }))} className="w-full py-2 text-[12px] text-muted hover:text-ink">Show more tasks ({total - limitFor(key)} remaining)</button> : null;
 
   return (
     <section aria-label="Task board" className="flex min-h-0 flex-1 flex-col" data-testid="task-board">
@@ -102,7 +111,7 @@ export function TaskBoard({
       ) : mode === "list" ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <ul aria-label="Task list" className="mx-auto max-w-[1180px] divide-y divide-line overflow-hidden rounded-lg border border-line bg-raised">
-            {visibleTasks.map((task) => (
+            {visibleTasks.slice(0, limitFor("list")).map((task) => (
               <li key={task.id}>
                 <button
                   type="button"
@@ -116,6 +125,7 @@ export function TaskBoard({
               </li>
             ))}
           </ul>
+          {moreButton("list", visibleTasks.length)}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 items-stretch gap-3 overflow-x-auto p-4">
@@ -137,7 +147,8 @@ export function TaskBoard({
                   <span className="font-mono text-[11px] text-faint">{groupTasks.length}</span>
                 </button>
                 <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
-                  {groupTasks.map((task) => <TaskCard key={task.id} task={task} tagsByTaskId={tagsByTaskId} tagsVisible={tagsAvailable} onSelectTask={onSelectTask} />)}
+                  {groupTasks.slice(0, limitFor(group.key)).map((task) => <TaskCard key={task.id} task={task} tagsByTaskId={tagsByTaskId} tagsVisible={tagsAvailable} onSelectTask={onSelectTask} />)}
+                  {moreButton(group.key, groupTasks.length)}
                 </div>
               </section>
             );

@@ -34,3 +34,15 @@ test("unassigned scope renders only its task IDs", () => {
   expect(html).toContain("Unassigned");
   expect(html).not.toContain("Assigned");
 });
+
+test("large boards and lists initially mount at most fifty tasks per visible group", () => {
+  const tasks = Array.from({ length: 500 }, (_, index) => ({ ...task(`T-${index}`), title: `Task ${index}`, state: sampleState("planned") }));
+  for (const mode of ["board", "list"] as const) {
+    const html = renderToStaticMarkup(createElement(TaskBoard, {
+      tasks, mode, onModeChange: () => {}, onSelectTask: () => {},
+      selectedTags: [], onSelectedTagsChange: () => {}, tagsAvailable: false,
+    }));
+    expect(html.match(mode === "list" ? /<li>/g : /aria-label="Open task /g)).toHaveLength(50);
+    expect(html).toContain("Show more tasks (450 remaining)");
+  }
+});

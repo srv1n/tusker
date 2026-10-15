@@ -40,6 +40,12 @@ type codexLiveHandle struct {
 	activeStates    []string
 	notePath        string
 	processPGID     int
+	rawLog          *boundedRawLogWriter
+	rawLogMu        sync.Mutex
+	drainClosing    atomic.Bool
+	ioFailure       atomic.Int32
+	requestedExit   atomic.Int32
+	exitObserved    atomic.Bool
 
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -92,7 +98,6 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err := assertRunnerCommandDir(RunnerCodex, cmd.Dir, req.WorkspacePath); err != nil {
 		return nil, err
 	}
-	logCodexDispatchPolicy(req.RawLogPath, policy)
 	cmd.Env = runnerEnv(runnerLaunchEnv{
 		WorkspaceStrategy: req.WorkspaceStrategy,
 		ProjectID:         req.ProjectID, RecordID: req.RecordID, ItemID: req.ItemID, AttemptID: req.AttemptID,
@@ -110,20 +115,35 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	rawLog, err := openNativeRunnerRawLog(req, resume != nil)
 	if err != nil {
+		_ = stdin.Close()
 		return nil, err
 	}
-	stderr, err := cmd.StderrPipe()
+	if _, err := rawLog.Write([]byte(codexDispatchPolicyLogLine(policy) + "\n")); err != nil {
+		_ = stdin.Close()
+		_ = rawLog.close()
+		return nil, err
+	}
+	pipes, err := openNativeRunnerPipes(cmd)
 	if err != nil {
+		_ = stdin.Close()
+		_ = rawLog.close()
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
+		pipes.close()
+		_ = stdin.Close()
+		_ = rawLog.close()
 		return nil, err
 	}
+	pipes.closeWriters()
 	childPGID := processGroupID(cmd.Process.Pid)
 	if req.ContainmentPGID > 0 && childPGID != req.ContainmentPGID {
 		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		pipes.close()
+		_ = rawLog.close()
 		return nil, tuskerError(errorInvalidTransition, fmt.Sprintf("Codex child escaped wrapper containment: pid=%d pgid=%d expected=%d", cmd.Process.Pid, childPGID, req.ContainmentPGID))
 	}
 	runtimeStore, _ := OpenRuntimeStore(DefaultStateRoot())
@@ -135,6 +155,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		leaseGeneration: req.LeaseGeneration,
 		eventSinkPath:   req.EventSinkPath,
 		rawLogPath:      req.RawLogPath,
+		rawLog:          rawLog,
 		statusPath:      req.StatusPath,
 		runner:          RunnerCodex,
 		policy:          policy,
@@ -147,8 +168,8 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 		runtimeStore:    runtimeStore,
 		cmd:             cmd,
 		stdin:           stdin,
-		stdout:          stdout,
-		stderr:          stderr,
+		stdout:          pipes.stdout,
+		stderr:          pipes.stderr,
 		pending:         map[string]chan codexRPCResponse{},
 	}
 	handle.nextID.Store(1)
@@ -157,6 +178,12 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	go handle.readStdout()
 	go handle.readStderr()
 	go handle.waitForExit()
+	ready := false
+	defer func() {
+		if !ready {
+			killNativeRunnerProcess(cmd)
+		}
+	}()
 
 	if err := handle.initialize(); err != nil {
 		_ = handle.Interrupt(context.Background())
@@ -185,6 +212,7 @@ func startLiveCodex(ctx context.Context, req StartRequest, resume *ResumeRequest
 	pid := cmd.Process.Pid
 	processStartedAt := recordedProcessStartTime(pid, time.Now().UTC().Format(time.RFC3339))
 	_, messageRef, _, _ := handle.liveState()
+	ready = true
 	return &StartResult{
 		SessionRef:   threadID,
 		MessageRef:   messageRef,
@@ -361,12 +389,9 @@ func codexTurnSandboxPolicy(policy CodexPolicy, cwd string) map[string]any {
 	}
 }
 
-func logCodexDispatchPolicy(rawLogPath string, policy CodexPolicy) {
-	if strings.TrimSpace(rawLogPath) == "" {
-		return
-	}
-	_ = appendRawLogLine(rawLogPath, fmt.Sprintf("codex app-server dispatch policy: max_turns=%d read_timeout_ms=%d stall_timeout_ms=%d approval_policy=%s thread_sandbox=%s turn_sandbox_policy=%s",
-		policy.MaxTurns, policy.ReadTimeoutMS, policy.StallTimeoutMS, policy.ApprovalPolicy, policy.ThreadSandbox, policy.TurnSandboxPolicy))
+func codexDispatchPolicyLogLine(policy CodexPolicy) string {
+	return fmt.Sprintf("codex app-server dispatch policy: max_turns=%d read_timeout_ms=%d stall_timeout_ms=%d approval_policy=%s thread_sandbox=%s turn_sandbox_policy=%s",
+		policy.MaxTurns, policy.ReadTimeoutMS, policy.StallTimeoutMS, policy.ApprovalPolicy, policy.ThreadSandbox, policy.TurnSandboxPolicy)
 }
 
 func (h *codexLiveHandle) readTimeout() time.Duration {
@@ -427,30 +452,32 @@ func (h *codexLiveHandle) readStdout() {
 	const maxLine = 4 * 1024 * 1024
 	for {
 		var line []byte
-		oversized := false
 		length := 0
 		for {
 			fragment, err := reader.ReadSlice('\n')
 			length += len(fragment)
-			if !oversized && len(line)+len(fragment) <= maxLine {
-				line = append(line, fragment...)
-			} else {
-				oversized = true
+			if length > maxLine {
+				if !h.appendCriticalEvent("stdout_line_oversized", map[string]any{"byte_length": length}) {
+					return
+				}
+				h.failCriticalRunnerIO("stdout line exceeded byte limit", errors.New("protocol output was truncated"))
+				return
 			}
+			line = append(line, fragment...)
 			if err == bufio.ErrBufferFull {
 				continue
 			}
 			if err != nil && err != io.EOF {
-				h.failCriticalRunnerIO("stdout read failed", err)
+				if !h.drainClosing.Load() {
+					h.failCriticalRunnerIO("stdout read failed", err)
+				}
 				return
 			}
-			if oversized {
-				if !h.appendCriticalEvent("stdout_line_oversized", map[string]any{"byte_length": length}) {
+			if len(line) > 0 {
+				text := strings.TrimSuffix(string(line), "\n")
+				if err := h.appendRawLogLine(text); err != nil {
 					return
 				}
-			} else if len(line) > 0 {
-				text := strings.TrimSuffix(string(line), "\n")
-				_ = appendRawLogLine(h.rawLogPath, text)
 				h.handleStdoutLine(text)
 			}
 			if err == io.EOF {
@@ -468,9 +495,11 @@ func (h *codexLiveHandle) readStderr() {
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 4*1024*1024)
 	for scanner.Scan() {
-		_ = appendRawLogLine(h.rawLogPath, scanner.Text())
+		if err := h.appendRawLogLine(scanner.Text()); err != nil {
+			return
+		}
 	}
-	if err := scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil && !h.drainClosing.Load() {
 		h.failCriticalRunnerIO("stderr scan failed", err)
 	}
 }
@@ -1146,7 +1175,7 @@ func (h *codexLiveHandle) recordApprovalDecision(method string, decision codexAp
 	if reason != "" {
 		message += " reason=" + reason
 	}
-	_ = appendRawLogLine(h.rawLogPath, message)
+	_ = h.appendRawLogLine(message)
 	if h.eventLog == nil {
 		return
 	}
@@ -1353,7 +1382,7 @@ func (h *codexLiveHandle) recordExtensionToolDispatch(method string, dispatch co
 	if dispatch.Error != "" {
 		message += " reason=" + dispatch.Error
 	}
-	_ = appendRawLogLine(h.rawLogPath, message)
+	_ = h.appendRawLogLine(message)
 	if h.eventLog == nil {
 		return
 	}
@@ -1415,7 +1444,7 @@ func (h *codexLiveHandle) handleNotification(method string, params json.RawMessa
 			case "interrupted":
 				h.finalize(130)
 			default:
-				_ = appendRawLogLine(h.rawLogPath, reason)
+				_ = h.appendRawLogLine(reason)
 				h.finalize(1)
 			}
 		}
@@ -1438,7 +1467,7 @@ func (h *codexLiveHandle) observeExecutionNotification(method string, params jso
 		ProjectID: h.projectID, RecordID: h.recordID, ItemID: h.itemID, ActiveAttemptID: h.attemptID,
 		Runner: string(RunnerCodexAppServer), SessionRef: threadID,
 	}, payload, 0, "codex_app_notification:"+method); err != nil {
-		_ = appendRawLogLine(h.rawLogPath, "codex execution observation rejected: "+err.Error())
+		_ = h.appendRawLogLine("codex execution observation rejected: " + err.Error())
 	}
 }
 
@@ -1446,7 +1475,7 @@ func (h *codexLiveHandle) continueOrFinalize() {
 	if !h.shouldContinueTurns() {
 		_, _, _, turnIndex := h.liveState()
 		if h.policy.MaxTurns > 1 && turnIndex+1 >= h.policy.MaxTurns {
-			_ = appendRawLogLine(h.rawLogPath, fmt.Sprintf("max turns reached for attempt %s: completed %d/%d turns", h.attemptID, turnIndex+1, h.policy.MaxTurns))
+			_ = h.appendRawLogLine(fmt.Sprintf("max turns reached for attempt %s: completed %d/%d turns", h.attemptID, turnIndex+1, h.policy.MaxTurns))
 		}
 		h.finalize(0)
 		return
@@ -1455,7 +1484,7 @@ func (h *codexLiveHandle) continueOrFinalize() {
 	threadID, _, _, _ := h.liveState()
 	turnID, err := h.turnStart(threadID, h.continuationPrompt())
 	if err != nil {
-		_ = appendRawLogLine(h.rawLogPath, "continuation turn failed: "+err.Error())
+		_ = h.appendRawLogLine("continuation turn failed: " + err.Error())
 		h.finalize(1)
 		return
 	}
@@ -1475,7 +1504,7 @@ func (h *codexLiveHandle) shouldContinueTurns() bool {
 	}
 	data, _, err := parseFrontmatterMustRead(h.notePath)
 	if err != nil {
-		_ = appendRawLogLine(h.rawLogPath, "continuation state check failed: "+err.Error())
+		_ = h.appendRawLogLine("continuation state check failed: " + err.Error())
 		return false
 	}
 	return containsString(h.activeStates, stringField(data, "status"))
@@ -1620,12 +1649,12 @@ func (h *codexLiveHandle) failCriticalRunnerIO(message string, err error) {
 		return
 	}
 	h.criticalOnce.Do(func() {
-		_ = appendRawLogLine(h.rawLogPath, message+": "+err.Error())
-		_ = writeRunnerStatusFile(h.statusPath, 1)
-		if h.cmd != nil && h.cmd.Process != nil {
-			_ = h.signalProcess(syscall.SIGKILL)
+		h.ioFailure.Store(int32(nativeRunnerFailureExitCode(err)))
+		_ = appendNativeRunnerLog(&h.rawLogMu, &h.rawLog, h.rawLogPath, message+": "+err.Error())
+		if wrote, _ := writeRunnerStatusFileIfAbsentWithOutcome(h.statusPath, nativeRunnerFailureExitCode(err), AttemptOutcomeFailed, message+": "+err.Error(), 0); wrote {
+			notifyDaemonRunStatus(StartRequest{ProjectID: h.projectID, RecordID: h.recordID})
 		}
-		h.doneOnce.Do(func() {})
+		killNativeRunnerProcess(h.cmd)
 		liveRegistry.Unregister(h.attemptID)
 	})
 }
@@ -1705,8 +1734,22 @@ func normalizedTurnStatus(status string) string {
 }
 
 func (h *codexLiveHandle) finalize(exitCode int) {
+	if h.cmd != nil && !h.exitObserved.Load() {
+		if h.requestedExit.CompareAndSwap(0, int32(exitCode+1)) {
+			stopNativeRunnerAfterResult(h.cmd, h.stdin)
+		}
+		return
+	}
 	h.doneOnce.Do(func() {
-		_ = writeRunnerStatusFile(h.statusPath, exitCode)
+		if closeErr := closeNativeRunnerLog(&h.rawLogMu, h.rawLog); closeErr != nil {
+			h.failCriticalRunnerIO("raw log close failed", closeErr)
+		}
+		if failed := h.ioFailure.Load(); failed != 0 {
+			exitCode = int(failed)
+		}
+		if wrote, _ := writeRunnerStatusFileIfAbsentWithOutcome(h.statusPath, exitCode, AttemptOutcomeNone, "", 0); wrote {
+			notifyDaemonRunStatus(StartRequest{ProjectID: h.projectID, RecordID: h.recordID})
+		}
 		liveRegistry.Unregister(h.attemptID)
 	})
 }
@@ -1719,8 +1762,10 @@ func (h *codexLiveHandle) closeRuntimeStore() {
 }
 
 func (h *codexLiveHandle) waitForExit() {
-	h.ioWG.Wait()
-	err := h.cmd.Wait()
+	err, drained := waitForNativeRunnerExit(h.cmd, &h.ioWG, h.stdout, h.stderr, &h.drainClosing)
+	if !drained && h.requestedExit.Load() == 0 && !fileExists(h.statusPath) {
+		h.failCriticalRunnerIO("output drain timed out after process exit", errors.New("runner descendant kept output pipes open"))
+	}
 	exitCode := 0
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -1732,7 +1777,20 @@ func (h *codexLiveHandle) waitForExit() {
 	if h.interrupted.Load() && exitCode == 0 {
 		exitCode = 130
 	}
+	if requested := h.requestedExit.Load(); requested != 0 {
+		exitCode = int(requested) - 1
+	}
+	h.exitObserved.Store(true)
 	h.finalize(exitCode)
+	reapNativeRunnerDescendants(h.cmd)
+}
+
+func (h *codexLiveHandle) appendRawLogLine(line string) error {
+	err := appendNativeRunnerLog(&h.rawLogMu, &h.rawLog, h.rawLogPath, line)
+	if err != nil {
+		h.failCriticalRunnerIO("raw log write failed", err)
+	}
+	return err
 }
 
 func normalizeRequestID(raw json.RawMessage) string {
@@ -1821,17 +1879,12 @@ func normalizeUsageKey(key string) string {
 }
 
 func appendRawLogLine(path, line string) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	log, err := openNativeRunnerRawLog(StartRequest{RawLogPath: path}, true)
 	if err != nil {
 		return err
 	}
-	if err := requirePrivateRunnerFile(file, path); err != nil {
-		_ = file.Close()
-		return err
-	}
-	defer file.Close()
-	_, err = file.WriteString(line + "\n")
-	return err
+	_, writeErr := log.Write([]byte(line + "\n"))
+	return errors.Join(writeErr, log.close())
 }
 
 func writeRunnerStatusFile(path string, exitCode int) error {

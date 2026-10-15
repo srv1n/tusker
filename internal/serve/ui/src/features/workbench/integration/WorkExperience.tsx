@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, type UseQueryResult } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
+import { useLiveRefetchInterval } from "@/lib/stream";
 import { qk, useProjects, useRun, useRuns, useTask, useTasks, useWaves, useWave, useWaveList, useWaveReview } from "@/lib/queries";
 import { WaveCallout, WaveMeta, WavePrimaryAction, WaveReviewDetail } from "@/features/workbench/integration/WaveAuthority";
 import { TaskBoard } from "../board";
-import { WaveFlow, type DependencyFact, type FlowViewport } from "../flow";
+import { WaveFlow, type DependencyFact, type FlowViewport, type WaveFlowProps } from "../flow";
 import { crossWaveWaitSummary } from "../flow/flowGraph";
 import { TaskInspector } from "../inspector/TaskInspector";
 import { WaveList } from "../overview/WaveList";
 import { WaveResults } from "../results/WaveResults";
 import { getWorkspaceViewState, NAVIGATION_CHANGED_EVENT, readNavigationState, updateWorkspaceViewState, writeNavigationState, type StorageLike } from "../navigation";
 import { canShowWaveResults, settleEnteredWaveView, waveSummaryWithReview, type WorkView } from "./integrationModel";
-import { projectContainsCheckout, type ProjectSummary, type WaveReviewMember } from "@/types/domain";
+import { projectContainsCheckout, type ProjectSummary, type TaskDetail, type WaveReviewMember } from "@/types/domain";
 
 type Params = { projectId?: string; waveId?: string };
 
@@ -138,28 +139,39 @@ export function WorkBoard() {
   return <Shell left={<WorkTitle projectId={projectId} current="board" />} right={modeToggle}>{body}<InspectorHost selected={selected} onClose={() => setSelected(null)} /></Shell>;
 }
 
+function combineMemberDetails(queries: UseQueryResult<TaskDetail>[]) {
+  return {
+    tasks: queries.flatMap((query) => query.data ? [query.data] : []),
+    loading: queries.some((query) => query.isPending),
+    error: queries.find((query) => query.error)?.error,
+  };
+}
+
+// Pan/zoom only renders the canvas. Retain its viewport when switching tabs.
+function WaveGraph({ savedViewport, ...props }: Omit<WaveFlowProps, "viewport" | "onViewportChange"> & { savedViewport: { current: FlowViewport } }) {
+  const [viewport, setViewport] = useState(savedViewport.current);
+  return <WaveFlow {...props} viewport={viewport} onViewportChange={(next) => {
+    savedViewport.current = next;
+    setViewport(next);
+  }} />;
+}
+
 export function WorkWave() {
   const { waveId = "" } = useParams({ strict: false }) as Params;
   const projectId = useProjectId();
   const location = useRouterState({ select: (state) => state.location });
   const waveQuery = useWave(projectId, waveId);
-  const runs = useRuns(projectId);
   const wave = waveQuery.data;
   const review = useWaveReview(waveId, projectId);
-  // Member details use the canonical task key so stream events and run/wave
-  // mutations invalidate them exactly like the inspector's useTask read.
-  const details = useQueries({ queries: (wave?.memberIds ?? []).map((id) => ({ queryKey: qk.task(id, projectId), queryFn: () => api.task(id, projectId) })) });
-  const tasks = details.flatMap((query) => query.data ? [query.data] : []);
   const requested = new URLSearchParams(location.searchStr).get("view") ?? undefined;
   const [chosenView, setChosenView] = useState<WorkView | null>(null);
   const [enteredView, setEnteredView] = useState<WorkView | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [viewport, setViewport] = useState<FlowViewport>({ x: 32, y: 32, scale: 1 });
+  const savedViewport = useMemo(() => ({ current: { x: 32, y: 32, scale: 1 } }), [projectId, waveId, requested]);
   useEffect(() => {
     setChosenView(null);
     setEnteredView(null);
     setSelected(null);
-    setViewport({ x: 32, y: 32, scale: 1 });
   }, [projectId, waveId, requested]);
   const currentWave = wave ? waveSummaryWithReview(wave, review.data, review.error) : undefined;
   const dependencyFacts = useMemo<Record<string, DependencyFact> | undefined>(() => {
@@ -185,6 +197,17 @@ export function WorkWave() {
   // entry destination; an explicit tab or deep link stays fixed through polls.
   const requestedView = requested === "work" || requested === "flow" || requested === "results" ? requested : null;
   const view = chosenView ?? enteredView ?? requestedView ?? "flow";
+  const runs = useRuns(projectId, view === "flow");
+  const refetchInterval = useLiveRefetchInterval();
+  // The Tasks tab already has the review projection. Fetch full contracts only
+  // for the graph and accepted results, using the inspector's canonical key.
+  const needsDetails = view === "flow" || (view === "results" && canShowWaveResults(review.data, review.error));
+  const details = useQueries({
+    queries: (needsDetails ? wave?.memberIds ?? [] : []).map((id) => ({
+      queryKey: qk.task(id, projectId), queryFn: () => api.task(id, projectId), refetchInterval,
+    })),
+    combine: combineMemberDetails,
+  });
   const crumb = <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px]"><Link to="/p/$projectId/waves" params={{ projectId }} className="text-muted hover:text-ink">Work</Link><span className="text-faint">/</span><span className="truncate font-mono text-[12px] text-ink">{waveId}</span></nav>;
   if (waveQuery.isPending || !currentWave) return <Shell left={crumb}><p role={waveQuery.error ? "alert" : "status"} className="p-5 text-[13px] text-muted">{waveQuery.error ? "Wave unavailable." : "Loading wave…"}</p></Shell>;
   const goal = currentWave.expectedOutcome ?? currentWave.brief.expectedOutcome;
@@ -209,8 +232,8 @@ export function WorkWave() {
       <nav aria-label="Wave views" className="flex rounded-md border border-line bg-panel p-0.5">{views.map(([tab, label]) => <button key={tab} type="button" aria-pressed={view === tab} onClick={() => setChosenView(tab)} className={segment(view === tab)}>{label}</button>)}</nav>
     </div>
     <WaveCallout projectId={projectId} waveId={currentWave.id} waitSummary={waitSummary} />
-    {view === "flow" ? <WaveFlow memberIds={currentWave.memberIds} tasks={tasks} runs={runs.data ?? []} members={currentWave.members} dependencyFacts={dependencyFacts} selectedTaskId={selected ?? undefined} viewport={viewport} onViewportChange={setViewport} onSelectTask={setSelected} loading={review.isPending || details.some((query) => query.isPending)} error={review.error instanceof Error ? review.error.message : details.find((query) => query.error)?.error instanceof Error ? String(details.find((query) => query.error)?.error) : undefined} />
-      : <Reading>{view === "work" ? <WaveReviewDetail projectId={projectId} waveId={currentWave.id} showControls={false} showDependencies={false} /> : canShowWaveResults(review.data, review.error) ? <WaveResults wave={currentWave} tasks={tasks} onOpenDependencies={() => setChosenView("flow")} onOpenTask={setSelected} /> : <p role="status" className="text-[13px] text-muted">{review.error ? "Results unavailable: the acceptance record could not be loaded." : review.isPending ? "Checking the acceptance record…" : "Results appear once this wave is accepted."}</p>}</Reading>}
+    {view === "flow" ? <WaveGraph key={`${projectId}:${waveId}:${requested ?? ""}`} savedViewport={savedViewport} memberIds={currentWave.memberIds} tasks={details.tasks} runs={runs.data ?? []} members={currentWave.members} dependencyFacts={dependencyFacts} selectedTaskId={selected ?? undefined} onSelectTask={setSelected} loading={review.isPending || details.loading} error={review.error instanceof Error ? review.error.message : details.error instanceof Error ? details.error.message : undefined} />
+      : <Reading>{view === "work" ? <WaveReviewDetail projectId={projectId} waveId={currentWave.id} showControls={false} showDependencies={false} /> : canShowWaveResults(review.data, review.error) ? <WaveResults wave={currentWave} tasks={details.tasks} onOpenDependencies={() => setChosenView("flow")} onOpenTask={setSelected} /> : <p role="status" className="text-[13px] text-muted">{review.error ? "Results unavailable: the acceptance record could not be loaded." : review.isPending ? "Checking the acceptance record…" : "Results appear once this wave is accepted."}</p>}</Reading>}
     <InspectorHost selected={selected} reviewMember={review.error ? undefined : review.data?.members.find((member) => member.taskId === selected)} onClose={() => setSelected(null)} />
   </Shell>;
 }

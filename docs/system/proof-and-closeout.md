@@ -132,6 +132,12 @@ reuses receipts that still match the material. It then runs the
 `adopt_completed` transition, which records the implementation as
 "external/unknown". Dependencies are adopted before their dependents.
 
+Every task receives its own contract-bound receipt. Identical pending shell
+commands execute for each task: they can read tracker state, ignored files, or
+external inputs that a repository hash does not cover. Existing material-bound
+receipts retain their normal validity checks; arbitrary command observations
+are not cached across tasks.
+
 The actor decides how far a task moves:
 
 | Actor | Passing task moves to |
@@ -151,6 +157,16 @@ contract (`tusker edit <ID> --body-file <path> --by <actor>`), a live
 claim on the task, or a malformed Verification row. A `|` inside a Check cell
 must be written `\|`; otherwise the table splits the command. Readiness also
 reports such rows as blockers.
+
+Quiet interactive leases are reclaimable by a subsequent claim or `done` once
+24 hours have passed since lease expiry and the recorded process is gone.
+Live or uncertain process identities retain their ownership fence. Reclaim
+releases ownership without deleting checkout files or scheduling a retry.
+Before that deadline, an operator can release an abandoned session explicitly:
+
+```sh
+tusker runs retire APP-T-0001 --release --break-glass --by human:<name> --reason 'release abandoned session'
+```
 
 ## Close checks
 

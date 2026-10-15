@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createServer } from "vite";
+import { chromeLaunchOptions } from "./browser-options";
 
 test("agent access approvals show immutable states and only settle a live request", async () => {
   const playwright = await import("/Users/sarav/.bun/install/global/node_modules/playwright/index.mjs").catch(() => undefined);
@@ -78,7 +79,7 @@ createRoot(document.getElementById("root")).render(<QueryClientProvider client={
     await server.listen();
     const address = server.httpServer?.address();
     if (!address || typeof address === "string") throw new Error("Vite did not expose a TCP address");
-    browser = await playwright.chromium.launch({ channel: "chrome", headless: true });
+    browser = await playwright.chromium.launch(chromeLaunchOptions);
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.goto(`http://127.0.0.1:${address.port}/`);
     const cards = page.locator("[data-agent-access-approvals] article");

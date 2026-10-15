@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let config = AppConfig.shared
     private let settings = SettingsWindowController()
     private let sse = SSEClient()
+    private let summary = SummaryRefresher()
     private var panel: PanelController!
     private var mainWindow: MainWindowController!
     private var notifications: NotificationCoordinator!
@@ -167,10 +168,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sse.connect(url: streamURL, onEvent: { [weak self] event in
             self?.notifications.handle(event)
             self?.refreshSummary()
-            if let baseURL = self?.config.baseURL { self?.spotlight.refresh(baseURL: baseURL) }
+            if SpotlightIndexer.affectsIndex(event), let baseURL = self?.config.baseURL {
+                self?.spotlight.refresh(baseURL: baseURL, projectID: event.project)
+            }
         }, onConnection: { [weak self] connected in
             self?.connected = connected
-            if connected, let baseURL = self?.config.baseURL { self?.spotlight.refresh(baseURL: baseURL) }
+            if connected {
+                self?.refreshSummary()
+                if let baseURL = self?.config.baseURL { self?.spotlight.refresh(baseURL: baseURL) }
+            }
         }, onReplayMiss: { [weak self] in
             // A replay miss means the event window is incomplete. Refresh the
             // authoritative summary immediately; waiting for another event leaves
@@ -182,16 +188,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshSummary() {
-        let url = config.baseURL.appendingPathComponent("api/summary")
-        // Native networking is deliberately limited to this unauthenticated,
-        // read-only local summary used for the badge. Mutating/capability-bearing
-        // calls stay inside the origin-scoped WebView bridge.
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
-            guard let data, let summary = try? JSONDecoder().decode(TuskerSummary.self, from: data) else { return }
-            DispatchQueue.main.async { self?.setBadge(summary.attention + summary.review) }
-        }.resume()
+        summary.refresh(baseURL: config.baseURL) { [weak self] summary in
+            self?.setBadge(summary.attention + summary.review)
+        }
     }
 
     func setBadge(_ count: Int) {

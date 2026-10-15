@@ -235,7 +235,7 @@ class JourneyTest(unittest.TestCase):
 		t.Fatalf("daemon terminal reconciliation: changed=%v err=%v", changed, err)
 	}
 	daemon.notifyMu.Lock()
-	_, reviewWakeScheduled := daemon.notifyTimers[runtimeRun.ProjectID]
+	_, reviewWakeScheduled := daemon.notifyPending[runtimeRun.ProjectID]
 	daemon.notifyMu.Unlock()
 	if !reviewWakeScheduled {
 		t.Fatal("execute completion did not schedule review reconciliation")

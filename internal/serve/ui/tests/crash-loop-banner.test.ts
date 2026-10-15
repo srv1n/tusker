@@ -14,7 +14,7 @@ describe("crash-loop circuit banner", () => {
     }));
     expect(html).toContain("Daemon crash loop");
     expect(html).toContain("six abnormal starts");
-    expect(html).toContain("tusker daemon resume");
+    expect(html).toContain("tusker daemon status --resume");
   });
 
   test("stays absent while the circuit is closed", () => {

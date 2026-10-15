@@ -290,7 +290,7 @@ func submitTaskReview(tuskerBin, taskID string) error {
 			break
 		}
 	}
-	args := []string{"review", "submit", taskID, "--vault", workerVault(), "--attempt", os.Getenv("TUSKER_ATTEMPT_ID"), "--by", actor, "--verdict", "pass", "--covers", "A1", "--summary", "objective fixture artifact inspected"}
+	args := []string{"review", taskID, "--vault", workerVault(), "--attempt", os.Getenv("TUSKER_ATTEMPT_ID"), "--by", actor, "--verdict", "pass", "--covers", "A1", "--summary", "objective fixture artifact inspected"}
 	for _, flag := range []string{"task-rev", "source-sha", "work-rev", "proof-fingerprint", "gate-fingerprint"} {
 		item, itemErr := value(flag)
 		if itemErr != nil {
@@ -335,7 +335,7 @@ func submitTaskWork(tuskerBin, deliverable, verification string) error {
 		return fmt.Errorf("missing TUSKER_ITEM_ID or TUSKER_VAULT")
 	}
 	cmd := exec.Command(tuskerBin,
-		"work", "submit", taskID,
+		"done", taskID,
 		"--by", os.Getenv("TUSKER_ATTEMPT_ID"),
 		"--deliverable", deliverable,
 		"--verification", verification,
@@ -422,7 +422,7 @@ func setTaskStatus(tuskerBin, status string) error {
 		return fmt.Errorf("missing TUSKER_ITEM_ID or TUSKER_VAULT")
 	}
 	cmd := exec.Command(tuskerBin,
-		"status", taskID,
+		"edit", taskID,
 		"--vault", vault,
 		"--status", status,
 		"--by", "agent:fake-runner",

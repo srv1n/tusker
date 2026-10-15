@@ -9,8 +9,21 @@ import (
 	"time"
 )
 
+// Read projections may reuse their request snapshot. Mutation callers leave
+// this nil and re-read current authority through the existing wrappers.
+type runRecoveryReadContext struct {
+	index    v7Index
+	task     Note
+	workflow WorkflowFile
+	material *waveMaterialReadContext
+}
+
 // contextRecoveryPreflight reads canonical facts without changing them.
 func contextRecoveryPreflight(store *RuntimeStore, wave Note, run RunStatus) (*RunAttempt, error, string) {
+	return contextRecoveryPreflightWithContext(store, wave, run, nil)
+}
+
+func contextRecoveryPreflightWithContext(store *RuntimeStore, wave Note, run RunStatus, context *runRecoveryReadContext) (*RunAttempt, error, string) {
 	if !run.Terminal || projectedAttemptOutcome(run.AttemptOutcome, run.LastError) != AttemptOutcomeUnknown {
 		return nil, nil, "context recovery requires an unknown terminal outcome"
 	}
@@ -24,11 +37,18 @@ func contextRecoveryPreflight(store *RuntimeStore, wave Note, run RunStatus) (*R
 		return nil, nil, "the existing wave execution window is not current"
 	}
 	if vault := v7VaultPathForLandingAudit(wave); vault != "" {
-		idx, loadErr := loadV7Index(vault)
+		var idx v7Index
+		var loadErr error
+		var material *waveMaterialReadContext
+		if context == nil {
+			idx, loadErr = loadV7Index(vault)
+		} else {
+			idx, material = context.index, context.material
+		}
 		if loadErr != nil {
 			return nil, nil, "cannot verify wave material before context recovery: " + loadErr.Error()
 		}
-		if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
+		if auth := waveAuthorizationProjectionWithContext(vault, idx, wave, material); boolFromAny(auth["stale"]) {
 			return nil, nil, "wave material changed since authorization; re-authorize before context recovery"
 		}
 	}
@@ -185,6 +205,10 @@ func clearFailedContextRecoveryIntent(store *RuntimeStore, recovery runSessionCo
 
 // nativeContinuationPreflight is shared by the read model and the mutating path.
 func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject, wave Note, run RunStatus, allowLiveSay ...bool) (*RunnerSession, error, string) {
+	return nativeContinuationPreflightWithContext(store, project, wave, run, nil, allowLiveSay...)
+}
+
+func nativeContinuationPreflightWithContext(store *RuntimeStore, project RegisteredProject, wave Note, run RunStatus, context *runRecoveryReadContext, allowLiveSay ...bool) (*RunnerSession, error, string) {
 	if run.Lane == runLaneReview {
 		return nil, nil, "native continuation is unavailable for review runs"
 	}
@@ -214,7 +238,13 @@ func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject,
 	// Recompute the context the continuation would be dispatched with and
 	// compare it with the fingerprint retained in the session's last prompt, so
 	// a changed task or workflow is refused here rather than at dispatch.
-	if reason := (&Daemon{store: store}).priorResumeContextMismatch(run, session, currentResumeContextFingerprint(store, project, run)); reason != "" {
+	var currentFingerprint string
+	if context == nil {
+		currentFingerprint = currentResumeContextFingerprint(store, project, run)
+	} else {
+		currentFingerprint = resumeContextFingerprint(project, context.workflow, context.task, run.WorkspacePath, runLaneExecute, run)
+	}
+	if reason := (&Daemon{store: store}).priorResumeContextMismatch(run, session, currentFingerprint); reason != "" {
 		return nil, nil, reason
 	}
 	if strings.TrimSpace(stringField(wave.Data, "id")) == "" ||
@@ -224,11 +254,18 @@ func nativeContinuationPreflight(store *RuntimeStore, project RegisteredProject,
 		return nil, nil, "the existing wave execution window is not current"
 	}
 	if vault := v7VaultPathForLandingAudit(wave); vault != "" {
-		idx, loadErr := loadV7Index(vault)
+		var idx v7Index
+		var loadErr error
+		var material *waveMaterialReadContext
+		if context == nil {
+			idx, loadErr = loadV7Index(vault)
+		} else {
+			idx, material = context.index, context.material
+		}
 		if loadErr != nil {
 			return nil, nil, "cannot verify wave material before continuation: " + loadErr.Error()
 		}
-		if auth := waveAuthorizationProjection(vault, idx, wave); boolFromAny(auth["stale"]) {
+		if auth := waveAuthorizationProjectionWithContext(vault, idx, wave, material); boolFromAny(auth["stale"]) {
 			return nil, nil, "wave material changed since authorization; re-authorize before continuation"
 		}
 	}
@@ -647,6 +684,15 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	run, err := store.FindRunScoped(projectID, recordID)
 	if err != nil {
 		return result, err
+	}
+	if run != nil && quietInteractiveLeaseExpired(*run, now) {
+		if _, err := store.ReclaimExpiredRunLease(run.ProjectID, run.RecordID, now, defaultRunLeaseTTL, "quiet interactive lease expired after 24h"); err != nil {
+			return result, err
+		}
+		run, err = store.FindRunScoped(projectID, recordID)
+		if err != nil {
+			return result, err
+		}
 	}
 	if run != nil && (isDispatchingLeaseState(run.LeaseState) || runProcessGroupAlive(*run)) {
 		return refuse("a live run holds " + taskID + "; release or interrupt it before adopt_completed")

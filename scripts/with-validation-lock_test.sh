@@ -43,6 +43,7 @@ wait_for_path "$lock/pid"
 wait_for_path "$events"
 
 EVENTS="$events" TUSKER_VALIDATION_LOCK_DIR="$lock" TUSKER_VALIDATION_LOCK_POLL_SECONDS=0.05 \
+	TUSKER_VALIDATION_LOCK_HELD=unrelated-token \
 	sh "$gate" -- sh -c 'printf "second-start\n" >>"$EVENTS"; printf "second-end\n" >>"$EVENTS"' 2>"$wait_log" &
 second_pid=$!
 sleep 0.15
@@ -67,11 +68,28 @@ actual=$(cat "$events")
 	exit 1
 }
 
+nested_lock="$tmp_dir/nested.lock"
+GATE="$gate" TUSKER_VALIDATION_LOCK_DIR="$nested_lock" TUSKER_VALIDATION_LOCK_TIMEOUT_SECONDS=2 \
+	sh "$gate" -- sh -c '
+		owner_token=$(cat "$TUSKER_VALIDATION_LOCK_DIR/token")
+		if sh "$GATE" -- sh -c "exit 17"; then
+			printf "nested validation lost the command exit status\n" >&2
+			exit 1
+		else
+			[ "$?" -eq 17 ] || exit 1
+		fi
+		[ "$(cat "$TUSKER_VALIDATION_LOCK_DIR/token")" = "$owner_token" ]
+	'
+[ ! -d "$nested_lock" ] || {
+	printf 'nested validation lock survived outer exit\n' >&2
+	exit 1
+}
+
 stale_lock="$tmp_dir/stale.lock"
 mkdir "$stale_lock"
 printf '99999999\n' >"$stale_lock/pid"
 printf 'stale\n' >"$stale_lock/token"
-TUSKER_VALIDATION_LOCK_DIR="$stale_lock" sh "$gate" -- true 2>"$tmp_dir/stale.log"
+TUSKER_VALIDATION_LOCK_DIR="$stale_lock" TUSKER_VALIDATION_LOCK_HELD=stale sh "$gate" -- true 2>"$tmp_dir/stale.log"
 grep -q 'recovered stale owner pid 99999999' "$tmp_dir/stale.log"
 [ ! -d "$stale_lock" ] || {
 	printf 'recovered stale lock survived command exit\n' >&2
@@ -138,6 +156,6 @@ check_plan=$(make -s -n -C "$repo_root" check)
 printf '%s\n' "$test_plan" | grep -q 'with-validation-lock.sh --.*test-unlocked'
 printf '%s\n' "$test_unlocked_plan" | grep -q 'GOMAXPROCS=2 go test -timeout=20m -p=1 -parallel=1 ./...'
 printf '%s\n' "$check_plan" | grep -q 'with-validation-lock.sh --.*check-unlocked'
-printf '%s\n' "$check_plan" | grep -q 'make fmt-check test-unlocked vet-unlocked validate-unlocked build-go-unlocked'
+printf '%s\n' "$check_plan" | grep -q 'make fmt-check test-unlocked vet-unlocked validate-unlocked release-test build-go-unlocked'
 
-printf 'PASS validation lock serialization, raw go-test admission, stale recovery, signal cleanup, worktree sharing, and canonical routing\n'
+printf 'PASS validation lock serialization, nested inheritance, raw go-test admission, stale recovery, signal cleanup, worktree sharing, and canonical routing\n'
