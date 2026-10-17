@@ -559,12 +559,14 @@ func normalizeList(value any) []string {
 	}
 }
 
+var wikiTargetPattern = regexp.MustCompile(`^\[\[([^\]]+)\]\]$`)
+
 func wikiTarget(value any) string {
 	str := strings.TrimSpace(toString(value))
 	if str == "" {
 		return ""
 	}
-	match := regexp.MustCompile(`^\[\[([^\]]+)\]\]$`).FindStringSubmatch(str)
+	match := wikiTargetPattern.FindStringSubmatch(str)
 	if match == nil {
 		return str
 	}

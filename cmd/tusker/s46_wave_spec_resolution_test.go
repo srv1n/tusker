@@ -86,8 +86,8 @@ func TestS46WaveSpecResolution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		subjectPath, subjectIssue := waveMaterialSpecFile(vault, "portable-project-documentation", corpus, true)
-		pathPath, pathIssue := waveMaterialSpecFile(vault, ".tusker/specs/portable-project-documentation.md", corpus, true)
+		subjectPath, subjectIssue := waveMaterialSpecFile(vault, "portable-project-documentation", docgraph.NewResolver(corpus))
+		pathPath, pathIssue := waveMaterialSpecFile(vault, ".tusker/specs/portable-project-documentation.md", docgraph.NewResolver(corpus))
 		if subjectIssue != "" || pathIssue != "" {
 			t.Fatalf("subject/path resolution mismatch: %q %q", subjectIssue, pathIssue)
 		}

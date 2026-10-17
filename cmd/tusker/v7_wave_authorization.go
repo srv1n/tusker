@@ -47,8 +47,7 @@ type waveMaterialSpecResult struct {
 // This shares corpus, spec bytes and identical material fingerprints across
 // summary/recovery projections without retaining authority across requests.
 type waveMaterialReadContext struct {
-	corpus          docgraph.Corpus
-	corpusLoaded    bool
+	resolver        *docgraph.Resolver
 	corpusAttempted bool
 	corpusLoads     int
 	specs           map[string]waveMaterialSpecResult
@@ -124,13 +123,13 @@ func waveMaterialFingerprintWithContext(vaultPath string, idx v7Index, wave Note
 		context.corpusAttempted = true
 		context.corpusLoads++
 		if corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath)); err == nil {
-			context.corpus, context.corpusLoaded = corpus, true
+			context.resolver = docgraph.NewResolver(corpus)
 		}
 	}
 	for _, ref := range refs {
 		cached, ok := context.specs[ref]
 		if !ok {
-			path, issue := waveMaterialSpecFile(vaultPath, ref, context.corpus, context.corpusLoaded)
+			path, issue := waveMaterialSpecFile(vaultPath, ref, context.resolver)
 			cached.issue = issue
 			if issue == "" {
 				file, read := context.files[path]
@@ -174,7 +173,7 @@ func waveMaterialFingerprintWithContext(vaultPath string, idx v7Index, wave Note
 // silently picking one route, and only spec/proposal/decision kinds are
 // admitted. The returned path is empty when the ref does not resolve; the
 // issue string then carries the MATERIAL_INVALID reason.
-func waveMaterialSpecFile(vaultPath, ref string, corpus docgraph.Corpus, corpusLoaded bool) (string, string) {
+func waveMaterialSpecFile(vaultPath, ref string, resolver *docgraph.Resolver) (string, string) {
 	unresolvable := "spec_ref does not resolve: " + ref
 	if v7SpecRefPathEscapes(v7CleanSpecRef(ref)) {
 		return "", unresolvable
@@ -192,7 +191,7 @@ func waveMaterialSpecFile(vaultPath, ref string, corpus docgraph.Corpus, corpusL
 		}
 		return path, ""
 	}
-	if !corpusLoaded {
+	if resolver == nil {
 		return "", unresolvable
 	}
 	base := v7CleanSpecRef(ref)
@@ -200,8 +199,8 @@ func waveMaterialSpecFile(vaultPath, ref string, corpus docgraph.Corpus, corpusL
 	if base == "" {
 		return "", unresolvable
 	}
-	if _, strictOK := docgraph.ResolveStrictReference(corpus, base); !strictOK {
-		if _, lenientOK := docgraph.ResolveReference(corpus, base); lenientOK {
+	if _, strictOK := resolver.ResolveStrict(base); !strictOK {
+		if _, lenientOK := resolver.Resolve(base); lenientOK {
 			return "", "spec_ref is ambiguous: " + ref
 		}
 		// Not a managed subject, path, or alias. Keep the historical
@@ -210,7 +209,7 @@ func waveMaterialSpecFile(vaultPath, ref string, corpus docgraph.Corpus, corpusL
 		// on-disk bytes instead of newly failing authorization.
 		return waveMaterialPlainFile(vaultPath, ref)
 	}
-	current, ok := docgraph.ResolveCurrentReference(corpus, base)
+	current, ok := resolver.ResolveCurrent(base)
 	if !ok {
 		return "", unresolvable
 	}
