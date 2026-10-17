@@ -18,6 +18,9 @@ const (
 )
 
 type automationCommandContext struct {
+	// armedWaveMemo is the daemon poll's pass-scoped armed-wave memo; nil
+	// outside a daemon poll collection stretch (see armedWavePassMemo).
+	armedWaveMemo      *armedWavePassMemo
 	StateRoot          string
 	Store              *RuntimeStore
 	CloseStore         bool
@@ -561,7 +564,7 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 	notesByRecordID := ctx.NotesByRecordID
 	projectionBlocker := ""
 	if lane == runLaneExecute {
-		if projected, projectedIdx, ok, projectionErr := armedWaveDispatchTaskProjection(ctx.Project.VaultRoot, note); projectionErr != nil {
+		if projected, projectedIdx, ok, projectionErr := armedWaveDispatchTaskProjectionWithMemo(ctx.armedWaveMemo, ctx.Project.VaultRoot, note); projectionErr != nil {
 			projectionBlocker = projectionErr.Error()
 		} else if ok {
 			note = projected
@@ -618,7 +621,7 @@ func (ctx *automationCommandContext) explainTaskForRunnerMode(note Note, runner 
 		blockers = append(blockers, reason)
 	}
 	if daemonDispatch {
-		if reason := armedWaveDispatchBlocker(ctx.Project.VaultRoot, note, ctx.Workflow.Data, ctx.ProjectRuns); reason != "" {
+		if reason := armedWaveDispatchBlockerWithMemo(ctx.armedWaveMemo, ctx.Project.VaultRoot, note, ctx.Workflow.Data, ctx.ProjectRuns); reason != "" {
 			blockers = append(blockers, reason)
 		}
 	}

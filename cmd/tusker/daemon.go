@@ -68,10 +68,13 @@ type Daemon struct {
 	reconcileSchedule          map[string]adaptiveProjectReconcileState
 	processIdentityProbe       func(RunStatus) bool
 	pollProcessIdentity        func(RunStatus) bool
-	completionAuthorityMu      sync.Mutex
-	completionAuthorityKey     map[string]ed25519.PrivateKey
-	codexExecIngestMu          sync.Mutex
-	codexExecIngest            map[string]*codexExecIngestState
+	// pollArmedWave is set only while pollOnce collects one project's
+	// candidates; see armedWavePassMemo for scope and invalidation.
+	pollArmedWave          *armedWavePassMemo
+	completionAuthorityMu  sync.Mutex
+	completionAuthorityKey map[string]ed25519.PrivateKey
+	codexExecIngestMu      sync.Mutex
+	codexExecIngest        map[string]*codexExecIngestState
 }
 
 const (
@@ -1346,6 +1349,8 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		pollErr := func() error {
 
 			project := loaded.Project
+			d.pollArmedWave = newArmedWavePassMemo(project.VaultRoot)
+			defer func() { d.pollArmedWave = nil }()
 			wfFile := loaded.Workflow
 			visibilityIntervals[project.ProjectID] = time.Duration(wfFile.Data.Runtime.VisibilityIntervalMS) * time.Millisecond
 			notes := loaded.Notes
@@ -1514,7 +1519,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				}
 				status := stringField(note.Data, "status")
 				if !containsString(wfFile.Data.Tracker.ActiveStates, status) {
-					projected, _, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
+					projected, _, ok, err := armedWaveDispatchTaskProjectionWithMemo(d.pollArmedWave, project.VaultRoot, note)
 					if err != nil {
 						return err
 					}
@@ -1646,7 +1651,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					dispatchNotes := notes
 					dispatchNotesByID := notesByID
 					dispatchNotesByRecordID := notesByRecordID
-					if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
+					if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjectionWithMemo(d.pollArmedWave, project.VaultRoot, note); err != nil {
 						return err
 					} else if ok {
 						dispatchNote = projected
@@ -1783,7 +1788,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				}
 				status := stringField(note.Data, "status")
 				if !containsString(wfFile.Data.Tracker.ReviewStates, status) {
-					projected, ok, err := armedWaveIntegrationTaskProjection(project.VaultRoot, note)
+					projected, ok, err := armedWaveIntegrationTaskProjectionWithMemo(d.pollArmedWave, project.VaultRoot, note)
 					if err != nil {
 						return err
 					}
@@ -1855,7 +1860,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					}
 					continue
 				}
-				if reason := armedWaveReviewDependencyBlocker(project.VaultRoot, note); reason != "" {
+				if reason := armedWaveReviewDependencyBlockerWithMemo(d.pollArmedWave, project.VaultRoot, note); reason != "" {
 					current.ProjectID = project.ProjectID
 					current.RecordID = recordID
 					current.ItemID = stringField(note.Data, "id")
@@ -2806,7 +2811,7 @@ func (d *Daemon) reconcileExecuteRunWithPlan(ctx context.Context, project Regist
 	if activeInteractiveBacklogClaim(d.store, project.VaultRoot, note, run, time.Now().UTC()) {
 		return run, false, nil
 	}
-	if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note); err != nil {
+	if projected, projectedIdx, ok, err := armedWaveDispatchTaskProjectionWithMemo(d.pollArmedWave, project.VaultRoot, note); err != nil {
 		return run, false, err
 	} else if ok {
 		note = projected
@@ -2892,6 +2897,7 @@ func (d *Daemon) executePlanBlockedReason(project RegisteredProject, wfFile Work
 	if err != nil {
 		return "", err
 	}
+	ctx.armedWaveMemo = d.pollArmedWave
 	// Plan eligibility and launch health have different persistence semantics.
 	// The actual pre-claim path owns runner health so it can record a structured,
 	// terminal infrastructure block without creating a lease or attempt.
@@ -2948,7 +2954,7 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 		return run, false, nil
 	}
 	if run.Lane == runLaneExecute {
-		projected, projectedIdx, ok, err := armedWaveDispatchTaskProjection(project.VaultRoot, note)
+		projected, projectedIdx, ok, err := armedWaveDispatchTaskProjectionWithMemo(d.pollArmedWave, project.VaultRoot, note)
 		if err != nil {
 			return run, false, err
 		}
@@ -2960,7 +2966,7 @@ func (d *Daemon) reconcileRunWithTracker(ctx context.Context, project Registered
 	}
 	trackerState := strings.TrimSpace(stringField(note.Data, "status"))
 	if run.Lane == runLaneReview {
-		projected, ok, err := armedWaveIntegrationTaskProjection(project.VaultRoot, note)
+		projected, ok, err := armedWaveIntegrationTaskProjectionWithMemo(d.pollArmedWave, project.VaultRoot, note)
 		if err != nil {
 			return run, false, err
 		}
@@ -4611,7 +4617,7 @@ func resolveRunnerForNote(note Note, wf Workflow) string {
 // Play authorizes one exact task even when no wave is armed. It never bypasses
 // dependency, resource, concurrency, or stale-material blockers.
 func (d *Daemon) scopeDispatchBlocker(project RegisteredProject, note Note, wf Workflow, runs map[string]RunStatus) (string, error) {
-	reason := armedWaveDispatchBlocker(project.VaultRoot, note, wf, runs)
+	reason := armedWaveDispatchBlockerWithMemo(d.pollArmedWave, project.VaultRoot, note, wf, runs)
 	if reason == "" || !runDirectiveBypassableBlocker(reason) {
 		return reason, nil
 	}

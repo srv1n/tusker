@@ -143,6 +143,10 @@ func buildArmedWaveSnapshot(vaultPath string, idx v7Index, wave Note, runs map[s
 }
 
 func armedWaveProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index, map[string]string) {
+	return armedWaveProjectedIndexWithMemo(nil, vaultPath, idx, wave)
+}
+
+func armedWaveProjectedIndexWithMemo(memo *armedWavePassMemo, vaultPath string, idx v7Index, wave Note) (v7Index, map[string]string) {
 	if armedWaveIntegrated(wave) {
 		return idx, map[string]string{}
 	}
@@ -153,7 +157,7 @@ func armedWaveProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index,
 	for id, task := range idx.Tasks {
 		effectiveTasks[id] = task
 	}
-	if repoRoot := v7RepoRoot(vaultPath); v7GitRepo(repoRoot) && gitBranchExists(repoRoot, v7WaveIntegrationBranch(wave)) {
+	if repoRoot := v7RepoRoot(vaultPath); memo.gitRepo(vaultPath, repoRoot) && memo.branchExists(vaultPath, repoRoot, v7WaveIntegrationBranch(wave)) {
 		for _, id := range members {
 			if !landed[id] {
 				continue
@@ -162,7 +166,7 @@ func armedWaveProjectedIndex(vaultPath string, idx v7Index, wave Note) (v7Index,
 			if !ok {
 				continue
 			}
-			projected, projectedOK, err := armedWaveIntegrationTaskProjection(vaultPath, task)
+			projected, projectedOK, err := armedWaveIntegrationTaskProjectionWithMemo(memo, vaultPath, task)
 			if err != nil {
 				projectionErrors[id] = err.Error()
 				continue
@@ -248,11 +252,15 @@ func armedWaveRunMachineParked(run RunStatus) bool {
 }
 
 func armedWaveForTask(vaultPath string, task Note) (Note, v7Index, bool) {
+	return armedWaveForTaskWithMemo(nil, vaultPath, task)
+}
+
+func armedWaveForTaskWithMemo(memo *armedWavePassMemo, vaultPath string, task Note) (Note, v7Index, bool) {
 	waveID := stringField(task.Data, "wave")
 	if waveID == "" {
 		return Note{}, v7Index{}, false
 	}
-	idx, err := loadV7Index(vaultPath)
+	idx, err := memo.index(vaultPath)
 	if err != nil {
 		return Note{}, v7Index{}, false
 	}
@@ -260,12 +268,16 @@ func armedWaveForTask(vaultPath string, task Note) (Note, v7Index, bool) {
 	if !ok {
 		return Note{}, idx, false
 	}
-	auth := waveAuthorizationProjection(vaultPath, idx, wave)
+	auth := memo.authorization(vaultPath, idx, wave)
 	return wave, idx, stringField(auth, "state") == "armed" && !boolFromAny(auth["stale"])
 }
 
 func armedWaveIntegrationTaskProjection(vaultPath string, task Note) (Note, bool, error) {
-	wave, _, armed := armedWaveForTask(vaultPath, task)
+	return armedWaveIntegrationTaskProjectionWithMemo(nil, vaultPath, task)
+}
+
+func armedWaveIntegrationTaskProjectionWithMemo(memo *armedWavePassMemo, vaultPath string, task Note) (Note, bool, error) {
+	wave, _, armed := armedWaveForTaskWithMemo(memo, vaultPath, task)
 	if !armed || !armedWaveLandedMembers(wave)[stringField(task.Data, "id")] {
 		return Note{}, false, nil
 	}
@@ -275,7 +287,7 @@ func armedWaveIntegrationTaskProjection(vaultPath string, task Note) (Note, bool
 		return Note{}, false, tuskerError(errorInvalidTransition, "cannot project armed-wave task from integration: invalid canonical task path "+task.AbsolutePath)
 	}
 	integrationBranch := v7WaveIntegrationBranch(wave)
-	projected, ok, err := v7GitNoteAtRef(repoRoot, integrationBranch, filepath.ToSlash(rel))
+	projected, ok, err := memo.noteAtRef(vaultPath, repoRoot, integrationBranch, filepath.ToSlash(rel))
 	if err != nil {
 		return Note{}, false, err
 	}
@@ -314,11 +326,15 @@ func v7GitNoteAtRef(repoRoot, ref, rel string) (Note, bool, error) {
 }
 
 func armedWaveDispatchTaskProjection(vaultPath string, task Note) (Note, v7Index, bool, error) {
-	wave, idx, armed := armedWaveForTask(vaultPath, task)
+	return armedWaveDispatchTaskProjectionWithMemo(nil, vaultPath, task)
+}
+
+func armedWaveDispatchTaskProjectionWithMemo(memo *armedWavePassMemo, vaultPath string, task Note) (Note, v7Index, bool, error) {
+	wave, idx, armed := armedWaveForTaskWithMemo(memo, vaultPath, task)
 	if !armed {
 		return task, idx, false, nil
 	}
-	projectedIdx, projectionErrors := armedWaveProjectedIndex(vaultPath, idx, wave)
+	projectedIdx, projectionErrors := memo.projectedIndex(vaultPath, idx, wave)
 	taskID := stringField(task.Data, "id")
 	if reason := projectionErrors[taskID]; reason != "" {
 		return task, projectedIdx, false, tuskerError(errorInvalidTransition, "armed-wave dispatch projection failed for "+taskID+": "+reason)
@@ -331,7 +347,11 @@ func armedWaveDispatchTaskProjection(vaultPath string, task Note) (Note, v7Index
 }
 
 func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
-	wave, idx, armed := armedWaveForTask(vaultPath, task)
+	return armedWaveReviewDependencyBlockerWithMemo(nil, vaultPath, task)
+}
+
+func armedWaveReviewDependencyBlockerWithMemo(memo *armedWavePassMemo, vaultPath string, task Note) string {
+	wave, idx, armed := armedWaveForTaskWithMemo(memo, vaultPath, task)
 	if !armed {
 		return ""
 	}
@@ -350,7 +370,7 @@ func armedWaveReviewDependencyBlocker(vaultPath string, task Note) string {
 			return dependencyID + " integration state has an invalid task path"
 		}
 		integrationBranch := armedWaveDependencyIntegrationBranch(idx, wave, dependency)
-		integrated, ok, err := v7GitNoteAtRef(repoRoot, integrationBranch, filepath.ToSlash(rel))
+		integrated, ok, err := memo.noteAtRef(vaultPath, repoRoot, integrationBranch, filepath.ToSlash(rel))
 		if err != nil {
 			return dependencyID + " integration state is unavailable"
 		}
@@ -374,6 +394,10 @@ func armedWaveDependencyIntegrationBranch(idx v7Index, currentWave, dependency N
 }
 
 func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map[string]RunStatus) string {
+	return armedWaveDispatchBlockerWithMemo(nil, vaultPath, task, wf, runs)
+}
+
+func armedWaveDispatchBlockerWithMemo(memo *armedWavePassMemo, vaultPath string, task Note, wf Workflow, runs map[string]RunStatus) string {
 	// Record integrity is checked before scope, continuation, or directive
 	// bypass: a queued Start must never execute contract bytes that were edited
 	// out of band after authorization. This reason is deliberately absent from
@@ -388,8 +412,8 @@ func armedWaveDispatchBlocker(vaultPath string, task Note, wf Workflow, runs map
 			}
 		}
 	}
-	if wave, idx, _ := armedWaveForTask(vaultPath, task); stringField(wave.Data, "id") != "" {
-		auth := waveAuthorizationProjection(vaultPath, idx, wave)
+	if wave, idx, _ := armedWaveForTaskWithMemo(memo, vaultPath, task); stringField(wave.Data, "id") != "" {
+		auth := memo.authorization(vaultPath, idx, wave)
 		if stringField(auth, "state") == "paused" && !boolFromAny(auth["stale"]) {
 			return "wave is paused"
 		}
