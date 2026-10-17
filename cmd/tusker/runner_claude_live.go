@@ -176,6 +176,11 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err := addClaudeAccessSettings(projection.claudeSettings, access); err != nil {
 		return nil, err
 	}
+	if permissionMode == "plan" {
+		if err := addClaudeAllowRules(projection.claudeSettings, claudeReviewAllowRules(req.NotePath)); err != nil {
+			return nil, err
+		}
+	}
 	if !slices.Contains(argv, "--replay-user-messages") {
 		argv = append(argv, "--replay-user-messages")
 	}

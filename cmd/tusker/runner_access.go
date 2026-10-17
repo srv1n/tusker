@@ -132,3 +132,50 @@ func addClaudeAccessSettings(path string, paths runnerAccessPaths) error {
 	}
 	return os.WriteFile(path, data, 0600)
 }
+
+// claudeReviewAllowRules lets a read-only (plan mode) Claude reviewer run the
+// commands a review needs: plan mode denies every unlisted Bash call, and
+// `tusker review` is the only way to submit a verdict.
+func claudeReviewAllowRules(notePath string) []string {
+	rules := []string{
+		"Bash(tusker review *)", "Bash(tusker show *)",
+		"Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git status*)",
+	}
+	_, body, err := parseFrontmatterMustRead(notePath)
+	if err != nil {
+		return rules
+	}
+	for _, row := range parseV7VerificationRows(body) {
+		command, ok := strings.CutPrefix(strings.TrimSpace(row.Check), "command:")
+		if command = strings.TrimSpace(command); ok && command != "" {
+			rules = append(rules, "Bash("+command+")")
+		}
+	}
+	return rules
+}
+
+func addClaudeAllowRules(path string, rules []string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+	permissions, _ := settings["permissions"].(map[string]any)
+	if permissions == nil {
+		permissions = map[string]any{}
+		settings["permissions"] = permissions
+	}
+	existing, _ := permissions["allow"].([]any)
+	for _, rule := range rules {
+		existing = append(existing, rule)
+	}
+	permissions["allow"] = existing
+	data, err = json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
