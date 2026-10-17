@@ -44,11 +44,16 @@ import {
   subscribeStartupQueryCache,
 } from "@/lib/queryPersistence";
 
+// A stale chunk (the server was rebuilt under an open tab) reloads once. Only
+// suppress the error when we actually reload: a suppressed preload error makes
+// the dynamic import resolve to undefined and the router crashes on it. The
+// retry stamp expires so a later rebuild in the same tab can reload again.
 window.addEventListener("vite:preloadError", (event) => {
-  event.preventDefault();
   const retryKey = "tusker:preload-reload";
-  if (window.sessionStorage.getItem(retryKey)) return;
-  window.sessionStorage.setItem(retryKey, "1");
+  const lastRetry = Number(window.sessionStorage.getItem(retryKey) ?? 0);
+  if (Date.now() - lastRetry < 30_000) return;
+  event.preventDefault();
+  window.sessionStorage.setItem(retryKey, Date.now().toString());
   const url = new URL(window.location.href);
   url.searchParams.set("_reload", Date.now().toString());
   window.location.replace(url);
