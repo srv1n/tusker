@@ -14,7 +14,7 @@ func TestClaudeReviewAllowRulesIncludeSubmitAndTaskChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules := claudeReviewAllowRules(note)
-	for _, want := range []string{"Bash(tusker review *)", "Bash(git diff*)", "Bash(go test ./cmd/tusker -run 'A|B' -count=1)"} {
+	for _, want := range []string{"Bash(tusker review *)", "Bash(git diff*)", "Bash(go test ./cmd/tusker -run 'A|B' -count=1)", "Bash(rtk git diff*)", "Bash(rtk go test ./cmd/tusker -run 'A|B' -count=1)"} {
 		if !slices.Contains(rules, want) {
 			t.Errorf("missing %q in %q", want, rules)
 		}

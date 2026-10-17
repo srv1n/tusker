@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -151,6 +152,11 @@ func claudeReviewAllowRules(notePath string) []string {
 		if command = strings.TrimSpace(command); ok && command != "" {
 			rules = append(rules, "Bash("+command+")")
 		}
+	}
+	// A PreToolUse hook such as `rtk hook claude` rewrites `git status` to
+	// `rtk git status` before the permission check, so mirror each rule.
+	for _, rule := range slices.Clone(rules) {
+		rules = append(rules, "Bash(rtk "+strings.TrimPrefix(rule, "Bash("))
 	}
 	return rules
 }
