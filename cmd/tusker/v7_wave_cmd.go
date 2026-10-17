@@ -68,15 +68,25 @@ func waveV7CreateCmd(args Args) error {
 	if strings.TrimSpace(args.String("file")) != "" {
 		return waveV7DirectAuthoringCmd(vaultPath, args)
 	}
-	title := strings.TrimSpace(firstNonEmpty(args.String("title"), args.String("_pos0")))
-	if title == "" {
-		return tuskerError(errorMissingArg, `Usage: tusker new wave "<title>" <TASK-ID>...`)
+	// Both `new wave "<title>" <TASK-ID>...` and the documented
+	// `new wave <TASK-ID>... --outcome <text>` forms are accepted.
+	outcome := firstNonEmpty(args.String("summary"), args.String("outcome"))
+	firstTask := 1
+	title := strings.TrimSpace(args.String("title"))
+	if pos0 := strings.ToUpper(strings.TrimSpace(args.String("_pos0"))); title == "" && v7TaskIDPattern.MatchString(pos0) {
+		firstTask = 0
+		title = strings.TrimSpace(firstNonEmpty(outcome, pos0))
+	} else if title == "" {
+		title = strings.TrimSpace(args.String("_pos0"))
 	}
-	expectedOutcome, err := validateWaveExpectedOutcome(args.String("summary"), false)
+	if title == "" {
+		return tuskerError(errorMissingArg, `Usage: tusker new wave <TASK-ID>... [--outcome <text>] | tusker new wave "<title>" <TASK-ID>...`)
+	}
+	expectedOutcome, err := validateWaveExpectedOutcome(outcome, false)
 	if err != nil {
 		return err
 	}
-	members := waveTaskArgs(args, 1)
+	members := waveTaskArgs(args, firstTask)
 	if len(members) == 0 {
 		return tuskerError(errorMissingArg, "wave create requires at least one task id")
 	}

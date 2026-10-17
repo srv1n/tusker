@@ -342,3 +342,16 @@ func setServeTaskWave(t *testing.T, vault, taskID, waveID string) {
 		t.Fatal(err)
 	}
 }
+
+func TestWaveCreateAcceptsDocumentedTaskFirstForm(t *testing.T) {
+	vault := newWaveTestVault(t, 2)
+
+	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "APP-T-0001", "_pos1": "APP-T-0002", "outcome": "Both tasks land."}, waveV7CreateCmd)
+
+	waveData, _, err := parseFrontmatterMustRead(filepath.Join(vault, "work", "waves", "W-0001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, []string{"APP-T-0001", "APP-T-0002"}, normalizeList(waveData["members"]), "members")
+	assertEqual(t, "Both tasks land.", stringField(waveData, "title"), "title from outcome")
+}
