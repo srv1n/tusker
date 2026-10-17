@@ -847,7 +847,7 @@ func removeConfigKey(path, key string) error {
 	if raw == nil {
 		return nil
 	}
-	removeNestedConfigKey(raw, strings.Split(key, "."))
+	removeNestedConfigKey(raw, configKeyParts(key))
 	encoded, err := yaml.Marshal(raw)
 	if err != nil {
 		return err

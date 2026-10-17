@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -556,5 +557,24 @@ func TestConfigResolvePrintsIgnoredGlobalNoteWhenBuiltInWins(t *testing.T) {
 	})
 	if !strings.Contains(output, "effective: false") || !strings.Contains(output, "ignored at user-global layer; behavioral settings must be project-local") {
 		t.Fatalf("config resolve omitted ignored-layer explanation:\n%s", output)
+	}
+}
+
+func TestConfigKeyPartsKeepsDottedProfileNameWhole(t *testing.T) {
+	cases := map[string][]string{
+		"automation.profiles.codex_exec-gpt-6.1-sol-medium": {"automation", "profiles", "codex_exec-gpt-6.1-sol-medium"},
+		"automation.profiles.muse-spark-1.3-high.disabled":  {"automation", "profiles", "muse-spark-1.3-high", "disabled"},
+		"automation.profiles.plain.access":                  {"automation", "profiles", "plain", "access"},
+		"automation.model_levels.standard.execute":          {"automation", "model_levels", "standard", "execute"},
+	}
+	for key, want := range cases {
+		if got := configKeyParts(key); !reflect.DeepEqual(got, want) {
+			t.Errorf("configKeyParts(%q) = %q, want %q", key, got, want)
+		}
+	}
+	raw := map[string]any{}
+	setNestedConfigValue(raw, "automation.profiles.gpt-6.1-sol.model", "gpt-6.1-sol")
+	if got, ok := lookupConfigValue(raw, "automation.profiles.gpt-6.1-sol.model"); !ok || got != "gpt-6.1-sol" {
+		t.Fatalf("round trip lost dotted profile: %#v", raw)
 	}
 }

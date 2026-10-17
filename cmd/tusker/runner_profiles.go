@@ -1403,8 +1403,36 @@ func writeConfigTextAtomically(path, content string) error {
 	return nil
 }
 
+// configKeyParts splits a dotted config key into map path segments. A runner
+// profile name is a single segment even when it contains dots (gpt-6.1-sol),
+// so "automation.profiles.<name>[.<field>]" keeps <name> whole.
+func configKeyParts(key string) []string {
+	const profilesPrefix = "automation.profiles."
+	if !strings.HasPrefix(key, profilesPrefix) {
+		return strings.Split(key, ".")
+	}
+	rest := strings.TrimPrefix(key, profilesPrefix)
+	parts := []string{"automation", "profiles"}
+	if i := strings.LastIndex(rest, "."); i > 0 && runnerProfileFieldKeys[rest[i+1:]] {
+		return append(parts, rest[:i], rest[i+1:])
+	}
+	return append(parts, rest)
+}
+
+// runnerProfileFieldKeys lists the yaml keys of RunnerProfileDefinition.
+var runnerProfileFieldKeys = func() map[string]bool {
+	keys := map[string]bool{}
+	t := reflect.TypeOf(RunnerProfileDefinition{})
+	for i := 0; i < t.NumField(); i++ {
+		if name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); name != "" {
+			keys[name] = true
+		}
+	}
+	return keys
+}()
+
 func setNestedConfigValue(raw map[string]any, key string, value any) {
-	parts := strings.Split(key, ".")
+	parts := configKeyParts(key)
 	current := raw
 	for _, part := range parts[:len(parts)-1] {
 		next, _ := current[part].(map[string]any)
@@ -1563,7 +1591,7 @@ func lookupConfigValue(raw map[string]any, key string) (any, bool) {
 		return nil, false
 	}
 	var current any = raw
-	for _, part := range strings.Split(key, ".") {
+	for _, part := range configKeyParts(key) {
 		m, ok := current.(map[string]any)
 		if !ok {
 			return nil, false
