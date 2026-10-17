@@ -464,13 +464,22 @@ func scanRepository(repoRoot string) ([]Document, []Issue, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	paths, err := corpusPaths(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	return parseCorpusPaths(root, paths)
+}
+
+// corpusPaths lists the absolute, sorted Markdown paths scanRepository reads.
+func corpusPaths(root string) ([]string, error) {
 	var paths []string
 	for _, relativeRoot := range []string{"docs/system", ".tusker/specs"} {
 		scanRoot := filepath.Join(root, filepath.FromSlash(relativeRoot))
 		if _, err := os.Stat(scanRoot); errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		err := filepath.WalkDir(scanRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -499,11 +508,14 @@ func scanRepository(repoRoot string) ([]Document, []Issue, error) {
 			return nil
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	sort.Strings(paths)
+	return paths, nil
+}
 
+func parseCorpusPaths(root string, paths []string) ([]Document, []Issue, error) {
 	var documents []Document
 	var issues []Issue
 	for _, path := range paths {

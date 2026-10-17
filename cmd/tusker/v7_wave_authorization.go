@@ -114,16 +114,21 @@ func waveMaterialFingerprintWithContext(vaultPath string, idx v7Index, wave Note
 		}
 	}
 	refs := sortedStrings(allSpecRefs)
-	base, _ := yaml.Marshal(material)
-	key := vaultPath + "\x00" + string(base) + "\x00" + strings.Join(refs, "\x00") + "\x00" + strings.Join(issues, "\x00")
+	// The key only needs to separate distinct material; %#v (typed, sorted
+	// map keys) is finer than the yaml fingerprint encoding and far cheaper.
+	keyHash := sha256.New()
+	fmt.Fprintf(keyHash, "%s\x00%#v\x00%#v\x00%#v", vaultPath, material, refs, issues)
+	key := string(keyHash.Sum(nil))
 	if cached, ok := context.fingerprints[key]; ok {
 		return cached.fingerprint, cached.issues
 	}
 	if len(refs) > 0 && !context.corpusAttempted {
 		context.corpusAttempted = true
 		context.corpusLoads++
-		if corpus, _, err := docgraph.LoadRepository(v7RepoRoot(vaultPath)); err == nil {
-			context.resolver = docgraph.NewResolver(corpus)
+		// Shared across contexts only while the doc tree's stat signature
+		// holds, so mutation contexts still resolve current documents.
+		if resolver, err := docgraph.CachedResolver(v7RepoRoot(vaultPath)); err == nil {
+			context.resolver = resolver
 		}
 	}
 	for _, ref := range refs {

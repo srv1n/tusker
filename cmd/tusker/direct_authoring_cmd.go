@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -70,7 +72,46 @@ func uniqueDirectAuthoringIssues(issues []directAuthoringIssue) []directAuthorin
 	return out
 }
 
+// directWaveContractFields are the frontmatter keys the contract canon reads;
+// the memo key must cover every one of them.
+var directWaveContractFields = []string{"title", "artifact_contract", "proof_mode", "proof_required", "proof_required_owner", "evidence_budget", "evidence_required", "dependencies", "gates", "work_level", "review_level", "review_reason", "owned_paths", "generated_outputs"}
+
+var directWaveContractMemo struct {
+	sync.Mutex
+	m map[[sha256.Size]byte]string
+}
+
+// directWaveTaskContractFingerprint memoizes the canon hash process-wide:
+// serve and the daemon recompute it for every wave member on every read.
 func directWaveTaskContractFingerprint(data map[string]any, body string) string {
+	h := sha256.New()
+	io.WriteString(h, body)
+	h.Write([]byte{0})
+	for _, field := range directWaveContractFields {
+		// %#v is typed Go syntax with sorted map keys, so distinct inputs
+		// never share a key (finer than the yaml canon, never coarser).
+		fmt.Fprintf(h, "%#v\x00", data[field])
+	}
+	var key [sha256.Size]byte
+	h.Sum(key[:0])
+	directWaveContractMemo.Lock()
+	cached, ok := directWaveContractMemo.m[key]
+	directWaveContractMemo.Unlock()
+	if ok {
+		return cached
+	}
+	fingerprint := directWaveTaskContractFingerprintUncached(data, body)
+	directWaveContractMemo.Lock()
+	// ponytail: whole-map reset at 4096 entries, LRU if live task count ever nears it.
+	if directWaveContractMemo.m == nil || len(directWaveContractMemo.m) >= 4096 {
+		directWaveContractMemo.m = map[[sha256.Size]byte]string{}
+	}
+	directWaveContractMemo.m[key] = fingerprint
+	directWaveContractMemo.Unlock()
+	return fingerprint
+}
+
+func directWaveTaskContractFingerprintUncached(data map[string]any, body string) string {
 	canon := map[string]any{
 		"title":                stringField(data, "title"),
 		"body":                 directWaveCanonicalContractBody(body),
@@ -416,6 +457,9 @@ func updateV7TaskCmd(args Args) error {
 		mutate(key, value)
 	}
 	if _, set := args["body-file"]; set {
+		if bad := v7MalformedVerificationRows(body); len(bad) > 0 {
+			return tuskerError(errorInvalidArg, v7MalformedVerificationReason(bad))
+		}
 		if failures := coordinatorBodyRefErrors(vaultPath, body); len(failures) > 0 {
 			return tuskerError(errorInvalidArg, strings.Join(failures, "; "))
 		}
