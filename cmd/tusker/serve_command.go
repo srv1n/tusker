@@ -640,7 +640,7 @@ func serveReviewBatchFor(snap serveSnapshot, contexts ...*waveMaterialReadContex
 		sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
 		waves = append(waves, serveReviewWave{
 			WaveID: waveID, Title: firstNonEmpty(stringField(wave.Data, "title"), waveID),
-			Authorization:  waveAuthorizationProjectionWithContext(snap.project.VaultRoot, idx, wave, context),
+			Authorization:  serveCachedWaveAuthorization(snap, idx, wave, context),
 			ReadyForReview: serveWaveReadyForReview(snap, wave), Members: members,
 		})
 	}
@@ -1096,6 +1096,7 @@ func (s *serveServer) buildSnapshotForProject(project RegisteredProject, include
 	}
 	snap := serveSnapshot{
 		projectID:         projectID,
+		derived:           newServeSnapshotDerived(),
 		projectName:       firstNonEmpty(project.Name, filepath.Base(project.RepoRoot)),
 		project:           project,
 		projectRegistered: project.ProjectID != "",
@@ -2039,7 +2040,7 @@ func (s *serveServer) taskDetailFor(snap serveSnapshot, task Note) serveTaskDeta
 	idx, runs, rctx := s.attachRecoveryInputs(snap)
 	waveAuth := map[string]string{}
 	for _, wave := range snap.waves {
-		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, rctx.material)
+		state, _ := serveWaveAuthorizationState(snap, idx, wave, rctx.material)
 		waveAuth[stringField(wave.Data, "id")] = state
 	}
 	detail.Recovery = s.recoveryForTask(task, snap, idx, runs, waveAuth, rctx)
@@ -2138,7 +2139,7 @@ func serveWaveList(snap serveSnapshot, contexts ...*waveMaterialReadContext) []s
 				}
 			}
 		}
-		auth, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, context)
+		auth, _ := serveWaveAuthorizationState(snap, idx, wave, context)
 		out = append(out, serveWaveListItem{
 			ID: stringField(wave.Data, "id"), Title: stringField(wave.Data, "title"),
 			Summary: stringField(wave.Data, "summary"), Status: stringField(wave.Data, "status"),
@@ -2194,14 +2195,7 @@ func serveWaveSummaryForWithInputs(snap serveSnapshot, wave Note, idx v7Index, r
 	for _, member := range members {
 		states = append(states, member.State)
 	}
-	evidence := make(map[string][]Note, len(idx.Evidence))
-	for id, notes := range idx.Evidence {
-		evidence[id] = notes
-	}
-	idx.Evidence = evidence
-	if projected, err := armedWaveBriefProjectedIndex(snap.project.VaultRoot, idx, wave); err == nil {
-		idx = projected
-	}
+	idx, authorization := serveCachedProjectedWave(snap, idx, wave, context)
 	return serveWaveSummary{
 		ID:              stringField(wave.Data, "id"),
 		Title:           stringField(wave.Data, "title"),
@@ -2212,7 +2206,7 @@ func serveWaveSummaryForWithInputs(snap serveSnapshot, wave Note, idx v7Index, r
 		MemberIDs:       normalizeList(wave.Data["members"]),
 		Members:         members,
 		Counts:          counts,
-		Authorization:   waveAuthorizationProjectionWithContext(snap.project.VaultRoot, idx, wave, context),
+		Authorization:   authorization,
 		Brief:           buildWaveBriefWithRuns(idx, wave, runs),
 		State:           aggregateWaveState(states),
 	}
@@ -2349,8 +2343,8 @@ func serveWaitingMembers(snap serveSnapshot, wave Note, runs map[string]RunStatu
 	return owners, waiting
 }
 
-func serveWaveAuthorizationState(vaultRoot string, idx v7Index, wave Note, contexts ...*waveMaterialReadContext) (state, action string) {
-	projection := waveAuthorizationProjectionWithContext(vaultRoot, idx, wave, sharedWaveMaterialReadContext(contexts))
+func serveWaveAuthorizationState(snap serveSnapshot, idx v7Index, wave Note, context *waveMaterialReadContext) (state, action string) {
+	projection := serveCachedWaveAuthorization(snap, idx, wave, context)
 	return fallback(stringField(projection, "state"), "disarmed"), stringField(projection, "action")
 }
 
@@ -2360,7 +2354,7 @@ func serveWaveAuthorizationState(vaultRoot string, idx v7Index, wave Note, conte
 // reported as queued, never as running.
 func (s *serveServer) recoveryForWave(wave Note, snap serveSnapshot, idx v7Index, runs map[string]RunStatus, rctx serveRecoveryContext) *serveRecovery {
 	waveID := stringField(wave.Data, "id")
-	authState, authAction := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, rctx.material)
+	authState, authAction := serveWaveAuthorizationState(snap, idx, wave, rctx.material)
 	recovery := &serveRecovery{
 		Authorization: authState,
 		Capabilities:  serveRecoveryCapabilitiesFor(),
@@ -2515,7 +2509,7 @@ func (s *serveServer) attachRecoveryInputs(snap serveSnapshot, contexts ...*wave
 			delete(rctx.directives, id)
 			continue
 		}
-		auth := waveAuthorizationProjectionWithContext(snap.project.VaultRoot, idx, wave, rctx.material)
+		auth := serveCachedWaveAuthorization(snap, idx, wave, rctx.material)
 		if directive.AuthorizationFingerprint != stringField(auth, "authorizedFingerprint") || directive.WaveAuthorizedAt != stringField(auth, "at") {
 			delete(rctx.directives, id)
 		}
@@ -2547,7 +2541,7 @@ func (s *serveServer) attachTaskRecovery(out []serveTaskCapsule, snap serveSnaps
 	idx, runs, rctx := s.attachRecoveryInputs(snap)
 	waveAuth := map[string]string{}
 	for _, wave := range snap.waves {
-		state, _ := serveWaveAuthorizationState(snap.project.VaultRoot, idx, wave, rctx.material)
+		state, _ := serveWaveAuthorizationState(snap, idx, wave, rctx.material)
 		waveAuth[stringField(wave.Data, "id")] = state
 	}
 	for i := range out {

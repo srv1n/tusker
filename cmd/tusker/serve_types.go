@@ -69,6 +69,8 @@ type serveSnapshot struct {
 	openQuestions     map[string][]AgentMessage
 	permissionWaits   map[string][]AgentAccessApproval
 	openP0Escalation  bool
+	// derived memoizes display-only wave projections per full build; see serve_derived_cache.go.
+	derived *serveSnapshotDerived
 }
 
 type serveProjectSummary struct {
