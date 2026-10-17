@@ -247,11 +247,23 @@ func scanReviewProposalLogWithLimit(input io.Reader, maxBytes int64) (reviewProp
 			payload := append(append([]byte(nil), line...), '\n')
 			if _, output, ok := rawLogCommandExecution(string(line)); ok && strings.Contains(output, reviewProposalMarker) {
 				payload = []byte(output)
+			} else if text, ok := rawLogToolResultText(string(line)); ok && strings.Contains(text, reviewProposalMarker) {
+				// Claude stream-json carries `tusker review` stdout escaped inside
+				// a tool_result; recover only marker lines that open a line.
+				payload = []byte(strings.Join(reviewProposalMarkerLines(text), "\n") + "\n")
 			}
 			if strings.Contains(string(payload), reviewProposalMarker) {
 				candidate, ok, parseErr := reviewProposalFromRawLog(payload)
-				if parseErr != nil || !ok {
-					return reviewProposal{}, false, firstNonNilError(parseErr, fmt.Errorf("proposal marker is malformed"))
+				if parseErr != nil {
+					return reviewProposal{}, false, parseErr
+				}
+				if !ok {
+					// The marker text appears mid-line, e.g. a reviewer reading
+					// the source that declares it. That is not a proposal.
+					if err == io.EOF {
+						return finish()
+					}
+					continue
 				}
 				if err := accept(candidate); err != nil {
 					return reviewProposal{}, false, err
@@ -268,6 +280,46 @@ func scanReviewProposalLogWithLimit(input io.Reader, maxBytes int64) (reviewProp
 			return reviewProposal{}, false, err
 		}
 	}
+}
+
+// rawLogToolResultText returns the tool_result text of a Claude stream-json
+// "user" event.
+func rawLogToolResultText(line string) (string, bool) {
+	var event struct {
+		Type    string `json:"type"`
+		Message struct {
+			Content []struct {
+				Type    string          `json:"type"`
+				Content json.RawMessage `json:"content"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(line)), &event) != nil || event.Type != "user" {
+		return "", false
+	}
+	var text strings.Builder
+	for _, block := range event.Message.Content {
+		if block.Type != "tool_result" {
+			continue
+		}
+		var plain string
+		if json.Unmarshal(block.Content, &plain) == nil {
+			text.WriteString(plain + "\n")
+			continue
+		}
+		var parts []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(block.Content, &parts) == nil {
+			for _, part := range parts {
+				if part.Type == "text" {
+					text.WriteString(part.Text + "\n")
+				}
+			}
+		}
+	}
+	return text.String(), text.Len() > 0
 }
 
 func firstNonNilError(errs ...error) error {
