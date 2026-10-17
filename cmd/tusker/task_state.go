@@ -172,7 +172,7 @@ func taskStateFromRun(f taskStateFacts) (taskState, bool) {
 		if LeaseState(run.LeaseState) == LeaseStateRetryQueued {
 			return newTaskState("working", "retrying", fmt.Sprintf("retry queued, attempt %d of %d", run.AttemptCount+1, maxAttempts), ""), true
 		}
-		return newTaskState("planned", "queued", "queued", ""), true
+		return newTaskState("planned", "queued", queuedReason(run.Detail), ""), true
 	case "stopped":
 		return newTaskState("blocked", "paused", "stopped by you", "Continue"), true
 	case "lost", "failed", "blocked":
@@ -182,6 +182,16 @@ func taskStateFromRun(f taskStateFacts) (taskState, bool) {
 		return blockedStateForReason(run), true
 	}
 	return taskState{}, false // finished: the task status decides
+}
+
+// queuedReason names the admission wait the daemon recorded on a queued run
+// ("dispatch waiting: machine busy (load 2.0 per CPU)"), so a queued task
+// says why it has not started instead of only "queued".
+func queuedReason(detail string) string {
+	if !fairDispatchReasonIsOwned(detail) && !strings.HasPrefix(detail, "automation plan do_not_dispatch: waiting: ") {
+		return "queued"
+	}
+	return "queued · " + detail[strings.LastIndex(detail, "waiting: "):]
 }
 
 func blockedStateForReason(run *taskStateRun) taskState {

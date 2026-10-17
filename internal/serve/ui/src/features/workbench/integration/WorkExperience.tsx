@@ -11,7 +11,7 @@ import { TaskBoard } from "../board";
 import { WaveFlow, type DependencyFact, type FlowViewport, type WaveFlowProps } from "../flow";
 import { crossWaveWaitSummary } from "../flow/flowGraph";
 import { TaskInspector } from "../inspector/TaskInspector";
-import { WaveList } from "../overview/WaveList";
+import { executionStatusLine, WaveList } from "../overview/WaveList";
 import { WaveResults } from "../results/WaveResults";
 import { getWorkspaceViewState, NAVIGATION_CHANGED_EVENT, readNavigationState, updateWorkspaceViewState, writeNavigationState, type StorageLike } from "../navigation";
 import { canShowWaveResults, settleEnteredWaveView, waveSummaryWithReview, type WorkView } from "./integrationModel";
@@ -80,6 +80,7 @@ export function WorkOverview() {
   const projectId = useProjectId();
   const navigate = useNavigate();
   const waves = useWaveList(projectId);
+  const runs = useRuns(projectId);
   const projects = useProjects();
   const projectIds = useMemo(
     () => [...new Set((projects.data ?? []).flatMap((project) => [project.id, ...(project.checkouts ?? []).map((checkout) => checkout.id)]))],
@@ -97,7 +98,7 @@ export function WorkOverview() {
   return <Shell
     left={<WorkTitle projectId={projectId} current="waves" />}
     right={<input type="search" value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="Filter waves" aria-label="Filter waves by ID, title, or description" className="h-8 w-48 min-w-0 rounded-md border border-line bg-raised px-2.5 text-[12.5px] text-ink placeholder:text-faint" />}
-  ><Reading><WaveList
+  ><Reading>{runs.data ? <p data-testid="execution-status" role="status" className="mb-4 text-[12.5px] text-muted">{executionStatusLine(runs.data)}</p> : null}<WaveList
     waves={waves.data ?? []}
     query={query}
     onOpenWave={(waveId) => navigate({ to: "/p/$projectId/waves/$waveId", params: { projectId, waveId } })}

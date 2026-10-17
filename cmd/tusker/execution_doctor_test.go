@@ -281,3 +281,41 @@ func TestSelfServiceDoctor(t *testing.T) {
 		}
 	})
 }
+
+func TestDoctorQueuedMemberNamesHostAdmissionWait(t *testing.T) {
+	saved := doctorHostWaitReason
+	defer func() { doctorHostWaitReason = saved }()
+	scope := DiagnosticScope{Project: "proj", Record: "TSK-T-0109", Wave: "W-0048"}
+	member := directWaveReviewMember{TaskID: "TSK-T-0109", WaitingReason: "queued for dispatch", eligibility: "waiting"}
+	queued := func() []DiagnosticFinding {
+		finding, include := doctorReviewMemberFinding(member, scope, "2026-10-17T00:00:00Z", "rev-1")
+		if !include {
+			t.Fatal("queued member produced no finding")
+		}
+		findings := []DiagnosticFinding{finding}
+		doctorQueuedHostWait(findings)
+		return findings
+	}
+
+	doctorHostWaitReason = func() string { return "" }
+	if got := queued()[0]; got.Code != "doctor-queued-for-dispatch" || got.Action != nil {
+		t.Fatalf("idle host must keep the plain queued finding: %#v", got)
+	}
+
+	doctorHostWaitReason = func() string { return "machine busy (load 2.0 per CPU)" }
+	findings := queued()
+	got := findings[0]
+	if got.Code != "doctor-queued-waiting-host" || got.Evidence.Detail != "waiting: machine busy (load 2.0 per CPU)" || got.Classification != DiagnosticNormalWait {
+		t.Fatalf("busy host finding = %#v", got)
+	}
+	if got.Action == nil || !strings.Contains(got.Action.ExpectedEffect, "automation.concurrency.max_load_per_cpu") {
+		t.Fatalf("busy host remedy must name the load cap knob: %#v", got.Action)
+	}
+	diagnosis, err := NewDiagnosis(DiagnosisInput{SourceRevisions: map[string]string{"wave": "rev-1"}, Findings: findings})
+	if err != nil {
+		t.Fatalf("host wait finding must validate: %v", err)
+	}
+	if diagnosis.PrimaryCode != "doctor-queued-waiting-host" {
+		t.Fatalf("primary = %s", diagnosis.PrimaryCode)
+	}
+}

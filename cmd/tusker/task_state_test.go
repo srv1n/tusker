@@ -55,6 +55,11 @@ func TestTaskStateTable(t *testing.T) {
 	if got := deriveTaskState(taskStateFacts{Status: "ready", Question: "Which port?"}); got.Reason != "Which port?" {
 		t.Fatalf("needs input reason must be the question, got %q", got.Reason)
 	}
+	held := run("queued", "unclaimed", 0, "")
+	held.Detail = "dispatch waiting: machine busy (load 2.0 per CPU)"
+	if got := deriveTaskState(taskStateFacts{Status: "ready", Run: held}); got.Reason != "queued · waiting: machine busy (load 2.0 per CPU)" {
+		t.Fatalf("queued run must name the recorded admission wait, got %q", got.Reason)
+	}
 }
 
 func TestTaskStateWaveMostUrgent(t *testing.T) {

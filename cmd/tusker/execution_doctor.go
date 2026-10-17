@@ -89,6 +89,7 @@ func diagnoseTaskForDoctorWithRuntime(vault string, store *RuntimeStore, runtime
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" {
 		if wave, ok := idx.Waves[waveID]; ok {
 			findings = append(findings, doctorWaveMemberFindings(vault, store, runtimeErr, idx, wave, task, scope, projectID, observed, now)...)
+			doctorQueuedHostWait(findings)
 		} else {
 			findings = append(findings, DiagnosticFinding{
 				Code: "doctor-wave-missing", Scope: scope, Classification: DiagnosticProductDefect,
@@ -192,6 +193,7 @@ func diagnoseWaveForDoctorWithRuntime(vault string, store *RuntimeStore, runtime
 			break
 		}
 	}
+	doctorQueuedHostWait(findings)
 	if store == nil {
 		findings = append(findings, DiagnosticFinding{
 			Code: "doctor-runtime-unavailable", Scope: scope, Classification: DiagnosticUnavailable,
@@ -340,6 +342,43 @@ func doctorWaveMemberFindings(vault string, store *RuntimeStore, runtimeErr erro
 		return nil
 	}
 	return []DiagnosticFinding{finding}
+}
+
+// doctorHostWaitReason is the dispatcher's own host load gate, read live;
+// tests replace it.
+var doctorHostWaitReason = func() string {
+	config, err := resolveTuskerConfigForRepo("", false)
+	if err != nil {
+		return ""
+	}
+	return loadGateReason(config.Config.Automation.Concurrency.MaxLoadPerCPU, machineLoadPerCPU, machineMemoryPressure)
+}
+
+// doctorQueuedHostWait names the host admission refusal on queued members:
+// "queued for dispatch" alone hides a daemon that declines every pass
+// because the machine is busy.
+func doctorQueuedHostWait(findings []DiagnosticFinding) {
+	reason, checked := "", false
+	for index := range findings {
+		if findings[index].Code != "doctor-queued-for-dispatch" {
+			continue
+		}
+		if !checked {
+			reason, checked = doctorHostWaitReason(), true
+		}
+		if reason == "" {
+			return
+		}
+		findings[index].Code = "doctor-queued-waiting-host"
+		findings[index].Evidence.Detail = "waiting: " + reason
+		findings[index].Evidence.Source, findings[index].Evidence.Revision = "runtime", "live"
+		findings[index].Action = &RecoveryAction{
+			ID: "doctor-queued-waiting-host", Type: RecoveryActionNoSupportedFix,
+			RequiredAuthority: DiagnosticAuthorityOperator,
+			ExpectedEffect:    "Dispatch resumes once host load falls under automation.concurrency.max_load_per_cpu; raise that cap, or set it to 0 to disable the load gate.",
+			Postcondition:     "tusker automation plan shows no machine busy blocker for the task.",
+		}
+	}
 }
 
 // doctorReviewMemberFinding maps one review member state to a finding.

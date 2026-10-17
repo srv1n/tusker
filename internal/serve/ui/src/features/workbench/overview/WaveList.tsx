@@ -1,6 +1,6 @@
 import { cardClass } from "@/components/ui/primitives";
 import { TaskStateBadge } from "@/components/ui/chips";
-import type { TaskStateCode, WaveListItem } from "@/types/domain";
+import type { RunSummary, TaskStateCode, WaveListItem } from "@/types/domain";
 
 /** Waves group by their server-computed state, most urgent first (task-states spec rule 5). */
 const GROUP_ORDER: TaskStateCode[] = ["blocked", "needs_input", "working", "in_review", "planned", "backlog", "done", "canceled"];
@@ -9,6 +9,20 @@ const GROUP_ORDER: TaskStateCode[] = ["blocked", "needs_input", "working", "in_r
 const byId = (a: WaveListItem, b: WaveListItem) => a.id.localeCompare(b.id, undefined, { numeric: true });
 // ponytail: the list API carries no created/updated date; newest-landed first, then ID. Add dates when the API sends them.
 const byLanded = (a: WaveListItem, b: WaveListItem) => (b.landedAt ?? "").localeCompare(a.landedAt ?? "") || byId(b, a);
+
+/** Admission waits the daemon records on a queued run ("dispatch waiting: …"). */
+const dispatchWait = (error?: string | null) =>
+  error && /^(dispatch waiting: |automation plan do_not_dispatch: waiting: )/.test(error) ? error.slice(error.lastIndexOf("waiting: ")) : undefined;
+
+/** One glanceable execution line: what runs, what is queued, and why the queue waits. */
+export function executionStatusLine(runs: RunSummary[]): string {
+  const live = runs.filter((run) => !run.terminal);
+  const running = live.filter((run) => ["working", "quiet", "waiting_on_you"].includes(run.operatorState?.state ?? "")).length;
+  const queued = live.filter((run) => run.operatorState?.state === "queued");
+  if (!running && !queued.length) return "Nothing running or queued";
+  const wait = queued.map((run) => dispatchWait(run.error)).find(Boolean);
+  return [running ? `${running} running` : "", queued.length ? `${queued.length} queued` : "", wait ?? ""].filter(Boolean).join(" · ");
+}
 
 export function WaveList({ waves, query, onOpenWave, loading, error }: {
   waves: WaveListItem[];
