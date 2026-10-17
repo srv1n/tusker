@@ -369,11 +369,11 @@ func doctorQueuedHostWait(findings []DiagnosticFinding) {
 		if reason == "" {
 			return
 		}
-		findings[index].Code = "doctor-queued-waiting-host"
+		findings[index].Code = "doctor-queued-host-busy"
 		findings[index].Evidence.Detail = "waiting: " + reason
 		findings[index].Evidence.Source, findings[index].Evidence.Revision = "runtime", "live"
 		findings[index].Action = &RecoveryAction{
-			ID: "doctor-queued-waiting-host", Type: RecoveryActionNoSupportedFix,
+			ID: "doctor-queued-host-busy", Type: RecoveryActionNoSupportedFix,
 			RequiredAuthority: DiagnosticAuthorityOperator,
 			ExpectedEffect:    "Dispatch resumes once host load falls under automation.concurrency.max_load_per_cpu; raise that cap, or set it to 0 to disable the load gate.",
 			Postcondition:     "tusker automation plan shows no machine busy blocker for the task.",

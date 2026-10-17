@@ -305,17 +305,22 @@ func TestDoctorQueuedMemberNamesHostAdmissionWait(t *testing.T) {
 	doctorHostWaitReason = func() string { return "machine busy (load 2.0 per CPU)" }
 	findings := queued()
 	got := findings[0]
-	if got.Code != "doctor-queued-waiting-host" || got.Evidence.Detail != "waiting: machine busy (load 2.0 per CPU)" || got.Classification != DiagnosticNormalWait {
+	if got.Code != "doctor-queued-host-busy" || got.Evidence.Detail != "waiting: machine busy (load 2.0 per CPU)" || got.Classification != DiagnosticNormalWait {
 		t.Fatalf("busy host finding = %#v", got)
 	}
 	if got.Action == nil || !strings.Contains(got.Action.ExpectedEffect, "automation.concurrency.max_load_per_cpu") {
 		t.Fatalf("busy host remedy must name the load cap knob: %#v", got.Action)
 	}
+	// The queued reservation finding is also a normal wait; the host reason
+	// must still be the primary cause.
+	reservation := got
+	reservation.Code, reservation.Action = "doctor-queued-reservation", nil
+	findings = append(findings, reservation)
 	diagnosis, err := NewDiagnosis(DiagnosisInput{SourceRevisions: map[string]string{"wave": "rev-1"}, Findings: findings})
 	if err != nil {
 		t.Fatalf("host wait finding must validate: %v", err)
 	}
-	if diagnosis.PrimaryCode != "doctor-queued-waiting-host" {
+	if diagnosis.PrimaryCode != "doctor-queued-host-busy" {
 		t.Fatalf("primary = %s", diagnosis.PrimaryCode)
 	}
 }
