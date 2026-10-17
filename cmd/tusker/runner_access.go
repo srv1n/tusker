@@ -140,6 +140,7 @@ func claudeReviewAllowRules(notePath string) []string {
 	rules := []string{
 		"Bash(tusker review *)", "Bash(tusker show *)",
 		"Bash(git diff*)", "Bash(git log*)", "Bash(git show*)", "Bash(git status*)",
+		"Bash(grep *)", "Bash(rg *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)", "Bash(ls*)",
 	}
 	_, body, err := parseFrontmatterMustRead(notePath)
 	if err != nil {

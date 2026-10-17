@@ -111,7 +111,7 @@ func TestClaudeProfilePolicyAndDenySettings(t *testing.T) {
 	}}
 	policy = codexPolicyForResolvedProfile(workflow, runLaneReview, review)
 	mode, err = claudePermissionModeForPolicy(policy)
-	if err != nil || mode != "plan" {
+	if err != nil || mode != "dontAsk" {
 		t.Fatalf("read-only Claude review resolved to %q, policy=%#v, err=%v", mode, policy, err)
 	}
 }

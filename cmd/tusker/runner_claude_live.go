@@ -176,7 +176,7 @@ func startLiveClaude(ctx context.Context, req StartRequest, resume *ResumeReques
 	if err := addClaudeAccessSettings(projection.claudeSettings, access); err != nil {
 		return nil, err
 	}
-	if permissionMode == "plan" {
+	if permissionMode == "dontAsk" {
 		if err := addClaudeAllowRules(projection.claudeSettings, claudeReviewAllowRules(req.NotePath)); err != nil {
 			return nil, err
 		}
@@ -313,7 +313,11 @@ func claudePermissionModeForPolicy(policy CodexPolicy) (string, error) {
 	mode := strings.TrimSpace(firstNonEmpty(policy.TurnSandboxPolicy, policy.ThreadSandbox))
 	switch mode {
 	case "read-only":
-		return "plan", nil
+		// dontAsk denies every tool call that is not allow-listed, so file
+		// edits stay blocked while the reviewer can still run the allowed
+		// review commands. Plan mode also tells the model not to change any
+		// state, which made reviewers refuse to submit `tusker review`.
+		return "dontAsk", nil
 	case "danger-full-access":
 		if strings.TrimSpace(policy.ApprovalPolicy) != "never" {
 			return "", tuskerError(errorConfigInvalid, "Claude full access requires approval_policy=never")
