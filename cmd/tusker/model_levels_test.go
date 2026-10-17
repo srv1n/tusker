@@ -322,8 +322,19 @@ func TestModelLevelsProfileRemoveRefusesOtherProjectReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = modelsProfileLifecycleCmd(Args{"vault": vault, "scope": "global", "name": "shared", "if-revision": current.Revision, "_no-output": "true"}, "profile-remove")
-	if err == nil || !strings.Contains(err.Error(), project.ProjectID+": model_levels.standard.execute") {
-		t.Fatalf("cross-project reference must block removal: %v", err)
+	label := firstNonEmpty(project.Name, filepath.Base(project.RepoRoot))
+	if err == nil || !strings.Contains(err.Error(), label+" (") || !strings.Contains(err.Error(), ": model_levels.standard.execute)") || strings.Contains(err.Error(), project.ProjectID) {
+		t.Fatalf("cross-project reference must block removal with a readable project label: %v", err)
+	}
+	refs, _ := modelProfileReferencesForScope(vault, "global")
+	matches := 0
+	for _, ref := range refs["shared"] {
+		if strings.HasPrefix(ref, label+" (") && strings.HasSuffix(ref, "model_levels.standard.execute)") {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("cross-project reference must appear exactly once: %v", refs["shared"])
 	}
 	if after, _ := modelLevelsRead(vault); after.Profiles["shared"].Harness == "" {
 		t.Fatal("refused removal still deleted the profile")
@@ -376,5 +387,23 @@ func TestGlobalProfilesCoverAllTiersIgnoresReadOnlyProfiles(t *testing.T) {
 	}
 	if !globalProfilesCoverAllTiers(map[string]any{"worker": map[string]any{"eligible_tiers": all, "permission_preset": "workspace-write-offline"}}) {
 		t.Fatal("writable profile must count as coverage")
+	}
+}
+
+func TestDescribeProfileReferenceNamesWhereToFix(t *testing.T) {
+	resolved := resolvedTuskerConfig{Layers: []tuskerConfigLayer{
+		{Name: configSourceUserGlobal, Present: true, Raw: map[string]any{"automation": map[string]any{"default_profile": "a"}}},
+		{Name: configSourceProject, Present: true, Raw: map[string]any{"automation": map[string]any{"lane_profiles": map[string]any{"review": "a"}}}},
+	}}
+	for ref, want := range map[string]string{
+		"task.FLW-T-0043.review_profile": "task FLW-T-0043 review_profile",
+		"lane_profiles.review":           configSourceProject + ": lane_profiles.review",
+	} {
+		if got, ok := describeProfileReference(resolved, ref); !ok || got != want {
+			t.Fatalf("%s => %q %v, want %q", ref, got, ok, want)
+		}
+	}
+	if got, ok := describeProfileReference(resolved, "default_profile"); ok {
+		t.Fatalf("user-global reference must be left to the local resolution, got %q", got)
 	}
 }

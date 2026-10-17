@@ -825,10 +825,15 @@ func modelProfileReferencesForScope(vault, scope string) (map[string][]string, b
 		}
 		projectRefs, projectComplete := modelProfileReferences(project.VaultRoot, projectResolved)
 		complete = complete && projectComplete
+		label := firstNonEmpty(strings.TrimSpace(project.Name), registeredProjectDirName(project), project.ProjectID)
 		for name, values := range projectRefs {
 			for _, value := range values {
-				if !containsString(refs[name], value) {
-					refs[name] = append(refs[name], project.ProjectID+": "+value)
+				where, ok := describeProfileReference(projectResolved, value)
+				if !ok {
+					continue // user-global setting: already reported by this vault's own resolution
+				}
+				if ref := label + " (" + where + ")"; !containsString(refs[name], ref) {
+					refs[name] = append(refs[name], ref)
 				}
 			}
 		}
@@ -837,6 +842,45 @@ func modelProfileReferencesForScope(vault, scope string) (map[string][]string, b
 		sort.Strings(refs[name])
 	}
 	return refs, complete
+}
+
+func registeredProjectDirName(project RegisteredProject) string {
+	for _, root := range []string{project.RepoRoot, project.VaultRoot} {
+		if root = strings.TrimSpace(root); root != "" {
+			return filepath.Base(root)
+		}
+	}
+	return ""
+}
+
+// describeProfileReference turns a raw reference from modelProfileReferences
+// into where the user fixes it: "task FLW-T-0043 review_profile" or
+// "project config: default_profile". It reports false for references set in
+// the shared user-global config, which every project resolution inherits.
+func describeProfileReference(resolved resolvedTuskerConfig, ref string) (string, bool) {
+	if rest, ok := strings.CutPrefix(ref, "task."); ok {
+		if dot := strings.LastIndex(rest, "."); dot > 0 {
+			return "task " + rest[:dot] + " " + rest[dot+1:], true
+		}
+		return "task " + rest, true
+	}
+	key := "automation." + ref
+	if strings.HasPrefix(ref, "routing.") {
+		key = "automation.routing"
+	}
+	layerName := "config"
+	for _, layer := range resolved.Layers {
+		if layer.Name == configSourceBuiltIn {
+			continue
+		}
+		if _, ok := lookupConfigValue(appliedConfigRaw(layer), key); ok {
+			layerName = layer.Name // later layers override earlier ones
+		}
+	}
+	if layerName == configSourceUserGlobal {
+		return "", false
+	}
+	return layerName + ": " + ref, true
 }
 
 func removeConfigKey(path, key string) error {
