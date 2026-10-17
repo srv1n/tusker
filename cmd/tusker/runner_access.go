@@ -151,6 +151,12 @@ func claudeReviewAllowRules(notePath string) []string {
 		command, ok := strings.CutPrefix(strings.TrimSpace(row.Check), "command:")
 		if command = strings.TrimSpace(command); ok && command != "" {
 			rules = append(rules, "Bash("+command+")")
+			// Claude checks each part of a chain on its own.
+			for _, part := range strings.FieldsFunc(strings.NewReplacer("&&", ";", "||", ";", "|", ";").Replace(command), func(r rune) bool { return r == ';' }) {
+				if part = strings.TrimSpace(part); part != "" && part != command {
+					rules = append(rules, "Bash("+part+")")
+				}
+			}
 		}
 	}
 	// A PreToolUse hook such as `rtk hook claude` rewrites `git status` to
