@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,24 @@ func TestRecoveryPriorReviewDoesNotSuppressNewTaskSnapshot(t *testing.T) {
 	}
 	if found, err := store.HasReviewResultForWork(project.ProjectID, "APP-T-0001", 1, "state-new"); err != nil || found {
 		t.Fatalf("historical review suppressed a new snapshot: found=%v err=%v", found, err)
+	}
+}
+
+func TestRecoveryInfrastructureBlockedReviewDoesNotSuppressRetry(t *testing.T) {
+	_, store, project := authorityFixture(t)
+	for i, blocker := range []string{"infrastructure", "machine", "human"} {
+		task := fmt.Sprintf("APP-T-%04d", i+1)
+		raw, err := json.Marshal(ReviewResult{ProjectID: project.ProjectID, TaskID: task, WorkRevision: 1, AttemptID: "review-" + blocker, TaskStateRev: "state", Verdict: "blocked", Blocker: blocker})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.exec(`INSERT INTO review_results(project_id,task_id,work_revision,attempt_id,result_json) VALUES(?,?,?,?,?)`, project.ProjectID, task, 1, "review-"+blocker, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		found, err := store.HasReviewResultForWork(project.ProjectID, task, 1, "state")
+		if err != nil || found != (blocker == "human") {
+			t.Fatalf("%s blocker: found=%v err=%v", blocker, found, err)
+		}
 	}
 }
 

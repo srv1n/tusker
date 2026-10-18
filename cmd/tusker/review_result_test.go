@@ -310,6 +310,8 @@ func TestReviewResultProtocolSavedResultSuppressesDuplicateReviewDispatch(t *tes
 	result.ProjectID = project.ProjectID
 	result.WorkRevision = 2
 	result.AttemptID = "review-1"
+	// Machine and infrastructure blocks are retryable and never suppress.
+	result.Blocker = "human"
 	// Suppression is snapshot-exact: the stored result must name the task's
 	// current state_rev, the same pin a real reviewer records at submit time.
 	note, err := resolveV7Note(vault, "APP-T-0001", "task")

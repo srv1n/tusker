@@ -135,6 +135,9 @@ func (s *RuntimeStore) HasReviewResult(projectID, taskID string, workRevision in
 // snapshot. Verification recovery changes state_rev while preserving the work
 // revision, so an older judgment must remain historical rather than blocking a
 // fresh independent review.
+// A machine or infrastructure "blocked" result is not a judgment of the work:
+// the reviewer could not finish. It never suppresses a fresh review; the
+// review-cycle cap still bounds retries. A human blocker keeps suppressing.
 func (s *RuntimeStore) HasReviewResultForWork(projectID, taskID string, workRevision int, taskStateRev string) (bool, error) {
 	rows, err := s.query(`SELECT result_json FROM review_results WHERE project_id=? AND task_id=? AND work_revision=?`, projectID, taskID, workRevision)
 	if err != nil {
@@ -147,11 +150,15 @@ func (s *RuntimeStore) HasReviewResultForWork(projectID, taskID string, workRevi
 			return false, err
 		}
 		var result ReviewResult
-		if json.Unmarshal([]byte(raw), &result) == nil && result.TaskStateRev == taskStateRev {
+		if json.Unmarshal([]byte(raw), &result) == nil && result.TaskStateRev == taskStateRev && !reviewResultRetryable(result) {
 			return true, nil
 		}
 	}
 	return false, rows.Err()
+}
+
+func reviewResultRetryable(result ReviewResult) bool {
+	return result.Verdict == "blocked" && (result.Blocker == "machine" || result.Blocker == "infrastructure")
 }
 
 func reviewSubmitCmd(args Args) error {
