@@ -246,6 +246,13 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 			if strings.Contains(err.Error(), "gate failed: merge ") && strings.Contains(strings.ToLower(err.Error()), "conflict") {
 				code = RunFailureMergeConflict
 			}
+			// A failing test is the implementation's to fix, so it goes back
+			// to the worker. A conflict or a broken host waits for the owner.
+			if code == RunFailureLandingFailed && strings.Contains(err.Error(), "--- FAIL: ") {
+				finding := "The landing gate failed on the reviewed commit merged into " + integration + ": " +
+					firstActionableLine("", err.Error()) + ". Fix the failing tests, run them, then request review again."
+				return returnReviewerFindingToImplementer(project.VaultRoot, taskID, finding, "daemon:review-pass")
+			}
 			return d.holdReviewPass(run, code, firstActionableLine("", err.Error()))
 		}
 		if injectReviewPassCrash != nil {

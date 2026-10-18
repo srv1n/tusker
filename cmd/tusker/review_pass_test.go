@@ -533,6 +533,30 @@ func TestReviewPassMergeConflictHoldsInReview(t *testing.T) {
 	}
 }
 
+// A landing gate whose tests fail sends the task back to the worker with the
+// failing test names; only conflicts and host failures hold it for the owner.
+func TestReviewPassGateTestFailureReturnsTaskToWorker(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	env.submitProposal(t, "pass")
+	configPath := managedTuskerConfigPath(env.vault)
+	config, err := readText(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := strings.Replace(config, "- "+yamlQuoteForTest("true"), "- "+yamlQuoteForTest("printf -- '--- FAIL: TestBroken (0.01s)\\n'; exit 1"), 1)
+	if failing == config {
+		t.Fatal("fixture gate command not found in config")
+	}
+	if err := writeText(configPath, failing); err != nil {
+		t.Fatal(err)
+	}
+	env.passHandler(t)
+	task := env.task(t)
+	if env.landed() || stringField(task.Data, "status") != "rework" || !strings.Contains(task.Body, "--- FAIL: TestBroken") {
+		t.Fatalf("gate test failure must return the task to the worker; status=%q run=%#v", stringField(task.Data, "status"), env.latestRun(t))
+	}
+}
+
 func TestReviewChangesRequestedReturnsTaskToWorker(t *testing.T) {
 	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
 	env.submitProposal(t, "changes_requested")
