@@ -723,3 +723,17 @@ func TestReviewCommandFailureFindingsFitTheResultLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A test that logs a merge conflict must not become the gate's failure, and
+// must not hold the landing as a merge conflict.
+func TestGateFailureSummaryNamesFailedTests(t *testing.T) {
+	output := "2026/10/18 12:39:50 review pass handler 001/APP-T-0001: gate failed: merge abc: CONFLICT (add/add): Merge conflict in reviewed.txt\n" +
+		"--- FAIL: TestExample (1.82s)\n    --- FAIL: TestExample/sub (0.10s)\nFAIL\ttusker/cmd/tusker\t31.0s\n"
+	got := gateFailureSummary("go test ./...", output, errors.New("exit status 1"))
+	if got != "gate failed: go test ./...: --- FAIL: TestExample (1.82s); --- FAIL: TestExample/sub (0.10s)" {
+		t.Fatalf("summary = %q", got)
+	}
+	if got := gateFailureSummary("go build ./...", "error: disk full\n", errors.New("exit status 1")); got != "gate failed: go build ./...: error: disk full" {
+		t.Fatalf("summary without FAIL lines = %q", got)
+	}
+}

@@ -1424,7 +1424,7 @@ func runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity stri
 		if err != nil {
 			evidence.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: "fail", StartedAt: commandStarted.Format(time.RFC3339Nano), FinishedAt: evidence.FinishedAt})
-			evidence.Summary = landingFailureSummary(command, string(output), err)
+			evidence.Summary = gateFailureSummary(command, string(output), err)
 			return evidence
 		}
 		evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: "pass", StartedAt: commandStarted.Format(time.RFC3339Nano), FinishedAt: time.Now().UTC().Format(time.RFC3339Nano)})
@@ -2269,6 +2269,22 @@ func landingFailureSummary(command, output string, err error) string {
 		line = "command failed"
 	}
 	return limitLandingSummary("gate failed: "+command+": "+line, 500)
+}
+
+// gateFailureSummary names the failed Go tests when a gate command reports
+// them. A test's own log output can look like a merge conflict or an error,
+// so it never stands in for the failure while a FAIL line exists.
+func gateFailureSummary(command, output string, err error) string {
+	var failed []string
+	for _, line := range strings.Split(output, "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "--- FAIL: ") {
+			failed = append(failed, line)
+		}
+	}
+	if len(failed) == 0 {
+		return landingFailureSummary(command, output, err)
+	}
+	return limitLandingSummary("gate failed: "+command+": "+strings.Join(failed, "; "), 500)
 }
 
 func limitLandingSummary(value string, max int) string {

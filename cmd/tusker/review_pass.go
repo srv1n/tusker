@@ -241,7 +241,9 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 		stopBeat()
 		if err := landErr; err != nil {
 			code := RunFailureLandingFailed
-			if strings.Contains(strings.ToLower(err.Error()), "conflict") {
+			// Only the merge step reports a conflict. A gate command's
+			// output can mention one (a test that exercises conflicts).
+			if strings.Contains(err.Error(), "gate failed: merge ") && strings.Contains(strings.ToLower(err.Error()), "conflict") {
 				code = RunFailureMergeConflict
 			}
 			return d.holdReviewPass(run, code, firstActionableLine("", err.Error()))
