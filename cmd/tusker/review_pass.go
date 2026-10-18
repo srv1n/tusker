@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // reviewPassActor closes tasks after a passing review. The reviewer namespace
@@ -186,12 +188,15 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 			parent.EndState.Dirty && !parent.EndStateInvalid {
 			daemonSubmissionSources[taskID] = source
 		}
-		if err := landV7CmdAsReviewPass(Args{
+		stopBeat := d.feedWatchdogDuring(reviewPassLandingWatchdogCap)
+		landErr := landV7CmdAsReviewPass(Args{
 			"vault": project.VaultRoot,
 			"quiet": "true",
 			"_pos0": taskID,
 			"from":  d.latestExecuteWorkspace(project.ProjectID, taskID),
-		}, map[string]string{taskID: source}, daemonSubmissionSources); err != nil {
+		}, map[string]string{taskID: source}, daemonSubmissionSources)
+		stopBeat()
+		if err := landErr; err != nil {
 			code := RunFailureLandingFailed
 			if strings.Contains(strings.ToLower(err.Error()), "conflict") {
 				code = RunFailureMergeConflict
@@ -211,6 +216,39 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 		return fmt.Errorf("close after landing: %w", err)
 	}
 	return nil
+}
+
+// reviewPassLandingWatchdogCap bounds how long a landing gate may keep the
+// watchdog fed. The gate runs the project's full checks inline in the poll,
+// which takes far longer than the 3m hang threshold on a large repo.
+//
+// ponytail: the poll blocks for the whole gate; move landing off the poll
+// goroutine if other projects must dispatch during long gates.
+const reviewPassLandingWatchdogCap = 60 * time.Minute
+
+var reviewPassWatchdogFeedInterval = 30 * time.Second
+
+// feedWatchdogDuring keeps the watchdog beat fresh while a known long step
+// runs, up to max. A step that outlives max lets the watchdog fire as a hang.
+func (d *Daemon) feedWatchdogDuring(max time.Duration) func() {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(reviewPassWatchdogFeedInterval)
+		defer ticker.Stop()
+		deadline := time.After(max)
+		for {
+			select {
+			case <-done:
+				return
+			case <-deadline:
+				return
+			case now := <-ticker.C:
+				_ = d.feedWatchdogBeat(now.UTC())
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // injectReviewPassCrash is a test seam that stops the handler between the ref
