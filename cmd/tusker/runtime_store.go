@@ -610,7 +610,12 @@ type RunnerSession struct {
 	LastError      string `json:"last_error"`
 }
 
-func OpenRuntimeStore(stateRoot string) (*RuntimeStore, error) {
+func OpenRuntimeStore(stateRoot string) (opened *RuntimeStore, openErr error) {
+	defer func() {
+		if errors.Is(openErr, os.ErrPermission) || errors.Is(openErr, syscall.EPERM) {
+			openErr = fmt.Errorf("cannot access Tusker runtime state at %s: %w; run Tusker outside the sandbox, or grant this sandbox access to that existing state directory", stateRoot, openErr)
+		}
+	}()
 	if info, err := os.Lstat(stateRoot); err == nil && info.Mode().Perm()&0o022 != 0 {
 		return nil, fmt.Errorf("runtime state root is group/world writable: %s", stateRoot)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -2895,6 +2900,13 @@ func scanRunDirectives(rows *sql.Rows) ([]RunDirective, error) {
 		directives = append(directives, directive)
 	}
 	return directives, rows.Err()
+}
+
+// LapseWaveRunDirective retires one queued wave directive that can never
+// match its wave's current authorization.
+func (s *RuntimeStore) LapseWaveRunDirective(projectID, waveID, recordID, reason string) error {
+	_, err := s.exec(`UPDATE run_directives SET state = 'lapsed', reason = ? WHERE project_id = ? AND record_id = ? AND wave_id = ? AND state = 'queued'`, reason, projectID, recordID, waveID)
+	return err
 }
 
 func (s *RuntimeStore) ExpireRunDirectives(now time.Time) error {

@@ -1991,3 +1991,27 @@ func TestDirectWaveStartRefusesHumanApprovalProfile(t *testing.T) {
 		t.Fatal("wave armed despite human-only approval policy")
 	}
 }
+
+func TestDirectWaveRearmLapsesStaleDirectiveItDoesNotRebind(t *testing.T) {
+	vault, store, project := authorityFixture(t)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001"}, nil)
+	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err != nil {
+		t.Fatal(err)
+	}
+	// The member moved on to review under an earlier authorization.
+	if _, err := store.exec(`UPDATE run_directives SET authorization_fingerprint='sha256:superseded' WHERE project_id=? AND record_id=?`, project.ProjectID, "APP-T-0001"); err != nil {
+		t.Fatal(err)
+	}
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
+	if _, err := queueAuthorizedWaveFrontier(vault, store, project.ProjectID, "W-0001", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	directive, err := store.RunDirective(project.ProjectID, "APP-T-0001")
+	if err != nil || directive == nil {
+		t.Fatalf("directive=%#v err=%v", directive, err)
+	}
+	if directive.State != "lapsed" {
+		t.Fatalf("stale directive state = %q, want lapsed", directive.State)
+	}
+}

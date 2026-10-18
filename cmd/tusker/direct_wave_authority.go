@@ -1786,6 +1786,7 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 		_ = waveLock.Close()
 		return nil, err
 	}
+	var staleRecords []string
 	for _, directive := range directives {
 		if taskID, ok := recordToTask[directive.RecordID]; ok {
 			// A queued directive bound to this wave's superseded authorization
@@ -1793,6 +1794,7 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 			// current fingerprint. Only a directive bound to the current (or a
 			// foreign) authorization occupies the frontier slot.
 			if directive.WaveID == waveID && (directive.AuthorizationFingerprint != fingerprint || directive.WaveAuthorizedAt != authorizedAt) {
+				staleRecords = append(staleRecords, directive.RecordID)
 				continue
 			}
 			occupied[taskID] = true
@@ -1818,12 +1820,31 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 			}
 		}
 	}
-	if remaining <= 0 || len(candidates) == 0 {
-		_ = waveLock.Close()
-		return nil, nil
-	}
 	if len(candidates) > remaining {
 		candidates = candidates[:remaining]
+	}
+	if remaining <= 0 {
+		candidates = nil
+	}
+	// A stale directive the frontier does not re-bind (its task moved on to
+	// review, or no slot is free) can never match again. Lapse it so it does
+	// not linger as a stale reservation.
+	rebinding := map[string]bool{}
+	for _, taskID := range candidates {
+		rebinding[trackerRecordID(idx.Tasks[taskID])] = true
+	}
+	for _, recordID := range staleRecords {
+		if rebinding[recordID] {
+			continue
+		}
+		if err := store.LapseWaveRunDirective(projectID, waveID, recordID, "superseded by a newer wave authorization"); err != nil {
+			_ = waveLock.Close()
+			return nil, err
+		}
+	}
+	if len(candidates) == 0 {
+		_ = waveLock.Close()
+		return nil, nil
 	}
 	if routeBlockers := directRouteBlockers(vault, idx, candidates); len(routeBlockers) > 0 {
 		_ = waveLock.Close()
