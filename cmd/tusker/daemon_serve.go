@@ -17,6 +17,19 @@ import (
 
 const daemonServeRequiredEnv = "TUSKER_SERVE_REQUIRED"
 
+// daemonServeRequired latches TUSKER_SERVE_REQUIRED for this daemon process.
+// daemonRunCmd removes the variable from the environment so the commands the
+// daemon starts (landing gates, workers, their test suites) do not inherit it
+// and bind the real Serve port from a test daemon.
+var daemonServeRequired bool
+
+func latchDaemonServeRequired() {
+	if parseTruthyQuery(os.Getenv(daemonServeRequiredEnv)) {
+		daemonServeRequired = true
+	}
+	_ = os.Unsetenv(daemonServeRequiredEnv)
+}
+
 type daemonServeServer struct {
 	addr       string
 	httpServer *http.Server
@@ -105,7 +118,7 @@ func (d *Daemon) serveTarget() (daemonServeTarget, bool, error) {
 	}
 	candidate := projects[selected]
 	cfg := candidate.Workflow.Data.Runtime.Serve
-	if !cfg.Enabled && !parseTruthyQuery(os.Getenv(daemonServeRequiredEnv)) {
+	if !cfg.Enabled && !daemonServeRequired && !parseTruthyQuery(os.Getenv(daemonServeRequiredEnv)) {
 		return daemonServeTarget{}, false, nil
 	}
 	addr, err := serveNormalizeAddr(firstNonEmpty(strings.TrimSpace(cfg.Addr), defaultServeAddr))

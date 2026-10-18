@@ -8202,6 +8202,7 @@ func daemonRunCmd(args Args) (returnErr error) {
 	if err := rejectAgentSpawn("tusker daemon run"); err != nil {
 		return err
 	}
+	latchDaemonServeRequired()
 	stateRoot := DefaultStateRoot()
 	once := args.Bool("once")
 	managed := !once && daemonRunningUnderLaunchd()
