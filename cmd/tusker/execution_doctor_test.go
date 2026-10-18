@@ -326,7 +326,11 @@ func TestDoctorQueuedMemberNamesHostAdmissionWait(t *testing.T) {
 }
 
 func TestDoctorReviewTaskIsNotAContractDefect(t *testing.T) {
-	vault, _, _, _, _ := selfServiceArmedABFixture(t)
+	vault, store, project, _, _ := selfServiceArmedABFixture(t)
+	// The execute run consumed the member's directive before review.
+	if _, err := store.exec(`UPDATE run_directives SET state='consumed' WHERE project_id=? AND record_id=?`, project.ProjectID, "APP-T-0001"); err != nil {
+		t.Fatal(err)
+	}
 	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
 	raw, _ := doctorJSONReportBytes(t, vault, "APP-T-0001")
 	var report doctorReport
@@ -336,6 +340,11 @@ func TestDoctorReviewTaskIsNotAContractDefect(t *testing.T) {
 	for _, code := range report.Diagnosis.FindingCodes() {
 		if strings.HasPrefix(code, "doctor-contract-defect") {
 			t.Fatalf("review task reported as contract defect: %v", report.Diagnosis.FindingCodes())
+		}
+	}
+	for _, code := range []string{"doctor-stale-reservation", "doctor-queued-reservation"} {
+		if doctorFindingByCode(report, code) != nil {
+			t.Fatalf("consumed directive reported as %s: %v", code, report.Diagnosis.FindingCodes())
 		}
 	}
 	if doctorFindingByCode(report, "doctor-review-waiting") == nil {

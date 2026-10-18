@@ -118,7 +118,9 @@ func diagnoseTaskForDoctorWithRuntime(vault string, store *RuntimeStore, runtime
 	findings = append(findings, doctorHumanGateFindings(idx, task, scope, observed, revision)...)
 
 	if store != nil {
-		if directive, directiveErr := store.RunDirective(projectID, trackerRecordID(task)); directiveErr == nil && directive != nil {
+		// Only a still-queued directive is a reservation; a consumed or lapsed
+		// one is history and must not read as a stale reservation.
+		if directive, directiveErr := store.RunDirective(projectID, trackerRecordID(task)); directiveErr == nil && directive != nil && directive.State == "queued" {
 			findings = append(findings, doctorDirectiveFinding(vault, idx, task, directive, scope, projectID, observed, now))
 		}
 		runs, runsErr := store.ListRuns()
