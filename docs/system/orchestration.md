@@ -3,7 +3,7 @@ title: "Orchestration"
 subject: orchestration
 part_of: overview
 status: canonical
-describes: [cmd/tusker/daemon.go, cmd/tusker/daemon_scheduler.go, cmd/tusker/workspace_manager.go, cmd/tusker/work_session_cmd.go, cmd/tusker/run_ownership.go]
+describes: [cmd/tusker/daemon.go, cmd/tusker/daemon_scheduler.go, cmd/tusker/workspace_manager.go, cmd/tusker/work_session_cmd.go, cmd/tusker/run_ownership.go, cmd/tusker/process_inventory.go, cmd/tusker/process_janitor.go]
 read_when: "Understanding scheduling, workspace preparation, or worker ownership."
 skip_when: "Authoring acceptance criteria or inspecting visual evidence."
 ---
@@ -76,6 +76,33 @@ Orphan cleanup checks active runtime ownership as well as the preparer's PID.
 A detached worker can outlive the daemon that prepared its workspace. If the
 runtime store is missing or unreadable, the copy stays counted toward the cap
 until ownership can be established.
+
+## Process containment
+
+Tusker records every process it starts in the runtime store's process
+inventory: owner, kind, PID, process group, start time, starter, and last sign
+of life. Only agent sessions may outlive the daemon. Checks, such as landing
+gates and closeout commands, run in their own process group and end with their
+starter.
+
+- A check is stopped as a group when it finishes, when its starter cancels or
+  shuts down, or when it has printed nothing and used no CPU for the check
+  silence limit. That outcome is recorded as stuck, stopped, not as a failure.
+- One janitor pass runs at daemon startup and on every poll. It stops checks
+  whose starter died, adopts agent sessions whose run is still claimed or
+  running, and stops sessions whose run is gone. It acts only when PID, process
+  group, and start time all match; otherwise it reports and leaves the process
+  alone. Every action writes a process event.
+- Landing gates take one machine-wide slot. Before a gate runs, a copy left by
+  a dead starter is stopped, so a restart never runs the same gate twice.
+- The watchdog stops its own daemon's checks before it exits. Every restart
+  counts toward the crash-loop breaker; while it is open, landing pauses and
+  the run shows why.
+- An agent session that shows no sign of life past the agent silence flag is
+  marked silent. Containment never stops an agent session for running long or
+  for being silent.
+
+The full rules are in the `process-containment` spec.
 
 ## Interactive work
 

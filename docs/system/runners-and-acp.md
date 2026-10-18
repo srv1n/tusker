@@ -242,6 +242,12 @@ supervision, and execution receipts. `cmd/tusker` owns claims, workspaces, task
 verification, review, retries, recovery, and canonical closure. Workers never update
 Tusker task state.
 
+Each runner wrapper writes an agent-session row to the process inventory when it
+starts. Agent sessions may outlive the daemon; a restarted daemon adopts a session
+whose run is still claimed or running and stops one whose run is gone. Test suites
+never leave wrappers behind: the test binary hands `runner-wrapper` arguments to the
+real command, and the top-level suite fails if any process it started is still alive.
+
 The public `acp install` and `acp setup` routes are retired. Existing saved
 `codex_acp` configuration is never selected as a fallback and must be migrated to an
 operator-installed `acp_v1` endpoint or to an explicit CLI profile.

@@ -74,6 +74,12 @@ duplicating attempts. The bounded-repair attempt ledger, once-only
 escalations, and per-project reconcile schedules live in `daemon_settings`
 and survive restart.
 
+`process_inventory` holds one row per process Tusker starts (owner, kind, PID,
+process group, start time, starter, last sign of life, end reason), and
+`process_events` records every automatic or operator stop, report, adoption
+and silent flag. Landing gates serialize on `landing-gate.slot` under the state
+root; the operating system releases that lock when its holder dies.
+
 ## Reset boundary
 
 `tusker reset --no-init --repo . --only-tusker-state` removes the known repository

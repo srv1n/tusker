@@ -36,10 +36,16 @@ Wave views show the authored expected outcome separately from the derived comple
 - Wave flow/results: `/p/<project>/waves/<wave>`
 - Full task detail: `/p/<project>/tasks/<task>`
 - Operations: `/p/<project>/diagnostics`
-- Execution Operations: `/p/<project>/diagnostics/executions`
+- Execution Operations: `/p/<project>/diagnostics/executions`, including the
+  Processes section: every Tusker process on the machine with its state,
+  runtime, last sign of life, owner, PID and process group, a Stop action that
+  stops the whole group only when its identity matches, and processes stopped
+  in the last 24 hours with their reason
 - Task and tracker documents: `/p/<project>/docs`
 - System knowledge: `/p/<project>/knowledge`
-- Project settings: `/p/<project>/settings`
+- Project settings: `/p/<project>/settings`, including Process limits: the
+  check silence limit (default 10 minutes) and the agent silence flag (default
+  20 minutes)
 
 The TypeScript source is the web source authority. `internal/serve/ui/dist/` is
 a generated embed. Rebuild it after a web source change.
