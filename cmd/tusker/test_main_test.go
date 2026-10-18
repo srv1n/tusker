@@ -22,6 +22,15 @@ const validationLockHeldEnv = "TUSKER_VALIDATION_LOCK_HELD"
 var validationTestLockRetireHook func(string) error
 
 func TestMain(m *testing.M) {
+	// The daemon spawns detached wrappers with os.Executable(), which under
+	// `go test` is this test binary. Act as the wrapper; never rerun the suite.
+	if len(os.Args) > 1 && os.Args[1] == "runner-wrapper" {
+		main()
+	}
+	if os.Getenv(processGuardSleeperEnv) == "1" {
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	}
 	if os.Getenv("TUSKER_COORDINATOR_TEST_HELPER") == "1" {
 		os.Exit(m.Run())
 	}
@@ -110,8 +119,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	guardRoot := claimSuiteGuard()
 	if os.Getenv(validationLockHeldEnv) != "" {
 		code := m.Run()
+		if guardRoot && !killSuiteLeaks() && code == 0 {
+			code = 1
+		}
 		cleanupNotifications()
 		if err := os.RemoveAll(stateRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "cmd/tusker test suite: remove isolated state root: %v\n", err)
@@ -130,7 +143,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	stopSignalCleanup := installValidationTestLockSignalCleanup(release)
+	if guardRoot {
+		reportStaleTestWrappers()
+	}
 	code := m.Run()
+	if guardRoot && !killSuiteLeaks() && code == 0 {
+		code = 1
+	}
 	if err := release(); err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/tusker test suite: release validation lock: %v\n", err)
 		if code == 0 {

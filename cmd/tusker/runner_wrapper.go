@@ -118,6 +118,9 @@ func runnerWrapperCmd(args Args) error {
 		return fmt.Errorf("open runtime store for wrapper registration: %w", err)
 	}
 	registered, registerErr := store.registerRunnerWrapperSpawn(req.Start, pid, pgid, processStartedAt)
+	if registerErr == nil && registered {
+		_, registerErr = store.recordOwnedProcess(req.Start.AttemptID, processKindAgentSession, pid, pgid, processStartedAt, processStarterFor(os.Getppid()))
+	}
 	closeErr := store.Close()
 	if registerErr != nil {
 		_ = writeRunnerStatusFile(req.Start.StatusPath, 1)

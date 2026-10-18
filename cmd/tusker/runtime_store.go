@@ -1420,6 +1420,21 @@ func (s *RuntimeStore) Migrate() error {
 		);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS external_loop_events_idempotency
 			ON external_loop_events(project_id, record_id, idempotency_key);`,
+		`CREATE TABLE IF NOT EXISTS process_inventory (
+			id INTEGER PRIMARY KEY,
+			owner TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			pid INTEGER NOT NULL,
+			pgid INTEGER NOT NULL,
+			process_start TEXT NOT NULL DEFAULT '',
+			starter TEXT NOT NULL DEFAULT '',
+			started_at TEXT NOT NULL,
+			last_sign_of_life TEXT NOT NULL DEFAULT '',
+			ended_at TEXT NOT NULL DEFAULT '',
+			end_reason TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS process_inventory_open
+			ON process_inventory(ended_at, starter);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.exec(stmt); err != nil {

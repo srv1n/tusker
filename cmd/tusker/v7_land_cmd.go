@@ -1420,11 +1420,15 @@ func runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity stri
 	}
 	for _, command := range commands {
 		commandStarted := time.Now().UTC()
-		output, err := runV7LandingGateCommand(workDir, command, isolated)
+		output, err := runV7OwnedLandingGateCommand("landing_gate:"+laneIdentity, workDir, command, isolated)
 		if err != nil {
 			evidence.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: "fail", StartedAt: commandStarted.Format(time.RFC3339Nano), FinishedAt: evidence.FinishedAt})
-			evidence.Summary = gateFailureSummary(command, string(output), err)
+			result, summary := "fail", gateFailureSummary(command, string(output), err)
+			if errors.Is(err, errCheckStuckStopped) {
+				result, summary = "stuck_stopped", limitLandingSummary("gate stuck, stopped: "+command+": "+err.Error(), 500)
+			}
+			evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: result, StartedAt: commandStarted.Format(time.RFC3339Nano), FinishedAt: evidence.FinishedAt})
+			evidence.Summary = summary
 			return evidence
 		}
 		evidence.Outcomes = append(evidence.Outcomes, v7LandingCommandOutcome{Command: command, Result: "pass", StartedAt: commandStarted.Format(time.RFC3339Nano), FinishedAt: time.Now().UTC().Format(time.RFC3339Nano)})
@@ -1439,20 +1443,30 @@ func runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity stri
 }
 
 func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, error) {
+	return runV7OwnedLandingGateCommand("landing_gate:"+workDir, workDir, command, isolated)
+}
+
+// Both gate paths run through runOwnedCheck: own process group, inventory
+// row, group stopped on finish, cancel, silence, or starter stop.
+// ponytail: callers carry no context yet, so cancellation is by starter stop
+// (stopOwnedChecksByStarter) or silence; thread a ctx when the daemon has one.
+func runV7OwnedLandingGateCommand(owner, workDir, command string, isolated bool) ([]byte, error) {
 	if !isolated {
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = workDir
-		return cmd.CombinedOutput()
+		return runOwnedCheck(context.Background(), owner, cmd, defaultCheckSilenceLimit)
 	}
 	sandbox, err := newV7GateSandbox(workDir, true)
 	if err != nil {
 		return nil, err
 	}
 	defer sandbox.Close()
+	sandbox.owner = owner
 	return sandbox.Run(context.Background(), command)
 }
 
 type v7GateSandbox struct {
+	owner        string
 	executable   string
 	profile      string
 	worktreePath string
@@ -1556,8 +1570,7 @@ func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error)
 		"LANG=C",
 		"LC_ALL=C",
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	output, err := runV7SandboxGateCommand(ctx, cmd)
+	output, err := runOwnedCheck(ctx, firstNonEmpty(s.owner, "landing_gate:"+s.worktreePath), cmd, defaultCheckSilenceLimit)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return output, ctxErr
 	}
@@ -1565,34 +1578,6 @@ func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error)
 		return []byte("sandbox gate aborted or denied (worktree=" + s.worktreePath + "; scratch=" + s.scratchPath + ")"), err
 	}
 	return output, err
-}
-
-// sandbox-exec constrains file/network authority for the focused landing gate,
-// but it is not a lifecycle boundary. This helper deliberately makes only the
-// narrow process-group cancellation claim; scheduled full promotion uses the
-// configured container/VM provider instead.
-func runV7SandboxGateCommand(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
-	if cmd == nil {
-		return nil, fmt.Errorf("sandbox gate: nil command")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var output bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &output, &output
-	if err := cmd.Start(); err != nil {
-		return output.Bytes(), err
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		return output.Bytes(), err
-	case <-ctx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done
-		return output.Bytes(), ctx.Err()
-	}
 }
 
 func sandboxCanonicalPath(path string) (string, error) {

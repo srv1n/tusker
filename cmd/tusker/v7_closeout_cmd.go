@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -127,7 +128,7 @@ func closeoutV7CreateCmd(args Args) error {
 	if !args.Bool("emit-packet") {
 		return tuskerError(errorMissingArg, stringField(task.Data, "id")+": closeout requires --emit-packet", withHint("terminal human-wait checkpoints must leave a durable review packet"))
 	}
-	validation, err := runV7CloseoutValidation(vaultPath, validateCommand)
+	validation, err := runV7CloseoutValidation(vaultPath, "closeout:"+stringField(task.Data, "id"), validateCommand)
 	if err != nil {
 		return err
 	}
@@ -232,7 +233,7 @@ func loadV7CloseoutContext(args Args) (string, Note, v7Index, v7ProofReport, err
 	return vaultPath, task, idx, report, nil
 }
 
-func runV7CloseoutValidation(vaultPath, command string) (map[string]any, error) {
+func runV7CloseoutValidation(vaultPath, owner, command string) (map[string]any, error) {
 	command = strings.TrimSpace(command)
 	result := map[string]any{
 		"result":      "skipped",
@@ -245,10 +246,14 @@ func runV7CloseoutValidation(vaultPath, command string) (map[string]any, error) 
 	started := time.Now().UTC()
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = filepath.Dir(vaultPath)
-	out, err := cmd.CombinedOutput()
+	out, err := runOwnedCheck(context.Background(), owner, cmd, defaultCheckSilenceLimit)
 	result["command"] = command
 	result["validated_at"] = started.Format(time.RFC3339)
 	result["output_tail"] = tailString(strings.TrimSpace(string(out)), 20)
+	if errors.Is(err, errCheckStuckStopped) {
+		result["result"] = "stuck_stopped"
+		return result, tuskerError(errorEvidenceGate, "closeout validation stuck, stopped: "+command, withContext(result))
+	}
 	if err != nil {
 		result["result"] = "fail"
 		return result, tuskerError(errorEvidenceGate, "closeout validation failed: "+command, withContext(result))
