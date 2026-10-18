@@ -12,8 +12,8 @@ import (
 )
 
 // defaultAgentSilenceLimit is how long an agent session may show no sign of
-// life before it is flagged silent. It is never stopped for it.
-// ponytail: fixed default; read the project setting when the settings page has it.
+// life before it is flagged silent. It is never stopped for it. Projects
+// override it with the "Agent silence flag" setting.
 const defaultAgentSilenceLimit = 20 * time.Minute
 
 type psEntry struct {
@@ -91,9 +91,12 @@ func (l janitorSnapshot) starterAlive(starter string) bool {
 //
 // Every stop, report, adoption and silent flag leaves a process event.
 func runProcessJanitor(store *RuntimeStore, agentSilence time.Duration, now time.Time) error {
-	if agentSilence <= 0 {
-		agentSilence = defaultAgentSilenceLimit
-	}
+	return runProcessJanitorFor(store, func(string) time.Duration { return agentSilence }, now)
+}
+
+// runProcessJanitorFor takes the agent silence limit per project, so each
+// session is flagged against its own project's setting.
+func runProcessJanitorFor(store *RuntimeStore, agentSilence func(projectID string) time.Duration, now time.Time) error {
 	rows, err := store.ownedProcesses()
 	if err != nil {
 		return err
@@ -106,9 +109,6 @@ func runProcessJanitor(store *RuntimeStore, agentSilence time.Duration, now time
 	}
 	if len(open) == 0 {
 		return nil
-	}
-	if _, err := store.exec(processEventsTable); err != nil {
-		return err
 	}
 	raw, err := processListing()
 	if err != nil {
@@ -125,7 +125,7 @@ func runProcessJanitor(store *RuntimeStore, agentSilence time.Duration, now time
 	return errors.Join(errs...)
 }
 
-func janitorRow(store *RuntimeStore, list janitorSnapshot, self string, p ownedProcess, agentSilence time.Duration, now time.Time) error {
+func janitorRow(store *RuntimeStore, list janitorSnapshot, self string, p ownedProcess, agentSilence func(string) time.Duration, now time.Time) error {
 	if !list.identity(p) {
 		if _, leader := list.alive(p.PID); !leader && !list.groupHasMembers(p.PGID) {
 			return store.endOwnedProcess(p.ID, "exited")
@@ -149,7 +149,7 @@ func janitorRow(store *RuntimeStore, list janitorSnapshot, self string, p ownedP
 		}
 		return store.recordProcessEvent(p, "stopped", "the process that started this check is gone", ruleCheckEndsWithStarter)
 	case processKindAgentSession:
-		lastEvent, live, err := agentSessionOwner(store, p.Owner)
+		projectID, lastEvent, live, err := agentSessionOwner(store, p.Owner)
 		if err != nil {
 			return err
 		}
@@ -168,21 +168,25 @@ func janitorRow(store *RuntimeStore, list janitorSnapshot, self string, p ownedP
 				return err
 			}
 		}
-		return flagSilentAgentSession(store, p, lastEvent, agentSilence, now)
+		limit := agentSilence(projectID)
+		if limit <= 0 {
+			limit = defaultAgentSilenceLimit
+		}
+		return flagSilentAgentSession(store, p, lastEvent, limit, now)
 	}
 	return nil
 }
 
-// agentSessionOwner reports whether a run still holds the attempt live, and
-// the run's last event time (its sign of life).
-func agentSessionOwner(store *RuntimeStore, attemptID string) (string, bool, error) {
-	var lastEvent string
-	err := store.queryRowScan(`SELECT last_event_at FROM runs WHERE active_attempt_id = ? AND lease_state IN (?, ?) LIMIT 1`,
-		[]any{attemptID, string(LeaseStateClaimed), string(LeaseStateRunning)}, &lastEvent)
+// agentSessionOwner reports whether a run still holds the attempt live, its
+// project, and the run's last event time (its sign of life).
+func agentSessionOwner(store *RuntimeStore, attemptID string) (string, string, bool, error) {
+	var projectID, lastEvent string
+	err := store.queryRowScan(`SELECT project_id, last_event_at FROM runs WHERE active_attempt_id = ? AND lease_state IN (?, ?) LIMIT 1`,
+		[]any{attemptID, string(LeaseStateClaimed), string(LeaseStateRunning)}, &projectID, &lastEvent)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+		return "", "", false, nil
 	}
-	return lastEvent, err == nil, err
+	return projectID, lastEvent, err == nil, err
 }
 
 // flagSilentAgentSession emits one silent signal per silence: when the last
@@ -228,7 +232,34 @@ func (d *Daemon) runProcessJanitor(now time.Time) {
 	if d == nil || d.store == nil {
 		return
 	}
-	if err := runProcessJanitor(d.store, defaultAgentSilenceLimit, now); err != nil {
+	if err := runProcessJanitorFor(d.store, projectAgentSilenceLimits(d.store), now); err != nil {
 		log.Printf("process janitor: %v", err)
 	}
+}
+
+// projectAgentSilenceLimits reads each project's agent silence flag once per
+// janitor pass.
+func projectAgentSilenceLimits(store *RuntimeStore) func(string) time.Duration {
+	cache := map[string]time.Duration{}
+	return func(projectID string) time.Duration {
+		if limit, ok := cache[projectID]; ok {
+			return limit
+		}
+		_, limit := processSilenceLimits(registeredProjectVault(store, projectID))
+		cache[projectID] = limit
+		return limit
+	}
+}
+
+// registeredProjectVault returns a registered project's vault root, or "" when
+// the project is unknown.
+func registeredProjectVault(store *RuntimeStore, projectID string) string {
+	if store == nil || strings.TrimSpace(projectID) == "" {
+		return ""
+	}
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, ProjectID: projectID})
+	if err != nil || len(projects) == 0 {
+		return ""
+	}
+	return projects[0].Project.VaultRoot
 }

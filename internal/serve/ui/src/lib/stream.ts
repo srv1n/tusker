@@ -126,8 +126,13 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
   }
 }
 
+// The process inventory has no topic of its own: daemon, run and execution
+// changes are when Tusker processes start, stop or go quiet.
+const PROCESS_TOPICS = new Set(["daemon", "runs", "executions"]);
+
 function eventQueryKeys(event: StreamEvent): QueryKey[] {
   const keys = event.keys.flatMap((key) => streamKeyToQueryKeys(key, event.project));
+  if (event.kind === "runtime_projection_refreshed" || event.keys.some((key) => PROCESS_TOPICS.has(key.split(":", 1)[0]))) keys.push(["processes"]);
   if (event.kind !== "runtime_projection_refreshed") return keys;
   // Runtime refreshes have narrow server topics: state reads and summary
   // counters still depend on them, without treating notes/docs as changed.

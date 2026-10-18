@@ -442,6 +442,33 @@ export interface ExecutionTimeline {
   older?: boolean;
   newer?: boolean;
 }
+/** GET /api/processes — mirrors serveProcess in cmd/tusker/serve_runs.go. */
+export type ProcessState = "running" | "long_running" | "silent" | "stopping" | "stopped";
+export interface TuskerProcess {
+  id: number;
+  kind: "agent_session" | "check";
+  what: string;
+  owner: string;
+  projectId?: string;
+  taskIds?: string[];
+  attemptId?: string;
+  state: ProcessState;
+  reason?: string;
+  rule?: string;
+  pid: number;
+  pgid: number;
+  startedAt: string;
+  lastSignOfLife: string;
+  endedAt?: string;
+  runtimeSec: number;
+  quietSec: number;
+  silenceLimitSec: number;
+  canStop: boolean;
+}
+export interface ProcessList {
+  processes: TuskerProcess[];
+  generatedAt: string;
+}
 export interface ExecutionInbox {
   schema: "tusker.execution-graph/v1";
   executions: ExecutionNode[];

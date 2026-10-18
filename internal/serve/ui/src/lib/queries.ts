@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, requireAccepted } from "@/lib/api";
 import { isLiveViewVisible, liveRefetchInterval, useLiveRefetchInterval } from "@/lib/stream";
 import { projectQueryScope } from "@/lib/queryScope";
-import type { AgentAccessApprovalResponse, DirectStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProjectSummary, RunAction, RunActionResult, RunDetail, WaveReview } from "@/types/domain";
+import type { AgentAccessApprovalResponse, DirectStartResult, ExecutionBindingPreview, ExecutionGraph, ExecutionInbox, ExecutionTimeline, ProcessList, ProjectSummary, RunAction, RunActionResult, RunDetail, WaveReview } from "@/types/domain";
 import type {
   DocgraphDocDetail,
   DocgraphSavePayload,
@@ -48,11 +48,15 @@ export const qk = {
   projectAutomationScope: (projectId: string) => ["project-automation-scope", projectId] as const,
   executions: (projectId: string, params: Record<string, string | undefined>) => ["executions", projectId, params] as const,
   executionInbox: (projectId: string) => ["executions", "inbox", projectId] as const,
+  processes: (projectId: string) => ["processes", projectId] as const,
   executionTimeline: (projectId: string, execution: string, params: Record<string, string | undefined>) => ["executions", "timeline", projectId, execution, params] as const,
 };
 
 export const useExecutions = (projectId: string, params: Record<string, string | undefined>) =>
   useQuery<ExecutionGraph>({ queryKey: qk.executions(projectId, params), queryFn: () => api.executions(params, projectId), refetchInterval: useLiveRefetchInterval() });
+export const useProcesses = (projectId: string) =>
+  useQuery<ProcessList>({ queryKey: qk.processes(projectId), queryFn: () => api.processes(projectId), refetchInterval: useLiveRefetchInterval() });
+export const useProcessStop = (projectId: string) => { const qc = useQueryClient(); return useMutation({ mutationFn: (id: number) => api.processStop(id, projectId), onSettled: () => void qc.invalidateQueries({ queryKey: ["processes"] }) }); };
 export const useExecutionInbox = (projectId: string) =>
   useQuery<ExecutionInbox>({ queryKey: qk.executionInbox(projectId), queryFn: () => api.executionInbox(projectId), refetchInterval: useLiveRefetchInterval() });
 export const useExecutionTimeline = (projectId: string, execution: string, params: Record<string, string | undefined>) =>

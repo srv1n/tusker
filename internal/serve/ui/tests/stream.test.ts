@@ -84,6 +84,7 @@ test("stream keys map to live query invalidations", () => {
     { queryKey: ["projects"], exact: false },
     { queryKey: qk.runs("tusker"), exact: false },
     { queryKey: ["run"], exact: false },
+    { queryKey: ["processes"], exact: false },
   ]);
 });
 
@@ -114,9 +115,10 @@ test("stream connection disables fast polling, falls back on error, and recovers
   source.error();
   expect(getStreamStatus().connected).toBe(false);
   expect(liveRefetchInterval()).toBe(LIVE_STREAM_FALLBACK_MS);
-  expect(invalidations.slice(-2)).toEqual([
+  expect(invalidations.slice(-3)).toEqual([
     { queryKey: ["daemon"], exact: false },
     { queryKey: ["projects"], exact: false },
+    { queryKey: ["processes"], exact: false },
   ]);
   expect(
     invalidations.filter((entry) => JSON.stringify(entry) === JSON.stringify({ queryKey: ["tasks"], exact: false }))

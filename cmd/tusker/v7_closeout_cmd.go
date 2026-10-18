@@ -246,7 +246,8 @@ func runV7CloseoutValidation(vaultPath, owner, command string) (map[string]any, 
 	started := time.Now().UTC()
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = filepath.Dir(vaultPath)
-	out, err := runOwnedCheck(context.Background(), owner, cmd, defaultCheckSilenceLimit)
+	checkSilence, _ := processSilenceLimits(vaultPath)
+	out, err := runOwnedCheck(context.Background(), owner, cmd, checkSilence)
 	result["command"] = command
 	result["validated_at"] = started.Format(time.RFC3339)
 	result["output_tail"] = tailString(strings.TrimSpace(string(out)), 20)

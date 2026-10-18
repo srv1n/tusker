@@ -7,6 +7,7 @@ import { PageHeader, PageScroll, SectionLabel, Toolbar } from "@/components/ui/p
 import { EmptyState, QueryBoundary, SkeletonRows } from "@/components/ui/states";
 import { useExecutionBind, useExecutionBindingPreview, useExecutionInbox, useExecutionRename, useExecutions, useExecutionTimeline } from "@/lib/queries";
 import type { ExecutionGraph, ExecutionNode } from "@/types/domain";
+import { ProcessesSection } from "./ProcessesSection";
 
 type FilterName = "task" | "wave" | "provider_id" | "agent_type" | "source" | "binding" | "lifecycle";
 const FILTERS: Array<{ key: FilterName; label: string }> = [
@@ -31,6 +32,7 @@ export function ExecutionOperations() {
 
   return <PageScroll><div className="mx-auto max-w-[1180px] animate-rise">
     <PageHeader eyebrow={<Mono className="text-[11px] uppercase tracking-[0.14em] text-faint">operations / execution observability</Mono>} title="Executions" subtitle="Lineage, provider observations, and authority boundaries. Provider children are visible, never promoted into fake Tusker work." />
+    <ProcessesSection projectId={projectId} />
     <Toolbar className="mb-5">
       <label className="relative min-w-[14rem] flex-1"><Search aria-hidden="true" size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-faint" /><TextInput value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search executions by name" placeholder="Search name, task, wave, provider ID…" className="w-full pl-8" /></label>
       <Button variant={showInbox ? "primary" : "default"} onClick={() => setShowInbox((value) => !value)}><Inbox size={14} /> Unbound inbox{inbox.data?.executions.length ? ` (${inbox.data.executions.length})` : ""}</Button>

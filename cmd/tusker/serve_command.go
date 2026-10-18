@@ -473,6 +473,8 @@ func (s *serveServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleModelCatalog(w, r)
 	case path == "/api/executions":
 		s.handleExecutionGraph(w, r)
+	case path == "/api/processes":
+		s.handleProcesses(w, r)
 	case path == "/api/executions/inbox":
 		s.handleExecutionInbox(w, r)
 	case path == "/api/executions/timeline":

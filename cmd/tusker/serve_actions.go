@@ -596,6 +596,8 @@ func (s *serveServer) handleAPIMutation(w http.ResponseWriter, r *http.Request, 
 		s.handleProjectIconAction(w, parts[2], body)
 	case len(parts) == 3 && parts[1] == "setup" && (parts[2] == "doctor" || parts[2] == "repair"):
 		s.handleSetupDoctorAction(w, body, parts[2] == "repair")
+	case len(parts) == 3 && parts[1] == "processes" && parts[2] == "stop":
+		s.handleProcessStop(w, body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "redrive":
 		s.handleRunRedrive(w, r, parts[2], body)
 	case len(parts) == 4 && parts[1] == "runs" && parts[3] == "say":
@@ -1177,6 +1179,8 @@ var serveProjectSettingValidators = map[string]func(any) (any, error){
 		}
 		return value, nil
 	},
+	checkSilenceSettingKey: serveSilenceMinutes("check silence limit"),
+	agentSilenceSettingKey: serveSilenceMinutes("agent silence flag"),
 	"tier": func(raw any) (any, error) {
 		value, err := strconv.Atoi(strings.TrimSpace(toString(raw)))
 		if err != nil || value < 1 || value > 5 {
@@ -1194,6 +1198,17 @@ var serveProjectSettingValidators = map[string]func(any) (any, error){
 		}
 		return values, nil
 	},
+}
+
+// serveSilenceMinutes accepts a whole number of minutes from 1 to one day.
+func serveSilenceMinutes(label string) func(any) (any, error) {
+	return func(raw any) (any, error) {
+		value, err := strconv.Atoi(strings.TrimSpace(toString(raw)))
+		if err != nil || value < 1 || value > 1440 {
+			return nil, fmt.Errorf("%s must be a whole number of minutes from 1 to 1440", label)
+		}
+		return value, nil
+	}
 }
 
 func (s *serveServer) handleTaskStatusAction(w http.ResponseWriter, taskID string, body serveActionBody) {

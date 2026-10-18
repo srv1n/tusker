@@ -129,6 +129,7 @@ const (
 	ruleAgentAdopted         = "agent_session_survives_restart"
 	ruleAgentSilence         = "agent_silence_limit"
 	ruleIdentityMustMatch    = "identity_must_match"
+	ruleOperator             = "operator"
 )
 
 type processEvent struct {
@@ -142,27 +143,15 @@ type processEvent struct {
 	At        string
 }
 
-// ponytail: created lazily so the inventory owns its table; move into Migrate
-// when the operator view starts reading it.
-const processEventsTable = `CREATE TABLE IF NOT EXISTS process_events (
-	id INTEGER PRIMARY KEY, process_id INTEGER NOT NULL, owner TEXT NOT NULL, pid INTEGER NOT NULL,
-	pgid INTEGER NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, rule TEXT NOT NULL, at TEXT NOT NULL)`
-
 // recordProcessEvent leaves the durable trace every automatic action owes the
 // operator: which process, its owner, what happened, why and which rule fired.
 func (s *RuntimeStore) recordProcessEvent(p ownedProcess, kind, reason, rule string) error {
-	if _, err := s.exec(processEventsTable); err != nil {
-		return err
-	}
 	_, err := s.exec(`INSERT INTO process_events (process_id, owner, pid, pgid, kind, reason, rule, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Owner, p.PID, p.PGID, kind, reason, rule, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *RuntimeStore) processEvents() ([]processEvent, error) {
-	if _, err := s.exec(processEventsTable); err != nil {
-		return nil, err
-	}
 	rows, err := s.query(`SELECT process_id, owner, pid, pgid, kind, reason, rule, at FROM process_events ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -334,13 +323,25 @@ func (o *silenceWatchedOutput) snapshot() ([]byte, time.Time) {
 	return append([]byte(nil), o.buf.Bytes()...), o.last
 }
 
+type checkSilenceLimitKey struct{}
+
+// withCheckSilenceLimit carries a project's check silence limit to the
+// runOwnedCheck calls below a caller that passes no explicit limit.
+func withCheckSilenceLimit(ctx context.Context, limit time.Duration) context.Context {
+	return context.WithValue(ctx, checkSilenceLimitKey{}, limit)
+}
+
 // runOwnedCheck is the one way Tusker runs a check: own process group,
 // inventory row before it can do work unrecorded, whole group stopped on
 // finish, ctx cancel, or no new output for the silence limit. A silence stop
-// returns an error wrapping errCheckStuckStopped.
+// returns an error wrapping errCheckStuckStopped. A zero silence takes the
+// limit from ctx (withCheckSilenceLimit), else the default.
 func runOwnedCheck(ctx context.Context, owner string, cmd *exec.Cmd, silence time.Duration) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if silence <= 0 {
+		silence, _ = ctx.Value(checkSilenceLimitKey{}).(time.Duration)
 	}
 	if silence <= 0 {
 		silence = defaultCheckSilenceLimit

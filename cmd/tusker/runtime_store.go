@@ -1435,6 +1435,17 @@ func (s *RuntimeStore) Migrate() error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS process_inventory_open
 			ON process_inventory(ended_at, starter);`,
+		`CREATE TABLE IF NOT EXISTS process_events (
+			id INTEGER PRIMARY KEY,
+			process_id INTEGER NOT NULL,
+			owner TEXT NOT NULL,
+			pid INTEGER NOT NULL,
+			pgid INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			rule TEXT NOT NULL,
+			at TEXT NOT NULL
+		);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.exec(stmt); err != nil {

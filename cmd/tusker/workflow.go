@@ -964,3 +964,34 @@ func workflowInitCmd(args Args) error {
 	}
 	return nil
 }
+
+// Project settings for process containment, in whole minutes.
+const (
+	checkSilenceSettingKey = "processes.check_silence_minutes"
+	agentSilenceSettingKey = "processes.agent_silence_minutes"
+)
+
+// processSilenceLimits returns the project's check silence limit and agent
+// silence flag. An unset, unreadable or non-positive value keeps the default.
+func processSilenceLimits(vaultPath string) (check, agent time.Duration) {
+	check, agent = defaultCheckSilenceLimit, defaultAgentSilenceLimit
+	if strings.TrimSpace(vaultPath) == "" {
+		return check, agent
+	}
+	resolved, err := resolveTuskerConfig(vaultPath)
+	if err != nil {
+		return check, agent
+	}
+	minutes := func(key string, fallback time.Duration) time.Duration {
+		raw, ok := lookupConfigValue(resolved.Raw, key)
+		if !ok {
+			return fallback
+		}
+		var n float64
+		if _, err := fmt.Sscan(fmt.Sprint(raw), &n); err != nil || n <= 0 {
+			return fallback
+		}
+		return time.Duration(n * float64(time.Minute))
+	}
+	return minutes(checkSilenceSettingKey, check), minutes(agentSilenceSettingKey, agent)
+}

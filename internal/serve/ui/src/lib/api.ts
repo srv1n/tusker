@@ -55,6 +55,7 @@ import type {
   DirectStartResult,
   ExecutionGraph,
   ExecutionInbox,
+  ProcessList,
   ExecutionTimeline,
   ExecutionBindingPreview,
 } from "@/types/domain";
@@ -261,6 +262,9 @@ export const api = {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value) as [string, string][]).toString();
     return real(withProject(`/executions${query ? `?${query}` : ""}`, projectId));
   },
+  // GET /api/processes, POST /api/processes/stop — the Tusker process inventory.
+  processes: (projectId?: string): Promise<ProcessList> => real(withProject("/processes", projectId)),
+  processStop: (id: number, projectId?: string) => post<{ ok: boolean; refused?: boolean; reason?: string }>("/processes/stop", { id, projectId }),
   executionInbox: (projectId?: string): Promise<ExecutionInbox> => real(withProject("/executions/inbox", projectId)),
   executionTimeline: (execution: string, params: Record<string, string | undefined>, projectId?: string): Promise<ExecutionTimeline> => {
     const query = new URLSearchParams({ execution, ...Object.fromEntries(Object.entries(params).filter(([, value]) => value)) }).toString();

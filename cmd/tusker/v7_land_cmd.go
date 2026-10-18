@@ -1390,6 +1390,11 @@ func runV7LandingGateEvidence(vaultPath, workDir, laneIdentity string) v7Landing
 // and an actor label as authority.
 func runV7LandingGateEvidenceWithIsolation(ctx context.Context, vaultPath, workDir, laneIdentity string, isolated bool) v7LandingGateEvidence {
 	started := time.Now().UTC()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	checkSilence, _ := processSilenceLimits(vaultPath)
+	ctx = withCheckSilenceLimit(ctx, checkSilence)
 	commands := backpressureCommands(vaultPath)
 	if len(commands) == 0 {
 		commands = []string{"go build ./...", "go vet ./...", "go test ./... -count=1"}
@@ -1458,7 +1463,7 @@ func runV7OwnedLandingGateCommand(ctx context.Context, owner, workDir, command s
 	if !isolated {
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = workDir
-		return runOwnedCheck(ctx, owner, cmd, defaultCheckSilenceLimit)
+		return runOwnedCheck(ctx, owner, cmd, 0)
 	}
 	sandbox, err := newV7GateSandbox(workDir, true)
 	if err != nil {
@@ -1574,7 +1579,7 @@ func (s *v7GateSandbox) Run(ctx context.Context, command string) ([]byte, error)
 		"LANG=C",
 		"LC_ALL=C",
 	}
-	output, err := runOwnedCheck(ctx, firstNonEmpty(s.owner, "landing_gate:"+s.worktreePath), cmd, defaultCheckSilenceLimit)
+	output, err := runOwnedCheck(ctx, firstNonEmpty(s.owner, "landing_gate:"+s.worktreePath), cmd, 0)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return output, ctxErr
 	}

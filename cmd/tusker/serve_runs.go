@@ -1,10 +1,13 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -890,4 +893,294 @@ func serveRedriveRun(store *RuntimeStore, run *RunStatus, actor, reason string, 
 		CreatedAt:        now.Format(time.RFC3339),
 	})
 	return err
+}
+
+// Operator view of the process inventory (Execution Operations → Processes).
+
+// serveProcessStoppedWindow keeps a stopped process listed with its reason.
+const serveProcessStoppedWindow = 24 * time.Hour
+
+type serveProcess struct {
+	ID        int64    `json:"id"`
+	Kind      string   `json:"kind"` // agent_session | check
+	What      string   `json:"what"`
+	Owner     string   `json:"owner"`
+	ProjectID string   `json:"projectId,omitempty"`
+	TaskIDs   []string `json:"taskIds,omitempty"`
+	AttemptID string   `json:"attemptId,omitempty"`
+	// State is running, long_running, silent, stopping or stopped.
+	State           string `json:"state"`
+	Reason          string `json:"reason,omitempty"`
+	Rule            string `json:"rule,omitempty"`
+	PID             int    `json:"pid"`
+	PGID            int    `json:"pgid"`
+	StartedAt       string `json:"startedAt"`
+	LastSignOfLife  string `json:"lastSignOfLife"`
+	EndedAt         string `json:"endedAt,omitempty"`
+	RuntimeSec      int    `json:"runtimeSec"`
+	QuietSec        int    `json:"quietSec"`
+	SilenceLimitSec int    `json:"silenceLimitSec"`
+	CanStop         bool   `json:"canStop"`
+}
+
+type serveProcessList struct {
+	Processes   []serveProcess `json:"processes"`
+	GeneratedAt string         `json:"generatedAt"`
+}
+
+// Normal ends (passed, failed, exited) are not stops and drop off the list.
+var serveProcessStopReasons = map[string]string{
+	"operator_stopped":     "stopped by the operator",
+	"starter_stopped":      "the process that started it is gone",
+	"stuck_stopped":        "no output or CPU progress for the check silence limit",
+	"owner_gone":           "no live run owns it any more",
+	"cancelled":            "cancelled by its starter",
+	"identity_unconfirmed": "PID, process group and start time no longer matched; reported, not stopped",
+}
+
+// recentOwnedProcesses returns open rows and rows ended since the cutoff.
+func (s *RuntimeStore) recentOwnedProcesses(since time.Time) ([]ownedProcess, error) {
+	rows, err := s.query(`SELECT id, owner, kind, pid, pgid, process_start, starter, started_at, last_sign_of_life, ended_at, end_reason
+		FROM process_inventory WHERE ended_at = '' OR ended_at >= ? ORDER BY id DESC`, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ownedProcess
+	for rows.Next() {
+		var p ownedProcess
+		if err := rows.Scan(&p.ID, &p.Owner, &p.Kind, &p.PID, &p.PGID, &p.ProcessStart, &p.Starter, &p.StartedAt, &p.LastSignOfLife, &p.EndedAt, &p.EndReason); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// lastProcessStopEvents maps a process to its latest stop or report event.
+func (s *RuntimeStore) lastProcessStopEvents(since time.Time) (map[int64]processEvent, error) {
+	rows, err := s.query(`SELECT process_id, owner, pid, pgid, kind, reason, rule, at FROM process_events
+		WHERE kind IN ('stopped', 'reported') AND at >= ? ORDER BY id`, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]processEvent{}
+	for rows.Next() {
+		var e processEvent
+		if err := rows.Scan(&e.ProcessID, &e.Owner, &e.PID, &e.PGID, &e.Kind, &e.Reason, &e.Rule, &e.At); err != nil {
+			return nil, err
+		}
+		out[e.ProcessID] = e
+	}
+	return out, rows.Err()
+}
+
+// liveRunForAttempt returns the claimed or running run that owns an attempt.
+func (s *RuntimeStore) liveRunForAttempt(attemptID string) (RunStatus, bool) {
+	runs, err := s.listRunsQuery(`SELECT `+runtimeRunColumns+` FROM runs WHERE active_attempt_id = ? AND lease_state IN (?, ?) LIMIT 1`,
+		attemptID, string(LeaseStateClaimed), string(LeaseStateRunning))
+	if err != nil || len(runs) == 0 {
+		return RunStatus{}, false
+	}
+	return runs[0], true
+}
+
+// serveProcessOwnerTasks reads task IDs out of a check owner:
+// "closeout:<task>" or "landing_gate:task-batch:<task>@<branch>@<sha>,...".
+func serveProcessOwnerTasks(owner string) (string, []string) {
+	if task, ok := strings.CutPrefix(owner, "closeout:"); ok {
+		return "Closeout check", []string{task}
+	}
+	if batch, ok := strings.CutPrefix(owner, "landing_gate:task-batch:"); ok {
+		var tasks []string
+		for _, part := range strings.Split(batch, ",") {
+			if id, _, _ := strings.Cut(part, "@"); id != "" {
+				tasks = append(tasks, id)
+			}
+		}
+		return "Landing gate", tasks
+	}
+	if strings.HasPrefix(owner, "landing_gate:") {
+		return "Landing gate", nil
+	}
+	return "Check", nil
+}
+
+func (s *serveServer) handleProcesses(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC()
+	snap, err := s.loadSnapshotForRequest(r)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	since := now.Add(-serveProcessStoppedWindow)
+	rows, err := s.store.recentOwnedProcesses(since)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	events, err := s.store.lastProcessStopEvents(since)
+	if err != nil {
+		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	var live janitorSnapshot
+	if raw, err := processListing(); err == nil {
+		live = janitorSnapshot(raw)
+	}
+	limits := map[string][2]time.Duration{}
+	limitsFor := func(projectID string) (time.Duration, time.Duration) {
+		if l, ok := limits[projectID]; ok {
+			return l[0], l[1]
+		}
+		vault := snap.project.VaultRoot
+		if projectID != "" && projectID != snap.projectID {
+			vault = registeredProjectVault(s.store, projectID)
+		}
+		check, agent := processSilenceLimits(vault)
+		limits[projectID] = [2]time.Duration{check, agent}
+		return check, agent
+	}
+	title := func(projectID, taskID string) string {
+		if projectID == "" || projectID == snap.projectID {
+			if note, ok := snap.notesByID[taskID]; ok {
+				if t := strings.TrimSpace(stringField(note.Data, "title")); t != "" {
+					return t
+				}
+			}
+		}
+		return taskID
+	}
+	out := serveProcessList{Processes: []serveProcess{}, GeneratedAt: now.Format(time.RFC3339Nano)}
+	for _, p := range rows {
+		item := serveProcess{ID: p.ID, Kind: p.Kind, Owner: p.Owner, PID: p.PID, PGID: p.PGID,
+			StartedAt: p.StartedAt, LastSignOfLife: p.LastSignOfLife, EndedAt: p.EndedAt}
+		lastSign := latestTime(p.StartedAt, p.LastSignOfLife)
+		var limit time.Duration
+		if p.Kind == processKindAgentSession {
+			item.AttemptID = p.Owner
+			item.What = "Agent session"
+			if run, ok := s.store.liveRunForAttempt(p.Owner); ok {
+				item.ProjectID, item.TaskIDs = run.ProjectID, []string{run.ItemID}
+				item.What = title(run.ProjectID, run.ItemID)
+				lastSign = latestTime(p.StartedAt, p.LastSignOfLife, run.LastEventAt)
+			}
+			_, limit = limitsFor(item.ProjectID)
+		} else {
+			label, tasks := serveProcessOwnerTasks(p.Owner)
+			item.TaskIDs, item.What = tasks, label
+			if len(tasks) > 0 {
+				item.What = label + " · " + title("", tasks[0])
+				if len(tasks) > 1 {
+					item.What += fmt.Sprintf(" +%d", len(tasks)-1)
+				}
+			}
+			limit, _ = limitsFor("")
+		}
+		if !lastSign.IsZero() {
+			item.LastSignOfLife = lastSign.Format(time.RFC3339Nano)
+		}
+		item.SilenceLimitSec = int(limit / time.Second)
+		end := now
+		if p.EndedAt != "" {
+			end = latestTime(p.EndedAt)
+		}
+		item.RuntimeSec = max(0, int(end.Sub(latestTime(p.StartedAt))/time.Second))
+		if !lastSign.IsZero() {
+			item.QuietSec = max(0, int(end.Sub(lastSign)/time.Second))
+		}
+		event, hasEvent := events[p.ID]
+		switch {
+		case p.EndedAt != "":
+			reason, stopped := serveProcessStopReasons[p.EndReason]
+			if !stopped {
+				continue
+			}
+			item.State, item.Reason = "stopped", reason
+			if hasEvent {
+				item.Reason, item.Rule = event.Reason, event.Rule
+			}
+		case live == nil || !live.identity(p):
+			item.State, item.Reason = "stopping", "the process is gone or no longer matches its recorded identity; the janitor closes this row on its next pass"
+		case time.Duration(item.QuietSec)*time.Second > limit:
+			item.State, item.CanStop = "silent", true
+			item.Reason = "no sign of life for longer than the silence limit"
+			if p.Kind == processKindAgentSession {
+				item.Reason += "; flagged, left running"
+			}
+		case time.Duration(item.RuntimeSec)*time.Second > limit:
+			item.State, item.CanStop = "long_running", true
+		default:
+			item.State, item.CanStop = "running", true
+		}
+		out.Processes = append(out.Processes, item)
+	}
+	serveJSON(w, http.StatusOK, out)
+}
+
+// handleProcessStop stops one inventoried process group for the operator. It
+// refuses unless PID, process group and start time all still match, records
+// the operator's intent as a process event, and for an agent session persists
+// the run's stop intent so automatic retry does not restart it.
+func (s *serveServer) handleProcessStop(w http.ResponseWriter, body serveActionBody) {
+	const command = "serve processes stop"
+	actor, err := s.serveOperatorActor(body, command)
+	if err != nil {
+		status, result := serveOperatorActorResult(command, err)
+		serveJSON(w, status, result)
+		return
+	}
+	refuse := func(code, reason string) {
+		serveJSON(w, http.StatusOK, serveActionResult{Refused: true, Reason: reason, Issue: &Issue{Code: code, Message: reason}})
+	}
+	id, _ := strconv.ParseInt(strings.TrimSpace(toString(body["id"])), 10, 64)
+	p, found, err := s.store.ownedProcessByID(id)
+	if err != nil {
+		refuse("PROCESS_INVENTORY_UNAVAILABLE", "process inventory is unreadable: "+err.Error())
+		return
+	}
+	if !found {
+		refuse("PROCESS_NOT_FOUND", fmt.Sprintf("process %d is not in the inventory", id))
+		return
+	}
+	if p.EndedAt != "" {
+		refuse("PROCESS_ALREADY_ENDED", "process already ended: "+firstNonEmpty(serveProcessStopReasons[p.EndReason], p.EndReason))
+		return
+	}
+	if !processIdentityMatches(RunStatus{ProcessPID: p.PID, ProcessPGID: p.PGID, ProcessStartedAt: p.ProcessStart}) {
+		refuse("PROCESS_IDENTITY_UNCONFIRMED", fmt.Sprintf("refused: PID %d, process group %d and start time no longer all match the inventory, so nothing was stopped", p.PID, p.PGID))
+		return
+	}
+	// End the row first so the operator reason wins over the exit the kill
+	// causes (endOwnedProcess keeps the first reason).
+	if err := s.store.endOwnedProcess(p.ID, "operator_stopped"); err != nil {
+		refuse("PROCESS_INVENTORY_UNAVAILABLE", "could not record the stop: "+err.Error())
+		return
+	}
+	_ = s.store.recordProcessEvent(p, "stopped", "stopped by "+actor, ruleOperator)
+	result := serveActionResult{OK: true, Reason: fmt.Sprintf("stopped process group %d", p.PGID)}
+	if p.Kind == processKindAgentSession {
+		if run, ok := s.store.liveRunForAttempt(p.Owner); ok {
+			prior, _ := loadRunSessionControlIntent(s.store, run.ProjectID, run.RecordID)
+			control, _ := s.applyRunStopControl(run, actor, "operator stopped its process", prior, runSessionControlResult{TaskID: run.ItemID, ProjectID: run.ProjectID, Action: runSessionControlStop})
+			result.TaskID, result.ProjectID = run.ItemID, run.ProjectID
+			if control.Refused {
+				result.Reason += "; run stop: " + control.Reason
+			}
+			defer s.refreshProjectRuntimeSnapshot(run.ProjectID)
+		}
+	}
+	stopProcessGroup(p.PGID)
+	serveJSON(w, http.StatusOK, result)
+}
+
+func (s *RuntimeStore) ownedProcessByID(id int64) (ownedProcess, bool, error) {
+	var p ownedProcess
+	err := s.queryRowScan(`SELECT id, owner, kind, pid, pgid, process_start, starter, started_at, last_sign_of_life, ended_at, end_reason
+		FROM process_inventory WHERE id = ?`, []any{id}, &p.ID, &p.Owner, &p.Kind, &p.PID, &p.PGID, &p.ProcessStart, &p.Starter, &p.StartedAt, &p.LastSignOfLife, &p.EndedAt, &p.EndReason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, false, nil
+	}
+	return p, err == nil, err
 }

@@ -6,7 +6,7 @@ import { ActionResultLine } from "@/components/ui/action-feedback";
 import { Card, Chip, Dot, Mono } from "@/components/ui/primitives";
 import { PageHeader, PageScroll, SectionLabel } from "@/components/ui/page";
 import { QueryBoundary, SkeletonRows } from "@/components/ui/states";
-import { useDaemon, useFactoryOperations, useProjectAutomation, useProjectAutomationScope, useProjectSettings, useProjects, useRuns, useWaves } from "@/lib/queries";
+import { useConfigResolve, useDaemon, useFactoryOperations, useProjectAutomation, useProjectAutomationScope, useProjectSettings, useProjects, useRuns, useWaves } from "@/lib/queries";
 import { cn } from "@/lib/cn";
 import { projectContainsCheckout, type DaemonStatus, type FactoryOperationsProjection, type ProjectSummary, type RunSummary, type WaveSummary } from "@/types/domain";
 import { api } from "@/lib/api";
@@ -197,11 +197,49 @@ export function SettingsBasic({
         </div>
       </SettingGroup>
 
+      <SettingGroup label="Process limits">
+        <SilenceLimitRow projectId={project.id} settingKey="processes.check_silence_minutes" fallback={10} name="Check silence limit" detail="A check (test, build or gate command) with no output and no CPU progress for this long is stopped as stuck." />
+        <SilenceLimitRow projectId={project.id} settingKey="processes.agent_silence_minutes" fallback={20} name="Agent silence flag" detail="An agent session with no sign of life for this long is flagged silent. It is never stopped for it." />
+      </SettingGroup>
+
       <SettingGroup label="Notifications">
         <UnavailableRow name="Notification policy" detail="In-app and operating-system notification preferences have no read/write Serve contract yet." />
       </SettingGroup>
     </div>
   );
+}
+
+/** Whole minutes from 1 to 1440; anything else is shown, never submitted. */
+export function parseSilenceMinutes(input: string): { value?: number; error?: string } {
+  const trimmed = input.trim();
+  const value = /^\d+$/.test(trimmed) ? Number.parseInt(trimmed, 10) : Number.NaN;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1440) return { error: "Enter whole minutes from 1 to 1440." };
+  return { value };
+}
+
+function SilenceLimitRow({ projectId, settingKey, fallback, name, detail }: { projectId: string; settingKey: string; fallback: number; name: string; detail: string }) {
+  const resolved = useConfigResolve(settingKey, projectId);
+  const settings = useProjectSettings(projectId);
+  const configured = resolved.data?.value;
+  const current = configured === undefined || configured === null || configured === "" ? fallback : Number(configured);
+  const [draft, setDraft] = useState<string | null>(null);
+  const text = draft ?? String(current);
+  const checked = parseSilenceMinutes(text);
+  const changed = checked.value !== undefined && checked.value !== current;
+  const save = () => { if (checked.value !== undefined) settings.mutate({ key: settingKey, value: checked.value }, { onSuccess: () => setDraft(null) }); };
+  return <>
+    <SettingRow name={name} detail={detail} source={configured === undefined || configured === null ? "Default" : resolved.data?.source || "Project"} control={
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-2">
+          <TextInput aria-label={`${name} in minutes`} inputMode="numeric" value={text} aria-invalid={checked.error ? true : undefined} onChange={(event) => setDraft(event.target.value)} className="w-20 font-mono" />
+          <span className="text-[12px] text-muted">min</span>
+          <Button size="sm" variant="primary" disabled={!changed || settings.isPending} onClick={save}>{settings.isPending ? "Saving…" : "Save"}</Button>
+        </div>
+        {checked.error ? <p role="alert" className="text-[12px] leading-relaxed text-warn">{checked.error}</p> : null}
+      </div>
+    } />
+    {settings.error || settings.data ? <div className="flex justify-end bg-panel px-4 py-2"><ActionResultLine pending={settings.isPending} error={settings.error} result={settings.data} /></div> : null}
+  </>;
 }
 
 export function beginAutomationToggle(pending: { current: boolean }) {
