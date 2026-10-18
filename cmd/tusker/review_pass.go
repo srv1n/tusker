@@ -53,20 +53,60 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 		taskIDs = append(taskIDs, taskID)
 	}
 	sort.Strings(taskIDs)
+	// A pass lands through the project's full gate, which can run far longer
+	// than a poll. Off the poll, one worker lands the passes one at a time and
+	// rereads each task first; passes found while it runs wait for a later poll.
+	landing := d.reviewPassAsync && d.reviewPassLanding.CompareAndSwap(false, true)
+	var passes []string
 	for _, taskID := range taskIDs {
-		task, err := resolveV7Note(project.VaultRoot, taskID, "task")
-		if err != nil || stringField(task.Data, "status") != "review" {
+		task, result, ok := d.reviewPassCandidate(project, taskID, byTask[taskID])
+		if !ok {
 			continue
 		}
-		result, ok := d.currentReviewResult(project.ProjectID, taskID, byTask[taskID])
-		if !ok || result.WorkRevision != intField(task.Data, "work_revision") {
+		if result.Verdict == "pass" && d.reviewPassAsync {
+			if landing {
+				passes = append(passes, taskID)
+			}
 			continue
 		}
 		if err := d.handleReviewResult(project, task, result); err != nil {
 			log.Printf("review pass handler %s/%s: %v", project.ProjectKey, taskID, err)
 		}
 	}
+	if !landing {
+		return nil
+	}
+	if len(passes) == 0 {
+		d.reviewPassLanding.Store(false)
+		return nil
+	}
+	go func() {
+		defer d.reviewPassLanding.Store(false)
+		for _, taskID := range passes {
+			task, result, ok := d.reviewPassCandidate(project, taskID, byTask[taskID])
+			if !ok {
+				continue
+			}
+			if err := d.handleReviewResult(project, task, result); err != nil {
+				log.Printf("review pass handler %s/%s: %v", project.ProjectKey, taskID, err)
+			}
+		}
+	}()
 	return nil
+}
+
+// reviewPassCandidate returns the task and its current review result when the
+// task is in review and the result matches its work revision.
+func (d *Daemon) reviewPassCandidate(project RegisteredProject, taskID string, results []ReviewResult) (Note, ReviewResult, bool) {
+	task, err := resolveV7Note(project.VaultRoot, taskID, "task")
+	if err != nil || stringField(task.Data, "status") != "review" {
+		return Note{}, ReviewResult{}, false
+	}
+	result, ok := d.currentReviewResult(project.ProjectID, taskID, results)
+	if !ok || result.WorkRevision != intField(task.Data, "work_revision") {
+		return Note{}, ReviewResult{}, false
+	}
+	return task, result, true
 }
 
 // currentReviewResult returns the result recorded by the task's latest review
@@ -188,7 +228,10 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 			parent.EndState.Dirty && !parent.EndStateInvalid {
 			daemonSubmissionSources[taskID] = source
 		}
-		stopBeat := d.feedWatchdogDuring(reviewPassLandingWatchdogCap)
+		stopBeat := func() {}
+		if !d.reviewPassAsync {
+			stopBeat = d.feedWatchdogDuring(reviewPassLandingWatchdogCap)
+		}
 		landErr := landV7CmdAsReviewPass(Args{
 			"vault": project.VaultRoot,
 			"quiet": "true",
@@ -218,12 +261,9 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 	return nil
 }
 
-// reviewPassLandingWatchdogCap bounds how long a landing gate may keep the
-// watchdog fed. The gate runs the project's full checks inline in the poll,
-// which takes far longer than the 3m hang threshold on a large repo.
-//
-// ponytail: the poll blocks for the whole gate; move landing off the poll
-// goroutine if other projects must dispatch during long gates.
+// reviewPassLandingWatchdogCap bounds how long an inline landing gate (a
+// one-shot daemon, or a test) may keep the watchdog fed. The resident daemon
+// lands off the poll, so its beat never needs feeding.
 const reviewPassLandingWatchdogCap = 60 * time.Minute
 
 var reviewPassWatchdogFeedInterval = 30 * time.Second
@@ -410,6 +450,11 @@ func reviewPassHoldCode(code string) bool {
 func (d *Daemon) holdReviewPass(run *RunStatus, code RunFailureReasonCode, reason string) error {
 	if run == nil {
 		return fmt.Errorf("%s", reason)
+	}
+	// The landing may run off the poll, so the row can have moved since run
+	// was read; write the hold onto the current row.
+	if current, err := d.store.FindRunScoped(run.ProjectID, run.RecordID); err == nil && current != nil {
+		run = current
 	}
 	updated := *run
 	updated.ReasonCode = string(code)

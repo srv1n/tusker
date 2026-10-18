@@ -70,7 +70,11 @@ type Daemon struct {
 	pollProcessIdentity        func(RunStatus) bool
 	// pollArmedWave is set only while pollOnce collects one project's
 	// candidates; see armedWavePassMemo for scope and invalidation.
-	pollArmedWave          *armedWavePassMemo
+	pollArmedWave *armedWavePassMemo
+	// reviewPassAsync lands passing reviews off the poll; reviewPassLanding
+	// is set while that landing worker runs. See reconcileReviewCompletion.
+	reviewPassAsync        bool
+	reviewPassLanding      atomic.Bool
 	completionAuthorityMu  sync.Mutex
 	completionAuthorityKey map[string]ed25519.PrivateKey
 	codexExecIngestMu      sync.Mutex
@@ -153,6 +157,8 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 	}
 	if once {
 		d.departureExecutionDisabled = true
+	} else {
+		d.reviewPassAsync = true
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

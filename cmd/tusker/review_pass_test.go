@@ -232,6 +232,28 @@ func TestReviewPassLandsAndClosesForAnyHarness(t *testing.T) {
 	env.passHandler(t) // idempotent
 }
 
+// The resident daemon lands off the poll: the handler returns at once, and a
+// later poll does not start a second landing while the first is running.
+func TestReviewPassLandsOffThePoll(t *testing.T) {
+	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
+	env.submitProposal(t, "pass")
+	env.daemon.reviewPassAsync = true
+	env.daemon.reviewPassLanding.Store(true)
+	env.passHandler(t)
+	if env.landed() || stringField(env.task(t).Data, "status") != "review" {
+		t.Fatal("a second landing started while one was running")
+	}
+	env.daemon.reviewPassLanding.Store(false)
+	env.passHandler(t)
+	deadline := time.Now().Add(time.Minute)
+	for env.daemon.reviewPassLanding.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !env.landed() || stringField(env.task(t).Data, "status") != "done" {
+		t.Fatalf("the landing worker did not land and close: status=%q", stringField(env.task(t).Data, "status"))
+	}
+}
+
 func TestReviewPassDepartureRecoversLandingReceipt(t *testing.T) {
 	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
 	env.submitProposal(t, "pass")
