@@ -1,6 +1,8 @@
 ---
 subject: process-containment-grill
 title: "Process containment grill, 2026-10-18"
+part_of: process-containment
+decides_for: process-containment
 status: canonical
 created: 2026-10-18
 read_when: "You want why process containment is shaped the way it is: the incident, the options weighed, and what the operator said."
