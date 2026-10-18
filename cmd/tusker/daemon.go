@@ -1822,6 +1822,10 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 					return err
 				}
 				if hasResult {
+					if reviewPassHoldCode(current.ReasonCode) {
+						// A held landing keeps its reason visible until the owner acts.
+						continue
+					}
 					current.ProjectID = project.ProjectID
 					current.RecordID = recordID
 					current.ItemID = stringField(note.Data, "id")
