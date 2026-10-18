@@ -1820,11 +1820,10 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 			}
 		}
 	}
-	if len(candidates) > remaining {
-		candidates = candidates[:remaining]
-	}
 	if remaining <= 0 {
 		candidates = nil
+	} else if len(candidates) > remaining {
+		candidates = candidates[:remaining]
 	}
 	// A stale directive the frontier does not re-bind (its task moved on to
 	// review, or no slot is free) can never match again. Lapse it so it does

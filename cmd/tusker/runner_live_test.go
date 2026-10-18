@@ -1089,6 +1089,14 @@ for line in sys.stdin:
 	if len(turns) < 2 {
 		t.Fatalf("expected execute and review turns, got %#v", turns)
 	}
+	// The runner wrappers can still be writing into the state root after their
+	// status files land; under load that raced the TempDir cleanup.
+	for _, run := range []RunStatus{executeRun, reviewRun} {
+		deadline := time.Now().Add(30 * time.Second)
+		for runProcessGroupAlive(run) && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
 }
 
 func startPreparedClaudeLiveTest(t *testing.T, req StartRequest, resume *ResumeRequest) (*StartResult, error) {
