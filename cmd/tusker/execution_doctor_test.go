@@ -324,3 +324,21 @@ func TestDoctorQueuedMemberNamesHostAdmissionWait(t *testing.T) {
 		t.Fatalf("primary = %s", diagnosis.PrimaryCode)
 	}
 }
+
+func TestDoctorReviewTaskIsNotAContractDefect(t *testing.T) {
+	vault, _, _, _, _ := selfServiceArmedABFixture(t)
+	setAutomationV7TaskFields(t, vault, "APP-T-0001", map[string]any{"status": "review", "readiness": "waiting_on_review", "next_owner": "reviewer"})
+	raw, _ := doctorJSONReportBytes(t, vault, "APP-T-0001")
+	var report doctorReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v", err)
+	}
+	for _, code := range report.Diagnosis.FindingCodes() {
+		if strings.HasPrefix(code, "doctor-contract-defect") {
+			t.Fatalf("review task reported as contract defect: %v", report.Diagnosis.FindingCodes())
+		}
+	}
+	if doctorFindingByCode(report, "doctor-review-waiting") == nil {
+		t.Fatalf("review task has no review-waiting finding: %v", report.Diagnosis.FindingCodes())
+	}
+}

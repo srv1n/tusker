@@ -72,6 +72,16 @@ func diagnoseTaskForDoctorWithRuntime(vault string, store *RuntimeStore, runtime
 
 	dispatchBlockers := v7TaskDispatchBlockers(vault, task)
 	memberOfWave := strings.TrimSpace(stringField(task.Data, "wave")) != ""
+	if strings.EqualFold(stringField(task.Data, "status"), "review") {
+		// Execute-lane blockers ("status is review", "next_owner is
+		// reviewer") are the review lifecycle itself, not contract defects.
+		dispatchBlockers = nil
+		findings = append(findings, DiagnosticFinding{
+			Code: "doctor-review-waiting", Scope: scope, Classification: DiagnosticNormalWait,
+			Affects: []string{taskID}, NextActor: DiagnosticAuthorityDaemon, RetryAfter: "5m",
+			Evidence: DiagnosticEvidence{Source: "task", Revision: revision, ObservedAt: observed, Detail: "Task is in review; the reviewer owns the next step."},
+		})
+	}
 	for _, blocker := range dispatchBlockers {
 		// Canonical wave-member authoring (backlog/held) is the state arming
 		// and the member's own reservation promote past it. It is never
