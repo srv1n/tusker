@@ -176,7 +176,7 @@ type v7LandSummaryRow struct {
 }
 
 func landV7Cmd(args Args) error {
-	return landV7CmdWithAuthority(args, nil, "", nil, nil)
+	return landV7CmdWithAuthority(context.Background(), args, nil, "", nil, nil)
 }
 
 func landV7CmdWithDepartureAuthority(args Args, frozenSources map[string]string, authority *v7LandingAuthority) error {
@@ -187,7 +187,7 @@ func landV7CmdWithDepartureAuthority(args Args, frozenSources map[string]string,
 	if err != nil {
 		return err
 	}
-	return landV7CmdWithAuthority(args, frozenSources, v7LandingAuthorityDeparture, authority, &internal)
+	return landV7CmdWithAuthority(context.Background(), args, frozenSources, v7LandingAuthorityDeparture, authority, &internal)
 }
 
 func landV7CmdAsWaveDrain(args Args) error {
@@ -198,7 +198,7 @@ func landV7CmdAsWaveDrain(args Args) error {
 	if err != nil {
 		return err
 	}
-	return landV7CmdWithAuthority(args, nil, "", nil, &internal)
+	return landV7CmdWithAuthority(context.Background(), args, nil, "", nil, &internal)
 }
 
 // recoverV7ReviewPassLanding finishes a review-pass landing that stopped
@@ -246,16 +246,16 @@ func recoverV7ReviewPassLanding(vaultPath, taskID, waveID, source string) error 
 // landV7CmdAsReviewPass lands exactly the reviewed commits named in sources.
 // The land path resolves them under its lock instead of reading the task
 // branch or worktree, which may have moved after review.
-func landV7CmdAsReviewPass(args Args, sources, daemonSubmissionSources map[string]string) error {
+func landV7CmdAsReviewPass(ctx context.Context, args Args, sources, daemonSubmissionSources map[string]string) error {
 	internal, err := newV7InternalActor("daemon:review-pass")
 	if err != nil {
 		return err
 	}
 	internal.daemonSubmissionSources = daemonSubmissionSources
-	return landV7CmdWithAuthority(args, sources, "", nil, &internal)
+	return landV7CmdWithAuthority(ctx, args, sources, "", nil, &internal)
 }
 
-func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authority string, capability *v7LandingAuthority, internal *v7InternalActor) error {
+func landV7CmdWithAuthority(ctx context.Context, args Args, frozenSources map[string]string, authority string, capability *v7LandingAuthority, internal *v7InternalActor) error {
 	vaultPath, err := resolveVaultPath(args, false)
 	if err != nil {
 		return err
@@ -285,7 +285,7 @@ func landV7CmdWithAuthority(args Args, frozenSources map[string]string, authorit
 		if err := landV7WaveToMain(vaultPath, targets[0], args, summary); err != nil {
 			return err
 		}
-	} else if err := landV7TaskTargets(vaultPath, targets, args, summary, frozenSources, authority, capability, internal); err != nil {
+	} else if err := landV7TaskTargets(ctx, vaultPath, targets, args, summary, frozenSources, authority, capability, internal); err != nil {
 		return err
 	}
 	printV7LandingSummary(summary, args)
@@ -510,7 +510,7 @@ func v7WaveLandingReceiptAt(value any) (string, bool) {
 	return latest, found
 }
 
-func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string, capability *v7LandingAuthority, internal *v7InternalActor) error {
+func landV7TaskTargets(ctx context.Context, vaultPath string, targets []string, args Args, summary *v7LandSummary, frozenSources map[string]string, authority string, capability *v7LandingAuthority, internal *v7InternalActor) error {
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -611,7 +611,7 @@ func landV7TaskTargets(vaultPath string, targets []string, args Args, summary *v
 	// the integration ref forward; rework/audit side effects are deferred.
 	acc := &v7BatchAccumulator{}
 	for _, waveID := range waveIDs {
-		if err := stageV7WaveBatch(vaultPath, repoRoot, waveID, byWave[waveID], actor, authority, capability, acc); err != nil {
+		if err := stageV7WaveBatch(ctx, vaultPath, repoRoot, waveID, byWave[waveID], actor, authority, capability, acc); err != nil {
 			return err
 		}
 	}
@@ -972,7 +972,7 @@ func v7WorkspaceRecordID(worktreePath string) string {
 	return strings.ToUpper(strings.TrimSpace(meta.RecordID))
 }
 
-func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority, acc *v7BatchAccumulator) error {
+func stageV7WaveBatch(ctx context.Context, vaultPath, repoRoot, waveID string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority, acc *v7BatchAccumulator) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -991,10 +991,10 @@ func stageV7WaveBatch(vaultPath, repoRoot, waveID string, tasks []v7LandTask, ac
 	if err := ensureV7WaveIntegrationBranch(vaultPath, wave); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks, actor, authority, capability, acc)
+	return landV7BatchRecursive(ctx, vaultPath, repoRoot, waveID, integrationBranch, tasks, actor, authority, capability, acc)
 }
 
-func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority, acc *v7BatchAccumulator) error {
+func landV7BatchRecursive(ctx context.Context, vaultPath, repoRoot, waveID, integrationBranch string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority, acc *v7BatchAccumulator) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -1032,7 +1032,7 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 		return nil
 	}
 	tasks = pending
-	result, err := stageV7LandingBatch(vaultPath, repoRoot, integrationBranch, tasks, actor, authority, capability)
+	result, err := stageV7LandingBatch(ctx, vaultPath, repoRoot, integrationBranch, tasks, actor, authority, capability)
 	if err != nil {
 		return err
 	}
@@ -1060,13 +1060,13 @@ func landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch string,
 		return nil
 	}
 	mid := len(tasks) / 2
-	if err := landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], actor, authority, capability, acc); err != nil {
+	if err := landV7BatchRecursive(ctx, vaultPath, repoRoot, waveID, integrationBranch, tasks[:mid], actor, authority, capability, acc); err != nil {
 		return err
 	}
-	return landV7BatchRecursive(vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], actor, authority, capability, acc)
+	return landV7BatchRecursive(ctx, vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], actor, authority, capability, acc)
 }
 
-func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority) (v7LandingBatchResult, error) {
+func stageV7LandingBatch(ctx context.Context, vaultPath, repoRoot, baseBranch string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority) (v7LandingBatchResult, error) {
 	tmp, err := os.MkdirTemp("", "tusker-land-stage-*")
 	if err != nil {
 		return v7LandingBatchResult{}, err
@@ -1142,7 +1142,7 @@ func stageV7LandingBatch(vaultPath, repoRoot, baseBranch string, tasks []v7LandT
 		return v7LandingBatchResult{}, err
 	}
 	laneIdentity := v7LandingBatchIdentity(tasks)
-	gate := runV7LandingGateEvidenceWithIsolation(vaultPath, tmp, laneIdentity, authority == v7LandingAuthorityDeparture)
+	gate := runV7LandingGateEvidenceWithIsolation(ctx, vaultPath, tmp, laneIdentity, authority == v7LandingAuthorityDeparture)
 	if !gate.Pass {
 		return v7LandingBatchResult{Summary: gate.Summary}, nil
 	}
@@ -1381,14 +1381,14 @@ func runV7LandingGate(vaultPath, workDir, laneIdentity string) (bool, string) {
 }
 
 func runV7LandingGateEvidence(vaultPath, workDir, laneIdentity string) v7LandingGateEvidence {
-	return runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity, false)
+	return runV7LandingGateEvidenceWithIsolation(context.Background(), vaultPath, workDir, laneIdentity, false)
 }
 
 // Scheduled gates execute repository-controlled commands.  They must not be
 // able to read the daemon's runtime state or ask it to mint authority; hosts
 // without the narrow sandbox boundary fail closed instead of treating a hash
 // and an actor label as authority.
-func runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity string, isolated bool) v7LandingGateEvidence {
+func runV7LandingGateEvidenceWithIsolation(ctx context.Context, vaultPath, workDir, laneIdentity string, isolated bool) v7LandingGateEvidence {
 	started := time.Now().UTC()
 	commands := backpressureCommands(vaultPath)
 	if len(commands) == 0 {
@@ -1420,7 +1420,7 @@ func runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity stri
 	}
 	for _, command := range commands {
 		commandStarted := time.Now().UTC()
-		output, err := runV7OwnedLandingGateCommand("landing_gate:"+laneIdentity, workDir, command, isolated)
+		output, err := runV7OwnedLandingGateCommand(ctx, "landing_gate:"+laneIdentity, workDir, command, isolated)
 		if err != nil {
 			evidence.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			result, summary := "fail", gateFailureSummary(command, string(output), err)
@@ -1443,18 +1443,22 @@ func runV7LandingGateEvidenceWithIsolation(vaultPath, workDir, laneIdentity stri
 }
 
 func runV7LandingGateCommand(workDir, command string, isolated bool) ([]byte, error) {
-	return runV7OwnedLandingGateCommand("landing_gate:"+workDir, workDir, command, isolated)
+	return runV7OwnedLandingGateCommand(context.Background(), "landing_gate:"+workDir, workDir, command, isolated)
 }
 
 // Both gate paths run through runOwnedCheck: own process group, inventory
-// row, group stopped on finish, cancel, silence, or starter stop.
-// ponytail: callers carry no context yet, so cancellation is by starter stop
-// (stopOwnedChecksByStarter) or silence; thread a ctx when the daemon has one.
-func runV7OwnedLandingGateCommand(owner, workDir, command string, isolated bool) ([]byte, error) {
+// row, group stopped on finish, ctx cancel, silence, or starter stop. Each
+// command first takes the global gate slot and stops a dead starter's copy.
+func runV7OwnedLandingGateCommand(ctx context.Context, owner, workDir, command string, isolated bool) ([]byte, error) {
+	release, err := prepareLandingGate(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if !isolated {
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = workDir
-		return runOwnedCheck(context.Background(), owner, cmd, defaultCheckSilenceLimit)
+		return runOwnedCheck(ctx, owner, cmd, defaultCheckSilenceLimit)
 	}
 	sandbox, err := newV7GateSandbox(workDir, true)
 	if err != nil {
@@ -1462,7 +1466,7 @@ func runV7OwnedLandingGateCommand(owner, workDir, command string, isolated bool)
 	}
 	defer sandbox.Close()
 	sandbox.owner = owner
-	return sandbox.Run(context.Background(), command)
+	return sandbox.Run(ctx, command)
 }
 
 type v7GateSandbox struct {

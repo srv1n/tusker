@@ -51,7 +51,7 @@ func waitProcessGone(pid int, within time.Duration) bool {
 func TestProcessInventoryRecordsGateCheck(t *testing.T) {
 	store := openInventoryTestStore(t)
 	dir := t.TempDir()
-	output, err := runV7OwnedLandingGateCommand("landing_gate:lane-1", dir, `echo "$$ $(ps -o pgid= -p $$) $TUSKER_PROCESS_OWNER"`, false)
+	output, err := runV7OwnedLandingGateCommand(context.Background(), "landing_gate:lane-1", dir, `echo "$$ $(ps -o pgid= -p $$) $TUSKER_PROCESS_OWNER"`, false)
 	if err != nil {
 		t.Fatalf("gate: %v\n%s", err, output)
 	}
@@ -135,6 +135,19 @@ func TestProcessInventorySilentCheckChattyNotStopped(t *testing.T) {
 	row := inventoryRow(t, store, "chatty")
 	if row.EndReason != "passed" || row.LastSignOfLife <= row.StartedAt {
 		t.Fatalf("chatty row %+v", row)
+	}
+}
+
+// go test prints nothing until a package ends; a quiet check whose group keeps
+// burning CPU is working, not stuck.
+func TestProcessInventoryQuietBusyCheckNotStopped(t *testing.T) {
+	store := openInventoryTestStore(t)
+	_, err := runOwnedCheck(context.Background(), "quiet-busy", exec.Command("sh", "-c", "yes >/dev/null & p=$!; sleep 2.5; kill $p"), 1500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("quiet busy check stopped: %v", err)
+	}
+	if row := inventoryRow(t, store, "quiet-busy"); row.EndReason != "passed" {
+		t.Fatalf("row %+v", row)
 	}
 }
 

@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -113,9 +116,143 @@ func stopOwnedChecksByStarter(store *RuntimeStore, starter string) (int, error) 
 		if err := store.endOwnedProcess(p.ID, "starter_stopped"); err != nil {
 			return stopped, err
 		}
+		_ = store.recordProcessEvent(p, "stopped", "starter is exiting", ruleCheckEndsWithStarter)
 		stopped++
 	}
 	return stopped, nil
+}
+
+// Rules named on durable process events.
+const (
+	ruleCheckEndsWithStarter = "check_ends_with_starter"
+	ruleAgentOwnerGone       = "agent_session_owner_gone"
+	ruleAgentAdopted         = "agent_session_survives_restart"
+	ruleAgentSilence         = "agent_silence_limit"
+	ruleIdentityMustMatch    = "identity_must_match"
+)
+
+type processEvent struct {
+	ProcessID int64
+	Owner     string
+	PID       int
+	PGID      int
+	Kind      string // stopped, reported, adopted, silent
+	Reason    string
+	Rule      string
+	At        string
+}
+
+// ponytail: created lazily so the inventory owns its table; move into Migrate
+// when the operator view starts reading it.
+const processEventsTable = `CREATE TABLE IF NOT EXISTS process_events (
+	id INTEGER PRIMARY KEY, process_id INTEGER NOT NULL, owner TEXT NOT NULL, pid INTEGER NOT NULL,
+	pgid INTEGER NOT NULL, kind TEXT NOT NULL, reason TEXT NOT NULL, rule TEXT NOT NULL, at TEXT NOT NULL)`
+
+// recordProcessEvent leaves the durable trace every automatic action owes the
+// operator: which process, its owner, what happened, why and which rule fired.
+func (s *RuntimeStore) recordProcessEvent(p ownedProcess, kind, reason, rule string) error {
+	if _, err := s.exec(processEventsTable); err != nil {
+		return err
+	}
+	_, err := s.exec(`INSERT INTO process_events (process_id, owner, pid, pgid, kind, reason, rule, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Owner, p.PID, p.PGID, kind, reason, rule, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *RuntimeStore) processEvents() ([]processEvent, error) {
+	if _, err := s.exec(processEventsTable); err != nil {
+		return nil, err
+	}
+	rows, err := s.query(`SELECT process_id, owner, pid, pgid, kind, reason, rule, at FROM process_events ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []processEvent
+	for rows.Next() {
+		var e processEvent
+		if err := rows.Scan(&e.ProcessID, &e.Owner, &e.PID, &e.PGID, &e.Kind, &e.Reason, &e.Rule, &e.At); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// starterAlive reports whether a "pid:<pid>@<start>" starter still runs. A
+// starter recorded without a start time counts as alive while its PID exists.
+func starterAlive(starter string) bool {
+	pid, start, ok := parseProcessStarter(starter)
+	if !ok || !processExists(pid) {
+		return false
+	}
+	if start == "" {
+		return true
+	}
+	actual, ok := processStartTime(pid)
+	return !ok || actual == start
+}
+
+func parseProcessStarter(starter string) (int, string, bool) {
+	rest, ok := strings.CutPrefix(starter, "pid:")
+	if !ok {
+		return 0, "", false
+	}
+	pidText, start, _ := strings.Cut(rest, "@")
+	pid, err := strconv.Atoi(pidText)
+	return pid, start, err == nil && pid > 0
+}
+
+// prepareLandingGate takes the one global landing-gate slot and stops any
+// copy of the same gate a dead starter left running, so at most one copy of a
+// gate runs and two projects never run full suites at once. The slot is a
+// flock, so a crashed holder releases it with its process.
+// ponytail: the slot is per gate command, not per whole gate, and has a fixed
+// size of one; make it a counted slot when the app setting exists.
+func prepareLandingGate(ctx context.Context, owner string) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	root := DefaultStateRoot()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, err
+	}
+	slot, err := os.OpenFile(filepath.Join(root, "landing-gate.slot"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	for syscall.Flock(int(slot.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		select {
+		case <-ctx.Done():
+			_ = slot.Close()
+			return nil, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	release := func() { _ = syscall.Flock(int(slot.Fd()), syscall.LOCK_UN); _ = slot.Close() }
+	store, err := OpenRuntimeStore(root)
+	if err != nil {
+		release()
+		return nil, fmt.Errorf("gate refused: process inventory unavailable: %w", err)
+	}
+	defer store.Close()
+	rows, err := store.ownedProcesses()
+	if err != nil {
+		release()
+		return nil, err
+	}
+	for _, p := range rows {
+		if p.Owner != owner || p.Kind != processKindCheck || p.EndedAt != "" || starterAlive(p.Starter) {
+			continue
+		}
+		if !processIdentityMatches(RunStatus{ProcessPID: p.PID, ProcessPGID: p.PGID, ProcessStartedAt: p.ProcessStart}) {
+			continue // the janitor reports what it cannot confirm
+		}
+		stopProcessGroup(p.PGID)
+		_ = store.endOwnedProcess(p.ID, "starter_stopped")
+		_ = store.recordProcessEvent(p, "stopped", "a dead starter's copy of this gate was still running", ruleCheckEndsWithStarter)
+	}
+	return release, nil
 }
 
 // stopProcessGroup mirrors the verification runner: TERM the group, give it
@@ -137,6 +274,49 @@ type silenceWatchedOutput struct {
 	mu   sync.Mutex
 	buf  bytes.Buffer
 	last time.Time
+}
+
+// processGroupCPUSeconds sums the CPU time of every live member of a group
+// from one process listing. Members that exit take their time with them, so
+// callers compare samples for an increase, not a total.
+func processGroupCPUSeconds(pgid int) (float64, bool) {
+	out, err := exec.Command("ps", "-axo", "pgid=,time=").Output()
+	if err != nil {
+		return 0, false
+	}
+	total, found := 0.0, false
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != strconv.Itoa(pgid) {
+			continue
+		}
+		if seconds, ok := parsePSCPUTime(fields[1]); ok {
+			total, found = total+seconds, true
+		}
+	}
+	return total, found
+}
+
+// parsePSCPUTime reads ps time: "[DD-][HH:]MM:SS[.ss]" (darwin keeps
+// hundredths, Linux whole seconds).
+func parsePSCPUTime(text string) (float64, bool) {
+	days := 0.0
+	if d, rest, ok := strings.Cut(text, "-"); ok {
+		n, err := strconv.Atoi(d)
+		if err != nil {
+			return 0, false
+		}
+		days, text = float64(n), rest
+	}
+	total := 0.0
+	for _, part := range strings.Split(text, ":") {
+		n, err := strconv.ParseFloat(part, 64)
+		if err != nil {
+			return 0, false
+		}
+		total = total*60 + n
+	}
+	return days*86400 + total, true
 }
 
 func (o *silenceWatchedOutput) Write(p []byte) (int, error) {
@@ -200,6 +380,7 @@ func runOwnedCheck(ctx context.Context, owner string, cmd *exec.Cmd, silence tim
 	var runErr error
 	reason := ""
 	recorded := time.Time{}
+	lastOutput, busy, lastCPU := time.Time{}, time.Time{}, -1.0
 	for reason == "" {
 		select {
 		case runErr = <-done:
@@ -213,10 +394,25 @@ func runOwnedCheck(ctx context.Context, owner string, cmd *exec.Cmd, silence tim
 			reason, runErr = "cancelled", ctx.Err()
 		case <-ticker.C:
 			_, last := out.snapshot()
+			if !last.After(lastOutput) {
+				// No new output: a quiet but busy check (go test prints nothing
+				// until a package ends) still counts as alive while its group
+				// keeps burning CPU.
+				if cpu, ok := processGroupCPUSeconds(pgid); ok {
+					if cpu > lastCPU && lastCPU >= 0 {
+						busy = time.Now()
+					}
+					lastCPU = cpu
+				}
+			}
+			lastOutput = last
+			if busy.After(last) {
+				last = busy
+			}
 			if time.Since(last) > silence {
 				stopProcessGroup(pgid)
 				<-done
-				reason, runErr = "stuck_stopped", fmt.Errorf("%w: no output for %s", errCheckStuckStopped, silence)
+				reason, runErr = "stuck_stopped", fmt.Errorf("%w: no output or CPU progress for %s", errCheckStuckStopped, silence)
 			} else if last.After(recorded) {
 				_ = store.touchOwnedProcess(id, last)
 				recorded = last
@@ -224,9 +420,13 @@ func runOwnedCheck(ctx context.Context, owner string, cmd *exec.Cmd, silence tim
 		}
 	}
 	// Stragglers that detached from the leader's pipes still share the group.
-	// ponytail: tiny PID-reuse window between reap and this kill; close it with
-	// a pidfd/kqueue-held group if it ever matters.
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	// The leader is reaped, so a live process at PID==PGID would be a new
+	// group that reused the ID: only kill a leaderless group that still has
+	// members. ponytail: a reuse between this probe and the kill is still
+	// possible in theory; a pidfd/kqueue-held group would close it.
+	if errors.Is(syscall.Kill(pgid, 0), syscall.ESRCH) && syscall.Kill(-pgid, 0) == nil {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
 	_ = store.endOwnedProcess(id, reason)
 	output, _ := out.snapshot()
 	return output, runErr

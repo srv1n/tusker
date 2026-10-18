@@ -185,7 +185,7 @@ func (env *reviewPassEnv) submitProposal(t *testing.T, verdict string) {
 
 func (env *reviewPassEnv) passHandler(t *testing.T) {
 	t.Helper()
-	if err := env.daemon.reconcileReviewCompletion(env.project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}); err != nil {
+	if err := env.daemon.reconcileReviewCompletion(context.Background(), env.project, Workflow{CompletionReactor: completionReactorModeProjection{Effective: string(completionReactorModeAuthoritative)}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -361,7 +361,7 @@ func TestReviewPassHandlerNeedsExplicitAuthoritativeMode(t *testing.T) {
 	}
 	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
 	env.submitProposal(t, "pass")
-	if err := env.daemon.reconcileReviewCompletion(env.project, Workflow{CompletionReactor: defaultCompletionReactorMode()}); err != nil {
+	if err := env.daemon.reconcileReviewCompletion(context.Background(), env.project, Workflow{CompletionReactor: defaultCompletionReactorMode()}); err != nil {
 		t.Fatal(err)
 	}
 	if env.landed() || stringField(env.task(t).Data, "status") != "review" {

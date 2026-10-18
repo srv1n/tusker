@@ -249,6 +249,9 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 		}
 		defer control.Close()
 	}
+	// The startup pass matters most: it is where a restarted daemon finds what
+	// its predecessor left running.
+	d.runProcessJanitor(time.Now().UTC())
 	if once {
 		return d.PollOnce(runCtx)
 	}
@@ -378,6 +381,7 @@ func (d *Daemon) runScheduledPoll(ctx context.Context, projectID string) error {
 
 func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 	started := time.Now()
+	d.runProcessJanitor(started.UTC())
 	var err error
 	if projectID == "" {
 		err = d.PollOnce(ctx)
@@ -435,6 +439,11 @@ func (d *Daemon) checkWatchdogOrExit(now time.Time, tick time.Duration) {
 	stale, reason, err := d.watchdogStale(now, tick)
 	if err != nil || !stale {
 		return
+	}
+	// Checks end with their starter: os.Exit skips every defer, so stop this
+	// daemon's checks (a landing gate included) before the process goes.
+	if stopped, err := stopOwnedChecksByStarter(d.store, currentProcessStarter()); err != nil || stopped > 0 {
+		log.Printf("daemon watchdog: stopped %d own checks before exit (err=%v)", stopped, err)
 	}
 	if daemonRunningUnderLaunchd() {
 		_ = d.store.markManagedDaemonAbnormalExit(daemonRestartCauseWatchdog)
@@ -1986,7 +1995,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			// Typed review results are consumed before the ordinary wave drain so an
 			// authoritative project has exactly one completion authority.  Legacy,
 			// disabled, and shadow modes are no-ops inside the reactor.
-			if err := d.reconcileReviewCompletion(project, wfFile.Data); err != nil {
+			if err := d.reconcileReviewCompletion(ctx, project, wfFile.Data); err != nil {
 				if errorToIssue(err).Code != completionRepairRequiredError {
 					return err
 				}
@@ -7172,10 +7181,15 @@ func processStartTime(pid int) (string, bool) {
 	if text == "" {
 		return "", false
 	}
+	return psStartTime(text), true
+}
+
+// psStartTime normalizes a ps lstart value the way identity rows store it.
+func psStartTime(text string) string {
 	if parsed, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", text, time.Local); err == nil {
-		return parsed.UTC().Format(time.RFC3339), true
+		return parsed.UTC().Format(time.RFC3339)
 	}
-	return text, true
+	return text
 }
 
 func processIdentityMatches(run RunStatus) bool {
@@ -8266,6 +8280,8 @@ func daemonRunCmd(args Args) (returnErr error) {
 		defer stopLogBound()
 	}
 	err = daemon.Run(context.Background(), once)
+	// The async landing worker is not waited for; its gate must not outlive us.
+	_, _ = stopOwnedChecksByStarter(daemon.store, currentProcessStarter())
 	if err != nil {
 		if managed {
 			_ = daemon.store.markManagedDaemonAbnormalExit(daemonRestartCauseRunError)

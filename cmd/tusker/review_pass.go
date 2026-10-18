@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -34,7 +35,7 @@ func reviewPassHandlerEnabled(wf Workflow) bool {
 // The reviewed commit is durable in the stored result. After a crash between
 // land and close, the next poll finds that commit already on the integration
 // branch and only closes. One task's failure never stops the others.
-func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflow) error {
+func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project RegisteredProject, wf Workflow) error {
 	if d == nil || d.store == nil || !reviewPassHandlerEnabled(wf) {
 		return nil
 	}
@@ -69,7 +70,7 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 			}
 			continue
 		}
-		if err := d.handleReviewResult(project, task, result); err != nil {
+		if err := d.handleReviewResult(ctx, project, task, result); err != nil {
 			log.Printf("review pass handler %s/%s: %v", project.ProjectKey, taskID, err)
 		}
 	}
@@ -87,7 +88,7 @@ func (d *Daemon) reconcileReviewCompletion(project RegisteredProject, wf Workflo
 			if !ok {
 				continue
 			}
-			if err := d.handleReviewResult(project, task, result); err != nil {
+			if err := d.handleReviewResult(ctx, project, task, result); err != nil {
 				log.Printf("review pass handler %s/%s: %v", project.ProjectKey, taskID, err)
 			}
 		}
@@ -145,7 +146,7 @@ func (d *Daemon) currentReviewResult(projectID, taskID string, results []ReviewR
 	return ReviewResult{}, false
 }
 
-func (d *Daemon) handleReviewResult(project RegisteredProject, task Note, result ReviewResult) error {
+func (d *Daemon) handleReviewResult(ctx context.Context, project RegisteredProject, task Note, result ReviewResult) error {
 	taskID := stringField(task.Data, "id")
 	switch result.Verdict {
 	case "changes_requested":
@@ -155,12 +156,12 @@ func (d *Daemon) handleReviewResult(project RegisteredProject, task Note, result
 		}
 		return returnReviewerFindingToImplementer(project.VaultRoot, taskID, findings, "daemon:review-pass")
 	case "pass":
-		return d.landAndClosePassingReview(project, task, result)
+		return d.landAndClosePassingReview(ctx, project, task, result)
 	}
 	return nil
 }
 
-func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note, result ReviewResult) error {
+func (d *Daemon) landAndClosePassingReview(ctx context.Context, project RegisteredProject, task Note, result ReviewResult) error {
 	taskID := stringField(task.Data, "id")
 	run, err := d.store.FindRunScoped(project.ProjectID, taskID)
 	if err != nil {
@@ -221,6 +222,24 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 			return d.holdReviewPass(run, RunFailureLandingFailed, firstActionableLine("", err.Error())+"; land by hand")
 		}
 	} else {
+		// Restarts that keep interrupting a landing open the crash-loop
+		// breaker; then the gate must not start again until the operator
+		// resumes. The reason stays on the run, with no hold code, so the
+		// landing resumes on its own once the breaker closes.
+		if reason, err := d.crashLoopDispatchBlocker(); err != nil {
+			return err
+		} else if reason != "" {
+			if run != nil {
+				updated := *run
+				updated.LastError = "landing paused: " + reason
+				if run.LastError != updated.LastError {
+					if err := d.upsertRunWithStream(*run, updated); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
 		// Land exactly the reviewed commit, not whatever the task branch or
 		// worktree points at now. The land path uses it under its lock.
 		daemonSubmissionSources := map[string]string{}
@@ -232,13 +251,18 @@ func (d *Daemon) landAndClosePassingReview(project RegisteredProject, task Note,
 		if !d.reviewPassAsync {
 			stopBeat = d.feedWatchdogDuring(reviewPassLandingWatchdogCap)
 		}
-		landErr := landV7CmdAsReviewPass(Args{
+		landErr := landV7CmdAsReviewPass(ctx, Args{
 			"vault": project.VaultRoot,
 			"quiet": "true",
 			"_pos0": taskID,
 			"from":  d.latestExecuteWorkspace(project.ProjectID, taskID),
 		}, map[string]string{taskID: source}, daemonSubmissionSources)
 		stopBeat()
+		if ctx != nil && ctx.Err() != nil {
+			// The daemon is shutting down and cancelled the gate; that is not a
+			// landing failure. The next daemon lands it again.
+			return ctx.Err()
+		}
 		if err := landErr; err != nil {
 			code := RunFailureLandingFailed
 			// Only the merge step reports a conflict. A gate command's

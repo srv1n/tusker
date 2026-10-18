@@ -1,0 +1,234 @@
+package main
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"log"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// defaultAgentSilenceLimit is how long an agent session may show no sign of
+// life before it is flagged silent. It is never stopped for it.
+// ponytail: fixed default; read the project setting when the settings page has it.
+const defaultAgentSilenceLimit = 20 * time.Minute
+
+type psEntry struct {
+	PGID   int
+	Start  string
+	Zombie bool
+}
+
+// processListing is one `ps` snapshot of every process: the janitor's only
+// process probe per pass, however many rows it checks.
+func processListing() (map[int]psEntry, error) {
+	out, err := exec.Command("ps", "-axo", "pid=,pgid=,stat=,lstart=").Output()
+	if err != nil {
+		return nil, err
+	}
+	list := map[int]psEntry{}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 8 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(fields[0])
+		pgid, err2 := strconv.Atoi(fields[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		list[pid] = psEntry{PGID: pgid, Start: psStartTime(strings.Join(fields[3:], " ")), Zombie: strings.Contains(fields[2], "Z")}
+	}
+	return list, nil
+}
+
+type janitorSnapshot map[int]psEntry
+
+func (l janitorSnapshot) alive(pid int) (psEntry, bool) {
+	e, ok := l[pid]
+	return e, ok && !e.Zombie
+}
+
+// identity reports whether the row's PID, process group and start time all
+// still match a live process.
+func (l janitorSnapshot) identity(p ownedProcess) bool {
+	e, ok := l.alive(p.PID)
+	return ok && p.ProcessStart != "" && e.PGID == p.PGID && e.Start == p.ProcessStart
+}
+
+func (l janitorSnapshot) groupHasMembers(pgid int) bool {
+	for _, e := range l {
+		if e.PGID == pgid && !e.Zombie {
+			return true
+		}
+	}
+	return false
+}
+
+func (l janitorSnapshot) starterAlive(starter string) bool {
+	pid, start, ok := parseProcessStarter(starter)
+	if !ok {
+		return false
+	}
+	e, ok := l.alive(pid)
+	return ok && (start == "" || e.Start == start)
+}
+
+// runProcessJanitor is the daemon's one reconciliation pass over the process
+// inventory, at startup and on every poll. It compares open rows with live
+// starters and owners:
+//
+//   - a row whose process is gone is closed;
+//   - a row whose identity (PID, group, start time) does not match is reported
+//     and closed, never stopped;
+//   - a check whose starter is dead is stopped with its group;
+//   - an agent session whose run no longer owns it is stopped; one whose run
+//     still owns it is adopted, however long it has run, and flagged silent
+//     past agentSilence without a sign of life.
+//
+// Every stop, report, adoption and silent flag leaves a process event.
+func runProcessJanitor(store *RuntimeStore, agentSilence time.Duration, now time.Time) error {
+	if agentSilence <= 0 {
+		agentSilence = defaultAgentSilenceLimit
+	}
+	rows, err := store.ownedProcesses()
+	if err != nil {
+		return err
+	}
+	open := rows[:0]
+	for _, p := range rows {
+		if p.EndedAt == "" {
+			open = append(open, p)
+		}
+	}
+	if len(open) == 0 {
+		return nil
+	}
+	if _, err := store.exec(processEventsTable); err != nil {
+		return err
+	}
+	raw, err := processListing()
+	if err != nil {
+		return err
+	}
+	list := janitorSnapshot(raw)
+	self := currentProcessStarter()
+	var errs []error
+	for _, p := range open {
+		if err := janitorRow(store, list, self, p, agentSilence, now); err != nil {
+			errs = append(errs, fmt.Errorf("process %d (%s): %w", p.ID, p.Owner, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func janitorRow(store *RuntimeStore, list janitorSnapshot, self string, p ownedProcess, agentSilence time.Duration, now time.Time) error {
+	if !list.identity(p) {
+		if _, leader := list.alive(p.PID); !leader && !list.groupHasMembers(p.PGID) {
+			return store.endOwnedProcess(p.ID, "exited")
+		}
+		// Something runs at that PID or in that group, but it cannot be proven
+		// to be ours. Report it once and leave it alone.
+		if err := store.recordProcessEvent(p, "reported", "PID, process group and start time do not all match the inventory; not stopped", ruleIdentityMustMatch); err != nil {
+			return err
+		}
+		return store.endOwnedProcess(p.ID, "identity_unconfirmed")
+	}
+	starterAlive := list.starterAlive(p.Starter)
+	switch p.Kind {
+	case processKindCheck:
+		if starterAlive {
+			return nil
+		}
+		stopProcessGroup(p.PGID)
+		if err := store.endOwnedProcess(p.ID, "starter_stopped"); err != nil {
+			return err
+		}
+		return store.recordProcessEvent(p, "stopped", "the process that started this check is gone", ruleCheckEndsWithStarter)
+	case processKindAgentSession:
+		lastEvent, live, err := agentSessionOwner(store, p.Owner)
+		if err != nil {
+			return err
+		}
+		if !live {
+			stopProcessGroup(p.PGID)
+			if err := store.endOwnedProcess(p.ID, "owner_gone"); err != nil {
+				return err
+			}
+			return store.recordProcessEvent(p, "stopped", "no live run owns this agent session any more", ruleAgentOwnerGone)
+		}
+		if !starterAlive && p.Starter != self {
+			if _, err := store.exec(`UPDATE process_inventory SET starter = ? WHERE id = ?`, self, p.ID); err != nil {
+				return err
+			}
+			if err := store.recordProcessEvent(p, "adopted", "its starter is gone but its run is live; adopted by "+self, ruleAgentAdopted); err != nil {
+				return err
+			}
+		}
+		return flagSilentAgentSession(store, p, lastEvent, agentSilence, now)
+	}
+	return nil
+}
+
+// agentSessionOwner reports whether a run still holds the attempt live, and
+// the run's last event time (its sign of life).
+func agentSessionOwner(store *RuntimeStore, attemptID string) (string, bool, error) {
+	var lastEvent string
+	err := store.queryRowScan(`SELECT last_event_at FROM runs WHERE active_attempt_id = ? AND lease_state IN (?, ?) LIMIT 1`,
+		[]any{attemptID, string(LeaseStateClaimed), string(LeaseStateRunning)}, &lastEvent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return lastEvent, err == nil, err
+}
+
+// flagSilentAgentSession emits one silent signal per silence: when the last
+// sign of life is older than the limit and no signal was emitted since it.
+func flagSilentAgentSession(store *RuntimeStore, p ownedProcess, lastEvent string, limit time.Duration, now time.Time) error {
+	last := latestTime(p.StartedAt, p.LastSignOfLife, lastEvent)
+	if last.IsZero() {
+		return nil
+	}
+	if lastEvent != "" && last.After(latestTime(p.LastSignOfLife)) {
+		if err := store.touchOwnedProcess(p.ID, last); err != nil {
+			return err
+		}
+	}
+	if now.Sub(last) <= limit {
+		return nil
+	}
+	var flagged int
+	if err := store.queryRowScan(`SELECT COUNT(*) FROM process_events WHERE process_id = ? AND kind = 'silent' AND at >= ?`,
+		[]any{p.ID, last.UTC().Format(time.RFC3339Nano)}, &flagged); err != nil {
+		return err
+	}
+	if flagged > 0 {
+		return nil
+	}
+	log.Printf("process janitor: agent session %s (pid %d) silent since %s", p.Owner, p.PID, last.UTC().Format(time.RFC3339))
+	return store.recordProcessEvent(p, "silent", fmt.Sprintf("no sign of life for %s; left running", now.Sub(last).Round(time.Second)), ruleAgentSilence)
+}
+
+func latestTime(values ...string) time.Time {
+	var latest time.Time
+	for _, v := range values {
+		if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(v)); err == nil && t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
+}
+
+// runProcessJanitor on the daemon logs instead of failing the poll: a broken
+// janitor pass must never stop the daemon from working.
+func (d *Daemon) runProcessJanitor(now time.Time) {
+	if d == nil || d.store == nil {
+		return
+	}
+	if err := runProcessJanitor(d.store, defaultAgentSilenceLimit, now); err != nil {
+		log.Printf("process janitor: %v", err)
+	}
+}
