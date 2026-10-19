@@ -348,8 +348,8 @@ class JourneyTest(unittest.TestCase):
 	if err != nil || stringField(closed.Data, "status") != "done" {
 		t.Fatalf("reviewed journey did not close: task=%#v err=%v", closed.Data, err)
 	}
-	if got := gitShowFile(t, repo, "integration/W-0001", "owned/journey.txt"); got != "recovered implementation\n" {
-		t.Fatalf("reviewed implementation was not landed to integration: contents=%q", got)
+	if got := gitShowFile(t, repo, "main", "owned/journey.txt"); got != "recovered implementation\n" {
+		t.Fatalf("reviewed implementation was not landed to the default branch: contents=%q", got)
 	}
 }
 

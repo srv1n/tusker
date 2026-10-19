@@ -135,6 +135,7 @@ func TestSelfServiceReconcile(t *testing.T) {
 
 	t.Run("A2/concurrency_one_admits_sequentially_without_duplicates", func(t *testing.T) {
 		store := fairDispatchTestStore(t)
+		registerFairDispatchTestProjects(t, store, "project-s")
 		daemon := &Daemon{store: store, stateRoot: store.stateRoot}
 		var order []string
 		daemon.fairDispatchRun = fairDispatchRecorder(&order)

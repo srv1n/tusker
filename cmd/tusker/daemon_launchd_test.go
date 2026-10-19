@@ -330,6 +330,12 @@ func TestCrashLoopPreRunFailuresLeaveSixthReplacementServingReads(t *testing.T) 
 	if pending, err := store.GetSetting(daemonPendingRestartCauseKey); err != nil || pending != "" {
 		t.Fatalf("sixth replacement left consumed restart debt: value=%q err=%v", pending, err)
 	}
+	// The daemon is event-driven: an idle project is not polled until something
+	// wakes it. Wake it the way a CLI command would, so the circuit-open
+	// replacement evaluates the dispatchable task and must refuse it.
+	if _, err := sendDaemonControl(stateRoot, daemonControlRequest{Command: "reconcile_project", ProjectID: project.ProjectID, Cause: "test_wake"}); err != nil {
+		t.Fatalf("wake circuit-open replacement: %v", err)
+	}
 	var blocked RunStatus
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

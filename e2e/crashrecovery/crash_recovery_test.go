@@ -345,7 +345,6 @@ func TestSpecToWaveDelivery(t *testing.T) {
 		t.Fatalf("wave authoring did not preserve the seven-task mixed DAG: %s", prettyJSON(authored))
 	}
 	h.setDeliveryFixtureVerificationContracts("APP-T-0001", "APP-T-0002", "APP-T-0003", "APP-T-0004", "APP-T-0005", "APP-T-0006", "APP-T-0007")
-	h.gitOK("branch", "-f", "integration/W-0001", "HEAD")
 	h.touch(filepath.Join(h.tempRoot, "delivery-control", "hold-APP-T-0001"))
 	daemon := h.startDaemon("delivery-daemon")
 	h.waitForAutomationStatus(crashRunWait)
@@ -407,34 +406,23 @@ func TestSpecToWaveDelivery(t *testing.T) {
 	if runString(brief, "schema") != "tusker.wave-brief/v1" || len(sliceAt(brief, "landed")) != 7 || len(sliceAt(brief, "humanAction")) != 0 {
 		t.Fatalf("artifact-first brief is incomplete: %s", prettyJSON(brief))
 	}
-	// This fixture arms continuous staging only. Its completed artifacts must be
-	// on the exact integration ref; moving main is deliberately a separate,
-	// explicitly configured scheduled-promotion concern.
+	// Without scheduled_promotion each task lands on the default branch as soon
+	// as it passes (docs/system/proposals/workspace-modes-and-landing.md, M4).
 	for i := 1; i <= 7; i++ {
 		id := fmt.Sprintf("APP-T-%04d", i)
-		path := "integration/W-0001:docs/delivery/" + strings.ToLower(id) + ".md"
+		path := "main:docs/delivery/" + strings.ToLower(id) + ".md"
 		if got := string(h.gitOK("show", path)); !strings.Contains(got, "# "+id+" delivery") {
-			t.Fatalf("%s documentation is absent from the integration snapshot: %q", id, got)
+			t.Fatalf("%s documentation is absent from main: %q", id, got)
 		}
-	}
-	promotion := exec.Command("git", "show", "main:docs/delivery/app-t-0001.md")
-	promotion.Dir = h.repoDir
-	promotion.Env = h.env()
-	if out, err := promotion.CombinedOutput(); err == nil {
-		t.Fatalf("continuous staging promoted main without a scheduled departure: %s", out)
 	}
 	wave := parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json"))
 	auth := mapAtPath(t, mapAtPath(t, wave, "wave"), "authorization")
-	if runString(auth, "actor") != "human:e2e" || runString(auth, "state") != "armed" {
-		t.Fatalf("one-arm authorization was not preserved: %s", prettyJSON(wave))
+	// A wave completed by per-task landing is marked landed and disarmed; the
+	// arming actor stays on record.
+	if runString(auth, "actor") != "human:e2e" || runString(auth, "state") != "disarmed" || runString(mapAtPath(t, wave, "wave"), "landedAt") == "" {
+		t.Fatalf("completed wave was not landed and disarmed with its arming actor: %s", prettyJSON(wave))
 	}
 	daemon.stop()
-	specPath := filepath.Join(h.vaultDir, "specs", "delivery.md")
-	h.writeFile(specPath, h.readFile(specPath)+"\nMaterial post-arm change.\n")
-	staleWave := parseJSON(t, h.cliOK(h.repoDir, "show", "W-0001", "--vault", h.vaultDir, "--json"))
-	if runString(mapAtPath(t, mapAtPath(t, staleWave, "wave"), "authorization"), "state") != "stale" {
-		t.Fatalf("material spec change did not stale authorization: %s", prettyJSON(staleWave))
-	}
 }
 
 func runSpecToWaveFailureContainment(t *testing.T) {
@@ -497,7 +485,6 @@ func newSmallDeliveryWave(t *testing.T, credentialGate bool) *harness {
 	h.cliOK(h.repoDir, "new", "wave", "Containment wave", "APP-T-0001", "APP-T-0002", "APP-T-0003", "--vault", h.vaultDir, "--quiet")
 	h.gitOK("add", "-A")
 	h.gitOK("commit", "-m", "record containment wave")
-	h.gitOK("branch", "-f", "integration/W-0001", "HEAD")
 	return h
 }
 
@@ -1286,7 +1273,44 @@ func (h *harness) startDaemon(name string) *daemonProcess {
 		}
 		proc.stop()
 	})
+	h.wakeProject(proc)
 	return proc
+}
+
+// wakeProject interacts with the project once the daemon is up. The daemon is
+// event-driven (docs/system/proposals/event-driven-daemon.md): at startup it
+// rescans only projects with live work, and wakes sent by fixture CLI commands
+// before it started are lost. An operator touching the project is what makes
+// it poll, so the harness does that until this daemon has polled it. It gives
+// up quietly if the daemon exits (a second instance is expected to).
+func (h *harness) wakeProject(proc *daemonProcess) {
+	h.t.Helper()
+	pid := proc.cmd.Process.Pid
+	deadline := time.Now().Add(crashRunnerWait)
+	for time.Now().Before(deadline) && proc.alive() {
+		out, err := h.cli(h.repoDir, time.Minute, "automation", "status", "--json")
+		if err == nil {
+			var payload struct {
+				Status struct {
+					DaemonPID       int    `json:"daemon_pid"`
+					DaemonStartedAt string `json:"daemon_started_at"`
+					Projects        []struct {
+						LastPollAt string `json:"last_poll_at"`
+					} `json:"projects"`
+				} `json:"status"`
+			}
+			if json.Unmarshal(out, &payload) == nil && payload.Status.DaemonPID == pid {
+				started, _ := time.Parse(time.RFC3339Nano, payload.Status.DaemonStartedAt)
+				for _, project := range payload.Status.Projects {
+					if polled, err := time.Parse(time.RFC3339Nano, project.LastPollAt); err == nil && !polled.Before(started) {
+						return
+					}
+				}
+				_, _ = h.cli(h.repoDir, time.Minute, "projects", "set", "--on", "--repo", h.repoDir, "--json")
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (h *harness) env() []string {
