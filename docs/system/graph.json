@@ -190,6 +190,20 @@
       "status": "canonical"
     },
     {
+      "subject": "process-containment",
+      "kind": "spec",
+      "path": ".tusker/specs/process-containment.md",
+      "title": "Process containment: Tusker knows and controls everything it starts",
+      "status": "canonical"
+    },
+    {
+      "subject": "process-containment-grill",
+      "kind": "decision",
+      "path": ".tusker/specs/decisions/2026-10-18-process-containment-grill.md",
+      "title": "Process containment grill, 2026-10-18",
+      "status": "canonical"
+    },
+    {
       "subject": "project-registration-and-visibility",
       "kind": "spec",
       "path": ".tusker/specs/project-registration-and-visibility.md",
@@ -960,6 +974,51 @@
       "from": "portable-project-documentation",
       "to": "skills",
       "kind": "updates"
+    },
+    {
+      "from": "process-containment",
+      "to": "run-session-continuity",
+      "kind": "link"
+    },
+    {
+      "from": "process-containment",
+      "to": "runner-execution-boundary",
+      "kind": "link"
+    },
+    {
+      "from": "process-containment",
+      "to": "tusker-trust-and-efficiency",
+      "kind": "link"
+    },
+    {
+      "from": "process-containment",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "process-containment",
+      "to": "process-containment-grill",
+      "kind": "source"
+    },
+    {
+      "from": "process-containment",
+      "to": "run-session-continuity",
+      "kind": "updates"
+    },
+    {
+      "from": "process-containment",
+      "to": "runner-execution-boundary",
+      "kind": "updates"
+    },
+    {
+      "from": "process-containment-grill",
+      "to": "process-containment",
+      "kind": "decides_for"
+    },
+    {
+      "from": "process-containment-grill",
+      "to": "process-containment",
+      "kind": "part_of"
     },
     {
       "from": "project-registration-and-visibility",

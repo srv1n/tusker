@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-19T02:17:38Z"
-updated_at: "2026-10-19T02:37:51Z"
-state_rev: "sha256:7f79fb8ed88e3951f1a79a39dffc67c1e2cbae41288cd586f207e4e7a4817029"
+updated_at: "2026-10-19T04:18:54Z"
+state_rev: "sha256:ea008cbbaf821c9924bb2c848bbcee1e7d51c959c97afafd286a174e2ebdef2f"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,12 +50,12 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[RTH-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RTH-T-0002]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RTH-T-0003]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RTH-T-0004]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RTH-T-0005]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[RTH-T-0006]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[RTH-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RTH-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RTH-T-0003]] | rework | agent | Address the reviewer finding, then re-request review. |
+| [[RTH-T-0004]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RTH-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RTH-T-0006]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -63,4 +63,4 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[RTH-T-0007]] | agent:claude | 2026-10-19T03:20:46Z |

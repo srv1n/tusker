@@ -124,6 +124,8 @@ graph TD
   n_planning_handoff_and_agent_entry["Planning capture, task handoff and progressive agent guidance"]
   n_platform_support["Platform support"]
   n_portable_project_documentation["S46: Portable project documentation"]
+  n_process_containment["Process containment: Tusker knows and controls everything it starts"]
+  n_process_containment_grill["Process containment grill, 2026-10-18"]
   n_project_registration_and_visibility["Project registration and visibility"]
   n_project_registration_and_visibility_decisions["Project registration and visibility decisions"]
   n_proof_and_closeout["Proof and closeout"]
@@ -266,6 +268,15 @@ graph TD
   n_portable_project_documentation -->|updates| n_knowledge_and_feedback
   n_portable_project_documentation -->|updates| n_overview
   n_portable_project_documentation -->|updates| n_skills
+  n_process_containment -->|link| n_run_session_continuity
+  n_process_containment -->|link| n_runner_execution_boundary
+  n_process_containment -->|link| n_tusker_trust_and_efficiency
+  n_process_containment -->|part of| n_overview
+  n_process_containment -->|source| n_process_containment_grill
+  n_process_containment -->|updates| n_run_session_continuity
+  n_process_containment -->|updates| n_runner_execution_boundary
+  n_process_containment_grill -->|decides for| n_process_containment
+  n_process_containment_grill -->|part of| n_process_containment
   n_project_registration_and_visibility -->|part of| n_overview
   n_project_registration_and_visibility -->|source| n_work_area_redesign
   n_project_registration_and_visibility_decisions -->|decides for| n_project_registration_and_visibility
