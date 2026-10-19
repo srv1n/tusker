@@ -359,6 +359,10 @@ func armedWaveReviewDependencyBlockerWithMemo(memo *armedWavePassMemo, vaultPath
 	// A shared checkout lands and closes in place, leaving the integration
 	// branch behind; the checkout's record is the current one.
 	shared, _ := sharedCheckoutStrategy(vaultPath)
+	// Per-task landing merges each closed task straight to the default
+	// branch; a leftover wave branch is history, so the canonical record is
+	// the current one there too.
+	shared = shared || v7LandsPerTask(vaultPath)
 	for _, edge := range v7TaskDependencyEdges(task, idx) {
 		dependencyID := edge.ID
 		dependency, ok := idx.Tasks[dependencyID]
