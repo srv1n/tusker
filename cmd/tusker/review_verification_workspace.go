@@ -26,11 +26,14 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 	if err != nil {
 		return nil, err
 	}
+	baseline := implementationMaterialGitBaseline(parent)
 	reviewPath, err := sharedReviewWorkspace(store, run)
 	if err != nil {
 		return nil, err
 	}
-	verify := func() error {
+	// bind re-checks everything but the material, which was just hashed;
+	// verify adds the material, decided by git where git can see it.
+	bind := func() error {
 		attempt, err := store.ReviewAttempt(run.ActiveAttemptID)
 		if err != nil {
 			return err
@@ -64,11 +67,15 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 			intField(current.Data, "work_revision") != run.WorkRevision {
 			return tuskerError(errorInvalidTransition, "review verification implementation scope or source changed")
 		}
-		bound, currentMaterial, err := reviewAttemptImplementation(store, run.ProjectID, run.RecordID, run.ActiveAttemptID, run.WorkRevision, source)
+		var parentID string
+		if err := store.queryRowScan(`SELECT parent_attempt_id FROM attempts WHERE attempt_id=? AND project_id=? AND record_id=?`, []any{run.ActiveAttemptID, run.ProjectID, run.RecordID}, &parentID); err != nil {
+			return err
+		}
+		bound, ok, err := storedExecuteSubmission(store, run.ProjectID, run.RecordID, func(a RunAttempt) bool { return a.AttemptID == parentID })
 		if err != nil {
 			return err
 		}
-		if bound.AttemptID != parent.AttemptID || bound.WorkspacePath != parent.WorkspacePath || currentMaterial != material {
+		if !ok || !sameExecuteSubmission(bound, parent, run.WorkRevision, source) {
 			return tuskerError(errorInvalidTransition, "review verification implementation binding changed")
 		}
 		if reviewPath != "" {
@@ -76,10 +83,16 @@ func reviewCommandVerificationWorkspace(store *RuntimeStore, vault string, note 
 		}
 		return nil
 	}
-	if err := verify(); err != nil {
+	verify := func() error {
+		if err := bind(); err != nil {
+			return err
+		}
+		return implementationMaterialFresh(parent, baseline)
+	}
+	if err := bind(); err != nil {
 		return nil, err
 	}
-	return &v7VerificationWorkspace{Path: firstNonEmpty(reviewPath, parent.WorkspacePath), Verify: verify, MaterialFingerprint: material}, nil
+	return &v7VerificationWorkspace{Path: firstNonEmpty(reviewPath, parent.WorkspacePath), Verify: verify, MaterialFingerprint: material, Submission: &parent}, nil
 }
 
 // sharedReviewWorkspace returns the detached review worktree of the run's
@@ -128,22 +141,94 @@ func recoveryCommandVerificationWorkspace(store *RuntimeStore, vault string, not
 	if err != nil {
 		return nil, err
 	}
+	baseline := implementationMaterialGitBaseline(parent)
 	verify := func() error {
 		current, err := resolveV7Note(vault, trackerRecordID(note), "task")
 		if err != nil {
 			return err
 		}
-		bound, currentMaterial, err := reviewImplementationParent(store, vault, run.ProjectID, trackerRecordID(current), intField(current.Data, "work_revision"), firstNonEmpty(stringField(current.Data, "source_sha"), stringField(current.Data, "source_commit")), current)
+		workRevision := intField(current.Data, "work_revision")
+		currentSource := firstNonEmpty(stringField(current.Data, "source_sha"), stringField(current.Data, "source_commit"))
+		scope, scopeErr := canonicalTaskMaterialScope(vault, current)
+		generatedOutputScope, generatedErr := taskGeneratedOutputScope(current)
+		if scopeErr != nil || generatedErr != nil || !submittedMaterialScopeMatches(scope, parent) ||
+			strings.Join(generatedOutputScope, "\x00") != strings.Join(parent.EndState.GeneratedOutputScope, "\x00") {
+			return tuskerError(errorInvalidTransition, "verification recovery implementation binding changed")
+		}
+		// The same first-match rule reviewImplementationParent applies.
+		bound, ok, err := storedExecuteSubmission(store, run.ProjectID, trackerRecordID(current), func(a RunAttempt) bool {
+			return a.Lane == runLaneExecute && a.WorkRevision == workRevision && a.Outcome == string(AttemptOutcomeSucceeded) && a.EndState.HeadSHA == currentSource
+		})
 		if err != nil {
 			return err
 		}
-		if bound.AttemptID != parent.AttemptID || bound.WorkspacePath != parent.WorkspacePath || currentMaterial != material {
+		if !ok || !sameExecuteSubmission(bound, parent, workRevision, currentSource) {
 			return tuskerError(errorInvalidTransition, "verification recovery implementation binding changed")
 		}
+		return implementationMaterialFresh(parent, baseline)
+	}
+	return &v7VerificationWorkspace{Path: parent.WorkspacePath, Verify: verify, MaterialFingerprint: material, Submission: &parent}, nil
+}
+
+// storedExecuteSubmission returns the first stored attempt match selects,
+// without reading its workspace.
+func storedExecuteSubmission(store *RuntimeStore, projectID, recordID string, match func(RunAttempt) bool) (RunAttempt, bool, error) {
+	attempts, err := store.ListAttemptsForRun(projectID, recordID)
+	if err != nil {
+		return RunAttempt{}, false, err
+	}
+	for _, attempt := range attempts {
+		if match(attempt) {
+			return attempt, true, nil
+		}
+	}
+	return RunAttempt{}, false, nil
+}
+
+// sameExecuteSubmission reports whether current is still the successful
+// execute submission parent for this revision and source.
+func sameExecuteSubmission(current, parent RunAttempt, workRevision int, source string) bool {
+	return current.AttemptID == parent.AttemptID && current.WorkspacePath == parent.WorkspacePath &&
+		current.Lane == runLaneExecute && current.Outcome == string(AttemptOutcomeSucceeded) &&
+		current.WorkRevision == workRevision && current.EndState.HeadSHA == source &&
+		current.EndState.MaterialFingerprint == parent.EndState.MaterialFingerprint
+}
+
+// implementationMaterialGitBaseline is taken right after the submission's
+// material hash matched. True means the scope then held exactly the submitted
+// commit's content, so the stored fingerprint is that content's hash.
+func implementationMaterialGitBaseline(parent RunAttempt) bool {
+	return len(parent.EndState.GeneratedOutputScope) == 0 &&
+		gitScopeAtCommit(parent.WorkspacePath, parent.EndState.HeadSHA, parent.EndState.MaterialScope)
+}
+
+// implementationMaterialFresh decides whether proof bound to the submission
+// still matches its workspace. Git decides when it can: with a clean baseline,
+// a scope that still holds exactly the submitted commit's content is the
+// hashed material. A later commit or uncommitted edit in scope, a dirty
+// submission, or generated outputs git ignores fall back to the content hash.
+func implementationMaterialFresh(parent RunAttempt, baseline bool) error {
+	if baseline && gitScopeAtCommit(parent.WorkspacePath, parent.EndState.HeadSHA, parent.EndState.MaterialScope) {
 		return nil
 	}
-	if err := verify(); err != nil {
-		return nil, err
+	_, err := verifiedImplementationWorkspaceMaterial(parent)
+	return err
+}
+
+// gitScopeAtCommit reports whether scope in workspace holds exactly its
+// content at commit: no later commit touched it and nothing in it is staged,
+// modified, deleted or untracked. Ignored files are invisible to it.
+func gitScopeAtCommit(workspace, commit string, scope []string) bool {
+	if strings.TrimSpace(workspace) == "" || strings.TrimSpace(commit) == "" || len(scope) == 0 {
+		return false
 	}
-	return &v7VerificationWorkspace{Path: parent.WorkspacePath, Verify: verify, MaterialFingerprint: material}, nil
+	head, err := gitOutputTrim(workspace, "rev-parse", "HEAD")
+	if err != nil {
+		return false
+	}
+	if head != commit && exec.Command("git", append([]string{"-C", workspace, "--literal-pathspecs", "diff", "--quiet", commit, head, "--"}, scope...)...).Run() != nil {
+		return false
+	}
+	out, err := exec.Command("git", append([]string{"-C", workspace, "--literal-pathspecs", "status", "--porcelain=v1", "--untracked-files=all", "--"}, scope...)...).Output()
+	return err == nil && strings.TrimSpace(string(out)) == ""
 }

@@ -16,6 +16,9 @@ import (
 	"time"
 )
 
+// workspaceMaterialHashObserver lets tests count full workspace material hashes.
+var workspaceMaterialHashObserver func(workspace string)
+
 func workspaceTreeStateHash(workspace string) (string, error) {
 	return workspaceTreeStateHashForPaths(workspace, nil)
 }
@@ -29,6 +32,9 @@ func workspaceTreeStateHash(workspace string) (string, error) {
 // their source-only behavior. When supplied, ignored files are enumerated only
 // below those exact declared roots; ignored files elsewhere remain invisible.
 func workspaceTreeStateHashForPaths(workspace string, scope []string, generatedOutputRoots ...[]string) (string, error) {
+	if workspaceMaterialHashObserver != nil {
+		workspaceMaterialHashObserver(workspace)
+	}
 	if len(generatedOutputRoots) > 1 {
 		return "", fmt.Errorf("workspace material hash accepts at most one generated-output root list")
 	}

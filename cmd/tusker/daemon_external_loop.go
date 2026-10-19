@@ -487,7 +487,7 @@ func (d *Daemon) closeExternalLoopTask(project RegisteredProject, wfFile Workflo
 	}
 	acceptanceIDs := v7AcceptanceIDs(task.Body)
 	existing := parseV7VerificationRows(note.Body)
-	currentMaterial, materialErr := v7VerificationCurrentScopedMaterial(project.VaultRoot, task)
+	currentMaterial, materialErr := v7VerificationCurrentScopedMaterialWithStore(d.store, project.VaultRoot, task)
 	var rows []v7VerificationRow
 	hasCoveringRow := false
 	hasCoveringCommand := false
@@ -861,14 +861,19 @@ func externalLoopCloseTaskRecordedForCurrentRun(store *RuntimeStore, projectID, 
 	if err != nil {
 		return false, err
 	}
-	currentMaterial := externalLoopCurrentMaterialFingerprint(store, projectID, recordID, note, run)
+	// The workspace is read only once a close event needs it; a task with no
+	// close event must not touch its workspace.
+	currentMaterial, measured := "", false
 	for _, event := range events {
 		if normalizeExternalLoopStage(event.Stage) != externalLoopStageCollected ||
 			normalizeExternalLoopAction(event.Action) != externalLoopActionCloseTask ||
-			strings.TrimSpace(event.Status) != "ok" {
+			strings.TrimSpace(event.Status) != "ok" || !externalLoopTaskCloseEffectSatisfied(note) {
 			continue
 		}
-		if !externalLoopEventMatchesNoteMaterial(event, note, currentMaterial) || !externalLoopTaskCloseEffectSatisfied(note) {
+		if !measured {
+			currentMaterial, measured = externalLoopCurrentMaterialFingerprint(store, projectID, recordID, note, run), true
+		}
+		if !externalLoopEventMatchesNoteMaterial(event, note, currentMaterial) {
 			continue
 		}
 		return true, nil

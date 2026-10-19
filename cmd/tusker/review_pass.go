@@ -54,13 +54,22 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 		taskIDs = append(taskIDs, taskID)
 	}
 	sort.Strings(taskIDs)
+	if len(taskIDs) == 0 {
+		return nil
+	}
 	// A pass lands through the project's full gate, which can run far longer
 	// than a poll. Off the poll, one worker lands the passes one at a time and
 	// rereads each task first; passes found while it runs wait for a later poll.
+	// One vault load serves every candidate; resolving each task separately
+	// reloaded the whole vault per review result.
+	idx, err := loadV7Index(project.VaultRoot)
+	if err != nil {
+		return err
+	}
 	landing := d.reviewPassAsync && d.reviewPassLanding.CompareAndSwap(false, true)
 	var passes []string
 	for _, taskID := range taskIDs {
-		task, result, ok := d.reviewPassCandidate(project, taskID, byTask[taskID])
+		task, result, ok := d.reviewPassCandidate(project, idx, taskID, byTask[taskID])
 		if !ok {
 			continue
 		}
@@ -84,7 +93,12 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 	go func() {
 		defer d.reviewPassLanding.Store(false)
 		for _, taskID := range passes {
-			task, result, ok := d.reviewPassCandidate(project, taskID, byTask[taskID])
+			idx, err := loadV7Index(project.VaultRoot)
+			if err != nil {
+				log.Printf("review pass handler %s/%s: %v", project.ProjectKey, taskID, err)
+				continue
+			}
+			task, result, ok := d.reviewPassCandidate(project, idx, taskID, byTask[taskID])
 			if !ok {
 				continue
 			}
@@ -98,8 +112,8 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 
 // reviewPassCandidate returns the task and its current review result when the
 // task is in review and the result matches its work revision.
-func (d *Daemon) reviewPassCandidate(project RegisteredProject, taskID string, results []ReviewResult) (Note, ReviewResult, bool) {
-	task, err := resolveV7Note(project.VaultRoot, taskID, "task")
+func (d *Daemon) reviewPassCandidate(project RegisteredProject, idx v7Index, taskID string, results []ReviewResult) (Note, ReviewResult, bool) {
+	task, err := resolveV7NoteFromIndex(idx, taskID, "task")
 	if err != nil || stringField(task.Data, "status") != "review" {
 		return Note{}, ReviewResult{}, false
 	}

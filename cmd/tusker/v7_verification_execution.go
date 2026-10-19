@@ -69,6 +69,9 @@ type v7VerificationWorkspace struct {
 	Path                string
 	Verify              func() error
 	MaterialFingerprint string
+	// Submission, when set, is the execute submission whose own workspace and
+	// scope a passing Verify proves still hold MaterialFingerprint.
+	Submission *RunAttempt
 }
 
 func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, args Args, actor string, trustedWorker bool, workspace *v7VerificationWorkspace) (Note, v7ProofReport, []v7VerificationExecutionFailure, error) {
@@ -664,8 +667,13 @@ func v7VerificationReceiptIdentityFor(vaultPath string, task Note, repoRoot stri
 	if len(scope) == 0 {
 		scope = nil
 	}
-	material, err := workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
-	if err != nil {
+	// When the commands run in the submission's own workspace on its own scope,
+	// a passing Verify already proves the material; hashing it again adds nothing.
+	proven := v7VerificationWorkspaceProvesMaterial(workspace, repoRoot, scope, generatedOutputScope)
+	material := ""
+	if proven {
+		material = workspace.MaterialFingerprint
+	} else if material, err = workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope); err != nil {
 		return v7VerificationReceiptIdentity{}, nil, err
 	}
 	if workspace != nil && strings.TrimSpace(workspace.MaterialFingerprint) != "" && material != workspace.MaterialFingerprint {
@@ -677,6 +685,9 @@ func v7VerificationReceiptIdentityFor(vaultPath string, task Note, repoRoot stri
 		}
 		if err := workspace.Verify(); err != nil {
 			return err
+		}
+		if proven {
+			return nil
 		}
 		current, hashErr := workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
 		if hashErr != nil {
@@ -693,6 +704,17 @@ func v7VerificationReceiptIdentityFor(vaultPath string, task Note, repoRoot stri
 		SourceRevision:      firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")),
 		MaterialFingerprint: material,
 	}, verify, nil
+}
+
+func v7VerificationWorkspaceProvesMaterial(workspace *v7VerificationWorkspace, repoRoot string, scope, generatedOutputScope []string) bool {
+	if workspace == nil || workspace.Submission == nil || strings.TrimSpace(workspace.MaterialFingerprint) == "" ||
+		workspace.MaterialFingerprint != workspace.Submission.EndState.MaterialFingerprint ||
+		strings.Join(scope, "\x00") != strings.Join(workspace.Submission.EndState.MaterialScope, "\x00") ||
+		strings.Join(generatedOutputScope, "\x00") != strings.Join(workspace.Submission.EndState.GeneratedOutputScope, "\x00") {
+		return false
+	}
+	root, err := canonicalV7VerificationWorkspaceRoot(workspace.Submission.WorkspacePath)
+	return err == nil && root == repoRoot
 }
 
 func v7VerificationReceiptCurrent(task Note, row v7VerificationRow, currentMaterial string, materialErr error) bool {
@@ -865,6 +887,12 @@ func v7VerificationReceiptInvalidationForMaterial(task Note, row v7VerificationR
 }
 
 func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, error) {
+	return v7VerificationCurrentScopedMaterialWithStore(nil, vaultPath, task)
+}
+
+// v7VerificationCurrentScopedMaterialWithStore uses the caller's runtime store
+// when it has one instead of opening another.
+func v7VerificationCurrentScopedMaterialWithStore(store *RuntimeStore, vaultPath string, task Note) (string, error) {
 	hasCommand := false
 	for _, row := range parseV7VerificationRows(task.Body) {
 		if _, ok := v7VerificationCommand(row.Check); ok {
@@ -875,7 +903,7 @@ func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, e
 	if !hasCommand {
 		return "", nil
 	}
-	if material, found, err := v7SubmittedVerificationMaterial(vaultPath, task); found || err != nil {
+	if material, found, err := v7SubmittedVerificationMaterial(store, vaultPath, task); found || err != nil {
 		return material, err
 	}
 	repoRoot, err := canonicalV7VerificationWorkspaceRoot(v7RepoRoot(vaultPath))
@@ -896,12 +924,15 @@ func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, e
 	return workspaceTreeStateHashForPaths(repoRoot, scope, generatedOutputScope)
 }
 
-func v7SubmittedVerificationMaterial(vaultPath string, task Note) (string, bool, error) {
-	store, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
-	if err != nil {
-		return "", false, nil
+func v7SubmittedVerificationMaterial(store *RuntimeStore, vaultPath string, task Note) (string, bool, error) {
+	if store == nil {
+		opened, err := OpenRuntimeStoreReadOnly(DefaultStateRoot())
+		if err != nil {
+			return "", false, nil
+		}
+		defer opened.Close()
+		store = opened
 	}
-	defer store.Close()
 	projectID, registered, err := registeredProjectIDForVault(store, vaultPath)
 	if err != nil || !registered {
 		return "", false, err
@@ -910,11 +941,10 @@ func v7SubmittedVerificationMaterial(vaultPath string, task Note) (string, bool,
 	if err != nil || run == nil || run.WorkRevision == 0 {
 		return "", false, err
 	}
+	// Building the workspace binds and hashes the submission once; verifying it
+	// again at once would only repeat that.
 	workspace, err := recoveryCommandVerificationWorkspace(store, vaultPath, task, *run)
 	if err != nil {
-		return "", true, err
-	}
-	if err := workspace.Verify(); err != nil {
 		return "", true, err
 	}
 	return workspace.MaterialFingerprint, true, nil
