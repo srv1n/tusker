@@ -167,9 +167,6 @@ func demoSeed(args Args) (map[string]any, error) {
 			return nil, err
 		}
 		mappings[wave.Name] = mapping
-		if _, err := demoGit(repoRoot, "branch", "-f", "integration/"+waveID, "HEAD"); err != nil {
-			return nil, err
-		}
 		record := demoWaveRecord{Name: wave.Name, WaveID: waveID, Title: wave.Title, Scope: wave.Scope, Epic: wave.Epic}
 		for _, task := range wave.Tasks {
 			taskID, ok := mapping[task.Key]
@@ -205,6 +202,19 @@ func demoSeed(args Args) (map[string]any, error) {
 			continue
 		}
 		if _, err := exec.run(repoRoot, "edit", task.TaskID, "--status", "ready", "--reason", "demo seed: wave ready to start", "--vault", vaultPath); err != nil {
+			return nil, err
+		}
+	}
+	// Commit the tracker records like a real project does: landing reads
+	// member task state from git, so uncommitted records can never land.
+	if _, err := demoGit(repoRoot, "add", "-A"); err != nil {
+		return nil, err
+	}
+	if _, err := demoGit(repoRoot, "commit", "-qm", "demo task records"); err != nil {
+		return nil, err
+	}
+	for _, name := range demoSortedWaveNames(manifest) {
+		if _, err := demoGit(repoRoot, "branch", "-f", "integration/"+manifest.Waves[name].WaveID, "HEAD"); err != nil {
 			return nil, err
 		}
 	}
@@ -306,26 +316,30 @@ func demoEnsureEmptyRepo(repoRoot string) error {
 	return nil
 }
 
+// demoSeedGitignore hides the per-task work directories from the main
+// checkout only. The offline demo-timer lane writes artifacts straight into
+// the main checkout, and work claims require a clean tree outside .tusker.
+// Real-agent worktrees must still see and commit those owned files, so the
+// ignore is a main-worktree excludes file, never the committed .gitignore.
 func demoSeedGitignore(repoRoot string) error {
-	path := filepath.Join(repoRoot, ".gitignore")
-	existing := ""
-	if fileExists(path) {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		existing = string(raw)
+	gitDir, err := demoGit(repoRoot, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return err
 	}
-	// Task work files must not dirty the work tree: work claims require a
-	// clean tree outside .tusker, and parallel tasks write concurrently.
-	// The sample project itself (README, tools) stays tracked; only the
-	// per-task work directories are ignored.
-	for _, line := range []string{"sample/standalone/", "sample/alpha/", "sample/beta/", "sample/followup/"} {
-		if !strings.Contains(existing, line) {
-			existing += line + "\n"
-		}
+	gitDir = strings.TrimSpace(gitDir)
+	excludes := filepath.Join(gitDir, "tusker-demo-offline-exclude")
+	if err := os.WriteFile(excludes, []byte("sample/standalone/\nsample/alpha/\nsample/beta/\nsample/followup/\n"), 0o644); err != nil {
+		return err
 	}
-	return os.WriteFile(path, []byte(existing), 0o644)
+	// includeIf on the exact main git dir: linked worktrees have their own
+	// gitdir (.git/worktrees/<name>), so they never load this include.
+	// (config.worktree would not do: `git worktree add` copies it.)
+	include := filepath.Join(gitDir, "tusker-demo-offline.config")
+	if _, err := demoGit(repoRoot, "config", "-f", include, "core.excludesFile", excludes); err != nil {
+		return err
+	}
+	_, err = demoGit(repoRoot, "config", "includeIf.gitdir:"+gitDir+".path", include)
+	return err
 }
 
 func demoSeedProfiles(repoRoot string) (map[string]string, error) {

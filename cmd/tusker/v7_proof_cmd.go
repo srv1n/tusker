@@ -1754,15 +1754,42 @@ func v7EvidenceArtifactFingerprint(vaultPath string, evidence Note) (string, boo
 }
 
 func v7TaskProofRequired(task Note) []string {
+	docsOnly := v7TaskOwnsOnlyDocs(task)
 	var out []string
 	for _, required := range normalizeList(task.Data["proof_required"]) {
 		required = strings.ToLower(strings.TrimSpace(required))
 		required = strings.ReplaceAll(required, "-", "_")
+		// A docs-only task has no test to run; its passing command check is
+		// the proof, so test requirements reduce to "command".
+		if docsOnly && (required == "focused_test" || required == "broad_test") {
+			required = "command"
+		}
 		if required != "" {
 			out = append(out, required)
 		}
 	}
 	return uniqueStrings(out)
+}
+
+// v7TaskOwnsOnlyDocs reports whether every owned path is documentation:
+// markdown anywhere, or anything under docs/.
+func v7TaskOwnsOnlyDocs(task Note) bool {
+	owned := normalizeOwnedPaths(normalizeList(task.Data["owned_paths"]))
+	if len(owned) == 0 {
+		return false
+	}
+	for _, path := range owned {
+		path = strings.ToLower(filepath.ToSlash(path))
+		if strings.HasPrefix(path, "docs/") {
+			continue
+		}
+		switch filepath.Ext(path) {
+		case ".md", ".mdx", ".markdown":
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func v7ProofRequiredClassSatisfied(taskID, required string, task Note, idx v7Index) bool {
@@ -1813,6 +1840,8 @@ func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool 
 		return false
 	}
 	switch required {
+	case "command":
+		return true
 	case "focused_test", "broad_test":
 		return v7CommandInvokesTest(command)
 	case "typecheck":
