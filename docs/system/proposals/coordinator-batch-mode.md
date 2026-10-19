@@ -1,3 +1,13 @@
+---
+kind: proposal
+subject: coordinator-batch-mode
+title: Coordinator batch mode
+part_of: orchestration
+status: proposed
+read_when: "Considering or changing the coordinator-driven batch workflow."
+skip_when: "Operating the resident daemon or an ordinary task run."
+---
+
 # Coordinator batch mode
 
 Status: proposal, 2026-10-08. Author: the Claude Code coordinator on the rzn backend, at Sarav's request. Audience: the Tusker team.
@@ -188,7 +198,7 @@ The packet tells workers to write it, with the schema inline. `REPORT.md` stays 
 - Changed paths are within the task's `owned_paths`, or listed as an explicit, reasoned exception in the report.
 - Every acceptance item has at least one gate row; no gate row says `pass` without a command.
 - No push happened (local branch is not behind/ahead of a remote unexpectedly, or no `git push` in the run log).
-- Repo-defined checks: a repo can add scripts in `.tusker/audit.d/*` that receive the task ID and commit list and exit non-zero on failure. rzn would add "no file over 2,000 lines grew", "no new code in root `src/`", "no `unwrap`/`expect`/`panic` added outside tests".
+- Repo-defined checks: a repo can add audit scripts that receive the task ID and commit list and exit non-zero on failure. rzn would add "no file over 2,000 lines grew", "no new code in root `src/`", "no `unwrap`/`expect`/`panic` added outside tests".
 
 **Behavior.** Audit failures appear in the digest. The coordinator decides: fix (new task), accept with a note, or reject.
 

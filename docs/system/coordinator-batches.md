@@ -135,7 +135,7 @@ required; a pass report cannot hide a crash. The audit inspects every reported
 commit and detects omitted commits since the baseline. It checks target-branch
 reachability, configured Git author, AI attribution, ignored/scratch paths,
 ownership (or exact path plus reason in `path_exceptions`), remaining uncommitted
-changes, and evidence/gate coverage. Executable `.tusker/audit.d/*` hooks receive
+changes, and evidence/gate coverage. Executable repository audit hooks receive
 the task ID and commit list, run in the task workspace, and have a one-minute
 limit. Audit failures park the task before dependents advance.
 
