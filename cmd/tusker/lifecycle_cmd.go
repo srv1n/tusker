@@ -207,7 +207,7 @@ func heldWorkSession(args Args, id, actor string) (bool, error) {
 		return false, err
 	}
 	defer store.Close()
-	run, err := findRunScopedOrAmbiguous(store, args.String("project"), id)
+	run, err := findRunForCLI(store, args, id)
 	if err != nil || run == nil {
 		return false, nil
 	}

@@ -202,7 +202,7 @@ func workProgressCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := findRunScopedOrAmbiguous(store, args.String("project"), id)
+	run, err := findRunForCLI(store, args, id)
 	if err != nil {
 		return err
 	}
@@ -270,7 +270,7 @@ func workWaitCmd(args Args) error {
 	}
 	defer store.Close()
 	for {
-		run, findErr := findRunScopedOrAmbiguous(store, args.String("project"), id)
+		run, findErr := findRunForCLI(store, args, id)
 		if findErr != nil {
 			return findErr
 		}
@@ -328,7 +328,7 @@ func workRetryCmd(args Args) error {
 	if err != nil {
 		return err
 	}
-	run, err := findRunScopedOrAmbiguous(store, args.String("project"), id)
+	run, err := findRunForCLI(store, args, id)
 	_ = store.Close()
 	if err != nil {
 		return err
@@ -367,7 +367,7 @@ func workReconcileCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := findRunScopedOrAmbiguous(store, args.String("project"), id)
+	run, err := findRunForCLI(store, args, id)
 	if err != nil {
 		return err
 	}
@@ -453,7 +453,7 @@ func workProfileCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, _ := findRunScopedOrAmbiguous(store, args.String("project"), id)
+	run, _ := findRunForCLI(store, args, id)
 	recorded := map[string]any{}
 	if run != nil {
 		recorded = map[string]any{

@@ -140,6 +140,21 @@ func findRunScopedOrAmbiguous(store *RuntimeStore, projectID, identity string) (
 	return store.FindRun(identity)
 }
 
+// findRunForCLI resolves a run named on the command line: an explicit
+// --project wins, then the registered project whose folder the command runs
+// in, then the cross-project lookup with its ambiguity refusal.
+func findRunForCLI(store *RuntimeStore, args Args, identity string) (*RunStatus, error) {
+	if project := strings.TrimSpace(args.String("project")); project != "" || store == nil {
+		return findRunScopedOrAmbiguous(store, project, identity)
+	}
+	if vaultPath, err := resolveVaultPath(args, false); err == nil {
+		if run, err := findRunForVault(store, vaultPath, identity); err != nil || run != nil {
+			return run, err
+		}
+	}
+	return store.FindRun(identity)
+}
+
 func findRunForVault(store *RuntimeStore, vaultPath, identity string) (*RunStatus, error) {
 	projectID, registered, err := registeredProjectIDForVault(store, vaultPath)
 	if err != nil {
