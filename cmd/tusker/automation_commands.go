@@ -992,10 +992,39 @@ func (ctx *automationCommandContext) effectiveRunForTask(note Note, runner strin
 		run.Lane = runLaneExecute
 		clearActiveExecution(&run)
 	}
-	if run.Lane == runLaneReview && LeaseState(run.LeaseState) == LeaseStateReleased {
+	if ctx.reworkReviewReleasedRun(note, run) {
 		run = prepareRunForLaneDispatch(run, runLaneExecute, run.Runner)
 	}
 	return run
+}
+
+func (ctx *automationCommandContext) reworkReviewReleasedRun(note Note, run RunStatus) bool {
+	if stringField(note.Data, "status") != "rework" || LeaseState(run.LeaseState) != LeaseStateReleased || run.Terminal || run.ReasonCode != "" {
+		return false
+	}
+	// A historical verdict must never undo a later operator release.
+	switch run.LastError {
+	case reviewerFindingReturnReason:
+		return run.Lane == runLaneReview && AttemptOutcome(run.AttemptOutcome) == AttemptOutcomeBlocked
+	case "typed review result recorded; awaiting review reactor":
+		if ctx.Store == nil || AttemptOutcome(run.AttemptOutcome) != AttemptOutcomeSucceeded {
+			return false
+		}
+	default:
+		return false
+	}
+	rows, err := ctx.Store.ListReviewResults(run.ProjectID)
+	if err != nil {
+		return false
+	}
+	results := make([]ReviewResult, 0, len(rows))
+	for _, row := range rows {
+		if row.Repair == nil && row.TaskID == run.RecordID {
+			results = append(results, row.Result)
+		}
+	}
+	result, ok := (&Daemon{store: ctx.Store}).currentReviewResult(run.ProjectID, run.RecordID, results)
+	return ok && result.WorkRevision == run.WorkRevision && result.Verdict == "changes_requested"
 }
 
 func automationRunBlocker(run RunStatus, now time.Time) string {
