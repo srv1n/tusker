@@ -278,3 +278,34 @@ func TestJanitorFlagsSilentAgentSession(t *testing.T) {
 		t.Fatalf("row ended: %+v", row)
 	}
 }
+
+// A wrapper whose attempt just finished is left to exit on its own; once the
+// grace has passed, a lingering wrapper is stopped.
+func TestJanitorLetsJustFinishedAgentSessionExit(t *testing.T) {
+	store := openInventoryTestStore(t)
+	now := time.Now().UTC()
+	for _, a := range []struct {
+		id       string
+		finished time.Time
+	}{{"ATT-JUST", now.Add(-10 * time.Second)}, {"ATT-LONG", now.Add(-10 * time.Minute)}} {
+		if err := store.SaveAttempt(RunAttempt{AttemptID: a.id, ProjectID: "proj", RecordID: "T-1", ItemID: "T-1", Runner: "codex_exec", Outcome: "failed", FinishedAt: a.finished.Format(time.RFC3339Nano)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	just := startJanitorTestGroup(t)
+	recordJanitorTestRow(t, store, "ATT-JUST", processKindAgentSession, just, "", deadTestStarter)
+	long := startJanitorTestGroup(t)
+	recordJanitorTestRow(t, store, "ATT-LONG", processKindAgentSession, long, "", deadTestStarter)
+	if err := runProcessJanitor(store, 0, now); err != nil {
+		t.Fatal(err)
+	}
+	if just.stopped(200 * time.Millisecond) {
+		t.Fatal("wrapper of a just-finished attempt was stopped")
+	}
+	if row := inventoryRow(t, store, "ATT-JUST"); row.EndedAt != "" {
+		t.Fatalf("just-finished row closed: %+v", row)
+	}
+	if !long.stopped(2 * time.Second) {
+		t.Fatal("wrapper lingering past the grace kept running")
+	}
+}

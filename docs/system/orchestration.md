@@ -90,7 +90,8 @@ starter.
   silence limit. That outcome is recorded as stuck, stopped, not as a failure.
 - One janitor pass runs at daemon startup and on every poll. It stops checks
   whose starter died, adopts agent sessions whose run is still claimed or
-  running, and stops sessions whose run is gone. It acts only when PID, process
+  running, and stops sessions whose run is gone. A session whose attempt finished
+  less than two minutes ago is left to exit on its own. It acts only when PID, process
   group, and start time all match; otherwise it reports and leaves the process
   alone. Every action writes a process event.
 - Landing gates take one machine-wide slot. Before a gate runs, a copy left by

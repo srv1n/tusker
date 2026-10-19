@@ -154,6 +154,9 @@ func janitorRow(store *RuntimeStore, list janitorSnapshot, self string, p ownedP
 			return err
 		}
 		if !live {
+			if attemptFinishedRecently(store, p.Owner, now) {
+				return nil
+			}
 			stopProcessGroup(p.PGID)
 			if err := store.endOwnedProcess(p.ID, "owner_gone"); err != nil {
 				return err
@@ -187,6 +190,20 @@ func agentSessionOwner(store *RuntimeStore, attemptID string) (string, string, b
 		return "", "", false, nil
 	}
 	return projectID, lastEvent, err == nil, err
+}
+
+// agentExitGrace lets a wrapper whose attempt just finished exit on its own:
+// the run releases the attempt a moment before the wrapper writes its last
+// status and exits, and stopping it then could cut off those writes.
+const agentExitGrace = 2 * time.Minute
+
+func attemptFinishedRecently(store *RuntimeStore, attemptID string, now time.Time) bool {
+	var finished string
+	if err := store.queryRowScan(`SELECT finished_at FROM attempts WHERE attempt_id = ?`, []any{attemptID}, &finished); err != nil {
+		return false
+	}
+	at := latestTime(finished)
+	return !at.IsZero() && now.Sub(at) < agentExitGrace
 }
 
 // flagSilentAgentSession emits one silent signal per silence: when the last
