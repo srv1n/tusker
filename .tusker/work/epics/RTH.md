@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-19T02:17:38Z"
-updated_at: "2026-10-19T04:18:54Z"
-state_rev: "sha256:ea008cbbaf821c9924bb2c848bbcee1e7d51c959c97afafd286a174e2ebdef2f"
+updated_at: "2026-10-19T13:09:56Z"
+state_rev: "sha256:031398c3aebc433f85ab693a4dcc4331a7ee2ce92b47f5ecae0dcf4507e8fae4"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -51,7 +51,7 @@ TBD.
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
 | [[RTH-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
-| [[RTH-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| [[RTH-T-0002]] | rework | agent | Execute the task contract and satisfy proof mode. |
 | [[RTH-T-0003]] | rework | agent | Address the reviewer finding, then re-request review. |
 | [[RTH-T-0004]] | review | reviewer | Review evidence and close or return to rework. |
 | [[RTH-T-0005]] | review | reviewer | Review evidence and close or return to rework. |
