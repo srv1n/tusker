@@ -130,10 +130,16 @@ export function streamKeyToQueryKeys(key: string, project?: string): QueryKey[] 
 // changes are when Tusker processes start, stop or go quiet.
 const PROCESS_TOPICS = new Set(["daemon", "runs", "executions"]);
 
+// The server announces only the topics whose content changed, so a runtime
+// refresh carrying just `needs` must not fan out to every task and wave read.
+const RUNTIME_STATE_TOPICS = new Set(["runs", "attempts", "roster", "agent-messages"]);
+
 function eventQueryKeys(event: StreamEvent): QueryKey[] {
   const keys = event.keys.flatMap((key) => streamKeyToQueryKeys(key, event.project));
-  if (event.kind === "runtime_projection_refreshed" || event.keys.some((key) => PROCESS_TOPICS.has(key.split(":", 1)[0]))) keys.push(["processes"]);
-  if (event.kind !== "runtime_projection_refreshed") return keys;
+  const runtimeState = event.kind === "runtime_projection_refreshed" && event.keys.some((key) => RUNTIME_STATE_TOPICS.has(key));
+  if (runtimeState || event.keys.some((key) => PROCESS_TOPICS.has(key.split(":", 1)[0]))) keys.push(["processes"]);
+  if (event.kind === "runtime_projection_refreshed" && event.keys.includes("needs")) keys.push(["projects"]);
+  if (!runtimeState) return keys;
   // Runtime refreshes have narrow server topics: state reads and summary
   // counters still depend on them, without treating notes/docs as changed.
   const scope = event.project ? [event.project] : [];

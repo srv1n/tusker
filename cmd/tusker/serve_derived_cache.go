@@ -34,7 +34,8 @@ type serveSnapshotDerived struct {
 	files      map[string]serveFileStamp // spec files hashed by cached entries
 	auth       map[string]map[string]any
 	projected  map[string]serveProjectedWave
-	computes   int // authorization projections computed; read by tests
+	computes   int               // authorization projections computed; read by tests
+	keyHashes  map[string]string // per-stream-topic content; serveSnapshotMetadataKeyHashes
 }
 
 type serveFileStamp struct {

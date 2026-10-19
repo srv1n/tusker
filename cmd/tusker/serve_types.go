@@ -29,6 +29,7 @@ type serveServer struct {
 	streamAdmission   chan struct{}
 	iconMu            sync.Mutex
 	iconCache         map[string]projectIconScanResult
+	projection        serveProjectionState
 }
 
 type serveSnapshotEntry struct {

@@ -29,6 +29,8 @@ type serveStreamEvent struct {
 	OccurredAt   string   `json:"occurred_at,omitempty"`
 	Keys         []string `json:"keys"`
 	ReplayMiss   bool     `json:"replay_miss,omitempty"`
+	// diffed marks a projection event already narrowed to changed keys.
+	diffed bool
 }
 
 type serveStreamBroker struct {
@@ -39,6 +41,34 @@ type serveStreamBroker struct {
 	closed            bool
 	heartbeatInterval time.Duration
 	history           []serveStreamEvent
+	// projector narrows projection refreshes to the keys whose content
+	// changed. handleStream attaches it, so it exists once a client does.
+	projector func(serveStreamEvent)
+}
+
+func serveStreamProjectionKind(kind string) bool {
+	return kind == "projection_refreshed" || kind == "runtime_projection_refreshed"
+}
+
+func (b *serveStreamBroker) setProjector(fn func(serveStreamEvent)) {
+	b.mu.Lock()
+	if b.projector == nil {
+		b.projector = fn
+	}
+	b.mu.Unlock()
+}
+
+// hasSubscriber reports whether any connected client would receive an event
+// for projectID; projections nobody watches are not rebuilt eagerly.
+func (b *serveStreamBroker) hasSubscriber(projectID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, client := range b.clients {
+		if client.project == "" || projectID == "" || client.project == projectID {
+			return true
+		}
+	}
+	return false
 }
 
 type serveStreamClient struct {
@@ -112,6 +142,10 @@ func (b *serveStreamBroker) Broadcast(event serveStreamEvent) {
 	if b.closed {
 		return
 	}
+	if b.projector != nil && !event.diffed && serveStreamProjectionKind(event.Kind) {
+		go b.projector(event) // rebuilds a snapshot; never under b.mu or on the caller
+		return
+	}
 	b.nextEventID++
 	event.ID = b.nextEventID
 	if strings.TrimSpace(event.OccurredAt) == "" {
@@ -183,6 +217,7 @@ func (s *serveServer) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	s.stream.setProjector(s.queueProjectionDiff)
 	lastID, malformedCursor := parseServeStreamCursor(r.Header.Get("Last-Event-ID"))
 	ch, unsubscribe, ok, replayMiss := s.stream.SubscribeProjectSince(r.URL.Query().Get("project"), lastID)
 	if !ok {

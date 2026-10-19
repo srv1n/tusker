@@ -291,6 +291,16 @@ test("runtime refreshes update state capsules and summary counters without refet
   expect(invalidations).not.toContainEqual({ queryKey: ["waves"], exact: false });
 });
 
+test("a runtime refresh that changed only needs refetches needs and counters, not task or wave state", () => {
+  const { client, invalidations } = recorder();
+  invalidateStreamEvent(client, { kind: "runtime_projection_refreshed", keys: ["needs"], project: "app" });
+  expect(invalidations).toContainEqual({ queryKey: qk.needs("app"), exact: false });
+  expect(invalidations).toContainEqual({ queryKey: ["projects"], exact: false });
+  for (const queryKey of [["tasks", "app"], ["waves", "app"], ["wave-list", "app"], ["daemon"], ["processes"], qk.runs("app")]) {
+    expect(invalidations).not.toContainEqual({ queryKey, exact: false });
+  }
+});
+
 test("connection and replay reconciliation refresh runtime detail families", () => {
   const { client, invalidations } = recorder();
   FakeEventSource.instances = [];

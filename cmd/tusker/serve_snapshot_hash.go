@@ -14,50 +14,55 @@ func serveSnapshotContentHash(snap serveSnapshot) string {
 }
 
 func serveSnapshotMetadataContentHash(snap serveSnapshot) string {
-	snap.runs, snap.needs = nil, nil
-	tasks := sortedServeSnapshotNotes(snap.tasks)
-	epics := sortedServeSnapshotNotes(snap.epics)
-	gates := sortedServeSnapshotNotes(snap.gates)
-	waves := sortedServeSnapshotNotes(snap.waves)
-	evidence := sortedServeSnapshotNotes(snap.evidence)
-	decisions := sortedServeSnapshotNotes(snap.decisions)
-	attempts := sortedServeSnapshotNotes(snap.attemptNotes)
-	runs := append([]RunStatus(nil), snap.runs...)
-	sort.Slice(runs, func(i, j int) bool {
-		if runs[i].ProjectID != runs[j].ProjectID {
-			return runs[i].ProjectID < runs[j].ProjectID
+	return "sha256:" + serveContentHash(serveSnapshotMetadataKeyHashes(snap)) // map keys marshal sorted
+}
+
+// serveSnapshotMetadataKeyHashes hashes each stream topic's note/doc inputs
+// once per full build and memoizes them on snap.derived, which the runtime
+// refresh path keeps. The live stream compares them per topic so a refresh
+// announces only the topics whose content changed.
+func serveSnapshotMetadataKeyHashes(snap serveSnapshot) map[string]string {
+	if d := snap.derived; d != nil {
+		d.mu.Lock()
+		cached := d.keyHashes
+		d.mu.Unlock()
+		if cached != nil {
+			return cached
 		}
-		return runs[i].RecordID < runs[j].RecordID
-	})
-	payload := struct {
-		ProjectID        string                               `json:"project_id"`
-		ProjectName      string                               `json:"project_name"`
-		Workflow         Workflow                             `json:"workflow"`
-		Tasks            []Note                               `json:"tasks"`
-		Epics            []Note                               `json:"epics"`
-		Gates            []Note                               `json:"gates"`
-		Waves            []Note                               `json:"waves"`
-		Evidence         []Note                               `json:"evidence"`
-		Decisions        []Note                               `json:"decisions"`
-		Attempts         []Note                               `json:"attempts"`
-		Docs             []serveDocListEntry                  `json:"docs"`
-		Needs            []serveNeedItem                      `json:"needs"`
-		Runs             []RunStatus                          `json:"runs"`
-		Queue            map[string]automationTaskExplanation `json:"queue"`
-		OpenP0Escalation bool                                 `json:"open_p0_escalation"`
-	}{
-		ProjectID: snap.projectID, ProjectName: snap.projectName, Workflow: snap.workflow,
-		Tasks: tasks, Epics: epics, Gates: gates, Waves: waves,
-		Evidence: evidence, Decisions: decisions, Attempts: attempts,
-		Docs: snap.docs, Needs: snap.needs, Runs: runs, Queue: snap.queue,
-		OpenP0Escalation: snap.openP0Escalation,
 	}
-	raw, err := json.Marshal(payload)
+	keys := map[string]string{
+		"tasks": serveContentHash(struct {
+			Tasks []Note
+			Queue map[string]automationTaskExplanation
+		}{sortedServeSnapshotNotes(snap.tasks), snap.queue}),
+		"epics":         serveContentHash(sortedServeSnapshotNotes(snap.epics)),
+		"waves":         serveContentHash(sortedServeSnapshotNotes(snap.waves)),
+		"gates":         serveContentHash(sortedServeSnapshotNotes(snap.gates)),
+		"evidence":      serveContentHash(sortedServeSnapshotNotes(snap.evidence)),
+		"decisions":     serveContentHash(sortedServeSnapshotNotes(snap.decisions)),
+		"attempt-notes": serveContentHash(sortedServeSnapshotNotes(snap.attemptNotes)),
+		"docs":          serveContentHash(snap.docs),
+		"meta": serveContentHash(struct {
+			ProjectID, ProjectName string
+			Workflow               Workflow
+			OpenP0Escalation       bool
+		}{snap.projectID, snap.projectName, snap.workflow, snap.openP0Escalation}),
+	}
+	if d := snap.derived; d != nil {
+		d.mu.Lock()
+		d.keyHashes = keys
+		d.mu.Unlock()
+	}
+	return keys
+}
+
+func serveContentHash(value any) string {
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return ""
 	}
 	sum := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
 }
 
 func sortedServeSnapshotNotes(notes []Note) []Note {
@@ -71,18 +76,17 @@ func sortedServeSnapshotNotes(notes []Note) []Note {
 	return copy
 }
 
+func sortedServeSnapshotRuns(runs []RunStatus) []RunStatus {
+	runs = append([]RunStatus(nil), runs...)
+	sort.Slice(runs, func(i, j int) bool { return runs[i].RecordID < runs[j].RecordID })
+	return runs
+}
+
 // Runtime ticks hash only dynamic facts; note bodies and docs were hashed when
 // their projection was built and do not need sorting/marshalling each tick.
 func serveSnapshotRuntimeContentHash(snap serveSnapshot) string {
-	runs := append([]RunStatus(nil), snap.runs...)
-	sort.Slice(runs, func(i, j int) bool { return runs[i].RecordID < runs[j].RecordID })
-	raw, err := json.Marshal(struct {
+	return serveContentHash(struct {
 		Runs  []RunStatus
 		Needs []serveNeedItem
-	}{runs, snap.needs})
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
+	}{sortedServeSnapshotRuns(snap.runs), snap.needs})
 }
