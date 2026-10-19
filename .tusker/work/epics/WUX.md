@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-09-07T04:07:03Z"
-updated_at: "2026-09-23T14:46:35Z"
-state_rev: "sha256:f4cb5ef0dc19f1f269139d989161c828f9169108290ac11d5fd25bb4a8f5758b"
+updated_at: "2026-10-18T17:31:00Z"
+state_rev: "sha256:81c8530e6d4fbaf83f10bfadb70d0b9e16cddab0b6d7bcb3332cb657af1f9d54"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -77,10 +77,10 @@ TBD.
 | [[WUX-T-0029]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[WUX-T-0030]] | backlog | blocked_dependency | Wait for dependency WUX-T-0029 to reach done. |
 | [[WUX-T-0031]] | backlog | blocked_dependency | Wait for dependency WUX-T-0030 to reach done. |
-| [[WUX-T-0032]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[WUX-T-0033]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[WUX-T-0034]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[WUX-T-0035]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[WUX-T-0032]] | backlog | agent | Review evidence and close or return to rework. |
+| [[WUX-T-0033]] | backlog | agent | Review evidence and close or return to rework. |
+| [[WUX-T-0034]] | backlog | agent | Review evidence and close or return to rework. |
+| [[WUX-T-0035]] | backlog | agent | Review evidence and close or return to rework. |
 
 ## Recently completed
 

@@ -14,12 +14,12 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-18T12:39:36Z"
-updated_at: "2026-10-18T12:39:36Z"
-state_rev: "sha256:4933e014a7dfffdb2a2986a0dc31502100335182651c58da0e0e729707992bb2"
+updated_at: "2026-10-19T00:48:26Z"
+state_rev: "sha256:84355aa8b291dc10da825c58e34c7e1cacc1b03e34dcd0d089e9ffbeca3ed385"
 capsule:
-  what: "PCN epic: Process containment."
-  use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
+  use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
+  what: "PCN epic: Process containment."
 ---
 
 # PCN · Process containment
@@ -40,10 +40,26 @@ TBD.
 
 <!-- tusker:generated open-gates -->
 
+| Gate | Owner | Blocks | Action |
+|---|---|---|---|
+| _None._ |  |  |  |
+
 ## Active work
 
 <!-- tusker:generated active-work -->
 
+| Task | Status | Next owner | Next action |
+|---|---|---|---|
+| [[PCN-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
+| [[PCN-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| [[PCN-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
+| [[PCN-T-0004]] | backlog | blocked_dependency | Wait for dependency PCN-T-0003 to reach done. |
+| [[PCN-T-0005]] | backlog | blocked_dependency | Wait for dependency PCN-T-0001 to reach done. |
+
 ## Recently completed
 
 <!-- tusker:generated recently-completed -->
+
+| Task | Accepted by | Closed at |
+|---|---|---|
+| _None._ |  | |
