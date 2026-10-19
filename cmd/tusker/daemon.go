@@ -3430,8 +3430,12 @@ func (d *Daemon) reconcileRunAttemptWithIngest(ctx context.Context, project Regi
 		run.ProcessPID = 0
 		run.UpdatedAt = finished
 		workerSubmitted := false
+		submissionRefusal := ""
 		if updated, consumed, consumeErr := d.consumeWorkerLifecycleRequest(run); consumeErr != nil {
-			return run, changed, consumeErr
+			// The runner has exited, so returning here would wedge the run until
+			// its lease expires. Finish the attempt and say why the queued
+			// request was not applied.
+			submissionRefusal = "worker submission refused: " + consumeErr.Error()
 		} else if consumed {
 			if updated != nil && isDispatchingLeaseState(updated.LeaseState) {
 				workerSubmitted = true
@@ -3450,6 +3454,8 @@ func (d *Daemon) reconcileRunAttemptWithIngest(ctx context.Context, project Regi
 		}
 		if statusFailureReason != "" {
 			classification.reason = statusFailureReason
+		} else if submissionRefusal != "" {
+			classification.reason = submissionRefusal
 		}
 		if status.ExitCode == 0 && run.Lane == runLaneExecute && classification.outcome == AttemptOutcomeEarlyExit {
 			waiting, waitErr := d.openYieldQuestion(run)

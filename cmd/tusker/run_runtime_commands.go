@@ -135,9 +135,31 @@ func findRunScopedOrAmbiguous(store *RuntimeStore, projectID, identity string) (
 		return nil, tuskerError(errorNotFound, "runtime store is unavailable")
 	}
 	if strings.TrimSpace(projectID) != "" {
-		return store.FindRunScoped(projectID, identity)
+		return store.FindRunScoped(registeredProjectIDForSelector(store, projectID), identity)
 	}
 	return store.FindRun(identity)
+}
+
+// registeredProjectIDForSelector maps a --project value to its project ID. Like
+// the project commands, it accepts the ID, the project key or the name; an
+// unknown value is returned unchanged so the lookup reports it as not found.
+func registeredProjectIDForSelector(store *RuntimeStore, selector string) string {
+	selector = strings.TrimSpace(selector)
+	loaded, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
+	if err != nil {
+		return selector
+	}
+	for _, project := range loaded {
+		if project.Project.ProjectID == selector {
+			return selector
+		}
+	}
+	for _, project := range loaded {
+		if project.Project.ProjectKey == selector || project.Project.Name == selector {
+			return project.Project.ProjectID
+		}
+	}
+	return selector
 }
 
 // findRunForCLI resolves a run named on the command line: an explicit
@@ -370,7 +392,7 @@ func runsInspectCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	run, err := findRunScopedOrAmbiguous(store, args.String("project"), identity)
+	run, err := findRunForCLI(store, args, identity)
 	if err != nil {
 		return err
 	}

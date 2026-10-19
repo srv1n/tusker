@@ -379,6 +379,9 @@ func autoRepairDeadReservation(store *RuntimeStore, projectEnabled bool, run Run
 	}
 	if !projectEnabled {
 		changed, err := store.reclaimExpiredRunLeaseIfSnapshot(run, now, defaultRunLeaseTTL, "daemon poll reclaimed expired dead lease")
+		if changed && err == nil {
+			err = store.requeueReclaimedDeadReservation(run, now, "daemon poll reclaimed expired dead lease")
+		}
 		return changed, false, false, err
 	}
 	fingerprint := selfServiceRepairFingerprint(run.ProjectID, selfServiceRepairKindDeadReservation, revision)
@@ -409,6 +412,11 @@ func autoRepairDeadReservation(store *RuntimeStore, projectEnabled bool, run Run
 	if err != nil {
 		return false, false, false, err
 	}
+	if changed {
+		if err := store.requeueReclaimedDeadReservation(run, now, "self-service automatic safe repair: dead reservation"); err != nil {
+			return true, false, false, err
+		}
+	}
 	if !changed {
 		// Contention or concurrent movement: no repair was applied, so no
 		// ledger entry is consumed. The next tick retries normally.
@@ -424,6 +432,26 @@ func autoRepairDeadReservation(store *RuntimeStore, projectEnabled bool, run Run
 		"dead reservation "+run.RecordID+" still held by "+strings.TrimSpace(run.LeaseOwner)+
 			" generation "+strconv.Itoa(run.LeaseGeneration)+" immediately after automatic safe repair")
 	return true, true, escalated, err
+}
+
+// requeueReclaimedDeadReservation turns the daemon's own reclaim of a dead
+// dispatched lease into a due retry. Reclaim leaves the row interrupted, the
+// operator-stop state that never dispatches, so an armed task would wait
+// forever: no retry time is set and the heartbeat sees no due event. The poll
+// still parks a retry_queued run at the attempt cap before it dispatches. Only
+// the exact row reclaim just wrote moves; a hand run keeps its released state.
+func (s *RuntimeStore) requeueReclaimedDeadReservation(run RunStatus, now time.Time, reason string) error {
+	if run.HandRun {
+		return nil
+	}
+	stamp := now.UTC().Format(time.RFC3339)
+	_, err := s.exec(`UPDATE runs
+		SET lease_state = 'retry_queued', next_retry_at = ?, terminal = 0, active_attempt_id = '',
+			prompt_path = '', event_sink_path = '', raw_log_path = '', status_path = '', updated_at = ?
+		WHERE project_id = ? AND record_id = ? AND lease_state = 'interrupted' AND (hand_run IS NULL OR hand_run = 0)
+			AND last_error = ? AND lease_generation = ? AND active_attempt_id = ?`,
+		stamp, stamp, run.ProjectID, run.RecordID, reason, run.LeaseGeneration, run.ActiveAttemptID)
+	return err
 }
 
 // selfServiceDeadReservationRecurred reports whether the exact dead lease

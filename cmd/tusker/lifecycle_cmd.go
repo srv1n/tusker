@@ -182,8 +182,12 @@ func doneSingle(vault, id, actor string, args Args) (bool, error) {
 	if held, err := heldWorkSession(args, id, actor); err != nil {
 		return true, err
 	} else if held {
-		if args.String("deliverable") == "" {
-			args["deliverable"] = args.String("summary")
+		// done carries one --summary; submit needs both summaries, so it fills
+		// whichever the caller did not pass.
+		for _, field := range []string{"deliverable", "verification"} {
+			if args.String(field) == "" {
+				args[field] = args.String("summary")
+			}
 		}
 		return true, workSessionCmd(args, "submit")
 	}

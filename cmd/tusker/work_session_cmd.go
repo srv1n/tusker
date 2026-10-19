@@ -719,12 +719,23 @@ func workSessionLifecycleCmd(args Args, action string) error {
 }
 
 func workerLifecycleControl(args Args, action string) error {
+	return workerLifecycleHandoff("http://"+defaultServeAddr, args, action)
+}
+
+func workerLifecycleHandoff(serveURL string, args Args, action string) error {
 	request, err := workerLifecycleRequest(args, action)
 	if err != nil {
 		return err
 	}
-	if err := workerLifecycleControlAt("http://"+defaultServeAddr, request); err == nil {
+	err = workerLifecycleControlAt(serveURL, request)
+	if err == nil {
 		return nil
+	}
+	// The workspace file is for a daemon that cannot be reached. A daemon that
+	// answered and refused has decided; queuing the same request would only be
+	// refused again at reconciliation while the worker believes it submitted.
+	if refusal, ok := err.(*TuskerError); ok && refusal.Code == errorWorkerLifecycleRefused {
+		return err
 	}
 	payload, _ := json.Marshal(request)
 	if err := writeConfigTextAtomically(workerLifecycleRequestPath(os.Getenv("TUSKER_WORKSPACE"), request.Worker.AttemptID), string(payload)); err != nil {
@@ -745,8 +756,13 @@ func workerLifecycleRequest(args Args, action string) (daemonControlRequest, err
 		Deliverable: args.String("deliverable"), Verification: args.String("verification"),
 		GateVerdicts: firstNonEmpty(args.String("gate-verdicts"), args.String("gates")), Reason: args.String("reason"),
 	}
+	if action == "submit" && (strings.TrimSpace(w.Deliverable) == "" || strings.TrimSpace(w.Verification) == "") {
+		return daemonControlRequest{}, tuskerError(errorMissingArg, "worker submit requires deliverable and verification summaries (--deliverable and --verification, or --summary)")
+	}
 	return daemonControlRequest{Command: "worker_lifecycle", ProjectID: os.Getenv("TUSKER_PROJECT_ID"), Identity: w.AttemptID, Worker: &w}, nil
 }
+
+const errorWorkerLifecycleRefused = "WORKER_LIFECYCLE_REFUSED"
 
 func workerLifecycleControlAt(serveURL string, request daemonControlRequest) error {
 	payload, _ := json.Marshal(request)
@@ -772,7 +788,7 @@ func workerLifecycleControlAt(serveURL string, request daemonControlRequest) err
 	defer postResp.Body.Close()
 	var resp serveActionResult
 	if err := json.NewDecoder(io.LimitReader(postResp.Body, 32<<10)).Decode(&resp); err != nil || postResp.StatusCode != http.StatusOK || !resp.OK {
-		return tuskerError(errorInvalidTransition, "worker lifecycle refused: "+resp.Reason)
+		return tuskerError(errorWorkerLifecycleRefused, "worker lifecycle refused: "+firstNonEmpty(resp.Reason, postResp.Status))
 	}
 	emitJSON(map[string]any{"ok": true, "action": request.Worker.Action, "attempt_id": request.Worker.AttemptID, "authority": "resident_daemon"})
 	return nil
