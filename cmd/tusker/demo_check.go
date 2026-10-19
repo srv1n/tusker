@@ -1032,6 +1032,23 @@ func demoReseed(repoRoot string, manifest *demoManifest, exec *demoExec) (*demoR
 			return nil, err
 		}
 	}
+	// Commit the rewritten records like seed does, so the tree matches git
+	// and landing (which reads member state from git) sees them.
+	if _, err := demoGit(repoRoot, "add", "-A"); err != nil {
+		return nil, err
+	}
+	if status, err := demoGit(repoRoot, "status", "--porcelain"); err != nil {
+		return nil, err
+	} else if strings.TrimSpace(status) != "" {
+		if _, err := demoGit(repoRoot, "commit", "-qm", "demo task records"); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range demoSortedWaveNames(manifest) {
+		if _, err := demoGit(repoRoot, "branch", "-f", "integration/"+manifest.Waves[name].WaveID, "HEAD"); err != nil {
+			return nil, err
+		}
+	}
 	// Re-register the default-scope project removed by reset so the normal
 	// UI keeps discovering the disposable repo. Best-effort like seed: when
 	// the scope is unavailable, reseed still restores data and reports the
