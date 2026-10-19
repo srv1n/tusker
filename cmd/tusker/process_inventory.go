@@ -78,9 +78,20 @@ func (s *RuntimeStore) endOwnedProcess(id int64, reason string) error {
 	return err
 }
 
+// ownedProcesses returns every row ever recorded, for history views.
 func (s *RuntimeStore) ownedProcesses() ([]ownedProcess, error) {
+	return s.queryOwnedProcesses(``)
+}
+
+// openOwnedProcesses returns only rows whose process has not ended, so the
+// janitor and starter cleanup never rescan history.
+func (s *RuntimeStore) openOwnedProcesses() ([]ownedProcess, error) {
+	return s.queryOwnedProcesses(`WHERE ended_at = ''`)
+}
+
+func (s *RuntimeStore) queryOwnedProcesses(where string) ([]ownedProcess, error) {
 	rows, err := s.query(`SELECT id, owner, kind, pid, pgid, process_start, starter, started_at, last_sign_of_life, ended_at, end_reason
-		FROM process_inventory ORDER BY id`)
+		FROM process_inventory ` + where + ` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +111,7 @@ func (s *RuntimeStore) ownedProcesses() ([]ownedProcess, error) {
 // given starter (watchdog and shutdown path). A row whose PID, process group
 // and start time no longer all match is left alone and not counted.
 func stopOwnedChecksByStarter(store *RuntimeStore, starter string) (int, error) {
-	all, err := store.ownedProcesses()
+	all, err := store.openOwnedProcesses()
 	if err != nil {
 		return 0, err
 	}
@@ -225,7 +236,7 @@ func prepareLandingGate(ctx context.Context, owner string) (func(), error) {
 		return nil, fmt.Errorf("gate refused: process inventory unavailable: %w", err)
 	}
 	defer store.Close()
-	rows, err := store.ownedProcesses()
+	rows, err := store.openOwnedProcesses()
 	if err != nil {
 		release()
 		return nil, err

@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -97,15 +99,9 @@ func runProcessJanitor(store *RuntimeStore, agentSilence time.Duration, now time
 // runProcessJanitorFor takes the agent silence limit per project, so each
 // session is flagged against its own project's setting.
 func runProcessJanitorFor(store *RuntimeStore, agentSilence func(projectID string) time.Duration, now time.Time) error {
-	rows, err := store.ownedProcesses()
+	open, err := store.openOwnedProcesses()
 	if err != nil {
 		return err
-	}
-	open := rows[:0]
-	for _, p := range rows {
-		if p.EndedAt == "" {
-			open = append(open, p)
-		}
 	}
 	if len(open) == 0 {
 		return nil
@@ -244,11 +240,18 @@ func latestTime(values ...string) time.Time {
 }
 
 // runProcessJanitor on the daemon logs instead of failing the poll: a broken
-// janitor pass must never stop the daemon from working.
+// janitor pass must never stop the daemon from working. It runs at most once
+// per heartbeat tick: the heartbeat and the polls it starts share one pass.
+// The first pass (startup, adoption of a predecessor's sessions) always runs.
 func (d *Daemon) runProcessJanitor(now time.Time) {
 	if d == nil || d.store == nil {
 		return
 	}
+	last := d.janitorLastAt.Load()
+	if since := now.Sub(time.Unix(0, last)); last != 0 && since >= 0 && since < reconcileLiveCadence/2 {
+		return
+	}
+	d.janitorLastAt.Store(now.UnixNano())
 	if err := runProcessJanitorFor(d.store, projectAgentSilenceLimits(d.store), now); err != nil {
 		log.Printf("process janitor: %v", err)
 	}
@@ -262,10 +265,47 @@ func projectAgentSilenceLimits(store *RuntimeStore) func(string) time.Duration {
 		if limit, ok := cache[projectID]; ok {
 			return limit
 		}
-		_, limit := processSilenceLimits(registeredProjectVault(store, projectID))
+		limit := cachedAgentSilenceLimit(registeredProjectVault(store, projectID))
 		cache[projectID] = limit
 		return limit
 	}
+}
+
+type agentSilenceEntry struct {
+	stamp string
+	limit time.Duration
+}
+
+// agentSilenceByVault keeps each project's agent silence flag across janitor
+// passes; it is reread only when a config layer's mtime or size changes.
+var agentSilenceByVault sync.Map
+
+func cachedAgentSilenceLimit(vault string) time.Duration {
+	if strings.TrimSpace(vault) == "" {
+		_, limit := processSilenceLimits(vault)
+		return limit
+	}
+	stamp := tuskerConfigStamp(vault)
+	if cached, ok := agentSilenceByVault.Load(vault); ok && cached.(agentSilenceEntry).stamp == stamp {
+		return cached.(agentSilenceEntry).limit
+	}
+	_, limit := processSilenceLimits(vault)
+	agentSilenceByVault.Store(vault, agentSilenceEntry{stamp: stamp, limit: limit})
+	return limit
+}
+
+// tuskerConfigStamp fingerprints the config layers processSilenceLimits
+// reads by path, mtime and size, without reading them.
+func tuskerConfigStamp(vault string) string {
+	var b strings.Builder
+	for _, path := range []string{userGlobalTuskerConfigPath(), managedTuskerConfigPath(vault), managedTuskerLocalConfigPath(vault)} {
+		b.WriteString(path)
+		if info, err := os.Stat(path); err == nil {
+			fmt.Fprintf(&b, "@%d:%d", info.ModTime().UnixNano(), info.Size())
+		}
+		b.WriteString(";")
+	}
+	return b.String()
 }
 
 // registeredProjectVault returns a registered project's vault root, or "" when

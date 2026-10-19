@@ -51,6 +51,7 @@ type Daemon struct {
 	frontierHints              map[string][]daemonControlChange
 	frontierScannedAt          map[string]time.Time
 	frontierWriteGeneration    map[string]uint64
+	interactionReads           map[string]bool // frontierMu; see controlReconcileProject
 	pollPreferFrontier         bool
 	pollFrontierChanged        bool
 	attentionLastPoll          map[string]time.Time
@@ -86,6 +87,8 @@ type Daemon struct {
 	completionAuthorityKey map[string]ed25519.PrivateKey
 	codexExecIngestMu      sync.Mutex
 	codexExecIngest        map[string]*codexExecIngestState
+	// janitorLastAt (UnixNano) lets one janitor pass serve a whole tick.
+	janitorLastAt atomic.Int64
 }
 
 const (
@@ -313,7 +316,8 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 				}
 				continue
 			}
-			d.noteProjectActivity(projectID, "cli_mutation", time.Now().UTC())
+			// scheduleProjectReconcile already marked the project active with
+			// the wake's cause; this poll serves CLI, runner and UI wakes alike.
 			if err := d.runPoll(runCtx, projectID); err != nil {
 				return err
 			}
@@ -322,10 +326,16 @@ func (d *Daemon) Run(ctx context.Context, once bool) error {
 }
 
 // controlReconcileProject handles a project wake from the CLI, a runner, or
-// the UI. A UI interaction carries no change: it asks for one full rescan,
-// and the poll refreshes Serve only if that rescan finds a change.
+// the UI. A UI interaction carries no change: it asks for one plain full read,
+// not a change hint, so the poll advances wave frontiers and refreshes Serve
+// only if that read finds changed records.
 func (d *Daemon) controlReconcileProject(req daemonControlRequest) {
-	d.recordFrontierHint(req.ProjectID, req.Changes)
+	interaction := req.Cause == serveInteractionCause && len(req.Changes) == 0
+	if interaction {
+		d.noteInteractionRead(req.ProjectID)
+	} else {
+		d.recordFrontierHint(req.ProjectID, req.Changes)
+	}
 	if d.serve != nil && req.Cause != serveInteractionCause {
 		if daemonControlChangesRuntimeOnly(req.Changes) {
 			d.serve.refreshProjectRuntimeSnapshot(req.ProjectID)
@@ -334,6 +344,29 @@ func (d *Daemon) controlReconcileProject(req daemonControlRequest) {
 		}
 	}
 	d.scheduleProjectReconcile(req.ProjectID)
+	if cause := strings.TrimSpace(req.Cause); cause != "" {
+		d.noteProjectActivity(req.ProjectID, cause, time.Now().UTC())
+	}
+}
+
+func (d *Daemon) noteInteractionRead(projectID string) {
+	if d == nil || strings.TrimSpace(projectID) == "" {
+		return
+	}
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	if d.interactionReads == nil {
+		d.interactionReads = map[string]bool{}
+	}
+	d.interactionReads[projectID] = true
+}
+
+func (d *Daemon) takeInteractionRead(projectID string) bool {
+	d.frontierMu.Lock()
+	defer d.frontierMu.Unlock()
+	pending := d.interactionReads[projectID]
+	delete(d.interactionReads, projectID)
+	return pending
 }
 
 // Heartbeat-triggered polls maintain live runs from the existing frontier.
@@ -362,9 +395,7 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		log.Printf("daemon poll: project=%s duration=%s error=%v", firstNonEmpty(strings.TrimSpace(projectID), "*"), elapsed, err)
 	}
 	d.recordPollSchedule(projectID, time.Now().UTC())
-	if projectID != "" {
-		d.recordProjectSignature(projectID)
-	}
+	d.recordPolledProjectSignatures(projectID)
 	var typed *TuskerError
 	if errors.As(err, &typed) && typed.Code == "CAS_CONFLICT" {
 		return nil
@@ -373,6 +404,27 @@ func (d *Daemon) runPoll(ctx context.Context, projectID string) error {
 		d.persistSelfServiceSchedules(projectID)
 	}
 	return err
+}
+
+// recordPolledProjectSignatures retakes the edit baseline for every project
+// the poll covered, so the daemon's own writes never read as outside edits.
+func (d *Daemon) recordPolledProjectSignatures(projectID string) {
+	if projectID != "" {
+		d.recordProjectSignature(projectID)
+		return
+	}
+	if d == nil || d.store == nil {
+		return
+	}
+	loaded, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{MetadataOnly: true})
+	if err != nil {
+		return
+	}
+	for _, project := range loaded {
+		if project.Project.Enabled {
+			d.recordProjectSignature(project.Project.ProjectID)
+		}
+	}
 }
 
 func (d *Daemon) feedWatchdogBeat(now time.Time) error {
@@ -1247,8 +1299,12 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 	var projects []loadedRegisteredProject
 	warmProjectID := ""
 	// A hint is a CLI change or a runner report: a wave frontier advance event.
+	// A UI interaction read is a plain full read: it advances frontiers only
+	// when rebuildFrontier finds changed records.
 	hinted := false
+	interactionRead := false
 	if projectID != "" {
+		interactionRead = d.takeInteractionRead(projectID)
 		if changes := d.takeFrontierHint(projectID); len(changes) > 0 {
 			hinted = true
 			d.pollFrontierChanged = !daemonControlChangesRuntimeOnly(changes)
@@ -1532,7 +1588,7 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			}
 			// The frontier advances on a full read, a CLI or runner event, a
 			// changed task, or a settled run; never on a bare heartbeat poll.
-			advance := project.ProjectID != warmProjectID || hinted || d.pollFrontierChanged
+			advance := (project.ProjectID != warmProjectID && !interactionRead) || hinted || d.pollFrontierChanged
 			for recordID, run := range projectRuns {
 				if advance {
 					break
@@ -1540,6 +1596,9 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 				advance = leaseBefore[recordID] != run.LeaseState+strconv.FormatBool(run.Terminal)
 			}
 			if advance {
+				if waveFrontierAdvanceObserver != nil {
+					waveFrontierAdvanceObserver(project.ProjectID)
+				}
 				if err := d.advanceAuthorizedWaveFrontiersFromNotes(project, notes); err != nil {
 					return err
 				}
@@ -2013,11 +2072,15 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			// Typed review results are consumed before the ordinary wave drain so an
 			// authoritative project has exactly one completion authority.  Legacy,
 			// disabled, and shadow modes are no-ops inside the reactor.
-			if err := d.reconcileReviewCompletion(ctx, project, wfFile.Data); err != nil {
-				if errorToIssue(err).Code != completionRepairRequiredError {
-					return err
+			// Only a task in review can consume a result; with none, skip the
+			// reactor and its whole-vault load.
+			if notesHaveTaskInReview(notes) {
+				if err := d.reconcileReviewCompletion(ctx, project, wfFile.Data); err != nil {
+					if errorToIssue(err).Code != completionRepairRequiredError {
+						return err
+					}
+					log.Printf("completion reactor: project=%s repair_required: %v", project.ProjectID, err)
 				}
-				log.Printf("completion reactor: project=%s repair_required: %v", project.ProjectID, err)
 			}
 			if err := d.store.DeleteRunsNotIn(project.ProjectID, keep); err != nil {
 				return err
@@ -2081,6 +2144,18 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 		}
 	}
 	return nil
+}
+
+// waveFrontierAdvanceObserver is a test hook on each poll's frontier advance.
+var waveFrontierAdvanceObserver func(projectID string)
+
+func notesHaveTaskInReview(notes []Note) bool {
+	for _, note := range notes {
+		if daemonNoteKind(note) == "task" && stringField(note.Data, "status") == "review" {
+			return true
+		}
+	}
+	return false
 }
 
 func daemonProjectPollErrorIsSkippable(err error) bool {
@@ -2216,8 +2291,8 @@ func (d *Daemon) reclaimExpiredDispatchCapacity(runs []RunStatus, now time.Time)
 		if changed {
 			reclaimed = true
 			if enabled[run.ProjectID] {
-				// Freed capacity wakes the affected project promptly instead
-				// of waiting for its next periodic tick.
+				// Freed capacity marks the project active; it schedules no
+				// poll itself. The heartbeat polls it if a run waits for room.
 				d.noteProjectActivity(run.ProjectID, "capacity_reclaimed", now)
 			}
 		}
