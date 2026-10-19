@@ -231,6 +231,7 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 
 	t.Run("runner_capacity_blocks_only_that_runner_with_stable_reason", func(t *testing.T) {
 		store := fairDispatchTestStore(t)
+		registerFairDispatchTestProjects(t, store, "project-holder", "project-a", "project-b")
 		active := fairDispatchTestRun("project-holder", "H-T-0001")
 		active.LeaseState, active.LeaseOwner = string(LeaseStateRunning), "holder"
 		if err := store.UpsertRun(active); err != nil {
@@ -261,6 +262,7 @@ func TestFairMultiProjectDispatch(t *testing.T) {
 
 	t.Run("capacity_reason_is_stable_and_does_not_churn", func(t *testing.T) {
 		store := fairDispatchTestStore(t)
+		registerFairDispatchTestProjects(t, store, "project-a")
 		active := fairDispatchTestRun("project-a", "A-T-0001")
 		active.LeaseState = string(LeaseStateRunning)
 		active.LeaseOwner = "attempt-a"
@@ -910,6 +912,17 @@ func fairDispatchTestStore(t *testing.T) *RuntimeStore {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+// registerFairDispatchTestProjects registers project IDs so their runs count
+// toward capacity; runs of unregistered projects are ignored.
+func registerFairDispatchTestProjects(t *testing.T, store *RuntimeStore, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		if err := store.UpsertProject(RegisteredProject{ProjectID: id, Name: id, RepoRoot: t.TempDir(), VaultRoot: t.TempDir()}); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func fairDispatchTestRun(projectID, taskID string) RunStatus {
