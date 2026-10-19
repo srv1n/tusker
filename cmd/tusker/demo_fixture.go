@@ -1,5 +1,10 @@
 package main
 
+import (
+	"path"
+	"strings"
+)
+
 // Deterministic demo fixture: one standalone smoke task plus three waves,
 // thirteen tasks total.
 //
@@ -105,6 +110,13 @@ func demoCrossScopeDeps() map[string][][2]string {
 	}
 }
 
+func (task demoTaskDef) ownedPaths() []string {
+	stem := strings.TrimSuffix(path.Base(task.Artifact), path.Ext(task.Artifact))
+	stem = strings.ReplaceAll(stem, "-", "_")
+	dir := path.Dir(task.Artifact)
+	return []string{task.Artifact, path.Join(dir, stem+".py"), path.Join(dir, "test_"+stem+".py")}
+}
+
 // demoTaskContext renders the bounded per-task context promised by the
 // real-work packet: files to inspect, owned paths, non-goals, exact
 // verification and review requirements. It links to the shared fictional
@@ -113,10 +125,10 @@ func demoTaskContext(wave demoWaveDef, task demoTaskDef) string {
 	check := `test "$(cat ` + task.Artifact + `)" = "` + task.Content + `"`
 	context := "Context: sample product Fixture Cafe; read .tusker/specs/fixture-cafe/overview.md before implementing.\n" +
 		"Files to inspect: " + task.Artifact + " and its wave siblings under " + demoTaskDir(task.Artifact) + ".\n" +
-		"Owned paths: " + task.Artifact + " (never edit task status files or sibling outputs).\n" +
+		"Owned paths: " + strings.Join(task.ownedPaths(), ", ") + " (never edit task status files or sibling outputs).\n" +
 		"Non-goals: no work outside " + demoTaskDir(task.Artifact) + ", no new dependencies, no credential handling.\n" +
 		"Exact verification (offline): " + check + ".\n" +
-		"Real-harness work: implement the outcome above in " + demoTaskDir(task.Artifact) + "/, run `python3 sample/tools/wait_progress.py` so progress is visible (~60s default, --short for cheap runs), execute the real tests, commit the owned artifact, then submit through the ordinary CLI.\n" +
+		"Real-harness work: implement the outcome above in the owned module and test files, run `python3 sample/tools/wait_progress.py` so progress is visible (~60s default, --short for cheap runs), execute the real tests, commit the owned files, then submit through the ordinary CLI.\n" +
 		"Review: independent review lane must accept before close; reviewer re-runs the exact verification."
 	if task.Key == "s1" {
 		context += "\nSession demo: before smoke work, if sample/standalone/session-ask.txt exists, read it and call the Tusker MCP ask tool to operator with its exact question and wait_seconds. Do not create or edit that marker. If the answer is pending, leave the run waiting on the operator. After the answer, continue the smoke work in this same session."

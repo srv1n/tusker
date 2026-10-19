@@ -411,7 +411,7 @@ func demoRenderWaveAuthoring(repoRoot string, wave demoWaveDef, withGate bool) (
 			"work_level":        demoWorkLevel(task.Complexity),
 			"body":              demoTaskBody(wave, task),
 			"epic":              wave.Epic,
-			"owned_paths":       []string{task.Artifact},
+			"owned_paths":       task.ownedPaths(),
 			"generated_outputs": []string{task.Artifact},
 		}
 		var deps []map[string]any
