@@ -186,6 +186,9 @@ func (s *serveServer) handleExecutionInbox(w http.ResponseWriter, r *http.Reques
 		serveJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	if views == nil {
+		views = []ExecutionView{} // encode as [], not null: the UI reads executions.length
+	}
 	serveJSON(w, http.StatusOK, map[string]any{"schema": executionGraphSchema, "executions": views, "read_only": true})
 }
 
