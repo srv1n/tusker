@@ -205,7 +205,12 @@ func TestServeWarmRecoveryPreflightUsesRequestIndex(t *testing.T) {
 	if loads != 0 {
 		t.Fatalf("warm recovery controls loaded the vault %d times", loads)
 	}
-	if err := writeText(filepath.Join(server.repoRoot, "docs", "specs", "test-fixture.md"), "# Changed authorization material\n"); err != nil {
+	// Spec text is not material (M5); a member's promised scope is.
+	data["owned_paths"] = []any{"src/changed-scope"}
+	if text, err = serializeDocument(data, body, v7FrontmatterOrder["task"]); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeText(taskPath, text); err != nil {
 		t.Fatal(err)
 	}
 	// Actual mutation admission still reads fresh material, even after a warm
@@ -331,7 +336,9 @@ func TestServeFactoryAndReviewShareSnapshotMaterialReads(t *testing.T) {
 		t.Fatalf("runtime summaries rebuilt metadata: index=%d docs=%d builds=%d", indexLoads, docsWalks, server.snapshots["app"].buildCount)
 	}
 	oldFingerprint := factory.Authority.Waves[0].CurrentFingerprint
-	if err := writeText(filepath.Join(server.repoRoot, "docs", "specs", "test-fixture.md"), "# Updated governing material\n"); err != nil {
+	// Spec text is not material (M5), but whether a cited spec resolves is,
+	// and that changes without a metadata rebuild.
+	if err := os.Remove(filepath.Join(server.repoRoot, "docs", "specs", "test-fixture.md")); err != nil {
 		t.Fatal(err)
 	}
 	serveDecode(t, server, "/api/factory-operations?project=app", &factory)
