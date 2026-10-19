@@ -112,8 +112,12 @@ final class TuskerBarTests: XCTestCase {
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .running), .restart)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .checking), .ignore)
         XCTAssertEqual(RuntimeLaunchPlan.terminationAction(for: .failed("boom")), .ignore)
-        XCTAssertTrue(RuntimeLaunchPlan.shouldReuseHealthyRuntime(childRunning: true))
-        XCTAssertFalse(RuntimeLaunchPlan.shouldReuseHealthyRuntime(childRunning: false))
+        let installed = Date(timeIntervalSince1970: 1_000)
+        let bundled = "/Apps/TuskerBar.app/Contents/Resources/tusker"
+        XCTAssertTrue(RuntimeLaunchPlan.shouldReuseHealthyRuntime(daemonExecutable: bundled, daemonStarted: installed.addingTimeInterval(60), bundledExecutable: bundled, bundledModified: installed))
+        XCTAssertFalse(RuntimeLaunchPlan.shouldReuseHealthyRuntime(daemonExecutable: bundled, daemonStarted: installed.addingTimeInterval(-60), bundledExecutable: bundled, bundledModified: installed), "an app update replaces the older daemon")
+        XCTAssertFalse(RuntimeLaunchPlan.shouldReuseHealthyRuntime(daemonExecutable: "/usr/local/bin/tusker", daemonStarted: installed.addingTimeInterval(60), bundledExecutable: bundled, bundledModified: installed))
+        XCTAssertFalse(RuntimeLaunchPlan.shouldReuseHealthyRuntime(daemonExecutable: nil, daemonStarted: nil, bundledExecutable: bundled, bundledModified: installed))
     }
 
     func testRuntimeLogRedactionCoversQuotedAndSpacedSecrets() {
@@ -170,34 +174,6 @@ safe=visible
             let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
             XCTAssertLessThanOrEqual(size, 512 * 1024, file.lastPathComponent)
         }
-    }
-
-    func testRuntimePipeDrainWritesShortLineAndReportsUnsafeLogPath() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("tusker-log-drain-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: home) }
-        let writer = try RuntimeLogWriter(home: home.path)
-        let pipe = Pipe()
-        let drain = RuntimePipeDrain()
-        let drained = expectation(description: "short pipe read returns before EOF")
-        DispatchQueue.global().async {
-            drain.consume(reader: pipe.fileHandleForReading, writer: writer)
-            drained.fulfill()
-        }
-        pipe.fileHandleForWriting.write(Data("startup line\n".utf8))
-        let result = XCTWaiter.wait(for: [drained], timeout: 1)
-        pipe.fileHandleForWriting.closeFile()
-        XCTAssertEqual(result, .completed)
-
-        let logs = home.appendingPathComponent("Library/Application Support/tusker/logs")
-        let current = logs.appendingPathComponent("app-daemon.log")
-        XCTAssertEqual(try String(contentsOf: current, encoding: .utf8), "startup line\n")
-        try FileManager.default.removeItem(at: current)
-        try FileManager.default.createSymbolicLink(at: current, withDestinationURL: logs.appendingPathComponent("elsewhere"))
-        writer.append(Data("must not follow link\n".utf8))
-        let errorFile = logs.appendingPathComponent("app-daemon.log-error")
-        XCTAssertTrue(try String(contentsOf: errorFile, encoding: .utf8).contains("open log handle lost owner-only authority"))
-        let mode = try FileManager.default.attributesOfItem(atPath: errorFile.path)[.posixPermissions] as? NSNumber
-        XCTAssertEqual(mode?.intValue, 0o600)
     }
 
     func testRuntimeLaunchPlanRequiresExplicitRetryAfterFailure() {

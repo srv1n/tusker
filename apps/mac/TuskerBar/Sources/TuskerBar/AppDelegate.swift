@@ -135,7 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Open in Browser", action: #selector(openTusker), keyEquivalent: "")
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit TuskerBar", action: #selector(quit), keyEquivalent: "q")
+        menu.addItem(withTitle: AppDelegate.quitAppTitle, action: #selector(quit), keyEquivalent: "q")
+        menu.addItem(withTitle: AppDelegate.quitAllTitle, action: #selector(quitAndStopAll), keyEquivalent: "")
         for item in menu.items { item.target = self }
         return menu
     }
@@ -161,7 +162,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openFullScreen() { mainWindow.enterFullScreen() }
     @objc private func openTusker() { NSWorkspace.shared.open(config.baseURL) }
     @objc private func openSettings() { settings.show(config: config) }
+    // Closing windows or quitting the app leaves the daemon and its agents
+    // running (the daemon runs in its own session). Only "Quit Tusker" stops
+    // everything, through the same `tusker stop --all` as the CLI.
+    static let quitAppTitle = "Quit TuskerBar (Keep Agents Running)"
+    static let quitAllTitle = "Quit Tusker and Stop All Agents…"
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func quitAndStopAll() {
+        let confirm = NSAlert()
+        confirm.messageText = "Stop Tusker and all agents?"
+        confirm.informativeText = "This stops the daemon, every running agent session and every check Tusker started, then quits TuskerBar."
+        confirm.addButton(withTitle: "Stop All and Quit")
+        confirm.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        Task {
+            do {
+                _ = try await RuntimeSupervisor.shared.stopEverything()
+                NSApp.terminate(nil)
+            } catch {
+                let failed = NSAlert()
+                failed.messageText = "Tusker could not stop everything"
+                failed.informativeText = error.localizedDescription
+                failed.runModal()
+            }
+        }
+    }
 
     private func connectStream() {
         let streamURL = config.baseURL.appendingPathComponent("api/stream")
@@ -211,7 +237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit TuskerBar", action: #selector(quit), keyEquivalent: "q")
+        appMenu.addItem(withTitle: AppDelegate.quitAppTitle, action: #selector(quit), keyEquivalent: "q")
+        appMenu.addItem(withTitle: AppDelegate.quitAllTitle, action: #selector(quitAndStopAll), keyEquivalent: "")
         appItem.submenu = appMenu
 
         let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")

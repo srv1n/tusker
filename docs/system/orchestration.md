@@ -127,6 +127,27 @@ starter.
 
 The full rules are in the `process-containment` spec.
 
+### Daemon lifecycle and stopping everything
+
+TuskerBar starts the bundled daemon in its own session, writing straight to
+`logs/app-daemon.log`, so closing a window or quitting the app leaves the
+daemon and its agents running. A relaunched app adopts a healthy daemon that
+runs its bundled runtime and started after that runtime was installed;
+otherwise it replaces it. "Launch at login" in Settings registers the app as a
+login item, which starts the daemon after login.
+
+- **Quit TuskerBar (Keep Agents Running)** (⌘Q) quits only the app.
+- **Quit Tusker and Stop All Agents…** and `tusker stop --all` stop the daemon
+  (control socket, then TERM and KILL of the receipt PID when its start time
+  matches), then stop every open inventory process group, agent sessions and
+  checks, TERM then KILL. Each row ends with `operator_stopped_all` and a
+  process event. It works when the daemon is already dead. A row whose
+  identity no longer matches is reported and left running.
+- A force-killed app does not reach the daemon. A force-killed daemon is
+  cleaned up at its next start by the janitor: checks whose starter died are
+  stopped, agent sessions whose run is still live are adopted, and sessions
+  whose run is gone are stopped.
+
 ## Interactive work
 
 A user-opened session implements the current request itself. It must not start

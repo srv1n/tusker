@@ -40,8 +40,13 @@ enum RuntimeLaunchPlan {
         }
     }
 
-    static func shouldReuseHealthyRuntime(childRunning: Bool) -> Bool {
-        childRunning
+    /// A healthy daemon is adopted when it runs this bundle's runtime and was
+    /// started after that runtime was installed; otherwise it is replaced. The
+    /// daemon outlives the app (M8), so a relaunched app must adopt, not restart.
+    static func shouldReuseHealthyRuntime(daemonExecutable: String?, daemonStarted: Date?,
+                                          bundledExecutable: String, bundledModified: Date?) -> Bool {
+        guard let daemonExecutable, let daemonStarted, let bundledModified else { return false }
+        return daemonExecutable == bundledExecutable && daemonStarted >= bundledModified
     }
 
     static func manages(_ baseURL: URL) -> Bool {
@@ -116,9 +121,9 @@ final class RuntimeSupervisor {
     private let config: AppConfig
     private var startupTask: Task<Void, Never>?
     private var monitorTask: Task<Void, Never>?
-    private var process: Process?
-    private var logPipe: Pipe?
-    private var logWriter: RuntimeLogWriter?
+    /// The daemon this app instance spawned, while it runs. A daemon left by an
+    /// earlier app instance is adopted by health and receipt, not by PID here.
+    private var childPID: pid_t?
     private var lastExitCode: Int32?
     private lazy var healthSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -178,7 +183,7 @@ final class RuntimeSupervisor {
         state = .checking
         startupTask = Task { [weak self] in
             guard let self else { return }
-            if await self.isHealthy(), RuntimeLaunchPlan.shouldReuseHealthyRuntime(childRunning: self.process?.isRunning == true) {
+            if await self.isHealthy(), self.childPID != nil || self.runningDaemonIsBundled() {
                 self.state = .running
                 self.startupTask = nil
                 self.startMonitoring()
@@ -260,9 +265,6 @@ final class RuntimeSupervisor {
             throw RuntimeStartupError("The bundled Tusker runtime isn't executable. Reinstall the app.")
         }
 
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = ["daemon", "run"]
         var environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment)
         if environment["TUSKER_SERVE_OPERATOR"]?.isEmpty != false {
             environment["TUSKER_SERVE_OPERATOR"] = "human:\(NSUserName())"
@@ -270,105 +272,157 @@ final class RuntimeSupervisor {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         environment["HOME"] = home
         environment["PATH"] = RuntimeLaunchPlan.path(home: home, inherited: environment["PATH"])
-        process.environment = environment
 
-        let writer = try RuntimeLogWriter(home: home)
-        let pipe = Pipe()
-        let drain = RuntimePipeDrain()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { reader in
-            drain.consume(reader: reader, writer: writer)
-        }
-        process.terminationHandler = { [weak self] process in
-            Task { @MainActor in
-                guard let self, self.process === process else { return }
-                // Drain the pipe before closing the file so the final crash
-                // diagnostics survive a fast child exit.
-                pipe.fileHandleForReading.readabilityHandler = nil
-                drain.finish(reader: pipe.fileHandleForReading, writer: writer)
-                self.lastExitCode = process.terminationStatus
-                self.process = nil
-                self.logWriter = nil
-                self.logPipe?.fileHandleForReading.readabilityHandler = nil
-                self.logPipe = nil
-                switch RuntimeLaunchPlan.terminationAction(for: self.state) {
-                case .restart:
-                    self.ensureRunning(force: true)
-                case .finishStartup:
-                    self.startupTask?.cancel()
-                    self.startupTask = Task { [weak self] in
-                        guard let self else { return }
-                        // A competing daemon may have won the startup race. Give
-                        // it one final probe before surfacing the child exit.
-                        if await self.isHealthy() {
-                            self.state = .running
-                            self.startupTask = nil
-                            self.startMonitoring()
-                        } else {
-                            self.state = .failed(self.startupFailureMessage())
-                            self.startupTask = nil
-                        }
-                    }
-                case .ignore:
-                    break
-                }
-            }
-        }
-        self.process = process
-        logWriter = writer
-        logPipe = pipe
-        do {
-            try process.run()
-        } catch {
-            if self.process === process { self.process = nil }
-            pipe.fileHandleForReading.readabilityHandler = nil
-            if self.logPipe === pipe { self.logPipe = nil }
-            writer.finish(Data())
-            if self.logWriter === writer { self.logWriter = nil }
-            throw error
+        // Rotate and redact the previous log, then hand the daemon the log file
+        // itself. A pipe would tie the daemon to the app: once the app quit,
+        // the daemon's next log line died of SIGPIPE.
+        // ponytail: lines written while the app is not running are redacted and
+        // size-bounded only at the next launch; add a daemon-side log sink if
+        // that matters.
+        try RuntimeLogWriter(home: home).finish(Data())
+        let logPath = RuntimeLogWriter.currentURL(home: home).path
+        let logFD = open(logPath, O_WRONLY | O_APPEND | O_NOFOLLOW)
+        guard logFD >= 0 else { throw RuntimeStartupError("Couldn't open \(logPath) for the daemon log.") }
+        defer { Darwin.close(logFD) }
+        let pid = try Self.spawnDetached(executable.path, ["daemon", "run"], environment: environment, logFD: logFD)
+        childPID = pid
+        Thread.detachNewThread { [weak self] in
+            var status: Int32 = 0
+            while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+            let code = (status & 0x7f) == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
+            Task { @MainActor in self?.childExited(pid: pid, code: code) }
         }
     }
 
-    private func stopExistingDaemon() async throws {
-        guard let executable = RuntimeLaunchPlan.executableURL(in: .main) else {
-            throw RuntimeStartupError("The app bundle is missing its Tusker runtime. Reinstall with `make install`.")
-        }
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = ["daemon", "stop", "--json"]
-        var environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment)
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        environment["HOME"] = home
-        environment["PATH"] = RuntimeLaunchPlan.path(home: home, inherited: environment["PATH"])
-        process.environment = environment
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { _ in continuation.resume() }
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
+    private func childExited(pid: pid_t, code: Int32) {
+        guard childPID == pid else { return }
+        lastExitCode = code
+        childPID = nil
+        switch RuntimeLaunchPlan.terminationAction(for: state) {
+        case .restart:
+            ensureRunning(force: true)
+        case .finishStartup:
+            startupTask?.cancel()
+            startupTask = Task { [weak self] in
+                guard let self else { return }
+                // A competing daemon may have won the startup race. Give
+                // it one final probe before surfacing the child exit.
+                if await self.isHealthy() {
+                    self.state = .running
+                    self.startupTask = nil
+                    self.startMonitoring()
+                } else {
+                    self.state = .failed(self.startupFailureMessage())
+                    self.startupTask = nil
+                }
             }
+        case .ignore:
+            break
         }
-        guard process.terminationStatus == 0 else {
+    }
+
+    /// Spawns the daemon in its own session with only stdin (/dev/null),
+    /// stdout and stderr (the log) open, so quitting or force-killing the app
+    /// never reaches it.
+    private static func spawnDetached(_ path: String, _ arguments: [String], environment: [String: String], logFD: Int32) throws -> pid_t {
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr)
+        defer { posix_spawnattr_destroy(&attr) }
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
+        var noMask: sigset_t = 0
+        posix_spawnattr_setsigmask(&attr, &noMask)
+        var defaults: sigset_t = [SIGPIPE, SIGTERM, SIGINT, SIGHUP].reduce(0) { $0 | (1 << ($1 - 1)) }
+        posix_spawnattr_setsigdefault(&attr, &defaults)
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, logFD, 1)
+        posix_spawn_file_actions_adddup2(&actions, logFD, 2)
+        let argv: [UnsafeMutablePointer<CChar>?] = ([path] + arguments).map { strdup($0) } + [nil]
+        let envp: [UnsafeMutablePointer<CChar>?] = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer { (argv + envp).forEach { free($0) } }
+        var pid: pid_t = 0
+        let result = posix_spawn(&pid, path, &actions, &attr, argv, envp)
+        guard result == 0 else {
+            throw RuntimeStartupError("Couldn't launch the bundled daemon: \(String(cString: strerror(result)))")
+        }
+        return pid
+    }
+
+    /// Whether the daemon named by the receipt runs this bundle's runtime and
+    /// started after it was installed (so an app update still replaces it).
+    private func runningDaemonIsBundled() -> Bool {
+        guard let receipt = receiptLiveness(), let executable = RuntimeLaunchPlan.executableURL(in: .main) else { return false }
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = proc_pidpath(Int32(receipt.pid), &buffer, UInt32(buffer.count))
+        let daemonPath = length > 0 ? URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path : nil
+        let bundled = executable.resolvingSymlinksInPath().path
+        let modified = (try? FileManager.default.attributesOfItem(atPath: bundled))?[.modificationDate] as? Date
+        return RuntimeLaunchPlan.shouldReuseHealthyRuntime(
+            daemonExecutable: daemonPath, daemonStarted: receipt.startedDate,
+            bundledExecutable: bundled, bundledModified: modified)
+    }
+
+    /// Stops the daemon and every process Tusker started (`tusker stop --all`).
+    /// The supervisor goes idle first so it does not relaunch the daemon.
+    func stopEverything() async throws -> String {
+        startupTask?.cancel()
+        monitorTask?.cancel()
+        startupTask = nil
+        monitorTask = nil
+        state = .idle
+        let (status, output) = try await runBundled(["stop", "--all"])
+        guard status == 0 else {
+            throw RuntimeStartupError(output.isEmpty ? "tusker stop --all failed (exit \(status))." : output)
+        }
+        return output
+    }
+
+    private func stopExistingDaemon() async throws {
+        let (status, _) = try await runBundled(["daemon", "stop", "--json"])
+        guard status == 0 else {
             throw RuntimeStartupError("TuskerBar could not replace the existing local daemon.")
         }
     }
 
+    private func runBundled(_ arguments: [String]) async throws -> (Int32, String) {
+        guard let executable = RuntimeLaunchPlan.executableURL(in: .main) else {
+            throw RuntimeStartupError("The app bundle is missing its Tusker runtime. Reinstall with `make install`.")
+        }
+        var environment = RuntimeLaunchPlan.daemonEnvironment(inheriting: ProcessInfo.processInfo.environment)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        environment["HOME"] = home
+        environment["PATH"] = RuntimeLaunchPlan.path(home: home, inherited: environment["PATH"])
+        let launchEnvironment = environment
+        return try await Task.detached {
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = arguments
+            process.environment = launchEnvironment
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (process.terminationStatus, output)
+        }.value
+    }
+
     private func startupFailureMessage() -> String {
-        if let process, let liveness = receiptLiveness(for: process), liveness.serveEnabled {
+        if childPID != nil, let liveness = receiptLiveness(), liveness.serveEnabled {
             return "The bundled runtime bound http://\(liveness.serveAddr), but TuskerBar is configured for \(config.baseURL.absoluteString). Match runtime.serve.addr to the configured local URL."
         }
         let suffix = lastExitCode.map { " (exit \($0))" } ?? ""
         return "The bundled daemon didn't become ready\(suffix). See ~/Library/Application Support/tusker/logs/app-daemon.log."
     }
 
-    private func receiptLiveness(for child: Process) -> RuntimeReceiptLiveness? {
-        let environment = child.environment ?? [:]
-        let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
-        let stateRoot = environment["TUSKER_STATE_ROOT"] ?? "\(home)/Library/Application Support/tusker"
+    private func receiptLiveness() -> RuntimeReceiptLiveness? {
+        let environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let stateRoot = environment["TUSKER_STATE_ROOT"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? "\(home)/Library/Application Support/tusker"
         let pidPath = URL(fileURLWithPath: stateRoot).appendingPathComponent("daemon.pid")
         guard let data = try? Data(contentsOf: pidPath) else { return nil }
         return try? JSONDecoder().decode(RuntimeReceiptLiveness.self, from: data)
@@ -377,35 +431,22 @@ final class RuntimeSupervisor {
 
 private struct RuntimeReceiptLiveness: Decodable {
     let pid: Int
+    let startedAt: String?
     let serveEnabled: Bool
     let serveAddr: String
 
     enum CodingKeys: String, CodingKey {
         case pid
+        case startedAt = "started_at"
         case serveEnabled = "serve_enabled"
         case serveAddr = "serve_addr"
     }
-}
 
-final class RuntimePipeDrain: @unchecked Sendable {
-    private let lock = NSLock()
-    private var finished = false
-
-    func consume(reader: FileHandle, writer: RuntimeLogWriter) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !finished else { return }
-        var bytes = [UInt8](repeating: 0, count: 64 * 1024)
-        let count = Darwin.read(reader.fileDescriptor, &bytes, bytes.count)
-        if count > 0 { writer.append(Data(bytes.prefix(count))) }
-    }
-
-    func finish(reader: FileHandle, writer: RuntimeLogWriter) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !finished else { return }
-        finished = true
-        writer.finish(reader.readDataToEndOfFile())
+    var startedDate: Date? {
+        guard let startedAt else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: startedAt) ?? ISO8601DateFormatter().date(from: startedAt)
     }
 }
 
@@ -428,12 +469,17 @@ final class RuntimeLogWriter: @unchecked Sendable {
     private var discardingLongLine = false
     private var closed = false
 
+    static func currentURL(home: String) -> URL {
+        URL(fileURLWithPath: home).standardizedFileURL
+            .appendingPathComponent("Library/Application Support/tusker/logs", isDirectory: true)
+            .appendingPathComponent("app-daemon.log")
+    }
+
     init(home: String) throws {
         let homeURL = URL(fileURLWithPath: home).standardizedFileURL
         self.home = homeURL
-        directory = homeURL
-            .appendingPathComponent("Library/Application Support/tusker/logs", isDirectory: true)
-        current = directory.appendingPathComponent("app-daemon.log")
+        current = Self.currentURL(home: home)
+        directory = current.deletingLastPathComponent()
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try Self.validateDirectoryChain(home: homeURL)
         try Self.validateDirectory(directory)

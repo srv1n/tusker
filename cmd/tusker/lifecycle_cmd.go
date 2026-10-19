@@ -279,7 +279,10 @@ func reviewCmd(args Args) error {
 // a daemon run you do not own. On a wave it pauses admission; on a batch it
 // stops the workers (--drain lets them finish).
 func stopCmd(args Args) error {
-	id := strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0")))
+	if args.Bool("all") {
+		return stopAllCmd(args)
+	}
+	id :=strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0")))
 	if v7TaskIDPattern.MatchString(strings.ToUpper(id)) || strings.HasPrefix(strings.ToUpper(id), "W-") {
 		id = strings.ToUpper(id)
 	}
