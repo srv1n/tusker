@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -249,6 +250,78 @@ func TestArmedWaveReviewDependencyReadsSharedCheckoutRecord(t *testing.T) {
 			// Both modes land per task, so the leftover wave branch is history.
 			if got := armedWaveReviewDependencyBlocker(vault, dependent); got != "" {
 				t.Fatalf("%s dependency closed on the checkout still blocked review: %q", strategy, got)
+			}
+		})
+	}
+}
+
+// TestArmedWaveCacheSeesDependencyClosedElsewhere warms every cross-poll cache
+// a daemon pass reads (shared note cache, wave check index, ref note cache),
+// then closes the dependency the way a separate CLI process would: a raw file
+// rewrite with no in-process write generation bump. The next pass must see it,
+// even when the rewrite keeps the size and the mtime.
+func TestArmedWaveCacheSeesDependencyClosedElsewhere(t *testing.T) {
+	for _, sameStat := range []bool{false, true} {
+		t.Run(map[bool]string{false: "rewrite", true: "same-size-and-mtime"}[sameStat], func(t *testing.T) {
+			_, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+			wf := defaultWorkflow()
+			wf.ScheduledPromotion = ScheduledPromotionPolicy{}
+			wf.Workspace.Strategy = "worktree"
+			_, body, _ := strings.Cut(strings.TrimPrefix(defaultWorkflowMarkdown(), "---\n"), "\n---\n")
+			writeWorkflowForPreflightTest(t, vault, wf, body)
+			armedWaveDirectTask(t, vault, "APP-T-0002", []string{"APP-T-0001:hard"})
+			writeArmedWaveTestFields(t, vault, map[string]any{"members": []string{"APP-T-0001", "APP-T-0002"}})
+			armWaveForTest(t, vault)
+			setWaveTaskState(t, vault, "APP-T-0001", "review", "waiting_on_review", "")
+			path := filepath.Join(vault, "work", "tasks", "APP-T-0001.md")
+			// A fine-grained mtime outside the coarse window, so the caches
+			// trust size+mtime as they do for any settled file.
+			oldTime := time.Now().Add(-time.Hour).Truncate(time.Second).Add(123456789)
+			if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+				t.Fatal(err)
+			}
+			dependent, err := resolveNote(vault, "APP-T-0002")
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := "dependency APP-T-0001 has not completed objective review (status review)"
+			if got := armedWaveReviewDependencyBlockerWithMemo(newArmedWavePassMemo(vault), vault, dependent); got != blocked {
+				t.Fatalf("warm pass blocker = %q, want %q", got, blocked)
+			}
+			if idx, _, err := waveCheckIndex(vault); err != nil || stringField(idx.Tasks["APP-T-0001"].Data, "status") != "review" {
+				t.Fatalf("warm wave check index status = %q err=%v", stringField(idx.Tasks["APP-T-0001"].Data, "status"), err)
+			}
+
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := "status: \"review\"\n"
+			if !strings.Contains(string(raw), old) {
+				t.Fatalf("task record has no %q:\n%s", old, raw)
+			}
+			replacement := "status: \"done\"\n"
+			if sameStat {
+				replacement = "status: \"done\"  \n" // pad to the same size
+			}
+			rewritten := strings.Replace(string(raw), old, replacement, 1)
+			if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if sameStat {
+				if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+					t.Fatal(err)
+				}
+				if len(rewritten) != len(raw) {
+					t.Fatalf("rewrite changed size %d -> %d", len(raw), len(rewritten))
+				}
+			}
+
+			if got := armedWaveReviewDependencyBlockerWithMemo(newArmedWavePassMemo(vault), vault, dependent); got != "" {
+				t.Fatalf("dependency closed by another process still blocks review: %q", got)
+			}
+			if idx, _, err := waveCheckIndex(vault); err != nil || stringField(idx.Tasks["APP-T-0001"].Data, "status") != "done" {
+				t.Fatalf("wave check index status after close = %q err=%v", stringField(idx.Tasks["APP-T-0001"].Data, "status"), err)
 			}
 		})
 	}

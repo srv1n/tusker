@@ -533,7 +533,7 @@ func waveCheckSignature(vaultPath string) ([sha256.Size]byte, bool) {
 		if err != nil || noteCacheNeedsCoarseMtimeHashCheck(info.ModTime()) {
 			return signature, false
 		}
-		fmt.Fprintf(h, "%s\x00%d\x00%d\x00", path, info.Size(), info.ModTime().UnixNano())
+		fmt.Fprintf(h, "%s\x00%+v\x00", path, noteFileVersionOf(info))
 	}
 	h.Sum(signature[:0])
 	return signature, true
@@ -566,7 +566,7 @@ func (entry *waveCheckEntry) fingerprint(vaultPath string, idx v7Index, wave Not
 		if sum := sha256.Sum256(raw); err != nil || hex.EncodeToString(sum[:]) != file.hash {
 			return fingerprint, issues
 		}
-		specs[path] = noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
+		specs[path] = noteFileVersionOf(info)
 	}
 	waveCheckCache.Lock()
 	wave.Data = cloneNoteData(wave.Data)
@@ -588,7 +588,7 @@ func (cached waveCheckMaterial) current(vaultPath string, wave Note) bool {
 	}
 	for path, version := range cached.specs {
 		info, err := os.Stat(path)
-		if err != nil || (noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}) != version {
+		if err != nil || (noteFileVersionOf(info)) != version {
 			return false
 		}
 	}

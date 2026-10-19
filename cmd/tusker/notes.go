@@ -19,9 +19,19 @@ type noteLoadOptions struct {
 	OperationalOnly bool
 }
 
+// noteFileVersion is a stat-only cache key. Inode and ctime catch a rewrite
+// by another process that keeps size and mtime (same-second write, or mtime
+// restored), which size+mtime alone would serve stale.
 type noteFileVersion struct {
 	modTime int64
 	size    int64
+	inode   uint64
+	ctime   int64
+}
+
+func noteFileVersionOf(info os.FileInfo) noteFileVersion {
+	inode, ctime := noteFileChange(info)
+	return noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size(), inode: inode, ctime: ctime}
 }
 
 type cachedNote struct {
@@ -95,7 +105,7 @@ func loadOperationalNotesByPath(vaultPath string, paths []string) ([]Note, error
 		if err != nil {
 			return nil, err
 		}
-		version := noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
+		version := noteFileVersionOf(info)
 		text := ""
 		if entry, ok := cache.entries[path]; ok && entry.version == version && entry.hasBody {
 			if noteCacheNeedsCoarseMtimeHashCheck(info.ModTime()) {
@@ -224,7 +234,7 @@ func (cache *vaultNoteCache) list(vaultPath string, opts noteLoadOptions) ([]Not
 		if err != nil {
 			return nil, err
 		}
-		version := noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
+		version := noteFileVersionOf(info)
 		seen[filePath] = struct{}{}
 		if entry, ok := cache.entries[filePath]; ok && entry.version == version && (opts.FrontmatterOnly || entry.hasBody) {
 			if noteCacheNeedsCoarseMtimeHashCheck(info.ModTime()) {
