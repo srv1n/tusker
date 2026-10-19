@@ -464,6 +464,10 @@ func returnReviewerFindingToImplementer(vaultPath, taskID, findingText, actor st
 	if strings.TrimSpace(actor) == "" {
 		actor = "daemon:reviewer-finding"
 	}
+	// An owned-path widening request is answered by Tusker, not the implementer.
+	if handled, err := widenOwnedPathsForReview(vaultPath, taskID, finding); handled || err != nil {
+		return err
+	}
 	note, err := resolveV7Note(vaultPath, taskID, "task")
 	if err != nil {
 		return err
