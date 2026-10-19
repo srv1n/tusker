@@ -85,16 +85,25 @@ live run.
 
 ## Workspaces
 
-The project can use a shared checkout or a worktree (`workspace.strategy` in
-`WORKFLOW.md`: `shared` or `worktree`). A worker must use the workspace that
-the claim assigns.
+The project can use a shared checkout or a worktree
+(`automation.workspace.strategy` in `.tusker/config.yaml`, or
+`config.local.yaml` when set from Serve). The config value overrides
+`workspace.strategy` in `WORKFLOW.md`, and `tusker init` writes `worktree`
+into `config.yaml`, so editing only `WORKFLOW.md` does not switch a project
+to shared. A worker must use the workspace that
+the claim assigns. A task keeps the mode it started in.
 
-- **Shared:** execute runs in the project checkout on the default branch, with
-  no worktree and no task branch. Tasks run in parallel only when their owned
-  files do not overlap (the owned-path claim keeps a submitted task's files
-  claimed until it lands). Tusker commits the task's owned files when it
-  submits; review reads that commit in a transient detached checkout. Rejected
-  work is fixed forward with a new commit.
+- **Shared:** execute runs in the project checkout itself on the default
+  branch, with no worktree and no task branch; the attempt records the
+  checkout's branch. Tasks run in parallel only when their owned files do not
+  overlap: the owned-path claim, checked under a lock at dispatch, keeps a
+  submitted task's files claimed until it lands. On submit Tusker commits only
+  the task's owned files, through a private index, without moving the
+  checkout; dirty files the task does not own are reported in the attempt end
+  state (`stray_paths`, `overlaps`) and left uncommitted. Landing merges that
+  recorded commit. Review reads it in a transient detached checkout that
+  shares the checkout's cargo target dir. Rejected work is fixed forward with
+  a new commit.
 - **Worktree:** each task works in its own worktree on `task/<ID>`, branched
   from the current default branch.
 

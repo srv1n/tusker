@@ -213,11 +213,6 @@ func demoSeed(args Args) (map[string]any, error) {
 	if _, err := demoGit(repoRoot, "commit", "-qm", "demo task records"); err != nil {
 		return nil, err
 	}
-	for _, name := range demoSortedWaveNames(manifest) {
-		if _, err := demoGit(repoRoot, "branch", "-f", "integration/"+manifest.Waves[name].WaveID, "HEAD"); err != nil {
-			return nil, err
-		}
-	}
 	localProjectID, err := demoRegisterProject(repoRoot, exec, vaultPath)
 	if err != nil {
 		return nil, err

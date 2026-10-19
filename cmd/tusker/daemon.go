@@ -4985,6 +4985,12 @@ func (d *Daemon) dispatchRunWithAttemptIDUnlocked(ctx context.Context, project R
 	if err != nil {
 		return run, false, err
 	}
+	if workspaceStrategy == WorkspaceStrategyShared {
+		// Shared mode works on the checkout's own (default) branch. No task
+		// branch exists, so none is recorded on the attempt either.
+		branchName, _ = currentGitBranchIn(project.RepoRoot)
+		branchBase = ""
+	}
 	workspaceRequest := WorkspacePrepareRequest{
 		ProjectID:        project.ProjectID,
 		ProjectKey:       project.ProjectKey,
@@ -7589,7 +7595,7 @@ func renderAttemptPrompt(project RegisteredProject, wfFile WorkflowFile, note No
 				}
 			}
 		}
-		b.WriteString("Build and test with the normal commands; builds queue automatically, one at a time. If errors are only in files another task owns, wait a minute and rerun rather than editing them. Edit outside your owned paths only when unavoidable and name those files in your submission. Format only your own files. Rerun a failing test once before treating it as yours. Do not commit: leave your changes uncommitted and submit; Tusker commits your owned paths, even when .git is read-only to you.")
+		b.WriteString("Build and test with the normal commands; builds queue automatically, one at a time. If errors are only in files another task owns, wait a minute and rerun rather than editing them. Edit outside your owned paths only when unavoidable and name those files in your submission; Tusker commits only your owned paths and reports other edits uncommitted. Format only your own files. Rerun a failing test once before treating it as yours. Do not commit: leave your changes uncommitted and submit; Tusker commits your owned paths, even when .git is read-only to you.")
 		rendered = strings.TrimSpace(rendered) + "\n\n" + b.String()
 	}
 	parentAttemptID, recoveryErr := pendingOutcomeUnknownRecoveryParent(store, previousRun)

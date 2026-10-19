@@ -30,11 +30,10 @@ func TestDemoSeedCommitsTrackerRecords(t *testing.T) {
 				t.Fatalf("%s not committed:\n%s", want, tracked)
 			}
 		}
-		head, _ := demoGit(repo, "rev-parse", "HEAD")
-		branch, err := demoGit(repo, "rev-parse", "integration/"+wave.WaveID)
-		if err != nil || branch != head {
-			t.Fatalf("integration/%s should point at the records commit: %q vs %q (%v)", wave.WaveID, branch, head, err)
-		}
+	}
+	// A wave is not a branch: tasks land straight on main.
+	if refs, _ := demoGit(repo, "for-each-ref", "--format=%(refname)", "refs/heads/integration"); strings.TrimSpace(refs) != "" {
+		t.Fatalf("demo seed created wave integration branches:\n%s", refs)
 	}
 	// Task work dirs are ignored only in the main checkout (offline lane);
 	// the committed .gitignore must not hide them from agent worktrees.

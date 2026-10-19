@@ -119,9 +119,11 @@ func (d *Daemon) consumeWorkerLifecycleRequest(run RunStatus) (*RunStatus, bool,
 }
 
 // captureSubmissionEndState records a submitted run's end state. A shared
-// checkout never holds a task commit, so Tusker commits the task's scope, plus
-// unowned strays, through a private index. commitDirty extends the commit to
-// sandboxed workers that could not commit in their own worktree.
+// checkout never holds a task commit, so Tusker commits the task's owned scope
+// through a private index. Dirty files nobody owns (strays) are reported in
+// the end state and left uncommitted in the checkout: a task never commits
+// files it does not own. commitDirty extends the commit to sandboxed workers
+// that could not commit in their own worktree.
 func captureSubmissionEndState(store *RuntimeStore, run RunStatus, verdicts, branch, sha string, commitDirty bool) (RunEndState, error) {
 	materialScope, generatedOutputScope, err := canonicalRunMaterialScopeWithGeneratedOutputs(store, run)
 	if err != nil {
@@ -139,8 +141,6 @@ func captureSubmissionEndState(store *RuntimeStore, run RunStatus, verdicts, bra
 		if err != nil {
 			return RunEndState{}, err
 		}
-		materialScope = append(materialScope, stray...)
-		commitScope = append(commitScope, stray...)
 	}
 	endState, err := captureRunEndStateForMaterialScope(run.WorkspacePath, materialScope, verdicts, branch, sha, time.Now().UTC(), generatedOutputScope)
 	if err != nil {

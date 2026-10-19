@@ -595,12 +595,13 @@ func reviewImplementationParent(store *RuntimeStore, vault, projectID, recordID 
 }
 
 // submittedMaterialScopeMatches reports whether the task's declared scope is
-// still the one execute submitted. A shared-checkout submission also commits
-// the unowned strays it recorded, so they belong to the reviewed material.
+// still the one execute submitted. Shared-checkout submissions made before
+// strays stopped being committed also carry the strays they recorded.
 func submittedMaterialScopeMatches(scope []string, parent RunAttempt) bool {
-	expected := sortedUniqueStrings(append(append([]string(nil), scope...), parent.EndState.StrayPaths...))
-	submitted := sortedUniqueStrings(append([]string(nil), parent.EndState.MaterialScope...))
-	return strings.Join(expected, "\x00") == strings.Join(submitted, "\x00")
+	submitted := strings.Join(sortedUniqueStrings(append([]string(nil), parent.EndState.MaterialScope...)), "\x00")
+	owned := sortedUniqueStrings(append([]string(nil), scope...))
+	legacy := sortedUniqueStrings(append(append([]string(nil), scope...), parent.EndState.StrayPaths...))
+	return strings.Join(owned, "\x00") == submitted || strings.Join(legacy, "\x00") == submitted
 }
 
 func verifiedImplementationWorkspaceMaterial(parent RunAttempt) (string, error) {

@@ -1044,11 +1044,6 @@ func demoReseed(repoRoot string, manifest *demoManifest, exec *demoExec) (*demoR
 			return nil, err
 		}
 	}
-	for _, name := range demoSortedWaveNames(manifest) {
-		if _, err := demoGit(repoRoot, "branch", "-f", "integration/"+manifest.Waves[name].WaveID, "HEAD"); err != nil {
-			return nil, err
-		}
-	}
 	// Re-register the default-scope project removed by reset so the normal
 	// UI keeps discovering the disposable repo. Best-effort like seed: when
 	// the scope is unavailable, reseed still restores data and reports the
