@@ -109,8 +109,8 @@ starter.
 - A check is stopped as a group when it finishes, when its starter cancels or
   shuts down, or when it has printed nothing and used no CPU for the check
   silence limit. That outcome is recorded as stuck, stopped, not as a failure.
-- One janitor pass runs at daemon startup, on every heartbeat and on every
-  poll. It stops checks
+- One janitor pass runs at daemon startup and at most once per heartbeat; a
+  poll in the same tick reuses it. It reads only open inventory rows. It stops checks
   whose starter died, adopts agent sessions whose run is still claimed or
   running, and stops sessions whose run is gone. A session whose attempt finished
   less than two minutes ago is left to exit on its own. It acts only when PID, process
