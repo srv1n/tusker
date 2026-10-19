@@ -411,7 +411,11 @@ func loadAutomationCommandContextWithStore(args Args, stateRoot string, store *R
 	if err != nil {
 		return nil, err
 	}
-	ctx.GlobalActiveRuns = countDispatchCapacityRuns(ctx.Runs)
+	registeredRuns, err := registeredProjectRuns(store, ctx.Runs)
+	if err != nil {
+		return nil, err
+	}
+	ctx.GlobalActiveRuns = countDispatchCapacityRuns(registeredRuns)
 	for _, run := range ctx.Runs {
 		if ctx.ProjectRegistered && run.ProjectID != ctx.Project.ProjectID {
 			continue

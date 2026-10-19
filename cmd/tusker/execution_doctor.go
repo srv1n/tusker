@@ -644,10 +644,18 @@ func doctorDirectiveFinding(vault string, idx v7Index, task Note, directive *Run
 }
 
 func doctorCapacityFindings(vault string, store *RuntimeStore, projectID string, runs []RunStatus, scope DiagnosticScope, taskID, observed string) []DiagnosticFinding {
+	runs, err := registeredProjectRuns(store, runs)
+	if err != nil {
+		return []DiagnosticFinding{{
+			Code: "doctor-runtime-unavailable", Scope: scope, Classification: DiagnosticUnavailable,
+			Affects: []string{taskID}, NextActor: DiagnosticAuthorityOperator,
+			Evidence: DiagnosticEvidence{Source: "runtime", Revision: "unavailable", ObservedAt: observed, Detail: "Project registrations are unavailable; capacity cannot be verified: " + err.Error()},
+		}}
+	}
 	globalActive := 0
 	projectActive := 0
 	for _, run := range runs {
-		if !isDispatchCapacityLeaseState(run.LeaseState) {
+		if !runConsumesDispatchCapacity(run) {
 			continue
 		}
 		globalActive++

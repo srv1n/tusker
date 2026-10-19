@@ -447,6 +447,10 @@ func (d *Daemon) dispatchFairCandidates(ctx context.Context, candidates []daemon
 	if err != nil {
 		return err
 	}
+	allRuns, err = registeredProjectRuns(d.store, allRuns)
+	if err != nil {
+		return err
+	}
 	runs := make(map[string]RunStatus, len(allRuns))
 	projectActive := map[string]int{}
 	runnerActive := map[string]int{}

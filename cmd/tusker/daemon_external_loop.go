@@ -642,7 +642,11 @@ func (d *Daemon) automationContextForDaemon(project RegisteredProject, wfFile Wo
 		ctx.NoteStatusByRecord[recordID] = stringField(note.Data, "status")
 	}
 	ctx.Runs = runs
-	ctx.GlobalActiveRuns = countDispatchCapacityRuns(runs)
+	registeredRuns, err := registeredProjectRuns(d.store, runs)
+	if err != nil {
+		return nil, err
+	}
+	ctx.GlobalActiveRuns = countDispatchCapacityRuns(registeredRuns)
 	for _, run := range runs {
 		if run.ProjectID != project.ProjectID || strings.TrimSpace(run.RecordID) == "" {
 			continue

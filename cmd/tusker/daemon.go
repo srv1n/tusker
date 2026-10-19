@@ -1398,7 +1398,11 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			d.rebuildFrontier(projects[i].Project.ProjectID, projects[i].Notes)
 		}
 	}
-	globalActiveRuns := countDispatchCapacityRuns(allRuns)
+	registeredRuns, err := registeredProjectRuns(d.store, allRuns)
+	if err != nil {
+		return err
+	}
+	globalActiveRuns := countDispatchCapacityRuns(registeredRuns)
 	globalLimit, err := d.globalActiveRunLimit()
 	if err != nil {
 		return err
@@ -2231,6 +2235,26 @@ func countDispatchCapacityRuns(runs []RunStatus) int {
 		}
 	}
 	return count
+}
+
+// registeredProjectRuns excludes removed projects without treating disabled or
+// unloadable registrations as removed. Keep their history in the runtime store.
+func registeredProjectRuns(store *RuntimeStore, runs []RunStatus) ([]RunStatus, error) {
+	projects, err := store.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	registered := make(map[string]bool, len(projects))
+	for _, project := range projects {
+		registered[project.ProjectID] = true
+	}
+	filtered := make([]RunStatus, 0, len(runs))
+	for _, run := range runs {
+		if registered[run.ProjectID] {
+			filtered = append(filtered, run)
+		}
+	}
+	return filtered, nil
 }
 
 func (d *Daemon) evaluateWorkerAttention(runs []RunStatus, intervals map[string]time.Duration, now time.Time) error {
@@ -9214,6 +9238,40 @@ func projectsRemoveCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
+	projects, err := store.ListProjects()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, project := range projects {
+		if project.ProjectID == projectID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return tuskerError(errorNotFound, "project not found: "+projectID)
+	}
+	if args.Bool("dry-run") {
+		counts := map[string]int{}
+		tables := []string{"projects", "runs", "sessions", "attempts", "turns", "external_loop_events", "supervisor_decisions"}
+		for _, table := range tables {
+			var count int
+			if err := store.queryRowScan(`SELECT COUNT(*) FROM `+table+` WHERE project_id = ?`, []any{projectID}, &count); err != nil {
+				return err
+			}
+			counts[table] = count
+		}
+		if args.Bool("json") {
+			emitJSON(map[string]any{"ok": true, "dry_run": true, "project_id": projectID, "would_delete": counts})
+			return nil
+		}
+		fmt.Printf("Removal preview for project %s: no changes made.\n", projectID)
+		for _, table := range tables {
+			fmt.Printf("  %s: %d rows would be deleted\n", table, counts[table])
+		}
+		return nil
+	}
 	if err := store.RemoveProject(projectID); err != nil {
 		return err
 	}
