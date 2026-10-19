@@ -962,12 +962,13 @@ type serveProcessList struct {
 
 // Normal ends (passed, failed, exited) are not stops and drop off the list.
 var serveProcessStopReasons = map[string]string{
-	"operator_stopped":     "stopped by the operator",
-	"starter_stopped":      "the process that started it is gone",
-	"stuck_stopped":        "no output or CPU progress for the check silence limit",
-	"owner_gone":           "no live run owns it any more",
-	"cancelled":            "cancelled by its starter",
-	"identity_unconfirmed": "PID, process group and start time no longer matched; reported, not stopped",
+	"operator_stopped":          "stopped by the operator",
+	endReasonOperatorStoppedAll: "stopped by the operator (tusker stop --all)",
+	"starter_stopped":           "the process that started it is gone",
+	"stuck_stopped":             "no output or CPU progress for the check silence limit",
+	"owner_gone":                "no live run owns it any more",
+	"cancelled":                 "cancelled by its starter",
+	"identity_unconfirmed":      "PID, process group and start time no longer matched; reported, not stopped",
 }
 
 // recentOwnedProcesses returns open rows and rows ended since the cutoff.

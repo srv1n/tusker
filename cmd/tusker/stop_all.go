@@ -24,6 +24,8 @@ func stopAllCmd(args Args) error {
 	if err != nil {
 		return err
 	}
+	actor := firstNonEmpty(args.String("by"), "human:operator")
+	server := newServeServer("", "", "", store, nil)
 	stopped, skipped := []map[string]any{}, []map[string]any{}
 	for _, p := range open {
 		row := map[string]any{"id": p.ID, "owner": p.Owner, "kind": p.Kind, "pid": p.PID, "pgid": p.PGID}
@@ -44,6 +46,18 @@ func stopAllCmd(args Args) error {
 			return err
 		}
 		_ = store.recordProcessEvent(p, "stopped", "tusker stop --all", ruleOperator)
+		if p.Kind == processKindAgentSession {
+			// Record the operator stop on the run itself, as the Serve process
+			// Stop does, so a restarted daemon does not recover it as a crash.
+			if run, ok := store.liveRunForAttempt(p.Owner); ok {
+				prior, _ := loadRunSessionControlIntent(store, run.ProjectID, run.RecordID)
+				control, _ := server.applyRunStopControl(run, actor, "tusker stop --all", prior, runSessionControlResult{TaskID: run.ItemID, ProjectID: run.ProjectID, Action: runSessionControlStop})
+				row["task"] = run.ItemID
+				if control.Refused {
+					row["run_stop"] = control.Reason
+				}
+			}
+		}
 		stopProcessGroup(p.PGID)
 		stopped = append(stopped, row)
 	}

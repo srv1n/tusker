@@ -198,6 +198,7 @@ func ownedPathDoNotTouchLists(vaultPath string, task Note) []ownedPathDoNotTouch
 // charged against the cap.
 func applyOwnedPathWidening(vaultPath string, note Note, want []string) error {
 	taskID := stringField(note.Data, "id")
+	before, beforeErr := loadV7Index(vaultPath)
 	owned := sortedUniqueStrings(append(normalizeList(note.Data["owned_paths"]), want...))
 	if err := updateV7TaskCmd(Args{
 		"vault": vaultPath, "id": taskID, "if-revision": stringField(note.Data, "state_rev"),
@@ -226,7 +227,92 @@ func applyOwnedPathWidening(vaultPath string, note Note, want []string) error {
 	}, ownedPathWideningStatusActor); err != nil {
 		return err
 	}
+	if beforeErr == nil {
+		if err := reauthorizeWaveAfterWidening(vaultPath, before, taskID, want); err != nil {
+			return err
+		}
+	}
 	return resetReviewCycleWindowForWidening(taskID)
+}
+
+// reauthorizeWaveAfterWidening keeps the task's wave authorized across the
+// widening (WML M5/M6). owned_paths are part of a member's promise, so the
+// widening stales the wave's authorization; the reviewer sanctioned this
+// change, so the governor records the new authorization itself. It acts only
+// when the authorization covered the wave just before the widening and the
+// widened task is the only material that changed since; any other promise
+// change still waits for a human `tusker start`.
+func reauthorizeWaveAfterWidening(vaultPath string, before v7Index, taskID string, want []string) error {
+	task, ok := before.Tasks[taskID]
+	if !ok {
+		return nil
+	}
+	waveID := stringField(task.Data, "wave")
+	wave, ok := before.Waves[waveID]
+	if !ok {
+		return nil
+	}
+	state := stringField(wave.Data, "authorization")
+	prior, issues := waveMaterialFingerprint(vaultPath, before, wave)
+	if len(issues) > 0 || !waveAuthorizationFingerprintActive(state) || !directWaveAuthorizationCurrent(wave.Data, state, prior) {
+		return nil
+	}
+	materialLock, err := acquireV7MaterialEpochLock(vaultPath)
+	if err != nil {
+		return err
+	}
+	defer materialLock.Close()
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return err
+	}
+	widened, taskOK := idx.Tasks[taskID]
+	current, waveOK := idx.Waves[waveID]
+	if !taskOK || !waveOK {
+		return nil
+	}
+	fingerprint, issues := waveMaterialFingerprint(vaultPath, idx, current)
+	expectedIdx := before
+	expectedIdx.Tasks = cloneNoteMap(before.Tasks)
+	expectedIdx.Tasks[taskID] = widened
+	expected, _ := waveMaterialFingerprint(vaultPath, expectedIdx, wave)
+	if len(issues) > 0 || fingerprint == prior || fingerprint != expected {
+		return nil
+	}
+	waveLock, err := acquireV7DocumentLock(current.AbsolutePath, v7DocumentLockTimeout)
+	if err != nil {
+		return err
+	}
+	defer waveLock.Close()
+	data, body, err := parseFrontmatterMustRead(current.AbsolutePath)
+	if err != nil {
+		return err
+	}
+	if !directWaveAuthorizationCurrent(data, state, prior) {
+		return nil
+	}
+	now := time.Now().UTC()
+	reason := fmt.Sprintf("owned_paths of %s widened to include %s after review; re-authorized by Tusker", taskID, strings.Join(want, ", "))
+	data["authorization_fingerprint"] = fingerprint
+	data["authorized_by"] = ownedPathWideningEditActor
+	data["authorized_at"] = now.Format(time.RFC3339Nano)
+	data["authorization_reason"] = reason
+	data["updated_at"] = now.Format(time.RFC3339)
+	data["updated_by"] = ownedPathWideningEditActor
+	data["state_rev"] = v7StateRev(data, body)
+	content, err := serializeDocument(data, body, v7FrontmatterOrder["wave"])
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"authorization": state, "fingerprint": fingerprint, "replaced_fingerprint": prior, "reason": reason}
+	eventPath, eventContent, err := prepareV7Event(vaultPath, waveID, "wave", "updated", ownedPathWideningEditActor, payload, now)
+	if err != nil {
+		return err
+	}
+	if err := ensureDir(filepath.Dir(eventPath)); err != nil {
+		return err
+	}
+	return commitV7DocumentWritesWithLocks(map[string]string{current.AbsolutePath: content, eventPath: eventContent}, 0, []*v7DocumentLock{waveLock})
 }
 
 // resetReviewCycleWindowForWidening records a budget redrive for the task's

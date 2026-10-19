@@ -448,7 +448,7 @@ func runOwnedCheck(ctx context.Context, owner string, cmd *exec.Cmd, silence tim
 	row, found, err := store.ownedProcessByID(id)
 	if err != nil {
 		runErr = fmt.Errorf("read check end reason: %w", err)
-	} else if found && row.EndReason == "operator_stopped" {
+	} else if found && (row.EndReason == "operator_stopped" || row.EndReason == endReasonOperatorStoppedAll) {
 		runErr = errCheckOperatorStopped
 	}
 	output, _ := out.snapshot()

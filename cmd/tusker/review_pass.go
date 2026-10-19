@@ -179,14 +179,17 @@ func (d *Daemon) releaseReviewPassLandingExcept(skip string) {
 }
 
 // reviewPassCandidate returns the task and its current review result when the
-// task is in review and the result matches its work revision.
+// task is in review and the result matches its work and task revisions. A
+// result reviewed against an older task revision (a contract change such as an
+// owned_paths widening) is stale: the task waits for its new review, which
+// review dispatch starts because no result matches the current revision.
 func (d *Daemon) reviewPassCandidate(project RegisteredProject, idx v7Index, taskID string, results []ReviewResult) (Note, ReviewResult, bool) {
 	task, err := resolveV7NoteFromIndex(idx, taskID, "task")
 	if err != nil || stringField(task.Data, "status") != "review" {
 		return Note{}, ReviewResult{}, false
 	}
 	result, ok := d.currentReviewResult(project.ProjectID, taskID, results)
-	if !ok || result.WorkRevision != intField(task.Data, "work_revision") {
+	if !ok || result.WorkRevision != intField(task.Data, "work_revision") || result.TaskStateRev != stringField(task.Data, "state_rev") {
 		return Note{}, ReviewResult{}, false
 	}
 	return task, result, true
