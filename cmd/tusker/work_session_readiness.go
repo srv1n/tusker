@@ -110,7 +110,7 @@ func workSessionTaskStateBlockerForLane(task Note, lane string) *ReadinessBlocke
 		return &ReadinessBlocker{
 			ID: "interactive-terminal:" + taskID, Kind: ReadinessBlockerTaskTerminal, Authority: ReadinessAuthorityInteractive,
 			Affects: []ReadinessDimensionKind{ReadinessDimensionInteractive}, TaskID: taskID,
-			Reason: "Task status is " + status + ".", Remedy: "Choose a non-terminal task or create a new task revision.",
+			Reason: "Task status is " + status + "; do not claim finished work retroactively.", Remedy: "Inspect `tusker show " + taskID + " --why`; choose a non-terminal task or create a new task revision.",
 		}
 	}
 	if (lane == runLaneReview && status == "review") || (lane != runLaneReview && (status == "ready" || status == "rework")) {

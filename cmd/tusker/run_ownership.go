@@ -300,7 +300,7 @@ func (s *runOwnershipService) guardOwnedPathClaim() error {
 		return err
 	}
 	if conflict, found := ownedPathConflict(s.candidateNote, s.notesByID, runs, now); found {
-		return tuskerError(stringValue(conflict["code"]), fmt.Sprintf("claim refused: %s holds %s for %s (lease age %s; liveness %s)", conflict["holder"], conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]), withContext(conflict))
+		return tuskerError(stringValue(conflict["code"]), "claim refused: "+ownershipConflictReason(conflict), withContext(conflict))
 	}
 	return nil
 }

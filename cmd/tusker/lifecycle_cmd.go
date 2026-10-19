@@ -72,6 +72,9 @@ func doneCmd(args Args) error {
 			if err != nil {
 				result = serveRecoveryResult{Action: "adopt_completed", TaskID: id, Refused: true, Reason: err.Error()}
 			}
+			if result.Refused {
+				result.Reason = doneRefusalRemedy(vault, id, actor, result.Reason)
+			}
 			results[id] = result
 			if !result.OK && strings.Contains(result.Reason, "unfinished dependency") {
 				retry = append(retry, id)

@@ -264,6 +264,9 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	if lane != runLaneExecute && lane != runLaneReview {
 		return runClaimResult{}, nil, tuskerError(errorInvalidArg, "work start lane must be execute or review")
 	}
+	if lane == runLaneExecute && !strings.EqualFold(stringField(note.Data, "status"), "done") && (taskAdoptedExternalImplementation(note) || strings.EqualFold(stringField(note.Data, "status"), "review")) {
+		return runClaimResult{}, nil, tuskerError(errorInvalidTransition, id+": implementation is already recorded; do not claim finished work retroactively", withHint("run `tusker show "+id+" --why`; use `tusker review "+id+"` for review"))
+	}
 	// A same-task holder is reclaimable only after both independent facts hold:
 	// its heartbeat is past the reclaim grace and its recorded process identity
 	// no longer exists.  Never let an expired timestamp alone steal a live

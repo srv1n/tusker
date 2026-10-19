@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -582,7 +581,7 @@ func adoptCompletedOwnershipFence(vault string, store *RuntimeStore, projectID, 
 		unlock()
 		return noop, "", err
 	} else if run != nil && (isDispatchingLeaseState(run.LeaseState) || runProcessGroupAlive(*run)) {
-		reason := "a live run holds " + taskID + "; release or interrupt it before adopt_completed"
+		reason := "a live run holds " + taskID + "; next: `" + releaseRunRemedy(taskID) + "`"
 		unlock()
 		return noop, reason, nil
 	}
@@ -592,7 +591,7 @@ func adoptCompletedOwnershipFence(vault string, store *RuntimeStore, projectID, 
 		return noop, "", err
 	}
 	if conflict, found := ownedPathConflict(candidate, claimNotes, runs, time.Now().UTC()); found {
-		reason := fmt.Sprintf("an active run holds %s for %s (lease age %s; liveness %s)", conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"])
+		reason := ownershipConflictReason(conflict)
 		unlock()
 		return noop, reason, nil
 	}
@@ -606,7 +605,7 @@ func adoptCompletedOwnershipFence(vault string, store *RuntimeStore, projectID, 
 func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, actor string, maxAttempts int, now time.Time) (serveRecoveryResult, error) {
 	result := serveRecoveryResult{Action: "adopt_completed", TaskID: taskID}
 	refuse := func(reason string) (serveRecoveryResult, error) {
-		result.Refused, result.Reason = true, reason
+		result.Refused, result.Reason = true, doneRefusalRemedy(vault, taskID, actor, reason)
 		return result, nil
 	}
 	task, err := resolveV7Note(vault, taskID, "task")
@@ -707,7 +706,7 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	}
 	claimNotes := orchestrationOwnedPathNotes(idx.Tasks, wf.Data)
 	if conflict, found := ownedPathConflict(task, claimNotes, runs, now); found {
-		return refuse(fmt.Sprintf("an active run holds %s for %s (lease age %s; liveness %s)", conflict["holder_path"], conflict["task_id"], conflict["lease_age"], conflict["liveness"]))
+		return refuse(ownershipConflictReason(conflict))
 	}
 	material, err := workspaceTreeStateHashForPaths(repoRoot, scope, generated)
 	if err != nil {

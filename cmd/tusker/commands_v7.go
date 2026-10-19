@@ -760,6 +760,9 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	if failures := coordinatorBodyRefErrors(vaultPath, body); len(failures) > 0 {
 		return tuskerError(errorInvalidArg, strings.Join(failures, "; "))
 	}
+	if bad := v7MalformedVerificationRows(body); len(bad) > 0 {
+		return tuskerError(errorInvalidArg, v7MalformedVerificationReason(bad))
+	}
 	// --force-ready may bypass proof/dispatchability checks, never the strict
 	// governing-spec requirement for a demanding task. Report every applicable
 	// blocker together so callers can fix the contract in one pass.

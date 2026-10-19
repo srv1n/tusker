@@ -158,6 +158,17 @@ claim on the task, or a malformed Verification row. A `|` inside a Check cell
 must be written `\|`; otherwise the table splits the command. Readiness also
 reports such rows as blockers.
 
+Creation and body updates reject malformed Verification results before saving.
+After a refactor, re-path the complete owned scope explicitly:
+
+```sh
+tusker edit APP-T-0001 --owned-paths crates/app/src/ingest,crates/app/src/lib.rs --by agent:<name>
+```
+
+A missing `ingest.rs` with an existing `ingest/` directory produces that module
+directory as a suggested replacement in the refusal's edit command. Tusker
+does not silently change the authored scope.
+
 Quiet interactive leases are reclaimable by a subsequent claim or `done` once
 24 hours have passed since lease expiry and the recorded process is gone.
 Live or uncertain process identities retain their ownership fence. Reclaim
@@ -167,6 +178,11 @@ Before that deadline, an operator can release an abandoned session explicitly:
 ```sh
 tusker runs retire APP-T-0001 --release --break-glass --by human:<name> --reason 'release abandoned session'
 ```
+
+Runtime permission refusals identify the state directory and explain that Tusker
+must run outside the sandbox or be granted access to the existing state. Do not
+claim finished work retroactively: use `done` to record it and `review` for the
+review lane.
 
 ## Close checks
 

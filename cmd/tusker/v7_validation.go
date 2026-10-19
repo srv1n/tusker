@@ -97,6 +97,9 @@ func validateV7FrontmatterSize(note Note, ctx validationContext, where string, w
 func validateV7Task(note Note, ctx validationContext, where string, errors, warnings *[]Issue) {
 	ctx = ctx.withV7Index()
 	ctx.proof = &validationProofReport{}
+	if bad := v7MalformedVerificationRows(note.Body); len(bad) > 0 {
+		*errors = append(*errors, issue(errorInvalidField, v7MalformedVerificationReason(bad), where, "repair the Verification table with tusker edit --body-file", nil))
+	}
 	for _, failure := range coordinatorBodyRefErrors(ctx.VaultPath, note.Body) {
 		*errors = append(*errors, issue(errorInvalidField, failure, where, "repair the dead reference", nil))
 	}
