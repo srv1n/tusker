@@ -155,9 +155,10 @@ func notifyDaemonForVaultPathWithChanges(vaultPath string, changes []daemonContr
 var daemonControlOneWaySender = sendDaemonControlOneWay
 
 // notifyProjectEnableWake sends a targeted wake after a Background-work
-// toggle so affected authorized work reconciles without waiting for the
-// periodic fallback. Delivery is best effort: a dropped notification is
-// recovered by the existing periodic poll, exactly like vault mutations.
+// toggle so affected authorized work reconciles. Delivery is best effort and
+// there is no periodic poll behind it: a dropped notification waits for the
+// project's next event (another CLI command, a runner report, or the
+// operator opening it in the UI), exactly like vault mutations.
 func notifyProjectEnableWake(projectID string, enabled bool) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {

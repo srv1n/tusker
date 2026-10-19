@@ -50,11 +50,21 @@ func (d *Daemon) startPendingDepartureExecutions(ctx context.Context, project Re
 			continue
 		}
 		go func(runID string, workerCtx context.Context) {
-			defer d.releaseDepartureExecution(runID)
+			wake := false
+			defer func() {
+				d.releaseDepartureExecution(runID)
+				// The departure moved the integration branch or the run's state;
+				// poll the project now that the worker is released, rather than
+				// wait for an unrelated event.
+				if wake {
+					d.scheduleProjectReconcile(project.ProjectID)
+				}
+			}()
 			executeErr := d.executeDeparture(workerCtx, project, wf, runID)
 			if departureExecutionContextCanceled(executeErr) {
 				return
 			}
+			wake = true
 			if executeErr != nil {
 				persisted, persistErr := d.recordDepartureExecutionError(runID, executeErr)
 				message := safePacketText(executeErr.Error(), departureExecutionErrorLimit)

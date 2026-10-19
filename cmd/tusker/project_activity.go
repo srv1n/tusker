@@ -4,10 +4,12 @@ import (
 	"context"
 	"io/fs"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,6 +46,11 @@ func (d *Daemon) startupReconcile(ctx context.Context) error {
 			continue
 		}
 		id := project.Project.ProjectID
+		// The armed-wave check reads the in-memory frontier, which is empty
+		// after a restart; the rescan below rebuilds it.
+		if !live[id] && vaultHasArmedWave(project.Project.VaultRoot) {
+			live[id] = true
+		}
 		d.setProjectTier(id, live[id])
 		if err := d.refreshDepartureSchedule(id, project.Workflow.Data, now); err != nil {
 			log.Printf("daemon startup: project=%s departure schedule: %v", id, err)
@@ -61,11 +68,41 @@ func (d *Daemon) startupReconcile(ctx context.Context) error {
 	return nil
 }
 
+// vaultHasArmedWave reads only the wave files: an armed wave that is not yet
+// landed or closed. Member status is left to the rescan it triggers.
+func vaultHasArmedWave(vaultRoot string) bool {
+	paths, _ := filepath.Glob(filepath.Join(vaultRoot, "work", "waves", "*.md"))
+	if len(paths) == 0 {
+		return false
+	}
+	waves, err := loadOperationalNotesByPath(vaultRoot, paths)
+	if err != nil {
+		return false
+	}
+	for _, wave := range waves {
+		if stringField(wave.Data, "authorization") == "armed" && !v7WaveHasDurableTerminal(wave) {
+			return true
+		}
+	}
+	return false
+}
+
 // heartbeat runs one beat and polls each due project once.
 func (d *Daemon) heartbeat(ctx context.Context, now time.Time) error {
 	d.runProcessJanitor(now)
 	due, err := d.heartbeatProjectsDue(now)
 	if err != nil {
+		return err
+	}
+	if _, global := due["*"]; global {
+		// Freed capacity with several projects waiting: one registry poll lets
+		// the fair scheduler pick, instead of the first project taking it all.
+		err := d.runPoll(ctx, "")
+		for projectID := range due {
+			if projectID != "*" {
+				d.recordProjectSignature(projectID)
+			}
+		}
 		return err
 	}
 	for _, projectID := range sortedKeys(due) {
@@ -111,6 +148,7 @@ func (d *Daemon) heartbeatProjectsDue(now time.Time) (map[string]bool, error) {
 	}
 	seenRuns := map[string]bool{}
 	enabled := map[string]bool{}
+	waitingProjects := 0
 	for _, project := range projects {
 		if !project.Enabled {
 			continue
@@ -120,18 +158,39 @@ func (d *Daemon) heartbeatProjectsDue(now time.Time) (map[string]bool, error) {
 		if d.batchGateDue(id, now) {
 			due[id] = false
 		}
+		// Run events are checked whether or not the project counts as active: a
+		// claimed run whose lease expired with no process left does not make its
+		// project active, yet only a poll of that project reclaims it.
+		var wf *Workflow
+		for _, run := range byProject[id] {
+			if run.Terminal {
+				continue
+			}
+			seenRuns[run.ProjectID+"\x00"+run.RecordID] = true
+			if wf == nil && run.ProcessPID > 0 {
+				loaded := heartbeatWorkflow(project.VaultRoot)
+				wf = &loaded
+			}
+			if d.runEventDue(run, wf, now) {
+				due[id] = false
+			}
+		}
 		active := d.projectActive(id, byProject[id], now)
 		d.setProjectTier(id, active)
 		if !active {
 			continue
 		}
+		waiting := false
 		for _, run := range byProject[id] {
-			seenRuns[run.ProjectID+"\x00"+run.RecordID] = true
-			if d.runEventDue(run, now) {
-				due[id] = false
+			if runWaitsForAdmission(run) || (!run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateUnclaimed && strings.TrimSpace(run.LastError) == "") {
+				waiting = true
 			}
-			waiting := runWaitsForAdmission(run) || (!run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateUnclaimed && strings.TrimSpace(run.LastError) == "")
-			if waiting && (capacityFreed || now.Sub(d.lastProjectPoll(id)) >= d.nextPollInterval()) {
+		}
+		if waiting {
+			if capacityFreed {
+				waitingProjects++
+			}
+			if capacityFreed || now.Sub(d.lastProjectPoll(id)) >= d.nextPollInterval() {
 				due[id] = false
 			}
 		}
@@ -155,6 +214,9 @@ func (d *Daemon) heartbeatProjectsDue(now time.Time) (map[string]bool, error) {
 		}
 	}
 	d.reconcileMu.Unlock()
+	if waitingProjects > 1 {
+		due["*"] = false
+	}
 	return due, nil
 }
 
@@ -192,10 +254,13 @@ func (d *Daemon) projectHasArmedWork(projectID string) bool {
 }
 
 // runEventDue reports a timed or liveness event on a run: a retry backoff or
-// lease that came due, or a runner whose process is gone or whose heartbeat
-// went stale. It fires once per distinct run state, so a poll that leaves the
-// run unchanged is not repeated every beat.
-func (d *Daemon) runEventDue(run RunStatus, now time.Time) bool {
+// lease that came due, or a runner whose process is gone or that stalled by
+// the same rule the poll applies (runStallReason, with the project's stall
+// timeout and first-event deadline). wf may be nil for a run with no process.
+// It fires once per distinct run state, so a poll that leaves the run
+// unchanged is not repeated every beat; a run that is not stalled yet is not
+// recorded, so the event fires when it does stall.
+func (d *Daemon) runEventDue(run RunStatus, wf *Workflow, now time.Time) bool {
 	if run.Terminal {
 		return false
 	}
@@ -206,19 +271,22 @@ func (d *Daemon) runEventDue(run RunStatus, now time.Time) bool {
 			event = "retry"
 		}
 	case LeaseStateClaimed, LeaseStateRunning:
-		if expires, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(run.LeaseExpiresAt)); err == nil && !expires.After(now) {
+		if expires, ok := parseRunTimestamp(run.LeaseExpiresAt); ok && !expires.After(now) {
 			event = "lease_expired"
 		} else if (run.ProcessPGID > 0 && !processGroupExists(run.ProcessPGID)) || (run.ProcessPGID <= 0 && run.ProcessPID > 0 && !processExists(run.ProcessPID)) {
 			event = "process_gone"
-		} else if beat, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(run.LastHeartbeatAt)); err == nil && now.Sub(beat) > daemonHeartbeatDeadThreshold {
-			event = "silent"
+		} else if run.ProcessPID > 0 && wf != nil {
+			// The poll checks stalls only for a run whose process is alive.
+			if stalled, reason := runStallReason(run, *wf, now); stalled {
+				event = "stalled: " + reason
+			}
 		}
 	}
 	if event == "" {
 		return false
 	}
 	key := run.ProjectID + "\x00" + run.RecordID
-	signature := strings.Join([]string{event, run.LeaseState, run.NextRetryAt, run.LeaseExpiresAt, strconv.Itoa(run.LeaseGeneration), strconv.Itoa(run.AttemptCount)}, "\x00")
+	signature := strings.Join([]string{event, run.LeaseState, run.NextRetryAt, run.LeaseExpiresAt, strconv.Itoa(run.LeaseGeneration), strconv.Itoa(run.AttemptCount), run.FirstEventAt, run.LastHeartbeatAt}, "\x00")
 	if d.heartbeatRunEvents == nil {
 		d.heartbeatRunEvents = map[string]string{}
 	}
@@ -259,9 +327,9 @@ func (d *Daemon) recordProjectSignature(projectID string) {
 	d.projectSignatures[projectID] = signature
 }
 
-// projectEditSignature is a stat-only fingerprint of a project's task, wave
-// and spec files and its git refs: file count and newest modification time.
-// It reads no file contents and starts no process.
+// projectEditSignature is a fingerprint of a project's task, wave and spec
+// files (file count and newest modification time) plus the HEAD and
+// integration branch refs. It starts no process.
 func projectEditSignature(project RegisteredProject) string {
 	count := 0
 	var newest time.Time
@@ -288,14 +356,81 @@ func projectEditSignature(project RegisteredProject) string {
 			visit(filepath.Join(project.VaultRoot, rel))
 		}
 	}
+	signature := strconv.Itoa(count) + "@" + strconv.FormatInt(newest.UnixNano(), 10)
 	// ponytail: a linked worktree's .git file is not followed; its branch refs
 	// change only through the CLI or a run, which already wake the daemon.
 	if gitDir := filepath.Join(project.RepoRoot, ".git"); project.RepoRoot != "" && dirExists(gitDir) {
-		for _, rel := range []string{"HEAD", "packed-refs", "refs"} {
-			visit(filepath.Join(gitDir, rel))
-		}
+		signature += "|" + gitIntegrationRefs(gitDir, heartbeatWorkflow(project.VaultRoot).Orchestration.DefaultBranch)
 	}
-	return strconv.Itoa(count) + "@" + strconv.FormatInt(newest.UnixNano(), 10)
+	return signature
+}
+
+// gitIntegrationRefs returns HEAD and the integration branch's commit, read
+// from its loose ref or its packed-refs entry. Agent worktrees share refs/,
+// so watching the whole directory read every agent commit as a hand edit.
+// Without a configured branch, HEAD's branch, main and master stand in.
+func gitIntegrationRefs(gitDir, configured string) string {
+	head, _ := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	headBranch, symbolic := strings.CutPrefix(strings.TrimSpace(string(head)), "ref: refs/heads/")
+	if !symbolic {
+		headBranch = "" // detached
+	}
+	branches := []string{strings.TrimSpace(configured), headBranch, "main", "master"}
+	packed, _ := os.ReadFile(filepath.Join(gitDir, "packed-refs"))
+	out := []string{strings.TrimSpace(string(head))}
+	seen := map[string]bool{}
+	for _, branch := range branches {
+		if branch == "" || seen[branch] {
+			continue
+		}
+		seen[branch] = true
+		ref := "refs/heads/" + branch
+		value := ""
+		if loose, err := os.ReadFile(filepath.Join(gitDir, filepath.FromSlash(ref))); err == nil {
+			value = strings.TrimSpace(string(loose))
+		} else {
+			for _, line := range strings.Split(string(packed), "\n") {
+				if strings.HasSuffix(line, " "+ref) {
+					value = line
+					break
+				}
+			}
+		}
+		out = append(out, branch+"="+value)
+	}
+	return strings.Join(out, ",")
+}
+
+// heartbeatWorkflows caches each project's workflow by WORKFLOW.md's stat, so
+// the heartbeat reads the file only after it changes.
+var heartbeatWorkflows = struct {
+	sync.Mutex
+	entries map[string]heartbeatWorkflowEntry
+}{entries: map[string]heartbeatWorkflowEntry{}}
+
+type heartbeatWorkflowEntry struct {
+	modTime time.Time
+	size    int64
+	wf      Workflow
+}
+
+func heartbeatWorkflow(vaultRoot string) Workflow {
+	path := workflowPath(vaultRoot)
+	info, err := os.Stat(path)
+	if err != nil {
+		return defaultWorkflow()
+	}
+	heartbeatWorkflows.Lock()
+	defer heartbeatWorkflows.Unlock()
+	if entry, ok := heartbeatWorkflows.entries[path]; ok && entry.modTime.Equal(info.ModTime()) && entry.size == info.Size() {
+		return entry.wf
+	}
+	wf := defaultWorkflow()
+	if file, err := loadWorkflow(vaultRoot); err == nil {
+		wf = file.Data
+	}
+	heartbeatWorkflows.entries[path] = heartbeatWorkflowEntry{modTime: info.ModTime(), size: info.Size(), wf: wf}
+	return wf
 }
 
 // noteBatchGateWake records when the project's batch gate is next due. After

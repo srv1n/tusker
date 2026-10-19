@@ -68,6 +68,7 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 	}
 	landing := d.reviewPassAsync && d.reviewPassLanding.CompareAndSwap(false, true)
 	var passes []string
+	skipped := false
 	for _, taskID := range taskIDs {
 		task, result, ok := d.reviewPassCandidate(project, idx, taskID, byTask[taskID])
 		if !ok {
@@ -76,6 +77,8 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 		if result.Verdict == "pass" && d.reviewPassAsync {
 			if landing {
 				passes = append(passes, taskID)
+			} else {
+				skipped = true
 			}
 			continue
 		}
@@ -83,15 +86,22 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 			log.Printf("review pass handler %s/%s: %v", project.ProjectKey, taskID, err)
 		}
 	}
+	if skipped {
+		d.deferReviewPass(project.ProjectID)
+	}
 	if !landing {
 		return nil
 	}
 	if len(passes) == 0 {
-		d.reviewPassLanding.Store(false)
+		d.releaseReviewPassLanding()
 		return nil
 	}
 	go func() {
-		defer d.reviewPassLanding.Store(false)
+		defer func() {
+			d.releaseReviewPassLanding()
+			// The landing changed this project's tasks; poll it now.
+			d.scheduleProjectReconcile(project.ProjectID)
+		}()
 		for _, taskID := range passes {
 			idx, err := loadV7Index(project.VaultRoot)
 			if err != nil {
@@ -108,6 +118,42 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 		}
 	}()
 	return nil
+}
+
+// reviewPassDeferred holds, per daemon, the projects whose passes waited
+// because another project's landing held the single landing worker. The lock
+// orders a deferral against the worker's release, so none is lost.
+var reviewPassDeferred = struct {
+	sync.Mutex
+	projects map[*Daemon]map[string]bool
+}{projects: map[*Daemon]map[string]bool{}}
+
+func (d *Daemon) deferReviewPass(projectID string) {
+	reviewPassDeferred.Lock()
+	if d.reviewPassLanding.Load() {
+		if reviewPassDeferred.projects[d] == nil {
+			reviewPassDeferred.projects[d] = map[string]bool{}
+		}
+		reviewPassDeferred.projects[d][projectID] = true
+		reviewPassDeferred.Unlock()
+		return
+	}
+	reviewPassDeferred.Unlock()
+	// The worker freed after this poll lost the race for it.
+	d.scheduleProjectReconcile(projectID)
+}
+
+// releaseReviewPassLanding frees the landing worker and wakes every project
+// that waited for it.
+func (d *Daemon) releaseReviewPassLanding() {
+	reviewPassDeferred.Lock()
+	d.reviewPassLanding.Store(false)
+	waiting := reviewPassDeferred.projects[d]
+	delete(reviewPassDeferred.projects, d)
+	reviewPassDeferred.Unlock()
+	for projectID := range waiting {
+		d.scheduleProjectReconcile(projectID)
+	}
 }
 
 // reviewPassCandidate returns the task and its current review result when the
