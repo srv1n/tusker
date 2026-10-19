@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-18T12:39:36Z"
-updated_at: "2026-10-19T00:48:26Z"
-state_rev: "sha256:84355aa8b291dc10da825c58e34c7e1cacc1b03e34dcd0d089e9ffbeca3ed385"
+updated_at: "2026-10-19T15:13:12Z"
+state_rev: "sha256:9ec2fc00b13526f87e77e3826d92b25b874d239d87118a64a92ecb2c988d8f2d"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,11 +50,8 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[PCN-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
-| [[PCN-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
-| [[PCN-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
-| [[PCN-T-0004]] | backlog | blocked_dependency | Wait for dependency PCN-T-0003 to reach done. |
-| [[PCN-T-0005]] | backlog | blocked_dependency | Wait for dependency PCN-T-0001 to reach done. |
+| [[PCN-T-0004]] | backlog | agent | Wait for dependency PCN-T-0003 to reach done. |
+| [[PCN-T-0005]] | backlog | blocked_dependency | Wait for dependency PCN-T-0004 to reach done. |
 
 ## Recently completed
 
@@ -62,4 +59,6 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[PCN-T-0001]] | human:sarav | 2026-10-19T15:12:35Z |
+| [[PCN-T-0002]] | human:sarav | 2026-10-19T15:12:36Z |
+| [[PCN-T-0003]] | human:sarav | 2026-10-19T15:12:51Z |
