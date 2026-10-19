@@ -3,6 +3,10 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"strings"
+	"sync/atomic"
+	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,15 +27,76 @@ var (
 	hookJWTPattern         = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`)
 )
 
+// hookRedactRegexRuns counts texts that reached the regexes; tests use it to
+// prove cached and plain text skip them.
+var hookRedactRegexRuns atomic.Int64
+
+// Each pattern runs only when its required literal is present. The (?i)
+// patterns are slow on long logs because the env pattern starts a match at
+// every word, so most text should never reach them.
 func redactHookOutput(text string) string {
-	text = hookPrivateKeyPattern.ReplaceAllString(text, `[REDACTED]`)
-	text = hookUserInfoPattern.ReplaceAllString(text, `$1[REDACTED]@`)
-	text = hookEnvSecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
-	text = hookJWTPattern.ReplaceAllString(text, `[REDACTED]`)
-	text = hookSecretPattern.ReplaceAllString(text, `$1$2$3$4[REDACTED]`)
-	text = hookQuerySecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
-	text = hookBearerPattern.ReplaceAllString(text, `Bearer [REDACTED]`)
-	return hookKnownTokenPattern.ReplaceAllString(text, `[REDACTED]`)
+	folded := strings.Map(foldHookRune, text)
+	has := func(words ...string) bool {
+		for _, word := range words {
+			if strings.Contains(folded, word) {
+				return true
+			}
+		}
+		return false
+	}
+	privateKey := strings.Contains(text, "PRIVATE KEY-----")
+	userInfo := strings.Contains(text, "://")
+	jwt := strings.Contains(text, ".eyJ")
+	assign := strings.Contains(text, "=")
+	envSecret := assign && has("secret", "token", "key", "password")
+	secret := has("token", "secret", "password", "key", "authorization", "capability")
+	bearer := has("bearer")
+	knownToken := has("ghp_", "github_pat_", "xox", "sk-")
+	if !privateKey && !userInfo && !jwt && !envSecret && !secret && !bearer && !knownToken {
+		return text
+	}
+	hookRedactRegexRuns.Add(1)
+	// Replacements only insert bracketed literals, so they cannot create a
+	// keyword the gates above did not already see.
+	if privateKey {
+		text = hookPrivateKeyPattern.ReplaceAllString(text, `[REDACTED]`)
+	}
+	if userInfo {
+		text = hookUserInfoPattern.ReplaceAllString(text, `$1[REDACTED]@`)
+	}
+	if envSecret {
+		text = hookEnvSecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
+	}
+	if jwt {
+		text = hookJWTPattern.ReplaceAllString(text, `[REDACTED]`)
+	}
+	if secret {
+		text = hookSecretPattern.ReplaceAllString(text, `$1$2$3$4[REDACTED]`)
+		if assign {
+			text = hookQuerySecretPattern.ReplaceAllString(text, `$1[REDACTED]`)
+		}
+	}
+	if bearer {
+		text = hookBearerPattern.ReplaceAllString(text, `Bearer [REDACTED]`)
+	}
+	if knownToken {
+		text = hookKnownTokenPattern.ReplaceAllString(text, `[REDACTED]`)
+	}
+	return text
+}
+
+// foldHookRune lowercases the way (?i) matches ASCII keywords, including
+// non-ASCII fold partners such as the Kelvin sign for k and long s for s.
+func foldHookRune(r rune) rune {
+	if r < utf8.RuneSelf {
+		return unicode.ToLower(r)
+	}
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		if f < utf8.RuneSelf {
+			return unicode.ToLower(f)
+		}
+	}
+	return r
 }
 
 func writeDefaultConfig(vaultPath string) error {

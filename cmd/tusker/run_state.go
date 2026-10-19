@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -51,6 +52,9 @@ type runOperatorFacts struct {
 type runStateTails struct {
 	events []map[string]any
 	log    []map[string]any
+	// key identifies the file states and read bounds the tails came from, so
+	// their display events can be reused while the logs are unchanged.
+	key string
 }
 
 func loadRunStateTails(run RunStatus, attempts []RunAttempt) runStateTails {
@@ -71,7 +75,29 @@ func loadRunStateTailsWithBudget(run RunStatus, attempts []RunAttempt, budget *i
 		}
 	}
 	attempts = []RunAttempt{latest}
-	return runStateTails{runActivityTailWithBudget(bestRunEventPath(run, attempts), budget, recordLimit), runActivityTailWithBudget(bestRunLogPath(run, attempts), budget, recordLimit)}
+	eventPath, logPath := bestRunEventPath(run, attempts), bestRunLogPath(run, attempts)
+	// Stat before reading: a log that grows mid-read is cached under its older
+	// size, which an append-only log never presents again.
+	key := runStateTailsKey(eventPath, logPath, budget, recordLimit)
+	return runStateTails{runActivityTailWithBudget(eventPath, budget, recordLimit), runActivityTailWithBudget(logPath, budget, recordLimit), key}
+}
+
+func runStateTailsKey(eventPath, logPath string, budget *int64, recordLimit int) string {
+	key, total := fmt.Sprint(recordLimit), int64(0)
+	for _, path := range []string{eventPath, logPath} {
+		size, modified := int64(-1), int64(0)
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			size, modified = info.Size(), info.ModTime().UnixNano()
+			total += size
+		}
+		key += fmt.Sprintf("\x00%s\x00%d\x00%d", path, size, modified)
+	}
+	// Reads stop at the logs' end, so every budget covering both reads alike.
+	remaining := int64(0)
+	if budget != nil {
+		remaining = min(*budget, total)
+	}
+	return key + fmt.Sprintf("\x00%d", remaining)
 }
 
 // deriveRunOperatorState has no store, process or provider reads. Callers

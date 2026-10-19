@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -487,7 +489,37 @@ func serveRunEventsAll(run RunStatus, attempts []RunAttempt) []serveRunEvent {
 	return serveRunEventsFromTails(loadRunStateTails(run, attempts))
 }
 
+// runEventsCache holds display events per unchanged tail state. Building them
+// parses and redacts every record, and one task page asks several times per run.
+var runEventsCache = struct {
+	sync.Mutex
+	entries map[string][]serveRunEvent
+}{entries: map[string][]serveRunEvent{}}
+
+const runEventsCacheLimit = 512
+
 func serveRunEventsFromTails(tails runStateTails) []serveRunEvent {
+	if tails.key == "" {
+		return buildRunEventsFromTails(tails)
+	}
+	runEventsCache.Lock()
+	cached, ok := runEventsCache.entries[tails.key]
+	runEventsCache.Unlock()
+	if !ok {
+		cached = buildRunEventsFromTails(tails)
+		runEventsCache.Lock()
+		if len(runEventsCache.entries) >= runEventsCacheLimit {
+			// ponytail: whole-cache reset; a growing log leaves one stale key per
+			// change, so evict per run if resets show up in profiles.
+			clear(runEventsCache.entries)
+		}
+		runEventsCache.entries[tails.key] = cached
+		runEventsCache.Unlock()
+	}
+	return slices.Clone(cached)
+}
+
+func buildRunEventsFromTails(tails runStateTails) []serveRunEvent {
 	out := []serveRunEvent{}
 	for _, payload := range tails.events {
 		out = appendRunActivity(out, serveRunEventFromPayload(payload))
