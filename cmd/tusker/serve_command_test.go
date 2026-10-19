@@ -173,6 +173,10 @@ func TestServeStaticCachePolicy(t *testing.T) {
 		assertEqual(t, test.want, rec.Header().Get("Cache-Control"), test.path+" cache policy")
 	}
 
+	stale := httptest.NewRecorder()
+	server.ServeHTTP(stale, httptest.NewRequest(http.MethodGet, "/assets/app-0ldbu1ld.js", nil))
+	assertEqual(t, http.StatusNotFound, stale.Code, "stale chunk status")
+
 	rec := httptest.NewRecorder()
 	serveJSON(rec, http.StatusOK, map[string]bool{"ok": true})
 	assertEqual(t, "no-store", rec.Header().Get("Cache-Control"), "API cache policy")

@@ -791,6 +791,13 @@ func (s *serveServer) handleAssets(w http.ResponseWriter, r *http.Request) {
 		serveStaticFile(w, r, s.assets, path)
 		return
 	}
+	// A missing build asset is a stale chunk from an older build. Answering with
+	// the SPA document makes the browser parse HTML as a module, which fails
+	// without the preload error the UI reloads on.
+	if strings.HasPrefix(path, "assets/") {
+		http.NotFound(w, r)
+		return
+	}
 	serveStaticFile(w, r, s.assets, "index.html")
 }
 
