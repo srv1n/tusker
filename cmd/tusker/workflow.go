@@ -599,6 +599,11 @@ func loadWorkflow(vaultPath string) (WorkflowFile, error) {
 		return WorkflowFile{}, tuskerError(errorConfigInvalid, fmt.Sprintf("failed to decode WORKFLOW.md: %s", err.Error()), withPath(filePath))
 	}
 	applyTuskerTierWorkflowDefaults(vaultPath, data, &wf)
+	// Switching to a separate-workspace strategy needs no second setting: the
+	// checkout itself (".") is never a workspace root for it.
+	if workspaceStrategyFromWorkflow(wf.Workspace.Strategy) != WorkspaceStrategyShared && strings.TrimSpace(wf.Workspace.Root) == "." {
+		wf.Workspace.Root = "workspaces"
+	}
 	_, configured := data["scheduled_promotion"]
 	provenance := "workflow"
 	if !configured {

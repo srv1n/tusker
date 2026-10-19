@@ -76,12 +76,14 @@ func checkPlan(args Args) ([]checkStep, error) {
 	if fix {
 		add("setup", "setup repair", func(a Args) (int, error) { return setupDoctorCheck(a, true) })
 		add("setup", "vault repair", func(a Args) (int, error) { return vaultMountsCheck(a, true) })
+		add("setup", "workspace mode", workspaceModeCheck)
 		add("validate", "reconcile", run0(reconcileV7Cmd))
 		add("validate", "reindex", run0(reindex))
 		add("docs", "docs map", run0(checkDocsMapIfStale))
 	} else {
 		add("setup", "setup doctor", func(a Args) (int, error) { return setupDoctorCheck(a, false) })
 		add("setup", "vault status", func(a Args) (int, error) { return vaultMountsCheck(a, false) })
+		add("setup", "workspace mode", workspaceModeCheck)
 	}
 	add("validate", "validate", validateCmd)
 	add("skills", "skill doctor", skillV7DoctorCmd)
@@ -251,4 +253,38 @@ Examples:
   tusker check --only docs --since origin/main
   tusker check --fix
   tusker check --only acp --json`)
+}
+
+// workspaceModeCheck warns when .tusker config overrides the workspace mode
+// that WORKFLOW.md names, which older `tusker init` templates did silently.
+func workspaceModeCheck(args Args) (int, error) {
+	vaultPath, err := resolveVaultPath(args, false)
+	if err != nil {
+		return 0, err
+	}
+	text, err := readText(workflowPath(vaultPath))
+	if err != nil {
+		return 0, nil
+	}
+	data, _, err := parseFrontmatter(text)
+	if err != nil {
+		return 0, nil
+	}
+	resolved, err := resolveTuskerConfig(vaultPath)
+	if err != nil {
+		return 0, err
+	}
+	workflowValue, _ := lookupConfigValue(data, "workspace.strategy")
+	workflowText, _ := workflowValue.(string)
+	workflowMode := workspaceStrategyFromWorkflow(workflowText)
+	configured := strings.TrimSpace(resolved.Config.Automation.Workspace.Strategy)
+	message := fmt.Sprintf("Workspace mode: %s (WORKFLOW.md).", workflowMode)
+	if resolvedConfigKeyPresent(resolved, "automation.workspace.strategy") && workspaceStrategyFromWorkflow(configured) != workflowMode {
+		message = fmt.Sprintf("Warning: .tusker config sets automation.workspace.strategy %q, which overrides WORKFLOW.md (%s). Remove one so a single setting decides.", configured, workflowMode)
+	}
+	if args.Bool("json") {
+		return 0, json.NewEncoder(os.Stdout).Encode(map[string]string{"message": message})
+	}
+	fmt.Println(message)
+	return 0, nil
 }

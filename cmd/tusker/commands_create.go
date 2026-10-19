@@ -97,6 +97,9 @@ automation:
   # pinned ACP adapter later when that machine has been configured for it.
   default_runner: codex_exec
   enabled_runners: [codex_exec, claude-code]
+  # Workspace mode: worktree (a worktree per task) or shared (the project
+  # checkout, no branches). This setting overrides workspace.strategy in
+  # WORKFLOW.md; tusker check warns when the two disagree.
   workspace:
     strategy: worktree
     root: workspaces

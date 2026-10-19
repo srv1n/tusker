@@ -282,7 +282,7 @@ func stopCmd(args Args) error {
 	if args.Bool("all") {
 		return stopAllCmd(args)
 	}
-	id :=strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0")))
+	id := strings.TrimSpace(firstNonEmpty(args.String("id"), args.String("_pos0")))
 	if v7TaskIDPattern.MatchString(strings.ToUpper(id)) || strings.HasPrefix(strings.ToUpper(id), "W-") {
 		id = strings.ToUpper(id)
 	}

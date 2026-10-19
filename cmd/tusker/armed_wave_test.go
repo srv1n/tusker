@@ -246,12 +246,9 @@ func TestArmedWaveReviewDependencyReadsSharedCheckoutRecord(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := armedWaveReviewDependencyBlocker(vault, dependent)
-			if strategy == "shared" && got != "" {
-				t.Fatalf("shared checkout dependency closed in place still blocked review: %q", got)
-			}
-			if want := "dependency APP-T-0001 has not completed objective review (status review)"; strategy == "worktree" && got != want {
-				t.Fatalf("worktree dependency blocker = %q, want %q", got, want)
+			// Both modes land per task, so the leftover wave branch is history.
+			if got := armedWaveReviewDependencyBlocker(vault, dependent); got != "" {
+				t.Fatalf("%s dependency closed on the checkout still blocked review: %q", strategy, got)
 			}
 		})
 	}
