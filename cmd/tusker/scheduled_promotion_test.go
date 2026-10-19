@@ -614,6 +614,15 @@ func TestScheduledPromotionLandingUnconfiguredPolicyPreservesLegacyAdvance(t *te
 	}
 }
 
+func TestScheduledPromotionLandingDisabledPolicyAllowsManualAdvance(t *testing.T) {
+	_, vault := newLandReadyForMainAdvanceTest(t, "manual-main.txt", "manual\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionDisabled)
+	allowed, err := scheduledPromotionAllowsDefaultAdvance(vault)
+	if err != nil || !allowed {
+		t.Fatalf("a disabled policy must leave manual landing as the way to advance main: allowed=%v err=%v", allowed, err)
+	}
+}
+
 func TestScheduledPromotionLandingConfiguredPromoteReservesMainForDeparture(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "reserved-main.txt", "reserved\n")
 	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionPromote)

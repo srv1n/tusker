@@ -129,7 +129,9 @@ func scheduledPromotionAllowsDefaultAdvance(vaultPath string) (bool, error) {
 		return false, err
 	}
 	policy := wf.Data.ScheduledPromotion.Effective
-	if !policy.Configured {
+	// Disabled means no departure executor runs, so a manual landing is the
+	// only way main can advance.
+	if !policy.Configured || policy.Mode == scheduledPromotionDisabled {
 		return true, nil
 	}
 	return false, nil
