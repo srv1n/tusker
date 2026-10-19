@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-19T04:23:44Z"
-updated_at: "2026-10-19T15:06:35Z"
-state_rev: "sha256:3613d0806e33638be56f83d8d0ce438cb5949b5d7dcaead3a92c4d2c6fa08751"
+updated_at: "2026-10-19T17:46:30Z"
+state_rev: "sha256:29619eabf2fb4eaded1c58b32d753df87bb90ca61881b1fbc5cb47c2c869ee5d"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,8 +50,8 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[EVD-T-0002]] | backlog | agent | Execute the task contract and satisfy proof mode. |
-| [[EVD-T-0003]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[EVD-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| [[EVD-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

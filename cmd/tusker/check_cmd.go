@@ -278,8 +278,13 @@ func workspaceModeCheck(args Args) (int, error) {
 	workflowText, _ := workflowValue.(string)
 	workflowMode := workspaceStrategyFromWorkflow(workflowText)
 	configured := strings.TrimSpace(resolved.Config.Automation.Workspace.Strategy)
-	message := fmt.Sprintf("Workspace mode: %s (WORKFLOW.md).", workflowMode)
-	if resolvedConfigKeyPresent(resolved, "automation.workspace.strategy") && workspaceStrategyFromWorkflow(configured) != workflowMode {
+	var message string
+	switch {
+	case !resolvedConfigKeyPresent(resolved, "automation.workspace.strategy"):
+		message = fmt.Sprintf("Workspace mode: %s (WORKFLOW.md).", workflowMode)
+	case workspaceStrategyFromWorkflow(configured) == workflowMode:
+		message = fmt.Sprintf("Workspace mode: %s (.tusker config, matches WORKFLOW.md).", workflowMode)
+	default:
 		message = fmt.Sprintf("Warning: .tusker config sets automation.workspace.strategy %q, which overrides WORKFLOW.md (%s). Remove one so a single setting decides.", configured, workflowMode)
 	}
 	if args.Bool("json") {
