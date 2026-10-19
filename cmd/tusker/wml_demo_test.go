@@ -40,8 +40,15 @@ func TestDemoSeedCommitsTrackerRecords(t *testing.T) {
 	if raw, err := os.ReadFile(filepath.Join(repo, ".gitignore")); err == nil && strings.Contains(string(raw), "sample/alpha/") {
 		t.Fatalf("committed .gitignore hides task-owned dirs:\n%s", raw)
 	}
+	// Seeding hides nothing: shared-mode agents work in the main checkout.
+	if _, err := demoGit(repo, "check-ignore", "-q", "sample/alpha/part-1.txt"); err == nil {
+		t.Fatal("seed must not ignore task-owned files; only the offline lane installs that exclude")
+	}
+	if err := demoSeedGitignore(repo); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := demoGit(repo, "check-ignore", "-q", "sample/alpha/part-1.txt"); err != nil {
-		t.Fatalf("main checkout should ignore offline-lane artifacts: %v", err)
+		t.Fatalf("offline lane should ignore its artifacts in the main checkout: %v", err)
 	}
 	wt := filepath.Join(t.TempDir(), "wt")
 	if _, err := demoGit(repo, "worktree", "add", "-q", "--detach", wt); err != nil {

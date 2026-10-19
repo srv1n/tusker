@@ -317,6 +317,10 @@ func demoRun(args Args) (map[string]any, int, error) {
 		}
 	}
 
+	if err := demoSeedGitignore(repoRoot); err != nil {
+		return nil, 0, err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

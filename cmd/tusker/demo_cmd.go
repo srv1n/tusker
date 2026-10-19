@@ -126,9 +126,6 @@ func demoSeed(args Args) (map[string]any, error) {
 	if err := writeText(filepath.Join(vaultPath, "specs", "demo-parallel-waves.md"), demoSpecDoc()); err != nil {
 		return nil, err
 	}
-	if err := demoSeedGitignore(repoRoot); err != nil {
-		return nil, err
-	}
 	profiles, err := demoSeedProfiles(repoRoot)
 	if err != nil {
 		return nil, err
@@ -314,6 +311,8 @@ func demoEnsureEmptyRepo(repoRoot string) error {
 // demoSeedGitignore hides the per-task work directories from the main
 // checkout only. The offline demo-timer lane writes artifacts straight into
 // the main checkout, and work claims require a clean tree outside .tusker.
+// Only that lane installs it: real agents in shared mode work in the main
+// checkout and must see the files they own.
 // Real-agent worktrees must still see and commit those owned files, so the
 // ignore is a main-worktree excludes file, never the committed .gitignore.
 func demoSeedGitignore(repoRoot string) error {
