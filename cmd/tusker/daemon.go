@@ -2240,13 +2240,13 @@ func countDispatchCapacityRuns(runs []RunStatus) int {
 // registeredProjectRuns excludes removed projects without treating disabled or
 // unloadable registrations as removed. Keep their history in the runtime store.
 func registeredProjectRuns(store *RuntimeStore, runs []RunStatus) ([]RunStatus, error) {
-	projects, err := store.ListProjects()
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	registered := make(map[string]bool, len(projects))
 	for _, project := range projects {
-		registered[project.ProjectID] = true
+		registered[project.Project.ProjectID] = true
 	}
 	filtered := make([]RunStatus, 0, len(runs))
 	for _, run := range runs {
@@ -9238,18 +9238,11 @@ func projectsRemoveCmd(args Args) error {
 		return err
 	}
 	defer store.Close()
-	projects, err := store.ListProjects()
+	projects, err := loadRegisteredProjects(store, registeredProjectLoadOptions{MetadataOnly: true, ProjectID: projectID})
 	if err != nil {
 		return err
 	}
-	found := false
-	for _, project := range projects {
-		if project.ProjectID == projectID {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if len(projects) == 0 {
 		return tuskerError(errorNotFound, "project not found: "+projectID)
 	}
 	if args.Bool("dry-run") {
