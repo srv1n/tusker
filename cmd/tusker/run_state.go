@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -79,7 +80,46 @@ func loadRunStateTailsWithBudget(run RunStatus, attempts []RunAttempt, budget *i
 	// Stat before reading: a log that grows mid-read is cached under its older
 	// size, which an append-only log never presents again.
 	key := runStateTailsKey(eventPath, logPath, budget, recordLimit)
-	return runStateTails{runActivityTailWithBudget(eventPath, budget, recordLimit), runActivityTailWithBudget(logPath, budget, recordLimit), key}
+	slot := fmt.Sprintf("%d\x00%s\x00%s", recordLimit, eventPath, logPath)
+	runStateTailsCache.Lock()
+	cached, ok := runStateTailsCache.entries[slot]
+	runStateTailsCache.Unlock()
+	if ok && cached.tails.key == key {
+		// The key pins both files' size and mtime and the effective budget, so
+		// a re-read would consume and return exactly the same.
+		if budget != nil {
+			*budget -= cached.consumed
+		}
+		return cached.tails
+	}
+	before := int64(0)
+	if budget != nil {
+		before = *budget
+	}
+	tails := runStateTails{runActivityTailWithBudget(eventPath, budget, recordLimit), runActivityTailWithBudget(logPath, budget, recordLimit), key}
+	entry := runStateTailsEntry{tails: tails}
+	if budget != nil {
+		entry.consumed = before - *budget
+	}
+	runStateTailsCache.Lock()
+	if len(runStateTailsCache.entries) >= runEventsCacheLimit {
+		clear(runStateTailsCache.entries)
+	}
+	runStateTailsCache.entries[slot] = entry
+	runStateTailsCache.Unlock()
+	return tails
+}
+
+// runStateTailsCache keeps one parsed tail per run log pair and record limit,
+// replaced when either log changes. Readers treat the records as immutable.
+var runStateTailsCache = struct {
+	sync.Mutex
+	entries map[string]runStateTailsEntry
+}{entries: map[string]runStateTailsEntry{}}
+
+type runStateTailsEntry struct {
+	tails    runStateTails
+	consumed int64
 }
 
 func runStateTailsKey(eventPath, logPath string, budget *int64, recordLimit int) string {

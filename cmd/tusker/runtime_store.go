@@ -4779,6 +4779,26 @@ func (s *RuntimeStore) ListApplyInputsForRun(projectID, recordID string) ([]Runt
 	return nil, nil
 }
 
+// ApplyInputRecordIDs names the records holding any apply input in a project.
+// Every scoped apply-input read filters on project and record, so a record
+// absent here has no current inputs and needs no per-run event lookup.
+func (s *RuntimeStore) ApplyInputRecordIDs(projectID string) (map[string]bool, error) {
+	rows, err := s.query(`SELECT DISTINCT record_id FROM apply_inputs WHERE project_id = ?`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var recordID string
+		if err := rows.Scan(&recordID); err != nil {
+			return nil, err
+		}
+		out[recordID] = true
+	}
+	return out, rows.Err()
+}
+
 // ListApplyInputsForRunScope returns only inputs belonging to one task
 // revision and an admitted collection event or explicitly named provider job.
 func (s *RuntimeStore) ListApplyInputsForRunScope(projectID, recordID string, workRevision int, eventID, jobID string) ([]RuntimeApplyInput, error) {

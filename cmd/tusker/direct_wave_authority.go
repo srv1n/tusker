@@ -670,13 +670,17 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		}
 		recordID := trackerRecordID(task)
 		storedRun, hasStoredRun := runs[firstNonEmpty(recordID, id)]
-		member.ProofInvalidation = v7VerificationReceiptInvalidation(vaultPath, task)
 		workspaceErr := error(nil)
+		var workspace *v7VerificationWorkspace
 		if store != nil && hasStoredRun {
-			var workspace *v7VerificationWorkspace
-			if workspace, workspaceErr = recoveryCommandVerificationWorkspace(store, vaultPath, task, storedRun); workspaceErr == nil {
-				member.ProofInvalidation = v7VerificationReceiptInvalidationForWorkspace(vaultPath, task, workspace)
-			}
+			workspace, workspaceErr = recoveryCommandVerificationWorkspace(store, vaultPath, task, storedRun)
+		}
+		// The run workspace, when it resolves, supersedes the checkout material;
+		// skip hashing the checkout for an answer that would be discarded.
+		if workspace != nil && workspaceErr == nil {
+			member.ProofInvalidation = v7VerificationReceiptInvalidationForWorkspace(vaultPath, task, workspace)
+		} else {
+			member.ProofInvalidation = v7VerificationReceiptInvalidation(vaultPath, task)
 		}
 		proofCode, proofStale := "", ""
 		if member.ProofInvalidation != nil {

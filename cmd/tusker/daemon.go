@@ -1305,9 +1305,15 @@ func (d *Daemon) pollOnce(ctx context.Context, projectID string) error {
 			continue
 		}
 		bodiesLoaded := false
+		var inputRecords map[string]bool
 		for _, run := range runsByProject[loaded.Project.ProjectID] {
 			requiresBodies := externalLoopRunnerRequiresCollect(loaded.Workflow.Data, run.Runner)
-			if !requiresBodies {
+			if !requiresBodies && inputRecords == nil {
+				if inputRecords, err = d.store.ApplyInputRecordIDs(loaded.Project.ProjectID); err != nil {
+					return err
+				}
+			}
+			if !requiresBodies && inputRecords[run.RecordID] {
 				inputs, err := listCurrentExternalApplyInputs(d.store, loaded.Project.ProjectID, run.RecordID, run)
 				if err != nil {
 					return err

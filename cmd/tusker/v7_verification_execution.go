@@ -744,13 +744,33 @@ type v7VerificationInvalidation struct {
 }
 
 func v7VerificationReceiptInvalidationForWorkspace(vaultPath string, task Note, workspace *v7VerificationWorkspace) *v7VerificationInvalidation {
-	material, err := v7VerificationMaterialForReport(vaultPath, task, workspace)
+	return v7VerificationReceiptInvalidationLazy(task, func() (string, error) {
+		return v7VerificationMaterialForReport(vaultPath, task, workspace)
+	})
+}
+
+// v7VerificationReceiptInvalidationLazy reads scoped material (git hashing)
+// only when a row reaches the material comparison: a command row with a
+// passing, receipted result. Other rows decide without it.
+func v7VerificationReceiptInvalidationLazy(task Note, readMaterial func() (string, error)) *v7VerificationInvalidation {
+	material, err, read := "", error(nil), false
 	for _, row := range parseV7VerificationRows(task.Body) {
+		if !read && v7VerificationRowNeedsMaterial(row) {
+			material, err = readMaterial()
+			read = true
+		}
 		if cause := v7VerificationReceiptInvalidationForMaterial(task, row, material, err); cause != nil {
 			return cause
 		}
 	}
 	return nil
+}
+
+func v7VerificationRowNeedsMaterial(row v7VerificationRow) bool {
+	if _, command := v7VerificationCommand(row.Check); !command {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(row.Result), "pass") && v7VerificationReceiptFields(row) != nil
 }
 
 func v7VerificationReceiptFields(row v7VerificationRow) map[string]string {
@@ -910,13 +930,9 @@ func v7VerificationReceiptRequirementMissingForMaterial(task Note, currentMateri
 }
 
 func v7VerificationReceiptInvalidation(vaultPath string, task Note) *v7VerificationInvalidation {
-	material, err := v7VerificationCurrentScopedMaterial(vaultPath, task)
-	for _, row := range parseV7VerificationRows(task.Body) {
-		if cause := v7VerificationReceiptInvalidationForMaterial(task, row, material, err); cause != nil {
-			return cause
-		}
-	}
-	return nil
+	return v7VerificationReceiptInvalidationLazy(task, func() (string, error) {
+		return v7VerificationCurrentScopedMaterial(vaultPath, task)
+	})
 }
 
 func v7VerificationReceiptRequirementMissing(vaultPath string, task Note) string {

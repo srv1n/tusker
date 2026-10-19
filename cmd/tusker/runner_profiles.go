@@ -334,13 +334,15 @@ func resolveTuskerConfigForPathsWithOverrides(repoRoot, vaultPath string, includ
 
 func builtInTuskerConfigRaw() map[string]any {
 	cfg := builtInTuskerConfig()
+	// One YAML round trip; the three keys are disjoint subtrees of it.
+	automation := configRawMap(cfg)["automation"].(map[string]any)
 	return map[string]any{
 		"tier": cfg.Tier,
 		"automation": map[string]any{
 			"default_profile": "default",
-			"profiles":        configRawMap(cfg)["automation"].(map[string]any)["profiles"],
-			"model_levels":    configRawMap(cfg)["automation"].(map[string]any)["model_levels"],
-			"denylist":        configRawMap(cfg)["automation"].(map[string]any)["denylist"],
+			"profiles":        automation["profiles"],
+			"model_levels":    automation["model_levels"],
+			"denylist":        automation["denylist"],
 			"concurrency": map[string]any{
 				"max_active_runs":             2,
 				"max_active_runs_per_project": 1,
