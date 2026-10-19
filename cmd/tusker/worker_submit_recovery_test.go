@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-// A daemon that answers and refuses a worker submit has decided. The worker
-// must see the refusal, not a "workspace_request" handoff that the daemon will
-// refuse again after the worker has exited.
-func TestWorkerSubmitRefusalIsReportedNotQueued(t *testing.T) {
+// The daemon on the default address may belong to another state root and
+// refuse an attempt it does not own, so a refusal still queues the request for
+// the owning daemon. A submit missing a summary is refused before any handoff.
+func TestWorkerSubmitRefusalStillQueuesForOwningDaemon(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/capability" {
 			_ = json.NewEncoder(w).Encode(map[string]string{"capability": "test-token"})
@@ -34,14 +34,12 @@ func TestWorkerSubmitRefusalIsReportedNotQueued(t *testing.T) {
 	t.Setenv("TUSKER_LEASE_GENERATION", "1")
 	t.Setenv("TUSKER_WORK_REVISION", "0")
 
-	err := workerLifecycleHandoff(server.URL, Args{"deliverable": "implemented", "verification": "tests passed"}, "submit")
-	if issue, ok := err.(*TuskerError); !ok || issue.Code != errorWorkerLifecycleRefused || !strings.Contains(issue.Message, "does not match") {
-		t.Fatalf("refusal = %v, want %s with the daemon's reason", err, errorWorkerLifecycleRefused)
+	if err := workerLifecycleHandoff(server.URL, Args{"deliverable": "implemented", "verification": "tests passed"}, "submit"); err != nil {
+		t.Fatalf("handoff after a foreign daemon's refusal: %v", err)
 	}
-	if fileExists(workerLifecycleRequestPath(workspace, "attempt-1")) {
-		t.Fatal("a refused submit was queued as a workspace request")
+	if !fileExists(workerLifecycleRequestPath(workspace, "attempt-1")) {
+		t.Fatal("a submit refused by the default-address daemon was not queued for the owning daemon")
 	}
-	// A submit the daemon is bound to refuse is refused before any handoff.
 	if _, err := workerLifecycleRequest(Args{"deliverable": "implemented"}, "submit"); err == nil {
 		t.Fatal("a submit without verification must be refused before it is handed off")
 	}
@@ -120,6 +118,13 @@ func TestInterruptedDeadReservationSchedulesRetry(t *testing.T) {
 		current, err := store.FindRunScoped("project-retry", "RET-T-0001")
 		if err != nil || current == nil {
 			t.Fatalf("run unavailable: %v", err)
+		}
+		if !enabled {
+			// A disabled project's reclaim only frees capacity; nothing redispatches it.
+			if current.LeaseState != string(LeaseStateInterrupted) {
+				t.Fatalf("disabled project's dead reservation was requeued: %#v", current)
+			}
+			continue
 		}
 		if current.LeaseState != string(LeaseStateRetryQueued) || current.NextRetryAt == "" || current.ActiveAttemptID != "" || current.SessionRef != "session-1" {
 			t.Fatalf("enabled=%v: dead reservation left no retry: %#v", enabled, current)

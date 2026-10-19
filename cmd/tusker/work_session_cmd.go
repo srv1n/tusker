@@ -731,12 +731,9 @@ func workerLifecycleHandoff(serveURL string, args Args, action string) error {
 	if err == nil {
 		return nil
 	}
-	// The workspace file is for a daemon that cannot be reached. A daemon that
-	// answered and refused has decided; queuing the same request would only be
-	// refused again at reconciliation while the worker believes it submitted.
-	if refusal, ok := err.(*TuskerError); ok && refusal.Code == errorWorkerLifecycleRefused {
-		return err
-	}
+	// The daemon on the default address may not own this attempt (another
+	// state root), so a refusal still queues the request for the owning
+	// daemon; a refusal there ends the attempt with the reason.
 	payload, _ := json.Marshal(request)
 	if err := writeConfigTextAtomically(workerLifecycleRequestPath(os.Getenv("TUSKER_WORKSPACE"), request.Worker.AttemptID), string(payload)); err != nil {
 		return tuskerError(errorInvalidTransition, "worker lifecycle handoff failed: "+err.Error())

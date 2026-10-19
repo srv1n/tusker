@@ -379,9 +379,6 @@ func autoRepairDeadReservation(store *RuntimeStore, projectEnabled bool, run Run
 	}
 	if !projectEnabled {
 		changed, err := store.reclaimExpiredRunLeaseIfSnapshot(run, now, defaultRunLeaseTTL, "daemon poll reclaimed expired dead lease")
-		if changed && err == nil {
-			err = store.requeueReclaimedDeadReservation(run, now, "daemon poll reclaimed expired dead lease")
-		}
 		return changed, false, false, err
 	}
 	fingerprint := selfServiceRepairFingerprint(run.ProjectID, selfServiceRepairKindDeadReservation, revision)
@@ -443,6 +440,16 @@ func autoRepairDeadReservation(store *RuntimeStore, projectEnabled bool, run Run
 func (s *RuntimeStore) requeueReclaimedDeadReservation(run RunStatus, now time.Time, reason string) error {
 	if run.HandRun {
 		return nil
+	}
+	// A session that outlived its daemon is adopted, not replaced.
+	if open, err := s.openOwnedProcesses(); err != nil {
+		return err
+	} else {
+		for _, p := range open {
+			if p.Owner == run.ActiveAttemptID && run.ActiveAttemptID != "" && processAlive(p.PID) {
+				return nil
+			}
+		}
 	}
 	stamp := now.UTC().Format(time.RFC3339)
 	_, err := s.exec(`UPDATE runs
