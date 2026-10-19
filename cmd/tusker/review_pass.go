@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -97,10 +98,17 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 		return nil
 	}
 	go func() {
+		changed := false
 		defer func() {
-			d.releaseReviewPassLanding()
-			// The landing changed this project's tasks; poll it now.
-			d.scheduleProjectReconcile(project.ProjectID)
+			// Wake only when a landing rewrote a task. A refused landing
+			// (drifted base, unauthorized wave) changes nothing, and waking
+			// on it re-runs the same refused pass in a tight loop.
+			if changed {
+				d.releaseReviewPassLanding()
+				d.scheduleProjectReconcile(project.ProjectID)
+				return
+			}
+			d.releaseReviewPassLandingExcept(project.ProjectID)
 		}()
 		for _, taskID := range passes {
 			idx, err := loadV7Index(project.VaultRoot)
@@ -112,8 +120,13 @@ func (d *Daemon) reconcileReviewCompletion(ctx context.Context, project Register
 			if !ok {
 				continue
 			}
+			before, _ := os.Stat(task.AbsolutePath)
 			if err := d.handleReviewResult(ctx, project, task, result); err != nil {
 				log.Printf("review pass handler %s/%s: %v", project.ProjectKey, taskID, err)
+			}
+			if after, err := os.Stat(task.AbsolutePath); err != nil || before == nil ||
+				!after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+				changed = true
 			}
 		}
 	}()
@@ -146,13 +159,22 @@ func (d *Daemon) deferReviewPass(projectID string) {
 // releaseReviewPassLanding frees the landing worker and wakes every project
 // that waited for it.
 func (d *Daemon) releaseReviewPassLanding() {
+	d.releaseReviewPassLandingExcept("")
+}
+
+// releaseReviewPassLandingExcept frees the worker without waking skip: that
+// project's own landing just ran and changed nothing, so another pass would
+// only repeat it.
+func (d *Daemon) releaseReviewPassLandingExcept(skip string) {
 	reviewPassDeferred.Lock()
 	d.reviewPassLanding.Store(false)
 	waiting := reviewPassDeferred.projects[d]
 	delete(reviewPassDeferred.projects, d)
 	reviewPassDeferred.Unlock()
 	for projectID := range waiting {
-		d.scheduleProjectReconcile(projectID)
+		if projectID != skip {
+			d.scheduleProjectReconcile(projectID)
+		}
 	}
 }
 
