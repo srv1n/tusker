@@ -119,6 +119,14 @@ merge brings the task onto it and the check reruns there; only a real merge
 conflict returns the task to rework with the conflict named. A failing test
 also returns it to rework; other landing failures hold it for the operator.
 
+When a landed task closes, Tusker deletes its `task/<ID>` and
+`review/<ID>/<sha>` branches and its clean Tusker-owned worktrees; anything
+not already on the default branch, or with uncommitted changes, is kept and the
+reason recorded in an event. Once every member of a wave is done, cancelled or
+superseded, the wave is marked `landed` and disarmed, and a leftover
+`integration/<W-ID>` branch is deleted only if it is fully merged into the
+default branch.
+
 Only a project with `scheduled_promotion` configured keeps a per-wave
 `integration/<W-ID>` branch that departures promote to main. `tusker land
 <W-ID>` merges such a branch, or one staged before per-task landing.

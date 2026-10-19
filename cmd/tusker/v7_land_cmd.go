@@ -3878,6 +3878,89 @@ func gitMergeBaseAncestor(repoRoot, ancestor, descendant string) bool {
 	return exec.Command("git", "-C", repoRoot, "merge-base", "--is-ancestor", ancestor, descendant).Run() == nil
 }
 
+// cleanupV7LandedTask removes what a task landed per task leaves behind: its
+// clean Tusker-owned worktrees and its task/<ID> and review/<ID>/<sha>
+// branches. Once the task's wave is complete it also removes the wave's
+// leftover integration branch. Only work already on the default branch is
+// removed; anything else stays, and the reason is recorded in an event.
+// Cleanup is best effort and never fails the close.
+func cleanupV7LandedTask(vaultPath, taskID, actor string) {
+	repoRoot := v7RepoRoot(vaultPath)
+	if !v7GitRepo(repoRoot) {
+		return
+	}
+	taskID = strings.ToUpper(strings.TrimSpace(taskID))
+	defaultBranch := v7DefaultBranch(vaultPath)
+	merged := func(rev string) bool { return gitMergeBaseAncestor(repoRoot, rev, defaultBranch) }
+	var removed, kept []string
+	keep := func(what, why string) { kept = append(kept, what+": "+why) }
+
+	taskRef := "refs/heads/" + v7TaskBranchName(taskID)
+	reviewPrefix := "refs/heads/review/" + taskID + "/"
+	for _, wt := range v7ListWorktrees(repoRoot) {
+		if workspacePathsCompatible(wt.Path, repoRoot) {
+			continue // the operator's main checkout
+		}
+		if wt.Branch != taskRef && !strings.HasPrefix(wt.Branch, reviewPrefix) && v7WorkspaceRecordID(wt.Path) != taskID {
+			continue
+		}
+		var meta WorkspaceMetadata
+		raw, err := os.ReadFile(filepath.Join(wt.Path, ".tusker", "workspace.json"))
+		switch {
+		case err != nil || json.Unmarshal(raw, &meta) != nil || meta.Strategy != string(WorkspaceStrategyWorktree):
+			keep("worktree "+wt.Path, "not a Tusker-owned worktree")
+		case wt.HEAD == "" || !merged(wt.HEAD):
+			keep("worktree "+wt.Path, "its HEAD is not on "+defaultBranch)
+		case reviewerWorkspaceDirtyReason(wt.Path) != "":
+			keep("worktree "+wt.Path, "it has uncommitted changes")
+		default:
+			if err := cleanupWorkspacePath(wt.Path); err != nil {
+				keep("worktree "+wt.Path, err.Error())
+				continue
+			}
+			removed = append(removed, "worktree "+wt.Path)
+		}
+	}
+	_ = exec.Command("git", "-C", repoRoot, "worktree", "prune").Run()
+
+	refs, _ := gitOutputTrim(repoRoot, "for-each-ref", "--format=%(refname:short)", taskRef, strings.TrimSuffix(reviewPrefix, "/"))
+	for _, branch := range strings.Fields(refs) {
+		if !merged("refs/heads/" + branch) {
+			keep("branch "+branch, "not merged into "+defaultBranch)
+		} else if err := deleteGitBranch(repoRoot, branch); err != nil {
+			keep("branch "+branch, firstActionableLine("", err.Error()))
+		} else {
+			removed = append(removed, "branch "+branch)
+		}
+	}
+	if len(removed)+len(kept) > 0 {
+		_ = emitV7Event(vaultPath, taskID, "task", "updated", actor, map[string]any{"branch_cleanup": map[string]any{"removed": removed, "kept": kept}})
+	}
+
+	idx, err := loadV7Index(vaultPath)
+	if err != nil {
+		return
+	}
+	wave, ok := idx.Waves[stringField(idx.Tasks[taskID].Data, "wave")]
+	if !ok || stringField(wave.Data, "status") != "landed" {
+		return
+	}
+	integration := v7LegacyWaveIntegrationBranch(wave)
+	if integration == defaultBranch || !gitBranchExists(repoRoot, integration) {
+		return
+	}
+	waveID := stringField(wave.Data, "id")
+	cleanup := map[string]any{}
+	if !merged("refs/heads/" + integration) {
+		cleanup["kept"] = []string{"branch " + integration + ": not merged into " + defaultBranch + "; merge or delete it by hand"}
+	} else if err := deleteGitBranch(repoRoot, integration); err != nil {
+		cleanup["kept"] = []string{"branch " + integration + ": " + firstActionableLine("", err.Error())}
+	} else {
+		cleanup["removed"] = []string{"branch " + integration}
+	}
+	_ = emitV7Event(vaultPath, waveID, "wave", "updated", actor, map[string]any{"branch_cleanup": cleanup})
+}
+
 func deleteGitBranch(repoRoot, branch string) error {
 	if !gitBranchExists(repoRoot, branch) {
 		return nil

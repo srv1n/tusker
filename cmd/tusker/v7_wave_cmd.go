@@ -459,6 +459,11 @@ func reconcileV7WaveStates(vaultPath string, idx v7Index, actor, source string) 
 				changes["status"] = map[string]any{"from": stringField(data, "status"), "to": nextStatus}
 				data["status"] = nextStatus
 			}
+			// A wave completed by per-task landing has nothing left to dispatch.
+			if auth := stringField(data, "authorization"); nextStatus == "landed" && (auth == "armed" || auth == "paused") && v7WaveLandsPerTask(wave) {
+				changes["authorization"] = map[string]any{"from": auth, "to": "disarmed"}
+				data["authorization"] = "disarmed"
+			}
 			if nextLandedAt == "" {
 				if stringField(data, "landed_at") != "" {
 					changes["landed_at"] = map[string]any{"from": stringField(data, "landed_at"), "to": ""}
@@ -550,14 +555,23 @@ func v7DesiredTaskWaveMap(idx v7Index) map[string]string {
 	return desired
 }
 
+// v7WaveLandsPerTask reports whether the wave's project lands each task on
+// the default branch. A wave held only in memory keeps the staged behaviour.
+func v7WaveLandsPerTask(wave Note) bool {
+	vaultPath := v7WaveVaultPath(wave)
+	return vaultPath != "" && v7LandsPerTask(vaultPath)
+}
+
 func v7DerivedWaveState(idx v7Index, wave Note) (string, string) {
 	members := normalizeList(wave.Data["members"])
 	if len(members) == 0 {
 		return "open", ""
 	}
+	perTask := v7WaveLandsPerTask(wave)
 	for _, member := range members {
 		task, ok := idx.Tasks[member]
-		if !ok || stringField(task.Data, "status") != "done" {
+		status := stringField(task.Data, "status")
+		if !ok || (status != "done" && !(perTask && v7TerminalTaskStatus(status))) {
 			return "open", ""
 		}
 	}
@@ -569,6 +583,11 @@ func v7DerivedWaveState(idx v7Index, wave Note) (string, string) {
 			receiptAt = time.Now().UTC().Format(time.RFC3339)
 		}
 		return "landed", receiptAt
+	}
+	if perTask {
+		// Each member merged into the default branch as it passed, so a wave
+		// whose members are all terminal is complete.
+		return "landed", time.Now().UTC().Format(time.RFC3339)
 	}
 	// All members being done is a precondition for landing, not proof that Git
 	// moved. Keep the wave open until the landing receipt is durable.

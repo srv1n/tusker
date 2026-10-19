@@ -509,8 +509,13 @@ func closeV7Task(vaultPath, id, actor string, args Args, skipCommandVerification
 	if err != nil {
 		return "", err
 	}
-	_, err = reconcileV7ControlProjections(vaultPath, affected, actor, "task:"+id)
-	return prev, err
+	if _, err = reconcileV7ControlProjections(vaultPath, affected, actor, "task:"+id); err != nil {
+		return prev, err
+	}
+	if v7LandsPerTask(vaultPath) {
+		cleanupV7LandedTask(vaultPath, id, actor)
+	}
+	return prev, nil
 }
 
 func v7ReviewerIntegratedDependencyIndex(vaultPath string, args Args, task Note, idx v7Index) v7Index {

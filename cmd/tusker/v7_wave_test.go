@@ -113,6 +113,9 @@ func TestWaveMembershipMutationsRejectForgedActors(t *testing.T) {
 
 func TestWaveDerivedState(t *testing.T) {
 	vault := newWaveTestVault(t, 3)
+	// A staged wave lands only on its receipt; per-task waves complete when
+	// every member is terminal (TestWaveAutoCompletesWhenMembersLand).
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage)
 	mustWave(t, Args{"vault": vault, "quiet": "true", "_pos0": "Landing batch", "_pos1": "APP-T-0001", "_pos2": "APP-T-0002"}, waveV7CreateCmd)
 
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T01:00:00Z")
