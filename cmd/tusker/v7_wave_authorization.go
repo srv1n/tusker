@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
 
 	"tusker/internal/docgraph"
 
@@ -70,7 +72,13 @@ func waveMaterialFingerprint(vaultPath string, idx v7Index, wave Note) (string, 
 	return waveMaterialFingerprintWithContext(vaultPath, idx, wave, newWaveMaterialReadContext())
 }
 
+// waveMaterialFingerprintObserver lets tests count wave material fingerprints.
+var waveMaterialFingerprintObserver func()
+
 func waveMaterialFingerprintWithContext(vaultPath string, idx v7Index, wave Note, context *waveMaterialReadContext) (string, []string) {
+	if waveMaterialFingerprintObserver != nil {
+		waveMaterialFingerprintObserver()
+	}
 	if context == nil {
 		context = newWaveMaterialReadContext()
 	}
@@ -344,6 +352,10 @@ func waveAuthorizationProjection(vaultPath string, idx v7Index, wave Note) map[s
 
 func waveAuthorizationProjectionWithContext(vaultPath string, idx v7Index, wave Note, context *waveMaterialReadContext) map[string]any {
 	fingerprint, _ := waveMaterialFingerprintWithContext(vaultPath, idx, wave, context)
+	return waveAuthorizationProjectionForFingerprint(wave, fingerprint)
+}
+
+func waveAuthorizationProjectionForFingerprint(wave Note, fingerprint string) map[string]any {
 	stored, state := stringField(wave.Data, "authorization_fingerprint"), fallback(stringField(wave.Data, "authorization"), "disarmed")
 	stale := waveAuthorizationFingerprintActive(state) && stored != "" && stored != fingerprint
 	if stale {
@@ -443,4 +455,139 @@ func cloneNoteMap(src map[string]Note) map[string]Note {
 		out[k] = v
 	}
 	return out
+}
+
+// waveCheckEntry carries one vault's index and per-wave material fingerprints
+// across wave checks (the daemon's frontier advance), so a check with nothing
+// changed neither reloads the vault nor re-fingerprints the wave. The index is
+// reused only while a stat-only signature of every note file and the
+// in-process write generation hold; a fingerprint only while its wave
+// document, the doc corpus and every cited spec file are unchanged. An edit
+// to the wave, a member, a gate or a cited spec is therefore recomputed on
+// the next check. Mutations (arming, pause, resume) never read this cache.
+//
+// ponytail: one entry per vault, never evicted; fine for a handful of
+// projects per process.
+type waveCheckEntry struct {
+	signature [sha256.Size]byte
+	idx       v7Index
+	waves     map[string]waveCheckMaterial
+}
+
+type waveCheckMaterial struct {
+	wave         Note
+	result       waveMaterialResult
+	usesResolver bool
+	resolver     *docgraph.Resolver
+	specs        map[string]noteFileVersion
+}
+
+var waveCheckCache = struct {
+	sync.Mutex
+	byVault map[string]*waveCheckEntry
+}{byVault: map[string]*waveCheckEntry{}}
+
+// waveCheckIndex returns the vault index for a wave check. The returned
+// index's Tasks and Waves maps are copies, so callers may overlay notes.
+func waveCheckIndex(vaultPath string) (v7Index, *waveCheckEntry, error) {
+	signature, cacheable := waveCheckSignature(vaultPath)
+	waveCheckCache.Lock()
+	entry := waveCheckCache.byVault[vaultPath]
+	waveCheckCache.Unlock()
+	if !cacheable || entry == nil || entry.signature != signature {
+		// The signature is taken before the load: a write racing the load
+		// changes the next signature, so the next check reloads.
+		idx, err := loadV7Index(vaultPath)
+		if err != nil {
+			return v7Index{}, nil, err
+		}
+		entry = &waveCheckEntry{signature: signature, idx: idx, waves: map[string]waveCheckMaterial{}}
+		if cacheable {
+			waveCheckCache.Lock()
+			waveCheckCache.byVault[vaultPath] = entry
+			waveCheckCache.Unlock()
+		}
+	}
+	idx := entry.idx
+	idx.Tasks = cloneNoteMap(entry.idx.Tasks)
+	idx.Waves = cloneNoteMap(entry.idx.Waves)
+	return idx, entry, nil
+}
+
+// waveCheckSignature is a stat-only signature of every note loadV7Index
+// reads. It is not cacheable when a file's mtime is too coarse to order a
+// same-size rewrite.
+func waveCheckSignature(vaultPath string) ([sha256.Size]byte, bool) {
+	var signature [sha256.Size]byte
+	h := sha256.New()
+	fmt.Fprintf(h, "%d\x00", v7DocumentWriteGeneration.Load())
+	paths, err := walkNoteFiles(vaultPath)
+	if err != nil {
+		return signature, false
+	}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil || noteCacheNeedsCoarseMtimeHashCheck(info.ModTime()) {
+			return signature, false
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00%d\x00", path, info.Size(), info.ModTime().UnixNano())
+	}
+	h.Sum(signature[:0])
+	return signature, true
+}
+
+// fingerprint returns the wave's material fingerprint over idx, reusing the
+// previous result while it is provably current.
+func (entry *waveCheckEntry) fingerprint(vaultPath string, idx v7Index, wave Note) (string, []string) {
+	id := stringField(wave.Data, "id")
+	waveCheckCache.Lock()
+	cached, ok := entry.waves[id]
+	waveCheckCache.Unlock()
+	if ok && cached.current(vaultPath, wave) {
+		return cached.result.fingerprint, cached.result.issues
+	}
+	context := newWaveMaterialReadContext()
+	fingerprint, issues := waveMaterialFingerprintWithContext(vaultPath, idx, wave, context)
+	if len(issues) > 0 || (context.corpusAttempted && context.resolver == nil) {
+		return fingerprint, issues
+	}
+	specs := make(map[string]noteFileVersion, len(context.files))
+	for path, file := range context.files {
+		// Stat, then confirm the bytes still hash as fingerprinted: an edit
+		// racing the fingerprint is either seen here or moves the mtime.
+		info, err := os.Stat(path)
+		if err != nil || noteCacheNeedsCoarseMtimeHashCheck(info.ModTime()) {
+			return fingerprint, issues
+		}
+		raw, err := os.ReadFile(path)
+		if sum := sha256.Sum256(raw); err != nil || hex.EncodeToString(sum[:]) != file.hash {
+			return fingerprint, issues
+		}
+		specs[path] = noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}
+	}
+	waveCheckCache.Lock()
+	wave.Data = cloneNoteData(wave.Data)
+	entry.waves[id] = waveCheckMaterial{wave: wave, result: waveMaterialResult{fingerprint, issues}, usesResolver: context.corpusAttempted, resolver: context.resolver, specs: specs}
+	waveCheckCache.Unlock()
+	return fingerprint, issues
+}
+
+func (cached waveCheckMaterial) current(vaultPath string, wave Note) bool {
+	if wave.Body != cached.wave.Body || !reflect.DeepEqual(wave.Data, cached.wave.Data) {
+		return false
+	}
+	// CachedResolver returns the same resolver while the doc corpus's stat
+	// signature holds, so spec resolution (route, ambiguity) is unchanged.
+	if cached.usesResolver {
+		if resolver, err := docgraph.CachedResolver(v7RepoRoot(vaultPath)); err != nil || resolver != cached.resolver {
+			return false
+		}
+	}
+	for path, version := range cached.specs {
+		info, err := os.Stat(path)
+		if err != nil || (noteFileVersion{modTime: info.ModTime().UnixNano(), size: info.Size()}) != version {
+			return false
+		}
+	}
+	return true
 }

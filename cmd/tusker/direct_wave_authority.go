@@ -452,6 +452,12 @@ func directWaveRunAdmittedByWave(store *RuntimeStore, run RunStatus, waveID, fin
 }
 
 func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, waveID string, runtimeErr error) (directWaveReview, error) {
+	return buildDirectWaveReviewFrom(vaultPath, store, projectID, waveID, runtimeErr, nil, nil)
+}
+
+// buildDirectWaveReviewFrom reuses a caller's loaded index and wave material
+// fingerprint when given; nil loads and fingerprints here.
+func buildDirectWaveReviewFrom(vaultPath string, store *RuntimeStore, projectID, waveID string, runtimeErr error, loaded *v7Index, material *waveMaterialResult) (directWaveReview, error) {
 	review := directWaveReview{
 		Schema:               directWaveReviewSchema,
 		WaveID:               waveID,
@@ -462,9 +468,14 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 		Blockers:             []directStartBlocker{},
 		Controls:             []directStartControl{},
 	}
-	idx, err := loadV7Index(vaultPath)
-	if err != nil {
-		return review, err
+	var idx v7Index
+	if loaded != nil {
+		idx = *loaded
+	} else {
+		var err error
+		if idx, err = loadV7Index(vaultPath); err != nil {
+			return review, err
+		}
 	}
 	wave, ok := idx.Waves[waveID]
 	if !ok {
@@ -481,12 +492,18 @@ func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, wav
 	members := uniqueStrings(normalizeList(wave.Data["members"]))
 	sort.Strings(members)
 	review.HumanActions = directWaveHumanActionProjection(idx, members)
-	fingerprint, issues := waveMaterialFingerprint(vaultPath, idx, wave)
+	var fingerprint string
+	var issues []string
+	if material != nil {
+		fingerprint, issues = material.fingerprint, material.issues
+	} else {
+		fingerprint, issues = waveMaterialFingerprint(vaultPath, idx, wave)
+	}
 	review.MaterialFingerprint = fingerprint
 	for _, issue := range issues {
 		review.Blockers = append(review.Blockers, directStartBlocker{Code: "MATERIAL_INVALID", Reason: issue, Action: "repair the wave material and rerun wave review"})
 	}
-	authorization := waveAuthorizationProjection(vaultPath, idx, wave)
+	authorization := waveAuthorizationProjectionForFingerprint(wave, fingerprint)
 	authState := stringField(authorization, "state")
 	stale := boolFromAny(authorization["stale"])
 	armedFingerprint := stringField(authorization, "authorizedFingerprint")
@@ -1716,7 +1733,7 @@ func queueAuthorizedWaveFrontier(vault string, store *RuntimeStore, projectID, w
 }
 
 func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeStore, projectID, waveID string, now time.Time) ([]string, error) {
-	idx, err := loadV7Index(vault)
+	idx, check, err := waveCheckIndex(vault)
 	if err != nil {
 		return nil, err
 	}
@@ -1741,7 +1758,7 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 		_ = waveLock.Close()
 		return nil, nil
 	}
-	fingerprint, issues := waveMaterialFingerprint(vault, idx, wave)
+	fingerprint, issues := check.fingerprint(vault, idx, wave)
 	stored := stringField(data, "authorization_fingerprint")
 	authorizedAt := stringField(data, "authorized_at")
 	authorizedBy := stringField(data, "authorized_by")
@@ -1750,7 +1767,7 @@ func queueAuthorizedWaveFrontierUnderMaterialLock(vault string, store *RuntimeSt
 		_ = waveLock.Close()
 		return nil, nil
 	}
-	review, err := buildDirectWaveReview(vault, store, projectID, waveID, nil)
+	review, err := buildDirectWaveReviewFrom(vault, store, projectID, waveID, nil, &idx, &waveMaterialResult{fingerprint, issues})
 	if err != nil {
 		_ = waveLock.Close()
 		return nil, err

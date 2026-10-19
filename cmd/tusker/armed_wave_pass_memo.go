@@ -1,6 +1,10 @@
 package main
 
-import "maps"
+import (
+	"maps"
+	"strings"
+	"sync"
+)
 
 // armedWavePassMemo shares armed-wave reads across one project's candidate
 // collection inside a daemon poll pass. Without it every candidate task
@@ -29,6 +33,7 @@ type armedWavePassMemo struct {
 	gitRepos   map[string]bool
 	branches   map[string]bool
 	refNotes   map[string]armedWaveRefNote
+	refTips    map[string]string
 }
 
 type armedWaveProjection struct {
@@ -61,6 +66,22 @@ func (m *armedWavePassMemo) reset() {
 	m.gitRepos = map[string]bool{}
 	m.branches = map[string]bool{}
 	m.refNotes = map[string]armedWaveRefNote{}
+	m.refTips = map[string]string{}
+}
+
+// armedWaveRefNoteCache keeps task records read from a ref across polls,
+// keyed by the commit the ref resolved to. A new commit on the branch is a
+// miss, and records are read at that exact commit, never at the moving ref.
+//
+// ponytail: one entry per repo+ref+path, replaced on a new tip, never evicted.
+var armedWaveRefNoteCache = struct {
+	sync.Mutex
+	byKey map[string]armedWaveTipNote
+}{byKey: map[string]armedWaveTipNote{}}
+
+type armedWaveTipNote struct {
+	tip    string
+	cached armedWaveRefNote
 }
 
 // usable reports whether the memo may answer for vaultPath, first dropping
@@ -160,10 +181,41 @@ func (m *armedWavePassMemo) noteAtRef(vaultPath, repoRoot, ref, rel string) (Not
 	key := repoRoot + "\x00" + ref + "\x00" + rel
 	cached, ok := m.refNotes[key]
 	if !ok {
-		cached.note, cached.ok, cached.err = v7GitNoteAtRef(repoRoot, ref, rel)
+		cached = m.noteAtTip(repoRoot, ref, rel, key)
 		m.refNotes[key] = cached
 	}
 	note := cached.note
 	note.Data = cloneNoteData(cached.note.Data)
 	return note, cached.ok, cached.err
+}
+
+// noteAtTip resolves ref once per pass and serves rel at that commit from the
+// cross-poll cache. An unresolvable ref reads through uncached.
+func (m *armedWavePassMemo) noteAtTip(repoRoot, ref, rel, key string) armedWaveRefNote {
+	tipKey := repoRoot + "\x00" + ref
+	tip, ok := m.refTips[tipKey]
+	if !ok {
+		if out, err := gitCombined(repoRoot, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil {
+			tip = strings.TrimSpace(out)
+		}
+		m.refTips[tipKey] = tip
+	}
+	var cached armedWaveRefNote
+	if tip == "" {
+		cached.note, cached.ok, cached.err = v7GitNoteAtRef(repoRoot, ref, rel)
+		return cached
+	}
+	armedWaveRefNoteCache.Lock()
+	hit, found := armedWaveRefNoteCache.byKey[key]
+	armedWaveRefNoteCache.Unlock()
+	if found && hit.tip == tip {
+		return hit.cached
+	}
+	cached.note, cached.ok, cached.err = v7GitNoteAtRef(repoRoot, tip, rel)
+	if cached.err == nil {
+		armedWaveRefNoteCache.Lock()
+		armedWaveRefNoteCache.byKey[key] = armedWaveTipNote{tip: tip, cached: cached}
+		armedWaveRefNoteCache.Unlock()
+	}
+	return cached
 }
