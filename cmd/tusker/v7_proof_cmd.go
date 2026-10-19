@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -718,11 +719,32 @@ func acquireV7ProofWriteLock(vaultPath, taskID string, timeout time.Duration) (f
 		if !os.IsExist(err) {
 			return nil, err
 		}
+		if proofLockHolderDead(lockPath) {
+			// A holder that died without releasing would block this task's proof forever.
+			_ = os.Remove(lockPath)
+			continue
+		}
 		if timeout <= 0 || time.Now().After(deadline) {
 			return nil, tuskerError("PROOF_WRITE_BUSY", taskID+": proof write lock is held", withPath(lockPath))
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+}
+
+// proofLockHolderDead reports a lock whose recorded holder process is gone. A
+// lock with no readable pid may still be mid-write, so it counts as held.
+func proofLockHolderDead(lockPath string) bool {
+	raw, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if value, ok := strings.CutPrefix(line, "pid="); ok {
+			pid, err := strconv.Atoi(strings.TrimSpace(value))
+			return err == nil && !processAlive(pid)
+		}
+	}
+	return false
 }
 
 func v7ProofLockTimeout(args Args) time.Duration {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1160,4 +1161,25 @@ func mustV7Task(t *testing.T, vault, taskID string) Note {
 		t.Fatal(err)
 	}
 	return note
+}
+
+func TestProofWriteLockReclaimsDeadHolder(t *testing.T) {
+	vault := t.TempDir()
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(vault, "locks", "proof-APP-T-0001.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := fmt.Sprintf("pid=%d\nat=2026-10-19T03:58:11Z\n", cmd.Process.Pid)
+	if err := os.WriteFile(lockPath, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	release, err := acquireV7ProofWriteLock(vault, "APP-T-0001", 0)
+	if err != nil {
+		t.Fatalf("a lock whose holder died was not reclaimed: %v", err)
+	}
+	release()
 }
