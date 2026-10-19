@@ -192,6 +192,8 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             if let requestID = payload["requestId"] as? String { presentFolderPicker(requestID: requestID) }
         case "pickImage":
             if let requestID = payload["requestId"] as? String { presentImagePicker(requestID: requestID) }
+        case "setTheme":
+            panel.appearance = Self.appearance(forTheme: payload["theme"] as? String)
         default: break
         }
     }
@@ -291,6 +293,15 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
     private func isConfiguredOrigin(_ url: URL?) -> Bool {
         guard let url, let configuredOrigin = Self.configuredOrigin(config.baseURL) else { return false }
         return Self.configuredOrigin(url) == configuredOrigin
+    }
+
+    /// Native appearance for the served UI's theme pin; nil follows the system.
+    static func appearance(forTheme theme: String?) -> NSAppearance? {
+        switch theme {
+        case "dark": return NSAppearance(named: .darkAqua)
+        case "light": return NSAppearance(named: .aqua)
+        default: return nil
+        }
     }
 
     static func configuredOrigin(_ url: URL) -> String? {

@@ -40,6 +40,10 @@ function systemPrefersDark(): boolean {
 }
 
 function apply(pref: ThemePref) {
+  // The Mac shell draws the native title bar; tell it which appearance to use.
+  const shell = (window as { webkit?: { messageHandlers?: { tuskerShell?: { postMessage(m: unknown): void } } } })
+    .webkit?.messageHandlers?.tuskerShell;
+  shell?.postMessage({ method: "setTheme", theme: pref });
   const root = document.documentElement;
   if (pref === "system") {
     root.removeAttribute("data-theme");

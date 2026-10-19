@@ -28,8 +28,8 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
         webView = WKWebView(frame: frame, configuration: webConfig)
         super.init()
         content.add(self, name: "tuskerShell")
-        // Follow the system appearance: the served UI already adapts to
-        // light/dark, so forcing .darkAqua would strand light-mode users.
+        // Follow the system appearance until the served UI reports its
+        // theme pin through the "setTheme" bridge message.
         window.title = "Tusker"
         window.collectionBehavior = [.fullScreenPrimary]
         window.isReleasedWhenClosed = false
@@ -232,6 +232,8 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
                     self.webView.evaluateJavaScript(script, completionHandler: nil)
                 }
             }
+        case "setTheme":
+            window.appearance = PanelController.appearance(forTheme: payload["theme"] as? String)
         default:
             return
         }
