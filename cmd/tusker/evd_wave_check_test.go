@@ -69,9 +69,6 @@ func TestWaveCheckSeesMaterialChange(t *testing.T) {
 		{"member task", func(t *testing.T, vault string) {
 			rewrite(t, filepath.Join(vault, "work", "tasks", "APP-T-0002.md"), "Direct APP-T-0002", "Edited APP-T-0002")
 		}},
-		{"cited spec", func(t *testing.T, vault string) {
-			rewrite(t, filepath.Join(v7RepoRoot(vault), filepath.FromSlash(evdWaveSpec)), "Existing context.", "Edited context.")
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vault, store, project := evdArmedWave(t)
@@ -111,6 +108,21 @@ func TestWaveCheckSeesMaterialChange(t *testing.T) {
 			}
 		})
 	}
+
+	// Cited spec text changes through commits to main, which never need
+	// re-approval (M5): the check must keep the armed fingerprint.
+	t.Run("cited spec text", func(t *testing.T) {
+		vault, _, _ := evdArmedWave(t)
+		armed := stringField(waveAuthorizationState(t, vault, "W-0001"), "authorizedFingerprint")
+		rewrite(t, filepath.Join(v7RepoRoot(vault), filepath.FromSlash(evdWaveSpec)), "Existing context.", "Edited context.")
+		idx, check, err := waveCheckIndex(vault)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := check.fingerprint(vault, idx, idx.Waves["W-0001"]); got != armed {
+			t.Fatalf("spec text edit changed the wave fingerprint: %s != %s", got, armed)
+		}
+	})
 
 	t.Run("branch tip", func(t *testing.T) {
 		repo := t.TempDir()

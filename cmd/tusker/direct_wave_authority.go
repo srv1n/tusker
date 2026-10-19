@@ -437,18 +437,25 @@ func directWaveReviewRuntimeStore() (*RuntimeStore, error) {
 }
 
 func directWaveRunAdmittedByWave(store *RuntimeStore, run RunStatus, waveID, fingerprint, authorizedAt string) bool {
-	if store == nil || fingerprint == "" || run.ProjectID == "" || run.RecordID == "" || run.LeaseGeneration <= 0 || run.ActiveAttemptID == "" {
-		return false
+	directive := directWaveRunDirective(store, run, waveID)
+	return directive != nil && fingerprint != "" && directive.AuthorizationFingerprint == fingerprint && directive.WaveAuthorizedAt == authorizedAt
+}
+
+// directWaveRunDirective returns the wave directive that admitted the run's
+// live attempt, under whichever authorization of this wave was current then.
+func directWaveRunDirective(store *RuntimeStore, run RunStatus, waveID string) *RunDirective {
+	if store == nil || run.ProjectID == "" || run.RecordID == "" || run.LeaseGeneration <= 0 || run.ActiveAttemptID == "" {
+		return nil
 	}
 	directive, err := store.RunDirective(run.ProjectID, run.RecordID)
-	if err != nil || directive == nil || directive.WaveID != waveID || directive.AuthorizationFingerprint != fingerprint || directive.WaveAuthorizedAt != authorizedAt {
-		return false
+	if err != nil || directive == nil || directive.WaveID != waveID {
+		return nil
 	}
 	auth, err := store.LatestRunAuthorization(run.ProjectID, run.RecordID)
-	if err != nil || auth == nil {
-		return false
+	if err != nil || auth == nil || auth.LeaseGeneration != run.LeaseGeneration || auth.AttemptID != run.ActiveAttemptID || auth.Source != "human_run_directive" {
+		return nil
 	}
-	return auth.LeaseGeneration == run.LeaseGeneration && auth.AttemptID == run.ActiveAttemptID && auth.Source == "human_run_directive"
+	return directive
 }
 
 func buildDirectWaveReview(vaultPath string, store *RuntimeStore, projectID, waveID string, runtimeErr error) (directWaveReview, error) {
@@ -723,6 +730,12 @@ func buildDirectWaveReviewFrom(vaultPath string, store *RuntimeStore, projectID,
 			member.Lane = liveRun.Lane
 		}
 		admitted := liveRun != nil && !stale && (authState == "armed" || authState == "paused") && directWaveRunAdmittedByWave(store, *liveRun, waveID, armedFingerprint, armedAt)
+		// A run this wave admitted under an earlier authorization keeps
+		// running; a new authorization applies to the member's next attempt,
+		// so it neither blocks re-approval nor counts as a foreign owner.
+		if !admitted && liveRun != nil && directWaveRunDirective(store, *liveRun, waveID) != nil {
+			admitted = true
+		}
 		status := strings.ToLower(stringField(task.Data, "status"))
 		dispatchBlockers := []string(nil)
 		if hasStoredRun && strings.HasPrefix(strings.TrimSpace(storedRun.LastError), "dispatch blocked:") {

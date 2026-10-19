@@ -97,7 +97,8 @@ func TestS46WaveSpecResolution(t *testing.T) {
 		t.Fatalf("subject and path refs hash different files: %q vs %q", subjectPath, pathPath)
 	}
 
-	// Changed spec content invalidates authorization: no bypass.
+	// Spec text reaches main through ordinary commits, which never need
+	// re-approval (M5): only which specs are cited is material.
 	specPath := filepath.Join(repoRoot, ".tusker", "specs", "portable-project-documentation.md")
 	original, err := os.ReadFile(specPath)
 	if err != nil {
@@ -107,8 +108,8 @@ func TestS46WaveSpecResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed, issues := s46Fingerprint(t, vault, idx, wave)
-	if len(issues) != 0 || changed == before {
-		t.Fatalf("spec content change escaped authorization: before=%s after=%s issues=%#v", before, changed, issues)
+	if len(issues) != 0 || changed != before {
+		t.Fatalf("spec content change staled authorization: before=%s after=%s issues=%#v", before, changed, issues)
 	}
 	if err := os.WriteFile(specPath, original, 0o644); err != nil {
 		t.Fatal(err)
@@ -154,8 +155,8 @@ func TestS46WaveSpecResolution(t *testing.T) {
 	if err := os.WriteFile(newHome, append(newHomeOriginal, []byte("\nSuccessor intent change.\n")...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if after, issues := s46Fingerprint(t, vault, idx, forwardedWave); len(issues) != 0 || after == forwardedBase {
-		t.Fatalf("successor change escaped authorization: %#v", issues)
+	if after, issues := s46Fingerprint(t, vault, idx, forwardedWave); len(issues) != 0 || after != forwardedBase {
+		t.Fatalf("successor text change staled authorization (M5): %#v", issues)
 	}
 	if err := os.WriteFile(newHome, newHomeOriginal, 0o644); err != nil {
 		t.Fatal(err)

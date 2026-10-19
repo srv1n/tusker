@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -132,7 +133,8 @@ func TestServeWaveRequestSharesMaterialAndNextRequestReadsChanges(t *testing.T) 
 		t.Fatalf("request material work was repeated: waves=%d corpus=%d specs=%d fingerprints=%d", len(out), context.corpusLoads, len(context.specs), len(context.fingerprints))
 	}
 	old := stringField(out[0].Authorization, "fingerprint")
-	if err := writeText(filepath.Join(server.repoRoot, "docs", "specs", "test-fixture.md"), "# Changed governing material\n"); err != nil {
+	// Spec text is not material (M5), but whether a cited spec resolves is.
+	if err := os.Remove(filepath.Join(server.repoRoot, "docs", "specs", "test-fixture.md")); err != nil {
 		t.Fatal(err)
 	}
 	fresh := newWaveMaterialReadContext()

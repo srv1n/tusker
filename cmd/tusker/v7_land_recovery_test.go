@@ -191,6 +191,7 @@ func readV7LandingLockOwnerForTest(t *testing.T, path string) v7LandingLockOwner
 // exact wave command to run.
 func TestLandNoWaveRefusal(t *testing.T) {
 	_, vault := newLandTestRepo(t, 1, "true")
+	perTaskLandingForTest(t, vault) // scheduled staging would wrap the task in a delivery unit
 	mustWave(t, Args{
 		"vault": vault, "quiet": "true", "epic": "APP",
 		"title": "Wave-less task", "risk": "low", "priority": "p2", "v7": "true", "owned-paths": "src"}, newV7Task)
@@ -327,6 +328,7 @@ func TestLandDetachedRecovery(t *testing.T) {
 	runGitDir(t, repo, "worktree", "remove", "--force", worktree)
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-08T02:00:00Z")
 	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
+	perTaskLandingForTest(t, vault)
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
 		t.Fatalf("wave land to main failed: %v", err)
 	}
@@ -767,7 +769,7 @@ func TestLandSummary(t *testing.T) {
 	if landErr != nil {
 		t.Fatal(landErr)
 	}
-	for _, want := range []string{"Landed 1 task", "APP-T-0001", "task/APP-T-0001", "integration/W-0001", "gate:pass", "main: waiting"} {
+	for _, want := range []string{"Landed 1 task", "APP-T-0001", "task/APP-T-0001", "integration/W-0001", "gate:pass", "main: scheduled promotion policy keeps W-0001 staged"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("landing summary missing %q in:\n%s", want, output)
 		}

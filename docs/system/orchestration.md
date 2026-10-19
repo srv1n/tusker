@@ -85,9 +85,39 @@ live run.
 
 ## Workspaces
 
-The project can use a shared checkout or a worktree. `WORKFLOW.md` stores the
-runner workspace policy. A worker must use the workspace that the claim
-assigns.
+The project can use a shared checkout or a worktree (`workspace.strategy` in
+`WORKFLOW.md`: `shared` or `worktree`). A worker must use the workspace that
+the claim assigns.
+
+- **Shared:** execute runs in the project checkout on the default branch, with
+  no worktree and no task branch. Tasks run in parallel only when their owned
+  files do not overlap (the owned-path claim keeps a submitted task's files
+  claimed until it lands). Tusker commits the task's owned files when it
+  submits; review reads that commit in a transient detached checkout. Rejected
+  work is fixed forward with a new commit.
+- **Worktree:** each task works in its own worktree on `task/<ID>`, branched
+  from the current default branch.
+
+## Landing
+
+A wave is an approval and grouping unit, not a branch. When a task passes
+review, the landing lane (one at a time, under the landing lock) merges the
+reviewed commit onto the current default branch in a staging checkout, runs
+the landing check on the merged result, and advances the default branch in
+place: files someone changed in the checkout are never overwritten and history
+is never rewritten. If the default branch moved since the task started, the
+merge brings the task onto it and the check reruns there; only a real merge
+conflict returns the task to rework with the conflict named. A failing test
+also returns it to rework; other landing failures hold it for the operator.
+
+Only a project with `scheduled_promotion` configured keeps a per-wave
+`integration/<W-ID>` branch that departures promote to main. `tusker land
+<W-ID>` merges such a branch, or one staged before per-task landing.
+
+Commits to the default branch never require re-approving a wave. Re-approval
+(`tusker start <W-ID>`) is needed only when a member's promise changes (its
+acceptance, owned scope or checks); it succeeds while a member attempt runs and
+applies to that member's next attempt.
 
 Worktree and clone preparation must succeed in Git before the workspace is
 reported as prepared. A failed Git command returns its error and preserves

@@ -166,7 +166,10 @@ func waveMaterialFingerprintWithContext(vaultPath string, idx v7Index, wave Note
 		if cached.issue != "" {
 			issues = append(issues, cached.issue)
 		} else {
-			material["specs"].(map[string]any)[ref] = cached.hash
+			// Only which specs a wave cites is material. Their text changes
+			// through commits to main, and a commit to main never needs
+			// re-approval; a task's promise (acceptance, scope, checks) does.
+			material["specs"].(map[string]any)[ref] = true
 		}
 	}
 	raw, _ := yaml.Marshal(material)

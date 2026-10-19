@@ -377,7 +377,11 @@ func TestWaveAuthorizationFingerprint(t *testing.T) {
 	if err := writeText(specPath, specBefore+"\nMaterial intent change.\n"); err != nil {
 		t.Fatal(err)
 	}
-	assertWaveFingerprintChanged(t, vault, idx, idx.Waves["W-0001"], original, "spec")
+	// Spec text changes through commits to main, which never need
+	// re-approval (M5).
+	if specEdited, _ := waveMaterialFingerprint(vault, idx, idx.Waves["W-0001"]); specEdited != original {
+		t.Fatal("spec text change staled authorization")
+	}
 	if err := writeText(specPath, specBefore); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +399,10 @@ func TestWaveAuthorizationFingerprint(t *testing.T) {
 	if err := writeText(memberSpecPath, "# Member contract\n\nChanged intent.\n"); err != nil {
 		t.Fatal(err)
 	}
-	assertWaveFingerprintChanged(t, vault, memberSpecIdx, memberSpecIdx.Waves["W-0001"], memberSpecFingerprint, "member task spec")
+	if edited, _ := waveMaterialFingerprint(vault, memberSpecIdx, memberSpecIdx.Waves["W-0001"]); edited != memberSpecFingerprint {
+		t.Fatal("member spec text change staled authorization")
+	}
+	assertWaveFingerprintChanged(t, vault, memberSpecIdx, memberSpecIdx.Waves["W-0001"], original, "member task spec_refs")
 	data, body, _ = parseFrontmatterMustRead(path)
 	data["dependencies"] = []string{"APP-T-0002:hard"}
 	data["state_rev"] = v7StateRev(data, body)

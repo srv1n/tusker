@@ -141,6 +141,7 @@ func TestArmedWaveProjection(t *testing.T) {
 
 func TestArmedWaveIntegrationProjectionDoesNotHideNewerCanonicalRecovery(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage) // the projection reads the staged wave branch
 	armWaveForTest(t, vault)
 	landed, err := resolveNote(vault, "APP-T-0001")
 	if err != nil {
@@ -165,6 +166,7 @@ func TestArmedWaveIntegrationProjectionDoesNotHideNewerCanonicalRecovery(t *test
 
 func TestArmedWaveIntegrationProjectionUsesCanonicalWhenTaskMissing(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage) // the projection reads the staged wave branch
 	armWaveForTest(t, vault)
 	branch := "integration/W-0001"
 	old := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", branch))
@@ -188,6 +190,7 @@ func TestArmedWaveIntegrationProjectionUsesCanonicalWhenTaskMissing(t *testing.T
 
 func TestArmedWaveReviewDependencyUsesCanonicalWhenTaskMissing(t *testing.T) {
 	repo, vault := newLandReadyForMainAdvanceTest(t, "recovered.txt", "landed\n")
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage) // dependencies project from the staged wave branch
 	armedWaveDirectTask(t, vault, "APP-T-0002", []string{"APP-T-0001:hard"})
 	writeArmedWaveTestFields(t, vault, map[string]any{"members": []string{"APP-T-0001", "APP-T-0002"}})
 	armWaveForTest(t, vault)

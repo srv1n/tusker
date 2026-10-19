@@ -605,8 +605,8 @@ func TestScheduledPromotionLandingStageNeverMovesMain(t *testing.T) {
 
 func TestScheduledPromotionLandingUnconfiguredPolicyPreservesLegacyAdvance(t *testing.T) {
 	_, vault := newLandTestRepo(t, 1, "true")
-	if fileExists(workflowPath(vault)) {
-		t.Fatal("legacy fixture unexpectedly has a workflow policy")
+	if err := os.Remove(workflowPath(vault)); err != nil { // a legacy repository predates WORKFLOW.md
+		t.Fatal(err)
 	}
 	allowed, err := scheduledPromotionAllowsDefaultAdvance(vault)
 	if err != nil || !allowed {

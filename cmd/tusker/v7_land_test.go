@@ -195,6 +195,7 @@ func TestWaveLandToMain(t *testing.T) {
 	}
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")
 	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
+	perTaskLandingForTest(t, vault)
 
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
 		t.Fatal(err)
@@ -317,7 +318,16 @@ func newLandReadyForMainAdvanceTestInStateRoot(t *testing.T, fileName, content, 
 	}
 	setWaveTaskState(t, vault, "APP-T-0001", "done", "done", "2026-07-07T02:00:00Z")
 	commitCanonicalTaskStateToIntegration(t, repo, vault, "APP-T-0001")
+	perTaskLandingForTest(t, vault)
 	return repo, vault
+}
+
+// perTaskLandingForTest turns off scheduled promotion, the default: tasks
+// land on main and `tusker land <W>` merges a wave left staged on its
+// integration branch, as after upgrading a project with a wave in flight.
+func perTaskLandingForTest(t *testing.T, vault string) {
+	t.Helper()
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionDisabled)
 }
 
 func yamlQuoteForShellTest(value string) string {
@@ -337,6 +347,7 @@ func TestLandIdempotent(t *testing.T) {
 	integrationRev := strings.TrimSpace(gitDirOutput(t, repo, "rev-parse", "integration/W-0001"))
 	mergeCommit := strings.TrimSpace(gitDirOutput(t, repo, "commit-tree", "integration/W-0001^{tree}", "-p", mainRev, "-p", integrationRev, "-m", "Wave W-0001: Landing batch"))
 	runGitDir(t, repo, "update-ref", "refs/heads/main", mergeCommit, mainRev)
+	perTaskLandingForTest(t, vault)
 
 	if err := landV7Cmd(Args{"vault": vault, "quiet": "true", "_pos0": "W-0001"}); err != nil {
 		t.Fatal(err)
@@ -369,6 +380,9 @@ func newLandTestRepo(t *testing.T, tasks int, gate string) (string, string) {
 	if err := writeText(filepath.Join(repo, "README.md"), "seed\n"); err != nil {
 		t.Fatal(err)
 	}
+	// These fixtures exercise wave staging on integration/W-0001, which only
+	// scheduled promotion keeps; the default lands each task on main.
+	setScheduledPromotionPolicyForTest(t, vault, scheduledPromotionStage)
 	runGitDir(t, repo, "add", ".")
 	runGitDir(t, repo, "commit", "-m", "seed")
 	waveArgs := Args{"vault": vault, "quiet": "true", "_pos0": "Landing batch"}

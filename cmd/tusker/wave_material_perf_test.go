@@ -90,8 +90,8 @@ func waveMaterialPerfFixture(t testing.TB, n int) (string, v7Index, Note) {
 	return vault, idx, wave
 }
 
-// TestWaveMaterialFingerprintFormulaPinned pins fingerprint bytes captured
-// before the caching work. Armed waves store authorization_fingerprint, so a
+// TestWaveMaterialFingerprintFormulaPinned pins fingerprint bytes. The wave
+// value was re-pinned once when spec text left the material (M5). Armed waves store authorization_fingerprint, so a
 // formula drift would stale every armed wave.
 func TestWaveMaterialFingerprintFormulaPinned(t *testing.T) {
 	task := Note{Data: map[string]any{"title": "x", "proof_required": []any{"b", "a"}, "evidence_budget": 2, "artifact_contract": map[string]any{"k": "v"}}, Body: waveMaterialPerfTaskBody}
@@ -104,7 +104,7 @@ func TestWaveMaterialFingerprintFormulaPinned(t *testing.T) {
 		t.Fatalf("memoized contract fingerprint drifted: %s", got)
 	}
 	vault, idx, wave := waveMaterialPerfFixture(t, 4)
-	const wantWave = "sha256:2941cf633db79bda871c264b4b1c2c32db602afa9f4269fe4c7aaf1570fccfa5"
+	const wantWave = "sha256:02d4ddc5a6b531d6805335960226f89cac5bb59af7c6602f012073bb70e3ad7a"
 	for i := 0; i < 2; i++ {
 		got, issues := waveMaterialFingerprint(vault, idx, wave)
 		if got != wantWave || len(issues) != 0 {

@@ -346,20 +346,23 @@ func (d *Daemon) landAndClosePassingReview(ctx context.Context, project Register
 			return ctx.Err()
 		}
 		if err := landErr; err != nil {
-			code := RunFailureLandingFailed
 			// Only the merge step reports a conflict. A gate command's
 			// output can mention one (a test that exercises conflicts).
+			// A real conflict with current main is the task's to resolve,
+			// so it goes back to the worker with the conflict named.
 			if strings.Contains(err.Error(), "gate failed: merge ") && strings.Contains(strings.ToLower(err.Error()), "conflict") {
-				code = RunFailureMergeConflict
+				finding := "The reviewed commit conflicts with current " + integration + ": " +
+					firstActionableLine("", err.Error()) + ". Bring the task onto current " + integration + ", resolve the conflict, then request review again."
+				return returnReviewerFindingToImplementer(project.VaultRoot, taskID, finding, "daemon:review-pass")
 			}
 			// A failing test is the implementation's to fix, so it goes back
-			// to the worker. A conflict or a broken host waits for the owner.
-			if code == RunFailureLandingFailed && strings.Contains(err.Error(), "--- FAIL: ") {
+			// to the worker. A broken host waits for the owner.
+			if strings.Contains(err.Error(), "--- FAIL: ") {
 				finding := "The landing gate failed on the reviewed commit merged into " + integration + ": " +
 					firstActionableLine("", err.Error()) + ". Fix the failing tests, run them, then request review again."
 				return returnReviewerFindingToImplementer(project.VaultRoot, taskID, finding, "daemon:review-pass")
 			}
-			return d.holdReviewPass(run, code, firstActionableLine("", err.Error()))
+			return d.holdReviewPass(run, RunFailureLandingFailed, firstActionableLine("", err.Error()))
 		}
 		if injectReviewPassCrash != nil {
 			if err := injectReviewPassCrash("after_land"); err != nil {

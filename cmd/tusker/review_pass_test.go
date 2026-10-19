@@ -199,8 +199,10 @@ func (env *reviewPassEnv) task(t *testing.T) Note {
 	return task
 }
 
+// landed reports whether the reviewed commit reached its landing target: main
+// for per-task landing, the wave branch when scheduled promotion stages it.
 func (env *reviewPassEnv) landed() bool {
-	return gitMergeBaseAncestor(env.repo, env.source, "integration/W-0001")
+	return gitMergeBaseAncestor(env.repo, env.source, "main") || gitMergeBaseAncestor(env.repo, env.source, "integration/W-0001")
 }
 
 func (env *reviewPassEnv) latestRun(t *testing.T) RunStatus {
@@ -257,6 +259,8 @@ func TestReviewPassLandsOffThePoll(t *testing.T) {
 func TestReviewPassDepartureRecoversLandingReceipt(t *testing.T) {
 	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
 	env.submitProposal(t, "pass")
+	// Departures exist only where scheduled promotion stages waves.
+	setScheduledPromotionPolicyForTest(t, env.vault, scheduledPromotionStage)
 	env.passHandler(t)
 	assertReviewPassDepartureRecovery(t, env)
 }
@@ -337,6 +341,7 @@ func TestReviewPassLandsDaemonSubmissionButCLIRefusesIt(t *testing.T) {
 		t.Fatalf("plain land must refuse the daemon submission without --trust-from: %v", err)
 	}
 	env.submitProposal(t, "pass")
+	setScheduledPromotionPolicyForTest(t, env.vault, scheduledPromotionStage)
 	env.passHandler(t)
 	if !env.landed() || stringField(env.task(t).Data, "status") != "done" {
 		t.Fatalf("daemon submission did not land and close: run %#v", env.latestRun(t))
@@ -514,23 +519,23 @@ func TestReviewPassRequiresTwoWayWaveMembership(t *testing.T) {
 	}
 }
 
-func TestReviewPassMergeConflictHoldsInReview(t *testing.T) {
+// M4: a real conflict with current main goes back to the worker as rework
+// with the conflicting file named; main does not move.
+func TestReviewPassMergeConflictReturnsTaskToWorker(t *testing.T) {
 	env := newReviewPassEnv(t, map[string]string{"reviewed.txt": "reviewed\n"}, []string{"reviewed.txt"})
 	env.submitProposal(t, "pass")
-	other := commitLandBranch(t, env.repo, "other", "integration/W-0001", map[string]string{"reviewed.txt": "conflicting\n"})
-	runGitDir(t, env.repo, "branch", "-f", "integration/W-0001", other)
+	if err := writeText(filepath.Join(env.repo, "reviewed.txt"), "conflicting\n"); err != nil {
+		t.Fatal(err)
+	}
+	runGitDir(t, env.repo, "add", "reviewed.txt")
+	runGitDir(t, env.repo, "commit", "-m", "conflicting commit on main")
+	mainBefore := strings.TrimSpace(gitDirOutput(t, env.repo, "rev-parse", "main"))
 	env.passHandler(t)
-	if stringField(env.task(t).Data, "status") != "review" {
-		t.Fatal("merge conflict must keep the task in review")
+	task := env.task(t)
+	if env.landed() || stringField(task.Data, "status") != "rework" || !strings.Contains(task.Body, "conflicts with current main") || !strings.Contains(task.Body, "reviewed.txt") {
+		t.Fatalf("merge conflict must return the task to rework naming the conflict; status=%q run=%#v", stringField(task.Data, "status"), env.latestRun(t))
 	}
-	run := env.latestRun(t)
-	if run.ReasonCode != string(RunFailureMergeConflict) {
-		t.Fatalf("run must record merge_conflict: %#v", run)
-	}
-	state := deriveTaskState(taskStateFacts{ID: "APP-T-0001", Status: "review", Run: taskStateRunFor(run, false, false)})
-	if state.State != "in_review" || state.ReasonCode != "merge_conflict" {
-		t.Fatalf("task state = %#v, want In review merge_conflict", state)
-	}
+	assertEqual(t, mainBefore, strings.TrimSpace(gitDirOutput(t, env.repo, "rev-parse", "main")), "a conflict never moves main")
 }
 
 // A landing gate whose tests fail sends the task back to the worker with the

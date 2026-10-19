@@ -148,6 +148,7 @@ type v7LandedEntry struct {
 
 type v7LandFailure struct {
 	WaveID  string
+	Target  string
 	Task    v7LandTask
 	Summary string
 }
@@ -569,6 +570,14 @@ func landV7TaskTargets(ctx context.Context, vaultPath string, targets []string, 
 			}
 			sourceSHA = resolved
 		}
+		if sourceSHA == "" && v7GitRepo(repoRoot) && !gitBranchExists(repoRoot, branch) && args.String("from") == "" {
+			// The submission recorded its exact commit; land that instead of
+			// minting a task branch (a shared checkout never has one).
+			recorded := firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit"), stringField(task.Data, "source_branch_sha"))
+			if resolved, ok := gitRevParse(repoRoot, recorded+"^{commit}"); recorded != "" && ok {
+				sourceSHA = resolved
+			}
+		}
 		if sourceSHA == "" && v7GitRepo(repoRoot) && !gitBranchExists(repoRoot, branch) {
 			if err := ensureV7TaskLandingBranch(repoRoot, taskID, branch, args); err != nil {
 				return err
@@ -650,13 +659,13 @@ func landV7TaskTargets(ctx context.Context, vaultPath string, targets []string, 
 			entries = append(entries, v7LandingAuditEntry{
 				Task: failure.Task.ID, Branch: failure.Task.Branch,
 				SourceSHA: failure.Task.SourceSHA,
-				Target:    v7IntegrationBranchName(waveID), GateResult: "fail",
+				Target:    failure.Target, GateResult: "fail",
 				GateSummary: failure.Summary, Actor: actor,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			})
 			summary.Reworked = append(summary.Reworked, v7LandSummaryRow{
 				Task: failure.Task.ID, Branch: failure.Task.Branch,
-				Target: v7IntegrationBranchName(waveID), GateResult: "fail",
+				Target: failure.Target, GateResult: "fail",
 			})
 		}
 		if err := appendV7WaveLandingAudit(vaultPath, waveID, entries, actor); err != nil {
@@ -682,7 +691,7 @@ func v7FailedBatchSummary(acc *v7BatchAccumulator) string {
 	total := len(acc.Failed)
 	target := "integration"
 	if total > 0 {
-		target = v7IntegrationBranchName(acc.Failed[0].WaveID)
+		target = acc.Failed[0].Target
 	}
 	first := ""
 	if total > 0 {
@@ -1037,7 +1046,7 @@ func landV7BatchRecursive(ctx context.Context, vaultPath, repoRoot, waveID, inte
 		return err
 	}
 	if result.Pass {
-		if err := updateGitRef(repoRoot, "refs/heads/"+integrationBranch, result.Receipt.BatchHeadSHA, result.Receipt.BatchBaseSHA); err != nil {
+		if err := advanceV7LandingTarget(vaultPath, repoRoot, integrationBranch, result.Receipt.BatchHeadSHA, result.Receipt.BatchBaseSHA); err != nil {
 			return err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -1056,7 +1065,7 @@ func landV7BatchRecursive(ctx context.Context, vaultPath, repoRoot, waveID, inte
 		return nil
 	}
 	if len(tasks) == 1 {
-		acc.Failed = append(acc.Failed, v7LandFailure{WaveID: waveID, Task: tasks[0], Summary: result.Summary})
+		acc.Failed = append(acc.Failed, v7LandFailure{WaveID: waveID, Target: integrationBranch, Task: tasks[0], Summary: result.Summary})
 		return nil
 	}
 	mid := len(tasks) / 2
@@ -1064,6 +1073,22 @@ func landV7BatchRecursive(ctx context.Context, vaultPath, repoRoot, waveID, inte
 		return err
 	}
 	return landV7BatchRecursive(ctx, vaultPath, repoRoot, waveID, integrationBranch, tasks[mid:], actor, authority, capability, acc)
+}
+
+// advanceV7LandingTarget moves the landing target from old to next. The
+// default branch is usually checked out (the operator's project checkout, or
+// a shared checkout with live agent work), so it advances in place without
+// touching any file someone changed and without rewriting history; any other
+// target is a plain ref compare-and-swap.
+func advanceV7LandingTarget(vaultPath, repoRoot, target, next, old string) error {
+	if target != v7DefaultBranch(vaultPath) {
+		return updateGitRef(repoRoot, "refs/heads/"+target, next, old)
+	}
+	checkouts, err := advanceV7DefaultBranchRefShared(repoRoot, target, next, old)
+	if err != nil {
+		return err
+	}
+	return finishV7DefaultBranchAdvance(checkouts)
 }
 
 func stageV7LandingBatch(ctx context.Context, vaultPath, repoRoot, baseBranch string, tasks []v7LandTask, actor, authority string, capability *v7LandingAuthority) (v7LandingBatchResult, error) {
@@ -2400,6 +2425,10 @@ func kickV7LandingTaskToRework(vaultPath, taskID, summary, actor string) error {
 }
 
 func landV7WaveToMainIfReady(vaultPath, waveID string, args Args, summary *v7LandSummary) error {
+	if v7LandsPerTask(vaultPath) {
+		// Each passing task already merged into the default branch.
+		return nil
+	}
 	idx, err := loadV7Index(vaultPath)
 	if err != nil {
 		return err
@@ -2452,24 +2481,33 @@ func landV7WaveToMain(vaultPath, waveID string, args Args, summary *v7LandSummar
 	if !allowed {
 		return tuskerError(errorInvalidTransition, "scheduled promotion policy refuses default-branch advance; configured departures own main promotion")
 	}
-	for _, member := range normalizeList(wave.Data["members"]) {
-		status, found, err := v7WaveIntegrationMemberStatus(vaultPath, wave, member)
-		if err != nil {
-			return err
-		}
-		if !found || status != "done" {
-			return tuskerError(errorInvalidTransition, waveID+" cannot land to main until every member task is done")
+	if !v7LandsPerTask(vaultPath) {
+		for _, member := range normalizeList(wave.Data["members"]) {
+			status, found, err := v7WaveIntegrationMemberStatus(vaultPath, wave, member)
+			if err != nil {
+				return err
+			}
+			if !found || status != "done" {
+				return tuskerError(errorInvalidTransition, waveID+" cannot land to main until every member task is done")
+			}
 		}
 	}
 	repoRoot := v7RepoRoot(vaultPath)
 	if !v7GitRepo(repoRoot) {
 		return tuskerError(errorInvalidTransition, "wave landing requires a Git repository", withPath(repoRoot))
 	}
-	integrationBranch := v7WaveIntegrationBranch(wave)
+	// Per-task projects merge each task into main as it passes. The only
+	// wave-level work left is a branch staged before per-task landing; it was
+	// gated when staged and merges as is, whatever its members did since.
+	integrationBranch := v7LegacyWaveIntegrationBranch(wave)
 	defaultBranch := v7DefaultBranch(vaultPath)
-	integrationExists := gitRefExists(repoRoot, "refs/heads/"+integrationBranch)
+	integrationExists := integrationBranch != defaultBranch && gitRefExists(repoRoot, "refs/heads/"+integrationBranch)
 	if !integrationExists {
-		summary.MainNotes = append(summary.MainNotes, "main: "+waveID+" has no integration branch to land")
+		note := "main: " + waveID + " has no integration branch to land"
+		if v7LandsPerTask(vaultPath) {
+			note = "main: " + waveID + " lands each task on " + defaultBranch + " as it passes; nothing to merge"
+		}
+		summary.MainNotes = append(summary.MainNotes, note)
 		return nil
 	}
 	integrationRev, err := gitOutputTrim(repoRoot, "rev-parse", integrationBranch)
@@ -3659,8 +3697,41 @@ func v7GitObjectID(value string) bool {
 	return true
 }
 
+// v7WaveIntegrationBranch is the branch a wave's tasks land on. By default
+// that is the default branch itself: each task merges into main as soon as it
+// passes review and its landing check, and a wave is only an approval and
+// grouping unit. Only a project with scheduled promotion configured keeps a
+// per-wave integration branch that departures promote to main.
 func v7WaveIntegrationBranch(wave Note) string {
+	if vaultPath := v7WaveVaultPath(wave); vaultPath != "" && v7LandsPerTask(vaultPath) {
+		return v7DefaultBranch(vaultPath)
+	}
+	return v7LegacyWaveIntegrationBranch(wave)
+}
+
+// v7LegacyWaveIntegrationBranch is the per-wave integration branch. Scheduled
+// promotion stages into it; per-task projects only read it to finish a wave
+// staged there before per-task landing.
+func v7LegacyWaveIntegrationBranch(wave Note) string {
 	return firstNonEmpty(stringField(wave.Data, "integration_branch"), v7IntegrationBranchName(stringField(wave.Data, "id")))
+}
+
+// v7LandsPerTask reports whether passing tasks merge straight into the
+// default branch. That is every project except one whose scheduled promotion
+// policy owns main.
+func v7LandsPerTask(vaultPath string) bool {
+	allowed, err := scheduledPromotionAllowsDefaultAdvance(vaultPath)
+	return err == nil && allowed
+}
+
+// v7WaveVaultPath derives the vault from a wave record's path
+// (<vault>/work/waves/<ID>.md), or "" for a wave held only in memory.
+func v7WaveVaultPath(wave Note) string {
+	dir := filepath.Dir(wave.AbsolutePath)
+	if wave.AbsolutePath == "" || filepath.Base(dir) != "waves" || filepath.Base(filepath.Dir(dir)) != "work" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(dir))
 }
 
 func v7WorkspaceBranchForTask(vaultPath string, note Note) (string, string, error) {
@@ -3740,26 +3811,27 @@ func ensureV7WaveIntegrationBranch(vaultPath string, wave Note) error {
 	if !v7GitRepo(repoRoot) || gitRefExists(repoRoot, "refs/heads/"+branch) {
 		return nil
 	}
-	frozen := strings.TrimSpace(stringField(wave.Data, "integration_base_sha"))
-	if frozen == "" {
-		return ensureV7IntegrationBranch(vaultPath, branch)
-	}
+	// Main moving after the wave was authored is normal and never needs
+	// re-approval: the branch starts at current main. Supplying the all-zero
+	// old value makes this a create-only CAS, so a racing completion cannot
+	// silently overwrite another integration lane.
 	current, err := gitOutputTrim(repoRoot, "rev-parse", "refs/heads/"+v7DefaultBranch(vaultPath))
-	if err != nil || current != frozen {
-		return tuskerError(errorInvalidTransition, "integration base drifted before first completion; rerun wave review and re-authorize with `tusker start`")
+	if err != nil {
+		return tuskerError(errorInvalidTransition, "cannot resolve the default branch to start "+branch+": "+err.Error())
 	}
-	// Supplying the all-zero old value makes this a create-only CAS. A racing
-	// completion cannot silently overwrite another integration lane.
-	zero := strings.Repeat("0", len(frozen))
-	if _, err := gitCombined(repoRoot, "update-ref", "refs/heads/"+branch, frozen, zero); err != nil {
-		return tuskerError(errorInvalidTransition, "failed to create integration branch from frozen base; retry the serialized landing lane: "+err.Error())
+	zero := strings.Repeat("0", len(current))
+	if _, err := gitCombined(repoRoot, "update-ref", "refs/heads/"+branch, current, zero); err != nil {
+		return tuskerError(errorInvalidTransition, "failed to create integration branch "+branch+"; retry the serialized landing lane: "+err.Error())
 	}
 	return nil
 }
 
+// ensureV7IntegrationBranch creates a wave's integration branch when the
+// project stages waves for scheduled promotion. Per-task projects land on the
+// default branch and never create one.
 func ensureV7IntegrationBranch(vaultPath, branch string) error {
 	repoRoot := v7RepoRoot(vaultPath)
-	if !v7GitRepo(repoRoot) {
+	if !v7GitRepo(repoRoot) || v7LandsPerTask(vaultPath) {
 		return nil
 	}
 	if gitRefExists(repoRoot, "refs/heads/"+branch) {
