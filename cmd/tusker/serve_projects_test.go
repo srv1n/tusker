@@ -12,14 +12,14 @@ func TestServeProjectsExposeAdaptiveReconciliationStatus(t *testing.T) {
 	server := newServeEmptyNeedsFixture(t)
 	now := time.Date(2026, 7, 15, 6, 0, 0, 0, time.UTC)
 	server.reconcileStatus = func(projectID string) adaptiveProjectReconcileStatus {
-		return adaptiveProjectReconcileStatus{Tier: "warm", CadenceMS: reconcileWarmCadence.Milliseconds(), LastActivityAt: now.Format(time.RFC3339Nano), NextDueAt: now.Add(reconcileWarmCadence).Format(time.RFC3339Nano)}
+		return adaptiveProjectReconcileStatus{Tier: "active", CadenceMS: reconcileLiveCadence.Milliseconds(), LastActivityAt: now.Format(time.RFC3339Nano)}
 	}
 	var summaries []serveProjectSummary
 	serveDecode(t, server, "/api/projects", &summaries)
 	if len(summaries) == 0 {
 		t.Fatal("expected project summaries")
 	}
-	if summaries[0].Reconciliation.Tier != "warm" || summaries[0].Reconciliation.CadenceMS != reconcileWarmCadence.Milliseconds() {
+	if summaries[0].Reconciliation.Tier != "active" || summaries[0].Reconciliation.CadenceMS != reconcileLiveCadence.Milliseconds() {
 		t.Fatalf("adaptive reconciliation status missing: %#v", summaries[0].Reconciliation)
 	}
 	if summaries[0].DispatchScope.Effective != string(automationDispatchScopeArmedWaves) || summaries[0].DispatchScope.Provenance == "" {

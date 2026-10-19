@@ -11,11 +11,14 @@ import (
 )
 
 const (
-	reconcileHotCadence  = time.Minute
-	reconcileWarmCadence = 5 * time.Minute
-	reconcileCoolCadence = 10 * time.Minute
-	reconcileColdCadence = 30 * time.Minute
+	// reconcileLiveCadence is the heartbeat: liveness, budget, silence and the
+	// stat-only edit check for active projects. It never loads a vault.
 	reconcileLiveCadence = 5 * time.Second
+	// projectInteractionWindow keeps a project active after the operator or a
+	// CLI command touched it.
+	projectInteractionWindow = 10 * time.Minute
+	// reconcileFullCadence bounds how long architect wave reports may reuse
+	// the in-memory frontier instead of reading the vault.
 	reconcileFullCadence = 5 * time.Minute
 )
 
@@ -23,7 +26,6 @@ type adaptiveProjectReconcileState struct {
 	LastActivityAt     time.Time
 	LastActivityReason string
 	LastPollAt         time.Time
-	NextDueAt          time.Time
 	Cadence            time.Duration
 	Tier               string
 }
@@ -34,36 +36,19 @@ type adaptiveProjectReconcileStatus struct {
 	LastActivityAt     string `json:"lastActivityAt,omitempty"`
 	LastActivityReason string `json:"lastActivityReason,omitempty"`
 	LastPollAt         string `json:"lastPollAt,omitempty"`
-	NextDueAt          string `json:"nextDueAt,omitempty"`
+	// NextDueAt is kept for older clients. Reconciliation is event-driven, so
+	// there is no scheduled due time and it stays empty.
+	NextDueAt string `json:"nextDueAt,omitempty"`
 }
 
-func adaptiveReconcileCadenceWithHot(idle time.Duration, runtimeUrgent bool, hotCadence time.Duration) (string, time.Duration) {
-	if runtimeUrgent {
-		return "live", reconcileLiveCadence
-	}
-	if hotCadence <= 0 {
-		hotCadence = reconcileFullCadence
-	}
-	hotCadence = min(hotCadence, reconcileFullCadence)
-	switch {
-	case idle < reconcileHotCadence:
-		return "hot", hotCadence
-	case idle < reconcileWarmCadence:
-		return "warm", reconcileWarmCadence
-	case idle < reconcileCoolCadence:
-		return "cool", reconcileFullCadence
-	default:
-		return "cold", reconcileFullCadence
-	}
-}
-
+// runtimeRunNeedsHotReconcileAt reports a live or queued run: one that makes
+// its project active.
 func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {
 	if run.Terminal {
 		return false
 	}
-	// A dead/stale row must get a bounded reconciliation, not pin its project
-	// to the five-second loop forever. Rows without timestamps are legacy data;
-	// keep those urgent until one normal poll can repair them.
+	// A dead/stale row must not keep its project active forever. Rows without
+	// timestamps are legacy data; keep those active until one poll repairs them.
 	lastHeartbeat := strings.TrimSpace(run.LastHeartbeatAt)
 	if lastHeartbeat != "" {
 		if heartbeatAt, err := time.Parse(time.RFC3339Nano, lastHeartbeat); err == nil &&
@@ -76,11 +61,9 @@ func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {
 		return true
 	case LeaseStateUnclaimed:
 		// A clean unclaimed row is runnable work waiting on shared/project
-		// capacity. Keep it live so capacity released by another project is
-		// observed promptly. A review handoff is also deliberately unclaimed while
-		// it waits for an upstream DAG edge to land; that is live control-plane
-		// work even when the last pass recorded a dependency blocker. Ordinary
-		// policy-blocked execute rows may still back off.
+		// capacity. A review handoff is also deliberately unclaimed while it
+		// waits for an upstream DAG edge to land. Ordinary policy-blocked
+		// execute rows are not live work.
 		if run.Lane == runLaneReview && run.AttemptOutcome == string(AttemptOutcomeWaitingForReview) {
 			return true
 		}
@@ -89,9 +72,7 @@ func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {
 		// A review handoff has no active lease by design, but it is not quiescent
 		// work. Before a reviewer can claim it, an upstream DAG edge may still
 		// need to land on integration. After the reviewer submits, the
-		// authoritative completion reactor must consume that typed receipt. Keep
-		// both durable handoffs live without making every released historical run
-		// poll forever.
+		// authoritative completion reactor must consume that typed receipt.
 		if run.Lane != runLaneReview {
 			return false
 		}
@@ -106,8 +87,8 @@ func runtimeRunNeedsHotReconcileAt(run RunStatus, now time.Time) bool {
 }
 
 // runWaitsForAdmission reports a queued run held by capacity, load, or the
-// build queue. Those clear on their own, so its project keeps the hot cadence
-// instead of backing off to a 30-minute poll.
+// build queue. Those clear on their own, so the heartbeat retries its project
+// when capacity frees and otherwise at the poll interval.
 func runWaitsForAdmission(run RunStatus) bool {
 	return !run.Terminal && LeaseState(strings.TrimSpace(run.LeaseState)) == LeaseStateUnclaimed &&
 		(strings.HasPrefix(run.LastError, fairDispatchReasonPrefix) || strings.HasPrefix(run.LastError, "automation plan do_not_dispatch: waiting: ") ||
@@ -115,183 +96,75 @@ func runWaitsForAdmission(run RunStatus) bool {
 			(strings.HasPrefix(run.LastError, "automation plan do_not_dispatch: ") && strings.Contains(run.LastError, "active run limit reached")))
 }
 
-func (d *Daemon) projectFullReconcileDeadline(projectID string) time.Time {
-	d.frontierMu.Lock()
-	defer d.frontierMu.Unlock()
-	if scannedAt := d.frontierScannedAt[projectID]; !scannedAt.IsZero() {
-		return scannedAt.Add(reconcileFullCadence)
-	}
-	return time.Time{}
-}
-
-func boundReconcileDueAt(now, next, fullDeadline time.Time) time.Time {
-	// An overdue full read may have failed. Keep the normal retry cadence
-	// instead of scheduling the same past deadline in a tight loop.
-	if fullDeadline.After(now) && fullDeadline.Before(next) {
-		return fullDeadline
-	}
-	return next
-}
-
+// noteProjectActivity records an interaction: a CLI command, a runner report,
+// or the operator opening the project in the UI. It keeps the project active
+// for projectInteractionWindow.
 func (d *Daemon) noteProjectActivity(projectID, reason string, now time.Time) {
 	projectID = strings.TrimSpace(projectID)
 	if d == nil || projectID == "" {
 		return
 	}
-	now = now.UTC()
-	fullDeadline := d.projectFullReconcileDeadline(projectID)
 	d.reconcileMu.Lock()
 	defer d.reconcileMu.Unlock()
 	if d.reconcileSchedule == nil {
 		d.reconcileSchedule = map[string]adaptiveProjectReconcileState{}
 	}
 	state := d.reconcileSchedule[projectID]
-	state.LastActivityAt = now
+	state.LastActivityAt = now.UTC()
 	state.LastActivityReason = strings.TrimSpace(reason)
-	state.Tier = "hot"
-	state.Cadence = min(d.nextPollInterval(), reconcileFullCadence)
-	state.NextDueAt = boundReconcileDueAt(now, now.Add(state.Cadence), fullDeadline)
+	state.Tier, state.Cadence = "active", reconcileLiveCadence
 	d.reconcileSchedule[projectID] = state
 }
 
-func (d *Daemon) recordProjectPoll(projectID string, now time.Time, runtimeUrgent bool) {
-	projectID = strings.TrimSpace(projectID)
-	if d == nil || projectID == "" {
+func (d *Daemon) recentProjectActivity(projectID string, now time.Time) bool {
+	d.reconcileMu.Lock()
+	defer d.reconcileMu.Unlock()
+	last := d.reconcileSchedule[projectID].LastActivityAt
+	return !last.IsZero() && now.Sub(last) < projectInteractionWindow
+}
+
+// setProjectTier publishes the active/idle state the heartbeat computed.
+func (d *Daemon) setProjectTier(projectID string, active bool) {
+	d.reconcileMu.Lock()
+	defer d.reconcileMu.Unlock()
+	if d.reconcileSchedule == nil {
+		d.reconcileSchedule = map[string]adaptiveProjectReconcileState{}
+	}
+	state := d.reconcileSchedule[projectID]
+	state.Tier, state.Cadence = "idle", 0
+	if active {
+		state.Tier, state.Cadence = "active", reconcileLiveCadence
+	}
+	d.reconcileSchedule[projectID] = state
+}
+
+func (d *Daemon) lastProjectPoll(projectID string) time.Time {
+	d.reconcileMu.Lock()
+	defer d.reconcileMu.Unlock()
+	return d.reconcileSchedule[projectID].LastPollAt
+}
+
+// recordPollSchedule stamps the poll time of one project, or of every known
+// project for a registry-wide poll.
+func (d *Daemon) recordPollSchedule(projectID string, now time.Time) {
+	if d == nil {
 		return
 	}
-	now = now.UTC()
-	fullDeadline := d.projectFullReconcileDeadline(projectID)
+	projectID = strings.TrimSpace(projectID)
 	d.reconcileMu.Lock()
 	defer d.reconcileMu.Unlock()
 	if d.reconcileSchedule == nil {
 		d.reconcileSchedule = map[string]adaptiveProjectReconcileState{}
 	}
-	state := d.reconcileSchedule[projectID]
-	if state.LastActivityAt.IsZero() {
-		state.LastActivityAt = now
-		state.LastActivityReason = "daemon_start"
-	}
-	tier, cadence := adaptiveReconcileCadenceWithHot(now.Sub(state.LastActivityAt), runtimeUrgent, d.nextPollInterval())
-	state.LastPollAt = now
-	state.Tier = tier
-	state.Cadence = cadence
-	state.NextDueAt = boundReconcileDueAt(now, now.Add(cadence), fullDeadline)
-	d.reconcileSchedule[projectID] = state
-}
-
-func (d *Daemon) recordPollSchedule(projectID string, now time.Time) error {
-	loaded, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
-	if err != nil {
-		return err
-	}
-	projects := loadedRegisteredProjects(loaded)
-	d.pruneFrontiers(projects)
-	runs, err := d.store.ListReconcileRuns(projectID)
-	if err != nil {
-		return err
-	}
-	urgent := map[string]bool{}
-	waiting := map[string]bool{}
-	for _, run := range runs {
-		if runtimeRunNeedsHotReconcileAt(run, now) {
-			urgent[run.ProjectID] = true
-		}
-		if runWaitsForAdmission(run) {
-			waiting[run.ProjectID] = true
+	for id, state := range d.reconcileSchedule {
+		if projectID == "" || id == projectID {
+			state.LastPollAt = now.UTC()
+			d.reconcileSchedule[id] = state
 		}
 	}
-	enabled := map[string]bool{}
-	for _, project := range projects {
-		if !project.Enabled || (projectID != "" && project.ProjectID != projectID) {
-			continue
-		}
-		enabled[project.ProjectID] = true
-		if waiting[project.ProjectID] {
-			d.noteProjectActivity(project.ProjectID, "dispatch_waiting", now)
-		}
-		d.recordProjectPoll(project.ProjectID, now, urgent[project.ProjectID])
+	if _, ok := d.reconcileSchedule[projectID]; projectID != "" && !ok {
+		d.reconcileSchedule[projectID] = adaptiveProjectReconcileState{LastPollAt: now.UTC(), Tier: "idle"}
 	}
-	if projectID == "" {
-		d.reconcileMu.Lock()
-		for id := range d.reconcileSchedule {
-			if !enabled[id] {
-				delete(d.reconcileSchedule, id)
-			}
-		}
-		d.reconcileMu.Unlock()
-	}
-	return nil
-}
-
-func (d *Daemon) adaptiveProjectsDue(now time.Time) ([]string, time.Duration, error) {
-	now = now.UTC()
-	loaded, err := loadRegisteredProjects(d.store, registeredProjectLoadOptions{MetadataOnly: true, LoadDisabled: true})
-	if err != nil {
-		return nil, reconcileHotCadence, err
-	}
-	projects := loadedRegisteredProjects(loaded)
-	d.pruneFrontiers(projects)
-	runs, err := d.store.ListReconcileRuns("")
-	if err != nil {
-		return nil, reconcileHotCadence, err
-	}
-	urgent := map[string]bool{}
-	for _, run := range runs {
-		if runtimeRunNeedsHotReconcileAt(run, now) {
-			urgent[run.ProjectID] = true
-		}
-	}
-	fullDeadlines := make(map[string]time.Time, len(projects))
-	for _, project := range projects {
-		fullDeadlines[project.ProjectID] = d.projectFullReconcileDeadline(project.ProjectID)
-	}
-	d.reconcileMu.Lock()
-	defer d.reconcileMu.Unlock()
-	if d.reconcileSchedule == nil {
-		d.reconcileSchedule = map[string]adaptiveProjectReconcileState{}
-	}
-	enabled := map[string]bool{}
-	due := []string{}
-	nextWait := reconcileFullCadence
-	for _, project := range projects {
-		if !project.Enabled {
-			continue
-		}
-		enabled[project.ProjectID] = true
-		state, ok := d.reconcileSchedule[project.ProjectID]
-		if !ok {
-			state = adaptiveProjectReconcileState{LastActivityAt: now, LastActivityReason: "project_discovered"}
-		}
-		tier, cadence := adaptiveReconcileCadenceWithHot(now.Sub(state.LastActivityAt), urgent[project.ProjectID], d.nextPollInterval())
-		if state.NextDueAt.IsZero() || (urgent[project.ProjectID] && state.NextDueAt.After(now.Add(cadence))) {
-			state.NextDueAt = now.Add(cadence)
-		}
-		state.NextDueAt = boundReconcileDueAt(now, state.NextDueAt, fullDeadlines[project.ProjectID])
-		state.Tier = tier
-		state.Cadence = cadence
-		d.reconcileSchedule[project.ProjectID] = state
-		wait := state.NextDueAt.Sub(now)
-		if wait <= 0 {
-			due = append(due, project.ProjectID)
-			continue
-		}
-		if wait < nextWait {
-			nextWait = wait
-		}
-	}
-	for id := range d.reconcileSchedule {
-		if !enabled[id] {
-			delete(d.reconcileSchedule, id)
-		}
-	}
-	if len(due) > 0 {
-		nextWait = 0
-	}
-	if len(projects) == 0 {
-		nextWait = min(d.nextPollInterval(), reconcileFullCadence)
-	}
-	sort.Strings(due)
-	return due, nextWait, nil
 }
 
 func (d *Daemon) adaptiveReconcileStatus(projectID string) adaptiveProjectReconcileStatus {
@@ -299,7 +172,7 @@ func (d *Daemon) adaptiveReconcileStatus(projectID string) adaptiveProjectReconc
 	defer d.reconcileMu.Unlock()
 	state := d.reconcileSchedule[strings.TrimSpace(projectID)]
 	result := adaptiveProjectReconcileStatus{
-		Tier: state.Tier, CadenceMS: state.Cadence.Milliseconds(),
+		Tier: firstNonEmpty(state.Tier, "idle"), CadenceMS: state.Cadence.Milliseconds(),
 		LastActivityReason: state.LastActivityReason,
 	}
 	if !state.LastActivityAt.IsZero() {
@@ -307,26 +180,6 @@ func (d *Daemon) adaptiveReconcileStatus(projectID string) adaptiveProjectReconc
 	}
 	if !state.LastPollAt.IsZero() {
 		result.LastPollAt = state.LastPollAt.UTC().Format(time.RFC3339Nano)
-	}
-	if !state.NextDueAt.IsZero() {
-		result.NextDueAt = state.NextDueAt.UTC().Format(time.RFC3339Nano)
-	}
-	return result
-}
-
-func (d *Daemon) adaptiveWatchdogCadence() time.Duration {
-	d.reconcileMu.Lock()
-	defer d.reconcileMu.Unlock()
-	// The loop beats every 5s even while vault reconciliation is idle. A longer
-	// external-edit fallback must not lengthen startup/live hang detection.
-	result := reconcileHotCadence
-	for _, state := range d.reconcileSchedule {
-		if state.Cadence <= 0 {
-			continue
-		}
-		if state.Cadence < result {
-			result = state.Cadence
-		}
 	}
 	return result
 }
@@ -681,17 +534,4 @@ func selfServiceScheduleOverdue(snapshot SelfServiceReconcileSchedule, now time.
 	}
 	return true, string(DiagnosticAuthorityOperator),
 		"reconcile project " + snapshot.ProjectID + " (schedule overdue since " + snapshot.NextDueAt + ")"
-}
-
-func resetTimer(timer *time.Timer, wait time.Duration) {
-	if wait < 100*time.Millisecond {
-		wait = 100 * time.Millisecond
-	}
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
-	timer.Reset(wait)
 }

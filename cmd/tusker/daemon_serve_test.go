@@ -26,7 +26,7 @@ func TestDaemonServeInProcessReportsPidAndPollData(t *testing.T) {
 
 	var status serveDaemonStatus
 	waitForDaemonServeJSON(t, "http://"+addr+"/api/daemon", &status, func() bool {
-		return status.DaemonAlive && status.DaemonPID == os.Getpid() && status.DaemonLastPollAt != nil
+		return status.DaemonAlive && status.DaemonPID == os.Getpid()
 	})
 	if status.Addr != addr {
 		t.Fatalf("expected served addr %q, got %#v", addr, status)
@@ -35,6 +35,16 @@ func TestDaemonServeInProcessReportsPidAndPollData(t *testing.T) {
 	var projects []serveProjectSummary
 	waitForDaemonServeJSON(t, "http://"+addr+"/api/projects", &projects, func() bool {
 		return len(projects) == 1 && projects[0].DaemonConnected
+	})
+	// An idle project is not polled at startup; opening it in the UI is the
+	// interaction that makes the daemon poll it.
+	if resp, err := http.Get("http://" + addr + "/api/tasks?project=" + projects[0].ID); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
+	waitForDaemonServeJSON(t, "http://"+addr+"/api/daemon", &status, func() bool {
+		return status.DaemonLastPollAt != nil
 	})
 
 	resp, err := http.Get("http://" + addr + "/")

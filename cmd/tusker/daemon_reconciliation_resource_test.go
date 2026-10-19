@@ -92,18 +92,18 @@ func TestFrontierMaintenanceAvoidsVaultWalkAndFallsBackForExternalEdits(t *testi
 		t.Fatal("idle maintenance walked the vault")
 	}
 
-	// External writers do not send CLI events. New records appear at the
-	// bounded full-read fallback, while the active lease cadence remains 5s.
+	// External writers do not send CLI events. There is no timed full-read
+	// fallback: the heartbeat's stat signature finds the new record instead.
+	before := projectEditSignature(project)
 	writeReconcileResourceTask(t, vault, "APP-T-0099", "backlog")
-	if got, ok := d.frontierMaintenanceNotes(project, wf, runs, now.Add(time.Minute)); !ok || len(got) != len(notes) {
+	if got, ok := d.frontierMaintenanceNotes(project, wf, runs, now.Add(time.Hour)); !ok || len(got) != len(notes) {
 		t.Fatalf("maintenance unexpectedly required a full scan: ok=%v count=%d", ok, len(got))
 	}
-	if _, ok := d.frontierMaintenanceNotes(project, wf, runs, now.Add(reconcileFullCadence)); ok {
-		t.Fatal("external-edit fallback did not force a full scan at five minutes")
+	if projectEditSignature(project) == before {
+		t.Fatal("stat signature missed the external record")
 	}
-	fresh, err := listOperationalNotes(vault)
-	if err != nil || len(fresh) != len(notes)+1 {
-		t.Fatalf("full fallback missed external record: count=%d err=%v", len(fresh), err)
+	if walks.Load() != 0 {
+		t.Fatal("the stat signature read the vault")
 	}
 }
 
@@ -191,14 +191,14 @@ func TestScheduledActivePollAvoidsVaultWalkAndFindsExternalRecords(t *testing.T)
 	}
 
 	// A direct filesystem write has no CLI event or write-generation change.
+	// The heartbeat's stat check finds it and runs a full read.
 	writeReconcileResourceTask(t, vault, "APP-T-0099", "backlog")
-	d.frontierScannedAt[project.ProjectID] = time.Now().UTC().Add(-reconcileFullCadence)
-	if err := d.runScheduledPoll(context.Background(), project.ProjectID); err != nil {
+	if err := d.heartbeat(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	assertLeaseHeld()
 	if walks.Load() == 0 {
-		t.Fatal("aged scheduled tick skipped the external-edit fallback")
+		t.Fatal("heartbeat skipped the outside-edit rescan")
 	}
 	if got := d.pollTaskMeta[project.ProjectID+"\x00APP-T-0099"]; got.TaskID != "APP-T-0099" || got.Status != "backlog" {
 		t.Fatalf("scheduled full fallback missed external record: %#v", got)
@@ -274,11 +274,11 @@ func TestHintedMaintenanceHonorsExternalFallbackAndShallowWake(t *testing.T) {
 	if _, ok := d.applyFrontierHint(project, []daemonControlChange{hint}); !ok {
 		t.Fatal("fresh runtime hint did not reuse the frontier")
 	}
-	d.frontierScannedAt["app"] = time.Now().UTC().Add(-reconcileFullCadence)
-	if _, ok := d.applyFrontierHint(project, []daemonControlChange{hint}); ok {
-		t.Fatal("continuous notifications bypassed the external-edit fallback")
+	// No timed full-read fallback: an hour-old frontier still serves hints.
+	d.frontierScannedAt["app"] = time.Now().UTC().Add(-time.Hour)
+	if _, ok := d.applyFrontierHint(project, []daemonControlChange{hint}); !ok {
+		t.Fatal("an aged frontier forced a timed full read")
 	}
-	d.frontierScannedAt["app"] = time.Now().UTC()
 	d.recordFrontierHint("app", []daemonControlChange{hint})
 	d.recordFrontierHint("app", nil)
 	d.recordFrontierHint("app", []daemonControlChange{hint})
@@ -347,17 +347,4 @@ func writeReconcileResourceTask(t *testing.T, vault, id, status string) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-func TestExternalFallbackDoesNotRelaxDaemonWatchdog(t *testing.T) {
-	now := time.Now().UTC()
-	d := &Daemon{}
-	d.recordProjectPoll("idle", now, false)
-	if cadence := d.adaptiveWatchdogCadence(); cadence != reconcileHotCadence {
-		t.Fatalf("idle fallback relaxed watchdog cadence: %s", cadence)
-	}
-	d.recordProjectPoll("live", now, true)
-	if cadence := d.adaptiveWatchdogCadence(); cadence != reconcileLiveCadence {
-		t.Fatalf("active watchdog cadence = %s", cadence)
-	}
 }

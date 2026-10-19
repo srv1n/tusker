@@ -332,26 +332,24 @@ func TestSelfServiceReconcile(t *testing.T) {
 		now := time.Now().UTC()
 		d := &Daemon{store: store, stateRoot: store.stateRoot}
 		d.noteProjectActivity("project-sched", "cli_mutation", now)
-		d.recordProjectPoll("project-sched", now, false)
+		d.recordPollSchedule("project-sched", now)
 		d.recordSelfServiceReconcileSchedule("project-sched", now)
 		snapshot, ok := loadSelfServiceReconcileSchedule(store, "project-sched")
 		if !ok {
 			t.Fatal("persisted schedule snapshot is unavailable")
 		}
-		if snapshot.LastActivityReason != "cli_mutation" || snapshot.NextDueAt == "" || snapshot.Tier == "" {
+		if snapshot.LastActivityReason != "cli_mutation" || snapshot.LastPollAt == "" || snapshot.Tier != "active" {
 			t.Fatalf("schedule snapshot lost last observation: %#v", snapshot)
 		}
-		// Deliberate idle polling before next-due is a normal wait, not a fault.
-		if overdue, _, _ := selfServiceScheduleOverdue(snapshot, now); overdue {
-			t.Fatal("a schedule before its published next-due time must not read overdue")
+		// Reconciliation is event-driven: there is no due time, so waiting for
+		// the next event never reads overdue.
+		if overdue, _, _ := selfServiceScheduleOverdue(snapshot, now.Add(24*time.Hour)); overdue || snapshot.NextDueAt != "" {
+			t.Fatalf("an event-driven schedule read overdue: %#v", snapshot)
 		}
-		// Past next-due the project exposes its next actor and scoped action
-		// instead of a false healthy daemon.
-		nextDue, err := time.Parse(time.RFC3339Nano, snapshot.NextDueAt)
-		if err != nil {
-			t.Fatal(err)
-		}
-		overdue, actor, action := selfServiceScheduleOverdue(snapshot, nextDue.Add(time.Second))
+		// A snapshot persisted by an older timed daemon still exposes its next
+		// actor and scoped action once past its due time.
+		snapshot.NextDueAt = now.Format(time.RFC3339Nano)
+		overdue, actor, action := selfServiceScheduleOverdue(snapshot, now.Add(time.Second))
 		if !overdue || actor != "operator" || !strings.Contains(action, "project-sched") {
 			t.Fatalf("overdue schedule hid its owner: overdue=%v actor=%q action=%q", overdue, actor, action)
 		}

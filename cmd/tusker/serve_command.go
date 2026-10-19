@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	serveassets "tusker/internal/serve"
@@ -919,7 +920,40 @@ func (s *serveServer) cachedProjectForSnapshot(projectID string) (RegisteredProj
 }
 
 func (s *serveServer) loadSnapshotForRequest(r *http.Request) (serveSnapshot, error) {
-	return s.loadSnapshotForProject(strings.TrimSpace(r.URL.Query().Get("project")))
+	projectID := strings.TrimSpace(r.URL.Query().Get("project"))
+	noteServeProjectInteraction(projectID, time.Now())
+	return s.loadSnapshotForProject(projectID)
+}
+
+const (
+	serveInteractionCause = "serve_interaction"
+	// serveInteractionDebounce turns a burst of UI requests for one project
+	// (opening it, clicking around, refetches) into one daemon rescan.
+	serveInteractionDebounce = time.Minute
+)
+
+var serveInteractions = struct {
+	sync.Mutex
+	last map[string]time.Time
+}{last: map[string]time.Time{}}
+
+// noteServeProjectInteraction tells the daemon the operator is using a
+// project, at most once per serveInteractionDebounce. Only a request naming
+// the project counts; listing projects in the sidebar does not.
+func noteServeProjectInteraction(projectID string, now time.Time) {
+	if projectID == "" {
+		return
+	}
+	serveInteractions.Lock()
+	last, seen := serveInteractions.last[projectID]
+	fire := !seen || now.Sub(last) >= serveInteractionDebounce
+	if fire {
+		serveInteractions.last[projectID] = now
+	}
+	serveInteractions.Unlock()
+	if fire {
+		_ = daemonControlOneWaySender(DefaultStateRoot(), daemonControlRequest{Command: "reconcile_project", ProjectID: projectID, Cause: serveInteractionCause}, 250*time.Millisecond)
+	}
 }
 
 func (s *serveServer) loadSnapshotForProject(projectID string) (serveSnapshot, error) {

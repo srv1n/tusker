@@ -3,7 +3,7 @@ title: "Orchestration"
 subject: orchestration
 part_of: overview
 status: canonical
-describes: [cmd/tusker/daemon.go, cmd/tusker/daemon_scheduler.go, cmd/tusker/workspace_manager.go, cmd/tusker/work_session_cmd.go, cmd/tusker/run_ownership.go, cmd/tusker/process_inventory.go, cmd/tusker/process_janitor.go]
+describes: [cmd/tusker/daemon.go, cmd/tusker/daemon_scheduler.go, cmd/tusker/workspace_manager.go, cmd/tusker/work_session_cmd.go, cmd/tusker/run_ownership.go, cmd/tusker/process_inventory.go, cmd/tusker/process_janitor.go, cmd/tusker/project_activity.go]
 read_when: "Understanding scheduling, workspace preparation, or worker ownership."
 skip_when: "Authoring acceptance criteria or inspecting visual evidence."
 ---
@@ -23,11 +23,32 @@ allow it.
 ## Updates and reconciliation
 
 The normal status path is CLI write → project notification → daemon/Serve
-refresh → client event. Active runs retain lightweight health checks, while
-warm polls reuse the project frontier and refresh active task records. A full
-reconciliation runs at startup and periodically (five minutes by default) to
-recover missed notifications or edits made outside the CLI. Explicit refreshes
-and mutation/dispatch authorization still read current material.
+refresh → client event. The daemon works on a project only when something
+changes or the operator is using it; there is no timed full reconciliation.
+
+- A project is active while it has a live or queued run, an armed wave with
+  unfinished members, or an interaction in the last ten minutes (a CLI command
+  in it, a runner report, or opening it in the UI). Being registered or shown
+  in the sidebar does not make it active.
+- Every five seconds a heartbeat runs the process janitor and, for active
+  projects only, checks runs and a stat-only signature (file count and newest
+  modification time of task, wave and spec files and git refs). It loads no
+  vault and starts no git. It polls a project only for a due event: a retry
+  backoff or lease that came due, a runner whose process is gone or went
+  silent, freed capacity for queued work, a scheduled departure or batch gate,
+  or a changed signature, which forces a full rescan.
+- Idle projects get no pass at all. Hand edits to an idle project are picked
+  up when the operator next touches it; UI requests for a project send one
+  debounced interaction wake (at most one a minute).
+- At startup only projects with live work are rescanned. Wave frontiers
+  advance on a full read, a CLI or runner event, a changed task, or a run that
+  settled; never on a bare heartbeat poll. Serve gets a full refresh only when
+  a poll found a canonical change.
+- `TUSKER_RECONCILIATION_MODE=event` also turns off the startup rescan and the
+  heartbeat's project checks, leaving only control-socket wakes.
+
+Explicit refreshes and mutation/dispatch authorization still read current
+material.
 
 Read operations share note indexes and request-local wave material instead of
 walking the vault for each row. Runner log ingestion advances over complete new
@@ -88,7 +109,8 @@ starter.
 - A check is stopped as a group when it finishes, when its starter cancels or
   shuts down, or when it has printed nothing and used no CPU for the check
   silence limit. That outcome is recorded as stuck, stopped, not as a failure.
-- One janitor pass runs at daemon startup and on every poll. It stops checks
+- One janitor pass runs at daemon startup, on every heartbeat and on every
+  poll. It stops checks
   whose starter died, adopts agent sessions whose run is still claimed or
   running, and stops sessions whose run is gone. A session whose attempt finished
   less than two minutes ago is left to exit on its own. It acts only when PID, process
