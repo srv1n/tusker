@@ -29,6 +29,9 @@ const (
 // as an ordinary failed check: a hung test is not a red test.
 var errCheckStuckStopped = errors.New("check stuck, stopped")
 
+// errCheckOperatorStopped preserves an explicit operator stop across check callers.
+var errCheckOperatorStopped = errors.New("check stopped by operator")
+
 type ownedProcess struct {
 	ID             int64
 	Owner          string
@@ -440,6 +443,14 @@ func runOwnedCheck(ctx context.Context, owner string, cmd *exec.Cmd, silence tim
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	}
 	_ = store.endOwnedProcess(id, reason)
+	// The Stop endpoint records intent before killing the group. Read the
+	// winning reason after ending the row so its exit cannot become a failure.
+	row, found, err := store.ownedProcessByID(id)
+	if err != nil {
+		runErr = fmt.Errorf("read check end reason: %w", err)
+	} else if found && row.EndReason == "operator_stopped" {
+		runErr = errCheckOperatorStopped
+	}
 	output, _ := out.snapshot()
 	return output, runErr
 }

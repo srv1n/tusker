@@ -1144,6 +1144,13 @@ func stageV7LandingBatch(ctx context.Context, vaultPath, repoRoot, baseBranch st
 	laneIdentity := v7LandingBatchIdentity(tasks)
 	gate := runV7LandingGateEvidenceWithIsolation(ctx, vaultPath, tmp, laneIdentity, authority == v7LandingAuthorityDeparture)
 	if !gate.Pass {
+		for _, outcome := range gate.Outcomes {
+			if outcome.Result == "operator_stopped" {
+				// Stop the batch before failure bisection can rerun its gates
+				// or send the tasks to rework.
+				return v7LandingBatchResult{}, tuskerError(errorInvalidTransition, gate.Summary)
+			}
+		}
 		return v7LandingBatchResult{Summary: gate.Summary}, nil
 	}
 	receipt := v7LandingReceipt{
@@ -1429,6 +1436,9 @@ func runV7LandingGateEvidenceWithIsolation(ctx context.Context, vaultPath, workD
 		if err != nil {
 			evidence.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			result, summary := "fail", gateFailureSummary(command, string(output), err)
+			if errors.Is(err, errCheckOperatorStopped) {
+				result, summary = "operator_stopped", limitLandingSummary("gate stopped by operator: "+command, 500)
+			}
 			if errors.Is(err, errCheckStuckStopped) {
 				result, summary = "stuck_stopped", limitLandingSummary("gate stuck, stopped: "+command+": "+err.Error(), 500)
 			}

@@ -251,6 +251,10 @@ func runV7CloseoutValidation(vaultPath, owner, command string) (map[string]any, 
 	result["command"] = command
 	result["validated_at"] = started.Format(time.RFC3339)
 	result["output_tail"] = tailString(strings.TrimSpace(string(out)), 20)
+	if errors.Is(err, errCheckOperatorStopped) {
+		result["result"] = "operator_stopped"
+		return result, tuskerError(errorEvidenceGate, "closeout validation stopped by operator: "+command, withContext(result))
+	}
 	if errors.Is(err, errCheckStuckStopped) {
 		result["result"] = "stuck_stopped"
 		return result, tuskerError(errorEvidenceGate, "closeout validation stuck, stopped: "+command, withContext(result))
