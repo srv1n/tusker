@@ -1498,6 +1498,7 @@ func runV7OwnedLandingGateCommand(ctx context.Context, owner, workDir, command s
 	if !isolated {
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = workDir
+		cmd.Env = sharedReviewCargoTargetEnv(os.Environ(), workDir, "")
 		return runOwnedCheck(ctx, owner, cmd, 0)
 	}
 	sandbox, err := newV7GateSandbox(workDir, true)

@@ -274,7 +274,7 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 		cmd = exec.Command("/bin/sh", "-c", command)
 	}
 	cmd.Dir = filepath.Clean(repoRoot)
-	cmd.Env = v7VerificationCommandEnv()
+	cmd.Env = sharedReviewCargoTargetEnv(v7VerificationCommandEnv(), cmd.Dir, "")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	output := &v7BoundedOutput{limit: v7VerificationCommandMaxOutput}
 	cmd.Stdout, cmd.Stderr = output, output
@@ -1023,7 +1023,7 @@ func canonicalV7VerificationWorkspaceRoot(root string) (string, error) {
 }
 
 func v7VerificationCommandEnv() []string {
-	allowed := map[string]bool{"HOME": true, "PATH": true, "TMPDIR": true, "TMP": true, "TEMP": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TZ": true, "GOCACHE": true, "GOMODCACHE": true, "TUSKER_VALIDATION_LOCK_DIR": true}
+	allowed := map[string]bool{"HOME": true, "PATH": true, "TMPDIR": true, "TMP": true, "TEMP": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TZ": true, "GOCACHE": true, "GOMODCACHE": true, "CARGO_TARGET_DIR": true, "TUSKER_VALIDATION_LOCK_DIR": true}
 	env := []string{"TUSKER_VERIFICATION_GATE=1"}
 	for _, pair := range os.Environ() {
 		key, _, _ := strings.Cut(pair, "=")

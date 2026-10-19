@@ -470,14 +470,34 @@ func runnerEnv(req runnerLaunchEnv) []string {
 	)
 }
 
-// sharedReviewCargoTargetEnv lets a worker running outside a shared checkout
-// (a shared-checkout review worktree) reuse the checkout's cargo build cache.
+// sharedReviewCargoTargetEnv points cargo in every checkout of a shared-mode
+// project (review worktrees, landing staging checkouts, check runs) at the main
+// checkout's target dir, the cache the shared checkout and the operator already
+// keep warm. Cargo locks that dir, so concurrent builds wait rather than corrupt
+// it. An inherited CARGO_TARGET_DIR or a project .cargo/config target-dir wins.
+// With repoRoot empty the main checkout is found from workspace's git common dir.
 func sharedReviewCargoTargetEnv(env []string, workspace, repoRoot string) []string {
-	if strings.TrimSpace(repoRoot) == "" || sameCanonicalProjectPath(workspace, repoRoot) || !sharedWorkspaceMetadata(repoRoot) ||
-		runnerEnvValue(env, "CARGO_TARGET_DIR") != "" {
+	if runnerEnvValue(env, "CARGO_TARGET_DIR") != "" {
+		return env
+	}
+	if strings.TrimSpace(repoRoot) == "" {
+		if common, err := gitCommonDirectory(workspace); err == nil && filepath.Base(common) == ".git" {
+			repoRoot = filepath.Dir(common)
+		}
+	}
+	if strings.TrimSpace(repoRoot) == "" || sameCanonicalProjectPath(workspace, repoRoot) || !sharedWorkspaceMetadata(repoRoot) || cargoConfigSetsTargetDir(repoRoot) {
 		return env
 	}
 	return setEnvValue(env, "CARGO_TARGET_DIR", filepath.Join(repoRoot, "target"))
+}
+
+func cargoConfigSetsTargetDir(repoRoot string) bool {
+	for _, name := range []string{"config.toml", "config"} {
+		if raw, err := os.ReadFile(filepath.Join(repoRoot, ".cargo", name)); err == nil && strings.Contains(string(raw), "target-dir") {
+			return true
+		}
+	}
+	return false
 }
 
 func runnerEnvValue(env []string, key string) string {
