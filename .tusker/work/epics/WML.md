@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-19T15:16:27Z"
-updated_at: "2026-10-20T03:51:19Z"
-state_rev: "sha256:d2358fd10a84effe69433b3fc715b4ab775bf801e57029b11005f7889963fbc8"
+updated_at: "2026-10-20T03:55:09Z"
+state_rev: "sha256:4244faf799d2faf2f0c5ff87d7640637d7de79d9d8c249dc5ba163996c94b655"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,7 +50,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[WML-T-0003]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| _None._ |  |  |  |
 
 ## Recently completed
 
@@ -60,4 +60,5 @@ TBD.
 |---|---|---|
 | [[WML-T-0001]] | human:sarav | 2026-10-20T03:46:49Z |
 | [[WML-T-0002]] | human:sarav | 2026-10-20T03:51:19Z |
+| [[WML-T-0003]] | human:sarav | 2026-10-20T03:55:06Z |
 | [[WML-T-0004]] | human:sarav | 2026-10-20T03:47:15Z |
