@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import { BookOpen, ChevronDown, ChevronUp, Ellipsis, FolderPlus, Inbox, Layers, PanelLeftClose, PanelLeftOpen, Pin, RefreshCw, Search, Settings } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronUp, Ellipsis, FolderPlus, Inbox, Layers, PanelLeftClose, PanelLeftOpen, Pin, Power, RefreshCw, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Chip } from "@/components/ui/primitives";
 import { openTaskSearch } from "@/features/search/TaskSearch";
@@ -34,6 +34,10 @@ export const PROJECT_SECTIONS = [
 ] as const;
 
 const TONE_DOT = { fail: "bg-fail", warn: "bg-warn", pass: "bg-pass", muted: "bg-faint" } as const;
+
+// The Mac app's bridge; absent in a plain browser.
+const macShell = () =>
+  (window as { webkit?: { messageHandlers?: { tuskerShell?: { postMessage(m: unknown): void } } } }).webkit?.messageHandlers?.tuskerShell;
 
 const MENU_ITEM = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-soft hover:bg-hover hover:text-ink disabled:opacity-40";
 
@@ -306,6 +310,7 @@ export function ProjectStrip({ expanded, onToggle, className = "flex" }: { expan
           <div className="absolute bottom-full left-2 right-2 z-30 mb-1 rounded-lg border border-line bg-raised p-1 shadow-lg">
             <button type="button" onClick={() => { setAddingProject(true); setMenuId(null); }} className={MENU_ITEM}><FolderPlus size={13} aria-hidden="true" />Add project</button>
             <button type="button" onClick={() => void projectsQ.refetch()} disabled={projectsQ.isFetching} aria-busy={projectsQ.isFetching} className={MENU_ITEM}><RefreshCw size={13} aria-hidden="true" className={projectsQ.isFetching ? "animate-spin" : undefined} />Refresh projects</button>
+            {macShell() && <button type="button" onClick={() => { setMenuId(null); macShell()?.postMessage({ method: "quitAndStopAll" }); }} className={MENU_ITEM}><Power size={13} aria-hidden="true" />Quit Tusker and Stop All Agents…</button>}
           </div>
         )}
       </div>

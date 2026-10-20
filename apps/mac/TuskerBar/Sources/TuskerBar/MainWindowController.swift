@@ -232,6 +232,9 @@ final class MainWindowController: NSObject, WKNavigationDelegate, WKScriptMessag
                     self.webView.evaluateJavaScript(script, completionHandler: nil)
                 }
             }
+        case "quitAndStopAll":
+            // Same confirmation and `tusker stop --all` as the menu bar item.
+            (NSApp.delegate as? AppDelegate)?.quitAndStopAll()
         case "setTheme":
             window.appearance = PanelController.appearance(forTheme: payload["theme"] as? String)
         default:

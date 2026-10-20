@@ -192,6 +192,9 @@ final class PanelController: NSObject, WKNavigationDelegate, WKScriptMessageHand
             if let requestID = payload["requestId"] as? String { presentFolderPicker(requestID: requestID) }
         case "pickImage":
             if let requestID = payload["requestId"] as? String { presentImagePicker(requestID: requestID) }
+        case "quitAndStopAll":
+            // Same confirmation and `tusker stop --all` as the menu bar item.
+            (NSApp.delegate as? AppDelegate)?.quitAndStopAll()
         case "setTheme":
             panel.appearance = Self.appearance(forTheme: payload["theme"] as? String)
         default: break

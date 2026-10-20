@@ -184,7 +184,9 @@ otherwise it replaces it. "Launch at login" in Settings registers the app as a
 login item, which starts the daemon after login.
 
 - **Quit TuskerBar (Keep Agents Running)** (⌘Q) quits only the app.
-- **Quit Tusker and Stop All Agents…** and `tusker stop --all` stop the daemon
+- **Quit Tusker and Stop All Agents…** (TuskerBar menu, the app menu, or the
+  "…" menu next to Settings at the bottom left of the app window) and
+  `tusker stop --all` stop the daemon
   (control socket, then TERM and KILL of the receipt PID when its start time
   matches), then stop every open inventory process group, agent sessions and
   checks, TERM then KILL. Each row ends with `operator_stopped_all` and a

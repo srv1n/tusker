@@ -168,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let quitAppTitle = "Quit TuskerBar (Keep Agents Running)"
     static let quitAllTitle = "Quit Tusker and Stop All Agents…"
     @objc private func quit() { NSApp.terminate(nil) }
-    @objc private func quitAndStopAll() {
+    @objc func quitAndStopAll() {
         let confirm = NSAlert()
         confirm.messageText = "Stop Tusker and all agents?"
         confirm.informativeText = "This stops the daemon, every running agent session and every check Tusker started, then quits TuskerBar."
