@@ -44,7 +44,8 @@ export type Priority = "p0" | "p1" | "p2" | "p3";
 export type Risk = "low" | "medium" | "high" | "critical";
 
 /** Per-acceptance-row proof state. */
-export type ProofStatus = "pending" | "pass" | "fail";
+/** "stale": passed, but the work changed since; accepting reruns the check. */
+export type ProofStatus = "pending" | "pass" | "fail" | "stale";
 
 /** The five human-gate kinds the needs-me queue routes (packet §4.1). */
 export type GateKind =

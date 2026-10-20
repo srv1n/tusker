@@ -167,9 +167,10 @@ export function visibleTaskIntent(task: Pick<TaskDetail, "intent" | "title">): {
 
 /** A failed/stale current attempt cannot inherit a pass from an older attempt. */
 export function proofStatusForCurrentAttempt(
-  status: VerificationRow["result"],
+  status: VerificationRow["result"] | "stale",
   run: RunDetail | null,
 ): VerificationRow["result"] | "not-current" {
+  if (status === "stale") return "not-current";
   return status === "pass" && runInvalidatesProof(run) ? "not-current" : status;
 }
 

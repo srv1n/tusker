@@ -88,7 +88,7 @@ export function OutcomeChip({ outcome }: { outcome: RunOutcome }) {
 }
 
 export function ProofChip({ proof }: { proof: ProofStatus }) {
-  const label = proof === "pass" ? "pass" : proof === "fail" ? "fail" : "pending";
+  const label = proof === "pass" ? "pass" : proof === "fail" ? "fail" : proof === "stale" ? "out of date" : "pending";
   return (
     <Chip tone={proofTone[proof]} variant="soft" mono>
       {label}

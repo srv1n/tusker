@@ -2050,7 +2050,7 @@ func (s *serveServer) taskDetailFor(snap serveSnapshot, task Note) serveTaskDeta
 		EffectiveReview:        routePreviewForNote(task, snap.workflow, runLaneReview),
 		Body:                   task.Body,
 		Intent:                 sectionContent(task.Body, "## Intent"),
-		Acceptance:             serveAcceptanceRows(task),
+		Acceptance:             serveAcceptanceRowsMarkingStale(firstNonEmpty(strings.TrimSpace(snap.project.VaultRoot), s.vaultPath), task),
 		NonGoals:               serveBullets(sectionContent(task.Body, "## Non-goals")),
 		Verification:           serveVerificationRows(task),
 		Evidence:               serveEvidenceCards(snap, task),
@@ -2778,6 +2778,31 @@ func serveAcceptanceRows(task Note) []serveAcceptanceRow {
 		out = append(out, serveAcceptanceRow{ID: id, Text: cells[1], Proof: firstNonEmpty(proofs[id], "pending")})
 	}
 	return out
+}
+
+// serveAcceptanceRowsMarkingStale shows a review task's passing criterion as
+// "stale" when its command proof no longer matches the work; accepting the
+// task reruns that check.
+func serveAcceptanceRowsMarkingStale(vaultPath string, task Note) []serveAcceptanceRow {
+	rows := serveAcceptanceRows(task)
+	if !strings.EqualFold(stringField(task.Data, "status"), "review") {
+		return rows
+	}
+	ids := v7AcceptanceIDs(task.Body)
+	stale := map[string]bool{}
+	for _, row := range parseV7VerificationRows(v7TaskWithStaleCommandRowsPending(vaultPath, task).Body) {
+		if strings.EqualFold(strings.TrimSpace(row.Result), "pending") {
+			for _, id := range v7CoverTextToAcceptanceIDs(row.CoverText, ids) {
+				stale[id] = true
+			}
+		}
+	}
+	for i := range rows {
+		if rows[i].Proof == "pass" && stale[rows[i].ID] {
+			rows[i].Proof = "stale"
+		}
+	}
+	return rows
 }
 
 func serveAcceptanceProofs(task Note) map[string]string {

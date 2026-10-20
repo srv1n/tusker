@@ -185,4 +185,5 @@ export const proofTone: Record<ProofStatus, Tone> = {
   pending: "neutral",
   pass: "pass",
   fail: "fail",
+  stale: "warn",
 };

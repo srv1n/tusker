@@ -57,7 +57,7 @@ export interface MergeCheck {
   id: string;
   label: string;
   detail: string;
-  state: "pass" | "fail" | "pending";
+  state: "pass" | "fail" | "pending" | "stale";
 }
 
 /** Context for the approve-spec banner (packet §4.1 / §5 moment 5). */

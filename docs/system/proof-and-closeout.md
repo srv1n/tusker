@@ -128,7 +128,8 @@ tusker done --since <git-ref> --by agent:<name>
 `--since` selects open tasks whose `owned_paths` changed between the ref and
 `HEAD`, so the agent that did the work needs no trailer or Tusker integration.
 For each task, Tusker reruns the command rows in the registered checkout. It
-reuses receipts that still match the material. It then runs the
+reuses receipts that still match the material and reruns those that no longer
+do, including for a task it already moved to review. It then runs the
 `adopt_completed` transition, which records the implementation as
 "external/unknown". Dependencies are adopted before their dependents.
 
@@ -194,7 +195,15 @@ rules.
 
 Expected result: `tusker done APP-T-0001` marks the current reviewed result
 done. If any required fact is missing or stale, close refuses and names the
-remaining action. Fix that fact and retry. Do not treat a successful command,
+remaining action. Fix that fact and retry.
+
+The one exception is command proof that passed but went stale because the
+task's files changed after it ran (for example, a later commit touched them).
+A person's close (`human:` or `operator:`, including Serve's "Accept & close")
+reruns those unchanged commands first and closes only if they pass again; a
+failing rerun refuses as usual. Serve shows such rows as "out of date" and the
+button as "Recheck & close". A changed or new command still needs explicit
+confirmation, and agent or daemon closes keep refusing stale proof. Do not treat a successful command,
 an old review, or a submitted work session as completion.
 
 When only a person can finish the task, closeout writes a bounded checkpoint

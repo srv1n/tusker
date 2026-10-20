@@ -98,14 +98,20 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			return tuskerError("CAS_CONFLICT", taskID+": verification manifest task snapshot drifted before execution")
 		}
 		rows := parseV7VerificationRows(body)
+		// Rows reset only because the work moved under an unchanged, already
+		// accepted command rerun without a fresh manifest confirmation.
+		staleOnly := 0
 		if args.Bool("rerun-invalid") {
 			material, materialErr := v7VerificationCurrentScopedMaterial(vaultPath, current)
 			if workspace != nil {
 				material, materialErr = workspace.MaterialFingerprint, workspace.Verify()
 			}
 			for i := range rows {
-				if v7VerificationReceiptInvalidationForMaterial(current, rows[i], material, materialErr) != nil {
+				if cause := v7VerificationReceiptInvalidationForMaterial(current, rows[i], material, materialErr); cause != nil {
 					rows[i].Result = "pending"
+					if v7VerificationRerunsWithoutConfirmation(cause) {
+						staleOnly++
+					}
 				}
 			}
 		}
@@ -126,7 +132,7 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			report = computeV7ProofReportForMaterial(vaultPath, current, idx, material, nil)
 			return nil
 		}
-		if len(pending) > 0 && !trustedWorker {
+		if len(pending) > staleOnly && !trustedWorker {
 			wf := defaultWorkflow()
 			if fileExists(workflowPath(vaultPath)) {
 				loaded, workflowErr := loadWorkflow(vaultPath)
@@ -1060,6 +1066,30 @@ func (b *v7BoundedOutput) Bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]byte(nil), b.buf...)
+}
+
+// v7VerificationRerunsWithoutConfirmation reports a receipt that went stale
+// only because the work moved under its unchanged, already accepted command.
+func v7VerificationRerunsWithoutConfirmation(cause *v7VerificationInvalidation) bool {
+	return cause != nil && cause.Kind == "changed" && cause.Dimension != "check"
+}
+
+// v7TaskWithStaleCommandRowsPending returns the task as a stale-rerunning
+// close will execute it: rows whose receipts went stale read as pending.
+func v7TaskWithStaleCommandRowsPending(vaultPath string, task Note) Note {
+	rows := parseV7VerificationRows(task.Body)
+	material, materialErr := v7VerificationCurrentScopedMaterial(vaultPath, task)
+	changed := false
+	for i := range rows {
+		if v7VerificationRerunsWithoutConfirmation(v7VerificationReceiptInvalidationForMaterial(task, rows[i], material, materialErr)) {
+			rows[i].Result, changed = "pending", true
+		}
+	}
+	if !changed {
+		return task
+	}
+	task.Body = replaceSection(task.Body, "## Verification", renderV7VerificationTable(rows))
+	return task
 }
 
 func v7PendingCommandProofGaps(task Note, report v7ProofReport) []string {

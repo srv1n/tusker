@@ -592,7 +592,7 @@ func enforceV7AcceptanceClose(vaultPath string, task Note, idx v7Index, allowPen
 	missing := append([]string{}, report.Missing...)
 	missing = append(missing, report.ModeMissing...)
 	if allowPendingCommands {
-		missing = v7PendingCommandProofGaps(task, report)
+		missing = v7PendingCommandProofGaps(v7TaskWithStaleCommandRowsPending(vaultPath, task), report)
 	}
 	receiptMissing := v7VerificationReceiptRequirementMissing(vaultPath, task)
 	if receiptMissing != "" && !allowPendingCommands {

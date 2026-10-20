@@ -181,7 +181,15 @@ func v7ClosePreflight(vaultPath string, task Note, idx v7Index, request v7CloseP
 		if err := preflightCanonicalRuntimeRetirement(vaultPath, id); err != nil {
 			return v7ClosePreflightResult{}, err
 		}
-		fresh, _, failures, err := executeV7CommandVerificationRows(vaultPath, task, request.Args, request.Actor, false)
+		// A person's close reruns checks whose proof went stale because the
+		// work moved since they passed, so accepting a reviewed task never
+		// needs a separate "rerun checks" step. Agent and daemon closes keep
+		// refusing stale proof; the review lane reruns it for them.
+		verifyArgs := copyArgsForInternalMutation(request.Args)
+		if strings.HasPrefix(request.Actor, "human:") || strings.HasPrefix(request.Actor, "operator:") {
+			verifyArgs["rerun-invalid"] = "true"
+		}
+		fresh, _, failures, err := executeV7CommandVerificationRows(vaultPath, task, verifyArgs, request.Actor, false)
 		if err != nil {
 			return v7ClosePreflightResult{}, err
 		}

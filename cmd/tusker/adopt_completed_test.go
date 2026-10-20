@@ -177,6 +177,37 @@ func TestAdoptCompletedWorkReplayRerunsStaleReceipts(t *testing.T) {
 	}
 }
 
+func TestCloseRerunsProofThatWentStaleInReview(t *testing.T) {
+	vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+	if first := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "agent:devin"); first.Lane != runLaneReview {
+		t.Fatalf("expected review-only adoption, got %+v", first)
+	}
+	if err := writeText(filepath.Join(v7RepoRoot(vault), "submitted.txt"), "changed after review\n"); err != nil {
+		t.Fatal(err)
+	}
+	if rows := serveAcceptanceRowsMarkingStale(vault, walkthroughNote(t, vault, "APP-T-0001")); len(rows) == 0 || rows[0].Proof != "stale" {
+		t.Fatalf("serve must show proof over changed work as stale, got %+v", rows)
+	}
+	if err := closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "by": "human:sarav", "reason": "accepted from serve"}); err != nil {
+		t.Fatalf("close over stale proof must rerun the accepted check, got %v", err)
+	}
+	if status := stringField(adoptStatus(t, vault, "APP-T-0001"), "status"); status != "done" {
+		t.Fatalf("status = %q, want done", status)
+	}
+
+	// A check that fails after the rerun still refuses the close.
+	vault, store, project = adoptFixture(t, "APP-T-0002", nil)
+	if first := adoptRun(t, vault, store, project.ProjectID, "APP-T-0002", "agent:devin"); first.Lane != runLaneReview {
+		t.Fatalf("expected review-only adoption, got %+v", first)
+	}
+	if err := os.Remove(filepath.Join(v7RepoRoot(vault), "submitted.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0002", "by": "human:sarav", "reason": "accepted from serve"}); err == nil {
+		t.Fatal("close must refuse when the rerun check fails")
+	}
+}
+
 func TestAdoptCompletedWorkAuthorization(t *testing.T) {
 	t.Run("inert agent stops at review, a person closes", func(t *testing.T) {
 		vault, store, project := adoptFixture(t, "APP-T-0001", nil)
