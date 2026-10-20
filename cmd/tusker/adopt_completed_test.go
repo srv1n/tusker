@@ -158,6 +158,25 @@ func TestAdoptCompletedWorkIdempotentReplay(t *testing.T) {
 	}
 }
 
+func TestAdoptCompletedWorkReplayRerunsStaleReceipts(t *testing.T) {
+	vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+	if first := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "agent:devin"); first.Lane != runLaneReview {
+		t.Fatalf("expected review-only adoption, got %+v", first)
+	}
+	if err := writeText(filepath.Join(v7RepoRoot(vault), "submitted.txt"), "changed after review\n"); err != nil {
+		t.Fatal(err)
+	}
+	if missing := v7VerificationReceiptRequirementMissing(vault, walkthroughNote(t, vault, "APP-T-0001")); missing == "" {
+		t.Fatal("fixture: changing an owned file must invalidate the receipt")
+	}
+	if again := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "agent:devin"); !again.OK || again.Lane != runLaneReview {
+		t.Fatalf("agent replay must stay in review, got %+v", again)
+	}
+	if missing := v7VerificationReceiptRequirementMissing(vault, walkthroughNote(t, vault, "APP-T-0001")); missing != "" {
+		t.Fatalf("replay over stale proof must rerun checks, still missing: %s", missing)
+	}
+}
+
 func TestAdoptCompletedWorkAuthorization(t *testing.T) {
 	t.Run("inert agent stops at review, a person closes", func(t *testing.T) {
 		vault, store, project := adoptFixture(t, "APP-T-0001", nil)

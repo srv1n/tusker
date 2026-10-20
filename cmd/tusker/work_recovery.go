@@ -615,7 +615,9 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	status := strings.ToLower(strings.TrimSpace(stringField(task.Data, "status")))
 	// Idempotent replay: a prior completed adoption reports its recorded
 	// outcome without writing duplicate receipts, markers, or directives.
-	if taskAdoptedExternalImplementation(task) {
+	// Receipts that no longer match the current material fall through and
+	// rerun, so "Checks passed" is never reported over stale proof.
+	if taskAdoptedExternalImplementation(task) && (status == "done" || v7VerificationReceiptRequirementMissing(vault, task) == "") {
 		switch status {
 		case "done":
 			result.OK, result.Reason = true, "Checks passed. The task is complete."
