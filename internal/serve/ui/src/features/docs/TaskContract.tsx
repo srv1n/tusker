@@ -163,7 +163,7 @@ function ContractBody({ projectId, task, focusGateId }: { projectId: string; tas
           <div className="min-w-0">
           {checks.length > 0 && (
             <>
-              <MergeReadiness checks={checks} onAccept={onAcceptClose} />
+              <MergeReadiness checks={checks} onAccept={onAcceptClose} busy={closeReview.isPending} />
               <ActionResultLine
                 pending={closeReview.isPending}
                 error={closeReview.error}
