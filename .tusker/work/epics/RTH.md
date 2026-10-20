@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-19T02:17:38Z"
-updated_at: "2026-10-19T17:55:18Z"
-state_rev: "sha256:f7a08a92cf6a6c827f835a7d90a5c0dd0e4ed024e7cedb218aae8e4167da41ec"
+updated_at: "2026-10-20T03:52:13Z"
+state_rev: "sha256:0397a22fd7517d708cfb234289b39c6ce8fa66713bc00f375bb056de2090ec1a"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,8 +50,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[RTH-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
-| [[RTH-T-0006]] | review | reviewer | Review evidence and close or return to rework. |
+| _None._ |  |  |  |
 
 ## Recently completed
 
@@ -61,6 +60,8 @@ TBD.
 |---|---|---|
 | [[RTH-T-0001]] | human:sarav | 2026-10-19T15:14:42Z |
 | [[RTH-T-0002]] | human:sarav | 2026-10-19T15:14:43Z |
+| [[RTH-T-0003]] | human:sarav | 2026-10-20T03:52:12Z |
 | [[RTH-T-0004]] | agent:claude | 2026-10-19T15:13:44Z |
 | [[RTH-T-0005]] | agent:claude | 2026-10-19T15:14:10Z |
+| [[RTH-T-0006]] | human:sarav | 2026-10-20T03:52:12Z |
 | [[RTH-T-0007]] | agent:claude | 2026-10-19T03:20:46Z |

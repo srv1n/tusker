@@ -6,9 +6,6 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
-| [[RTH-T-0003]] | W-0050 |  | Review evidence and close or return to rework. |
-| [[RTH-T-0006]] | W-0050 |  | Review evidence and close or return to rework. |
-| [[EVD-T-0002]] |  |  | Review evidence and close or return to rework. |
-| [[WML-T-0002]] |  |  | Review evidence and close or return to rework. |
+
 
 <!-- tusker:generated:end -->

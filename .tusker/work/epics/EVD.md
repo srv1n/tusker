@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-19T04:23:44Z"
-updated_at: "2026-10-20T03:47:57Z"
-state_rev: "sha256:47dfc1d2e3cedad2e4f895979e3aca41f5aa4a8cfa08c32468da9a054836b45d"
+updated_at: "2026-10-20T03:52:12Z"
+state_rev: "sha256:c534c7ef29fcb0ac901d32f5aaadb19aea8ec34e5e7c51999b0564cc65a2621b"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -50,7 +50,7 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[EVD-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| _None._ |  |  |  |
 
 ## Recently completed
 
@@ -59,4 +59,5 @@ TBD.
 | Task | Accepted by | Closed at |
 |---|---|---|
 | [[EVD-T-0001]] | human:sarav | 2026-10-19T15:06:34Z |
+| [[EVD-T-0002]] | human:sarav | 2026-10-20T03:51:53Z |
 | [[EVD-T-0003]] | human:sarav | 2026-10-20T03:47:56Z |
