@@ -111,6 +111,20 @@ func directWaveTaskContractFingerprint(data map[string]any, body string) string 
 	return fingerprint
 }
 
+// directWaveTaskCheckContractFingerprint is the contract a command receipt
+// binds: the task contract without its proof policy, which decides what the
+// checks must prove but not what they observe.
+func directWaveTaskCheckContractFingerprint(data map[string]any, body string) string {
+	checks := make(map[string]any, len(data))
+	for key, value := range data {
+		checks[key] = value
+	}
+	for _, field := range []string{"proof_mode", "proof_required", "proof_required_owner", "evidence_budget", "evidence_required"} {
+		delete(checks, field)
+	}
+	return directWaveTaskContractFingerprint(checks, body)
+}
+
 func directWaveTaskContractFingerprintUncached(data map[string]any, body string) string {
 	canon := map[string]any{
 		"title":                stringField(data, "title"),
@@ -652,7 +666,7 @@ func updateV7TaskCmd(args Args) error {
 		return err
 	}
 	if !args.Bool("quiet") {
-		warnV7UnsatisfiableVerificationRows(id, Note{Data: data, Body: body}, idx)
+		warnV7UnsatisfiableVerificationRows(id, Note{AbsolutePath: note.AbsolutePath, RelativePath: note.RelativePath, Data: data, Body: body}, idx)
 	}
 	if args.Bool("json") {
 		emitJSON(map[string]any{"ok": true, "task": id, "state_rev": nextRev, "changes": changes})
@@ -664,19 +678,40 @@ func updateV7TaskCmd(args Args) error {
 
 func warnV7UnsatisfiableVerificationRows(id string, task Note, idx v7Index) {
 	rows := parseV7VerificationRows(task.Body)
+	if mode := strings.ToLower(fallback(stringField(task.Data, "proof_mode"), defaultV7ProofMode(stringField(task.Data, "risk")))); mode == "inline" {
+		acceptance := v7AcceptanceIDs(task.Body)
+		covered := map[string]bool{}
+		for _, row := range rows {
+			for _, acceptanceID := range v7CoverTextToAcceptanceIDs(row.CoverText, acceptance) {
+				covered[acceptanceID] = true
+			}
+		}
+		for _, acceptanceID := range v7AcceptanceWaivers(task.Data) {
+			covered[acceptanceID] = true
+		}
+		var uncovered []string
+		for _, acceptanceID := range acceptance {
+			if !covered[acceptanceID] {
+				uncovered = append(uncovered, acceptanceID)
+			}
+		}
+		if len(uncovered) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: %s acceptance %s is not in any check row's Covers column; done will refuse it as unproven unless a gate covers it (the Acceptance table's Proof column is not read).\n", id, strings.Join(uncovered, ", "))
+		}
+	}
 	for _, required := range v7TaskProofRequired(task) {
 		if required == "none" || classifyProofRequirement(required, task, idx) != "machine" {
 			continue
 		}
 		satisfied := false
 		for _, row := range rows {
-			if v7InlineVerificationSatisfies(required, row) {
+			if v7InlineVerificationSatisfies(task, required, row) {
 				satisfied = true
 				break
 			}
 		}
 		if !satisfied {
-			fmt.Fprintf(os.Stderr, "warning: %s proof_required %s has no verification command that can satisfy it (for example `test ...` or `go test ...`); the review will be refused.\n", id, required)
+			fmt.Fprintf(os.Stderr, "warning: %s proof_required %s has no verification command that can satisfy it (for example `go test ...`; list a wrapped test runner in WORKFLOW.md verification.test_commands); the review will be refused.\n", id, required)
 		}
 	}
 }

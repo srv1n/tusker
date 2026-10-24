@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -88,6 +89,16 @@ func doneCmd(args Args) error {
 	ok := true
 	out := make([]serveRecoveryResult, 0, len(ids))
 	for _, id := range ids {
+		// A dependent of a task this batch could not record is skipped, not
+		// wrong itself; name the task to fix instead of the dependency rule.
+		if r := results[id]; !r.OK {
+			if m := doneDependencyRefusal.FindStringSubmatch(r.Reason); m != nil {
+				if dep, inBatch := results[m[1]]; inBatch && !dep.OK {
+					r.Reason = "skipped: depends on " + m[1] + ", which was not recorded; fix it and rerun"
+					results[id] = r
+				}
+			}
+		}
 		out = append(out, results[id])
 		ok = ok && results[id].OK
 	}
@@ -97,6 +108,9 @@ func doneCmd(args Args) error {
 	} else {
 		for _, r := range out {
 			outcome := "refused"
+			if strings.HasPrefix(r.Reason, "skipped:") {
+				outcome = "skipped"
+			}
 			if r.OK && r.Lane == runLaneReview {
 				outcome = "review"
 			} else if r.OK {
@@ -110,6 +124,8 @@ func doneCmd(args Args) error {
 	}
 	return nil
 }
+
+var doneDependencyRefusal = regexp.MustCompile(`unfinished dependency ([A-Z][A-Z0-9]*-T-\d+)`)
 
 // doneCandidates unions explicit IDs, wave members, and open tasks whose
 // owned paths changed since a git ref. The ref form needs nothing from the

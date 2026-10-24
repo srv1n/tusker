@@ -45,7 +45,7 @@ func TestSharedModeSharesCargoTargetDir(t *testing.T) {
 	if out, err := runV7LandingGateCommand(staging, check, false); err != nil {
 		t.Fatalf("landing gate did not get the shared target dir: %v %s", err, out)
 	}
-	if obs, err := runV7VerificationCommand(staging, check, time.Minute); err != nil || obs.ExitCode != 0 {
+	if obs, err := runV7VerificationCommand(staging, check, time.Minute, nil); err != nil || obs.ExitCode != 0 {
 		t.Fatalf("verification check did not get the shared target dir: exit=%d err=%v %s", obs.ExitCode, err, obs.Message)
 	}
 	if got := runnerEnvValue(sharedReviewCargoTargetEnv([]string{"CARGO_TARGET_DIR=/x"}, staging, ""), "CARGO_TARGET_DIR"); got != "/x" {

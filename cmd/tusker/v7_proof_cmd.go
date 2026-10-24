@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,11 +45,13 @@ type v7ProofReport struct {
 	TerminalWait      bool                `json:"terminal_wait"`
 	AgentAction       string              `json:"agent_action"`
 	GapOwners         map[string]string   `json:"gap_owners,omitempty"`
-	GateOwners        map[string]string   `json:"gate_owners,omitempty"`
-	InlineRows        []v7VerificationRow `json:"inline_rows"`
-	Evidence          []string            `json:"evidence"`
-	ProofOwner        map[string]string   `json:"proof_owner,omitempty"`
-	OwnerHints        map[string]string   `json:"owner_hints,omitempty"`
+	// GapReasons says why the task's checks leave a gap open, when they do.
+	GapReasons map[string]string   `json:"gap_reasons,omitempty"`
+	GateOwners map[string]string   `json:"gate_owners,omitempty"`
+	InlineRows []v7VerificationRow `json:"inline_rows"`
+	Evidence   []string            `json:"evidence"`
+	ProofOwner map[string]string   `json:"proof_owner,omitempty"`
+	OwnerHints map[string]string   `json:"owner_hints,omitempty"`
 }
 
 func defaultV7ProofMode(risk string) string {
@@ -140,10 +143,10 @@ func printV7ProofStatusConcise(report v7ProofReport) {
 	fmt.Printf("Proof mode: %s\n", report.Mode)
 	fmt.Printf("Proof status: %s\n\n", report.Status)
 	fmt.Println("Missing gaps:")
-	printV7OwnedProofGapGroup("machine", report.MachineMissing)
-	printV7OwnedProofGapGroup("human", report.HumanMissing)
-	printV7OwnedProofGapGroup("reviewer", report.ReviewerMissing)
-	printV7OwnedProofGapGroup("external", report.ExternalMissing)
+	printV7OwnedProofGapGroup("machine", report.MachineMissing, report.GapReasons)
+	printV7OwnedProofGapGroup("human", report.HumanMissing, report.GapReasons)
+	printV7OwnedProofGapGroup("reviewer", report.ReviewerMissing, report.GapReasons)
+	printV7OwnedProofGapGroup("external", report.ExternalMissing, report.GapReasons)
 	fmt.Printf("\nAgent action: %s\n", fallback(report.AgentAction, "continue"))
 	fmt.Println("\nEvidence summary:")
 	fmt.Printf("  inline rows: %d\n", len(report.InlineRows))
@@ -228,7 +231,7 @@ func printV7ProofStatusVerbose(report v7ProofReport) {
 	printV7ProofBlockerGroup(report.ExternalBlockers)
 }
 
-func printV7OwnedProofGapGroup(owner string, gaps []string) {
+func printV7OwnedProofGapGroup(owner string, gaps []string, reasons map[string]string) {
 	fmt.Printf("  %s:", owner)
 	if len(gaps) == 0 {
 		fmt.Println(" none")
@@ -237,6 +240,9 @@ func printV7OwnedProofGapGroup(owner string, gaps []string) {
 	fmt.Println()
 	for _, gap := range gaps {
 		fmt.Printf("    - %s\n", gap)
+		if why := reasons[gap]; why != "" {
+			fmt.Printf("      why: %s\n", why)
+		}
 	}
 }
 
@@ -311,7 +317,7 @@ func proofV7SetModeCmd(args Args) error {
 		return err
 	}
 	baseRev := stringField(data, "state_rev")
-	priorContract := directWaveTaskContractFingerprint(data, body)
+	priorChecks := directWaveTaskCheckContractFingerprint(data, body)
 	data["proof_mode"] = mode
 	required := splitCSV(firstNonEmpty(args.String("required"), args.String("proof-required")))
 	if len(required) == 0 {
@@ -329,7 +335,9 @@ func proofV7SetModeCmd(args Args) error {
 	if reason := strings.TrimSpace(args.String("raw-artifacts-reason")); reason != "" {
 		data["raw_artifacts_reason"] = reason
 	}
-	if directWaveTaskContractFingerprint(data, body) != priorContract {
+	// Receipts bind the checks, not the proof policy, so a policy change
+	// keeps them.
+	if directWaveTaskCheckContractFingerprint(data, body) != priorChecks {
 		body, _ = invalidateV7PassedVerificationRows(body)
 	}
 	data["contract_fingerprint"] = directWaveTaskContractFingerprint(data, body)
@@ -391,8 +399,9 @@ func verifyV7AddCmd(args Args) error {
 	return nil
 }
 
-// verifyV7RemoveCmd deletes one verification row by its one-based position in
-// the task's current table. Indexing is explicit and CAS-protected so a stale
+// verifyV7RemoveCmd deletes verification rows by their one-based positions in
+// the task's current table ("3" or "3,5"). All positions refer to the table
+// before the removal, and indexing is explicit and CAS-protected so a stale
 // cleanup cannot silently remove a different row after a concurrent proof edit.
 func verifyV7RemoveCmd(args Args) error {
 	vaultPath, err := resolveVaultPath(args, false)
@@ -415,15 +424,25 @@ func verifyV7RemoveCmd(args Args) error {
 		return err
 	}
 	rawIndex := strings.TrimSpace(args.String("index"))
-	index := atoiSafe(rawIndex)
-	if rawIndex == "" || index < 1 {
-		return tuskerError(errorMissingArg, "verify remove requires --index <one-based-row>")
+	var indexes []int
+	for _, raw := range splitCSV(rawIndex) {
+		index := atoiSafe(raw)
+		if index < 1 {
+			return tuskerError(errorMissingArg, "verify remove requires --index <one-based-row>[,<row>...]")
+		}
+		if !slices.Contains(indexes, index) {
+			indexes = append(indexes, index)
+		}
 	}
-	retryCommand := fmt.Sprintf("tusker edit %s --verify-remove %d", taskID, index)
+	if len(indexes) == 0 {
+		return tuskerError(errorMissingArg, "verify remove requires --index <one-based-row>[,<row>...]")
+	}
+	// Remove from the bottom up so each position still names its original row.
+	sort.Sort(sort.Reverse(sort.IntSlice(indexes)))
+	retryCommand := fmt.Sprintf("tusker edit %s --verify-remove %s", taskID, rawIndex)
 	if vault := strings.TrimSpace(args.String("vault")); vault != "" {
 		retryCommand += " --vault " + v7ShellQuote(vault)
 	}
-	var removed v7VerificationRow
 	err = withV7ProofWriteLock(vaultPath, taskID, args, retryCommand, func() error {
 		note, err := resolveV7Note(vaultPath, taskID, "task")
 		if err != nil {
@@ -435,11 +454,14 @@ func verifyV7RemoveCmd(args Args) error {
 		}
 		rows := parseV7VerificationRows(body)
 		priorContract := directWaveTaskContractFingerprint(data, body)
-		if index > len(rows) {
-			return tuskerError(errorInvalidArg, fmt.Sprintf("verify remove --index %d is outside %d verification row%s", index, len(rows), plural(len(rows))))
+		if indexes[0] > len(rows) {
+			return tuskerError(errorInvalidArg, fmt.Sprintf("verify remove --index %d is outside %d verification row%s", indexes[0], len(rows), plural(len(rows))))
 		}
-		removed = rows[index-1]
-		rows = append(rows[:index-1], rows[index:]...)
+		removed := map[int]v7VerificationRow{}
+		for _, index := range indexes {
+			removed[index] = rows[index-1]
+			rows = append(rows[:index-1], rows[index:]...)
+		}
 		body = replaceSection(body, "## Verification", renderV7VerificationTable(rows))
 		if directWaveTaskContractFingerprint(data, body) != priorContract {
 			body, _ = invalidateV7PassedVerificationRows(body)
@@ -462,16 +484,22 @@ func verifyV7RemoveCmd(args Args) error {
 		if _, err := saveV7DocumentCAS(note.AbsolutePath, data, body, v7FrontmatterOrder["task"], stringField(data, "state_rev")); err != nil {
 			return err
 		}
-		return emitV7Event(vaultPath, taskID, "task", "verification_removed", actor, map[string]any{
-			"index": index, "covers": removed.CoverText, "check": removed.Check, "result": removed.Result,
-			"notes": removed.Notes, "blocked_by": removed.BlockedBy,
-		})
+		for _, index := range indexes {
+			row := removed[index]
+			if err := emitV7Event(vaultPath, taskID, "task", "verification_removed", actor, map[string]any{
+				"index": index, "covers": row.CoverText, "check": row.Check, "result": row.Result,
+				"notes": row.Notes, "blocked_by": row.BlockedBy,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 	if !args.Bool("quiet") {
-		fmt.Printf("Removed verification row %d for %s\n", index, taskID)
+		fmt.Printf("Removed verification row%s %s for %s\n", plural(len(indexes)), rawIndex, taskID)
 	}
 	return nil
 }
@@ -1219,6 +1247,14 @@ func classifyV7ProofReport(report *v7ProofReport, task Note, idx v7Index) {
 		report.GapOwners[missing] = owner
 		appendV7OwnedProofGap(report, owner, missing)
 	}
+	for gap := range report.GapOwners {
+		if why := v7ProofGapReason(task, report.InlineRows, gap); why != "" {
+			if report.GapReasons == nil {
+				report.GapReasons = map[string]string{}
+			}
+			report.GapReasons[gap] = why
+		}
+	}
 	for _, gateID := range report.OpenGates {
 		gate, ok := idx.Gates[gateID]
 		if !ok {
@@ -1257,6 +1293,41 @@ func classifyV7ProofReport(report *v7ProofReport, task Note, idx v7Index) {
 		report.TerminalWait = true
 		report.AgentAction = "stop_until_human_response"
 	}
+}
+
+// v7ProofGapReason explains a gap the task's own check rows could have closed:
+// an acceptance ID no row covers, or a proof requirement that passing command
+// rows do not count toward.
+func v7ProofGapReason(task Note, rows []v7VerificationRow, gap string) string {
+	if id, ok := strings.CutPrefix(gap, "acceptance:"); ok {
+		// A row that names the ID but has not passed explains itself.
+		acceptance := v7AcceptanceIDs(task.Body)
+		for _, row := range rows {
+			if slices.Contains(v7CoverTextToAcceptanceIDs(row.CoverText, acceptance), id) {
+				return ""
+			}
+		}
+		return "no check row, evidence, or gate covers " + id + "; the Acceptance table's Proof column is not read, so put " + id + " in the Covers column of the check that proves it"
+	}
+	required, ok := strings.CutPrefix(gap, "proof_required:")
+	if !ok {
+		return ""
+	}
+	var passed []string
+	for _, row := range rows {
+		command, isCommand := v7VerificationCommand(row.Check)
+		if isCommand && v7VerificationResultCovers(row.Result) && !v7InlineVerificationSatisfies(task, required, row) {
+			passed = append(passed, fallback(strings.TrimSpace(row.CoverText), "?")+" `"+command+"`")
+		}
+	}
+	if len(passed) == 0 {
+		return ""
+	}
+	why := strings.Join(passed, ", ") + " passed but does not count as " + required
+	if required == "focused_test" || required == "broad_test" {
+		why += ": it is not a recognised test runner; list the repo's test wrapper in WORKFLOW.md verification.test_commands"
+	}
+	return why
 }
 
 func v7ProofReportMachineComplete(report v7ProofReport) bool {
@@ -1321,7 +1392,7 @@ func v7BlockedRequirementOwners(taskID string, task Note, rows []v7VerificationR
 		}
 		owner := classifyV7VerificationBlocker(taskID, row.BlockedBy)
 		for _, required := range v7TaskProofRequired(task) {
-			if v7InlineVerificationSatisfies(required, row) && (owners[required] == "" || owner == "external") {
+			if v7InlineVerificationSatisfies(task, required, row) && (owners[required] == "" || owner == "external") {
 				owners[required] = owner
 			}
 		}
@@ -1803,7 +1874,7 @@ func v7ProofRequiredClassSatisfied(taskID, required string, task Note, idx v7Ind
 		if !v7VerificationResultCovers(row.Result) {
 			continue
 		}
-		if owner == "machine" && v7InlineVerificationSatisfies(required, row) {
+		if owner == "machine" && v7InlineVerificationSatisfies(task, required, row) {
 			return true
 		}
 	}
@@ -1834,7 +1905,7 @@ func v7ProofRequiredClassSatisfied(taskID, required string, task Note, idx v7Ind
 // -list, -showBuildSettings and test-without-building do not.
 var xcodebuildCompileActions = []string{"build", "build-for-testing", "test", "archive", "analyze"}
 
-func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool {
+func v7InlineVerificationSatisfies(task Note, required string, row v7VerificationRow) bool {
 	command, ok := v7VerificationCommand(row.Check)
 	if !ok {
 		return false
@@ -1843,7 +1914,7 @@ func v7InlineVerificationSatisfies(required string, row v7VerificationRow) bool 
 	case "command":
 		return true
 	case "focused_test", "broad_test":
-		return v7CommandInvokesTest(command)
+		return v7CommandInvokesTest(command) || v7RepoTestCommand(task, command)
 	case "typecheck":
 		return v7CommandInvokesAny(command, map[string][]string{
 			"cargo": {"check", "test"}, "go": {"test"}, "swift": {"build", "test"}, "xcodebuild": xcodebuildCompileActions, "tsc": nil, "npx": {"tsc"},
@@ -2004,7 +2075,7 @@ func v7VerificationCommand(check string) (string, bool) {
 func v7CommandInvokesTest(command string) bool {
 	return v7CommandInvokesAny(command, map[string][]string{
 		"test": nil, "[": nil,
-		"go": {"test"}, "cargo": {"test"}, "swift": {"test"}, "dotnet": {"test"}, "xcodebuild": {"test", "test-without-building"},
+		"go": {"test"}, "cargo": {"test", "nextest"}, "swift": {"test"}, "dotnet": {"test"}, "xcodebuild": {"test", "test-without-building"},
 		"npm": {"test", "run:test"}, "pnpm": {"test", "run:test"}, "yarn": {"test"}, "bun": {"test"},
 		"pytest": nil, "jest": nil, "vitest": nil, "make": {"test"},
 		"python": {"-m:pytest", "-m:unittest"}, "python3": {"-m:pytest", "-m:unittest"},

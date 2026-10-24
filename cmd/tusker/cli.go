@@ -705,7 +705,8 @@ func printVerifyHelp() {
   tusker edit <task-id> --covers A1 --check "manual proof: <check>" --result blocked|skipped|waived --blocked-by <path|task|owner> [--note <text>]
   tusker edit <task-id> --verify "A1|command: go test ./pkg|pending|note"
   tusker edit <task-id> --batch-file <path>
-  tusker edit <task-id> --verify-remove <one-based-row>
+  tusker edit <task-id> --verify-remove <one-based-row>[,<row>...]
+  tusker edit <task-id> --proof-mode inline --required command|focused_test,broad_test|...
   tusker show <task-id> --proof
 
 Purpose:
@@ -716,7 +717,11 @@ Purpose:
 Options:
   --blocked-by <path|task|owner>  Required with --result blocked; attributes external/shared blockers.
   --verify <rows>                 Newline rows shaped covers|check|result|note|blocked_by.
-  --batch-file <path>             Read rows from a file using the same format.`)
+  --batch-file <path>             Read rows from a file using the same format.
+  --verify-remove <rows>          Remove rows by position; several positions all refer to the table before removal.
+  --required <csv>                With --proof-mode, the proof classes the checks must meet (default: the mode's own).
+                                  "command" accepts any passing check; focused_test and broad_test need a test runner
+                                  or a wrapper listed in WORKFLOW.md verification.test_commands.`)
 }
 
 func printCloseHelp() {

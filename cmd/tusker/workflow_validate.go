@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var extensionNamePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$`)
@@ -25,6 +26,21 @@ func validateWorkflow(wf Workflow, filePath, body string) error {
 	}
 	if err := validateScheduledPromotionPolicy(wf.ScheduledPromotion, filePath); err != nil {
 		return err
+	}
+	if raw := strings.TrimSpace(wf.Verification.Timeout); raw != "" {
+		if d, err := time.ParseDuration(raw); err != nil || d <= 0 {
+			return tuskerError(errorConfigInvalid, "verification.timeout must be a positive duration such as 30m", withPath(filePath), withContext(map[string]any{"timeout": raw}))
+		}
+	}
+	for _, name := range wf.Verification.Env {
+		if name = strings.TrimSpace(name); name == "" || name == "*" {
+			return tuskerError(errorConfigInvalid, "verification.env entries must name variables or NAME_* prefixes; a bare * would pass every secret in the shell", withPath(filePath))
+		}
+	}
+	for _, pattern := range wf.Verification.TestCommands {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return tuskerError(errorConfigInvalid, "verification.test_commands has an invalid regular expression: "+err.Error(), withPath(filePath), withContext(map[string]any{"pattern": pattern}))
+		}
 	}
 	if len(wf.Tracker.ActiveStates) == 0 {
 		return tuskerError(errorConfigInvalid, "tracker.dispatch_states must not be empty; usually ready,rework", withPath(filePath))

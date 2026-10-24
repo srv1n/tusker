@@ -106,6 +106,20 @@ type Workflow struct {
 	} `yaml:"hooks"`
 	Fanout        FanoutPolicy        `yaml:"fanout"`
 	Orchestration OrchestrationPolicy `yaml:"orchestration,omitempty"`
+	Verification  VerificationPolicy  `yaml:"verification,omitempty"`
+}
+
+// VerificationPolicy is how this repo's task checks run. Every field is
+// optional; an empty policy keeps the built-in defaults.
+type VerificationPolicy struct {
+	// Timeout is the longest one check may run, as a Go duration ("30m").
+	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	// Env names extra environment variables checks receive. A trailing *
+	// matches a prefix ("RZN_*"). Checks otherwise get a minimal environment.
+	Env []string `yaml:"env,omitempty" json:"env,omitempty"`
+	// TestCommands are regular expressions for the repo's own test wrappers;
+	// a check command matching one counts as running tests.
+	TestCommands []string `yaml:"test_commands,omitempty" json:"test_commands,omitempty"`
 }
 
 // ScheduledPromotionPolicy is versioned so a future expansion cannot turn an
@@ -563,6 +577,19 @@ orchestration:
     #       - internal/store
     #     commands:
     #       - go test ./internal/store/...
+# verification tunes how task checks run. Uncomment what this repo needs.
+# verification:
+#   # timeout is the longest one check may run (default 10m). Set it above the
+#   # repo's measured cold build plus test time.
+#   timeout: 30m
+#   # env passes extra environment variables to checks; NAME_* matches a
+#   # prefix. Checks otherwise see only HOME, PATH, temp, locale and build caches.
+#   env:
+#     - BUILD_HOST_*
+#   # test_commands are regular expressions for wrapped test runners, so a
+#   # check like "make cargo-any CARGO_ARGS='test -p core'" counts as a test.
+#   test_commands:
+#     - "make cargo-any CARGO_ARGS=.?(test|nextest)"
 `, orch.BranchAgeWarningHours, orch.BatchGate.Enabled, orch.BatchGate.PeriodHours, orch.BatchGate.MaxRepairs)
 }
 

@@ -32,13 +32,13 @@ func TestRZNVerificationObservesExternalInputChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := "test \"$(cat " + shellSingleQuote(input) + ")\" = pass"
-	if _, err := runV7VerificationCommand(root, command, time.Second); err != nil {
+	if _, err := runV7VerificationCommand(root, command, time.Second, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(input, []byte("fail"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runV7VerificationCommand(root, command, time.Second); err == nil {
+	if _, err := runV7VerificationCommand(root, command, time.Second, nil); err == nil {
 		t.Fatal("unchanged source hid changed external verification input")
 	}
 }

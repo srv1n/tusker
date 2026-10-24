@@ -671,7 +671,7 @@ func TestV7ProofCommandMatcherHandlesWrappedAndPositionedCommands(t *testing.T) 
 	}
 	for _, test := range tests {
 		row := v7VerificationRow{Check: "command: " + test.command}
-		if got := v7InlineVerificationSatisfies(test.required, row); got != test.want {
+		if got := v7InlineVerificationSatisfies(Note{}, test.required, row); got != test.want {
 			t.Errorf("%s %q: got %v, want %v", test.required, test.command, got, test.want)
 		}
 	}

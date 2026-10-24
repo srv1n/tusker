@@ -50,6 +50,11 @@ automation:
 tusker config automation.workspace.strategy --vault ./.tusker --json
 ```
 
+Task checks run with a minimal environment, 10 minutes each. When builds take
+longer, need routing variables, or a wrapper runs the tests, set
+`verification:` in WORKFLOW.md: `timeout`, `env` (names or `NAME_*` prefixes),
+and `test_commands` (regexes matching wrapped test runs).
+
 Keep fixture artifacts in their owned disposable location. Inspect
 `tusker config automation.profiles --vault ./.tusker --json` for the
 configured runner; do not assume a default or substitute a transport. Profiles

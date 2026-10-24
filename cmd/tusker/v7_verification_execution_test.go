@@ -269,7 +269,7 @@ func TestFilteredGoTestEvidenceRejectsSpoofAndUnsupportedSelectors(t *testing.T)
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			observation, err := runV7VerificationCommand(repo, tc.command, 30*time.Second)
+			observation, err := runV7VerificationCommand(repo, tc.command, 30*time.Second, nil)
 			if tc.wantError == "" {
 				if err != nil {
 					t.Fatalf("matched command failed: %v", err)

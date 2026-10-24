@@ -70,7 +70,8 @@ claim a task afterwards just to record it. Submission is not completion; follow
 
 Add planned checks with `tusker edit <TASK-ID> --covers A1 --check
 "command: go test ./..." --result pending`. Escape `|` as `\|` inside a check
-command. Only the executor records PASS/FAIL. Choose the smallest checks
+command. Only the executor records PASS/FAIL. Covers must list every
+acceptance ID a check proves. Choose the smallest checks
 covering acceptance, attach required evidence, and reserve human review for
 explicit gates. Use CLI-managed scratch for transient logs and summaries. Keep
 large build or test output in the system temp directory: scratch has a 200MiB

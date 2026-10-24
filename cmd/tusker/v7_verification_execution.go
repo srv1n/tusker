@@ -9,15 +9,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-// Verification commands are gate work, not worker attestations. Keep the
-// default finite so a broken command cannot wedge accept/close forever.
+// Verification commands are gate work, not worker attestations. Each check
+// gets a finite timeout so a broken command cannot wedge accept/close
+// forever; WORKFLOW.md verification.timeout replaces the default.
 const v7VerificationCommandTimeout = 10 * time.Minute
 const v7VerificationCommandMaxRows = 16
 const v7VerificationCommandMaxOutput = 64 << 10
@@ -36,21 +41,95 @@ type v7VerificationReceiptIdentity struct {
 	MaterialFingerprint string
 }
 
-// v7VerificationCommandTimeoutFor returns the bounded per-row timeout. The
-// override is intentionally an internal/test-facing duration knob; zero or
-// malformed values retain the safe default.
-func v7VerificationCommandTimeoutFor(args Args) time.Duration {
+// v7VerificationCommandTimeoutFor returns the per-row timeout: the repo's
+// limit, lowered by the internal/test-facing verification-timeout-ms knob.
+func v7VerificationCommandTimeoutFor(args Args, limit time.Duration) time.Duration {
 	if args != nil {
-		if raw := strings.TrimSpace(args.String("verification-timeout-ms")); raw != "" {
-			if ms := atoiSafe(raw); ms > 0 {
-				limit := time.Duration(ms) * time.Millisecond
-				if limit < v7VerificationCommandTimeout {
-					return limit
+		if ms := atoiSafe(strings.TrimSpace(args.String("verification-timeout-ms"))); ms > 0 && time.Duration(ms)*time.Millisecond < limit {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return limit
+}
+
+type v7VerificationSettings struct {
+	timeout      time.Duration
+	env          []string
+	testCommands []*regexp.Regexp
+}
+
+var v7VerificationSettingsCache = struct {
+	sync.Mutex
+	m map[string]v7CachedVerificationSettings
+}{m: map[string]v7CachedVerificationSettings{}}
+
+type v7CachedVerificationSettings struct {
+	size     int64
+	modified time.Time
+	settings v7VerificationSettings
+}
+
+// v7VerificationSettingsFor reads WORKFLOW.md's verification section, cached
+// on the file's size and mtime because proof reports consult it on every
+// read. A missing or unreadable section keeps the defaults; tusker check
+// reports an invalid one.
+func v7VerificationSettingsFor(vaultPath string) v7VerificationSettings {
+	settings := v7VerificationSettings{timeout: v7VerificationCommandTimeout}
+	if strings.TrimSpace(vaultPath) == "" {
+		return settings
+	}
+	path := workflowPath(vaultPath)
+	info, err := os.Stat(path)
+	if err != nil {
+		return settings
+	}
+	v7VerificationSettingsCache.Lock()
+	cached, ok := v7VerificationSettingsCache.m[path]
+	v7VerificationSettingsCache.Unlock()
+	if ok && cached.size == info.Size() && cached.modified.Equal(info.ModTime()) {
+		return cached.settings
+	}
+	if text, err := readText(path); err == nil {
+		if data, _, err := parseFrontmatter(text); err == nil {
+			var policy VerificationPolicy
+			if raw, err := yaml.Marshal(data["verification"]); err == nil && yaml.Unmarshal(raw, &policy) == nil {
+				if d, err := time.ParseDuration(strings.TrimSpace(policy.Timeout)); err == nil && d > 0 {
+					settings.timeout = d
+				}
+				settings.env = policy.Env
+				for _, pattern := range policy.TestCommands {
+					if re, err := regexp.Compile(pattern); err == nil {
+						settings.testCommands = append(settings.testCommands, re)
+					}
 				}
 			}
 		}
 	}
-	return v7VerificationCommandTimeout
+	v7VerificationSettingsCache.Lock()
+	v7VerificationSettingsCache.m[path] = v7CachedVerificationSettings{size: info.Size(), modified: info.ModTime(), settings: settings}
+	v7VerificationSettingsCache.Unlock()
+	return settings
+}
+
+// v7TaskVault is the vault a loaded task note came from, or "" for a note
+// built in memory.
+func v7TaskVault(task Note) string {
+	abs, rel := filepath.ToSlash(task.AbsolutePath), task.RelativePath
+	if abs == "" || rel == "" || !strings.HasSuffix(abs, "/"+rel) {
+		return ""
+	}
+	return filepath.FromSlash(strings.TrimSuffix(abs, "/"+rel))
+}
+
+// v7RepoTestCommand reports whether command matches one of the repo's
+// declared test wrappers (WORKFLOW.md verification.test_commands).
+func v7RepoTestCommand(task Note, command string) bool {
+	for _, re := range v7VerificationSettingsFor(v7TaskVault(task)).testCommands {
+		if re.MatchString(command) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeV7CommandVerificationRows is the shared gate seam used by accept,
@@ -171,9 +250,16 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 		if err != nil {
 			return err
 		}
-		deadline := time.Now().Add(v7VerificationCommandTimeoutFor(args))
+		settings := v7VerificationSettingsFor(vaultPath)
+		timeout := v7VerificationCommandTimeoutFor(args, settings.timeout)
+		progress := !args.Bool("quiet")
+		env := v7VerificationCommandEnv(settings.env, progress)
 		changed := false
 		observations := map[int]v7VerificationCommandObservation{}
+		// Rows naming the same command share one run of it.
+		// ponytail: assumes a repeated check sees the same tree, which a
+		// command editing its own inputs would break.
+		ran := map[string]v7VerificationCommandObservation{}
 		for i, row := range rows {
 			if !strings.EqualFold(strings.TrimSpace(row.Result), "pending") {
 				continue
@@ -182,18 +268,28 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			if !ok {
 				continue
 			}
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return tuskerError(errorEvidenceGate, taskID+": verification command total wall budget exhausted")
-			}
 			// Shell checks may read tracker state, ignored files, or external
-			// inputs. A source-tree hash cannot safely share their observations.
-			observed, execErr := runV7VerificationCommand(repoRoot, command, remaining)
+			// inputs. A source-tree hash cannot safely share their observations
+			// across runs, only between rows of this one.
+			observed, seen := ran[command]
+			if !seen {
+				if progress {
+					fmt.Fprintf(os.Stderr, "%s %s: running %s\n", taskID, fallback(strings.TrimSpace(row.CoverText), "check"), command)
+				}
+				observed, _ = runV7VerificationCommand(repoRoot, command, timeout, env)
+				ran[command] = observed
+				if progress {
+					fmt.Fprintf(os.Stderr, "%s %s: %s (%s)\n", taskID, fallback(strings.TrimSpace(row.CoverText), "check"), observed.Message, observed.FinishedAt.Sub(observed.StartedAt).Round(time.Second))
+				}
+			}
 			rows[i].Result = "pass"
-			if execErr != nil {
+			if observed.ExitCode != 0 {
 				rows[i].Result = "fail"
-				failure := v7VerificationExecutionFailure{Row: rows[i], Message: observed.Message}
-				failures = append(failures, failure)
+				message := observed.Message
+				if saved := v7SaveFailedCheckOutput(vaultPath, taskID, i+1, observed.Tail); saved != "" {
+					message += "; output saved to " + saved
+				}
+				failures = append(failures, v7VerificationExecutionFailure{Row: rows[i], Message: message})
 			}
 			observations[i] = observed
 			rows[i].BlockedBy = ""
@@ -263,9 +359,15 @@ type v7VerificationCommandObservation struct {
 	TimedOut   bool
 	Truncated  bool
 	MatchCount int
+	// Tail is the end of the raw output. It is never written to the task.
+	Tail []byte
 }
 
-func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (v7VerificationCommandObservation, error) {
+// runV7VerificationCommand runs one check. A nil env is the minimal default.
+func runV7VerificationCommand(repoRoot, command string, timeout time.Duration, env []string) (v7VerificationCommandObservation, error) {
+	if env == nil {
+		env = v7VerificationCommandEnv(nil, false)
+	}
 	started := time.Now().UTC()
 	filtered := v7FilteredTestCommand(command)
 	var cmd *exec.Cmd
@@ -280,7 +382,7 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 		cmd = exec.Command("/bin/sh", "-c", command)
 	}
 	cmd.Dir = filepath.Clean(repoRoot)
-	cmd.Env = sharedReviewCargoTargetEnv(v7VerificationCommandEnv(), cmd.Dir, "")
+	cmd.Env = sharedReviewCargoTargetEnv(env, cmd.Dir, "")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	output := &v7BoundedOutput{limit: v7VerificationCommandMaxOutput}
 	cmd.Stdout, cmd.Stderr = output, output
@@ -306,7 +408,7 @@ func runV7VerificationCommand(repoRoot, command string, timeout time.Duration) (
 	finished := time.Now().UTC()
 	outputBytes := output.Bytes()
 	digest := sha256.Sum256(outputBytes)
-	obs := v7VerificationCommandObservation{StartedAt: started, FinishedAt: finished, Digest: "sha256:" + hex.EncodeToString(digest[:]), Truncated: output.truncated}
+	obs := v7VerificationCommandObservation{StartedAt: started, FinishedAt: finished, Digest: "sha256:" + hex.EncodeToString(digest[:]), Truncated: output.truncated, Tail: output.Tail()}
 	if timedOut {
 		obs.TimedOut = true
 		obs.ExitCode = 124
@@ -705,7 +807,7 @@ func v7VerificationReceiptIdentityFor(vaultPath string, task Note, repoRoot stri
 		return nil
 	}
 	return v7VerificationReceiptIdentity{
-		ContractFingerprint: contract,
+		ContractFingerprint: directWaveTaskCheckContractFingerprint(task.Data, task.Body),
 		WorkRevision:        intField(task.Data, "work_revision"),
 		SourceRevision:      firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")),
 		MaterialFingerprint: material,
@@ -744,7 +846,7 @@ func v7VerificationReceiptCurrent(task Note, row v7VerificationRow, currentMater
 	}
 	contract := directWaveTaskContractFingerprint(task.Data, task.Body)
 	stored := strings.TrimSpace(stringField(task.Data, "contract_fingerprint"))
-	if stored == "" || stored != contract || fields["contract"] != contract || fields["row"] != v7VerificationRowFingerprint(row) {
+	if stored == "" || stored != contract || fields["contract"] != v7VerificationReceiptContract(task, fields["contract"]) || fields["row"] != v7VerificationRowFingerprint(row) {
 		return false
 	}
 	if fields["work_revision"] != strconv.Itoa(intField(task.Data, "work_revision")) || fields["source"] != fallback(firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")), "-") || fields["material"] != currentMaterial {
@@ -874,9 +976,8 @@ func v7VerificationReceiptInvalidationForMaterial(task Note, row v7VerificationR
 		base.Kind, base.Dimension, base.Previous, base.Explanation = "unavailable", "material", fields["material"], "current scoped material could not be read; this does not prove that work changed"
 		return &base
 	}
-	contract := directWaveTaskContractFingerprint(task.Data, task.Body)
 	checks := []struct{ dimension, previous, current string }{
-		{"contract", fields["contract"], contract},
+		{"contract", fields["contract"], v7VerificationReceiptContract(task, fields["contract"])},
 		{"work_revision", fields["work_revision"], strconv.Itoa(intField(task.Data, "work_revision"))},
 		{"source", fields["source"], fallback(firstNonEmpty(stringField(task.Data, "source_sha"), stringField(task.Data, "source_commit")), "-")},
 		{"material", fields["material"], currentMaterial},
@@ -890,6 +991,16 @@ func v7VerificationReceiptInvalidationForMaterial(task Note, row v7VerificationR
 		}
 	}
 	return nil
+}
+
+// v7VerificationReceiptContract is the task's current contract fingerprint in
+// the form a receipt recorded: receipts bind the check contract, and older
+// receipts bound the whole contract, policy included.
+func v7VerificationReceiptContract(task Note, recorded string) string {
+	if full := directWaveTaskContractFingerprint(task.Data, task.Body); recorded == full {
+		return full
+	}
+	return directWaveTaskCheckContractFingerprint(task.Data, task.Body)
 }
 
 func v7VerificationCurrentScopedMaterial(vaultPath string, task Note) (string, error) {
@@ -1028,21 +1139,55 @@ func canonicalV7VerificationWorkspaceRoot(root string) (string, error) {
 	return repoRoot, nil
 }
 
-func v7VerificationCommandEnv() []string {
+var v7VerificationDroppedEnvReported sync.Once
+
+// v7VerificationCommandEnv is the minimal environment checks run with, plus
+// the repo's verification.env names (NAME_* matches a prefix). With report
+// set it names, once per process, the variables checks will not see.
+func v7VerificationCommandEnv(extra []string, report bool) []string {
 	allowed := map[string]bool{"HOME": true, "PATH": true, "TMPDIR": true, "TMP": true, "TEMP": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TZ": true, "GOCACHE": true, "GOMODCACHE": true, "CARGO_TARGET_DIR": true, "TUSKER_VALIDATION_LOCK_DIR": true}
+	var prefixes []string
+	for _, name := range extra {
+		name = strings.TrimSpace(name)
+		// A bare * would hand every check the shell's secrets; validation
+		// refuses it and it is ignored here.
+		if prefix, ok := strings.CutSuffix(name, "*"); ok && prefix != "" {
+			prefixes = append(prefixes, prefix)
+		} else if !ok && name != "" {
+			allowed[name] = true
+		}
+	}
 	env := []string{"TUSKER_VERIFICATION_GATE=1"}
+	var dropped []string
 	for _, pair := range os.Environ() {
 		key, _, _ := strings.Cut(pair, "=")
-		if allowed[key] {
-			env = append(env, pair)
+		keep := allowed[key]
+		for _, prefix := range prefixes {
+			keep = keep || strings.HasPrefix(key, prefix)
 		}
+		if keep {
+			env = append(env, pair)
+		} else if key != "" {
+			dropped = append(dropped, key)
+		}
+	}
+	if report && len(dropped) > 0 {
+		v7VerificationDroppedEnvReported.Do(func() {
+			sort.Strings(dropped)
+			fmt.Fprintf(os.Stderr, "checks run without these variables from your shell (pass more with verification.env in WORKFLOW.md): %s\n", strings.Join(dropped, ", "))
+		})
 	}
 	return env
 }
 
+// v7VerificationOutputTail is how much of a check's last output is kept for
+// the failure log; build tools print the cause last.
+const v7VerificationOutputTail = 16 << 10
+
 type v7BoundedOutput struct {
 	mu        sync.Mutex
 	buf       []byte
+	tail      []byte
 	limit     int
 	truncated bool
 }
@@ -1059,6 +1204,10 @@ func (b *v7BoundedOutput) Write(p []byte) (int, error) {
 	if len(b.buf) >= b.limit && len(p) > 0 {
 		b.truncated = true
 	}
+	b.tail = append(b.tail, p...)
+	if over := len(b.tail) - v7VerificationOutputTail; over > 0 {
+		b.tail = append(b.tail[:0], b.tail[over:]...)
+	}
 	return len(p), nil
 }
 
@@ -1066,6 +1215,30 @@ func (b *v7BoundedOutput) Bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]byte(nil), b.buf...)
+}
+
+func (b *v7BoundedOutput) Tail() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.tail...)
+}
+
+// v7SaveFailedCheckOutput keeps the end of a failed check's output in the
+// vault's git-ignored generated area, since the task records only a digest.
+// It returns the file's path relative to the repo, or "" when nothing was
+// saved.
+func v7SaveFailedCheckOutput(vaultPath, taskID string, row int, tail []byte) string {
+	if len(tail) == 0 || strings.TrimSpace(vaultPath) == "" {
+		return ""
+	}
+	path := filepath.Join(vaultPath, "_system", "generated", "check-output", taskID, fmt.Sprintf("row-%d.log", row))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil || os.WriteFile(path, tail, 0o644) != nil {
+		return ""
+	}
+	if rel, err := filepath.Rel(v7RepoRoot(vaultPath), path); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	return path
 }
 
 // v7VerificationRerunsWithoutConfirmation reports a receipt that went stale
@@ -1130,7 +1303,7 @@ func v7PendingCommandProofGaps(task Note, report v7ProofReport) []string {
 			required := strings.TrimPrefix(gap, "proof_required:")
 			matched := false
 			for _, row := range pending {
-				if v7InlineVerificationSatisfies(required, row) {
+				if v7InlineVerificationSatisfies(task, required, row) {
 					matched = true
 					break
 				}

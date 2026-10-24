@@ -650,6 +650,11 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	if err != nil {
 		return result, err
 	}
+	// Checks can run for many minutes, so a dependency that has not reached
+	// review refuses before them. Both endings below recheck it after.
+	if edge, blocked := adoptCompletedUnreadyDependency(task, idx); blocked {
+		return result, tuskerError(errorInvalidTransition, taskID+": adopt_completed blocked by unfinished dependency "+edge.ID)
+	}
 	// Authorization: humans, operators and authorized agents may close. Any
 	// other agent may still adopt, but only up to review: Tusker runs the
 	// proof itself, so the agent attests nothing and a person or reviewer
@@ -763,7 +768,14 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 		return refuse("verification rows are blocked externally: " + strings.Join(report.ExternalBlockers, "; "))
 	}
 	if len(report.MachineMissing) > 0 {
-		return refuse("machine proof is incomplete: " + strings.Join(report.MachineMissing, ", "))
+		gaps := make([]string, 0, len(report.MachineMissing))
+		for _, gap := range report.MachineMissing {
+			if why := report.GapReasons[gap]; why != "" {
+				gap += " (" + why + ")"
+			}
+			gaps = append(gaps, gap)
+		}
+		return refuse("machine proof is incomplete: " + strings.Join(gaps, ", "))
 	}
 	if len(report.HumanMissing) > 0 || len(report.ExternalMissing) > 0 {
 		return refuse("proof requires human/external evidence: " + strings.Join(append(append([]string{}, report.HumanMissing...), report.ExternalMissing...), ", "))
@@ -877,12 +889,8 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 			return result, tuskerError(errorInvalidTransition, taskID+": adopt_completed blocked by open gate "+stringField(gate.Data, "id"))
 		}
 	}
-	// Review is not acceptance, so a dependency already in review is enough
-	// here; close still requires every dependency done.
-	for _, edge := range v7TaskDependencyEdges(task, idx) {
-		if status := strings.ToLower(stringField(idx.Tasks[edge.ID].Data, "status")); status != "done" && status != "review" {
-			return result, tuskerError(errorInvalidTransition, taskID+": adopt_completed blocked by unfinished dependency "+edge.ID)
-		}
+	if edge, blocked := adoptCompletedUnreadyDependency(task, idx); blocked {
+		return result, tuskerError(errorInvalidTransition, taskID+": adopt_completed blocked by unfinished dependency "+edge.ID)
 	}
 	data, body, err := parseFrontmatterMustRead(task.AbsolutePath)
 	if err != nil {
@@ -931,6 +939,18 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 		}
 	}
 	return result, nil
+}
+
+// adoptCompletedUnreadyDependency returns a dependency that is neither done
+// nor in review. Review is not acceptance, so a dependency in review is enough
+// to adopt up to review; close still requires every dependency done.
+func adoptCompletedUnreadyDependency(task Note, idx v7Index) (v7DependencyEdge, bool) {
+	for _, edge := range v7TaskDependencyEdges(task, idx) {
+		if status := strings.ToLower(stringField(idx.Tasks[edge.ID].Data, "status")); status != "done" && status != "review" {
+			return edge, true
+		}
+	}
+	return v7DependencyEdge{}, false
 }
 
 // recordAdoptionMarker persists the truthful provenance marker with a CAS on

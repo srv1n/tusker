@@ -137,7 +137,44 @@ Every task receives its own contract-bound receipt. Identical pending shell
 commands execute for each task: they can read tracker state, ignored files, or
 external inputs that a repository hash does not cover. Existing material-bound
 receipts retain their normal validity checks; arbitrary command observations
-are not cached across tasks.
+are not cached across tasks. Within one task, rows with the same command share
+a single run, and each row still gets its own receipt.
+
+Before any check runs, `done` refuses a task whose dependency is neither `done`
+nor in `review`. When one task in the batch is refused, its dependents report
+`skipped` and name it, without running their checks.
+
+## How checks run
+
+Each check runs from the repository root with a minimal environment: `HOME`,
+`PATH`, temp directories, locale, `TZ`, and the Go and Cargo cache variables.
+Each check has its own time limit, 10 minutes by default. While `done` works it
+prints each check as it starts and finishes, and once per run it names the
+shell variables the checks will not see. When a check fails, the end of its
+output is saved under `.tusker/_system/generated/check-output/<TASK-ID>/` and
+the refusal names the file; the task itself records only a digest.
+
+A repository declares its own needs in `WORKFLOW.md`:
+
+```yaml
+verification:
+  timeout: 30m            # per check
+  env: [BUILD_HOST_*]     # extra names, or NAME_* prefixes; a bare * is refused
+  test_commands:          # regexes for wrapped test runners
+    - "make cargo-any CARGO_ARGS=.?(test|nextest)"
+```
+
+`focused_test` and `broad_test` count a check that runs a known test runner
+(`go test`, `cargo test`, `cargo nextest`, `pytest`, `npm test`, `make test`,
+and others) or matches `test_commands`. When passing checks leave a proof
+requirement or an acceptance row open, `tusker show <ID> --proof` and the
+`done` refusal say which check did not count and why. Acceptance rows are
+covered only by the Covers column of a Verification row, an evidence record, or
+a gate; the Acceptance table's Proof column is not read, and authoring warns
+about uncovered rows.
+
+Command receipts bind the task's checks, not its proof policy, so
+`tusker edit <ID> --proof-mode <mode> --required <csv>` keeps passed checks.
 
 The actor decides how far a task moves:
 

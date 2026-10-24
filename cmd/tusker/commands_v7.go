@@ -808,7 +808,7 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	}
 	if !args.Bool("quiet") {
 		fmt.Printf("Created V7 task %s at %s\n", id, path)
-		warnV7UnsatisfiableVerificationRows(id, Note{Data: data, Body: body}, warningIndex)
+		warnV7UnsatisfiableVerificationRows(id, Note{AbsolutePath: path, RelativePath: filepath.ToSlash(filepath.Join("work", "tasks", id+".md")), Data: data, Body: body}, warningIndex)
 	}
 	return nil
 }

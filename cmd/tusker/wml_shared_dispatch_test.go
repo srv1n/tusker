@@ -117,8 +117,13 @@ func TestSharedModeDispatchUsesCheckout(t *testing.T) {
 		t.Fatal("shared dispatch materialized a per-task workspace")
 	}
 	waitForSharedDispatchCwd(t, cwdLog, 1)
-	if got, _ := readText(cwdLog); canonicalPath(strings.TrimSpace(got)) != repo {
-		t.Fatalf("agent cwd = %q, want repo root %q", strings.TrimSpace(got), repo)
+	// The shim exits after five seconds and the daemon may start a
+	// continuation, so every start it logged must be in the checkout.
+	got, _ := readText(cwdLog)
+	for _, cwd := range strings.Fields(got) {
+		if canonicalPath(cwd) != repo {
+			t.Fatalf("agent cwd = %q, want repo root %q", cwd, repo)
+		}
 	}
 }
 
