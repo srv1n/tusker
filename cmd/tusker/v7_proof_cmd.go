@@ -74,7 +74,8 @@ func defaultV7ProofRequired(mode string) []string {
 	case "audit":
 		return []string{"focused_test", "broad_test", "independent_review"}
 	default:
-		return []string{"focused_test", "broad_test"}
+		// Matches what wave authoring gives its members.
+		return []string{"focused_test"}
 	}
 }
 
@@ -1313,6 +1314,12 @@ func v7ProofGapReason(task Note, rows []v7VerificationRow, gap string) string {
 	if !ok {
 		return ""
 	}
+	if required == "broad_test" {
+		commands := v7DistinctTestCommands(task, rows, true)
+		if len(commands) == 1 {
+			return "broad_test needs a second test check besides `" + commands[0] + "`, such as the package's wider test run"
+		}
+	}
 	var passed []string
 	for _, row := range rows {
 		command, isCommand := v7VerificationCommand(row.Check)
@@ -1721,7 +1728,7 @@ func v7ProofModeRequirementMissing(vaultPath string, task Note, idx v7Index) []s
 func v7KnownProofRequirement(required string) bool {
 	required = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(required, "-", "_")))
 	switch required {
-	case "", "none", "focused_test", "broad_test", "typecheck", "lint", "build", "ci", "independent_review", "manual_smoke", "physical_smoke", "screenshot", "video", "trace", "provider_probe", "benchmark", "security_review", "privacy_review", "release_smoke", "human_signoff", "visual", "performance", "backend", "migration":
+	case "", "none", "command", "focused_test", "broad_test", "typecheck", "lint", "build", "ci", "independent_review", "manual_smoke", "physical_smoke", "screenshot", "video", "trace", "provider_probe", "benchmark", "security_review", "privacy_review", "release_smoke", "human_signoff", "visual", "performance", "backend", "migration":
 		return true
 	default:
 		return false
@@ -1863,6 +1870,20 @@ func v7TaskOwnsOnlyDocs(task Note) bool {
 	return true
 }
 
+func v7DistinctTestCommands(task Note, rows []v7VerificationRow, passingOnly bool) []string {
+	var commands []string
+	for _, row := range rows {
+		if passingOnly && !v7VerificationResultCovers(row.Result) {
+			continue
+		}
+		if v7InlineVerificationSatisfies(task, "focused_test", row) {
+			command, _ := v7VerificationCommand(row.Check)
+			commands = append(commands, strings.TrimSpace(command))
+		}
+	}
+	return uniqueStrings(commands)
+}
+
 func v7ProofRequiredClassSatisfied(taskID, required string, task Note, idx v7Index) bool {
 	required = strings.ToLower(strings.TrimSpace(required))
 	switch required {
@@ -1870,11 +1891,15 @@ func v7ProofRequiredClassSatisfied(taskID, required string, task Note, idx v7Ind
 		return true
 	}
 	owner := classifyProofRequirement(required, task, idx)
-	for _, row := range parseV7VerificationRows(task.Body) {
+	rows := parseV7VerificationRows(task.Body)
+	if owner == "machine" && required == "broad_test" && len(v7DistinctTestCommands(task, rows, true)) >= 2 {
+		return true
+	}
+	for _, row := range rows {
 		if !v7VerificationResultCovers(row.Result) {
 			continue
 		}
-		if owner == "machine" && v7InlineVerificationSatisfies(task, required, row) {
+		if owner == "machine" && required != "broad_test" && v7InlineVerificationSatisfies(task, required, row) {
 			return true
 		}
 	}
@@ -2074,7 +2099,6 @@ func v7VerificationCommand(check string) (string, bool) {
 
 func v7CommandInvokesTest(command string) bool {
 	return v7CommandInvokesAny(command, map[string][]string{
-		"test": nil, "[": nil,
 		"go": {"test"}, "cargo": {"test", "nextest"}, "swift": {"test"}, "dotnet": {"test"}, "xcodebuild": {"test", "test-without-building"},
 		"npm": {"test", "run:test"}, "pnpm": {"test", "run:test"}, "yarn": {"test"}, "bun": {"test"},
 		"pytest": nil, "jest": nil, "vitest": nil, "make": {"test"},

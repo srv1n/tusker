@@ -204,7 +204,7 @@ func TestSelfServiceJourneys(t *testing.T) {
 func journeysPendingABFixture(t *testing.T) (string, *RuntimeStore, RegisteredProject) {
 	t.Helper()
 	vault, store, project := autonomousWaveFixture(t, []string{"APP-T-0001", "APP-T-0002"}, map[string]any{"concurrency": 1})
-	writePendingDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writePendingDirectTask(t, vault, "APP-T-0001", "W-0001", map[string]any{"owned_paths": []any{"src"}})
 	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"dependencies": []any{"APP-T-0001:hard"}})
 	return vault, store, project
 }

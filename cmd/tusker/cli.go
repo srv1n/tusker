@@ -720,8 +720,9 @@ Options:
   --batch-file <path>             Read rows from a file using the same format.
   --verify-remove <rows>          Remove rows by position; several positions all refer to the table before removal.
   --required <csv>                With --proof-mode, the proof classes the checks must meet (default: the mode's own).
-                                  "command" accepts any passing check; focused_test and broad_test need a test runner
-                                  or a wrapper listed in WORKFLOW.md verification.test_commands.`)
+                                  "command" accepts any passing check; focused_test needs a test runner or a wrapper
+                                  listed in WORKFLOW.md verification.test_commands; broad_test needs two different
+                                  passing test commands.`)
 }
 
 func printCloseHelp() {

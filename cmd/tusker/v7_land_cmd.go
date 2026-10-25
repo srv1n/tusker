@@ -1269,10 +1269,20 @@ func resolveV7ProjectionMerge(workDir, reviewedTaskID string) (bool, string, err
 	if _, err := reconcileV7EpicManagedBlocks(vaultPath, idx); err != nil {
 		return false, "", err
 	}
-	stagePaths := []string{".tusker/Dashboard.md", ".tusker/_generated", ".tusker/dashboards", ".tusker/work/epics"}
+	stagePaths := []string{".tusker/Dashboard.md", ".tusker/dashboards", ".tusker/work/epics"}
 	stagePaths = append(stagePaths, retainIntegrationTasks...)
 	if output, err := gitCombined(workDir, append([]string{"add", "--"}, stagePaths...)...); err != nil {
 		return false, "", tuskerError(errorInvalidTransition, "failed to stage regenerated Tusker projections: "+firstActionableLine(output, err.Error()))
+	}
+	// Stage only tracked projections because the vault .gitignore ignores _generated/.
+	output, err = gitCombined(workDir, "ls-files", "--", ".tusker/_generated")
+	if err != nil {
+		return false, "", tuskerError(errorInvalidTransition, "failed to stage regenerated Tusker projections: "+firstActionableLine(output, err.Error()))
+	}
+	if strings.TrimSpace(output) != "" {
+		if output, err := gitCombined(workDir, "add", "-u", "--", ".tusker/_generated"); err != nil {
+			return false, "", tuskerError(errorInvalidTransition, "failed to stage regenerated Tusker projections: "+firstActionableLine(output, err.Error()))
+		}
 	}
 	if output, err := gitCombined(workDir, "commit", "--no-edit"); err != nil {
 		return false, "", tuskerError(errorInvalidTransition, "failed to complete generated-projection merge: "+firstActionableLine(output, err.Error()))

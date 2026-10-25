@@ -270,6 +270,10 @@ func TestDirectWavePacketRichDagSpecimenAndTerseContrast(t *testing.T) {
 
 func TestDirectWavePacketShippedDagExampleValid(t *testing.T) {
 	vault, _, _ := authorityFixture(t)
+	command, epicArgs := parseCLI([]string{"tusker", "new", "epic", "SCH", "--vault", vault, "--quiet", "--title", "Scheduler"})
+	if code, err := run(command, epicArgs); err != nil || code != 0 {
+		t.Fatalf("new epic SCH: code=%d err=%v", code, err)
+	}
 	raw, err := readText(filepath.Join("..", "..", "skills", "tusker", "references", "HANDOFF.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -302,6 +306,11 @@ func TestDirectWavePacketShippedDagExampleValid(t *testing.T) {
 	}
 	if len(req.Tasks) != 2 || len(req.Tasks[1].Dependencies) != 1 {
 		t.Fatalf("shipped DAG example lost its second-task dependency edge: %#v", req.Tasks)
+	}
+	for _, task := range req.Tasks {
+		if task.Epic != "SCH" {
+			t.Fatalf("wave epic did not reach task %s: %q", task.Key, task.Epic)
+		}
 	}
 	dep := req.Tasks[1].Dependencies[0]
 	if dep.Task != "frontier-helper" || dep.Kind != "hard" {

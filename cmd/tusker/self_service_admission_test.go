@@ -13,7 +13,7 @@ import (
 func selfServiceArmedABFixture(t *testing.T) (vault string, store *RuntimeStore, project RegisteredProject, fingerprint, authorizedAt string) {
 	t.Helper()
 	vault, store, project = autonomousWaveFixture(t, []string{"APP-T-0001", "APP-T-0002"}, map[string]any{"concurrency": 1})
-	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", map[string]any{"owned_paths": []any{"src"}})
 	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"dependencies": []any{"APP-T-0001:hard"}})
 	if err := store.SetProjectEnabled(project.ProjectID, true); err != nil {
 		t.Fatal(err)

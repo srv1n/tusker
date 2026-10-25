@@ -195,6 +195,7 @@ func TestRecoveryVerificationUsesSubmittedWorkspaceAndRetainsMaterialFence(t *te
 	rewriteTaskFile(t, vault, "APP-T-0001", func(data map[string]any, body string) (map[string]any, string) {
 		rows := parseV7VerificationRows(body)
 		rows[0].Check, rows[0].Result, rows[0].Notes = "command: test -f submitted.txt", "pending", ""
+		data["proof_required"] = []string{"command"}
 		return data, replaceSection(body, "## Verification", renderV7VerificationTable(rows))
 	})
 

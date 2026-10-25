@@ -620,7 +620,7 @@ func newV7TaskWithActor(args Args, internal *v7InternalActor) error {
 	ownedPaths := normalizeOwnedPaths(splitCSV(firstNonEmpty(args.String("owned-paths"), args.String("owned_paths"))))
 	// Internal actors (batch-gate repairs) may create a task without paths so a
 	// failure is never dropped; the task then waits for a human to scope it.
-	if len(ownedPaths) == 0 && internal == nil {
+	if len(ownedPaths) == 0 && internal == nil && (status == "ready" || status == "rework" || args.Bool("ready")) {
 		return tuskerError(errorMissingField, "task needs at least one owned path (owned_paths) so its changes can be scope-checked before merge")
 	}
 	generatedOutputs := normalizeOwnedPaths(splitCSV(firstNonEmpty(args.String("generated-outputs"), args.String("generated_outputs"))))

@@ -28,6 +28,7 @@ type runOwnershipService struct {
 	store                   *RuntimeStore
 	now                     func() time.Time
 	projectConcurrencyLimit int
+	sharedCheckout          string
 	projectID               string
 	vaultPath               string
 	candidateNote           Note
@@ -338,6 +339,35 @@ func (s *runOwnershipService) claimWorkSessionWithAuthorizationWithParent(run Ru
 	defer unlock()
 	if err := s.guardOwnedPathClaim(); err != nil {
 		return runClaimResult{}, err
+	}
+	if s.sharedCheckout != "" {
+		runs, err := s.store.ListRuns()
+		if err != nil {
+			return runClaimResult{}, err
+		}
+		for _, other := range runs {
+			if other.ProjectID != run.ProjectID || other.RecordID == run.RecordID ||
+				!isDispatchingLeaseState(other.LeaseState) || !sameCanonicalProjectPath(other.WorkspacePath, s.sharedCheckout) {
+				continue
+			}
+			missing := []string{}
+			if len(taskOwnershipClaims(s.candidateNote)) == 0 {
+				missing = append(missing, run.ItemID)
+			}
+			if len(taskOwnershipClaims(s.notesByID[other.ItemID])) == 0 {
+				missing = append(missing, other.ItemID)
+			}
+			if len(missing) != 0 {
+				lacking := missing[0] + " declares no"
+				if len(missing) == 2 {
+					lacking = "neither declares"
+				}
+				return runClaimResult{}, tuskerError("WORK_SESSION_CHECKOUT_BUSY",
+					fmt.Sprintf("work start refused: %s is active in this checkout and %s owned paths, so they could edit the same files", other.ItemID, lacking),
+					withHint(fmt.Sprintf("declare owned paths on both (`tusker edit <TASK-ID> --owned-paths <csv> --by <actor>`) or wait for %s to finish; `tusker done` records work finished without a claim", other.ItemID)),
+					withContext(map[string]any{"task_id": run.ItemID, "conflicting_task_id": other.ItemID}))
+			}
+		}
 	}
 	if run.LeaseState == "" {
 		run.LeaseState = string(LeaseStateUnclaimed)

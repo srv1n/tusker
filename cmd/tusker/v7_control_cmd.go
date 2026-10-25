@@ -348,6 +348,9 @@ func statusV7CmdWithInternalActor(args Args, internal *v7InternalActor, daemonLi
 		return tuskerError("CAS_CONFLICT", id+": task status snapshot changed before mutation")
 	}
 	if nextStatus == "ready" {
+		if len(normalizeOwnedPaths(normalizeList(data["owned_paths"]))) == 0 {
+			return tuskerError(errorMissingField, "task needs at least one owned path (owned_paths) so its changes can be scope-checked before merge", withHint("add them with `tusker edit "+id+" --owned-paths <csv> --by <actor>`"))
+		}
 		candidate := cloneNoteData(data)
 		candidate["status"], candidate["readiness"], candidate["next_owner"] = "ready", "ready", "agent"
 		if finding, ok := v7DemandingTaskSpecRefIssue(vaultPath, Note{Data: candidate, Body: body, RelativePath: note.RelativePath}, note.RelativePath); ok && tuskerTier(vaultPath) >= 2 {

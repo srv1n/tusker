@@ -16,6 +16,7 @@ func TestWorkRecoverContinuesFromValidChecksInVaultProjectOnly(t *testing.T) {
 		body = directDispatchableTaskBody("APP-T-0001")
 		rows := parseV7VerificationRows(body)
 		rows[0].Check, rows[0].Result, rows[0].Notes = "command: test -f submitted.txt", "pending", ""
+		data["proof_required"] = []string{"command"}
 		data["proof_status"] = "pending"
 		return data, replaceSection(body, "## Verification", renderV7VerificationTable(rows))
 	})

@@ -154,6 +154,13 @@ shell variables the checks will not see. When a check fails, the end of its
 output is saved under `.tusker/_system/generated/check-output/<TASK-ID>/` and
 the refusal names the file; the task itself records only a digest.
 
+Checks run in the live checkout. When a check fails while the checkout changes
+under it (HEAD moves, or files appear or change), `done` does not record the
+failure: the row stays pending and the refusal names the changed paths, so a
+commit landing from another session does not count against the task. Rerun
+`done` once the tree is quiet. A failing check that edits tracked files itself
+is reported the same way.
+
 A repository declares its own needs in `WORKFLOW.md`:
 
 ```yaml
@@ -164,9 +171,14 @@ verification:
     - "make cargo-any CARGO_ARGS=.?(test|nextest)"
 ```
 
-`focused_test` and `broad_test` count a check that runs a known test runner
-(`go test`, `cargo test`, `cargo nextest`, `pytest`, `npm test`, `make test`,
-and others) or matches `test_commands`. When passing checks leave a proof
+`focused_test` counts a check that runs a known test runner (`go test`,
+`cargo test`, `cargo nextest`, `pytest`, `npm test`, `make test`, and others)
+or matches `test_commands`. The shell's `test` and `[` are not test runners,
+so `[ -f x ]` proves only `command`. `broad_test` needs passing test checks
+with at least two different commands, so one filtered run cannot stand in for
+the wider one. New tasks, standalone or in a wave, require only `focused_test`;
+add `broad_test` with `tusker edit <ID> --proof-mode inline --required
+focused_test,broad_test`. When passing checks leave a proof
 requirement or an acceptance row open, `tusker show <ID> --proof` and the
 `done` refusal say which check did not count and why. Acceptance rows are
 covered only by the Covers column of a Verification row, an evidence record, or

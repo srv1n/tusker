@@ -933,7 +933,12 @@ func adoptCompletedWork(vault string, store *RuntimeStore, projectID, taskID, ac
 	if waveID := strings.TrimSpace(stringField(task.Data, "wave")); waveID != "" && run != nil {
 		if wave, waveErr := resolveV7Note(vault, waveID, "wave"); waveErr == nil {
 			queued, queueErr := queueReviewRecovery(store, task, wave, *run, actor, maxAttempts, now, true)
-			if queueErr == nil && queued.Refused {
+			switch {
+			case queueErr != nil || !queued.Refused:
+			case !strings.EqualFold(stringField(wave.Data, "authorization"), "armed"):
+				// Only an armed wave lets the daemon review in the background.
+				result.Reason = "Checks passed. Independent review is next. Wave " + waveID + " is not armed, so no background review was queued: run `tusker review " + taskID + " --by <reviewer>` from another session, or close it with `tusker done " + taskID + " --by human:<name>`."
+			default:
 				result.Reason = "Checks passed. Independent review is next. (review lane not queued: " + queued.Reason + ")"
 			}
 		}

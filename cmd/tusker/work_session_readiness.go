@@ -78,10 +78,23 @@ func workSessionAdmissionBlockersForLane(task Note, idx v7Index, notesByID, note
 		return []ReadinessBlocker{*blocker}
 	}
 	if edge, blocked := v7BlockingDependencyForReadiness(task, idx); blocked {
+		reason := "Dependency " + edge.ID + " is not satisfied."
+		remedy := "Complete dependency " + edge.ID + " before starting this work session."
+		if dependency, exists := idx.Tasks[edge.ID]; exists && strings.EqualFold(stringField(dependency.Data, "status"), "review") && edge.Hardness == v7DependencyHardnessHard {
+			reason = "Dependency " + edge.ID + " is in review; it is a hard dependency, so it must be done first."
+			// --dependencies replaces the list, so the remedy restates all of it.
+			deps := []string{}
+			for _, raw := range normalizeList(task.Data["dependencies"]) {
+				if parseV7DependencyEdge(raw).ID == edge.ID {
+					raw = edge.ID + ":soft"
+				}
+				deps = append(deps, raw)
+			}
+			remedy = "Close " + edge.ID + ", or mark the edge soft (`tusker edit " + taskID + " --dependencies " + strings.Join(deps, ",") + " --by <actor>`) to build on reviewed work."
+		}
 		return []ReadinessBlocker{workSessionDependencyBlocker(
 			"interactive-dependency:"+taskID+":"+edge.ID, taskID, edge.ID,
-			"Dependency "+edge.ID+" is not satisfied.",
-			"Complete dependency "+edge.ID+" before starting this work session.",
+			reason, remedy,
 		)}
 	}
 	if blocker := workSessionUnresolvedDependencyBlocker(task, notesByID, notesByRecordID); blocker != nil {

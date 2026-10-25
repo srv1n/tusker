@@ -37,7 +37,8 @@ func adoptFixture(t *testing.T, taskID string, extra map[string]any) (vault stri
 
 	fields := map[string]any{
 		"status": "ready", "readiness": "ready",
-		"source_sha": head, "work_revision": 1,
+		"proof_required": []string{"command"},
+		"source_sha":     head, "work_revision": 1,
 		"owned_paths": []string{"submitted.txt"},
 	}
 	for k, v := range extra {
@@ -107,7 +108,7 @@ func TestAdoptCompletedWorkObjectiveCloseDevinSession(t *testing.T) {
 
 func TestAdoptCompletedWorkIndependentReviewQueued(t *testing.T) {
 	vault, store, project := adoptFixture(t, "APP-T-0001", map[string]any{
-		"proof_required": []any{"focused_test", "independent_review"},
+		"proof_required": []any{"command", "independent_review"},
 	})
 
 	result := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav")
@@ -353,7 +354,7 @@ func TestAdoptCompletedWorkFailedVerificationNoTransition(t *testing.T) {
 
 func TestAdoptCompletedWorkPostVerificationGateRefusalLeavesNoMarker(t *testing.T) {
 	vault, store, project := adoptFixture(t, "APP-T-0001", map[string]any{
-		"proof_required": []any{"focused_test", "independent_review"},
+		"proof_required": []any{"command", "independent_review"},
 	})
 	adoptCompletedBeforeCommitHook = func() {
 		adoptCompletedBeforeCommitHook = nil
@@ -413,7 +414,7 @@ func TestAdoptCompletedWorkMaterialMutationAtCommitRollsBack(t *testing.T) {
 
 func TestAdoptCompletedWorkReviewProvenanceFence(t *testing.T) {
 	vault, store, project := adoptFixture(t, "APP-T-0001", map[string]any{
-		"proof_required": []any{"focused_test", "independent_review"},
+		"proof_required": []any{"command", "independent_review"},
 	})
 	result := adoptRun(t, vault, store, project.ProjectID, "APP-T-0001", "human:sarav")
 	if !result.OK {
@@ -622,7 +623,7 @@ func TestExternalReviewAdoptionOwnership(t *testing.T) {
 			t.Fatalf("no-owner adoption failed: %+v", result)
 		}
 		reviewVault, reviewStore, reviewProject := adoptFixture(t, "APP-T-0001", map[string]any{
-			"proof_required": []any{"focused_test", "independent_review"},
+			"proof_required": []any{"command", "independent_review"},
 		})
 		review := adoptRun(t, reviewVault, reviewStore, reviewProject.ProjectID, "APP-T-0001", "human:sarav")
 		if !review.OK || review.Lane != runLaneReview {

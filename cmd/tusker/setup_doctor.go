@@ -38,6 +38,7 @@ type setupDoctorReport struct {
 
 type setupDoctorInput struct {
 	RepoRoot        string
+	VaultPath       string
 	Store           *RuntimeStore
 	Source          string
 	ExecutablePath  string
@@ -85,7 +86,7 @@ func setupDoctorCheck(args Args, apply bool) (int, error) {
 		}
 		defer store.Close()
 	}
-	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: absRepo, Store: store, Source: args.String("source"), WorkflowInspect: inspectRZNWorkflow}, apply && !args.Bool("dry-run"))
+	report, err := runSetupDoctor(setupDoctorInput{RepoRoot: absRepo, VaultPath: args.String("vault"), Store: store, Source: args.String("source"), WorkflowInspect: inspectRZNWorkflow}, apply && !args.Bool("dry-run"))
 	if err != nil {
 		return 0, err
 	}
@@ -181,6 +182,22 @@ func runSetupDoctor(input setupDoctorInput, apply bool) (setupDoctorReport, erro
 	}
 
 	localVault := filepath.Join(repo, ".tusker")
+	ignoreVault := localVault
+	if input.VaultPath != "" {
+		ignoreVault = input.VaultPath
+		if !filepath.IsAbs(ignoreVault) {
+			ignoreVault = filepath.Join(repo, ignoreVault)
+		}
+	}
+	if isVaultDir(ignoreVault) {
+		findings, err := diagnoseVaultGitignore(repo, ignoreVault, apply && input.repairs("core"))
+		if err != nil {
+			return report, err
+		}
+		for _, finding := range findings {
+			add(finding)
+		}
+	}
 	if workflow, err := loadWorkflow(localVault); err == nil {
 		if workflow.Data.DispatchScope.Warning != "" {
 			add(setupFinding{
@@ -699,4 +716,48 @@ Purpose:
   zip artifact matching, and installed rzn-browser workflow contracts. Doctor never writes.
   Repair applies only deterministic local fixes and is idempotent; credentials,
   project routing, and browser workflow refreshes remain explicit actions.`)
+}
+
+func diagnoseVaultGitignore(repo, vault string, apply bool) ([]setupFinding, error) {
+	path := filepath.Join(vault, ".gitignore")
+	current, err := readText(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	var findings []setupFinding
+	if missing := missingTuskerGitignoreLines(current); len(missing) > 0 {
+		finding := setupFinding{Code: "vault_gitignore", Status: "warning", Path: path,
+			Message: fmt.Sprintf("vault .gitignore is missing %d Tusker lines", len(missing)),
+			Action:  "run tusker check --fix", Repairable: true}
+		if apply {
+			if err := upsertGitignore(vault); err != nil {
+				return nil, err
+			}
+			finding.Changed = true
+		}
+		findings = append(findings, finding)
+	}
+	rel, err := filepath.Rel(repo, vault)
+	if err != nil {
+		return findings, err
+	}
+	// Only the generated patterns: attempts/ also holds tracked notes.
+	var specs []string
+	for _, pattern := range []string{"_generated/**", "events/**/*.json", "attempts/**/*.json", "attempts/**/*.jsonl", "attempts/**/*.log"} {
+		specs = append(specs, ":(glob)"+filepath.ToSlash(filepath.Join(rel, pattern)))
+	}
+	out, err := exec.Command("git", append([]string{"-C", repo, "ls-files", "-z", "--"}, specs...)...).Output()
+	if err != nil {
+		return findings, nil
+	}
+	if count := bytes.Count(out, []byte{0}); count > 0 {
+		quoted := make([]string, 0, len(specs))
+		for _, spec := range specs {
+			quoted = append(quoted, v7ShellQuote(spec))
+		}
+		findings = append(findings, setupFinding{Code: "vault_generated_tracked", Status: "warning", Path: vault,
+			Message: fmt.Sprintf("%d generated vault files are already tracked by git", count),
+			Action:  "git rm -r --cached --quiet --ignore-unmatch -- " + strings.Join(quoted, " ")})
+	}
+	return findings, nil
 }

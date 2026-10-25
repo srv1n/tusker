@@ -64,6 +64,7 @@ func newReviewPassEnv(t *testing.T, files map[string]string, owned []string) *re
 	if err != nil {
 		t.Fatal(err)
 	}
+	data["proof_required"] = []string{"command"}
 	// One pending command row: the daemon must run it in the worktree.
 	body = replaceSection(body, "## Verification", renderV7VerificationTable([]v7VerificationRow{
 		{CoverText: "A1", Check: "command: test -f reviewed.txt", Result: "pending"},

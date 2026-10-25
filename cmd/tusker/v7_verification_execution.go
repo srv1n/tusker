@@ -260,6 +260,7 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 		// ponytail: assumes a repeated check sees the same tree, which a
 		// command editing its own inputs would break.
 		ran := map[string]v7VerificationCommandObservation{}
+		treeChanges := map[string][]string{}
 		for i, row := range rows {
 			if !strings.EqualFold(strings.TrimSpace(row.Result), "pending") {
 				continue
@@ -276,7 +277,12 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 				if progress {
 					fmt.Fprintf(os.Stderr, "%s %s: running %s\n", taskID, fallback(strings.TrimSpace(row.CoverText), "check"), command)
 				}
+				before, beforeOK := v7CheckoutSnapshot(repoRoot)
 				observed, _ = runV7VerificationCommand(repoRoot, command, timeout, env)
+				after, afterOK := v7CheckoutSnapshot(repoRoot)
+				if beforeOK && afterOK {
+					treeChanges[command] = v7CheckoutChangedPaths(before, after)
+				}
 				ran[command] = observed
 				if progress {
 					fmt.Fprintf(os.Stderr, "%s %s: %s (%s)\n", taskID, fallback(strings.TrimSpace(row.CoverText), "check"), observed.Message, observed.FinishedAt.Sub(observed.StartedAt).Round(time.Second))
@@ -286,10 +292,21 @@ func executeV7CommandVerificationRowsInWorkspace(vaultPath string, task Note, ar
 			if observed.ExitCode != 0 {
 				rows[i].Result = "fail"
 				message := observed.Message
+				if paths := treeChanges[command]; len(paths) > 0 {
+					// ponytail: a failing check that edits tracked files itself also counts as a tree change.
+					rows[i].Result = "pending"
+					if len(paths) > 5 {
+						paths = paths[:5]
+					}
+					message += "; the checkout changed while it ran (" + strings.Join(paths, ", ") + "), so the result was not recorded; rerun when the tree is quiet"
+				}
 				if saved := v7SaveFailedCheckOutput(vaultPath, taskID, i+1, observed.Tail); saved != "" {
 					message += "; output saved to " + saved
 				}
 				failures = append(failures, v7VerificationExecutionFailure{Row: rows[i], Message: message})
+			}
+			if rows[i].Result == "pending" {
+				continue
 			}
 			observations[i] = observed
 			rows[i].BlockedBy = ""
@@ -1315,4 +1332,55 @@ func v7PendingCommandProofGaps(task Note, report v7ProofReport) []string {
 		missing = append(missing, gap)
 	}
 	return uniqueStrings(missing)
+}
+
+func v7CheckoutSnapshot(repoRoot string) (map[string]string, bool) {
+	head, err := exec.Command("git", "-C", repoRoot, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return nil, false
+	}
+	status, err := exec.Command("git", "-C", repoRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all").Output()
+	if err != nil {
+		return nil, false
+	}
+	snapshot := map[string]string{"HEAD": strings.TrimSpace(string(head))}
+	entries := strings.Split(string(status), "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
+			continue
+		}
+		code, path := entry[:2], entry[3:]
+		value := code
+		if info, err := os.Lstat(filepath.Join(repoRoot, path)); err == nil {
+			value += fmt.Sprintf(" %d %d", info.Size(), info.ModTime().UnixNano())
+		}
+		snapshot[path] = value
+		if strings.ContainsAny(code, "RC") && i+1 < len(entries) {
+			i++
+			snapshot[path] += " " + entries[i]
+		}
+	}
+	return snapshot, true
+}
+
+func v7CheckoutChangedPaths(before, after map[string]string) []string {
+	var paths []string
+	for path, value := range before {
+		if other, ok := after[path]; !ok || other != value {
+			paths = append(paths, path)
+		}
+	}
+	for path := range after {
+		if _, ok := before[path]; !ok {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	for i, path := range paths {
+		if path == "HEAD" {
+			paths[i] = "HEAD moved"
+		}
+	}
+	return paths
 }

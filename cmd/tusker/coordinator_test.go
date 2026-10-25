@@ -55,7 +55,7 @@ func coordinatorTestTask(t *testing.T, vault, id, title, resources, deps string)
 	if e := writeText(path, body); e != nil {
 		t.Fatal(e)
 	}
-	mustWave(t, Args{"vault": vault, "quiet": "true", "id": id, "epic": "APP", "title": title, "owned-paths": id + ".txt", "body-file": path, "runner-profile": "batch-test", "resources": resources, "dependencies": deps, "budget": "30s"}, newV7Task)
+	mustWave(t, Args{"vault": vault, "quiet": "true", "id": id, "epic": "APP", "title": title, "owned-paths": id + ".txt", "body-file": path, "proof-mode": "inline", "proof-required": "command", "runner-profile": "batch-test", "resources": resources, "dependencies": deps, "budget": "30s"}, newV7Task)
 }
 func coordinatorTestProfile(t *testing.T, command string) {
 	t.Helper()

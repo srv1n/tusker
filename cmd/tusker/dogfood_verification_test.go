@@ -110,7 +110,7 @@ func TestDogfoodFailedCheckKeepsItsOutput(t *testing.T) {
 }
 
 func TestDogfoodRepoTestWrapperCountsAsTest(t *testing.T) {
-	vault, store, project := adoptFixture(t, "APP-T-0001", nil)
+	vault, store, project := adoptFixture(t, "APP-T-0001", map[string]any{"proof_required": []string{"focused_test"}})
 	if err := os.WriteFile(filepath.Join(v7RepoRoot(vault), "Makefile"), []byte("cargo-any:\n\t@true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

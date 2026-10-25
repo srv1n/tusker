@@ -330,7 +330,7 @@ func newProcSelfServiceHarness(t *testing.T) *procSelfServiceHarness {
 	}
 	harness.project = project
 	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, map[string]any{"concurrency": 1})
-	writeDirectTask(t, vault, "APP-T-0001", "W-0001", nil)
+	writeDirectTask(t, vault, "APP-T-0001", "W-0001", map[string]any{"owned_paths": []any{"src"}})
 	writeDirectTask(t, vault, "APP-T-0002", "W-0001", map[string]any{"dependencies": []any{"APP-T-0001:hard"}})
 	if err := harness.store.SetProjectEnabled(project.ProjectID, true); err != nil {
 		t.Fatal(err)

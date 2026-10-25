@@ -44,6 +44,10 @@ the wave ID and outcome so wave members read shared intent first, while the
 task body stays the task-specific contract. Receipt and administrative
 fields are never projected into packets.
 
+A wave request's `epic` puts every member in that epic's ID series (for
+example `PIX-T-0004`); a task's own `epic` overrides it. Without either,
+members get standalone `TSK-` IDs. The epic must already exist.
+
 ## Review and start authority
 
 `tusker show <WAVE-ID> --json` projects state, authorization, the
@@ -80,7 +84,10 @@ matches the stored fingerprint; drifted material is refused rather than
 silently reauthorized. An explicit `tusker start` inside a paused wave
 converts that task's queued directive to task scope and leaves the wave
 paused. `tusker start <TASK-ID> --by <agent>
---current-workspace` claims one task in the current workspace.
+--current-workspace` claims one task in the current workspace, backlog tasks
+included. Several tasks can be claimed in one checkout when each declares
+owned paths and none overlap. A task without owned paths needs the checkout to
+itself, and the refusal names the task already holding it.
 An interactive Start may leave the task in backlog: the fresh, exact
 interactive authorization, not background eligibility, owns that attempt.
 Reconciliation preserves it only while the actor, attempt, lease generation,

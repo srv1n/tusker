@@ -269,6 +269,9 @@ func startCmd(args Args) error {
 	case args.Bool("background"):
 		return directRunCmd(args)
 	}
+	if args.Bool("current-workspace") {
+		args["explicit-start"] = "true"
+	}
 	actor := firstNonEmpty(args.String("by"), args.String("actor"))
 	if held, err := heldWorkSession(args, id, actor); err != nil {
 		return err

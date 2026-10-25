@@ -59,8 +59,8 @@ func TestServeTaskCreateUsesNewTaskAndJoinsWave(t *testing.T) {
 	}
 	assertEqual(t, []string{"cmd/tusker/serve_task_edit.go"}, normalizeList(taskData["owned_paths"]), "serve task owned paths")
 	missingPaths := servePostJSON(t, server, "/api/tasks", `{"projectId":"`+project.ProjectID+`","title":"No paths","workLevel":"light","body":"x"}`)
-	if !strings.Contains(missingPaths.Body.String(), "task needs at least one owned path (owned_paths)") {
-		t.Fatalf("new task without owned paths must be refused like the CLI: %s", missingPaths.Body.String())
+	if !strings.Contains(missingPaths.Body.String(), `"ok":true`) {
+		t.Fatalf("serve must create a backlog task without owned paths like the CLI: %s", missingPaths.Body.String())
 	}
 	missing := servePostJSON(t, server, "/api/tasks", `{"projectId":"`+project.ProjectID+`","title":"No level","body":"x"}`)
 	if !strings.Contains(missing.Body.String(), `"refused":true`) {

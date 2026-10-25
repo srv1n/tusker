@@ -19,8 +19,8 @@ func TestNewEpicRejectsUnresolvableSpecRefWithReason(t *testing.T) {
 	if !strings.Contains(issue.Message, "spec_ref does not resolve: docs/notes.md (") {
 		t.Fatalf("missing reason in message: %s", issue.Message)
 	}
-	if !strings.Contains(issue.Hint, "kind: spec|proposal|decision") {
-		t.Fatalf("missing front matter hint: %s", issue.Hint)
+	if !strings.Contains(issue.Hint, "docs/system/proposals/notes.md") {
+		t.Fatalf("missing move hint: %s", issue.Hint)
 	}
 	if fileExists(filepath.Join(vault, "work", "epics", "BAD.md")) {
 		t.Fatal("rejected epic was written")

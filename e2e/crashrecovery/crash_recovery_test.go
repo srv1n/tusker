@@ -507,7 +507,7 @@ func (h *harness) setDeliveryFixtureVerificationContracts(taskIDs ...string) {
 		if strings.Contains(body, oldContract) {
 			body = strings.Replace(body, oldContract, newContract, 1)
 		} else if start := strings.Index(body, "\nowned_paths:"); start >= 0 && strings.Contains(body[start:], ownedPath) {
-			body = strings.Replace(body, "proof_required:\n  - \"trace\"", "proof_required:\n  - \"focused_test\"", 1)
+			body = strings.Replace(body, "proof_required:\n  - \"trace\"", "proof_required:\n  - \"command\"", 1)
 			start = strings.Index(body, "\nowned_paths:")
 			newContract = strings.Replace(newContract, "kind: "+artifactKinds[taskID], "kind: diff_summary", 1)
 			if end := strings.Index(body[start+1:], "\n---"); end >= 0 {
@@ -559,7 +559,7 @@ func specToWaveAuthoringRequest() string {
 	for index, item := range tasks {
 		id := fmt.Sprintf("APP-T-%04d", index+1)
 		body := fmt.Sprintf("# %s\n\n## Intent\n\n%s is objectively delivered and documented.\n\n## Acceptance\n\n| ID | Outcome | Proof |\n| --- | --- | --- |\n| A1 | %s has a committed artifact and focused proof. | Committed delivery artifact plus focused command proof. |\n\n## Verification\n\n| Covers | Check | Result | Notes |\n| --- | --- | --- | --- |\n| A1 | command: fixture delivery assertion | pending | |\n", item.title, item.title, item.title)
-		fmt.Fprintf(&b, "  - key: %s\n    title: %s\n    work_level: standard\n    epic: APP\n    owned_paths: [%s, docs/delivery/%s.md]\n    body: |\n", item.key, item.title, item.path, strings.ToLower(id))
+		fmt.Fprintf(&b, "  - key: %s\n    title: %s\n    work_level: standard\n    epic: APP\n    owned_paths: [%s, docs/delivery/%s.md]\n    proof_required: [command]\n    body: |\n", item.key, item.title, item.path, strings.ToLower(id))
 		for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
 			fmt.Fprintf(&b, "      %s\n", line)
 		}

@@ -182,6 +182,7 @@ func taskAuthoringJourneyRequest(t *testing.T, vault string) string {
 			"body":              taskAuthoringJourneyTaskBody(title, outcome, notes, check),
 			"owned_paths":       []string{artifact},
 			"generated_outputs": []string{artifact},
+			"proof_required":    []string{"command"},
 		}
 		if len(deps) > 0 {
 			entry["dependencies"] = deps

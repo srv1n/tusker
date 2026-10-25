@@ -107,6 +107,7 @@ An atomic wave request authors the whole graph in one transaction:
 ```yaml
 schema: tusker.wave-authoring/v1
 request_key: sched-wave-v1
+epic: SCH          # optional; members get SCH-T- IDs instead of TSK-T-
 title: Scheduler split
 outcome: Split frontier queueing out of the daemon loop.
 shared_context: |

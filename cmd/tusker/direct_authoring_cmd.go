@@ -22,8 +22,10 @@ const directWaveAuthoringReceiptSchema = "tusker.wave-authoring-receipt/v1"
 const directStandaloneTaskEpic = "TSK"
 
 type directWaveAuthoringRequest struct {
-	Schema        string                    `yaml:"schema" json:"schema"`
-	RequestKey    string                    `yaml:"request_key,omitempty" json:"request_key,omitempty"`
+	Schema     string `yaml:"schema" json:"schema"`
+	RequestKey string `yaml:"request_key,omitempty" json:"request_key,omitempty"`
+	// Epic is the default epic for tasks that do not name their own.
+	Epic          string                    `yaml:"epic,omitempty" json:"epic,omitempty"`
 	Title         string                    `yaml:"title" json:"title"`
 	Outcome       string                    `yaml:"outcome" json:"outcome"`
 	Concurrency   int                       `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
@@ -51,6 +53,7 @@ type directWaveAuthoringTask struct {
 	Dependencies        []directWaveAuthoringDependency `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
 	OwnedPaths          []string                        `yaml:"owned_paths,omitempty" json:"owned_paths,omitempty"`
 	GeneratedOutputs    []string                        `yaml:"generated_outputs,omitempty" json:"generated_outputs,omitempty"`
+	ProofRequired       []string                        `yaml:"proof_required,omitempty" json:"proof_required,omitempty"`
 }
 
 type directAuthoringIssue struct {
@@ -710,6 +713,10 @@ func warnV7UnsatisfiableVerificationRows(id string, task Note, idx v7Index) {
 				break
 			}
 		}
+		if required == "broad_test" && len(v7DistinctTestCommands(task, rows, false)) < 2 {
+			fmt.Fprintf(os.Stderr, "warning: %s proof_required broad_test needs two distinct test commands (for example a focused test and the package's wider test run); the review will be refused.\n", id)
+			continue
+		}
 		if !satisfied {
 			fmt.Fprintf(os.Stderr, "warning: %s proof_required %s has no verification command that can satisfy it (for example `go test ...`; list a wrapped test runner in WORKFLOW.md verification.test_commands); the review will be refused.\n", id, required)
 		}
@@ -773,6 +780,9 @@ func normalizeDirectWaveAuthoringRequest(req *directWaveAuthoringRequest) {
 	req.RequestKey = strings.TrimSpace(req.RequestKey)
 	for i := range req.Tasks {
 		req.Tasks[i].Key = strings.TrimSpace(req.Tasks[i].Key)
+		if strings.TrimSpace(req.Tasks[i].Epic) == "" {
+			req.Tasks[i].Epic = strings.TrimSpace(req.Epic)
+		}
 		for j := range req.Tasks[i].Dependencies {
 			req.Tasks[i].Dependencies[j].Task = strings.TrimSpace(req.Tasks[i].Dependencies[j].Task)
 		}
@@ -936,6 +946,11 @@ func validateDirectWaveAuthoring(vaultPath string, req directWaveAuthoringReques
 			acceptance[id] = true
 		}
 		taskAcceptanceIDs[key] = acceptance
+		for _, required := range task.ProofRequired {
+			if !v7KnownProofRequirement(required) {
+				add("AUTHORING_REQUEST_INVALID", key+": unknown proof_required: "+required)
+			}
+		}
 		if epic := strings.ToUpper(strings.TrimSpace(task.Epic)); epic != "" {
 			if !epicAcronymPattern.MatchString(epic) {
 				add("AUTHORING_REQUEST_INVALID", key+": epic must be a three-letter acronym")
@@ -1261,6 +1276,9 @@ func waveV7DirectAuthoringCmd(vaultPath string, args Args) error {
 		}
 		if len(deps) > 0 {
 			data["dependencies"] = deps
+		}
+		if len(task.ProofRequired) > 0 {
+			data["proof_required"] = task.ProofRequired
 		}
 		if owned := normalizeOwnedPaths(task.OwnedPaths); len(owned) > 0 {
 			data["owned_paths"] = owned

@@ -388,11 +388,7 @@ func claimWorkSession(args Args) (runClaimResult, *automationCommandContext, err
 	// slot. Same-task and owned-path safety stay in the ownership service.
 	service.projectConcurrencyLimit = 0
 	if currentWorkspace {
-		// The current repository is one physical workspace. Reuse the
-		// ownership transaction's project concurrency fence so a self claim
-		// cannot race another active run into the same checkout, including
-		// when their declared paths happen not to overlap.
-		service.projectConcurrencyLimit = 1
+		service.sharedCheckout = run.WorkspacePath
 	}
 	identity := runIdentityForClaim(run, ctx.Project.RepoRoot, run.WorkspacePath, string(workspaceStrategy), branchName)
 	trigger := "work_start"

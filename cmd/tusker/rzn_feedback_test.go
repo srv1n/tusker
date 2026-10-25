@@ -106,6 +106,7 @@ func TestRZNDoneWaveRunsChecksAndWritesTaskReceipts(t *testing.T) {
 			body = directDispatchableTaskBody(id)
 			rows := parseV7VerificationRows(body)
 			rows[0].Check, rows[0].Result, rows[0].Notes = command, "pending", ""
+			data["proof_required"] = []string{"command"}
 			data["proof_status"] = "pending"
 			return data, replaceSection(body, "## Verification", renderV7VerificationTable(rows))
 		})

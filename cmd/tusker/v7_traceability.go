@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -159,6 +160,11 @@ func v7SpecRefFailureReason(vaultPath, ref string, decisionIDs map[string]Note) 
 	}
 	if _, lenientOK := docgraph.ResolveReference(corpus, clean); lenientOK {
 		return "ambiguous subject " + normalized + v7SpecRefAmbiguitySuffix(corpus, clean)
+	}
+	if strings.HasSuffix(clean, ".md") && !strings.HasPrefix(clean, "docs/system/") && !strings.HasPrefix(clean, ".tusker/specs/") {
+		if info, err := os.Lstat(filepath.Join(v7RepoRoot(vaultPath), filepath.FromSlash(clean))); err == nil && info.Mode().IsRegular() {
+			return "outside docs/system: " + clean + " exists, but spec_refs resolve only to documents under docs/system"
+		}
 	}
 	return "missing target: no managed document matches " + normalized
 }
@@ -357,6 +363,10 @@ func v7SpecRefError(vaultPath, ref string, decisionIDs map[string]Note) (message
 	hint = v7GoverningSpecHint()
 	if strings.HasPrefix(reason, "wrong kind:") || strings.HasPrefix(reason, "missing target:") {
 		hint += "; if the document exists, give it YAML front matter with `kind: spec|proposal|decision`"
+	}
+	if strings.HasPrefix(reason, "outside docs/system:") {
+		clean := v7CleanSpecRef(v7NormalizeSpecRef(ref))
+		hint = "move it to docs/system/proposals/" + filepath.Base(clean) + " and give it front matter `kind: proposal` (a decision goes under docs/system/decisions/ with `kind: decision`)"
 	}
 	return "spec_ref does not resolve: " + strings.TrimSpace(ref) + " (" + reason + ")", hint
 }

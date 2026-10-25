@@ -417,6 +417,7 @@ func demoRenderWaveAuthoring(repoRoot string, wave demoWaveDef, withGate bool) (
 		entry := map[string]any{
 			"key": task.Key, "title": task.Title,
 			"work_level":        demoWorkLevel(task.Complexity),
+			"proof_required":    []string{"command"},
 			"body":              demoTaskBody(wave, task),
 			"epic":              wave.Epic,
 			"owned_paths":       task.ownedPaths(),

@@ -306,11 +306,11 @@ func TestWalkthroughRerunChecksFailedCommand(t *testing.T) {
 	vault, store, project := authorityFixture(t)
 	writeDirectTaskBody(t, vault, "APP-T-0001", "W-0001", map[string]any{
 		"status": "done", "readiness": "done", "work_revision": 1,
-		"source_sha": "deadbeef", "owned_paths": []any{"proofed.txt"},
+		"proof_required": []any{"command"}, "source_sha": "deadbeef", "owned_paths": []any{"proofed.txt"},
 	}, rerunChecksCommandTaskBody("APP-T-0001"))
 	writeDirectTaskBody(t, vault, "APP-T-0002", "W-0001", map[string]any{
 		"status": "review", "readiness": "waiting_on_review", "work_revision": 1,
-		"source_sha": "deadbeef", "owned_paths": []any{"proofed-review.txt"},
+		"proof_required": []any{"command"}, "source_sha": "deadbeef", "owned_paths": []any{"proofed-review.txt"},
 	}, rerunChecksCommandTaskBody("APP-T-0002"))
 	writeDirectWave(t, vault, "W-0001", []string{"APP-T-0001", "APP-T-0002"}, nil)
 	if _, err := directWaveStart(vault, store, "W-0001", "human:test"); err != nil {

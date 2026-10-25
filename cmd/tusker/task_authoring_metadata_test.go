@@ -29,7 +29,7 @@ func TestTaskAuthoringMetadataNewTaskOmitsEmptyOptionalFields(t *testing.T) {
 	assertEqual(t, "standard", stringField(data, "work_level"), "default authored work level")
 	assertEqual(t, []string{"src"}, normalizeList(data["owned_paths"]), "owned paths")
 	assertEqual(t, "inline", stringField(data, "proof_mode"), "default proof mode")
-	assertEqual(t, []string{"focused_test", "broad_test"}, normalizeList(data["proof_required"]), "default proof requirements")
+	assertEqual(t, []string{"focused_test"}, normalizeList(data["proof_required"]), "default proof requirements")
 	assertEqual(t, 0, intField(data, "evidence_budget"), "zero evidence budget")
 	assertEqual(t, false, boolField(data, "raw_artifacts_allowed"), "default raw artifact policy")
 	assertEqual(t, "task", stringField(data, "next_source"), "default next source")

@@ -30,7 +30,7 @@ func v7DirectTestVault(t *testing.T) string {
 func TestTaskCreationAndWavePlanningRequireOwnedPaths(t *testing.T) {
 	vault := v7DirectTestVault(t)
 	want := "task needs at least one owned path (owned_paths) so its changes can be scope-checked before merge"
-	if err := newV7Task(Args{"vault": vault, "title": "Unscoped"}); err == nil || !strings.Contains(err.Error(), want) {
+	if err := newV7Task(Args{"vault": vault, "title": "Unscoped", "status": "ready"}); err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("task create: got %v, want %q", err, want)
 	}
 	issues, _ := validateDirectWaveAuthoring(vault, directWaveAuthoringRequest{Tasks: []directWaveAuthoringTask{{Key: "one", Title: "Unscoped"}}})
@@ -57,7 +57,8 @@ func TestNewTaskProofRequiredVerificationWarning(t *testing.T) {
 		wantWarning   bool
 	}{
 		{"grep", "grep -qx x f", true},
-		{"test", `test "$(head -n 1 f)" = "x"`, false},
+		{"test", `test "$(head -n 1 f)" = "x"`, true},
+		{"go test", "go test ./... -run '^TestX$' -count=1", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vault := v7DirectTestVault(t)

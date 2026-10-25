@@ -15,7 +15,7 @@ func TestV7InlineProofClosesWithoutEvidenceFile(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Inline proof close", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Inline proof close", "proof-required": "command", "risk": "low", "priority": "p2", "proof-mode": "inline", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "runner": "codex"}, attemptV7StartCmd)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestProof -count=1", "result": "pass", "note": "Focused proof passed."}, v7TestVerificationMutation)
 
@@ -260,7 +260,7 @@ func TestV7FinishWithoutAttemptPrintsRecoveryCommand(t *testing.T) {
 	vault := filepath.Join(t.TempDir(), "vault")
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true"}, bootstrap)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "acronym": "APP", "title": "App", "summary": "Proof policy.", "v7": "true"}, newV7Epic)
-	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing attempt finish", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
+	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "epic": "APP", "title": "Missing attempt finish", "proof-required": "command", "risk": "low", "priority": "p2", "owned-paths": "src", "v7": "true"}, newV7Task)
 	mustV7Proof(t, Args{"vault": vault, "quiet": "true", "_pos1": "APP-T-0001", "covers": "A1", "check": "go test ./cmd/tusker -run TestFinishWithoutAttempt -count=1", "result": "pass", "note": "Proof passed."}, v7TestVerificationMutation)
 
 	err := finishV7Cmd(Args{"vault": vault, "quiet": "true", "id": "APP-T-0001", "summary": "Implementation complete.", "request-review": "true"})
@@ -419,7 +419,6 @@ func TestV7ProofStatusDefaultIsConcise(t *testing.T) {
 		"Missing gaps:",
 		"  machine:",
 		"    - proof_required:focused_test",
-		"    - proof_required:broad_test",
 		"  human:",
 		"    - acceptance:A1",
 		"Agent action: continue",
@@ -460,7 +459,7 @@ func TestV7HighRiskDefaultsToInlineCodeProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "inline", stringField(data, "proof_mode"), "proof mode")
-	assertEqual(t, []string{"focused_test", "broad_test"}, normalizeList(data["proof_required"]), "proof required")
+	assertEqual(t, []string{"focused_test"}, normalizeList(data["proof_required"]), "proof required")
 	assertEqual(t, 0, intField(data, "evidence_budget"), "evidence budget")
 	if containsString(normalizeList(data["proof_required"]), "manual_smoke") || containsString(normalizeList(data["proof_required"]), "screenshot") {
 		t.Fatalf("high-risk default should not require manual/screenshot proof: %#v", data["proof_required"])
@@ -644,7 +643,7 @@ func TestV7ProofCommandMatcherHandlesWrappedAndPositionedCommands(t *testing.T) 
 		{"focused_test", `make -j4 test`, true},
 		{"focused_test", `npm run test:unit`, true},
 		{"focused_test", `timeout 600 go test ./...`, true},
-		{"focused_test", `test "$(cat sample/result.txt)" = "ok"`, true},
+		{"focused_test", `test "$(cat sample/result.txt)" = "ok"`, false},
 		{"focused_test", `tusker note --body "did X; go test passed"`, false},
 		{"focused_test", `echo go test ./...`, false},
 		{"focused_test", `go test-helper ./...`, false},
@@ -1182,4 +1181,31 @@ func TestProofWriteLockReclaimsDeadHolder(t *testing.T) {
 		t.Fatalf("a lock whose holder died was not reclaimed: %v", err)
 	}
 	release()
+}
+
+func TestV7ProofDistinctTestCommands(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		commands       []string
+		focused, broad bool
+	}{
+		{"shell test", []string{"test -f x"}, false, false},
+		{"shell bracket", []string{"[ -f x ]"}, false, false},
+		{"focused", []string{"go test ./x -run A"}, true, false},
+		{"broad", []string{"go test ./x -run A", "go test ./x"}, true, true},
+		{"duplicate", []string{"go test ./x -run A", "  go test ./x -run A  "}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := Note{Data: map[string]any{"id": "APP-T-0001"}, Body: "## Verification\n\n| Covers | Check | Result |\n| --- | --- | --- |\n"}
+			for _, command := range tc.commands {
+				task.Body += "| A1 | command: " + command + " | pass |\n"
+			}
+			for required, want := range map[string]bool{"command": true, "focused_test": tc.focused, "broad_test": tc.broad} {
+				assertEqual(t, want, v7ProofRequiredClassSatisfied("APP-T-0001", required, task, v7Index{}), required)
+			}
+			if tc.focused && !tc.broad {
+				assertEqual(t, "broad_test needs a second test check besides `go test ./x -run A`, such as the package's wider test run", v7ProofGapReason(task, parseV7VerificationRows(task.Body), "proof_required:broad_test"), "broad gap")
+			}
+		})
+	}
 }

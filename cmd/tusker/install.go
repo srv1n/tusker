@@ -1171,21 +1171,36 @@ func initPathForDisplay(repoRoot, path string) string {
 	return path
 }
 
-func upsertGitignore(vaultPath string) error {
-	marker := "# tusker"
-	block := marker + "\nconfig.local.yaml\n_system/generated/\n.obsidian/workspace*\n.obsidian/cache\n.trash/\n"
-	filePath := filepath.Join(vaultPath, ".gitignore")
-	if !fileExists(filePath) {
-		return writeText(filePath, block)
+const tuskerGitignoreBlock = "# tusker\nconfig.local.yaml\n_system/generated/\n.obsidian/workspace*\n.obsidian/cache\n.trash/\nevents/**/*.json\nattempts/**/*.json\nattempts/**/*.jsonl\nattempts/**/*.log\n_generated/\nscratch/\nworkspaces/\n_runtime/\n_system/locks/\nevidence/**/artifacts/\n"
+
+func missingTuskerGitignoreLines(current string) []string {
+	present := map[string]bool{}
+	for _, line := range strings.Split(current, "\n") {
+		present[line] = true
 	}
+	var missing []string
+	for _, line := range strings.Split(strings.TrimSuffix(tuskerGitignoreBlock, "\n"), "\n") {
+		if !present[line] {
+			missing = append(missing, line)
+		}
+	}
+	return missing
+}
+
+func upsertGitignore(vaultPath string) error {
+	filePath := filepath.Join(vaultPath, ".gitignore")
 	current, err := readText(filePath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if strings.Contains(current, marker) {
+	missing := missingTuskerGitignoreLines(current)
+	if len(missing) == 0 {
 		return nil
 	}
-	return writeText(filePath, strings.TrimRight(current, "\n")+"\n\n"+block)
+	if current != "" && !strings.HasSuffix(current, "\n") {
+		current += "\n"
+	}
+	return writeText(filePath, current+strings.Join(missing, "\n")+"\n")
 }
 
 func renderTuskerPointerBlock(readmeLink string) string {
