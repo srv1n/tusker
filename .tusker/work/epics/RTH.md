@@ -14,8 +14,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-10-19T02:17:38Z"
-updated_at: "2026-10-24T06:31:18Z"
-state_rev: "sha256:867787c04e8ae03455b120ffd385e30db2a9303bb3ba440bfe373ce6bdba41ce"
+updated_at: "2026-10-25T13:20:09Z"
+state_rev: "sha256:24e9c10d6d04f397fa513d7942fa259dfa2bd5088c66368ea9bfb9a51d9250e5"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -66,3 +66,4 @@ TBD.
 | [[RTH-T-0006]] | human:sarav | 2026-10-20T03:52:12Z |
 | [[RTH-T-0007]] | agent:claude | 2026-10-19T03:20:46Z |
 | [[RTH-T-0008]] | human:sarav | 2026-10-24T06:31:16Z |
+| [[RTH-T-0009]] | human:sarav | 2026-10-25T13:20:08Z |
