@@ -72,7 +72,7 @@
       "route": "Existing-repo onboarding",
       "guide": "references/REPO_ONBOARDING.md",
       "loaded_words": 832,
-      "max_loaded_words": 877,
+      "max_loaded_words": 895,
       "required": [
         "Existing Repository Onboarding",
         "Storage Boundary"

@@ -73,7 +73,6 @@ Add planned checks with `tusker edit <TASK-ID> --covers A1 --check
 command. Only the executor records PASS/FAIL. Covers must list every
 acceptance ID a check proves. Choose the smallest checks
 covering acceptance, attach required evidence, and reserve human review for
-explicit gates. Use CLI-managed scratch for transient logs and summaries. Keep
-large build or test output in the system temp directory: scratch has a 200MiB
-budget and idle entries are evicted. Never manufacture proof or rewrite
+explicit gates. Large build or test output goes to system temp. Never
+manufacture proof or rewrite
 lifecycle fields to clear a refusal.

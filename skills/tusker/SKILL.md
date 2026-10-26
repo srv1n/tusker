@@ -7,7 +7,8 @@ description: Manage Tusker tasks, proof, gates, and repository knowledge. Use wh
 
 Mutate tracker state only through the CLI; read flags with `tusker help <command>`.
 Report refusals without rewriting generated state. Task records do not expand
-the user's authorization.
+the user's authorization. `.tusker/scratch/` is disposable: gc, `check --fix` and
+the daemon delete idle folders unasked; keep only regenerable files there.
 
 | Intent | Command |
 |---|---|
