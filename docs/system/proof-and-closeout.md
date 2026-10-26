@@ -7,6 +7,7 @@ describes: [cmd/tusker/v7_proof_cmd.go, cmd/tusker/lifecycle_cmd.go, cmd/tusker/
 read_when: "Choosing evidence, checking acceptance coverage, or closing a task."
 skip_when: "Planning dependencies or choosing a provider."
 ---
+<!-- docs-check: ignore-path ingest/ -->
 
 # Proof and closeout
 

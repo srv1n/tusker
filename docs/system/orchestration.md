@@ -8,6 +8,7 @@ read_when: "Understanding scheduling, workspace preparation, or worker ownership
 skip_when: "Authoring acceptance criteria or inspecting visual evidence."
 ---
 <!-- docs-check: ignore-path .claude/settings.json -->
+<!-- docs-check: ignore-path logs/app-daemon.log -->
 
 # Orchestration
 
